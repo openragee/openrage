@@ -511,9 +511,12 @@ fn stand_in(
 }
 
 impl Made {
-    /// One triangle of zeroed vertices drawn into targets of its own, or one group of a compute
-    /// pipeline run, every binding holding a stand-in: the device validates a pipeline against
-    /// what it is bound and run with only here.
+    /// A draw of no vertices into targets of its own, or a dispatch of no group, with every
+    /// binding holding a stand-in: the device validates a pipeline against what it is bound and
+    /// drawn with only here.
+    // No vertex and no group, so the device runs none of the program: fed stand-ins, a
+    // program's loops need not end, and a draw that does not end has the driver reset the
+    // device under every process that draws on it.
     fn draw(&self, gpu: &Gpu) -> Result<(), String> {
         let device = &gpu.device;
         let (groups, layouts) = (self.stated.as_ref())
@@ -585,7 +588,7 @@ impl Made {
                 for (group, bind_group) in &bound {
                     pass.set_bind_group(*group, bind_group, &[]);
                 }
-                pass.dispatch_workgroups(1, 1, 1);
+                pass.dispatch_workgroups(0, 0, 0);
             }
             Pipeline::Render {
                 pipeline,
@@ -616,7 +619,7 @@ impl Made {
                 let depth = depth.then(|| target(wgpu::TextureFormat::Depth32Float));
                 let vertices = device.create_buffer(&wgpu::BufferDescriptor {
                     label: None,
-                    size: (vertex_stride * 3).max(4),
+                    size: (*vertex_stride).max(4),
                     usage: wgpu::BufferUsages::VERTEX,
                     mapped_at_creation: false,
                 });
@@ -642,7 +645,7 @@ impl Made {
                     pass.set_bind_group(*group, bind_group, &[]);
                 }
                 pass.set_vertex_buffer(0, vertices.slice(..));
-                pass.draw(0..3, 0..1);
+                pass.draw(0..0, 0..1);
             }
         }
         gpu.queue.submit([encoder.finish()]);

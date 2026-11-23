@@ -24,8 +24,9 @@ pub fn print_usage(program: &str) {
     eprintln!("                                pipeline cache where its backend has one, and times what it saves.");
     eprintln!("                                --technique checks only the pairs the passes of those techniques draw");
     eprintln!("                                with, such as the ones that shade a model. --draw draws with each");
-    eprintln!("                                pipeline a device creates: a triangle into targets of its own, or one");
-    eprintln!("                                group of a compute pipeline, every binding a stand-in. --msl also has");
+    eprintln!("                                pipeline a device creates, into targets of its own with a stand-in at");
+    eprintln!("                                every binding: no vertex and no group, so that the device checks the");
+    eprintln!("                                pipeline against all it is drawn with and runs none of it. --msl also has");
     eprintln!("                                naga write each unit as Metal's shading language, a row of its own that");
     eprintln!("                                needs no Metal device (--adapter none for that row alone). No OpenGL");
     eprintln!("                                adapter is opened: OpenRage does not support OpenGL. --skip-crashed");

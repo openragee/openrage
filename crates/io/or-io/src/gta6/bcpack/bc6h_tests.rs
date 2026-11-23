@@ -71,32 +71,46 @@ fn ten_lanes(
     presets: &Presets,
     backs: impl Fn(usize) -> (usize, usize),
 ) -> Vec<Vec<u16>> {
+    let blocks: Vec<_> = (blocks.iter())
+        .map(|block| (ten_fields(block), block.indices))
+        .collect();
+    lanes_of(10, &blocks, presets, backs)
+}
+
+/// The same for blocks of mode `mode`, of one region, each as its fields, left-aligned in 16 bits, and its indices.
+fn lanes_of(
+    mode: u16,
+    blocks: &[([u16; FIELDS], [u8; 16])],
+    presets: &Presets,
+    backs: impl Fn(usize) -> (usize, usize),
+) -> Vec<Vec<u16>> {
+    let shape = &shapes()[usize::from(mode)];
     let mut lanes = vec![vec![0u16; 2 * blocks.len()]; 16];
-    for (b, block) in blocks.iter().enumerate() {
+    for (b, (fields, indices)) in blocks.iter().enumerate() {
         let (end_back, index_back) = backs(b);
         let at = 2 * b;
         let moved = symbol(end_back as i32 - index_back as i32, 8);
         lanes[0][at..at + 2].copy_from_slice(&halves(moved));
         lanes[1][at..at + 2].copy_from_slice(&halves(index_back as u16));
-        lanes[15][at] = 10;
-        let fields = ten_fields(block);
+        lanes[15][at] = mode;
         for (field, &value) in fields.iter().enumerate().take(6) {
             let from = match end_back {
                 0 => 0x8000,
-                back if back <= b => ten_fields(&blocks[b - back])[field],
+                back if back <= b => blocks[b - back].0[field],
                 back => presets.ends[256 + b - back][field],
             };
-            let delta = i32::from(value >> 6) - i32::from(from >> 6);
-            lanes[2 + field][at..at + 2].copy_from_slice(&halves(symbol(delta, 10)));
+            let bits = shape.depth(field);
+            let delta = i32::from(value >> (16 - bits)) - i32::from(from >> (16 - bits));
+            lanes[2 + field][at..at + 2].copy_from_slice(&halves(symbol(delta, bits)));
         }
         for pixel in 0..16 {
             // An index with no reference is a difference from half its range.
             let from = match index_back {
                 0 => 8,
-                back if back <= b => blocks[b - back].indices[pixel],
+                back if back <= b => blocks[b - back].1[pixel],
                 back => presets.first[256 + b - back][pixel],
             };
-            let field = symbol(i32::from(block.indices[pixel]) - i32::from(from), 4);
+            let field = symbol(i32::from(indices[pixel]) - i32::from(from), 4);
             let (row, half, odd) = place(pixel);
             for bit in 0..4 {
                 lanes[11 + row][at + half] |= ((field >> bit) & 1) << (2 * bit + odd);
@@ -122,9 +136,16 @@ fn made_up_presets(slots: &[usize]) -> Presets {
     presets
 }
 
-/// The level above `level`, `width` by `height` blocks of [`ten`]: twice as wide and as high, each pixel repeated 2 by 2.
+/// The level above `level` as the bytes of its blocks.
 fn level_above(level: &[Ten], width: usize, height: usize) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 * 16 * level.len());
+    (above(level, width, height).iter())
+        .flat_map(ten_bytes)
+        .collect()
+}
+
+/// The level above `level`, `width` by `height` blocks of [`ten`]: twice as wide and as high, each pixel repeated 2 by 2.
+fn above(level: &[Ten], width: usize, height: usize) -> Vec<Ten> {
+    let mut out = Vec::with_capacity(4 * level.len());
     for y in 0..2 * height {
         for x in 0..2 * width {
             let below = &level[(y / 2) * width + x / 2];
@@ -140,7 +161,7 @@ fn level_above(level: &[Ten], width: usize, height: usize) -> Vec<u8> {
                     *index = 15 - *index;
                 }
             }
-            out.extend(ten_bytes(&block));
+            out.push(block);
         }
     }
     out
@@ -321,6 +342,158 @@ fn a_calibration_finds_made_up_presets_again_and_the_body_then_decodes() {
     assert!(decode_with(6, &stream, size, None).is_err());
     let kept = super::super::Tables::from_bytes(&tables.to_bytes()).expect("reads back");
     assert!(kept == tables);
+}
+
+#[test]
+fn a_level_with_no_plain_level_beside_it_is_fitted_from_the_level_the_fit_draws() {
+    // A plain level, the coded level below it, and a coded level below that, which alone reads
+    // slots 252 and 253: each level is the one below with each pixel repeated 2 by 2.
+    let (width, height) = (4, 4);
+    let low: Vec<Ten> = (0..width * height).map(ten).collect();
+    let mid = above(&low, width, height);
+    let top = level_above(&mid, 2 * width, 2 * height);
+    let made = made_up_presets(&[252, 253, 254, 255]);
+    // In both, even blocks hang on an index slot alone and odd ones on an endpoint slot alone.
+    let mid_lanes = ten_lanes(&mid, &made, |b| match b {
+        0 => (0, 1),
+        1 => (3, 0),
+        _ => (2, 2),
+    });
+    let low_lanes = ten_lanes(&low, &made, |b| match b {
+        0 => (0, 3),
+        1 => (5, 0),
+        _ => (2, 2),
+    });
+    let coded = |lanes: &Vec<Vec<u16>>, width: usize, height: usize| LevelIn {
+        width,
+        height,
+        data: LevelData::Coded {
+            lanes: lanes.clone(),
+            at: (0..(width * height) as u32).collect(),
+        },
+    };
+    let texture = || TextureIn {
+        kind: 6,
+        levels: vec![
+            LevelIn {
+                width: 4 * width,
+                height: 4 * height,
+                data: LevelData::Plain(top.clone()),
+            },
+            coded(&mid_lanes, 2 * width, 2 * height),
+            coded(&low_lanes, width, height),
+        ],
+    };
+
+    let (tables, summaries) =
+        calibrate(1, &|_| vec![texture()], &mut |_, _| {}, &|| false).expect("not stopped");
+    let found = tables.hdr();
+    assert_eq!(found.ends[254][..6], made.ends[254][..6]);
+    assert_eq!(found.first[255], made.first[255]);
+    // No plain level is beside the lowest: the level above it, as drawn, says what it holds.
+    assert_eq!(found.ends[252][..6], made.ends[252][..6]);
+    assert_eq!(found.first[253], made.first[253]);
+    let summary = (summaries.iter())
+        .find(|summary| summary.kind == 6)
+        .expect("BC6H's");
+    assert_eq!(
+        (summary.bodies, summary.blocks, summary.unknown),
+        (2, 80, 0)
+    );
+}
+
+#[test]
+fn a_field_takes_no_value_that_sends_an_end_out_of_its_base_s_range() {
+    // Blocks of the mode of an 11-bit base and 9-bit differences, all hanging on slot 254 for
+    // their ends: red, green and blue of the base, then of the difference.
+    let eleven = |base: [u16; 3], difference: [i32; 3]| -> ([u16; FIELDS], [u8; 16]) {
+        let fields = std::array::from_fn(|field| match field {
+            0..3 => base[field] << 5,
+            3..6 => ((difference[field - 3] & 0x1FF) as u16) << 7,
+            _ => 0,
+        });
+        // Each 2 by 2 pixels start on index 0, so the level above needs no end swapped.
+        (fields, std::array::from_fn(|pixel| 15 * (pixel % 2) as u8))
+    };
+    let mut made = Presets::empty();
+    made.ends[254] = std::array::from_fn(|field| match field {
+        0..3 => (900 + 100 * field as u16) << 5,
+        3 => 10 << 7,
+        4 => 0x1F1 << 7,
+        5 => 37 << 7,
+        _ => 0,
+    });
+    let backs = |b: usize| (if b < 2 { 2 - b } else { 1 + b % 2 }, 0);
+    let (width, height) = (8, 8);
+    let level: Vec<_> = (0..width * height)
+        .map(|b| {
+            let base = std::array::from_fn(|c| (700 + (b * 37 + c * 101) % 600) as u16);
+            eleven(
+                base,
+                std::array::from_fn(|c| 60 + ((b * 13 + c * 7) % 150) as i32),
+            )
+        })
+        .collect();
+    // The plain level above holds every other end two steps lower than the coded level does.
+    let mut top = Vec::new();
+    for y in 0..2 * height {
+        for x in 0..2 * width {
+            let (mut fields, _) = level[(y / 2) * width + x / 2];
+            for field in &mut fields[3..6] {
+                *field = field.wrapping_sub(2 << 7);
+            }
+            top.extend(write(
+                &shapes()[11],
+                &fields,
+                0,
+                &[0, 0, 15, 15].repeat(4).try_into().expect("16"),
+            ));
+        }
+    }
+    // A body with no plain level beside it, whose every other end is 0 exactly.
+    let dark: Vec<_> = (0..16)
+        .map(|b: i32| eleven([3, 5 + (b % 2) as u16, 7], [-3, -5 - b % 2, -7]))
+        .collect();
+    let coded = |blocks: &[([u16; FIELDS], [u8; 16])], width: usize, height: usize| LevelIn {
+        width,
+        height,
+        data: LevelData::Coded {
+            lanes: lanes_of(11, blocks, &made, backs),
+            at: (0..(width * height) as u32).collect(),
+        },
+    };
+    let textures = |with_dark: bool| {
+        let lit = TextureIn {
+            kind: 6,
+            levels: vec![
+                LevelIn {
+                    width: 2 * width,
+                    height: 2 * height,
+                    data: LevelData::Plain(top.clone()),
+                },
+                coded(&level, width, height),
+            ],
+        };
+        let dark = TextureIn {
+            kind: 6,
+            levels: vec![coded(&dark, 4, 4)],
+        };
+        (std::iter::once(lit).chain(with_dark.then_some(dark))).collect::<Vec<_>>()
+    };
+    let fit = |with_dark: bool| {
+        let (tables, _) =
+            calibrate(1, &|_| textures(with_dark), &mut |_, _| {}, &|| false).expect("not stopped");
+        tables.hdr().ends[254]
+    };
+
+    // The plain level alone says two steps lower, which would send the dark body's ends under 0.
+    let lower: [u16; 3] = std::array::from_fn(|c| made.ends[254][3 + c].wrapping_sub(2 << 7));
+    let alone = fit(false);
+    assert_eq!(alone[..3], made.ends[254][..3]);
+    assert_eq!(alone[3..6], lower);
+    let both = fit(true);
+    assert_eq!(both[..3], made.ends[254][..3]);
+    assert_eq!(both[3..6], made.ends[254][3..6]);
 }
 
 #[test]

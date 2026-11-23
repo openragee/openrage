@@ -6,12 +6,23 @@
 //! known, as the least squares of a region's two ends over its pixels. An end is its base plus a
 //! difference, so a field is voted only once the other is settled or free of the presets.
 //!
+//! An encoder's difference never takes an end out of its base's range, which needs no pixel to
+//! check: every block of every coded level counts, against each value tried for a field, the
+//! ends that value sends out of range, each of which costs that value what a block that fits
+//! nothing does.
+//!
+//! A level with no plain level beside it is voted last, for what is still not known: against the
+//! coded levels beside it as the fit draws them by then, and against the pixels across each
+//! block's edges in its own level.
+//!
 //! Everything is held in the 16 bits the format interpolates, which run with the logarithm of
 //! the light: 2,114 of them to a stop.
 
 use super::super::bc6h::{self, Presets, Shape, Walk, CANDIDATES, FIELDS};
 use super::super::bptc::{subset_of, weights};
-use super::{bilinear_up, box_down, nearest_up, LevelData, Pixels, Summary, TextureIn, MIN_VOTES};
+use super::{
+    bilinear_up, box_down, edges, nearest_up, LevelData, Pixels, Summary, TextureIn, MIN_VOTES,
+};
 
 /// What a vote counts a difference past it as: a block that fits nothing does not outvote the rest.
 const CAP: u32 = 6144;
@@ -32,6 +43,8 @@ pub(super) struct Votes {
     /// For each preset field and each value tried for it, how far that leaves the blocks hanging on it, and how many voted.
     ends: Vec<u32>,
     ends_count: Vec<u32>,
+    /// For each preset field and each value tried for it, the ends that value sends out of their base's range.
+    wraps: Vec<u32>,
 }
 
 impl Votes {
@@ -40,6 +53,7 @@ impl Votes {
             first: vec![0; 256 * 16 * 16],
             ends: vec![0; 256 * FIELDS * CANDIDATES],
             ends_count: vec![0; 256 * FIELDS],
+            wraps: vec![0; 256 * FIELDS * CANDIDATES],
         }
     }
 
@@ -53,6 +67,7 @@ impl Votes {
         sum(&mut self.first, &other.first);
         sum(&mut self.ends, &other.ends);
         sum(&mut self.ends_count, &other.ends_count);
+        sum(&mut self.wraps, &other.wraps);
     }
 }
 
@@ -138,7 +153,7 @@ fn agree(plains: &[Option<Pixels>]) -> bool {
     count == 0 || off / STOP <= AGREE * count as f64
 }
 
-/// What a coded level is held against: its lanes, where each block lies, its width in blocks, and a target for each pixel if a plain level is beside it.
+/// What a coded level is held against: its lanes, where each block lies, its width in blocks, and a target for each pixel, NaN where none is known.
 struct Coded<'a> {
     lanes: &'a [Vec<u16>],
     at: &'a [u32],
@@ -146,11 +161,101 @@ struct Coded<'a> {
     target: Option<Vec<Vec<f32>>>,
     /// Whether the target is the level below, which has one pixel for each 2 by 2.
     quads: bool,
+    /// Whether a plain level beside it gave the target.
+    plain: bool,
+}
+
+/// A coded level through `presets` as pixels in the 16 bits the format interpolates, NaN in a
+/// block that hangs on something not known, and whether a block of it hangs on something not settled.
+fn drawn(
+    lanes: &[Vec<u16>],
+    at: &[u32],
+    (width, height): (usize, usize),
+    presets: &Presets,
+) -> Option<(Pixels, bool)> {
+    let mut walk = Walk::new(lanes, presets, false).ok()?;
+    let (w, h) = (4 * width, 4 * height);
+    let mut channels = vec![vec![f32::NAN; w * h]; 3];
+    let mut open = false;
+    for (block, &place) in at.iter().enumerate().take(walk.blocks) {
+        let (shape, partition) = walk.step(block).ok()?;
+        open |= walk.open(block, shape);
+        let known = walk.ends_known(block, shape) && walk.indices_known(block);
+        let place = place as usize;
+        if place >= width * height || !known {
+            continue;
+        }
+        let pixels = bc6h::draw(shape, walk.fields(block), partition, &walk.indices(block));
+        let origin = 4 * (place / width) * w + 4 * (place % width);
+        for (pixel, colour) in pixels.iter().enumerate() {
+            for (plane, &value) in channels.iter_mut().zip(colour) {
+                plane[origin + (pixel / 4) * w + pixel % 4] = value as f32;
+            }
+        }
+    }
+    let pixels = Pixels {
+        width: w,
+        height: h,
+        channels,
+    };
+    Some((pixels, open))
+}
+
+/// `source`, twice `width` by twice `height` in the 16 bits the format interpolates, with the lights of each 2 by 2 pixels averaged; NaN where one is.
+fn lights_down(source: &[f32], width: usize, height: usize) -> Vec<f32> {
+    let wide = 2 * width;
+    (0..width * height)
+        .map(|i| {
+            let at = 2 * (i / width) * wide + 2 * (i % width);
+            let sum: f32 = [at, at + 1, at + wide, at + wide + 1]
+                .iter()
+                .map(|&at| light(source[at]))
+                .sum();
+            if sum.is_nan() {
+                f32::NAN
+            } else {
+                interpolated(sum / 4.0)
+            }
+        })
+        .collect()
+}
+
+/// The pixels a coded level with no plain level beside it is held against: the pixels across
+/// each block's edges in level `i` itself and, where `levels`, those of the coded level below as
+/// `draws` has it, smoothed up, and of the one above, averaged down; a pixel takes the last that knows it.
+fn beside(draws: &[Option<Pixels>], i: usize, levels: bool) -> Option<Vec<Vec<f32>>> {
+    let own = draws[i].as_ref()?;
+    let (w, h) = (own.width, own.height);
+    let above = (i.checked_sub(1))
+        .and_then(|above| draws[above].as_ref())
+        .filter(|above| levels && above.width == 2 * w && above.height == 2 * h);
+    let below = (draws.get(i + 1))
+        .and_then(Option::as_ref)
+        .filter(|below| levels && 2 * below.width == w && 2 * below.height == h);
+    let planes = (0..3).map(|c| {
+        let mut plane = edges(&own.channels[c], w, h);
+        let others = [
+            below.map(|below| bilinear_up(&below.channels[c], w, h)),
+            above.map(|above| lights_down(&above.channels[c], w, h)),
+        ];
+        for other in others.into_iter().flatten() {
+            for (pixel, other) in plane.iter_mut().zip(other) {
+                if !other.is_nan() {
+                    *pixel = other;
+                }
+            }
+        }
+        plane
+    });
+    Some(planes.collect())
 }
 
 /// The coded levels of `texture`: a level's target is the plain level above averaged down, else
 /// the one below, smoothed up for a vote and each pixel repeated 2 by 2 where `repeated`, for a score.
-fn coded(texture: &TextureIn, repeated: bool) -> Vec<Coded<'_>> {
+///
+/// With `through`, the presets as they stand, a level with neither that has a block hanging on
+/// something not settled is held against what the fit draws beside it ([`beside`]).
+fn coded<'a>(texture: &'a TextureIn, repeated: bool, through: Option<&Presets>) -> Vec<Coded<'a>> {
     let plains: Vec<Option<Pixels>> = (texture.levels.iter())
         .map(|level| match &level.data {
             LevelData::Plain(blocks) => plain(blocks, level.width, level.height),
@@ -179,15 +284,41 @@ fn coded(texture: &TextureIn, repeated: bool) -> Vec<Coded<'_>> {
                 .filter(|below| 2 * below.width == w && 2 * below.height == h)
                 .map(|below| (below.channels.iter().map(|c| scaled(up(c, w, h)))).collect())
         };
-        out.push(Coded {
+        let quads = above.is_none();
+        let target = above.or_else(below).filter(|_| targets);
+        let coded = Coded {
             lanes,
             at,
             width: level.width,
-            quads: above.is_none(),
-            target: above.or_else(below).filter(|_| targets),
-        });
+            quads,
+            plain: target.is_some(),
+            target,
+        };
+        out.push((i, coded));
     }
-    out
+    if let Some(presets) = through {
+        let (mut draws, mut opens) = (Vec::new(), Vec::new());
+        for level in &texture.levels {
+            let drawn = match &level.data {
+                LevelData::Coded { lanes, at } if lanes.len() == 16 => {
+                    drawn(lanes, at, (level.width, level.height), presets)
+                }
+                _ => None,
+            };
+            opens.push(drawn.as_ref().is_some_and(|drawn| drawn.1));
+            draws.push(drawn.map(|drawn| drawn.0));
+        }
+        // A level with nothing left to settle votes nothing; the levels of a texture whose plain
+        // levels disagree say nothing of one another.
+        for (i, level) in &mut out {
+            if !opens[*i] {
+                level.target = None;
+            } else if !level.plain {
+                level.target = beside(&draws, *i, targets);
+            }
+        }
+    }
+    out.into_iter().map(|(_, level)| level).collect()
 }
 
 /// The 16 pixels of a block, each as red, green and blue.
@@ -242,6 +373,9 @@ fn vote_indices(
         let Some(draws) = &draws[subset_of(shape.regions, partition, pixel)] else {
             continue;
         };
+        if target[0].is_nan() {
+            continue;
+        }
         let off = |index: usize| -> f32 {
             (draws[index].iter().zip(target))
                 .map(|(drawn, wanted)| (drawn - wanted).abs())
@@ -283,7 +417,7 @@ fn vote_ends(
             let (mut aa, mut ab, mut bb, mut at, mut bt, mut count) =
                 (0f32, 0f32, 0f32, 0f32, 0f32, 0f32);
             for (pixel, target) in wanted.iter().enumerate() {
-                if subset_of(shape.regions, partition, pixel) != region {
+                if subset_of(shape.regions, partition, pixel) != region || target[0].is_nan() {
                     continue;
                 }
                 let b = f32::from(weights[usize::from(indices[pixel])]) / 64.0;
@@ -346,22 +480,90 @@ fn vote_ends(
     }
 }
 
-/// Adds `texture`'s votes, read through `presets` as they stand.
-pub(super) fn vote(texture: &TextureIn, presets: &Presets, votes: &mut Votes) {
-    for level in coded(texture, false) {
-        let (Some(target), Ok(mut walk)) = (&level.target, Walk::new(level.lanes, presets, true))
-        else {
+/// Counts, for each value tried for a preset field that block `block` hangs on, the ends that
+/// value sends out of their base's range, the other of a base and its difference being settled.
+fn vote_range(walk: &Walk<'_>, block: usize, shape: &Shape, votes: &mut Votes) {
+    if !shape.transformed {
+        return;
+    }
+    let standing = walk.fields(block);
+    let top = 1 << shape.base;
+    for end in 1..2 * shape.regions {
+        for channel in 0..3 {
+            let own = 3 * end + channel;
+            let open = |field: usize| walk.settled(block, field) < 16;
+            let (hangs, both) = match (open(channel), open(own)) {
+                (true, false) => (walk.from(block, channel), false),
+                (false, true) => (walk.from(block, own), false),
+                (true, true) if walk.from(block, channel) == walk.from(block, own) => {
+                    (walk.from(block, own), true)
+                }
+                _ => continue,
+            };
+            let Some(at) = usize::from(hangs).checked_sub(1) else {
+                continue;
+            };
+            // A value tried for a field's top 8 bits stands for the 256 that share them, which
+            // reach past it by what the bits below add at this block's depth.
+            let slack = |field: usize| match walk.settled(block, field) {
+                0 => 0xFF >> (16 - shape.depth(field)),
+                _ => 0,
+            };
+            let base = bc6h::base_of(shape, standing[channel]);
+            let other = bc6h::difference_of(shape, standing[own], channel);
+            let wraps = &mut votes.wraps[CANDIDATES * at..CANDIDATES * (at + 1)];
+            let out = |sum: i32, slack: i32| u32::from(sum + slack < 0 || sum >= top);
+            if both {
+                let slack = slack(channel) + slack(own);
+                let (bases, others) = (walk.trace(block, channel), walk.trace(block, own));
+                for ((wraps, &tried), &other) in wraps.iter_mut().zip(bases).zip(others) {
+                    let other = bc6h::difference_of(shape, other, channel);
+                    *wraps += out(bc6h::base_of(shape, tried) + other, slack);
+                }
+            } else if open(own) {
+                let slack = slack(own);
+                for (wraps, &tried) in wraps.iter_mut().zip(walk.trace(block, own)) {
+                    *wraps += out(base + bc6h::difference_of(shape, tried, channel), slack);
+                }
+            } else {
+                let slack = slack(channel);
+                for (wraps, &tried) in wraps.iter_mut().zip(walk.trace(block, channel)) {
+                    *wraps += out(bc6h::base_of(shape, tried) + other, slack);
+                }
+            }
+        }
+    }
+}
+
+/// Adds `texture`'s votes, read through `presets` as they stand, and says whether a block of it
+/// hangs on something not settled.
+///
+/// A pass that fills (`fill`) reads only the levels with such a block, and holds a level with
+/// no plain level beside it against what the fit draws beside it.
+pub(super) fn vote(texture: &TextureIn, presets: &Presets, votes: &mut Votes, fill: bool) -> bool {
+    let mut open = false;
+    for level in coded(texture, false, fill.then_some(presets)) {
+        if fill && level.target.is_none() {
+            continue;
+        }
+        let Ok(mut walk) = Walk::new(level.lanes, presets, true) else {
             continue;
         };
         for block in 0..walk.blocks {
             let Ok(of) = walk.step(block) else {
                 break;
             };
-            let Some(wanted) = wanted(target, level.width, level.at[block]) else {
+            open |= walk.open(block, of.0);
+            vote_range(&walk, block, of.0, votes);
+            let wanted = (level.target.as_ref())
+                .and_then(|target| wanted(target, level.width, level.at[block]));
+            let Some(wanted) = wanted else {
                 continue;
             };
             let settled = (0..6 * of.0.regions).all(|field| walk.settled(block, field) == 16);
-            if settled && walk.index_slot(block) != 0 {
+            let slot = usize::from(walk.index_slot(block));
+            // A pass that fills leaves the indices the plain levels voted as they are.
+            if settled && slot != 0 && !(fill && presets.first_known[slot]) {
                 vote_indices(&walk, block, of, &wanted, votes);
             }
             if walk.indices_known(block) && !settled {
@@ -369,6 +571,7 @@ pub(super) fn vote(texture: &TextureIn, presets: &Presets, votes: &mut Votes) {
             }
         }
     }
+    open
 }
 
 /// Takes into `presets` what `votes` settle: a voted field's next 8 bits, and each voted index.
@@ -393,8 +596,13 @@ pub(super) fn solve(votes: &Votes, presets: &mut Presets) {
                 continue;
             }
             let costs = &votes.ends[CANDIDATES * at..CANDIDATES * (at + 1)];
+            let wraps = &votes.wraps[CANDIDATES * at..CANDIDATES * (at + 1)];
+            // An end out of range counts as a block that fits nothing. It counts no more: the
+            // other of its base and its difference is itself a fitted value, so a few blocks
+            // that only a far value keeps in range say less than the pixels of the rest.
+            let cost = |x: usize| costs[x].saturating_add(wraps[x].saturating_mul(CAP >> 4));
             let least =
-                (0..CANDIDATES).fold(0, |best, x| if costs[x] < costs[best] { x } else { best });
+                (0..CANDIDATES).fold(0, |best, x| if cost(x) < cost(best) { x } else { best });
             presets.ends[slot][field] = presets.candidate(slot, field, least);
             presets.ends_bits[slot][field] = settled + 8;
         }
@@ -406,7 +614,7 @@ pub(super) fn solve(votes: &Votes, presets: &mut Presets) {
 /// A level is held against the level above pixel by pixel, else its lights averaged 2 by 2
 /// against the level below.
 pub(super) fn score(texture: &TextureIn, presets: &Presets, summary: &mut Summary) {
-    let levels = coded(texture, true);
+    let levels = coded(texture, true, None);
     summary.textures += u64::from(!levels.is_empty());
     for level in levels {
         let Ok(mut walk) = Walk::new(level.lanes, presets, false) else {

@@ -38,7 +38,10 @@ const FIRST_PASSES: usize = 4;
 const SECOND_PASSES: usize = 2;
 /// The passes that vote BC6H's presets: a field is settled 8 bits to a pass, its base before its
 /// other ends, and each waits for the indices that the ends in turn let a pass vote.
-const HDR_PASSES: usize = 10;
+const HDR_PASSES: usize = 8;
+/// The passes after them that vote what those left open: they read only the levels with a
+/// block that hangs on it, and hold one with no plain level beside it against what the fit draws.
+const HDR_FILLS: usize = 5;
 /// The most workers a pass reads textures on, each holding one texture and its own tallies.
 const MAX_WORKERS: usize = 16;
 
@@ -970,21 +973,24 @@ impl Doing {
             hdr: match pass {
                 _ if pass + 1 == passes => BptcPass::Score,
                 _ if pass < HDR_PASSES => BptcPass::Vote,
+                _ if pass < HDR_PASSES + HDR_FILLS => BptcPass::Fill,
                 _ => BptcPass::Rest,
             },
         }
     }
 
     /// Whether the pass does anything with a texture that holds chains of the codec kinds whose
-    /// bits `kinds` has; bit 0 says a BC7 chain of it has something a pass that fills votes from.
+    /// bits `kinds` has; bit 0 says a BC7 chain of it has something a pass that fills votes from,
+    /// and bit 2 the same of a BC6H chain.
     fn reads(&self, kinds: u8) -> bool {
         let holds = |kind: u8| kinds >> kind & 1 != 0;
-        let bptc = match self.bptc {
+        let reads = |pass: BptcPass, marked: u8| match pass {
             BptcPass::Rest => false,
-            BptcPass::Fill => holds(0),
+            BptcPass::Fill => holds(marked),
             _ => true,
         };
-        (holds(6) && self.hdr != BptcPass::Rest)
+        let (bptc, hdr) = (reads(self.bptc, 0), reads(self.hdr, 2));
+        (holds(6) && hdr)
             || (holds(7) && bptc)
             || ([1, 3, 4, 5].into_iter().any(holds) && self.halves)
     }
@@ -1016,8 +1022,9 @@ impl Part {
     }
 
     /// Takes one mip chain into the pass's tallies, read through `tables` as they stand, and says
-    /// whether it is a BC7 chain a pass that fills has something to vote from: a coded level with
-    /// no plain level beside it and a block that hangs on something not known.
+    /// whether it is a chain a pass that fills has something to vote from: for BC7 one with a
+    /// coded level that has no plain level beside it and a block that hangs on something not
+    /// known, for BC6H one with a block that hangs on something not settled.
     ///
     /// `plain` is BC7's presets as the plain levels left them, in a pass that fills what they did not know.
     fn take(
@@ -1030,12 +1037,13 @@ impl Part {
         let Doing { second, last, .. } = doing;
         if input.kind == 6 {
             match doing.hdr {
-                BptcPass::Vote => {
+                BptcPass::Vote | BptcPass::Fill => {
                     let votes = self.hdr_votes.get_or_insert_with(bc6h_fit::Votes::empty);
-                    bc6h_fit::vote(input, &tables.hdr, votes);
+                    let fill = doing.hdr == BptcPass::Fill;
+                    return bc6h_fit::vote(input, &tables.hdr, votes, fill);
                 }
                 BptcPass::Score => bc6h_fit::score(input, &tables.hdr, &mut self.hdr),
-                BptcPass::Census | BptcPass::Fill | BptcPass::Rest => {}
+                BptcPass::Census | BptcPass::Rest => {}
             }
             return false;
         }
@@ -1145,7 +1153,7 @@ pub fn calibrate(
         kind: 6,
         ..Summary::default()
     };
-    let passes = (FIRST_PASSES + SECOND_PASSES).max(HDR_PASSES) + 1;
+    let passes = (FIRST_PASSES + SECOND_PASSES).max(HDR_PASSES + HDR_FILLS) + 1;
     let workers = std::thread::available_parallelism()
         .map_or(1, std::num::NonZero::get)
         .clamp(1, MAX_WORKERS)
@@ -1181,22 +1189,26 @@ pub fn calibrate(
                                 continue;
                             }
                             let inputs = texture(index);
+                            let kinds =
+                                (inputs.iter()).fold(0, |all, input| all | 1 << (input.kind & 7));
                             if pass == 0 {
-                                let kinds = (inputs.iter())
-                                    .fold(0, |all, input| all | 1 << (input.kind & 7));
                                 held[index].store(kinds, Ordering::Relaxed);
                             }
                             let mut lone = false;
                             for input in inputs {
                                 lone |= part.take(&input, standing, doing, plain);
                             }
-                            // A pass that fills leaves the mark only where a level still had something to vote.
-                            match (lone, doing.bptc) {
-                                (true, _) => held[index].fetch_or(1, Ordering::Relaxed),
-                                (false, BptcPass::Fill) => {
-                                    held[index].fetch_and(!1, Ordering::Relaxed)
-                                }
-                                (false, _) => 0,
+                            // The mark of a BC7 chain, or of a BC6H one. A pass that fills leaves
+                            // it only where a level still had something to vote, and so does
+                            // each of BC6H's passes, which all look.
+                            let (mark, looked) = match kinds >> 6 & 1 {
+                                0 => (1, doing.bptc == BptcPass::Fill),
+                                _ => (4, true),
+                            };
+                            match (lone, looked) {
+                                (true, _) => held[index].fetch_or(mark, Ordering::Relaxed),
+                                (false, true) => held[index].fetch_and(!mark, Ordering::Relaxed),
+                                (false, false) => 0,
                             };
                             done.fetch_add(1, Ordering::Relaxed);
                         }

@@ -55,7 +55,8 @@ const STATED: [Stated; 14] = [
 /// What a mode's block holds.
 pub(super) struct Shape {
     pub(super) regions: usize,
-    transformed: bool,
+    /// Whether the ends past the base are differences from it.
+    pub(super) transformed: bool,
     /// The bits of the base.
     pub(super) base: u32,
     /// The bits of the other ends' red, green and blue.
@@ -153,14 +154,27 @@ pub(super) fn end_value(shape: &Shape, fields: &[u16; FIELDS], end: usize, chann
     if end == 0 {
         return base;
     }
-    let bits = shape.delta[channel];
-    let other = u32::from(fields[3 * end + channel]) >> (16 - bits);
+    let other = fields[3 * end + channel];
     if !shape.transformed {
-        return other;
+        return u32::from(other) >> (16 - shape.delta[channel]);
     }
-    // A difference is signed and is added to the base within the base's bits.
-    let signed = ((other << (32 - bits)) as i32) >> (32 - bits);
-    (base as i32 + signed) as u32 & ((1 << shape.base) - 1)
+    // A difference is added to the base within the base's bits.
+    let sum = base as i32 + difference_of(shape, other, channel);
+    sum as u32 & ((1 << shape.base) - 1)
+}
+
+/// The base that `field`, left-aligned in 16 bits, states in a block of `shape`.
+pub(super) fn base_of(shape: &Shape, field: u16) -> i32 {
+    base_value(u32::from(field) >> (16 - shape.base), shape.base) as i32
+}
+
+/// The signed difference from its base that `field` of channel `channel`, left-aligned in 16 bits, states in a block of `shape`.
+///
+/// An encoder's difference never takes an end out of its base's range, so a base plus its
+/// difference below 0 or past the base's bits says a field is not what the block held.
+pub(super) fn difference_of(shape: &Shape, field: u16, channel: usize) -> i32 {
+    let bits = shape.delta[channel];
+    (i32::from(field) << 16) >> (32 - bits)
 }
 
 /// An end of `bits` bits as the 16 bits the unsigned format interpolates.
@@ -382,7 +396,7 @@ impl<'a> Walk<'a> {
                 };
                 fields[field] = left(fields[source]);
                 from[field] = from[source];
-                if traced && from[source] != 0 {
+                if traced && self.reads_trace(&from, field) {
                     let source = Self::trace_at(block, source);
                     for candidate in 0..CANDIDATES {
                         self.trace[to + candidate] = left(self.trace[source + candidate]);
@@ -404,7 +418,7 @@ impl<'a> Walk<'a> {
                     let kept = named % REACH;
                     fields[field] = (self.fields[kept][field] & keep).wrapping_add(adds);
                     from[field] = self.from[kept][field];
-                    if traced && from[field] != 0 {
+                    if traced && self.reads_trace(&from, field) {
                         let named = Self::trace_at(named, field);
                         for candidate in 0..CANDIDATES {
                             self.trace[to + candidate] =
@@ -415,7 +429,7 @@ impl<'a> Walk<'a> {
                 (None, Some(slot)) => {
                     fields[field] = (self.presets.ends[slot][field] & keep).wrapping_add(adds);
                     from[field] = (1 + FIELDS * slot + field) as u16;
-                    if traced {
+                    if traced && self.reads_trace(&from, field) {
                         for candidate in 0..CANDIDATES {
                             let tried = self.presets.candidate(slot, field, candidate);
                             self.trace[to + candidate] = (tried & keep).wrapping_add(adds);
@@ -491,6 +505,27 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// Whether `from` names a preset field a fit has not settled whole.
+    fn open_from(&self, from: u16) -> bool {
+        (usize::from(from).checked_sub(1))
+            .is_some_and(|at| self.presets.ends_bits[at / FIELDS][at % FIELDS] < 16)
+    }
+
+    /// Whether a fit reads the trace of field `field` of a block whose fields hang on `from`:
+    /// a base's while it is not settled whole, and another end's once its base is, or where the
+    /// two hang on one preset field. A block's fields and those of the block it refers to hang
+    /// on the same, so a trace that is read is made from one that was.
+    fn reads_trace(&self, from: &[u16; FIELDS], field: usize) -> bool {
+        let base = from[field % 3];
+        self.open_from(from[field]) && (field < 3 || from[field] == base || !self.open_from(base))
+    }
+
+    /// Whether block `block`, of `shape`, draws with a preset field a fit has not settled whole or with indices it does not know.
+    pub(super) fn open(&self, block: usize, shape: &Shape) -> bool {
+        (0..6 * shape.regions).any(|field| self.settled(block, field) < 16)
+            || !self.indices_known(block)
+    }
+
     /// Whether a fit gave a value to everything the fields a block of `shape` draws with hang on.
     pub(super) fn ends_known(&self, block: usize, shape: &Shape) -> bool {
         (0..6 * shape.regions).all(|field| self.settled(block, field) > 0)
@@ -507,7 +542,7 @@ impl<'a> Walk<'a> {
         self.first_from[block % REACH]
     }
 
-    /// Field `field` of block `block` for each value a fit tries for the preset field it hangs on; only for the block last stepped, in a traced walk.
+    /// Field `field` of block `block` for each value a fit tries for the preset field it hangs on, where a fit votes that field; only for the block last stepped, in a traced walk.
     pub(super) fn trace(&self, block: usize, field: usize) -> &[u16] {
         let at = Self::trace_at(block, field);
         &self.trace[at..at + CANDIDATES]

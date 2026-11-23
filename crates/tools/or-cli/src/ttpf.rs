@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use or_io::codec::texture::{decode_level, save_png, to_dds, DxgiFormat};
+use or_io::codec::texture::{decode_level, save_png, to_dds};
 use or_io::gta6::bcpack::calibrate::{load_cache, save_cache};
 use or_io::gta6::bcpack::Decode;
 use or_io::gta6::hash::name_hash64;
@@ -135,16 +135,9 @@ fn cmd_info(args: &[String]) -> Result<(), String> {
                     1 => format!("yes, {} mip(s)", texture.levels),
                     faces => format!("yes, {faces} slices of {} mip(s)", texture.levels),
                 };
-                // The tables are fitted on the unsigned format's textures: no signed one has a plain mip beside a coded one.
-                let signed =
-                    (entry.format()).is_some_and(|format| format.dxgi() == DxgiFormat::Bc6hSf16);
-                let unverified = match signed && !how.is_exact() {
-                    true => "; unverified: no plain mip checks a signed texture's decode",
-                    false => "",
-                };
                 // A texture with a body through the coder says whether its decode is exact.
                 match coded {
-                    true => format!("{mips}, {}{unverified}", decode_note(&how)),
+                    true => format!("{mips}, {}", decode_note(&how)),
                     false => mips,
                 }
             }
@@ -748,8 +741,8 @@ fn print_usage() {
     eprintln!("info and export say calibrated for it, with the share of its coded blocks drawn");
     eprintln!("through a slot or symbol the fit did not solve. A save never writes an estimate:");
     eprintln!("it carries the coded bodies as the file stores them. A signed BC6H texture is");
-    eprintln!("drawn through the tables the unsigned ones fitted, which nothing checks: info");
-    eprintln!("says unverified.");
+    eprintln!("drawn through the tables the unsigned ones fitted: no plain mip lies beside one,");
+    eprintln!("and what checks it is that its blocks' ends stay in range as an encoder's do.");
     eprintln!("Refused, each by name: bodies of codec kinds 3 to 7 with no calibration kept;");
     eprintln!("cubes of 1-, 2- and 8-byte pixels; arrays in 4 KiB tiles;");
     eprintln!("volumes in tile modes other than 1; a mip in a tail with no measured slot (2-byte");

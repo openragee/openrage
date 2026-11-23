@@ -489,10 +489,10 @@ fn a_calibration_stops_when_asked_and_tells_how_far_it_is() {
         7,
         "a texture is read once in each pass that does something with its mode"
     );
-    assert_eq!(told.first(), Some(&(0, 11)));
+    assert_eq!(told.first(), Some(&(0, 14)));
     assert!(told
         .windows(2)
-        .all(|pair| pair[0].0 < pair[1].0 && pair[1].1 == 11));
+        .all(|pair| pair[0].0 < pair[1].0 && pair[1].1 == 14));
 }
 
 #[test]

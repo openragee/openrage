@@ -13,7 +13,6 @@ use naga::ShaderStage;
 use wgpu::util::DeviceExt;
 
 use super::bindings::{arrayed, Requirement, Resource};
-use super::link::match_interpolation;
 use super::mesh::Image;
 use super::pipeline::{entry_of, fragment_targets_in, Target};
 use super::targets::render_target;
@@ -39,9 +38,6 @@ const ARRAY_ENTRIES: u32 = 4096;
 /// The buffers and textures of one stage a device is asked for where its adapter has them: a
 /// translated program binds each buffer the game fills, which is more than a device gives unasked.
 const STAGE_BINDINGS: u32 = 64;
-/// The parameters between two stages a device is asked for where its adapter has them: a mesh
-/// program gives more than the sixteen a device takes unasked.
-const STAGE_PARAMETERS: u32 = 32;
 
 /// A developer's aids for reading what a translated pass does, from the environment variable
 /// `OPENRAGE_GTA6_SHADED`: words separated by commas. `target=N` shows a target raw in place
@@ -114,8 +110,6 @@ pub fn device_needs(
         limits.max_samplers_per_shader_stage,
         has.max_samplers_per_shader_stage,
     );
-    limits.max_inter_stage_shader_variables = (limits.max_inter_stage_shader_variables)
-        .max(has.max_inter_stage_shader_variables.min(STAGE_PARAMETERS));
     // Only a program that picks a texture at a place it computes binds an array: a device
     // without them still draws every other pass.
     if !features.contains(TEXTURE_ARRAYS) {
@@ -148,7 +142,8 @@ pub enum Feed {
 /// One geometry with the two stages that shade it.
 #[derive(Debug, Clone)]
 pub struct MeshletSurface {
-    /// The lowered mesh program, its bindings in group 0 and its arrays in group 2.
+    /// The lowered mesh program, its bindings in group 0 and its arrays in group 2, linked to
+    /// `fragment`: it gives the locations that stage takes.
     pub vertex: Arc<naga::Module>,
     /// The pixel program, its bindings in group 1 and its arrays in group 3.
     pub fragment: Arc<naga::Module>,
@@ -642,7 +637,7 @@ fn build(
     stages: (Arc<naga::Module>, Arc<naga::Module>),
     compiled: Option<&wgpu::PipelineCache>,
 ) -> Result<Built, String> {
-    let mut fragment = match &aids().pixel {
+    let fragment = match &aids().pixel {
         Some(file) => stage_of(file)?,
         None => (*stages.1).clone(),
     };
@@ -652,13 +647,11 @@ fn build(
     if let Some(Some(colour)) = targets.first_mut() {
         colour.format = colour.format.add_srgb_suffix();
     }
-    let mut vertex = match &aids().mesh {
+    // The two stages come linked: the vertex stage gives the locations the pixel stage takes.
+    let vertex = match &aids().mesh {
         Some(file) => stage_of(file)?,
         None => (*stages.0).clone(),
     };
-    let missing = dense_locations(&mut vertex, &mut fragment);
-    give_noughts(&mut vertex, &missing)?;
-    match_interpolation(&mut vertex, &fragment);
     let mut layouts = Vec::new();
     for group in 0..GROUPS {
         let (module, visibility) = match group % 2 {
@@ -724,144 +717,6 @@ fn build(
 /// whatever follows it are drawn to nothing.
 const TARGETS: usize = 4;
 
-/// Renumber each location `map` holds among what the entry point of `stage` takes (a pixel
-/// stage) or gives (a vertex stage); the locations in it, in their order.
-fn relocate(module: &mut naga::Module, stage: ShaderStage, map: &BTreeMap<u32, u32>) -> Vec<u32> {
-    use naga::{Binding, TypeInner};
-    let mut seen = Vec::new();
-    let mut set = |binding: &mut Option<Binding>| {
-        if let Some(Binding::Location { location, .. }) = binding {
-            seen.push(*location);
-            if let Some(to) = map.get(location) {
-                *location = *to;
-            }
-        }
-    };
-    let mut structs = Vec::new();
-    for entry in module.entry_points.iter_mut().filter(|e| e.stage == stage) {
-        match stage {
-            ShaderStage::Fragment => {
-                for argument in &mut entry.function.arguments {
-                    set(&mut argument.binding);
-                    structs.push(argument.ty);
-                }
-            }
-            _ => {
-                if let Some(result) = entry.function.result.as_mut() {
-                    set(&mut result.binding);
-                    structs.push(result.ty);
-                }
-            }
-        }
-    }
-    for handle in structs {
-        let mut ty = module.types[handle].clone();
-        let TypeInner::Struct { members, .. } = &mut ty.inner else {
-            continue;
-        };
-        let before = members.clone();
-        members.iter_mut().for_each(|m| set(&mut m.binding));
-        // `replace` panics unless the type really changed.
-        if *members != before {
-            module.types.replace(handle, ty);
-        }
-    }
-    seen
-}
-
-/// Have the vertex stage of `vertex` give noughts at each location of `missing`, four floats
-/// each: what the hardware hands a pixel program for a parameter the stage before never wrote.
-fn give_noughts(vertex: &mut naga::Module, missing: &[u32]) -> Result<(), String> {
-    use naga::{Expression as E, Span, Statement, TypeInner};
-    if missing.is_empty() {
-        return Ok(());
-    }
-    let shape = "the vertex stage does not end by returning its outputs as one value";
-    let vec4 = vertex.types.insert(
-        naga::Type {
-            name: None,
-            inner: TypeInner::Vector {
-                size: naga::VectorSize::Quad,
-                scalar: naga::Scalar::F32,
-            },
-        },
-        Span::UNDEFINED,
-    );
-    let entry = (vertex.entry_points.iter_mut())
-        .find(|e| e.stage == ShaderStage::Vertex)
-        .ok_or(shape)?;
-    let function = &mut entry.function;
-    let result = function.result.as_mut().ok_or(shape)?;
-    let TypeInner::Struct { mut members, span } = vertex.types[result.ty].inner.clone() else {
-        return Err(shape.into());
-    };
-    let Some(Statement::Return { value: Some(old) }) = function.body.iter().last() else {
-        return Err(shape.into());
-    };
-    let E::Compose { mut components, .. } = function.expressions[*old].clone() else {
-        return Err(shape.into());
-    };
-    let nought = function
-        .expressions
-        .append(E::ZeroValue(vec4), Span::UNDEFINED);
-    let mut offset = span;
-    for location in missing {
-        members.push(naga::StructMember {
-            name: None,
-            ty: vec4,
-            binding: Some(naga::Binding::Location {
-                location: *location,
-                interpolation: Some(naga::Interpolation::Perspective),
-                sampling: Some(naga::Sampling::Center),
-                blend_src: None,
-                per_primitive: false,
-            }),
-            offset,
-        });
-        offset += 16;
-        components.push(nought);
-    }
-    let ty = vertex.types.insert(
-        naga::Type {
-            name: None,
-            inner: TypeInner::Struct {
-                members,
-                span: offset,
-            },
-        },
-        Span::UNDEFINED,
-    );
-    result.ty = ty;
-    let value = (function.expressions).append(E::Compose { ty, components }, Span::UNDEFINED);
-    if let Some(last) = function.body.iter_mut().last() {
-        *last = Statement::Emit(naga::Range::new_from_bounds(value, value));
-    }
-    (function.body).push(Statement::Return { value: Some(value) }, Span::UNDEFINED);
-    Ok(())
-}
-
-/// Number the parameters the two stages share from nought, those the pixel stage reads first:
-/// a mesh program numbers them sparsely, past the locations a device takes between two stages.
-/// The new numbers of those the pixel stage reads and the vertex stage does not give.
-fn dense_locations(vertex: &mut naga::Module, fragment: &mut naga::Module) -> Vec<u32> {
-    let none = BTreeMap::new();
-    let read = relocate(fragment, ShaderStage::Fragment, &none);
-    let given = relocate(vertex, ShaderStage::Vertex, &none);
-    let mut map = BTreeMap::new();
-    for location in read.iter().chain(&given) {
-        let next = map.len() as u32;
-        map.entry(*location).or_insert(next);
-    }
-    relocate(fragment, ShaderStage::Fragment, &map);
-    relocate(vertex, ShaderStage::Vertex, &map);
-    let mut missing: Vec<u32> = (read.iter())
-        .filter(|location| !given.contains(location))
-        .map(|location| map[location])
-        .collect();
-    missing.dedup();
-    missing
-}
-
 /// The colour formats the first [`TARGETS`] targets of `fragment` are made in, by location.
 fn formats_of(fragment: &naga::Module) -> Result<Vec<Option<wgpu::ColorTargetState>>, String> {
     let entry = entry_of(fragment, ShaderStage::Fragment).map_err(|e| e.to_string())?;
@@ -881,9 +736,9 @@ fn formats_of(fragment: &naga::Module) -> Result<Vec<Option<wgpu::ColorTargetSta
 /// Lights what the targets hold onto the frame, with the depth the pass drew: the first target's
 /// colour as a surface of the second's normal and smoothness and the third's specular colour,
 /// under a sun and a sky, then a tone curve and the frame's encoding.
-// Taken, not established: the normal is an octahedral one in the world's space; the third
-// target holds the square root of the specular colour. The fourth target's ambient terms come
-// of buffers the editor leaves at nought, so they are not read.
+// The normal is an octahedral one in the world's space. The third target holds, of the specular
+// colour `f`, `sqrt(1 - sqrt(1 - f))`. The fourth target's ambient terms come of buffers the
+// editor leaves at nought, so they are not read.
 // The colour is linear light: a pixel program writes what it samples of a map that states sRGB,
 // scaled, with no transfer of its own.
 const RESOLVE: &str = "
@@ -958,7 +813,8 @@ fn surroundings(way: vec3<f32>) -> vec3<f32> {
     let n_l = max(dot(n, l), 0.0);
     let n_v = max(dot(n, v), 1e-4);
     let n_h = max(dot(n, h), 0.0);
-    let f0 = max(terms.rgb * terms.rgb, vec3<f32>(0.02));
+    let kept = 1.0 - terms.rgb * terms.rgb;
+    let f0 = 1.0 - kept * kept;
     let roughness = clamp(1.0 - packed_normal.x, 0.08, 1.0);
     let a = roughness * roughness;
     let a2 = a * a;

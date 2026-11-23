@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 
 use or_io::gta5::shaders::sgd5::Sgd5Table;
 use or_shader_front::dxil::ShaderKind;
+use or_shader_front::rdna::link::{self, Linked};
 use or_shader_front::rdna_bind::picks::{deferred_targets, picks};
 use or_shader_front::rdna_bind::shading::{feed, parameter_of, parameter_slots};
 
@@ -12,11 +13,14 @@ pub use or_shader_front::rdna_bind::kept as gta6_kept;
 pub use or_shader_front::rdna_bind::shading::{Fed, Feed, Stage};
 use or_shader_front::rdna_bind::{self, Native};
 
-/// The two stages of a model's shading pass, the mesh program lowered to a vertex stage.
+/// The two stages of a model's shading pass, the mesh program lowered to a vertex stage, linked:
+/// the vertex stage writes the locations the pixel stage reads, numbered from nought, and no other.
 #[derive(Debug, Clone)]
 pub struct Gta6ShadingPass {
     pub mesh: Stage,
     pub pixel: Stage,
+    /// What crosses between the two, and where.
+    pub linked: Linked,
 }
 
 fn native(container: &[u8]) -> Result<Native, String> {
@@ -91,9 +95,21 @@ pub fn translate_gta6_mesh_stage(
         .filter_map(|slot| parameter_of(&slots, *slot))
         .collect();
     let geometry = rdna_bind::kept::lower(&first, &halves).map_err(|why| said("mesh", &why))?;
+    let mut mesh = feed(&first, geometry, table, effect).map_err(|why| said("mesh", &why))?;
+    let mut pixel = pixel.stage.clone();
+    // The pixel stage is several passes': each pass links a copy of its own. The mesh stage's
+    // parameters are at the pixel stage's slots already, and a clip distance crosses as a
+    // location the pixel stage discards by, so that no device has to clip by distances.
+    let (vertex, fragment) = (
+        std::sync::Arc::make_mut(&mut mesh.module),
+        std::sync::Arc::make_mut(&mut pixel.module),
+    );
+    let linked = link::link(vertex, fragment, &link::Options::default())
+        .map_err(|why| said("pass", &why))?;
     Ok(Gta6ShadingPass {
-        mesh: feed(&first, geometry, table, effect).map_err(|why| said("mesh", &why))?,
-        pixel: pixel.stage.clone(),
+        mesh,
+        pixel,
+        linked,
     })
 }
 
@@ -281,6 +297,13 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
             }
             Ok(pass) => {
                 println!("  shading       translated in {:?}", started.elapsed());
+                let unfed = pass.linked.carried.iter().filter(|c| !c.fed).count();
+                println!(
+                    "  linked        {} locations, {} components, {unfed} the mesh stage does not write, clip at {:?}",
+                    pass.linked.locations,
+                    pass.linked.carried.len(),
+                    pass.linked.clip
+                );
                 for (word, stage) in [("mesh", &pass.mesh), ("pixel", &pass.pixel)] {
                     println!(
                         "  {word}: textures {:X?}, streams {:?}",

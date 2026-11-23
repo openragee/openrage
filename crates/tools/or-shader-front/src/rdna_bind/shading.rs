@@ -123,6 +123,9 @@ pub enum Feed {
     Instance,
     /// The numbers of the material's textures: number `i` at dword `i`.
     Numbers,
+    /// The head of the material's record, which starts the buffer: each dword of it with the
+    /// number of the texture it lists. The rest of the record is the game's, and noughts.
+    Listed(Vec<(u32, u32)>),
     /// The heap the numbers pick from, bound whole: every entry a texture of this dimension field.
     Heap {
         dim: u8,
@@ -551,6 +554,7 @@ pub fn feed(
                     .and_then(|i| filled.get(i).copied());
                 match source {
                     _ if material.buffer == Some(at) => Feed::Numbers,
+                    _ if material.record == Some(at) => Feed::Listed(material.listed.clone()),
                     Some(Source::VertexData) => Feed::VertexData,
                     Some(Source::Meshlets) => Feed::Meshlets,
                     Some(Source::View) => Feed::View(layout(named)),

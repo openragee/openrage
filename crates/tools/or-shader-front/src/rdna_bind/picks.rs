@@ -23,14 +23,25 @@ const RAW: u32 = 1;
 /// The dwords of a buffer's descriptor.
 const BUFFER_DWORDS: u32 = 4;
 
+/// Where a program's numbers start in their buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Base {
+    /// At the byte a user register holds.
+    User(u8),
+    /// At the byte a dword of another buffer holds: that buffer, as [`Pick::buffer`] names
+    /// one, and the dword's byte offset there. The numbers are then the head of a record of the
+    /// material that the game keeps among others in one buffer.
+    Dword((u8, u32), u32),
+}
+
 /// One heap entry a program loads by a number it reads from a buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Pick {
     /// The buffer of numbers: the register that points at its table and its descriptor's byte
     /// offset there, as the code numbers its registers.
     pub buffer: (u8, u32),
-    /// The user register added to the number's place.
-    pub base: u8,
+    /// What is added to the number's place.
+    pub base: Base,
     /// The number's place in bytes, past `base`.
     pub at: u32,
     /// The user register that points at the heap.
@@ -57,10 +68,12 @@ enum Held {
     User(u8, u32),
     /// The first word of the descriptor at a byte offset of the table a user register points at.
     Descriptor(u8, u32),
-    /// A dword of a buffer, read at a user register plus a constant.
-    Number((u8, u32), u8, u32),
+    /// A dword of a buffer at a stated byte offset, plus a constant.
+    Dword((u8, u32), u32, u32),
+    /// A dword of a buffer, read at its base plus a constant.
+    Number((u8, u32), Base, u32),
     /// A number times the size of a heap entry.
-    Entry((u8, u32), u8, u32),
+    Entry((u8, u32), Base, u32),
     /// The first word of the entry a number names.
     Picked(Pick),
 }
@@ -139,6 +152,10 @@ pub fn picks(words: &[u32]) -> Picks {
                     | ("s_add_i32" | "s_add_u32", Held::Const(by), Held::User(r, had)) => {
                         Held::User(r, had.wrapping_add(by))
                     }
+                    ("s_add_i32" | "s_add_u32", Held::Dword(of, at, had), Held::Const(by))
+                    | ("s_add_i32" | "s_add_u32", Held::Const(by), Held::Dword(of, at, had)) => {
+                        Held::Dword(of, at, had.wrapping_add(by))
+                    }
                     ("s_add_i32" | "s_add_u32", Held::Const(a), Held::Const(b)) => {
                         Held::Const(a.wrapping_add(b))
                     }
@@ -180,10 +197,17 @@ pub fn picks(words: &[u32]) -> Picks {
                 };
                 let mut first = Held::Unknown;
                 if name.starts_with("s_buffer_load") {
-                    if let (Held::Descriptor(root, at), Some(Held::User(by, plus))) = (from, index)
-                    {
-                        first = Held::Number((root, at), by, plus.wrapping_add(*offset));
-                    }
+                    first = match (from, index) {
+                        (Held::Descriptor(root, at), Some(Held::User(by, plus))) => {
+                            Held::Number((root, at), Base::User(by), plus.wrapping_add(*offset))
+                        }
+                        (Held::Descriptor(root, at), Some(Held::Dword(of, start, plus))) => {
+                            let at_byte = plus.wrapping_add(*offset);
+                            Held::Number((root, at), Base::Dword(of, start), at_byte)
+                        }
+                        (Held::Descriptor(root, at), None) => Held::Dword((root, at), *offset, 0),
+                        _ => Held::Unknown,
+                    };
                 } else {
                     match (from, index) {
                         (Held::User(root, 0), None) => first = Held::Descriptor(root, *offset),
@@ -212,6 +236,9 @@ pub fn picks(words: &[u32]) -> Picks {
                         }
                         (Held::Number(buffer, by, at), word) => {
                             Held::Number(buffer, by, at.wrapping_add(4 * (word as u32)))
+                        }
+                        (Held::Dword(buffer, at, 0), word) => {
+                            Held::Dword(buffer, at.wrapping_add(4 * (word as u32)), 0)
                         }
                         _ => Held::Unknown,
                     };
@@ -257,6 +284,10 @@ pub struct MaterialTextures<'t> {
     pub buffer: Option<Place>,
     /// Each number picked, with the effect's texture it names.
     pub textures: Vec<(u32, &'t Sgd5Resource)>,
+    /// The buffer that holds the material's record, where the program reads numbers at the
+    /// head of one, and the number each dword of the head holds.
+    pub record: Option<Place>,
+    pub listed: Vec<(u32, u32)>,
 }
 
 /// Whether `resource` is a texture a material sets, and whether it is an array.
@@ -281,7 +312,14 @@ pub fn material_textures<'t>(
     let mut out = MaterialTextures {
         buffer: None,
         textures: Vec::new(),
+        record: None,
+        listed: Vec::new(),
     };
+    // The textures a record lists: those of the effect that are no array, in their registers' order.
+    let mut flat: Vec<&Sgd5Resource> = (effect.resources.iter())
+        .filter(|r| material_texture(r) == Some(false))
+        .collect();
+    flat.sort_by_key(|r| r.slot);
     if picks.by_number.is_empty() {
         return Ok(out);
     }
@@ -313,19 +351,40 @@ pub fn material_textures<'t>(
         let bytes = (records.iter()).any(|r| {
             r.class == Class::Srv && r.stride == RAW && (r.root, r.offset) == (root, offset)
         });
-        let placed = shifted(pick.base) == draw.root.wrapping_add(1)
-            && shifted(pick.heap) == draw.root.wrapping_add(2);
-        if !bytes || !placed {
+        if !bytes || shifted(pick.heap) != draw.root.wrapping_add(2) {
+            return Err(refused);
+        }
+        if pick.at % 4 != 0 {
+            return Err(Unsettled::Unaligned { at: pick.at });
+        }
+        let number = pick.at / 4;
+        let by = match pick.base {
+            Base::User(by) => by,
+            // The head of the material's record: dword `k` is the number of the effect's
+            // `k`-th texture that is no array. A dword past those, or read as an array, is one
+            // the rule does not cover: it stays at nought, which picks the blank entry.
+            Base::Dword(..) => {
+                if out.record.is_some_and(|had| had != buffer) {
+                    return Err(Unsettled::TwoBuffers);
+                }
+                out.record = Some(buffer);
+                let covered = (flat.get(number as usize)).filter(|_| !dims.contains(&DIM_2D_ARRAY));
+                let Some(texture) = covered else { continue };
+                let named = u32::from(texture.slot & 0xFF);
+                out.listed.push((number, named));
+                if out.textures.iter().all(|(had, _)| *had != named) {
+                    out.textures.push((named, texture));
+                }
+                continue;
+            }
+        };
+        if shifted(by) != draw.root.wrapping_add(1) {
             return Err(refused);
         }
         if out.buffer.is_some_and(|had| had != buffer) {
             return Err(Unsettled::TwoBuffers);
         }
         out.buffer = Some(buffer);
-        if pick.at % 4 != 0 {
-            return Err(Unsettled::Unaligned { at: pick.at });
-        }
-        let number = pick.at / 4;
         let mut named = (effect.resources.iter())
             .filter(|r| material_texture(r).is_some() && u32::from(r.slot & 0xFF) == number);
         let (Some(texture), None) = (named.next(), named.next()) else {
@@ -338,7 +397,9 @@ pub fn material_textures<'t>(
         if let Some(&dim) = dims.iter().find(|d| (**d == DIM_2D_ARRAY) != array) {
             return Err(Unsettled::Kind { number, dim });
         }
-        out.textures.push((number, texture));
+        if out.textures.iter().all(|(had, _)| *had != number) {
+            out.textures.push((number, texture));
+        }
     }
     Ok(out)
 }
@@ -474,7 +535,7 @@ mod tests {
         let picks = picks(&program());
         let pick = |at| Pick {
             buffer: (8, 0x40),
-            base: 13,
+            base: Base::User(13),
             at,
             heap: 14,
         };
@@ -533,6 +594,69 @@ mod tests {
                 number: 3,
                 found: 0
             })
+        );
+    }
+
+    #[test]
+    fn a_record_s_head_lists_the_textures_that_are_no_array_in_their_registers_order() {
+        // The record starts at the byte the first dword of the buffer at +0x60 holds; its
+        // dwords 0 and 2 are numbers, read from the buffer at +0x40.
+        let code = [
+            smem("s_load_dwordx4", 72, 8, 0x40, None),
+            smem("s_load_dwordx4", 76, 8, 0x60, None),
+            smem("s_buffer_load_dword", 20, 76, 0, None),
+            smem("s_buffer_load_dword", 21, 72, 0, Some(20)),
+            smem("s_buffer_load_dword", 22, 72, 8, Some(20)),
+            sop2("s_lshl_b32", 21, 21, int(5)),
+            sop2("s_lshl_b32", 22, 22, int(5)),
+            smem("s_load_dwordx8", 32, 14, 0, Some(21)),
+            smem("s_load_dwordx8", 40, 14, 0, Some(22)),
+            sample(32, 1),
+            sample(40, 1),
+        ]
+        .concat();
+        let picks = picks(&code);
+        let pick = |at| Pick {
+            buffer: (8, 0x40),
+            base: Base::Dword((8, 0x60), 0),
+            at,
+            heap: 14,
+        };
+        assert_eq!(
+            picks.by_number.keys().copied().collect::<Vec<_>>(),
+            [pick(0), pick(8)]
+        );
+        let effect = Sgd5Table {
+            resources: vec![
+                texture(TEXTURE, 256, 0xA000_0001),
+                texture(TEXTURE_ARRAY, 513, 0xA000_0002),
+                texture(TEXTURE, 258, 0xA000_0003),
+                texture(TEXTURE, 259, 0xA000_0004),
+            ],
+            ..Sgd5Table::default()
+        };
+        let joined = material_textures(&picks, &records(), ShaderKind::Pixel, &effect).unwrap();
+        let table = Place::Table {
+            root: 8,
+            offset: 0x40,
+        };
+        assert_eq!((joined.buffer, joined.record), (None, Some(table)));
+        // The array is passed over: the record's third dword is the fourth register's texture.
+        assert_eq!(joined.listed, [(0, 0), (2, 3)]);
+        let names: Vec<(u32, u32)> = (joined.textures.iter())
+            .map(|(number, texture)| (*number, texture.name_hash))
+            .collect();
+        assert_eq!(names, [(0, 0xA000_0001), (3, 0xA000_0004)]);
+        // An effect with fewer such textures than the record lists.
+        let short = Sgd5Table {
+            resources: effect.resources[..3].to_vec(),
+            ..Sgd5Table::default()
+        };
+        let fewer = material_textures(&picks, &records(), ShaderKind::Pixel, &short).unwrap();
+        assert_eq!(
+            fewer.listed,
+            [(0, 0)],
+            "the dword past them stays at nought"
         );
     }
 

@@ -335,61 +335,6 @@ fn the_built_in_sky_has_a_sun_by_day_a_dim_moon_by_night_and_less_of_both_under_
     }
 }
 
-fn locations(module: &naga::Module, stage: ShaderStage) -> Vec<u32> {
-    let mut module = module.clone();
-    let mut seen = relocate(&mut module, stage, &BTreeMap::new());
-    seen.sort_unstable();
-    seen
-}
-
-fn valid(module: &naga::Module) {
-    use naga::valid::{Capabilities, ValidationFlags, Validator};
-    Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(module)
-        .expect("the stage is valid");
-}
-
-#[test]
-fn two_stages_share_their_parameters_from_nought_and_one_never_written_is_given_noughts() {
-    // As a mesh program numbers them: sparsely, the high halves of a parameter far past it.
-    let mut vertex = wgsl(
-        "struct Out {
-            @builtin(position) position: vec4<f32>,
-            @location(2) uv: vec4<f32>,
-            @location(3) low: vec4<f32>,
-            @location(35) high: vec4<f32>,
-            @location(9) unread: vec4<f32>,
-        }
-        @vertex fn main() -> Out {
-            return Out(vec4<f32>(0.0), vec4<f32>(1.0), vec4<f32>(2.0), vec4<f32>(3.0), vec4<f32>(4.0));
-        }",
-    );
-    let mut fragment = wgsl(
-        "@fragment fn main(
-            @location(35) high: vec4<f32>,
-            @location(2) uv: vec4<f32>,
-            @location(6) before: vec4<f32>,
-            @location(3) low: vec4<f32>,
-        ) -> @location(0) vec4<f32> {
-            return high + uv + before + low;
-        }",
-    );
-    let missing = dense_locations(&mut vertex, &mut fragment);
-    // Those the pixel stage reads come first, in its order; the one it reads alone is third.
-    assert_eq!(locations(&fragment, ShaderStage::Fragment), [0, 1, 2, 3]);
-    assert_eq!(missing, [2]);
-    assert_eq!(locations(&vertex, ShaderStage::Vertex), [0, 1, 3, 4]);
-
-    give_noughts(&mut vertex, &missing).expect("the stage returns its outputs as one value");
-    assert_eq!(locations(&vertex, ShaderStage::Vertex), [0, 1, 2, 3, 4]);
-    valid(&vertex);
-    valid(&fragment);
-    // Nothing missing leaves a stage as it is.
-    let before = format!("{vertex:?}");
-    give_noughts(&mut vertex, &[]).expect("nothing to give");
-    assert_eq!(format!("{vertex:?}"), before);
-}
-
 #[test]
 fn the_developer_s_aids_are_words_separated_by_commas() {
     let aids = Aids::parse("target=3, pixel=C:/a b/p.wgsl,plain-device,unknown,mesh=m.wgsl");

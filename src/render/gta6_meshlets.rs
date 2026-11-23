@@ -287,6 +287,15 @@ fn feeds(
                 }
                 Feed::Bytes(headed(*header, &bytes_of(&words)))
             }
+            // Entry nought is the blank one: number `i` picks entry `i + 1`.
+            Filled::Listed(listed) => {
+                let last = listed.iter().map(|(dword, _)| *dword).max();
+                let mut words = vec![0u32; last.map_or(0, |last| last as usize + 1)];
+                for (dword, number) in listed {
+                    words[*dword as usize] = number + 1;
+                }
+                Feed::Bytes(headed(*header, &bytes_of(&words)))
+            }
             Filled::Heap { .. } => Feed::Textures(heap.to_vec()),
             Filled::Blank => Feed::Textures(vec![None]),
             Filled::HeapWords => Feed::Bytes(heap_words(heap, rows)),
@@ -499,6 +508,7 @@ mod tests {
         Arc::new(Gta6ShadingPass {
             mesh: stage(streams),
             pixel: stage(&[]),
+            linked: Default::default(),
         })
     }
 

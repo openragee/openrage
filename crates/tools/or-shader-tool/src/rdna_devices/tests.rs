@@ -25,7 +25,7 @@ fn a_module_with_a_partner_that_feeds_it_is_created_on_every_adapter() {
     for gpu in gpus() {
         for source in [COLOUR, NO_OUTPUT, COUNTER] {
             let ready = alone(wgsl(source), false).unwrap();
-            let (outcome, _) = build(&gpu, &ready.stages, None);
+            let (outcome, _) = build(&gpu, &ready.stages, None, false);
             assert_eq!(outcome, Outcome::Created, "{:?}: {source}", gpu.info);
         }
     }
@@ -36,7 +36,7 @@ fn a_pair_whose_stages_do_not_link_is_rejected_in_the_devices_words() {
     for gpu in gpus() {
         // Each module is valid alone; the pixel stage reads a location the vertex stage never writes.
         let stages = Stages::Render(wgsl(NO_OUTPUT), Some(wgsl(COLOUR)));
-        let (outcome, _) = build(&gpu, &stages, None);
+        let (outcome, _) = build(&gpu, &stages, None, false);
         let Outcome::Rejected(why) = outcome else {
             panic!("{:?} created a pair that does not link", gpu.info);
         };
@@ -49,7 +49,7 @@ fn a_module_of_subgroup_operations_is_skipped_where_the_device_has_none() {
     for mut gpu in gpus() {
         gpu.features.remove(wgpu::Features::SUBGROUP);
         let ready = alone(wgsl(NO_OUTPUT), true).unwrap();
-        let (outcome, _) = tried(&gpu, &ready, None);
+        let (outcome, _) = tried(&gpu, &ready, None, false);
         assert_eq!(outcome, Outcome::Skipped("SUBGROUP".into()));
     }
 }
@@ -64,7 +64,7 @@ fn a_module_that_updates_a_texture_of_wide_texels_is_skipped_by_the_features_it_
         gpu.features.remove(wgpu::Features::SHADER_INT64);
         gpu.features
             .insert(wgpu::Features::TEXTURE_ATOMIC | wgpu::Features::TEXTURE_INT64_ATOMIC);
-        let (outcome, _) = tried(&gpu, &ready, None);
+        let (outcome, _) = tried(&gpu, &ready, None, false);
         assert_eq!(outcome, Outcome::Skipped("SHADER_INT64".into()));
     }
 }
@@ -117,7 +117,7 @@ fn a_saved_pipeline_cache_holds_data_where_the_backend_has_one() {
                 })
         };
         let ready = alone(wgsl(COLOUR), false).unwrap();
-        let (outcome, _) = build(&gpu, &ready.stages, Some(&cache));
+        let (outcome, _) = build(&gpu, &ready.stages, Some(&cache), false);
         assert_eq!(outcome, Outcome::Created);
         assert!(cache.get_data().is_some_and(|data| !data.is_empty()));
     }
@@ -152,14 +152,14 @@ fn a_stage_that_gives_clip_distances_is_built_without_them_where_the_device_has_
     for mut gpu in gpus() {
         // As lowered where the device clips by them, as a discard where it does not: created on both.
         assert_eq!(
-            tried(&gpu, &ready, None).0,
+            tried(&gpu, &ready, None, false).0,
             Outcome::Created,
             "{:?}",
             gpu.info
         );
         gpu.features.remove(wgpu::Features::CLIP_DISTANCES);
         assert_eq!(
-            tried(&gpu, &ready, None).0,
+            tried(&gpu, &ready, None, false).0,
             Outcome::Created,
             "{:?}",
             gpu.info
@@ -182,7 +182,7 @@ fn a_texture_updated_in_a_step_beside_a_binding_array_is_laid_out_as_one() {
         }
         let ready = alone(wgsl(source), false).unwrap();
         assert_eq!(
-            tried(&gpu, &ready, None).0,
+            tried(&gpu, &ready, None, false).0,
             Outcome::Created,
             "{:?}",
             gpu.info
@@ -202,10 +202,98 @@ fn a_binding_array_is_built_in_a_group_of_its_own_with_its_length_stated() {
         // Direct3D 12 places the buffers on the array's registers and wgpu refuses the group.
         let ready = alone(wgsl(ARRAY), false).unwrap();
         assert_eq!(
-            tried(&gpu, &ready, None).0,
+            tried(&gpu, &ready, None, false).0,
             Outcome::Created,
             "{:?}",
             gpu.info
         );
+    }
+}
+
+const SAMPLED: &str = "@group(0) @binding(0) var map: texture_2d<f32>;
+@group(0) @binding(1) var taps: sampler;
+@group(0) @binding(2) var<uniform> tint: vec4<f32>;
+@fragment fn main(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
+    return textureSample(map, taps, at.xy) * tint;
+}";
+
+#[test]
+fn a_pipeline_the_check_is_asked_to_draw_with_is_drawn_with_stand_ins_at_every_binding() {
+    let array = wgpu::Features::TEXTURE_BINDING_ARRAY
+        | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
+    for gpu in gpus() {
+        for source in [COLOUR, NO_OUTPUT, COUNTER, SAMPLED, ARRAY] {
+            if source == ARRAY && !gpu.features.contains(array) {
+                continue;
+            }
+            let ready = alone(wgsl(source), false).unwrap();
+            let (outcome, _) = tried(&gpu, &ready, None, true);
+            assert_eq!(outcome, Outcome::Created, "{:?}: {source}", gpu.info);
+        }
+    }
+}
+
+#[test]
+fn a_draw_with_a_binding_left_out_is_the_units_refusal() {
+    for gpu in gpus() {
+        let ready = alone(wgsl(SAMPLED), false).unwrap();
+        let mut made = None;
+        let created = scoped(&gpu.device, || {
+            made = Some(create(&gpu.device, &ready.stages, None, true)?);
+            Ok(())
+        });
+        assert_eq!(created, Outcome::Created, "{:?}", gpu.info);
+        let mut made = made.unwrap();
+        // The group's layout stays, and what the draw would bind in it is gone.
+        made.stated.as_mut().unwrap().0.clear();
+        let drawn = scoped(&gpu.device, || made.draw(&gpu));
+        assert!(
+            matches!(drawn, Outcome::Rejected(_)),
+            "{:?}: {drawn:?}",
+            gpu.info
+        );
+    }
+}
+
+#[test]
+fn a_texture_of_wide_texels_is_skipped_where_the_adapter_offers_the_feature_and_updates_none() {
+    let wide = "
+@group(0) @binding(0) var cells: texture_storage_2d<r64uint, atomic>;
+@compute @workgroup_size(1) fn main() { textureAtomicMax(cells, vec2<i32>(0, 0), 1lu); }";
+    let ready = alone(wgsl(wide), false).unwrap();
+    for mut gpu in gpus() {
+        gpu.features |= ready.needs;
+        gpu.updates_64_bit_textures = false;
+        let (outcome, _) = tried(&gpu, &ready, None, false);
+        assert_eq!(outcome, Outcome::Skipped(NO_64_BIT_UPDATE.into()));
+    }
+}
+
+#[test]
+fn a_unit_is_written_as_metals_language_with_no_device() {
+    for source in [COLOUR, NO_OUTPUT, COUNTER, SAMPLED] {
+        let ready = alone(wgsl(source), false).unwrap();
+        assert_eq!(metal_text(&ready.stages), Outcome::Created, "{source}");
+    }
+    // Each module is valid alone and the writer takes each: only a device links the two.
+    let unlinked = Stages::Render(wgsl(NO_OUTPUT), Some(wgsl(COLOUR)));
+    assert_eq!(metal_text(&unlinked), Outcome::Created);
+    assert_eq!(metal_text_adapter().backend, "Metal");
+}
+
+const WIDE: &str = "
+@group(0) @binding(0) var cells: texture_storage_2d<r64uint, atomic>;
+@group(0) @binding(1) var<uniform> tint: vec4<f32>;
+@compute @workgroup_size(1) fn main() { textureAtomicMax(cells, vec2<i32>(0, 0), u64(tint.x)); }";
+
+#[test]
+fn a_texture_of_wide_texels_is_laid_out_and_drawn_with_where_the_adapter_updates_one() {
+    let ready = alone(wgsl(WIDE), false).unwrap();
+    for gpu in gpus() {
+        if !gpu.updates_64_bit_textures || !gpu.features.contains(ready.needs) {
+            continue;
+        }
+        let (outcome, _) = tried(&gpu, &ready, None, true);
+        assert_eq!(outcome, Outcome::Created, "{:?}", gpu.info);
     }
 }

@@ -12,6 +12,7 @@ pub mod context;
 pub mod error;
 pub mod game_shaders;
 pub mod gpu_timer;
+pub mod instance;
 pub mod particle_game;
 pub mod particle_meshes;
 pub mod particle_models;

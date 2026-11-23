@@ -17,10 +17,10 @@ use or_io::gta5::shaders::sgd5::Sgd5File;
 use or_io::gta5::shaders::sgd5_pack::vertex_pixel_passes;
 use or_renderer::game_shaders::bindings::arrayed;
 use or_renderer::game_shaders::pipeline::{entry_of, fragment_targets, vertex_streams};
+use or_renderer::instance;
 use or_shader_front::rdna::link::{self, Linked};
 use or_shader_front::rdna::{self, RdnaError};
 use or_shader_front::rdna_bind;
-use or_shader_front::rdna_bind::shading::parameter_slots;
 use sha1::{Digest, Sha1};
 
 use crate::device_check::{matching_vertex_shader, one_line};
@@ -37,14 +37,20 @@ pub struct Gpu {
     pub features: wgpu::Features,
     pub limits: wgpu::Limits,
     pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    /// Whether it updates a texture of 64-bit texels in a step, which the feature alone does not say.
+    pub updates_64_bit_textures: bool,
 }
 
-/// Every adapter of every backend the machine has, the software ones too, in wgpu's order; `only`
-/// keeps those whose name and backend hold that text, whatever its case.
+/// Every adapter of every backend OpenRage draws through, the software ones too, in wgpu's order,
+/// Direct3D 12 compiling as the app's does; `only` keeps those whose name and backend hold that
+/// text, whatever its case. No OpenGL adapter is opened: OpenRage does not support it.
 pub fn open_all(only: Option<&str>) -> Vec<Gpu> {
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+    let backends = instance::backends_from_env().unwrap_or(wgpu::Backends::empty());
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    descriptor.backends = backends;
+    let instance = wgpu::Instance::new(instance::with_dxc(descriptor));
+    let adapters = pollster::block_on(instance.enumerate_adapters(backends));
     // A backend may list one adapter once per output it drives.
     let mut seen: Vec<wgpu::AdapterInfo> = Vec::new();
     (adapters.into_iter())
@@ -61,6 +67,7 @@ pub fn open_all(only: Option<&str>) -> Vec<Gpu> {
             // An experimental feature is refused unless the device is opened unsafely for it.
             let features = adapter.features() - wgpu::Features::all_experimental_mask();
             let limits = adapter.limits();
+            let updates_64_bit_textures = instance::updates_64_bit_textures(&adapter);
             let opened = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("or-shader-tool"),
                 required_features: features,
@@ -68,13 +75,15 @@ pub fn open_all(only: Option<&str>) -> Vec<Gpu> {
                 ..Default::default()
             }));
             match opened {
-                Ok((device, _queue)) => {
+                Ok((device, queue)) => {
                     device.on_uncaptured_error(Arc::new(|_| {}));
                     Some(Gpu {
                         info,
                         features,
                         limits,
                         device,
+                        queue,
+                        updates_64_bit_textures,
                     })
                 }
                 Err(e) => {
@@ -105,8 +114,11 @@ impl Gpu {
             driver_info: self.info.driver_info.clone(),
             backend: format!("{:?}", self.info.backend),
             shader_compiler: match self.info.backend {
-                wgpu::Backend::Dx12 => (std::env::var("WGPU_DX12_COMPILER").ok())
-                    .map_or("fxc".into(), |named| named.to_lowercase()),
+                wgpu::Backend::Dx12 => match instance::dx12_compiler() {
+                    wgpu::Dx12Compiler::Fxc => "fxc".into(),
+                    wgpu::Dx12Compiler::Auto => "auto".into(),
+                    _ => "dxc".into(),
+                },
                 _ => String::new(),
             },
             features: (self.features.iter_names())
@@ -133,16 +145,75 @@ pub enum Stages {
     Compute(naga::Module),
 }
 
-/// The layout of a pipeline whose modules bind an array: a layout the device derives from a
-/// module states no array's length, and takes each for one entry. `None` where no module binds
-/// one, or binds something the renderer's own layouts do not take.
-fn stated_layout(
-    device: &wgpu::Device,
-    modules: &[(&naga::Module, wgpu::ShaderStages)],
-) -> Option<wgpu::PipelineLayout> {
-    let mut groups: BTreeMap<u32, Vec<wgpu::BindGroupLayoutEntry>> = BTreeMap::new();
+/// The entries of each bind group the modules ask for, the bytes a buffer of each holds, and
+/// whether a module binds an array. `None` where a module binds something the renderer's own
+/// layouts do not take.
+type Groups = BTreeMap<u32, Vec<(wgpu::BindGroupLayoutEntry, u64)>>;
+
+/// `module` with its textures of 64-bit texels declared with a format the renderer's layouts
+/// name, or `None` where it has none: the layouts know no format of 64-bit texels.
+fn narrowed(module: &naga::Module) -> Option<naga::Module> {
+    use naga::StorageFormat as Format;
+    let wide: Vec<_> = (module.types.iter())
+        .filter(|(_, ty)| is_wide(&ty.inner))
+        .map(|(handle, ty)| (handle, ty.clone()))
+        .collect();
+    let mut module = (!wide.is_empty()).then(|| module.clone())?;
+    for (handle, mut ty) in wide {
+        // A type the module does not hold yet: an arena holds each type once.
+        for narrow in [
+            Format::R32Uint,
+            Format::Rg32Uint,
+            Format::Rgba32Uint,
+            Format::Rgba16Uint,
+        ] {
+            if let naga::TypeInner::Image {
+                class: naga::ImageClass::Storage { format, .. },
+                ..
+            } = &mut ty.inner
+            {
+                *format = narrow;
+            }
+            if module.types.get(&ty).is_none() {
+                module.types.replace(handle, ty);
+                break;
+            }
+        }
+    }
+    Some(module)
+}
+
+fn is_wide(inner: &naga::TypeInner) -> bool {
+    matches!(
+        inner,
+        naga::TypeInner::Image {
+            class: naga::ImageClass::Storage {
+                format: naga::StorageFormat::R64Uint,
+                ..
+            },
+            ..
+        }
+    )
+}
+
+fn groups(modules: &[(&naga::Module, wgpu::ShaderStages)]) -> Option<(Groups, bool)> {
+    use or_renderer::game_shaders::bindings::Resource;
+    let mut groups = Groups::new();
     let mut arrays = false;
     for (module, visibility) in modules {
+        // The textures of 64-bit texels, which the layout states as they are.
+        let wide = |group: u32, binding: u32| {
+            module.global_variables.iter().any(|(_, global)| {
+                let here = (global.binding.as_ref())
+                    .is_some_and(|at| (at.group, at.binding) == (group, binding));
+                let ty = match module.types[global.ty].inner {
+                    naga::TypeInner::BindingArray { base, .. } => base,
+                    _ => global.ty,
+                };
+                here && is_wide(&module.types[ty].inner)
+            })
+        };
+        let narrowed = narrowed(module);
         // The textures the module updates in a step, which a layout has to say of them.
         let updated = |group: u32, binding: u32| {
             module.global_variables.iter().any(|(_, global)| {
@@ -158,50 +229,83 @@ fn stated_layout(
                 } if access.contains(naga::StorageAccess::ATOMIC))
             })
         };
-        for (requirement, count) in arrayed(module).ok()? {
+        for (requirement, count) in arrayed(narrowed.as_ref().unwrap_or(module)).ok()? {
             arrays |= count.is_some();
             let mut entry = (requirement.resource).layout_entry(requirement.binding, *visibility);
-            if let wgpu::BindingType::StorageTexture { access, .. } = &mut entry.ty {
+            if let wgpu::BindingType::StorageTexture { access, format, .. } = &mut entry.ty {
                 if updated(requirement.group, requirement.binding) {
                     *access = wgpu::StorageTextureAccess::Atomic;
                 }
+                if wide(requirement.group, requirement.binding) {
+                    *format = wgpu::TextureFormat::R64Uint;
+                }
             }
             entry.count = count;
-            groups.entry(requirement.group).or_default().push(entry);
+            let size = match requirement.resource {
+                Resource::Uniform { size } | Resource::Storage { size, .. } => size,
+                _ => 0,
+            };
+            (groups.entry(requirement.group).or_default()).push((entry, size));
         }
     }
-    if !arrays {
-        return None;
-    }
-    let last = *groups.keys().next_back()?;
-    let layouts: Vec<Option<wgpu::BindGroupLayout>> = (0..=last)
+    Some((groups, arrays))
+}
+
+/// A pipeline's layout stated from `groups`, with the layout of each group, `None` at a number
+/// no module binds in.
+// A layout the device derives from a module states no array's length, and takes each for one entry.
+fn stated_layout(
+    device: &wgpu::Device,
+    groups: &Groups,
+) -> (wgpu::PipelineLayout, Vec<Option<wgpu::BindGroupLayout>>) {
+    let last = groups.keys().next_back().map_or(0, |last| last + 1);
+    let layouts: Vec<Option<wgpu::BindGroupLayout>> = (0..last)
         .map(|group| {
-            let entries = groups.get(&group)?;
+            let entries: Vec<_> = (groups.get(&group)?.iter())
+                .map(|(entry, _)| *entry)
+                .collect();
             Some(
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: None,
-                    entries,
+                    entries: &entries,
                 }),
             )
         })
         .collect();
-    let layouts: Vec<Option<&wgpu::BindGroupLayout>> = layouts.iter().map(Option::as_ref).collect();
-    Some(
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &layouts,
-            immediate_size: 0,
-        }),
-    )
+    let stated: Vec<Option<&wgpu::BindGroupLayout>> = layouts.iter().map(Option::as_ref).collect();
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &stated,
+        immediate_size: 0,
+    });
+    (layout, layouts)
+}
+
+/// A pipeline the check created, and what a draw with it takes.
+enum Pipeline {
+    Render {
+        pipeline: wgpu::RenderPipeline,
+        vertex_stride: u64,
+        colours: Vec<Option<wgpu::TextureFormat>>,
+        depth: bool,
+    },
+    Compute(wgpu::ComputePipeline),
+}
+
+struct Made {
+    pipeline: Pipeline,
+    /// The stated layout's groups, where the layout was stated.
+    stated: Option<(Groups, Vec<Option<wgpu::BindGroupLayout>>)>,
 }
 
 /// The pipeline of `stages`, its bind group layouts the ones the device derives from what the
-/// modules declare, or [`stated_layout`]'s where a module binds an array.
+/// modules declare, or [`stated_layout`]'s where a module binds an array or `state` asks.
 fn create(
     device: &wgpu::Device,
     stages: &Stages,
     cache: Option<&wgpu::PipelineCache>,
-) -> Result<(), String> {
+    state: bool,
+) -> Result<Made, String> {
     let shader = |module: &naga::Module| {
         device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
@@ -209,18 +313,26 @@ fn create(
         })
     };
     let said = |e: or_renderer::game_shaders::pipeline::PipelineError| format!("the check: {e}");
+    let stated = |modules: &[(&naga::Module, wgpu::ShaderStages)]| {
+        let (groups, arrays) = groups(modules)?;
+        (arrays || state).then(|| (stated_layout(device, &groups), groups))
+    };
     match stages {
         Stages::Compute(module) => {
             let entry = entry_of(module, ShaderStage::Compute).map_err(said)?;
-            let layout = stated_layout(device, &[(module, wgpu::ShaderStages::COMPUTE)]);
-            let _pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            let stated = stated(&[(module, wgpu::ShaderStages::COMPUTE)]);
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: None,
-                layout: layout.as_ref(),
+                layout: stated.as_ref().map(|((layout, _), _)| layout),
                 module: &shader(module),
                 entry_point: Some(&entry.name),
                 compilation_options: Default::default(),
                 cache,
             });
+            Ok(Made {
+                pipeline: Pipeline::Compute(pipeline),
+                stated: stated.map(|((_, layouts), groups)| (groups, layouts)),
+            })
         }
         Stages::Render(vertex, fragment) => {
             let entry = entry_of(vertex, ShaderStage::Vertex).map_err(said)?;
@@ -238,10 +350,10 @@ fn create(
             let no_colour = (pixel.as_ref()).is_none_or(|(_, _, targets, _)| targets.is_empty());
             let mut modules = vec![(vertex, wgpu::ShaderStages::VERTEX)];
             modules.extend((fragment.iter()).map(|pixel| (pixel, wgpu::ShaderStages::FRAGMENT)));
-            let layout = stated_layout(device, &modules);
-            let _pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            let stated = stated(&modules);
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: None,
-                layout: layout.as_ref(),
+                layout: stated.as_ref().map(|((layout, _), _)| layout),
                 vertex: wgpu::VertexState {
                     module: &shader(vertex),
                     entry_point: Some(&entry.name),
@@ -270,27 +382,287 @@ fn create(
                 multiview_mask: None,
                 cache,
             });
+            let colours = (pixel.iter().flat_map(|(_, _, targets, _)| targets))
+                .map(|target| target.as_ref().map(|target| target.format))
+                .collect();
+            Ok(Made {
+                pipeline: Pipeline::Render {
+                    pipeline,
+                    vertex_stride: streams.vertex_stride,
+                    colours,
+                    depth: writes_depth || no_colour,
+                },
+                stated: stated.map(|((_, layouts), groups)| (groups, layouts)),
+            })
         }
     }
-    Ok(())
 }
 
-/// What `gpu` makes of `stages`, and the milliseconds it took: the device's refusals are caught
-/// through its error scopes, and a panic inside wgpu or naga's writers is a refusal too.
-pub fn build(gpu: &Gpu, stages: &Stages, cache: Option<&wgpu::PipelineCache>) -> (Outcome, f64) {
-    let start = Instant::now();
-    let device = &gpu.device;
+/// What a draw binds at one entry of a group: stand-ins that hold nothing.
+enum Held {
+    Buffers(Vec<wgpu::Buffer>),
+    Views(Vec<wgpu::TextureView>),
+    Samplers(Vec<wgpu::Sampler>),
+}
+
+/// A one-texel texture of `format` with `usage`, seen as `dimension`.
+fn stand_in_view(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    dimension: wgpu::TextureViewDimension,
+    multisampled: bool,
+    usage: wgpu::TextureUsages,
+) -> wgpu::TextureView {
+    use wgpu::TextureViewDimension as V;
+    let (texture_dimension, layers) = match dimension {
+        V::D1 => (wgpu::TextureDimension::D1, 1),
+        V::D2 => (wgpu::TextureDimension::D2, 1),
+        V::D2Array => (wgpu::TextureDimension::D2, 2),
+        V::Cube | V::CubeArray => (wgpu::TextureDimension::D2, 6),
+        V::D3 => (wgpu::TextureDimension::D3, 1),
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: layers,
+        },
+        mip_level_count: 1,
+        sample_count: if multisampled { 4 } else { 1 },
+        dimension: texture_dimension,
+        format,
+        usage,
+        view_formats: &[],
+    });
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(dimension),
+        ..Default::default()
+    })
+}
+
+/// What a draw binds at `entry`, a buffer of it `size` bytes long.
+fn stand_in(
+    device: &wgpu::Device,
+    entry: &wgpu::BindGroupLayoutEntry,
+    size: u64,
+) -> Result<Held, String> {
+    use wgpu::{BufferBindingType, SamplerBindingType, TextureSampleType, TextureUsages};
+    let count = entry.count.map_or(1, |count| count.get() as usize);
+    Ok(match entry.ty {
+        wgpu::BindingType::Buffer { ty, .. } => {
+            let usage = match ty {
+                BufferBindingType::Uniform => wgpu::BufferUsages::UNIFORM,
+                BufferBindingType::Storage { .. } => wgpu::BufferUsages::STORAGE,
+            };
+            let buffer = || {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: None,
+                    size: size.max(16).next_multiple_of(16),
+                    usage,
+                    mapped_at_creation: false,
+                })
+            };
+            Held::Buffers((0..count).map(|_| buffer()).collect())
+        }
+        wgpu::BindingType::Sampler(kind) => {
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                compare: (kind == SamplerBindingType::Comparison)
+                    .then_some(wgpu::CompareFunction::LessEqual),
+                ..Default::default()
+            });
+            Held::Samplers(vec![sampler; count])
+        }
+        wgpu::BindingType::Texture {
+            sample_type,
+            view_dimension,
+            multisampled,
+        } => {
+            let format = match sample_type {
+                TextureSampleType::Float { .. } => wgpu::TextureFormat::Rgba8Unorm,
+                TextureSampleType::Sint => wgpu::TextureFormat::Rgba8Sint,
+                TextureSampleType::Uint => wgpu::TextureFormat::Rgba8Uint,
+                TextureSampleType::Depth => wgpu::TextureFormat::Depth32Float,
+            };
+            // A texture of several samples can only be one that is drawn to.
+            let usage = match multisampled {
+                true => TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
+                false => TextureUsages::TEXTURE_BINDING,
+            };
+            let view = stand_in_view(device, format, view_dimension, multisampled, usage);
+            Held::Views(vec![view; count])
+        }
+        wgpu::BindingType::StorageTexture {
+            access,
+            format,
+            view_dimension,
+        } => {
+            let usage = match access {
+                wgpu::StorageTextureAccess::Atomic => {
+                    TextureUsages::STORAGE_BINDING | TextureUsages::STORAGE_ATOMIC
+                }
+                _ => TextureUsages::STORAGE_BINDING,
+            };
+            let view = stand_in_view(device, format, view_dimension, false, usage);
+            Held::Views(vec![view; count])
+        }
+        _ => return Err("the check has no stand-in for a resource the pipeline binds".into()),
+    })
+}
+
+impl Made {
+    /// One triangle of zeroed vertices drawn into targets of its own, or one group of a compute
+    /// pipeline run, every binding holding a stand-in: the device validates a pipeline against
+    /// what it is bound and run with only here.
+    fn draw(&self, gpu: &Gpu) -> Result<(), String> {
+        let device = &gpu.device;
+        let (groups, layouts) = (self.stated.as_ref())
+            .ok_or("the check states no layout for a resource the pipeline binds")?;
+        let mut bound = Vec::new();
+        for (group, layout) in layouts.iter().enumerate() {
+            let (Some(layout), Some(entries)) = (layout, groups.get(&(group as u32))) else {
+                continue;
+            };
+            let held: Vec<Held> = (entries.iter())
+                .map(|(entry, size)| stand_in(device, entry, *size))
+                .collect::<Result<_, _>>()?;
+            // An array's entries are named through references that outlive the bind group's own.
+            let views: Vec<Vec<&wgpu::TextureView>> = (held.iter())
+                .map(|held| match held {
+                    Held::Views(views) => views.iter().collect(),
+                    _ => Vec::new(),
+                })
+                .collect();
+            let samplers: Vec<Vec<&wgpu::Sampler>> = (held.iter())
+                .map(|held| match held {
+                    Held::Samplers(samplers) => samplers.iter().collect(),
+                    _ => Vec::new(),
+                })
+                .collect();
+            let buffers: Vec<Vec<wgpu::BufferBinding<'_>>> = (held.iter())
+                .map(|held| match held {
+                    Held::Buffers(buffers) => (buffers.iter())
+                        .map(wgpu::Buffer::as_entire_buffer_binding)
+                        .collect(),
+                    _ => Vec::new(),
+                })
+                .collect();
+            let resources: Vec<wgpu::BindGroupEntry<'_>> = (entries.iter().enumerate())
+                .map(|(at, (entry, _))| {
+                    let array = entry.count.is_some();
+                    let resource = match &held[at] {
+                        Held::Buffers(_) if array => {
+                            wgpu::BindingResource::BufferArray(&buffers[at])
+                        }
+                        Held::Buffers(held) => held[0].as_entire_binding(),
+                        Held::Views(_) if array => {
+                            wgpu::BindingResource::TextureViewArray(&views[at])
+                        }
+                        Held::Views(held) => wgpu::BindingResource::TextureView(&held[0]),
+                        Held::Samplers(_) if array => {
+                            wgpu::BindingResource::SamplerArray(&samplers[at])
+                        }
+                        Held::Samplers(held) => wgpu::BindingResource::Sampler(&held[0]),
+                    };
+                    wgpu::BindGroupEntry {
+                        binding: entry.binding,
+                        resource,
+                    }
+                })
+                .collect();
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout,
+                entries: &resources,
+            });
+            bound.push((group as u32, bind_group));
+        }
+        let mut encoder = device.create_command_encoder(&Default::default());
+        match &self.pipeline {
+            Pipeline::Compute(pipeline) => {
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.set_pipeline(pipeline);
+                for (group, bind_group) in &bound {
+                    pass.set_bind_group(*group, bind_group, &[]);
+                }
+                pass.dispatch_workgroups(1, 1, 1);
+            }
+            Pipeline::Render {
+                pipeline,
+                vertex_stride,
+                colours,
+                depth,
+            } => {
+                let target = |format: wgpu::TextureFormat| {
+                    let usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
+                    stand_in_view(device, format, wgpu::TextureViewDimension::D2, false, usage)
+                };
+                let colours: Vec<Option<wgpu::TextureView>> =
+                    colours.iter().map(|format| format.map(target)).collect();
+                let attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> = (colours
+                    .iter())
+                .map(|view| {
+                    view.as_ref().map(|view| wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })
+                })
+                .collect();
+                let depth = depth.then(|| target(wgpu::TextureFormat::Depth32Float));
+                let vertices = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: None,
+                    size: (vertex_stride * 3).max(4),
+                    usage: wgpu::BufferUsages::VERTEX,
+                    mapped_at_creation: false,
+                });
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &attachments,
+                    depth_stencil_attachment: depth.as_ref().map(|view| {
+                        wgpu::RenderPassDepthStencilAttachment {
+                            view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(pipeline);
+                for (group, bind_group) in &bound {
+                    pass.set_bind_group(*group, bind_group, &[]);
+                }
+                pass.set_vertex_buffer(0, vertices.slice(..));
+                pass.draw(0..3, 0..1);
+            }
+        }
+        gpu.queue.submit([encoder.finish()]);
+        (device.poll(wgpu::PollType::wait_indefinitely()))
+            .map(|_| ())
+            .map_err(|e| format!("the device did not finish the draw: {e}"))
+    }
+}
+
+/// What the device said of `work`: its refusals are caught through its error scopes, and a panic
+/// inside wgpu or naga's writers is a refusal too.
+fn scoped(device: &wgpu::Device, work: impl FnOnce() -> Result<(), String>) -> Outcome {
     let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
     let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let made = catch_unwind(AssertUnwindSafe(|| create(device, stages, cache)));
+    let made = catch_unwind(AssertUnwindSafe(work));
     let validation = pollster::block_on(validation.pop());
     let internal = pollster::block_on(internal.pop());
     let memory = pollster::block_on(memory.pop());
-    let ms = start.elapsed().as_secs_f64() * 1000.0;
-    // The device frees what was dropped only when it is polled.
-    let _ = device.poll(wgpu::PollType::Poll);
-    let outcome = match made {
+    match made {
         Err(panic) => {
             let said = (panic.downcast_ref::<String>().map(String::as_str))
                 .or_else(|| panic.downcast_ref::<&str>().copied())
@@ -308,7 +680,33 @@ pub fn build(gpu: &Gpu, stages: &Stages, cache: Option<&wgpu::PipelineCache>) ->
             }
             Some(error) => Outcome::Rejected(one_line(&error.to_string())),
         },
-    };
+    }
+}
+
+/// What `gpu` makes of `stages`, and the milliseconds it took. With `draw`, a pipeline it creates
+/// is then drawn with ([`Made::draw`]), and a refusal of the draw is the unit's.
+pub fn build(
+    gpu: &Gpu,
+    stages: &Stages,
+    cache: Option<&wgpu::PipelineCache>,
+    draw: bool,
+) -> (Outcome, f64) {
+    let start = Instant::now();
+    let device = &gpu.device;
+    let mut made = None;
+    let mut outcome = scoped(device, || {
+        made = Some(create(device, stages, cache, draw)?);
+        Ok(())
+    });
+    if let (Outcome::Created, true, Some(made)) = (&outcome, draw, &made) {
+        if let Outcome::Rejected(why) = scoped(device, || made.draw(gpu)) {
+            outcome = Outcome::Rejected(format!("the draw: {why}"));
+        }
+    }
+    drop(made);
+    let ms = start.elapsed().as_secs_f64() * 1000.0;
+    // The device frees what was dropped only when it is polled.
+    let _ = device.poll(wgpu::PollType::Poll);
     (outcome, ms)
 }
 
@@ -656,7 +1054,12 @@ struct Plan {
 pub struct Programs {
     plan: Plan,
     blob: Mutex<std::fs::File>,
+    /// Per adapter, in the order they open, the units not to build on it ([`Options::avoid`]).
+    avoid: Vec<BTreeSet<String>>,
 }
+
+/// What a unit is skipped for on an adapter it ended the process on before.
+pub const AVOIDED: &str = "ended the process on this adapter and driver in an earlier run";
 
 impl Programs {
     /// Writes `file`'s programs and `units` into `dir`.
@@ -693,12 +1096,22 @@ impl Programs {
         std::fs::write(dir.join("plan.json"), text).map_err(said)
     }
 
+    /// Writes into `dir` the units each adapter is not to build.
+    fn write_avoided(dir: &Path, avoid: &[BTreeSet<String>]) -> Result<(), String> {
+        let text = serde_json::to_string(avoid).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("avoid.json"), text).map_err(|e| format!("{}: {e}", dir.display()))
+    }
+
     pub fn open(dir: &Path) -> Result<Self, String> {
         let said = |e: std::io::Error| format!("{}: {e}", dir.display());
         let text = std::fs::read_to_string(dir.join("plan.json")).map_err(said)?;
+        let avoid = (std::fs::read_to_string(dir.join("avoid.json")).ok())
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
         Ok(Self {
             plan: serde_json::from_str(&text).map_err(|e| e.to_string())?,
             blob: Mutex::new(std::fs::File::open(dir.join("programs.bin")).map_err(said)?),
+            avoid,
         })
     }
 
@@ -752,7 +1165,19 @@ pub fn translated(programs: &Programs, unit: Unit, block: usize) -> Result<Ready
                 .map_err(|e| format!("pair, pixel: {}", e.name()))?;
             // The pixel stage reads parameter `n` at the `n`th register of the signature that is no
             // system value, as the binder pairs them; a parameter past the signature at its own number.
-            let slots = parameter_slots(&vertex.outputs);
+            let registers: Vec<link::Register> = (vertex.outputs.iter())
+                .map(|element| link::Register {
+                    number: element.register,
+                    system_value: element.system_value,
+                    halves: element.component_type == FLOAT16,
+                })
+                .collect();
+            // Lowered once more, for its count, only where the signature reads two ways.
+            let count = || {
+                (rdna_bind::lower(&vertex, &BTreeSet::new()).ok())
+                    .map_or(0, |lowered| link::written(&lowered.module))
+            };
+            let slots = link::parameter_slots(&registers, count);
             let parameter = |slot: &u8| match slots.iter().position(|s| *s == u32::from(*slot)) {
                 Some(at) => u8::try_from(at).ok(),
                 None => (usize::from(*slot) >= slots.len()).then_some(*slot),
@@ -796,12 +1221,71 @@ pub fn translated(programs: &Programs, unit: Unit, block: usize) -> Result<Ready
     }
 }
 
+/// The component type a signature gives a register of 16-bit floats.
+const FLOAT16: u32 = 6;
+
 /// The note of a pair whose pixel stage reads a parameter its vertex stage does not give.
 pub const UNFED: &str =
     "a pair whose pixel stage reads a parameter its vertex stage does not write: read as nought";
 
+/// What a unit is skipped for on an adapter that offers `TEXTURE_INT64_ATOMIC` and whose textures
+/// of 64-bit texels cannot be updated in a step.
+pub const NO_64_BIT_UPDATE: &str =
+    "TEXTURE_INT64_ATOMIC (offered, but no R64Uint texture of the adapter is updated in a step)";
+
+/// Whether naga writes `stages` as Metal's shading language, validated for what its writer
+/// supports: all of Metal that a machine with no Metal device can check.
+// ponytail: the text is not compiled; only a Metal device's own compiler says whether it builds.
+fn metal_text(stages: &Stages) -> Outcome {
+    use naga::back::msl;
+    use naga::valid::{ValidationFlags, Validator};
+    let write = |module: &naga::Module| -> Result<(), Outcome> {
+        let info = Validator::new(ValidationFlags::all(), msl::supported_capabilities())
+            .validate(module)
+            .map_err(|refusal| {
+                let said = format!("{:?}", refusal.into_inner());
+                match missing_feature(&said) {
+                    Some(capability) => Outcome::Skipped(capability),
+                    None => Outcome::Rejected(one_line(&said)),
+                }
+            })?;
+        let options = msl::Options {
+            lang_version: (3, 1),
+            fake_missing_bindings: true,
+            ..Default::default()
+        };
+        msl::write_string(module, &info, &options, &msl::PipelineOptions::default())
+            .map(|_| ())
+            .map_err(|e| Outcome::Rejected(one_line(&e.to_string())))
+    };
+    let written = catch_unwind(AssertUnwindSafe(|| match stages {
+        Stages::Compute(module) | Stages::Render(module, None) => write(module),
+        Stages::Render(vertex, Some(pixel)) => write(vertex).and_then(|()| write(pixel)),
+    }));
+    match written {
+        Ok(Ok(())) => Outcome::Created,
+        Ok(Err(outcome)) => outcome,
+        Err(_) => Outcome::Rejected("naga's MSL writer panicked".into()),
+    }
+}
+
+/// The adapter a run of [`Ways::msl`] is counted under.
+pub fn metal_text_adapter() -> Adapter {
+    Adapter {
+        name: "naga's MSL writer, no device".into(),
+        backend: "Metal".into(),
+        shader_compiler: "text".into(),
+        ..Default::default()
+    }
+}
+
 /// `ready` on `gpu`, or the feature it needs that `gpu` lacks.
-fn tried(gpu: &Gpu, ready: &Ready, cache: Option<&wgpu::PipelineCache>) -> (Outcome, f64) {
+fn tried(
+    gpu: &Gpu,
+    ready: &Ready,
+    cache: Option<&wgpu::PipelineCache>,
+    draw: bool,
+) -> (Outcome, f64) {
     if ready.subgroups && !gpu.features.contains(wgpu::Features::SUBGROUP) {
         return (Outcome::Skipped("SUBGROUP".into()), 0.0);
     }
@@ -810,11 +1294,15 @@ fn tried(gpu: &Gpu, ready: &Ready, cache: Option<&wgpu::PipelineCache>) -> (Outc
         let names: Vec<&str> = missing.iter_names().map(|(name, _)| name).collect();
         return (Outcome::Skipped(names.join(" | ")), 0.0);
     }
+    if (ready.needs).contains(wgpu::Features::TEXTURE_INT64_ATOMIC) && !gpu.updates_64_bit_textures
+    {
+        return (Outcome::Skipped(NO_64_BIT_UPDATE.into()), 0.0);
+    }
     let lacks = ready.clips && !gpu.features.contains(wgpu::Features::CLIP_DISTANCES)
         || ready.locations > gpu.limits.max_inter_stage_shader_variables;
     match &ready.bare {
-        Some(bare) if lacks => build(gpu, bare, cache),
-        _ => build(gpu, &ready.stages, cache),
+        Some(bare) if lacks => build(gpu, bare, cache, draw),
+        _ => build(gpu, &ready.stages, cache, draw),
     }
 }
 
@@ -832,6 +1320,7 @@ pub fn worker(
     range: Range<usize>,
     resume: Resume,
     only: Option<&str>,
+    ways: Ways,
     out: &mut dyn Write,
 ) -> Result<(), String> {
     let mut say = |line: Line| -> Result<(), String> {
@@ -889,7 +1378,31 @@ pub fn worker(
                     block,
                     adapter: Some(adapter),
                 })?;
-                let (outcome, ms) = tried(gpu, &ready, None);
+                let avoided = (programs.avoid.get(adapter))
+                    .is_some_and(|avoid| avoid.contains(&what.name(block)));
+                let (outcome, ms) = match avoided {
+                    true => (Outcome::Skipped(AVOIDED.into()), 0.0),
+                    false => tried(gpu, &ready, None, ways.draw),
+                };
+                say(Line::Device {
+                    unit,
+                    block,
+                    adapter,
+                    outcome,
+                    ms,
+                })?;
+            }
+            // The text is one more adapter, after the devices.
+            if ways.msl && passed <= gpus.len() {
+                let adapter = gpus.len();
+                say(Line::Begin {
+                    unit,
+                    block,
+                    adapter: Some(adapter),
+                })?;
+                let start = Instant::now();
+                let outcome = metal_text(&ready.stages);
+                let ms = start.elapsed().as_secs_f64() * 1000.0;
                 say(Line::Device {
                     unit,
                     block,
@@ -955,7 +1468,7 @@ pub fn cache_worker(
                 .collect()
         });
         for ready in ready.iter().flatten() {
-            if let (Outcome::Created, took) = tried(gpu, ready, Some(&cache)) {
+            if let (Outcome::Created, took) = tried(gpu, ready, Some(&cache), false) {
                 built += 1;
                 ms += took;
             }
@@ -972,9 +1485,19 @@ pub fn cache_worker(
     Ok((built, ms, bytes))
 }
 
+/// What a check does with a unit beyond creating its pipeline.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Ways {
+    /// Draw with each pipeline a device creates.
+    pub draw: bool,
+    /// Write each unit as Metal's shading language too, counted as an adapter of its own.
+    pub msl: bool,
+}
+
 /// How a check runs.
 #[derive(Debug, Clone)]
 pub struct Options {
+    pub ways: Ways,
     /// The worker processes at once.
     pub jobs: usize,
     /// The units a worker is given.
@@ -990,11 +1513,15 @@ pub struct Options {
     pub cache_dir: Option<PathBuf>,
     /// The stack a worker's steps run on, in mebibytes; [`stack_mib`]'s where `None`.
     pub stack_mib: Option<usize>,
+    /// An earlier report: a unit that ended the process on an adapter of it is not built again
+    /// on that adapter and driver, and is counted as skipped for [`AVOIDED`].
+    pub avoid: Option<Report>,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
+            ways: Ways::default(),
             jobs: std::thread::available_parallelism().map_or(2, |n| (usize::from(n) / 2).max(1)),
             chunk: 128,
             timeout: Duration::from_secs(120),
@@ -1003,6 +1530,7 @@ impl Default for Options {
             techniques: Vec::new(),
             cache_dir: None,
             stack_mib: None,
+            avoid: None,
         }
     }
 }
@@ -1030,6 +1558,12 @@ fn one_worker(
     ]);
     if let Some(only) = &options.adapter {
         command.args(["--adapter", only]);
+    }
+    if options.ways.draw {
+        command.arg("--draw");
+    }
+    if options.ways.msl {
+        command.arg("--msl");
     }
     if let Some(mib) = options.stack_mib {
         command.env(STACK_ENV, mib.to_string());
@@ -1187,11 +1721,16 @@ pub fn run(
     let digest: String = (Sha1::digest(body).iter())
         .map(|b| format!("{b:02x}"))
         .collect();
-    let adapters: Vec<(Adapter, Option<String>)> = (open_all(options.adapter.as_deref()).iter())
-        .map(|gpu| (gpu.described(), gpu.cache_key()))
-        .collect();
+    let mut adapters: Vec<(Adapter, Option<String>)> = (open_all(options.adapter.as_deref())
+        .iter())
+    .map(|gpu| (gpu.described(), gpu.cache_key()))
+    .collect();
+    if options.ways.msl {
+        adapters.push((metal_text_adapter(), None));
+    }
     if adapters.is_empty() {
-        return Err("this machine has no adapter a device opens on".into());
+        let unsupported = instance::UNSUPPORTED;
+        return Err(format!("no adapter a device opens on. {unsupported}"));
     }
     let range = (options.units.clone()).map_or(0..units.len(), |r| r.start..r.end.min(units.len()));
     let scratch = std::env::temp_dir().join(format!("or-rdna-devices-{}", std::process::id()));
@@ -1201,6 +1740,21 @@ pub fn run(
         technique_units(&file, &units, &names)
     });
     Programs::write(&scratch, &file, body, &units, only.as_ref())?;
+    if let Some(earlier) = &options.avoid {
+        let same = |run: &&Run, adapter: &Adapter| {
+            let (a, b) = (&run.adapter, adapter);
+            (&a.name, &a.backend, &a.driver, &a.driver_info)
+                == (&b.name, &b.backend, &b.driver, &b.driver_info)
+        };
+        let avoid: Vec<BTreeSet<String>> = (adapters.iter())
+            .map(|(adapter, _)| {
+                (earlier.runs.iter().filter(|run| same(run, adapter)))
+                    .flat_map(|run| run.crashed.values().flatten().cloned())
+                    .collect()
+            })
+            .collect();
+        Programs::write_avoided(&scratch, &avoid)?;
+    }
     // The ranges of the units checked: the range asked for, or the runs of a technique's pairs in it.
     let checked = match &only {
         None => vec![(range.start, range.end)],
@@ -1229,6 +1783,7 @@ pub fn run(
             adapter: adapter.clone(),
             stack_mib: options.stack_mib.unwrap_or_else(stack_mib),
             units: checked.clone(),
+            drawn: options.ways.draw && adapter.shader_compiler != "text",
             ..Default::default()
         })
         .collect();

@@ -282,3 +282,42 @@ fn a_carried_component_is_the_one_the_stage_before_wrote() {
     ));
     assert!(matches!(function.expressions[components[0]], E::Literal(_)));
 }
+
+#[test]
+fn a_slot_is_a_register_of_the_signature_and_two_registers_of_halves_share_one() {
+    use super::super::link::{parameter_slots, written, Register};
+    let register = |number, system_value, halves| Register {
+        number,
+        system_value,
+        halves,
+    };
+    let (full, half, position, clip) = (
+        |n| register(n, 0, false),
+        |n| register(n, 0, true),
+        |n| register(n, 1, false),
+        |n| register(n, 2, false),
+    );
+    let unasked = || -> usize { panic!("a signature with one reading asks for no count") };
+    // The position first: each parameter one slot past its own number.
+    let plain = [position(0), full(1), full(2)];
+    assert_eq!(parameter_slots(&plain, unasked), [1, 2]);
+    // Two registers of halves are one parameter, so what follows them moves up a slot; the
+    // position between two parameters holds a slot no parameter has.
+    let signature = [full(0), half(1), half(2), full(3), position(4), full(5)];
+    assert_eq!(parameter_slots(&signature, || 4), [0, 1, 2, 4]);
+    // A stage that writes a parameter a register keeps the halves apart.
+    assert_eq!(parameter_slots(&signature, || 5), [0, 1, 2, 3, 5]);
+    // Its clip distances are one parameter more, and no slot of the pixel stage's.
+    let clipped = [clip(0), position(1), half(2), half(3), full(4)];
+    assert_eq!(parameter_slots(&clipped, || 3), [2, 3]);
+    assert_eq!(parameter_slots(&clipped, || 4), [2, 3, 4]);
+    // They pair in their order, neighbours or not, and a third starts a pair of its own.
+    let apart = [half(0), full(1), half(2), half(3), full(4)];
+    assert_eq!(parameter_slots(&apart, || 4), [0, 1, 2, 3]);
+    // Two elements of one register are one register, in whatever order they are listed.
+    let shared = [full(2), half(0), position(1), half(0)];
+    assert_eq!(parameter_slots(&shared, unasked), [0, 2]);
+    // What a stage writes is counted by its parameters, a high half with its low one.
+    assert_eq!(written(&vertex(&[0, 1, 2], &[])), 3);
+    assert_eq!(written(&vertex(&[0, 1, 2], &[1])), 3);
+}

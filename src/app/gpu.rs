@@ -281,13 +281,14 @@ impl App {
             return Ok(());
         }
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            flags: wgpu::InstanceFlags::default(),
-            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-            backend_options: wgpu::BackendOptions::default(),
-            display: None,
-        });
+        let instance =
+            wgpu::Instance::new(or_renderer::instance::with_dxc(wgpu::InstanceDescriptor {
+                backends: or_renderer::instance::BACKENDS,
+                flags: wgpu::InstanceFlags::default(),
+                memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+                backend_options: wgpu::BackendOptions::default(),
+                display: None,
+            }));
 
         let probe = instance.create_surface(first_window.clone())?;
 
@@ -296,7 +297,10 @@ impl App {
             compatible_surface: Some(&probe),
             force_fallback_adapter: false,
         }))
-        .map_err(|e| anyhow::anyhow!("Failed to find suitable GPU adapter: {e}"))?;
+        .map_err(|e| {
+            let needs = or_renderer::instance::UNSUPPORTED;
+            anyhow::anyhow!("Failed to find suitable GPU adapter: {e}. {needs}")
+        })?;
 
         tracing::info!("Using GPU: {}", adapter.get_info().name);
 

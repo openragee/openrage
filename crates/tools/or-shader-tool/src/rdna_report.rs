@@ -107,6 +107,9 @@ pub struct Run {
     /// The ranges of the container's units this run checked: a long check is run a range at a time.
     #[serde(default)]
     pub units: Vec<(usize, usize)>,
+    /// Whether each pipeline counted as created was also drawn with.
+    #[serde(default)]
+    pub drawn: bool,
     pub created: usize,
     /// The units the device refused, by the refusal with its numbers taken out.
     pub rejected: BTreeMap<String, Vec<String>>,
@@ -256,10 +259,12 @@ impl Run {
         self.cache = self.cache.take().or(other.cache);
     }
 
-    /// What tells this run from another: the container, the adapter, its backend and its driver.
-    fn key(&self) -> [&str; 6] {
+    /// What tells this run from another: the container, the adapter, its backend and its driver,
+    /// and whether it drew.
+    fn key(&self) -> [&str; 7] {
         let a = &self.adapter;
         [
+            if self.drawn { "drawn" } else { "" },
             &self.container,
             &a.name,
             &a.backend,
@@ -339,7 +344,7 @@ pub fn table(report: &Report) -> String {
     }
     let _ = writeln!(
         out,
-        "\n{:<12} {:<44} {:<8} {:<34} {:>7} {:>8} {:>7} {:>7} {:>8}",
+        "\n{:<12} {:<44} {:<10} {:<34} {:>13} {:>8} {:>7} {:>7} {:>8}",
         "container",
         "adapter",
         "backend",
@@ -354,12 +359,15 @@ pub fn table(report: &Report) -> String {
         let a = &run.adapter;
         let _ = writeln!(
             out,
-            "{:<12} {:<44} {:<8} {:<34} {:>7} {:>8} {:>7} {:>7} {:>8}",
+            "{:<12} {:<44} {:<10} {:<34} {:>13} {:>8} {:>7} {:>7} {:>8}",
             &run.container[..run.container.len().min(12)],
             a.name,
             format!("{} {}", a.backend, a.shader_compiler),
             format!("{} {}", a.driver, a.driver_info),
-            run.created,
+            match run.drawn {
+                true => format!("{} drawn", run.created),
+                false => run.created.to_string(),
+            },
             run.rejected_count(),
             run.skipped_count(),
             run.crashed_count(),

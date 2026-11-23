@@ -988,13 +988,13 @@ fn headless_gpu() -> Result<(std::sync::Arc<wgpu::Device>, std::sync::Arc<wgpu::
     use std::sync::Arc;
 
     // `WGPU_BACKEND` picks the backend, so the same frames are drawn through each one a machine has.
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY),
+    let instance = wgpu::Instance::new(or_renderer::instance::with_dxc(wgpu::InstanceDescriptor {
+        backends: or_renderer::instance::backends_from_env()?,
         flags: wgpu::InstanceFlags::default(),
         memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         backend_options: wgpu::BackendOptions::default(),
         display: None,
-    });
+    }));
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,

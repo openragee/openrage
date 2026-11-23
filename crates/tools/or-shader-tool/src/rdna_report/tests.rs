@@ -138,3 +138,21 @@ fn the_notes_of_two_reports_of_one_container_merge_without_repeats() {
     );
     assert!(table(&merged).contains("3  noted: fed nought"));
 }
+
+#[test]
+fn a_run_that_drew_is_kept_apart_from_one_that_did_not_and_says_so() {
+    let mut drew = run("c", "A", "Vulkan", 4);
+    drew.drawn = true;
+    let merged = merge(vec![
+        report(vec![run("c", "A", "Vulkan", 5)]),
+        report(vec![drew]),
+    ])
+    .unwrap();
+    assert_eq!(merged.runs.len(), 2);
+    let table = table(&merged);
+    assert!(table.contains("4 drawn"), "{table}");
+    // A report written before runs could draw reads as one that did not.
+    let text = serde_json::to_string(&merged.runs[0]).unwrap();
+    let old: Run = serde_json::from_str(&text.replace("\"drawn\":false,", "")).unwrap();
+    assert!(!old.drawn);
+}

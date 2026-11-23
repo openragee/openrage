@@ -699,6 +699,23 @@ timestamp queries (`gpu_timer::FEATURES`) and reads them back a frame late, so t
 reports what each stage took on the device without waiting for it; the Statistics panel and
 `or-shader-tool render-drawable --frames` show it.
 
+`instance` holds what every wgpu instance of the app and the tools is given.
+OpenRage draws through Vulkan, Direct3D 12 or Metal. **OpenGL is not supported**:
+it indexes no table of textures at a computed place and updates no texture in a
+step, which a game's shading passes do, so the app opens no OpenGL adapter and
+`WGPU_BACKEND=gl` is refused in those words (`backends_from_env`) by the
+self-check and by the shader tool's device checks. A shader for Direct3D 12 is
+compiled by DXC, since FXC refuses valid ones (a gradient inside a loop, a barrier in a
+branch) and has no 64-bit integers: `instance::dx12_compiler` takes the
+`dxcompiler.dll` beside the program, else the first on `PATH`, else the newest
+Windows SDK's, and falls back to FXC with a warning that says so where there is
+none. `WGPU_DX12_COMPILER` overrides the choice. A compiler older than 1.8.2502,
+such as an SDK's, loads `dxil.dll` by name and Direct3D 12 opens no device on it
+without one, so the folder of a compiler found with its `dxil.dll` is put on the
+process's `PATH`. On Direct3D 12 the feature `TEXTURE_INT64_ATOMIC` is offered
+and the layout of such a texture refused; `updates_64_bit_textures` asks the
+adapter instead.
+
 ## Tool crates
 
 **or-cli** holds the `openrage-cli` subcommands (`openrage-cli help` lists

@@ -10,7 +10,8 @@ pub fn print_usage(program: &str) {
         "  {program} rdna-devices <ARCHIVE.rpf> <OFFSET> [--out <REPORT.json>] [--cache-dir <DIR>]"
     );
     eprintln!("               [--adapter <TEXT>] [--jobs <N>] [--chunk <N>] [--timeout <SECONDS>] [--units <FROM>..<TO>]");
-    eprintln!("               [--stack-mib <N>] [--technique <NAME>[,<NAME>...]]");
+    eprintln!("               [--stack-mib <N>] [--technique <NAME>[,<NAME>...]] [--draw] [--msl]");
+    eprintln!("               [--skip-crashed <REPORT.json>]");
     eprintln!("                                translate every native program of the GTA VI effect container at OFFSET");
     eprintln!("                                (or of a container saved as a file, with no OFFSET) and build a pipeline");
     eprintln!("                                of each on every adapter of this machine, of every backend, the software");
@@ -22,7 +23,14 @@ pub fn print_usage(program: &str) {
     eprintln!("                                and the units behind each count. --cache-dir saves each adapter's");
     eprintln!("                                pipeline cache where its backend has one, and times what it saves.");
     eprintln!("                                --technique checks only the pairs the passes of those techniques draw");
-    eprintln!("                                with, such as the ones that shade a model.");
+    eprintln!("                                with, such as the ones that shade a model. --draw draws with each");
+    eprintln!("                                pipeline a device creates: a triangle into targets of its own, or one");
+    eprintln!("                                group of a compute pipeline, every binding a stand-in. --msl also has");
+    eprintln!("                                naga write each unit as Metal's shading language, a row of its own that");
+    eprintln!("                                needs no Metal device (--adapter none for that row alone). No OpenGL");
+    eprintln!("                                adapter is opened: OpenRage does not support OpenGL. --skip-crashed");
+    eprintln!("                                passes over, on the same adapter and driver, each unit an earlier");
+    eprintln!("                                report counts as having ended the process, and counts it as skipped.");
     eprintln!("  {program} rdna-devices --merge <REPORT.json>... [--out <MERGED.json>]");
     eprintln!("                                several machines' reports as one table; a merged file merges again");
     eprintln!("  {program} rdna-devices --help");
@@ -49,12 +57,19 @@ that shade a model. Nothing opens a window; each run prints a table and writes o
      or-shader-tool rdna-devices <shaders.rpf> <LARGE OFFSET> --units 0..3000 --out large-00000.json
    A worker process holds a device on every adapter and may take 3 GB: --jobs sets how many
    run at once (half the cores unless said). --adapter <TEXT> keeps the adapters whose name or
-   backend holds the text, such as vulkan, dx12, metal or part of the card's name.
+   backend holds the text, such as vulkan, dx12, metal or part of the card's name. Add --draw
+   to draw with each pipeline a device creates, which is what the report then counts.
 
-3. On Windows, Direct3D 12 compiles with FXC unless told otherwise. To add the DXC rows, put
-   dxcompiler.dll on PATH and run again with the variable set, to other files:
-     set WGPU_DX12_COMPILER=dxc
-     or-shader-tool rdna-devices <shaders.rpf> <SMALL OFFSET> --adapter dx12 --out small-dxc.json
+   On a Mac the same commands check Metal, and nothing else is needed:
+     cargo build -p or-shader-tool --features device-check
+     ./or-shader-tool rdna-devices <shaders.rpf> <SMALL OFFSET> --draw --out mac-small.json
+     ./or-shader-tool rdna-devices <shaders.rpf> <LARGE OFFSET> --technique <NAME>,<NAME> --draw --out mac-shading.json
+
+3. On Windows, Direct3D 12 compiles with DXC, as the app does: the dxcompiler.dll beside the
+   binary, else one on PATH, else the newest Windows SDK's (an old one needs its dxil.dll in
+   the same folder). The report names the compiler; where it says fxc, none was found, and
+   FXC refuses programs that are valid. WGPU_DX12_COMPILER=fxc asks for the FXC rows.
+   OpenGL is not checked: OpenRage does not support it.
 
 4. Send the JSON files. A file holds each adapter's name, driver, features and limits, the
    numbers of the units behind every count and the devices' own refusals. It holds no game
@@ -65,7 +80,8 @@ that shade a model. Nothing opens a window; each run prints a table and writes o
    Two runs of the same container on the same adapter, backend, compiler and driver are added
    where they checked different units; where they overlap the later file stands.
 
-Reading the table: created is a pipeline the device built; skipped is a unit that needs a
+Reading the table: created is a pipeline the device built, and drew with where the run was
+given --draw; skipped is a unit that needs a
 device feature the adapter lacks, by the feature's name; rejected is a refusal in the
 device's words; crashed and timed out are a driver that ended or held a worker twice. The
 lines marked noted say what the units ask of any device, and which pairs read a parameter
@@ -151,6 +167,17 @@ fn check(mut args: Vec<String>, out: Option<PathBuf>) -> Result<(), String> {
         .map_err(|e| format!("{word} is not a number: {e}"))
     };
     let adapter = take(&mut args, "--adapter")?;
+    let mut flag = |name: &str| {
+        let before = args.len();
+        args.retain(|arg| arg != name);
+        args.len() < before
+    };
+    let ways = rdna_devices::Ways {
+        draw: flag("--draw"),
+        msl: flag("--msl"),
+    };
+    // A backend the app does not draw through is refused here, not half-run.
+    or_renderer::instance::backends_from_env()?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
 
     // The two forms a parent starts its children with; neither is for a person to type.
@@ -167,7 +194,8 @@ fn check(mut args: Vec<String>, out: Option<PathBuf>) -> Result<(), String> {
             let range = number(from)?..number(to)?;
             return rdna_devices::on_worker_stack(|| {
                 let mut stdout = std::io::stdout().lock();
-                rdna_devices::worker(&programs, range, resume, adapter.as_deref(), &mut stdout)
+                let only = adapter.as_deref();
+                rdna_devices::worker(&programs, range, resume, only, ways, &mut stdout)
             })?;
         }
         Some("--cache-worker") => {
@@ -199,6 +227,7 @@ fn check(mut args: Vec<String>, out: Option<PathBuf>) -> Result<(), String> {
     }
 
     let mut options = Options {
+        ways,
         adapter,
         cache_dir: take(&mut args, "--cache-dir")?.map(PathBuf::from),
         ..Default::default()
@@ -217,6 +246,9 @@ fn check(mut args: Vec<String>, out: Option<PathBuf>) -> Result<(), String> {
     }
     if let Some(names) = take(&mut args, "--technique")? {
         options.techniques = names.split(',').map(str::to_owned).collect();
+    }
+    if let Some(earlier) = take(&mut args, "--skip-crashed")? {
+        options.avoid = Some(read_report(&earlier)?);
     }
     if let Some(units) = take(&mut args, "--units")? {
         let (from, to) = units.split_once("..").ok_or("--units takes FROM..TO")?;

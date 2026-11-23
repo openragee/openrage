@@ -46,6 +46,87 @@ pub struct Options {
     pub clip_distances: bool,
 }
 
+/// One register of the signature the two stages of a pass share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Register {
+    pub number: u32,
+    /// The system value it holds as the signature numbers it, such as the position: a slot of
+    /// the pixel stage and no parameter. Nought where it holds a parameter.
+    pub system_value: u32,
+    /// Whether it holds 16-bit floats.
+    pub halves: bool,
+}
+
+/// The number a signature gives the clip distances.
+const CLIP_DISTANCE: u32 = 2;
+
+/// The parameters the vertex stage of `producer` writes, high halves counted with their low ones.
+pub fn written(producer: &naga::Module) -> usize {
+    let result = (producer.entry_points.iter())
+        .find(|entry| entry.stage == ShaderStage::Vertex)
+        .and_then(|entry| entry.function.result.as_ref());
+    let members = match result.map(|result| &producer.types[result.ty].inner) {
+        Some(TypeInner::Struct { members, .. }) => members.as_slice(),
+        _ => &[],
+    };
+    let parameters: std::collections::BTreeSet<u32> = (members.iter())
+        .filter_map(|member| match member.binding {
+            Some(Binding::Location { location, .. }) => Some(location % HIGH_HALVES),
+            _ => None,
+        })
+        .collect();
+    parameters.len()
+}
+
+/// The slot a pixel stage reads each parameter of the stage before at, parameter `n` at place
+/// `n`, for [`Options::slots`]. `written` gives how many parameters the stage before writes
+/// ([`written`]), and is asked only where the signature reads two ways.
+// Every register of the signature is a slot, in the order of their numbers and a system value's
+// too. In most passes the registers of 16-bit floats go two to a parameter, in their order and
+// whether or not they are neighbours: the first's slot holds both, and the second has none. A
+// pass that keeps each apart is told by its count of parameters, which then is one a register
+// that is no system value, and one more for its clip distances where it gives them.
+pub fn parameter_slots(registers: &[Register], written: impl FnOnce() -> usize) -> Vec<u32> {
+    let mut registers = registers.to_vec();
+    registers.sort_by_key(|register| register.number);
+    // Two elements may share a register.
+    registers.dedup_by(|next, kept| {
+        let same = next.number == kept.number;
+        if same {
+            kept.system_value = kept.system_value.max(next.system_value);
+            kept.halves |= next.halves;
+        }
+        same
+    });
+    let slots = |pairs: bool| {
+        let mut slots = Vec::new();
+        let (mut slot, mut second) = (0, false);
+        for register in &registers {
+            if register.system_value == 0 {
+                if register.halves && pairs {
+                    second = !second;
+                    if !second {
+                        continue;
+                    }
+                }
+                slots.push(slot);
+            }
+            slot += 1;
+        }
+        slots
+    };
+    let (paired, apart) = (slots(true), slots(false));
+    if paired == apart {
+        return paired;
+    }
+    let clips = (registers.iter()).any(|register| register.system_value == CLIP_DISTANCE);
+    let written = written().saturating_sub(usize::from(clips));
+    match written == apart.len() {
+        true => apart,
+        false => paired,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LinkError {
     #[error("the module has no {0:?} entry point")]

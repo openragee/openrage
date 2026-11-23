@@ -17,8 +17,9 @@ pub struct DeviceCompiler {
 
 /// The machine's best adapter with no surface, taking the most it allows, and the name of the adapter; wgpu's `WGPU_BACKEND` and `WGPU_VALIDATION` choose the backend and its validation layer.
 pub fn open_device() -> Result<(wgpu::Device, wgpu::Queue, String), String> {
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    descriptor.backends = or_renderer::instance::backends_from_env()?;
+    let instance = wgpu::Instance::new(or_renderer::instance::with_dxc(descriptor));
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,

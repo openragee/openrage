@@ -35,13 +35,13 @@ pub(crate) fn test_device(what: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
 /// [`test_device`] with the instance that made it, which wgpu counts its objects through.
 #[cfg(test)]
 pub(crate) fn test_gpu(what: &str) -> Option<(wgpu::Instance, wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(or_renderer::instance::with_dxc(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
         flags: wgpu::InstanceFlags::default(),
         memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         backend_options: wgpu::BackendOptions::default(),
         display: None,
-    });
+    }));
     let adapter =
         match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         {

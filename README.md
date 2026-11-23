@@ -24,7 +24,7 @@ OpenRage opens, edits and saves the files Rockstar's RAGE games ship: a desktop 
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/wardrobe.png" alt="The Wardrobe workspace on the sample clothing project: the garments, the preview, a garment's details and the Problems list" width="900">
+  <img src="assets/screenshots/model.png" alt="The Model workspace with a GTA VI folder open: its archives, a model in the viewport, the model's textures and its details" width="900">
 </p>
 
 ## Who it is for

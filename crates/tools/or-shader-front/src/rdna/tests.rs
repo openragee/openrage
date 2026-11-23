@@ -5,6 +5,7 @@ use or_io::gta5::shaders::xdat::{XdatProgram, XdatStage};
 
 use super::*;
 
+mod exact;
 mod interp;
 mod link;
 mod pass_w;

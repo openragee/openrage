@@ -53,18 +53,13 @@ fn a_16_bit_result_that_may_differ_from_the_hardware_s_is_counted_by_its_kind() 
     ];
     let notes = lowered(ShaderKind::Vertex, words).approximations;
     let counted: Vec<_> = notes.iter().map(|(note, count)| (*note, *count)).collect();
+    // The fused multiply-add is computed whole and rounded once: only the function is counted.
     assert_eq!(
         counted,
-        [
-            (
-                "a 16-bit float function as exact as the device's 32-bit one",
-                1
-            ),
-            (
-                "a 16-bit fused multiply-add rounded at 32 bits before 16",
-                1
-            ),
-        ]
+        [(
+            "a 16-bit float function as exact as the device's 32-bit one",
+            1
+        )]
     );
 }
 
@@ -211,13 +206,13 @@ fn masks_counts_votes_and_lane_reads_of_a_wave_in_shared_memory_are_the_wave_s()
 }
 
 #[test]
-fn a_group_of_several_waves_and_a_caller_that_asks_keep_the_device_s_subgroup() {
+fn a_caller_that_asks_keeps_the_device_s_subgroup_and_several_full_waves_do_not() {
     let mut words = lane_into_v2();
     words.extend(wave_fold("v_min_u32"));
     words.push(S_ENDPGM);
-    // 128 threads are two waves of 64, which no barrier of the group keeps in step.
+    // 128 threads are two waves of 64, which take turns in the memory the group shares.
     let two = compute([16, 8, 1], words.clone());
-    assert!(translate(&two).unwrap().subgroups);
+    assert!(!translate(&two).unwrap().subgroups);
     let asked = Options {
         wave: true,
         ..Options::default()
@@ -225,10 +220,10 @@ fn a_group_of_several_waves_and_a_caller_that_asks_keep_the_device_s_subgroup() 
     let one = compute([8, 8, 1], words.clone());
     assert!(translate_with(&one, &asked).unwrap().subgroups);
     assert!(!translate(&one).unwrap().subgroups);
-    // A wave of 32 lanes is filled by a group of 32 threads: 64 are two of them.
+    // A wave of 32 lanes is filled by a group of 32 threads: 40 are one and a part of one.
     let narrow = Program {
         wave32: true,
-        ..compute([8, 8, 1], words)
+        ..compute([8, 5, 1], words)
     };
     assert!(translate(&narrow).is_ok_and(|out| out.subgroups));
 }

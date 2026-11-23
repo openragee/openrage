@@ -123,6 +123,244 @@ impl Builder {
     }
 }
 
+/// A 64-bit number as its high and low dwords.
+type Wide = [Handle<E>; 2];
+
+impl Builder {
+    /// `wide` shifted left by `by`, which is under 64.
+    fn wide_shl(&mut self, [high, low]: Wide, by: Handle<E>) -> Wide {
+        let (zero, one, most, word) = (self.u32(0), self.u32(1), self.u32(31), self.u32(32));
+        let within = self.bin(Bo::And, by, most);
+        let left = self.bin(Bo::Subtract, most, within);
+        let carried = self.bin(Bo::ShiftRight, low, one);
+        let carried = self.bin(Bo::ShiftRight, carried, left);
+        let raised = self.bin(Bo::ShiftLeft, high, within);
+        let near = self.bin(Bo::InclusiveOr, raised, carried);
+        let moved = self.bin(Bo::ShiftLeft, low, within);
+        let far = self.bin(Bo::GreaterEqual, by, word);
+        [self.select(far, moved, near), self.select(far, zero, moved)]
+    }
+
+    /// `wide` shifted right by any `by`, and the bits that fell off its end, as a dword that
+    /// is zero where none was set.
+    fn wide_shr(&mut self, [high, low]: Wide, by: Handle<E>) -> (Wide, Handle<E>) {
+        let (zero, one, most) = (self.u32(0), self.u32(1), self.u32(31));
+        let (word, both) = (self.u32(32), self.u32(64));
+        let within = self.bin(Bo::And, by, most);
+        let left = self.bin(Bo::Subtract, most, within);
+        let mask = self.bin(Bo::ShiftLeft, one, within);
+        let mask = self.bin(Bo::Subtract, mask, one);
+        let carried = self.bin(Bo::ShiftLeft, high, one);
+        let carried = self.bin(Bo::ShiftLeft, carried, left);
+        let near_low = self.bin(Bo::ShiftRight, low, within);
+        let near_low = self.bin(Bo::InclusiveOr, near_low, carried);
+        let near_high = self.bin(Bo::ShiftRight, high, within);
+        let near_lost = self.bin(Bo::And, low, mask);
+        let far_lost = self.bin(Bo::And, high, mask);
+        let far_lost = self.bin(Bo::InclusiveOr, far_lost, low);
+        let all = self.bin(Bo::InclusiveOr, high, low);
+        let far = self.bin(Bo::GreaterEqual, by, word);
+        let gone = self.bin(Bo::GreaterEqual, by, both);
+        let top = self.select(far, zero, near_high);
+        let bottom = self.select(far, near_high, near_low);
+        let bottom = self.select(gone, zero, bottom);
+        let lost = self.select(far, far_lost, near_lost);
+        let lost = self.select(gone, all, lost);
+        ([top, bottom], lost)
+    }
+
+    fn wide_add(&mut self, [ah, al]: Wide, [bh, bl]: Wide) -> Wide {
+        let low = self.bin(Bo::Add, al, bl);
+        let carry = self.bin(Bo::Less, low, al);
+        let carry = self.flag(carry);
+        let high = self.bin(Bo::Add, ah, bh);
+        [self.bin(Bo::Add, high, carry), low]
+    }
+
+    fn wide_sub(&mut self, [ah, al]: Wide, [bh, bl]: Wide) -> Wide {
+        let low = self.bin(Bo::Subtract, al, bl);
+        let borrow = self.bin(Bo::Less, al, bl);
+        let borrow = self.flag(borrow);
+        let high = self.bin(Bo::Subtract, ah, bh);
+        [self.bin(Bo::Subtract, high, borrow), low]
+    }
+
+    /// The zero bits above the first set one, 64 for zero.
+    fn wide_clz(&mut self, [high, low]: Wide) -> Handle<E> {
+        let (zero, word) = (self.u32(0), self.u32(32));
+        let upper = self.math(Mf::CountLeadingZeros, &[high]);
+        let lower = self.math(Mf::CountLeadingZeros, &[low]);
+        let lower = self.bin(Bo::Add, lower, word);
+        let empty = self.bin(Bo::Equal, high, zero);
+        self.select(empty, lower, upper)
+    }
+
+    /// A finite float's pattern as its sign, its exponent field, a denormal's read as the
+    /// least normal one, and the 24 bits of its magnitude.
+    fn float_parts(&mut self, bits: Handle<E>) -> [Handle<E>; 3] {
+        let (zero, one, top, by) = (self.u32(0), self.u32(1), self.u32(31), self.u32(23));
+        let (field, fraction, implied) = (self.u32(0xFF), self.u32(0x7F_FFFF), self.u32(0x80_0000));
+        let sign = self.bin(Bo::ShiftRight, bits, top);
+        let exponent = self.bin(Bo::ShiftRight, bits, by);
+        let exponent = self.bin(Bo::And, exponent, field);
+        let mantissa = self.bin(Bo::And, bits, fraction);
+        let normal = self.bin(Bo::NotEqual, exponent, zero);
+        let whole = self.bin(Bo::InclusiveOr, mantissa, implied);
+        [
+            sign,
+            self.math(Mf::Max, &[exponent, one]),
+            self.select(normal, whole, mantissa),
+        ]
+    }
+
+    /// `a * b + c` of three finite float patterns, `a` and `b` not zero, computed whole and
+    /// rounded once, to the float no further from zero with its last bit set where anything
+    /// was dropped: any rounding of that to a 16-bit float is the rounding of the whole
+    /// sum, since it keeps 24 bits where a half keeps eleven. A sum past a float's range is
+    /// the greatest float, and one under it the least normal one, which round as the sum.
+    pub(super) fn fused_odd(&mut self, a: Handle<E>, b: Handle<E>, c: Handle<E>) -> Handle<E> {
+        let (zero, one) = (self.u32(0), self.u32(1));
+        let [sa, ea, ma] = self.float_parts(a);
+        let [sb, eb, mb] = self.float_parts(b);
+        let [sc, ec, mc] = self.float_parts(c);
+        // The 48 bits of the product, by 12-bit limbs.
+        let (limb, twelve, twenty) = (self.u32(0xFFF), self.u32(12), self.u32(20));
+        let (eight, top) = (self.u32(8), self.u32(24));
+        let (a0, a1) = (
+            self.bin(Bo::And, ma, limb),
+            self.bin(Bo::ShiftRight, ma, twelve),
+        );
+        let (b0, b1) = (
+            self.bin(Bo::And, mb, limb),
+            self.bin(Bo::ShiftRight, mb, twelve),
+        );
+        let ll = self.bin(Bo::Multiply, a0, b0);
+        let (lh, hl) = (
+            self.bin(Bo::Multiply, a0, b1),
+            self.bin(Bo::Multiply, a1, b0),
+        );
+        let middle = self.bin(Bo::Add, lh, hl);
+        let hh = self.bin(Bo::Multiply, a1, b1);
+        let raised = self.bin(Bo::ShiftLeft, middle, twelve);
+        let first = self.bin(Bo::Add, ll, raised);
+        let carry = self.bin(Bo::Less, first, ll);
+        let carry = self.flag(carry);
+        let raised = self.bin(Bo::ShiftLeft, hh, top);
+        let low = self.bin(Bo::Add, first, raised);
+        let again = self.bin(Bo::Less, low, first);
+        let again = self.flag(again);
+        let high = self.bin(Bo::ShiftRight, hh, eight);
+        let over = self.bin(Bo::ShiftRight, middle, twenty);
+        let high = self.bin(Bo::Add, high, over);
+        let high = self.bin(Bo::Add, high, carry);
+        let high = self.bin(Bo::Add, high, again);
+        // Both terms with their first set bit at bit 62, each with the power of two its
+        // lowest bit is worth, counted from a common floor so that none is negative.
+        let (most, floor) = (self.u32(63), self.u32(65));
+        let zeros = self.wide_clz([high, low]);
+        let by = self.bin(Bo::Subtract, zeros, one);
+        let product = self.wide_shl([high, low], by);
+        let power = self.bin(Bo::Add, ea, eb);
+        let power = self.bin(Bo::Add, power, floor);
+        let product_power = self.bin(Bo::Subtract, power, zeros);
+        let zeros = self.wide_clz([zero, mc]);
+        let by = self.bin(Bo::Subtract, zeros, one);
+        let by = self.bin(Bo::And, by, most);
+        let addend = self.wide_shl([zero, mc], by);
+        let lift = self.u32(215);
+        let power = self.bin(Bo::Add, ec, lift);
+        let power = self.bin(Bo::Subtract, power, zeros);
+        let none = self.bin(Bo::Equal, mc, zero);
+        let addend_power = self.select(none, zero, power);
+        // The greater in magnitude first, the lesser moved down to its scale.
+        let above = self.bin(Bo::Greater, product_power, addend_power);
+        let level = self.bin(Bo::Equal, product_power, addend_power);
+        let high_less = self.bin(Bo::Less, product[0], addend[0]);
+        let high_same = self.bin(Bo::Equal, product[0], addend[0]);
+        let low_less = self.bin(Bo::Less, product[1], addend[1]);
+        let less = self.bin(Bo::LogicalAnd, high_same, low_less);
+        let less = self.bin(Bo::LogicalOr, high_less, less);
+        let not_less = self.lnot(less);
+        let tied = self.bin(Bo::LogicalAnd, level, not_less);
+        let leads = self.bin(Bo::LogicalOr, above, tied);
+        let greater = [0, 1].map(|k| self.select(leads, product[k], addend[k]));
+        let lesser = [0, 1].map(|k| self.select(leads, addend[k], product[k]));
+        let power = self.select(leads, product_power, addend_power);
+        let lesser_power = self.select(leads, addend_power, product_power);
+        let product_sign = self.bin(Bo::ExclusiveOr, sa, sb);
+        let sign = self.select(leads, product_sign, sc);
+        let apart = self.bin(Bo::Subtract, power, lesser_power);
+        let (lesser, lost) = self.wide_shr(lesser, apart);
+        let dropped = self.ne0(lost);
+        let sum = self.wide_add(greater, lesser);
+        // What fell off the lesser term is taken from the difference as a whole step, and
+        // what is left of that step is dropped below.
+        let step = self.flag(dropped);
+        let difference = self.wide_sub(greater, lesser);
+        let difference = self.wide_sub(difference, [zero, step]);
+        let alike = self.bin(Bo::Equal, product_sign, sc);
+        let whole = [0, 1].map(|k| self.select(alike, sum[k], difference[k]));
+        let zeros = self.wide_clz(whole);
+        let by = self.bin(Bo::And, zeros, most);
+        let [top_word, bottom_word] = self.wide_shl(whole, by);
+        let (byte, fraction) = (self.u32(0xFF), self.u32(0x7F_FFFF));
+        let kept = self.bin(Bo::ShiftRight, top_word, eight);
+        let rest = self.bin(Bo::And, top_word, byte);
+        let rest = self.bin(Bo::InclusiveOr, rest, bottom_word);
+        let rest = self.bin(Bo::InclusiveOr, rest, step);
+        let odd = self.ne0(rest);
+        let odd = self.flag(odd);
+        let kept = self.bin(Bo::InclusiveOr, kept, odd);
+        // The exponent field is this less 254.
+        let (lift, bias, by) = (self.u32(80), self.u32(254), self.u32(23));
+        let raised = self.bin(Bo::Add, power, lift);
+        let raised = self.bin(Bo::Subtract, raised, zeros);
+        let field = self.bin(Bo::Subtract, raised, bias);
+        let field = self.bin(Bo::And, field, byte);
+        let field = self.bin(Bo::ShiftLeft, field, by);
+        let mantissa = self.bin(Bo::And, kept, fraction);
+        let mut value = self.bin(Bo::InclusiveOr, field, mantissa);
+        let (greatest, least, past) = (self.u32(0x7F7F_FFFF), self.u32(0x0080_0000), self.u32(509));
+        let too_big = self.bin(Bo::GreaterEqual, raised, past);
+        value = self.select(too_big, greatest, value);
+        let too_small = self.bin(Bo::LessEqual, raised, bias);
+        value = self.select(too_small, least, value);
+        let thirty_one = self.u32(31);
+        let sign = self.bin(Bo::ShiftLeft, sign, thirty_one);
+        let value = self.bin(Bo::InclusiveOr, sign, value);
+        let nothing = self.bin(Bo::InclusiveOr, whole[0], whole[1]);
+        let nothing = self.bin(Bo::Equal, nothing, zero);
+        self.select(nothing, zero, value)
+    }
+
+    /// `a * b + c` of three float patterns as a float pattern that any rounding to a 16-bit
+    /// float rounds as it would the whole sum: [`Builder::fused_odd`], or the device's own
+    /// where a term has no end or is no number, or a factor is zero and the sum is `c`.
+    pub(super) fn fused(&mut self, a: Handle<E>, b: Handle<E>, c: Handle<E>) -> Handle<E> {
+        let (field, magnitude, zero) = (self.u32(0x7F80_0000), self.u32(0x7FFF_FFFF), self.u32(0));
+        let mut plain = None;
+        for term in [a, b, c] {
+            let exponent = self.bin(Bo::And, term, field);
+            let endless = self.bin(Bo::Equal, exponent, field);
+            plain = Some(match plain {
+                Some(so_far) => self.bin(Bo::LogicalOr, so_far, endless),
+                None => endless,
+            });
+        }
+        let mut plain = plain.unwrap_or(zero);
+        for factor in [a, b] {
+            let size = self.bin(Bo::And, factor, magnitude);
+            let nothing = self.bin(Bo::Equal, size, zero);
+            plain = self.bin(Bo::LogicalOr, plain, nothing);
+        }
+        let whole = self.fused_odd(a, b, c);
+        let (x, y, z) = (self.float(a), self.float(b), self.float(c));
+        let device = self.math(Mf::Fma, &[x, y, z]);
+        let device = self.bits(device);
+        self.select(plain, device, whole)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,9 +368,25 @@ mod tests {
 
     /// What an expression over dwords and conditions comes to, with the function's one argument `x`.
     fn eval(b: &Builder, at: Handle<E>, x: u32) -> u32 {
-        let dword = |h| eval(b, h, x);
+        eval_of(b, at, &[x], &mut Vec::new())
+    }
+
+    /// [`eval`] with several arguments; `known` holds what each expression came to, since a
+    /// value used twice is one expression.
+    fn eval_of(b: &Builder, at: Handle<E>, given: &[u32], known: &mut Vec<Option<u32>>) -> u32 {
+        known.resize(b.fun.expressions.len(), None);
+        if let Some(value) = known[at.index()] {
+            return value;
+        }
+        let value = eval_one(b, at, given, known);
+        known[at.index()] = Some(value);
+        value
+    }
+
+    fn eval_one(b: &Builder, at: Handle<E>, given: &[u32], known: &mut Vec<Option<u32>>) -> u32 {
+        let mut dword = |h| eval_of(b, h, given, known);
         match b.fun.expressions[at] {
-            E::FunctionArgument(_) => x,
+            E::FunctionArgument(index) => given[index as usize],
             E::Literal(Literal::U32(word)) => word,
             E::Literal(Literal::Bool(flag)) => u32::from(flag),
             E::Binary { op, left, right } => {
@@ -140,8 +394,14 @@ mod tests {
                 match op {
                     Bo::Add => l.wrapping_add(r),
                     Bo::Subtract => l.wrapping_sub(r),
+                    Bo::Multiply => l.wrapping_mul(r),
                     Bo::And => l & r,
                     Bo::InclusiveOr => l | r,
+                    Bo::ExclusiveOr => l ^ r,
+                    Bo::NotEqual => u32::from(l != r),
+                    Bo::Less => u32::from(l < r),
+                    Bo::LessEqual => u32::from(l <= r),
+                    Bo::LogicalOr => l | r,
                     Bo::ShiftLeft => l.checked_shl(r).expect("a shift a dword has no bit for"),
                     Bo::ShiftRight => l.checked_shr(r).expect("a shift a dword has no bit for"),
                     Bo::Equal => u32::from(l == r),
@@ -163,10 +423,14 @@ mod tests {
                 condition,
                 accept,
                 reject,
-            } => match dword(condition) {
-                0 => dword(reject),
-                _ => dword(accept),
-            },
+            } => {
+                // Both sides are computed whichever is taken, as a device may.
+                let (accept, reject) = (dword(accept), dword(reject));
+                match dword(condition) {
+                    0 => reject,
+                    _ => accept,
+                }
+            }
             E::Math {
                 fun,
                 arg,
@@ -174,9 +438,18 @@ mod tests {
                 arg2,
                 ..
             } => match (fun, arg1, arg2) {
-                (Mf::Min, Some(b), _) => dword(arg).min(dword(b)),
-                (Mf::Max, Some(b), _) => dword(arg).max(dword(b)),
-                (Mf::Clamp, Some(low), Some(high)) => dword(arg).clamp(dword(low), dword(high)),
+                (Mf::Min, Some(b), _) => {
+                    let (a, b) = (dword(arg), dword(b));
+                    a.min(b)
+                }
+                (Mf::Max, Some(b), _) => {
+                    let (a, b) = (dword(arg), dword(b));
+                    a.max(b)
+                }
+                (Mf::Clamp, Some(low), Some(high)) => {
+                    let (x, low, high) = (dword(arg), dword(low), dword(high));
+                    x.clamp(low, high)
+                }
                 (Mf::CountLeadingZeros, ..) => dword(arg).leading_zeros(),
                 other => panic!("{other:?} is not evaluated"),
             },
@@ -307,6 +580,106 @@ mod tests {
                 let (got, want) = (eval(&b, half, bits), u32::from(reference(bits, named)));
                 assert_eq!(got, want, "{bits:#010x} {named:?}");
             }
+        }
+    }
+
+    /// The 16-bit float `a * b + c` rounds to, the sum taken whole: the product of two
+    /// floats is exact in 53 bits, the sum's error is another double, and a sum rounded to
+    /// the double with its last bit set wherever it is inexact rounds on as the whole one.
+    fn fused_reference(a: f32, b: f32, c: f32, rounding: Rounding) -> u16 {
+        let (p, c) = (f64::from(a) * f64::from(b), f64::from(c));
+        let sum = p + c;
+        let rest = sum - p;
+        let error = (p - (sum - rest)) + (c - rest);
+        let mut bits = sum.to_bits();
+        if error != 0.0 && bits & 1 == 0 {
+            // The neighbour on the error's side: further from zero where their signs agree.
+            match (error > 0.0) == (sum > 0.0) {
+                true => bits += 1,
+                false => bits -= 1,
+            }
+        }
+        let whole = f64::from_bits(bits);
+        let sign = if whole.is_sign_negative() && whole != 0.0 {
+            0x8000
+        } else {
+            0
+        };
+        let x = whole.abs();
+        let (mut below, mut above) = (0u16, 0x7C01u16);
+        while above - below > 1 {
+            let middle = below + (above - below) / 2;
+            match worth(middle).is_some_and(|w| w <= x) {
+                true => below = middle,
+                false => above = middle,
+            }
+        }
+        let low = worth(below).unwrap_or(0.0);
+        let high = worth(below + 1)
+            .filter(|h| h.is_finite())
+            .unwrap_or(65536.0);
+        let (down, up) = (x - low, high - x);
+        let nearer = down < up || (down == up && below & 1 == 0);
+        let up_one = rounding == Rounding::Nearest && !nearer;
+        sign | (below + u16::from(low != x && up_one))
+    }
+
+    #[test]
+    fn a_fused_multiply_add_of_halves_is_the_whole_sum_rounded_once() {
+        for rounding in [Rounding::Nearest, Rounding::TowardZero] {
+            let mut b = Builder::new();
+            let [x, y, z] = [0, 1, 2].map(|index| b.emit(E::FunctionArgument(index)));
+            let whole = b.fused_odd(x, y, z);
+            let half = b.half_of(whole, rounding);
+            // What the lowering was: the device's 32-bit sum, rounded a second time.
+            let twice = |a: f32, b: f32, c: f32| reference(a.mul_add(b, c).to_bits(), rounding);
+            let mut seed = 0x2545_F491u32;
+            let mut next = || {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                seed >> 8
+            };
+            let float = |half: u32| {
+                let sign = if half & 0x8000 != 0 { -1.0 } else { 1.0 };
+                (sign * worth((half & 0x7FFF) as u16).unwrap_or(0.0)) as f32
+            };
+            let mut known = Vec::new();
+            for round in 0..20_000 {
+                // Finite halves, the factors not zero; every fourth round the addend is near
+                // the product's opposite, and every fifth the sources are whole floats.
+                let pick = |word: u32| float((word % 0x7BFF + 1) | (word & 0x8000));
+                let (mut a, mut b_, mut c) = (pick(next()), pick(next()), float(next() & 0xFBFF));
+                if !c.is_finite() || round % 7 == 3 {
+                    c = 0.0;
+                }
+                if round % 4 == 1 {
+                    let near = reference((-a * b_).to_bits(), Rounding::TowardZero);
+                    let near = float(u32::from(near)) * (1.0 + (next() % 5) as f32 / 1024.0);
+                    c = if near.is_finite() { near } else { c };
+                }
+                if round % 5 == 2 {
+                    let wide = |word: u32| f32::from_bits(word % 0x7F00_0000 + 0x0000_0100);
+                    (a, b_, c) = (wide(next() << 8 | 1), wide(next() << 7), wide(next() << 6));
+                }
+                let given = [a.to_bits(), b_.to_bits(), c.to_bits()];
+                known.clear();
+                let got = eval_of(&b, half, &given, &mut known);
+                let want = fused_reference(a, b_, c, rounding);
+                assert_eq!(got, u32::from(want), "{a:e} * {b_:e} + {c:e}, {rounding:?}");
+            }
+            // What this is for, where rounding twice is not rounding once. 7/4 * 293/512 is
+            // the middle of two halves and the least half under it is half a float's step:
+            // the float rounds back to the middle, and the middle to the even half above. And
+            // 4 less the least half is 4 as a float, which toward zero stays 4.
+            let least = f32::from_bits(0x3380_0000);
+            let (a, b_, c, want) = match rounding {
+                Rounding::Nearest => (1.75f32, 293.0f32 / 512.0, -least, 0x3C01),
+                _ => (2.0, 2.0, -least, 0x43FF),
+            };
+            known.clear();
+            let given = [a.to_bits(), b_.to_bits(), c.to_bits()];
+            assert_eq!(eval_of(&b, half, &given, &mut known), want, "{rounding:?}");
+            assert_eq!(u32::from(fused_reference(a, b_, c, rounding)), want);
+            assert_ne!(u32::from(twice(a, b_, c)), want, "{rounding:?}");
         }
     }
 

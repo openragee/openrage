@@ -299,7 +299,7 @@ fn step_vectors(state: &mut State, inst: &Inst) {
 
 /// How many vector registers a memory instruction fills from its first, by its mnemonic; four
 /// where the mnemonic does not say.
-fn loaded_registers(name: &str) -> u8 {
+pub(crate) fn loaded_registers(name: &str) -> u8 {
     if name.contains("_store") || name.contains("_write") {
         return 0;
     }

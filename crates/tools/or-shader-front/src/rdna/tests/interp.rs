@@ -460,6 +460,7 @@ fn math(fun: Mf, a: Value, b: Option<Value>, c: Option<Value>) -> Value {
         (Mf::Sqrt, F(a), ..) => F(a.sqrt()),
         (Mf::InverseSqrt, F(a), ..) => F(1.0 / a.sqrt()),
         (Mf::Saturate, F(a), ..) => F(a.clamp(0.0, 1.0)),
+        (Mf::Fma, F(a), Some(F(b)), Some(F(c))) => F(a.mul_add(b, c)),
         other => panic!("{other:?} is not run"),
     }
 }

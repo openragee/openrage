@@ -3,7 +3,8 @@
 //! the wave is the program's own whatever width the device runs.
 //!
 //! Every thread has to reach every barrier, so every branch is voted: the lanes of the wave
-//! walk the program together, as the hardware's do, each masking its own writes.
+//! walk the program together, as the hardware's do, each masking its own writes. The waves
+//! of a group of several walk it a block of one wave at a time, the whole group in step.
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -14,7 +15,7 @@ use naga::{
 };
 
 use super::halves::Rounding;
-use super::{fold_of, form, insert, Builder, Cx, Done, Inst, NotTranslated, Reg, EXEC};
+use super::{fold_of, form, insert, Builder, Cx, Done, End, Inst, NotTranslated, Reg, EXEC};
 use crate::dxil::ShaderKind;
 use crate::rdna::cfg::{Cfg, Terminator};
 use crate::rdna::decode::Operand;
@@ -30,22 +31,72 @@ pub(super) fn width(program: &Program) -> u32 {
     }
 }
 
-/// The threads of a compute group that is one wave, which shared memory can stand for.
-// ponytail: a group of several waves needs each wave to wait while another runs on, a
-// scheduler of rounds; until one is written such a group keeps the device's subgroups.
-pub(super) fn one_wave(program: &Program) -> Option<u32> {
+/// The threads of each wave of a compute group and the waves it is, where shared memory can
+/// stand for them: one wave, full or not, or several full ones, which take turns
+/// ([`Cx::dispatch_waves`]). A group whose last wave is not full keeps the device's subgroups.
+pub(super) fn waves(program: &Program) -> Option<(u32, u32)> {
     let launch = program
         .launch
         .filter(|_| program.kind == ShaderKind::Compute)?;
     let threads: u32 = launch.threads.iter().map(|&n| n.max(1)).product();
-    (threads <= width(program)).then_some(threads)
+    let lanes = width(program);
+    match threads <= lanes {
+        true => Some((threads, 1)),
+        false => threads
+            .is_multiple_of(lanes)
+            .then_some((lanes, threads / lanes)),
+    }
 }
+
+/// `cfg` with every block cut after an `s_barrier`: a wave of several stops there until the
+/// group's other waves have come as far, and a wave stops only where a block ends.
+pub(super) fn split(cfg: &Cfg) -> Cfg {
+    let mut blocks = std::collections::BTreeMap::new();
+    for block in cfg.blocks.values() {
+        let mut rest = block.clone();
+        while let Some(at) = (rest.insts.iter())
+            .position(|(_, inst)| inst.name() == "s_barrier")
+            .filter(|at| at + 1 < rest.insts.len())
+        {
+            let after = rest.insts.split_off(at + 1);
+            let next = after.first().map_or(rest.start, |(pc, _)| *pc);
+            let first = crate::rdna::cfg::Block {
+                start: rest.start,
+                insts: std::mem::replace(&mut rest.insts, after),
+                terminator: Terminator::Fall(next),
+            };
+            blocks.insert(first.start, first);
+            rest.start = next;
+        }
+        blocks.insert(rest.start, rest);
+    }
+    Cfg { blocks }
+}
+
+/// Whether a wave waits for its group where `block` ends.
+pub(super) fn waits(block: &crate::rdna::cfg::Block) -> bool {
+    (block.insts.last()).is_some_and(|(_, inst)| inst.name() == "s_barrier")
+}
+
+/// What a wave of several leaves as the block it runs next once its program has ended, what
+/// the group reads where every wave left waits at a barrier, and the bit a waiting wave sets.
+const ENDED: u32 = 0x7FFF_FFFF;
+const RELEASE: u32 = 0x7FFF_FFFE;
+const WAITING: u32 = 0x8000_0000;
 
 /// The shared memory a wave is exchanged through, and the functions that read it.
 #[derive(Default)]
 pub(super) struct Shared {
     /// The threads of the wave, where the wave is kept in shared memory at all.
     pub(super) threads: Option<u32>,
+    /// The waves of the group: more than one take turns, a block at a time.
+    pub(super) waves: u32,
+    /// Where the waves take turns: whether this thread's wave is the one whose block runs,
+    /// and whether it waits at a barrier of the program.
+    turn: Option<[Handle<naga::GlobalVariable>; 2]>,
+    /// Whether the statements being written are a block's own, which only the wave whose
+    /// turn it is may be seen to run.
+    pub(super) guarding: bool,
     /// Each lane's value and whether the lane runs, twice over: an exchange writes the half
     /// the one before it did not, which a slower lane may still be reading.
     memory: Option<[Handle<naga::GlobalVariable>; 2]>,
@@ -72,9 +123,10 @@ pub(super) struct Shared {
 }
 
 impl Shared {
-    pub(super) fn of(threads: Option<u32>) -> Self {
+    pub(super) fn of(shape: Option<(u32, u32)>) -> Self {
         Self {
-            threads,
+            threads: shape.map(|(threads, _)| threads),
+            waves: shape.map_or(1, |(_, waves)| waves),
             ..Self::default()
         }
     }
@@ -131,7 +183,8 @@ impl Cx<'_> {
             return memory;
         }
         let base = self.ty(TypeInner::Scalar(Scalar::U32));
-        let size = NonZeroU32::new(2 * width(self.program)).unwrap_or(NonZeroU32::MIN);
+        let all = 2 * width(self.program) * self.shared_wave.waves;
+        let size = NonZeroU32::new(all).unwrap_or(NonZeroU32::MIN);
         let ty = self.ty(TypeInner::Array {
             base,
             size: naga::ArraySize::Constant(size),
@@ -152,8 +205,8 @@ impl Cx<'_> {
         memory
     }
 
-    /// This thread's number in its group, which is its lane of the one wave the group is.
-    pub(super) fn wave_lane(&mut self) -> Handle<E> {
+    /// This thread's number in its group: the waves fill in that order.
+    fn wave_thread(&mut self) -> Handle<E> {
         let threads = self.launch.map_or([1; 3], |launch| launch.threads);
         let [x, y, z] = [0, 1, 2].map(|axis| self.launch_number(0, axis));
         let (across, down) = (self.b.u32(threads[0].max(1)), self.b.u32(threads[1].max(1)));
@@ -163,8 +216,28 @@ impl Cx<'_> {
         self.b.bin(Bo::Add, before, x)
     }
 
+    /// This thread's lane of its wave: its number in its group, past the waves before its own.
+    pub(super) fn wave_lane(&mut self) -> Handle<E> {
+        let thread = self.wave_thread();
+        match self.shared_wave.waves {
+            1 => thread,
+            _ => {
+                let last = self.b.u32(width(self.program) - 1);
+                self.b.bin(Bo::And, thread, last)
+            }
+        }
+    }
+
+    /// Whether this thread's wave is the one whose block runs, where the statements being
+    /// written are a block's own and the group's waves take turns.
+    pub(super) fn turn(&mut self) -> Option<Handle<E>> {
+        let [here, _] = (self.shared_wave.turn).filter(|_| self.shared_wave.guarding)?;
+        let pointer = self.global(here);
+        Some(self.b.load(pointer))
+    }
+
     /// Leaves this lane's `value` and whether it runs where the wave's other lanes read them,
-    /// and waits for theirs: the first dword of the half of the memory they are all in.
+    /// and waits for theirs: the first dword of its wave's in the half of the memory they are all in.
     fn exchange(&mut self, value: Handle<E>) -> Handle<E> {
         let [values, active] = self.wave_memory();
         let round = match self.shared_wave.round {
@@ -178,11 +251,13 @@ impl Cx<'_> {
         };
         let counter = self.global(round);
         let made = self.b.load(counter);
-        let (one, lanes) = (self.b.u32(1), self.b.u32(width(self.program)));
+        let all = width(self.program) * self.shared_wave.waves;
+        let (one, all) = (self.b.u32(1), self.b.u32(all));
         let half = self.b.bin(Bo::And, made, one);
-        let base = self.b.bin(Bo::Multiply, half, lanes);
-        let lane = self.wave_lane();
-        let place = self.b.bin(Bo::Add, base, lane);
+        let half = self.b.bin(Bo::Multiply, half, all);
+        let (thread, lane) = (self.wave_thread(), self.wave_lane());
+        let place = self.b.bin(Bo::Add, half, thread);
+        let base = self.b.bin(Bo::Subtract, place, lane);
         let runs = self.active();
         let runs = self.b.flag(runs);
         for (global, value) in [(values, value), (active, runs)] {
@@ -202,9 +277,9 @@ impl Cx<'_> {
         base
     }
 
-    /// Calls a function of the wave's memory, written on its first use; `None` where `write`
-    /// has no way to write it.
-    fn wave_call(
+    /// Calls a function of the module's own, written on its first use: one of the wave's
+    /// memory, or of dwords alone. `None` where `write` has no way to write it.
+    pub(super) fn wave_call(
         &mut self,
         name: String,
         arguments: Vec<Handle<E>>,
@@ -812,5 +887,187 @@ impl Cx<'_> {
             self.shared_wave.masks.insert(r);
         }
         done
+    }
+}
+
+impl Cx<'_> {
+    /// Before a program's blocks are lowered: where its group's waves take turns, the
+    /// variables that say whose turn it is, and that the statements written from here are
+    /// the blocks' own.
+    pub(super) fn take_turns(&mut self, turns: bool) {
+        if !turns {
+            return;
+        }
+        let flag = self.ty(TypeInner::Scalar(Scalar::BOOL));
+        let word = self.ty(TypeInner::Scalar(Scalar::U32));
+        self.shared_wave.turn = Some([
+            self.private("wave_turn".to_owned(), flag),
+            self.private("wave_waits".to_owned(), word),
+        ]);
+        self.shared_wave.guarding = true;
+    }
+
+    /// What the group does next, read by every thread alike where each wave left the block
+    /// it runs next: the least block a wave that does not wait is at, or that every wave has
+    /// ended, or that those left all wait for the group and go on together.
+    fn wave_next(&mut self, group: Handle<E>) -> Option<Handle<E>> {
+        let (lanes, waves) = (width(self.program), self.shared_wave.waves);
+        self.wave_call("wave_next".to_owned(), vec![group], |cx, f, taken| {
+            let (wave, least, waiting) = (
+                local(f, &mut cx.module, "wave"),
+                local(f, &mut cx.module, "least"),
+                local(f, &mut cx.module, "waiting"),
+            );
+            let (zero, one, count) = (f.u32(0), f.u32(1), f.u32(waves));
+            let (ended, bit, lanes) = (f.u32(ENDED), f.u32(WAITING), f.u32(lanes));
+            for (pointer, value) in [(wave, zero), (least, ended), (waiting, zero)] {
+                f.push(Statement::Store { pointer, value });
+            }
+            let last = |f: &mut Builder, at| f.bin(Bo::GreaterEqual, at, count);
+            let look = |f: &mut Builder, at| {
+                let first = f.bin(Bo::Multiply, at, lanes);
+                let place = f.bin(Bo::Add, taken[0], first);
+                let from = cx.wave_word(f, 0, place);
+                let (stands, so_far, held) = (f.load(from), f.load(least), f.load(waiting));
+                let waits = f.bin(Bo::And, stands, bit);
+                let waits = f.ne0(waits);
+                let less = f.math(naga::MathFunction::Min, &[so_far, stands]);
+                let value = f.select(waits, so_far, less);
+                f.push(Statement::Store {
+                    pointer: least,
+                    value,
+                });
+                let flag = f.flag(waits);
+                let value = f.bin(Bo::InclusiveOr, held, flag);
+                f.push(Statement::Store {
+                    pointer: waiting,
+                    value,
+                });
+            };
+            repeat(f, wave, last, look, |f, at| f.bin(Bo::Add, at, one));
+            let (least, waiting) = (f.load(least), f.load(waiting));
+            let none = f.bin(Bo::Equal, least, ended);
+            let any = f.ne0(waiting);
+            let release = f.u32(RELEASE);
+            let left = f.select(any, release, ended);
+            Some(f.select(none, left, least))
+        })
+    }
+
+    /// The blocks of a group of several waves as one loop the whole group walks in step, a
+    /// block of one wave a round: every thread tells the group the block its wave runs next,
+    /// all take the least, and the threads of the waves that are elsewhere walk it for its
+    /// barriers alone, their lanes off and their registers kept. A wave at `s_barrier` is
+    /// passed over until every other wave waits or has ended. So a wave is the program's own
+    /// on a device of any width, and two waves never run a block at once: the order of the
+    /// waves between two barriers of the program is this loop's, where the hardware has none.
+    pub(super) fn dispatch_waves(
+        &mut self,
+        ends: &[End],
+        waits: &[bool],
+        blocks: Vec<Block>,
+    ) -> Done {
+        let Some([turn, waiting]) = self.shared_wave.turn else {
+            return Ok(());
+        };
+        let next = self.local(Reg::Next);
+        let entry = self.b.u32(0);
+        self.b.push(Statement::Store {
+            pointer: next,
+            value: entry,
+        });
+        self.b.open();
+        let stands = self.b.load(next);
+        let pointer = self.global(waiting);
+        let held = self.b.load(pointer);
+        let waits_now = self.b.ne0(held);
+        let bit = self.b.u32(WAITING);
+        let flagged = self.b.bin(Bo::InclusiveOr, stands, bit);
+        let word = self.b.select(waits_now, flagged, stands);
+        let base = self.exchange(word);
+        let (thread, lane) = (self.wave_thread(), self.wave_lane());
+        let before = self.b.bin(Bo::Subtract, thread, lane);
+        let group = self.b.bin(Bo::Subtract, base, before);
+        let chosen = (self.wave_next(group)).ok_or_else(|| {
+            NotTranslated::Structure("the waves of a group have no turn to take".to_owned())
+        })?;
+        let ended = self.b.u32(ENDED);
+        let done = self.b.bin(Bo::Equal, chosen, ended);
+        self.when(done, |cx| {
+            cx.b.push(Statement::Return { value: None });
+            Ok(())
+        })?;
+        let release = self.b.u32(RELEASE);
+        let released = self.b.bin(Bo::Equal, chosen, release);
+        self.when(released, |cx| {
+            let (pointer, zero) = (cx.global(waiting), cx.b.u32(0));
+            cx.b.push(Statement::Store {
+                pointer,
+                value: zero,
+            });
+            cx.b.push(Statement::Continue);
+            Ok(())
+        })?;
+        let mine = self.b.bin(Bo::Equal, stands, chosen);
+        let idle = self.b.lnot(waits_now);
+        let here = self.b.bin(Bo::LogicalAnd, mine, idle);
+        let pointer = self.global(turn);
+        self.b.push(Statement::Store {
+            pointer,
+            value: here,
+        });
+        self.shared_wave.guarding = true;
+        let mut cases = Vec::with_capacity(blocks.len() + 1);
+        for (index, statements) in blocks.into_iter().enumerate() {
+            self.b.open();
+            self.b.push(Statement::Block(statements));
+            match ends.get(index) {
+                Some(&End::Jump(to)) => {
+                    let to = self.b.u32(to);
+                    self.put(Reg::Next, to);
+                }
+                Some(&End::Branch { then, otherwise }) => {
+                    let condition = self.raw(Reg::Cond(index as u32));
+                    let (then, otherwise) = (self.b.u32(then), self.b.u32(otherwise));
+                    self.put(Reg::Next, otherwise);
+                    self.when(condition, |cx| {
+                        cx.put(Reg::Next, then);
+                        Ok(())
+                    })?;
+                }
+                Some(End::Return) | None => {
+                    let ended = self.b.u32(ENDED);
+                    self.put(Reg::Next, ended);
+                }
+            }
+            if waits.get(index) == Some(&true) {
+                let (pointer, one) = (self.global(waiting), self.b.u32(1));
+                let old = self.b.load(pointer);
+                let value = self.b.select(here, one, old);
+                self.b.push(Statement::Store { pointer, value });
+            }
+            cases.push(naga::SwitchCase {
+                value: naga::SwitchValue::U32(index as u32),
+                body: self.b.close(),
+                fall_through: false,
+            });
+        }
+        self.shared_wave.guarding = false;
+        cases.push(naga::SwitchCase {
+            value: naga::SwitchValue::Default,
+            body: Block::new(),
+            fall_through: false,
+        });
+        self.b.push(Statement::Switch {
+            selector: chosen,
+            cases,
+        });
+        let body = self.b.close();
+        self.b.push(Statement::Loop {
+            body,
+            continuing: Block::new(),
+            break_if: None,
+        });
+        Ok(())
     }
 }

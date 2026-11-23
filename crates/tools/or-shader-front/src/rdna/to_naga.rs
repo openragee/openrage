@@ -21,6 +21,7 @@ mod buffers;
 mod flow;
 mod geometry;
 mod halves;
+mod uniform;
 mod wave;
 
 use flow::Flow;
@@ -59,14 +60,20 @@ pub enum NotTranslated {
 const GEOMETRY: &str = "a geometry program: it reads its primitive's vertices from memory the \
     vertex half of its pair wrote, and leaves the vertices it emits there for code the \
     pipeline holds to export, in a stage wgpu does not have";
-/// Why a pixel program that waits its turn at a pixel is not translated.
+/// Why a pixel program that waits its turn at a pixel is not translated: the wait is a
+/// rasterizer-ordered view in Direct3D, a fragment shader interlock in Vulkan and a raster
+/// order group in Metal, and neither naga's statements nor wgpu's features name any of them.
 const ORDERED: &str = "a pixel program shaded in primitive order: it holds every later \
-    primitive's pixel at its place until it has read and written its targets, which no stage \
-    of a device does";
-/// Why a program that intersects rays itself is not translated.
-const RAY_TRACING: &str = "a program that traces rays: it walks an acceleration structure's \
-    memory by address and tests each node with image_bvh_intersect_ray, where a device gives a \
-    structure to a ray query and to nothing else";
+    primitive's pixel at its place until it has read and written its targets. No statement \
+    of a naga module and no feature of wgpu asks a device for that wait, and without it two \
+    primitives at one pixel read and write the target in either order";
+/// Why a program that intersects rays itself is not translated: the structure it reads is
+/// the console driver's own, and what wgpu has is a ray query over a structure it builds.
+const RAY_TRACING: &str = "a program that traces rays: it loads the nodes of an acceleration \
+    structure from memory by address, tests each with image_bvh_intersect_ray and chooses \
+    itself where to go next. A device builds its own structure, whose memory no program \
+    reads, and gives it to a ray query that walks all of it: neither the nodes nor the test \
+    of one node has a counterpart, and a ray query in the walk's place would be another program";
 const VERTEX_HALF: &str = "the vertex half of a geometry pair: it leaves its vertex in memory \
     its group shares and returns to the pipeline's own code, with no position exported";
 
@@ -163,6 +170,44 @@ pub struct Lowered {
     pub subgroups: bool,
 }
 
+impl Lowered {
+    /// The textures the module loads texels of, by the place of each one's descriptor: each is declared with the kind [`Options::image_kinds`] states of it, and as floats where it states none.
+    pub fn image_loads(&self) -> BTreeSet<Loc> {
+        let functions = (self.module.functions.iter().map(|(_, function)| function))
+            .chain(self.module.entry_points.iter().map(|entry| &entry.function));
+        let mut loaded = BTreeSet::new();
+        for function in functions {
+            for (_, expression) in function.expressions.iter() {
+                let E::ImageLoad { mut image, .. } = *expression else {
+                    continue;
+                };
+                // An entry of a table bound whole is reached through the table.
+                while let E::Access { base, .. } | E::AccessIndex { base, .. } =
+                    function.expressions[image]
+                {
+                    image = base;
+                }
+                let E::GlobalVariable(global) = function.expressions[image] else {
+                    continue;
+                };
+                let binding = self.module.global_variables[global].binding.as_ref();
+                let resource = binding.and_then(|at| {
+                    (self.resources.iter()).find(|r| r.group == at.group && r.binding == at.binding)
+                });
+                if let Some(Resource {
+                    kind: ResourceKind::Texture { .. },
+                    at: Some(at),
+                    ..
+                }) = resource
+                {
+                    loaded.insert(at.clone());
+                }
+            }
+        }
+        loaded
+    }
+}
+
 /// What a lowering is told of the program's neighbours.
 #[derive(Debug, Clone, Default)]
 pub struct Options {
@@ -171,12 +216,18 @@ pub struct Options {
     /// The format of each texture the program stores to, by the place of its descriptor
     /// ([`Resource::at`]): a module declares a stored texture's format, which only the texture bound states.
     pub storage_formats: BTreeMap<Loc, naga::StorageFormat>,
+    /// The kind of each texture the program loads texels of, by the place of its descriptor
+    /// (those of [`Lowered::image_loads`]): floats for a float or a normalised format, signed or
+    /// unsigned integers for an integer one. The hardware loads what the texture's own
+    /// format holds, which only the texture bound states; one not stated here is declared
+    /// as floats, and counted.
+    pub image_kinds: BTreeMap<Loc, ScalarKind>,
     /// Whether a wave is the subgroup its device runs the invocation in, which the device has
     /// to allow ([`Lowered::subgroups`]) and which is the program's wave only on a device as
     /// wide, filled in thread order. Otherwise a pixel is a wave of one lane: a fold over the
     /// wave is the pixel's own value. And a compute group that is one wave keeps it in memory
-    /// the group shares, the same on every device; a group of several waves has only the
-    /// subgroup.
+    /// the group shares, the same on every device, and the full waves of a group of several
+    /// take turns there; only a group whose last wave is not full has the subgroup alone.
     pub wave: bool,
     /// The other half of a geometry pair: the geometry program a vertex half runs before, or the
     /// vertex half a geometry program runs after. With it either half lowers to the pair's one module.
@@ -1224,16 +1275,6 @@ fn is_half(name: &str) -> bool {
     name.ends_with("_f16") && !name.starts_with("v_cvt_")
 }
 
-/// Refuses a part selection that negates or takes the magnitude of a 16-bit float: the modifier
-/// is written for a whole register.
-fn half_parts(pc: u32, inst: &Inst, name: &str, word: u32) -> Done {
-    let modified = (word >> 20) & 3 != 0 || (word >> 28) & 3 != 0;
-    match modified && name.ends_with("_f16") {
-        true => Err(form(pc, inst, "a float modifier on a 16-bit part")),
-        false => Ok(()),
-    }
-}
-
 /// The pattern, in the low half of a dword, of the 16-bit float an inline float constant is.
 fn half_word(word: u32) -> u32 {
     u32::from(half_bits(f32::from_bits(word)))
@@ -1398,6 +1439,14 @@ struct Cx<'a> {
     lane: Option<Handle<naga::GlobalVariable>>,
     /// The wave of a compute group kept in the memory the group shares.
     shared_wave: wave::Shared,
+    /// The `v_readfirstlane_b32` that read what this lane holds too, by their words, and
+    /// whether a compute program holds one of the others: the wave's own first lane is then
+    /// read, in the memory the group shares.
+    first_exact: BTreeSet<u32>,
+    wants_wave: bool,
+    /// The `v_readfirstlane_b32` at the entry that read a register the launch gave, where
+    /// the first lane is the first thread of the wave.
+    first_entry: BTreeMap<u32, u8>,
     mesh: Option<Mesh>,
     half_slots: &'a BTreeSet<u8>,
     /// A pixel input by its parameter slot: the private variable, and whether anything interpolates it.
@@ -1420,7 +1469,9 @@ struct Cx<'a> {
     user_data: Option<Handle<naga::GlobalVariable>>,
     /// A constant buffer by its descriptor's place, with the rows it is read to.
     buffers: BTreeMap<Loc, (Handle<naga::GlobalVariable>, u32)>,
-    textures: BTreeMap<(Loc, u8, bool), Handle<naga::GlobalVariable>>,
+    textures: BTreeMap<(Loc, u8, bool, ScalarKind), Handle<naga::GlobalVariable>>,
+    /// The kinds the binder states of the textures the program loads.
+    kinds: &'a BTreeMap<Loc, ScalarKind>,
     /// A sampler by its descriptor's place or its constant words, and whether it compares.
     samplers: BTreeMap<SamplerKey, Handle<naga::GlobalVariable>>,
     /// A buffer read by address, by its descriptor's place and the stride the code states.
@@ -1484,7 +1535,9 @@ type StoredImages = BTreeMap<Loc, Option<naga::StorageFormat>>;
 /// What one lowering came to: the module, or the images it loaded before it found that the
 /// program stores to them, which the next lowering reads through their stored bindings.
 enum Pass {
-    Done(Box<Lowered>),
+    /// The module, and whether a compute program asks for its wave in shared memory though
+    /// it holds no subgroup operation.
+    Done(Box<Lowered>, bool),
     Again(StoredImages),
 }
 
@@ -1690,6 +1743,15 @@ impl<'a> Cx<'a> {
 
     fn put(&mut self, reg: Reg, value: Handle<E>) {
         let pointer = self.local(reg);
+        // Where a group's waves take turns, a thread of a wave whose turn it is not walks
+        // the block for its barriers alone, and keeps what its registers held.
+        let value = match self.turn() {
+            Some(here) => {
+                let old = self.b.load(pointer);
+                self.b.select(here, value, old)
+            }
+            None => value,
+        };
         self.b.push(Statement::Store { pointer, value });
         self.defined.insert(reg);
         self.shared_wave.wrote(reg);
@@ -1998,12 +2060,16 @@ impl<'a> Cx<'a> {
         Ok(self.b.load(cell))
     }
 
-    /// Whether this lane runs: bit 0 of the lane mask.
+    /// Whether this lane runs: bit 0 of the lane mask, in a wave whose turn it is.
     fn active(&mut self) -> Handle<E> {
         let exec = self.raw(Reg::S(EXEC));
         let one = self.b.u32(1);
         let bit = self.b.bin(Bo::And, exec, one);
-        self.b.ne0(bit)
+        let runs = self.b.ne0(bit);
+        match self.turn() {
+            Some(here) => self.b.bin(Bo::LogicalAnd, runs, here),
+            None => runs,
+        }
     }
 
     /// Writes a vector register, in an active lane only where the program masks lanes.
@@ -2184,9 +2250,12 @@ impl<'a> Cx<'a> {
             "s_sendmsg" | "s_barrier" if self.mesh.is_some() || self.pair.is_some() => {
                 return Ok(())
             }
-            // A compute group's threads wait for one another before any reads what another wrote.
+            // A compute group's threads wait for one another before any reads what another
+            // wrote. Waves that take turns wait where the block ends, which is here.
             "s_barrier" if self.launch.is_some() => {
-                (self.b).push(Statement::ControlBarrier(naga::Barrier::WORK_GROUP));
+                if self.shared_wave.waves == 1 {
+                    (self.b).push(Statement::ControlBarrier(naga::Barrier::WORK_GROUP));
+                }
                 return Ok(());
             }
             "s_cbranch_scc0" | "s_cbranch_scc1" => {
@@ -3506,16 +3575,29 @@ impl<'a> Cx<'a> {
                 }
             }
             ("v_readfirstlane_b32", _, _) => {
-                // ponytail: this lane stands for the first active one, which is exact where the value is the same in every lane.
                 let value = self.sv(pc, src)?;
                 let first = match self.shared_wave.threads {
                     Some(_) => self.shared_first(value),
                     None => None,
                 };
+                // This lane stands for the first that runs where every lane that runs holds
+                // the value, or where the program goes on to keep the wave to the lanes
+                // that do. Elsewhere which lanes share a wave decides, which a compute
+                // group states and no other stage does.
+                // A mesh thread's launch number in the first lane of its wave: the number
+                // of the wave's first thread, while every lane runs.
+                let launched = self.mesh.is_some() && self.first_entry.get(&pc) == Some(&5);
                 let value = match first {
                     Some(first) => first,
+                    None if launched => {
+                        let rest = self.b.u32(!(wave::width(self.program) - 1));
+                        self.b.bin(Bo::And, value, rest)
+                    }
                     None => {
-                        self.note("the first lane read as this lane");
+                        if !self.first_exact.contains(&pc) && matches!(src, Operand::Vgpr(_)) {
+                            self.note("the first lane read as this lane");
+                            self.wants_wave |= self.launch.is_some();
+                        }
                         value
                     }
                 };
@@ -3552,7 +3634,6 @@ impl<'a> Cx<'a> {
                 self.permute(pc, inst, dst, source, quad)?;
             }
             (_, Operand::Sdwa, Some(word)) => {
-                half_parts(pc, inst, name, word)?;
                 let (a, _) = self.sdwa_sources(pc, inst, word, None)?;
                 let value = self.unary(pc, inst, name, a)?;
                 self.sdwa_put(pc, inst, word, dst, value)?;
@@ -3628,13 +3709,27 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// Counts a 16-bit result that is not the hardware's on every input: a fused multiply-add
-    /// is rounded to 32 bits before 16, and a function is as exact as the device's 32-bit one.
+    /// `a * b + c` of three float patterns as a pattern that any rounding to a 16-bit float
+    /// rounds as it would the whole sum, which is the hardware's one rounding: integer
+    /// arithmetic, in one function of the module.
+    fn fused(&mut self, a: Handle<E>, b: Handle<E>, c: Handle<E>) -> Handle<E> {
+        let whole = self.wave_call("fused".to_owned(), vec![a, b, c], |_, f, taken| {
+            Some(f.fused(taken[0], taken[1], taken[2]))
+        });
+        match whole {
+            Some(whole) => whole,
+            None => self.b.fmath(Mf::Fma, &[a, b, c]),
+        }
+    }
+
+    /// Counts a 16-bit result that is not the hardware's on every input: a multiply-add that
+    /// is not computed whole is rounded to 32 bits before 16, and a function is as exact as
+    /// the device's 32-bit one.
     fn note_half(&mut self, name: &str) {
         let kind = name.trim_start_matches("v_pk_").trim_start_matches("v_");
         let kind = kind.split('_').next().unwrap_or(kind);
         match kind {
-            "fma" | "fmac" | "mac" => {
+            "fmac" | "mac" => {
                 self.note("a 16-bit fused multiply-add rounded at 32 bits before 16");
             }
             _ if half_function(name) => {
@@ -3682,7 +3777,6 @@ impl<'a> Cx<'a> {
         };
         let (a, b) = match parts {
             Some(word) => {
-                half_parts(pc, inst, name, word)?;
                 let (a, b) = self.sdwa_sources(pc, inst, word, Some(src1))?;
                 let b = b.ok_or_else(|| refused(pc, inst))?;
                 (self.widen(a), self.widen(b))
@@ -3699,10 +3793,12 @@ impl<'a> Cx<'a> {
                 let held = self.vreg(pc, dst)?;
                 let c = self.widen(held);
                 let sum = match name {
-                    "v_mac_f16" => self.b.mad(false, a, b, c),
-                    _ => self.b.fmath(Mf::Fma, &[a, b, c]),
+                    "v_mac_f16" => {
+                        self.note_half(name);
+                        self.b.mad(false, a, b, c)
+                    }
+                    _ => self.fused(a, b, c),
                 };
-                self.note_half(name);
                 self.narrow(sum)
             }
             _ => (self.half_alu(name, &[a, b])).ok_or_else(|| refused(pc, inst))?,
@@ -3732,7 +3828,10 @@ impl<'a> Cx<'a> {
     ) -> Done {
         let compare = name.starts_with("v_cmp");
         let scaled = omod != 0 && name != "v_cvt_f32_f16";
-        if (!compare && opsel != 0) || scaled || name.contains("_class_") {
+        // An arithmetic over 16-bit floats names the half of each register it reads, and
+        // in the fourth bit the half of the destination it writes.
+        let parts = !compare && is_half(name);
+        if (!compare && !parts && opsel != 0) || scaled || name.contains("_class_") {
             return Err(form(
                 pc,
                 inst,
@@ -3741,8 +3840,14 @@ impl<'a> Cx<'a> {
         }
         let mut values = Vec::with_capacity(count);
         for (i, src) in srcs.iter().take(count).enumerate() {
+            let high = parts && (opsel >> i) & 1 != 0 && !matches!(src, Operand::Float(_));
             let bits = match name {
                 "v_cvt_f16_f32" => self.sv(pc, *src)?,
+                _ if high => {
+                    let (bits, sixteen) = (self.sv(pc, *src)?, self.b.u32(16));
+                    let upper = self.b.bin(Bo::ShiftRight, bits, sixteen);
+                    self.widen(upper)
+                }
                 _ => self.widened(pc, *src)?,
             };
             values.push(self.modified(bits, (abs >> i) & 1 != 0, (neg >> i) & 1 != 0));
@@ -3760,6 +3865,7 @@ impl<'a> Cx<'a> {
         let mut value = match (name, values.first()) {
             // A conversion's source is already a 32-bit pattern, whichever way it goes.
             ("v_cvt_f16_f32" | "v_cvt_f32_f16", Some(&only)) => only,
+            ("v_fma_f16", _) if values.len() == 3 => self.fused(values[0], values[1], values[2]),
             _ => (self.b.alu(&wide, &values)).ok_or_else(|| refused(pc, inst))?,
         };
         // A scale by two, four or a half is exact in 32 bits, and comes before the clamp.
@@ -3772,6 +3878,14 @@ impl<'a> Cx<'a> {
             self.note_half(name);
         }
         let half = self.narrow_as(name, value);
+        if parts && opsel & 8 != 0 {
+            let (old, low, sixteen) = (self.raw(Reg::V(dst)), self.b.u32(0xFFFF), self.b.u32(16));
+            let kept = self.b.bin(Bo::And, old, low);
+            let raised = self.b.bin(Bo::ShiftLeft, half, sixteen);
+            let value = self.b.bin(Bo::InclusiveOr, kept, raised);
+            self.vput(dst, value);
+            return Ok(());
+        }
         self.vput_half(dst, half);
         Ok(())
     }
@@ -4192,7 +4306,15 @@ impl<'a> Cx<'a> {
             }
             values.push(x);
         }
-        let mut value = self.b.math(Mf::Fma, &values);
+        let mut value = match name {
+            "v_fma_mix_f32" => self.b.math(Mf::Fma, &values),
+            // A 16-bit result is the whole sum rounded once.
+            _ => {
+                let [a, b, c] = [0, 1, 2].map(|i| self.b.bits(values[i]));
+                let whole = self.fused(a, b, c);
+                self.b.float(whole)
+            }
+        };
         if clamp {
             value = self.b.math(Mf::Saturate, &[value]);
         }
@@ -4200,7 +4322,6 @@ impl<'a> Cx<'a> {
             "v_fma_mix_f32" => self.b.bits(value),
             // The 16-bit forms write one half of the destination and keep the other.
             _ => {
-                self.note_half("v_fma");
                 let wide = self.b.bits(value);
                 let half = self.narrow(wide);
                 let (low, old) = (self.b.u32(0xFFFF), self.raw(Reg::V(dst)));
@@ -4256,7 +4377,10 @@ impl<'a> Cx<'a> {
                 }
                 inputs.push(self.b.bits(x));
             }
-            let mut value = (self.b.alu(&wide, &inputs)).ok_or_else(|| refused(pc, inst))?;
+            let mut value = match (name, inputs.as_slice()) {
+                ("v_pk_fma_f16", &[a, b, c]) => self.fused(a, b, c),
+                _ => (self.b.alu(&wide, &inputs)).ok_or_else(|| refused(pc, inst))?,
+            };
             if clamp {
                 value = self.b.fmath(Mf::Saturate, &[value]);
             }
@@ -4610,15 +4734,36 @@ impl<'a> Cx<'a> {
             true => cx.sreg(pc, number),
             false => cx.vreg(pc, number),
         };
+        // The float they are read as is the instruction's: a 16-bit one's sign is bit 15.
+        let half = inst.name().ends_with("_f16");
+        let modified = |cx: &mut Self, part: Handle<E>, abs: bool, neg: bool| match half {
+            true => {
+                let (mut part, sign) = (part, cx.b.u32(0x8000));
+                if abs {
+                    let rest = cx.b.u32(!0x8000);
+                    part = cx.b.bin(Bo::And, part, rest);
+                }
+                if neg {
+                    part = cx.b.bin(Bo::ExclusiveOr, part, sign);
+                }
+                part
+            }
+            false => cx.modified(part, abs, neg),
+        };
         let first = register(self, word as u8, (word >> 23) & 1 != 0)?;
         let first = self.sdwa_part(pc, inst, first, (word >> 16) & 7, (word >> 19) & 1 != 0)?;
-        let first = self.modified(first, (word >> 21) & 1 != 0, (word >> 20) & 1 != 0);
+        let first = modified(self, first, (word >> 21) & 1 != 0, (word >> 20) & 1 != 0);
         let second = match second {
             Some(number) => {
                 let value = register(self, number, word >> 31 != 0)?;
                 let part =
                     self.sdwa_part(pc, inst, value, (word >> 24) & 7, (word >> 27) & 1 != 0)?;
-                Some(self.modified(part, (word >> 29) & 1 != 0, (word >> 28) & 1 != 0))
+                Some(modified(
+                    self,
+                    part,
+                    (word >> 29) & 1 != 0,
+                    (word >> 28) & 1 != 0,
+                ))
             }
             None => None,
         };
@@ -4635,10 +4780,19 @@ impl<'a> Cx<'a> {
             let name = inst.name();
             let float_out = (name.ends_with("_f32") && !name.starts_with("v_cvt_"))
                 || name.starts_with("v_cvt_f32_");
-            if !float_out {
-                return Err(form(pc, inst, "an output modifier on an integer result"));
+            match (float_out, is_half(name)) {
+                (true, _) => value = self.output_modified(value, clamp, omod),
+                // A 16-bit float kept to zero and one is zero, one or itself: no rounding.
+                (false, true) if omod == 0 => {
+                    let wide = self.widen(value);
+                    let kept = self.b.fmath(Mf::Saturate, &[wide]);
+                    value = self.b.half_of(kept, Rounding::TowardZero);
+                }
+                (false, true) => return Err(form(pc, inst, "a scale on a 16-bit result")),
+                (false, false) => {
+                    return Err(form(pc, inst, "an output modifier on an integer result"))
+                }
             }
-            value = self.output_modified(value, clamp, omod);
         }
         let (first, width) = match sel {
             0..=3 => (8 * sel, 8),
@@ -5089,7 +5243,20 @@ impl<'a> Cx<'a> {
     }
 
     /// The image the eight descriptor registers from `rsrc` name, as an expression.
-    fn image_of(&mut self, pc: u32, inst: &Inst, (rsrc, dim, compared): (u8, u8, bool)) -> Value {
+    /// The kind the binder states of the texture whose descriptor is in `rsrc`, by its
+    /// place: the whole table's where a run computes the entry.
+    fn stated_kind(&self, rsrc: u8) -> Option<ScalarKind> {
+        let at = sym::descriptor(&self.state, rsrc, 8)?;
+        let at = if sym::computed(&at) { whole(&at) } else { at };
+        self.kinds.get(&at).copied()
+    }
+
+    fn image_of(
+        &mut self,
+        pc: u32,
+        inst: &Inst,
+        (rsrc, dim, compared, texel): (u8, u8, bool, ScalarKind),
+    ) -> Value {
         let (dimension, arrayed) = match dim {
             0 => (ImageDimension::D1, false),
             1 => (ImageDimension::D2, false),
@@ -5114,13 +5281,13 @@ impl<'a> Cx<'a> {
         // A place a run computed picks one entry of the whole table, bound as an array of this kind of image.
         let slot = self.entry(pc, rsrc, &at, SLOT_DWORDS);
         let at = if slot.is_some() { whole(&at) } else { at };
-        let texture = match self.textures.get(&(at.clone(), dim, compared)) {
+        let texture = match self.textures.get(&(at.clone(), dim, compared, texel)) {
             Some(&global) => global,
             None => {
                 let class = match compared {
                     true => ImageClass::Depth { multi: false },
                     false => ImageClass::Sampled {
-                        kind: ScalarKind::Float,
+                        kind: texel,
                         multi: false,
                     },
                 };
@@ -5136,7 +5303,7 @@ impl<'a> Cx<'a> {
                     Some(_) => self.bound_table(name, inner, space, kind, at.clone()),
                     None => self.bound(name, inner, space, kind, Some(at.clone())),
                 };
-                self.textures.insert((at, dim, compared), global);
+                self.textures.insert((at, dim, compared, texel), global);
                 global
             }
         };
@@ -5551,7 +5718,14 @@ impl<'a> Cx<'a> {
                     "xor" => F::ExclusiveOr,
                     "umin" | "smin" => F::Min,
                     "umax" | "smax" => F::Max,
-                    _ => return Err(form(pc, inst, "an update no atomic texture makes")),
+                    // naga's validator takes a sum, a mask, a least and a greatest value.
+                    _ => {
+                        return Err(form(
+                            pc,
+                            inst,
+                            "an update of a texel that a module has no statement for",
+                        ))
+                    }
                 };
                 let low = self.vreg(pc, *data)?;
                 let value = match format {
@@ -5633,7 +5807,12 @@ impl<'a> Cx<'a> {
             if let Some(atomic) = stored {
                 return self.load_stored(pc, inst, name, atomic);
             }
-            let image = self.image_of(pc, inst, (*rsrc, *dim, false))?;
+            let kind = self.stated_kind(*rsrc);
+            let image = self.image_of(
+                pc,
+                inst,
+                (*rsrc, *dim, false, kind.unwrap_or(ScalarKind::Float)),
+            )?;
             // Integer coordinates, the slice of an array after them, then the level where the mnemonic takes one.
             let mut parts = Vec::with_capacity(coords);
             for _ in 0..coords {
@@ -5658,8 +5837,11 @@ impl<'a> Cx<'a> {
                     })
                 }
             };
-            // ponytail: the texel is read as floats; an integer format needs the descriptor's own format, known only at run time.
-            self.note("an image loaded as floats");
+            // The hardware loads what the texture's format holds, floats or integers, which
+            // only the texture bound states: the binder's word, or floats and a count.
+            if kind.is_none() {
+                self.note("an image loaded as floats");
+            }
             let texel = self.b.emit(E::ImageLoad {
                 image,
                 coordinate,
@@ -5668,14 +5850,23 @@ impl<'a> Cx<'a> {
                 level: Some(level),
             });
             let mut parts = Vec::with_capacity(4);
+            let floats = matches!(kind, None | Some(ScalarKind::Float));
             for &c in &enabled {
                 let part = self.b.index(texel, c);
-                parts.push(self.b.bits(part));
+                parts.push(match kind {
+                    Some(ScalarKind::Uint) => part,
+                    _ => self.b.bits(part),
+                });
             }
-            return self.put_texel(pc, inst, (*data, *d16, true), &parts);
+            return self.put_texel(pc, inst, (*data, *d16, floats), &parts);
         }
         if name == "image_get_resinfo" {
-            let image = self.image_of(pc, inst, (*rsrc, *dim, false))?;
+            let kind = self.stated_kind(*rsrc);
+            let image = self.image_of(
+                pc,
+                inst,
+                (*rsrc, *dim, false, kind.unwrap_or(ScalarKind::Float)),
+            )?;
             let level = self.int_operand(pc, inst, addrs, &mut at)?;
             let sizes = self.image_size(*dim, image, level);
             let parts: Vec<_> = enabled.iter().map(|&c| sizes[c as usize]).collect();
@@ -5743,7 +5934,7 @@ impl<'a> Cx<'a> {
         if cube && (gather || lod || compared) {
             return Err(form(pc, inst, "a cube gathered, compared or measured"));
         }
-        let image = self.image_of(pc, inst, (*rsrc, *dim, compared))?;
+        let image = self.image_of(pc, inst, (*rsrc, *dim, compared, ScalarKind::Float))?;
         let samplers = match texels {
             true => Vec::new(),
             false => self.sampler_of(pc, *samp, compared)?,
@@ -6010,7 +6201,6 @@ impl<'a> Cx<'a> {
                 extra: Some(word),
                 ..
             } => {
-                half_parts(pc, inst, name, *word)?;
                 let (a, b) = self.sdwa_sources(pc, inst, *word, Some(*src1))?;
                 let b = b.ok_or_else(|| refused(pc, inst))?;
                 let condition = self.compared(pc, inst, name, a, b)?;
@@ -6543,6 +6733,9 @@ impl<'a> Cx<'a> {
         };
         let Some(launch) = self.launch else {
             return Err(match self.mesh {
+                // A thread stores where data it loaded says, and after the barrier another
+                // reads where its own number says: a thread run alone finds what it reads
+                // only once every thread of its group has run to the barrier.
                 Some(_) => form(
                     pc,
                     inst,
@@ -7055,15 +7248,29 @@ fn lower_as(
     split: Option<&geometry::Split>,
 ) -> Result<Lowered, NotTranslated> {
     let (mut told, mut eager, mut shared) = (StoredImages::new(), false, None);
+    // What the lowering onto the device's subgroup came to, where it stands if the one
+    // through shared memory stops: a group of several waves, or one that asked for its wave
+    // only to read a first lane.
+    let mut alone = None;
+    let cut;
+    let mut cfg = cfg;
     loop {
         match lower_pass(program, cfg, options, (&told, eager, shared), split) {
-            // A compute group that is one wave, lowered onto its device's subgroup: again,
-            // with the wave in the memory the group shares, which every device runs alike.
-            Ok(Pass::Done(lowered)) => {
-                let again = lowered.subgroups && !options.wave && shared.is_none();
-                match wave::one_wave(program).filter(|_| again) {
-                    Some(threads) => shared = Some(threads),
-                    None => return Ok(*lowered),
+            // A compute group lowered onto its device's subgroup: again, with its waves in
+            // the memory the group shares, which every device runs alike.
+            Ok(Pass::Done(lowered, wants_wave)) => {
+                let again = (lowered.subgroups || wants_wave) && !options.wave && shared.is_none();
+                let Some(shape) = wave::waves(program).filter(|_| again) else {
+                    return Ok(*lowered);
+                };
+                shared = Some(shape);
+                if shape.1 > 1 || !lowered.subgroups {
+                    alone = Some(lowered);
+                }
+                if shape.1 > 1 {
+                    cut = wave::split(cfg);
+                    cfg = &cut;
+                    break;
                 }
             }
             // Each round names an image no earlier one did, so the rounds end.
@@ -7071,7 +7278,18 @@ fn lower_as(
             Err(NotTranslated::Descriptor {
                 what: MIXED_NUMBER, ..
             }) if !eager => eager = true,
-            Err(stopped) => return Err(stopped),
+            Err(stopped) => return alone.map_or(Err(stopped), |alone| Ok(*alone)),
+        }
+    }
+    // Waves that take turns, over the graph cut where a wave waits for its group.
+    loop {
+        match lower_pass(program, cfg, options, (&told, eager, shared), split) {
+            Ok(Pass::Done(lowered, _)) => return Ok(*lowered),
+            Ok(Pass::Again(more)) => told.extend(more),
+            Err(NotTranslated::Descriptor {
+                what: MIXED_NUMBER, ..
+            }) if !eager => eager = true,
+            Err(stopped) => return alone.map_or(Err(stopped), |alone| Ok(*alone)),
         }
     }
 }
@@ -7086,7 +7304,7 @@ fn lower_pass(
     program: &Program,
     cfg: &Cfg,
     options: &Options,
-    (told, eager, shared): (&StoredImages, bool, Option<u32>),
+    (told, eager, shared): (&StoredImages, bool, Option<(u32, u32)>),
     split: Option<&geometry::Split>,
 ) -> Result<Pass, NotTranslated> {
     let stage = match program.kind {
@@ -7137,8 +7355,11 @@ fn lower_pass(
         });
         ends.push(end);
     }
-    // A graph with a loop entered at two blocks still runs, block by block, in a dispatch loop.
+    // A graph with a loop entered at two blocks still runs, block by block, in a dispatch
+    // loop, and so do the waves of a group of several, a block of one wave at a time.
+    let turns = shared.is_some_and(|(_, waves)| waves > 1);
     let (nodes, unstructured) = match flow::structure(&ends) {
+        _ if turns => (None, None),
         Ok(nodes) => (Some(nodes), None),
         Err(why) => (None, Some(why)),
     };
@@ -7149,7 +7370,7 @@ fn lower_pass(
         b: Builder::new(),
         fragment,
         vertex: program.kind == ShaderKind::Vertex,
-        masked: masks_lanes(cfg),
+        masked: turns || masks_lanes(cfg),
         locals: HashMap::new(),
         spread: nodes
             .as_deref()
@@ -7170,6 +7391,9 @@ fn lower_pass(
         half_mode: None,
         lane: None,
         shared_wave: wave::Shared::of(shared),
+        first_exact: uniform::first_lanes(cfg, program.wave32),
+        wants_wave: false,
+        first_entry: uniform::entry_lanes(cfg),
         mesh: None,
         half_slots: &options.half_slots,
         attributes: BTreeMap::new(),
@@ -7185,6 +7409,7 @@ fn lower_pass(
         user_data: None,
         buffers: BTreeMap::new(),
         textures: BTreeMap::new(),
+        kinds: &options.image_kinds,
         samplers: BTreeMap::new(),
         storage: BTreeMap::new(),
         blocks: BTreeMap::new(),
@@ -7253,6 +7478,7 @@ fn lower_pass(
         .collect();
     let mut states = sym::solve_for(cfg, program.wave32);
     let mut lowered = Vec::with_capacity(starts.len());
+    cx.take_turns(turns);
     for (index, (start, block)) in cfg.blocks.iter().enumerate() {
         let state = states.remove(start).unwrap_or_else(sym::entry);
         // The first function is the one the lowering holds; another is swapped in for its blocks.
@@ -7272,7 +7498,7 @@ fn lower_pass(
     // through the stored binding, which only another lowering can give them.
     let clash: StoredImages = (cx.images_stored.iter())
         .filter(|(at, _)| {
-            !told.contains_key(*at) && cx.textures.keys().any(|(read, _, _)| read == *at)
+            !told.contains_key(*at) && cx.textures.keys().any(|(read, ..)| read == *at)
         })
         .chain(&cx.restated)
         .map(|(at, atomic)| (at.clone(), *atomic))
@@ -7280,6 +7506,7 @@ fn lower_pass(
     if !clash.is_empty() {
         return Ok(Pass::Again(clash));
     }
+    cx.shared_wave.guarding = false;
     cx.settle_swizzles(&successors)?;
     for (block, n) in std::mem::take(&mut cx.rebuilt) {
         if read_after(&lowered, &successors, block as usize, Reg::V(n)) {
@@ -7296,6 +7523,11 @@ fn lower_pass(
             let mut blocks: Vec<Option<Block>> =
                 lowered.into_iter().map(|l| Some(l.block)).collect();
             cx.flow(&nodes, &mut blocks, &mut parts, Place::default())?;
+        }
+        None if turns => {
+            let waits: Vec<bool> = cfg.blocks.values().map(wave::waits).collect();
+            let blocks = lowered.into_iter().map(|l| l.block).collect();
+            cx.dispatch_waves(&ends, &waits, blocks)?;
         }
         None => {
             cx.note(match unstructured {
@@ -7338,6 +7570,7 @@ fn lower_pass(
         shared_atomic,
         pair,
         shared_wave,
+        wants_wave,
         ..
     } = cx;
     // What the program updates in one step holds atomic dwords, which its other reads and
@@ -7751,11 +7984,12 @@ fn lower_pass(
         task_payload: None,
         incoming_ray_payload: None,
     });
-    Ok(Pass::Done(Box::new(Lowered {
+    let lowered = Lowered {
         module,
         resources,
         approximations: notes,
         half_slots: halves.keys().map(|(slot, _)| *slot).collect(),
         subgroups: wave_ops || lane.is_some(),
-    })))
+    };
+    Ok(Pass::Done(Box::new(lowered), wants_wave))
 }

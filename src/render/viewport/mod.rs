@@ -94,6 +94,8 @@ pub(crate) struct MeshCacheKey {
     /// out and switching channel changes nothing on screen.
     debug_channel: Option<crate::render::debug_channel::DebugChannel>,
     lod: usize,
+    /// Whether a GTA VI weapon is drawn as its parts.
+    assemble_parts: bool,
     /// The garment's variant, which stands in for the diffuse its material names.
     garment_dictionary: Option<DocumentId>,
     /// ⚠ A mesh's texture comes from another tab's file, which a recook reads again without this model's own count moving.
@@ -120,6 +122,7 @@ impl MeshCacheKey {
             anim_scene: anim_scene_signature(state),
             debug_channel: state.preview_scene.debug_channel,
             lod: state.preview_scene.lod,
+            assemble_parts: state.preview_scene.assemble_parts,
             garment_dictionary: state.garment_dictionary(doc),
             recooked: state.recooked,
             packs: crate::state::ttpf_document::packs_epoch(state),

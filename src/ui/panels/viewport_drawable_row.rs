@@ -40,6 +40,9 @@ pub(crate) fn draw(ui: &mut egui::Ui, rect: egui::Rect, top: f32, state: &mut Ap
         levels: levels(state),
         collision: has_collision(state),
         skeleton: bones::can_draw(state),
+        weapon: (state.active_document())
+            .and_then(|doc| doc.path.as_deref())
+            .is_some_and(|path| crate::state::gta6_weapon_parts::of(path).is_some()),
         export: gta6_model(state)
             .and_then(|doc| commands::on(state, Action::ExportGltf, Target::Document(doc))),
     };
@@ -66,6 +69,8 @@ struct Parts {
     levels: Vec<(usize, f32)>,
     collision: bool,
     skeleton: bool,
+    /// Whether the document is a GTA VI weapon whose parts are kept.
+    weapon: bool,
     /// Export to glTF… on a GTA VI drawable, as the command registry offers it now.
     export: Option<Command>,
 }
@@ -75,10 +80,12 @@ fn draw_parts(ui: &mut egui::Ui, rect: egui::Rect, top: f32, state: &mut AppStat
         levels,
         collision,
         skeleton,
+        weapon,
         export,
     } = parts;
     let toggle = if collision { TOGGLE_W } else { 0.0 };
     let bones_toggle = if skeleton { BONES_W } else { 0.0 };
+    let parts_toggle = if weapon { BONES_W } else { 0.0 };
     // The button is as wide as its words, which a language changes.
     let button = |text: &str| {
         let font = egui::TextStyle::Button.resolve(ui.style());
@@ -86,9 +93,15 @@ fn draw_parts(ui: &mut egui::Ui, rect: egui::Rect, top: f32, state: &mut AppStat
         let words = ui.painter().layout_no_wrap(text.to_string(), font, colour);
         words.size().x + 2.0 * ui.spacing().button_padding.x
     };
-    let counted = [!levels.is_empty(), collision, skeleton, export.is_some()];
+    let counted = [
+        !levels.is_empty(),
+        collision,
+        skeleton,
+        weapon,
+        export.is_some(),
+    ];
     let gaps = counted.iter().filter(|c| **c).count().saturating_sub(1);
-    let toggles = toggle + bones_toggle + GAP * gaps as f32;
+    let toggles = toggle + bones_toggle + parts_toggle + GAP * gaps as f32;
     let least = if levels.is_empty() { 0.0 } else { SWITCH_LEAST };
     let room = rect.width() - 16.0;
     // ⚠ Where the row is too wide with the switch at its least, the button is its icon alone, named by its words
@@ -168,6 +181,12 @@ fn draw_parts(ui: &mut egui::Ui, rect: egui::Rect, top: f32, state: &mut AppStat
                 "Draw the skeleton as lines in front of the model; click a line to select its bone",
             );
         }
+        if weapon {
+            ui.checkbox(&mut state.preview_scene.assemble_parts, tr!("Parts"))
+                .on_hover_text(tr!(
+                    "Draw the weapon as the first of each kind of its parts, each on its bone, in place of its own mesh"
+                ));
+        }
         if let Some(command) = &export {
             let enabled = command.enabled.is_ok();
             let words = command.label.as_str();
@@ -232,6 +251,7 @@ mod tests {
                         levels: vec![(0, 15.0), (1, 40.0), (3, 300.0)],
                         collision: true,
                         skeleton: true,
+                        weapon: false,
                         export: export.clone(),
                     };
                     draw_parts(ui, rect, 8.0, state, parts);

@@ -16014,3 +16014,9 @@ msgid "{count} station no text names"
 msgid_plural "{count} stations no text names"
 msgstr[0] "텍스트가 이름을 지정하지 않은 방송국 {count}개"
 msgstr[1] "텍스트가 이름을 지정하지 않은 방송국 {count}개"
+
+msgid "Parts"
+msgstr "부품"
+
+msgid "Draw the weapon as the first of each kind of its parts, each on its bone, in place of its own mesh"
+msgstr "무기를 각 종류의 첫 번째 부품으로 그립니다. 각 부품은 해당 뼈대에 놓이며 무기 자체의 메시를 대신합니다"

@@ -550,6 +550,7 @@ pub(super) fn read_body(path: &Path, archive: &Path, offset: u64) -> Result<DocP
                 let read = Arc::new(read);
                 if let Some(fragment) = fragment {
                     super::gta6_head::keep(path, &read, virtual_section, physical, fragment);
+                    super::gta6_weapon_parts::keep(path, archive, &read);
                 }
                 DocPayload::Gta6Drawable(read)
             })

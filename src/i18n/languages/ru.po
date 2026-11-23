@@ -16149,3 +16149,9 @@ msgid_plural "{count} stations no text names"
 msgstr[0] "{count} станция, которую не называет ни один текст"
 msgstr[1] "{count} станции, которые не называет ни один текст"
 msgstr[2] "{count} станций, которые не называет ни один текст"
+
+msgid "Parts"
+msgstr "Детали"
+
+msgid "Draw the weapon as the first of each kind of its parts, each on its bone, in place of its own mesh"
+msgstr "Рисует оружие из первой детали каждого вида, каждая на своей кости, вместо его собственного меша"

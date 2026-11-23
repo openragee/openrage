@@ -92,6 +92,8 @@ pub struct PreviewScene {
     pub lod: usize,
     /// Whether the viewport draws the bound a drawable embeds.
     pub show_collision: bool,
+    /// Whether a GTA VI weapon is drawn as its parts, each on its bone, in place of its own mesh.
+    pub assemble_parts: bool,
     /// Whether the preview draws the skeleton source's own model while no mesh source is chosen, or the chosen sources draw nothing.
     ///
     /// ⚠ Ticked unless the user unticked it, and kept in the preferences: a ped's `.yft` holds a
@@ -120,6 +122,7 @@ impl Default for PreviewScene {
             debug_channel: None,
             lod: 0,
             show_collision: false,
+            assemble_parts: true,
             draw_skeleton_model: true,
             picked: None,
         }

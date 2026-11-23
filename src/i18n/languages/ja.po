@@ -16014,3 +16014,9 @@ msgid "{count} station no text names"
 msgid_plural "{count} stations no text names"
 msgstr[0] "どのテキストにも名前がないラジオ局 {count} 個"
 msgstr[1] "どのテキストにも名前がないラジオ局 {count} 個"
+
+msgid "Parts"
+msgstr "パーツ"
+
+msgid "Draw the weapon as the first of each kind of its parts, each on its bone, in place of its own mesh"
+msgstr "武器を各種パーツの最初のもので描画します。それぞれ自分のボーンに置かれ、武器自身のメッシュの代わりになります"

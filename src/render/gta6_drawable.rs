@@ -3,7 +3,9 @@
 //! where a GTA VI clip poses a skeleton; or a bound's triangles and primitive children, each child
 //! placed by its matrix.
 
-use glam::{Mat4, Vec3, Vec4};
+use std::sync::Arc;
+
+use glam::{Mat3, Mat4, Vec3, Vec4};
 use or_io::gta5::data::materials_palette::MaterialPalette;
 use or_io::gta5::{
     PhBound, PhBoundAny, PhBoundBox, PhBoundCapsule, PhBoundCylinder, PhBoundDisc, PhBoundSphere,
@@ -23,6 +25,7 @@ use super::debug_channel::DebugChannel;
 use super::meshes::{face_normals, MeshUpload};
 use crate::state::capabilities::GeometryRequest;
 use crate::state::gta6_resource::{drawable_of, texture_name};
+use crate::state::gta6_weapon_parts::Part;
 use crate::state::{AppState, DocPayload, DocumentId};
 
 /// The skeleton a GTA VI clip poses, and the drawable's own, which its meshes are skinned to.
@@ -45,7 +48,14 @@ pub(crate) fn meshes(req: &GeometryRequest<'_>) -> Vec<MeshUpload> {
     let srgb = |key: u64| srgb_key(req.state, req.doc.id, key);
     match (drawable_of(resource, req.selection), &**resource) {
         (Some(drawable), _) => {
-            let mut out = meshes_at(drawable, lod, posing, channel, &srgb);
+            // A clip poses the weapon's own mesh: no part is skinned to its skeleton.
+            let parts = parts_drawn(req.state, req.doc).filter(|_| posing.is_none());
+            let mut out = match &parts {
+                Some(parts) => (parts.iter())
+                    .flat_map(|part| part_meshes(part, lod, channel, &srgb))
+                    .collect(),
+                None => meshes_at(drawable, lod, posing, channel, &srgb),
+            };
             out.extend(surface_meshes(drawable));
             out
         }
@@ -53,6 +63,37 @@ pub(crate) fn meshes(req: &GeometryRequest<'_>) -> Vec<MeshUpload> {
         (None, Resource::Cloth(cloth)) => super::gta6_cloth::meshes(cloth),
         _ => Vec::new(),
     }
+}
+
+/// The parts drawn in place of `doc`'s own mesh: those kept for a weapon, while the row's box is ticked.
+pub(crate) fn parts_drawn(
+    state: &AppState,
+    doc: &crate::state::Document,
+) -> Option<Arc<Vec<Part>>> {
+    (state.preview_scene.assemble_parts)
+        .then(|| crate::state::gta6_weapon_parts::of(doc.path.as_deref()?))
+        .flatten()
+}
+
+/// A part's meshes at `lod`, in the weapon's frame.
+fn part_meshes(
+    part: &Part,
+    lod: usize,
+    channel: Option<DebugChannel>,
+    srgb: &dyn Fn(u64) -> Option<bool>,
+) -> Vec<MeshUpload> {
+    let Some(drawable) = drawable_of(&part.resource, None) else {
+        return Vec::new();
+    };
+    let normals = Mat3::from_mat4(part.place).inverse().transpose();
+    let mut meshes = meshes_at(drawable, lod, None, channel, srgb);
+    for v in meshes.iter_mut().flat_map(|mesh| &mut mesh.vertices) {
+        v.position = (part.place.transform_point3(Vec3::from(v.position))).to_array();
+        v.normal = (normals * Vec3::from(v.normal))
+            .normalize_or_zero()
+            .to_array();
+    }
+    meshes
 }
 
 /// The levels of `doc`'s GTA VI drawable that hold models, each with the distance it is drawn to.
@@ -158,6 +199,10 @@ pub(crate) fn drawn_geometries(
     };
     let drawable = drawable_of(resource, state.selection.selected(doc))?;
     let lod = level_drawn(drawable, state.preview_scene.lod);
+    // A weapon drawn as its parts shows none of its own geometries to pick.
+    if parts_drawn(state, state.document(doc)?).is_some() {
+        return Some((lod, Vec::new()));
+    }
     let bases = base_colours(drawable, &|key| srgb_key(state, doc, key));
     let mut out = Vec::new();
     for (m, model) in drawable.levels[lod].iter().flatten().enumerate() {

@@ -83,6 +83,12 @@ opens as a plain folder.
   dictionaries and the other animation bodies, PSO, RBM and RBF metadata, text tables, AWC audio,
   which plays and exports as Ogg Opus, and the pictures of a Bink movie. A drawable is drawn in
   Wireframe, Solid and Material and goes out to glTF.
+- **Weapons.** A weapon is a carrier model and a model for each part. Where the archive's names are
+  harvested, the carrier is drawn as the first variant of each kind of part at its own level of
+  detail, each with its root bone on the bone of the same name that the carrier or another part
+  offers; with the viewport's Parts box unticked the carrier's own mesh is drawn. A part's material
+  holds no colour map: the game computes a weapon's colour from data no model holds, so Material
+  shades a part by its normal map alone.
 - **Written.** A texture pack saves with a texture replaced, and an edit to a scanned body saves as a
   loose file. Which values of a model, a bound, a map or a metadata body can be edited is narrower than
   for GTA V, and a refusal names what it cannot write.

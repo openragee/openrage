@@ -453,6 +453,15 @@ Coordinates are points on a 1600×900 screen unless `size` changes it.
 App shortcuts such as Ctrl+S are dispatched from winit, so no step reaches
 them.
 
+A GTA VI model drawn in Shaded by its own translated programs has one developer
+option, the environment variable `OPENRAGE_GTA6_SHADED`: words separated by
+commas. `target=N` shows a target of the pass raw in place of the lit frame (1 the
+colour to 6 the fourth channels), `pixel=FILE` and `mesh=FILE` draw with a stage of
+WGSL of one's own in place of the translated one, such as one
+`openrage-cli rpf scan-shading … --wgsl` wrote and a person edited to store a
+value, and `plain-device` asks the device for no optional feature and no raised
+limit. `Aids` in `crates/runtime/or-renderer/src/game_shaders/meshlets.rs` reads it.
+
 Nothing a script clicks reaches past the app. A self-check's first act,
 `stand_in_for_the_desktop`, sends every call that would to its stand-in in
 `src/platform/`, which logs what it was asked: the run prints it and the Log

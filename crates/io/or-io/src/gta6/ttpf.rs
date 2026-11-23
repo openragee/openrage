@@ -213,7 +213,12 @@ pub enum TtpfError {
 /// What is known of a codec kind no reader reads.
 fn codec_state(kind: u8) -> String {
     match kind {
-        3..=7 => format!(
+        3..=5 => format!(
+            "BC{kind} blocks through the BCPack coder, whose tables for BC{kind} are not known \
+             until `openrage-cli ttpf calibrate <folder>` fits them on this machine from the \
+             packs of a folder, so it does not decode"
+        ),
+        6 | 7 => format!(
             "BC{kind} blocks through the BCPack coder, whose tables for BC{kind} are not known, so \
              it does not decode"
         ),
@@ -487,6 +492,8 @@ pub struct TexturePack {
     replaced: write::Replaced,
     /// The file's own table once a texture changed size, format or mips; `None` until then.
     moved: Option<Box<write::Moved>>,
+    /// The coder's tables fitted on this machine, through which a body that does not decode exactly is drawn.
+    calibration: Option<std::sync::Arc<bcpack::Tables>>,
 }
 
 impl TexturePack {
@@ -630,6 +637,7 @@ impl TexturePack {
             first_rows,
             replaced: write::Replaced::default(),
             moved: None,
+            calibration: None,
         })
     }
 
@@ -671,7 +679,7 @@ impl TexturePack {
 
     /// Why texture `index` cannot be read, as far as the directory and the table tell without inflating a body.
     pub fn check(&self, index: usize) -> Result<(), TtpfError> {
-        self.plan(index).map(|_| ())
+        self.plan_as(index, true).map(|_| ())
     }
 
     /// The row of `rows` that holds byte `at` of a texture whose range starts at `start`.
@@ -687,6 +695,11 @@ impl TexturePack {
 
     /// What reading texture `index` takes, once the rows its top mip needs are known to be readable.
     fn plan(&self, index: usize) -> Result<Plan, TtpfError> {
+        self.plan_as(index, false)
+    }
+
+    /// [`Self::plan`], a row the pack's calibration covers being readable too when `fitted`.
+    fn plan_as(&self, index: usize, fitted: bool) -> Result<Plan, TtpfError> {
         let plan = self.layout_of(index)?;
         let first = if plan.layout.slices > 1 || plan.layout.depth.is_some() {
             plan.rows.start
@@ -694,7 +707,7 @@ impl TexturePack {
             self.row_holding(&plan.rows, plan.start, plan.layout.levels[0].from())
         };
         for row in first..plan.rows.end {
-            self.readable(row)?;
+            self.readable_as(row, fitted)?;
         }
         Ok(plan)
     }
@@ -892,6 +905,11 @@ impl TexturePack {
 
     /// Texture `index`: every mip of its chain whose rows are readable, top first, in each face.
     pub fn texture(&self, index: usize) -> Result<Texture, TtpfError> {
+        self.texture_noted(index).map(|(texture, _)| texture)
+    }
+
+    /// [`Self::texture`], and how its coded bodies were rebuilt: exactly, or through the pack's calibration.
+    pub fn texture_noted(&self, index: usize) -> Result<(Texture, bcpack::Decode), TtpfError> {
         let Plan {
             rows,
             start,
@@ -899,7 +917,8 @@ impl TexturePack {
             pad_from,
             layout,
             ..
-        } = self.plan(index)?;
+        } = self.plan_as(index, true)?;
+        let mut decode = bcpack::Decode::default();
         let mut memory = vec![0u8; len as usize];
         let mut file = File::open(&self.path).map_err(|source| TtpfError::Io {
             path: self.path.clone(),
@@ -908,7 +927,7 @@ impl TexturePack {
         // The bytes before this were not read.
         let mut read_from = 0;
         for row in rows.clone().rev() {
-            match self.body(&mut file, row) {
+            match self.body_fitted(&mut file, row, &mut decode) {
                 Ok(body) => {
                     let at = (self.rows[row].virtual_address - start) as usize;
                     memory[at..at + body.len()].copy_from_slice(&body);
@@ -935,23 +954,35 @@ impl TexturePack {
                 "texture {index}'s top mip does not lie in its range"
             ))
         })?;
-        Ok(Texture {
+        let texture = Texture {
             width: layout.width,
             height: layout.height,
             format: layout.format,
             levels,
             faces: layout.slices as u32,
             pixels,
-        })
+        };
+        Ok((texture, decode))
     }
 
     /// Whether body `row`'s codec is identified and its bytes are on disk.
     fn readable(&self, row: usize) -> Result<(), TtpfError> {
+        self.readable_as(row, false)
+    }
+
+    /// [`Self::readable`], a codec the pack's calibration covers being identified too when `fitted`.
+    fn readable_as(&self, row: usize, fitted: bool) -> Result<(), TtpfError> {
         if self.replaced_row(row).is_some() {
             return Ok(());
         }
         let this = self.rows[row];
-        if this.kind != KIND_STORED && this.kind != KIND_ZLIB && !bcpack::decodes(this.kind) {
+        let covered =
+            fitted && (self.calibration.as_deref()).is_some_and(|tables| tables.covers(this.kind));
+        if this.kind != KIND_STORED
+            && this.kind != KIND_ZLIB
+            && !bcpack::decodes(this.kind)
+            && !covered
+        {
             return Err(TtpfError::UnidentifiedCodec {
                 row,
                 kind: this.kind,
@@ -1005,6 +1036,30 @@ impl TexturePack {
             return Err(TtpfError::Inflate { row, size });
         }
         Ok(out)
+    }
+
+    /// [`Self::body`], and for a coded body that does not decode exactly, its blocks through the
+    /// pack's calibration, counted in `decode`.
+    ///
+    /// ⚠ Only a read for showing or exporting takes this: what a save writes back goes through
+    /// [`Self::body`], so an estimate is never written as if the pack stored it.
+    fn body_fitted(
+        &self,
+        file: &mut File,
+        row: usize,
+        decode: &mut bcpack::Decode,
+    ) -> Result<Vec<u8>, TtpfError> {
+        let kind = self.rows[row].kind;
+        let coded = kind != KIND_STORED && kind != KIND_ZLIB && self.replaced_row(row).is_none();
+        let Some(tables) = self.calibration.as_deref().filter(|_| coded) else {
+            return self.body(file, row);
+        };
+        self.readable_as(row, true)?;
+        let stored = self.stored(file, row)?;
+        let (blocks, how) = bcpack::decode_with(kind, &stored, self.size(row), Some(tables))
+            .map_err(|source| TtpfError::BcPack { row, kind, source })?;
+        decode.add(how);
+        Ok(blocks)
     }
 
     /// Row `row`'s bytes as the file stores them, whatever its codec.
@@ -1177,6 +1232,10 @@ fn is_sparse(metadata: &std::fs::Metadata) -> bool {
         false
     }
 }
+
+#[path = "ttpf_calibrate.rs"]
+mod calibrate;
+pub use calibrate::{calibrate_packs, coverage, Calibrated, Coverage};
 
 #[path = "ttpf_write.rs"]
 mod write;

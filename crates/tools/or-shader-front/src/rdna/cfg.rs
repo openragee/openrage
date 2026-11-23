@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::decode::{decode_one, DecodeError, Inst};
+use super::decode::{decode_one, DecodeError, Inst, Operand};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CfgError {
@@ -79,10 +79,51 @@ fn flow(inst: &Inst, pc: u32, len: usize) -> Result<Flow, CfgError> {
     })
 }
 
+/// The word a far branch lands on: `s_getpc_b64` takes the address of the instruction after
+/// it, the next two add a literal to that or take one from it, and `s_setpc_b64` at `pc` jumps there. `None` for a
+/// jump through a register filled any other way, or to no word of the code.
+fn far_target(insts: &BTreeMap<u32, (Inst, u32)>, pc: u32, len: usize) -> Option<u32> {
+    let (Inst::Sop1 { src: through, .. }, _) = insts.get(&pc)? else {
+        return None;
+    };
+    let mut before = insts.range(..pc).rev();
+    let (_, (carry, _)) = before.next()?;
+    let (_, (add, _)) = before.next()?;
+    let (&at, (get, _)) = before.next()?;
+    let names = (get.name(), add.name(), carry.name());
+    let back = match names {
+        ("s_getpc_b64", "s_add_u32", "s_addc_u32") => false,
+        ("s_getpc_b64", "s_sub_u32", "s_subb_u32") => true,
+        _ => return None,
+    };
+    let (
+        Inst::Sop1 { dst: taken, .. },
+        Inst::Sop2 {
+            dst,
+            src0,
+            src1: Operand::Literal(by),
+            ..
+        },
+    ) = (get, add)
+    else {
+        return None;
+    };
+    if taken != through || dst != through || src0 != through {
+        return None;
+    }
+    // The code's first word is at address zero, as the lowering of `s_getpc_b64` has it.
+    let bytes = match back {
+        true => (4 * (at + 1)).wrapping_sub(*by),
+        false => (4 * (at + 1)).wrapping_add(*by),
+    };
+    (bytes % 4 == 0 && ((bytes / 4) as usize) < len).then_some(bytes / 4)
+}
+
 impl Cfg {
     /// The graph of what word 0 reaches; code only an indirect jump or call reaches is left out.
     pub fn build(words: &[u32]) -> Result<Self, CfgError> {
         let len = words.len();
+        let mut far: BTreeMap<u32, u32> = BTreeMap::new();
         let mut insts: BTreeMap<u32, (Inst, u32)> = BTreeMap::new();
         let mut leaders = BTreeSet::from([0u32]);
         let mut work = vec![0u32];
@@ -95,6 +136,16 @@ impl Cfg {
                 let next = pc + size as u32;
                 let flow = flow(&inst, pc, len)?;
                 insts.insert(pc, (inst, size as u32));
+                let flow = match flow {
+                    Flow::Indirect => match far_target(&insts, pc, len) {
+                        Some(target) => {
+                            far.insert(pc, target);
+                            Flow::Jump(target)
+                        }
+                        None => Flow::Indirect,
+                    },
+                    other => other,
+                };
                 match flow {
                     Flow::Next => pc = next,
                     Flow::End | Flow::Indirect => break,
@@ -129,7 +180,10 @@ impl Cfg {
             let next = pc + size;
             let terminator = match flow(&inst, pc, len)? {
                 Flow::End => Some(Terminator::End),
-                Flow::Indirect => Some(Terminator::Indirect),
+                Flow::Indirect => Some(match far.get(&pc) {
+                    Some(&target) => Terminator::Jump(target),
+                    None => Terminator::Indirect,
+                }),
                 Flow::Jump(target) => Some(Terminator::Jump(target)),
                 Flow::Branch(taken) => Some(Terminator::Branch {
                     taken,

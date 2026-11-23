@@ -38,7 +38,8 @@ lists the edges.
   pointing up, which is why `crates/title/or-title/tests/adding_a_title.rs`
   stops one call short of `or_editor::Summary`.
 - **Edges that look wrong.** None points up the chain since `or-test-support`
-  dropped `or-io` (P64, #334). The app depends on `or-cli` (its
+  dropped `or-io` (P64, #334). One tool depends on another: `or-cli` on `or-shader-front`,
+  whose Rust front ends translate a GTA VI program for `rpf scan-shaders` and for the app's Shaded. The app depends on `or-cli` (its
   `or_cli::run` is all of `src/cli_main.rs`; `openrage-cli photo` draws with the
   editor's renderer, so it starts the `openrage` beside it as `openrage --photo`,
   `src/photo.rs`, rather than `or-cli` depending on a renderer) and on `or-shader-tool`, which
@@ -153,6 +154,31 @@ snapshot declares, so a file naming nothing in it types exactly as without it.
 Its suites are `or-io-verify`'s `meta` binary, and the layouts are the local
 [Meta_Binary_Formats_Specification.md](../extra/Meta_Binary_Formats_Specification.md).
 
+`or_io::gta6`, behind the `gta6` feature, is GTA VI's formats as ordinary code, since no source names
+their fields: a name says the role a field was measured to play, and nothing there is a declaration
+([GTA_VI_Xbox_Build.md](../features/GTA_VI_Xbox_Build.md) owns what is read, saved and refused).
+
+| Module | Holds |
+|---|---|
+| `container::rpf::rpf9`, `rpf9_scan`, `rpf9_write`, `rpf9_grow` | the archive's clear header and the refusal of its encrypted table; the scan that finds bodies by their bytes, its kinds, families and roles, and the scan kept as bytes; a resource written as a loose file; a section grown or shrunk with every typed pointer moved |
+| `gta6::headerless` | the headerless resources by role (drawable, fragment, bound, dictionary, navigation cell and octree, cloth, particle effects list and the small ones), and the writers that put an edit back in place or lay a part out anew |
+| `gta6::ttpf`, with its `ttpf_write`, `ttpf_relayout`, `ttpf_slice` and `ttpf_calibrate` files | a texture pack read, saved, a texture given another shape, one slice replaced, and a pack's side of a calibration |
+| `gta6::bcpack` | the console's entropy coder over BC blocks: `rans` and `tables` the entropy layer, `bc1` the exact BC1 rebuild, `planes` the BC1, BC3, BC4 and BC5 rebuild through tables, `calibrate` those tables fitted from the user's packs; `Decode` counts the blocks a fitted table drew |
+| `gta6::hash`, `gta6::names`, `gta6::texture_names` | the two data hashes; the vocabulary harvested from bodies, the name each model states of itself and the textures each model binds; the rules a texture's name follows from its drawable's, and the use label of a texture with no name |
+| `gta6::anim`, `gta6::anim_scene`, `gta6::move_network` | animation resources read and written; anim scenes; a MoVE network's node outline |
+| `gta6::map` and its `map_grow`, `map_links`, `map_lights`, `map_lanes` and `map_world` files | map placement and archetypes typed from a body's own class table, entities added and removed, level-of-detail and interior links, lights placed in the world, the lane graph joined, and the census, index and grid over many bodies |
+| `gta6::text`, `gta6::text_language` | a text table read and written; the language a table has by the order a change set registers its archive |
+| `gta6::audio_data`, `audio_tables`, `audio_links`, `audio_radio`, `gta6::dialogue` | audio game data and the items a table lays out, what they link to, the radio's stations joined to their streams, and dialogue lines joined to their audio and their subtitles |
+| `gta6::ui_tree` | an RBF0 document as a strict element tree |
+| `gta6::mission_tables`, `gta6::script_bodies` | a script body's mission state tables, found by its block table; the script archives' opaque bodies, stated and never read |
+| `gta6::save` | the three save containers: a story save as an owned value, a record read, a packed copy refused |
+| `gta6::other_bodies` | the bodies a scan names by their head |
+
+⚠ `gta6::save` was written from a description of the layout with no save at hand, so its tests hold
+it to that description and to nothing a game wrote. A member a typed reader of `gta6::map` or
+`gta6::anim_scene` uses is checked against the body's own class table first, and a body that states
+another layout is refused and stays the generic tree.
+
 **or-io-macros** is `#[record]`: one declaration makes the owned struct, its raw
 layout, its description and its view, with the layout proved at compile time.
 
@@ -192,8 +218,9 @@ the container in `crates/io/or-media/src/bik.rs`:
 `bik::Pictures` yields a movie's planar 4:2:0 pictures, `bik::audio_track` the sound of any one of
 its tracks, and a `VideoStream` converts a picture to RGBA. XMA is a row, decoded by the port of
 FFmpeg's WMA Pro decoder in `crates/io/or-media/src/xma`. GTA VI's codec 2 is a row, `crates/io/or-media/src/spectra.rs`: an inverse FFT per block, each block's missing Nyquist term restored from the overlaps, and `or_media::spectra::replaced` writes one from a WAV. The app adds no row; a Bink 2 movie's
-sound is a Bink audio track and decodes through the Bink audio rows, except a `KB2n` movie's, which
-is refused before any row is asked. A multi-channel `.awc`
+sound is a Bink audio track and decodes through the Bink audio rows; a `KB2n` movie's DCT track has
+a row of its own, `Codec::Bink2Audio`, since its blocks state a band's step in seven bits and a
+span's signs after its values. A multi-channel `.awc`
 stream's blocks stay `or-io`'s to de-interleave, so the table is only asked whether it decodes each
 channel's codec. ⚠ **The crate's licence is the strictest of any file in it**: AGPL-3.0-only
 today, for the Bink 2 port of NihAV's Rust, over the LGPL-2.1-or-later Bink 1 and XMA ports from FFmpeg n7.0, and the
@@ -634,7 +661,9 @@ GPU-free so CI tests it; `resolve` answers which skeleton a document offers.
 Skinning is `world * inverse_bind`, in that order
 (`reversed_multiplication_order_would_be_wrong`). It stays apart from
 `or-simulation`, because a clip is a pure function of time and particle state
-is integrated ([Animation_Preview.md](../features/Animation_Preview.md)).
+is integrated ([Animation_Preview.md](../features/Animation_Preview.md)). Its `gta6` feature poses a
+GTA VI animation on a GTA VI skeleton (`crates/runtime/or-anim/src/gta6.rs`): a track moves the bone
+whose name's hash is its id, and a track that poses nothing is reported by name.
 
 **or-simulation.** The particle simulation behind the `.ypt` preview, following
 the engine's solver and behaviours at full fidelity (D9)
@@ -687,6 +716,15 @@ target share one call, `or_io::gta5::retarget::retarget_file`, which `or-cli` re
 `weapons validate` and `verify` are the rules and the verifier of `or-weapons`, and its plan and build are `project` as well.
 `particles list`, `validate` and `verify` are those of `or-particles`, and its plan and build are `project` as well.
 `maps list`, `validate` and `verify` are those of `or-maps`, and its plan and build are `project` as well.
+The GTA VI commands are the `gta6_*.rs` files of `crates/tools/or-cli/src/`, one concern a file, reached from
+`crates/tools/or-cli/src/rpf.rs` as the `rpf scan-*` verbs, which address a body by the offset a scan found it at;
+`rpf list` and `rpf extract` take an RPF9 archive too and answer from the scan. `ttpf` is
+`crates/tools/or-cli/src/ttpf.rs` (a pack listed, exported, replaced into, planned and calibrated), `gta6-save`
+and `gta6-mission` are `crates/tools/or-cli/src/gta6_save.rs` and `crates/tools/or-cli/src/gta6_mission.rs`, and
+`navmesh scan`, `disable` and `delete` take a scanned or loose cell. A command that writes writes a loose
+resource or a new pack, never the archive. `crates/tools/or-cli/src/gta6_translate.rs` runs a GTA VI program
+through the front end its payload takes, and the app's Shaded calls the same function
+([the commands in one table](../features/GTA_VI_Xbox_Build.md#commands)).
 **or-shader-tool** translates shaders, `.fxc` to a pack of SPIR-V modules, with a
 binary of its own. Its `inventory` command counts what an install's shaders are
 (the bytecode, shader model, stage, container parts and feature flags of every
@@ -717,9 +755,21 @@ one call per shader through a thin C shim, with the options naga needs set in
 the shim. The C++ is compiled by the crate's build script, with the `cc` crate and
 no CMake or Meson, only under its `native` feature, which is off by default: a
 build without it has no C++ and every call says so. `BindingLayout` (always
-compiled) says where each register binds, and the shim places it. It depends on
-no workspace crate; only `or-shader-tool` depends on it, behind its `native-front`
-feature, so the editor's own build holds no C++.
+compiled) says where each register binds, and the shim places it. `or-shader-tool`
+turns `native` on behind its `native-front` feature, so the editor's own build holds
+no C++.
+
+Three modules of it are Rust and always compiled, and write naga IR. `dxil` reads a
+container that holds bitcode. `rdna` reads GTA VI's Xbox programs, which ship as native
+GPU code: `decode` the instruction words (its opcode numbers are `opcodes`, generated
+from Mesa's table, MIT, and listed in `LICENSE-third-party.md`), `cfg` the control-flow
+graph, `sym` where each scalar register's value came from, and `to_naga` the lowering of
+a pixel, vertex, mesh or compute program, which refuses by name (`NotTranslated`) what it
+does not model. `rdna_bind` joins each resource of a translated module to the binding
+record its package lists and to the name the effect container's table gives the register,
+and refuses by name (`Unbound`) a program the renderer has nothing to give. Every test of
+`rdna` assembles its input from the encodings' field layouts and none reads a game file.
+For these the crate depends on `or-io`'s `gta6` feature, and `or-cli` depends on the crate.
 
 **xtask** is the repository's own tasks, run as `cargo xtask <task>` (an alias
 in `.cargo/config.toml`): the chunked formatter, the encoding and provenance
@@ -804,6 +854,13 @@ harder in an immediate-mode UI (`the_shell_is_flat_rather_than_deep`).
 | `mod_manager.rs` | the active install's mods, the load order saved for it, the winner of two mods writing one path, and moving a mod between `mods` and `mods_` once the edit gate permits and the user answers |
 | `install_lifecycle.rs`, `game_discovery.rs` | choosing a game and finding installs |
 | `explorer.rs`, `navigation.rs` | archive-tree sorting, favourites, back and forward, and the walk that opens the archives on a path before revealing, opening or extracting what it names |
+| `gta_vi.rs`, `rpf9_scan.rs`, `rpf9_list.rs`, `rpf9_kept.rs`, `gta6_install_scan.rs` | a GTA VI archive opened as what a scan finds, a slice at a time on a worker; which rows of the list show and which an extraction takes; a whole scan kept in the configuration folder; every archive of a folder scanned as one job |
+| `ttpf_document.rs`, `ttpf_reshape.rs`, `gta6_bcpack_calibration.rs`, `gta6_texture_index.rs`, `gta6_dictionary_index.rs` | a texture pack as a document, a texture reshaped, the coder's tables fitted as a job, and the packs and dictionaries indexed by texture key so a drawable's key opens what holds it |
+| `gta6_names.rs`, `gta6_install_harvest.rs`, `gta6_texture_naming.rs`, `gta6_texture_names_file.rs` | the harvested vocabulary served to every view, the harvest of an install as a job, the naming rules run on a worker, and a file of names the user picks |
+| `gta6_resource.rs`, `gta6_resource_save.rs`, `gta6_edit.rs` and the other GTA VI edit modules beside them | a scanned body's facts, its edits as steps of undo, and its save as a loose resource through the `edited_sections` cell |
+| `gta6_map.rs`, `gta6_map_edit.rs`, `gta6_map_links.rs`, `gta6_world.rs`, `gta6_world_fill.rs` | a scanned map on the Map screen, its entities edited, its links, and the lights, lane graph and other maps of an archive kept for the overlay |
+| `gta6_shaders.rs`, `gta6_effects.rs` | the effect containers read and the programs a drawable's effects run translated on a worker, once a session, into a pack held in memory |
+| `gta6_dialogue.rs`, `gta6_text.rs`, `gta6_audio_links.rs` | dialogue lines, radio and texts indexed from the open scans; a text table edited and saved; what audio game data links to |
 | `file_index.rs`, `vfs_session.rs` | every file of the install and of each folder and archive open in Files, nested archives included, walked off the UI thread: what Go to File and the search of every archive read |
 
 ### Panels, docks and panel state
@@ -955,6 +1012,17 @@ bytes, read-only, in the inspector, and never saved. A file no kind names whose
 bytes are text (UTF-8 with no NUL in its first 8 KiB, or a UTF-16 byte order
 mark) opens as `DocumentKind::Text` instead. `DocumentKind::Compare` is no
 file's: it is two files compared (`src/state/compare/`), opened and never saved.
+
+A GTA VI kind costs more than a paged format, because it has no `ResourceType`, no extension and no
+declared root: `Rpf9`, `Ttpf`, `Gta6Anim`, `Gta6Drawable`, `Gta6Text`, `Gta6AudioData`,
+`Gta6Expressions` and `Gta6Save` each take arms in `src/state/document_io.rs`, a `KindInfo` row and a
+capability row, and a scanned body is opened from a row of its archive's scan, by its offset, where
+another kind is opened from a path. One kind serves the headerless resources: a drawable, a fragment, a
+bound and a dictionary are all `Gta6Drawable`, whose payload is whichever resource the reader read. A GTA VI
+metadata body is a `Meta` document, and its mission state tables, its anim scene's timeline and its
+map on the Map screen are views over that document and no kind of their own. A kind that saves its
+edits returns them from `edited_sections`, and `src/state/gta6_resource_save.rs` writes them as a
+loose resource.
 
 `src/state/capabilities.rs` is the table, builtins plus a process-global behind
 a lock, keyed by `kind` because a `FormatId` cannot name an archive, a text
@@ -1316,6 +1384,10 @@ declared.
 
 RDR2 is declared, discovered and unsupported until a second container exists;
 [R56](../direction/Roadmap.md#r56-rdr2-the-second-container) is its plan.
+GTA VI is declared with a target of its own (`Gta6` in
+`crates/title/or-title/src/game/profiles.rs`): its install opens as a plain folder and an archive as a
+scan, since the archive's table is encrypted
+([GTA_VI_Xbox_Build.md](../features/GTA_VI_Xbox_Build.md)).
 
 ## The container seam
 

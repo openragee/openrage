@@ -105,6 +105,7 @@ impl Decoders {
                 (Codec::Bink2, Decoder::video(bik::open_video)),
                 (Codec::BinkAudioDct, Decoder::audio(bik::open_audio)),
                 (Codec::BinkAudioRdft, Decoder::audio(bik::open_audio)),
+                (Codec::Bink2Audio, Decoder::audio(bik::open_audio)),
             ],
             accumulator,
         }
@@ -161,6 +162,7 @@ mod tests {
             Codec::Spectra,
             Codec::BinkAudioDct,
             Codec::BinkAudioRdft,
+            Codec::Bink2Audio,
         ] {
             assert!(table.audio_decoder(codec).is_ok(), "{codec:?}");
         }

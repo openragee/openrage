@@ -16,9 +16,21 @@ native = []
 [dependencies]
 thiserror.workspace = true
 # The DXIL front end writes naga IR and the pack manifest's reflection types.
-naga.workspace = true
+# `serialize` and `deserialize` are how `rdna_cache` keeps a translated module on disk.
+# The WGSL writer prints a translated module for a person to read (`rpf scan-shading --wgsl`).
+naga = { workspace = true, features = ["serialize", "deserialize", "wgsl-out"] }
+serde.workspace = true
+bincode.workspace = true
+flate2.workspace = true
+# The content hash a cached translation and a kept program are named by.
+sha1.workspace = true
 # `gta6` reads the XDAT payload a GTA VI program carries where bitcode would be.
 or-io = { workspace = true, features = ["gta6"] }
 
 [build-dependencies]
 cc = "1"
+
+[dev-dependencies]
+tempfile.workspace = true
+# The tests write each translated module with every writer a device of wgpu compiles one with.
+naga = { workspace = true, features = ["spv-out", "wgsl-out", "msl-out", "hlsl-out"] }

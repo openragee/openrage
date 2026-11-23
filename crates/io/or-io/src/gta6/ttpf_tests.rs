@@ -1402,3 +1402,6 @@ mod slice_replace;
 
 #[path = "ttpf_bcpack_tests.rs"]
 mod coder;
+
+#[path = "ttpf_calibrate_tests.rs"]
+mod calibrated;

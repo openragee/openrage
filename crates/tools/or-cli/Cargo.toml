@@ -48,6 +48,8 @@ dirs.workspace = true
 # view, and the SHA-1 a translated program is keyed by.
 or-shader-front.workspace = true
 sha1.workspace = true
+# The writers wgpu hands a module to on each platform, for `rpf scan-rdna --backends`.
+naga = { workspace = true, features = ["spv-out", "hlsl-out", "msl-out", "wgsl-out"] }
 
 serde.workspace = true
 serde_json.workspace = true

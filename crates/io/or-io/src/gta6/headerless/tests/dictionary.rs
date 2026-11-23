@@ -58,6 +58,29 @@ fn a_dictionary_reads_its_drawables_and_refuses_an_entry_of_no_kind() {
 }
 
 #[test]
+fn the_shaders_of_each_model_are_read_from_the_virtual_section_alone() {
+    let keys = |models: &[(String, Vec<Shader>)]| -> Vec<(String, Vec<Option<u64>>)> {
+        let of = |(name, shaders): &(String, Vec<Shader>)| {
+            let keys = shaders.iter().flat_map(|s| s.texture_keys.clone());
+            (name.clone(), keys.collect())
+        };
+        models.iter().map(of).collect()
+    };
+    let wanted = vec![("box#dr".to_string(), vec![Some(TEXTURE_KEY), None])];
+    let (img, _, _) = drawable([1.0, 1.0, 0.0]);
+    let models = model_shaders(Rpf9Role::Drawable, &img.bytes).expect("a drawable");
+    assert_eq!(keys(&models), wanted);
+    // A dictionary gives each entry that is a drawable, and passes over an entry of no kind.
+    let (img, _) = dictionary([0, name_hash32(b"box#dr")]);
+    let models = model_shaders(Rpf9Role::Dictionary, &img.bytes).expect("a dictionary");
+    assert_eq!(keys(&models), wanted);
+    // A body of another role holds no model, and a section cut short is refused.
+    let none = model_shaders(Rpf9Role::Bound, &img.bytes).expect("no model");
+    assert!(none.is_empty());
+    assert!(model_shaders(Rpf9Role::Drawable, &img.bytes[..0x20]).is_err());
+}
+
+#[test]
 fn a_dictionary_whose_codes_do_not_ascend_is_refused() {
     let (img, phys) = dictionary([0x20, 0x10]);
     assert!(matches!(

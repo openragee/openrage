@@ -118,6 +118,7 @@ fn archive(dir: &Path) -> (PathBuf, ShaderSource, [Sgd5Program; 2]) {
         archive: path.clone(),
         base: BASE,
         file,
+        whole: true,
     };
     (path, source, programs)
 }
@@ -149,7 +150,7 @@ fn an_effect_s_programs_are_read_by_seek_translated_once_and_kept_as_a_pack_of_r
     let bytes = std::fs::read(&path).unwrap();
     let key_of = |p: &Sgd5Program| {
         let from = BASE as usize + p.stream.start;
-        translate_gta6_program(p, &bytes[from..from + p.stream.len()])
+        translate_gta6_program(p, &bytes[from..from + p.stream.len()], None)
             .unwrap()
             .key
     };
@@ -212,6 +213,37 @@ fn an_effect_s_programs_are_read_by_seek_translated_once_and_kept_as_a_pack_of_r
     assert_eq!(found.effects[0].1.techniques[0].passes[0].stages.len(), 2);
     assert_eq!(merge(&mut shaders, found), (0, 0));
     assert_eq!(shaders.pack.as_ref().map(|(n, _)| *n), Some(2));
+}
+
+#[test]
+fn an_effect_read_from_its_container_is_kept_and_the_next_session_reads_no_container_for_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, source, _) = archive(dir.path());
+    let hash = name_hash32(EFFECT);
+    let first = work(input(source, vec![hash]), &Cancel::new(), &Progress::new()).unwrap();
+    let kept = kept_effect(&path, hash).expect("a place to keep it");
+    assert!(kept.is_file(), "the effect is not kept");
+
+    // A session that knows no container, and whose archive holds none a scan would find.
+    let later = Input {
+        sources: Vec::new(),
+        keys: HashMap::new(),
+        known: HashSet::new(),
+        wanted: vec![hash],
+        install: Some(path.clone()),
+    };
+    let again = work(later, &Cancel::new(), &Progress::new()).unwrap();
+    assert_eq!(again.searched, None, "the archive was searched");
+    assert!(again.sources.is_empty());
+    let keys =
+        |found: &Found| -> Vec<String> { found.done.iter().map(|(key, _)| key.clone()).collect() };
+    assert_eq!(keys(&again), keys(&first));
+    assert_eq!(again.effects.len(), 1);
+    assert_eq!(again.effects[0].1.techniques, first.effects[0].1.techniques);
+
+    // The archive written again is another archive: what was kept of the old one is not its.
+    std::fs::write(&path, [std::fs::read(&path).unwrap(), vec![0]].concat()).unwrap();
+    assert_ne!(kept_effect(&path, hash), Some(kept));
 }
 
 #[test]

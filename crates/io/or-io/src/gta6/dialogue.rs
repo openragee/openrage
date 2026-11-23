@@ -5,7 +5,8 @@
 //!
 //! The pairs are found by their shape in a body's bytes, not through the body's structure. A
 //! line's number is stated nowhere: a key that keeps one take of several has a stream whose
-//! number the labels do not give. A text table's language is `text_language`'s to tell.
+//! number the labels do not give, and [`Dialogue::settle`] takes it from the streams that
+//! exist. A text table's language is `text_language`'s to tell.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -175,6 +176,33 @@ impl Dialogue {
 
     pub fn is_empty(&self) -> bool {
         self.keys.is_empty()
+    }
+
+    /// Renumbers the lines of each key that `held` holds no stream for under a number its
+    /// labels state, where it holds as many streams of the key, numbered 00 to 99, as the key
+    /// has labels: the labels take those streams' numbers in order. Says how many lines changed.
+    // A key that keeps one take of several is the case: one label, and one stream of any number.
+    pub fn settle(&mut self, held: impl Fn(u32) -> bool) -> usize {
+        let stream = |key: &str, number: usize| {
+            name_hash32(format!("{key}_{number:02}").as_bytes()) & 0x1FFF_FFFF
+        };
+        let mut changed = 0;
+        for (key, labels) in &mut self.keys {
+            if labels.iter().all(|(number, _)| held(stream(key, *number))) {
+                continue;
+            }
+            let numbers: Vec<usize> = (0..100).filter(|n| held(stream(key, *n))).collect();
+            if numbers.len() != labels.len() {
+                continue;
+            }
+            // A stable sort: labels two bodies numbered alike stay in the order they were found.
+            labels.sort_by_key(|(number, _)| *number);
+            for ((number, _), now) in labels.iter_mut().zip(numbers) {
+                changed += usize::from(*number != now);
+                *number = now;
+            }
+        }
+        changed
     }
 
     /// Every line, key by key and in each key's label order.

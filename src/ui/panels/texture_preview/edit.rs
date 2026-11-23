@@ -254,7 +254,10 @@ pub(super) fn draw_encoding_bar(
                 .save_file()
         }) {
             match textures::export_texture(texture, level, &path) {
-                Ok(()) => state.show_toast(format!("Wrote {}", path.display())),
+                Ok(()) => {
+                    let said = wrote(state, doc_id, texture.name(), &path);
+                    state.show_toast(said)
+                }
                 Err(message) => state.show_error_toast(message),
             }
         }
@@ -271,6 +274,30 @@ pub(super) fn draw_encoding_bar(
     if unembed {
         let outcome = state.unembed_texture(doc_id, texture.name());
         report(state, outcome);
+    }
+}
+
+/// What an export of texture `name` of `doc_id` to `path` says: one of a GTA VI pack's texture
+/// read through fitted tables says it is an estimate.
+fn wrote(
+    state: &AppState,
+    doc_id: crate::state::DocumentId,
+    name: &str,
+    path: &std::path::Path,
+) -> String {
+    let estimate = match state.document(doc_id).map(|d| &d.payload) {
+        Some(DocPayload::Ttpf(ttpf)) => {
+            (ttpf.index_of(name)).and_then(|index| ttpf.estimate_label(index))
+        }
+        _ => None,
+    };
+    match estimate {
+        Some(how) => tr!(
+            "Wrote {path}. This texture is {how}: an estimate, not the blocks the pack stores",
+            path = path.display(),
+            how = how
+        ),
+        None => format!("Wrote {}", path.display()),
     }
 }
 
@@ -372,7 +399,10 @@ pub(crate) fn export(
     });
     if let Some(path) = asked {
         match textures::export_texture(&texture, 0, &path) {
-            Ok(()) => state.show_toast(format!("Wrote {}", path.display())),
+            Ok(()) => {
+                let said = wrote(state, doc_id, name, &path);
+                state.show_toast(said)
+            }
             Err(message) => state.show_error_toast(message),
         }
     }

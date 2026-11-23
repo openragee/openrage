@@ -69,7 +69,7 @@ fn wgsl_type(kind: ScalarKind, count: usize) -> Option<String> {
 }
 
 /// A vertex shader that passes zero for every input a fragment entry point takes, with matching interpolation.
-fn matching_vertex_shader(
+pub(crate) fn matching_vertex_shader(
     module: &naga::Module,
     entry: &naga::EntryPoint,
 ) -> Result<String, String> {
@@ -165,7 +165,7 @@ impl DeviceCompiler {
 }
 
 /// A wgpu error's lines joined, without the pipeline's label and naga's source diagram.
-fn one_line(description: &str) -> String {
+pub(crate) fn one_line(description: &str) -> String {
     description
         .lines()
         .map(str::trim)

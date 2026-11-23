@@ -1,7 +1,8 @@
 //! The world of a whole GTA VI archive read on a worker for the Map screen: every map's entity
 //! rows, each archetype's box, every light placed in the world and the lane graph, a body at a
 //! time with progress and a stop, kept in the configuration folder while the archive's size and
-//! modification time stand.
+//! modification time stand. Where each world body starts and the ground a map covers are kept
+//! beside it, so a region reads only the maps that meet it.
 //!
 //! ⚠ An archetype's lights stand once at each entity that places it, and an interior's once at each
 //! `CMloInstanceDef` that places the interior, so they are placed when every body is read.
@@ -11,7 +12,7 @@ use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::UNIX_EPOCH;
+use std::time::{Instant, UNIX_EPOCH};
 
 use or_io::container::rpf::rpf9_scan::Rpf9BodyReader;
 use or_io::container::rpf::{Rpf9BodyKind, Rpf9Scan, Rpf9ScanCarry, Rpf9ScanFind, Rpf9ZlibRun};
@@ -36,6 +37,26 @@ pub type Region = ([f32; 2], [f32; 2]);
 
 fn meets(region: &Region, b: &Aabb) -> bool {
     (0..2).all(|i| b.min[i] <= region.1[i] && b.max[i] >= region.0[i])
+}
+
+/// What a world body of an archive is, as a fill of a region asks before it reads the body.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum Extent {
+    /// A map that places entities, and the box they are streamed in.
+    Map(Aabb),
+    /// Archetypes or a lane list, which a fill of any region reads.
+    Everywhere,
+}
+
+/// The offsets among `bodies` a fill of `region` reads: each map that meets it, and every body
+/// that is no map.
+pub(super) fn bodies_of(bodies: &[(u64, Extent)], region: &Region) -> Vec<u64> {
+    let reads = |extent: &Extent| match extent {
+        Extent::Map(streamed) => meets(region, streamed),
+        Extent::Everywhere => true,
+    };
+    let wanted = bodies.iter().filter(|(_, extent)| reads(extent));
+    wanted.map(|(offset, _)| *offset).collect()
 }
 
 /// Whether `find` starts a headerless resource with no signature, as a map body and a lane list do.
@@ -71,6 +92,8 @@ pub(super) struct Gathered {
     /// The light effects inside each interior, by the interior's word, each with its entity's pose.
     interior_lights: HashMap<u64, Vec<(Pose, LightEffect)>>,
     lanes: Lanes,
+    /// Where each body that gives a fill something starts, and what it is, whatever the region.
+    bodies: Vec<(u64, Extent)>,
 }
 
 impl Gathered {
@@ -94,6 +117,13 @@ impl Gathered {
     /// Keep what `body`, found at `offset`, gives; a map whose streaming box is outside `region`
     /// gives nothing.
     pub(super) fn add(&mut self, offset: u64, body: AreaBody, region: Option<&Region>) {
+        let extent = match &body {
+            // A map that places no entity gives a fill nothing.
+            AreaBody::Map(MapBody::Data(map), _) if map.entities.is_empty() => None,
+            AreaBody::Map(MapBody::Data(map), _) => Some(Extent::Map(map.streaming_extents)),
+            _ => Some(Extent::Everywhere),
+        };
+        self.bodies.extend(extent.map(|extent| (offset, extent)));
         match body {
             AreaBody::Map(MapBody::Data(map), lights) => {
                 if region.is_some_and(|r| !meets(r, &map.streaming_extents)) {
@@ -149,6 +179,11 @@ impl Gathered {
         }
     }
 
+    /// Where each body read so far that gives a fill something starts, and what it is.
+    pub(super) fn bodies(&self) -> &[(u64, Extent)] {
+        &self.bodies
+    }
+
     /// What was read, with each archetype's lights at every entity that places it and each
     /// interior's at every entity that places the interior.
     pub(super) fn finish(self) -> Filled {
@@ -157,6 +192,7 @@ impl Gathered {
             archetype_lights,
             interior_lights,
             lanes,
+            bodies: _,
         } = self;
         let lights = &mut filled.lights;
         for row in &filled.index.rows {
@@ -238,6 +274,17 @@ fn not_kept(what: &'static str) -> io::Error {
 }
 
 impl Filled {
+    /// The bytes its lists hold, less what a map and an allocation add around them.
+    fn held_bytes(&self) -> usize {
+        size_of_val(&self.index.maps[..])
+            + size_of_val(&self.index.rows[..])
+            + self.boxes.len() * size_of::<(u64, [[f32; 3]; 2])>()
+            + size_of_val(&self.lights[..])
+            + size_of_val(&self.lane_points[..])
+            + size_of_val(&self.lane_segments[..])
+            + size_of_val(&self.lane_signals[..])
+    }
+
     /// Write everything a fill read, as [`Filled::read`] reads it.
     pub(super) fn write(&self, out: &mut impl Write) -> io::Result<()> {
         put_u64(out, self.index.maps.len() as u64)?;
@@ -374,36 +421,91 @@ impl Kept {
         Some(Self { file, head })
     }
 
-    /// The fill kept of the archive as it is now; `None` where none is, or it does not read.
-    pub(super) fn read(&self) -> Option<Filled> {
-        let mut from = BufReader::new(File::open(&self.file).ok()?);
+    /// `file` past its head, where it was kept of the archive as it is now.
+    fn open(&self, file: &Path) -> Option<BufReader<File>> {
+        let mut from = BufReader::new(File::open(file).ok()?);
         let mut head = vec![0; self.head.len()];
         from.read_exact(&mut head).ok()?;
-        if head != self.head {
-            return None;
+        (head == self.head).then_some(from)
+    }
+
+    /// Write `file` whole beside itself, the head and then what `write` writes, and move it there.
+    fn write(
+        &self,
+        file: &Path,
+        write: impl FnOnce(&mut BufWriter<File>) -> io::Result<()>,
+    ) -> io::Result<()> {
+        if let Some(folder) = file.parent() {
+            std::fs::create_dir_all(folder)?;
         }
-        Filled::read(&mut from)
+        let beside = file.with_extension("tmp");
+        let mut out = BufWriter::new(File::create(&beside)?);
+        out.write_all(&self.head)?;
+        write(&mut out)?;
+        out.flush()?;
+        drop(out);
+        std::fs::rename(beside, file)
+    }
+
+    /// The fill kept of the archive as it is now; `None` where none is, or it does not read.
+    pub(super) fn read(&self) -> Option<Filled> {
+        Filled::read(&mut self.open(&self.file)?)
             .inspect_err(|e| tracing::info!("{}: {e}", self.file.display()))
             .ok()
     }
 
-    /// Keep `filled` in place of any fill kept before: written whole beside it, then moved there.
+    /// Keep `filled` in place of any fill kept before.
     pub(super) fn keep(&self, filled: &Filled) -> io::Result<()> {
-        if let Some(folder) = self.file.parent() {
-            std::fs::create_dir_all(folder)?;
-        }
-        let beside = self.file.with_extension("tmp");
-        let mut out = BufWriter::new(File::create(&beside)?);
-        out.write_all(&self.head)?;
-        filled.write(&mut out)?;
-        out.flush()?;
-        drop(out);
-        std::fs::rename(beside, &self.file)
+        self.write(&self.file, |out| filled.write(out))
+    }
+
+    /// Where the archive's world bodies are kept: each one's offset, and a map's streaming box.
+    fn bodies_file(&self) -> PathBuf {
+        self.file.with_extension("bodies")
+    }
+
+    /// The world bodies kept of the archive as it is now; `None` where none are, or they do not
+    /// read.
+    pub(super) fn read_bodies(&self) -> Option<Vec<(u64, Extent)>> {
+        let mut from = self.open(&self.bodies_file())?;
+        let body = |from: &mut BufReader<File>| {
+            let offset = get_u64(from)?;
+            let extent = match get(from)? {
+                [0u8] => Extent::Everywhere,
+                [1] => Extent::Map(Aabb {
+                    min: get_floats(from)?,
+                    max: get_floats(from)?,
+                }),
+                _ => return Err(not_kept("a kept body of no kind")),
+            };
+            Ok((offset, extent))
+        };
+        list(&mut from, body).ok()
+    }
+
+    /// Keep `bodies`, the world bodies a pass over every body of the archive found.
+    pub(super) fn keep_bodies(&self, bodies: &[(u64, Extent)]) -> io::Result<()> {
+        self.write(&self.bodies_file(), |out| {
+            put_u64(out, bodies.len() as u64)?;
+            for (offset, extent) in bodies {
+                put_u64(out, *offset)?;
+                match extent {
+                    Extent::Everywhere => out.write_all(&[0])?,
+                    Extent::Map(streamed) => {
+                        out.write_all(&[1])?;
+                        put_floats(out, &streamed.min)?;
+                        put_floats(out, &streamed.max)?;
+                    }
+                }
+            }
+            Ok(())
+        })
     }
 }
 
 /// Read the world of `archive`: the fill kept of it where every map is asked for and one stands,
-/// else its bodies at `offsets`, or those a scan of it finds; `None` once `cancel` is set.
+/// else its bodies at `offsets`, or those a scan of it finds; `None` once `cancel` is set. A
+/// region reads only the bodies that meet it once a pass over every body has kept where they are.
 fn read(
     archive: &Path,
     offsets: Option<Vec<u64>>,
@@ -411,14 +513,19 @@ fn read(
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Option<Filled>, String> {
-    // ponytail: only a fill of every map is kept; key the file by the region too if a region's fill is asked for often.
-    let kept = (region.is_none())
-        .then(crate::state::prefs::config_root)
-        .flatten()
-        .and_then(|root| Kept::of(&root, archive));
-    if let Some(filled) = kept.as_ref().and_then(Kept::read) {
+    // ponytail: only a fill of every map is kept whole; a region reads its own bodies each time.
+    // Key the file by the region too if one region's fill is asked for often.
+    let kept = crate::state::prefs::config_root().and_then(|root| Kept::of(&root, archive));
+    let whole = (region.is_none()).then_some(()).and(kept.as_ref());
+    if let Some(filled) = whole.and_then(Kept::read) {
         return Ok(Some(filled));
     }
+    let began = Instant::now();
+    let met = (region.as_ref()).zip(kept.as_ref().and_then(Kept::read_bodies));
+    let met = met.map(|(region, bodies)| bodies_of(&bodies, region));
+    // What is read is every body unless the kept bodies say which meet the region.
+    let every = met.is_none();
+    let offsets = met.or(offsets);
     let file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
     // One window for every body: the offsets rise, so bodies close together share what is read.
     let mut bodies = Rpf9BodyReader::new(&file).map_err(|e| e.to_string())?;
@@ -460,12 +567,29 @@ fn read(
             }
         }
     }
+    if let (true, Some(kept)) = (every, &kept) {
+        if let Err(error) = kept.keep_bodies(gathered.bodies()) {
+            tracing::warn!(%error, path = %archive.display(), "the world's bodies were not kept");
+        }
+    }
+    let bodies = gathered.bodies().len();
     let filled = gathered.finish();
-    if let Some(kept) = &kept {
+    if let Some(kept) = whole {
         if let Err(error) = kept.keep(&filled) {
             tracing::warn!(%error, path = %archive.display(), "the world read was not kept");
         }
     }
+    tracing::info!(
+        seconds = began.elapsed().as_secs_f64(),
+        every,
+        bodies,
+        maps = filled.index.maps.len(),
+        entities = filled.index.rows.len(),
+        lights = filled.lights.len(),
+        held_bytes = filled.held_bytes(),
+        path = %archive.display(),
+        "the world was read"
+    );
     Ok(Some(filled))
 }
 

@@ -430,6 +430,8 @@ mod tests {
     fn a_key_the_pack_index_states_as_srgb_is_the_base_colour_before_its_pack_opens() {
         let (normal, colour) = (0x0123_4567_89AB_CDEFu64, 0x0000_0000_000C_0105u64);
         let geometry = Geometry {
+            vertex_data: Vec::new(),
+            index_data: Vec::new(),
             shader: 0,
             vertex_count: 3,
             channels: Vec::new(),

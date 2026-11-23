@@ -2,7 +2,7 @@
 //! the entry carries one.
 
 use super::bytes::{f32_at, sections, u32_at, Bytes};
-use super::drawable::{drawable_at, Drawable};
+use super::drawable::{drawable_at, is_drawable_root, Drawable};
 use super::texture::{is_texture, texture_at, DictionaryTexture};
 use super::{HeaderlessError, Result};
 use crate::gta6::hash::name_hash32;
@@ -128,6 +128,25 @@ fn dictionary_at(v: Bytes, p: Bytes) -> Result<Dictionary> {
         read.push((code, entry));
     }
     Ok(Dictionary { entries: read })
+}
+
+/// Where each entry of the dictionary that is a drawable lies.
+pub(super) fn drawable_entries(v: Bytes) -> Result<Vec<usize>> {
+    let count = usize::from(v.u16("entry count", 0x38)?);
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    let entries = v.to("entries", 0x30)?;
+    v.array("entries", entries, count, 8)?;
+    let mut drawables = Vec::new();
+    for i in 0..count {
+        if let Some(at) = v.ptr("entry", entries + 8 * i)? {
+            if !is_texture(v, at) && is_drawable_root(v, at, false) {
+                drawables.push(at);
+            }
+        }
+    }
+    Ok(drawables)
 }
 
 /// Where the entry of code `code` lies; `None` where no code is `code`.

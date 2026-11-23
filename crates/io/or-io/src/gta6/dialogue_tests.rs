@@ -166,3 +166,23 @@ fn a_line_s_comments_name_it_and_carry_its_subtitle_without_markup() {
     assert_eq!(plain("a tilde ~ alone"), "a tilde ~ alone");
     assert_eq!(plain(""), "");
 }
+
+#[test]
+fn a_key_that_keeps_one_take_is_numbered_by_the_stream_that_exists() {
+    const OTHER: &str = "OTHR_AAAAU_0001";
+    let mut dialogue = Dialogue::default();
+    dialogue.add(&body(&[
+        (KEY, "MIS1_INT_EXT_15"),
+        (OTHER, "OTHR_A_1"),
+        (OTHER, "OTHR_B_2"),
+    ]));
+    let id = |name: &str| name_hash32(name.as_bytes()) & 0x1FFF_FFFF;
+    // The first key's one stream is its sixteenth take; the other has one stream for two labels.
+    let held = [id("MIS1_INTAU_AB12_16"), id("OTHR_AAAAU_0001_01")];
+    assert_eq!(dialogue.settle(|stream| held.contains(&stream)), 1);
+    let lines: Vec<DialogueLine> = dialogue.lines().collect();
+    assert_eq!(lines[0], line(16, "MIS1_INT_EXT_15"));
+    assert_eq!(lines[0].stream_id(), held[0]);
+    assert_eq!((lines[1].number, lines[2].number), (1, 2));
+    assert_eq!(dialogue.settle(|stream| held.contains(&stream)), 0);
+}

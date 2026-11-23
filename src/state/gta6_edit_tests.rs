@@ -406,6 +406,8 @@ fn a_drawable_edited_in_place_still_poses_and_draws_the_base_colour_its_edited_k
     };
     let triangle = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     let geometry = Geometry {
+        vertex_data: Vec::new(),
+        index_data: Vec::new(),
         shader: 0,
         vertex_count: 3,
         channels: Vec::new(),

@@ -202,6 +202,8 @@ mod tests {
             code,
         };
         Geometry {
+            vertex_data: Vec::new(),
+            index_data: Vec::new(),
             shader: 0,
             vertex_count: 3,
             channels: vec![

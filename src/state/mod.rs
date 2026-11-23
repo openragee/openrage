@@ -171,6 +171,7 @@ mod gta6_anim_edit;
 mod gta6_anim_in_audio_save;
 pub(crate) mod gta6_anim_keys;
 pub(crate) mod gta6_audio_links;
+pub(crate) mod gta6_bcpack_calibration;
 mod gta6_bone_edit;
 pub(crate) mod gta6_bound;
 mod gta6_bound_vertex;

@@ -57,7 +57,8 @@ pub(super) fn upload_texture(
             return None;
         }
     };
-    let rgba = rgba.with_channel_view(ChannelView::preview_default(texture.format()));
+    let mut rgba = rgba.with_channel_view(ChannelView::preview_default(texture.format()));
+    opaque_where_wholly_clear(&mut rgba.data);
     // ⚠ A normal map holds vectors: read as sRGB, its level half tilts every normal the same way.
     let srgb = !bump
         && !matches!(
@@ -72,6 +73,17 @@ pub(super) fn upload_texture(
         &rgba.data,
         srgb,
     ))
+}
+
+/// Make `rgba` opaque where every texel of it is fully clear: such a map hides the whole surface
+/// it colours, so its fourth channel is not an opacity. A GTA VI base-colour map often holds
+/// nought there, and its surface drew as nothing.
+// ponytail: a map whose fourth channel is data that is not nought everywhere still cuts its
+// surface out; tell an alpha effect by its technique when the game's choice of it is read.
+fn opaque_where_wholly_clear(rgba: &mut [u8]) {
+    if rgba.as_chunks::<4>().0.iter().all(|texel| texel[3] == 0) {
+        (rgba.as_chunks_mut::<4>().0.iter_mut()).for_each(|texel| texel[3] = 255);
+    }
 }
 
 /// The pixels as the bind group a mesh's material samples, and the bytes it holds.
@@ -148,4 +160,20 @@ pub(super) fn upload_rgba(
         ],
     });
     (bind_group, bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::opaque_where_wholly_clear;
+
+    #[test]
+    fn a_map_that_would_hide_its_whole_surface_is_drawn_opaque() {
+        let mut clear = vec![130, 63, 40, 0, 1, 2, 3, 0];
+        opaque_where_wholly_clear(&mut clear);
+        assert_eq!(clear, [130, 63, 40, 255, 1, 2, 3, 255]);
+        // One texel that shows keeps the map a cutout.
+        let mut cutout = vec![130, 63, 40, 0, 1, 2, 3, 9];
+        opaque_where_wholly_clear(&mut cutout);
+        assert_eq!(cutout, [130, 63, 40, 0, 1, 2, 3, 9]);
+    }
 }

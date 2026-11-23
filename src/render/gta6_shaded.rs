@@ -129,9 +129,62 @@ fn material(state: &AppState, selection: Option<u64>, shader: &Shader) -> Materi
 }
 
 /// The first level of the texture of `key`, found as the app finds it for a mesh.
-fn texture(state: &AppState, selection: Option<u64>, key: u64) -> Option<Image> {
+pub(super) fn texture(state: &AppState, selection: Option<u64>, key: u64) -> Option<Image> {
     let resolved = texture_resolution::resolve(state, None, selection, &texture_name(key))?;
     first_level(&resolved.texture)
+}
+
+/// The first level of a texture as its pack stores it, copied out of the pack so that a worker
+/// can decode it while the frames go on.
+pub(super) struct StoredLevel {
+    format: or_io::codec::texture::GrcTextureFormat,
+    srgb: bool,
+    size: (u32, u32),
+    payload: Vec<u8>,
+}
+
+impl or_io::codec::texture::TextureSource for StoredLevel {
+    fn pixel_format(&self) -> or_io::codec::texture::GrcTextureFormat {
+        self.format
+    }
+    fn is_srgb(&self) -> bool {
+        self.srgb
+    }
+    fn stored_size(&self) -> (u32, u32) {
+        self.size
+    }
+    fn stored_levels(&self) -> u32 {
+        1
+    }
+    fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
+impl StoredLevel {
+    /// The level decoded, in the colour space it states; `None` where it will not decode.
+    pub(super) fn decode(&self) -> Option<Image> {
+        first_level(self)
+    }
+}
+
+/// The first level of the texture of `key` as stored, found as the app finds it for a mesh.
+pub(super) fn stored_level(
+    state: &AppState,
+    selection: Option<u64>,
+    key: u64,
+) -> Option<StoredLevel> {
+    use or_io::codec::texture::TextureSource;
+    let resolved = texture_resolution::resolve(state, None, selection, &texture_name(key))?;
+    let texture = &resolved.texture;
+    let (format, size) = (texture.pixel_format(), texture.stored_size());
+    let level = format.mip_level_range(size.0, size.1, 0);
+    Some(StoredLevel {
+        format,
+        srgb: texture.is_srgb(),
+        size,
+        payload: texture.payload().get(level)?.to_vec(),
+    })
 }
 
 /// What the Shaded button says of the active GTA VI drawable: where its programs stand and, once
@@ -164,6 +217,52 @@ pub(crate) fn said(status: &Status, drawn: usize, total: usize) -> String {
         ));
     }
     said
+}
+
+/// How a drawable's own mesh and pixel programs came out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Own {
+    /// The surfaces they draw.
+    pub drawn: usize,
+    /// The bindings only the game fills, left at nought.
+    pub zeroed: usize,
+    /// The surfaces drawn as Material in the same frame, and why the first is.
+    pub rest: usize,
+    pub why: Option<String>,
+}
+
+/// `said` with how the drawable's own mesh and pixel programs came out: the surfaces they draw
+/// and the bindings left at nought, or why it draws without them.
+pub(crate) fn said_of_own(said: String, own: Option<&Result<Own, String>>) -> String {
+    match own {
+        None => said,
+        Some(Ok(own)) => {
+            let mut said = tr!(
+                "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts",
+                drawn = own.drawn,
+                zeroed = own.zeroed,
+            );
+            if let Some(why) = &own.why {
+                said.push('\n');
+                said.push_str(&tr!(
+                    "Drawn as Material: {count} surfaces; the first: {why}",
+                    count = own.rest,
+                    why = why,
+                ));
+            }
+            said
+        }
+        Some(Err(why)) => {
+            let own = tr!(
+                "Its own mesh and pixel programs do not draw it: {why}",
+                why = why,
+            );
+            format!(
+                "{said}
+{own}"
+            )
+        }
+    }
 }
 
 #[cfg(test)]
@@ -199,6 +298,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_shaded_button_says_what_draws_as_material_beside_the_drawable_s_own_programs() {
+        let mut own = Own {
+            drawn: 2,
+            zeroed: 9,
+            rest: 0,
+            why: None,
+        };
+        let whole = said_of_own(String::new(), Some(&Ok(own.clone())));
+        assert!(
+            whole.contains("2 surfaces drawn") && !whole.contains('\n'),
+            "{whole}"
+        );
+        own.rest = 3;
+        own.why = Some("an effect: why".into());
+        let partly = said_of_own(String::new(), Some(&Ok(own)));
+        assert!(
+            partly.ends_with("Drawn as Material: 3 surfaces; the first: an effect: why"),
+            "{partly}"
+        );
+        let none = said_of_own("before".into(), Some(&Err("why".into())));
+        assert!(
+            none.starts_with("before\n") && none.ends_with("why"),
+            "{none}"
+        );
+    }
+
     fn said_of(refused: usize, drawn: usize, total: usize) -> String {
         let status = Status::Done {
             refused,
@@ -228,6 +354,8 @@ mod tests {
             triangles: vec![[0, 1, 2], [0, 1, 3], [2, 1, 0]],
             positions: Ok(positions.clone()),
             vertices,
+            vertex_data: Vec::new(),
+            index_data: Vec::new(),
         };
         let surface = surface(&geometry).unwrap();
         assert_eq!(surface.positions, positions);

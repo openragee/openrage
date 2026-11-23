@@ -223,6 +223,9 @@ pub struct ViewportRenderer {
     fallback_material_bytes: u64,
     meshes: Vec<MeshDraw>,
     game_scene: Option<crate::game_shaders::mesh::MeshScene>,
+    /// A GTA VI model drawn by its own mesh and pixel programs, which Shaded draws in place of `game_scene` where there is one.
+    gta6_scene: Option<crate::game_shaders::meshlets::MeshletScene>,
+    gta6_sky: crate::game_shaders::meshlets::Sky,
     /// The scene drawn by the game's deferred passes, which Shaded draws in place of `game_scene` where there is one.
     deferred: Option<DeferredFrame>,
     deferred_scene: Option<crate::game_shaders::deferred::DeferredScene>,
@@ -490,6 +493,9 @@ impl ViewportRenderer {
         self.colour_display_view = colour_display_view;
         self.depth_view = depth_view;
         self.refresh_soft_depth();
+        if let Some(scene) = self.gta6_scene.as_mut() {
+            scene.resize(device, (width, height));
+        }
         if let Some(deferred) = self.deferred.as_mut() {
             deferred.gbuffer = crate::game_shaders::deferred::GBuffer::new(device, width, height);
             deferred.hdr = crate::game_shaders::deferred::hdr_target(device, width, height);
@@ -572,6 +578,16 @@ impl ViewportRenderer {
         self.game_scene.is_some()
     }
 
+    /// The GTA VI model [`ShadingMode::Shaded`] draws by its own programs, prepared for [`Self::game_target`] and [`Self::size`]; `None` takes it away.
+    pub fn set_gta6_scene(&mut self, scene: Option<crate::game_shaders::meshlets::MeshletScene>) {
+        self.gta6_scene = scene;
+    }
+
+    /// The sun and the sky a GTA VI drawable's own passes are lit by.
+    pub fn set_gta6_sky(&mut self, sky: crate::game_shaders::meshlets::Sky) {
+        self.gta6_sky = sky;
+    }
+
     /// The light the plain modes (solid, material) light a surface by: the way towards it and how strongly it lights. A way of no length puts it where it began.
     ///
     /// ⚠ Only a key light: the head light that follows the camera and the ambient light stay as they are, and the channel and wireframe modes are unlit.
@@ -623,6 +639,14 @@ impl ViewportRenderer {
         let deferred = self.deferred_in(mode);
         if let Some((deferred, scene)) = deferred {
             self.render_deferred(encoder, queue, camera, aspect, deferred, scene);
+        } else if let (ShadingMode::Shaded, Some(scene)) = (mode, &self.gta6_scene) {
+            let lighting = crate::game_shaders::meshlets::Lighting {
+                view_proj,
+                sky: self.gta6_sky,
+                camera: eye,
+            };
+            scene.update(queue, &lighting);
+            scene.record_targets(encoder);
         } else if let (ShadingMode::Shaded, Some(scene)) = (mode, &self.game_scene) {
             scene.update(queue, &self.game_constants(camera, aspect));
         }
@@ -770,6 +794,21 @@ impl ViewportRenderer {
         let mode = match (mode, &self.game_scene) {
             // What is lit is drawn already, and what blends over it is in it
             (ShadingMode::Shaded, _) if self.deferred_in(ShadingMode::Shaded).is_some() => return,
+            (ShadingMode::Shaded, _) if self.gta6_scene.is_some() => {
+                if let Some(scene) = &self.gta6_scene {
+                    scene.record(pass);
+                    // What its programs do not draw is drawn as a material, over the same depth
+                    let rest = || scene.rest.iter().filter_map(|mesh| self.meshes.get(*mesh));
+                    pass.set_bind_group(0, &self.bind_group, &[]);
+                    for pipeline in [&self.material_pipeline, &self.material_blend_pipeline] {
+                        pass.set_pipeline(pipeline);
+                        for draw in rest() {
+                            self.draw_mesh(pass, draw, ShadingMode::Material);
+                        }
+                    }
+                }
+                return;
+            }
             (ShadingMode::Shaded, Some(scene)) => {
                 scene.record(pass);
                 return;

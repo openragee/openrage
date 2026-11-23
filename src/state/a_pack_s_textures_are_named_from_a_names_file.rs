@@ -56,3 +56,17 @@ fn a_names_file_with_no_pack_open_starts_nothing_and_says_why() {
         state.toasts
     );
 }
+
+#[test]
+fn a_key_nothing_learned_this_session_is_named_by_the_vocabulary_a_harvest_kept() {
+    let name = "zq_kept_by_a_harvest_glow";
+    let key = name_hash64(name.as_bytes());
+    let mut kept = or_io::gta6::names::Vocabulary::default();
+    assert!(kept.add(name, None));
+    let named_by = crate::state::ttpf_document::named_by;
+    assert_eq!(named_by(None, &kept, key).as_deref(), Some(name));
+    // What the session learned comes first, and a key neither holds has no name.
+    let learned = Some("zq_typed".to_string());
+    assert_eq!(named_by(learned, &kept, key).as_deref(), Some("zq_typed"));
+    assert_eq!(named_by(None, &kept, key ^ 1), None);
+}

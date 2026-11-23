@@ -3,6 +3,7 @@
 
 pub mod cfg;
 pub mod decode;
+pub mod link;
 mod opcodes;
 pub mod sym;
 pub mod to_naga;
@@ -12,7 +13,10 @@ use or_io::gta5::shaders::xdat;
 pub use cfg::{Block, Cfg, CfgError, Terminator};
 pub use decode::{decode, decode_one, DecodeError, Family, Inst, Op, Operand};
 pub use sym::{Index, IndexSource, Loc};
-pub use to_naga::{lower, lower_with, Lowered, NotTranslated, Options, Resource, ResourceKind};
+pub use to_naga::{
+    emitted, lower, lower_with, Emitted, Lowered, NotTranslated, Options, Pair, Resource,
+    ResourceKind,
+};
 
 use crate::dxil::container::{Container, ContainerError};
 use crate::dxil::ShaderKind;
@@ -24,10 +28,11 @@ const S_CODE_END: u32 = 0xBF9F_0000;
 /// The package word whose bit 5 says the code was compiled for 32 lanes rather than 64.
 const PACKAGE_FLAGS: usize = 0xD4;
 const WAVE32: u32 = 0x20;
-/// A pixel package's input records: eight bytes each, from here while the first byte is 6.
+/// A pixel package's input records: eight bytes each, from here while the first byte is 6, or
+/// 7 as the record of the parameter in slot 0 is tagged where a program reads one.
 const INPUT_TABLE: usize = 0x138;
 const INPUT_RECORD: usize = 8;
-const INPUT_TAG: u8 = 6;
+const INPUT_TAGS: [u8; 2] = [6, 7];
 
 /// One input a pixel program interpolates; its place in [`Program::inputs`] is the attribute number the code names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +52,21 @@ pub struct VertexInput {
     pub component_type: u32,
 }
 
+/// What a compute package states of its launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Launch {
+    /// The scalar registers the pipeline loads; the group's numbers follow them.
+    pub user_registers: u8,
+    /// Bit `i`: the group's number along axis `i` is loaded.
+    pub group_axes: u8,
+    /// Whether the group's size is loaded too, after its numbers.
+    pub group_size: bool,
+    /// The threads of a group along each axis.
+    pub threads: [u32; 3],
+    /// The dwords of memory the threads of a group share.
+    pub shared_dwords: u32,
+}
+
 /// One `XBCH` block's code: a container holds one, or two where its `XDAT` directory lists two.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
@@ -62,6 +82,8 @@ pub struct Program {
     pub position_read: u8,
     /// Whether a pixel program's signature says it reads which way its triangle faces.
     pub front_face: bool,
+    /// A compute program's launch, as its package states it.
+    pub launch: Option<Launch>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -108,12 +130,29 @@ fn system_reads(signature: &[u8]) -> (u8, bool) {
     (position, facing)
 }
 
+/// A compute package's launch: the word at the input table's place holds the user registers in
+/// bits 5:1, the group axes in 9:7, the group size's flag in 10 and the shared memory in 23:15,
+/// in units of 512 bytes; the three words after it are the threads of a group.
+fn launch(package: &[u8]) -> Launch {
+    let word = |at: usize| {
+        (package.get(at..at + 4)).map_or(0, |w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+    };
+    let state = word(INPUT_TABLE);
+    Launch {
+        user_registers: ((state >> 1) & 0x1F) as u8,
+        group_axes: ((state >> 7) & 7) as u8,
+        group_size: (state >> 10) & 1 != 0,
+        threads: [1, 2, 3].map(|k| word(INPUT_TABLE + 4 * k)),
+        shared_dwords: ((state >> 15) & 0x1FF) * 128,
+    }
+}
+
 fn pixel_inputs(package: &[u8]) -> Vec<PixelInput> {
     (package.get(INPUT_TABLE..).unwrap_or_default())
         .as_chunks::<INPUT_RECORD>()
         .0
         .iter()
-        .take_while(|record| record[0] == INPUT_TAG)
+        .take_while(|record| INPUT_TAGS.contains(&record[0]))
         .map(|record| PixelInput {
             slot: record[6],
             flags: record[7],
@@ -172,6 +211,7 @@ pub fn unwrap(dxbc: &[u8]) -> Result<Vec<Program>, ContainerError> {
                 vertex_inputs: vertex_inputs.clone(),
                 position_read,
                 front_face,
+                launch: (kind == ShaderKind::Compute).then(|| launch(&stage.package)),
             })
         })
         .collect()

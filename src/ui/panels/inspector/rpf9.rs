@@ -175,7 +175,12 @@ pub(super) fn draw_scan_rows(ui: &mut egui::Ui, state: &mut AppState, doc_id: Do
     list.seek(&found.rows);
     let filtering = list.filtering(found.rows.len());
     let (jumped, scroll) = (list.jumped, std::mem::take(&mut list.scroll));
-    let shown = list.shown(&found.rows, row_words);
+    let names = crate::state::gta6_names::labels(&scan.path);
+    let name_of = |row: &Row| match row {
+        Row::Body(find) => names.get(&find.offset).map(String::as_str),
+        Row::Missing { .. } => None,
+    };
+    let shown = list.shown(&found.rows, |row| named_words(row, name_of(row)));
     let count = shown.map_or(found.rows.len(), <[usize]>::len);
     let selection_id = egui::Id::new(("scanned bodies selected", doc_id));
     let mut selection: std::collections::BTreeSet<usize> =
@@ -221,11 +226,6 @@ pub(super) fn draw_scan_rows(ui: &mut egui::Ui, state: &mut AppState, doc_id: Do
     let row_of = |at: usize| shown.map_or(at, |s| s[at]);
     let row_height = ui.spacing().interact_size.y;
     let (mut clicked, mut kept) = (None, None);
-    let names = crate::state::gta6_names::labels(&scan.path);
-    let row_offset = |row: &Row| match row {
-        Row::Body(find) => Some(find.offset),
-        Row::Missing { .. } => None,
-    };
     let rows = egui::ScrollArea::both()
         .id_salt(("scanned bodies", doc_id))
         .auto_shrink([false, false]);
@@ -254,12 +254,7 @@ pub(super) fn draw_scan_rows(ui: &mut egui::Ui, state: &mut AppState, doc_id: Do
                 ui.set_height(row_height);
                 // ⚠ A selectable label senses drags, which would take presses meant for the row.
                 ui.style_mut().interaction.selectable_labels = false;
-                let words = draw_row(ui, row);
-                // The name the body states of itself, where a harvest kept one.
-                if let Some(name) = row_offset(row).and_then(|at| names.get(&at)) {
-                    ui.label(egui::RichText::new(name).color(theme::TEXT_PRIMARY));
-                }
-                words
+                draw_row(ui, row, name_of(row))
             });
             let rect = drawn.response.rect;
             if jumped == Some(index) {
@@ -424,8 +419,18 @@ fn row_words(row: &Row) -> String {
     }
 }
 
+/// A row's words and the name a harvest kept for its body, which the filter's text is found in too.
+fn named_words(row: &Row, name: Option<&str>) -> String {
+    match name {
+        Some(name) => format!("{}  {name}", row_words(row)),
+        None => row_words(row),
+    }
+}
+
 /// One line of the list; for a body, the words it shows, which name the row that opens it.
-fn draw_row(ui: &mut egui::Ui, row: &Row) -> Option<String> {
+/// ⚠ The name a harvest kept comes right after the offset: after the size it lies past the
+/// panel's edge, where nothing says it is.
+fn draw_row(ui: &mut egui::Ui, row: &Row, name: Option<&str>) -> Option<String> {
     let Row::Body(find) = row else {
         ui.colored_label(theme::WARNING, row_words(row));
         return None;
@@ -445,11 +450,14 @@ fn draw_row(ui: &mut egui::Ui, row: &Row) -> Option<String> {
         }
         (at, kind, Some(size)) => {
             ui.label(egui::RichText::new(&at).monospace());
+            if let Some(name) = name {
+                ui.label(egui::RichText::new(name).color(theme::TEXT_PRIMARY));
+            }
             ui.label(egui::RichText::new(&kind).monospace());
             ui.label(egui::RichText::new(&size).color(theme::TEXT_SECONDARY));
         }
     }
-    Some(row_words(row))
+    Some(named_words(row, name))
 }
 
 /// What a body's row says under the pointer: how it opens, or why it does not.
@@ -622,5 +630,21 @@ fn sizes(find: &Rpf9ScanFind) -> String {
         ),
         (Some(stored), _) => or_job::human_bytes(stored),
         (None, _) => tr!("end not known").to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_words_the_filter_reads_hold_the_name_a_harvest_kept() {
+        let row = Row::Missing {
+            from: 0,
+            to: 16,
+            bytes: 16,
+        };
+        assert!(named_words(&row, Some("a_made_up_model.#dr")).ends_with("a_made_up_model.#dr"));
+        assert_eq!(named_words(&row, None), row_words(&row));
     }
 }

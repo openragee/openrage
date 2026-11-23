@@ -451,6 +451,8 @@ mod tests {
 
     fn geometry(positions: Result<Vec<[f32; 3]>, HeaderlessError>) -> Geometry {
         Geometry {
+            vertex_data: Vec::new(),
+            index_data: Vec::new(),
             shader: 0,
             vertex_count: 3,
             channels: Vec::new(),

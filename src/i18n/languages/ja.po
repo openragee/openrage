@@ -14608,6 +14608,30 @@ msgstr "シェーディング — GTA VIのプログラムから変換したゲ�
 msgid "Shaded — the game's own passes, translated from GTA VI's programs: {drawn} of {total} surfaces drawn"
 msgstr "シェーディング — GTA VIのプログラムから変換したゲーム自身のパス：{total} 個のサーフェスのうち {drawn} 個を描画"
 
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
+msgstr "シェーディング — GTA VIのプログラムから変換した、このドローアブル自身のメッシュプログラムとピクセルプログラム：{drawn} 個のサーフェスを描画し、設定した時刻と天候でエディター自身の太陽と空によって照らします。ゲームだけが埋める {zeroed} 個のバインディングはゼロとして読み取られます"
+
+msgid "a worker is still decoding its maps"
+msgstr "ワーカーがまだマップをデコード中です"
+
+msgid "a worker is still building its passes for this device"
+msgstr "ワーカーがまだこのデバイス用のパスを構築中です"
+
+msgid "Drawn as Material: {count} surfaces; the first: {why}"
+msgstr "マテリアルとして描画：{count} 個のサーフェス。最初のもの：{why}"
+
+msgid "Its own mesh and pixel programs do not draw it: {why}"
+msgstr "自身のメッシュプログラムとピクセルプログラムでは描画されません：{why}"
+
+msgid "{effect}: none of its passes reads the streams this geometry has"
+msgstr "{effect}：このジオメトリが持つストリームを読み取るパスがありません"
+
+msgid "{effect}: its programs are not translated yet"
+msgstr "{effect}：プログラムはまだ変換されていません"
+
+msgid "none of its techniques is a mesh pass that writes the deferred targets"
+msgstr "ディファードターゲットに書き込むメッシュパスであるテクニックがありません"
+
 msgid "{count} program is not translated: {why}"
 msgid_plural "{count} programs are not translated; the first: {why}"
 msgstr[0] "{count} 個のプログラムが変換されていません：{why}"
@@ -15984,8 +16008,8 @@ msgstr "ラジオ局を読み取れません：{why}"
 msgid "GTA VI Radio"
 msgstr "GTA VIラジオ"
 
-msgid "A station's key is the key of its name in the text tables, and a track plays the streamed sound of a sounds body: index the open scans with the scans of the text and audio archives open to name the stations and play their tracks. A track's title and artists are the identifiers its text states; the titles the game shows are keyed by a track id the stream carries, which is not read."
-msgstr "局のキーは、テキストテーブルにあるその名前のキーで、トラックはサウンドボディのストリーミングサウンドを再生します：局に名前を付けてトラックを再生するには、テキストとオーディオのアーカイブのスキャンを開いた状態で、開いているスキャンをインデックスしてください。トラックのタイトルとアーティストは、そのテキストが示す識別子です。ゲームが表示するタイトルは、ストリームが持つトラックIDをキーとしていますが、これは読み取られません。"
+msgid "A station's key is the key of its name in the text tables, and a track plays the streamed sound of a sounds body: index the open scans with the scans of the text and audio archives open to name the stations, show their tracks' titles and artists and play them. A title the game shows is keyed by the track id a marker of the track's stream states; a track with none is listed by the identifiers its text states. A station kept off the wheel is named from the names harvested."
+msgstr "局のキーは、テキストテーブルにあるその名前のキーで、トラックはサウンドボディのストリーミングサウンドを再生します：局に名前を付け、トラックのタイトルとアーティストを表示して再生するには、テキストとオーディオのアーカイブのスキャンを開いた状態で、開いているスキャンをインデックスしてください。ゲームが表示するタイトルは、トラックのストリームのマーカーが示すトラックIDをキーとします。マーカーのないトラックは、そのテキストが示す識別子で一覧表示されます。ラジオホイールに載っていない局には、収集した名前から名前が付けられます。"
 
 msgid "GTA VI Dialogue"
 msgstr "GTA VI台詞"
@@ -16020,3 +16044,66 @@ msgstr "パーツ"
 
 msgid "Draw the weapon as the first of each kind of its parts, each on its bone, in place of its own mesh"
 msgstr "武器を各種パーツの最初のもので描画します。それぞれ自分のボーンに置かれ、武器自身のメッシュの代わりになります"
+
+msgid "A mix of {count} track"
+msgid_plural "A mix of {count} tracks"
+msgstr[0] "トラック {count} 個のミックス"
+msgstr[1] "トラック {count} 個のミックス"
+
+msgid "exact"
+msgstr "正確"
+
+msgid "calibrated"
+msgstr "キャリブレーション済み"
+
+msgid "calibrated, {percent} % of its coded blocks through a slot not known"
+msgstr "キャリブレーション済み、符号化ブロックの{percent}%が未知のスロットを経由"
+
+msgid "Calibrating GTA VI texture decoding from the packs of {folder}"
+msgstr "{folder}配下のパックからGTA VIテクスチャのデコードをキャリブレーションしています"
+
+msgid "A calibration of GTA VI texture decoding is already running"
+msgstr "GTA VIテクスチャのデコードのキャリブレーションは既に実行中です"
+
+msgid "No GTA VI texture pack opens under that folder"
+msgstr "そのフォルダー配下に開けるGTA VIテクスチャパックはありません"
+
+msgid "The calibration could not be kept: {why}"
+msgstr "キャリブレーションを保存できませんでした：{why}"
+
+msgid "GTA VI texture calibration"
+msgstr "GTA VIテクスチャのキャリブレーション"
+
+msgid "Calibrate decoding"
+msgstr "デコードをキャリブレーション"
+
+msgid "Fit the tables of the console's texture coder from every pack of this game, so that the textures stored through it for BC3, BC4, BC5, BC6H and BC7 read. No file holds those tables, so such a texture is an estimate and is marked calibrated"
+msgstr "このゲームのすべてのパックから、コンソールのテクスチャコーダーのテーブルをフィットさせ、それを経由して保存されたBC3、BC4、BC5、BC6H、BC7のテクスチャを読み取れるようにします。これらのテーブルを含むファイルはないため、そのようなテクスチャは推定値となり、「キャリブレーション済み」と表示されます"
+
+msgid "Decode"
+msgstr "デコード"
+
+msgid "Wrote {path}. This texture is {how}: an estimate, not the blocks the pack stores"
+msgstr "{path}を書き出しました。このテクスチャは{how}です：推定値であり、パックが保存しているブロックそのものではありません"
+
+msgid "{count} GTA VI texture pack calibrated: {bodies} coded mips now read as estimates, {unknown} % of their blocks through a slot not known"
+msgid_plural "{count} GTA VI texture packs calibrated: {bodies} coded mips now read as estimates, {unknown} % of their blocks through a slot not known"
+msgstr[0] "キャリブレーション済みのGTA VIテクスチャパック {count} 個：符号化されたミップ {bodies} 個が推定値として読み取られるようになり、ブロックの{unknown}%が未知のスロットを経由します"
+msgstr[1] "キャリブレーション済みのGTA VIテクスチャパック {count} 個：符号化されたミップ {bodies} 個が推定値として読み取られるようになり、ブロックの{unknown}%が未知のスロットを経由します"
+
+msgid "Filter by the model that uses a texture"
+msgstr "テクスチャを使用するモデルでフィルター"
+
+msgid "Show only the textures used by a model whose name holds this text. A harvest of the game's names finds, for each texture, the first model whose material binds it"
+msgstr "この文字列を名前に含むモデルが使用しているテクスチャのみを表示します。ゲームの名前の収集により、各テクスチャについて、マテリアルがそれをバインドしている最初のモデルが見つかります"
+
+msgid "used by {model} as {parameter}"
+msgstr "{model}が{parameter}として使用"
+
+msgid "used by {model} as {parameter}, and by {count} model more"
+msgid_plural "used by {model} as {parameter}, and by {count} models more"
+msgstr[0] "{model}が{parameter}として使用、ほかに {count} 個のモデルが使用"
+msgstr[1] "{model}が{parameter}として使用、ほかに {count} 個のモデルが使用"
+
+msgid "Use"
+msgstr "用途"

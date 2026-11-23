@@ -110,6 +110,12 @@ impl AppState {
                         Ok(resolved) => {
                             self.apply_archive_open(doc_id, node_id, resolved);
                         }
+                        // A GTA VI archive is refused by design and opens as a scan: the status
+                        // bar counts no warning for it.
+                        Err(error) if super::gta_vi::is_rpf9_refusal(&error) => {
+                            tracing::debug!(doc_id, node_id, "A GTA VI archive lists no entry");
+                            self.mark_archive_open_failed(doc_id, node_id, error);
+                        }
                         Err(error) => {
                             tracing::warn!(doc_id, node_id, error = %error, "Archive open failed");
                             self.mark_archive_open_failed(doc_id, node_id, error);

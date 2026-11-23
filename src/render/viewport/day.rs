@@ -59,6 +59,25 @@ pub(super) fn sun_towards(
     Some(-lighting.directional_light.truncate())
 }
 
+/// The sun and the sky a GTA VI drawable's own passes are lit by: the hour, the weather and the
+/// exposure the drivers say and nothing else, since no install's timecycle is theirs. The
+/// exposure's middle leaves the light as it is, and its ends are a quarter and four times it.
+fn gta6_sky(
+    hour: f32,
+    weather: WeatherState,
+    exposure: f32,
+) -> or_renderer::game_shaders::meshlets::Sky {
+    let overcast = match weather {
+        WeatherState::Clear => 0.0,
+        WeatherState::Cloudy | WeatherState::Fog => 0.6,
+        WeatherState::Rain => 0.8,
+        WeatherState::Storm => 0.95,
+    };
+    let mut sky = or_renderer::game_shaders::meshlets::Sky::at(hour, overcast);
+    sky.exposure = 2f32.powf(4.0 * (exposure - 0.5));
+    sky
+}
+
 impl RenderBridge {
     /// Hand the renderer the day the drivers say, worked out again only when the hour, the weather or the install's timecycle changed.
     pub(super) fn refresh_day(&mut self, state: &AppState) {
@@ -66,6 +85,8 @@ impl RenderBridge {
         let hour = state.drivers.time_of_day.hour;
         let weather = state.drivers.weather.state;
         let days = state.drivers.time_of_day.days;
+        self.renderer
+            .set_gta6_sky(gta6_sky(hour, weather, state.drivers.exposure.value));
         let key = (
             Arc::as_ptr(&data) as usize,
             hour.to_bits(),

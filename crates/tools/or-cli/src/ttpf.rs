@@ -5,16 +5,41 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use or_io::codec::texture::{decode_level, save_png, to_dds};
+use or_io::codec::texture::{decode_level, save_png, to_dds, DxgiFormat};
+use or_io::gta6::bcpack::calibrate::{load_cache, save_cache};
+use or_io::gta6::bcpack::Decode;
 use or_io::gta6::hash::name_hash64;
-use or_io::gta6::texture_names::name_keys;
-use or_io::gta6::ttpf::{Format, Texture, TexturePack, KIND_STORED, KIND_ZLIB};
+use or_io::gta6::texture_names::{name_keys, use_label};
+use or_io::gta6::ttpf::{
+    calibrate_packs, coverage, Format, Texture, TexturePack, KIND_STORED, KIND_ZLIB,
+};
 
 /// A cube's faces in the order a pack stores them, D3D's.
 const FACES: [&str; 6] = ["px", "nx", "py", "ny", "pz", "nz"];
 
+/// Where `ttpf calibrate` keeps the coder's tables it fits: `bcpack` under the configuration directory.
+fn calibration_dir() -> Option<PathBuf> {
+    or_title::config::config_dir().map(|dir| dir.join("bcpack"))
+}
+
+/// The pack at `path`, its bodies that do not decode exactly drawn through a calibration that read it, if one is kept.
 fn open(path: &Path) -> Result<TexturePack, String> {
-    TexturePack::open(path).map_err(|e| format!("{}: {e}", path.display()))
+    let mut pack = TexturePack::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let tables = calibration_dir().and_then(|dir| load_cache(&dir, pack.member_key()));
+    pack.set_calibration(tables.map(std::sync::Arc::new));
+    Ok(pack)
+}
+
+/// How a texture with a body through the coder was decoded, for a line that lists or exports it.
+fn decode_note(how: &Decode) -> String {
+    if how.is_exact() {
+        return "exact".to_string();
+    }
+    format!(
+        "calibrated: an estimate through tables fitted on this machine, {:.1}% of its coded \
+         blocks through a slot or symbol not known",
+        how.unknown_percent()
+    )
 }
 
 fn kind_name(kind: u8) -> String {
@@ -84,24 +109,45 @@ fn cmd_info(args: &[String]) -> Result<(), String> {
         let name = match names.get(&entry.key) {
             _ if !entry.on_disk => "not on disk".to_string(),
             Some(name) => name.clone(),
-            None => format!("hash_{:016X}", entry.key),
+            // A texture with no name is said with the model a harvest found to name it by key.
+            None => match super::gta6_names::texture_uses().get(&entry.key) {
+                Some(used) => format!("hash_{:016X} ({})", entry.key, use_label(used)),
+                None => format!("hash_{:016X}", entry.key),
+            },
         };
         let format = match entry.format() {
             Some(format) => format!("{} ({:#05x})", format.name(), entry.format_code),
             None => format!("{:#05x}", entry.format_code),
         };
         let mut kinds: Vec<String> = Vec::new();
+        let mut coded = false;
         for row in pack.rows_of(index).into_iter().flatten() {
-            let name = kind_name(pack.rows[row].kind);
+            let kind = pack.rows[row].kind;
+            coded |= kind != KIND_STORED && kind != KIND_ZLIB;
+            let name = kind_name(kind);
             if !kinds.contains(&name) {
                 kinds.push(name);
             }
         }
-        let read = match pack.texture(index) {
-            Ok(texture) if texture.faces > 1 => {
-                format!("yes, {} slices of {} mip(s)", texture.faces, texture.levels)
+        let read = match pack.texture_noted(index) {
+            Ok((texture, how)) => {
+                let mips = match texture.faces {
+                    1 => format!("yes, {} mip(s)", texture.levels),
+                    faces => format!("yes, {faces} slices of {} mip(s)", texture.levels),
+                };
+                // The tables are fitted on the unsigned format's textures: no signed one has a plain mip beside a coded one.
+                let signed =
+                    (entry.format()).is_some_and(|format| format.dxgi() == DxgiFormat::Bc6hSf16);
+                let unverified = match signed && !how.is_exact() {
+                    true => "; unverified: no plain mip checks a signed texture's decode",
+                    false => "",
+                };
+                // A texture with a body through the coder says whether its decode is exact.
+                match coded {
+                    true => format!("{mips}, {}{unverified}", decode_note(&how)),
+                    false => mips,
+                }
             }
-            Ok(texture) => format!("yes, {} mip(s)", texture.levels),
             Err(e) => format!("no: {e}"),
         };
         println!(
@@ -158,9 +204,10 @@ fn cmd_export(args: &[String]) -> Result<(), String> {
         None => (0..pack.entries.len()).collect(),
     };
     let (mut written, mut refused) = (0usize, 0usize);
+    let mut estimates = 0usize;
     for index in indices {
-        let texture = match pack.texture(index) {
-            Ok(texture) => texture,
+        let (texture, how) = match pack.texture_noted(index) {
+            Ok(read) => read,
             Err(e) if only.is_some() => return Err(format!("texture {index}: {e}")),
             Err(e) => {
                 eprintln!("texture {index}: {e}");
@@ -169,7 +216,13 @@ fn cmd_export(args: &[String]) -> Result<(), String> {
             }
         };
         let cube = pack.entries[index].dimension == 2;
-        write_faces(out_dir, &index.to_string(), texture, cube, as_dds)?;
+        // An export of an estimate says so on its line.
+        let note = match how.is_exact() {
+            true => String::new(),
+            false => format!("; {}", decode_note(&how)),
+        };
+        estimates += usize::from(!how.is_exact());
+        write_faces(out_dir, &index.to_string(), texture, cube, as_dds, &note)?;
         written += 1;
     }
     if written == 0 {
@@ -178,6 +231,115 @@ fn cmd_export(args: &[String]) -> Result<(), String> {
     println!(
         "\nExported {written} texture(s) to {}; {refused} not readable",
         out_dir.display()
+    );
+    if estimates > 0 {
+        println!(
+            "{estimates} of them are calibrated: estimates through tables fitted on this \
+             machine, not the pack's stored blocks"
+        );
+    }
+    Ok(())
+}
+
+/// Every `.ttpf` under `dir`, into `out`.
+fn packs_under(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let listed = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    for entry in listed.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            packs_under(&path, out)?;
+        } else if (path.extension()).is_some_and(|e| e.eq_ignore_ascii_case("ttpf")) {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Fit the coder's tables from every pack under a folder, and keep them for those packs.
+fn cmd_calibrate(args: &[String]) -> Result<(), String> {
+    let (folder, covered) = match args {
+        [folder] => (folder, false),
+        [folder, flag] if flag == "--coverage" => (folder, true),
+        _ => return Err("usage: ttpf calibrate <folder> [--coverage]".into()),
+    };
+    let mut paths = Vec::new();
+    packs_under(Path::new(folder), &mut paths)?;
+    paths.sort();
+    let mut packs = Vec::new();
+    for path in &paths {
+        match TexturePack::open(path) {
+            Ok(pack) => packs.push(pack),
+            Err(e) => eprintln!("{}: {e}", path.display()),
+        }
+    }
+    if packs.is_empty() {
+        return Err(format!("no texture pack opens under {folder}"));
+    }
+    let mut said = u64::MAX;
+    let mut progress = |done: u64, total: u64| {
+        let percent = 100 * done / total.max(1);
+        if percent != said {
+            said = percent;
+            eprint!("\r{percent:>3}%");
+        }
+    };
+    let found = calibrate_packs(&packs, &mut progress, &|| false).ok_or("stopped")?;
+    eprintln!();
+    println!("Calibrated from {} pack(s) under {folder}\n", packs.len());
+    println!(
+        "{:<5} {:>7} {:>7} {:>10} {:>10} {:>6} {:>6} {:>10}  AGAINST THE PLAIN MIPS",
+        "MODE", "CHAINS", "BODIES", "BLOCKS", "NOT KNOWN", "SLOTS", "PAIRS", "QUADRANTS"
+    );
+    for summary in &found.summaries {
+        let mismatch = match (summary.mean_mismatch(), summary.mean_alpha_mismatch()) {
+            (Some(mean), _) if summary.kind == 6 => format!("{mean:.2} stops off"),
+            (Some(mean), Some(alpha)) => format!("colour {mean:.2}, alpha {alpha:.2} of 255 off"),
+            (Some(mean), None) => format!("{mean:.2} of 255 off"),
+            (None, _) => "no coded mip beside a plain one".to_string(),
+        };
+        println!(
+            "{:<5} {:>7} {:>7} {:>10} {:>9.2}% {:>6} {:>6} {:>10}  {mismatch}",
+            format!("BC{}", summary.kind),
+            summary.textures,
+            summary.bodies,
+            summary.blocks,
+            100.0 * summary.unknown as f64 / summary.blocks.max(1) as f64,
+            summary.slots,
+            summary.pairs,
+            summary.quadrants
+        );
+    }
+    let dir = calibration_dir().ok_or("no configuration directory to keep the calibration in")?;
+    let path = save_cache(&dir, &found.tables, &found.members)
+        .map_err(|e| format!("{}: {e}", dir.display()))?;
+    println!("\nKept in {}", path.display());
+    if !covered {
+        return Ok(());
+    }
+    // How every coded texture of these packs then reads, each coded body decoded once.
+    let tables = std::sync::Arc::new(found.tables);
+    for pack in &mut packs {
+        pack.set_calibration(Some(tables.clone()));
+    }
+    println!(
+        "\n{:<5} {:>9} {:>10} {:>8} {:>12} {:>12}  THROUGH A SLOT NOT KNOWN",
+        "MODE", "EXACT", "CALIBRATED", "REFUSED", "BLOCKS", "FITTED"
+    );
+    for of_kind in coverage(&packs, &|| false).ok_or("stopped")? {
+        println!(
+            "{:<5} {:>9} {:>10} {:>8} {:>12} {:>12}  {:.2}% of the fitted blocks",
+            format!("BC{}", of_kind.kind),
+            of_kind.exact,
+            of_kind.calibrated,
+            of_kind.refused,
+            of_kind.blocks,
+            of_kind.fitted,
+            100.0 * of_kind.unknown as f64 / of_kind.fitted.max(1) as f64
+        );
+    }
+    println!(
+        "The tables are fitted on this machine, not read from a source: a texture drawn through \
+         them is an estimate, and `ttpf info` and `ttpf export` say which are."
     );
     Ok(())
 }
@@ -190,6 +352,7 @@ fn write_faces(
     texture: Texture,
     cube: bool,
     as_dds: bool,
+    note: &str,
 ) -> Result<(), String> {
     let extension = if as_dds { "dds" } else { "png" };
     let faces: Vec<(String, Texture)> = match texture.faces {
@@ -216,7 +379,7 @@ fn write_faces(
         }
         .map_err(|e| format!("{}: {e}", path.display()))?;
         println!(
-            "{}  ({}x{} {}, {} mip(s))",
+            "{}  ({}x{} {}, {} mip(s){note})",
             path.display(),
             face.width,
             face.height,
@@ -333,7 +496,7 @@ pub(crate) fn export_dictionary(
                     n += 1;
                     stem = format!("{named}_{n}");
                 }
-                write_faces(out, &stem, texture, t.dimension == 2, as_dds)?;
+                write_faces(out, &stem, texture, t.dimension == 2, as_dds, "")?;
                 written += 1;
             }
             Err(e) => {
@@ -549,6 +712,19 @@ fn print_usage() {
     eprintln!("        image of another size, --format or --mips plans the texture's rows anew");
     eprintln!("        as the pack's own textures of that shape have them and moves every");
     eprintln!("        texture after it; no game has been seen to load a pack written so.");
+    eprintln!("  calibrate <folder> [--coverage]");
+    eprintln!("        Fit the BCPack coder's preset and index tables for BC1, BC3, BC4, BC5,");
+    eprintln!("        BC6H and BC7");
+    eprintln!("        from every .ttpf under <folder>, against the plain mips beside the coded");
+    eprintln!("        ones, and keep them in the configuration directory for those packs. The");
+    eprintln!("        tables are in no file and no source gives them, so they are estimates;");
+    eprintln!("        the table printed says how far each mode's coded mips are from the plain");
+    eprintln!("        mips beside them. Name the folder that holds every pack of the game: a");
+    eprintln!("        slot is fitted only from the packs read. --coverage then decodes every");
+    eprintln!("        coded body of those packs once and counts, by mode, the textures that");
+    eprintln!(
+        "        read exactly, as estimates, or not at all, which takes longer than the fit."
+    );
     eprintln!("  plan <file.ttpf>...");
     eprintln!("        Print what a save would write against what the file holds: rows whose");
     eprintln!("        offset, pad or kind differ, rows whose start is carried, and entries");
@@ -563,11 +739,19 @@ fn print_usage() {
     eprintln!("by slice, each z-slab holding the chain; with every mip of the chain whose tail");
     eprintln!("slot is measured (1-, 4-, 8- and 16-byte elements), and a lone level in one tile.");
     eprintln!("A body of codec kind 1 (BC1 coder in the BODIES column) holds BC1 blocks through");
-    eprintln!("the console's BCPack coder and decodes, but for one that reads a preset endpoint");
-    eprintln!("no value is known for.");
-    eprintln!("Refused, each by name: bodies of codec kinds 3 to 7 (BCn coder in the BODIES");
-    eprintln!("column), which hold BC blocks of that number through BCPack, whose tables for");
-    eprintln!("them are not known; cubes of 1-, 2- and 8-byte pixels; arrays in 4 KiB tiles;");
+    eprintln!("the console's BCPack coder and decodes exactly, but for one that reads a preset");
+    eprintln!("endpoint no value is known for. That one, and bodies of codec kinds 3 to 7 (BC3,");
+    eprintln!(
+        "BC4, BC5, BC6H and BC7 through the coder), read once `ttpf calibrate` has fitted the"
+    );
+    eprintln!("coder's tables from the packs they are in: such a texture is an estimate, and");
+    eprintln!("info and export say calibrated for it, with the share of its coded blocks drawn");
+    eprintln!("through a slot or symbol the fit did not solve. A save never writes an estimate:");
+    eprintln!("it carries the coded bodies as the file stores them. A signed BC6H texture is");
+    eprintln!("drawn through the tables the unsigned ones fitted, which nothing checks: info");
+    eprintln!("says unverified.");
+    eprintln!("Refused, each by name: bodies of codec kinds 3 to 7 with no calibration kept;");
+    eprintln!("cubes of 1-, 2- and 8-byte pixels; arrays in 4 KiB tiles;");
     eprintln!("volumes in tile modes other than 1; a mip in a tail with no measured slot (2-byte");
     eprintln!("elements, and past the slots measured); other DXGI numbers; entries and bytes");
     eprintln!("not on disk.");
@@ -589,6 +773,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "export" => cmd_export(rest),
         "replace" => cmd_replace(rest),
         "plan" => cmd_plan(rest),
+        "calibrate" => cmd_calibrate(rest),
         "-h" | "--help" | "help" => {
             print_usage();
             return ExitCode::SUCCESS;

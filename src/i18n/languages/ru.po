@@ -14758,6 +14758,30 @@ msgstr "С затенением — собственные проходы игр
 msgid "Shaded — the game's own passes, translated from GTA VI's programs: {drawn} of {total} surfaces drawn"
 msgstr "С затенением — собственные проходы игры, транслированные из программ GTA VI: нарисовано поверхностей — {drawn} из {total}"
 
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
+msgstr "С затенением — собственные программы сетки и пикселей этого drawable, транслированные из программ GTA VI: нарисовано поверхностей — {drawn}, освещение — собственные солнце и небо редактора в заданные час и погоду. Привязок, которые заполняет только игра и которые читаются как нули, — {zeroed}"
+
+msgid "a worker is still decoding its maps"
+msgstr "рабочий поток ещё декодирует его текстуры"
+
+msgid "a worker is still building its passes for this device"
+msgstr "рабочий поток ещё строит его проходы для этого устройства"
+
+msgid "Drawn as Material: {count} surfaces; the first: {why}"
+msgstr "Нарисовано как «Материал»: поверхностей — {count}; первая: {why}"
+
+msgid "Its own mesh and pixel programs do not draw it: {why}"
+msgstr "Его собственные программы сетки и пикселей его не рисуют: {why}"
+
+msgid "{effect}: none of its passes reads the streams this geometry has"
+msgstr "{effect}: ни один его проход не читает потоки, которые есть у этой геометрии"
+
+msgid "{effect}: its programs are not translated yet"
+msgstr "{effect}: его программы ещё не транслированы"
+
+msgid "none of its techniques is a mesh pass that writes the deferred targets"
+msgstr "ни одна его техника не является проходом сетки, который пишет в отложенные цели"
+
 msgid "{count} program is not translated: {why}"
 msgid_plural "{count} programs are not translated; the first: {why}"
 msgstr[0] "{count} программа не транслирована: {why}"
@@ -16117,8 +16141,8 @@ msgstr "Радиостанции не читаются: {why}"
 msgid "GTA VI Radio"
 msgstr "Радио GTA VI"
 
-msgid "A station's key is the key of its name in the text tables, and a track plays the streamed sound of a sounds body: index the open scans with the scans of the text and audio archives open to name the stations and play their tracks. A track's title and artists are the identifiers its text states; the titles the game shows are keyed by a track id the stream carries, which is not read."
-msgstr "Ключ станции — это ключ её имени в таблицах текстов, а трек воспроизводит потоковый звук тела звуков: чтобы назвать станции и воспроизвести их треки, проиндексируйте открытые сканирования при открытых сканированиях архивов текстов и аудио. Название и исполнители трека — это идентификаторы, которые указывает его текст; названия, которые показывает игра, привязаны к ID трека, который несёт поток и который не читается."
+msgid "A station's key is the key of its name in the text tables, and a track plays the streamed sound of a sounds body: index the open scans with the scans of the text and audio archives open to name the stations, show their tracks' titles and artists and play them. A title the game shows is keyed by the track id a marker of the track's stream states; a track with none is listed by the identifiers its text states. A station kept off the wheel is named from the names harvested."
+msgstr "Ключ станции — это ключ её имени в таблицах текстов, а трек воспроизводит потоковый звук тела звуков: чтобы назвать станции, показать названия и исполнителей их треков и воспроизвести эти треки, проиндексируйте открытые сканирования при открытых сканированиях архивов текстов и аудио. Название, которое показывает игра, привязано к ID трека, который указывает маркер потока трека; трек без такого маркера перечисляется по идентификаторам, которые указывает его текст. Станция, не включённая в радиоколесо, получает имя из собранных имён."
 
 msgid "GTA VI Dialogue"
 msgstr "Диалоги GTA VI"
@@ -16155,3 +16179,69 @@ msgstr "Детали"
 
 msgid "Draw the weapon as the first of each kind of its parts, each on its bone, in place of its own mesh"
 msgstr "Рисует оружие из первой детали каждого вида, каждая на своей кости, вместо его собственного меша"
+
+msgid "A mix of {count} track"
+msgid_plural "A mix of {count} tracks"
+msgstr[0] "Микс из {count} трека"
+msgstr[1] "Микс из {count} треков"
+msgstr[2] "Микс из {count} треков"
+
+msgid "exact"
+msgstr "точное"
+
+msgid "calibrated"
+msgstr "откалибровано"
+
+msgid "calibrated, {percent} % of its coded blocks through a slot not known"
+msgstr "откалибровано, {percent} % закодированных блоков — через неизвестный слот"
+
+msgid "Calibrating GTA VI texture decoding from the packs of {folder}"
+msgstr "Калибровка декодирования текстур GTA VI по пакам в {folder}"
+
+msgid "A calibration of GTA VI texture decoding is already running"
+msgstr "Калибровка декодирования текстур GTA VI уже выполняется"
+
+msgid "No GTA VI texture pack opens under that folder"
+msgstr "Ни один пак текстур GTA VI не открывается в этой папке"
+
+msgid "The calibration could not be kept: {why}"
+msgstr "Не удалось сохранить калибровку: {why}"
+
+msgid "GTA VI texture calibration"
+msgstr "Калибровка текстур GTA VI"
+
+msgid "Calibrate decoding"
+msgstr "Откалибровать декодирование"
+
+msgid "Fit the tables of the console's texture coder from every pack of this game, so that the textures stored through it for BC3, BC4, BC5, BC6H and BC7 read. No file holds those tables, so such a texture is an estimate and is marked calibrated"
+msgstr "Подобрать таблицы кодера текстур консоли по всем пакам этой игры, чтобы читались текстуры BC3, BC4, BC5, BC6H и BC7, сохранённые через этот кодер. Ни один файл не содержит этих таблиц, поэтому такая текстура — оценка и помечается как «откалибровано»"
+
+msgid "Decode"
+msgstr "Декодирование"
+
+msgid "Wrote {path}. This texture is {how}: an estimate, not the blocks the pack stores"
+msgstr "Записано: {path}. Декодирование этой текстуры {how}: это оценка, а не блоки, которые хранит пак"
+
+msgid "{count} GTA VI texture pack calibrated: {bodies} coded mips now read as estimates, {unknown} % of their blocks through a slot not known"
+msgid_plural "{count} GTA VI texture packs calibrated: {bodies} coded mips now read as estimates, {unknown} % of their blocks through a slot not known"
+msgstr[0] "{count} пак текстур GTA VI откалиброван: закодированные мип-уровни ({bodies}) теперь читаются как оценки, {unknown} % их блоков — через неизвестный слот"
+msgstr[1] "{count} пака текстур GTA VI откалиброваны: закодированные мип-уровни ({bodies}) теперь читаются как оценки, {unknown} % их блоков — через неизвестный слот"
+msgstr[2] "{count} паков текстур GTA VI откалиброваны: закодированные мип-уровни ({bodies}) теперь читаются как оценки, {unknown} % их блоков — через неизвестный слот"
+
+msgid "Filter by the model that uses a texture"
+msgstr "Фильтр по модели, использующей текстуру"
+
+msgid "Show only the textures used by a model whose name holds this text. A harvest of the game's names finds, for each texture, the first model whose material binds it"
+msgstr "Показать только текстуры, используемые моделью, в имени которой есть этот текст. Сбор имён игры находит для каждой текстуры первую модель, материал которой её связывает"
+
+msgid "used by {model} as {parameter}"
+msgstr "используется моделью {model} как {parameter}"
+
+msgid "used by {model} as {parameter}, and by {count} model more"
+msgid_plural "used by {model} as {parameter}, and by {count} models more"
+msgstr[0] "используется моделью {model} как {parameter} и ещё {count} моделью"
+msgstr[1] "используется моделью {model} как {parameter} и ещё {count} моделями"
+msgstr[2] "используется моделью {model} как {parameter} и ещё {count} моделями"
+
+msgid "Use"
+msgstr "Использование"

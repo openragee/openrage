@@ -528,6 +528,8 @@ The module table and the app's traps are in
   [Mesh_Interchange.md](docs/features/Mesh_Interchange.md) and
   [Dlc_Pack_Creation.md](docs/features/Dlc_Pack_Creation.md): what each kind of file
   supports per game, shading modes, glTF out and back, and generating a DLC pack.
+- [GTA_VI_Xbox_Build.md](docs/features/GTA_VI_Xbox_Build.md): what is read, saved and
+  refused of a GTA VI Xbox build, and its commands.
 - [CLI_Server_Protocol.md](docs/reference/CLI_Server_Protocol.md), with
   [openrage_client.go](docs/reference/openrage_client.go), and
   [Plugin_ABI.md](docs/reference/Plugin_ABI.md): the `openrage-cli serve` protocol and

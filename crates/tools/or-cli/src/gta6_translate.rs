@@ -1,6 +1,7 @@
-//! GTA VI's programs through the DXIL front end: the names and constant buffers an `SGD5` table
-//! gives a program, the key a pack stores it by, and `rpf scan-shaders`, which counts how every
-//! program of an effect container translates, by outcome and by refusal.
+//! GTA VI's programs through the DXIL front end, and through the native one and its binder where
+//! a program holds native code: the names and constant buffers an `SGD5` table gives a program,
+//! the key a pack stores it by, and `rpf scan-shaders`, which counts how every program of an
+//! effect container translates, by outcome and by refusal.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -8,9 +9,10 @@ use std::fs;
 use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind};
 use or_io::gta5::shaders::sgd5::{Sgd5File, Sgd5Program, Sgd5Table};
 use or_io::gta5::shaders::sgd5_pack::constant_buffers;
-use or_shader_front::dxil::container::{Container, PsvResourceKind};
+use or_shader_front::dxil::container::{Container, ContainerError, PsvResourceKind};
 use or_shader_front::dxil::plan::hash_name;
 use or_shader_front::dxil::{translate, Naming, Refusal, Register, ResourceClass, Translated};
+use or_shader_front::rdna_bind::{self, Unbound};
 use sha1::{Digest, Sha1};
 
 pub use or_shader_front::dxil::DXIL_FRONT;
@@ -21,7 +23,34 @@ const SRV_CODES: [u8; 5] = [0x01, 0x02, 0x05, 0x07, 0x42];
 /// The bytes a program's stream may hold before it is refused unread.
 const MAX_STREAM: usize = 64 << 20;
 
-/// What one GTA VI program came to through the DXIL front end.
+/// Why a GTA VI program is not translated: by the DXIL front end, or, where it holds native code, by
+/// the native front end and its binder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Gta6Refusal {
+    Dxil(Refusal),
+    Native(Unbound),
+}
+
+impl Gta6Refusal {
+    /// The word a census counts by: the DXIL front end's, or `native:` and the binder's.
+    pub fn name(&self) -> String {
+        match self {
+            Self::Dxil(refusal) => refusal.name(),
+            Self::Native(unbound) => format!("native:{}", unbound.name()),
+        }
+    }
+}
+
+impl std::fmt::Display for Gta6Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Dxil(refusal) => std::fmt::Display::fmt(refusal, f),
+            Self::Native(unbound) => std::fmt::Display::fmt(unbound, f),
+        }
+    }
+}
+
+/// What one GTA VI program came to through the front end its payload takes.
 #[derive(Debug)]
 pub struct Gta6Program {
     /// The SHA-1 of its inflated container, as hex: its key in a pack.
@@ -29,11 +58,17 @@ pub struct Gta6Program {
     pub source_bytes: u32,
     /// Whether its inputs read blend indices, which only a skinned pass's vertex program does.
     pub skinned: bool,
-    pub translated: Result<Translated, Refusal>,
+    pub translated: Result<Translated, Gta6Refusal>,
 }
 
-/// `program` translated from its DEFLATE stream `stream`, read alone; `Err` where it does not inflate.
-pub fn translate_gta6_program(program: &Sgd5Program, stream: &[u8]) -> Result<Gta6Program, String> {
+/// `program` translated from its DEFLATE stream `stream`, read alone; `Err` where it does not
+/// inflate. `effect` is the first table of an effect that runs it, which states the hash a
+/// drawable names each of a native program's parameters by.
+pub fn translate_gta6_program(
+    program: &Sgd5Program,
+    stream: &[u8],
+    effect: Option<&Sgd5Table>,
+) -> Result<Gta6Program, String> {
     if stream.len() > MAX_STREAM {
         return Err(format!(
             "program `{}` states a {}-byte stream, past the {MAX_STREAM} bytes one is read to",
@@ -53,7 +88,12 @@ pub fn translate_gta6_program(program: &Sgd5Program, stream: &[u8]) -> Result<Gt
             .collect(),
         source_bytes: u32::try_from(container.len()).unwrap_or(u32::MAX),
         skinned,
-        translated: translate(&container, &naming(&program.variables, &container)),
+        translated: match translate(&container, &naming(&program.variables, &container)) {
+            Err(Refusal::Container(ContainerError::NativeCode { .. })) => {
+                rdna_bind::bind(&container, &program.variables, effect).map_err(Gta6Refusal::Native)
+            }
+            other => other.map_err(Gta6Refusal::Dxil),
+        },
     })
 }
 
@@ -109,7 +149,7 @@ fn census(file: &Sgd5File, bytes: &[u8]) -> Census {
     for program in &file.programs {
         let read = bytes
             .get(program.stream.clone())
-            .map(|s| translate_gta6_program(program, s));
+            .map(|s| translate_gta6_program(program, s, None));
         match read {
             Some(Ok(Gta6Program {
                 translated: Ok(_), ..
@@ -329,7 +369,7 @@ mod tests {
             inflated_len: inflated.len(),
             variables: table(),
         };
-        let done = translate_gta6_program(&program, &stream).unwrap();
+        let done = translate_gta6_program(&program, &stream, None).unwrap();
         let key: String = Sha1::digest(&inflated)
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -337,14 +377,14 @@ mod tests {
         assert_eq!(done.key, key);
         assert_eq!(done.source_bytes as usize, inflated.len());
         assert!(done.skinned);
+        // Native code goes to the native front end, which is what refuses these made-up words.
         let refusal = done.translated.unwrap_err();
-        assert_eq!(refusal.name(), "native-code:vertex");
-        let said = refusal.to_string();
-        let stated = "64 bytes of native GPU code for the vertex stage, in 1 code range";
-        assert!(said.contains(stated), "{said}");
+        assert!(matches!(refusal, Gta6Refusal::Native(_)), "{refusal}");
+        assert!(refusal.name().starts_with("native:"), "{}", refusal.name());
+        assert!(!refusal.to_string().is_empty());
 
         // A stream cut short does not inflate.
-        assert!(translate_gta6_program(&program, &stream[..stream.len() - 1]).is_err());
+        assert!(translate_gta6_program(&program, &stream[..stream.len() - 1], None).is_err());
     }
 
     #[test]
@@ -381,13 +421,9 @@ mod tests {
             effect_count: Some(0),
             effects: Vec::new(),
         };
-        assert_eq!(
-            census(&file, &bytes),
-            Census {
-                translated: 0,
-                refused: [("native-code:vertex".to_string(), 2)].into(),
-                unread: 2,
-            }
-        );
+        let census = census(&file, &bytes);
+        assert_eq!((census.translated, census.unread), (0, 2));
+        assert_eq!(census.refused.values().sum::<usize>(), 2);
+        assert!(census.refused.keys().all(|w| w.starts_with("native:")));
     }
 }

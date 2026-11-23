@@ -495,12 +495,10 @@ fn an_archive_is_harvested_in_one_pass_whatever_its_ranges_and_workers() {
             let held = gave.vocabulary.name32(name_hash32(name.as_bytes()));
             assert_eq!(held, Some(name), "{how}");
         }
-        if workers == 1 {
-            // One worker reads each body once, each range from where the last one's scan ended.
-            assert_eq!(gave.bodies, 3, "{how}");
-            let whole = first.get_or_insert_with(|| gave.vocabulary.clone());
-            assert_eq!(gave.vocabulary, *whole, "{how}");
-        }
+        // Each body is read once, whatever the ranges and the workers.
+        assert_eq!(gave.bodies, 3, "{how}");
+        let whole = first.get_or_insert_with(|| gave.vocabulary.clone());
+        assert_eq!(gave.vocabulary, *whole, "{how}");
         let mut said = said.lock().expect("unlocked");
         assert_eq!(said.iter().map(|(done, _)| *done).max(), Some(len), "{how}");
         assert!(said.iter().all(|(_, of)| *of == len), "{how}");
@@ -521,4 +519,265 @@ fn an_archive_is_harvested_in_one_pass_whatever_its_ranges_and_workers() {
     assert!(stopped.stopped && stopped.vocabulary.is_empty() && stopped.labels.is_empty());
     assert!(harvest_archive(&root.join("zq_absent.rpf"), 1, 1, &never, &reached).is_err());
     fs::remove_dir_all(&root).expect("the scratch folder goes");
+}
+
+/// What the scan of one made-up range gave: its finds as (start, where the scan stood after),
+/// the bodies read among them, each a model that names the texture whose key is its offset, and
+/// each name with the body that spells it last.
+fn ranged(limit: u64, finds: &[(u64, u64)], bodies: &[u64], names: &[(&str, u64)]) -> Ranged {
+    let seen = |(name, last): &(&str, u64)| {
+        let seen = Seen {
+            text: (*name).into(),
+            last: *last,
+            kind: None,
+        };
+        (name_hash64(name.as_bytes()), seen)
+    };
+    Ranged {
+        limit,
+        finds: finds.to_vec(),
+        bodies: bodies.to_vec(),
+        labels: bodies.iter().map(|at| (*at, format!("zq_{at}"))).collect(),
+        names: names.iter().map(seen).collect(),
+        textures: (bodies.iter())
+            .map(|at| (*at, format!("zq_{at}"), vec![(*at, 1)]))
+            .collect(),
+        end: finds.last().map_or(0, |(_, end)| *end),
+    }
+}
+
+#[test]
+fn a_range_scanned_from_inside_a_body_gives_only_the_bodies_that_start_after_it() {
+    let mut joined = Joined::default();
+    let mut asked = Vec::new();
+    let held = |joined: &Joined, name: &str| {
+        (joined.harvest.vocabulary)
+            .name64(name_hash64(name.as_bytes()))
+            .is_some()
+    };
+    let mut never = |_: u64, _: u64| -> io::Result<Ranged> {
+        Err(io::Error::other("nothing is scanned again"))
+    };
+    // The first range's last body ends at 130, past the range's end at 100.
+    let first = ranged(
+        100,
+        &[(10, 60), (60, 130)],
+        &[10, 60],
+        &[("zq_a", 10), ("zq_b", 60)],
+    );
+    joined.join(&first, &mut never).expect("joined");
+    assert_eq!((joined.harvest.bodies, joined.read_to), (2, 130));
+
+    // The second starts inside that body: it reads a later stream of it as a run at 104, and a
+    // run at 120 that takes the body at 130 for one of its chunks and ends at 150. What stands
+    // from 130 to 150 is scanned again, and the range's own finds stand from there on.
+    let second = ranged(
+        200,
+        &[(104, 120), (120, 150), (160, 210)],
+        &[104, 120, 160],
+        &[
+            ("zq_junk", 104),
+            ("zq_b", 120),
+            ("zq_c", 120),
+            ("zq_later", 160),
+        ],
+    );
+    let mut again = |from: u64, to: u64| -> io::Result<Ranged> {
+        asked.push((from, to));
+        Ok(ranged(
+            to,
+            &[(130, 140), (140, 160)],
+            &[130, 140],
+            &[("zq_d", 130), ("zq_e", 140)],
+        ))
+    };
+    joined.join(&second, &mut again).expect("joined");
+    assert_eq!(asked, [(130, 150)]);
+    assert_eq!((joined.harvest.bodies, joined.read_to), (5, 210));
+    let labelled: Vec<u64> = joined.harvest.labels.keys().copied().collect();
+    assert_eq!(labelled, [10, 60, 130, 140, 160]);
+    let textured: Vec<u64> = joined.harvest.textures.keys().copied().collect();
+    assert_eq!(textured, labelled);
+    for name in ["zq_a", "zq_b", "zq_d", "zq_e", "zq_later"] {
+        assert!(held(&joined, name), "{name}");
+    }
+    assert!(!held(&joined, "zq_junk") && !held(&joined, "zq_c"));
+
+    // A range that lies whole inside a body gives nothing, and nothing is scanned again for it.
+    let inside = ranged(
+        205,
+        &[(202, 204), (204, 260)],
+        &[202, 204],
+        &[("zq_no", 204)],
+    );
+    joined.join(&inside, &mut never).expect("joined");
+    assert_eq!((joined.harvest.bodies, joined.read_to), (5, 210));
+    assert!(!held(&joined, "zq_no"));
+
+    // A find that reaches past the range's end is scanned again only to that end.
+    let last = ranged(300, &[(208, 320)], &[208], &[("zq_no", 208)]);
+    let mut asked = Vec::new();
+    let mut again = |from: u64, to: u64| -> io::Result<Ranged> {
+        asked.push((from, to));
+        Ok(ranged(to, &[(210, 340)], &[210], &[("zq_f", 210)]))
+    };
+    joined.join(&last, &mut again).expect("joined");
+    assert_eq!(asked, [(210, 300)]);
+    assert_eq!((joined.harvest.bodies, joined.read_to), (6, 340));
+    assert!(held(&joined, "zq_f") && !held(&joined, "zq_no"));
+
+    // The ranges are joined in the archive's order, whichever was scanned first.
+    let mut joined = Joined::default();
+    (joined.waiting).insert(1, ranged(200, &[(110, 130)], &[110], &[]));
+    joined.join_waiting(&mut never).expect("joined");
+    assert_eq!((joined.harvest.bodies, joined.next), (0, 0));
+    (joined.waiting).insert(0, ranged(100, &[(10, 130)], &[10], &[]));
+    joined.join_waiting(&mut never).expect("joined");
+    assert_eq!((joined.harvest.bodies, joined.next), (1, 2));
+    assert!(joined.waiting.is_empty());
+}
+
+/// Bytes with no zero, no printable one and no pointer word, which hardly deflate.
+fn noise(len: usize) -> Vec<u8> {
+    let mut x = 0x2545_F491u32;
+    let next = |_| {
+        x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (x >> 24) as u8 | 0x80
+    };
+    (0..len).map(next).collect()
+}
+
+#[test]
+fn a_body_right_after_one_a_range_cuts_is_read_whatever_the_workers() {
+    use crate::container::rpf::{write_rpf9_resource, Rpf9Form, Rpf9Sections};
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let archive = scratch.path().join("zq_cut.rpf");
+    // A model whose virtual stream is longer than a range and whose physical section is one
+    // stream of a whole 64 KiB, with a text body in the slot right after it: a scan that starts
+    // inside the model reads the physical stream as a run that goes on in the text body.
+    let mut section = model_section("zq_hut_03.#dr", false);
+    section.extend(noise(0x1800));
+    let model = write_rpf9_resource(&Rpf9Sections {
+        form: Rpf9Form::BlockMapped,
+        virtual_section: section,
+        physical: vec![0xA5; 0x1_0000],
+    })
+    .expect("a resource");
+    assert!(model.len() > 0x1000 && model.len().is_multiple_of(16));
+    let mut bytes = crate::container::rpf::RPF9_MAGIC.to_le_bytes().to_vec();
+    bytes.resize(0x1000, 0);
+    bytes.extend(model);
+    bytes.extend(zlib_file(
+        b"<?xml version=\"1.0\"?>\n<Zq>\n<a>zq_after_name</a>\n</Zq>\n",
+    ));
+    bytes.resize(bytes.len().next_multiple_of(0x1000), 0);
+    let mast = bytes.len() as u64;
+    bytes.extend(resource_file(model_section("zq_mast", true)));
+    bytes.resize(bytes.len().next_multiple_of(0x1000), 0);
+    fs::write(&archive, bytes).expect("a made-up archive");
+
+    let never = || false;
+    let reached = |_: u64, _: u64| {};
+    let whole = harvest_ranges(&archive, HARVEST_PREFIX, u64::MAX, 1, &never, &reached)
+        .expect("it is harvested");
+    let held = |gave: &ArchiveHarvest, name: &[u8]| {
+        (gave.vocabulary.name32(name_hash32(name))).map(str::to_string)
+    };
+    assert_eq!(
+        held(&whole, b"zq_after_name").as_deref(),
+        Some("zq_after_name")
+    );
+    assert_eq!(whole.labels.get(&mast).map(String::as_str), Some("zq_mast"));
+    assert!(whole.bodies >= 3);
+    for (range, workers) in [
+        (0x1000, 1),
+        (0x1000, 2),
+        (0x1000, 4),
+        (0x800, 3),
+        (0x400, 5),
+    ] {
+        let gave = harvest_ranges(&archive, HARVEST_PREFIX, range, workers, &never, &reached)
+            .expect("it is harvested");
+        let how = format!("{range:#X} bytes a range, {workers} workers");
+        assert_eq!(gave.bodies, whole.bodies, "{how}");
+        assert_eq!(gave.labels, whole.labels, "{how}");
+        assert_eq!(gave.vocabulary, whole.vocabulary, "{how}");
+    }
+}
+
+/// The find of a resource a scan would make of `section`, placed by the role its signature has.
+fn model_find(section: &[u8]) -> Rpf9ScanFind {
+    let find = resource_find(section);
+    assert!(role_of(&find).is_some(), "the made-up section is placed");
+    find
+}
+
+#[test]
+fn a_model_names_its_textures_by_key_and_the_first_model_to_name_one_is_kept() {
+    // A body that is no model, and a model with no shader that reads, name none.
+    let text = zlib_find(Rpf9Content::Xml);
+    assert!(body_textures(&text, b"<a>zq_tower.#dr</a>").is_empty());
+    let bare = model_section("zq_hut_03.#dr", false);
+    assert!(body_textures(&model_find(&bare), &bare).is_empty());
+
+    let mut uses = TextureUses::new();
+    add_texture_uses(&mut uses, "zq_hut_03", &[(7, 0xA1), (9, 0xB2)]);
+    add_texture_uses(&mut uses, "zq_mast", &[(9, 0xC3), (11, 0xD4)]);
+    let of = |key: u64| {
+        let used = &uses[&key];
+        (used.model.as_str(), used.parameter, used.models)
+    };
+    assert_eq!(of(7), ("zq_hut_03", 0xA1, 1));
+    assert_eq!(of(9), ("zq_hut_03", 0xB2, 2), "the first model is kept");
+    assert_eq!(of(11), ("zq_mast", 0xD4, 1));
+
+    let mut written = Vec::new();
+    write_texture_uses(&uses, &mut written).expect("written");
+    let mut read = TextureUses::new();
+    read_texture_uses(written.as_slice(), &mut read).expect("read");
+    assert_eq!(read, uses);
+    // Another archive's file adds its models to a key and keeps the first model; a line that
+    // is no use, and a file of another kind, are passed over.
+    let other = format!(
+        "{TEXTURES_HEAD}
+{:016X} {:08X} 3 zq_other
+not a use
+0 0 x y
+",
+        9, 1
+    );
+    read_texture_uses(other.as_bytes(), &mut read).expect("read");
+    assert_eq!(read[&9].models, 5);
+    assert_eq!(read[&9].model, "zq_hut_03");
+    assert_eq!(read.len(), 3);
+    read_texture_uses(
+        &b"another file
+9 1 1 zq_x
+"[..],
+        &mut read,
+    )
+    .expect("read");
+    assert_eq!(read.len(), 3);
+
+    // Each archive's uses are kept apart and served together.
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let (config, a, b) = (
+        scratch.path().join("config"),
+        scratch.path().join("zq_a.rpf"),
+        scratch.path().join("zq_b.rpf"),
+    );
+    assert!(load_texture_uses(&config).is_empty());
+    for archive in [&a, &b] {
+        fs::write(archive, b"zq").expect("a made-up archive");
+    }
+    save_texture_uses(&config, &a, &uses).expect("kept");
+    let mut more = TextureUses::new();
+    add_texture_uses(&mut more, "zq_crane", &[(11, 0xE5), (13, 0xF6)]);
+    save_texture_uses(&config, &b, &more).expect("kept");
+    let served = load_texture_uses(&config);
+    assert_eq!(served.len(), 4);
+    assert_eq!((served[&11].models, served[&13].models), (2, 1));
+    // An archive harvested again replaces what was kept of it.
+    save_texture_uses(&config, &b, &TextureUses::new()).expect("kept");
+    assert_eq!(load_texture_uses(&config), uses);
 }

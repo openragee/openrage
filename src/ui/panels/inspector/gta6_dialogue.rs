@@ -1,11 +1,10 @@
 //! GTA VI's radio stations of a music body and the dialogue lines of the open scans, each with
 //! the texts of the language picked and a button that plays its audio stream.
 
-use std::collections::BTreeMap;
-
 use or_io::gta6::audio_data::AudioDataKind;
-use or_io::gta6::audio_radio::{Station, Track};
+use or_io::gta6::audio_radio::{track_text_keys, Station, Track};
 use or_io::gta6::dialogue::plain;
+use or_io::gta6::hash::name_hash32;
 
 use crate::state::gta6_dialogue::{self as store, lines, Lines, Radio};
 
@@ -89,9 +88,26 @@ fn length(ms: u32) -> String {
     format!("{}:{:02}", ms / 60_000, ms / 1_000 % 60)
 }
 
-/// A track's row: the button that plays it where its stream's container is known, its title and
-/// artists where its text names them, and its length. Returns the stream to play.
-fn draw_track(ui: &mut egui::Ui, lines: &Lines, radio: &Radio, track: &Track) -> Option<u32> {
+/// The title and the artist the texts of `language` show for the track of id `id`.
+fn shown_title(lines: &Lines, language: &str, id: u32) -> Option<String> {
+    let (title, artist) = track_text_keys(id);
+    let title = plain(lines.text(title, language)?);
+    Some(match lines.text(artist, language) {
+        Some(artist) => format!("{title}  ({})", plain(artist)),
+        None => title,
+    })
+}
+
+/// A track's row: the button that plays it where its stream's container is known, the title and
+/// artist the game shows where its stream states its id and the texts are read, else those its
+/// text names as identifiers, and its length. Returns the stream to play.
+fn draw_track(
+    ui: &mut egui::Ui,
+    lines: &Lines,
+    radio: &Radio,
+    language: &str,
+    track: &Track,
+) -> Option<u32> {
     let sound = track.sound.and_then(|key| lines.sound(key));
     let stream = sound.and_then(|s| s.streams().find(|id| lines.container(*id).is_some()));
     let mut play = None;
@@ -108,12 +124,32 @@ fn draw_track(ui: &mut egui::Ui, lines: &Lines, radio: &Radio, track: &Track) ->
     {
         play = stream;
     }
-    let title = match track.text.and_then(|key| radio.texts.get(&key)) {
-        Some(text) if text.artists.is_empty() => text.title.clone(),
-        Some(text) => format!("{}  ({})", text.title, text.artists.join(", ")),
-        None => format!("0x{:08X}", track.key),
-    };
-    ui.monospace(title);
+    let ids = sound.map_or(&[][..], |s| lines.track_ids(s));
+    let shown: Vec<String> = (ids.iter())
+        .filter_map(|id| shown_title(lines, language, *id))
+        .collect();
+    match shown.as_slice() {
+        [] => {
+            let title = match track.text.and_then(|key| radio.texts.get(&key)) {
+                Some(text) if text.artists.is_empty() => text.title.clone(),
+                Some(text) => format!("{}  ({})", text.title, text.artists.join(", ")),
+                None => format!("0x{:08X}", track.key),
+            };
+            ui.monospace(title);
+        }
+        [title] => {
+            ui.label(title);
+        }
+        // A mix states the id of each track it plays, in order.
+        mix => {
+            ui.label(tr_n!(
+                "A mix of {count} track",
+                "A mix of {count} tracks",
+                mix.len()
+            ))
+            .on_hover_text(mix.join("\n"));
+        }
+    }
     ui.label(sound.map_or_else(String::new, |s| length(s.duration_ms)));
     ui.end_row();
     play
@@ -124,6 +160,7 @@ fn draw_station(
     ui: &mut egui::Ui,
     lines: &Lines,
     radio: &Radio,
+    language: &str,
     station: &Station,
     name: String,
 ) -> Option<u32> {
@@ -151,7 +188,7 @@ fn draw_station(
                         .striped(true)
                         .show(ui, |ui| {
                             for track in &tracks[range] {
-                                play = draw_track(ui, lines, radio, track).or(play);
+                                play = draw_track(ui, lines, radio, language, track).or(play);
                             }
                         });
                 });
@@ -159,8 +196,23 @@ fn draw_station(
     play
 }
 
-/// The radio of a music body: the stations a text names first, in the order the list of every
-/// station states, each with its tracks; then the others, in that order too.
+/// The name a station kept off the wheel is listed under: the name found of its item, after the
+/// shown name of the station of the wheel it is the twin of where it is one; else its key.
+fn hidden_name(state: &AppState, lines: &Lines, language: &str, station: &Station) -> String {
+    let Some(name) = lines.station_name(station.key) else {
+        return hash_text(station.key, state.name_index.name_of(station.key));
+    };
+    let twin = name
+        .strip_prefix("hidden_")
+        .map(|n| name_hash32(n.as_bytes()));
+    match twin.and_then(|key| lines.text(key, language)) {
+        Some(text) => format!("{}  ({name})", plain(text)),
+        None => name.to_string(),
+    }
+}
+
+/// The radio of a music body: the stations a text names first, in the order their bands give, each
+/// with its tracks; then the others, by the name found of each.
 pub(super) fn draw_radio(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId) {
     let Some(doc) = state.document(doc_id) else {
         return;
@@ -186,21 +238,16 @@ pub(super) fn draw_radio(ui: &mut egui::Ui, state: &mut AppState, doc_id: Docume
     ui.heading(tr!("GTA VI Radio"));
     ui.separator();
     ui.label(
-        egui::RichText::new(tr!("A station's key is the key of its name in the text tables, and a track plays the streamed sound of a sounds body: index the open scans with the scans of the text and audio archives open to name the stations and play their tracks. A track's title and artists are the identifiers its text states; the titles the game shows are keyed by a track id the stream carries, which is not read."))
+        egui::RichText::new(tr!("A station's key is the key of its name in the text tables, and a track plays the streamed sound of a sounds body: index the open scans with the scans of the text and audio archives open to name the stations, show their tracks' titles and artists and play them. A title the game shows is keyed by the track id a marker of the track's stream states; a track with none is listed by the identifiers its text states. A station kept off the wheel is named from the names harvested."))
             .small()
             .color(theme::TEXT_SECONDARY),
     );
     draw_index(ui, state);
     draw_language(ui);
 
-    let by_key: BTreeMap<u32, &Station> = radio.stations.iter().map(|s| (s.key, s)).collect();
-    let listed = radio.lists.iter().find(|list| list.ordered);
-    let order: Vec<&Station> = match listed {
-        Some(list) => (list.stations.iter())
-            .filter_map(|key| by_key.get(key).copied())
-            .collect(),
-        None => radio.stations.iter().collect(),
-    };
+    // A station's band orders the stations a text names.
+    let mut order: Vec<&Station> = radio.stations.iter().collect();
+    order.sort_by_key(|station| station.band);
     let mut play = None;
     {
         let lines = lines();
@@ -211,9 +258,13 @@ pub(super) fn draw_radio(ui: &mut egui::Ui, state: &mut AppState, doc_id: Docume
         let name_of = |station: &Station| lines.text(station.key, &language).map(plain);
         for station in order.iter().filter(|s| name_of(s).is_some()) {
             let name = name_of(station).unwrap_or_default();
-            play = draw_station(ui, &lines, radio, station, name).or(play);
+            play = draw_station(ui, &lines, radio, &language, station, name).or(play);
         }
-        let others: Vec<&&Station> = order.iter().filter(|s| name_of(s).is_none()).collect();
+        let mut others: Vec<(String, &Station)> = (order.iter())
+            .filter(|s| name_of(s).is_none())
+            .map(|s| (hidden_name(state, &lines, &language, s), *s))
+            .collect();
+        others.sort_by(|a, b| a.0.cmp(&b.0));
         let title = tr_n!(
             "{count} station no text names",
             "{count} stations no text names",
@@ -222,9 +273,8 @@ pub(super) fn draw_radio(ui: &mut egui::Ui, state: &mut AppState, doc_id: Docume
         egui::CollapsingHeader::new(title)
             .id_salt("gta6_stations_unnamed")
             .show(ui, |ui| {
-                for station in others {
-                    let name = hash_text(station.key, state.name_index.name_of(station.key));
-                    play = draw_station(ui, &lines, radio, station, name).or(play);
+                for (name, station) in others {
+                    play = draw_station(ui, &lines, radio, &language, station, name).or(play);
                 }
             });
     }

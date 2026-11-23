@@ -308,15 +308,19 @@ impl App {
         if adapter_features.contains(or_renderer::gpu_timer::FEATURES) {
             required_features |= or_renderer::gpu_timer::FEATURES;
         }
+        let mut required_limits = wgpu::Limits::default();
+        required_limits.max_bind_groups = required_limits.max_bind_groups.max(5);
+        // A GTA VI drawable's own programs bind arrays of textures and more buffers than a device gives unasked
+        required_features |= or_renderer::game_shaders::meshlets::device_needs(
+            adapter_features,
+            &adapter.limits(),
+            &mut required_limits,
+        );
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("OpenRage device"),
                 required_features,
-                required_limits: {
-                    let mut l = wgpu::Limits::default();
-                    l.max_bind_groups = l.max_bind_groups.max(5);
-                    l
-                },
+                required_limits,
                 experimental_features: wgpu::ExperimentalFeatures::default(),
                 memory_hints: wgpu::MemoryHints::Performance,
                 trace: wgpu::Trace::Off,

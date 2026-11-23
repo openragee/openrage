@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use flate2::{Decompress, FlushDecompress, Status};
+use serde::{Deserialize, Serialize};
 
 use crate::gta5::shaders::sga::{SgaVariable, SgaVariableType};
 use crate::gta5::shaders::shader_defs::{
@@ -75,7 +76,7 @@ pub enum Sgd5Error {
 type Read<T> = Result<T, Sgd5Error>;
 
 /// A read container: its head, its programs as far as they are on disk, and its effects.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sgd5File {
     /// The u64 after the magic, whose meaning is not known.
     pub head_word: u64,
@@ -94,7 +95,7 @@ pub struct Sgd5File {
 }
 
 /// A run of the file a download has not delivered, and where the read resumed after it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sgd5Gap {
     /// Where the structure the read was on starts.
     pub from: usize,
@@ -103,7 +104,7 @@ pub struct Sgd5Gap {
 }
 
 /// One compiled program, located in the container rather than copied out of it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sgd5Program {
     /// `None` where the bank's count is not on disk.
     pub bank: Option<usize>,
@@ -122,7 +123,7 @@ pub struct Sgd5Program {
 }
 
 /// One effect: its programs per bank, techniques, passes, parameters and binding layouts.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sgd5Effect {
     pub name: String,
     pub at: usize,
@@ -147,7 +148,7 @@ pub struct Sgd5Effect {
     pub layouts: Vec<Sgd5Layout>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sgd5Technique {
     pub name: String,
     /// Bit 15 of the name offset, whose meaning is not known.
@@ -156,7 +157,7 @@ pub struct Sgd5Technique {
     pub passes: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sgd5Pass {
     pub name: String,
     /// Per bank, 1 + an index into the effect's program list for that bank; 0 for none.
@@ -164,7 +165,7 @@ pub struct Sgd5Pass {
 }
 
 /// What a pass binds, by the +0x10 hash of the effect's resource records.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sgd5BoundPass {
     /// Shader resources, unordered-access resources, a list always empty, and constant buffers.
     pub lists: [Vec<u32>; 4],
@@ -173,7 +174,7 @@ pub struct Sgd5BoundPass {
 }
 
 /// A table of binding slots: a name hash, a kind and a slot per record.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sgd5Layout {
     pub hash: u64,
     /// Records per class, in class order, which sum to the record count; see [`class_of`].
@@ -183,7 +184,7 @@ pub struct Sgd5Layout {
     pub bindings: Vec<Sgd5Binding>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sgd5Binding {
     pub hash: u32,
     pub kind: u8,
@@ -192,7 +193,7 @@ pub struct Sgd5Binding {
 }
 
 /// A variable table: resources, constants, annotations and a pool of names.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sgd5Table {
     pub resources: Vec<Sgd5Resource>,
     pub constants: Vec<Sgd5Constant>,
@@ -204,7 +205,7 @@ pub struct Sgd5Table {
 }
 
 /// A resource binding, or a constant buffer whose members are constants of the same table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sgd5Resource {
     /// `SGD2`'s resource type code.
     pub code: u8,
@@ -221,7 +222,7 @@ pub struct Sgd5Resource {
 }
 
 /// A member of a constant buffer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sgd5Constant {
     /// `SGD2`'s constant type code.
     pub code: u8,

@@ -1,0 +1,460 @@
+//! BC6H's two presets, fitted against the plain levels beside coded ones.
+//!
+//! A preset field has 16 bits, too many to try at once, so a pass tries 8 of them: the top 8
+//! first, then the 8 below. A pass votes each index slot from the blocks whose ends are known, as
+//! the index nearest each pixel's target, and each preset field from the blocks whose indices are
+//! known, as the least squares of a region's two ends over its pixels. An end is its base plus a
+//! difference, so a field is voted only once the other is settled or free of the presets.
+//!
+//! Everything is held in the 16 bits the format interpolates, which run with the logarithm of
+//! the light: 2,114 of them to a stop.
+
+use super::super::bc6h::{self, Presets, Shape, Walk, CANDIDATES, FIELDS};
+use super::super::bptc::{subset_of, weights};
+use super::{bilinear_up, box_down, nearest_up, LevelData, Pixels, Summary, TextureIn, MIN_VOTES};
+
+/// What a vote counts a difference past it as: a block that fits nothing does not outvote the rest.
+const CAP: u32 = 6144;
+/// The span of a region's ends, summed over its channels, under which its indices say nothing.
+const FLAT: u32 = 2048;
+/// How far, in stops, a texture's plain levels may lie from one another averaged down before none
+/// of them is taken as a target.
+const AGREE: f64 = 0.4;
+/// The 16-bit steps of one stop.
+const STOP: f64 = 65536.0 / 31.0;
+/// A light under 2^-10 is drawn as that: under it a stop is no difference anyone sees.
+const FLOOR: f32 = 5120.0 * 64.0 / 31.0;
+
+/// One pass's votes.
+pub(super) struct Votes {
+    /// For each slot, pixel and value of an index, the blocks it suits.
+    first: Vec<u32>,
+    /// For each preset field and each value tried for it, how far that leaves the blocks hanging on it, and how many voted.
+    ends: Vec<u32>,
+    ends_count: Vec<u32>,
+}
+
+impl Votes {
+    pub(super) fn empty() -> Self {
+        Self {
+            first: vec![0; 256 * 16 * 16],
+            ends: vec![0; 256 * FIELDS * CANDIDATES],
+            ends_count: vec![0; 256 * FIELDS],
+        }
+    }
+
+    /// Adds `other`'s votes: every tally is a sum of whole numbers, so the order votes are added in changes nothing.
+    pub(super) fn add(&mut self, other: &Self) {
+        let sum = |into: &mut [u32], more: &[u32]| {
+            for (into, more) in into.iter_mut().zip(more) {
+                *into = into.saturating_add(*more);
+            }
+        };
+        sum(&mut self.first, &other.first);
+        sum(&mut self.ends, &other.ends);
+        sum(&mut self.ends_count, &other.ends_count);
+    }
+}
+
+/// A light as the 16 bits the format interpolates to draw it; 0 for none or less.
+fn interpolated(light: f32) -> f32 {
+    if light.is_nan() || light <= 0.0 {
+        return 0.0;
+    }
+    let bits = light.to_bits();
+    let exponent = (bits >> 23) as i32 - 127;
+    // A half's bits: 1,024 to each power of two, the smallest powers sharing one scale.
+    let half = if exponent < -14 {
+        light * 16_777_216.0
+    } else if exponent > 15 {
+        31_743.0
+    } else {
+        ((exponent + 15) * 1024) as f32 + (bits & 0x7F_FFFF) as f32 / 8192.0
+    };
+    (half * 64.0 / 31.0).min(65535.0)
+}
+
+/// The light that [`interpolated`] gives `value` for.
+fn light(value: f32) -> f32 {
+    let half = value * 31.0 / 64.0;
+    let exponent = (half / 1024.0) as u32;
+    let fraction = half - 1024.0 * exponent as f32;
+    if exponent == 0 {
+        fraction / 16_777_216.0
+    } else {
+        f32::from_bits((exponent + 112) << 23 | (fraction * 8192.0) as u32)
+    }
+}
+
+/// A plain level's blocks as pixels, each channel a light.
+fn plain(blocks: &[u8], width: usize, height: usize) -> Option<Pixels> {
+    if width == 0 || blocks.len() != 16 * width * height {
+        return None;
+    }
+    let (w, h) = (4 * width, 4 * height);
+    let mut channels = vec![vec![0f32; w * h]; 3];
+    let mut rgb = [0f32; 48];
+    let (cells, _) = blocks.as_chunks::<16>();
+    for (i, block) in cells.iter().enumerate() {
+        bcdec_rs::bc6h_float(block, &mut rgb, 12, false);
+        let origin = 4 * (i / width) * w + 4 * (i % width);
+        for (pixel, colour) in rgb.as_chunks::<3>().0.iter().enumerate() {
+            let at = origin + (pixel / 4) * w + pixel % 4;
+            for (channel, &value) in channels.iter_mut().zip(colour) {
+                channel[at] = value;
+            }
+        }
+    }
+    Some(Pixels {
+        width: w,
+        height: h,
+        channels,
+    })
+}
+
+/// Whether the plain levels of a texture are one another averaged down, as far as any two of
+/// them lie one above the other.
+///
+/// A map filtered anew for each level is not, and then no plain level says what a coded one holds.
+fn agree(plains: &[Option<Pixels>]) -> bool {
+    let (mut off, mut count) = (0f64, 0u64);
+    for pair in plains.windows(2) {
+        let [Some(above), Some(below)] = pair else {
+            continue;
+        };
+        if above.width != 2 * below.width || above.height != 2 * below.height {
+            continue;
+        }
+        let (width, height) = (below.width, below.height);
+        for (above, below) in above.channels.iter().zip(&below.channels) {
+            let down = box_down(above, width, height);
+            for (&down, &below) in down.iter().zip(below) {
+                let apart = interpolated(down).max(FLOOR) - interpolated(below).max(FLOOR);
+                off += f64::from(apart.abs());
+                count += 1;
+            }
+        }
+    }
+    count == 0 || off / STOP <= AGREE * count as f64
+}
+
+/// What a coded level is held against: its lanes, where each block lies, its width in blocks, and a target for each pixel if a plain level is beside it.
+struct Coded<'a> {
+    lanes: &'a [Vec<u16>],
+    at: &'a [u32],
+    width: usize,
+    target: Option<Vec<Vec<f32>>>,
+    /// Whether the target is the level below, which has one pixel for each 2 by 2.
+    quads: bool,
+}
+
+/// The coded levels of `texture`: a level's target is the plain level above averaged down, else
+/// the one below, smoothed up for a vote and each pixel repeated 2 by 2 where `repeated`, for a score.
+fn coded(texture: &TextureIn, repeated: bool) -> Vec<Coded<'_>> {
+    let plains: Vec<Option<Pixels>> = (texture.levels.iter())
+        .map(|level| match &level.data {
+            LevelData::Plain(blocks) => plain(blocks, level.width, level.height),
+            _ => None,
+        })
+        .collect();
+    let scaled = |lights: Vec<f32>| -> Vec<f32> { lights.into_iter().map(interpolated).collect() };
+    let targets = agree(&plains);
+    let mut out = Vec::new();
+    for (i, level) in texture.levels.iter().enumerate() {
+        let LevelData::Coded { lanes, at } = &level.data else {
+            continue;
+        };
+        if lanes.len() != 16 || 2 * at.len() != lanes[0].len() {
+            continue;
+        }
+        let (w, h) = (4 * level.width, 4 * level.height);
+        let above: Option<Vec<Vec<f32>>> = (i.checked_sub(1))
+            .and_then(|above| plains[above].as_ref())
+            .filter(|above| above.width == 2 * w && above.height == 2 * h)
+            .map(|above| (above.channels.iter().map(|c| scaled(box_down(c, w, h)))).collect());
+        let up = if repeated { nearest_up } else { bilinear_up };
+        let below = || {
+            (plains.get(i + 1))
+                .and_then(Option::as_ref)
+                .filter(|below| 2 * below.width == w && 2 * below.height == h)
+                .map(|below| (below.channels.iter().map(|c| scaled(up(c, w, h)))).collect())
+        };
+        out.push(Coded {
+            lanes,
+            at,
+            width: level.width,
+            quads: above.is_none(),
+            target: above.or_else(below).filter(|_| targets),
+        });
+    }
+    out
+}
+
+/// The 16 pixels of a block, each as red, green and blue.
+type BlockPixels = [[f32; 3]; 16];
+
+/// The target of the block that lies at `place` of a level `width` blocks wide; `None` for a block outside the level.
+fn wanted(target: &[Vec<f32>], width: usize, place: u32) -> Option<BlockPixels> {
+    let place = usize::try_from(place).ok().filter(|_| place != u32::MAX)?;
+    let origin = 16 * (place / width) * width + 4 * (place % width);
+    let mut out = [[0f32; 3]; 16];
+    for (pixel, colour) in out.iter_mut().enumerate() {
+        let at = origin + (pixel / 4) * 4 * width + pixel % 4;
+        for (value, channel) in colour.iter_mut().zip(target) {
+            *value = *channel.get(at)?;
+        }
+    }
+    Some(out)
+}
+
+/// Votes the preset indices block `block` hangs on, its ends being known.
+fn vote_indices(
+    walk: &Walk<'_>,
+    block: usize,
+    (shape, partition): (&Shape, usize),
+    wanted: &BlockPixels,
+    votes: &mut Votes,
+) {
+    let slot = usize::from(walk.index_slot(block));
+    let depth = shape.index_depth();
+    let weights = weights(depth);
+    let fields = walk.fields(block);
+    // For each region whose ends are apart, what each index draws.
+    let draws: [Option<[[f32; 3]; 16]>; 2] = std::array::from_fn(|region| {
+        if region >= shape.regions {
+            return None;
+        }
+        let ends: [[u32; 3]; 2] = std::array::from_fn(|end| {
+            std::array::from_fn(|channel| {
+                let value = bc6h::end_value(shape, fields, 2 * region + end, channel);
+                bc6h::unquantised(value, shape.base)
+            })
+        });
+        let spread: u32 = (0..3).map(|c| ends[0][c].abs_diff(ends[1][c])).sum();
+        (spread >= FLAT).then(|| {
+            std::array::from_fn(|index| {
+                let weight = weights.get(index).copied().unwrap_or(0);
+                std::array::from_fn(|c| bc6h::mix(ends[0][c], ends[1][c], weight) as f32)
+            })
+        })
+    });
+    for (pixel, target) in wanted.iter().enumerate() {
+        let Some(draws) = &draws[subset_of(shape.regions, partition, pixel)] else {
+            continue;
+        };
+        let off = |index: usize| -> f32 {
+            (draws[index].iter().zip(target))
+                .map(|(drawn, wanted)| (drawn - wanted).abs())
+                .sum()
+        };
+        let best = (1..weights.len()).fold(
+            0,
+            |best, index| {
+                if off(index) < off(best) {
+                    index
+                } else {
+                    best
+                }
+            },
+        );
+        let trace = walk.first_trace(block, pixel);
+        let at = 16 * (16 * slot + pixel);
+        for (x, vote) in votes.first[at..at + 16].iter_mut().enumerate() {
+            let through = ((trace >> (4 * x)) & 0xF) as usize;
+            *vote += u32::from(through >> (4 - depth) == best);
+        }
+    }
+}
+
+/// Votes the preset fields block `block` hangs on, its indices being known.
+fn vote_ends(
+    walk: &Walk<'_>,
+    block: usize,
+    (shape, partition): (&Shape, usize),
+    wanted: &BlockPixels,
+    votes: &mut Votes,
+) {
+    let indices = walk.indices(block);
+    let weights = weights(shape.index_depth());
+    let standing = walk.fields(block);
+    for region in 0..shape.regions {
+        for channel in 0..3 {
+            // The two ends that leave the region's pixels nearest their targets, by least squares.
+            let (mut aa, mut ab, mut bb, mut at, mut bt, mut count) =
+                (0f32, 0f32, 0f32, 0f32, 0f32, 0f32);
+            for (pixel, target) in wanted.iter().enumerate() {
+                if subset_of(shape.regions, partition, pixel) != region {
+                    continue;
+                }
+                let b = f32::from(weights[usize::from(indices[pixel])]) / 64.0;
+                let a = 1.0 - b;
+                aa += a * a;
+                ab += a * b;
+                bb += b * b;
+                at += a * target[channel];
+                bt += b * target[channel];
+                count += 1.0;
+            }
+            let det = aa * bb - ab * ab;
+            let found = if det > 0.02 * count * count {
+                [
+                    Some((bb * at - ab * bt) / det),
+                    Some((aa * bt - ab * at) / det),
+                ]
+            } else if bb < 0.05 * aa {
+                [Some(at / aa), None]
+            } else if aa < 0.05 * bb {
+                [None, Some(bt / bb)]
+            } else {
+                [None, None]
+            };
+            for (side, found) in found.into_iter().enumerate() {
+                let Some(found) = found else {
+                    continue;
+                };
+                let found = found.clamp(0.0, 65535.0) as u32;
+                // An end is its base and, past the base, its own field: it votes the one of the
+                // two that a fit has not settled, the other being settled or hanging on the same.
+                let end = 2 * region + side;
+                let own = 3 * end + channel;
+                let open = |field: usize| walk.settled(block, field) < 16;
+                let voted = match (open(channel), end > 0 && open(own)) {
+                    (true, false) => channel,
+                    (false, true) => own,
+                    (true, true) if walk.from(block, channel) == walk.from(block, own) => own,
+                    _ => continue,
+                };
+                let hangs = walk.from(block, voted);
+                let Some(at) = usize::from(hangs).checked_sub(1) else {
+                    continue;
+                };
+                votes.ends_count[at] += 1;
+                let costs = &mut votes.ends[CANDIDATES * at..CANDIDATES * (at + 1)];
+                let mut tried = *standing;
+                for (candidate, cost) in costs.iter_mut().enumerate() {
+                    for field in [channel, own] {
+                        if walk.from(block, field) == hangs {
+                            tried[field] = walk.trace(block, field)[candidate];
+                        }
+                    }
+                    let value = bc6h::end_value(shape, &tried, end, channel);
+                    let off = bc6h::unquantised(value, shape.base).abs_diff(found);
+                    *cost = cost.saturating_add(off.min(CAP) >> 4);
+                }
+            }
+        }
+    }
+}
+
+/// Adds `texture`'s votes, read through `presets` as they stand.
+pub(super) fn vote(texture: &TextureIn, presets: &Presets, votes: &mut Votes) {
+    for level in coded(texture, false) {
+        let (Some(target), Ok(mut walk)) = (&level.target, Walk::new(level.lanes, presets, true))
+        else {
+            continue;
+        };
+        for block in 0..walk.blocks {
+            let Ok(of) = walk.step(block) else {
+                break;
+            };
+            let Some(wanted) = wanted(target, level.width, level.at[block]) else {
+                continue;
+            };
+            let settled = (0..6 * of.0.regions).all(|field| walk.settled(block, field) == 16);
+            if settled && walk.index_slot(block) != 0 {
+                vote_indices(&walk, block, of, &wanted, votes);
+            }
+            if walk.indices_known(block) && !settled {
+                vote_ends(&walk, block, of, &wanted, votes);
+            }
+        }
+    }
+}
+
+/// Takes into `presets` what `votes` settle: a voted field's next 8 bits, and each voted index.
+pub(super) fn solve(votes: &Votes, presets: &mut Presets) {
+    for slot in 1..256 {
+        let mut known = true;
+        for (pixel, index) in presets.first[slot].iter_mut().enumerate() {
+            let at = 16 * (16 * slot + pixel);
+            let tally = &votes.first[at..at + 16];
+            if tally.iter().sum::<u32>() < MIN_VOTES {
+                known = false;
+                continue;
+            }
+            let best = (0..16).fold(0, |best, x| if tally[x] > tally[best] { x } else { best });
+            *index = best as u8;
+        }
+        presets.first_known[slot] |= known;
+        for field in 0..FIELDS {
+            let at = FIELDS * slot + field;
+            let settled = presets.ends_bits[slot][field];
+            if votes.ends_count[at] < 2 * MIN_VOTES || settled >= 16 {
+                continue;
+            }
+            let costs = &votes.ends[CANDIDATES * at..CANDIDATES * (at + 1)];
+            let least =
+                (0..CANDIDATES).fold(0, |best, x| if costs[x] < costs[best] { x } else { best });
+            presets.ends[slot][field] = presets.candidate(slot, field, least);
+            presets.ends_bits[slot][field] = settled + 8;
+        }
+    }
+}
+
+/// Draws `texture`'s coded levels through `presets` and adds what they show to `summary`: its mismatch is in stops.
+///
+/// A level is held against the level above pixel by pixel, else its lights averaged 2 by 2
+/// against the level below.
+pub(super) fn score(texture: &TextureIn, presets: &Presets, summary: &mut Summary) {
+    let levels = coded(texture, true);
+    summary.textures += u64::from(!levels.is_empty());
+    for level in levels {
+        let Ok(mut walk) = Walk::new(level.lanes, presets, false) else {
+            continue;
+        };
+        summary.bodies += 1;
+        for block in 0..walk.blocks {
+            let Ok((shape, partition)) = walk.step(block) else {
+                break;
+            };
+            summary.blocks += 1;
+            let known = walk.ends_known(block, shape) && walk.indices_known(block);
+            summary.unknown += u64::from(!known);
+            let wanted = (level.target.as_ref())
+                .filter(|_| known)
+                .and_then(|target| wanted(target, level.width, level.at[block]));
+            let Some(wanted) = wanted else {
+                continue;
+            };
+            let drawn = bc6h::draw(shape, walk.fields(block), partition, &walk.indices(block));
+            let mut compare = |drawn: f32, target: f32| {
+                let off = drawn.max(FLOOR) - target.max(FLOOR);
+                summary.mismatch += f64::from(off.abs()) / STOP;
+                summary.compared += 1;
+            };
+            for channel in 0..3 {
+                if level.quads {
+                    for corner in [0, 2, 8, 10] {
+                        let lights =
+                            [0, 1, 4, 5].map(|more| light(drawn[corner + more][channel] as f32));
+                        let mean = lights.iter().sum::<f32>() / 4.0;
+                        compare(interpolated(mean), wanted[corner][channel]);
+                    }
+                } else {
+                    for (drawn, target) in drawn.iter().zip(&wanted) {
+                        compare(drawn[channel] as f32, target[channel]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The preset slots `presets` knows a field of, and those it knows the indices of.
+pub(super) fn solved(presets: &Presets) -> (u32, u32) {
+    let ends = (presets.ends_bits.iter())
+        .filter(|bits| bits.iter().any(|&bits| bits > 0))
+        .count();
+    let first = presets.first_known.iter().filter(|&&known| known).count();
+    (ends as u32, first as u32)
+}

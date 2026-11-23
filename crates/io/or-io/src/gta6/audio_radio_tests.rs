@@ -138,6 +138,7 @@ fn a_station_lists_its_track_lists_and_their_tracks_in_order() {
     };
     let want = Station {
         key: STATION,
+        flags: 0x1111_1111,
         band: BAND,
         lists: vec![
             list(
@@ -491,4 +492,50 @@ fn a_station_s_tracks_join_the_streamed_sounds_they_play() {
         (TRACKS[2], None, vec![]),
     ];
     assert_eq!(joined, want);
+}
+
+#[test]
+fn a_flags_word_states_two_bits_a_flag_and_the_third_hides_a_station() {
+    // 0b01 is set, 0b00 clear, and 0b10 not stated.
+    let word = 0b10_01_00_01;
+    let read = [0, 1, 2, 3].map(|n| flag(word, n));
+    assert_eq!(read, [Some(true), Some(false), Some(true), None]);
+    assert_eq!(flag(word, 16), None, "past the word's sixteen flags");
+    // The fixture fills a station with 0x11, which sets every other flag.
+    let station = &stations(&music().done()).expect("stations")[0];
+    assert_eq!(station.flags, 0x1111_1111);
+    assert!(station.hidden());
+}
+
+#[test]
+fn a_track_id_keys_its_title_and_its_artist() {
+    let (title, artist) = track_text_keys(1234);
+    assert_eq!(title, name_hash32(b"1234S"));
+    assert_eq!(artist, name_hash32(b"1234A"));
+}
+
+#[test]
+fn a_station_s_name_is_found_among_known_names_whole_or_by_its_words() {
+    let stations = [
+        "radio_made_up_fm",
+        "hidden_radio_made_up_fm",
+        "hidden_radio_corner_shop",
+        "radio_never_spelled",
+    ];
+    let keys: BTreeSet<u32> = (stations.iter())
+        .map(|name| name_hash32(name.as_bytes()))
+        .collect();
+    // A name whole, and two words in a row of a longer one.
+    let known = ["made_up_fm", "prop_corner_shop_sign_01", "unrelated"];
+    let found = station_names(&keys, known.into_iter());
+    for name in &stations[..3] {
+        let named = found.get(&name_hash32(name.as_bytes()));
+        assert_eq!(named.map(String::as_str), Some(*name));
+    }
+    assert_eq!(
+        found.len(),
+        3,
+        "a station no known name spells stays unnamed"
+    );
+    assert_eq!(name_of_text("The Made-Up  FM 98.3!"), "the_made_up_fm_98_3");
 }

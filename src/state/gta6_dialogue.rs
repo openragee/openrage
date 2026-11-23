@@ -1,17 +1,18 @@
 //! GTA VI's dialogue and radio as every view finds them while the app runs: the lines the
-//! conversation bodies state, their texts by language, the streamed sounds of the sounds bodies
-//! and the audio container that holds each stream. An index of the open scans fills them on a
-//! worker, as a row of the job list; a body or a text table opened by hand adds what it holds.
+//! conversation bodies state, their texts by language, the streamed sounds of the sounds bodies,
+//! the audio container that holds each stream, and the radio's track ids and station names. An
+//! index of the open scans fills them on a worker, as a row of the job list; a body or a text
+//! table opened by hand adds what it holds.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9Content, Rpf9ScanFind, Rpf9ZlibRun};
 use or_io::gta6::audio_data::{AudioData, AudioDataKind};
-use or_io::gta6::audio_radio::{self, Station, StationList, StreamedSound, TrackText};
-use or_io::gta6::dialogue::{subtitles_in, Dialogue, DialogueLine};
+use or_io::gta6::audio_radio::{self, Station, StreamedSound, TrackText};
+use or_io::gta6::dialogue::{plain, subtitles_in, Dialogue, DialogueLine};
 use or_io::gta6::text::TextTable;
 use or_io::gta6::text_language::{registered, LanguageArchives, Scanned};
 use or_job::{Cancel, Progress};
@@ -49,8 +50,14 @@ pub(crate) struct Lines {
     by_stream: BTreeMap<u32, u32>,
     /// The texts kept of each language: of a line's label, and of a key a view asked for.
     texts: BTreeMap<String, BTreeMap<u32, String>>,
-    /// Keys that are no line's label whose texts are kept: a radio station's key names it.
+    /// Keys that are no line's label whose texts are kept: a radio station's key names it, and
+    /// a track's id keys its title and its artist.
     wanted: BTreeSet<u32>,
+    /// The radio track ids the markers of each stream state, in the order of their positions.
+    track_ids: BTreeMap<u32, Vec<u32>>,
+    /// The keys of the stations of the music bodies opened, and the name found of each.
+    stations: BTreeSet<u32>,
+    station_names: BTreeMap<u32, String>,
     /// The languages a change set registers text archives for, in its order.
     registered: Vec<String>,
     /// The most language archives one scanned file held when the scans were last indexed.
@@ -153,6 +160,20 @@ impl Lines {
 
     pub fn sound(&self, key: u32) -> Option<&StreamedSound> {
         self.sounds.get(&key)
+    }
+
+    /// The ids of the radio tracks `sound` plays, as its streams' markers state them: one for a
+    /// track, several for a mix, none where no marker states one.
+    pub fn track_ids(&self, sound: &StreamedSound) -> &[u32] {
+        let mut streams = sound.streams();
+        streams
+            .find_map(|id| self.track_ids.get(&(id & STREAM_ID)))
+            .map_or(&[][..], |ids| ids.as_slice())
+    }
+
+    /// The name of the station `key` found among the names harvested and the stations' texts.
+    pub fn station_name(&self, key: u32) -> Option<&str> {
+        self.station_names.get(&key).map(String::as_str)
     }
 
     /// The archive and offset of the audio container that holds `stream`.
@@ -302,10 +323,9 @@ pub(crate) fn table_language(state: &AppState, path: &Path) -> Option<String> {
     Some(language_of(&lines().registered, ordinal, known.1.len()))
 }
 
-/// What a music body states of the radio: its stations, the lists of them, and its tracks' texts.
+/// What a music body states of the radio: its stations and its tracks' texts.
 pub(crate) struct Radio {
     pub stations: Vec<Station>,
-    pub lists: Vec<StationList>,
     pub texts: BTreeMap<u32, TrackText>,
 }
 
@@ -322,7 +342,6 @@ pub(crate) fn radio_of(path: &Path, data: &AudioData) -> Arc<Result<Radio, Strin
     let read = || -> Result<Radio, audio_radio::RadioError> {
         Ok(Radio {
             stations: audio_radio::stations(data)?,
-            lists: audio_radio::station_lists(data)?,
             texts: audio_radio::track_texts(data)?,
         })
     };
@@ -330,6 +349,9 @@ pub(crate) fn radio_of(path: &Path, data: &AudioData) -> Arc<Result<Radio, Strin
     if let Ok(radio) = &read {
         let mut lines = lines();
         (lines.wanted).extend(radio.stations.iter().map(|s| s.key));
+        (lines.stations).extend(radio.stations.iter().map(|s| s.key));
+        // The index names the stations from the names harvested, which the first ask starts reading.
+        super::gta6_names::vocabulary();
     }
     let radio = Arc::new(read);
     radios.insert(path.to_path_buf(), Arc::clone(&radio));
@@ -479,8 +501,9 @@ impl Steps<'_> {
 }
 
 /// Reads what `archives` hold into the lines: the languages a change set registers, every
-/// conversation body's lines, the sounds bodies' streamed sounds, the texts of `language` of the
-/// lines and of the keys asked for, and the container of each stream. Says what it kept.
+/// conversation body's lines, the sounds bodies' streamed sounds, the container of each stream,
+/// the track ids the radio's streams state, the texts of `language` of the lines and of the keys
+/// asked for, and the stations' names. Says what it kept.
 fn index(
     archives: &[Archive],
     language: Option<String>,
@@ -538,7 +561,55 @@ fn index(
             }
         }
     }
-    lines().refresh();
+
+    // ponytail: every stream id of the open scans is held at once, some tens of megabytes for
+    // an install; a second pass over the stream tables if that grows.
+    let mut held: HashMap<u32, (usize, u64)> = HashMap::new();
+    let mut files = Vec::with_capacity(archives.len());
+    for (n, archive) in archives.iter().enumerate() {
+        let file = open(archive)?;
+        for &(at, flags, streams) in &archive.containers {
+            steps.step()?;
+            let Ok(words) = super::gta6_audio_links::stream_words(&file, at, flags, streams) else {
+                continue;
+            };
+            for id in words.iter().map(|w| w & STREAM_ID) {
+                held.entry(id).or_insert((n, at));
+            }
+        }
+        files.push(file);
+    }
+    // A line's number is settled by the streams that exist before its stream is looked for.
+    let sounds: BTreeSet<u32> = {
+        let mut lines = lines();
+        lines.dialogue.settle(|id| held.contains_key(&id));
+        lines.refresh();
+        let streams = lines.sounds.values().flat_map(|s| s.streams());
+        streams.map(|id| id & STREAM_ID).collect()
+    };
+    let radio: BTreeSet<(usize, u64)> = (sounds.iter())
+        .filter_map(|id| held.get(id).copied())
+        .collect();
+    let mut track_ids = BTreeMap::new();
+    for (n, at) in radio {
+        steps.step()?;
+        let Ok(found) = or_io::awc::read_markers(&files[n], at) else {
+            continue;
+        };
+        for (id, markers) in found {
+            let ids = or_io::awc::track_ids(&markers);
+            if !ids.is_empty() {
+                track_ids.insert(id & STREAM_ID, ids);
+            }
+        }
+    }
+    {
+        let mut lines = lines();
+        let keys = (track_ids.values().flatten())
+            .flat_map(|id| <[u32; 2]>::from(audio_radio::track_text_keys(*id)));
+        lines.wanted.extend(keys);
+        lines.track_ids = track_ids;
+    }
 
     let (registered, keys) = {
         let lines = lines();
@@ -579,21 +650,19 @@ fn index(
             .map(|id| id & STREAM_ID)
             .collect()
     };
-    let mut containers: BTreeMap<u32, (usize, u64)> = BTreeMap::new();
-    for (n, archive) in archives.iter().enumerate() {
-        let file = open(archive)?;
-        for &(at, flags, streams) in &archive.containers {
-            steps.step()?;
-            let Ok(words) = super::gta6_audio_links::stream_words(&file, at, flags, streams) else {
-                continue;
-            };
-            for id in words.iter().map(|w| w & STREAM_ID) {
-                if wanted.contains(&id) {
-                    containers.entry(id).or_insert((n, at));
-                }
-            }
-        }
-    }
+    let containers: BTreeMap<u32, (usize, u64)> = (wanted.iter())
+        .filter_map(|id| Some((*id, *held.get(id)?)))
+        .collect();
+
+    // A station is named by a name harvested or by the name its own text gives it.
+    let stations = lines().stations.clone();
+    let named: Vec<String> = (stations.iter())
+        .filter_map(|key| kept.get(key))
+        .map(|text| audio_radio::name_of_text(&plain(text)))
+        .collect();
+    let vocabulary = super::gta6_names::vocabulary();
+    let known = vocabulary.names().chain(named.iter().map(String::as_str));
+    let station_names = audio_radio::station_names(&stations, known);
 
     let mut lines = lines();
     lines.keep(&language, kept);
@@ -601,6 +670,7 @@ fn index(
     lines.archives = archives.iter().map(|a| a.path.clone()).collect();
     let streams = containers.len();
     lines.containers = containers;
+    lines.station_names = station_names;
     if lines.filter.language.is_empty() {
         lines.filter.language = language.clone();
     }

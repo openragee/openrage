@@ -29,7 +29,7 @@ use crate::error::{IoError, Result};
 pub use codec::{Accumulator, Codec};
 pub use crypto::AwcKey;
 #[cfg(feature = "gta6")]
-pub use gta6_chunks::AwcLoudness;
+pub use gta6_chunks::{markers, read_markers, track_ids, AwcLoudness, AwcMarker};
 
 /// `ADAT`, little-endian.
 pub const AWC_MAGIC_LE: u32 = 0x5441_4441;

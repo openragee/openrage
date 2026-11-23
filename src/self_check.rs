@@ -987,8 +987,9 @@ pub(crate) fn headless_bridge() -> Result<crate::render::RenderBridge, String> {
 fn headless_gpu() -> Result<(std::sync::Arc<wgpu::Device>, std::sync::Arc<wgpu::Queue>), String> {
     use std::sync::Arc;
 
+    // `WGPU_BACKEND` picks the backend, so the same frames are drawn through each one a machine has.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::PRIMARY,
+        backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY),
         flags: wgpu::InstanceFlags::default(),
         memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         backend_options: wgpu::BackendOptions::default(),
@@ -1000,20 +1001,25 @@ fn headless_gpu() -> Result<(std::sync::Arc<wgpu::Device>, std::sync::Arc<wgpu::
         force_fallback_adapter: false,
     }))
     .map_err(|e| format!("no GPU adapter without a surface: {e}"))?;
+    tracing::info!(backend = ?adapter.get_info().backend, adapter = %adapter.get_info().name, "the self-check's device");
 
     let adapter_features = adapter.features();
     let mut required_features = wgpu::Features::empty();
     if adapter_features.contains(wgpu::Features::CLIP_DISTANCES) {
         required_features |= wgpu::Features::CLIP_DISTANCES;
     }
+    let mut required_limits = wgpu::Limits::default();
+    required_limits.max_bind_groups = required_limits.max_bind_groups.max(5);
+    // A GTA VI drawable's own programs bind arrays of textures and more buffers than a device gives unasked
+    required_features |= or_renderer::game_shaders::meshlets::device_needs(
+        adapter_features,
+        &adapter.limits(),
+        &mut required_limits,
+    );
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("OpenRage self-check device"),
         required_features,
-        required_limits: {
-            let mut l = wgpu::Limits::default();
-            l.max_bind_groups = l.max_bind_groups.max(5);
-            l
-        },
+        required_limits,
         experimental_features: wgpu::ExperimentalFeatures::default(),
         memory_hints: wgpu::MemoryHints::Performance,
         trace: wgpu::Trace::Off,

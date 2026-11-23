@@ -5,10 +5,15 @@ const VENDOR: &str = "vendor/dxbc-spirv";
 const SOURCE_DIRS: [&str; 5] = ["dxbc", "ir", "ir/passes", "spirv", "util"];
 
 fn sources(dir: &Path) -> Vec<PathBuf> {
+    sources_of(dir, "cpp")
+}
+
+fn sources_of(dir: impl AsRef<Path>, extension: &str) -> Vec<PathBuf> {
+    let dir = dir.as_ref();
     let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
         .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| path.extension().is_some_and(|ext| ext == "cpp"))
+        .filter(|path| path.extension().is_some_and(|ext| ext == extension))
         .collect();
     found.sort();
     found
@@ -32,6 +37,16 @@ fn main() {
     println!(
         "cargo:rustc-env=OR_SHADER_FRONT_FINGERPRINT={:016x}",
         fingerprint(&["src/shim.cpp", "src/layout.rs"])
+    );
+    // The native front end's own sources: a translation kept on disk is of the build that wrote it.
+    let rdna: Vec<String> = (sources_of("src/rdna", "rs").iter())
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    let rdna: Vec<&str> = rdna.iter().map(String::as_str).collect();
+    println!("cargo:rerun-if-changed=src/rdna");
+    println!(
+        "cargo:rustc-env=OR_RDNA_FINGERPRINT={:016x}",
+        fingerprint(&rdna)
     );
     println!("cargo:rerun-if-changed=vendor");
     println!("cargo:rerun-if-changed=src/shim.cpp");

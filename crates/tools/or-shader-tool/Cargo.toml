@@ -20,8 +20,9 @@ path = "src/main.rs"
 default = []
 # Translate DXBC with the vendored C++ translator: the `translate-check` command. Off, the tool has no C++ in its build.
 native-front = ["dep:or-shader-front", "or-shader-front/native", "dep:or-renderer"]
-# Build a pipeline from each module on a real GPU device, which runs the platform's own shader compiler: `--device`.
-device-check = ["dep:wgpu", "dep:pollster", "dep:or-renderer"]
+# Build a pipeline from each module on a real GPU device, which runs the platform's own shader compiler: `--device`,
+# and `rdna-devices`, which builds GTA VI's native programs on every adapter of the machine.
+device-check = ["dep:wgpu", "dep:pollster", "dep:or-renderer", "dep:or-shader-front", "or-io/gta6"]
 # Draw a drawable of an install with a pack's passes into a picture: `render-drawable`.
 render-drawable = ["device-check", "dep:or-cli", "dep:or-interchange", "dep:image"]
 # Reach the Vulkan loader on macOS (MoltenVK), so the Vulkan route runs on this machine: `WGPU_BACKEND=vulkan`.

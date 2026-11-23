@@ -8,10 +8,11 @@ use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use super::hash::{name_hash32, name_hash64};
 use crate::container::rpf::{
-    Rpf9BodyKind, Rpf9Content, Rpf9Role, Rpf9Scan, Rpf9ScanFind, Rpf9ZlibRun,
+    Rpf9BodyKind, Rpf9Content, Rpf9Role, Rpf9Scan, Rpf9ScanCarry, Rpf9ScanFind, Rpf9ZlibRun,
 };
 
 /// The bytes of a body a harvest reads by default, from its start: what each worker of a harvest
@@ -19,6 +20,8 @@ use crate::container::rpf::{
 pub const HARVEST_PREFIX: usize = 16 << 20;
 /// The bytes of an archive one scan of a harvest covers, and the step its progress moves by.
 const HARVEST_RANGE: u64 = 64 << 20;
+/// The shortest range a harvest scans alone, where the archive is too short to give each worker more.
+const SMALL_RANGE: u64 = 4 << 20;
 /// The longest name kept, without its `.#xx` ending.
 pub const MAX_NAME: usize = 96;
 /// The shortest plain name kept: a shorter one is as likely chance as a name.
@@ -29,6 +32,7 @@ const TEXT_PROBE: usize = 4096;
 const MAX_LINE: u64 = 160;
 const VOCABULARY_HEAD: &str = "openrage gta6 names 1";
 const LABELS_HEAD: &str = "openrage gta6 labels 1";
+const TEXTURES_HEAD: &str = "openrage gta6 textures 1";
 
 /// A name a body spells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,6 +124,11 @@ fn tokens<'a>(run: &'a [u8], plain: bool, each: &mut impl FnMut(Harvested<'a>)) 
     }
 }
 
+/// Whether a vocabulary holds `name`: 1 to [`MAX_NAME`] printable bytes with no space.
+fn holdable(name: &str) -> bool {
+    !name.is_empty() && name.len() <= MAX_NAME && name.bytes().all(|b| b.is_ascii_graphic())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Name {
     /// Lower-cased, as both hashes fold it.
@@ -155,7 +164,7 @@ impl Vocabulary {
     /// Holds `name`, lower-cased, where it is 1 to [`MAX_NAME`] printable bytes with no space;
     /// whether it is new. A name held as plain takes the `kind` a later body spells it with.
     pub fn add(&mut self, name: &str, kind: Option<[u8; 2]>) -> bool {
-        if name.is_empty() || name.len() > MAX_NAME || !name.bytes().all(|b| b.is_ascii_graphic()) {
+        if !holdable(name) {
             return false;
         }
         match self.names.entry(name_hash64(name.as_bytes())) {
@@ -227,10 +236,22 @@ impl Vocabulary {
         }
     }
 
+    /// Every name held, in no order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.names.values().map(|n| &*n.text)
+    }
+
     /// The names a body spelled with a `.#xx` ending, without it.
     pub fn resource_names(&self) -> impl Iterator<Item = &str> {
         (self.names.values())
             .filter(|n| n.kind.is_some())
+            .map(|n| &*n.text)
+    }
+
+    /// The names no body spelled with an ending.
+    pub fn plain_names(&self) -> impl Iterator<Item = &str> {
+        (self.names.values())
+            .filter(|n| n.kind.is_none())
             .map(|n| &*n.text)
     }
 
@@ -339,11 +360,17 @@ pub fn vocabulary_file(root: &Path) -> PathBuf {
     folder(root).join("vocabulary.txt")
 }
 
-/// Where the labels of `archive` are kept, under the configuration directory `root`.
-pub fn labels_file(root: &Path, archive: &Path) -> PathBuf {
+/// Where what is kept of `archive` alone lies under the configuration directory `root`, by its
+/// `extension`.
+fn archive_file(root: &Path, archive: &Path, extension: &str) -> PathBuf {
     let full = fs::canonicalize(archive).unwrap_or_else(|_| archive.to_path_buf());
     let word = name_hash64(full.to_string_lossy().as_bytes());
-    folder(root).join(format!("{word:016x}.labels"))
+    folder(root).join(format!("{word:016x}.{extension}"))
+}
+
+/// Where the labels of `archive` are kept, under the configuration directory `root`.
+pub fn labels_file(root: &Path, archive: &Path) -> PathBuf {
+    archive_file(root, archive, "labels")
 }
 
 /// Writes the labels of an archive of `archive_len` bytes as text, a line each: the offset in
@@ -396,6 +423,151 @@ pub fn load_labels(root: &Path, archive: &Path) -> Labels {
     read().unwrap_or_default()
 }
 
+/// A texture a model's material names by its 64-bit key, as a pack lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextureUse {
+    /// The first model that names it, by the name the model states less its ending, lower-cased.
+    pub model: String,
+    /// The hash of the shader parameter that binds it in that model.
+    pub parameter: u32,
+    /// How many models name it.
+    pub models: u32,
+}
+
+/// The textures the models of archives name, by key.
+pub type TextureUses = BTreeMap<u64, TextureUse>;
+
+/// The texture keys the materials of each model in the body `find` name, `bytes` being what a
+/// read of it returned: the model's name less its ending, lower-cased, and each key once with the
+/// parameter that binds it first. None of a body that is no drawable, fragment or dictionary, or
+/// whose shaders do not read from the bytes held.
+pub fn body_textures(find: &Rpf9ScanFind, bytes: &[u8]) -> Vec<(String, Vec<(u64, u32)>)> {
+    let Rpf9BodyKind::Zlib(Rpf9ZlibRun {
+        resource: Some(resource),
+        signature: Some(signature),
+        ..
+    }) = find.kind
+    else {
+        return Vec::new();
+    };
+    let Some(role) = signature.role() else {
+        return Vec::new();
+    };
+    let virtual_section = resource.sections(bytes).0;
+    let models = super::headerless::model_shaders(role, virtual_section).unwrap_or_default();
+    let named = models.into_iter().filter(|(name, _)| stated(name));
+    let textures = named.map(|(name, shaders)| {
+        let mut seen = HashSet::new();
+        let mut keys = Vec::new();
+        for shader in &shaders {
+            // A shader's texture parameters come first, one a slot.
+            for (key, parameter) in shader.texture_keys.iter().zip(&shader.parameters) {
+                if let Some(key) = (*key).filter(|key| seen.insert(*key)) {
+                    keys.push((key, parameter.hash));
+                }
+            }
+        }
+        (split_kind(&name).0.to_ascii_lowercase(), keys)
+    });
+    textures.filter(|(_, keys)| !keys.is_empty()).collect()
+}
+
+/// Holds in `uses` that `model` names each of `keys`: the first model to name a key is the one
+/// kept for it.
+pub fn add_texture_uses(uses: &mut TextureUses, model: &str, keys: &[(u64, u32)]) {
+    for (key, parameter) in keys {
+        match uses.entry(*key) {
+            std::collections::btree_map::Entry::Occupied(mut held) => held.get_mut().models += 1,
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(TextureUse {
+                    model: model.to_string(),
+                    parameter: *parameter,
+                    models: 1,
+                });
+            }
+        }
+    }
+}
+
+/// Writes `uses` as text, a line each: the key and the parameter in hexadecimal, the count of
+/// models and the first model's name.
+pub fn write_texture_uses(uses: &TextureUses, mut out: impl Write) -> io::Result<()> {
+    writeln!(out, "{TEXTURES_HEAD}")?;
+    for (key, used) in uses {
+        let (parameter, models) = (used.parameter, used.models);
+        writeln!(out, "{key:016X} {parameter:08X} {models} {}", used.model)?;
+    }
+    Ok(())
+}
+
+/// Reads what [`write_texture_uses`] wrote into `uses`, a key another file's models name too
+/// keeping its first model; a line that is no use is passed over.
+pub fn read_texture_uses(mut from: impl BufRead, uses: &mut TextureUses) -> io::Result<()> {
+    let mut line = Vec::new();
+    if !next_line(&mut from, &mut line)? || line != TEXTURES_HEAD.as_bytes() {
+        return Ok(());
+    }
+    while next_line(&mut from, &mut line)? {
+        let mut words = std::str::from_utf8(&line)
+            .unwrap_or_default()
+            .splitn(4, ' ');
+        let (Some(key), Some(parameter), Some(models), Some(model)) =
+            (words.next(), words.next(), words.next(), words.next())
+        else {
+            continue;
+        };
+        let (Ok(key), Ok(parameter), Ok(models), true) = (
+            u64::from_str_radix(key, 16),
+            u32::from_str_radix(parameter, 16),
+            models.parse::<u32>(),
+            stated(model),
+        ) else {
+            continue;
+        };
+        match uses.entry(key) {
+            std::collections::btree_map::Entry::Occupied(mut held) => {
+                let held = held.get_mut();
+                held.models = held.models.saturating_add(models);
+            }
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(TextureUse {
+                    model: model.to_string(),
+                    parameter,
+                    models,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Keeps the textures the models of `archive` name under the configuration directory `root`, in
+/// place of those kept of it before; the file written.
+pub fn save_texture_uses(root: &Path, archive: &Path, uses: &TextureUses) -> io::Result<PathBuf> {
+    let file = archive_file(root, archive, "textures");
+    keep(&file, |out| write_texture_uses(uses, out))?;
+    Ok(file)
+}
+
+/// The textures the models of every archive harvested name, as kept under the configuration
+/// directory `root`; none where none are kept.
+pub fn load_texture_uses(root: &Path) -> TextureUses {
+    let mut files: Vec<PathBuf> = (fs::read_dir(folder(root)).into_iter().flatten())
+        .filter_map(|entry| Some(entry.ok()?.path()))
+        .filter(|path| path.extension().is_some_and(|e| e == "textures"))
+        .collect();
+    // In one order, so the model kept for a key two archives name is the same each time.
+    files.sort();
+    let mut uses = TextureUses::new();
+    for file in files {
+        if let Ok(file) = fs::File::open(file) {
+            // A file cut short gives the lines before the cut.
+            let _ = read_texture_uses(BufReader::new(file), &mut uses);
+        }
+    }
+    uses
+}
+
 /// Whether `name` reads as a name a body states of itself: a name the vocabulary would hold, with
 /// or without a `.#xx` ending.
 fn stated(name: &str) -> bool {
@@ -423,6 +595,18 @@ pub fn harvest_body(
     bytes: &[u8],
     prefix: usize,
 ) -> Option<String> {
+    body_names(find, bytes, prefix, &mut |name, kind| {
+        vocabulary.add(name, kind);
+    })
+}
+
+/// As [`harvest_body`], each name handed to `each` with the ending it is spelled with.
+fn body_names(
+    find: &Rpf9ScanFind,
+    bytes: &[u8],
+    prefix: usize,
+    each: &mut impl FnMut(&str, Option<[u8; 2]>),
+) -> Option<String> {
     if !harvests(find) {
         return None;
     }
@@ -432,12 +616,14 @@ pub fn harvest_body(
         ..
     }) = find.kind
     else {
-        vocabulary.harvest(bytes, prefix);
+        harvest(bytes, prefix, &mut |found| each(found.name, found.kind));
         return None;
     };
     // The physical section is vertex and index data.
     let virtual_section = resource.sections(bytes).0;
-    vocabulary.harvest(virtual_section, prefix);
+    harvest(virtual_section, prefix, &mut |found| {
+        each(found.name, found.kind)
+    });
     let role = signature.and_then(|s| s.role())?;
     if !matches!(role, Rpf9Role::Drawable | Rpf9Role::DrawableWithBound) {
         return None;
@@ -448,7 +634,7 @@ pub fn harvest_body(
     }
     // Its own name is held wherever the root points, past the prefix too.
     let (stem, kind) = split_kind(&name);
-    vocabulary.add(stem, kind);
+    each(stem, kind);
     Some(name)
 }
 
@@ -458,20 +644,172 @@ pub struct ArchiveHarvest {
     pub vocabulary: Vocabulary,
     /// The name each drawable and fragment states of itself, by its offset.
     pub labels: Labels,
+    /// The textures the materials of its models name.
+    pub textures: TextureUses,
     /// The bodies read for names.
     pub bodies: usize,
     /// Whether it was stopped before the archive's end; what it read until then is given.
     pub stopped: bool,
 }
 
+/// A name the scan of one range read, as written.
+#[derive(Debug)]
+struct Seen {
+    text: Box<str>,
+    /// Where the last body that spells it starts.
+    last: u64,
+    /// The ending a body spelled it with, and where the last body that spelled one starts.
+    kind: Option<([u8; 2], u64)>,
+}
+
 /// What the scan of one range of an archive gave.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Ranged {
-    index: u64,
-    bodies: usize,
+    /// The range's end: a body that starts at or past it is a later range's.
+    limit: u64,
+    /// Where each find starts and where the scan stood after it, in the scan's order.
+    finds: Vec<(u64, u64)>,
+    /// Where each body read for names starts.
+    bodies: Vec<u64>,
     labels: Vec<(u64, String)>,
-    /// Where the scan ended: past the range's end where its last body is.
+    names: HashMap<u64, Seen>,
+    /// Each model that names textures: where its body starts, its name and the keys.
+    textures: Vec<ModelTextures>,
+    /// Where the scan ended: past the limit where its last body is.
     end: u64,
+}
+
+/// A model that names textures: where its body starts, its name, and each key with its use.
+type ModelTextures = (u64, String, Vec<(u64, u32)>);
+
+/// The names of the bodies of `file` that start in `from..to`, each read once, and what the scan
+/// leaves the scan of the bytes after.
+fn scan_range(
+    file: &fs::File,
+    (from, to): (u64, u64),
+    carry: Option<Rpf9ScanCarry>,
+    keep: usize,
+    stop: &(dyn Fn() -> bool + Sync),
+) -> io::Result<(Ranged, Rpf9ScanCarry)> {
+    let mut ranged = Ranged {
+        limit: to,
+        end: from,
+        ..Ranged::default()
+    };
+    if from >= to {
+        return Ok((ranged, carry.unwrap_or_default()));
+    }
+    let scan = Rpf9Scan::new(file, from..to).map_err(io::Error::other)?;
+    let mut scan = match carry {
+        Some(carry) => scan.carrying(carry),
+        None => scan,
+    }
+    .keeping(keep);
+    while let Some(find) = scan.next() {
+        // A scan that fails says so once and ends: the rest of its range is not read.
+        let (Ok(find), false) = (find, stop()) else {
+            break;
+        };
+        let at = find.offset;
+        ranged.finds.push((at, scan.position()));
+        let bytes = scan.kept(&find);
+        if bytes.is_empty() || !harvests(&find) {
+            continue;
+        }
+        ranged.bodies.push(at);
+        let names = &mut ranged.names;
+        let label = body_names(&find, bytes, keep, &mut |name, kind| {
+            if !holdable(name) {
+                return;
+            }
+            let seen = (names.entry(name_hash64(name.as_bytes()))).or_insert_with(|| Seen {
+                text: name.into(),
+                last: at,
+                kind: None,
+            });
+            seen.last = at;
+            if let Some(kind) = kind {
+                seen.kind = Some((seen.kind.map_or(kind, |(first, _)| first), at));
+            }
+        });
+        if let Some(name) = label {
+            ranged.labels.push((at, name));
+        }
+        let models = body_textures(&find, bytes).into_iter();
+        (ranged.textures).extend(models.map(|(model, keys)| (at, model, keys)));
+    }
+    ranged.end = scan.position();
+    Ok((ranged, scan.carry()))
+}
+
+/// The ranges of a harvest joined in the archive's order, each from where the bodies before end.
+// A scan that starts inside a body, as a range's does where the range before ends in one, reads
+// that body's later streams as runs of their own, and its last such run may take the body after
+// for one more of its chunks. So what a range found before the end of the bodies read is dropped,
+// and where one of its finds reaches past that end the bytes from there are scanned again.
+#[derive(Debug, Default)]
+struct Joined {
+    harvest: ArchiveHarvest,
+    /// Where the last body joined ends.
+    read_to: u64,
+    /// The range to join next, and the ranges scanned before their turn.
+    next: u64,
+    waiting: BTreeMap<u64, Ranged>,
+}
+
+impl Joined {
+    /// Holds what `ranged` read of the bodies that start at or past the end of those joined.
+    fn keep(&mut self, ranged: &Ranged) {
+        let from = self.read_to;
+        self.harvest.bodies += ranged.bodies.iter().filter(|at| **at >= from).count();
+        let labels = ranged.labels.iter().filter(|(at, _)| *at >= from);
+        self.harvest.labels.extend(labels.cloned());
+        for (_, model, keys) in ranged.textures.iter().filter(|(at, ..)| *at >= from) {
+            add_texture_uses(&mut self.harvest.textures, model, keys);
+        }
+        for seen in ranged.names.values().filter(|seen| seen.last >= from) {
+            let kind = seen.kind.filter(|(_, at)| *at >= from);
+            (self.harvest.vocabulary).add(&seen.text, kind.map(|(kind, _)| kind));
+        }
+    }
+
+    /// Joins `ranged`, the range after the last one joined; `again` scans the bytes it is given
+    /// from a body's start.
+    fn join(
+        &mut self,
+        ranged: &Ranged,
+        again: &mut dyn FnMut(u64, u64) -> io::Result<Ranged>,
+    ) -> io::Result<()> {
+        loop {
+            let from = self.read_to;
+            if from >= ranged.limit {
+                return Ok(());
+            }
+            let over = (ranged.finds.iter()).find(|(at, end)| *at < from && from < *end);
+            let Some((_, end)) = over else {
+                // The scan stood at `from` between two finds, as a scan from a body's start does.
+                self.keep(ranged);
+                self.read_to = from.max(ranged.end);
+                return Ok(());
+            };
+            let to = (*end).min(ranged.limit);
+            let truly = again(from, to)?;
+            self.keep(&truly);
+            self.read_to = to.max(truly.end);
+        }
+    }
+
+    /// Joins each range scanned whose turn has come.
+    fn join_waiting(
+        &mut self,
+        again: &mut dyn FnMut(u64, u64) -> io::Result<Ranged>,
+    ) -> io::Result<()> {
+        while let Some(ranged) = self.waiting.remove(&self.next) {
+            self.next += 1;
+            self.join(&ranged, again)?;
+        }
+        Ok(())
+    }
 }
 
 /// Harvests the first `keep` inflated bytes of every body of the archive at `path` a harvest
@@ -486,16 +824,21 @@ pub fn harvest_archive(
     stop: &(dyn Fn() -> bool + Sync),
     reached: &(dyn Fn(u64, u64) + Sync),
 ) -> io::Result<ArchiveHarvest> {
-    harvest_ranges(path, keep, HARVEST_RANGE, workers, stop, reached)
+    // An archive shorter than a range a worker is cut finer, so every worker reads some of it:
+    // a scan runs over the bytes no body claims a slot at a time, and two ranges left a small
+    // archive of them to two cores.
+    let each = fs::metadata(path)?.len() / workers.max(1) as u64;
+    let range = (each.next_multiple_of(SMALL_RANGE)).clamp(SMALL_RANGE, HARVEST_RANGE);
+    harvest_ranges(path, keep, range, workers, stop, reached)
 }
 
 /// As [`harvest_archive`], a scan to each `range` bytes of the archive.
-// ponytail: a scan that starts inside a body, as a range's does where the range before it ends in
-// one, reads the body's later streams as runs of their own and may take the start of the body
-// after for one more. Their bytes are the archive's, so the names stand, and a label found before
-// that body's end is dropped; one worker scans the ranges in order, each from where the last
-// ended, and misses none. Cut the ranges at entry starts if a harvest on several threads must
-// equal that one.
+// One worker scans the ranges in order, each from where the last ended. Several start each range
+// at its boundary and the ranges are joined in order ([`Joined`]), so every body is read once
+// whatever the workers; a nested archive's names that a range boundary parts from its header
+// are then found as no body, and a harvest reads none of them.
+// ponytail: the bytes scanned again where a find reaches past a body's end are read by the worker
+// that joins, with the join held; hand them to the workers if a profile shows the join waiting.
 fn harvest_ranges(
     path: &Path,
     keep: usize,
@@ -508,92 +851,62 @@ fn harvest_ranges(
     let ranges = len.div_ceil(range.max(1));
     let workers = (workers.max(1) as u64).min(ranges.max(1));
     let (next, done) = (AtomicU64::new(0), AtomicU64::new(0));
-    let work = || -> io::Result<(Vocabulary, Vec<Ranged>)> {
+    let joined = Mutex::new(Joined::default());
+    let work = || -> io::Result<()> {
         let file = fs::File::open(path)?;
-        let (mut vocabulary, mut out) = (Vocabulary::default(), Vec::new());
+        let mut again = |from: u64, to: u64| -> io::Result<Ranged> {
+            Ok(scan_range(&file, (from, to), None, keep, stop)?.0)
+        };
         let mut carried = None;
         loop {
             let index = next.fetch_add(1, Ordering::Relaxed);
             if index >= ranges || stop() {
-                break;
+                return Ok(());
             }
             let start = index.saturating_mul(range);
             let end = start.saturating_add(range).min(len);
-            let mut ranged = Ranged {
-                index,
-                end: start,
-                ..Ranged::default()
-            };
             // One worker takes the ranges in order, so each scan goes on from the last.
             let (from, carry) = match carried.filter(|_| workers == 1) {
                 Some((position, carry)) => (start.max(position), Some(carry)),
                 None => (start, None),
             };
-            if from < end {
-                let scan = Rpf9Scan::new(&file, from..end).map_err(io::Error::other)?;
-                let mut scan = match carry {
-                    Some(carry) => scan.carrying(carry),
-                    None => scan,
-                }
-                .keeping(keep);
-                while let Some(find) = scan.next() {
-                    // A scan that fails says so once and ends: the rest of its range is not read.
-                    let (Ok(find), false) = (find, stop()) else {
-                        break;
-                    };
-                    let bytes = scan.kept(&find);
-                    if bytes.is_empty() || !harvests(&find) {
-                        continue;
-                    }
-                    ranged.bodies += 1;
-                    if let Some(name) = harvest_body(&mut vocabulary, &find, bytes, keep) {
-                        ranged.labels.push((find.offset, name));
-                    }
-                }
-                ranged.end = scan.position();
-                carried = Some((scan.position(), scan.carry()));
+            let (ranged, carry) = scan_range(&file, (from, end), carry, keep, stop)?;
+            carried = Some((ranged.end, carry));
+            {
+                let mut joined = joined.lock().unwrap_or_else(|p| p.into_inner());
+                joined.waiting.insert(index, ranged);
+                joined.join_waiting(&mut again)?;
             }
-            out.push(ranged);
             let step = end - start;
             reached(done.fetch_add(step, Ordering::Relaxed) + step, len);
         }
-        Ok((vocabulary, out))
     };
-    let gave: Vec<io::Result<(Vocabulary, Vec<Ranged>)>> = match workers {
+    let gave: Vec<io::Result<()>> = match workers {
         // No thread is started for one, as where none can be.
         1 => vec![work()],
         _ => std::thread::scope(|scope| {
             let started: Vec<_> = (0..workers).map(|_| scope.spawn(work)).collect();
-            let joined = started.into_iter().map(|worker| {
+            let ended = started.into_iter().map(|worker| {
                 let ended = worker.join();
                 ended.unwrap_or_else(|_| Err(io::Error::other("a harvest worker panicked")))
             });
-            joined.collect()
+            ended.collect()
         }),
     };
-    let mut harvest = ArchiveHarvest {
-        stopped: stop(),
-        ..ArchiveHarvest::default()
-    };
-    let mut ranged = Vec::new();
-    for gave in gave {
-        let (vocabulary, out) = gave?;
-        match harvest.vocabulary.is_empty() {
-            true => harvest.vocabulary = vocabulary,
-            false => harvest.vocabulary.merge(&vocabulary),
+    gave.into_iter().collect::<io::Result<()>>()?;
+    let mut joined = joined.into_inner().unwrap_or_else(|p| p.into_inner());
+    // A stop leaves ranges scanned past one that was not: what they read is given too.
+    if !joined.waiting.is_empty() {
+        let file = fs::File::open(path)?;
+        let mut again = |from: u64, to: u64| -> io::Result<Ranged> {
+            Ok(scan_range(&file, (from, to), None, keep, stop)?.0)
+        };
+        for ranged in std::mem::take(&mut joined.waiting).into_values() {
+            joined.join(&ranged, &mut again)?;
         }
-        ranged.extend(out);
     }
-    ranged.sort_by_key(|r| r.index);
-    // What a scan found before the end of a body an earlier range's scan read is no body.
-    let mut read_to = 0;
-    for r in ranged {
-        harvest.bodies += r.bodies;
-        let labels = r.labels.into_iter().filter(|(at, _)| *at >= read_to);
-        harvest.labels.extend(labels);
-        read_to = read_to.max(r.end);
-    }
-    Ok(harvest)
+    joined.harvest.stopped = stop();
+    Ok(joined.harvest)
 }
 
 #[cfg(feature = "meta")]

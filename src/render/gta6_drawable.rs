@@ -131,6 +131,7 @@ fn surface_meshes(drawable: &Drawable) -> Vec<MeshUpload> {
                 );
             }
             MeshUpload {
+                bump: false,
                 indices: (0..vertices.len() as u32).collect(),
                 vertices,
                 texture_name: None,
@@ -278,21 +279,31 @@ pub(crate) fn srgb_key(state: &AppState, doc: DocumentId, key: u64) -> Option<bo
     (code.map(srgb)).or_else(|| state.held_by_no_pack(doc, &name).map(|_| false))
 }
 
+/// The hash a material's normal map's texture record states.
+const BUMP_TEX: u32 = or_io::gta6::hash::name_hash32(b"BumpTex");
+
+/// A shader's texture key, and whether it is the normal map of a material that has no colour map.
+type DrawnTexture = Option<(u64, bool)>;
+
 /// Each shader's base-colour key: its `DiffuseTex` record's when bound, else the first key `srgb`
-/// holds, else the first key it knows nothing of, which asks for its pack. ⚠ A key a pack states
+/// holds, else the first key it knows nothing of, which asks for its pack; and where none of the
+/// three is, its `BumpTex` record's, as the normal map that shades it. ⚠ A key a pack states
 /// as linear is a data or normal map: drawn as a colour it tints the whole mesh green and blue.
-fn base_colours(drawable: &Drawable, srgb: &dyn Fn(u64) -> Option<bool>) -> Vec<Option<u64>> {
+fn base_colours(drawable: &Drawable, srgb: &dyn Fn(u64) -> Option<bool>) -> Vec<DrawnTexture> {
     (drawable.shaders.iter())
         .map(|s| {
             let key = |slot: u8| s.texture_keys.get(usize::from(slot)).copied().flatten();
-            let diffuse = (s.parameters.iter()).find_map(|p| match p.value {
-                ParameterValue::Texture { slot } if p.hash == DIFFUSE_TEX => key(slot),
-                _ => None,
-            });
+            let record = |hash: u32| {
+                (s.parameters.iter()).find_map(|p| match p.value {
+                    ParameterValue::Texture { slot } if p.hash == hash => key(slot),
+                    _ => None,
+                })
+            };
             let keys = || s.texture_keys.iter().flatten().copied();
-            diffuse
+            let colour = record(DIFFUSE_TEX)
                 .or_else(|| keys().find(|k| srgb(*k) == Some(true)))
-                .or_else(|| keys().find(|k| srgb(*k).is_none()))
+                .or_else(|| keys().find(|k| srgb(*k).is_none()));
+            (colour.map(|key| (key, false))).or_else(|| record(BUMP_TEX).map(|key| (key, true)))
         })
         .collect()
 }
@@ -333,10 +344,11 @@ fn over_extent(reference: &[Option<[f32; 3]>]) -> Vec<[f32; 4]> {
 }
 
 fn upload(
-    bases: &[Option<u64>],
+    bases: &[DrawnTexture],
     geometry: &Geometry,
     channel: Option<DebugChannel>,
 ) -> Option<MeshUpload> {
+    let texture = bases.get(usize::from(geometry.shader)).copied().flatten();
     let positions = geometry.positions.as_ref().ok()?;
     let channels = channels_of(&geometry.vertices, positions.len());
     let shown = (channels.iter()).find(|(c, _)| Some(*c) == channel);
@@ -374,8 +386,8 @@ fn upload(
     Some(MeshUpload {
         vertices,
         indices: corners.into_iter().map(u32::from).collect(),
-        texture_name: (bases.get(usize::from(geometry.shader)).copied().flatten())
-            .map(texture_name),
+        texture_name: texture.map(|(key, _)| texture_name(key)),
+        bump: texture.is_some_and(|(_, bump)| bump),
         skinning: None,
         palette_bones: Vec::new(),
         channels: channels.into_iter().map(|(c, _)| c).collect(),
@@ -449,6 +461,7 @@ fn placed_meshes(
         return Vec::new();
     }
     vec![MeshUpload {
+        bump: false,
         vertices,
         indices,
         texture_name: None,
@@ -475,6 +488,7 @@ pub(crate) fn primitive_meshes_of(child: &BoundChild) -> Vec<(usize, MeshUpload)
         append_primitive(&mut vertices, &mut indices, p, &at, [1.0; 4]);
         if !indices.is_empty() {
             let mesh = MeshUpload {
+                bump: false,
                 vertices,
                 indices,
                 texture_name: None,
@@ -548,6 +562,7 @@ fn mesh_of(positions: Vec<[f32; 3]>, corners: Vec<u16>) -> Option<MeshUpload> {
     let mut normals = Vec::new();
     face_normals(&positions, &corners, &mut normals);
     Some(MeshUpload {
+        bump: false,
         vertices: (positions.iter().zip(&normals))
             .map(|(p, n)| MeshVertex::new(*p, *n, [0.0; 2]))
             .collect(),
@@ -953,6 +968,46 @@ mod tests {
         let unopened = |key: u64| (key == normal).then_some(false);
         assert_eq!(drawn(keys, None, &unopened), Some(texture_name(colour)));
         assert!(texture_name(normal).ends_with("0123456789ABCDEF"));
+    }
+
+    #[test]
+    fn a_material_with_no_colour_map_is_shaded_by_its_bump_record_and_one_with_a_colour_is_not() {
+        use or_io::gta6::headerless::Parameter;
+        let (specular, normal, colour) = (0x5EC_u64, 0xB0B_u64, 0xC0105_u64);
+        let drawn = |keys: Vec<Option<u64>>, srgb: &dyn Fn(u64) -> Option<bool>| {
+            let mut d = drawable(vec![geometry(vec![[0.0; 3]; 3], Vertices::default())]);
+            let hashes = [BUMP_TEX ^ 1, BUMP_TEX, DIFFUSE_TEX ^ 9];
+            let parameters = (hashes.iter().zip(0u8..))
+                .map(|(&hash, slot)| Parameter {
+                    hash,
+                    value: ParameterValue::Texture { slot },
+                })
+                .collect();
+            d.shaders = vec![Shader {
+                name_hash: 1,
+                texture_keys: keys,
+                parameters,
+            }];
+            let mesh = meshes_at(&d, 0, None, None, srgb).remove(0);
+            (mesh.texture_name, mesh.bump)
+        };
+        let linear = |_: u64| Some(false);
+        // Data and normal maps alone: the normal map shades the mesh.
+        assert_eq!(
+            drawn(vec![Some(specular), Some(normal), None], &linear),
+            (Some(texture_name(normal)), true)
+        );
+        // A colour map is drawn as the colour, and no normal map stands in for it.
+        let keys = vec![Some(specular), Some(normal), Some(colour)];
+        assert_eq!(
+            drawn(keys, &|key| Some(key == colour)),
+            (Some(texture_name(colour)), false)
+        );
+        // A `BumpTex` record whose slot is unbound shades nothing.
+        assert_eq!(
+            drawn(vec![Some(specular), None, None], &linear),
+            (None, false)
+        );
     }
 
     #[test]

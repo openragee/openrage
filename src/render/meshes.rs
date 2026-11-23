@@ -18,6 +18,8 @@ pub struct MeshUpload {
     pub vertices: Vec<MeshVertex>,
     pub indices: Vec<u32>,
     pub texture_name: Option<String>,
+    /// Whether `texture_name` names a normal map: Material shades the surface by it and takes no colour from it.
+    pub bump: bool,
     pub skinning: Option<SkinnedMesh>,
     /// The palette's bones as index and tag, where the drawable carried the
     /// skeleton its palette indexes.
@@ -400,6 +402,7 @@ pub(crate) mod rows {
             }
         }
         vec![MeshUpload {
+            bump: false,
             vertices,
             indices,
             texture_name: None,
@@ -488,6 +491,7 @@ fn build_cloth_meshes(cloth: &or_io::gta5::CharacterCloth) -> Vec<MeshUpload> {
     let indices: Vec<u32> = controller.tri_indices.iter().map(|&i| i as u32).collect();
 
     vec![MeshUpload {
+        bump: false,
         channels: Vec::new(),
         vertices,
         indices,
@@ -817,6 +821,7 @@ fn geometry_upload<V: VertexSource + ?Sized>(
     }
 
     Some(MeshUpload {
+        bump: false,
         vertices,
         indices,
         texture_name,

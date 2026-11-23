@@ -205,6 +205,7 @@ impl ViewportRenderer {
             "fs_material_blend",
             false,
         );
+        let bump_pipeline = make_mesh_pipeline("viewport-bump-pipeline", "fs_bump", true);
         let channel_pipeline = make_mesh_pipeline("viewport-channel-pipeline", "fs_channel", true);
 
         let (fallback_material_bg, fallback_material_bytes) =
@@ -239,6 +240,7 @@ impl ViewportRenderer {
             solid_pipeline,
             material_pipeline,
             material_blend_pipeline,
+            bump_pipeline,
             channel_pipeline,
             material_bgl,
             fallback_material_bg: Arc::new(fallback_material_bg),

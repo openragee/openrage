@@ -328,6 +328,7 @@ impl RenderBridge {
                 Arc::new(group)
             });
             draws.push(MeshDraw {
+                bump: false,
                 vertex_buffer: self
                     .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {

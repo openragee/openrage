@@ -124,6 +124,7 @@ mod tests {
 
     fn skinned_upload(palette: &[(u16, u16)]) -> MeshUpload {
         MeshUpload {
+            bump: false,
             vertices: Vec::new(),
             indices: Vec::new(),
             texture_name: None,

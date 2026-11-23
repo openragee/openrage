@@ -13313,8 +13313,8 @@ msgstr "GTA VI 클로스"
 msgid "A GTA VI drawable, fragment, bound or dictionary of drawables found by a scan: its geometry drawn with the textures its keys resolve to, and a drawable's materials, which edit and save as a loose resource"
 msgstr "스캔에서 찾은 GTA VI 드로어블, 프래그먼트, 바운드 또는 드로어블 딕셔너리: 키가 가리키는 텍스처로 지오메트리를 그리며, 드로어블의 머티리얼은 편집하여 개별 리소스로 저장할 수 있습니다"
 
-msgid "What GTA VI's headerless reader reads from this body. A shader is named by its effect once a scan has opened the SGD5 container that holds it. A material is drawn with its base-colour texture: the one its DiffuseTex slot binds, else the first a texture pack states as sRGB, so a material that binds only data and normal maps is drawn untextured. A key resolves in an open texture pack or a dictionary the app has read; one that resolves in none is listed as unresolved."
-msgstr "GTA VI의 헤더 없는 리더가 이 본문에서 읽은 내용입니다. 셰이더는 스캔에서 이를 담은 SGD5 컨테이너를 연 뒤에 이펙트 이름으로 지정됩니다. 머티리얼은 기본 색상 텍스처로 그려지는데, DiffuseTex 슬롯이 바인딩하는 텍스처이거나 그렇지 않으면 텍스처 팩이 sRGB로 지정한 첫 번째 텍스처이므로, 데이터 맵과 노멀 맵만 바인딩하는 머티리얼은 텍스처 없이 그려집니다. 키는 열려 있는 텍스처 팩 또는 앱이 읽은 딕셔너리에서 확인되며, 어디에서도 확인되지 않는 키는 미확인으로 나열됩니다."
+msgid "What GTA VI's headerless reader reads from this body. A shader is named by its effect once a scan has opened the SGD5 container that holds it. A material is drawn with its base-colour texture: the one its DiffuseTex slot binds, else the first a texture pack states as sRGB, so a material that binds only data and normal maps takes no colour from them and is shaded by its normal map. A key resolves in an open texture pack or a dictionary the app has read; one that resolves in none is listed as unresolved."
+msgstr "GTA VI의 헤더 없는 리더가 이 본문에서 읽은 내용입니다. 셰이더는 스캔에서 이를 담은 SGD5 컨테이너를 연 뒤에 이펙트 이름으로 지정됩니다. 머티리얼은 기본 색상 텍스처로 그려지는데, DiffuseTex 슬롯이 바인딩하는 텍스처이거나 그렇지 않으면 텍스처 팩이 sRGB로 지정한 첫 번째 텍스처이므로, 데이터 맵과 노멀 맵만 바인딩하는 머티리얼은 그 맵에서 색을 가져오지 않고 노멀 맵으로 음영이 표현됩니다. 키는 열려 있는 텍스처 팩 또는 앱이 읽은 딕셔너리에서 확인되며, 어디에서도 확인되지 않는 키는 미확인으로 나열됩니다."
 
 msgid "{count} drawable: click it to draw it"
 msgid_plural "{count} drawables: click one to draw it"

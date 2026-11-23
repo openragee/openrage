@@ -702,14 +702,16 @@ impl RenderBridge {
                     usage: wgpu::BufferUsages::INDEX,
                 });
             let texture_bind_group = upload.texture_name.as_deref().and_then(|name| {
-                (bound.entry((upload.source, name)))
+                (bound.entry((upload.source, name, upload.bump)))
                     .or_insert_with(|| {
-                        self.resolve_texture(state, upload.source, name, texture_entry)
+                        self.resolve_texture(state, upload.source, name, texture_entry, upload.bump)
                     })
                     .clone()
             });
             let index_count = upload.indices.len() as u32;
             draws.push(MeshDraw {
+                // ⚠ Only with its texture: the stand-in of one that did not resolve is no normal map.
+                bump: upload.bump && texture_bind_group.is_some(),
                 vertex_buffer,
                 index_buffer,
                 index_count,
@@ -729,16 +731,29 @@ impl RenderBridge {
         from: Option<MeshSource>,
         name: &str,
         entry: Option<u64>,
+        bump: bool,
     ) -> Option<Arc<wgpu::BindGroup>> {
-        let key = (entry, name.to_ascii_lowercase());
-        let Some((texture, stamp)) = bound_texture(state, from, entry, &key.1) else {
+        let name = name.to_ascii_lowercase();
+        let found = bound_texture(state, from, entry, &name);
+        // ⚠ A normal map is uploaded linear and a colour as sRGB, so one name read both ways is two uploads.
+        let key = match bump {
+            true => (entry, format!("{name}\0bump")),
+            false => (entry, name),
+        };
+        let Some((texture, stamp)) = found else {
             self.gpu_textures.remove(&key);
             return None;
         };
         if let Some(bg) = self.gpu_textures.get(&key, stamp) {
             return Some(bg);
         }
-        let (bg, bytes) = upload_texture(&self.device, &self.queue, &self.material_bgl, &texture)?;
+        let (bg, bytes) = upload_texture(
+            &self.device,
+            &self.queue,
+            &self.material_bgl,
+            &texture,
+            bump,
+        )?;
         let bg = Arc::new(bg);
         self.gpu_textures.insert(key, bg.clone(), bytes, stamp);
         Some(bg)

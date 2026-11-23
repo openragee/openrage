@@ -109,6 +109,7 @@ fn bake_a_key(state: &mut AppState) {
 fn a_skinned_vertex() -> MeshUpload {
     let beside_the_bone = [1.0, 2.0, 0.0];
     MeshUpload {
+        bump: false,
         vertices: vec![MeshVertex::new(beside_the_bone, [0.0, 1.0, 0.0], [0.0; 2])],
         indices: vec![0, 0, 0],
         texture_name: None,

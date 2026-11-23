@@ -13313,8 +13313,8 @@ msgstr "GTA VI 布料"
 msgid "A GTA VI drawable, fragment, bound or dictionary of drawables found by a scan: its geometry drawn with the textures its keys resolve to, and a drawable's materials, which edit and save as a loose resource"
 msgstr "通过扫描找到的 GTA VI drawable、fragment、bound 或 drawable 字典：用其键所对应的纹理绘制其几何体，以及 drawable 的材质，这些内容可编辑并作为独立资源保存"
 
-msgid "What GTA VI's headerless reader reads from this body. A shader is named by its effect once a scan has opened the SGD5 container that holds it. A material is drawn with its base-colour texture: the one its DiffuseTex slot binds, else the first a texture pack states as sRGB, so a material that binds only data and normal maps is drawn untextured. A key resolves in an open texture pack or a dictionary the app has read; one that resolves in none is listed as unresolved."
-msgstr "GTA VI 的无头部读取器从此数据体读取到的内容。扫描打开包含着色器的 SGD5 容器后，着色器即以其效果命名。材质以其基础色纹理绘制：即其 DiffuseTex 槽绑定的纹理，否则为纹理包声明为 sRGB 的第一张，因此只绑定数据贴图和法线贴图的材质会无纹理绘制。键会在已打开的纹理包或应用已读取的字典中解析；在其中任何一处都无法解析的键会列为未解析。"
+msgid "What GTA VI's headerless reader reads from this body. A shader is named by its effect once a scan has opened the SGD5 container that holds it. A material is drawn with its base-colour texture: the one its DiffuseTex slot binds, else the first a texture pack states as sRGB, so a material that binds only data and normal maps takes no colour from them and is shaded by its normal map. A key resolves in an open texture pack or a dictionary the app has read; one that resolves in none is listed as unresolved."
+msgstr "GTA VI 的无头部读取器从此数据体读取到的内容。扫描打开包含着色器的 SGD5 容器后，着色器即以其效果命名。材质以其基础色纹理绘制：即其 DiffuseTex 槽绑定的纹理，否则为纹理包声明为 sRGB 的第一张，因此只绑定数据贴图和法线贴图的材质不从中取色，其明暗由法线贴图决定。键会在已打开的纹理包或应用已读取的字典中解析；在其中任何一处都无法解析的键会列为未解析。"
 
 msgid "{count} drawable: click it to draw it"
 msgid_plural "{count} drawables: click one to draw it"

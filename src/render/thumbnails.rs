@@ -358,6 +358,7 @@ mod tests {
 
     fn upload(positions: &[[f32; 3]]) -> MeshUpload {
         MeshUpload {
+            bump: false,
             vertices: positions
                 .iter()
                 .map(|&p| MeshVertex::new(p, [0.0, 0.0, 1.0], [0.0, 0.0]))

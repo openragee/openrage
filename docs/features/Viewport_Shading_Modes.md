@@ -14,7 +14,7 @@ bridge is `src/render/viewport/mod.rs`, the frame is in
 |---|---|---|
 | Wireframe | the document's edges as lines, no meshes | none |
 | Solid | meshes in their builder's colour, white by default (a vehicle with its wheels at its wheel bones) | the inline studio shade |
-| Material | meshes with their diffuse texture (a vehicle with its wheels) | the inline studio shade |
+| Material | meshes with their diffuse texture (a vehicle with its wheels); a GTA VI material that binds no colour map takes no colour and is shaded by its `BumpTex` normal map (`fs_bump`) | the inline studio shade |
 | Shaded | every surface of the open drawable, each with the pass its material's effect names, and particles through the passes their rules name | the install's timecycle at the hour and the weather the Time of Day and Weather drivers say (sun or moon, ambient, fog, how wet the world is in the rain and the storm, and the night emissives, off by day and on from the install's hour of evening to its hour of morning, with the camera outdoors), and where the install holds none the engine's constants, a sun over the camera's shoulder and a flat ambient |
 | Channel | one vertex channel, unlit | none |
 

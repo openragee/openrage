@@ -45,6 +45,7 @@ pub(super) fn upload_texture(
     queue: &wgpu::Queue,
     layout: &wgpu::BindGroupLayout,
     texture: &Texture<'_>,
+    bump: bool,
 ) -> Option<(wgpu::BindGroup, usize)> {
     if !texture.has_pixel_data() || texture.width() == 0 || texture.height() == 0 {
         return None;
@@ -57,10 +58,12 @@ pub(super) fn upload_texture(
         }
     };
     let rgba = rgba.with_channel_view(ChannelView::preview_default(texture.format()));
-    let srgb = !matches!(
-        texture.format(),
-        GrcTextureFormat::A8 | GrcTextureFormat::L8
-    );
+    // ⚠ A normal map holds vectors: read as sRGB, its level half tilts every normal the same way.
+    let srgb = !bump
+        && !matches!(
+            texture.format(),
+            GrcTextureFormat::A8 | GrcTextureFormat::L8
+        );
     Some(upload_rgba(
         device,
         queue,

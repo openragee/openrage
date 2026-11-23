@@ -265,6 +265,7 @@ impl RenderBridge {
                 usage: wgpu::BufferUsages::INDEX,
             });
         MeshDraw {
+            bump: false,
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,

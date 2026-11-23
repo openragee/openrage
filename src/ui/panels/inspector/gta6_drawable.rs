@@ -119,7 +119,7 @@ pub(super) fn draw_gta6_drawable(
     // ⚠ The inspector scrolls both ways, so a label has no width to wrap at but the one set here.
     ui.scope(|ui| {
         ui.set_max_width(ui.clip_rect().width());
-        ui.label(tr!("What GTA VI's headerless reader reads from this body. A shader is named by its effect once a scan has opened the SGD5 container that holds it. A material is drawn with its base-colour texture: the one its DiffuseTex slot binds, else the first a texture pack states as sRGB, so a material that binds only data and normal maps is drawn untextured. A key resolves in an open texture pack or a dictionary the app has read; one that resolves in none is listed as unresolved."));
+        ui.label(tr!("What GTA VI's headerless reader reads from this body. A shader is named by its effect once a scan has opened the SGD5 container that holds it. A material is drawn with its base-colour texture: the one its DiffuseTex slot binds, else the first a texture pack states as sRGB, so a material that binds only data and normal maps takes no colour from them and is shaded by its normal map. A key resolves in an open texture pack or a dictionary the app has read; one that resolves in none is listed as unresolved."));
     });
     ui.add_space(crate::ui::theme::SPACING_TIGHT);
     selected::draw(ui, state, doc_id, selection);

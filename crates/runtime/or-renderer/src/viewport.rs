@@ -76,6 +76,8 @@ pub struct MeshDraw {
     pub index_buffer: wgpu::Buffer,
     pub index_count: u32,
     pub texture_bind_group: Option<Arc<wgpu::BindGroup>>,
+    /// Whether the texture is a normal map: Material shades the surface by it and takes no colour from it.
+    pub bump: bool,
 }
 
 #[repr(C)]
@@ -213,6 +215,8 @@ pub struct ViewportRenderer {
     material_pipeline: wgpu::RenderPipeline,
     /// The material's translucent texels, drawn after every opaque one and writing no depth.
     material_blend_pipeline: wgpu::RenderPipeline,
+    /// The material of a mesh whose texture is a normal map.
+    bump_pipeline: wgpu::RenderPipeline,
     channel_pipeline: wgpu::RenderPipeline,
     material_bgl: Arc<wgpu::BindGroupLayout>,
     fallback_material_bg: Arc<wgpu::BindGroup>,
@@ -785,15 +789,20 @@ impl ViewportRenderer {
                         unreachable!("filtered above")
                     }
                 };
-                pass.set_pipeline(default_pipeline);
+                let material = matches!(mode, ShadingMode::Material);
                 pass.set_bind_group(0, &self.bind_group, &[]);
                 for draw in &self.meshes {
+                    pass.set_pipeline(match material && draw.bump {
+                        true => &self.bump_pipeline,
+                        false => default_pipeline,
+                    });
                     self.draw_mesh(pass, draw, mode);
                 }
                 // In the order the drawable lists them, as the game's alpha bucket is
-                if matches!(mode, ShadingMode::Material) {
+                if material {
                     pass.set_pipeline(&self.material_blend_pipeline);
-                    for draw in &self.meshes {
+                    // A normal map has no translucent texel: its alpha is no coverage.
+                    for draw in self.meshes.iter().filter(|draw| !draw.bump) {
                         self.draw_mesh(pass, draw, mode);
                     }
                 }
@@ -1224,6 +1233,33 @@ fn fs_material_blend(
         discard;
     }
     return c;
+}
+
+// The texture is a tangent-space normal map: it tilts the normal the surface is shaded by and
+// colours nothing. Its z is rebuilt from x and y, so a two-channel map reads as a three-channel one.
+// No vertex carries a tangent here, so the frame is how the position and the texture coordinate
+// change across the pixel; where the coordinate does not change, the normal stays the vertex's.
+@fragment
+fn fs_bump(
+    in: VsOut,
+    @builtin(front_facing) front_facing: bool,
+) -> @location(0) vec4<f32> {
+    let t = textureSample(diffuse_tex, diffuse_smp, in.uv).xy * 2.0 - 1.0;
+    let n = normalize(shaded_normal(in.world_normal, front_facing));
+    let dp1 = dpdx(in.world_pos);
+    let dp2 = dpdy(in.world_pos);
+    let duv1 = dpdx(in.uv);
+    let duv2 = dpdy(in.uv);
+    let dp2perp = cross(dp2, n);
+    let dp1perp = cross(n, dp1);
+    let tangent = dp2perp * duv1.x + dp1perp * duv2.x;
+    let bitangent = dp2perp * duv1.y + dp1perp * duv2.y;
+    let longest = max(dot(tangent, tangent), dot(bitangent, bitangent));
+    let scale = inverseSqrt(max(longest, 1e-30));
+    let z = max(sqrt(max(1.0 - dot(t, t), 0.0)), 0.01);
+    let bumped = tangent * (t.x * scale) + bitangent * (t.y * scale) + n * z;
+    let s = shade(bumped, in.world_pos, true);
+    return vec4<f32>(in.colour.rgb * s, in.colour.a);
 }
 "#;
 

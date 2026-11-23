@@ -221,6 +221,7 @@ fn lines_drawn_in_front_show_through_a_mesh_nearer_the_camera() {
         })
     };
     renderer.set_meshes(vec![MeshDraw {
+        bump: false,
         vertex_buffer: buffer(bytemuck::cast_slice(&vertices), wgpu::BufferUsages::VERTEX),
         index_buffer: buffer(
             bytemuck::cast_slice(&[0u32, 1, 2, 0, 2, 3]),
@@ -281,6 +282,126 @@ fn lines_drawn_in_front_show_through_a_mesh_nearer_the_camera() {
     };
     assert!(!shows_the_line(0), "the square hides the line behind it");
     assert!(shows_the_line(2), "a line drawn in front is hidden");
+}
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_normal_map_tilts_the_light_a_material_takes_and_gives_it_no_colour() {
+    const WHAT: &str = "a_normal_map_tilts_the_light_a_material_takes_and_gives_it_no_colour";
+    let Some((device, queue)) = bytes_test_device(WHAT) else {
+        return;
+    };
+    let mut renderer =
+        ViewportRenderer::new(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, 64, 64);
+    let camera = OrbitCamera {
+        yaw: 0.0,
+        pitch: 0.0,
+        distance: 5.0,
+        ..OrbitCamera::default()
+    };
+    // A square facing the camera, its texture coordinate running across it.
+    let corners = [
+        ([1.0, -1.0, -1.0], [0.0, 0.0]),
+        ([1.0, 1.0, -1.0], [1.0, 0.0]),
+        ([1.0, 1.0, 1.0], [1.0, 1.0]),
+        ([1.0, -1.0, 1.0], [0.0, 1.0]),
+    ];
+    let vertices = corners.map(|(at, uv)| MeshVertex::new(at, [1.0, 0.0, 0.0], uv));
+    let buffer = |contents: &[u8], usage| {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents,
+            usage,
+        })
+    };
+    let layout = renderer.material_bind_group_layout();
+    // A texture of one linear texel.
+    let texel = |rgba: [u8; 4]| {
+        let size = wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            texture.as_image_copy(),
+            &rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            size,
+        );
+        let view = texture.create_view(&Default::default());
+        let sampler = device.create_sampler(&Default::default());
+        Arc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        }))
+    };
+    let square = MeshDraw {
+        vertex_buffer: buffer(bytemuck::cast_slice(&vertices), wgpu::BufferUsages::VERTEX),
+        index_buffer: buffer(
+            bytemuck::cast_slice(&[0u32, 1, 2, 0, 2, 3]),
+            wgpu::BufferUsages::INDEX,
+        ),
+        index_count: 6,
+        texture_bind_group: None,
+        bump: false,
+    };
+    // The pixel in the middle of the square, drawn as a material.
+    let mut middle = |rgba: Option<[u8; 4]>, bump: bool| {
+        renderer.set_meshes(vec![MeshDraw {
+            texture_bind_group: rgba.map(texel),
+            bump,
+            ..square.clone()
+        }]);
+        image_after(&device, &queue, &renderer, &camera, ShadingMode::Material)[32 * 64 + 32]
+    };
+    let near = |a: [u8; 4], b: [u8; 4]| (0..3).all(|c| a[c].abs_diff(b[c]) <= 3);
+    const FLAT: [u8; 4] = [128, 128, 255, 255];
+    let untextured = middle(None, false);
+    let flat = middle(Some(FLAT), true);
+    assert!(
+        near(flat, untextured),
+        "a flat normal map leaves the light as it was and its blue tints nothing: {flat:?} against {untextured:?}"
+    );
+    let tinted = middle(Some(FLAT), false);
+    assert!(
+        u16::from(tinted[0]) + 16 < u16::from(tinted[2]),
+        "the same texel drawn as a colour is blue: {tinted:?}"
+    );
+    // A normal lying in the square takes none of the light from the camera, and to one side or
+    // the other none of the key light.
+    let tilted = [[255, 128, 128, 255], [0, 128, 128, 255]].map(|t| middle(Some(t), true)[0]);
+    let darkest = tilted[0].min(tilted[1]);
+    assert!(
+        u16::from(darkest) + 16 < u16::from(flat[0]),
+        "a normal tilted into the surface is lit less: {tilted:?} against {flat:?}"
+    );
 }
 
 /// Every pixel of the viewport, row by row, after `renderer` draws in `mode`: its width is a multiple of 64, so a row is a whole number of copy rows.
@@ -382,6 +503,7 @@ fn a_translucent_surface_in_the_material_mode_leaves_the_one_behind_it_visible()
             })
         };
         MeshDraw {
+            bump: false,
             vertex_buffer: buffer(bytemuck::cast_slice(&vertices), wgpu::BufferUsages::VERTEX),
             index_buffer: buffer(
                 bytemuck::cast_slice(&[0u32, 1, 2, 0, 2, 3]),
@@ -450,6 +572,7 @@ fn the_game_shaders_mode_draws_a_prepared_scene_and_without_one_draws_as_a_mater
         })
     };
     renderer.set_meshes(vec![MeshDraw {
+        bump: false,
         vertex_buffer: buffer(bytemuck::cast_slice(&vertices), wgpu::BufferUsages::VERTEX),
         index_buffer: buffer(
             bytemuck::cast_slice(&[0u32, 1, 2, 0, 2, 3]),
@@ -1326,6 +1449,7 @@ fn the_plain_modes_are_lit_by_the_key_light_that_was_set_and_by_the_first_one_un
         })
     };
     renderer.set_meshes(vec![MeshDraw {
+        bump: false,
         vertex_buffer: buffer(bytemuck::cast_slice(&vertices), wgpu::BufferUsages::VERTEX),
         index_buffer: buffer(
             bytemuck::cast_slice(&[0u32, 1, 2, 0, 2, 3]),

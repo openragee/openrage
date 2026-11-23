@@ -125,6 +125,7 @@ fn sheet(points: &[[f32; 4]], triangles: &[[u16; 3]], k: usize, per: usize) -> O
     let mut normals = Vec::new();
     face_normals(&level, &indices, &mut normals);
     Some(MeshUpload {
+        bump: false,
         vertices: (level.iter().zip(&normals))
             .map(|(p, n)| MeshVertex::new_coloured(*p, *n, [0.0; 2], CLOTH_SURFACE))
             .collect(),

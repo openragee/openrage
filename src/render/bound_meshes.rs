@@ -164,6 +164,7 @@ impl<'a> BoundMeshBuilder<'a> {
             }
         }
         self.out.push(MeshUpload {
+            bump: false,
             channels: Vec::new(),
             vertices,
             indices,

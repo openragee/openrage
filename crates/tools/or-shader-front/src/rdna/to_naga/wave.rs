@@ -216,6 +216,29 @@ impl Cx<'_> {
         self.b.bin(Bo::Add, before, x)
     }
 
+    /// One axis of the number of its wave's first thread: what the first lane holds of a
+    /// compute thread's number while every lane runs.
+    pub(super) fn wave_first_thread(&mut self, axis: u32) -> Handle<E> {
+        let threads = self
+            .launch
+            .map_or([1; 3], |launch| launch.threads.map(|n| n.max(1)));
+        let thread = self.wave_thread();
+        let rest = self.b.u32(!(width(self.program) - 1));
+        let first = self.b.bin(Bo::And, thread, rest);
+        let (across, down) = (self.b.u32(threads[0]), self.b.u32(threads[1]));
+        match axis {
+            0 => self.b.bin(Bo::Modulo, first, across),
+            1 => {
+                let rows = self.b.bin(Bo::Divide, first, across);
+                self.b.bin(Bo::Modulo, rows, down)
+            }
+            _ => {
+                let plane = self.b.u32(threads[0] * threads[1]);
+                self.b.bin(Bo::Divide, first, plane)
+            }
+        }
+    }
+
     /// This thread's lane of its wave: its number in its group, past the waves before its own.
     pub(super) fn wave_lane(&mut self) -> Handle<E> {
         let thread = self.wave_thread();
@@ -237,8 +260,29 @@ impl Cx<'_> {
     }
 
     /// Leaves this lane's `value` and whether it runs where the wave's other lanes read them,
-    /// and waits for theirs: the first dword of its wave's in the half of the memory they are all in.
+    /// and waits for theirs: the first dword of its wave's in the half of the memory they are
+    /// all in. One function of the module, since a program makes thousands of exchanges.
     fn exchange(&mut self, value: Handle<E>) -> Handle<E> {
+        let runs = self.active();
+        let runs = self.b.flag(runs);
+        let call = self.wave_call(
+            "wave_exchange".to_owned(),
+            vec![value, runs],
+            |cx, f, taken| {
+                std::mem::swap(&mut cx.b, f);
+                let base = cx.exchanged(taken[0], taken[1]);
+                std::mem::swap(&mut cx.b, f);
+                Some(base)
+            },
+        );
+        match call {
+            Some(base) => base,
+            None => self.exchanged(value, runs),
+        }
+    }
+
+    /// [`Cx::exchange`], written where the builder stands.
+    fn exchanged(&mut self, value: Handle<E>, runs: Handle<E>) -> Handle<E> {
         let [values, active] = self.wave_memory();
         let round = match self.shared_wave.round {
             Some(round) => round,
@@ -258,8 +302,6 @@ impl Cx<'_> {
         let (thread, lane) = (self.wave_thread(), self.wave_lane());
         let place = self.b.bin(Bo::Add, half, thread);
         let base = self.b.bin(Bo::Subtract, place, lane);
-        let runs = self.active();
-        let runs = self.b.flag(runs);
         for (global, value) in [(values, value), (active, runs)] {
             let memory = self.global(global);
             let pointer = self.b.emit(E::Access {

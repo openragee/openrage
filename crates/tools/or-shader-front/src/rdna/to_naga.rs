@@ -3576,23 +3576,29 @@ impl<'a> Cx<'a> {
             }
             ("v_readfirstlane_b32", _, _) => {
                 let value = self.sv(pc, src)?;
+                // A launch number in the first lane at the entry, while every lane runs, is
+                // the wave's first thread's: a mesh thread's number with its lane taken
+                // off, an axis of a compute thread's first.
+                let launched = match self.first_entry.get(&pc) {
+                    Some(5) if self.mesh.is_some() => {
+                        let rest = self.b.u32(!(wave::width(self.program) - 1));
+                        Some(self.b.bin(Bo::And, value, rest))
+                    }
+                    Some(&axis) if axis < 3 && self.ids.is_some() => {
+                        Some(self.wave_first_thread(u32::from(axis)))
+                    }
+                    _ => None,
+                };
                 let first = match self.shared_wave.threads {
-                    Some(_) => self.shared_first(value),
-                    None => None,
+                    Some(_) if launched.is_none() => self.shared_first(value),
+                    _ => launched,
                 };
                 // This lane stands for the first that runs where every lane that runs holds
                 // the value, or where the program goes on to keep the wave to the lanes
                 // that do. Elsewhere which lanes share a wave decides, which a compute
                 // group states and no other stage does.
-                // A mesh thread's launch number in the first lane of its wave: the number
-                // of the wave's first thread, while every lane runs.
-                let launched = self.mesh.is_some() && self.first_entry.get(&pc) == Some(&5);
                 let value = match first {
                     Some(first) => first,
-                    None if launched => {
-                        let rest = self.b.u32(!(wave::width(self.program) - 1));
-                        self.b.bin(Bo::And, value, rest)
-                    }
                     None => {
                         if !self.first_exact.contains(&pc) && matches!(src, Operand::Vgpr(_)) {
                             self.note("the first lane read as this lane");
@@ -7259,7 +7265,8 @@ fn lower_as(
             // A compute group lowered onto its device's subgroup: again, with its waves in
             // the memory the group shares, which every device runs alike.
             Ok(Pass::Done(lowered, wants_wave)) => {
-                let again = (lowered.subgroups || wants_wave) && !options.wave && shared.is_none();
+                let wanted = wants_wave && program.words.len() <= FIRST_LANE_WORDS;
+                let again = (lowered.subgroups || wanted) && !options.wave && shared.is_none();
                 let Some(shape) = wave::waves(program).filter(|_| again) else {
                     return Ok(*lowered);
                 };
@@ -7293,6 +7300,12 @@ fn lower_as(
         }
     }
 }
+
+/// The longest compute program whose wave is kept in shared memory only to read a first
+/// lane. A wave there makes an exchange at every branch and comparison, and its module takes
+/// over twice the time to validate and write as the one that reads this lane. A longer
+/// program reads this lane, counted.
+const FIRST_LANE_WORDS: usize = 1 << 16;
 
 /// What stops a lowering that reads a table's words only where a descriptor is used: a
 /// register that holds a table's word on some paths, computed with as a number.

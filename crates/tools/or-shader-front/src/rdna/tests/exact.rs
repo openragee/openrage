@@ -311,6 +311,15 @@ fn a_value_chosen_by_a_condition_every_lane_shares_is_one_value() {
         pick[1],
     ];
     assert_eq!(counted(&first_lane(&shared, &[])), 0);
+    // The mask is a pair of registers: its second written, it is that mask no longer.
+    let clobbered = [
+        sopc(S_CMP_EQ_U32, 4, I_ZERO),
+        sop2(op(opcodes::SOP2, "s_cselect_b64"), 6, 126, I_ZERO),
+        sop1(op(opcodes::SOP1, "s_mov_b32"), 7, 4),
+        pick[0],
+        pick[1],
+    ];
+    assert_eq!(counted(&first_lane(&clobbered, &[])), 1);
     // A comparison of each lane's own input is each lane's own bit.
     let own = [
         vintrp(1, 0, 0, 0, 2),
@@ -366,4 +375,27 @@ fn a_three_source_form_over_halves_reads_and_writes_the_halves_its_word_names() 
     assert!(out.approximations.is_empty(), "{:?}", out.approximations);
     let ran = interp::run(&out.module, [1, 1, 1], &|_, _| None).remove(0);
     assert_eq!(ran.reg("v3"), 0x4300_1234);
+}
+
+#[test]
+fn a_compute_thread_reads_its_wave_s_first_thread_at_the_entry() {
+    // s20 and s21 = the thread's column and row in the first lane: those of its wave's
+    // first thread, which no memory is shared to find.
+    let words = vec![
+        vop1(op(opcodes::VOP1, "v_readfirstlane_b32"), 20, V),
+        vop1(op(opcodes::VOP1, "v_readfirstlane_b32"), 21, V + 1),
+        S_ENDPGM,
+    ];
+    let out = translate(&group([16, 8, 1], 0, words)).unwrap();
+    validate(&out.module);
+    assert!(!out.subgroups);
+    assert!(out.approximations.is_empty(), "{:?}", out.approximations);
+    let shared = (out.module.global_variables.iter())
+        .any(|(_, global)| global.space == naga::AddressSpace::WorkGroup);
+    assert!(!shared);
+    let ran = interp::run(&out.module, [16, 8, 1], &|_, _| None);
+    for (thread, lane) in ran.iter().enumerate() {
+        let read = [lane.reg("s20"), lane.reg("s21")];
+        assert_eq!(read, [0, 4 * (thread as u32 / 64)], "thread {thread}");
+    }
 }

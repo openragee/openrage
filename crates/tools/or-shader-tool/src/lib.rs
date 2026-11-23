@@ -15,6 +15,9 @@ pub mod pack_protocol;
 #[cfg(feature = "native-front")]
 pub mod pass_check;
 pub mod passes;
+#[cfg(feature = "device-check")]
+pub mod rdna_devices;
+pub mod rdna_report;
 #[cfg(feature = "render-drawable")]
 pub mod render_drawable;
 pub mod signature;

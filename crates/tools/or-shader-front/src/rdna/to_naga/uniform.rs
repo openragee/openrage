@@ -41,12 +41,21 @@ impl Agreed {
     }
 
     fn set_level(&mut self, operand: &Operand, on: bool) {
-        let Some(r) = sym::register(*operand).filter(|r| *r < 128) else {
-            return;
-        };
-        match on {
-            true => self.level |= 1 << r,
-            false => self.level &= !(1 << r),
+        if let Some(r) = sym::register(*operand) {
+            self.wrote(r, on);
+        }
+    }
+
+    /// Scalar register `r` was written, with such a mask or not. A mask of 64 lanes is a pair
+    /// kept under its first register, so the pairs that begin beside `r` hold one no longer.
+    fn wrote(&mut self, r: u8, on: bool) {
+        for beside in [r.wrapping_sub(1), r, r.saturating_add(1)] {
+            if beside < 128 {
+                self.level &= !(1 << beside);
+            }
+        }
+        if on && r < 128 {
+            self.level |= 1 << r;
         }
     }
 }
@@ -89,8 +98,8 @@ fn scalar(agreed: &mut Agreed, inst: &Inst, wave32: bool) {
         // A load fills up to sixteen registers from its first.
         Inst::Smem { data, .. } => {
             if let Some(first) = sym::register(*data) {
-                for r in (first..first.saturating_add(16)).filter(|r| *r < 128) {
-                    agreed.level &= !(1 << r);
+                for r in first..first.saturating_add(16) {
+                    agreed.wrote(r, false);
                 }
             }
         }
@@ -207,30 +216,41 @@ fn step(agreed: &mut Agreed, inst: &Inst, wave32: bool) {
     // A comparison's mask, in the register its encoding names.
     if name.starts_with("v_cmp_") {
         match inst {
+            // A comparison of parts names its mask register in its trailing word.
+            Inst::Vopc {
+                src0: Operand::Sdwa,
+                extra: Some(word),
+                ..
+            } => {
+                let named = (word >> 15) & 1 != 0;
+                let dst = if named {
+                    ((word >> 8) & 0x7F) as u8
+                } else {
+                    sym::VCC
+                };
+                agreed.wrote(dst, false);
+            }
             Inst::Vopc { src0, src1, .. } => {
                 let level = compared(&agreed.same, &[*src0, Operand::Vgpr(*src1)]);
                 agreed.set_level(&Operand::VccLo, level);
             }
-            Inst::Vop3 { dst, srcs, .. } if *dst < 128 => {
+            Inst::Vop3 { dst, srcs, .. } => {
                 let level = compared(&agreed.same, &srcs[..2]);
-                match level {
-                    true => agreed.level |= 1 << *dst,
-                    false => agreed.level &= !(1 << *dst),
-                }
+                agreed.wrote(*dst, level);
             }
             _ => {}
         }
     }
     // A scalar register a vector instruction writes holds no mask.
     if let Inst::Vop1 { dst, .. } | Inst::Vop3 { dst, .. } = inst {
-        if matches!(name, "v_readfirstlane_b32" | "v_readlane_b32") && *dst < 128 {
-            agreed.level &= !(1 << *dst);
+        if matches!(name, "v_readfirstlane_b32" | "v_readlane_b32") {
+            agreed.wrote(*dst, false);
         }
     }
     // A sum's carry is each lane's own.
     if let Inst::Vop3 { abs, opsel, .. } = inst {
         if name.contains("_co_") {
-            agreed.level &= !(1 << (((u32::from(*opsel) << 3) | u32::from(*abs)) & 0x7F));
+            agreed.wrote(((opsel << 3) | abs) & 0x7F, false);
         }
     }
     if let Inst::Vop2 { .. } = inst {
@@ -275,9 +295,10 @@ fn step(agreed: &mut Agreed, inst: &Inst, wave32: bool) {
                 set(same, data.wrapping_add(k), known);
             }
         }
+        // Scratch memory is each lane's own, whatever the address.
         Inst::Flat { addr, dst, .. } => {
-            let known =
-                name.contains("_load_") && has(same, *addr) && has(same, addr.wrapping_add(1));
+            let shared = name.starts_with("global_load_") || name.starts_with("flat_load_");
+            let known = shared && has(same, *addr) && has(same, addr.wrapping_add(1));
             for k in 0..sym::loaded_registers(name) {
                 set(same, dst.wrapping_add(k), known);
             }

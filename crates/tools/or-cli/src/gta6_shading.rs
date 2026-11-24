@@ -7,7 +7,7 @@ use or_io::gta5::shaders::sgd5::Sgd5Table;
 use or_shader_front::dxil::ShaderKind;
 use or_shader_front::rdna::link::{self, Linked};
 use or_shader_front::rdna_bind::picks::{deferred_targets, picks};
-use or_shader_front::rdna_bind::shading::{feed, parameter_of, parameter_slots};
+use or_shader_front::rdna_bind::shading::{feed, parameter_of, parameter_slots, sources, Source};
 
 pub use or_shader_front::rdna_bind::kept as gta6_kept;
 pub use or_shader_front::rdna_bind::shading::{Fed, Feed, Stage};
@@ -242,6 +242,25 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
             technique.name,
             if is { ", shades a model" } else { "" }
         );
+        // What only the game fills of each stage, by the hash of its name.
+        for (word, container, table) in [
+            ("mesh", &a, &first.variables),
+            ("pixel", &b, &pixel.variables),
+        ] {
+            let Ok(native) = native(container) else {
+                continue;
+            };
+            let mesh = native.program.kind == ShaderKind::Mesh;
+            let filled = sources(&native.records, mesh, table, &effect.parameters);
+            let game: BTreeSet<String> = (filled.iter())
+                .filter_map(|source| match source {
+                    Source::Game(hash) => Some(format!("{hash:08X}")),
+                    _ => None,
+                })
+                .collect();
+            let game: Vec<&str> = game.iter().map(String::as_str).collect();
+            println!("    {word} game {}", game.join(" "));
+        }
         if is
             && shading.iter().all(
                 |(_, _, seen, _): &(_, _, &or_io::gta5::shaders::sgd5::Sgd5Program, _)| {
@@ -378,6 +397,317 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// The pass of `passes` that draws a geometry whose vertex data is `vertex_data`: the one whose
+/// mesh program reads the most streams among those reading none the data's table of streams
+/// leaves empty.
+pub fn drawing_pass<'p, P: std::borrow::Borrow<Gta6ShadingPass>>(
+    passes: &'p [P],
+    vertex_data: &[u8],
+) -> Option<&'p P> {
+    let held = |slot: &u32| {
+        let at = 4 * *slot as usize;
+        (vertex_data.get(at..at + 4)).is_some_and(|word| word != [0; 4])
+    };
+    // The first of those that read as many: `max_by_key` keeps the last.
+    (passes.iter().rev())
+        .filter(|pass| pass.borrow().mesh.streams.iter().all(held))
+        .max_by_key(|pass| pass.borrow().mesh.streams.len())
+}
+
+/// The workers a census runs side by side.
+const WORKERS: usize = 8;
+
+/// `each` over `items` on [`WORKERS`] threads, the results in the items' order.
+fn side_by_side<T: Sync, R: Send>(items: &[T], each: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut out: Vec<(usize, R)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..WORKERS.min(items.len()))
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(item) = items.get(at) else {
+                            return mine;
+                        };
+                        mine.push((at, each(item)));
+                    }
+                })
+            })
+            .collect();
+        (workers.into_iter())
+            .flat_map(|worker| worker.join().unwrap_or_default())
+            .collect()
+    });
+    out.sort_by_key(|(at, _)| *at);
+    out.into_iter().map(|(_, result)| result).collect()
+}
+
+/// Whether an effect's own passes draw a model, as the editor decides it.
+enum Verdict {
+    Draws(Vec<Gta6ShadingPass>),
+    /// The first refusal of a pass that writes the deferred targets.
+    Refused(String),
+    /// No technique's first pass writes them: what its first mesh pass writes instead.
+    NoDeferredPass(String),
+}
+
+/// One drawable of a census: the effect and the vertex data's table of streams of each geometry
+/// of its first level that reads.
+type Named = Vec<(u32, Vec<u8>)>;
+
+/// `rpf scan-effect-use`: the drawables of an archive, or each n-th, by the effects their
+/// geometries name, against what each effect's own passes are to the editor.
+pub(crate) fn cmd_scan_effect_use(args: &[String]) -> Result<(), String> {
+    use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9Content, Rpf9Role, Rpf9Scan};
+    use or_io::gta5::shaders::sgd5::Sgd5File;
+    use or_io::gta5::shaders::sgd5_pack::first_passes;
+    use or_io::gta6::hash::name_hash32;
+    use or_io::gta6::headerless::{read, Drawable, Entry, Resource};
+    use std::collections::BTreeMap;
+
+    let (limit, args) = super::rpf::split_limit(args)?;
+    let (from, args) = super::rpf::split_offset_flag(&args, "--from")?;
+    let (to, args) = super::rpf::split_offset_flag(&args, "--to")?;
+    let (every, args) = super::rpf::split_offset_flag(&args, "--every")?;
+    let [path, effects, offset] = args.as_slice() else {
+        return Err(
+            "usage: rpf scan-effect-use <archive.rpf> <shaders.rpf> <offset> [--from <offset>] [--to <offset>] [--every <n>] [--limit <bytes>]"
+                .to_string(),
+        );
+    };
+    let every = every.unwrap_or(1).max(1);
+    let offset = super::rpf::parse_offset(offset)?;
+    let file = std::fs::File::open(path).map_err(|e| format!("open({path}): {e}"))?;
+    let cancel = super::jobs::on_interrupt();
+    let mut rows = Vec::new();
+    let mut seen = 0u64;
+    // ⚠ The scan panics on some bytes of a large archive: it is taken up again past them, by
+    // steps that double, and what was passed over is said.
+    let (mut start, end) = (from.unwrap_or(0), to.unwrap_or(u64::MAX));
+    let (mut step, mut passed) = (0u64, 0u64);
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let scanned = 'scan: loop {
+        let mut scan = match Rpf9Scan::new(&file, start..end) {
+            Ok(scan) => scan,
+            Err(why) => break Err(why.to_string()),
+        };
+        loop {
+            if cancel.is_set() {
+                break 'scan Err("cancelled".to_string());
+            }
+            let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scan.next()));
+            let find = match next {
+                Ok(None) => break 'scan Ok(()),
+                Ok(Some(Err(why))) => break 'scan Err(why.to_string()),
+                Ok(Some(Ok(find))) => find,
+                Err(_) => {
+                    step = (2 * step).max(16);
+                    passed += step;
+                    start += step;
+                    continue 'scan;
+                }
+            };
+            step = 0;
+            start = find.offset + find.span.max(16);
+            let Rpf9BodyKind::Zlib(run) = find.kind else {
+                continue;
+            };
+            let (Rpf9Content::ResourceShaped, Some(resource), Some(signature)) =
+                (run.content, run.resource, run.signature)
+            else {
+                continue;
+            };
+            let model = matches!(
+                signature.role(),
+                Some(Rpf9Role::Drawable | Rpf9Role::DrawableWithBound | Rpf9Role::Dictionary)
+            );
+            if model {
+                seen += 1;
+                if (seen - 1).is_multiple_of(every) {
+                    rows.push((find.offset, resource, signature));
+                }
+            }
+        }
+    };
+    std::panic::set_hook(hook);
+    scanned?;
+    if passed > 0 {
+        println!("  scan          {passed} bytes passed over where the scan panicked");
+    }
+    let named = |drawable: &Drawable| -> Named {
+        let level = drawable.levels.iter().flatten().find(|l| !l.is_empty());
+        (level.into_iter().flatten())
+            .flat_map(|model| model.geometries.iter().flatten())
+            .filter(|geometry| geometry.positions.is_ok())
+            .filter_map(|geometry| {
+                let shader = drawable.shaders.get(usize::from(geometry.shader))?;
+                let table = geometry.vertex_data.get(..4 * 23).unwrap_or_default();
+                Some((shader.name_hash, table.to_vec()))
+            })
+            .collect()
+    };
+    let opened = side_by_side(&rows, |(at, resource, signature)| -> Vec<(u64, Named)> {
+        if cancel.is_set() {
+            return Vec::new();
+        }
+        let Ok((_, bytes)) = read_rpf9_body(&file, *at, limit) else {
+            return Vec::new();
+        };
+        let (virtual_section, physical) = resource.sections(&bytes);
+        match read(*signature, virtual_section, Some(physical)) {
+            Ok(Resource::Drawable(d)) => vec![(*at, named(&d))],
+            Ok(Resource::DrawableWithBound(r)) => vec![(*at, named(&r.drawable))],
+            Ok(Resource::Dictionary(dict)) => (dict.entries.iter())
+                .filter_map(|(_, entry)| match entry {
+                    Ok(Entry::Drawable(d)) => Some((*at, named(d))),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    });
+    let drawables: Vec<(u64, Named)> = (opened.into_iter().flatten())
+        .filter(|(_, named)| !named.is_empty())
+        .collect();
+    println!(
+        "  census        {} drawables with a geometry that reads, of {} of {seen} model bodies (every {every})",
+        drawables.len(),
+        rows.len()
+    );
+
+    let source = std::fs::File::open(effects).map_err(|e| format!("open({effects}): {e}"))?;
+    let (_, bytes) = read_rpf9_body(&source, offset, limit).map_err(|e| e.to_string())?;
+    let container = Sgd5File::open(&bytes)
+        .map_err(|e| format!("the SGD5 container at {offset:#X} does not read: {e}"))?;
+    let mut used: BTreeMap<u32, (u64, u64)> = BTreeMap::new();
+    for (_, named) in &drawables {
+        let mut effects: Vec<u32> = named.iter().map(|(effect, _)| *effect).collect();
+        for effect in &effects {
+            used.entry(*effect).or_default().1 += 1;
+        }
+        effects.sort_unstable();
+        effects.dedup();
+        for effect in effects {
+            used.entry(effect).or_default().0 += 1;
+        }
+    }
+    let hashes: Vec<u32> = used.keys().copied().collect();
+    let verdicts = side_by_side(&hashes, |hash| {
+        let Some(effect) =
+            (container.effects.iter()).find(|e| name_hash32(e.name.as_bytes()) == *hash)
+        else {
+            return (
+                format!("0x{hash:08X}"),
+                Verdict::Refused("the container holds no such effect".to_string()),
+            );
+        };
+        let inflated = |program: &or_io::gta5::shaders::sgd5::Sgd5Program| {
+            program.inflate(bytes.get(program.stream.clone())?).ok()
+        };
+        let (mut passes, mut refused, mut other) = (Vec::new(), None, None);
+        let mut seen = BTreeSet::new();
+        for (first, pixel) in first_passes(&container, effect) {
+            if cancel.is_set() || !seen.insert(first.at) {
+                continue;
+            }
+            let (Some(a), Some(b)) = (inflated(first), inflated(pixel)) else {
+                continue;
+            };
+            if is_gta6_shading_pass(&a, &b) {
+                let tables = [&first.variables, &pixel.variables];
+                match translate_gta6_shading(&a, &b, tables, &effect.parameters) {
+                    Ok(pass) => passes.push(pass),
+                    Err(why) => refused = refused.or(Some(why)),
+                }
+            } else if let (Ok(a), Ok(b)) = (native(&a), native(&b)) {
+                if a.program.kind == ShaderKind::Mesh && other.is_none() {
+                    let mut targets: Vec<(u8, u8)> = picks(&b.program.words).exports;
+                    targets.dedup();
+                    other = Some(format!(
+                        "its mesh pass {} + {} writes (target, mask) {targets:?}",
+                        first.name, pixel.name
+                    ));
+                }
+            }
+        }
+        let verdict = match (passes.is_empty(), refused, other) {
+            (false, ..) => Verdict::Draws(passes),
+            (true, Some(why), _) => Verdict::Refused(why),
+            (true, None, Some(other)) => Verdict::NoDeferredPass(other),
+            (true, None, None) => Verdict::NoDeferredPass("it has no mesh pass".to_string()),
+        };
+        (effect.name.clone(), verdict)
+    });
+    let verdicts: BTreeMap<u32, (String, Verdict)> = hashes.iter().copied().zip(verdicts).collect();
+    let draws = |effect: u32, table: &[u8]| match verdicts.get(&effect) {
+        Some((_, Verdict::Draws(passes))) => drawing_pass(passes, table).is_some(),
+        _ => false,
+    };
+    let mut drawn: BTreeMap<u32, u64> = BTreeMap::new();
+    let (mut whole, mut partly, mut geometries, mut all) = (0u64, 0u64, 0u64, 0u64);
+    let mut first_of: BTreeMap<Vec<u32>, u64> = BTreeMap::new();
+    for (at, named) in &drawables {
+        let mut count = 0;
+        for (effect, table) in named {
+            if draws(*effect, table) {
+                count += 1;
+                *drawn.entry(*effect).or_default() += 1;
+            }
+        }
+        all += named.len() as u64;
+        geometries += count as u64;
+        whole += u64::from(count == named.len());
+        partly += u64::from(count > 0 && count < named.len());
+        let mut effects: Vec<u32> = named.iter().map(|(effect, _)| *effect).collect();
+        effects.sort_unstable();
+        effects.dedup();
+        first_of.entry(effects).or_insert(*at);
+    }
+    println!(
+        "  bound         {whole} of {} drawables draw every geometry by its effect's own passes, {partly} more draw some; {geometries} of {all} geometries",
+        drawables.len()
+    );
+    let mut ranked: Vec<(u32, (u64, u64))> = used.into_iter().collect();
+    ranked.sort_by_key(|(_, (drawables, _))| std::cmp::Reverse(*drawables));
+    let mut reasons: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    for (hash, (drawables, geometries)) in &ranked {
+        let (name, verdict) = &verdicts[hash];
+        let said = match verdict {
+            Verdict::Draws(passes) => format!("draws by {} passes", passes.len()),
+            Verdict::Refused(why) => format!("refused: {why}"),
+            Verdict::NoDeferredPass(why) => format!("no deferred pass: {why}"),
+        };
+        let reason = match verdict {
+            Verdict::Draws(_) => None,
+            Verdict::Refused(why) => Some(format!("refused: {why}")),
+            Verdict::NoDeferredPass(_) => Some("no deferred pass".to_string()),
+        };
+        if let Some(reason) = reason {
+            let reason = reasons.entry(reason).or_default();
+            reason.0 += 1;
+            reason.1 += geometries;
+        }
+        // A drawable that names this effect and no other, else the first that names it.
+        let sample = (first_of.iter())
+            .find(|(effects, _)| effects.as_slice() == [*hash])
+            .or_else(|| first_of.iter().find(|(effects, _)| effects.contains(hash)))
+            .map_or(String::new(), |(_, at)| format!(", at {at:#X}"));
+        println!(
+            "  {name}: {drawables} drawables, {} of {geometries} geometries drawn, {said}{sample}",
+            drawn.get(hash).copied().unwrap_or(0)
+        );
+    }
+    println!("  reasons       by effects and geometries");
+    let mut reasons: Vec<_> = reasons.into_iter().collect();
+    reasons.sort_by_key(|(_, (_, geometries))| std::cmp::Reverse(*geometries));
+    for (reason, (effects, geometries)) in reasons {
+        println!("  {effects} effects, {geometries} geometries: {reason}");
     }
     Ok(())
 }

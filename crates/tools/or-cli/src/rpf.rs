@@ -56,6 +56,7 @@ pub fn run(args: &[String]) -> ExitCode {
         // Run by `scan-rdna` on itself, and so not in the usage.
         "scan-rdna-worker" => super::gta6_rdna_run::cmd_worker(&args[1..]).map_err(Run),
         "scan-shading" => super::gta6_shading::cmd_scan_shading(&args[1..]).map_err(Run),
+        "scan-effect-use" => super::gta6_shading::cmd_scan_effect_use(&args[1..]).map_err(Run),
         "scan-rdna-bind" => super::gta6_rdna_bind::cmd_scan_rdna_bind(&args[1..]).map_err(Run),
         "scan-install" => super::gta6_install::cmd_scan_install(&args[1..]),
         "scan-expressions" => super::gta6_expressions::cmd_scan_expressions(&args[1..]),

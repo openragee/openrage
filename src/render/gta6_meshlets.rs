@@ -214,20 +214,12 @@ fn empty_table() -> Vec<u32> {
 /// The matrices a buffer of them is filled with: a skeleton has at most as many bones.
 const MATRICES: usize = 256;
 
-/// The pass of `passes` that draws `geometry`: the one whose mesh program reads the most
-/// streams among those reading none the geometry's table of streams leaves empty.
+/// The pass of `passes` that draws `geometry`.
 fn pass_of<'p>(
     passes: &'p [Arc<Gta6ShadingPass>],
     geometry: &Geometry,
 ) -> Option<&'p Arc<Gta6ShadingPass>> {
-    let held = |slot: &u32| {
-        let at = 4 * *slot as usize;
-        (geometry.vertex_data.get(at..at + 4)).is_some_and(|word| word != [0; 4])
-    };
-    // The first of those that read as many: `max_by_key` keeps the last.
-    (passes.iter().rev())
-        .filter(|pass| pass.mesh.streams.iter().all(held))
-        .max_by_key(|pass| pass.mesh.streams.len())
+    or_cli::gta6_drawing_pass(passes, &geometry.vertex_data)
 }
 
 /// What fills each binding of `stage` for `geometry` drawn with `shader`, its textures picked

@@ -12597,8 +12597,6 @@ msgid_plural "{count} bodies of {archive}"
 msgstr[0] "{archive} 的 {count} 个数据体"
 msgstr[1] "{archive} 的 {count} 个数据体"
 
-msgid "This is a GTA VI archive (RPF9). Its table of contents and its names are encrypted and OpenRage has no key for them, so its entries cannot be listed by name."
-msgstr "这是一个 GTA VI 归档（RPF9）。其目录和名称均已加密，OpenRage 没有对应的密钥，因此无法按名称列出其条目。"
 
 msgid "Its header says: {count} entry, a table of contents ending at byte {toc_end}, {names} bytes of names, {width}-byte entry indices, and the per-archive value {per_archive}, whose role is not known."
 msgid_plural "Its header says: {count} entries, a table of contents ending at byte {toc_end}, {names} bytes of names, {width}-byte entry indices, and the per-archive value {per_archive}, whose role is not known."
@@ -12608,8 +12606,6 @@ msgstr[1] "其头部显示：{count} 个条目、目录结束于字节 {toc_end}
 msgid "The table's parts start at 0x40, {part_b} and {part_c}, and its index at {index}; its layout byte is {layout} and its index kind {kind}. Kind 1 indexes the entry rows alone; what the layout byte and the other kinds select is not known."
 msgstr "该表的各部分起始于 0x40、{part_b} 和 {part_c}，其索引位于 {index}；其布局字节为 {layout}，索引类型为 {kind}。类型 1 仅索引条目行；布局字节和其他类型所选择的内容未知。"
 
-msgid "its archives are RPF9, whose tables of contents are encrypted with a key OpenRage does not have, so none of them can be listed"
-msgstr "其归档为 RPF9，目录使用 OpenRage 没有的密钥加密，因此都无法列出"
 
 msgid "{folder} is {title}, which OpenRage does not support yet, so it was not opened as an install: {why}."
 msgstr "{folder} 是 {title}，OpenRage 尚不支持，因此未将其作为安装打开：{why}。"
@@ -12620,8 +12616,6 @@ msgstr "{folder} 看起来不是 {title} 的文件夹，因此未将其设为该
 msgid "{folder} is {title}, which OpenRage does not support yet, so it is shown as a plain folder: {why}."
 msgstr "{folder} 是 {title}，OpenRage 尚不支持，因此将其显示为普通文件夹：{why}。"
 
-msgid "{folder} is {title}. Its archives have no names OpenRage can read, so each opens as a scan of what it holds."
-msgstr "{folder} 是 {title}。其归档没有 OpenRage 能读取的名称，因此每个归档都以其所含内容的扫描结果打开。"
 
 msgid "GTA VI Texture Pack"
 msgstr "GTA VI 纹理包"
@@ -12750,11 +12744,7 @@ msgstr "嵌套在此归档中的 GTA VI 归档。其头部声明了它的表，�
 msgid "This body starts with four zero bytes but has no 0DRP at 0x10, so what it is and which reader fits it are not known."
 msgstr "此数据体以四个零字节开头，但在 0x10 处没有 0DRP，因此其类型以及适用的读取器均未知。"
 
-msgid "a GTA VI archive is scanned for the bodies stored in the clear and shown; OpenRage does not write one"
-msgstr "对 GTA VI 归档扫描其中以明文存储的数据体并显示；OpenRage 不写入归档"
 
-msgid "a GTA VI archive opens from its own file, which is scanned a slice at a time"
-msgstr "GTA VI 归档从其自身的文件打开，一次扫描一个切片"
 
 msgid "Archive scan"
 msgstr "归档扫描"
@@ -12762,11 +12752,7 @@ msgstr "归档扫描"
 msgid "GTA VI Archive"
 msgstr "GTA VI 归档"
 
-msgid "RPF9 — a GTA VI archive, shown as what a scan without its table finds, read-only"
-msgstr "RPF9 — GTA VI 归档，显示为不借助其表进行扫描所发现的内容，只读"
 
-msgid "(read without names)"
-msgstr "（未读取名称）"
 
 msgid "Its first 64 bytes are zero, as a piece a download has not delivered reads, so whether it is an RPF9 archive and what its header states are not known; the bytes present are scanned."
 msgstr "其前 64 个字节均为零，如同下载尚未送达的部分读取所得，因此不知道它是否为 RPF9 归档，也不知道其头部声明了什么；已存在的字节会被扫描。"
@@ -14741,8 +14727,6 @@ msgstr "参考位置"
 msgid "XYZ over the geometry's reference positions as RGB; black where a vertex holds none"
 msgstr "将几何体参考位置的 XYZ 显示为 RGB；顶点没有参考位置处显示为黑色"
 
-msgid "{why}\n\nIt opens as a scan of what it holds, in a tab of its own."
-msgstr "{why}\n\n它会作为其所含内容的扫描结果，在其自己的标签页中打开。"
 
 msgid "A rule, an event or a behaviour was added, removed or renamed: a GTA VI particle list is written in place, so its rules stay as they are stored."
 msgstr "已添加、移除或重命名规则、事件或行为：GTA VI 粒子列表是就地写入的，因此其规则保持其存储时的样子。"
@@ -16782,3 +16766,72 @@ msgid "the lights of {count} map"
 msgid_plural "the lights of {count} maps"
 msgstr[0] "{count} 个地图的灯光"
 msgstr[1] "{count} 个地图的灯光"
+
+msgid "The archive table could not be loaded."
+msgstr "无法加载归档表。"
+
+msgid "Opening a GTA VI archive requires gtavi_magic.dat in the configuration folder or OPENRAGE_GTA6_KEYS."
+msgstr "打开 GTA VI 归档需要配置文件夹中的 gtavi_magic.dat，或设置 OPENRAGE_GTA6_KEYS。"
+
+msgid "The archive changed on disk. Reopen it to read its table."
+msgstr "磁盘上的归档已更改。请重新打开以读取其表。"
+
+msgid "This entry does not describe a bounded nested archive."
+msgstr "此条目未描述具有有效范围的嵌套归档。"
+
+msgid "This nested archive is encrypted and cannot be expanded."
+msgstr "此嵌套归档已加密，无法展开。"
+
+msgid "The archive nesting limit was reached."
+msgstr "已达到归档嵌套深度上限。"
+
+msgid "Entries are listed from the archive table. Expand an archive to load its table."
+msgstr "条目来自归档表。展开归档即可加载其表。"
+
+msgid "File contents cannot be opened from this table view yet."
+msgstr "目前还无法从此表视图打开文件内容。"
+
+msgid "Loading archive table…"
+msgstr "正在加载归档表…"
+
+msgid "Open as archive"
+msgstr "作为归档打开"
+
+msgid "Offset: {offset}"
+msgstr "位置：{offset}"
+
+msgid "Stored size: {size}"
+msgstr "存储大小：{size}"
+
+msgid "a GTA VI archive is listed from its table and is read only; OpenRage does not write one"
+msgstr "GTA VI 归档根据其表列出条目，且为只读；OpenRage 不会写入此类归档"
+
+msgid "a GTA VI archive opens from its own file using its encrypted table of contents"
+msgstr "GTA VI 归档通过加密的目录表从其自身文件打开"
+
+msgid "It opens from its table in a tab of its own."
+msgstr "它会根据其表在单独的标签页中打开。"
+
+msgid "RPF9 — a GTA VI archive listed from its table, read-only"
+msgstr "RPF9 — 根据其表列出条目的 GTA VI 归档，只读"
+
+msgid "This is a GTA VI archive (RPF9). Open it in its own tab to read its table with the GTA VI keys."
+msgstr "这是 GTA VI 归档（RPF9）。请在单独的标签页中打开，使用 GTA VI 密钥读取其表。"
+
+msgid "its RPF9 archives open individually from their tables; mounting a whole install is not supported yet"
+msgstr "RPF9 归档根据各自的表单独打开；尚不支持挂载整个安装目录"
+
+msgid "{folder} is {title}. Each archive opens from its table using the GTA VI keys."
+msgstr "{folder} 是 {title}。每个归档使用 GTA VI 密钥根据其表打开。"
+
+msgid "Archive table"
+msgstr "归档表"
+
+msgid "(archive by archive)"
+msgstr "（逐个归档）"
+
+msgid "Find"
+msgstr "查找"
+
+msgid "Encrypted"
+msgstr "已加密"

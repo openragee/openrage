@@ -1,3 +1,5 @@
+use crate::state::Rpf9Document;
+
 use or_io::container::rpf::{
     Rpf9BodyKind, Rpf9Content, Rpf9Resource, Rpf9ScanFind, Rpf9Walk, Rpf9ZlibRun,
 };
@@ -11,7 +13,15 @@ use crate::state::rpf9_scan::{
 /// The archive's header facts, what a scan without the table is, its progress and the bodies it
 /// found, laying out only the rows in view: a large archive holds hundreds of thousands.
 pub(super) fn draw_rpf9(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId) {
-    let Some(DocPayload::Rpf9(scan)) = state.document(doc_id).map(|d| &d.payload) else {
+    if let Some(DocPayload::Rpf9(Rpf9Document::Table(table))) =
+        state.document(doc_id).map(|d| &d.payload)
+    {
+        super::rpf9_table::draw_facts(ui, table);
+        return;
+    }
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
+        state.document(doc_id).map(|d| &d.payload)
+    else {
         return;
     };
     let scan = scan.clone();
@@ -143,7 +153,9 @@ pub(super) fn draw_rpf9(ui: &mut egui::Ui, state: &mut AppState, doc_id: Documen
 /// The bodies a scan found, under their filter, laying out only the rows in view: a large archive
 /// holds hundreds of thousands. A click opens a body in the preview tab and a double click keeps it.
 pub(super) fn draw_scan_rows(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId) {
-    let Some(DocPayload::Rpf9(scan)) = state.document(doc_id).map(|d| &d.payload) else {
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
+        state.document(doc_id).map(|d| &d.payload)
+    else {
         return;
     };
     let scan = scan.clone();

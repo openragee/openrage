@@ -1,6 +1,8 @@
 //! A GTA VI archive opened as what a scan without its table finds: its header's facts and the
 //! bodies stored in the clear, found a slice at a time on a worker and never read whole.
 
+use crate::state::Rpf9Document;
+
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -597,7 +599,7 @@ fn nested(archive: &Path, mut file: &File, offset: u64) -> Result<DocPayload, St
         .map_err(at)?;
     let header = Rpf9Header::parse(&head).map_err(|e| e.to_string())?;
     let scan = Rpf9ScanDocument::open_nested(archive, offset, header)?;
-    Ok(DocPayload::Rpf9(Arc::new(scan)))
+    Ok(DocPayload::Rpf9(Rpf9Document::Scan(Arc::new(scan))))
 }
 
 /// What the scan found of each body opened from its list, by the path [`body_path`] made, read
@@ -704,13 +706,13 @@ impl super::AppState {
     /// path names it a body of.
     pub fn scan_listing_the_active_tab(&self) -> Option<super::DocumentId> {
         let active = self.active_document()?;
-        if matches!(active.payload, DocPayload::Rpf9(_)) {
+        if matches!(active.payload, DocPayload::Rpf9(Rpf9Document::Scan(_))) {
             return Some(active.id);
         }
         let archive = active.path.as_deref()?.parent()?;
         (self.documents.iter())
             .find(|d| {
-                matches!(&d.payload, DocPayload::Rpf9(scan) if scan.start == 0)
+                matches!(&d.payload, DocPayload::Rpf9(Rpf9Document::Scan(scan)) if scan.start == 0)
                     && d.path.as_deref() == Some(archive)
             })
             .map(|d| d.id)
@@ -740,7 +742,9 @@ impl super::AppState {
     /// Show the body at `offset` of the scan document `doc` in the preview tab, as a step of history
     /// to its row does; nothing for a document of any other kind.
     pub(super) fn show_scanned_row(&mut self, doc: super::DocumentId, offset: u64) {
-        let Some(DocPayload::Rpf9(scan)) = self.document(doc).map(|d| &d.payload) else {
+        let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
+            self.document(doc).map(|d| &d.payload)
+        else {
             return;
         };
         let row = {
@@ -754,7 +758,9 @@ impl super::AppState {
     }
 
     fn open_scanned(&mut self, doc: super::DocumentId, row: usize, preview: bool) {
-        let Some(DocPayload::Rpf9(scan)) = self.document(doc).map(|d| &d.payload) else {
+        let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
+            self.document(doc).map(|d| &d.payload)
+        else {
             return;
         };
         let scan = Arc::clone(scan);
@@ -832,7 +838,9 @@ impl super::AppState {
         rows: &[usize],
         dest: PathBuf,
     ) -> bool {
-        let Some(DocPayload::Rpf9(scan)) = self.document(doc).map(|d| &d.payload) else {
+        let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
+            self.document(doc).map(|d| &d.payload)
+        else {
             return false;
         };
         let scan = Arc::clone(scan);

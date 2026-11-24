@@ -30,12 +30,11 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
         });
 }
 
-/// The title read by scan whose remembered folder holds the tab on screen: no install of it is
-/// ever the open one, and its files are still that game's.
+/// The title whose remembered folder holds the tab when its archives open individually.
 fn scanned_title_of_the_tab(state: &AppState) -> Option<Game> {
     let path = state.active_document()?.path.as_deref()?;
     Game::all().find(|&game| {
-        crate::state::gta_vi::read_by_scan(game)
+        crate::state::gta_vi::opens_archives_individually(game)
             && (state.prefs.game_paths.get(game)).is_some_and(|root| path.starts_with(root))
     })
 }

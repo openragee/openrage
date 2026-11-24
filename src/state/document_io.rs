@@ -1,3 +1,5 @@
+use crate::state::Rpf9Document;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,6 +14,10 @@ use super::prefs::RpfOutputMode;
 use super::rpf_node::RpfNodeBacking;
 use super::rpf_session::{RpfDocument, RpfEditSession};
 use crate::ui::panels::hierarchy::gta6_save;
+
+#[cfg(test)]
+#[path = "opening_an_rpf9_table.rs"]
+mod opening_an_rpf9_table;
 
 /// The message the four enumerating matches in this file end with.
 ///
@@ -71,10 +77,10 @@ const NO_BLANK_TTPF: &str = tr_key!(
 const TTPF_FROM_DISK: &str =
     tr_key!("a GTA VI texture pack opens from its own file, which is read a texture at a time");
 const READ_ONLY_RPF9: &str = tr_key!(
-    "a GTA VI archive is scanned for the bodies stored in the clear and shown; OpenRage does not write one"
+    "a GTA VI archive is listed from its table and is read only; OpenRage does not write one"
 );
 const RPF9_FROM_DISK: &str =
-    tr_key!("a GTA VI archive opens from its own file, which is scanned a slice at a time");
+    tr_key!("a GTA VI archive opens from its own file using its encrypted table of contents");
 const READ_ONLY_GTA6_ANIM: &str = tr_key!(
     "a GTA VI animation resource opened from a scan is saved once edited, as a loose resource; any other is read and shown"
 );
@@ -206,10 +212,13 @@ pub(super) fn parse_payload_from_path(
         let data = std::fs::read(path).map_err(|e| format!("Read error: {e}"))?;
         return Ok((text_payload(path, data), None));
     }
-    // ⚠ Before the whole read: a GTA VI archive can be tens of gigabytes, and is scanned instead, as is the tab of one read again.
+    // An archive can be tens of gigabytes; its table is read before any whole-file path.
     if matches!(kind, DocumentKind::Rpf | DocumentKind::Rpf9) {
-        if let Some(scan) = super::rpf9_scan::Rpf9ScanDocument::open(path)? {
-            return Ok((DocPayload::Rpf9(Arc::new(scan)), None));
+        if let Some(table) = super::document::rpf9::Rpf9TableDocument::open(path)? {
+            return Ok((DocPayload::Rpf9(Rpf9Document::Table(Arc::new(table))), None));
+        }
+        if kind == DocumentKind::Rpf9 {
+            return Err(crate::i18n::tr(RPF9_FROM_DISK).to_string());
         }
     }
     // ⚠ Never read whole: a pack can be gigabytes, and a texture is read only when it is shown.

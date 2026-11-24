@@ -73,10 +73,18 @@ the editor lists none of these games as a title.
 
 ## GTA VI
 
-The table of contents of an RPF9 archive is encrypted and OpenRage holds no key for it, so no file is
-listed by name: the editor and `openrage-cli rpf scan` find the bodies an archive stores in the clear,
-and name one only where a body states its own name or a harvested vocabulary holds it. The install
-opens as a plain folder.
+An RPF9 archive opens from its encrypted table of contents. It needs the user's key snapshot,
+`gtavi_magic.dat` in the configuration folder or the file `OPENRAGE_GTA6_KEYS` names; a masked
+snapshot also needs the executable `OPENRAGE_GTA6_EXE` names. Missing keys or an invalid table
+produce an error, with no scan fallback. The Files panel lists the entries and loads a nested
+archive's table when it is expanded, on a worker and within its containing entry's bounds. A name
+the loaded vocabulary does not resolve is shown as its hash. An entry whose table does not state
+its class offers **Open as archive**, which checks only its stated position and extent.
+
+The table view lists entries and their facts; it does not yet open or extract their contents.
+`openrage-cli rpf9 list` also lists from the table. The explicit `openrage-cli rpf scan` command and
+the World index retain their scanners and their existing body readers. The install opens as a
+plain folder.
 
 - **Read.** Texture packs (`.ttpf`) and dictionary textures, drawables, fragments, dictionaries of
   drawables and their skeletons, bounds, navigation cells, map placements and map types, clip

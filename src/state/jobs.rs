@@ -3,6 +3,8 @@
 //! ⚠ Each job stays in its own controller, which is the truth about whether it runs; the list
 //! reads them every frame, so it never shows a job its controller has dropped.
 
+use crate::state::Rpf9Document;
+
 use std::path::{Path, PathBuf};
 
 use super::{AppState, DocumentId};
@@ -38,6 +40,8 @@ pub enum JobKind {
     ProjectReopen,
     /// A GTA VI archive scanned for the bodies stored in the clear, a slice at a time.
     ArchiveScan,
+    /// A nested archive's table read when its row is expanded.
+    ArchiveTable,
     /// A GTA VI effect container read for the names of drawables' shaders.
     EffectsRead,
     /// The texture naming rules run over the names GTA VI drawables state.
@@ -80,6 +84,7 @@ impl JobKind {
             Self::ProjectImport => tr!("Project import"),
             Self::ProjectReopen => tr!("Import a pack"),
             Self::ArchiveScan => tr!("Archive scan"),
+            Self::ArchiveTable => tr!("Archive table"),
             Self::EffectsRead => tr!("GTA VI effects"),
             Self::TextureNames => tr!("GTA VI texture names"),
             Self::NeighbourCells => tr!("GTA VI neighbouring cells"),
@@ -187,7 +192,14 @@ impl AppState {
     /// The GTA VI archives open as what a scan finds in them.
     fn archive_scans(&self) -> impl Iterator<Item = &super::rpf9_scan::Rpf9ScanDocument> {
         self.documents.iter().filter_map(|doc| match &doc.payload {
-            super::DocPayload::Rpf9(scan) => Some(&**scan),
+            super::DocPayload::Rpf9(Rpf9Document::Scan(scan)) => Some(&**scan),
+            _ => None,
+        })
+    }
+
+    fn archive_tables(&self) -> impl Iterator<Item = &super::document::rpf9::Rpf9TableDocument> {
+        self.documents.iter().filter_map(|doc| match &doc.payload {
+            super::DocPayload::Rpf9(Rpf9Document::Table(table)) => Some(&**table),
             _ => None,
         })
     }
@@ -227,6 +239,7 @@ impl AppState {
         .into_iter()
         .flatten()
         .chain(self.archive_scans().filter_map(|scan| scan.job()))
+        .chain(self.archive_tables().filter_map(|table| table.job()))
         .chain(self.archive_scans().filter_map(|scan| scan.effects_job()))
         .chain(super::gta6_effects::install_job())
         .chain(super::gta6_shaders::job())
@@ -322,6 +335,10 @@ impl AppState {
                     .collect();
                 running.iter().for_each(|scan| scan.stop());
                 !running.is_empty()
+            }
+            JobKind::ArchiveTable => {
+                self.archive_tables().for_each(|table| table.stop());
+                true
             }
             // ⚠ Its end is said once its worker sees the stop, by `poll_effects_reads`.
             JobKind::EffectsRead => {
@@ -447,6 +464,7 @@ impl AppState {
 
     /// The per-frame tick of the jobs whose panels may not be drawn.
     pub fn poll_jobs(&mut self) {
+        self.archive_tables().for_each(|table| table.tree().poll());
         self.poll_defrag();
         self.poll_overlay_copy();
         self.poll_overlay_refresh();

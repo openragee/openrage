@@ -62,7 +62,7 @@ pub use gta6_archive::{
 #[cfg(feature = "gta6")]
 pub use gta6_keygate::{decode_masked, encode_masked, gate_key, is_masked, MASKED_MAGIC};
 #[cfg(feature = "gta6")]
-pub use gta6_mount::{open_at, Gta6DecryptedBody, Gta6Mount};
+pub use gta6_mount::{open_at, open_at_bounded, Gta6DecryptedBody, Gta6Mount};
 #[cfg(feature = "gta6")]
 pub use gta6_write::{Rpf9Builder, Rpf9CipherCore};
 pub use header::{

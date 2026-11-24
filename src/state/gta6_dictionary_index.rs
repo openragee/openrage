@@ -3,6 +3,8 @@
 //! holds it beside the drawable, as a GTA V model opens its own dictionary. The index holds keys
 //! and the bodies they are in, never pixels.
 
+use crate::state::Rpf9Document;
+
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -82,7 +84,7 @@ impl DictionaryIndex {
 pub(super) fn whole_scans(documents: &[Document], bodies: bool) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let (mut archives, mut paths) = (Vec::new(), Vec::new());
     for doc in documents {
-        let DocPayload::Rpf9(scan) = &doc.payload else {
+        let DocPayload::Rpf9(Rpf9Document::Scan(scan)) = &doc.payload else {
             continue;
         };
         let found = scan.found();

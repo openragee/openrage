@@ -1,3 +1,5 @@
+use crate::state::Rpf9Document;
+
 use egui_phosphor::regular as ph;
 
 use crate::state::particle_target::{on_particle_target, ParticleTarget};
@@ -44,6 +46,7 @@ mod move_network;
 mod rel;
 mod rpf;
 mod rpf9;
+mod rpf9_table;
 pub(crate) use rpf9::row_kind_label as rpf9_row_kind_label;
 mod structure;
 mod summary;
@@ -163,6 +166,17 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
 /// The Files panel's list of what the scan of the GTA VI archive `doc` found.
 pub fn draw_scan_list(ui: &mut egui::Ui, state: &mut AppState, doc: DocumentId) {
     draw_scan_rows(ui, state, doc);
+}
+
+/// Draw the table-backed archive tree when the active document holds one.
+pub fn draw_archive_table(ui: &mut egui::Ui, state: &AppState) -> bool {
+    let Some(DocPayload::Rpf9(Rpf9Document::Table(table))) =
+        state.active_document().map(|doc| &doc.payload)
+    else {
+        return false;
+    };
+    rpf9_table::draw_tree(ui, table);
+    true
 }
 
 /// The active document's body without the inspector's header: the Document

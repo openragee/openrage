@@ -392,7 +392,7 @@ static KINDS: &[KindInfo] = &[
     KindInfo {
         kind: DocumentKind::Rpf9,
         noun: tr_key!("GTA VI Archive"),
-        tooltip: tr_key!("RPF9 — a GTA VI archive, shown as what a scan without its table finds, read-only"),
+        tooltip: tr_key!("RPF9 — a GTA VI archive listed from its table, read-only"),
         glyph: ph::SCAN,
         color: theme::KIND_RPF,
         workspace: Workspace::Browse,

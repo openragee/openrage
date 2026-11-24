@@ -3,6 +3,8 @@
 //! and the audio container that holds each stream. An index of the open scans fills them on a
 //! worker, as a row of the job list; a body or a text table opened by hand adds what it holds.
 
+use crate::state::Rpf9Document;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -285,7 +287,9 @@ pub(crate) fn table_language(state: &AppState, path: &Path) -> Option<String> {
     let stem = path.file_stem()?.to_str()?;
     let at = u64::from_str_radix(stem.strip_prefix("0x")?, 16).ok()?;
     let scan = (state.documents.iter()).find_map(|d| match &d.payload {
-        DocPayload::Rpf9(scan) if scan.start == 0 && scan.path == archive => Some(scan),
+        DocPayload::Rpf9(Rpf9Document::Scan(scan)) if scan.start == 0 && scan.path == archive => {
+            Some(scan)
+        }
         _ => None,
     })?;
     let found = scan.found();
@@ -625,7 +629,7 @@ impl AppState {
         }
         let archives: Vec<Archive> = (self.documents.iter())
             .filter_map(|d| match &d.payload {
-                DocPayload::Rpf9(scan) if scan.start == 0 => {
+                DocPayload::Rpf9(Rpf9Document::Scan(scan)) if scan.start == 0 => {
                     Some(Archive::of(&scan.path, &scan.found().rows))
                 }
                 _ => None,

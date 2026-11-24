@@ -18,6 +18,13 @@ pub struct FxcDocument {
     pub bytes: Vec<u8>,
 }
 
+/// How an RPF9 document obtained its listing.
+#[derive(Clone)]
+pub enum Rpf9Document {
+    Table(std::sync::Arc<super::rpf9::Rpf9TableDocument>),
+    Scan(std::sync::Arc<crate::state::rpf9_scan::Rpf9ScanDocument>),
+}
+
 // An owned root is matched by value in every row, and a box would hide it from those patterns.
 #[derive(Clone)]
 #[allow(clippy::large_enum_variant)]
@@ -43,8 +50,8 @@ pub enum DocPayload {
     /// A GTA VI texture pack, read a texture at a time.
     Ttpf(std::sync::Arc<crate::state::ttpf_document::TtpfDocument>),
     Rpf(RpfDocument),
-    /// A GTA VI archive, as a scan without its table finds it.
-    Rpf9(std::sync::Arc<crate::state::rpf9_scan::Rpf9ScanDocument>),
+    /// A GTA VI archive opened from its table or as an explicit scan.
+    Rpf9(Rpf9Document),
     /// A GTA VI animation resource a scan found, read only.
     Gta6Anim(std::sync::Arc<or_io::gta6::anim::AnimResource>),
     /// A GTA VI drawable, fragment, bound or dictionary of drawables, its edited materials saved as a loose resource.

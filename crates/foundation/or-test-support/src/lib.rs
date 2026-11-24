@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 pub mod ledger;
+pub mod rpf9;
 
 pub const FIXTURE_ROOT_ENV: &str = "OPENRAGE_FIXTURES";
 

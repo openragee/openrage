@@ -1,4 +1,4 @@
-//! What the app says of GTA VI, whose archives it recognises by their plaintext header and cannot list by name.
+//! What the app says of GTA VI archives and folders.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -8,9 +8,9 @@ use or_title::ContainerFamily;
 
 use super::prefs::Game;
 
-/// The sentence every [`rpf9_refusal`] starts with: why an RPF9 archive's entries have no names.
+/// The sentence every [`rpf9_refusal`] starts with: why RPF9 opens in its own tab.
 pub(crate) fn rpf9_why() -> &'static str {
-    tr!("This is a GTA VI archive (RPF9). Its table of contents and its names are encrypted and OpenRage has no key for them, so its entries cannot be listed by name.")
+    tr!("This is a GTA VI archive (RPF9). Open it in its own tab to read its table with the GTA VI keys.")
 }
 
 /// Whether `message` is an [`rpf9_refusal`], which says why itself, rather than an error that may only name a path holding `RPF9`.
@@ -70,7 +70,7 @@ pub(super) fn unsupported_title(game: Game, root: &Path) -> Option<Game> {
 /// Why `title` is not supported, in a clause.
 fn why_unsupported(title: Game) -> String {
     match title.profile().container() {
-        ContainerFamily::Rpf9 => tr!("its archives are RPF9, whose tables of contents are encrypted with a key OpenRage does not have, so none of them can be listed").to_string(),
+        ContainerFamily::Rpf9 => tr!("its RPF9 archives open individually from their tables; mounting a whole install is not supported yet").to_string(),
         _ => title.profile().description().to_string(),
     }
 }
@@ -111,18 +111,18 @@ impl super::AppState {
     }
 }
 
-/// Whether `game`'s archives open as a scan of what they hold, so its folder is browsed and not refused.
-pub(crate) fn read_by_scan(game: Game) -> bool {
+/// Whether `game`'s archives open individually, so its folder is browsed and not refused.
+pub(crate) fn opens_archives_individually(game: Game) -> bool {
     game.profile().container() == ContainerFamily::Rpf9
 }
 
 /// What opening the folder at `root` says when it holds a title that is not opened as an install,
-/// and whether that is a warning: a title read by scan is browsed as it is meant to be.
+/// and whether that is a warning: a title with individual archives is browsed as it is meant to be.
 pub(super) fn plain_folder_note(root: &Path) -> Option<(String, bool)> {
     let title = Some(Game::detect_from_root(root)).filter(|t| !t.profile().is_supported())?;
-    if read_by_scan(title) {
+    if opens_archives_individually(title) {
         let note = tr!(
-            "{folder} is {title}. Its archives have no names OpenRage can read, so each opens as a scan of what it holds.",
+            "{folder} is {title}. Each archive opens from its table using the GTA VI keys.",
             folder = root.display(),
             title = title.label(),
         );
@@ -173,7 +173,7 @@ mod tests {
         let said = rpf9_refusal(&head).expect("an RPF9 head is refused by name");
         for fact in [
             "GTA VI".to_string(),
-            "cannot be listed".to_string(),
+            "read its table".to_string(),
             format!("{} entries", header.entry_count),
             format!("{:#X}", header.toc_end),
             format!("{} bytes of names", header.names_size),
@@ -243,12 +243,12 @@ mod tests {
     }
 
     #[test]
-    fn opening_an_rpf9_archive_says_it_is_gta_vi_from_its_head_and_offers_no_keys() {
+    fn an_unreadable_rpf9_table_reports_an_error_without_asking_for_gta_v_keys() {
         let (_scratch, dir) = gta_vi_folder();
         let archive = dir.join("common.rpf");
         let expected = rpf9_refusal_at(&archive).expect("the archive is RPF9");
 
-        // The open of a file (a dialog, a drop, a recent file) opens it as what a scan finds.
+        // This header carries no readable table; normal opening must not recover by scanning.
         let mut state = AppState::from_prefs(Prefs::default());
         assert!(!state.maybe_defer_encrypted_rpf(&archive));
         assert!(
@@ -262,9 +262,13 @@ mod tests {
             assert!(Instant::now() < deadline, "the load never ended");
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(!state.show_error_dialog, "{}", state.error_dialog_message);
+        assert!(state.show_error_dialog, "an unreadable table opened");
+        assert!(
+            state.error_dialog_plain.is_none(),
+            "the table error was hidden"
+        );
         let opened = state.active_document().map(|d| d.kind);
-        assert_eq!(opened, Some(DocumentKind::Rpf9));
+        assert_eq!(opened, None);
 
         // The archive browser's open of it as an archive.
         let crypto = state.keys.provider();
@@ -326,7 +330,7 @@ mod tests {
         assert!(says(
             &state,
             ToastType::Info,
-            &["GTA VI", "opens as a scan"]
+            &["GTA VI", "opens from its table"]
         ));
         assert!(!says(&state, ToastType::Warning, &["GTA VI"]));
 
@@ -338,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn going_into_a_gta_vi_archive_opens_its_scan_and_back_does_not_lead_into_it_again() {
+    fn an_unreadable_gta_vi_archive_keeps_the_folder_and_back_does_not_retry_it() {
         use super::super::navigation::Location;
         use super::super::the_files_view_in_the_centre::{frame, listed, node};
         let _serial = crate::ui::theme::serial();
@@ -369,9 +373,16 @@ mod tests {
             doc: folder,
             node: archive,
         });
-        let scan_is_open =
-            |state: &AppState| state.active_document().map(|d| d.kind) == Some(DocumentKind::Rpf9);
-        frames(&mut state, &scan_is_open, "the archive's scan never opened");
+        let failed = |state: &AppState| state.show_error_dialog;
+        frames(
+            &mut state,
+            &failed,
+            "the unreadable table never reported its error",
+        );
+        assert!(!state
+            .documents
+            .iter()
+            .any(|doc| doc.kind == DocumentKind::Rpf9));
         assert_eq!(state.navigation.current(), Some(Location::document(folder)));
 
         // The folder's tab shows the folder again, and stays on screen.
@@ -460,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn a_gta_vi_archive_is_drawn_in_the_tree_as_one_that_opens_and_says_it_opens_as_a_scan() {
+    fn a_gta_vi_archive_is_drawn_in_the_tree_as_one_that_opens_from_its_table() {
         use super::super::nothing_draws_over_what_it_belongs_to::Panel;
         use super::super::{DocPayload, RpfNodeBacking};
         use crate::ui::theme;
@@ -512,9 +523,9 @@ mod tests {
         for _ in 0..45 {
             said = frame(&mut state, Vec::new());
         }
-        let tip = (said.iter()).find(|(text, ..)| text.contains("It opens as a scan"));
+        let tip = (said.iter()).find(|(text, ..)| text.contains("It opens from its table"));
         let (tip, ..) = tip.unwrap_or_else(|| panic!("the row says no such thing: {said:?}"));
-        assert!(tip.starts_with(rpf9_why()), "{tip}");
+        assert!(tip.contains("in a tab of its own"), "{tip}");
     }
 
     #[test]

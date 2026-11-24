@@ -1,6 +1,8 @@
 //! What a scanned GTA VI navigation cell states that GTA V's navigation mesh view has no place
 //! for, kept for the inspector beside the view's model of it.
 
+use crate::state::Rpf9Document;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -424,7 +426,9 @@ impl AppState {
         };
         let finds: Vec<Rpf9ScanFind> = (self.documents.iter())
             .filter_map(|d| match &d.payload {
-                DocPayload::Rpf9(scan) if scan.path == archive => Some(Arc::clone(scan)),
+                DocPayload::Rpf9(Rpf9Document::Scan(scan)) if scan.path == archive => {
+                    Some(Arc::clone(scan))
+                }
                 _ => None,
             })
             .flat_map(|scan| {

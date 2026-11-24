@@ -38,7 +38,9 @@ pub use motion::{
 pub use signature::dof_signature;
 pub use write::{edit, reencode, rename_clip, AnimEdit};
 
-use crate::codec::anim::channel::{reconstruct_component, ChannelFormat, FORMAT_COUNT};
+use crate::codec::anim::channel::{
+    reconstruct_component, ChannelFormat, DecodedChannel, FORMAT_COUNT,
+};
 use crate::codec::anim::{AnimationSource, BlockSource, ChannelWalk, DofSamples};
 use crate::decl::{Aligned, Image, Raw, View};
 use crate::gta5::CrBlockStream;
@@ -399,35 +401,84 @@ impl Animation {
     /// DOF `dof`'s value at `time` seconds: sections 0 to 5, then 10, then 7 and 8 of its block.
     // A section-10 value between two frames is their linear blend, as GTA V's formats blend.
     pub fn sample(&self, dof: usize, time: f32) -> Result<DofSamples, AnimError> {
-        if dof >= self.dofs.len() {
+        self.sampler().sample(dof, time)
+    }
+
+    /// [`Animation::sample`] for many samples, since a sample alone walks its whole block.
+    pub fn sampler(&self) -> Sampler<'_> {
+        Sampler {
+            animation: self,
+            blocks: self.blocks.iter().map(|_| None).collect(),
+            words: None,
+        }
+    }
+}
+
+/// What [`Animation::sample`] returns, a block's channels walked once and the two frames a time
+/// lies between read once for every DOF sampled at it.
+pub struct Sampler<'a> {
+    animation: &'a Animation,
+    /// Each block sampled: its walk, and its channels by DOF in the walk's order.
+    blocks: Vec<Option<(ChannelWalk<'a>, Vec<DecodedChannel>)>>,
+    words: Option<FrameWords>,
+}
+
+/// The block and frame last sampled, and that frame's and the next one's words.
+struct FrameWords {
+    at: (usize, usize),
+    prev: Vec<u32>,
+    next: Vec<u32>,
+}
+
+impl<'a> Sampler<'a> {
+    pub fn sample(&mut self, dof: usize, time: f32) -> Result<DofSamples, AnimError> {
+        let animation: &'a Animation = self.animation;
+        if dof >= animation.dofs.len() {
             return Err(AnimError::NoDof {
-                animation: self.name.clone(),
+                animation: animation.name.clone(),
                 dof,
-                count: self.dofs.len(),
+                count: animation.dofs.len(),
             });
         }
-        let frame = self.time_to_internal_frame(time);
-        let index = self.internal_frame_to_block_index(frame);
-        let Some(block) = self.blocks.get(index) else {
+        let frame = animation.time_to_internal_frame(time);
+        let index = animation.internal_frame_to_block_index(frame);
+        let Some(block) = animation.blocks.get(index) else {
             return Err(AnimError::Blocks {
-                animation: self.name.clone(),
+                animation: animation.name.clone(),
                 why: format!("no block {index}"),
             });
         };
-        let at = self.internal_frame_to_block_time(frame, index);
+        let at = animation.internal_frame_to_block_time(frame, index);
         let tq = (at as usize).min(usize::from(block.stream.num_frames).saturating_sub(2));
         let tr = (at - tq as f32).clamp(0.0, 1.0);
         let decode = |source| AnimError::Decode {
-            animation: self.name.clone(),
+            animation: animation.name.clone(),
             source,
         };
-        let walk = ChannelWalk::new(&block.stream).map_err(decode)?;
-        let (post, pre): (Vec<_>, Vec<_>) = walk
-            .channels_for_dof(dof as u32)
-            .map_err(decode)?
-            .into_iter()
+        let (walk, channels) = match &mut self.blocks[index] {
+            Some(walked) => walked,
+            slot => {
+                let walk = ChannelWalk::new(&block.stream).map_err(decode)?;
+                let mut channels = walk.channels().map_err(decode)?;
+                channels.sort_by_key(|c| c.dof_index);
+                slot.insert((walk, channels))
+            }
+        };
+        let from = channels.partition_point(|c| (c.dof_index as usize) < dof);
+        let (post, pre): (Vec<_>, Vec<_>) = (channels[from..].iter().copied())
+            .take_while(|c| c.dof_index as usize == dof)
             .partition(|c| c.format.is_post_pass());
-        let mut samples = walk.evaluate_channels(&pre, tq, tr, 1).map_err(decode)?;
+        let words = match &mut self.words {
+            Some(words) if words.at == (index, tq) => words,
+            slot => slot.insert(FrameWords {
+                at: (index, tq),
+                prev: walk.frame_words(tq).map_err(decode)?,
+                next: walk.frame_words(tq + 1).map_err(decode)?,
+            }),
+        };
+        let mut samples = walk
+            .evaluate_between(&pre, &words.prev, &words.next, tq, tr, 1)
+            .map_err(decode)?;
         for delta in block.deltas.iter().filter(|d| d.dof as usize == dof) {
             let value = |f: usize| delta.values[f.min(delta.values.len() - 1)];
             let index = usize::from(delta.component).min(3);

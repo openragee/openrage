@@ -1435,3 +1435,32 @@ mod write_derived_and_grown;
 mod write_edit;
 #[path = "anim/write_relayout_tests.rs"]
 mod write_relayout;
+
+#[test]
+fn one_sampler_gives_every_dof_at_every_frame_what_a_sample_alone_gives() {
+    let read = read(&build(&Spec::default()).bytes).expect("reads");
+    let animation = the_animation(&read);
+    let rate = animation.rate().expect("a rate");
+    let mut sampler = animation.sampler();
+    let values = quantised(usize::from(FRAMES), 0);
+    // Back and forth over the frames, so a frame's kept words are asked for again after another's.
+    for frame in (0..usize::from(FRAMES)).chain((0..usize::from(FRAMES)).rev()) {
+        let time = frame as f32 / rate;
+        let mut at = |dof| sampler.sample(dof, time).expect("decodes");
+        let expected = SCALE * values[frame] as f32 + OFFSET;
+        assert!(
+            (at(2).as_slice()[0] - expected).abs() < 1e-3,
+            "frame {frame}"
+        );
+        assert_eq!(at(0).as_slice(), [0.5], "frame {frame}");
+        assert_eq!(at(1).as_slice(), [1.0, 2.0, 3.0], "frame {frame}");
+        assert_eq!(
+            at(2).as_slice(),
+            animation.sample(2, time).expect("decodes").as_slice()
+        );
+    }
+    assert!(matches!(
+        sampler.sample(3, 0.0),
+        Err(AnimError::NoDof { dof: 3, .. })
+    ));
+}

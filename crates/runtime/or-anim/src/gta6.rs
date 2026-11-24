@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use glam::{Mat4, Quat, Vec3};
 use or_io::gta5::{CrBoneData, CrSkeletonData, Vec4V};
-use or_io::gta6::anim::{AnimError, Animation, ClipEntry, ClipGroup};
+use or_io::gta6::anim::{AnimError, Animation, ClipEntry, ClipGroup, Sampler};
 use or_io::gta6::headerless;
 
 use crate::pose::{BoneTransform, Pose};
@@ -390,13 +390,13 @@ impl Binding {
         pose_layers(skeleton, &[(self, animation, 0.0, time)])
     }
 
-    fn mover_at(&self, animation: &Animation, time: f32) -> Result<(Vec3, Quat), AnimError> {
+    fn mover_at(&self, sampler: &mut Sampler, time: f32) -> Result<(Vec3, Quat), AnimError> {
         let v = (self.mover_translation)
-            .map(|d| vector(animation, d, time))
+            .map(|d| vector(sampler, d, time))
             .transpose()?
             .flatten();
         let q = (self.mover_rotation)
-            .map(|d| rotation(animation, d, time))
+            .map(|d| rotation(sampler, d, time))
             .transpose()?
             .flatten();
         Ok((v.unwrap_or(Vec3::ZERO), q.unwrap_or(Quat::IDENTITY)))
@@ -409,11 +409,13 @@ impl Binding {
         start: f32,
         time: f32,
     ) -> Result<(), AnimError> {
+        // One sampler for the pose: a sample alone walks its whole block.
+        let sampler = &mut animation.sampler();
         // The mover is absolute and a window need not start at the origin: the root moves by
         // the mover's change since the window's start, in the start's frame.
         if self.mover_translation.is_some() || self.mover_rotation.is_some() {
-            let from = self.mover_at(animation, start)?;
-            let to = self.mover_at(animation, time)?;
+            let from = self.mover_at(sampler, start)?;
+            let to = self.mover_at(sampler, time)?;
             pose.root_motion = from_window_start(from, to);
         }
         for bone in &self.bones {
@@ -421,17 +423,17 @@ impl Binding {
                 continue;
             };
             if let Some(dof) = bone.translation {
-                if let Some(v) = vector(animation, dof, time)? {
+                if let Some(v) = vector(sampler, dof, time)? {
                     local.translation = v;
                 }
             }
             if let Some(dof) = bone.rotation {
-                if let Some(q) = rotation(animation, dof, time)? {
+                if let Some(q) = rotation(sampler, dof, time)? {
                     local.rotation = q;
                 }
             }
             if let Some(dof) = bone.scale {
-                if let Some(v) = vector(animation, dof, time)? {
+                if let Some(v) = vector(sampler, dof, time)? {
                     local.scale = v;
                 }
             }
@@ -529,15 +531,15 @@ pub fn entry_frame_times(group_start: f32, entry: &ClipEntry, animation: &Animat
         .collect()
 }
 
-fn vector(animation: &Animation, dof: usize, time: f32) -> Result<Option<Vec3>, AnimError> {
-    let s = animation.sample(dof, time)?;
+fn vector(sampler: &mut Sampler, dof: usize, time: f32) -> Result<Option<Vec3>, AnimError> {
+    let s = sampler.sample(dof, time)?;
     let [x, y, z, _] = s.components;
     let v = Vec3::new(x, y, z);
     Ok((s.count >= 3 && v.is_finite()).then_some(v))
 }
 
-fn rotation(animation: &Animation, dof: usize, time: f32) -> Result<Option<Quat>, AnimError> {
-    let s = animation.sample(dof, time)?;
+fn rotation(sampler: &mut Sampler, dof: usize, time: f32) -> Result<Option<Quat>, AnimError> {
+    let s = sampler.sample(dof, time)?;
     let [x, y, z, w] = s.components;
     let q = Quat::from_xyzw(x, y, z, w);
     Ok((s.count == 4 && q.is_finite() && q.length_squared() > 1e-12).then(|| q.normalize()))

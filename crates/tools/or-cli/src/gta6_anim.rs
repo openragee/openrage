@@ -253,17 +253,16 @@ fn print_animation(a: usize, animation: &Animation) -> Result<(), String> {
 fn quaternions(animation: &Animation) -> Result<(usize, usize), String> {
     let (mut samples, mut off) = (0, 0);
     let chunk = usize::from(animation.frames_per_chunk);
-    for (d, dof) in animation.dofs.iter().enumerate() {
-        if dof.kind != 0 {
-            continue;
-        }
-        for (b, block) in animation.blocks.iter().enumerate() {
-            if !block.holds_delta(d) {
-                continue;
-            }
-            for f in 0..animation.frames_in_block(b) {
-                let time = animation.internal_frame_to_time((b * chunk + f) as f32);
-                let value = animation.sample(d, time).map_err(|e| e.to_string())?;
+    let mut sampler = animation.sampler();
+    // Frame by frame, so the sampler reads each frame's words once for every DOF.
+    for (b, block) in animation.blocks.iter().enumerate() {
+        let held: Vec<usize> = (0..animation.dofs.len())
+            .filter(|&d| animation.dofs[d].kind == 0 && block.holds_delta(d))
+            .collect();
+        for f in 0..animation.frames_in_block(b) {
+            let time = animation.internal_frame_to_time((b * chunk + f) as f32);
+            for &d in &held {
+                let value = sampler.sample(d, time).map_err(|e| e.to_string())?;
                 let length = value.as_slice().iter().map(|x| x * x).sum::<f32>().sqrt();
                 samples += 1;
                 let clamped = value.as_slice().contains(&0.0) && length <= 1.0 + CLAMP_SLACK;

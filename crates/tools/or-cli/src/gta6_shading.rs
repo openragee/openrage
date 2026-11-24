@@ -333,6 +333,15 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
                                     resource.at,
                                     std::mem::discriminant(&join),
                                 );
+                                if let rdna_bind::Join::Named { record, named } = &join {
+                                    println!(
+                                        "      is {:?} 0x{:08X} register {}, {} bytes an element",
+                                        record.class,
+                                        named.name_hash,
+                                        record.register,
+                                        record.stride
+                                    );
+                                }
                                 // A pick by a number a buffer states: which buffer, and its member there.
                                 let index = resource.at.as_ref().and_then(|at| at.index.as_ref());
                                 if let Some(or_shader_front::rdna::Index {

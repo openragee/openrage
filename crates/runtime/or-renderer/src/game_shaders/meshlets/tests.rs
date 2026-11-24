@@ -428,3 +428,30 @@ fn a_stage_with_more_constant_buffers_than_a_default_device_gives_draws_once_the
     let (two_less, error) = refused(&device, || prepared(&|n| n >= 2));
     assert_eq!((two_less, error), (Ok(1), None));
 }
+
+#[test]
+fn every_entry_of_an_array_is_bound_and_its_last_is_blank_as_an_unfilled_one_is() {
+    let image = |side: u32| {
+        Some(Arc::new(Image {
+            width: side,
+            height: side,
+            rgba: vec![0; (side * side * 4) as usize],
+            srgb: false,
+        }))
+    };
+    // More images than the array has entries, and one entry among them that none fills.
+    let mut images: Vec<_> = (1..=300).map(image).collect();
+    images[7] = None;
+    let side = |entry, entries| image_at(&images, entry, entries).map(|image| image.width);
+    assert_eq!(side(0, Some(256)), Some(1));
+    assert_eq!(side(7, Some(256)), None);
+    assert_eq!(side(254, Some(256)), Some(255));
+    assert_eq!(
+        side(255, Some(256)),
+        None,
+        "the entry any past the array is"
+    );
+    // A texture bound alone is its image, and a short list leaves the rest blank.
+    assert_eq!(side(0, None), Some(1));
+    assert_eq!(image_at(&images[..2], 2, Some(256)).map(|i| i.width), None);
+}

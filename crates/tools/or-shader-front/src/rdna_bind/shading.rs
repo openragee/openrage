@@ -169,7 +169,7 @@ pub enum Unfed {
     Loop(u32),
     #[error("{0} of its loops are not shown to end by its translation")]
     NotShown(u32),
-    #[error("it picks an entry of an array of textures or buffers by a number it computes, which no device checks")]
+    #[error("it picks an entry of an array of textures or buffers by a number nothing holds to the array's length, and no device checks one")]
     Entry,
     #[error("it is too large and branches too often for the software adapter to draw ({0} stores, {1} branches), so it has not been checked there, and it stays undrawn on a hardware adapter until its owner allows a check")]
     Unchecked(u32, u32),
@@ -325,42 +325,6 @@ const BATCH: u32 = 0x1AB3_F264;
 /// Whether a stage fed `feeds` draws the instances of a batch.
 fn draws_a_batch(feeds: &[Fed]) -> bool {
     feeds.iter().any(|fed| fed.feed == Feed::Zero(Some(BATCH)))
-}
-
-/// Whether `module` takes an entry of an array it binds by a number it computes, or by a stated
-/// one past the array's end.
-// ⚠ No backend checks that number: Direct3D 12 and Vulkan read whatever lies there, or fault.
-fn picks_an_unchecked_entry(module: &naga::Module) -> bool {
-    use naga::{ArraySize, Expression as E, TypeInner};
-    let entries = |global: naga::Handle<naga::GlobalVariable>| match module.types
-        [module.global_variables[global].ty]
-        .inner
-    {
-        TypeInner::BindingArray { size, .. } => Some(match size {
-            ArraySize::Constant(entries) => entries.get(),
-            _ => 0,
-        }),
-        _ => None,
-    };
-    let functions = (module.functions.iter().map(|(_, function)| function))
-        .chain(module.entry_points.iter().map(|entry| &entry.function));
-    for function in functions {
-        let array = |base: naga::Handle<E>| match function.expressions[base] {
-            E::GlobalVariable(global) => entries(global),
-            _ => None,
-        };
-        for (_, expression) in function.expressions.iter() {
-            let unchecked = match *expression {
-                E::Access { base, .. } => array(base).is_some(),
-                E::AccessIndex { base, index } => array(base).is_some_and(|held| index >= held),
-                _ => false,
-            };
-            if unchecked {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 /// The constant buffers a device with default limits gives a stage.
@@ -872,7 +836,9 @@ pub fn feed(
     if let Some(why) = never_ending(&module, &feeds, &approximations) {
         return Err(why);
     }
-    if picks_an_unchecked_entry(&module) {
+    // ⚠ No backend checks an entry of a bound array: Direct3D 12 and Vulkan read whatever lies
+    // past its end, or fault.
+    if !crate::rdna::bound_entries_checked(&module) {
         return Err(Unfed::Entry);
     }
     if reads_skinned_vertices(&feeds) {
@@ -1092,29 +1058,50 @@ var x = 0.0;
         ]));
     }
 
+    /// A mesh program that binds nothing a record names.
+    fn bare_mesh() -> Native {
+        Native {
+            program: crate::rdna::Program {
+                kind: ShaderKind::Mesh,
+                slot: 8,
+                words: Vec::new(),
+                wave32: false,
+                inputs: Vec::new(),
+                vertex_inputs: Vec::new(),
+                position_read: 0,
+                front_face: false,
+                launch: None,
+            },
+            records: Vec::new(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+        }
+    }
+
     #[test]
-    fn an_entry_of_a_bound_array_taken_by_a_computed_number_or_past_its_end_is_told() {
-        let stage = |entry: &str| {
+    fn a_stage_is_fed_where_each_computed_entry_of_a_bound_array_is_held_to_its_length() {
+        let fed = |entry: &str| {
             let text = format!(
-                "@group(3) @binding(0) var heap: binding_array<texture_2d<f32>, 4>;
-@group(1) @binding(1) var<uniform> number: u32;
-@fragment fn main() -> @location(0) vec4<f32> {{
+                "@group(2) @binding(0) var heap: binding_array<texture_2d<f32>, 256>;
+@group(0) @binding(1) var<uniform> number: u32;
+@vertex fn main() -> @builtin(position) vec4<f32> {{
     return textureLoad(heap[{entry}], vec2<i32>(0), 0);
 }}"
             );
-            naga::front::wgsl::parse_str(&text).expect("the WGSL parses")
+            let lowered = Lowered {
+                module: naga::front::wgsl::parse_str(&text).expect("the WGSL parses"),
+                resources: Vec::new(),
+                approximations: Default::default(),
+                half_slots: Default::default(),
+                subgroups: false,
+            };
+            feed(&bare_mesh(), lowered, &program(), &Sgd5Table::default()).map(|_| ())
         };
-        assert!(picks_an_unchecked_entry(&stage("number")));
-        assert!(picks_an_unchecked_entry(&stage("number / 8u")));
-        assert!(!picks_an_unchecked_entry(&stage("3")));
-        // A stated entry past the end is one the reader of WGSL refuses, so it is made by hand.
-        let mut past = stage("3");
-        for (_, expression) in past.entry_points[0].function.expressions.iter_mut() {
-            if let naga::Expression::AccessIndex { index, .. } = expression {
-                *index = 4;
-            }
-        }
-        assert!(picks_an_unchecked_entry(&past));
+        // The last entry stands for any past the array, as the lowering holds one.
+        assert_eq!(fed("min(number / 8u, 255u)"), Ok(()));
+        assert_eq!(fed("3"), Ok(()));
+        assert_eq!(fed("number / 8u"), Err(Unfed::Entry));
+        assert_eq!(fed("min(number, 256u)"), Err(Unfed::Entry));
     }
 
     fn resource(code: u8, slot: u16, name_hash: u32) -> Sgd5Resource {

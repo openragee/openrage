@@ -292,6 +292,15 @@ fn view_of(
     })
 }
 
+/// The image `images` fill entry `entry` of a binding with, an array of `entries` where it is
+/// one; `None` is the blank texel.
+// ⚠ A translated stage takes the last entry of an array for any entry past it, and no device
+// checks one: the last is blank, as an entry no image fills is.
+fn image_at(images: &[Option<Arc<Image>>], entry: usize, entries: Option<usize>) -> Option<&Image> {
+    let last = entries.is_some_and(|entries| entry + 1 >= entries);
+    (images.get(entry).and_then(Option::as_deref)).filter(|_| !last)
+}
+
 /// What one binding is bound to, by its place in the lists a group is made from.
 enum Bound {
     Buffer(usize),
@@ -443,7 +452,8 @@ fn bind(
                 // The entries no image fills share one white texel.
                 let mut blank = None;
                 for entry in 0..entries {
-                    let view = match images.get(entry).and_then(Option::as_deref) {
+                    let array = count.map(|_| entries);
+                    let view = match image_at(images, entry, array) {
                         Some(image) => {
                             view_of(device, queue, *dimension, *sample, Some(image), empty)
                         }

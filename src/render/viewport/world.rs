@@ -170,8 +170,8 @@ pub(super) struct WorldGpu {
     changes: u64,
     /// The models that came, will never come (`None`) or left (`false`), not yet told to the world's thread.
     told: Vec<(ModelRef, Option<bool>)>,
-    /// The models on the device not yet told, for the maps of the level each first draws at are not all there.
-    pending: HashMap<ModelRef, usize>,
+    /// The models on the device not yet told, for the maps they sample are not all there.
+    pending: HashSet<ModelRef>,
     laid_for: Option<LaidFor>,
     layout: Layout,
     /// When the last frame was and where the camera stood in it.
@@ -278,7 +278,7 @@ impl RenderBridge {
                     let before = world.model_bytes;
                     let slot = world.put(&self.device, &self.queue, &budgets, &read, (frame, eye));
                     uploaded += world.model_bytes - before;
-                    world.pending.insert(model, 0);
+                    world.pending.insert(model);
                     viewer.on_device(model);
                     slot
                 }

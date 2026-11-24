@@ -286,9 +286,18 @@ pub fn stores_and_branches(module: &naga::Module) -> (u32, u32) {
 // Nothing found says one is unsafe on a hardware adapter, and none has been seen drawn on one.
 const CHECKED_ON_SOFTWARE: u64 = 800_000;
 
+/// The same for a pixel stage, most of whose branches are the `switch` that picks a texture.
+// A four-layer parallax stage of 13,681 stores and 3,515 branches ended the process after its
+// first frame; a three-layer one of 7,746 and 2,152, the largest that draws, is under it.
+const PIXEL_CHECKED_ON_SOFTWARE: u64 = 17_000_000;
+
 /// Whether a stage of so many stores and branches is past what the software adapter draws.
-fn past_the_software_adapter(stores: u32, branches: u32) -> bool {
-    u64::from(stores) * u64::from(branches) > CHECKED_ON_SOFTWARE
+fn past_the_software_adapter(mesh: bool, stores: u32, branches: u32) -> bool {
+    let most = match mesh {
+        true => CHECKED_ON_SOFTWARE,
+        false => PIXEL_CHECKED_ON_SOFTWARE,
+    };
+    u64::from(stores) * u64::from(branches) > most
 }
 
 /// The two buffers the game's compute pass that skins a ped writes each frame, by the hashes of
@@ -856,10 +865,8 @@ pub fn feed(
             header,
         });
     }
-    // Held to a mesh stage: pixel stages far past the measure drew on the software adapter, so
-    // it says nothing of them.
     let (stores, branches) = stores_and_branches(&module);
-    if mesh && !unguarded() && past_the_software_adapter(stores, branches) {
+    if !unguarded() && past_the_software_adapter(mesh, stores, branches) {
         return Err(Unfed::Unchecked(stores, branches));
     }
     if let Some(why) = never_ending(&module, &feeds, &approximations) {
@@ -1038,13 +1045,16 @@ var x = 0.0;
     #[test]
     fn a_stage_past_what_the_software_adapter_draws_is_told_by_stores_times_branches() {
         // 4,000 stores and 200 branches drew there; 4,020 and 201 are the first past it.
-        assert!(!past_the_software_adapter(4000, 200));
-        assert!(past_the_software_adapter(4020, 201));
+        assert!(!past_the_software_adapter(true, 4000, 200));
+        assert!(past_the_software_adapter(true, 4020, 201));
         // Many stores with few branches, and many branches over few stores, are not past it.
-        assert!(!past_the_software_adapter(9000, 60));
-        assert!(!past_the_software_adapter(1800, 360));
+        assert!(!past_the_software_adapter(true, 9000, 60));
+        assert!(!past_the_software_adapter(true, 1800, 360));
+        // A pixel stage branches far more for its size: one that draws, and one that does not.
+        assert!(!past_the_software_adapter(false, 7746, 2152));
+        assert!(past_the_software_adapter(false, 13681, 3515));
         // The numbers are multiplied past what 32 bits hold.
-        assert!(past_the_software_adapter(u32::MAX, u32::MAX));
+        assert!(past_the_software_adapter(false, u32::MAX, u32::MAX));
     }
 
     #[test]

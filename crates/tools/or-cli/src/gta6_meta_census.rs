@@ -1,16 +1,16 @@
 //! `rpf scan-census`: the metadata rows of a GTA VI archive, or with `--kind` those of a kind, a
-//! family or all, through `rpf scan-open`, each in a process of its own, tallied by what was read,
+//! family or all, but those `--not` names, through `rpf scan-open`, each in a process of its own, tallied by what was read,
 //! by refusal and by save line; nothing is written.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::process::Command;
 
-use or_io::container::rpf::{Rpf9BodyKind, Rpf9Content, Rpf9Family, Rpf9Scan};
+use or_io::container::rpf::{Rpf9BodyKind, Rpf9Content, Rpf9Family, Rpf9Scan, Rpf9ScanFind};
 use or_job::Step;
 
 const USAGE: &str =
-    "usage: rpf scan-census <archive.rpf> [--from <offset>] [--to <offset>] [--every <n>] [--kind <kind>|all] [--sample <n>] [--jobs <n>] [--limit <bytes>]";
+    "usage: rpf scan-census <archive.rpf> [--from <offset>] [--to <offset>] [--every <n>] [--kind <kind>|all] [--not <kind>] [--sample <n>] [--jobs <n>] [--limit <bytes>]";
 
 /// What `scan-open` says when a reader of metadata, not the container, refuses a body.
 const READER_REFUSALS: [&str; 4] = [
@@ -41,6 +41,7 @@ pub(crate) fn cmd_scan_census(args: &[String]) -> Result<(), String> {
     let (sample, args) = super::rpf::split_offset_flag(&args, "--sample")?;
     let (jobs, args) = super::rpf::split_offset_flag(&args, "--jobs")?;
     let (kind, args) = super::rpf::split_value(&args, "--kind")?;
+    let (not, args) = super::rpf::split_value(&args, "--not")?;
     let [path] = args.as_slice() else {
         return Err(USAGE.to_string());
     };
@@ -58,12 +59,7 @@ pub(crate) fn cmd_scan_census(args: &[String]) -> Result<(), String> {
         }
         let find = find.map_err(|e| e.to_string())?;
         let row = super::rpf::scan_row(&find);
-        let admitted = match kind.as_deref() {
-            None => is_metadata_row(&find.kind),
-            Some("all") => true,
-            Some(k) => k == row || Rpf9Family::parse(k) == Some(Rpf9Family::of(&find)),
-        };
-        if !admitted {
+        if !admits(kind.as_deref(), not.as_deref(), &find, &row) {
             continue;
         }
         seen += 1;
@@ -129,6 +125,18 @@ pub(crate) fn cmd_scan_census(args: &[String]) -> Result<(), String> {
         (false, None, 0) => Ok(()),
         (false, None, n) => Err(format!("{n} bodies were refused by a reader of metadata")),
     }
+}
+
+/// Whether a census of `kind`, but not of `not`, opens `find`, whose row is `row`: a kind is a
+/// row as `rpf scan` tallies it, a family as `rpf list --kind` names it, or `all`.
+fn admits(kind: Option<&str>, not: Option<&str>, find: &Rpf9ScanFind, row: &str) -> bool {
+    let is = |k: &str| k == row || Rpf9Family::parse(k) == Some(Rpf9Family::of(find));
+    let asked = match kind {
+        None => is_metadata_row(&find.kind),
+        Some("all") => true,
+        Some(k) => is(k),
+    };
+    asked && !not.is_some_and(is)
 }
 
 /// At most `sample` rows of each row label, evenly spaced among that label's, in the order found.
@@ -271,6 +279,57 @@ fn numbers_as_n(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_census_opens_the_kind_asked_for_but_not_the_kind_it_is_told_to_leave() {
+        let find = |kind| Rpf9ScanFind {
+            offset: 0x1000,
+            kind,
+            span: 16,
+            stored_len: Some(16),
+            inflated_len: Some(16),
+            container: None,
+        };
+        let entry = find(Rpf9BodyKind::FirstEntry { head: *b"FORC" });
+        let rbf = find(Rpf9BodyKind::RawDeflate {
+            content: Rpf9Content::Rbf,
+        });
+        // With no kind a census is of metadata rows; `all` takes every row.
+        assert!(admits(None, None, &rbf, "raw deflate rbf"));
+        assert!(!admits(None, None, &entry, "first entry"));
+        assert!(admits(Some("all"), None, &entry, "first entry"));
+        // A row or a family is left out by name, and only it.
+        assert!(!admits(
+            Some("all"),
+            Some("archives"),
+            &entry,
+            "first entry"
+        ));
+        assert!(!admits(
+            Some("all"),
+            Some("first entry"),
+            &entry,
+            "first entry"
+        ));
+        assert!(admits(
+            Some("all"),
+            Some("archives"),
+            &rbf,
+            "raw deflate rbf"
+        ));
+        assert!(admits(
+            Some("raw deflate rbf"),
+            None,
+            &rbf,
+            "raw deflate rbf"
+        ));
+        assert!(!admits(
+            Some("raw deflate rbf"),
+            None,
+            &entry,
+            "first entry"
+        ));
+    }
 
     #[test]
     fn a_sample_takes_each_row_evenly_and_a_small_row_whole() {

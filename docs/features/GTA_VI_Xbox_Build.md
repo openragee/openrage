@@ -171,7 +171,7 @@ Every command is `openrage-cli` and a row below; `openrage-cli rpf` and `openrag
 | `rpf scan-particles` | a particle effects list's rules; `--validate` checks its in-place writer |
 | `rpf scan-relayout` | whether the loose-resource writer derives each stored resource's layout |
 | `rpf scan-maps` | every map body's structure, and the share of maps, archetypes and entities the kept names name; `--list`, `--check`, `--extents`, and `--names` to keep the map names the rules derive |
-| `rpf scan-census` | bodies opened through `rpf scan-open`, a process each: the metadata rows, or with `--kind` those of a kind, a family or all, at most `--sample` of each row, `--jobs` at a time; how many read and were refused per row, the refusals ranked, and the root type of each metadata document |
+| `rpf scan-census` | bodies opened through `rpf scan-open`, a process each: the metadata rows, or with `--kind` those of a kind, a family or all, but those `--not` names, at most `--sample` of each row, `--jobs` at a time; how many read and were refused per row, the refusals ranked, and the root type of each metadata document |
 | `rpf scan-world` | a census of an archive's world data, and the lane graph joined |
 | `rpf scan-lights` | the lights of one map body, each where it stands in the world |
 | `rpf scan-names` | harvests names into the kept vocabulary; `--names` adds the lines of a file of names the user supplies; `--pack` counts the texture keys they name |

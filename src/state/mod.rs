@@ -195,6 +195,7 @@ mod gta6_gltf_import;
 pub(crate) mod gta6_head;
 mod gta6_install_harvest;
 pub(crate) mod gta6_install_scan;
+pub(crate) mod gta6_layer_index;
 pub(crate) mod gta6_map;
 mod gta6_map_edit;
 mod gta6_map_extents;

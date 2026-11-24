@@ -144,7 +144,7 @@ impl PackIndex {
 }
 
 /// The folder whose packs serve `doc`: the install or folder open around its file, else the folder its file, or its archive, is in.
-fn root_of(state: &AppState, doc: &Document) -> Option<PathBuf> {
+pub(super) fn root_of(state: &AppState, doc: &Document) -> Option<PathBuf> {
     let file = doc.path.as_deref()?;
     let open = (state.documents.iter())
         .filter(|d| matches!(d.kind, DocumentKind::GameRoot | DocumentKind::Folder))
@@ -285,9 +285,15 @@ impl AppState {
             return false;
         };
         let doc_id = doc.id;
-        let misses = self.texture_report.document == Some(doc_id)
-            && !self.texture_report.missing().is_empty();
-        if !misses || !matches!(doc.payload, DocPayload::Gta6Drawable(_)) {
+        // The maps the drawable names and nothing open holds, then the tiles of its material.
+        let mut missing: Vec<u64> = match self.texture_report.document == Some(doc_id) {
+            true => (self.texture_report.missing().into_iter())
+                .filter_map(key_of)
+                .collect(),
+            false => Vec::new(),
+        };
+        missing.extend(super::gta6_layer_index::tile_keys(self));
+        if missing.is_empty() || !matches!(doc.payload, DocPayload::Gta6Drawable(_)) {
             return false;
         }
         let root = match self.texture_packs.asked.get(&doc_id) {
@@ -306,9 +312,8 @@ impl AppState {
             let Some(index) = built.as_ref() else {
                 return false;
             };
-            (self.texture_report.missing().into_iter())
-                .filter_map(key_of)
-                .filter_map(|key| index.keys.get(&key))
+            (missing.iter())
+                .filter_map(|key| index.keys.get(key))
                 .filter_map(|&at| index.packs.get(at as usize).cloned())
                 .collect()
         };

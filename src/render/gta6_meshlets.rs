@@ -12,6 +12,8 @@ use or_io::hash::string_hash_str;
 use or_renderer::game_shaders::mesh::Image;
 use or_renderer::game_shaders::meshlets::{Feed, MeshletSurface, ROW};
 
+use super::gta6_layers::Material;
+use crate::state::gta6_layer_index::{self, Index};
 use crate::state::gta6_resource::{drawable_of, effect_name};
 use crate::state::{gta6_shaders, AppState, DocPayload};
 
@@ -229,13 +231,15 @@ fn pass_of<'p>(
 }
 
 /// What fills each binding of `stage` for `geometry` drawn with `shader`, its textures picked
-/// from `heap`. Also how many bindings are left at nought.
+/// from `heap`, with `record` as the record its material's numbers head. Also how many
+/// bindings are left at nought.
 fn feeds(
     stage: &Stage,
     geometry: &Geometry,
     shader: &Shader,
     heap: &[Option<Arc<Image>>],
     rows: &[u32],
+    record: Option<&[u32]>,
     out: &mut BTreeMap<(u32, u32), Feed>,
 ) -> usize {
     let mut zeroed = 0;
@@ -291,9 +295,10 @@ fn feeds(
             Filled::Listed(listed) => {
                 let last = listed.iter().map(|(dword, _)| *dword).max();
                 let mut words = vec![0u32; last.map_or(0, |last| last as usize + 1)];
-                if let Some(record) = or_renderer::game_shaders::meshlets::record_aid() {
+                let aid = or_renderer::game_shaders::meshlets::record_aid();
+                if let Some(record) = aid.as_deref().or(record) {
                     words.resize(words.len().max(record.len()), 0);
-                    words[..record.len()].copy_from_slice(&record);
+                    words[..record.len()].copy_from_slice(record);
                 }
                 for (dword, number) in listed {
                     words[*dword as usize] = number + 1;
@@ -318,21 +323,72 @@ fn feeds(
     zeroed
 }
 
+/// Whether `pass` reads a record a material's texture numbers head.
+fn reads_a_record(pass: &Gta6ShadingPass) -> bool {
+    let mut feeds = pass.mesh.feeds.iter().chain(&pass.pixel.feeds);
+    feeds.any(|fed| matches!(fed.feed, Filled::Listed(_)))
+}
+
+/// The record of the layered material `worn`, its layers' textures added to `heap`: `tile` finds
+/// the image of one by its key, and one it does not find is the blank entry.
+// ponytail: the game numbers a default texture where a layer names none, which is not read yet;
+// such a layer takes the blank entry.
+fn record_of(
+    worn: &(Arc<Index>, Material),
+    heap: &mut Vec<Option<Arc<Image>>>,
+    tile: &mut dyn FnMut(u64) -> Option<Arc<Image>>,
+) -> Vec<u32> {
+    let mut numbers = BTreeMap::new();
+    super::gta6_layers::record(&worn.1, &worn.0.layered, &mut |key| {
+        let mut number = || match tile(key) {
+            Some(image) => {
+                heap.push(Some(image));
+                heap.len() as u32 - 1
+            }
+            None => 0,
+        };
+        match key {
+            0 => 0,
+            key => *numbers.entry(key).or_insert_with(&mut number),
+        }
+    })
+}
+
 /// The surface of `geometry` drawn by `pass`, and how many of its bindings are left at nought.
+/// `worn` is the layered material the drawable wears, and `tile` finds a texture of its layers.
 fn surface(
     pass: &Arc<Gta6ShadingPass>,
     geometry: &Geometry,
     shader: &Shader,
     texture: &mut dyn FnMut(u32) -> Option<Arc<Image>>,
+    worn: Option<&(Arc<Index>, Material)>,
+    tile: &mut dyn FnMut(u64) -> Option<Arc<Image>>,
 ) -> Option<(MeshletSurface, usize)> {
     // The meshlet count is the low half of the index data's first word.
     let head = geometry.index_data.first_chunk::<4>()?;
     let meshlets = u32::from_le_bytes(*head) & 0xFFFF;
     let mut filled = BTreeMap::new();
-    let heap = heap(pass, texture);
+    let mut heap = heap(pass, texture);
+    let record = worn.map(|worn| record_of(worn, &mut heap, tile));
+    let record = record.as_deref();
     let rows = rows_of(pass);
-    let zeroed = feeds(&pass.mesh, geometry, shader, &heap, &rows, &mut filled)
-        + feeds(&pass.pixel, geometry, shader, &heap, &rows, &mut filled);
+    let zeroed = feeds(
+        &pass.mesh,
+        geometry,
+        shader,
+        &heap,
+        &rows,
+        record,
+        &mut filled,
+    ) + feeds(
+        &pass.pixel,
+        geometry,
+        shader,
+        &heap,
+        &rows,
+        record,
+        &mut filled,
+    );
     let surface = MeshletSurface {
         vertex: Arc::clone(&pass.mesh.module),
         fragment: Arc::clone(&pass.pixel.module),
@@ -388,6 +444,15 @@ pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
         decoding: false,
     };
     let decoding = std::cell::Cell::new(false);
+    // The layered material the drawable wears, asked for by the first pass that reads a record.
+    let mut worn: Option<Option<(Arc<Index>, Material)>> = None;
+    let mut tile = |key: u64| {
+        let stored = || super::gta6_shaded::stored_level(state, selection, key);
+        decoded(key, stored).unwrap_or_else(|()| {
+            decoding.set(true);
+            None
+        })
+    };
     // The model view uploads a mesh for each geometry whose positions read, in this order.
     let drawn = (models.iter())
         .flat_map(|model| model.geometries.iter().flatten())
@@ -429,7 +494,14 @@ pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
                 None
             })
         };
-        if let Some((surface, zeroed)) = surface(pass, geometry, shader, &mut texture) {
+        let worn = match reads_a_record(pass) {
+            true => worn
+                .get_or_insert_with(|| gta6_layer_index::worn(state, true))
+                .as_ref(),
+            false => None,
+        };
+        let drawn = surface(pass, geometry, shader, &mut texture, worn, &mut tile);
+        if let Some((surface, zeroed)) = drawn {
             out.surfaces.push(surface);
             out.of.push((mesh, effect));
             out.zeroed += zeroed;

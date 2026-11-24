@@ -6,6 +6,7 @@ pub mod gpu_budget;
 pub mod gta6_cloth;
 pub mod gta6_drawable;
 pub mod gta6_glass_panes;
+pub(crate) mod gta6_layers;
 pub(crate) mod gta6_meshlets;
 pub(crate) mod gta6_shaded;
 pub mod heel_floor;

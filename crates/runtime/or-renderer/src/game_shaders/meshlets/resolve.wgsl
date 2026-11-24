@@ -40,6 +40,9 @@ struct Light {
     // laid, then the middle of its square, how high it lies and half its side.
     laid: vec4<f32>,
     plane: vec4<f32>,
+    // The nine numbers a probe holds of the light from all around, a row each; the first row's
+    // last word is one where they are stated.
+    around: array<vec4<f32>, 9>,
     // From the world to the clip space.
     project: mat4x4<f32>,
 }
@@ -76,6 +79,17 @@ const LUMINANCE: vec3<f32> = vec3<f32>(0.2125, 0.7154, 0.0721);
 // What the sky and the ground give along a way: the one above, the other below.
 fn surroundings(way: vec3<f32>) -> vec3<f32> {
     return mix(light.ground.rgb, light.sky.rgb, way.z * 0.5 + 0.5);
+}
+
+// What falls on a surface that faces `n` of the light the probe's nine numbers hold, as GTA VI's
+// lighting program takes it of a probe.
+fn falls_on(n: vec3<f32>) -> vec3<f32> {
+    let fallen = 0.886227 * light.around[0].rgb
+        + 1.023328 * (light.around[1].rgb * n.y + light.around[2].rgb * n.z + light.around[3].rgb * n.x)
+        + 0.858086 * (light.around[4].rgb * n.x * n.y + light.around[5].rgb * n.y * n.z + light.around[7].rgb * n.x * n.z)
+        + (0.743125 * n.z * n.z - 0.247708) * light.around[6].rgb
+        + 0.429043 * (n.x * n.x - n.y * n.y) * light.around[8].rgb;
+    return max(fallen, vec3<f32>(0.0));
 }
 
 fn normal_of(packed_normal: vec4<f32>) -> vec3<f32> {
@@ -237,12 +251,15 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
         let shape = (1.0 + k * from_light) * (1.0 + k * from_view) + back * (from_light + from_view + from_light * from_view * (back - 1.0));
         matte = vec3<f32>((1.0 - 0.3377483 * a) * shape / PI);
     }
+    // The light from all around is a probe's nine numbers where they are stated, else the two
+    // colours of the sky and the ground.
+    let probed = light.around[0].w > 0.0;
     var direct = vec3<f32>(0.0);
     if n_l > 0.0 {
         // A light the clouds hide goes towards what the surroundings give along its way, then
         // the model's own shadow and the clouds' dim it.
         var from_light = light.sun.rgb;
-        let hazed = max(surroundings(l) * PI, vec3<f32>(0.0)) * light.clouds.w / max(open, 0.001);
+        let hazed = select(surroundings(l) * PI, falls_on(l), probed) * light.clouds.w / max(open, 0.001);
         from_light += light.clouds.z * (1.0 - open) * (hazed - from_light);
         from_light *= sunlit(surface.at, n_l, pixel) * open;
         direct = (albedo * (1.0 - reflected) * matte + gloss) * from_light * n_l;
@@ -250,7 +267,8 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
     // From all around: the sky and the ground on the colour, and along the mirrored way on the
     // gloss, less as the surface is rougher.
     let grazing = f0 + (max(vec3<f32>(1.0 - roughness), f0) - f0) * pow(1.0 - n_v, 5.0);
-    let around = albedo * surroundings(n) + grazing * surroundings(reflect(-v, n)) * (1.0 - roughness);
+    let matte_around = select(surroundings(n), falls_on(n) / PI, probed);
+    let around = albedo * matte_around + grazing * surroundings(reflect(-v, n)) * (1.0 - roughness);
     return direct + around;
 }
 

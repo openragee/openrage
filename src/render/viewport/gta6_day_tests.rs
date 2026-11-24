@@ -207,6 +207,19 @@ fn the_cycle_states_the_light_by_its_lux_its_tint_its_multipliers_and_the_air() 
     assert_eq!(noon.scene.clouds.open, 0.75);
     let ground = (noon.sky + noon.sun * 0.75 * noon.towards.z / PI) * GROUND * 2.0;
     assert!(close(noon.ground, ground), "{:?}", noon.ground);
+    // The light from all around is a probe's nine numbers of that sky and that ground: what
+    // falls on a surface that faces up is the sky's, and on one that faces down the ground's,
+    // as far as nine numbers hold a sky that is brighter towards the sun.
+    use or_renderer::game_shaders::meshlets::falls_on;
+    let nine = noon.scene.around.expect("gathered");
+    let within = |a: Vec3, b: Vec3| (a - b).length() <= 0.12 * b.length();
+    let (up, down) = (falls_on(&nine, Vec3::Z), falls_on(&nine, -Vec3::Z));
+    assert!(within(up, noon.sky * PI), "{up:?} {:?}", noon.sky * PI);
+    assert!(
+        within(down, noon.ground * PI),
+        "{down:?} {:?}",
+        noon.ground * PI
+    );
     // A shadow that shows by half hides half as much, and the rows of the light under it are
     // the cycle's.
     let mut stated = Keyframe::default();

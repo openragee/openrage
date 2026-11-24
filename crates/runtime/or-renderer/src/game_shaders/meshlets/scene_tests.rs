@@ -234,3 +234,47 @@ fn a_ground_laid_under_the_model_is_lit_where_no_surface_is_and_takes_the_model_
     // The model is drawn over its ground as it was without.
     assert_eq!(seen_at(ground, (0.0, -0.1)), seen_at(bare, (0.0, -0.1)));
 }
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_probe_s_nine_numbers_light_the_floor_as_the_sky_they_were_gathered_of() {
+    // No sun. A sky and a ground of one dim colour every way, as two colours and as a probe's
+    // nine numbers: the floor, which faces up, is lit alike by both.
+    let dim = 0.08;
+    let unlit = Sky {
+        sun: Vec3::ZERO,
+        ..leaning()
+    };
+    let two = Sky {
+        sky: Vec3::splat(dim),
+        ground: Vec3::splat(dim),
+        ..unlit
+    };
+    // One colour every way is the first number alone: that colour by the angle of the sphere,
+    // weighed as the first number weighs.
+    let mut nine = [Vec3::ZERO; 9];
+    nine[0] = Vec3::splat(dim * 0.282_095 * 4.0 * std::f32::consts::PI);
+    let mut probed = unlit;
+    probed.scene.around = Some(nine);
+    let Some(frames) = frames_of(
+        "a_probe_s_nine_numbers_light_the_floor",
+        two_levels(true),
+        &[two, probed, unlit],
+    ) else {
+        return;
+    };
+    let (by_two, by_nine) = (seen_at(&frames[0], OPEN), seen_at(&frames[1], OPEN));
+    assert!(by_two[0] > 30, "{by_two:?}");
+    assert!(
+        by_two[0].abs_diff(by_nine[0]) <= 2,
+        "{by_two:?} {by_nine:?}"
+    );
+    assert_eq!(
+        seen_at(&frames[2], OPEN)[..3],
+        [0; 3],
+        "no numbers, no light"
+    );
+}

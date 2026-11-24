@@ -931,7 +931,7 @@ impl Default for Sky {
 }
 
 /// The bytes of what the resolve reads of a frame's light.
-const LIGHT_BYTES: usize = 480;
+const LIGHT_BYTES: usize = 624;
 /// The format of the texel the surfaces are metered into: the stops the frame is exposed by.
 const METERED: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -960,8 +960,8 @@ fn light_bytes(lighting: &Lighting, casts: bool) -> [u8; LIGHT_BYTES] {
     let to_tile = sun_shadow::cast_of(sky).unwrap_or(Mat4::IDENTITY);
     words[72..88].copy_from_slice(&to_tile.to_cols_array());
     words[88..92].copy_from_slice(&sun_shadow::words(sky, casts));
-    words[92..104].copy_from_slice(&sky.scene.words());
-    words[104..120].copy_from_slice(&lighting.view_proj.to_cols_array());
+    words[92..140].copy_from_slice(&sky.scene.words());
+    words[140..156].copy_from_slice(&lighting.view_proj.to_cols_array());
     bytemuck::cast(words)
 }
 
@@ -1341,7 +1341,7 @@ impl MeshletScene {
 mod scene;
 mod sun_shadow;
 mod tone;
-pub use scene::{Clouds, Scene};
+pub use scene::{falls_on, nine_of, Clouds, Scene};
 pub use sun_shadow::to_tile;
 pub use tone::{metered, Curve, Filmic, Tone};
 

@@ -170,7 +170,25 @@ pub fn updates_64_bit_textures(adapter: &wgpu::Adapter) -> bool {
 }
 
 /// AMD's number as the vendor of an adapter.
-const AMD: u32 = 0x1002;
+pub(crate) const AMD: u32 = 0x1002;
+
+/// A made-up adapter: `vendor`'s card `device` under `backend`.
+#[cfg(test)]
+pub(crate) fn made_up(vendor: u32, device: u32, backend: wgpu::Backend) -> wgpu::AdapterInfo {
+    wgpu::AdapterInfo {
+        name: "a made-up card".into(),
+        vendor,
+        device,
+        device_type: wgpu::DeviceType::IntegratedGpu,
+        device_pci_bus_id: String::new(),
+        driver: String::new(),
+        driver_info: String::new(),
+        backend,
+        subgroup_min_size: 4,
+        subgroup_max_size: 64,
+        transient_saves_memory: false,
+    }
+}
 
 /// Whether `info` is an AMD adapter under Direct3D 12, whose driver ends the process while it
 /// builds some passes ([`refused_by_driver`]).
@@ -288,22 +306,7 @@ mod tests {
         assert!(software_or_not_asked(false, DiscreteGpu, "a").is_ok());
     }
 
-    /// A made-up adapter: `vendor`'s card `device` under `backend`.
-    fn adapter(vendor: u32, device: u32, backend: wgpu::Backend) -> wgpu::AdapterInfo {
-        wgpu::AdapterInfo {
-            name: "a made-up card".into(),
-            vendor,
-            device,
-            device_type: wgpu::DeviceType::IntegratedGpu,
-            device_pci_bus_id: String::new(),
-            driver: String::new(),
-            driver_info: String::new(),
-            backend,
-            subgroup_min_size: 4,
-            subgroup_max_size: 64,
-            transient_saves_memory: false,
-        }
-    }
+    use super::made_up as adapter;
 
     const NVIDIA: u32 = 0x10DE;
 

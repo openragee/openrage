@@ -676,31 +676,46 @@ fn build_checked(
     built
 }
 
+/// The mesh stage and the pixel stage a pass of `stages` is built from on the adapter `info`:
+/// each as it is, or the one a developer's aid of `aids` puts in its place. `Err` says why no
+/// pass of theirs is built there.
+fn stages_drawn(
+    info: &wgpu::AdapterInfo,
+    stages: &(Arc<naga::Module>, Arc<naga::Module>),
+    aids: &Aids,
+) -> Result<(naga::Module, naga::Module), String> {
+    // ⚠ A loop the guard would have refused may never end, and a hardware adapter that waits on one is lost.
+    if aids.unguarded && info.device_type != wgpu::DeviceType::Cpu {
+        return Err("an unguarded stage is drawn on a software adapter only".to_string());
+    }
+    let fragment = match &aids.pixel {
+        Some(file) => stage_of(file)?,
+        None => (*stages.1).clone(),
+    };
+    let vertex = match &aids.mesh {
+        Some(file) => stage_of(file)?,
+        None => (*stages.0).clone(),
+    };
+    if let Some(why) = crate::instance::refused_by_driver(info, &vertex) {
+        return Err(why);
+    }
+    Ok((vertex, fragment))
+}
+
 /// The pass of the two `stages` built for `device`.
 fn build(
     device: &wgpu::Device,
     stages: (Arc<naga::Module>, Arc<naga::Module>),
     compiled: Option<&wgpu::PipelineCache>,
 ) -> Result<Built, String> {
-    // ⚠ A loop the guard would have refused may never end, and a hardware adapter that waits on one is lost.
-    if aids().unguarded && device.adapter_info().device_type != wgpu::DeviceType::Cpu {
-        return Err("an unguarded stage is drawn on a software adapter only".to_string());
-    }
-    let fragment = match &aids().pixel {
-        Some(file) => stage_of(file)?,
-        None => (*stages.1).clone(),
-    };
+    // The two stages come linked: the vertex stage gives the locations the pixel stage takes.
+    let (vertex, fragment) = stages_drawn(&device.adapter_info(), &stages, aids())?;
     let mut targets = formats_of(&fragment)?;
     // The first target holds linear light, which eight bits band in the darks: it is kept
     // encoded, as a colour target is, and read back as the light the program wrote.
     if let Some(Some(colour)) = targets.first_mut() {
         colour.format = colour.format.add_srgb_suffix();
     }
-    // The two stages come linked: the vertex stage gives the locations the pixel stage takes.
-    let vertex = match &aids().mesh {
-        Some(file) => stage_of(file)?,
-        None => (*stages.0).clone(),
-    };
     let mut layouts = Vec::new();
     for group in 0..GROUPS {
         let (module, visibility) = match group % 2 {

@@ -455,3 +455,41 @@ fn every_entry_of_an_array_is_bound_and_its_last_is_blank_as_an_unfilled_one_is(
     assert_eq!(side(0, None), Some(1));
     assert_eq!(image_at(&images[..2], 2, Some(256)).map(|i| i.width), None);
 }
+
+#[test]
+fn a_pass_whose_mesh_stage_nests_loops_is_refused_at_build_on_an_amd_card_under_direct3d_12() {
+    use crate::instance::{made_up, AMD};
+    use wgpu::Backend::{Dx12, Vulkan};
+    let mesh = |work: &str| {
+        format!(
+            "@vertex fn main(@builtin(vertex_index) at: u32) -> @builtin(position) vec4<f32> {{
+                var sum = 0u;
+                {work}
+                return vec4<f32>(f32(sum));
+            }}"
+        )
+    };
+    let nested =
+        mesh("for (var i = 0u; i < at; i++) { for (var j = 0u; j < i; j++) { sum += j; } }");
+    let pixel = "@fragment fn main() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }";
+    let stages = (Arc::new(wgsl(&nested)), Arc::new(wgsl(pixel)));
+    let amd = made_up(AMD, 0x1681, Dx12);
+    let refused = stages_drawn(&amd, &stages, &Aids::default()).err();
+    let why = refused.expect("the pass is refused");
+    assert!(why.contains("AMD") && why.contains("Vulkan"), "{why}");
+    // The same card under Vulkan builds it.
+    let vulkan = made_up(AMD, 0x1681, Vulkan);
+    assert!(stages_drawn(&vulkan, &stages, &Aids::default()).is_ok());
+    // A mesh stage a developer's aid puts in its place is the one the driver is handed.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("mesh.wgsl");
+    std::fs::write(&file, mesh("sum = at;")).unwrap();
+    let aided = Aids {
+        mesh: Some(file.to_string_lossy().into_owned()),
+        ..Aids::default()
+    };
+    assert!(stages_drawn(&amd, &stages, &aided).is_ok());
+    let plain = (Arc::new(wgsl(&mesh("sum = at;"))), Arc::clone(&stages.1));
+    std::fs::write(&file, &nested).unwrap();
+    assert!(stages_drawn(&amd, &plain, &aided).is_err());
+}

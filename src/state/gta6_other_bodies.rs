@@ -136,8 +136,8 @@ fn move_lines(outline: &MoveOutline) -> Vec<String> {
     };
     let mut lines = vec![
         tr!(
-            "A GTA VI MoVE network at version 0x13 whose name hash is hash_{hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}.",
-            hash = format!("{:08X}", head.name_hash),
+            "A GTA VI MoVE network at version 0x13 whose name hash is {hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}.",
+            hash = super::gta6_names::said32(head.name_hash),
             a = head.list_a.len(),
             b = head.list_b.len(),
             d = head.list_d.len(),

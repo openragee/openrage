@@ -12730,8 +12730,8 @@ msgstr[2] "Фильтр кадров с именем {name}, {count} дорож�
 msgid "Track {track}: weight {weight}, group {group}, word at 0x2C {word}."
 msgstr "Дорожка {track}: вес {weight}, группа {group}, слово по смещению 0x2C {word}."
 
-msgid "Bone hash_{bone}: kind {kind}, flags {flags}, values {values}."
-msgstr "Кость hash_{bone}: тип {kind}, флаги {flags}, значения {values}."
+msgid "Bone {bone}: kind {kind}, flags {flags}, values {values}."
+msgstr "Кость {bone}: тип {kind}, флаги {flags}, значения {values}."
 
 msgid "An animation record named {name}, with settings for {count} skeleton bone."
 msgid_plural "An animation record named {name}, with settings for {count} skeleton bones."
@@ -14329,8 +14329,8 @@ msgstr "Его вид — {kind}, а слово по смещению {at} ра�
 msgid "It lies on the height map tile of the same entry number in the nested archive beside its own; with no archive table, the scan's order of the two archives' bodies is their entry order."
 msgstr "Она лежит на тайле карты высот с тем же номером записи во вложенном архиве рядом с её собственным; без таблицы архива порядком записей считается порядок, в котором сканирование нашло тела двух архивов."
 
-msgid "A GTA VI MoVE network at version 0x13 whose name hash is hash_{hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
-msgstr "Сеть MoVE GTA VI версии 0x13, хеш имени которой — hash_{hash}: списки из {a}, {b} и {d} записей, затем корневой узел типа {kind}, с индексом {index} и идентификатором {id}."
+msgid "A GTA VI MoVE network at version 0x13 whose name hash is {hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
+msgstr "Сеть MoVE GTA VI версии 0x13, хеш имени которой — {hash}: списки из {a}, {b} и {d} записей, затем корневой узел типа {kind}, с индексом {index} и идентификатором {id}."
 
 msgid "Its {nodes} nodes tile the body from the root to its end, with {tails} tails no offset names between them. A kind's name is GTA V's at the same place in GTA V's list, which is not confirmed."
 msgstr "Узлов: {nodes}. Они покрывают тело от корня до его конца; между ними остаются хвосты, которых не называет ни одно смещение: {tails}. Имя вида — это имя из GTA V на том же месте в списке GTA V, что не подтверждено."
@@ -14464,8 +14464,8 @@ msgstr "Элемент {index}: {a}, {b}, {c} и {d}."
 msgid "The expression reader does not read this body: {e}"
 msgstr "Средство чтения выражений не читает это тело: {e}"
 
-msgid "A GTA VI expression set of key hash_{key}, whose name is not known."
-msgstr "Набор выражений GTA VI с ключом hash_{key}, имя которого неизвестно."
+msgid "A GTA VI expression set of key {key}."
+msgstr "Набор выражений GTA VI с ключом {key}."
 
 msgid "It reads {count} track: the facial controls, or bones, a clip carries."
 msgid_plural "It reads {count} tracks: the facial controls, or bones, a clip carries."
@@ -15388,11 +15388,11 @@ msgstr "Средство чтения деревьев объектов GTA VI �
 msgid "A GTA VI table of {items} objects in {trees} trees, of {types} types. Each tree's root is keyed by the 32-bit name hash of a model's name, and an object points at later objects of its tree by their offsets. What the objects' fields hold and what the type tags name are not known."
 msgstr "Таблица GTA VI: объектов — {items}, деревьев — {trees}, типов — {types}. Корень каждого дерева имеет ключом 32-битный хеш имени модели, а объект указывает на последующие объекты своего дерева по их смещениям. Что содержат поля объектов и что называют теги типов, неизвестно."
 
-msgid "hash_{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
-msgid_plural "hash_{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
-msgstr[0] "hash_{key}: корень типа {tag}, объектов в его дереве: {count}; он указывает на [{children}]"
-msgstr[1] "hash_{key}: корень типа {tag}, объектов в его дереве: {count}; он указывает на [{children}]"
-msgstr[2] "hash_{key}: корень типа {tag}, объектов в его дереве: {count}; он указывает на [{children}]"
+msgid "{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
+msgid_plural "{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
+msgstr[0] "{key}: корень типа {tag}, объектов в его дереве: {count}; он указывает на [{children}]"
+msgstr[1] "{key}: корень типа {tag}, объектов в его дереве: {count}; он указывает на [{children}]"
+msgstr[2] "{key}: корень типа {tag}, объектов в его дереве: {count}; он указывает на [{children}]"
 
 msgid "16 entries {entries}"
 msgstr "16 записей {entries}"
@@ -15592,11 +15592,11 @@ msgstr[0] "{group}: {count} дорожка"
 msgstr[1] "{group}: {count} дорожки"
 msgstr[2] "{group}: {count} дорожек"
 
-msgid "{group}: hash_{id} {word} ({at} of {total}), {detail}"
-msgstr "{group}: hash_{id} {word} ({at} из {total}), {detail}"
+msgid "{group}: {id} {word} ({at} of {total}), {detail}"
+msgstr "{group}: {id} {word} ({at} из {total}), {detail}"
 
-msgid "Expression set hash_{key}, tracks read: {reads}, tracks written: {writes}"
-msgstr "Набор выражений hash_{key}, читаемых дорожек: {reads}, записываемых дорожек: {writes}"
+msgid "Expression set {key}, tracks read: {reads}, tracks written: {writes}"
+msgstr "Набор выражений {key}, читаемых дорожек: {reads}, записываемых дорожек: {writes}"
 
 msgid "Keyframed values GTA V's records have no member for are listed at the end, raw: a velocity's angle, a colour's last three unnamed values and a domain's fifth and sixth. A colour's first two unnamed values are shown as its minimum and maximum, which is inferred; the preview draws the maximum, as GTA V does, where the colour's word at +0x19C counts two or more colours in use, which is inferred too."
 msgstr "Значения ключевых кадров, для которых в записях GTA V нет поля, перечислены в конце в сыром виде: угол скорости, три последних безымянных значения цвета и пятое и шестое значения области. Первые два безымянных значения цвета показаны как его минимум и максимум, что выведено; предпросмотр рисует максимум, как GTA V, где слово цвета по +0x19C насчитывает два или более используемых цвета, что тоже выведено."

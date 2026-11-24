@@ -12676,8 +12676,8 @@ msgstr[1] "名为 {name} 的帧筛选器，共 {count} 条轨道："
 msgid "Track {track}: weight {weight}, group {group}, word at 0x2C {word}."
 msgstr "轨道 {track}：权重 {weight}，组 {group}，0x2C 处的字 {word}。"
 
-msgid "Bone hash_{bone}: kind {kind}, flags {flags}, values {values}."
-msgstr "骨骼 hash_{bone}：类型 {kind}，标志 {flags}，值 {values}。"
+msgid "Bone {bone}: kind {kind}, flags {flags}, values {values}."
+msgstr "骨骼 {bone}：类型 {kind}，标志 {flags}，值 {values}。"
 
 msgid "An animation record named {name}, with settings for {count} skeleton bone."
 msgid_plural "An animation record named {name}, with settings for {count} skeleton bones."
@@ -14243,8 +14243,8 @@ msgstr "其类型为 {kind}，{at} 处的字为 {word}：其低半部分是其�
 msgid "It lies on the height map tile of the same entry number in the nested archive beside its own; with no archive table, the scan's order of the two archives' bodies is their entry order."
 msgstr "它位于与其自身相邻的嵌套归档中条目编号相同的高度图图块上；没有归档表时，扫描得到的两个归档的数据体顺序就是其条目顺序。"
 
-msgid "A GTA VI MoVE network at version 0x13 whose name hash is hash_{hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
-msgstr "版本为 0x13、名称哈希为 hash_{hash} 的 GTA VI MoVE 网络：含 {a}、{b} 和 {d} 个条目的列表，然后是类型 {kind}、索引 {index}、ID {id} 的根节点。"
+msgid "A GTA VI MoVE network at version 0x13 whose name hash is {hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
+msgstr "版本为 0x13、名称哈希为 {hash} 的 GTA VI MoVE 网络：含 {a}、{b} 和 {d} 个条目的列表，然后是类型 {kind}、索引 {index}、ID {id} 的根节点。"
 
 msgid "Its {nodes} nodes tile the body from the root to its end, with {tails} tails no offset names between them. A kind's name is GTA V's at the same place in GTA V's list, which is not confirmed."
 msgstr "其 {nodes} 个节点从根节点到末尾铺满数据体，节点之间有 {tails} 段没有任何偏移量指明的尾部。类型的名称取自 GTA V 列表中相同位置的名称，这一点尚未确认。"
@@ -14376,8 +14376,8 @@ msgstr "元素 {index}：{a}、{b}、{c} 和 {d}。"
 msgid "The expression reader does not read this body: {e}"
 msgstr "表达式读取器无法读取此数据体：{e}"
 
-msgid "A GTA VI expression set of key hash_{key}, whose name is not known."
-msgstr "键为 hash_{key} 的 GTA VI 表达式集，其名称未知。"
+msgid "A GTA VI expression set of key {key}."
+msgstr "键为 {key} 的 GTA VI 表达式集。"
 
 msgid "It reads {count} track: the facial controls, or bones, a clip carries."
 msgid_plural "It reads {count} tracks: the facial controls, or bones, a clip carries."
@@ -15268,10 +15268,10 @@ msgstr "GTA VI 的对象树读取器无法读取此数据体：{e}"
 msgid "A GTA VI table of {items} objects in {trees} trees, of {types} types. Each tree's root is keyed by the 32-bit name hash of a model's name, and an object points at later objects of its tree by their offsets. What the objects' fields hold and what the type tags name are not known."
 msgstr "GTA VI 表，含 {items} 个对象，分属 {trees} 棵树，共 {types} 种类型。每棵树的根以模型名称的 32 位名称哈希为键，对象通过偏移量指向其树中靠后的对象。对象字段所含的内容以及类型标记所指明的名称未知。"
 
-msgid "hash_{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
-msgid_plural "hash_{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
-msgstr[0] "hash_{key}：类型为 {tag} 的根，单独位于其树中；它指向 [{children}]"
-msgstr[1] "hash_{key}：类型为 {tag} 的根，其树中共有 {count} 个对象；它指向 [{children}]"
+msgid "{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
+msgid_plural "{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
+msgstr[0] "{key}：类型为 {tag} 的根，单独位于其树中；它指向 [{children}]"
+msgstr[1] "{key}：类型为 {tag} 的根，其树中共有 {count} 个对象；它指向 [{children}]"
 
 msgid "16 entries {entries}"
 msgstr "16 个条目 {entries}"
@@ -15466,11 +15466,11 @@ msgid_plural "{group}: {count} tracks"
 msgstr[0] "{group}：{count} 条轨道"
 msgstr[1] "{group}：{count} 条轨道"
 
-msgid "{group}: hash_{id} {word} ({at} of {total}), {detail}"
-msgstr "{group}：hash_{id} {word}（{at}/{total}），{detail}"
+msgid "{group}: {id} {word} ({at} of {total}), {detail}"
+msgstr "{group}：{id} {word}（{at}/{total}），{detail}"
 
-msgid "Expression set hash_{key}, tracks read: {reads}, tracks written: {writes}"
-msgstr "表达式集 hash_{key}，读取的轨道：{reads}，写入的轨道：{writes}"
+msgid "Expression set {key}, tracks read: {reads}, tracks written: {writes}"
+msgstr "表达式集 {key}，读取的轨道：{reads}，写入的轨道：{writes}"
 
 msgid "Keyframed values GTA V's records have no member for are listed at the end, raw: a velocity's angle, a colour's last three unnamed values and a domain's fifth and sixth. A colour's first two unnamed values are shown as its minimum and maximum, which is inferred; the preview draws the maximum, as GTA V does, where the colour's word at +0x19C counts two or more colours in use, which is inferred too."
 msgstr "GTA V 的记录中没有对应成员的关键帧值以原始形式列在末尾：速度的角度、颜色最后三个未命名的值，以及域的第五和第六个值。颜色前两个未命名的值显示为其最小值和最大值，这是推断的；当颜色在 +0x19C 处的字计数两种或更多正在使用的颜色时，预览像 GTA V 一样绘制最大值，这也是推断的。"

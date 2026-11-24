@@ -12628,8 +12628,8 @@ msgstr[1] "Un filtre d'images nommé {name}, de {count} pistes :"
 msgid "Track {track}: weight {weight}, group {group}, word at 0x2C {word}."
 msgstr "Piste {track} : poids {weight}, groupe {group}, mot à 0x2C {word}."
 
-msgid "Bone hash_{bone}: kind {kind}, flags {flags}, values {values}."
-msgstr "Os hash_{bone} : type {kind}, drapeaux {flags}, valeurs {values}."
+msgid "Bone {bone}: kind {kind}, flags {flags}, values {values}."
+msgstr "Os {bone} : type {kind}, drapeaux {flags}, valeurs {values}."
 
 msgid "An animation record named {name}, with settings for {count} skeleton bone."
 msgid_plural "An animation record named {name}, with settings for {count} skeleton bones."
@@ -14195,8 +14195,8 @@ msgstr "Son genre vaut {kind} et son mot à {at} vaut {word} : sa moitié basse
 msgid "It lies on the height map tile of the same entry number in the nested archive beside its own; with no archive table, the scan's order of the two archives' bodies is their entry order."
 msgstr "Elle se place sur la tuile de la carte des hauteurs de même numéro d'entrée dans l'archive imbriquée voisine de la sienne ; faute de table d'archive, l'ordre dans lequel l'analyse trouve les corps des deux archives est leur ordre d'entrée."
 
-msgid "A GTA VI MoVE network at version 0x13 whose name hash is hash_{hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
-msgstr "Un réseau MoVE de GTA VI en version 0x13 dont le hachage du nom est hash_{hash} : des listes de {a}, {b} et {d} entrées, puis un nœud racine de type {kind}, d'index {index} et d'identifiant {id}."
+msgid "A GTA VI MoVE network at version 0x13 whose name hash is {hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
+msgstr "Un réseau MoVE de GTA VI en version 0x13 dont le hachage du nom est {hash} : des listes de {a}, {b} et {d} entrées, puis un nœud racine de type {kind}, d'index {index} et d'identifiant {id}."
 
 msgid "Its {nodes} nodes tile the body from the root to its end, with {tails} tails no offset names between them. A kind's name is GTA V's at the same place in GTA V's list, which is not confirmed."
 msgstr "Ses {nodes} nœuds pavent le corps de la racine à sa fin, avec entre eux {tails} queues qu'aucun décalage ne nomme. Le nom d'un genre est celui de GTA V à la même place dans la liste de GTA V, ce qui n'est pas confirmé."
@@ -14331,8 +14331,8 @@ msgstr "Élément {index} : {a}, {b}, {c} et {d}."
 msgid "The expression reader does not read this body: {e}"
 msgstr "Le lecteur d'ensembles d'expressions ne lit pas ce corps : {e}"
 
-msgid "A GTA VI expression set of key hash_{key}, whose name is not known."
-msgstr "Un ensemble d'expressions de GTA VI de clé hash_{key}, dont le nom n'est pas connu."
+msgid "A GTA VI expression set of key {key}."
+msgstr "Un ensemble d'expressions de GTA VI de clé {key}."
 
 msgid "It reads {count} track: the facial controls, or bones, a clip carries."
 msgid_plural "It reads {count} tracks: the facial controls, or bones, a clip carries."
@@ -15140,10 +15140,10 @@ msgstr "Le lecteur d'arbres d'objets de GTA VI ne lit pas ce corps : {e}"
 msgid "A GTA VI table of {items} objects in {trees} trees, of {types} types. Each tree's root is keyed by the 32-bit name hash of a model's name, and an object points at later objects of its tree by their offsets. What the objects' fields hold and what the type tags name are not known."
 msgstr "Une table GTA VI de {items} objets en {trees} arbres, de {types} types. La racine de chaque arbre a pour clé le hachage de nom 32 bits du nom d'un modèle, et un objet désigne les objets suivants de son arbre par leurs décalages. Ce que contiennent les champs des objets et ce que nomment les étiquettes de type n'est pas connu."
 
-msgid "hash_{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
-msgid_plural "hash_{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
-msgstr[0] "hash_{key} : une racine de type {tag}, seule dans son arbre ; elle désigne [{children}]"
-msgstr[1] "hash_{key} : une racine de type {tag} et {count} objets dans son arbre ; elle désigne [{children}]"
+msgid "{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
+msgid_plural "{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
+msgstr[0] "{key} : une racine de type {tag}, seule dans son arbre ; elle désigne [{children}]"
+msgstr[1] "{key} : une racine de type {tag} et {count} objets dans son arbre ; elle désigne [{children}]"
 
 msgid "16 entries {entries}"
 msgstr "16 entrées {entries}"
@@ -15469,11 +15469,11 @@ msgid_plural "{group}: {count} tracks"
 msgstr[0] "{group} : {count} piste"
 msgstr[1] "{group} : {count} pistes"
 
-msgid "{group}: hash_{id} {word} ({at} of {total}), {detail}"
-msgstr "{group} : hash_{id} {word} ({at} sur {total}), {detail}"
+msgid "{group}: {id} {word} ({at} of {total}), {detail}"
+msgstr "{group} : {id} {word} ({at} sur {total}), {detail}"
 
-msgid "Expression set hash_{key}, tracks read: {reads}, tracks written: {writes}"
-msgstr "Ensemble d'expressions hash_{key}, pistes lues : {reads}, pistes écrites : {writes}"
+msgid "Expression set {key}, tracks read: {reads}, tracks written: {writes}"
+msgstr "Ensemble d'expressions {key}, pistes lues : {reads}, pistes écrites : {writes}"
 
 msgid "Keyframed values GTA V's records have no member for are listed at the end, raw: a velocity's angle, a colour's last three unnamed values and a domain's fifth and sixth. A colour's first two unnamed values are shown as its minimum and maximum, which is inferred; the preview draws the maximum, as GTA V does, where the colour's word at +0x19C counts two or more colours in use, which is inferred too."
 msgstr "Les valeurs à images clés pour lesquelles les enregistrements de GTA V n'ont pas de membre sont listées à la fin, brutes : l'angle d'une vitesse, les trois dernières valeurs sans nom d'une couleur et les cinquième et sixième d'un domaine. Les deux premières valeurs sans nom d'une couleur sont montrées comme son minimum et son maximum, ce qui est déduit ; l'aperçu dessine le maximum, comme GTA V, là où le mot de la couleur à +0x19C compte deux couleurs utilisées ou plus, ce qui est déduit aussi."

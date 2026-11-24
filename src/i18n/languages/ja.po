@@ -12628,8 +12628,8 @@ msgstr[1] "{name}という名前のフレームフィルター、{count} 個の�
 msgid "Track {track}: weight {weight}, group {group}, word at 0x2C {word}."
 msgstr "トラック {track}：ウェイト {weight}、グループ {group}、0x2Cのワード {word}。"
 
-msgid "Bone hash_{bone}: kind {kind}, flags {flags}, values {values}."
-msgstr "ボーン hash_{bone}：種類 {kind}、フラグ {flags}、値 {values}。"
+msgid "Bone {bone}: kind {kind}, flags {flags}, values {values}."
+msgstr "ボーン {bone}：種類 {kind}、フラグ {flags}、値 {values}。"
 
 msgid "An animation record named {name}, with settings for {count} skeleton bone."
 msgid_plural "An animation record named {name}, with settings for {count} skeleton bones."
@@ -14195,8 +14195,8 @@ msgstr "種類は{kind}、{at}のワードは{word}です：下位半分は、�
 msgid "It lies on the height map tile of the same entry number in the nested archive beside its own; with no archive table, the scan's order of the two archives' bodies is their entry order."
 msgstr "自身のアーカイブの隣にある入れ子のアーカイブ内の、同じエントリ番号のハイトマップタイル上に位置します。アーカイブのテーブルがない場合は、スキャンで2つのアーカイブのボディが見つかった順序が、エントリの順序になります。"
 
-msgid "A GTA VI MoVE network at version 0x13 whose name hash is hash_{hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
-msgstr "バージョン0x13のGTA VI MoVEネットワークで、名前ハッシュは hash_{hash}です：{a}、{b}、{d} 個のエントリのリストに続き、タイプ {kind}、インデックス {index}、ID {id}のルートノードがあります。"
+msgid "A GTA VI MoVE network at version 0x13 whose name hash is {hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
+msgstr "バージョン0x13のGTA VI MoVEネットワークで、名前ハッシュは {hash}です：{a}、{b}、{d} 個のエントリのリストに続き、タイプ {kind}、インデックス {index}、ID {id}のルートノードがあります。"
 
 msgid "Its {nodes} nodes tile the body from the root to its end, with {tails} tails no offset names between them. A kind's name is GTA V's at the same place in GTA V's list, which is not confirmed."
 msgstr "{nodes} 個のノードが、ルートから終端までボディを隙間なく埋めており、その間にどのオフセットも指していない末尾部分が {tails} 個あります。種類の名前はGTA Vの一覧の同じ位置にある名前ですが、確認されていません。"
@@ -14328,8 +14328,8 @@ msgstr "要素 {index}：{a}、{b}、{c}、{d}。"
 msgid "The expression reader does not read this body: {e}"
 msgstr "エクスプレッションリーダーは、このボディを読み取れません：{e}"
 
-msgid "A GTA VI expression set of key hash_{key}, whose name is not known."
-msgstr "キー hash_{key}のGTA VIエクスプレッションセットで、名前は不明です。"
+msgid "A GTA VI expression set of key {key}."
+msgstr "キー {key}のGTA VIエクスプレッションセットです。"
 
 msgid "It reads {count} track: the facial controls, or bones, a clip carries."
 msgid_plural "It reads {count} tracks: the facial controls, or bones, a clip carries."
@@ -15137,10 +15137,10 @@ msgstr "GTA VIのオブジェクトツリーリーダーはこのボディを読
 msgid "A GTA VI table of {items} objects in {trees} trees, of {types} types. Each tree's root is keyed by the 32-bit name hash of a model's name, and an object points at later objects of its tree by their offsets. What the objects' fields hold and what the type tags name are not known."
 msgstr "{trees} 本のツリーに {items} 個のオブジェクトを収めた、GTA VIのテーブルです。タイプは {types} 種類あります。各ツリーのルートは、モデル名の32ビットの名前ハッシュをキーとし、オブジェクトは同じツリー内の後続のオブジェクトをオフセットで指します。オブジェクトのフィールドの内容と、タイプタグが何を指すかは不明です。"
 
-msgid "hash_{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
-msgid_plural "hash_{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
-msgstr[0] "hash_{key}：タイプ {tag}のルートで、ツリー内にこれ1つだけです。[{children}]を指します"
-msgstr[1] "hash_{key}：タイプ {tag}のルートで、ツリー内に {count} 個のオブジェクトがあります。[{children}]を指します"
+msgid "{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
+msgid_plural "{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
+msgstr[0] "{key}：タイプ {tag}のルートで、ツリー内にこれ1つだけです。[{children}]を指します"
+msgstr[1] "{key}：タイプ {tag}のルートで、ツリー内に {count} 個のオブジェクトがあります。[{children}]を指します"
 
 msgid "16 entries {entries}"
 msgstr "16個のエントリ {entries}"
@@ -15466,11 +15466,11 @@ msgid_plural "{group}: {count} tracks"
 msgstr[0] "{group}：{count} トラック"
 msgstr[1] "{group}：{count} トラック"
 
-msgid "{group}: hash_{id} {word} ({at} of {total}), {detail}"
-msgstr "{group}：hash_{id} {word} ({at}/{total})、{detail}"
+msgid "{group}: {id} {word} ({at} of {total}), {detail}"
+msgstr "{group}：{id} {word} ({at}/{total})、{detail}"
 
-msgid "Expression set hash_{key}, tracks read: {reads}, tracks written: {writes}"
-msgstr "エクスプレッションセット hash_{key}、読み取るトラック：{reads}、書き込むトラック：{writes}"
+msgid "Expression set {key}, tracks read: {reads}, tracks written: {writes}"
+msgstr "エクスプレッションセット {key}、読み取るトラック：{reads}、書き込むトラック：{writes}"
 
 msgid "Keyframed values GTA V's records have no member for are listed at the end, raw: a velocity's angle, a colour's last three unnamed values and a domain's fifth and sixth. A colour's first two unnamed values are shown as its minimum and maximum, which is inferred; the preview draws the maximum, as GTA V does, where the colour's word at +0x19C counts two or more colours in use, which is inferred too."
 msgstr "GTA V のレコードにメンバーがないキーフレーム値は末尾に生のまま一覧表示されます: 速度の角度、色の名前のない最後の 3 つの値、ドメインの 5 番目と 6 番目。色の名前のない最初の 2 つの値はその最小値と最大値として表示されますが、これは推定です。プレビューは、色の +0x19C のワードが使用中の色を 2 つ以上数える場合に GTA V と同様に最大値を描画しますが、これも推定です。"

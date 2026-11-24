@@ -522,6 +522,11 @@ impl Viewer {
         }
     }
 
+    /// Say `model` is on the device though not yet told ready: it is not read again meanwhile.
+    pub fn on_device(&mut self, model: ModelRef) {
+        self.have.insert(model);
+    }
+
     /// Whether any texture is read: with no pack indexed none is.
     pub fn reads_textures(&self) -> bool {
         self.textures.is_some()

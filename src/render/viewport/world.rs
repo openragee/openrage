@@ -279,6 +279,7 @@ impl RenderBridge {
                     let slot = world.put(&self.device, &self.queue, &budgets, &read, (frame, eye));
                     uploaded += world.model_bytes - before;
                     world.pending.insert(model);
+                    viewer.on_device(model);
                     slot
                 }
                 None => {

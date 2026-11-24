@@ -117,7 +117,7 @@ pub(super) fn run(limit: Duration) -> i32 {
             Ok(status) if status.success() => 0,
             Ok(status) => {
                 println!("the run ended by itself: {status}");
-                status.code().unwrap_or(1)
+                1
             }
             Err(e) => {
                 println!("the run's end was not read: {e}");

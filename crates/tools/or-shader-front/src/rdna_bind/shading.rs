@@ -260,8 +260,9 @@ fn to_pixel_slots(module: &mut naga::Module, slots: &[u32]) {
             if let Some(Binding::Location { location, .. }) = &mut member.binding {
                 let high = *location / HIGH_HALVES * HIGH_HALVES;
                 if let Some(slot) = slots.get((*location - high) as usize) {
+                    // A type put back unchanged is one the module already holds, which it refuses.
+                    moved |= *location != high + slot;
                     *location = high + slot;
-                    moved = true;
                 }
             }
         }
@@ -1109,6 +1110,10 @@ struct Words { words: array<u32> }
             })
             .collect();
         assert_eq!(locations, [2, 3, HIGH_HALVES + 3, 5]);
+        // Parameters already at their slots: the module holds the type that would be put back.
+        let before = format!("{module:?}");
+        to_pixel_slots(&mut module, &[0, 1, 2, 3, 4, 5]);
+        assert_eq!(format!("{module:?}"), before);
     }
 
     #[test]

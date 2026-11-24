@@ -327,15 +327,31 @@ impl App {
 
         let probe = instance.create_surface(first_window.clone())?;
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&probe),
-            force_fallback_adapter: false,
-        }))
-        .map_err(|e| {
-            let needs = or_renderer::instance::UNSUPPORTED;
-            anyhow::anyhow!("Failed to find suitable GPU adapter: {e}. {needs}")
-        })?;
+        let mut adapter =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&probe),
+                force_fallback_adapter: false,
+            }))
+            .map_err(|e| {
+                let needs = or_renderer::instance::UNSUPPORTED;
+                anyhow::anyhow!("Failed to find suitable GPU adapter: {e}. {needs}")
+            })?;
+        // AMD's Direct3D 12 driver ends the process on some of a game's passes: the same card
+        // under Vulkan, where the backends hold it and it draws to this window.
+        if or_renderer::instance::amd_under_dx12(&adapter.get_info()) {
+            let mut others: Vec<wgpu::Adapter> =
+                pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN & backends))
+                    .into_iter()
+                    .filter(|other| other.is_surface_supported(&probe))
+                    .collect();
+            let infos: Vec<wgpu::AdapterInfo> =
+                others.iter().map(wgpu::Adapter::get_info).collect();
+            if let Some(at) = or_renderer::instance::rather_than(&adapter.get_info(), &infos) {
+                tracing::info!("Opening the AMD adapter under Vulkan, not Direct3D 12");
+                adapter = others.swap_remove(at);
+            }
+        }
 
         tracing::info!("Using GPU: {}", adapter.get_info().name);
         if or_renderer::instance::fell_back_to_fxc(adapter.get_info().backend) {

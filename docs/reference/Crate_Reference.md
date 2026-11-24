@@ -722,7 +722,12 @@ such as an SDK's, loads `dxil.dll` by name and Direct3D 12 opens no device on it
 without one, so the folder of a compiler found with its `dxil.dll` is put on the
 process's `PATH`. On Direct3D 12 the feature `TEXTURE_INT64_ATOMIC` is offered
 and the layout of such a texture refused; `updates_64_bit_textures` asks the
-adapter instead.
+adapter instead. AMD's Direct3D 12 driver ends the process while it builds a mesh
+stage that holds a loop inside a loop: `instance::refused_by_driver` gives the
+reason such a stage is not built on such an adapter (`amd_under_dx12`), and the
+app opens the same card under Vulkan where the backends list it
+(`instance::rather_than`). ⚠ The builder of a GTA VI pass
+(`game_shaders::meshlets`) does not ask `refused_by_driver` yet.
 
 ## Tool crates
 

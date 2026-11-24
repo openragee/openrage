@@ -148,6 +148,17 @@ fn inside_of(loaded: &HashMap<u32, MapLights>) -> Vec<(Lamp, [u32; 3])> {
         .collect()
 }
 
+/// `lamps` cut to the [`or_renderer::world::WORLD_LAMPS`] nearest `eye`, nearest first: a lamp's glass glows by its own small light at any reach of it, so the nearest by place, not by the edge of their reach, light what blends.
+fn nearest_lamps(lamps: &mut Vec<or_renderer::WorldLamp>, eye: Vec3) {
+    let most = or_renderer::world::WORLD_LAMPS;
+    let away = |l: &or_renderer::WorldLamp| l.position.distance_squared(eye);
+    if lamps.len() > most {
+        lamps.select_nth_unstable_by(most - 1, |a, b| away(a).total_cmp(&away(b)));
+        lamps.truncate(most);
+    }
+    lamps.sort_unstable_by(|a, b| away(a).total_cmp(&away(b)));
+}
+
 /// A word that changes with what `rooms` says is seen, whatever order it holds it in.
 fn digest(rooms: &RoomsSeen) -> u32 {
     use std::hash::{Hash, Hasher};
@@ -434,6 +445,7 @@ impl Lights {
             .map_or(&[][..], |c| c.chosen.as_slice());
         let mut out = lights_frame::volumes_of(chosen, hour, scale);
         self.drawn = out.lights;
+        nearest_lamps(&mut out.lamps, view.eye);
         // The frame's units for a radiance are the stated ones times the exposure, which `scale` holds over pi.
         let exposure = scale * PI;
         if let Some((_, sprites)) = &self.sprites {

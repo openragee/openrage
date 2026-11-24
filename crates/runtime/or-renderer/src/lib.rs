@@ -40,4 +40,6 @@ pub use particles::{ParticleAlignment, ParticleBatch, ParticleBlendMode, Particl
 pub use surface::{FrameStats, Renderer};
 pub use trails::{TrailBatch, TrailVertex, MAX_TRAIL_CONTROL_POINTS};
 pub use viewport::{LineVertex, MeshDraw, MeshVertex, OrbitCamera, ShadingMode, ViewportRenderer};
-pub use world::{WorldBucket, WorldDraw, WorldInstance, WorldMaterial, WorldMesh, OUTDOORS};
+pub use world::{
+    WorldBucket, WorldDraw, WorldInstance, WorldLamp, WorldMaterial, WorldMesh, OUTDOORS,
+};

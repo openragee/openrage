@@ -136,6 +136,22 @@ codegen-backend = "llvm"
 # step and no CI setup. rustc resolves the bare name out of its own sysroot.
 linker = "rust-lld.exe"
 
+# ⚠ **Apple silicon builds every profile with LLVM.** Cranelift there does not
+# catch a panic (`catch_unwind` lets it go on up) and lacks a NEON intrinsic the
+# JPEG decoder runs (`llvm.aarch64.neon.sqshrun.v4i16 is not yet supported`):
+# 8 tests of the default tier fail on it and pass on LLVM.
+#
+# cargo passes these after the profile's own `-Zcodegen-backend`, and the last
+# one wins. They replace `[build] rustflags` for this target, hence `-Zthreads`
+# again.
+#
+# Measured on an M5 Ultra at 565bc5616, `cargo test --no-run --workspace`, cold
+# and then after touching `or-io`: Cranelift 64 s and 25 s, LLVM 115 s and 27 s.
+# 16 or 30 threads and `lld` move neither figure: the link of the app's test
+# binary is 0.3 s of its 5.7 s.
+[target.aarch64-apple-darwin]
+rustflags = ["-Zthreads=8", "-Zcodegen-backend=llvm"]
+
 # Cranelift cannot unwind a panic out of the Kraken port, which panics on a stream it cannot read, so
 # `container::rpf::oodle` could not turn that into an error.
 [profile.dev.package.or-kraken]

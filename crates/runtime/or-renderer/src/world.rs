@@ -16,6 +16,7 @@ use crate::game_shaders::stand_in::constant_view;
 use crate::viewport::{MeshVertex, OrbitCamera, ViewportRenderer};
 
 pub mod cards;
+mod lamps;
 mod material;
 mod pipelines;
 mod shader;
@@ -23,6 +24,7 @@ pub(crate) mod shadow;
 pub mod water;
 mod water_shader;
 
+pub use lamps::{WorldLamp, WORLD_LAMPS};
 pub use material::{
     colour1, coloured, slot, WorldConstants, WorldFamily, WorldSurface, WORLD_MAPS,
 };
@@ -257,6 +259,8 @@ pub(crate) struct World {
     pub(crate) focus: ShadowFocus,
     /// What a material's own light is multiplied by: the exposure the day's light is given at, 1 where the frame keeps its own day.
     exposure: f32,
+    /// The lamps that light what blends, nearest first.
+    lamps: Vec<WorldLamp>,
     /// The maps and constants of each material made, by [`alike`], so that materials alike bind one group and their draws join; and the size past which the dead are let go.
     alike: RefCell<(Alike, usize)>,
 }
@@ -453,7 +457,7 @@ impl World {
                 count: None,
             }],
         });
-        let light = uniform("viewport-world-light", 20);
+        let light = uniform("viewport-world-light", lamps::LIGHT_FLOATS);
         let light_group = group("viewport-world-light-bg", &light_layout, &light);
         let cascades = std::array::from_fn(|_| {
             let view = uniform("viewport-world-cascade", CAMERA_FLOATS);
@@ -471,6 +475,7 @@ impl World {
             casting: RefCell::default(),
             focus: ShadowFocus::FREE,
             exposure: 1.0,
+            lamps: Vec::new(),
             alike: RefCell::default(),
             materials,
             sampler,
@@ -749,7 +754,9 @@ impl World {
         let mut light = [sun.travel.normalize_or_zero(), sun.colour, down, up]
             .map(|vector| vector.extend(0.0).to_array())
             .to_vec();
-        light.push([night, self.exposure, 0.0, 0.0]);
+        let lamps = self.lamps.len().min(WORLD_LAMPS) as f32;
+        light.push([night, self.exposure, lamps, 0.0]);
+        light.extend(lamps::rows(&self.lamps));
         queue.write_buffer(&self.light, 0, bytemuck::cast_slice(&light));
     }
 
@@ -863,6 +870,11 @@ impl ViewportRenderer {
     /// Multiply every material's own light by `exposure`, the exposure the day's light is given at; 1 leaves it as the material states it.
     pub fn set_world_exposure(&mut self, exposure: f32) {
         self.world.exposure = exposure;
+    }
+
+    /// Light what blends over the lit frame by `lamps`, nearest first, of which the first [`WORLD_LAMPS`] count.
+    pub fn set_world_lamps(&mut self, lamps: Vec<WorldLamp>) {
+        self.world.lamps = lamps;
     }
 
     /// How many instances the world draws.

@@ -334,6 +334,7 @@ impl RenderBridge {
         self.renderer.set_capsule_lights(lights.capsules);
         (self.renderer).set_distant_lights(lights.sprite_look, lights.sprites);
         self.renderer.set_coronas(lights.coronas);
+        self.renderer.set_world_lamps(lights.lamps);
         self.renderer.set_world_exposure(exposure);
         world.cost.lights = lighting.elapsed();
         // ⚠ The game stretches its cascades by what the camera rides: a camera this high above the ground is taken to ride an aircraft.
@@ -662,6 +663,7 @@ impl RenderBridge {
             self.renderer.set_capsule_lights(Vec::new());
             (self.renderer).set_distant_lights(Default::default(), Default::default());
             self.renderer.set_coronas(None);
+            self.renderer.set_world_lamps(Vec::new());
             self.world.hide_cards(&mut self.renderer);
             (self.world.laid_for, self.world.day) = (None, None);
         }

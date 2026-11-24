@@ -299,6 +299,9 @@ recipe.
   holding every target root passes the 32,766-character command-line limit
   and fails with os error 206. `just fmt` is `cargo xtask fmt`, the same on
   every OS.
+- ⚠ On Apple silicon every profile builds with LLVM (`.cargo/config.toml`):
+  Cranelift there does not catch a panic, and 8 tests of the default tier fail
+  on it.
 
 ## Before merging, and how to push
 

@@ -6,6 +6,12 @@ fn wgsl(source: &str) -> naga::Module {
 }
 
 fn gpu(test: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
+    gpu_with(test, false)
+}
+
+/// A device of the adapter's own limits, or `plain`, one asked for nothing: the limits every
+/// adapter gives.
+fn gpu_with(test: &str, plain: bool) -> Option<(wgpu::Device, wgpu::Queue)> {
     // `WGPU_BACKEND` picks the backend, so the same frame is drawn through each one a machine has.
     let mut backends = wgpu::InstanceDescriptor::new_without_display_handle();
     backends.backends = wgpu::Backends::from_env().unwrap_or(backends.backends);
@@ -23,7 +29,10 @@ fn gpu(test: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
     };
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("meshlet-test"),
-        required_limits: adapter.limits(),
+        required_limits: match plain {
+            true => wgpu::Limits::default(),
+            false => adapter.limits(),
+        },
         ..Default::default()
     }))
     .ok()
@@ -348,4 +357,69 @@ fn the_developer_s_aids_are_words_separated_by_commas() {
         }
     );
     assert_eq!(Aids::parse(""), Aids::default());
+}
+
+/// The pixel stage with `more` constant buffers beside its own, each read, declared as bound
+/// or as the stage's own noughts.
+fn pixel_with(more: u32, bound: impl Fn(u32) -> bool) -> naga::Module {
+    let mut text = PIXEL.replace(
+        "texel.rgb * tint.rgb * shade",
+        "texel.rgb * tint.rgb * shade + others()",
+    );
+    let mut sum = String::from("vec3<f32>(0.0)");
+    for n in 0..more {
+        let declared = match bound(n) {
+            true => format!("@group(1) @binding({}) var<uniform>", 3 + n),
+            false => "var<private>".to_string(),
+        };
+        text += &format!("\n{declared} other{n}: vec4<f32>;");
+        sum += &format!(" + other{n}.rgb");
+    }
+    text += &format!("\nfn others() -> vec3<f32> {{ return {sum}; }}");
+    wgsl(&text)
+}
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_stage_with_more_constant_buffers_than_a_default_device_gives_draws_once_the_noughts_bind_nothing(
+) {
+    let Some((device, queue)) = gpu_with("a_stage_with_more_constant_buffers", true) else {
+        return;
+    };
+    let frame = Target {
+        colour: wgpu::TextureFormat::Rgba8Unorm,
+        depth: DEPTH,
+        depth_compare: wgpu::CompareFunction::GreaterEqual,
+        blend: None,
+        colour_attachments: Some(1),
+    };
+    // With its own, the stage declares two more than the device gives.
+    let more = device.limits().max_uniform_buffers_per_shader_stage + 1;
+    let prepared = |bound: &dyn Fn(u32) -> bool| {
+        let mut surface = surface();
+        surface.fragment = Arc::new(pixel_with(more, bound));
+        let mut pipelines = MeshletPipelines::default();
+        loop {
+            let size = (SIZE, SIZE);
+            match MeshletScene::prepare(
+                &device,
+                &queue,
+                &mut pipelines,
+                &[surface.clone()],
+                size,
+                &frame,
+            ) {
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(5)),
+                Ok(Some(scene)) => break Ok(scene.drawn()),
+                Err(why) => break Err(why),
+            }
+        }
+    };
+    let (all_bound, _) = refused(&device, || prepared(&|_| true));
+    assert!(all_bound.is_err(), "the device took {more} more buffers");
+    let (two_less, error) = refused(&device, || prepared(&|n| n >= 2));
+    assert_eq!((two_less, error), (Ok(1), None));
 }

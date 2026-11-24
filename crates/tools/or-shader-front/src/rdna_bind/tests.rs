@@ -272,6 +272,7 @@ fn each_refusal_has_its_census_word() {
         ),
         (Unbound::NoName { register: 4 }, "no-name"),
         (Unbound::Halves, "halves"),
+        (Unbound::Alone, "alone"),
         (Unbound::Stage(ShaderKind::Mesh), "stage"),
         (Unbound::Records(RecordError::Short), "records"),
         (Unbound::Invalid("anything".into()), "invalid"),
@@ -323,4 +324,121 @@ fn a_mesh_program_s_user_registers_are_numbered_eight_below_the_registers_its_co
         Place::Words { root: 251 }
     );
     assert_eq!(numbered(Place::Picked, ShaderKind::Mesh), Place::Picked);
+}
+
+#[test]
+fn a_program_that_loads_texels_is_lowered_again_with_each_such_texture_stated_as_floats() {
+    use naga::{Expression as E, Literal, Span};
+    let at = rdna::Loc {
+        root: 2,
+        path: Vec::new(),
+        offset: 64,
+        index: None,
+    };
+    // A module that loads a texel of the one texture it binds.
+    let mut module = naga::Module::default();
+    let image = module.types.insert(
+        naga::Type {
+            name: None,
+            inner: naga::TypeInner::Image {
+                dim: naga::ImageDimension::D1,
+                arrayed: false,
+                class: naga::ImageClass::Sampled {
+                    kind: naga::ScalarKind::Float,
+                    multi: false,
+                },
+            },
+        },
+        Span::UNDEFINED,
+    );
+    let global = module.global_variables.append(
+        naga::GlobalVariable {
+            name: None,
+            space: naga::AddressSpace::Handle,
+            binding: Some(naga::ResourceBinding {
+                group: 0,
+                binding: 7,
+            }),
+            ty: image,
+            init: None,
+            memory_decorations: Default::default(),
+        },
+        Span::UNDEFINED,
+    );
+    let mut function = naga::Function::default();
+    let mut put = |e| function.expressions.append(e, Span::UNDEFINED);
+    let (image, coordinate) = (
+        put(E::GlobalVariable(global)),
+        put(E::Literal(Literal::I32(0))),
+    );
+    put(E::ImageLoad {
+        image,
+        coordinate,
+        array_index: None,
+        sample: None,
+        level: Some(coordinate),
+    });
+    module.functions.append(function, Span::UNDEFINED);
+    let lowered = |resources| Lowered {
+        module: module.clone(),
+        resources,
+        approximations: Default::default(),
+        half_slots: Default::default(),
+        subgroups: false,
+    };
+    let texture = Resource {
+        kind: ResourceKind::Texture {
+            dim: 0,
+            compared: false,
+        },
+        at: Some(at.clone()),
+        words: None,
+        group: 0,
+        binding: 7,
+        count: None,
+        written: false,
+    };
+    let asked = std::cell::RefCell::new(Vec::new());
+    let translate = |resources: Vec<Resource>| {
+        let asked = &asked;
+        move |options: &Options| {
+            asked.borrow_mut().push(options.image_kinds.clone());
+            Ok::<_, ()>(lowered(resources.clone()))
+        }
+    };
+    lower_by(&BTreeSet::new(), translate(vec![texture])).unwrap();
+    let stated = [(at, naga::ScalarKind::Float)].into();
+    assert_eq!(*asked.borrow(), [Default::default(), stated]);
+    // A program that loads none is lowered once.
+    asked.borrow_mut().clear();
+    lower_by(&BTreeSet::new(), translate(Vec::new())).unwrap();
+    assert_eq!(asked.borrow().len(), 1);
+}
+
+#[test]
+fn a_native_program_that_binds_is_still_not_handed_to_a_pack_alone() {
+    // The one instruction that ends a program: it binds nothing, so nothing else stops it.
+    let native = Native {
+        program: Program {
+            kind: ShaderKind::Pixel,
+            slot: 5,
+            words: vec![0xBF81_0000],
+            wave32: false,
+            inputs: Vec::new(),
+            vertex_inputs: Vec::new(),
+            position_read: 0,
+            front_face: false,
+            launch: None,
+        },
+        records: Vec::new(),
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+    };
+    let table = Sgd5Table::default();
+    let lowered = lower(&native, &BTreeSet::new()).expect("the program lowers");
+    assert!(bind_lowered(&native, lowered, &table, None).is_ok());
+    assert_eq!(
+        bind_alone(&native, &table, None).unwrap_err(),
+        Unbound::Alone
+    );
 }

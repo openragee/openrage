@@ -499,6 +499,7 @@ mod tests {
 
     fn pass(streams: &[u32]) -> Arc<Gta6ShadingPass> {
         let stage = |streams: &[u32]| Stage {
+            approximations: Default::default(),
             module: Arc::default(),
             feeds: Vec::new(),
             textures: Vec::new(),

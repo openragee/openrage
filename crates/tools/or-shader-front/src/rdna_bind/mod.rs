@@ -327,6 +327,8 @@ pub enum Unbound {
     NoName { register: u32 },
     #[error("its pixel program reads parameters as 16-bit halves, which its vertex program is not translated for")]
     Halves,
+    #[error("it binds, but alone: its outputs and the next stage's inputs are made to agree only where a pass is translated as one")]
+    Alone,
 }
 
 impl Unbound {
@@ -350,6 +352,7 @@ impl Unbound {
             Self::NoRecord { .. } => "no-record".into(),
             Self::NoName { .. } => "no-name".into(),
             Self::Halves => "halves".into(),
+            Self::Alone => "alone".into(),
         }
     }
 }
@@ -391,9 +394,28 @@ pub fn native(container: &[u8]) -> Result<Native, Unbound> {
 
 /// `native` lowered, exporting as halves the parameter slots its pass's pixel program reads so.
 pub fn lower(native: &Native, half_slots: &BTreeSet<u8>) -> Result<Lowered, Unbound> {
+    lower_by(half_slots, |options| {
+        Ok(rdna::translate_with(&native.program, options)?)
+    })
+}
+
+/// A program lowered by `translate`, then again with the kind of each texture it loads texels
+/// of stated, where it loads any: only a lowering shows which those are.
+// Every texture the renderer binds is of a float or a normalised format: a material's map, the
+// blank texel, and the noughts that stand for a texture the game fills.
+pub(crate) fn lower_by<E>(
+    half_slots: &BTreeSet<u8>,
+    translate: impl Fn(&Options) -> Result<Lowered, E>,
+) -> Result<Lowered, E> {
     let mut options = Options::default();
     options.half_slots.extend(half_slots);
-    Ok(rdna::translate_with(&native.program, &options)?)
+    let lowered = translate(&options)?;
+    let loaded = lowered.image_loads();
+    if loaded.is_empty() {
+        return Ok(lowered);
+    }
+    (options.image_kinds).extend(loaded.into_iter().map(|at| (at, naga::ScalarKind::Float)));
+    translate(&options)
 }
 
 /// What each resource of `lowered` joins to, in the order of its bindings.
@@ -562,20 +584,30 @@ pub fn bind_lowered(
     })
 }
 
-/// The native program of `container` translated alone and bound.
-// ponytail: a pass whose pixel program reads halves is refused; translate the pair as
-// `rpf scan-rdna-bind` does once a drawable's pass is one the renderer can feed.
+/// Why the native program of `container` is not handed to the renderer alone, as a program of
+/// a pack is: the first thing that stops it, and where nothing does, that it is alone.
+// ⚠ A pack keeps one module a program and pairs them when it draws, by location. A native
+// program's parameters are not at the places the next stage reads them, and the link that
+// moves them changes both stages: a pair is translated as one pass (`shading`) or not drawn.
 pub fn bind(
     container: &[u8],
     table: &Sgd5Table,
     effect: Option<&Sgd5Table>,
 ) -> Result<Translated, Unbound> {
-    let native = native(container)?;
-    let lowered = lower(&native, &BTreeSet::new())?;
+    bind_alone(&native(container)?, table, effect)
+}
+
+fn bind_alone(
+    native: &Native,
+    table: &Sgd5Table,
+    effect: Option<&Sgd5Table>,
+) -> Result<Translated, Unbound> {
+    let lowered = lower(native, &BTreeSet::new())?;
     if !lowered.half_slots.is_empty() {
         return Err(Unbound::Halves);
     }
-    bind_lowered(&native, lowered, table, effect)
+    bind_lowered(native, lowered, table, effect)?;
+    Err(Unbound::Alone)
 }
 
 pub mod picks;

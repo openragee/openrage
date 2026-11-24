@@ -158,6 +158,16 @@ fn msl(module: &std::sync::Arc<naga::Module>) -> Result<String, String> {
     .unwrap_or_else(|_| Err("the writer panicked".to_string()))
 }
 
+/// The expressions of `module` that load a texel of a texture.
+fn texel_loads(module: &naga::Module) -> usize {
+    let functions = (module.functions.iter().map(|(_, function)| function))
+        .chain(module.entry_points.iter().map(|entry| &entry.function));
+    functions
+        .flat_map(|function| function.expressions.iter())
+        .filter(|(_, expression)| matches!(expression, naga::Expression::ImageLoad { .. }))
+        .count()
+}
+
 /// `rpf scan-shading`: one effect of the `SGD5` container at an offset, technique by technique:
 /// the stages of its first pass and the targets its pixel program exports, then the pass that
 /// shades a model translated, with what fills each binding.
@@ -305,6 +315,16 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
                     pass.linked.clip
                 );
                 for (word, stage) in [("mesh", &pass.mesh), ("pixel", &pass.pixel)] {
+                    let globals = stage.module.global_variables.iter();
+                    let buffers = globals.filter(|(_, global)| {
+                        global.space == naga::AddressSpace::Uniform && global.binding.is_some()
+                    });
+                    println!(
+                        "  {word}: binds {} constant buffers, loads texels at {} places, departs from the hardware by {:?}",
+                        buffers.count(),
+                        texel_loads(&stage.module),
+                        stage.approximations
+                    );
                     println!(
                         "  {word}: textures {:X?}, streams {:?}",
                         stage.textures, stage.streams

@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 use or_io::gta5::shaders::sgd5::Sgd5File;
 
 use super::Native;
-use crate::rdna::{Lowered, Options};
+use crate::rdna::Lowered;
 use crate::rdna_cache::{Cache, Cached};
 
 /// The stored form of the containers: a change to what a container reads as takes a new number.
@@ -28,13 +28,13 @@ pub fn lower(
     native: &Native,
     half_slots: &std::collections::BTreeSet<u8>,
 ) -> Result<Lowered, String> {
-    let mut options = Options::default();
-    options.half_slots.extend(half_slots);
     let cache = TRANSLATIONS.get_or_init(Cache::in_memory);
-    match &*cache.get_or_translate(&native.program, &options).0 {
-        Cached::Translated(lowered) => Ok((**lowered).clone()),
-        Cached::Refused { message, .. } => Err(message.clone()),
-    }
+    super::lower_by(half_slots, |options| {
+        match &*cache.get_or_translate(&native.program, options).0 {
+            Cached::Translated(lowered) => Ok((**lowered).clone()),
+            Cached::Refused { message, .. } => Err(message.clone()),
+        }
+    })
 }
 
 /// The effect containers of an archive, each with its offset there, as the bytes a file holds.

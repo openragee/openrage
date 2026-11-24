@@ -1,7 +1,7 @@
 //! Where each binding of a pass that shades a GTA VI model gets its contents: the model's own
 //! buffers, the view, the material, or what only the game fills when it runs.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use or_io::gta5::shaders::sgd5::{Sgd5Resource, Sgd5Table};
 use or_io::gta5::shaders::sgd5_pack::constant_buffers;
@@ -180,6 +180,41 @@ pub struct Stage {
     /// The numbers the stage reads as a row of texels: a palette, loaded at a place and not
     /// sampled.
     pub rows: Vec<u32>,
+    /// Each way the stage departs from the hardware, counted, as its lowering says them.
+    pub approximations: BTreeMap<&'static str, u32>,
+}
+
+/// The constant buffers a device with default limits gives a stage.
+const CONSTANT_BUFFERS: usize = 12;
+/// The most bytes of a constant buffer left at nought that a stage holds as its own variable.
+// ⚠ Each thread of a stage has its own copy: with one of 64 KiB, the size a buffer read at a
+// computed place is declared with, a Vulkan device was lost at the first draw.
+const OWN_NOUGHTS: u32 = 4096;
+
+/// Keep `module` to the constant buffers a device with default limits gives a stage: while it
+/// binds more, the smallest it binds at one of `noughts`, the bindings the editor leaves at
+/// nought, becomes the stage's own variable of noughts, which binds nothing and reads the same.
+// Only as many as it takes: a driver may fold what a program computes from noughts it can see,
+// a division by one say, otherwise than the device computes it from a buffer.
+fn within_constant_buffers(module: &mut naga::Module, noughts: &[(u32, u32)]) {
+    use naga::AddressSpace;
+    let bound = (module.global_variables.iter())
+        .filter(|(_, global)| global.space == AddressSpace::Uniform && global.binding.is_some())
+        .count();
+    let mut own: Vec<_> = (module.global_variables.iter())
+        .filter(|(_, global)| global.space == AddressSpace::Uniform)
+        .filter(|(_, global)| {
+            (global.binding.as_ref()).is_some_and(|b| noughts.contains(&(b.group, b.binding)))
+        })
+        .map(|(handle, global)| (module.types[global.ty].inner.size(module.to_ctx()), handle))
+        .filter(|(size, _)| *size <= OWN_NOUGHTS)
+        .collect();
+    own.sort();
+    for (_, handle) in own.into_iter().take(bound.saturating_sub(CONSTANT_BUFFERS)) {
+        let global = module.global_variables.get_mut(handle);
+        global.space = AddressSpace::Private;
+        global.binding = None;
+    }
 }
 
 /// The location a lowered stage gives the high halves of a parameter of 16-bit floats, past
@@ -506,9 +541,12 @@ pub fn feed(
     let Lowered {
         mut module,
         resources,
+        approximations,
         ..
     } = lowered;
     let mut feeds = Vec::with_capacity(resources.len());
+    // The bindings the editor leaves at nought.
+    let mut noughts = Vec::new();
     let mut rows = Vec::new();
     // The bindings a heap lowered to plain textures takes: past every one the stage has.
     let mut free = resources.iter().map(|r| r.binding + 1).max().unwrap_or(0);
@@ -637,6 +675,9 @@ pub fn feed(
                 });
             }
         }
+        if matches!(feed, Feed::Zero(_)) {
+            noughts.push((group, resource.binding));
+        }
         feeds.push(Fed {
             group,
             binding: resource.binding,
@@ -649,6 +690,8 @@ pub fn feed(
     }
     whole_tables(&mut module);
     first_levels_stated(&mut module);
+    // After the tables are bound whole, which takes constant buffers away.
+    within_constant_buffers(&mut module, &noughts);
     let mut streams = BTreeSet::new();
     let read = reads(&module);
     for fed in feeds.iter().filter(|fed| fed.feed == Feed::VertexData) {
@@ -661,6 +704,7 @@ pub fn feed(
         feeds,
         streams,
         rows,
+        approximations,
         textures: (material.textures.iter())
             .map(|(number, texture)| (*number, texture.semantic_hash))
             .collect(),
@@ -1164,8 +1208,46 @@ struct Words { words: array<u32> }
             ),
             bound(ResourceKind::UserData, None, 4),
         ];
+        // The view's constant buffer and the user data, as a lowering declares them.
+        let mut module = naga::Module::default();
+        let row = module.types.insert(
+            naga::Type {
+                name: None,
+                inner: naga::TypeInner::Vector {
+                    size: naga::VectorSize::Quad,
+                    scalar: naga::Scalar::U32,
+                },
+            },
+            naga::Span::UNDEFINED,
+        );
+        // Eleven buffers no resource names, each larger than the user data, then the two.
+        let matrix = module.types.insert(
+            naga::Type {
+                name: None,
+                inner: naga::TypeInner::Matrix {
+                    columns: naga::VectorSize::Quad,
+                    rows: naga::VectorSize::Quad,
+                    scalar: naga::Scalar::F32,
+                },
+            },
+            naga::Span::UNDEFINED,
+        );
+        for binding in (5..5 + CONSTANT_BUFFERS as u32 - 1).chain([3, 4]) {
+            let ty = if binding > 4 { matrix } else { row };
+            module.global_variables.append(
+                naga::GlobalVariable {
+                    name: None,
+                    space: naga::AddressSpace::Uniform,
+                    binding: Some(naga::ResourceBinding { group: 0, binding }),
+                    ty,
+                    init: None,
+                    memory_decorations: Default::default(),
+                },
+                naga::Span::UNDEFINED,
+            );
+        }
         let lowered = |resources: Vec<Resource>| Lowered {
-            module: naga::Module::default(),
+            module: module.clone(),
             resources,
             approximations: Default::default(),
             half_slots: Default::default(),
@@ -1181,6 +1263,27 @@ struct Words { words: array<u32> }
         };
         assert!(layout.variables.iter().any(|v| v.name == "gViewProj"));
         assert_eq!(fed[4], (&Feed::Zero(None), None));
+        // Thirteen constant buffers: the one the editor leaves at nought binds nothing, and
+        // the stage's own noughts stand for it; the twelve others stay bound.
+        let globals: Vec<_> = (stage.module.global_variables.iter())
+            .map(|(_, global)| (global.space, global.binding.as_ref().map(|b| b.binding)))
+            .collect();
+        assert_eq!(globals.len(), CONSTANT_BUFFERS + 1);
+        assert_eq!(
+            globals[CONSTANT_BUFFERS],
+            (naga::AddressSpace::Private, None)
+        );
+        let bound = &globals[..CONSTANT_BUFFERS];
+        assert!(bound
+            .iter()
+            .all(|g| g.0 == naga::AddressSpace::Uniform && g.1.is_some()));
+        // With twelve, none is over and the one at nought stays bound.
+        let mut twelve = module.clone();
+        let first = twelve.global_variables.iter().next().unwrap().0;
+        twelve.global_variables.get_mut(first).space = naga::AddressSpace::Private;
+        let before = format!("{twelve:?}");
+        within_constant_buffers(&mut twelve, &[(0, 4)]);
+        assert_eq!(format!("{twelve:?}"), before);
         assert!(stage.textures.is_empty());
 
         assert!(stage.streams.is_empty());

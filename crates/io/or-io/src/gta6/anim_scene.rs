@@ -181,6 +181,7 @@ pub fn scene_root(model: &RbmModel) -> Option<u32> {
 
 /// The anim scene `tree` states, the value tree the table-form reader decodes of `model`.
 pub fn read_tree(model: &RbmModel, tree: &MetaInstance) -> Result<AnimSceneBody> {
+    let _names = crate::meta::binary::hash_index::title_names();
     let root = root_class(model);
     let map = match root {
         SCENE => false,

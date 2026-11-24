@@ -234,3 +234,83 @@ fn a_gta6_p_form_outside_the_measured_layouts_is_refused_by_name() {
         assert!(err.contains(want), "{want}: {err}");
     }
 }
+
+/// A P-form document of one structure `root` that holds a u32 `member`, with the `CHKS` tag of
+/// GTA VI (`zppp`) or of the titles before it (`yppp`).
+fn plain_document(root: u32, member: u32, tag: &[u8; 4]) -> Vec<u8> {
+    let mut psin = vec![0x70u8; 8];
+    psin.extend_from_slice(&7u32.to_be_bytes());
+    psin.extend_from_slice(&[0; 4]);
+    let mut pmap = Vec::new();
+    pmap.extend_from_slice(&1i32.to_be_bytes());
+    pmap.extend_from_slice(&1i16.to_be_bytes());
+    pmap.extend_from_slice(&0i16.to_be_bytes());
+    for word in [root, 0x10, 0, 8] {
+        pmap.extend_from_slice(&word.to_be_bytes());
+    }
+    let mut psch = 1u32.to_be_bytes().to_vec();
+    psch.extend_from_slice(&root.to_be_bytes());
+    psch.extend_from_slice(&(8 + 4 + 8u32).to_be_bytes());
+    psch.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 8, 0, 0, 0, 0]);
+    entry(&mut psch, member, 0x06, 0, 0);
+    let mut out = Vec::new();
+    section(&mut out, b"PSIN", &psin);
+    section(&mut out, b"PMAP", &pmap);
+    section(&mut out, b"PSCH", &psch);
+    let mut chks = (out.len() as u32 + 20).to_be_bytes().to_vec();
+    chks.extend_from_slice(&[0; 4]);
+    chks.extend_from_slice(tag);
+    section(&mut out, b"CHKS", &chks);
+    out
+}
+
+/// ⚠ Two titles' hash spaces are unrelated. The library installed here names two made-up hashes
+/// no other test reads, so the other tests of this process are as they were.
+#[test]
+fn a_name_only_the_second_title_s_library_holds_names_a_gta6_body_and_no_other() {
+    use crate::meta::schema::{Field, FieldHint, FieldType, StructDef};
+    let (root_name, member_name) = ("ZqSecondTitleRoot", "zqSecondTitleMember");
+    let mut library = SchemaLibrary::new();
+    library.insert_struct(StructDef {
+        name: root_name.into(),
+        base: None,
+        abstract_: false,
+        simple: true,
+        fields: vec![Field {
+            name: member_name.into(),
+            ty: FieldType::U32,
+            init: None,
+            min: None,
+            max: None,
+            step: None,
+            ui_key: false,
+            hide_widgets: false,
+            description: None,
+            hint: FieldHint::None,
+        }],
+        source_path: String::new(),
+    });
+    crate::meta::install_names_library(library);
+    let root = crate::literal_string_hash(root_name.as_bytes());
+    let member = crate::literal_string_hash(member_name.as_bytes());
+
+    let bytes = plain_document(root, member, b"zppp");
+    let (six, layout) = open(&bytes).expect("GTA VI's opens");
+    assert_eq!(six.type_name, root_name);
+    assert!(six.get(member_name).is_some(), "{six:?}");
+    assert_eq!(write(&six, &layout).expect("and saves"), bytes);
+
+    let bytes = plain_document(root, member, b"yppp");
+    let (five, layout) = open(&bytes).expect("the other title's opens");
+    assert_eq!(five.type_name, format!("hash_{root:08X}"));
+    assert!(
+        five.get(&format!("hash_{member:08X}")).is_some(),
+        "{five:?}"
+    );
+    assert_eq!(write(&five, &layout).expect("and saves"), bytes);
+    assert_eq!(
+        named(root),
+        format!("hash_{root:08X}"),
+        "nor outside a body"
+    );
+}

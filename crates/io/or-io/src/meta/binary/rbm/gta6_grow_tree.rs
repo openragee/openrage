@@ -58,6 +58,7 @@ fn grow(e: Gta6GrowError) -> MetaError {
 
 /// A headerless resource's sections with `instance` written in, its arrays resized to it first.
 pub fn write_grown(layout: &RbmLayout, instance: &MetaInstance) -> Result<(Vec<u8>, Vec<u8>)> {
+    let _names = crate::meta::binary::hash_index::title_names();
     let model = &layout.model;
     let stored = table_form::decode(model)?;
     let root = model.root_block_id;

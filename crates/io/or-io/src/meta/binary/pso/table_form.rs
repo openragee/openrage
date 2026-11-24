@@ -132,6 +132,7 @@ pub(crate) fn read(sections: &[RawPsoSection]) -> Result<MetaInstance> {
 /// A hash value is named by the tree's names and by the document's own strings, which a second
 /// read applies when the first found a string that names a value it left unnamed.
 pub(crate) fn decode(model: &RbmModel) -> Result<MetaInstance> {
+    let _names = crate::meta::binary::hash_index::title_names();
     let mut names = DataNames::of_tree();
     let (instance, unnamed) = decode_with(model, &names)?;
     if !names.add_naming(&unnamed) {

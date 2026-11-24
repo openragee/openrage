@@ -116,6 +116,27 @@ std::thread_local! {
     static PUBLIC_ONLY: Cell<bool> = const { Cell::new(false) };
 }
 
+std::thread_local! {
+    static TITLE_NAMES: Cell<bool> = const { Cell::new(false) };
+}
+
+/// While held, a hash read on this thread is named by the second title's library first.
+pub struct TitleNames(bool);
+
+impl Drop for TitleNames {
+    fn drop(&mut self) {
+        TITLE_NAMES.with(|on| on.set(self.0));
+    }
+}
+
+/// Names the hashes of the second title's bodies, read and written on this thread until the guard drops.
+///
+/// ⚠ Two titles' hash spaces are unrelated: outside a guard no name of the second title's library is
+/// given, so a document of the first title prints as it does with no such library installed.
+pub fn title_names() -> TitleNames {
+    TitleNames(TITLE_NAMES.with(|on| on.replace(true)))
+}
+
 /// Runs `f` naming every hash on this thread from the public table alone, whatever library the host installed, so what `f` reads and writes is what a clean checkout makes.
 pub fn with_public_names_only<R>(f: impl FnOnce() -> R) -> R {
     struct Restore(bool);
@@ -136,20 +157,24 @@ pub fn with_public_names_only<R>(f: impl FnOnce() -> R) -> R {
 pub fn default_hash_index() -> &'static HashIndex {
     static INSTALLED_INDEX: OnceLock<HashIndex> = OnceLock::new();
     static PUBLIC_INDEX: OnceLock<HashIndex> = OnceLock::new();
+    static TITLE_INDEX: OnceLock<HashIndex> = OnceLock::new();
     let public_only = PUBLIC_ONLY.with(Cell::get);
     let installed = crate::meta::snapshot::installed().filter(|_| !public_only);
-    let names = crate::meta::snapshot::names_library().filter(|_| !public_only);
-    match (installed, names) {
-        (None, None) => PUBLIC_INDEX
-            .get_or_init(|| HashIndex::from_library(&SchemaLibrary::default()).with_public_names()),
-        _ => INSTALLED_INDEX.get_or_init(|| {
-            let mut index = HashIndex::default();
-            installed
-                .into_iter()
-                .chain(names)
-                .for_each(|l| index.add_library(l));
+    let title = crate::meta::snapshot::names_library()
+        .filter(|_| !public_only && TITLE_NAMES.with(Cell::get));
+    if let Some(title) = title {
+        return TITLE_INDEX.get_or_init(|| {
+            let mut index = HashIndex::from_library(title);
+            installed.into_iter().for_each(|l| index.add_library(l));
             index.with_public_names()
-        }),
+        });
+    }
+    match installed {
+        Some(library) => {
+            INSTALLED_INDEX.get_or_init(|| HashIndex::from_library(library).with_public_names())
+        }
+        None => PUBLIC_INDEX
+            .get_or_init(|| HashIndex::from_library(&SchemaLibrary::default()).with_public_names()),
     }
 }
 

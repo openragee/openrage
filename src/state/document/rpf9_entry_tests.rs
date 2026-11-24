@@ -287,3 +287,73 @@ fn a_twenty_byte_nested_entry_opens_reloads_and_extracts_from_its_table() {
     assert_eq!(hex.bytes, expected);
     assert_eq!(std::fs::read(dest.join(&source.name)).unwrap(), expected);
 }
+
+mod install {
+    use super::*;
+    use crate::state::extract_job::{run_extraction, ExtractItem, OnClash};
+
+    fn walk(table: &Rpf9TableDocument, base: u64, output: &Path) -> usize {
+        let entries = table.tree().nodes[&base].archive.entries.clone();
+        let mut count = 0;
+        for entry in entries {
+            let source = table
+                .entry(base, entry.index)
+                .unwrap_or_else(|e| panic!("{base:#x}/{}: {e}", entry.index));
+            let expected = match source
+                .payload()
+                .unwrap_or_else(|e| panic!("open {}: {e}", source.path.display()))
+            {
+                DocPayload::Hex(hex) => hex.bytes,
+                DocPayload::Text(_) => source.bytes().unwrap(),
+                _ => panic!("unexpected entry document"),
+            };
+            let dest = output.join(format!("{base:x}_{}", entry.index));
+            let path = dest.join(&source.name);
+            let item = ExtractItem::written(source.name.clone(), Arc::new(move || source.bytes()));
+            let report = run_extraction(
+                vec![item],
+                dest,
+                or_io::container::rpf::BodyForm::Decoded,
+                false,
+                OnClash::KeepBoth,
+                or_job::Cancel::new(),
+                or_job::Progress::new(),
+            );
+            assert_eq!(report.counts.failed, 0, "{:?}", report.failures);
+            assert_eq!(report.counts.succeeded, 1);
+            assert_eq!(std::fs::read(path).unwrap(), expected);
+            count += 1;
+            if entry.kind() == Some(Gta6Class::NestedArchive) {
+                let child = child_extent(&table.tree().nodes[&base], entry.index).unwrap();
+                table.toggle(base, entry.index);
+                wait(table);
+                assert!(table.tree().errors.is_empty());
+                count += walk(table, child.start, output);
+            }
+        }
+        count
+    }
+
+    #[test]
+    fn every_entry_in_the_selected_archive_opens_and_extracts_from_tables() {
+        let Some(archive) = std::env::var_os("OPENRAGE_GTA6_ARCHIVE") else {
+            or_test_support::skip_install(
+                "RPF9 table opening and extraction",
+                format_args!("set OPENRAGE_GTA6_ARCHIVE and OPENRAGE_GTA6_KEYS"),
+            );
+            return;
+        };
+        let snapshot = std::env::var_os("OPENRAGE_GTA6_KEYS").expect("OPENRAGE_GTA6_KEYS");
+        let keys = GtaViKeys::from_file(Path::new(&snapshot)).expect("load the key snapshot");
+        let table = Rpf9TableDocument::open_using(Path::new(&archive), || Ok(keys))
+            .unwrap()
+            .unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let count = walk(&table, 0, output.path());
+        assert!(count > 0, "the selected archive is empty");
+        println!(
+            "{count} entries opened, extracted and compared through the application; {} tables",
+            table.tree().nodes.len()
+        );
+    }
+}

@@ -46,6 +46,7 @@ not (
       | test(/^state::document::hex::tests::/)
       | test(/^state::document::material_baseline::tests::/)
       | test(/^state::document::meta::a_document_that_will_not_save::/)
+      | test(/^state::document::rpf9::entry::tests::install::/)
       | test(/^state::document::tests::/)
       | test(/^state::document_io::tests::/)
       | test(/^state::dropping_and_importing_folders::/)

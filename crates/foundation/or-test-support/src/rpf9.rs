@@ -107,11 +107,21 @@ pub fn table(entries: &[(u64, u64, u64, u8)]) -> Vec<u8> {
 
 /// A plaintext 20-byte entry at 0x1000 with mode-2 `(decoded, stored, compressed)` chunk descriptors.
 pub fn resource_table(chunks: &[(u32, u32, bool)]) -> Vec<u8> {
+    chunk_table(None, chunks)
+}
+
+/// A plaintext 24-byte entry at 0x1000 with mode-3 `(decoded, stored, compressed)` chunk descriptors.
+pub fn chunked_table(class: u8, chunks: &[(u32, u32, bool)]) -> Vec<u8> {
+    chunk_table(Some(class), chunks)
+}
+
+fn chunk_table(class: Option<u8>, chunks: &[(u32, u32, bool)]) -> Vec<u8> {
+    let width = if class.is_some() { 24 } else { 20 };
     let metadata_start = 64 + 4 * 8;
     let groups = metadata_start + 0x150;
     let indices = groups + 3 * 24;
     let data = (indices + 2usize).next_multiple_of(8);
-    let cell = data + 20;
+    let cell = data + width;
     let heap = cell + 8;
     let split = (heap + chunks.len() * 8).next_multiple_of(16);
     let end = split + 16;
@@ -141,8 +151,16 @@ pub fn resource_table(chunks: &[(u32, u32, bool)]) -> Vec<u8> {
     bytes[0x40] = 1;
     bytes[metadata_start + 4] = 0x10;
     for (i, (hash, width, offset)) in [
-        (0xBA18_0AFB_232D_1B4Bu64, 20, 0),
-        (0xE0C1_2D7A_5D48_84C5, 8, 20),
+        (
+            if class.is_some() {
+                0x33F7_0DFA_F2C5_0989u64
+            } else {
+                0xBA18_0AFB_232D_1B4B
+            },
+            width,
+            0,
+        ),
+        (0xE0C1_2D7A_5D48_84C5, 8, width),
         (0x73BC_B72D_CE74_F11F, 8 | (1 << 16), 0),
     ]
     .into_iter()
@@ -158,20 +176,52 @@ pub fn resource_table(chunks: &[(u32, u32, bool)]) -> Vec<u8> {
         .iter()
         .map(|c| (c.1 as usize).next_multiple_of(16))
         .sum();
-    put32(&mut bytes, data, u32::MAX as usize);
-    put32(&mut bytes, data + 8, 1 + stored / 16);
-    put32(&mut bytes, data + 12, 0x1000 / 16);
+    let mode = if let Some(class) = class {
+        let decoded: u64 = chunks.iter().map(|c| u64::from(c.0)).sum();
+        for (i, value) in [
+            (0x1000 / 16) | (u64::from(class) << 40),
+            (stored / 16) as u64,
+            decoded,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            bytes[data + i * 8..data + (i + 1) * 8].copy_from_slice(&value.to_le_bytes());
+        }
+        3
+    } else {
+        put32(&mut bytes, data, u32::MAX as usize);
+        put32(&mut bytes, data + 8, 1 + stored / 16);
+        put32(&mut bytes, data + 12, 0x1000 / 16);
+        2
+    };
     put32(&mut bytes, cell, heap - cell);
-    put32(&mut bytes, cell + 4, 0x0208_0000 | chunks.len());
+    put32(
+        &mut bytes,
+        cell + 4,
+        (mode << 24) | 0x0008_0000 | chunks.len(),
+    );
     bytes[split + 8..split + 16].copy_from_slice(&1u64.to_le_bytes());
+    let mut offset = 0;
     for (i, &(decoded, stored, compressed)) in chunks.iter().enumerate() {
-        assert_eq!(decoded % 16, 0);
         let aligned = u64::from(stored).next_multiple_of(16);
-        let word = u64::from(decoded / 16)
-            | ((aligned / 16) << 32)
-            | ((aligned - u64::from(stored)) << 58)
-            | (if compressed { 3 } else { 0 } << 62);
+        let flag = if compressed { 3 } else { 0 };
+        let word = if mode == 2 {
+            assert_eq!(decoded % 16, 0);
+            u64::from(decoded / 16)
+                | ((aligned / 16) << 32)
+                | ((aligned - u64::from(stored)) << 58)
+                | (flag << 62)
+        } else {
+            assert!((1..=0x10000).contains(&decoded));
+            assert!((1..=0x10000).contains(&stored));
+            u64::from((0x10000 - decoded) & 0xffff)
+                | (u64::from((0x10000 - stored) & 0xffff) << 16)
+                | ((offset / 16) << 32)
+                | (flag << 60)
+        };
         bytes[heap + i * 8..heap + (i + 1) * 8].copy_from_slice(&word.to_le_bytes());
+        offset += aligned;
     }
     bytes
 }

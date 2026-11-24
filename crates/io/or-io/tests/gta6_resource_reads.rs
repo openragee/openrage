@@ -29,6 +29,10 @@ impl Seek for BodyOnly {
 }
 
 fn fixture(plain: Vec<u8>, body: &[u8]) -> (Gta6Archive, BodyOnly, GtaViKeys) {
+    fixture_at(plain, body, 0x1010)
+}
+
+fn fixture_at(plain: Vec<u8>, body: &[u8], start: usize) -> (Gta6Archive, BodyOnly, GtaViKeys) {
     let keys = GtaViKeys::parse(&rpf9::keys()).unwrap();
     let mut bytes = Rpf9Builder::serialize(
         &Rpf9Toc {
@@ -41,7 +45,7 @@ fn fixture(plain: Vec<u8>, body: &[u8]) -> (Gta6Archive, BodyOnly, GtaViKeys) {
         &keys,
     )
     .unwrap();
-    bytes.resize(0x1010, 0x78);
+    bytes.resize(start, 0x78);
     bytes.extend_from_slice(body);
     let end = bytes.len() as u64;
     let mut source = Cursor::new(bytes);
@@ -50,7 +54,7 @@ fn fixture(plain: Vec<u8>, body: &[u8]) -> (Gta6Archive, BodyOnly, GtaViKeys) {
         archive,
         BodyOnly {
             source,
-            allowed: 0x1010..end,
+            allowed: start as u64..end,
             reads: 0,
         },
         keys,
@@ -245,4 +249,67 @@ fn resource_content_keys_are_required_before_reading_and_decode_the_body() {
     assert_eq!(read.read(&mut source, &content_keys).unwrap(), expected);
     archive.entries[0].cipher.as_mut().unwrap().framing[4] = 5;
     assert!(Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).is_err());
+}
+
+#[test]
+fn media_and_resource_rows_follow_mixed_mode_three_chunks() {
+    let expected = b"compressed chunk";
+    let packed = zlib(expected);
+    let raw = b"\x78\xda9FPRxxxxxxxxxx";
+    for class in [0xff, 11] {
+        let table = rpf9::chunked_table(
+            class,
+            &[
+                (expected.len() as u32, packed.len() as u32, true),
+                (raw.len() as u32, raw.len() as u32, false),
+            ],
+        );
+        let mut body = packed.clone();
+        body.resize(body.len().next_multiple_of(16), 0x78);
+        body.extend(raw);
+        let (archive, mut source, keys) = fixture_at(table, &body, 0x1000);
+        let read = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
+        assert_eq!(
+            read.read(&mut source, &keys).unwrap(),
+            [expected.as_slice(), raw.as_slice()].concat()
+        );
+        assert_eq!(source.reads, 1);
+    }
+}
+
+#[test]
+fn malformed_mode_three_tables_never_fall_back_to_raw_or_counted_streams() {
+    use or_io::container::rpf::{gta6_chunk_table::cell_offset, GROUP_ENTRY_ROW};
+    for case in 0..6 {
+        let (mut archive, mut source, keys) = fixture_at(
+            rpf9::chunked_table(255, &[(16, 16, false)]),
+            b"table only bytes",
+            0x1000,
+        );
+        let at = cell_offset(&archive, 0).unwrap();
+        match case {
+            0 => archive.toc.bytes[at + 7] = 2,
+            1 => archive.toc.bytes[at + 6] = 0,
+            2 => archive.toc.bytes[at..at + 4].fill(0xff),
+            3 => {
+                let row = archive
+                    .toc
+                    .groups
+                    .iter()
+                    .find(|g| g.name_hash == GROUP_ENTRY_ROW)
+                    .unwrap()
+                    .data
+                    .start;
+                archive.toc.bytes[row + 16..row + 24].copy_from_slice(&17u64.to_le_bytes());
+                archive.entries[0].real = Some(17);
+            }
+            4 => archive.entries[0].stored = Some(32),
+            5 => archive.toc.bytes[at + 4..at + 6].fill(0),
+            _ => unreachable!(),
+        }
+        let result = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000)
+            .and_then(|read| read.read(&mut source, &keys));
+        assert!(result.is_err(), "case {case}");
+        assert_eq!(source.reads, 0);
+    }
 }

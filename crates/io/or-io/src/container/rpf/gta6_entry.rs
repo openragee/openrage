@@ -19,7 +19,6 @@ pub struct Gta6EntryRead {
 #[derive(Clone)]
 enum Decoding {
     Raw,
-    CountedZlib(u32),
     Table(Vec<Chunk>),
 }
 
@@ -45,9 +44,7 @@ impl Gta6EntryRead {
         let extra = archive
             .entry_extra(index as usize)
             .ok_or_else(|| bad("entry columns are unreadable"))?;
-        let table = if extra.nested.is_some() {
-            let at = gta6_chunk_table::cell_offset(archive, index as usize)
-                .ok_or_else(|| bad("a 20-byte resource row requires a chunk table"))?;
+        let table = if let Some(at) = gta6_chunk_table::cell_offset(archive, index as usize) {
             let heap = &archive.toc.bytes[at..];
             let mut cell = [0; 8];
             cell.copy_from_slice(&heap[..8]);
@@ -78,20 +75,8 @@ impl Gta6EntryRead {
             (None, None, Some(row)) if entry.class.is_none() => {
                 let table =
                     table.ok_or_else(|| bad("a 20-byte resource row requires a chunk table"))?;
-                if table.mode != 2 || table.chunks.is_empty() {
-                    return Err(bad(
-                        "a 20-byte resource row requires a nonempty mode-2 chunk table",
-                    ));
-                }
-                let mut stored = 16u64;
-                let mut real = 0u64;
-                for chunk in &table.chunks {
-                    if chunk.stored == 0 || chunk.inflated == 0 {
-                        return Err(bad("empty resource chunk"));
-                    }
-                    stored += (u64::from(chunk.stored) + 15) & !15;
-                    real += u64::from(chunk.inflated);
-                }
+                let (body, real) = table_sizes(&table, 2, extra.chunk_count)?;
+                let stored = body + 16;
                 if stored != row.stored_size() {
                     return Err(bad(
                         "chunk sizes do not match the 20-byte row's stored size",
@@ -100,16 +85,18 @@ impl Gta6EntryRead {
                 (stored, real, 16, Decoding::Table(table.chunks))
             }
             (Some(stored), Some(real), None) => {
-                let decoding = match (entry.kind(), extra.chunk_count) {
+                let decoding = match (entry.kind(), table) {
                     (Some(Gta6Class::Media | Gta6Class::NestedArchive), None)
-                        if real.checked_add(15).map(|n| n & !15) == Some(stored) =>
+                        if extra.chunk_count.is_none()
+                            && real.checked_add(15).map(|n| n & !15) == Some(stored) =>
                     {
                         Decoding::Raw
                     }
-                    (Some(Gta6Class::CompressedResource), Some(count))
-                        if count > 0 && u64::from(count) <= stored / 16 =>
-                    {
-                        Decoding::CountedZlib(count)
+                    (Some(Gta6Class::Media | Gta6Class::CompressedResource), Some(table)) => {
+                        if table_sizes(&table, 3, extra.chunk_count)? != (stored, real) {
+                            return Err(bad("chunk sizes do not match the 24-byte row's sizes"));
+                        }
+                        Decoding::Table(table.chunks)
                     }
                     _ => {
                         return Err(bad(
@@ -189,7 +176,6 @@ impl Gta6EntryRead {
             result?;
         }
         match &self.decoding {
-            Decoding::CountedZlib(count) => inflate(&body, *count, self.real),
             Decoding::Table(chunks) => inflate_table(&body, chunks),
             Decoding::Raw => {
                 body.truncate(self.real);
@@ -197,6 +183,27 @@ impl Gta6EntryRead {
             }
         }
     }
+}
+
+fn table_sizes(table: &Table, mode: u8, count: Option<u32>) -> Result<(u64, u64)> {
+    if table.mode != mode || table.chunks.is_empty() || count != Some(table.chunks.len() as u32) {
+        return Err(bad(
+            "chunk table mode or count does not match the entry row",
+        ));
+    }
+    let mut stored = 0;
+    let mut real = 0;
+    for chunk in &table.chunks {
+        if chunk.stored == 0
+            || chunk.inflated == 0
+            || (!chunk.zlib && chunk.stored != chunk.inflated)
+        {
+            return Err(bad("empty or inconsistent chunk sizes"));
+        }
+        stored += (u64::from(chunk.stored) + 15) & !15;
+        real += u64::from(chunk.inflated);
+    }
+    Ok((stored, real))
 }
 
 fn inflate_table(body: &[u8], chunks: &[Chunk]) -> Result<Vec<u8>> {
@@ -220,28 +227,6 @@ fn inflate_table(body: &[u8], chunks: &[Chunk]) -> Result<Vec<u8>> {
     }
     if at != body.len() {
         return Err(bad("chunk sizes do not cover the entry body"));
-    }
-    Ok(out)
-}
-
-fn inflate(body: &[u8], count: u32, real: usize) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    let mut at = 0usize;
-    for _ in 0..count {
-        let input = body
-            .get(at..)
-            .ok_or_else(|| bad("chunk extends past its entry"))?;
-        let consumed = inflate_zlib(input, &mut out, real)?;
-        at = at
-            .checked_add(consumed)
-            .and_then(|n| n.checked_add(15))
-            .map(|n| n & !15)
-            .ok_or_else(|| bad("chunk size overflow"))?;
-    }
-    if at != body.len() || out.len() != real {
-        return Err(bad(
-            "chunk count or decoded/stored size does not match the table",
-        ));
     }
     Ok(out)
 }
@@ -335,27 +320,35 @@ mod tests {
         }
     }
 
-    fn plan(row: &Gta6Entry, chunks: Option<u32>) -> Result<Gta6EntryRead> {
+    fn plan(row: &Gta6Entry, chunks: Option<&[Chunk]>) -> Result<Gta6EntryRead> {
         Gta6EntryRead::plan(
             row,
             Gta6EntryExtra {
-                chunk_count: chunks,
+                chunk_count: chunks.map(|c| c.len() as u32),
                 ..Default::default()
             },
-            None,
+            chunks.map(|c| Table {
+                mode: 3,
+                chunks: c.to_vec(),
+            }),
             64,
             128..1024,
             1024,
         )
     }
 
-    fn zlib(bytes: &[u8]) -> Vec<u8> {
+    fn zlib(bytes: &[u8]) -> (Vec<u8>, Chunk) {
         let mut encoder =
             flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(bytes).unwrap();
         let mut stored = encoder.finish().unwrap();
+        let chunk = Chunk {
+            inflated: bytes.len() as u32,
+            stored: stored.len() as u32,
+            zlib: true,
+        };
         stored.resize(stored.len().next_multiple_of(16), 0);
-        stored
+        (stored, chunk)
     }
 
     #[test]
@@ -372,13 +365,14 @@ mod tests {
     }
 
     #[test]
-    fn counted_zlib_streams_end_at_the_stated_size() {
-        let mut stored = zlib(b"first chunk");
-        stored.extend(zlib(b"second chunk"));
+    fn table_zlib_streams_end_at_the_stated_size() {
+        let (mut stored, first) = zlib(b"first chunk");
+        let (second_body, second) = zlib(b"second chunk");
+        stored.extend(second_body);
         let mut src = source(&stored);
         let row = entry(stored.len() as u64, 23, 11);
         assert_eq!(
-            plan(&row, Some(2))
+            plan(&row, Some(&[first, second]))
                 .unwrap()
                 .read(&mut src, &keys())
                 .unwrap(),
@@ -389,15 +383,20 @@ mod tests {
     #[test]
     fn malformed_compression_never_becomes_raw_bytes_or_a_later_stream() {
         let mut stored = vec![0; 16];
-        stored.extend(zlib(b"decoy stream"));
+        stored.extend(zlib(b"decoy stream").0);
         let row = entry(stored.len() as u64, 12, 11);
-        assert!(plan(&row, Some(1))
+        let chunk = Chunk {
+            inflated: 12,
+            stored: stored.len() as u32,
+            zlib: true,
+        };
+        assert!(plan(&row, Some(&[chunk]))
             .unwrap()
             .read(&mut source(&stored), &keys())
             .is_err());
-        let mut stored = zlib(b"broken checksum");
+        let (mut stored, chunk) = zlib(b"broken checksum");
         stored[3] ^= 0x55;
-        assert!(plan(&entry(stored.len() as u64, 15, 11), Some(1))
+        assert!(plan(&entry(stored.len() as u64, 15, 11), Some(&[chunk]))
             .unwrap()
             .read(&mut source(&stored), &keys())
             .is_err());
@@ -405,20 +404,38 @@ mod tests {
 
     #[test]
     fn size_count_and_trailing_stream_mismatches_are_errors() {
-        let mut stored = zlib(b"first");
-        stored.extend(zlib(b"second"));
-        for (count, real) in [(1, 5), (2, 10), (2, 12), (3, 11)] {
-            assert!(plan(&entry(stored.len() as u64, real, 11), Some(count))
+        let (mut stored, first) = zlib(b"first");
+        let (second_body, second) = zlib(b"second");
+        stored.extend(second_body);
+        for (chunks, real) in [
+            (vec![first], 5),
+            (vec![first, second], 10),
+            (vec![first, second], 12),
+            (vec![first, second, second], 11),
+        ] {
+            assert!(plan(&entry(stored.len() as u64, real, 11), Some(&chunks))
                 .and_then(|read| read.read(&mut source(&stored), &keys()))
                 .is_err());
         }
+        let chunk = Chunk {
+            inflated: first.inflated,
+            stored: stored.len() as u32,
+            zlib: true,
+        };
+        assert!(plan(
+            &entry(stored.len() as u64, u64::from(first.inflated), 11),
+            Some(&[chunk])
+        )
+        .unwrap()
+        .read(&mut source(&stored), &keys())
+        .is_err());
     }
 
     #[test]
     fn unsupported_rows_and_out_of_bounds_extents_are_refused() {
         assert!(plan(&entry(16, 16, 14), None).is_err());
         assert!(plan(&entry(16, 16, 11), None).is_err());
-        assert!(plan(&entry(16, 16, 11), Some(0)).is_err());
+        assert!(plan(&entry(16, 16, 11), Some(&[])).is_err());
         assert!(plan(&entry(16, 17, 255), None).is_err());
         assert!(plan(&entry(32, 1, 255), None).is_err());
         assert!(plan(&entry(2048, 2048, 255), None).is_err());
@@ -463,7 +480,7 @@ mod tests {
         }
         let keys = GtaViKeys::parse(&snapshot).unwrap();
         let expected = b"synthetic encrypted content";
-        let mut body = zlib(expected);
+        let (mut body, chunk) = zlib(expected);
         // Constant output maps make the expected keystream independent of the cipher implementation.
         for (i, byte) in body.iter_mut().enumerate() {
             *byte ^= 0x80 + (i % 16) as u8;
@@ -476,17 +493,17 @@ mod tests {
             framing: [0, 0x400, 0, 0, 4],
         });
         assert_eq!(
-            plan(&row, Some(1))
+            plan(&row, Some(&[chunk]))
                 .unwrap()
                 .read(&mut source(&body), &keys)
                 .unwrap(),
             expected
         );
         row.cipher.as_mut().unwrap().cipher_type = 19;
-        assert!(plan(&row, Some(1)).is_err());
+        assert!(plan(&row, Some(&[chunk])).is_err());
         row.cipher.as_mut().unwrap().cipher_type = 17;
         row.cipher.as_mut().unwrap().framing[4] = 5;
-        assert!(plan(&row, Some(1)).is_err());
+        assert!(plan(&row, Some(&[chunk])).is_err());
     }
 
     #[test]

@@ -444,3 +444,58 @@ fn extraction_reads_a_twenty_byte_nested_entry_and_refuses_a_missing_chunk_table
         }
     }
 }
+
+#[test]
+fn chunked_media_extracts_and_invalid_descriptors_write_nothing() {
+    use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
+    let keys = GtaViKeys::parse(&or_test_support::rpf9::keys()).unwrap();
+    for invalid in [false, true] {
+        let mut table =
+            or_test_support::rpf9::chunked_table(255, &[(16, 16, false), (16, 16, false)]);
+        if invalid {
+            let metadata_start = 64 + 4 * 8;
+            let index_start = metadata_start + 0x150 + 3 * 24;
+            let data = (index_start + 2usize).next_multiple_of(8);
+            table[data + 24 + 6] = 0;
+        }
+        let mut bytes = Rpf9Builder::serialize(
+            &Rpf9Toc {
+                bytes: table,
+                key_id: 0,
+                registry_id: 0,
+                entry_count: 0,
+                groups: Vec::new(),
+            },
+            &keys,
+        )
+        .unwrap();
+        bytes.resize(0x1000, 0x78);
+        let expected = b"first raw chunk second raw chunk";
+        assert_eq!(expected.len(), 32);
+        bytes.extend(expected);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("media.rpf");
+        let dest = dir.path().join("out");
+        std::fs::write(&path, bytes).unwrap();
+        let result = do_extract(
+            &path,
+            &dest,
+            &[],
+            Some("0"),
+            None,
+            false,
+            &keys,
+            &NameResolver::new(),
+        );
+        if invalid {
+            assert!(result.is_err());
+            assert_eq!(std::fs::read_dir(dest).unwrap().count(), 0);
+        } else {
+            assert_eq!(result.unwrap(), 1);
+            assert_eq!(
+                std::fs::read(dest.join("hash_0000000000000001")).unwrap(),
+                expected
+            );
+        }
+    }
+}

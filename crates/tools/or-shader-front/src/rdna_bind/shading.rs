@@ -171,6 +171,8 @@ pub enum Unfed {
     NotShown(u32),
     #[error("it picks an entry of an array of textures or buffers by a number it computes, which no device checks")]
     Entry,
+    #[error("it reads the game's wind records, at nought here, and every stage that does faults on a software adapter")]
+    Wind,
 }
 
 /// One stage of a shading pass ready for the renderer: its module, what fills each binding, and
@@ -231,6 +233,17 @@ fn never_ending(
         return None;
     }
     loops::counted_to(module, &game).map(Unfed::Loop)
+}
+
+/// The buffer of 80-byte records a mesh program sways a vertex by, by the hash of its name.
+// ⚠ Each of the three effects drawn that read it (a hedge's, a trunk's and a batch of emissive
+// leaves') ended the process on a software adapter, by an access violation or a corrupted heap,
+// where their siblings that do not read it drew: what in that path faults is not read.
+const WIND: u32 = 0x1948_E9AA;
+
+/// Whether a stage fed `feeds` reads the wind records, which the editor leaves at nought.
+fn sways(feeds: &[Fed]) -> bool {
+    feeds.iter().any(|fed| fed.feed == Feed::Zero(Some(WIND)))
 }
 
 /// Whether `module` takes an entry of an array it binds by a number it computes, or by a stated
@@ -777,6 +790,9 @@ pub fn feed(
     if picks_an_unchecked_entry(&module) {
         return Err(Unfed::Entry);
     }
+    if sways(&feeds) && !unguarded() {
+        return Err(Unfed::Wind);
+    }
     if mesh {
         to_pixel_slots(&mut module, &parameter_slots(&native.outputs));
     }
@@ -900,6 +916,21 @@ mod tests {
         }
         let other = counted("a count over the wave's lanes read as this lane's");
         assert_eq!(never_ending(&module, &[], &other), None);
+    }
+
+    #[test]
+    fn a_stage_that_reads_the_wind_records_is_told_from_one_that_reads_another_buffer() {
+        let fed = |feed| Fed {
+            group: 0,
+            binding: 3,
+            feed,
+            header: None,
+        };
+        assert!(sways(&[fed(Feed::Bones), fed(Feed::Zero(Some(WIND)))]));
+        assert!(!sways(&[
+            fed(Feed::Zero(Some(OTHER))),
+            fed(Feed::Zero(None))
+        ]));
     }
 
     #[test]

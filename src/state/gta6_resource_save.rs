@@ -99,7 +99,7 @@ impl AppState {
             }
         };
         let items = std::iter::once(item).chain(beside).collect();
-        self.start_scanned_extraction(name, dest, reads, items, OnClash::Save)
+        self.start_archive_extraction(name, dest, reads, items, OnClash::Save)
     }
 
     /// Save a copy of the scanned body `doc` shows to `path`: a metadata body as its XML where
@@ -177,7 +177,7 @@ impl AppState {
                 return Some(false);
             }
         }
-        Some(self.start_scanned_extraction(name, dest, archive, vec![item], OnClash::Save))
+        Some(self.start_archive_extraction(name, dest, archive, vec![item], OnClash::Save))
     }
 
     /// Whether `doc` holds edits no writer took, said in a toast: a copy of the stored body would

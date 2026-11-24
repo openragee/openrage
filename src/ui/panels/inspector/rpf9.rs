@@ -16,7 +16,10 @@ pub(super) fn draw_rpf9(ui: &mut egui::Ui, state: &mut AppState, doc_id: Documen
     if let Some(DocPayload::Rpf9(Rpf9Document::Table(table))) =
         state.document(doc_id).map(|d| &d.payload)
     {
-        super::rpf9_table::draw_facts(ui, table);
+        let table = table.clone();
+        if let Some(action) = super::rpf9_table::draw_facts(ui, &table) {
+            action.run(state, &table);
+        }
         return;
     }
     let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =

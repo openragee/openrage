@@ -13,10 +13,14 @@ use or_io::container::rpf::{
 };
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
 
+#[path = "rpf9_entry.rs"]
+pub mod entry;
+
 pub struct Node {
     pub archive: Gta6Archive,
     pub extent: Range<u64>,
     depth: usize,
+    chain: Vec<u32>,
 }
 
 struct Pending {
@@ -106,6 +110,7 @@ impl Rpf9TableDocument {
                 archive,
                 extent: 0..metadata.len(),
                 depth: 0,
+                chain: Vec::new(),
             },
         );
         Ok(Some(Self {
@@ -173,6 +178,8 @@ impl Rpf9TableDocument {
             }
         };
         let depth = parent.depth + 1;
+        let mut chain = parent.chain.clone();
+        chain.push(index);
         if let Some(node) = tree.nodes.get(&extent.start) {
             if node.extent == extent {
                 tree.expanded.insert(key);
@@ -213,6 +220,7 @@ impl Rpf9TableDocument {
                     archive,
                     extent,
                     depth,
+                    chain,
                 })
             })();
             let _ = tx.send(loaded);

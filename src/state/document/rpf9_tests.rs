@@ -4,7 +4,7 @@ use super::*;
 use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
 use or_test_support::rpf9;
 
-fn keys() -> GtaViKeys {
+pub(super) fn keys() -> GtaViKeys {
     GtaViKeys::parse(&rpf9::keys()).expect("synthetic keys")
 }
 
@@ -22,7 +22,7 @@ fn encrypted(rows: &[(u64, u64, u64, u8)]) -> Vec<u8> {
     .expect("synthetic encrypted table")
 }
 
-fn fixture(child_size: u64, valid_child: bool) -> (tempfile::TempDir, PathBuf) {
+pub(super) fn fixture(child_size: u64, valid_child: bool) -> (tempfile::TempDir, PathBuf) {
     let name = or_io::gta6::hash::name_hash64(b"child");
     let mut bytes = encrypted(&[(name, 0x1000, child_size, 0), (0, 0x800, 16, 0xff)]);
     bytes.resize(0x1000, 0x78);
@@ -36,7 +36,7 @@ fn fixture(child_size: u64, valid_child: bool) -> (tempfile::TempDir, PathBuf) {
     (dir, path)
 }
 
-fn wait(doc: &Rpf9TableDocument) {
+pub(super) fn wait(doc: &Rpf9TableDocument) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         let mut tree = doc.tree();
@@ -153,8 +153,12 @@ fn the_tree_arrow_loads_and_collapses_the_child_table() {
         egui::Pos2::ZERO,
         egui::vec2(560.0, 900.0),
     ));
+    let state = std::cell::RefCell::new(state);
     let draw = |ui: &mut egui::Ui| {
-        assert!(crate::ui::panels::inspector::draw_archive_table(ui, &state));
+        assert!(crate::ui::panels::inspector::draw_archive_table(
+            ui,
+            &mut state.borrow_mut()
+        ));
     };
     panel.frame(Vec::new(), draw);
     let before = panel.frame(Vec::new(), draw);

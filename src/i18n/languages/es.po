@@ -16788,8 +16788,6 @@ msgstr "Se alcanzó el límite de anidamiento de archivos."
 msgid "Entries are listed from the archive table. Expand an archive to load its table."
 msgstr "Las entradas se obtienen de la tabla del archivo. Despliega un archivo para cargar su tabla."
 
-msgid "File contents cannot be opened from this table view yet."
-msgstr "Todavía no se puede abrir el contenido de los ficheros desde esta vista de tabla."
 
 msgid "Loading archive table…"
 msgstr "Cargando la tabla del archivo…"
@@ -16835,3 +16833,9 @@ msgstr "Buscar"
 
 msgid "Encrypted"
 msgstr "Cifrado"
+
+msgid "Files are read from their table entries. Unsupported layouts are reported as errors."
+msgstr "Los archivos se leen desde sus entradas de la tabla. Las estructuras no compatibles se notifican como errores."
+
+msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
+msgstr "Este archivo se abrió desde una tabla RPF9 y es de solo lectura. Extráigalo para guardar una copia independiente."

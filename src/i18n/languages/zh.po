@@ -16788,8 +16788,6 @@ msgstr "已达到归档嵌套深度上限。"
 msgid "Entries are listed from the archive table. Expand an archive to load its table."
 msgstr "条目来自归档表。展开归档即可加载其表。"
 
-msgid "File contents cannot be opened from this table view yet."
-msgstr "目前还无法从此表视图打开文件内容。"
 
 msgid "Loading archive table…"
 msgstr "正在加载归档表…"
@@ -16835,3 +16833,9 @@ msgstr "查找"
 
 msgid "Encrypted"
 msgstr "已加密"
+
+msgid "Files are read from their table entries. Unsupported layouts are reported as errors."
+msgstr "文件按表中的条目读取。不支持的结构会报告错误。"
+
+msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
+msgstr "此文件从 RPF9 表中打开，为只读。请提取文件以保存单独的副本。"

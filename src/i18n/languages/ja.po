@@ -16788,8 +16788,6 @@ msgstr "アーカイブの入れ子の深さが上限に達しました。"
 msgid "Entries are listed from the archive table. Expand an archive to load its table."
 msgstr "エントリはアーカイブのテーブルから取得されます。アーカイブを展開するとテーブルが読み込まれます。"
 
-msgid "File contents cannot be opened from this table view yet."
-msgstr "このテーブル表示からファイルの内容を開くことはまだできません。"
 
 msgid "Loading archive table…"
 msgstr "アーカイブのテーブルを読み込み中…"
@@ -16835,3 +16833,9 @@ msgstr "検索"
 
 msgid "Encrypted"
 msgstr "暗号化済み"
+
+msgid "Files are read from their table entries. Unsupported layouts are reported as errors."
+msgstr "ファイルはテーブルのエントリに従って読み込まれます。未対応の構造はエラーとして報告されます。"
+
+msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
+msgstr "このファイルはRPF9テーブルから開かれ、読み取り専用です。別のコピーを保存するには抽出してください。"

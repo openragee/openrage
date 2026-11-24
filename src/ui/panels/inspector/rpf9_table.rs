@@ -3,7 +3,25 @@
 use crate::state::rpf9::{is_archive, Rpf9TableDocument, Tree};
 use crate::ui::theme;
 
-pub(super) fn draw_facts(ui: &mut egui::Ui, doc: &Rpf9TableDocument) {
+pub(super) enum Action {
+    Open(u64, u32),
+    Extract(u64, u32),
+}
+
+impl Action {
+    pub fn run(self, state: &mut crate::state::AppState, doc: &Rpf9TableDocument) {
+        match self {
+            Self::Open(base, index) => state.open_rpf9_entry(doc, base, index),
+            Self::Extract(base, index) => {
+                if let Some(dest) = crate::platform::file_dialogs::pick_extract_destination() {
+                    state.extract_rpf9_entry(doc, base, index, dest);
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn draw_facts(ui: &mut egui::Ui, doc: &Rpf9TableDocument) -> Option<Action> {
     let mut tree = doc.tree();
     tree.poll();
     ui.heading(tr!("GTA VI Archive"));
@@ -11,16 +29,15 @@ pub(super) fn draw_facts(ui: &mut egui::Ui, doc: &Rpf9TableDocument) {
         "Entries are listed from the archive table. Expand an archive to load its table."
     ));
     ui.label(tr!(
-        "File contents cannot be opened from this table view yet."
+        "Files are read from their table entries. Unsupported layouts are reported as errors."
     ));
-    let Some(root) = tree.nodes.get(&0) else {
-        return;
-    };
+    let root = tree.nodes.get(&0)?;
     ui.label(tr_n!(
         "{count} entry",
         "{count} entries",
         root.archive.entries.len()
     ));
+    let mut action = None;
     if let Some((base, index)) = tree.selected {
         if let Some(entry) = tree
             .nodes
@@ -39,11 +56,20 @@ pub(super) fn draw_facts(ui: &mut egui::Ui, doc: &Rpf9TableDocument) {
             if entry.cipher.is_some() {
                 ui.label(tr!("Encrypted"));
             }
+            ui.horizontal(|ui| {
+                if !is_archive(entry) && ui.button(tr!("Open")).clicked() {
+                    action = Some(Action::Open(base, index));
+                }
+                if ui.button(tr!("Extract…")).clicked() {
+                    action = Some(Action::Extract(base, index));
+                }
+            });
         }
         if let Some(error) = tree.errors.get(&(base, index)) {
             ui.colored_label(theme::WARNING, error);
         }
     }
+    action
 }
 
 fn visible_rows(
@@ -70,7 +96,7 @@ fn visible_rows(
     }
 }
 
-pub(crate) fn draw_tree(ui: &mut egui::Ui, doc: &Rpf9TableDocument) {
+pub(super) fn draw_tree(ui: &mut egui::Ui, doc: &Rpf9TableDocument) -> Option<Action> {
     let mut tree = doc.tree();
     tree.poll();
     ui.strong(crate::state::jobs::file_name(&doc.path));
@@ -87,6 +113,7 @@ pub(crate) fn draw_tree(ui: &mut egui::Ui, doc: &Rpf9TableDocument) {
             .request_repaint_after(std::time::Duration::from_millis(50));
     }
     let mut toggle = None;
+    let mut action = None;
     let mut selected = tree.selected;
     let row_height = ui.text_style_height(&egui::TextStyle::Body) + 4.0;
     egui::ScrollArea::both()
@@ -126,23 +153,33 @@ pub(crate) fn draw_tree(ui: &mut egui::Ui, doc: &Rpf9TableDocument) {
                             && (pending.is_none() || open)
                         {
                             toggle = Some(key);
+                        } else if response.double_clicked() && !is_archive(entry) && !open {
+                            action = Some(Action::Open(base, index));
                         }
                         // A row without a class can be checked at its exact start on request.
-                        if entry.class.is_none() && entry.start.is_some() {
-                            response.context_menu(|ui| {
-                                if ui
+                        response.context_menu(|ui| {
+                            if !is_archive(entry) && ui.button(tr!("Open")).clicked() {
+                                action = Some(Action::Open(base, index));
+                                ui.close();
+                            }
+                            if ui.button(tr!("Extract…")).clicked() {
+                                action = Some(Action::Extract(base, index));
+                                ui.close();
+                            }
+                            if entry.class.is_none()
+                                && entry.start.is_some()
+                                && ui
                                     .add_enabled(
                                         pending.is_none(),
                                         egui::Button::new(tr!("Open as archive")),
                                     )
                                     .clicked()
-                                {
-                                    selected = Some(key);
-                                    toggle = Some(key);
-                                    ui.close();
-                                }
-                            });
-                        }
+                            {
+                                selected = Some(key);
+                                toggle = Some(key);
+                                ui.close();
+                            }
+                        });
                         if pending == Some(key) {
                             ui.spinner();
                         }
@@ -162,4 +199,5 @@ pub(crate) fn draw_tree(ui: &mut egui::Ui, doc: &Rpf9TableDocument) {
         doc.toggle(base, index);
         ui.ctx().request_repaint();
     }
+    action
 }

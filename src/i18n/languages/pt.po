@@ -16788,8 +16788,6 @@ msgstr "O limite de aninhamento de arquivos foi atingido."
 msgid "Entries are listed from the archive table. Expand an archive to load its table."
 msgstr "As entradas vêm da tabela do arquivo. Expanda um arquivo para carregar sua tabela."
 
-msgid "File contents cannot be opened from this table view yet."
-msgstr "Ainda não é possível abrir o conteúdo dos arquivos nesta visualização da tabela."
 
 msgid "Loading archive table…"
 msgstr "Carregando a tabela do arquivo…"
@@ -16835,3 +16833,9 @@ msgstr "Pesquisar"
 
 msgid "Encrypted"
 msgstr "Criptografado"
+
+msgid "Files are read from their table entries. Unsupported layouts are reported as errors."
+msgstr "Os arquivos são lidos a partir de suas entradas na tabela. Estruturas não suportadas são informadas como erros."
+
+msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
+msgstr "Este arquivo foi aberto a partir de uma tabela RPF9 e é somente leitura. Extraia-o para salvar uma cópia separada."

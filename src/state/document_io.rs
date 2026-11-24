@@ -205,6 +205,9 @@ pub(super) fn parse_payload_from_path(
     kind: DocumentKind,
     crypto: std::sync::Arc<dyn or_io::container::RpfCryptoProvider>,
 ) -> std::result::Result<(DocPayload, Option<Arc<document::ResourceImage>>), String> {
+    if document::rpf9::entry::is_entry(path) {
+        return document::rpf9::entry::read_path(path).map(|payload| (payload, None));
+    }
     if let Some((archive, offset)) = super::rpf9_scan::scanned_body(path) {
         return Ok((super::rpf9_scan::read_body(path, archive, offset)?, None));
     }

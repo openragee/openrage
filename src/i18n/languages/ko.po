@@ -16788,8 +16788,6 @@ msgstr "아카이브 중첩 한도에 도달했습니다."
 msgid "Entries are listed from the archive table. Expand an archive to load its table."
 msgstr "항목은 아카이브 테이블에서 가져옵니다. 아카이브를 펼치면 해당 테이블을 불러옵니다."
 
-msgid "File contents cannot be opened from this table view yet."
-msgstr "이 테이블 보기에서는 아직 파일 내용을 열 수 없습니다."
 
 msgid "Loading archive table…"
 msgstr "아카이브 테이블을 불러오는 중…"
@@ -16835,3 +16833,9 @@ msgstr "찾기"
 
 msgid "Encrypted"
 msgstr "암호화됨"
+
+msgid "Files are read from their table entries. Unsupported layouts are reported as errors."
+msgstr "파일은 테이블 항목에 따라 읽습니다. 지원하지 않는 구조는 오류로 표시됩니다."
+
+msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
+msgstr "이 파일은 RPF9 테이블에서 열렸으며 읽기 전용입니다. 별도 사본을 저장하려면 추출하세요."

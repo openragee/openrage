@@ -6,6 +6,113 @@
 use super::*;
 use or_io::container::rpf::Gta6Cipher;
 
+fn table_fixture(class: u8) -> (tempfile::TempDir, PathBuf, GtaViKeys) {
+    use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
+    let keys = GtaViKeys::parse(&or_test_support::rpf9::keys()).unwrap();
+    let toc = Rpf9Toc {
+        bytes: or_test_support::rpf9::table(&[(1, 0x1000, 16, class)]),
+        key_id: 0,
+        registry_id: 0,
+        entry_count: 0,
+        groups: Vec::new(),
+    };
+    let mut bytes = Rpf9Builder::serialize(&toc, &keys).unwrap();
+    bytes.resize(0x1010, 0xa5);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("table.rpf");
+    std::fs::write(&path, bytes).unwrap();
+    (dir, path, keys)
+}
+
+#[test]
+fn extraction_reads_an_arbitrary_raw_entry_without_a_body_detector() {
+    let (dir, path, keys) = table_fixture(0xff);
+    let dest = dir.path().join("out");
+    let count = do_extract(
+        &path,
+        &dest,
+        &[],
+        Some("0"),
+        None,
+        false,
+        &keys,
+        &NameResolver::new(),
+    )
+    .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(
+        std::fs::read(dest.join("hash_0000000000000001")).unwrap(),
+        vec![0xa5; 16]
+    );
+}
+
+#[test]
+fn extraction_refuses_an_unsupported_table_layout_without_writing() {
+    let (dir, path, keys) = table_fixture(11);
+    let dest = dir.path().join("out");
+    assert!(do_extract(
+        &path,
+        &dest,
+        &[],
+        Some("0"),
+        None,
+        false,
+        &keys,
+        &NameResolver::new()
+    )
+    .is_err());
+    assert_eq!(std::fs::read_dir(dest).unwrap().count(), 0);
+}
+
+#[test]
+fn extraction_from_a_nested_table_stays_inside_its_parent_entry() {
+    use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
+    let keys = GtaViKeys::parse(&or_test_support::rpf9::keys()).unwrap();
+    let table = |rows: &[(u64, u64, u64, u8)]| {
+        Rpf9Builder::serialize(
+            &Rpf9Toc {
+                bytes: or_test_support::rpf9::table(rows),
+                key_id: 0,
+                registry_id: 0,
+                entry_count: 0,
+                groups: Vec::new(),
+            },
+            &keys,
+        )
+        .unwrap()
+    };
+    for size in [64, 0x400, 0x1000] {
+        let mut bytes = table(&[(1, 0x1000, size, 0)]);
+        bytes.resize(0x1000, 0);
+        bytes.extend(table(&[(2, 0x800, 16, 255)]));
+        bytes.resize(0x2000, 0xa5);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested.rpf");
+        let dest = dir.path().join("out");
+        std::fs::write(&path, bytes).unwrap();
+        let result = do_extract(
+            &path,
+            &dest,
+            &["0".into()],
+            Some("0"),
+            None,
+            false,
+            &keys,
+            &NameResolver::new(),
+        );
+        if size == 0x1000 {
+            assert_eq!(result.unwrap(), 1);
+            assert_eq!(
+                std::fs::read(dest.join("hash_0000000000000002")).unwrap(),
+                vec![0xa5; 16]
+            );
+        } else {
+            assert!(result.is_err());
+            assert!(!dest.join("hash_0000000000000002").exists());
+        }
+    }
+}
+
 /// A hand-built entry: index, name64, optional recovered name, optional cipher.
 fn entry(index: u32, name64: u64, name: Option<&str>, cipher: bool) -> Gta6Entry {
     Gta6Entry {
@@ -226,6 +333,10 @@ fn extract_decrypt_writes_a_deciphered_body() {
             // A flagged entry small enough for the smoke test; `read_entry_decrypted` refuses any
             // cipher it does not handle, so a non-content cipher is skipped by the `Ok` below.
             if entry.cipher.is_none() || entry.stored.is_none_or(|s| s == 0 || s > SAMPLE_CAP) {
+                continue;
+            }
+            let extent = 0..file.metadata().expect("archive length").len();
+            if Gta6EntryRead::from_table(&mount.archive, extent, entry.index, SAMPLE_CAP).is_err() {
                 continue;
             }
             if let Ok(body) = mount.read_entry_decrypted(&mut file, entry, &keys) {

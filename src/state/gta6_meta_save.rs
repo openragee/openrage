@@ -47,7 +47,7 @@ impl AppState {
         match meta.to_bytes() {
             Ok(bytes) => {
                 let item = ExtractItem::bytes(name.clone(), bytes);
-                Some(self.start_scanned_extraction(name, dest, reads, vec![item], OnClash::Save))
+                Some(self.start_archive_extraction(name, dest, reads, vec![item], OnClash::Save))
             }
             Err(e) => {
                 self.show_error_toast(tr!("Cannot save: {reason}", reason = e));

@@ -484,6 +484,7 @@ fn the_kinds_the_list_test_runs_are_those_no_other_test_holds() {
         include_str!("reopening_a_built_pack_from_the_app.rs"),
         include_str!("one_place_for_background_jobs.rs"),
         include_str!("opening_an_rpf9_archive.rs"),
+        include_str!("document/rpf9_tests.rs"),
         include_str!("opening_a_gta_vi_body.rs"),
         include_str!("gta6_set_finding_tests.rs"),
         include_str!("gta6_map_tests.rs"),

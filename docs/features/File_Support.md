@@ -81,8 +81,20 @@ archive's table when it is expanded, on a worker and within its containing entry
 the loaded vocabulary does not resolve is shown as its hash. An entry whose table does not state
 its class offers **Open as archive**, which checks only its stated position and extent.
 
-The table view lists entries and their facts; it does not yet open or extract their contents.
-`openrage-cli rpf9 list` also lists from the table. The explicit `openrage-cli rpf scan` command and
+The table view opens a file with **Open** or a double-click, and **Extract…** writes its decoded
+bytes into a chosen folder, keeping existing files. Both actions use the same bounded reader.
+Text files open as text, other decoded contents as read-only bytes; a resource extension never
+selects a GTA V reader. Reopening an entry follows its archive indices through the tables again.
+
+The reader supports sized raw entries and counted zlib streams, including content-ciphered entries
+when their key and framing are supported. Unknown layouts, 20-byte resource rows without a proven
+decoded size, stored chunks mixed with compressed chunks, and raw DEFLATE are refused. Extraction
+does not reconstruct a loose resource header around headerless contents. These paths do not scan
+for content or recover from a failed decode. Tests cover the bounded reads, decoding failures and
+the app's open and extraction actions.
+
+`openrage-cli rpf9 list` also lists from the table, and `rpf9 extract` uses the same strict entry
+reader as the app (`--decrypt` enables ciphered entries). The explicit `openrage-cli rpf scan` command and
 the World index retain their scanners and their existing body readers. The install opens as a
 plain folder.
 

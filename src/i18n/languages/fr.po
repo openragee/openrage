@@ -16788,8 +16788,6 @@ msgstr "La limite d’imbrication des archives est atteinte."
 msgid "Entries are listed from the archive table. Expand an archive to load its table."
 msgstr "Les entrées proviennent de la table de l’archive. Dépliez une archive pour charger sa table."
 
-msgid "File contents cannot be opened from this table view yet."
-msgstr "Le contenu des fichiers ne peut pas encore être ouvert depuis cette vue de la table."
 
 msgid "Loading archive table…"
 msgstr "Chargement de la table de l’archive…"
@@ -16835,3 +16833,9 @@ msgstr "Rechercher"
 
 msgid "Encrypted"
 msgstr "Chiffré"
+
+msgid "Files are read from their table entries. Unsupported layouts are reported as errors."
+msgstr "Les fichiers sont lus à partir de leur entrée dans la table. Les structures non prises en charge produisent une erreur."
+
+msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
+msgstr "Ce fichier a été ouvert depuis une table RPF9 et est en lecture seule. Extrayez-le pour enregistrer une copie séparée."

@@ -881,11 +881,11 @@ impl super::AppState {
             archive = file_name(&scan.path)
         );
         let archive = scan.path.clone();
-        self.start_scanned_extraction(label, dest, archive, items, OnClash::KeepBoth)
+        self.start_archive_extraction(label, dest, archive, items, OnClash::KeepBoth)
     }
 
     /// Write `items` read out of `archive` into `dest` as the one extraction, on a worker.
-    pub(super) fn start_scanned_extraction(
+    pub(super) fn start_archive_extraction(
         &mut self,
         label: String,
         dest: PathBuf,

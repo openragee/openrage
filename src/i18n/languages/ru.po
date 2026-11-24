@@ -16931,8 +16931,6 @@ msgstr "Достигнут предел вложенности архивов."
 msgid "Entries are listed from the archive table. Expand an archive to load its table."
 msgstr "Записи получены из таблицы архива. Разверните архив, чтобы загрузить его таблицу."
 
-msgid "File contents cannot be opened from this table view yet."
-msgstr "В этом представлении таблицы пока нельзя открыть содержимое файлов."
 
 msgid "Loading archive table…"
 msgstr "Загрузка таблицы архива…"
@@ -16978,3 +16976,9 @@ msgstr "Поиск"
 
 msgid "Encrypted"
 msgstr "Зашифровано"
+
+msgid "Files are read from their table entries. Unsupported layouts are reported as errors."
+msgstr "Файлы читаются по их записям в таблице. Неподдерживаемые структуры вызывают ошибку."
+
+msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
+msgstr "Этот файл открыт из таблицы RPF9 и доступен только для чтения. Извлеките его, чтобы сохранить отдельную копию."

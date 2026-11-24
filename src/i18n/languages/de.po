@@ -16788,8 +16788,6 @@ msgstr "Die maximale Verschachtelungstiefe wurde erreicht."
 msgid "Entries are listed from the archive table. Expand an archive to load its table."
 msgstr "Die Einträge stammen aus der Archivtabelle. Klappen Sie ein Archiv auf, um seine Tabelle zu laden."
 
-msgid "File contents cannot be opened from this table view yet."
-msgstr "Dateiinhalte können aus dieser Tabellenansicht noch nicht geöffnet werden."
 
 msgid "Loading archive table…"
 msgstr "Archivtabelle wird geladen…"
@@ -16835,3 +16833,9 @@ msgstr "Suchen"
 
 msgid "Encrypted"
 msgstr "Verschlüsselt"
+
+msgid "Files are read from their table entries. Unsupported layouts are reported as errors."
+msgstr "Dateien werden anhand ihrer Tabelleneinträge gelesen. Nicht unterstützte Strukturen werden als Fehler gemeldet."
+
+msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
+msgstr "Diese Datei wurde aus einer RPF9-Tabelle geöffnet und ist schreibgeschützt. Extrahieren Sie sie, um eine separate Kopie zu speichern."

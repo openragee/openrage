@@ -357,6 +357,7 @@ impl AppState {
             self.error_dialog_title = headline;
             // A body a scan found says what it is and why it does not open, which no plain sentence says.
             self.error_dialog_plain = (super::rpf9_scan::scanned_body(path).is_none()
+                && !super::document::rpf9::entry::is_entry(path)
                 && super::gta_vi::rpf9_refusal_at(path).is_none())
             .then(|| super::load_error::plain_reason(&message).to_string());
         }

@@ -196,22 +196,42 @@ pub fn amd_under_dx12(info: &wgpu::AdapterInfo) -> bool {
     info.backend == wgpu::Backend::Dx12 && info.vendor == AMD
 }
 
-/// The loops `block` nests one in another at its deepest: nought where it holds none.
+/// The loops `block` nests one in another at its deepest: nought where it holds none. A call
+/// counts as the loops of the function it calls, which a compiler puts in its place: `called`
+/// holds that of each function, by its place in the module.
 // It recurses once a nested block: a pass is built on a thread with the stack a lowered program takes.
-fn loop_depth(block: &naga::Block) -> usize {
+fn loop_depth(block: &naga::Block, called: &[usize]) -> usize {
     let of = |statement: &naga::Statement| match statement {
         naga::Statement::Loop {
             body, continuing, ..
-        } => 1 + loop_depth(body).max(loop_depth(continuing)),
-        naga::Statement::Block(inner) => loop_depth(inner),
-        naga::Statement::If { accept, reject, .. } => loop_depth(accept).max(loop_depth(reject)),
+        } => 1 + loop_depth(body, called).max(loop_depth(continuing, called)),
+        naga::Statement::Block(inner) => loop_depth(inner, called),
+        naga::Statement::If { accept, reject, .. } => {
+            loop_depth(accept, called).max(loop_depth(reject, called))
+        }
         naga::Statement::Switch { cases, .. } => {
-            let depths = cases.iter().map(|case| loop_depth(&case.body));
+            let depths = cases.iter().map(|case| loop_depth(&case.body, called));
             depths.max().unwrap_or(0)
+        }
+        naga::Statement::Call { function, .. } => {
+            called.get(function.index()).copied().unwrap_or(0)
         }
         _ => 0,
     };
     block.iter().map(of).max().unwrap_or(0)
+}
+
+/// Whether a function or an entry point of `stage` holds a loop inside a loop, a loop reached
+/// through a call among them.
+fn nests_loops(stage: &naga::Module) -> bool {
+    // A function is called only by one after it: each one's loops are known before its callers'.
+    let mut called = Vec::with_capacity(stage.functions.len());
+    for (_, function) in stage.functions.iter() {
+        called.push(loop_depth(&function.body, &called));
+    }
+    let entries =
+        (stage.entry_points.iter()).map(|entry| loop_depth(&entry.function.body, &called));
+    called.iter().copied().chain(entries).any(|depth| depth > 1)
 }
 
 /// Why a pass whose mesh stage is `stage` is not built on the adapter `info`, or `None` where it
@@ -221,31 +241,11 @@ fn loop_depth(block: &naga::Block) -> usize {
 // it ended the process on nests loops in its mesh stage, and no pair that nests none ended it.
 // It built some that nest loops, which this refuses too.
 pub fn refused_by_driver(info: &wgpu::AdapterInfo, stage: &naga::Module) -> Option<String> {
-    let functions = (stage.functions.iter().map(|(_, function)| function))
-        .chain(stage.entry_points.iter().map(|entry| &entry.function));
-    let nests = || {
-        functions
-            .into_iter()
-            .any(|function| loop_depth(&function.body) > 1)
-    };
-    (amd_under_dx12(info) && nests()).then(|| {
+    (amd_under_dx12(info) && nests_loops(stage)).then(|| {
         "its mesh stage holds a loop inside a loop, and AMD's Direct3D 12 driver ends the \
          program while it builds such a stage: it is drawn under Vulkan (WGPU_BACKEND=vulkan)"
             .to_owned()
     })
-}
-
-/// Of `others`, the adapter to open in place of `chosen`: the same card under Vulkan, where
-/// `chosen` is AMD's under Direct3D 12 and Vulkan lists the card.
-pub fn rather_than(chosen: &wgpu::AdapterInfo, others: &[wgpu::AdapterInfo]) -> Option<usize> {
-    let same = |other: &wgpu::AdapterInfo| {
-        other.backend == wgpu::Backend::Vulkan
-            && (other.vendor, other.device) == (chosen.vendor, chosen.device)
-    };
-    others
-        .iter()
-        .position(same)
-        .filter(|_| amd_under_dx12(chosen))
 }
 
 /// The variable that, set to anything but `0`, sends every device opened with no surface to the
@@ -311,22 +311,11 @@ mod tests {
     const NVIDIA: u32 = 0x10DE;
 
     #[test]
-    fn an_amd_card_under_direct3d_12_gives_way_to_the_same_card_under_vulkan() {
+    fn an_amd_card_is_told_under_direct3d_12_and_under_no_other_backend() {
         use wgpu::Backend::{Dx12, Vulkan};
-        let chosen = adapter(AMD, 0x1681, Dx12);
-        assert!(amd_under_dx12(&chosen));
+        assert!(amd_under_dx12(&adapter(AMD, 0x1681, Dx12)));
         assert!(!amd_under_dx12(&adapter(AMD, 0x1681, Vulkan)));
         assert!(!amd_under_dx12(&adapter(NVIDIA, 0x2684, Dx12)));
-        let others = [
-            adapter(NVIDIA, 0x2684, Vulkan),
-            adapter(AMD, 0x15BF, Vulkan),
-            adapter(AMD, 0x1681, Dx12),
-            adapter(AMD, 0x1681, Vulkan),
-        ];
-        assert_eq!(rather_than(&chosen, &others), Some(3));
-        // Another card is no replacement, and another vendor's choice stands.
-        assert_eq!(rather_than(&chosen, &others[..3]), None);
-        assert_eq!(rather_than(&adapter(NVIDIA, 0x2684, Dx12), &others), None);
     }
 
     /// A mesh stage whose `work` is its body.
@@ -366,6 +355,40 @@ mod tests {
             refused_by_driver(&adapter(NVIDIA, 0x2684, Dx12), &nested),
             None
         );
+    }
+
+    #[test]
+    fn a_loop_reached_through_a_call_from_inside_a_loop_is_a_loop_inside_a_loop() {
+        let amd = adapter(AMD, 0x1681, wgpu::Backend::Dx12);
+        let called = |work: &str| {
+            let source = format!(
+                "fn summed(to: u32) -> u32 {{
+                    var sum = 0u;
+                    for (var j = 0u; j < to; j++) {{ sum += j; }}
+                    return sum;
+                }}
+                fn through(to: u32) -> u32 {{ return summed(to) + 1u; }}
+                @vertex fn main(@builtin(vertex_index) at: u32) -> @builtin(position) vec4<f32> {{
+                    var sum = 0u;
+                    {work}
+                    return vec4<f32>(f32(sum));
+                }}"
+            );
+            naga::front::wgsl::parse_str(&source).expect("the test's stage parses")
+        };
+        // The compiler puts a function's body where it is called: in a loop, and through another.
+        for nested in [
+            "for (var i = 0u; i < at; i++) { sum += summed(i); }",
+            "for (var i = 0u; i < at; i++) { if i > 1u { sum += through(i); } }",
+        ] {
+            assert!(
+                refused_by_driver(&amd, &called(nested)).is_some(),
+                "{nested}"
+            );
+        }
+        // Called beside a loop, the two stand apart.
+        let apart = "for (var i = 0u; i < at; i++) { sum += i; } sum += through(at);";
+        assert_eq!(refused_by_driver(&amd, &called(apart)), None);
     }
 
     #[test]

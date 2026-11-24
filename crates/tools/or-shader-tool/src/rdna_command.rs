@@ -12,6 +12,7 @@ pub fn print_usage(program: &str) {
     eprintln!("               [--adapter <TEXT>] [--jobs <N>] [--chunk <N>] [--timeout <SECONDS>] [--units <FROM>..<TO>]");
     eprintln!("               [--stack-mib <N>] [--technique <NAME>[,<NAME>...]] [--draw] [--msl]");
     eprintln!("               [--skip-crashed <REPORT.json>] [--software] [--run] [--pick <FILE>] [--msl-dir <DIR>]");
+    eprintln!("               [--try-refused]");
     eprintln!("                                translate every native program of the GTA VI effect container at OFFSET");
     eprintln!("                                (or of a container saved as a file, with no OFFSET) and build a pipeline");
     eprintln!("                                of each on every adapter of this machine, of every backend, the software");
@@ -40,9 +41,16 @@ pub fn print_usage(program: &str) {
     eprintln!("                                --pick checks the units whose numbers FILE lists and no other.");
     eprintln!("                                --msl-dir <DIR> is --msl with each stage's text kept in DIR, a folder a");
     eprintln!("                                version of Metal's language, for a Mac's own compiler to build.");
+    eprintln!("                                A unit the renderer refuses for an adapter's driver (a mesh stage that");
+    eprintln!("                                nests loops, on an AMD adapter under Direct3D 12) is counted as skipped");
+    eprintln!("                                there; --try-refused puts it to that driver all the same, which may end");
+    eprintln!(
+        "                                the worker: the way to see whether the driver still does."
+    );
     eprintln!("  {program} rdna-devices <ARCHIVE.rpf> <OFFSET> --list");
     eprintln!("                                every unit on a line: its number, its name in a report, then a program's");
-    eprintln!("                                kind and name, or the effects and techniques that draw with a pair");
+    eprintln!("                                kind (pixel, vertex, compute, mesh) and name, or the effects and");
+    eprintln!("                                techniques that draw with a pair");
     eprintln!("  {program} rdna-devices --merge <REPORT.json>... [--out <MERGED.json>]");
     eprintln!("                                several machines' reports as one table; a merged file merges again");
     eprintln!("  {program} rdna-devices --help");
@@ -194,6 +202,7 @@ fn check(mut args: Vec<String>, out: Option<PathBuf>) -> Result<(), String> {
         },
         msl: flag("--msl") || msl_dir.is_some(),
         msl_dir,
+        try_refused: flag("--try-refused"),
     };
     let list = flag("--list");
     // Before any thread: the workers this process starts inherit it.
@@ -302,7 +311,7 @@ fn check(mut args: Vec<String>, out: Option<PathBuf>) -> Result<(), String> {
     };
     if list {
         let file = or_io::gta5::shaders::sgd5::Sgd5File::open(&body).map_err(|e| e.to_string())?;
-        print!("{}", rdna_devices::listing(&file));
+        print!("{}", rdna_devices::listing(&file, &body));
         return Ok(());
     }
     let progress = |done: usize, of: usize| {

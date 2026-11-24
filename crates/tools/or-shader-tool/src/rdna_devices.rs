@@ -18,6 +18,7 @@ use or_io::gta5::shaders::sgd5_pack::vertex_pixel_passes;
 use or_renderer::game_shaders::bindings::arrayed;
 use or_renderer::game_shaders::pipeline::{entry_of, fragment_targets, vertex_streams};
 use or_renderer::instance;
+use or_shader_front::dxil::ShaderKind;
 use or_shader_front::rdna::link::{self, Linked};
 use or_shader_front::rdna::{self, RdnaError};
 use or_shader_front::rdna_bind;
@@ -816,9 +817,10 @@ pub fn units(file: &Sgd5File) -> Vec<Unit> {
     out
 }
 
-/// Every unit of `file` on a line: its number, its name as a report gives it, then a program's
-/// kind and name, or each effect and technique a pass of which draws with the pair.
-pub fn listing(file: &Sgd5File) -> String {
+/// Every unit of `file`, the container `body` holds, on a line: its number, its name as a report
+/// gives it, then a program's kind and name, or each effect and technique a pass of which draws
+/// with the pair.
+pub fn listing(file: &Sgd5File, body: &[u8]) -> String {
     let index: HashMap<usize, usize> = (file.programs.iter().enumerate())
         .map(|(i, program)| (program.at, i))
         .collect();
@@ -842,7 +844,13 @@ pub fn listing(file: &Sgd5File) -> String {
     for (number, unit) in units(file).iter().enumerate() {
         let what = match unit {
             Unit::Program(at) => {
-                format!("{}\t{}", file.programs[*at].kind, file.programs[*at].name)
+                let program = &file.programs[*at];
+                // The kind its first block states: every block of a program is of one kind.
+                let kind = (body.get(program.stream.clone()))
+                    .and_then(|stream| program.inflate(stream).ok())
+                    .and_then(|container| rdna::unwrap(&container).ok())
+                    .and_then(|blocks| blocks.first().map(|block| block.kind));
+                format!("{}\t{}", kind_name(kind), program.name)
             }
             Unit::Pair { .. } => {
                 let of: Vec<&str> = (passes.get(unit).into_iter().flatten())
@@ -1161,6 +1169,19 @@ fn described_as(vendor: u32, backend: wgpu::Backend, kind: wgpu::DeviceType) -> 
     }
 }
 
+/// A program's kind as a list names it: its stage, or `unread` where its container does not read.
+fn kind_name(kind: Option<ShaderKind>) -> String {
+    kind.map_or("unread".to_owned(), |kind| {
+        format!("{kind:?}").to_lowercase()
+    })
+}
+
+/// Why `stages` are not put to the adapter `info`: what the renderer refuses for its driver,
+/// unless the check is asked to `try_refused`.
+fn kept_from(stages: &Stages, info: &wgpu::AdapterInfo, try_refused: bool) -> Option<String> {
+    stages.refused_on(info).filter(|_| !try_refused)
+}
+
 impl Stages {
     /// Why the renderer builds no pass of these stages on the adapter `info`, where it does not.
     fn refused_on(&self, info: &wgpu::AdapterInfo) -> Option<String> {
@@ -1444,11 +1465,10 @@ fn metal_resources(
             resources.resources.insert(at, target);
         }
     }
+    // No vertex buffer is counted: the renderer's passes draw a lowered stage with none.
     if sized {
         resources.sizes_buffer = Some(next(0));
     }
-    // The vertex buffer a render stage is drawn with takes one of the same table.
-    bound[0] += u32::from(stage == wgpu::ShaderStages::VERTEX);
     match (METAL_STAGE.iter().zip(bound)).find(|((_, most), bound)| bound > most) {
         Some(((what, most), bound)) => {
             let stage = match stage {
@@ -1569,6 +1589,7 @@ fn tried(
     ready: &Ready,
     cache: Option<&wgpu::PipelineCache>,
     draw: Draw,
+    try_refused: bool,
 ) -> (Outcome, f64) {
     if draw == Draw::Run && gpu.info.device_type != wgpu::DeviceType::Cpu {
         return (Outcome::Skipped(RUN_ON_SOFTWARE.into()), 0.0);
@@ -1591,8 +1612,9 @@ fn tried(
         Some(bare) if lacks => bare,
         _ => &ready.stages,
     };
-    // What the renderer refuses for the adapter's driver is not put to the driver here either.
-    match stages.refused_on(&gpu.info) {
+    // What the renderer refuses for the adapter's driver is not put to the driver here either,
+    // unless the check is run to see what that driver does with it.
+    match kept_from(stages, &gpu.info, try_refused) {
         Some(why) => (Outcome::Skipped(why), 0.0),
         None => build(gpu, stages, cache, draw),
     }
@@ -1674,7 +1696,7 @@ pub fn worker(
                     .is_some_and(|avoid| avoid.contains(&what.name(block)));
                 let (outcome, ms) = match avoided {
                     true => (Outcome::Skipped(AVOIDED.into()), 0.0),
-                    false => tried(gpu, &ready, None, ways.draw),
+                    false => tried(gpu, &ready, None, ways.draw, ways.try_refused),
                 };
                 say(Line::Device {
                     unit,
@@ -1762,7 +1784,7 @@ pub fn cache_worker(
                 .collect()
         });
         for ready in ready.iter().flatten() {
-            if let (Outcome::Created, took) = tried(gpu, ready, Some(&cache), Draw::No) {
+            if let (Outcome::Created, took) = tried(gpu, ready, Some(&cache), Draw::No, false) {
                 built += 1;
                 ms += took;
             }
@@ -1788,6 +1810,10 @@ pub struct Ways {
     pub msl: bool,
     /// Where each unit's Metal text is kept, a folder a language version.
     pub msl_dir: Option<PathBuf>,
+    /// Put to an adapter what the renderer refuses for its driver too
+    /// ([`instance::refused_by_driver`]), which a check otherwise skips there: how a run finds
+    /// out whether that driver still ends the process on it.
+    pub try_refused: bool,
 }
 
 /// How a check runs.
@@ -1865,6 +1891,9 @@ fn one_worker(
     }
     if options.ways.msl {
         command.arg("--msl");
+    }
+    if options.ways.try_refused {
+        command.arg("--try-refused");
     }
     if let Some(dir) = &options.ways.msl_dir {
         command.arg("--msl-dir").arg(dir);

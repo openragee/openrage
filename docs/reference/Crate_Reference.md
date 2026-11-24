@@ -724,10 +724,12 @@ process's `PATH`. On Direct3D 12 the feature `TEXTURE_INT64_ATOMIC` is offered
 and the layout of such a texture refused; `updates_64_bit_textures` asks the
 adapter instead. AMD's Direct3D 12 driver ends the process while it builds a mesh
 stage that holds a loop inside a loop: `instance::refused_by_driver` gives the
-reason such a stage is not built on such an adapter (`amd_under_dx12`), and the
-app opens the same card under Vulkan where the backends list it
-(`instance::rather_than`). ⚠ The builder of a GTA VI pass
-(`game_shaders::meshlets`) does not ask `refused_by_driver` yet.
+reason such a stage is not built on such an adapter (`amd_under_dx12`), a loop
+reached through a call counting as one, and the builder of a GTA VI pass
+(`game_shaders::meshlets`) asks it of the mesh stage it builds with, so the
+surface draws as Material with that reason. The app opens a card two backends
+hold under Vulkan with no code of its own: an instance ranks adapters by their
+kind and lists Vulkan's first.
 
 ## Tool crates
 

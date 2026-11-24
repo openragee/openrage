@@ -308,6 +308,13 @@ pub(crate) fn configured_egui_context(
     egui_ctx
 }
 
+/// The notice that Direct3D 12 compiles with FXC, which says `message`.
+// ⚠ It is made before the device is asked for and the first frame drawn: a toast that times out
+// would be gone, or nearly, when a person first sees the window.
+fn fxc_notice(message: &str) -> crate::state::toasts::Toast {
+    crate::state::toasts::Toast::warning(message).lasting()
+}
+
 impl App {
     pub(super) fn init_gpu(&mut self, first_window: &Arc<Window>) -> Result<()> {
         if self.gpu.is_some() {
@@ -327,35 +334,22 @@ impl App {
 
         let probe = instance.create_surface(first_window.clone())?;
 
-        let mut adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&probe),
-                force_fallback_adapter: false,
-            }))
-            .map_err(|e| {
-                let needs = or_renderer::instance::UNSUPPORTED;
-                anyhow::anyhow!("Failed to find suitable GPU adapter: {e}. {needs}")
-            })?;
-        // AMD's Direct3D 12 driver ends the process on some of a game's passes: the same card
-        // under Vulkan, where the backends hold it and it draws to this window.
-        if or_renderer::instance::amd_under_dx12(&adapter.get_info()) {
-            let mut others: Vec<wgpu::Adapter> =
-                pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN & backends))
-                    .into_iter()
-                    .filter(|other| other.is_surface_supported(&probe))
-                    .collect();
-            let infos: Vec<wgpu::AdapterInfo> =
-                others.iter().map(wgpu::Adapter::get_info).collect();
-            if let Some(at) = or_renderer::instance::rather_than(&adapter.get_info(), &infos) {
-                tracing::info!("Opening the AMD adapter under Vulkan, not Direct3D 12");
-                adapter = others.swap_remove(at);
-            }
-        }
-
+        // ⚠ Of a card two backends hold, this takes the one under Vulkan: adapters are ranked by
+        // their kind alone, and Vulkan's are listed first. AMD's Direct3D 12 driver, which ends
+        // the process on some of a game's passes, is so opened only where `WGPU_BACKEND` asks
+        // for it or the card has no Vulkan driver, and those passes are refused there when built.
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: Some(&probe),
+            force_fallback_adapter: false,
+        }))
+        .map_err(|e| {
+            let needs = or_renderer::instance::UNSUPPORTED;
+            anyhow::anyhow!("Failed to find suitable GPU adapter: {e}. {needs}")
+        })?;
         tracing::info!("Using GPU: {}", adapter.get_info().name);
         if or_renderer::instance::fell_back_to_fxc(adapter.get_info().backend) {
-            self.app_state.toasts.warning(tr!("Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan."));
+            self.app_state.toasts.push(fxc_notice(tr!("Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan.")));
         }
 
         let adapter_features = adapter.features();
@@ -485,6 +479,14 @@ mod tests {
 
     fn lead(fonts: &egui::FontDefinitions) -> String {
         fonts.families[&egui::FontFamily::Proportional][0].clone()
+    }
+
+    #[test]
+    fn the_notice_of_fxc_stays_up_until_it_is_clicked_away() {
+        let notice = fxc_notice("FXC");
+        assert_eq!(notice.toast_type, crate::state::ToastType::Warning);
+        // A start-up takes seconds before its first frame, and the notice is four sentences.
+        assert!(notice.duration >= std::time::Duration::from_secs(60 * 60));
     }
 
     #[test]

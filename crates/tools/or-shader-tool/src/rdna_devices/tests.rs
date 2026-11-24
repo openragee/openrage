@@ -49,7 +49,7 @@ fn a_module_of_subgroup_operations_is_skipped_where_the_device_has_none() {
     for mut gpu in gpus() {
         gpu.features.remove(wgpu::Features::SUBGROUP);
         let ready = alone(wgsl(NO_OUTPUT), true).unwrap();
-        let (outcome, _) = tried(&gpu, &ready, None, Draw::No);
+        let (outcome, _) = tried(&gpu, &ready, None, Draw::No, false);
         assert_eq!(outcome, Outcome::Skipped("SUBGROUP".into()));
     }
 }
@@ -64,7 +64,7 @@ fn a_module_that_updates_a_texture_of_wide_texels_is_skipped_by_the_features_it_
         gpu.features.remove(wgpu::Features::SHADER_INT64);
         gpu.features
             .insert(wgpu::Features::TEXTURE_ATOMIC | wgpu::Features::TEXTURE_INT64_ATOMIC);
-        let (outcome, _) = tried(&gpu, &ready, None, Draw::No);
+        let (outcome, _) = tried(&gpu, &ready, None, Draw::No, false);
         assert_eq!(outcome, Outcome::Skipped("SHADER_INT64".into()));
     }
 }
@@ -152,14 +152,14 @@ fn a_stage_that_gives_clip_distances_is_built_without_them_where_the_device_has_
     for mut gpu in gpus() {
         // As lowered where the device clips by them, as a discard where it does not: created on both.
         assert_eq!(
-            tried(&gpu, &ready, None, Draw::No).0,
+            tried(&gpu, &ready, None, Draw::No, false).0,
             Outcome::Created,
             "{:?}",
             gpu.info
         );
         gpu.features.remove(wgpu::Features::CLIP_DISTANCES);
         assert_eq!(
-            tried(&gpu, &ready, None, Draw::No).0,
+            tried(&gpu, &ready, None, Draw::No, false).0,
             Outcome::Created,
             "{:?}",
             gpu.info
@@ -182,7 +182,7 @@ fn a_texture_updated_in_a_step_beside_a_binding_array_is_laid_out_as_one() {
         }
         let ready = alone(wgsl(source), false).unwrap();
         assert_eq!(
-            tried(&gpu, &ready, None, Draw::No).0,
+            tried(&gpu, &ready, None, Draw::No, false).0,
             Outcome::Created,
             "{:?}",
             gpu.info
@@ -202,7 +202,7 @@ fn a_binding_array_is_built_in_a_group_of_its_own_with_its_length_stated() {
         // Direct3D 12 places the buffers on the array's registers and wgpu refuses the group.
         let ready = alone(wgsl(ARRAY), false).unwrap();
         assert_eq!(
-            tried(&gpu, &ready, None, Draw::No).0,
+            tried(&gpu, &ready, None, Draw::No, false).0,
             Outcome::Created,
             "{:?}",
             gpu.info
@@ -227,7 +227,7 @@ fn a_pipeline_the_check_is_asked_to_draw_with_is_drawn_with_stand_ins_at_every_b
                 continue;
             }
             let ready = alone(wgsl(source), false).unwrap();
-            let (outcome, _) = tried(&gpu, &ready, None, Draw::Empty);
+            let (outcome, _) = tried(&gpu, &ready, None, Draw::Empty, false);
             assert_eq!(outcome, Outcome::Created, "{:?}: {source}", gpu.info);
         }
     }
@@ -266,7 +266,7 @@ fn a_texture_of_wide_texels_is_skipped_where_the_adapter_offers_the_feature_and_
     for mut gpu in gpus() {
         gpu.features |= ready.needs;
         gpu.updates_64_bit_textures = false;
-        let (outcome, _) = tried(&gpu, &ready, None, Draw::No);
+        let (outcome, _) = tried(&gpu, &ready, None, Draw::No, false);
         assert_eq!(outcome, Outcome::Skipped(NO_64_BIT_UPDATE.into()));
     }
 }
@@ -299,7 +299,7 @@ fn a_texture_of_wide_texels_is_laid_out_and_drawn_with_where_the_adapter_updates
         if !gpu.updates_64_bit_textures || !gpu.features.contains(ready.needs) {
             continue;
         }
-        let (outcome, _) = tried(&gpu, &ready, None, Draw::Empty);
+        let (outcome, _) = tried(&gpu, &ready, None, Draw::Empty, false);
         assert_eq!(outcome, Outcome::Created, "{:?}", gpu.info);
     }
 }
@@ -383,7 +383,7 @@ fn a_program_is_not_run_on_an_adapter_that_is_no_cpus() {
     let ready = alone(wgsl(COUNTER), false).unwrap();
     for mut gpu in gpus() {
         gpu.info.device_type = wgpu::DeviceType::DiscreteGpu;
-        let (outcome, _) = tried(&gpu, &ready, None, Draw::Run);
+        let (outcome, _) = tried(&gpu, &ready, None, Draw::Run, false);
         assert_eq!(outcome, Outcome::Skipped(RUN_ON_SOFTWARE.into()));
     }
 }
@@ -462,12 +462,86 @@ fn a_stage_the_renderer_refuses_for_amds_direct3d_12_driver_is_noted_and_not_put
     for mut gpu in gpus() {
         // Built on the adapter the machine has, whose description is not AMD's under Direct3D 12 here.
         if !instance::amd_under_dx12(&gpu.info) {
-            assert_eq!(tried(&gpu, &nested, None, Draw::No).0, Outcome::Created);
+            assert_eq!(
+                tried(&gpu, &nested, None, Draw::No, false).0,
+                Outcome::Created
+            );
         }
         (gpu.info.vendor, gpu.info.backend) = (0x1002, wgpu::Backend::Dx12);
-        let (outcome, _) = tried(&gpu, &nested, None, Draw::No);
+        let (outcome, _) = tried(&gpu, &nested, None, Draw::No, false);
         assert!(matches!(outcome, Outcome::Skipped(_)), "{outcome:?}");
+        // Asked to, the check hands it to the driver, which here is the machine's own.
+        let (outcome, _) = tried(&gpu, &nested, None, Draw::No, true);
+        assert!(!matches!(outcome, Outcome::Skipped(_)), "{outcome:?}");
     }
+}
+
+#[test]
+fn a_check_asked_to_try_what_the_renderer_refuses_puts_it_to_the_driver() {
+    let nested = alone(wgsl(NESTED), false).unwrap();
+    let amd = described_as(0x1002, wgpu::Backend::Dx12, wgpu::DeviceType::DiscreteGpu);
+    assert!(kept_from(&nested.stages, &amd, false).is_some());
+    assert_eq!(kept_from(&nested.stages, &amd, true), None);
+    let plain = alone(wgsl(NO_OUTPUT), false).unwrap();
+    assert_eq!(kept_from(&plain.stages, &amd, false), None);
+}
+
+/// A stage that binds `buffers` constant buffers, as its `stage` attribute and result say.
+fn many_buffers(buffers: usize, stage: &str, result: &str) -> Ready {
+    let mut source = String::new();
+    for at in 0..buffers {
+        source.push_str(&format!(
+            "@group(0) @binding({at}) var<uniform> b{at}: vec4<f32>;
+"
+        ));
+    }
+    source.push_str(&format!(
+        "{stage} fn main() -> {result} vec4<f32> {{
+    var sum = vec4<f32>(0.0);
+"
+    ));
+    for at in 0..buffers {
+        source.push_str(&format!(
+            "    sum += b{at};
+"
+        ));
+    }
+    source.push_str(
+        "    return sum;
+}",
+    );
+    alone(wgsl(&source), false).unwrap()
+}
+
+#[test]
+fn a_vertex_stage_is_counted_with_its_buffer_of_sizes_and_no_vertex_buffer() {
+    let vertex = |buffers| many_buffers(buffers, "@vertex", "@builtin(position)");
+    // Thirty buffers and the buffer of sizes are the thirty-one Metal binds a stage.
+    assert_eq!(
+        metal_resources(&stage_of(&vertex(30)), wgpu::ShaderStages::VERTEX).map(|_| ()),
+        Ok(())
+    );
+    assert_eq!(
+        metal_resources(&stage_of(&vertex(31)), wgpu::ShaderStages::VERTEX).map(|_| ()),
+        Err("Metal binds 31 buffers a stage, and the vertex stage binds 32".to_owned())
+    );
+}
+
+/// The first stage of `ready`.
+fn stage_of(ready: &Ready) -> naga::Module {
+    match &ready.stages {
+        Stages::Render(vertex, _) => vertex.clone(),
+        Stages::Compute(module) => module.clone(),
+    }
+}
+
+#[test]
+fn a_program_s_kind_is_listed_by_its_stage_s_name() {
+    use or_shader_front::dxil::ShaderKind;
+    assert_eq!(kind_name(Some(ShaderKind::Pixel)), "pixel");
+    assert_eq!(kind_name(Some(ShaderKind::Mesh)), "mesh");
+    assert_eq!(kind_name(Some(ShaderKind::Other(9))), "other(9)");
+    assert_eq!(kind_name(None), "unread");
 }
 
 #[test]

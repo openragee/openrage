@@ -461,12 +461,12 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether a technique of this name draws a model as a view sees it from the model's own data:
-/// one that draws in the space of a texture bakes a material's decorations, whatever targets it
-/// writes, and one for vertices skinned beforehand reads them where a pass of the game's left
-/// them, which the editor does not run: a ped's head and a garment drew nothing by theirs.
+/// Whether a technique of this name draws a model as a view sees it: one that draws in the
+/// space of a texture bakes a material's decorations, whatever targets it writes.
+// A technique for vertices skinned beforehand is told by what its mesh stage reads, where the
+// stage is fed, and not by its name.
 fn draws_in_a_view(technique: &str) -> bool {
-    !technique.contains("uvspace") && !technique.contains("preskinned")
+    !technique.contains("uvspace")
 }
 
 /// The two programs of the first pass of each technique of `effect` that draws a model as a
@@ -865,7 +865,7 @@ mod tests {
         assert!(draws_in_a_view("deferred_drawmeshlets"));
         assert!(draws_in_a_view("deferredalphaclip_drawskinnedmeshlets"));
         assert!(!draws_in_a_view("deferreduvspace_drawmeshlets"));
-        assert!(!draws_in_a_view("deferredpacked_drawpreskinnedmeshlets"));
+        assert!(draws_in_a_view("deferredpacked_drawpreskinnedmeshlets"));
     }
 
     #[test]

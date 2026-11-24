@@ -173,6 +173,10 @@ pub enum Unfed {
     Entry,
     #[error("it reads the game's wind records, at nought here, and every stage that does faults on a software adapter")]
     Wind,
+    #[error(
+        "it reads vertices a compute pass of the game's skins first, and the editor runs none"
+    )]
+    SkinnedBefore,
 }
 
 /// One stage of a shading pass ready for the renderer: its module, what fills each binding, and
@@ -244,6 +248,21 @@ const WIND: u32 = 0x1948_E9AA;
 /// Whether a stage fed `feeds` reads the wind records, which the editor leaves at nought.
 fn sways(feeds: &[Fed]) -> bool {
     feeds.iter().any(|fed| fed.feed == Feed::Zero(Some(WIND)))
+}
+
+/// The two buffers the game's compute pass that skins a ped writes each frame, by the hashes of
+/// the names a mesh program reads them by: a program named for vertices skinned beforehand takes
+/// its vertices from them and reads no bone.
+const SKINNED_BEFORE: [u32; 2] = [0x3450_B596, 0x580D_0575];
+
+/// Whether a stage fed `feeds` reads the vertices a compute pass skins, which are nought here: a
+/// ped's head and a garment drew nothing by such a stage.
+fn reads_skinned_vertices(feeds: &[Fed]) -> bool {
+    (feeds.iter()).any(|fed| {
+        SKINNED_BEFORE
+            .iter()
+            .any(|hash| fed.feed == Feed::Zero(Some(*hash)))
+    })
 }
 
 /// Whether `module` takes an entry of an array it binds by a number it computes, or by a stated
@@ -793,6 +812,9 @@ pub fn feed(
     if sways(&feeds) && !unguarded() {
         return Err(Unfed::Wind);
     }
+    if reads_skinned_vertices(&feeds) {
+        return Err(Unfed::SkinnedBefore);
+    }
     if mesh {
         to_pixel_slots(&mut module, &parameter_slots(&native.outputs));
     }
@@ -931,6 +953,22 @@ mod tests {
             fed(Feed::Zero(Some(OTHER))),
             fed(Feed::Zero(None))
         ]));
+    }
+
+    #[test]
+    fn a_stage_that_reads_vertices_skinned_beforehand_is_told_by_either_buffer_and_no_other() {
+        let fed = |feed| Fed {
+            group: 0,
+            binding: 3,
+            feed,
+            header: None,
+        };
+        for hash in SKINNED_BEFORE {
+            let feeds = [fed(Feed::Bones), fed(Feed::Zero(Some(hash)))];
+            assert!(reads_skinned_vertices(&feeds));
+        }
+        let skins_itself = [fed(Feed::Zero(Some(WIND))), fed(Feed::Bones)];
+        assert!(!reads_skinned_vertices(&skins_itself));
     }
 
     #[test]

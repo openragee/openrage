@@ -7,9 +7,7 @@ use or_io::gta5::shaders::sgd5::Sgd5Table;
 use or_shader_front::dxil::ShaderKind;
 use or_shader_front::rdna::link::{self, Linked};
 use or_shader_front::rdna_bind::picks::{deferred_targets, picks};
-use or_shader_front::rdna_bind::shading::{
-    draw_words, feed, parameter_of, parameter_slots, sources, Source,
-};
+use or_shader_front::rdna_bind::shading::{feed, parameter_of, parameter_slots, sources, Source};
 
 pub use or_shader_front::rdna_bind::kept as gta6_kept;
 pub use or_shader_front::rdna_bind::shading::{Fed, Feed, Stage};
@@ -60,8 +58,6 @@ pub fn translate_gta6_shading(
 pub struct Gta6PixelStage {
     stage: Stage,
     half_slots: BTreeSet<u8>,
-    /// The user register of the first dword of a draw, where its package lists them.
-    draw: Option<u8>,
 }
 
 fn said(stage: &str, why: &dyn std::fmt::Display) -> String {
@@ -80,8 +76,7 @@ pub fn translate_gta6_pixel_stage(
         rdna_bind::kept::lower(&pixel, &BTreeSet::new()).map_err(|why| said("pixel", &why))?;
     Ok(Gta6PixelStage {
         half_slots: fragment.half_slots.clone(),
-        draw: draw_words(&pixel.records),
-        stage: feed(&pixel, fragment, table, effect, None).map_err(|why| said("pixel", &why))?,
+        stage: feed(&pixel, fragment, table, effect).map_err(|why| said("pixel", &why))?,
     })
 }
 
@@ -100,8 +95,7 @@ pub fn translate_gta6_mesh_stage(
         .filter_map(|slot| parameter_of(&slots, *slot))
         .collect();
     let geometry = rdna_bind::kept::lower(&first, &halves).map_err(|why| said("mesh", &why))?;
-    let mut mesh =
-        feed(&first, geometry, table, effect, pixel.draw).map_err(|why| said("mesh", &why))?;
+    let mut mesh = feed(&first, geometry, table, effect).map_err(|why| said("mesh", &why))?;
     let mut pixel = pixel.stage.clone();
     // The pixel stage is several passes': each pass links a copy of its own. The mesh stage's
     // parameters are at the pixel stage's slots already, and a clip distance crosses as a

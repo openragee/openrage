@@ -173,6 +173,64 @@ fn the_upper_triangle_shadows_the_floor_on_the_side_away_from_the_light() {
     assert_eq!(seen_at(cast, (0.0, -0.1)), seen_at(plain, (0.0, -0.1)));
 }
 
+/// A camera that looks straight down at the floor about (`x`, `y`), from `half` to each side.
+fn close_on(x: f32, y: f32, half: f32) -> Mat4 {
+    Mat4::from_scale(Vec3::new(1.0 / half, 1.0 / half, 1.0))
+        * Mat4::from_translation(Vec3::new(-x, -y, 0.0))
+}
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn the_floor_a_search_s_reach_outside_a_shadow_s_edge_is_lit_whole() {
+    // A light dim enough that the frame's curve does not flatten what a tap takes off it.
+    let dim = Sky {
+        sun: Vec3::splat(0.6),
+        ..leaning()
+    };
+    let mut boxed = dim;
+    boxed.scene.bounds = Some(BOX);
+    // How far the search reaches over the floor: across the light's way a unit of the world is
+    // as long on the tile as anywhere.
+    let to_tile = sun_shadow::to_tile(dim.towards, BOX);
+    let across = to_tile.project_point3(Vec3::Y) - to_tile.project_point3(Vec3::ZERO);
+    let reach = sun_shadow::DISC / (across.truncate().length() * 0.5);
+    // The shadow's lower edge lies along y = -0.3 from x = -0.675 to -0.075. Seen close: the
+    // floor from half the reach below that edge to a fifth past the whole of it, where only the
+    // spiral's outermost taps reach the shadow; then as far above the edge, inside the shadow.
+    let (edge, half) = (-0.3, 0.35 * reach);
+    let below = close_on(-0.5, edge - 0.85 * reach, half);
+    let above = close_on(-0.5, edge + 0.85 * reach, half);
+    let Some(frames) = frames_seen(
+        "the_floor_a_search_s_reach_outside_a_shadow_s_edge",
+        two_levels(true),
+        &[(below, dim), (below, boxed), (above, dim), (above, boxed)],
+    ) else {
+        return;
+    };
+    let reds = |frame: &[u8]| -> Vec<u8> { frame.chunks(4).map(|pixel| pixel[0]).collect() };
+    let (open, cast) = (reds(&frames[0]), reds(&frames[1]));
+    assert!(open.iter().all(|red| *red > 60), "{open:?}");
+    let dimmed: Vec<(u8, u8)> = (open.iter().zip(&cast))
+        .filter(|(open, cast)| open != cast)
+        .map(|(open, cast)| (*open, *cast))
+        .collect();
+    assert!(
+        dimmed.is_empty(),
+        "{} of {} pixels below the shadow are not lit as with none cast (lit, cast): {dimmed:?}",
+        dimmed.len(),
+        open.len()
+    );
+    // The shadow is where the frames were taken beside: as far inside it the floor is dark.
+    let (lit, dark) = (reds(&frames[2]), reds(&frames[3]));
+    assert!(
+        lit.iter().zip(&dark).all(|(lit, dark)| *dark < lit / 4),
+        "{lit:?} {dark:?}"
+    );
+}
+
 #[cfg_attr(
     not(feature = "gpu-tests"),
     ignore = "needs a GPU adapter: acquisition can hang, not just fail"
@@ -360,4 +418,69 @@ fn a_probe_s_nine_numbers_light_the_floor_as_the_sky_they_were_gathered_of() {
         [0; 3],
         "no numbers, no light"
     );
+}
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn each_of_a_probe_s_nine_numbers_lights_a_floor_that_leans_along_every_axis() {
+    // A floor of every colour whose pixel stage states a normal that leans along each axis, so
+    // that every one of the nine numbers weighs on it: 3040 and 2606 of 4095 across the
+    // octahedron, unpacked as the resolve unpacks them.
+    let e = Vec3::new(3040.0, 2606.0, 0.0) / 2047.5 - Vec3::new(1.0, 1.0, 0.0);
+    let n = Vec3::new(e.x, e.y, 1.0 - e.x.abs() - e.y.abs()).normalize();
+    assert!(n.min_element() > 0.35 && n.x - n.y > 0.3, "{n:?}");
+    let upright = "2047u | (2047u << 12u)";
+    assert!(super::tests::PIXEL.contains(upright));
+    let pixel = super::tests::PIXEL.replace(upright, "3040u | (2606u << 12u)");
+    let mut floor = two_levels(true);
+    floor.fragment = Arc::new(naga::front::wgsl::parse_str(&pixel).expect("the WGSL parses"));
+    let white = Image {
+        width: 1,
+        height: 1,
+        rgba: vec![255; 4],
+        srgb: false,
+    };
+    (floor.feeds).insert((1, 1), Feed::Textures(vec![Some(Arc::new(white))]));
+    // Nine numbers that each differ from every other, in an order of its own in each colour.
+    let reds = [0.80, 0.10, 0.40, 0.25, 0.55, 0.05, 0.45, 0.30, 0.15];
+    let greens = [0.70, 0.35, 0.05, 0.50, 0.15, 0.40, 0.10, 0.55, 0.25];
+    let blues = [0.90, 0.20, 0.30, 0.05, 0.45, 0.25, 0.60, 0.10, 0.50];
+    let every: [Vec3; 9] =
+        std::array::from_fn(|at| Vec3::new(reds[at], greens[at], blues[at]) * 0.35);
+    // What falls on the floor of them is worked out here, and the frame they light is the one
+    // that light gives as a first number alone, which the same every way is.
+    let fallen = falls_on(&every, n);
+    assert!(fallen.min_element() > 0.2, "{fallen:?}");
+    let mut alone = [Vec3::ZERO; 9];
+    alone[0] = fallen / 0.886_227;
+    // The same nine with two of them changed over, as a slip of a row would have them.
+    let mut slipped = every;
+    slipped.swap(5, 7);
+    let probed = |nine: [Vec3; 9]| {
+        let mut sky = Sky {
+            sun: Vec3::ZERO,
+            ..leaning()
+        };
+        sky.scene.around = Some(nine);
+        sky
+    };
+    let Some(frames) = frames_of(
+        "each_of_a_probe_s_nine_numbers_lights_a_floor",
+        floor,
+        &[probed(every), probed(alone), probed(slipped)],
+    ) else {
+        return;
+    };
+    let (by_nine, by_one) = (seen_at(&frames[0], OPEN), seen_at(&frames[1], OPEN));
+    assert!(by_nine[..3].iter().all(|c| *c > 30), "{by_nine:?}");
+    for c in 0..3 {
+        assert!(
+            by_nine[c].abs_diff(by_one[c]) <= 1,
+            "{by_nine:?} {by_one:?}"
+        );
+    }
+    assert_ne!(seen_at(&frames[2], OPEN), by_nine, "two rows changed over");
 }

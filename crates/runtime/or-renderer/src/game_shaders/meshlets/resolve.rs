@@ -129,10 +129,14 @@ fn open_at(uv: vec2<f32>, deep: f32) -> f32 {
 }
 
 // The share of the sun's or the moon's light that reaches `world`, on a surface that stands
-// `n_l` to it, as GTA VI filters its cascades: three taps beside the place, a search over twelve
-// taps of a spiral for what stands before it, a penumbra as wide as that stands far, and the
-// share of the penumbra's disc the taps leave open, ring by ring.
-// The turn of the spiral by the pixel, how far the search reaches and the bias are the editor's.
+// `n_l` to it, by the arithmetic GTA VI filters its cascades with: three taps beside the place,
+// a search over twelve taps of a spiral for what stands before it, a penumbra as wide as that
+// stands far, and the share of the penumbra's disc the taps leave open, ring by ring.
+// The editor's own, and no reading of the game's filter: the turn of the spiral by the pixel;
+// the 150 degrees from a tap to the next, the game's angles being read and their order not; how
+// far the search reaches; the bias; a tap that loads the nearest texel, where the game's
+// compares and filters; the one tile about the model, where the game has four cascades about
+// its camera; and that the outermost tap, which stands past the search, weighs nothing.
 fn sunlit(world: vec3<f32>, n_l: f32, pixel: vec2<f32>) -> f32 {
     if light.shadow.x <= 0.0 {
         return 1.0;
@@ -166,14 +170,18 @@ fn sunlit(world: vec3<f32>, n_l: f32, pixel: vec2<f32>) -> f32 {
         let at = clamp(uv + reach * r * vec2<f32>(cos(angle), sin(angle)), vec2<f32>(0.0), vec2<f32>(1.0));
         let held = textureLoad(shadow_map, vec2<i32>(at * (size - 1.0)), 0);
         hidden[i] = deep - r * reach * slope - lean > held;
+        // A tap weighs less the farther it stands, and the last stands past the search, where
+        // that would be under nought: it weighs nothing, so the weights never sum to less than
+        // one of them and the mean depth is a depth some tap holds.
+        let weighs = max(1.0 - r, 0.0);
         if hidden[i] {
-            before += (1.0 - r) * held;
-            weight += 1.0 - r;
+            before += weighs * held;
+            weight += weighs;
         }
     }
     var penumbra = 0.0;
-    if weight != 0.0 {
-        penumbra = (deep - before / max(weight, 1e-5)) * light.shadow.w;
+    if weight > 0.0 {
+        penumbra = (deep - before / weight) * light.shadow.w;
     }
     let p = max(clamp(penumbra, 0.0, 1.0), 0.03125);
     let disc = p * p;

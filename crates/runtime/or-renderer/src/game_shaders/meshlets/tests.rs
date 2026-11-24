@@ -77,7 +77,7 @@ struct Out {
 
 /// A stage that writes the five targets: the colour of its texture by its constant, a normal
 /// along +Z packed as two 12-bit numbers over three bytes, and noughts.
-const PIXEL: &str = "
+pub(super) const PIXEL: &str = "
 @group(1) @binding(0) var<uniform> tint: vec4<f32>;
 @group(1) @binding(1) var diffuse: texture_2d<f32>;
 @group(1) @binding(2) var diffuse_sampler: sampler;

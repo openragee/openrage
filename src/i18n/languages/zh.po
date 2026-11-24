@@ -16899,3 +16899,6 @@ msgstr "此文档字符串的名称需要 GTA VI 密钥快照"
 
 msgid "Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan."
 msgstr "Direct3D 12 正在使用 FXC 编译着色器，因为在 OpenRage 旁边、PATH 中或 Windows SDK 中都没有找到 dxcompiler.dll。FXC 会拒绝部分 GTA VI 着色器程序，另一些则要花几分钟，因此需要它们的模型会以“材质”绘制。请将 dxcompiler.dll 和 dxil.dll 放在 openrage.exe 旁边，或使用 WGPU_BACKEND=vulkan 启动 OpenRage。"
+
+msgid "It casts no shadow: one of its surfaces reads the view at an offset the light's view cannot be copied to"
+msgstr "它不投射阴影：它的一个表面在无法复制光源视图的偏移处读取视图"

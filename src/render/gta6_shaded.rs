@@ -51,23 +51,35 @@ pub(crate) fn bounds(state: &AppState) -> Option<(glam::Vec3, glam::Vec3)> {
     let DocPayload::Gta6Drawable(resource) = &doc.payload else {
         return None;
     };
-    let drawable = drawable_of(resource, state.selection.selected(doc.id))?;
-    let level = drawn_level(drawable, state.preview_scene.lod);
-    // Measured once for a drawable and a level: a frame asks again with the same.
-    type Measured = ((usize, usize), Option<(glam::Vec3, glam::Vec3)>);
-    static KEPT: std::sync::Mutex<Option<Measured>> = std::sync::Mutex::new(None);
-    let key = (
-        std::ptr::from_ref(drawable) as usize,
-        state.preview_scene.lod,
-    );
+    let selection = state.selection.selected(doc.id);
+    let drawable = drawable_of(resource, selection)?;
+    let lod = state.preview_scene.lod;
+    kept_box((doc.id, doc.payload_epoch(), selection, lod), || {
+        let geometries = drawn_level(drawable, lod).flat_map(|model| model.geometries.iter());
+        let read = (geometries.flatten()).filter_map(|geometry| geometry.positions.as_ref().ok());
+        bounds_of(read.flatten())
+    })
+}
+
+/// What a box was measured of: the document, what it held when it was read, the drawable picked
+/// in it and the level drawn.
+// ⚠ Never where the drawable lies: a document opened after another is closed may lie there.
+type Measured = (crate::state::DocumentId, u64, Option<u64>, usize);
+
+/// The box kept for `of`, else the one `measure` gives, kept in its place: a frame asks again
+/// with the same.
+fn kept_box(
+    of: Measured,
+    measure: impl FnOnce() -> Option<(glam::Vec3, glam::Vec3)>,
+) -> Option<(glam::Vec3, glam::Vec3)> {
+    type Kept = (Measured, Option<(glam::Vec3, glam::Vec3)>);
+    static KEPT: std::sync::Mutex<Option<Kept>> = std::sync::Mutex::new(None);
     let mut kept = KEPT.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some((_, held)) = kept.as_ref().filter(|(of, _)| *of == key) {
+    if let Some((_, held)) = kept.as_ref().filter(|(held, _)| *held == of) {
         return *held;
     }
-    let geometries = level.flat_map(|model| model.geometries.iter().flatten());
-    let read = geometries.filter_map(|geometry| geometry.positions.as_ref().ok());
-    let measured = bounds_of(read.flatten());
-    *kept = Some((key, measured));
+    let measured = measure();
+    *kept = Some((of, measured));
     measured
 }
 
@@ -270,6 +282,8 @@ pub(crate) struct Own {
     /// The surfaces drawn as Material in the same frame, and why the first is.
     pub rest: usize,
     pub why: Option<String>,
+    /// Whether the model casts no shadow, for a surface of it that cannot be cast.
+    pub unshadowed: bool,
 }
 
 /// `said` with how the drawable's own mesh and pixel programs came out: the surfaces they draw
@@ -302,6 +316,10 @@ pub(crate) fn said_of_own(
                     count = own.rest,
                     why = why,
                 ));
+            }
+            if own.unshadowed {
+                said.push('\n');
+                said.push_str(tr!("It casts no shadow: one of its surfaces reads the view at an offset the light's view cannot be copied to"));
             }
             said
         }
@@ -358,6 +376,7 @@ mod tests {
             zeroed: 9,
             rest: 0,
             why: None,
+            unshadowed: false,
         };
         let whole = said_of_own(String::new(), Some(&Ok(own.clone())), false);
         assert!(
@@ -371,11 +390,16 @@ mod tests {
         );
         own.rest = 3;
         own.why = Some("an effect: why".into());
-        let partly = said_of_own(String::new(), Some(&Ok(own)), false);
+        let partly = said_of_own(String::new(), Some(&Ok(own.clone())), false);
         assert!(
             partly.ends_with("Drawn as Material: 3 surfaces; the first: an effect: why"),
             "{partly}"
         );
+        assert!(!partly.contains("casts no shadow"), "{partly}");
+        own.unshadowed = true;
+        let unshadowed = said_of_own(String::new(), Some(&Ok(own)), false);
+        let last = unshadowed.lines().last().unwrap_or_default();
+        assert!(last.starts_with("It casts no shadow: "), "{unshadowed}");
         let none = said_of_own("before".into(), Some(&Err("why".into())), false);
         assert!(
             none.starts_with("before\n") && none.ends_with("why"),
@@ -389,6 +413,23 @@ mod tests {
             first: Some("why".into()),
         };
         super::said(&status, drawn, total)
+    }
+
+    #[test]
+    fn a_box_measured_of_one_document_is_not_handed_to_the_next() {
+        let (first, second) = (
+            Some((glam::Vec3::ZERO, glam::Vec3::ONE)),
+            Some((glam::Vec3::NEG_ONE, glam::Vec3::splat(4.0))),
+        );
+        // Documents no other test opens: the box is kept for the whole process.
+        let (one, next) = (u64::MAX - 7, u64::MAX - 6);
+        assert_eq!(kept_box((one, 0, None, 0), || first), first);
+        // Another document, though it may lie where the first did, is measured itself.
+        assert_eq!(kept_box((next, 0, None, 0), || second), second);
+        // And so is the same document read again, another drawable of it, and another level.
+        assert_eq!(kept_box((next, 1, None, 0), || first), first);
+        assert_eq!(kept_box((next, 1, Some(3), 0), || second), second);
+        assert_eq!(kept_box((next, 1, Some(3), 2), || None), None);
     }
 
     #[test]

@@ -1234,16 +1234,20 @@ impl MeshletScene {
         Some(self.targets.get(index)?.as_ref()?.texture())
     }
 
+    /// Whether the model casts no shadow whatever lights it, which a person is told.
+    // A buffer is copied to at a multiple of four bytes: a surface that reads the view elsewhere
+    // cannot be handed the light's, and a model is not cast by some of its surfaces alone.
+    pub fn casts_no_shadow(&self) -> bool {
+        (self.draws.iter().flat_map(|draw| &draw.views)).any(|(_, at)| at % 4 != 0)
+    }
+
     /// Write this frame's view and what the last draw lights by.
     pub fn update(&self, queue: &wgpu::Queue, lighting: &Lighting) {
         let matrix = lighting.view_proj.to_cols_array();
         for (buffer, at) in self.draws.iter().flat_map(|draw| &draw.views) {
             queue.write_buffer(buffer, *at as u64, bytemuck::cast_slice(&matrix));
         }
-        // A buffer is copied to at a multiple of four bytes: a surface that reads the view
-        // elsewhere casts nothing, and nor does the model it is of.
-        let aligned = (self.draws.iter().flat_map(|draw| &draw.views)).all(|(_, at)| at % 4 == 0);
-        let cast = sun_shadow::cast_of(&lighting.sky).filter(|_| aligned);
+        let cast = sun_shadow::cast_of(&lighting.sky).filter(|_| !self.casts_no_shadow());
         if let Some(to_tile) = cast {
             let both = [matrix, to_tile.to_cols_array()];
             queue.write_buffer(&self.matrices, 0, bytemuck::cast_slice(&both));

@@ -10,7 +10,7 @@ use std::time::Instant;
 use glam::Vec3;
 use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9ZlibRun};
 use or_io::gta5::data::visual_settings::VisualSettings;
-use or_world::streaming::{Forest, Kind, Level, NodeId, NodeState, View, FADE};
+use or_world::streaming::{Extent, Forest, Kind, Level, NodeId, NodeState, View, FADE};
 
 use super::index::{Enabled, ModelRef, WorldIndex};
 use super::pool::Pool;
@@ -99,6 +99,8 @@ pub struct Selected {
     pub species: Arc<[Species]>,
     /// Each model waited for, with how far the nearest thing that waits for it is.
     pub wanted: Vec<(f32, ModelRef)>,
+    /// The sphere of each thing that waits for a model, by the model.
+    pub waiting_at: HashMap<ModelRef, Vec<(Vec3, f32)>>,
     pub streaming: Streaming,
     /// What it holds, counted for the check against what the game loads (`world dump`).
     pub census: Census,
@@ -542,6 +544,16 @@ impl Streamer {
             let away = eye.distance(node.position) + later;
             let nearest = waited.entry(model).or_insert(away);
             *nearest = nearest.min(away);
+            let sphere = match node.extent {
+                Extent::Box(min, max) => Some(((min + max) / 2.0, (max - min).length() / 2.0)),
+                Extent::Point => drawn_of(*id).and_then(|(map, drawn)| {
+                    let rows = map.entities.get(id.1 as usize)?;
+                    Some((place(rows, drawn.centre), drawn.radius * stretch(rows)))
+                }),
+            };
+            if let Some(sphere) = sphere {
+                out.waiting_at.entry(model).or_default().push(sphere);
+            }
         }
         // What the maps place inside an interior near the camera takes the interior's ambient light.
         // ponytail: every selection looks again at each instance near an interior in range; held
@@ -582,6 +594,8 @@ impl Streamer {
                         Some(false) => {
                             let nearest = waited.entry(child.model).or_insert(away);
                             *nearest = nearest.min(away);
+                            let at = out.waiting_at.entry(child.model).or_default();
+                            at.push((child.centre, child.radius));
                         }
                         None => {}
                     }

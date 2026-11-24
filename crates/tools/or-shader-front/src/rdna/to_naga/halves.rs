@@ -2,7 +2,7 @@
 //! likes and may lose a denormal, and a driver may fold a pack and an unpack into nothing.
 //! 64-bit floats likewise, as dword pairs: not every writer has the type.
 
-use naga::{BinaryOperator as Bo, Expression as E, Handle, MathFunction as Mf};
+use naga::{BinaryOperator as Bo, Expression as E, Handle, MathFunction as Mf, ScalarKind};
 
 use super::Builder;
 
@@ -444,6 +444,41 @@ impl Builder {
         self.bin(Bo::InclusiveOr, sign, magnitude)
     }
 
+    /// A dword as another lane of this lane's quad holds it: `steps` is, for each axis some
+    /// lane of the pattern moves along, how many lanes this one moves, as a float. Each 16-bit
+    /// half goes by its fine derivative, a difference of two whole numbers under 65,536 and
+    /// so exact where a float's own derivative rounds; the second axis takes the derivative of
+    /// what the first made, which in the lane across is that lane's neighbour.
+    pub(super) fn quad_neighbour(
+        &mut self,
+        bits: Handle<E>,
+        steps: [Option<Handle<E>>; 2],
+    ) -> Handle<E> {
+        let (low, sixteen) = (self.u32(0xFFFF), self.u32(16));
+        let halves = [
+            self.bin(Bo::And, bits, low),
+            self.bin(Bo::ShiftRight, bits, sixteen),
+        ];
+        let mut halves = halves.map(|half| self.convert(half, ScalarKind::Float));
+        let axes = [naga::DerivativeAxis::X, naga::DerivativeAxis::Y];
+        for (axis, steps) in axes.into_iter().zip(steps) {
+            let Some(steps) = steps else { continue };
+            for half in &mut halves {
+                let ctrl = naga::DerivativeControl::Fine;
+                let slope = self.emit(E::Derivative {
+                    axis,
+                    ctrl,
+                    expr: *half,
+                });
+                let change = self.bin(Bo::Multiply, steps, slope);
+                *half = self.bin(Bo::Add, *half, change);
+            }
+        }
+        let [low, high] = halves.map(|half| self.convert(half, ScalarKind::Uint));
+        let high = self.bin(Bo::ShiftLeft, high, sixteen);
+        self.bin(Bo::InclusiveOr, low, high)
+    }
+
     /// A whole number as the 64-bit float that holds it exactly: its low dword and its high.
     pub(super) fn double_of_count(&mut self, count: Handle<E>) -> [Handle<E>; 2] {
         let (zero, one, most) = (self.u32(0), self.u32(1), self.u32(31));
@@ -870,6 +905,93 @@ mod tests {
             check(seed);
             // The exponents a float has, and those just under them.
             check(seed & !(0x7FF << 52) | (850 + (seed >> 40) % 310) << 52);
+        }
+    }
+
+    /// What an expression of [`Builder::quad_neighbour`] comes to in lane `lane` of a quad
+    /// whose lanes hold `held`, as a float: argument 0 is the lane's dword, and arguments 1
+    /// and 2 its steps along the row and the column. A fine derivative is the lane to the
+    /// right or below less the one to the left or above.
+    fn in_quad(b: &Builder, at: Handle<E>, lane: usize, held: &[u32; 4], to: &[usize; 4]) -> f64 {
+        let value = |at| in_quad(b, at, lane, held, to);
+        match b.fun.expressions[at] {
+            E::FunctionArgument(0) => f64::from(held[lane]),
+            E::FunctionArgument(axis) => {
+                let shift = axis as usize - 1;
+                ((to[lane] >> shift & 1) as f64) - ((lane >> shift & 1) as f64)
+            }
+            E::Literal(Literal::U32(word)) => f64::from(word),
+            E::Binary { op, left, right } => {
+                let (l, r) = (value(left), value(right));
+                match op {
+                    Bo::And => f64::from(l as u32 & r as u32),
+                    Bo::InclusiveOr => f64::from(l as u32 | r as u32),
+                    Bo::ShiftRight => f64::from(l as u32 >> r as u32),
+                    Bo::ShiftLeft => f64::from((l as u32) << r as u32),
+                    // The sums and products here are a float's: rounded as one.
+                    Bo::Add => f64::from(l as f32 + r as f32),
+                    Bo::Multiply => f64::from(l as f32 * r as f32),
+                    other => panic!("{other:?} is not evaluated"),
+                }
+            }
+            // To a float, the nearest; to a dword, a whole number as it is.
+            E::As {
+                expr,
+                kind: ScalarKind::Float,
+                ..
+            } => f64::from(value(expr) as f32),
+            E::As { expr, .. } => {
+                let whole = value(expr);
+                assert_eq!(whole, whole.trunc());
+                whole
+            }
+            E::Derivative { axis, expr, .. } => {
+                let bit = if axis == naga::DerivativeAxis::X {
+                    1
+                } else {
+                    2
+                };
+                let (near, far) = (lane & !bit, lane | bit);
+                let far = in_quad(b, expr, far, held, to) as f32;
+                f64::from(far - in_quad(b, expr, near, held, to) as f32)
+            }
+            ref other => panic!("{other:?} is not evaluated"),
+        }
+    }
+
+    #[test]
+    fn a_lane_of_a_quad_reads_any_other_lane_s_dword_whole() {
+        let mut b = Builder::new();
+        let [bits, across, down] = [0, 1, 2].map(|index| b.emit(E::FunctionArgument(index)));
+        // The lane in the row, in the column, across both, each lane to one lane, and itself.
+        let patterns = [
+            [1, 0, 3, 2],
+            [2, 3, 0, 1],
+            [3, 2, 1, 0],
+            [0, 0, 0, 0],
+            [0, 1, 2, 3],
+        ];
+        let mut seed = 0x2545_F491u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            seed
+        };
+        for to in patterns {
+            let moves = |shift: usize| (0..4).any(|lane| (to[lane] ^ lane) >> shift & 1 != 0);
+            let steps = [moves(0).then_some(across), moves(1).then_some(down)];
+            let read = b.quad_neighbour(bits, steps);
+            for _ in 0..2_000 {
+                // Floats near one another, as a quad's are, and any four dwords.
+                let near = 0x3F80_0000 | next() >> 9;
+                let held = match next() & 1 {
+                    0 => [near, near ^ 1, near.wrapping_add(next() & 0xFFFF), next()],
+                    _ => [next(), next(), next(), next()],
+                };
+                for lane in 0..4 {
+                    let got = in_quad(&b, read, lane, &held, &to) as u32;
+                    assert_eq!(got, held[to[lane]], "lane {lane} of {held:x?} to {to:?}");
+                }
+            }
         }
     }
 

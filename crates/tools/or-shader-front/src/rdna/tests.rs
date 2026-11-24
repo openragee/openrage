@@ -646,7 +646,7 @@ fn two_lanes_of_a_quad_subtracted_are_a_derivative() {
             ..
         }
     )));
-    // A neighbouring lane's value read any other way is this lane's plus its derivatives toward it.
+    // A neighbouring lane's value read any other way goes by the fine derivatives of its halves.
     let target = exp(0, [1, 1, 1, 1]);
     let words = vec![
         vintrp(1, 0, 0, 0, 1),
@@ -659,7 +659,7 @@ fn two_lanes_of_a_quad_subtracted_are_a_derivative() {
     let out = lowered(ShaderKind::Pixel, words);
     assert!(out
         .approximations
-        .contains_key("a neighbouring lane's value rebuilt from this lane's derivatives"));
+        .contains_key("a neighbouring lane's value read through the device's fine derivatives"));
 }
 
 /// An image instruction of dimension `dim` whose address and data start at `v0`; `flags` holds
@@ -876,7 +876,7 @@ fn a_permutation_folded_into_a_sum_and_a_comparison_of_parts_are_lowered() {
     assert_eq!(state[20], sym::Sym::Unknown);
     assert_eq!(state[usize::from(sym::VCC)], sym::Sym::User(sym::VCC));
     let out = waved(words);
-    let note = "a neighbouring lane's value rebuilt from this lane's derivatives";
+    let note = "a neighbouring lane's value read through the device's fine derivatives";
     assert!(out.approximations.contains_key(note));
     // The count is over the wave's own mask: every lane's bit, gathered by a vote of the subgroup.
     assert!(out.subgroups);

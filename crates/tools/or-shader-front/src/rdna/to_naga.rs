@@ -1582,9 +1582,10 @@ fn whole(at: &Loc) -> Loc {
         }),
     }
 }
-/// A pixel lane's neighbour as this lane's value moved by its derivatives: the neighbour in its
-/// row or column to a float's rounding, the diagonal one less closely.
-const REBUILT: &str = "a neighbouring lane's value rebuilt from this lane's derivatives";
+/// A pixel lane's neighbour read through the device's fine derivatives of its 16-bit halves: the
+/// neighbour's dword whole wherever a fine derivative is the difference of the quad's two lanes
+/// along its axis, where the read stands, and a quad starts at an even pixel.
+const REBUILT: &str = "a neighbouring lane's value read through the device's fine derivatives";
 /// What the blocks of one function are lowered in: its builder, and where its registers are.
 type Part = (Builder, HashMap<Reg, Handle<E>>);
 
@@ -3450,10 +3451,8 @@ impl<'a> Cx<'a> {
         Ok(Some(self.b.bits(value)))
     }
 
-    /// `source` as the lane of its quad that `quad` gives this lane computed it: this lane's value
-    /// plus its derivative toward that lane.
-    // ponytail: exact for the neighbour in this lane's row or column; the diagonal one takes this
-    // lane's two derivatives, which misses how the row's derivative changes down the quad.
+    /// `source` as the lane of its quad that `quad` gives this lane computed it: this lane's
+    /// value moved by the fine derivatives of its halves ([`Builder::quad_neighbour`]).
     fn neighbour(&mut self, pc: u32, inst: &Inst, source: u8, quad: Quad) -> Value {
         if !self.subgroups && !self.fragment {
             return Err(form(
@@ -3478,7 +3477,6 @@ impl<'a> Cx<'a> {
             let index = self.b.bin(Bo::InclusiveOr, base, from);
             return Ok(self.gather(bits, index));
         }
-        let expr = self.b.float(bits);
         // This lane's number in its quad: its column's parity, then its row's.
         let position = self.position();
         let one = self.b.u32(1);
@@ -3500,20 +3498,17 @@ impl<'a> Cx<'a> {
             self.b.bin(Bo::And, from, one),
             self.b.bin(Bo::ShiftRight, from, one),
         ];
-        let mut value = expr;
-        for (k, axis) in [DerivativeAxis::X, DerivativeAxis::Y]
-            .into_iter()
-            .enumerate()
-        {
-            let ctrl = DerivativeControl::Fine;
-            let slope = self.b.emit(E::Derivative { axis, ctrl, expr });
+        // An axis no lane of the pattern moves along takes no derivative.
+        let mut steps = [None; 2];
+        for (k, steps) in steps.iter_mut().enumerate() {
+            if (0..4u8).all(|lane| (quad[usize::from(lane)] ^ lane) >> k & 1 == 0) {
+                continue;
+            }
             let (to, here) = (self.b.sint(there[k]), self.b.sint(parity[k]));
-            let steps = self.b.bin(Bo::Subtract, to, here);
-            let steps = self.b.convert(steps, ScalarKind::Float);
-            let change = self.b.bin(Bo::Multiply, steps, slope);
-            value = self.b.bin(Bo::Add, value, change);
+            let moved = self.b.bin(Bo::Subtract, to, here);
+            *steps = Some(self.b.convert(moved, ScalarKind::Float));
         }
-        Ok(self.b.bits(value))
+        Ok(self.b.quad_neighbour(bits, steps))
     }
 
     /// Writes `dst` with a neighbouring lane's value of `source`, and marks it so for the
@@ -7346,6 +7341,7 @@ fn lower_as(
     split: Option<&geometry::Split>,
 ) -> Result<Lowered, NotTranslated> {
     let (mut told, mut eager, mut shared) = (StoredImages::new(), false, None);
+    let mut read = None;
     // What the lowering onto the device's subgroup came to, where it stands if the one
     // through shared memory stops: a group of several waves, or one that asked for its wave
     // only to read a first lane.
@@ -7353,7 +7349,13 @@ fn lower_as(
     let cut;
     let mut cfg = cfg;
     loop {
-        match lower_pass(program, cfg, options, (&told, eager, shared), split) {
+        match lower_pass(
+            program,
+            (cfg, &mut read),
+            options,
+            (&told, eager, shared),
+            split,
+        ) {
             // A compute group lowered onto its device's subgroup: again, with its waves in
             // the memory the group shares, which every device runs alike.
             Ok(Pass::Done(lowered, wants_wave)) => {
@@ -7369,6 +7371,7 @@ fn lower_as(
                 if shape.1 > 1 {
                     cut = wave::split(cfg);
                     cfg = &cut;
+                    read = None;
                     break;
                 }
             }
@@ -7382,7 +7385,13 @@ fn lower_as(
     }
     // Waves that take turns, over the graph cut where a wave waits for its group.
     loop {
-        match lower_pass(program, cfg, options, (&told, eager, shared), split) {
+        match lower_pass(
+            program,
+            (cfg, &mut read),
+            options,
+            (&told, eager, shared),
+            split,
+        ) {
             Ok(Pass::Done(lowered, _)) => return Ok(*lowered),
             Ok(Pass::Again(more)) => told.extend(more),
             Err(NotTranslated::Descriptor {
@@ -7403,11 +7412,28 @@ const FIRST_LANE_WORDS: usize = 1 << 16;
 /// register that holds a table's word on some paths, computed with as a number.
 const MIXED_NUMBER: &str = "a table's word as a number";
 
+/// What is read off a program's graph before it is lowered, the same for every lowering of it.
+struct Read {
+    first_exact: BTreeSet<u32>,
+    first_entry: BTreeMap<u32, u8>,
+    states: BTreeMap<u32, State>,
+}
+
+impl Read {
+    fn of(program: &Program, cfg: &Cfg) -> Self {
+        Self {
+            first_exact: uniform::first_lanes(cfg, program.wave32),
+            first_entry: uniform::entry_lanes(cfg),
+            states: sym::solve_for(cfg, program.wave32),
+        }
+    }
+}
+
 /// One lowering, which reads the images `told` names through the bindings they are stored through.
 #[allow(clippy::too_many_lines)]
 fn lower_pass(
     program: &Program,
-    cfg: &Cfg,
+    (cfg, read): (&Cfg, &mut Option<Read>),
     options: &Options,
     (told, eager, shared): (&StoredImages, bool, Option<(u32, u32)>),
     split: Option<&geometry::Split>,
@@ -7497,9 +7523,9 @@ fn lower_pass(
         half_mode: None,
         lane: None,
         shared_wave: wave::Shared::of(shared),
-        first_exact: uniform::first_lanes(cfg, program.wave32),
+        first_exact: BTreeSet::new(),
         wants_wave: false,
-        first_entry: uniform::entry_lanes(cfg),
+        first_entry: BTreeMap::new(),
         mesh: None,
         half_slots: &options.half_slots,
         attributes: BTreeMap::new(),
@@ -7584,11 +7610,13 @@ fn lower_pass(
     let mut parts: Vec<Part> = (0..functions)
         .map(|_| (Builder::new(), HashMap::new()))
         .collect();
-    let mut states = sym::solve_for(cfg, program.wave32);
+    let read = &*read.get_or_insert_with(|| Read::of(program, cfg));
+    cx.first_exact.clone_from(&read.first_exact);
+    cx.first_entry.clone_from(&read.first_entry);
     let mut lowered = Vec::with_capacity(starts.len());
     cx.take_turns(turns);
     for (index, (start, block)) in cfg.blocks.iter().enumerate() {
-        let state = states.remove(start).unwrap_or_else(sym::entry);
+        let state = (read.states.get(start).cloned()).unwrap_or_else(sym::entry);
         // The first function is the one the lowering holds; another is swapped in for its blocks.
         let part = parts.get_mut(homes[index]).filter(|_| homes[index] != 0);
         let Some(part) = part else {

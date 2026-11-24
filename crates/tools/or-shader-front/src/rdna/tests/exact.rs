@@ -237,6 +237,37 @@ fn the_first_lane_is_this_lane_where_the_lanes_agree_or_the_program_takes_them_i
         lost[3] = sop1(op(opcodes::SOP1, "s_mov_b64"), 24, 6);
         assert_eq!(counted(&first_lane(&lost, &[])), 1);
     }
+    // The lanes a branch left waiting hold what they agreed on, whatever the lanes that ran
+    // wrote; lanes that were taken away after the write hold what it wrote.
+    let narrow = vopc(V_CMPX_GT_F32, F_HALF, 0);
+    let turn = sop2(op(opcodes::SOP2, "s_andn2_b64"), 126, 24, 126);
+    let waited = [
+        vop1(V_MOV, 1, 4),
+        sop1(op(opcodes::SOP1, "s_mov_b64"), 24, 126),
+        narrow,
+        vintrp(1, 0, 0, 0, 2),
+        add(1, I_ONE, 2),
+        vop1(op(opcodes::VOP1, "v_nop"), 0, 0),
+        turn,
+    ];
+    assert_eq!(counted(&first_lane(&waited, &[])), 0);
+    let mut twice = waited;
+    twice[5] = narrow;
+    assert_eq!(counted(&first_lane(&twice, &[])), 1);
+    // A mask made of a saved mask's lanes is put back as those lanes; a scalar register
+    // written beside the saved one, by an instruction of 32 bits, leaves it be.
+    let within = [
+        vop1(V_MOV, 1, 4),
+        sop1(op(opcodes::SOP1, "s_mov_b64"), 24, 126),
+        sop2(op(opcodes::SOP2, "s_and_b64"), 28, 24, 24),
+        sop1(op(opcodes::SOP1, "s_mov_b32"), 27, 6),
+        narrow,
+        sop1(op(opcodes::SOP1, "s_mov_b64"), 126, 28),
+    ];
+    assert_eq!(counted(&first_lane(&within, &[])), 0);
+    let mut beside = within;
+    beside[3] = sop1(op(opcodes::SOP1, "s_mov_b32"), 29, 6);
+    assert_eq!(counted(&first_lane(&beside, &[])), 1);
     // The loop over a wave's distinct values: the lanes that hold the first lane's value
     // run and the others wait their turn, which comes with their own value read.
     let turn = [

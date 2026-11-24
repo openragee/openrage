@@ -14659,8 +14659,8 @@ msgstr "Ombreggiato — i passaggi del gioco stesso, tradotti dai programmi di G
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
 msgstr "Ombreggiato — i programmi di mesh e di pixel di questo drawable stesso, tradotti da quelli di GTA VI: {drawn} superfici disegnate, illuminate dal sole e dal cielo dell'editor stesso all'ora e con il meteo impostati. {zeroed} associazioni che solo il gioco riempie vengono lette come zeri"
 
-msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the editor's own sky and exposure. {zeroed} bindings only the game fills read as noughts"
-msgstr "Ombreggiato — i programmi di mesh e di pixel di questo drawable stesso, tradotti da quelli di GTA VI: {drawn} superfici disegnate, illuminate dal ciclo meteo dell'installazione all'ora e con il meteo impostati, sotto il cielo e l'esposizione dell'editor stesso. {zeroed} associazioni che solo il gioco riempie vengono lette come zeri"
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts"
+msgstr "Ombreggiato — i programmi di mesh e di pixel di questo drawable stesso, tradotti da quelli di GTA VI: {drawn} superfici disegnate, illuminate dal ciclo meteo dell'installazione all'ora e con il meteo impostati, sotto il cielo che dà la sua atmosfera, con la misurazione e la curva di tono del gioco. {zeroed} associazioni che solo il gioco riempie vengono lette come zeri"
 
 msgid "a worker is still decoding its maps"
 msgstr "un worker sta ancora decodificando le sue texture"

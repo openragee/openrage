@@ -3,6 +3,7 @@ pub mod content;
 pub mod crawl;
 pub mod discovery;
 pub mod freemode;
+pub mod gta6_weather;
 pub mod materials;
 pub mod names;
 pub mod shader_defs;

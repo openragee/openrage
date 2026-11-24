@@ -249,7 +249,7 @@ pub(crate) fn said_of_own(
                     zeroed = own.zeroed,
                 ),
                 true => tr!(
-                    "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the editor's own sky and exposure. {zeroed} bindings only the game fills read as noughts",
+                    "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts",
                     drawn = own.drawn,
                     zeroed = own.zeroed,
                 ),

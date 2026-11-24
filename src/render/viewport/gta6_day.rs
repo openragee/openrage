@@ -1,14 +1,16 @@
 //! The light of the day for a GTA VI model: where the sun and the moon stand at an hour, which
-//! of them lights, the two samples of the install's weather cycle that stand for the sun's
-//! place, and the sky those state.
+//! of them lights, the cycle of the install a weather is drawn with and its two samples that
+//! stand for the sun's place, and the light, the sky and the tone those state.
 
 use std::f32::consts::{PI, TAU};
 
 use glam::Vec3;
 use or_io::gta5::data::timecycle::{Keyframe, TimeTable};
-use or_renderer::game_shaders::meshlets::Sky;
+use or_io::gta5::data::visual_settings::VisualSettings;
+use or_renderer::game_shaders::meshlets::{Curve, Filmic, Sky, Tone};
 use or_title::TimecycleData;
 
+use super::gta6_air::Air;
 use crate::state::drivers::WeatherState;
 
 /// When the sun is highest, as a part of the day: one o'clock by the summer clock and the
@@ -35,11 +37,16 @@ const LIGHT_FLOOR: f32 = 0.15;
 /// What a cycle states for the cross-fade of sun and moon to leave it to their heights.
 const CROSSFADE_BY_HEIGHT: f32 = -10.0;
 
-/// What a lux of sunlight and of moonlight come to in the frame.
-// Estimates: the game meters each frame and exposes it on the GPU, by programs not read. These
-// two keep a clear noon and a moonlit night where the built-in sky has them.
-const SUN_EXPOSURE: f32 = 3.2 / 100_000.0;
-const MOON_EXPOSURE: f32 = 0.5;
+/// What the ground under a model sends back of the light that falls on it.
+// An estimate: the game's ground is its world, lit and read through its probes.
+const GROUND: f32 = 0.3;
+/// The tuning value an install states the scale of its exposure curve by, and the stems of that
+/// curve's and of the second curve's values.
+const EXPOSURE_CURVE: [&str; 3] = [
+    "Exposure.curve.scale",
+    "Exposure.curve",
+    "Exposure.curve.blend",
+];
 
 /// Where a cycle's samples stand on the sun's round, east to west through the top: the angle of
 /// the sun in the plane of its path, nought where it rises, and the sample that holds there.
@@ -61,8 +68,19 @@ const SAMPLE_ANGLES: [(f32, usize); 13] = [
     (3.09, 8),
 ];
 
-/// The cycle of a GTA VI install that stands for a weather of the Weather bar.
-fn cycle_of(weather: WeatherState) -> &'static str {
+/// The name a weather of the Weather bar is asked of a GTA VI install's weather set by.
+fn asked_as(weather: WeatherState) -> &'static str {
+    match weather {
+        WeatherState::Clear => "clear",
+        WeatherState::Cloudy => "CLOUDS",
+        WeatherState::Fog => "FOG",
+        WeatherState::Rain => "Rain",
+        WeatherState::Storm => "THUNDERSTORM",
+    }
+}
+
+/// The cycle that stands for a weather where an install states no weather set.
+fn plain_cycle(weather: WeatherState) -> &'static str {
     match weather {
         WeatherState::Clear => "Sunny",
         WeatherState::Cloudy => "CLOUDS",
@@ -144,13 +162,23 @@ enum Body {
 
 /// The body that lights with the sun at `sun` and the moon at `moon`, and how much of its light
 /// is there, from nought to one: the sun until it is some way under the horizon, then the moon,
-/// never both; or as the cycle's own cross-fade says.
-fn lighting_body(sun: Vec3, moon: Vec3, frame: &Keyframe) -> Option<(Body, f32)> {
+/// never both; or as the cycle's own cross-fade says. `settings` state the angle each gives way
+/// at and the degrees it fades over, where the cycle states no angle.
+fn lighting_body(
+    sun: Vec3,
+    moon: Vec3,
+    frame: &Keyframe,
+    settings: &VisualSettings,
+) -> Option<(Body, f32)> {
     let zenith = |towards: Vec3| towards.z.clamp(-1.0, 1.0).acos().to_degrees();
-    let past = |towards: Vec3, name: &str| {
-        let stated = frame.get_or(name, -1.0);
-        let threshold = if stated < 0.0 { FADE_ZENITH } else { stated };
-        (zenith(towards) - threshold).clamp(-1.0, 1.0)
+    let past = |towards: Vec3, row: &str, body: &str| {
+        let stated = frame.get_or(row, -1.0);
+        let threshold = match stated < 0.0 {
+            true => settings.get_f32(&format!("misc.{body}Fade.Threshold"), FADE_ZENITH),
+            false => stated,
+        };
+        let over = settings.get_f32(&format!("misc.{body}Fade.ThresholdLength"), 1.0);
+        ((zenith(towards) - threshold) / over.max(1e-3)).clamp(-1.0, 1.0)
     };
     let stated = frame.get_or("sun_moon_crossfade", CROSSFADE_BY_HEIGHT);
     if stated != CROSSFADE_BY_HEIGHT {
@@ -161,8 +189,8 @@ fn lighting_body(sun: Vec3, moon: Vec3, frame: &Keyframe) -> Option<(Body, f32)>
         };
     }
     let (sun, moon) = (
-        past(sun, "sun_fade_threshold"),
-        past(moon, "moon_fade_threshold"),
+        past(sun, "sun_fade_threshold", "Sun"),
+        past(moon, "moon_fade_threshold", "Moon"),
     );
     match (sun < 0.0, moon < 0.0) {
         (true, _) => Some((Body::Sun, -sun)),
@@ -179,70 +207,159 @@ fn rgb(frame: &Keyframe, stem: &str) -> Vec3 {
     Vec3::new(part("r"), part("g"), part("b"))
 }
 
-/// Whether `data` holds what lights a GTA VI model in `weather`: a table of the day's samples
-/// and that weather's cycle.
+/// The cycle a weather is drawn with, and each variable its type's modifiers state over it: as
+/// the install's weather set says, else the cycle of the weather's own name with nothing over.
+fn cycle_of(data: &TimecycleData, weather: WeatherState) -> (&str, Vec<(&str, f32)>) {
+    (data.gta6_weather.resolve(asked_as(weather))).unwrap_or((plain_cycle(weather), Vec::new()))
+}
+
+/// Whether `data` holds what lights a GTA VI model in `weather`: a table of the day's samples,
+/// that weather's cycle, and the curve a metered frame is exposed by.
 pub(crate) fn lights(data: &TimecycleData, weather: WeatherState) -> bool {
     data.timecycle.table.samples.len() >= SAMPLE_ANGLES.len()
-        && data.timecycle.cycle(cycle_of(weather)).is_some()
+        && data.timecycle.cycle(cycle_of(data, weather).0).is_some()
+        && data.visual_settings.get(EXPOSURE_CURVE[0]).is_some()
+}
+
+/// The seven numbers of a filmic curve and the exposure it stands at: a cycle's rows whose
+/// names end `ending`, or the install's tuning values of `kind` with the rows where it has none.
+fn filmic(
+    frame: &Keyframe,
+    settings: Option<(&VisualSettings, &str)>,
+    ending: &str,
+) -> (Filmic, f32) {
+    let row = |name: &str| frame.get_or(&format!("postfx_tonemap_filmic_{name}{ending}"), 0.0);
+    let value = |name: &str, tuned: &str| match settings {
+        Some((settings, kind)) => {
+            settings.get_f32(&format!("Tonemapping.{kind}.filmic.{tuned}"), row(name))
+        }
+        None => row(name),
+    };
+    let numbers = [
+        ("a", "A"),
+        ("b", "B"),
+        ("c", "C"),
+        ("d", "D"),
+        ("e", "E"),
+        ("f", "F"),
+        ("w", "W"),
+    ];
+    let which = if ending.is_empty() { "_dark" } else { ending };
+    let at = frame.get_or(&format!("postfx_tonemap_filmic_exposure{which}"), 0.0);
+    let at = match settings {
+        Some((settings, kind)) => {
+            settings.get_f32(&format!("Tonemapping.{kind}.filmic.exposure"), at)
+        }
+        None => at,
+    };
+    (Filmic(numbers.map(|(name, tuned)| value(name, tuned))), at)
+}
+
+/// How a frame lit by `frame` is metered and toned, with the install's tuning values; `disc`
+/// is the tangent of half the lighting body's disc.
+fn tone_of(frame: &Keyframe, settings: &VisualSettings, disc: f32) -> Tone {
+    let curve = |stem: &str| Curve {
+        scale: settings.get_f32(&format!("{stem}.scale"), 0.0),
+        vertical: settings.get_f32(&format!("{stem}.verticalOffset"), 0.0),
+        horizontal: settings.get_f32(&format!("{stem}.horizontalOffset"), 0.0),
+        bending: settings.get_f32(&format!("{stem}.bending"), 0.0),
+    };
+    let lowlights = frame.get_or("postfx_exposure_lowlights_percent", 0.0);
+    let by_key = frame.get_or("postfx_exposure_use_key_value_mode", 0.0) > 0.0;
+    // A cycle overrules the install's two filmic curves with rows of its own: the dark rows
+    // alone for both, or both; the dark curve is the rows' wherever either is overruled.
+    let overruled =
+        |which: &str| frame.get_or(&format!("postfx_tonemap_filmic_override_{which}"), 0.0) > 0.0;
+    let ((bright, bright_at), (dark, dark_at)) = match (overruled("dark"), overruled("bright")) {
+        (false, false) => (
+            filmic(frame, Some((settings, "bright")), "_bright"),
+            filmic(frame, Some((settings, "dark")), ""),
+        ),
+        (true, false) => (filmic(frame, None, ""), filmic(frame, None, "")),
+        (true, true) => (filmic(frame, None, "_bright"), filmic(frame, None, "")),
+        (false, true) => (
+            filmic(frame, Some((settings, "bright")), "_bright"),
+            filmic(frame, None, ""),
+        ),
+    };
+    Tone {
+        roughness_mod: frame.get_or("direct_light_roughness_mod", 0.0),
+        disc,
+        lowlights,
+        highlights: (frame.get_or("postfx_exposure_highlights_percent", 0.0)).min(0.99 - lowlights),
+        curve: [curve(EXPOSURE_CURVE[1]), curve(EXPOSURE_CURVE[2])],
+        blend: frame.get_or("postfx_exposure_blend_curve_weight", 0.0),
+        key: by_key.then(|| frame.get_or("postfx_exposure_key_value", 0.18)),
+        least: frame.get_or("postfx_exposure_min", -11.0),
+        most: frame.get_or("postfx_exposure_max", 32.0),
+        added: frame.get_or("postfx_exposure", 0.0) + frame.get_or("postfx_exposure_tweak", 0.0),
+        bright,
+        dark,
+        bright_at,
+        dark_at,
+    }
 }
 
 /// The sky a GTA VI model is lit by at `hours` in `weather` by the install's tables of the day,
 /// or none where `data` does not hold them. The sun and the moon stand where the game puts them
-/// and one of them lights; the weather's cycle, at the two samples the sun's angle lies between,
-/// states its illuminance, its fade, its colour and what the sky's ambient is multiplied by.
-/// `built_in` gives the sky of an hour of a day whose sun rises at six, under clouds that hide a
-/// part of it or the Weather bar's own where none is said.
-// Estimates: the two exposures above; the sky's and the ground's colour, which the game works
-// out on the GPU from its atmosphere and which are the built-in sky's here, at the hour its
-// sun stands as high; the moon's round, which is the game's at rest.
-pub(super) fn sky(
-    data: &TimecycleData,
-    hours: f32,
-    weather: WeatherState,
-    built_in: impl Fn(f32, Option<f32>) -> Sky,
-) -> Option<Sky> {
+/// and one of them lights, by its lux and the cycle's tint and multipliers, through the air the
+/// cycle states; that air's sky is what surrounds the model; and the frame is metered and toned
+/// as the game's programs do.
+// Estimates left: the ground, a matte one of the editor's own; the moon's round, which is the
+// game's at rest; and what the game adds that a lone model has none of: shadows, clouds, fog,
+// probes and reflections.
+pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Option<Sky> {
     if !lights(data, weather) {
         return None;
     }
-    let timecycle = &data.timecycle;
-    let name = cycle_of(weather);
+    let (name, stated) = cycle_of(data, weather);
     let sun = sun_towards(hours);
     let moon = moon_towards(hours);
-    let angle = sun_angle(sun);
-    let between = samples_at(&timecycle.table, angle);
-    let frame = timecycle.keyframe_between(between, name, name, 0.0, 0.0)?;
+    let between = samples_at(&data.timecycle.table, sun_angle(sun));
+    let mut frame = (data.timecycle).keyframe_between(between, name, name, 0.0, 0.0)?;
+    for (variable, value) in stated {
+        frame.set(variable, value);
+    }
+    let air = Air::of(&frame);
 
     let lux = |body: &str| {
         frame.get_or(&format!("sky_scattering_{body}_illuminance"), 0.0)
             * frame.get_or(&format!("sky_scattering_{body}_intensity_multiplier"), 1.0)
     };
-    let light = lighting_body(sun, moon, &frame).map(|(body, fade)| {
-        let (towards, word, exposure) = match body {
-            Body::Sun => (sun, "sun", SUN_EXPOSURE),
-            Body::Moon => (moon, "moon", MOON_EXPOSURE),
+    let light = lighting_body(sun, moon, &frame, &data.visual_settings).map(|(body, fade)| {
+        let (towards, word) = match body {
+            Body::Sun => (sun, "sun"),
+            Body::Moon => (moon, "moon"),
         };
         let strength = frame.get_or("light_dir_mult", 1.0)
             * fade
             * frame.get_or(&format!("light_dir_{word}_mult"), 1.0);
-        let colour = rgb(&frame, "light_dir_col")
-            * rgb(&frame, &format!("sky_scattering_{word}_col"))
-            * lux(word)
-            * strength
-            * exposure;
-        (towards, colour)
+        let through = air.light_through(towards)
+            * frame.get_or("sky_transmittance_correction_factor", 1.0 / PI);
+        (
+            towards,
+            rgb(&frame, "light_dir_col") * lux(word) * strength * through,
+        )
     });
     let (towards, colour) = light.unwrap_or((sun, Vec3::ZERO));
+    let towards = Vec3::new(towards.x, towards.y, towards.z.max(LIGHT_FLOOR)).normalize();
 
-    let cover = (timecycle.cycle(name)).and_then(|cycle| cycle.overall.get("cloud_cover"));
-    let mut sky = built_in((6.0 + angle / PI * 12.0).rem_euclid(24.0), cover.copied());
-    sky.towards = Vec3::new(towards.x, towards.y, towards.z.max(LIGHT_FLOOR)).normalize();
-    sky.sun = colour;
-    sky.sky *= rgb(&frame, "sky_scattering_sky_col")
+    // What a matte surface that faces up sends back of the whole sky, under both bodies.
+    let given = air.sky_on_the_ground(sun) * lux("sun") + air.sky_on_the_ground(moon) * lux("moon");
+    let around = given / PI
+        * rgb(&frame, "sky_scattering_sky_col")
         * rgb(&frame, "ambient_sky_color_mult")
         * frame.get_or("ambient_sky_intensity", 1.0);
-    // As the built-in sky lays its ground: a part of the sky and a little of the light, bounced.
-    sky.ground = (sky.sky * 0.3 + sky.sun * 0.04) * frame.get_or("ambient_bounce_intensity", 1.0);
-    Some(sky)
+    let ground =
+        (around + colour * towards.z / PI) * GROUND * frame.get_or("ambient_bounce_intensity", 1.0);
+    Some(Sky {
+        towards,
+        sun: colour,
+        sky: around,
+        ground,
+        exposure: 1.0,
+        tone: Some(tone_of(&frame, &data.visual_settings, air.disc_tangent())),
+    })
 }
 
 #[cfg(test)]

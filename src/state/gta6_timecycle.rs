@@ -1,5 +1,6 @@
-//! The look of the day a GTA VI install states: the time table and the weather cycles among the
-//! nameless bodies of its common archive, read on a worker once a session and held in memory.
+//! The look of the day a GTA VI install states: the time table, the weather cycles, the weather
+//! set, its modifiers and the tuning values among the nameless bodies of its common archive, read
+//! on a worker once a session and held in memory.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -39,14 +40,15 @@ fn archive_of(state: &AppState, document: Option<&Path>) -> Option<PathBuf> {
     })
 }
 
-/// Every XML text a scan of `archive` finds, as the tables of the day they state.
+/// Every text a scan of `archive` finds, XML or plain, as the tables of the day they state.
 fn read(archive: &Path) -> Result<TimecycleData, String> {
     let file = File::open(archive).map_err(|e| e.to_string())?;
     let mut texts = Vec::new();
     for find in Rpf9Scan::new(&file, 0..u64::MAX).map_err(|e| e.to_string())? {
         let find = find.map_err(|e| e.to_string())?;
-        let xml = matches!(find.kind, Rpf9BodyKind::Zlib(run) if run.content == Rpf9Content::Xml);
-        if !xml {
+        let text = matches!(find.kind, Rpf9BodyKind::Zlib(run)
+            if matches!(run.content, Rpf9Content::Xml | Rpf9Content::Text));
+        if !text {
             continue;
         }
         match read_rpf9_body(&file, find.offset, TEXT_LIMIT) {

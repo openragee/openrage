@@ -22,18 +22,22 @@ fn data(cycle: &str, rows: &str) -> TimecycleData {
     or_title::timecycle_of_documents([
         format!("<time_data>{samples}</time_data>").as_str(),
         cycle.as_str(),
+        TUNED,
     ])
 }
 
-fn plain(hours: f32, cover: Option<f32>) -> Sky {
-    Sky {
-        towards: Vec3::Z,
-        sun: Vec3::ONE,
-        sky: Vec3::splat(hours),
-        ground: Vec3::splat(cover.unwrap_or(-1.0)),
-        exposure: 1.0,
-    }
-}
+/// An install's tuning values: the curve a metered frame is exposed by, two filmic curves and
+/// how the sun gives way.
+const TUNED: &str = "# Visual Configuration Table
+Exposure.curve.scale -1.5
+Exposure.curve.verticalOffset 7
+Exposure.curve.blend.scale -2
+Tonemapping.bright.filmic.A 0.25
+Tonemapping.bright.filmic.exposure -5
+Tonemapping.dark.filmic.A 0.5
+Tonemapping.dark.filmic.exposure -2.5
+misc.SunFade.ThresholdLength 10
+";
 
 fn close(a: Vec3, b: Vec3) -> bool {
     (a - b).length() <= 0.01 * b.length().max(1e-3)
@@ -115,11 +119,13 @@ fn an_angle_lies_between_two_samples_and_the_round_closes_on_itself() {
 #[test]
 fn the_sun_lights_until_it_is_ten_degrees_under_then_the_moon_and_never_both() {
     let frame = Keyframe::default();
+    let plain = VisualSettings::default();
     let moon = Vec3::new(0.0, 0.6, 0.8);
-    let at = |under: f32| {
-        let (sin, cos) = under.to_radians().sin_cos();
-        lighting_body(Vec3::new(cos, 0.0, -sin), moon, &frame)
+    let under = |degrees: f32| {
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        Vec3::new(cos, 0.0, -sin)
     };
+    let at = |degrees: f32| lighting_body(under(degrees), moon, &frame, &plain);
     assert_eq!(at(-30.0), Some((Body::Sun, 1.0)));
     assert_eq!(at(8.0), Some((Body::Sun, 1.0)));
     let (body, fade) = at(9.5).expect("a light");
@@ -128,49 +134,83 @@ fn the_sun_lights_until_it_is_ten_degrees_under_then_the_moon_and_never_both() {
     assert!(body == Body::Moon && (fade - 0.5).abs() < 0.01, "{fade}");
     assert_eq!(at(40.0), Some((Body::Moon, 1.0)));
     // With both far under, nothing lights.
-    assert_eq!(lighting_body(-Vec3::Z, -Vec3::Z, &frame), None);
+    assert_eq!(lighting_body(-Vec3::Z, -Vec3::Z, &frame, &plain), None);
+    // An install's own angle and the degrees it fades over: half gone five degrees before.
+    let tuned =
+        VisualSettings::parse("misc.SunFade.Threshold 96\nmisc.SunFade.ThresholdLength 10\n");
+    let (body, fade) = lighting_body(under(1.0), moon, &frame, &tuned).expect("a light");
+    assert!(body == Body::Sun && (fade - 0.5).abs() < 0.01, "{fade}");
     // A cycle's own cross-fade overrules the heights.
     let mut stated = Keyframe::default();
     stated.set("sun_moon_crossfade", -0.25);
     assert_eq!(
-        lighting_body(Vec3::Z, moon, &stated),
+        lighting_body(Vec3::Z, moon, &stated, &plain),
         Some((Body::Moon, 0.25))
     );
-    // And its own angle moves where the sun gives way.
+    // And its own angle moves where the sun gives way, over the install's.
     let mut early = Keyframe::default();
     early.set("sun_fade_threshold", 80.0);
     let low = Vec3::new(0.0, 5f32.to_radians().cos(), 5f32.to_radians().sin());
-    assert_eq!(lighting_body(low, moon, &early), Some((Body::Moon, 1.0)));
+    assert_eq!(
+        lighting_body(low, moon, &early, &plain),
+        Some((Body::Moon, 1.0))
+    );
 }
 
 #[test]
-fn the_cycle_states_the_light_by_its_lux_its_fade_its_colours_and_its_multipliers() {
+fn the_cycle_states_the_light_by_its_lux_its_tint_its_multipliers_and_the_air() {
     // Sample 6 is the top of the round and 0 the middle of the night.
     let rows = "<light_dir_col_g> 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5</light_dir_col_g>
         <light_dir_mult> 3 1 1 1 1 1 2 2 1 1 1 1 3</light_dir_mult>
         <sky_scattering_sun_intensity_multiplier> 0 0 0 0 1 1 0.5 0.5 1 1 0 0 0</sky_scattering_sun_intensity_multiplier>
-        <sky_scattering_sun_col_b> 1 1 1 1 1 1 0.25 0.25 1 1 1 1 1</sky_scattering_sun_col_b>
         <light_dir_moon_mult> 0.5 1 1 1 1 1 1 1 1 1 1 1 0.5</light_dir_moon_mult>
-        <ambient_sky_intensity> 1 1 1 1 1 1 0.5 0.5 1 1 1 1 1</ambient_sky_intensity>
-        <ambient_sky_color_mult_r> 1 1 1 1 1 1 0.5 0.5 1 1 1 1 1</ambient_sky_color_mult_r>
         <ambient_bounce_intensity> 2 2 2 2 2 2 2 2 2 2 2 2 2</ambient_bounce_intensity>";
-    let data = data("Rain", rows);
-    let at = |hours: f32| sky(&data, hours, WeatherState::Rain, plain).expect("lit by the cycle");
+    let ambient = "<ambient_sky_intensity> 1 1 1 1 1 1 0.5 0.5 1 1 1 1 1</ambient_sky_intensity>
+        <ambient_sky_color_mult_r> 1 1 1 1 1 1 0.5 0.5 1 1 1 1 1</ambient_sky_color_mult_r>
+        <sky_scattering_sky_col_b> 1 1 1 1 1 1 0.5 0.5 1 1 1 1 1</sky_scattering_sky_col_b>";
+    let data = data("Rain", &format!("{rows}{ambient}"));
+    let at = |hours: f32| sky(&data, hours, WeatherState::Rain).expect("lit by the cycle");
+    let air = Air::of(&Keyframe::default());
+    let noon_hours = SOLAR_NOON * 24.0;
 
-    let noon = at(SOLAR_NOON * 24.0);
-    // A thousand lux, half of it, twice, by the colours.
-    let sun = Vec3::new(1.0, 0.5, 0.25) * 1000.0 * 0.5 * 2.0 * SUN_EXPOSURE;
+    let noon = at(noon_hours);
+    // A thousand lux, half of it, twice, by the tint, through the air, with the air's own
+    // share of a matte surface's light.
+    let through = air.light_through(sun_towards(noon_hours)) / PI;
+    let sun = Vec3::new(1.0, 0.5, 1.0) * 1000.0 * 0.5 * 2.0 * through;
     assert!(close(noon.sun, sun), "{:?} against {sun:?}", noon.sun);
-    assert!(close(noon.towards, sun_towards(SOLAR_NOON * 24.0)));
-    // The built-in sky of its own noon, under the cover the cycle states, by the ambient rows.
-    assert!(close(noon.sky, Vec3::new(3.0, 6.0, 6.0)), "{:?}", noon.sky);
-    assert!(close(noon.ground, (noon.sky * 0.3 + noon.sun * 0.04) * 2.0));
+    assert!(
+        sun.x > sun.z && sun.x > 200.0,
+        "the air takes the blue: {sun:?}"
+    );
+    assert!(close(noon.towards, sun_towards(noon_hours)));
+    assert_eq!(noon.exposure, 1.0);
 
-    let night = at(SOLAR_NOON * 24.0 + 12.0);
+    // The sky is the air's under the sun's lux, by the rows that multiply it: without them it
+    // is twice, four times and twice what it is with them.
+    let bare = sky(&self::data("Rain", rows), noon_hours, WeatherState::Rain).expect("lit");
+    let of_the_air = air.sky_on_the_ground(sun_towards(noon_hours)) * 500.0 / PI;
+    assert!(
+        close(bare.sky, of_the_air),
+        "{:?} against {of_the_air:?}",
+        bare.sky
+    );
+    assert!(
+        close(noon.sky * Vec3::new(4.0, 2.0, 4.0), bare.sky),
+        "{:?}",
+        noon.sky
+    );
+    assert!(noon.sky.z > noon.sky.x, "blue: {:?}", noon.sky);
+    let ground = (noon.sky + noon.sun * noon.towards.z / PI) * GROUND * 2.0;
+    assert!(close(noon.ground, ground), "{:?}", noon.ground);
+
+    let night = at(noon_hours + 12.0);
     // Two lux of moon, three times, halved by the moon's own multiplier.
-    let moon = Vec3::new(1.0, 0.5, 1.0) * 2.0 * 3.0 * 0.5 * MOON_EXPOSURE;
+    let through = air.light_through(moon_towards(noon_hours + 12.0)) / PI;
+    let moon = Vec3::new(1.0, 0.5, 1.0) * 2.0 * 3.0 * 0.5 * through;
     assert!(close(night.sun, moon), "{:?} against {moon:?}", night.sun);
-    assert!(close(night.towards, moon_towards(SOLAR_NOON * 24.0 + 12.0)));
+    assert!(close(night.towards, moon_towards(noon_hours + 12.0)));
+    assert!(night.sky.y < noon.sky.y * 0.02, "{:?}", night.sky);
 
     // A sun at the horizon lights from no lower than the floor of the light's way.
     let low = at(SUNSET * 24.0).towards;
@@ -181,19 +221,67 @@ fn the_cycle_states_the_light_by_its_lux_its_fade_its_colours_and_its_multiplier
 }
 
 #[test]
-fn the_cover_a_cycle_states_reaches_the_built_in_sky() {
-    let data = data("Rain", "");
-    let seen = std::cell::Cell::new(None);
-    let built_in = |hours, cover| {
-        seen.set(cover);
-        plain(hours, cover)
+fn the_tone_is_the_cycle_s_rows_and_the_install_s_tuning_values() {
+    let rows = "<postfx_exposure_lowlights_percent> 0.9 0.9 0.9 0.9 0.9 0.9 0.9 0.9 0.9 0.9 0.9 0.9 0.9</postfx_exposure_lowlights_percent>
+        <postfx_exposure_highlights_percent> 0.2 0.2 0.2 0.2 0.2 0.2 0.2 0.2 0.2 0.2 0.2 0.2 0.2</postfx_exposure_highlights_percent>
+        <postfx_exposure_min> -9 -9 -9 -9 -9 -9 -9 -9 -9 -9 -9 -9 -9</postfx_exposure_min>
+        <postfx_exposure> 1 1 1 1 1 1 1 1 1 1 1 1 1</postfx_exposure>
+        <postfx_exposure_tweak> 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5</postfx_exposure_tweak>
+        <direct_light_roughness_mod> 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4</direct_light_roughness_mod>
+        <postfx_tonemap_filmic_a> 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1</postfx_tonemap_filmic_a>
+        <postfx_tonemap_filmic_b> 0.3 0.3 0.3 0.3 0.3 0.3 0.3 0.3 0.3 0.3 0.3 0.3 0.3</postfx_tonemap_filmic_b>
+        <postfx_tonemap_filmic_exposure_dark> 1 1 1 1 1 1 1 1 1 1 1 1 1</postfx_tonemap_filmic_exposure_dark>";
+    let tone_in = |rows: &str| {
+        let sky = sky(&data("Rain", rows), 12.0, WeatherState::Rain).expect("lit by the cycle");
+        sky.tone.expect("a cycle that lights states a tone")
     };
-    sky(&data, 12.0, WeatherState::Rain, built_in).expect("lit by the cycle");
-    assert_eq!(seen.get(), Some(0.25));
+    let tone = tone_in(rows);
+    // The brightest share is cut to what the darkest leaves of all but a hundredth.
+    assert_eq!((tone.lowlights, tone.roughness_mod), (0.9, 0.4));
+    assert!((tone.highlights - 0.09).abs() < 1e-6, "{}", tone.highlights);
+    assert_eq!((tone.least, tone.most, tone.added), (-9.0, 32.0, 1.5));
+    assert_eq!((tone.key, tone.blend), (None, 0.0));
+    assert_eq!((tone.curve[0].scale, tone.curve[0].vertical), (-1.5, 7.0));
+    assert_eq!((tone.curve[1].scale, tone.curve[1].vertical), (-2.0, 0.0));
+    assert!((0.008..0.009).contains(&tone.disc), "{}", tone.disc);
+    // The install's two curves, a number it does not state being the cycle's row.
+    assert_eq!((tone.bright.0[0], tone.dark.0[0]), (0.25, 0.5));
+    assert_eq!((tone.bright.0[1], tone.dark.0[1]), (0.0, 0.3));
+    assert_eq!((tone.bright_at, tone.dark_at), (-5.0, -2.5));
+
+    // A cycle that overrules the dark curve gives its rows to both, and the place they state.
+    let dark = "<postfx_tonemap_filmic_override_dark> 1 1 1 1 1 1 1 1 1 1 1 1 1</postfx_tonemap_filmic_override_dark>";
+    let overruled = tone_in(&format!("{rows}{dark}"));
+    assert_eq!(overruled.bright, overruled.dark);
+    assert_eq!((overruled.dark.0[0], overruled.dark_at), (0.1, 1.0));
+    // And a cycle that meters by its key says the key.
+    let key = "<postfx_exposure_use_key_value_mode> 1 1 1 1 1 1 1 1 1 1 1 1 1</postfx_exposure_use_key_value_mode>
+        <postfx_exposure_key_value> 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25</postfx_exposure_key_value>";
+    assert_eq!(tone_in(key).key, Some(0.25));
 }
 
 #[test]
-fn each_weather_takes_a_cycle_and_without_it_or_the_table_nothing_is_stated() {
+fn a_weather_is_drawn_with_the_cycle_its_type_names_under_that_type_s_modifiers() {
+    let mut data = data("Layered", "");
+    let lit = |data: &TimecycleData| sky(data, SOLAR_NOON * 24.0, WeatherState::Rain);
+    assert!(lit(&data).is_none(), "no cycle of the weather's own name");
+    data.gta6_weather.add_types(
+        "<WeatherTypeDatas><Item><Name>Wet</Name><TimeCycleName>LAYERED</TimeCycleName></Item></WeatherTypeDatas>
+        <WeatherTypes><Item><Name>AM_Rain</Name><DataName>Wet</DataName>
+        <ModAtmosphere>M_air</ModAtmosphere></Item></WeatherTypes>
+        <WeatherTypeIndirectionList><Item><From>Rain</From><To>AM_Rain</To></Item></WeatherTypeIndirectionList>",
+    );
+    assert!(lights(&data, WeatherState::Rain) && !lights(&data, WeatherState::Clear));
+    let plain = lit(&data).expect("the type's cycle lights");
+    data.gta6_weather.add_modifiers(
+        r#"<modifier name="M_air"><light_dir_mult>4.000000 0.000000</light_dir_mult></modifier>"#,
+    );
+    let modified = lit(&data).expect("the type's cycle lights");
+    assert!(close(modified.sun, plain.sun * 4.0), "{:?}", modified.sun);
+}
+
+#[test]
+fn each_weather_takes_a_cycle_and_without_it_the_table_or_the_curve_nothing_is_stated() {
     for (weather, cycle) in [
         (WeatherState::Clear, "SUNNY"),
         (WeatherState::Cloudy, "clouds"),
@@ -203,11 +291,15 @@ fn each_weather_takes_a_cycle_and_without_it_or_the_table_nothing_is_stated() {
     ] {
         let data = data(cycle, "");
         assert!(lights(&data, weather), "{weather:?}");
-        assert!(sky(&data, 9.0, weather, plain).is_some());
+        assert!(sky(&data, 9.0, weather).is_some());
     }
-    let rain = data("Rain", "");
+    let mut rain = data("Rain", "");
     assert!(!lights(&rain, WeatherState::Clear));
-    assert!(sky(&rain, 9.0, WeatherState::Clear, plain).is_none());
+    assert!(sky(&rain, 9.0, WeatherState::Clear).is_none());
     assert!(!lights(&TimecycleData::default(), WeatherState::Rain));
-    assert!(sky(&TimecycleData::default(), 9.0, WeatherState::Rain, plain).is_none());
+    assert!(sky(&TimecycleData::default(), 9.0, WeatherState::Rain).is_none());
+    // An install that states no curve to expose a metered frame by is not lit by its cycles.
+    rain.visual_settings = VisualSettings::default();
+    assert!(!lights(&rain, WeatherState::Rain));
+    assert!(sky(&rain, 9.0, WeatherState::Rain).is_none());
 }

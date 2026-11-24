@@ -14659,8 +14659,8 @@ msgstr "Schattiert – die eigenen Durchgänge des Spiels, aus den Programmen vo
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
 msgstr "Schattiert – die eigenen Mesh- und Pixelprogramme dieses Drawables, aus denen von GTA VI übersetzt: {drawn} Flächen gezeichnet, beleuchtet von der eigenen Sonne und dem eigenen Himmel des Editors zur eingestellten Uhrzeit und beim eingestellten Wetter. {zeroed} Bindungen, die nur das Spiel füllt, werden als Nullen gelesen"
 
-msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the editor's own sky and exposure. {zeroed} bindings only the game fills read as noughts"
-msgstr "Schattiert – die eigenen Mesh- und Pixelprogramme dieses Drawables, aus denen von GTA VI übersetzt: {drawn} Flächen gezeichnet, beleuchtet vom Wetterzyklus der Installation zur eingestellten Uhrzeit und beim eingestellten Wetter, unter dem eigenen Himmel und der eigenen Belichtung des Editors. {zeroed} Bindungen, die nur das Spiel füllt, werden als Nullen gelesen"
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts"
+msgstr "Schattiert – die eigenen Mesh- und Pixelprogramme dieses Drawables, aus denen von GTA VI übersetzt: {drawn} Flächen gezeichnet, beleuchtet vom Wetterzyklus der Installation zur eingestellten Uhrzeit und beim eingestellten Wetter, unter dem Himmel, den seine Atmosphäre ergibt, mit der Messung und der Tonkurve des Spiels. {zeroed} Bindungen, die nur das Spiel füllt, werden als Nullen gelesen"
 
 msgid "a worker is still decoding its maps"
 msgstr "ein Worker dekodiert noch seine Texturen"

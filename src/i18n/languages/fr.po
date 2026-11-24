@@ -14614,8 +14614,8 @@ msgstr "Ombré — les passes du jeu lui-même, traduites des programmes de GTA 
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
 msgstr "Ombré — les programmes de maillage et de pixel de ce drawable lui-même, traduits de ceux de GTA VI : {drawn} surfaces dessinées, éclairées par le soleil et le ciel de l'éditeur lui-même, à l'heure et par le temps réglés. {zeroed} liaisons que seul le jeu remplit sont lues comme des zéros"
 
-msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the editor's own sky and exposure. {zeroed} bindings only the game fills read as noughts"
-msgstr "Ombré — les programmes de maillage et de pixel de ce drawable lui-même, traduits de ceux de GTA VI : {drawn} surfaces dessinées, éclairées par le cycle météo de l'installation, à l'heure et par le temps réglés, sous le ciel et l'exposition de l'éditeur lui-même. {zeroed} liaisons que seul le jeu remplit sont lues comme des zéros"
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts"
+msgstr "Ombré — les programmes de maillage et de pixel de ce drawable lui-même, traduits de ceux de GTA VI : {drawn} surfaces dessinées, éclairées par le cycle météo de l'installation, à l'heure et par le temps réglés, sous le ciel que donne son atmosphère, avec la mesure et la courbe de ton du jeu. {zeroed} liaisons que seul le jeu remplit sont lues comme des zéros"
 
 msgid "a worker is still decoding its maps"
 msgstr "un fil de travail décode encore ses textures"

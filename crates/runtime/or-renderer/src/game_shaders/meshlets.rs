@@ -183,6 +183,11 @@ pub struct MeshletScene {
     resolve: wgpu::RenderPipeline,
     resolve_layout: wgpu::BindGroupLayout,
     resolve_group: wgpu::BindGroup,
+    /// The pass that meters the lit surfaces, the texel it writes and the group the resolve
+    /// reads it by.
+    meter: wgpu::RenderPipeline,
+    metered: wgpu::TextureView,
+    metered_group: wgpu::BindGroup,
     light: wgpu::Buffer,
     /// The meshes of the model its programs do not draw, which the frame draws as a material.
     pub rest: Vec<usize>,
@@ -745,7 +750,9 @@ fn formats_of(fragment: &naga::Module) -> Result<Vec<Option<wgpu::ColorTargetSta
 
 /// Lights what the targets hold onto the frame, with the depth the pass drew: the first target's
 /// colour as a surface of the second's normal and smoothness and the third's specular colour,
-/// under a sun and a sky, then a tone curve and the frame's encoding.
+/// under a sun and a sky, then a tone curve and the frame's encoding. Where the light states a
+/// tone, the directional light's arithmetic, the metering and the tone curve are GTA VI's: the
+/// surfaces are metered into a texel of their own first, and the frame is exposed by it.
 // The normal is an octahedral one in the world's space. The third target holds, of the specular
 // colour `f`, `sqrt(1 - sqrt(1 - f))`. The fourth target's ambient terms come of buffers the
 // editor leaves at nought, so they are not read.
@@ -764,6 +771,23 @@ struct Light {
     camera: vec4<f32>,
     // From the clip space back to the world.
     unproject: mat4x4<f32>,
+    // GTA VI's metering and tone: one where it runs, how far the directional light's roughness
+    // is taken towards one, and the shares of the darkest and the brightest pixels left out.
+    tone: vec4<f32>,
+    // Two curves from a luminance to stops: scale, offset, added to the luminance, bending.
+    curve: vec4<f32>,
+    curve_blend: vec4<f32>,
+    // The least and the most stops, the stops added, and how far to the second curve.
+    stops: vec4<f32>,
+    // The key luminance, whether the frame is metered by it, and the scale and the offset that
+    // take an exposure to how far from the bright filmic curve to the dark one it stands.
+    key: vec4<f32>,
+    // The bright filmic curve's seven numbers and the tangent of half the light's disc, then
+    // the dark curve's.
+    bright: vec4<f32>,
+    bright_end: vec4<f32>,
+    dark: vec4<f32>,
+    dark_end: vec4<f32>,
 }
 @group(0) @binding(0) var colour: texture_2d<f32>;
 @group(0) @binding(1) var normal: texture_2d<f32>;
@@ -771,6 +795,8 @@ struct Light {
 @group(0) @binding(3) var<uniform> light: Light;
 @group(0) @binding(4) var specular: texture_2d<f32>;
 @group(0) @binding(5) var ambient: texture_2d<f32>;
+// The stops the surfaces metered to.
+@group(1) @binding(0) var metered_stops: texture_2d<f32>;
 
 struct Corner {
     @builtin(position) at: vec4<f32>,
@@ -788,10 +814,79 @@ struct Lit {
 }
 
 const PI: f32 = 3.14159265;
+// What a colour weighs in its luminance.
+const LUMINANCE: vec3<f32> = vec3<f32>(0.2125, 0.7154, 0.0721);
 
 // What the sky and the ground give along a way: the one above, the other below.
 fn surroundings(way: vec3<f32>) -> vec3<f32> {
     return mix(light.ground.rgb, light.sky.rgb, way.z * 0.5 + 0.5);
+}
+
+fn normal_of(packed_normal: vec4<f32>) -> vec3<f32> {
+    let bytes = vec3<u32>(round(packed_normal.yzw * 255.0));
+    let packed = bytes.x | (bytes.y << 8u) | (bytes.z << 16u);
+    let e = vec2<f32>(f32(packed & 0xFFFu), f32(packed >> 12u)) / 2047.5 - 1.0;
+    let n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
+    let fold = max(-n.z, 0.0);
+    return normalize(vec3<f32>(n.x + select(fold, -fold, n.x >= 0.0), n.y + select(fold, -fold, n.y >= 0.0), n.z));
+}
+
+// The light a surface at `texel` sends to the camera, in the light's own units, before any
+// exposure; `clip` is where the texel stands on the frame and `far` its depth.
+fn lit_at(texel: vec2<i32>, clip: vec2<f32>, far: f32) -> vec3<f32> {
+    let packed_normal = textureLoad(normal, texel, 0);
+    let n = normal_of(packed_normal);
+    let albedo = textureLoad(colour, texel, 0);
+    let terms = textureLoad(specular, texel, 0);
+    let world = light.unproject * vec4<f32>(clip.x, clip.y, far, 1.0);
+    let v = normalize(light.camera.xyz - world.xyz / world.w);
+    let l = light.towards.xyz;
+    let h = normalize(l + v);
+    let n_l = max(dot(n, l), 0.0);
+    let n_v = max(dot(n, v), 1e-4);
+    let n_h = max(dot(n, h), 0.0);
+    let v_h = max(dot(h, v), 0.0);
+    let kept = 1.0 - terms.rgb * terms.rgb;
+    let f0 = 1.0 - kept * kept;
+    let roughness = clamp(1.0 - packed_normal.x, 0.08, 1.0);
+    let game = light.tone.x > 0.0;
+    // The game takes the directional light's roughness part of the way to one.
+    let softened = roughness + select(0.0, light.tone.y, game) * (1.0 - roughness);
+    let a = max(softened * softened, 0.001);
+    let a2 = a * a;
+    // The microfacet terms: how many facets face halfway, how many of them are seen and lit,
+    // and how much a facet reflects at this angle.
+    let spread = n_h * n_h * (a2 - 1.0) + 1.0;
+    let facets = a2 / (PI * spread * spread);
+    let seen = 0.5 / max(n_l * sqrt(n_v * n_v * (1.0 - a2) + a2) + n_v * sqrt(n_l * n_l * (1.0 - a2) + a2), 1e-4);
+    let reflected = f0 + (1.0 - f0) * pow(1.0 - v_h, 5.0);
+    var gloss = facets * seen * reflected;
+    var matte = vec3<f32>(1.0 / PI);
+    if game {
+        // The gloss of a light that is a disc and no point, and what the facets reflect onto
+        // one another: a fit by the angle and the roughness.
+        let disc = light.bright_end.w;
+        let lobe = a2 * (v_h + 0.001);
+        gloss *= lobe / (lobe + 0.25 * disc * (disc + 3.0 * a));
+        let by_angle = (((4.51786 * n_l - 13.70343) * n_l + 15.88844) * n_l - 9.11368) * n_l + 3.09507;
+        let by_roughness = ((0.73343 * a - 2.61748) * a + 2.77203) * a - 0.20276;
+        let lost = -1.4594 * n_l * by_angle * a * by_roughness;
+        gloss *= 1.0 + f0 * (1.0 / (1.0 + lost) - 1.0);
+        // The matte part: brighter at grazing angles on a rough surface, dimmer on a smooth.
+        let from_light = pow(1.0 - n_l, 5.0);
+        let from_view = pow(1.0 - n_v, 5.0);
+        let l_h = clamp(dot(l, h), 0.0, 1.0);
+        let back = 2.0 * l_h * l_h * a;
+        let k = 0.5 * a - 1.0;
+        let shape = (1.0 + k * from_light) * (1.0 + k * from_view) + back * (from_light + from_view + from_light * from_view * (back - 1.0));
+        matte = vec3<f32>((1.0 - 0.3377483 * a) * shape / PI);
+    }
+    let direct = (albedo.rgb * (1.0 - reflected) * matte + gloss) * light.sun.rgb * n_l;
+    // From all around: the sky and the ground on the colour, and along the mirrored way on the
+    // gloss, less as the surface is rougher.
+    let grazing = f0 + (max(vec3<f32>(1.0 - roughness), f0) - f0) * pow(1.0 - n_v, 5.0);
+    let around = albedo.rgb * surroundings(n) + grazing * surroundings(reflect(-v, n)) * (1.0 - roughness);
+    return direct + around;
 }
 
 @fragment fn lit(corner: Corner) -> Lit {
@@ -800,46 +895,24 @@ fn surroundings(way: vec3<f32>) -> vec3<f32> {
     if far <= 0.0 {
         discard;
     }
-    let packed_normal = textureLoad(normal, texel, 0);
-    let bytes = vec3<u32>(round(packed_normal.yzw * 255.0));
-    let packed = bytes.x | (bytes.y << 8u) | (bytes.z << 16u);
-    let e = vec2<f32>(f32(packed & 0xFFFu), f32(packed >> 12u)) / 2047.5 - 1.0;
-    var n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
-    let fold = max(-n.z, 0.0);
-    n = normalize(vec3<f32>(n.x + select(fold, -fold, n.x >= 0.0), n.y + select(fold, -fold, n.y >= 0.0), n.z));
-    let albedo = textureLoad(colour, texel, 0);
-    let terms = textureLoad(specular, texel, 0);
     let shown = u32(light.camera.w);
-    if shown == 1u { return Lit(vec4<f32>(albedo.rgb, 1.0), far); }
-    if shown == 2u { return Lit(vec4<f32>(packed_normal.rgb, 1.0), far); }
-    if shown == 3u { return Lit(vec4<f32>(n * 0.5 + 0.5, 1.0), far); }
-    if shown == 4u { return Lit(vec4<f32>(terms.rgb, 1.0), far); }
-    if shown == 5u { return Lit(vec4<f32>(textureLoad(ambient, texel, 0).rgb, 1.0), far); }
-    if shown == 6u { return Lit(vec4<f32>(albedo.a, packed_normal.a, terms.a, 1.0), far); }
-    let world = light.unproject * vec4<f32>(corner.clip.x, corner.clip.y, far, 1.0);
-    let v = normalize(light.camera.xyz - world.xyz / world.w);
-    let l = light.towards.xyz;
-    let h = normalize(l + v);
-    let n_l = max(dot(n, l), 0.0);
-    let n_v = max(dot(n, v), 1e-4);
-    let n_h = max(dot(n, h), 0.0);
-    let kept = 1.0 - terms.rgb * terms.rgb;
-    let f0 = 1.0 - kept * kept;
-    let roughness = clamp(1.0 - packed_normal.x, 0.08, 1.0);
-    let a = roughness * roughness;
-    let a2 = a * a;
-    // The microfacet terms: how many facets face halfway, how many of them are seen and lit,
-    // and how much a facet reflects at this angle.
-    let spread = n_h * n_h * (a2 - 1.0) + 1.0;
-    let facets = a2 / (PI * spread * spread);
-    let seen = 0.5 / max(n_l * sqrt(n_v * n_v * (1.0 - a2) + a2) + n_v * sqrt(n_l * n_l * (1.0 - a2) + a2), 1e-4);
-    let reflected = f0 + (1.0 - f0) * pow(1.0 - max(dot(h, v), 0.0), 5.0);
-    let direct = (albedo.rgb * (1.0 - reflected) / PI + facets * seen * reflected) * light.sun.rgb * n_l;
-    // From all around: the sky and the ground on the colour, and along the mirrored way on the
-    // gloss, less as the surface is rougher.
-    let grazing = f0 + (max(vec3<f32>(1.0 - roughness), f0) - f0) * pow(1.0 - n_v, 5.0);
-    let around = albedo.rgb * surroundings(n) + grazing * surroundings(reflect(-v, n)) * (1.0 - roughness);
-    return Lit(vec4<f32>(encoded(toned((direct + around) * light.sun.w)), 1.0), far);
+    if shown != 0u {
+        let packed_normal = textureLoad(normal, texel, 0);
+        let albedo = textureLoad(colour, texel, 0);
+        let terms = textureLoad(specular, texel, 0);
+        if shown == 1u { return Lit(vec4<f32>(albedo.rgb, 1.0), far); }
+        if shown == 2u { return Lit(vec4<f32>(packed_normal.rgb, 1.0), far); }
+        if shown == 3u { return Lit(vec4<f32>(normal_of(packed_normal) * 0.5 + 0.5, 1.0), far); }
+        if shown == 4u { return Lit(vec4<f32>(terms.rgb, 1.0), far); }
+        if shown == 5u { return Lit(vec4<f32>(textureLoad(ambient, texel, 0).rgb, 1.0), far); }
+        return Lit(vec4<f32>(albedo.a, packed_normal.a, terms.a, 1.0), far);
+    }
+    let seen = lit_at(texel, corner.clip, far);
+    if light.tone.x > 0.0 {
+        let exposure = exp2(textureLoad(metered_stops, vec2<i32>(0), 0).x) * light.sun.w;
+        return Lit(vec4<f32>(filmic(seen * exposure, exposure), 1.0), far);
+    }
+    return Lit(vec4<f32>(encoded(toned(seen * light.sun.w)), 1.0), far);
 }
 
 // A filmic curve fitted to the reference one: light past one rolls off and does not clip.
@@ -852,6 +925,99 @@ fn encoded(linear: vec3<f32>) -> vec3<f32> {
     let low = linear * 12.92;
     let high = 1.055 * pow(max(linear, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
     return select(high, low, linear <= vec3<f32>(0.0031308));
+}
+
+fn filmic_raw(x: vec3<f32>, abcd: vec4<f32>, efw: vec4<f32>) -> vec3<f32> {
+    return (x * (abcd.x * x + abcd.z * abcd.y) + abcd.w * efw.x) / (x * (abcd.x * x + abcd.y) + abcd.w * efw.y) - efw.x / efw.y;
+}
+
+// GTA VI's tone curve of an exposed colour: the filmic curve between the bright and the dark
+// one by the exposure, its white taken to one, then a power for the frame.
+fn filmic(x: vec3<f32>, exposure: f32) -> vec3<f32> {
+    let along = clamp(exposure * light.key.z + light.key.w, 0.0, 1.0);
+    let abcd = mix(light.bright, light.dark, along);
+    let efw = mix(light.bright_end, light.dark_end, along);
+    let white = filmic_raw(vec3<f32>(efw.z), abcd, efw).x;
+    let curved = clamp(filmic_raw(max(x, vec3<f32>(0.0)), abcd, efw) / white, vec3<f32>(0.0), vec3<f32>(1.0));
+    return pow(curved, vec3<f32>(0.4545));
+}
+
+// The surfaces the meter looks at: a lattice of this many a side over the frame.
+const LATTICE: i32 = 32;
+
+// What the lit surfaces meter to, as GTA VI meters a frame: each sample's luminance goes to one
+// of 256 bins laid evenly over the logarithm between the least and the greatest, the darkest
+// and the brightest shares are left out, the rest average, and the average gives the stops by
+// the curves or by the key. Nought where no surface is seen or no tone is stated.
+@fragment fn metered(corner: Corner) -> @location(0) vec4<f32> {
+    if light.tone.x <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    let size = vec2<i32>(textureDimensions(depth));
+    var luminances: array<f32, 1024>;
+    var count = 0;
+    var least = 1e30;
+    var most = 0.0;
+    for (var y = 0; y < LATTICE; y++) {
+        for (var x = 0; x < LATTICE; x++) {
+            let texel = (vec2<i32>(x, y) * 2 + 1) * size / (2 * LATTICE);
+            let far = textureLoad(depth, texel, 0);
+            if far <= 0.0 {
+                continue;
+            }
+            let at = (vec2<f32>(texel) + 0.5) / vec2<f32>(size) * 2.0 - 1.0;
+            let luminance = dot(lit_at(texel, vec2<f32>(at.x, -at.y), far), LUMINANCE);
+            if luminance != luminance {
+                continue;
+            }
+            let held = max(luminance, 1e-6);
+            luminances[count] = held;
+            count++;
+            least = min(least, held);
+            most = max(most, held);
+        }
+    }
+    if count == 0 {
+        return vec4<f32>(0.0);
+    }
+    let ratio = select(1.0, most / least, least >= 1e-8);
+    let span = max(log(ratio), 1e-8);
+    var bins: array<f32, 256>;
+    for (var i = 0; i < count; i++) {
+        let bin = clamp(255.0 * log(luminances[i] / least) / span, 0.0, 255.0);
+        bins[u32(bin)] += 1.0;
+    }
+    let lows = round(light.tone.z * f32(count));
+    let middle_ends = round(f32(count) - (round(light.tone.w * f32(count)) + lows)) + lows;
+    var before = 0.0;
+    var sum = 0.0;
+    var taken = 0.0;
+    for (var bin = 0; bin < 256; bin++) {
+        var left = bins[bin];
+        var reached = before;
+        if left > 0.0 && lows > reached {
+            left -= min(lows - reached, left);
+            reached = lows;
+        }
+        if left > 0.0 && middle_ends > reached {
+            let middle = min(middle_ends - reached, left);
+            sum += middle * clamp(least * pow(ratio, f32(bin) / 255.0), least, most);
+            taken += middle;
+        }
+        before += bins[bin];
+    }
+    let mean = select(0.0, sum / max(taken, 1.0), taken > 0.0);
+    var stops = log2(light.key.x / max(mean, 1e-6));
+    if light.key.y <= 0.0 {
+        let first = light.curve.y - 10.0 + light.curve.w * mean + light.curve.x * log(light.curve.z + mean);
+        let second = light.curve_blend.y - 10.0 + light.curve_blend.w * mean + light.curve_blend.x * log(light.curve_blend.z + mean);
+        stops = first + light.stops.w * (second - first);
+    }
+    if stops != stops {
+        stops = light.stops.y;
+    }
+    stops = clamp(clamp(stops, light.stops.x, light.stops.y) + light.stops.z, light.stops.x, light.stops.y);
+    return vec4<f32>(stops, 0.0, 0.0, 1.0);
 }
 ";
 
@@ -937,6 +1103,9 @@ pub struct Sky {
     pub sky: Vec3,
     pub ground: Vec3,
     pub exposure: f32,
+    /// GTA VI's metering and tone curve, where an install's cycle states them: the frame is
+    /// then exposed by what its surfaces meter to, times `exposure`.
+    pub tone: Option<Tone>,
 }
 
 fn smoothstep(from: f32, to: f32, x: f32) -> f32 {
@@ -978,6 +1147,7 @@ impl Sky {
             sky,
             ground: sky * 0.3 + sun * 0.04,
             exposure: 1.0,
+            tone: None,
         }
     }
 }
@@ -989,6 +1159,11 @@ impl Default for Sky {
     }
 }
 
+/// The bytes of what the resolve reads of a frame's light.
+const LIGHT_BYTES: usize = 288;
+/// The format of the texel the surfaces are metered into: the stops the frame is exposed by.
+const METERED: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
 /// What a frame lights the targets by.
 #[derive(Debug, Clone, Copy)]
 pub struct Lighting {
@@ -999,17 +1174,18 @@ pub struct Lighting {
     pub camera: Vec3,
 }
 
-fn light_bytes(lighting: &Lighting) -> [u8; 144] {
+fn light_bytes(lighting: &Lighting) -> [u8; LIGHT_BYTES] {
     let sky = &lighting.sky;
     let towards = sky.towards.try_normalize().unwrap_or(Vec3::Z);
-    let mut words = [0f32; 36];
+    let mut words = [0f32; LIGHT_BYTES / 4];
     words[..4].copy_from_slice(&[towards.x, towards.y, towards.z, 0.0]);
     words[4..8].copy_from_slice(&[sky.sun.x, sky.sun.y, sky.sun.z, sky.exposure]);
     words[8..12].copy_from_slice(&[sky.sky.x, sky.sky.y, sky.sky.z, 0.0]);
     words[12..16].copy_from_slice(&[sky.ground.x, sky.ground.y, sky.ground.z, 0.0]);
     let camera = lighting.camera;
     words[16..20].copy_from_slice(&[camera.x, camera.y, camera.z, aids().target]);
-    words[20..].copy_from_slice(&lighting.view_proj.inverse().to_cols_array());
+    words[20..36].copy_from_slice(&lighting.view_proj.inverse().to_cols_array());
+    words[36..].copy_from_slice(&Tone::words(sky.tone.as_ref()));
     bytemuck::cast(words)
 }
 
@@ -1113,12 +1289,57 @@ impl MeshletScene {
         });
         let light = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("meshlet-light"),
-            contents: &[0; 144],
+            contents: &[0; LIGHT_BYTES],
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let metered_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("meshlet-metered"),
+            entries: &[texture(0, unfiltered)],
+        });
+        let metered = render_target(
+            device,
+            "meshlet-metered",
+            (1, 1),
+            METERED,
+            wgpu::TextureUsages::empty(),
+        );
+        let metered_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("meshlet-metered"),
+            layout: &metered_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&metered),
+            }],
+        });
+        let meter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("meshlet-meter"),
+            bind_group_layouts: &[Some(&resolve_layout)],
+            immediate_size: 0,
+        });
+        let meter = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("meshlet-meter"),
+            layout: Some(&meter_layout),
+            vertex: wgpu::VertexState {
+                module: &resolve_shader,
+                entry_point: Some("at_corner"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &resolve_shader,
+                entry_point: Some("metered"),
+                compilation_options: Default::default(),
+                targets: &[Some(METERED.into())],
+            }),
+            multiview_mask: None,
+            cache: None,
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("meshlet-resolve"),
-            bind_group_layouts: &[Some(&resolve_layout)],
+            bind_group_layouts: &[Some(&resolve_layout), Some(&metered_layout)],
             immediate_size: 0,
         });
         let resolve = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1161,6 +1382,9 @@ impl MeshletScene {
             resolve,
             resolve_layout,
             resolve_group,
+            meter,
+            metered,
+            metered_group,
             light,
             rest: Vec::new(),
             refused,
@@ -1235,15 +1459,40 @@ impl MeshletScene {
             }
             pass.draw(0..VERTICES, 0..draw.meshlets);
         }
+        drop(pass);
+        // What the surfaces meter to, before the frame is lit by it.
+        let mut meter = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("meshlet-meter"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.metered,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        meter.set_pipeline(&self.meter);
+        meter.set_bind_group(0, &self.resolve_group, &[]);
+        meter.draw(0..3, 0..1);
     }
 
     /// Light what the targets hold onto the frame `pass` draws, with its depth.
     pub fn record(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(&self.resolve);
         pass.set_bind_group(0, &self.resolve_group, &[]);
+        pass.set_bind_group(1, &self.metered_group, &[]);
         pass.draw(0..3, 0..1);
     }
 }
+
+mod tone;
+pub use tone::{metered, Curve, Filmic, Tone};
 
 #[cfg(test)]
 mod tests;

@@ -59,25 +59,61 @@ pub(super) fn sun_towards(
     Some(-lighting.directional_light.truncate())
 }
 
-/// The built-in sun and sky a GTA VI drawable's own passes are lit by: the hour, the weather and
-/// the exposure the drivers say and nothing else, under clouds that hide `cover` of the sky
-/// where an install's cycle says how much. The exposure's middle leaves the light as it is,
-/// and its ends are a quarter and four times it.
+/// The built-in sun and sky a GTA VI drawable's own passes are lit by where no install's cycles
+/// light it: the hour, the weather and the exposure the drivers say and nothing else.
 fn gta6_sky(
     hour: f32,
     weather: WeatherState,
-    cover: Option<f32>,
     exposure: f32,
 ) -> or_renderer::game_shaders::meshlets::Sky {
-    let overcast = cover.unwrap_or(match weather {
+    let overcast = match weather {
         WeatherState::Clear => 0.0,
         WeatherState::Cloudy | WeatherState::Fog => 0.6,
         WeatherState::Rain => 0.8,
         WeatherState::Storm => 0.95,
-    });
+    };
     let mut sky = or_renderer::game_shaders::meshlets::Sky::at(hour, overcast);
-    sky.exposure = 2f32.powf(4.0 * (exposure - 0.5));
+    sky.exposure = exposure_times(exposure);
     sky
+}
+
+/// What the exposure the drivers say multiplies a frame by: its middle leaves the light as it
+/// is, and its ends are a quarter and four times it.
+fn exposure_times(exposure: f32) -> f32 {
+    2f32.powf(4.0 * (exposure - 0.5))
+}
+
+/// The sky an install's cycles gave last, and the tables, the hour and the weather it was
+/// worked out for: a frame asks again with the same, and the air is not marched through again.
+type Kept = (
+    usize,
+    u32,
+    WeatherState,
+    Option<or_renderer::game_shaders::meshlets::Sky>,
+);
+static KEPT: std::sync::Mutex<Option<Kept>> = std::sync::Mutex::new(None);
+
+/// The sky the install's cycles state at `hour` in `weather`, exposed as the drivers say.
+fn sky_by_cycles(
+    tables: &Arc<or_title::TimecycleData>,
+    hour: f32,
+    weather: WeatherState,
+    exposure: f32,
+) -> Option<or_renderer::game_shaders::meshlets::Sky> {
+    let key = (Arc::as_ptr(tables) as usize, hour.to_bits(), weather);
+    let mut kept = KEPT.lock().unwrap_or_else(|p| p.into_inner());
+    let held = (kept.as_ref())
+        .filter(|(of, at, in_weather, _)| (*of, *at, *in_weather) == key)
+        .map(|(.., sky)| *sky);
+    let sky = held.unwrap_or_else(|| {
+        let sky = super::gta6_day::sky(tables, hour, weather);
+        *kept = Some((key.0, key.1, key.2, sky));
+        sky
+    });
+    sky.map(|sky| or_renderer::game_shaders::meshlets::Sky {
+        exposure: exposure_times(exposure),
+        ..sky
+    })
 }
 
 impl RenderBridge {
@@ -89,12 +125,10 @@ impl RenderBridge {
         let days = state.drivers.time_of_day.days;
         let exposure = state.drivers.exposure.value;
         let tables = crate::state::gta6_timecycle::timecycle(state);
-        let built_in = |hour, cover| gta6_sky(hour, weather, cover, exposure);
-        let by_cycles = tables
-            .as_deref()
-            .and_then(|tables| super::gta6_day::sky(tables, hour, weather, built_in));
+        let by_cycles =
+            (tables.as_ref()).and_then(|tables| sky_by_cycles(tables, hour, weather, exposure));
         self.renderer
-            .set_gta6_sky(by_cycles.unwrap_or_else(|| built_in(hour, None)));
+            .set_gta6_sky(by_cycles.unwrap_or_else(|| gta6_sky(hour, weather, exposure)));
         let key = (
             Arc::as_ptr(&data) as usize,
             hour.to_bits(),

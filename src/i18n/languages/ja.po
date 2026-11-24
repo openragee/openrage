@@ -14611,8 +14611,8 @@ msgstr "シェーディング — GTA VIのプログラムから変換したゲ�
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
 msgstr "シェーディング — GTA VIのプログラムから変換した、このドローアブル自身のメッシュプログラムとピクセルプログラム：{drawn} 個のサーフェスを描画し、設定した時刻と天候でエディター自身の太陽と空によって照らします。ゲームだけが埋める {zeroed} 個のバインディングはゼロとして読み取られます"
 
-msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the editor's own sky and exposure. {zeroed} bindings only the game fills read as noughts"
-msgstr "シェーディング — GTA VIのプログラムから変換した、このドローアブル自身のメッシュプログラムとピクセルプログラム：{drawn} 個のサーフェスを描画し、設定した時刻と天候でインストールの天候サイクルによって照らし、空と露出はエディター自身のものです。ゲームだけが埋める {zeroed} 個のバインディングはゼロとして読み取られます"
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts"
+msgstr "シェーディング — GTA VIのプログラムから変換した、このドローアブル自身のメッシュプログラムとピクセルプログラム：{drawn} 個のサーフェスを描画し、設定した時刻と天候でインストールの天候サイクルによって照らし、空はその大気が与えるもので、測光とトーンカーブはゲームのものです。ゲームだけが埋める {zeroed} 個のバインディングはゼロとして読み取られます"
 
 msgid "a worker is still decoding its maps"
 msgstr "ワーカーがまだマップをデコード中です"

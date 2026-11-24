@@ -1,6 +1,7 @@
 use or_io::gta5::data::timecycle::Timecycle;
 use or_io::gta5::data::visual_settings::VisualSettings;
 
+use super::gta6_weather::Gta6Weather;
 use crate::Vfs;
 
 pub const TIME_VFS_PATH: &str = "common:/data/levels/gta5/time.xml";
@@ -29,6 +30,8 @@ const CYCLES: [&str; 14] = [
 pub struct TimecycleData {
     pub timecycle: Timecycle,
     pub visual_settings: VisualSettings,
+    /// The weather types and modifiers a GTA VI install states; empty for any other.
+    pub gta6_weather: Gta6Weather,
 }
 
 /// Read the time table, the weather cycles and the visual settings the install holds; whatever it does not hold is left empty.
@@ -54,25 +57,30 @@ pub fn load_timecycle(vfs: &Vfs) -> TimecycleData {
     TimecycleData {
         timecycle,
         visual_settings,
+        gta6_weather: Gta6Weather::default(),
     }
 }
 
 /// The look of the day the XML texts `documents` state, for an install whose files have no names: each is known by its root element, and a text of neither kind is passed over.
 pub fn timecycle_of_documents<'a>(documents: impl IntoIterator<Item = &'a str>) -> TimecycleData {
-    let mut timecycle = Timecycle::default();
+    let mut data = TimecycleData::default();
     for text in documents {
-        // The root is the first element after the declaration.
-        let head = &text[..text.len().min(512)];
+        // The root is the first element after the declaration; the tuning values are no XML
+        // and say what they are in a comment.
+        let head = String::from_utf8_lossy(&text.as_bytes()[..text.len().min(512)]);
         if head.contains("<time_data") {
-            timecycle.table = or_io::gta5::data::timecycle::TimeTable::parse(text);
+            data.timecycle.table = or_io::gta5::data::timecycle::TimeTable::parse(text);
         } else if head.contains("<timecycle_keyframe_data") {
-            timecycle.add_cycles(text);
+            data.timecycle.add_cycles(text);
+        } else if head.contains("<CContentsOfWeatherXmlFile") {
+            data.gta6_weather.add_types(text);
+        } else if head.contains("<timecycle_modifier_data") {
+            data.gta6_weather.add_modifiers(text);
+        } else if head.contains("# Visual Configuration Table") {
+            data.visual_settings = VisualSettings::parse(text);
         }
     }
-    TimecycleData {
-        timecycle,
-        visual_settings: VisualSettings::default(),
-    }
+    data
 }
 
 #[cfg(test)]

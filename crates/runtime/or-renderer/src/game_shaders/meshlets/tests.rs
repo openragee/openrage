@@ -319,6 +319,7 @@ fn overhead() -> Sky {
         sky: Vec3::ZERO,
         ground: Vec3::ZERO,
         exposure: 1.0,
+        tone: None,
     }
 }
 

@@ -14659,8 +14659,8 @@ msgstr "Sombreado — los pases propios del juego, traducidos de los programas d
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
 msgstr "Sombreado — los programas de malla y de píxel propios de este drawable, traducidos de los de GTA VI: {drawn} superficies dibujadas, iluminadas por el sol y el cielo propios del editor a la hora y con el clima establecidos. {zeroed} enlaces que solo el juego rellena se leen como ceros"
 
-msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the editor's own sky and exposure. {zeroed} bindings only the game fills read as noughts"
-msgstr "Sombreado — los programas de malla y de píxel propios de este drawable, traducidos de los de GTA VI: {drawn} superficies dibujadas, iluminadas por el ciclo meteorológico de la instalación a la hora y con el clima establecidos, bajo el cielo y la exposición propios del editor. {zeroed} enlaces que solo el juego rellena se leen como ceros"
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts"
+msgstr "Sombreado — los programas de malla y de píxel propios de este drawable, traducidos de los de GTA VI: {drawn} superficies dibujadas, iluminadas por el ciclo meteorológico de la instalación a la hora y con el clima establecidos, bajo el cielo que da su atmósfera, con la medición y la curva de tono del juego. {zeroed} enlaces que solo el juego rellena se leen como ceros"
 
 msgid "a worker is still decoding its maps"
 msgstr "un proceso de trabajo aún está decodificando sus texturas"

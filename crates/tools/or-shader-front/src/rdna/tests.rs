@@ -9,6 +9,7 @@ mod exact;
 mod interp;
 mod link;
 mod pass_aa;
+mod pass_ab;
 mod pass_w;
 mod pass_y;
 

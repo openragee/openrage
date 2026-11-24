@@ -181,6 +181,11 @@ impl Lowered {
         counted(LOOP_OTHER_LANES) + counted(LOOP_UNCHANGING)
     }
 
+    /// [`bound_entries_checked`] of the module.
+    pub fn bound_entries_checked(&self) -> bool {
+        bound_entries_checked(&self.module)
+    }
+
     /// The textures the module loads texels of, by the place of each one's descriptor: each is declared with the kind [`Options::image_kinds`] states of it, and as floats where it states none.
     pub fn image_loads(&self) -> BTreeSet<Loc> {
         let functions = (self.module.functions.iter().map(|(_, function)| function))
@@ -216,6 +221,43 @@ impl Lowered {
         }
         loaded
     }
+}
+
+/// Whether every entry `module` takes of a bound array is one the array holds: a stated entry within its length, or a computed one held to it by a `min` with a stated entry. No device checks such an entry.
+pub fn bound_entries_checked(module: &naga::Module) -> bool {
+    let length = |global: Handle<naga::GlobalVariable>| match module.types
+        [module.global_variables[global].ty]
+        .inner
+    {
+        TypeInner::BindingArray { size, .. } => Some(match size {
+            naga::ArraySize::Constant(length) => length.get(),
+            _ => 0,
+        }),
+        _ => None,
+    };
+    let functions = (module.functions.iter().map(|(_, function)| function))
+        .chain(module.entry_points.iter().map(|entry| &entry.function));
+    functions.into_iter().all(|function| {
+        let array = |base: Handle<E>| match function.expressions[base] {
+            E::GlobalVariable(global) => length(global),
+            _ => None,
+        };
+        let held = |index: Handle<E>, length: u32| match function.expressions[index] {
+            E::Math {
+                fun: Mf::Min,
+                arg1: Some(last),
+                ..
+            } => {
+                matches!(function.expressions[last], E::Literal(Literal::U32(last)) if last < length)
+            }
+            _ => false,
+        };
+        (function.expressions.iter()).all(|(_, expression)| match *expression {
+            E::Access { base, index } => array(base).is_none_or(|length| held(index, length)),
+            E::AccessIndex { base, index } => array(base).is_none_or(|length| index < length),
+            _ => true,
+        })
+    })
 }
 
 /// What a lowering is told of the program's neighbours.
@@ -1695,7 +1737,11 @@ impl<'a> Cx<'a> {
         }
         let place = self.get(pc, Reg::Place(first));
         let by = self.b.u32(dwords);
-        Some(self.b.bin(Bo::Divide, place, by))
+        let entry = self.b.bin(Bo::Divide, place, by);
+        // No device checks an entry of a bound array, so the last entry stands for any past it
+        // ([`bound_entries_checked`] reads this shape).
+        let last = self.b.u32(TABLE_SLOTS - 1);
+        Some(self.b.math(Mf::Min, &[entry, last]))
     }
 
     fn rows(&mut self, rows: u32) -> TypeInner {

@@ -14,8 +14,8 @@ pub use cfg::{Block, Cfg, CfgError, Terminator};
 pub use decode::{decode, decode_one, DecodeError, Family, Inst, Op, Operand};
 pub use sym::{Index, IndexSource, Loc};
 pub use to_naga::{
-    emitted, lower, lower_with, Emitted, Lowered, NotTranslated, Options, Pair, Resource,
-    ResourceKind, LOOP_NOT_SHOWN, LOOP_OTHER_LANES, LOOP_UNCHANGING,
+    bound_entries_checked, emitted, lower, lower_with, Emitted, Lowered, NotTranslated, Options,
+    Pair, Resource, ResourceKind, LOOP_NOT_SHOWN, LOOP_OTHER_LANES, LOOP_UNCHANGING,
 };
 
 use crate::dxil::container::{Container, ContainerError};

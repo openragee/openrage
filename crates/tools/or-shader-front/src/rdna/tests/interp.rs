@@ -128,6 +128,12 @@ fn zero(module: &naga::Module, ty: Handle<naga::Type>) -> Value {
         TypeInner::Struct { ref members, .. } => {
             Value::List(members.iter().map(|m| zero(module, m.ty)).collect())
         }
+        // What is bound holds nothing here; an array of them has its entries all the same.
+        TypeInner::Image { .. } | TypeInner::Sampler { .. } => Value::U(0),
+        TypeInner::BindingArray {
+            base,
+            size: naga::ArraySize::Constant(count),
+        } => Value::List(vec![zero(module, base); count.get() as usize]),
         ref other => panic!("no zero of {other:?}"),
     }
 }
@@ -264,6 +270,16 @@ impl<'a> Machine<'a> {
                 let b = arg1.map(|b| self.value(frame, b));
                 let c = arg2.map(|c| self.value(frame, c));
                 math(fun, a, b, c)
+            }
+            // The texture and the sampler are looked up, which stops at an entry an array of
+            // them does not hold, and the texel is noughts.
+            E::ImageSample { image, sampler, .. } => {
+                for bound in [image, sampler] {
+                    if let Got::Place(place) = self.got(frame, bound) {
+                        self.read(frame, &place);
+                    }
+                }
+                Value::List(vec![F(0.0); 4])
             }
             ref other => panic!("{other:?} is not run"),
         };

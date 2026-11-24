@@ -228,6 +228,7 @@ not (
   | (binary_id(=or-io) & (
       test(/^codec::texture::image::tests::/)
       | test(/^container::rpf::crypto::encrypt_cache::tests::/)
+      | test(/^container::rpf::gta6_extract::tests::the_extracted_snapshot/)
       | test(/^gta5::texture_dict::tests::/)
       | test(/^meta::binary::pso::chks::tests::every_clear_pso_body/)
       | test(/^meta::typed::tests::/)
@@ -242,6 +243,9 @@ not (
       | test(/^write::canvas::tests::/)
     ))
   | binary_id(=or-io::gta6_archive_explorer)
+  | binary_id(=or-io::gta6_chunk_table)
+  | binary_id(=or-io::gta6_compiled_scripts)
+  | binary_id(=or-io::gta6_container_write)
   | binary_id(=or-io::gta6_content_cipher)
   | binary_id(=or-io::gta6_content_extent)
   | binary_id(=or-io::gta6_mount_every_nested_table)

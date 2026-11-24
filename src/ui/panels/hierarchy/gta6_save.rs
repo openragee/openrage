@@ -643,6 +643,7 @@ fn draw_facts(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId, selec
     for line in doc.facts() {
         ui.label(line);
     }
+    super::gta6_save_text::draw(ui, &doc.save);
 }
 
 #[cfg(test)]

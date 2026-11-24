@@ -37,6 +37,10 @@ pub use meta::{meta_schema, MetaDocument};
 
 mod gta6_meta_names;
 
+mod gta6_meta_strings;
+
+pub use gta6_meta_strings::{DocumentStrings, STRING_NAMES_NEED_KEYS};
+
 pub use gta6_meta_names::{
     hash_name_or_text, hash_text_name, meta_names_from_the_text, meta_text_name,
 };

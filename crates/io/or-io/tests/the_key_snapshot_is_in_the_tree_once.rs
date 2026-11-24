@@ -20,7 +20,14 @@ struct Snapshot {
     len: u64,
 }
 
-const SNAPSHOTS: [Snapshot; 2] = [
+const SNAPSHOTS: [Snapshot; 3] = [
+    Snapshot {
+        file: "gtavi_scarlett_magic.dat",
+        bundled: "crates/io/or-io/data/gtavi_scarlett_magic.dat",
+        embed: "crates/io/or-io/src/container/rpf/gta6_keygate.rs",
+        sha1: "8c488ed36ce5e49874a2dfac873b7248d71568a1",
+        len: 144_248,
+    },
     Snapshot {
         file: "magic.dat",
         bundled: "crates/io/or-io/data/magic.dat",
@@ -186,7 +193,7 @@ fn a_second_copy_of_a_bundled_snapshot_is_found() {
     }
 
     let found = offenders(dir);
-    assert_eq!(found.len(), 2, "{found:#?}");
+    assert_eq!(found.len(), SNAPSHOTS.len(), "{found:#?}");
     assert!(found
         .iter()
         .all(|f| f.contains("keys") && f.contains("renamed")));

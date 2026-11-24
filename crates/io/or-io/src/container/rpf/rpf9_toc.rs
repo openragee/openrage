@@ -6,8 +6,9 @@
 //!
 //! ⚠ The transform and its constants — table sizes, the header offsets, the CBC and white-box math,
 //! the registry-id formula — are the algorithm, committed per the owner's "truth from the
-//! executable" ruling. The key bytes are not: the snapshot that holds them (`gtavi_magic.dat`, or a
-//! path [`GTA6_SNAPSHOT_ENV`] names) is game-derived and never committed, and nothing here bundles it.
+//! executable" ruling. The key bytes are not: a plaintext snapshot (`gtavi_magic.dat`, or a path
+//! [`GTA6_SNAPSHOT_ENV`] names) is game-derived and never committed. The one `bundled-keys` embeds is
+//! masked, and opens only with the user's own executable ([`gta6_keygate`]).
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -323,14 +324,33 @@ impl GtaViKeys {
     }
 
     /// The snapshot the user supplies — [`GTA6_SNAPSHOT_ENV`], else [`GTA6_SNAPSHOT_FILE_NAME`]
-    /// beside the keys cache in `config_dir` — or `None` when neither is present. Nothing is
-    /// bundled, so `None` means the TOC cannot be read and the archive is left encrypted.
+    /// beside the keys cache in `config_dir` — else the masked one `bundled-keys` embeds, which
+    /// opens only with the executable [`GTA6_EXE_ENV`] names. `None` means the TOC cannot be read
+    /// and the archive is left encrypted.
     pub fn for_install(config_dir: Option<&Path>) -> Result<Option<Self>> {
         let path = std::env::var_os(GTA6_SNAPSHOT_ENV)
             .map(PathBuf::from)
             .or_else(|| config_dir.map(|dir| dir.join(GTA6_SNAPSHOT_FILE_NAME)))
             .filter(|p| p.is_file());
-        path.map(Self::from_file).transpose()
+        match path {
+            Some(path) => Self::from_file(path).map(Some),
+            None => Self::bundled(),
+        }
+    }
+
+    /// The bundled masked snapshot, unmasked with the executable [`GTA6_EXE_ENV`] names.
+    #[cfg(feature = "bundled-keys")]
+    fn bundled() -> Result<Option<Self>> {
+        let Some(exe) = std::env::var_os(GTA6_EXE_ENV) else {
+            return Ok(None);
+        };
+        let plain = unmask_with(gta6_keygate::BUNDLED_SNAPSHOT, Some(exe.as_os_str()))?;
+        plain.as_deref().map(Self::parse).transpose()
+    }
+
+    #[cfg(not(feature = "bundled-keys"))]
+    fn bundled() -> Result<Option<Self>> {
+        Ok(None)
     }
 
     /// The SHA-256 of the executable this snapshot was taken from.

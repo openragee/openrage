@@ -6,11 +6,16 @@
 //!
 //! ⚠ Reversible only with the executable, so a masked snapshot can be committed where the plaintext
 //! one cannot (D18). The masking algorithm and the PE layout constants are committable; the
-//! executable's bytes, the plaintext snapshot and any masked bytes are not.
+//! executable's bytes and the plaintext snapshot are not. The masked snapshot is in the tree once,
+//! where `bundled-keys` embeds it (`the_key_snapshot_is_in_the_tree_once`).
 
 use sha2::{Digest, Sha256};
 
 use crate::error::{IoError, Result};
+
+/// The masked snapshot `bundled-keys` embeds: inert until the user's own executable keys it (D18).
+#[cfg(feature = "bundled-keys")]
+pub const BUNDLED_SNAPSHOT: &[u8] = include_bytes!("../../../data/gtavi_scarlett_magic.dat");
 
 /// The marker a masked snapshot opens with; a container that begins with it needs the executable.
 pub const MASKED_MAGIC: &[u8; 8] = b"ORGTAVIM";

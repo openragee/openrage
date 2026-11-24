@@ -241,6 +241,7 @@ impl Bake {
                     7 => Float32x4,
                     8 => Float32x4,
                     10 => Float32x2,
+                    11 => Float32,
                 ],
             },
         ];

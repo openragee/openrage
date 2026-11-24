@@ -62,6 +62,10 @@ fn draw_visual_view(ui: &mut egui::Ui, state: &mut AppState, doc_id: crate::stat
         }
         _ => false,
     };
+    let strings = match state.document(doc_id).map(|d| &d.payload) {
+        Some(DocPayload::Meta(meta)) => std::sync::Arc::clone(&meta.strings),
+        _ => Default::default(),
+    };
     let places_an_interior = match state.document(doc_id).map(|d| &d.payload) {
         Some(DocPayload::Meta(meta)) => meta
             .parsed
@@ -95,6 +99,7 @@ fn draw_visual_view(ui: &mut egui::Ui, state: &mut AppState, doc_id: crate::stat
         records: std::rc::Rc::new(presets::RecordUi::of(state, doc_id)),
         edits: Default::default(),
         text_names,
+        strings,
     };
 
     let Some(doc) = state.document_mut(doc_id) else {
@@ -112,6 +117,7 @@ fn draw_visual_view(ui: &mut egui::Ui, state: &mut AppState, doc_id: crate::stat
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            text_names::draw_needs_keys(ui, &ctx.strings);
             if let Some(err) = meta.parse_error.clone() {
                 ui.colored_label(
                     theme::WARNING,

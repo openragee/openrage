@@ -108,6 +108,7 @@ struct VsIn {
     @location(7) row2:     vec4<f32>,
     @location(8) tint:     vec4<f32>,
     @location(10) ambient: vec2<f32>,
+    @location(11) cast_only: f32,
 };
 
 struct VsOut {
@@ -164,6 +165,10 @@ fn vs_main(in: VsIn) -> VsOut {
     let world = placed(in);
     var out = handed_on(in, world);
     out.clip_pos = camera.view_proj * vec4<f32>(world, 1.0);
+    // One that only casts its shadow is put past the far plane, where every triangle of it is clipped.
+    if (in.cast_only > 0.5) {
+        out.clip_pos = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+    }
     return out;
 }
 

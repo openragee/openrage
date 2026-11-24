@@ -282,16 +282,36 @@ impl Placed {
         }
     }
 
+    /// Whether the sphere of `radius` about `p` in the world reaches into one of the interior's rooms.
+    pub(super) fn reaches_a_room(&self, p: Vec3, radius: f32) -> bool {
+        let (p, r) = (self.own.transform_point3(p), radius * stretch(self.own));
+        (self.rooms.iter().skip(1))
+            .any(|room| p.clamp(room.min, room.max).distance_squared(p) <= r * r)
+    }
+
+    /// `pyramids`, planes through the camera in the interior's own space, as planes in the world.
+    pub(super) fn to_world(
+        &self,
+        pyramids: &[interior_rooms::Planes],
+    ) -> Vec<interior_rooms::Planes> {
+        // A plane through the eye takes the transpose of the map into the interior's space.
+        let linear = glam::Mat3::from_mat4(self.own).transpose();
+        let world = |n: &Vec3| (linear * *n).normalize_or_zero();
+        (pyramids.iter())
+            .map(|planes| planes.iter().map(world).collect())
+            .collect()
+    }
+
     /// Call `draw` with each child a camera of `view` sees at the hour `hour`, 0 to 23, how far from
-    /// the camera it stands and how opaque it draws, the interior itself drawing `fade` opaque; the
-    /// rooms it sees, where the interior is in range and tells rooms apart.
+    /// the camera it stands and how opaque it draws, the interior itself drawing `fade` opaque; what
+    /// it sees of the rooms, where the interior is in range and tells rooms apart.
     pub(super) fn each(
         &self,
         view: &View,
         hour: u32,
         fade: f32,
         mut draw: impl FnMut(&Child, f32, f32),
-    ) -> Option<Vec<bool>> {
+    ) -> Option<Seen> {
         let eye = view.eye;
         if !self.in_range(eye, view) {
             return None;
@@ -316,7 +336,7 @@ impl Placed {
                 draw(child, away, fade * own);
             }
         }
-        seen.map(|seen| seen.rooms)
+        seen
     }
 }
 

@@ -16839,3 +16839,6 @@ msgstr "Os arquivos são lidos a partir de suas entradas na tabela. Estruturas n
 
 msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
 msgstr "Este arquivo foi aberto a partir de uma tabela RPF9 e é somente leitura. Extraia-o para salvar uma cópia separada."
+
+msgid "The names of this document's strings need the GTA VI key snapshot"
+msgstr "Os nomes das strings deste documento precisam do snapshot de chaves do GTA VI"

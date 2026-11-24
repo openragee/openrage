@@ -34,6 +34,9 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         Some("list" | "tree") => list(&args[1..]),
         Some("extract") => extract(&args[1..]),
         Some("census") => census(&args[1..]),
+        Some(verb @ ("copy" | "replace" | "remove" | "rename" | "defrag")) => {
+            crate::rpf9_write::run(verb, &args[1..])
+        }
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -45,7 +48,12 @@ const USAGE: &str = "\
 usage:
   openrage-cli rpf9 list <archive.rpf> [inner/path] [--names <dir>] [--keys <snapshot>] [--groups] [--nested] [--json]
   openrage-cli rpf9 extract <archive.rpf> <dest-dir> [inner/path] [--entry <selector>] [--filter <substr>] [--decrypt] [--names <dir>] [--keys <snapshot>]
-  openrage-cli rpf9 census <build-root> [--names <dir>] [--keys <snapshot>] [--out <dir>] [--top-only]";
+  openrage-cli rpf9 census <build-root> [--names <dir>] [--keys <snapshot>] [--out <dir>] [--top-only]
+  openrage-cli rpf9 copy <archive.rpf> --out <new.rpf> [--keys <snapshot>]
+  openrage-cli rpf9 replace <archive.rpf> [inner/path] --entry <selector> --with <file> --out <new.rpf> [--names <dir>] [--keys <snapshot>]
+  openrage-cli rpf9 remove <archive.rpf> [inner/path] --entry <selector> --out <new.rpf> [--names <dir>] [--keys <snapshot>]
+  openrage-cli rpf9 rename <archive.rpf> [inner/path] --entry <selector> --name <path> --out <new.rpf> [--names <dir>] [--keys <snapshot>]
+  openrage-cli rpf9 defrag <archive.rpf> --out <new.rpf> [--keys <snapshot>]";
 
 fn usage(msg: &str) -> ExitCode {
     eprintln!("Error: {msg}");

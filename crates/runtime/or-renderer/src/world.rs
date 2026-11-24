@@ -166,13 +166,15 @@ impl WorldMesh {
     }
 }
 
-/// Where one instance of a mesh stands: the rows of its 3×4 model matrix, a tint whose colour its surface is multiplied by and whose alpha is how much of it its fade leaves (below nought, by the inverse dither of what it gives way to), and how much of the natural and of the artificial ambient light it takes.
+/// Where one instance of a mesh stands: the rows of its 3×4 model matrix, a tint whose colour its surface is multiplied by and whose alpha is how much of it its fade leaves (below nought, by the inverse dither of what it gives way to), and how much of the natural and of the artificial ambient light it takes; one cast only is not seen and casts the sun's shadow alone.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct WorldInstance {
     pub rows: [[f32; 4]; 3],
     pub tint: [f32; 4],
     pub ambient: [f32; 2],
+    /// 1 where it casts its shadow and is not seen, else 0.
+    pub cast_only: f32,
 }
 
 /// The ambient scales of what stands outdoors: the whole of the natural light and none of the artificial.
@@ -185,6 +187,7 @@ impl WorldInstance {
             rows: [0, 1, 2].map(|row| matrix.row(row).to_array()),
             tint,
             ambient: OUTDOORS,
+            cast_only: 0.0,
         }
     }
 }

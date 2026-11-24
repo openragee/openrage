@@ -16839,3 +16839,6 @@ msgstr "文件按表中的条目读取。不支持的结构会报告错误。"
 
 msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
 msgstr "此文件从 RPF9 表中打开，为只读。请提取文件以保存单独的副本。"
+
+msgid "The names of this document's strings need the GTA VI key snapshot"
+msgstr "此文档字符串的名称需要 GTA VI 密钥快照"

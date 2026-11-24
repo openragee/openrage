@@ -587,6 +587,29 @@ mod tests {
     }
 
     #[test]
+    fn the_day_carries_the_installs_bloom_weights_temporal_times_and_sharpening() {
+        let settings = |name: &str, default: f32| match name {
+            "bloom.airy.weight2" => 0.712,
+            "bloom.airy.weight256" => 0.317,
+            "temporalaa.convergenceTimeFar" => 1.0,
+            "sharpen.intensity" => 0.15,
+            _ => default,
+        };
+        let mut own = or_io::gta5::data::timecycle::Keyframe::default();
+        own.set("postfx_intensity_bloom", 0.1498);
+        own.set("postfx_exposure_perpixel_amount", 0.2);
+        let post = post_of(&settings, &own);
+        assert_eq!(post.bloom_weights[0], 0.712);
+        assert_eq!(post.bloom_weights[7], 0.317);
+        // A size the settings leave out takes the executable's own weight
+        assert_eq!(post.bloom_weights[3], 0.5);
+        assert_eq!((post.bloom_mix, post.local.amount), (0.1498, 0.2));
+        assert_eq!((post.temporal.far, post.sharpen), (1.0, 0.15));
+        // A keyframe that states no compensation curve compensates nothing
+        assert!(post.local.compensation.iter().all(|c| *c == 0.0));
+    }
+
+    #[test]
     fn every_weather_of_the_bar_names_a_cycle() {
         use WeatherState::*;
         let names = [Clear, Cloudy, Fog, Rain, Storm].map(weather_name);

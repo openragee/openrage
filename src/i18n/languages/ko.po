@@ -16839,3 +16839,6 @@ msgstr "파일은 테이블 항목에 따라 읽습니다. 지원하지 않는 �
 
 msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
 msgstr "이 파일은 RPF9 테이블에서 열렸으며 읽기 전용입니다. 별도 사본을 저장하려면 추출하세요."
+
+msgid "The names of this document's strings need the GTA VI key snapshot"
+msgstr "이 문서의 문자열 이름에는 GTA VI 키 스냅샷이 필요합니다"

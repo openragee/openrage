@@ -345,7 +345,8 @@ impl RenderBridge {
         });
         // The GTA V day is worked out again once the world is left.
         self.day_key = None;
-        let water = viewer.water(weather);
+        // From a room that sees no portal to the outside, no water.
+        let water = viewer.water(weather).filter(|_| viewer.sees_outside());
         if (world.water).refresh(&mut self.renderer, &self.device, water.as_ref(), eye) {
             world.changes += 1;
         }

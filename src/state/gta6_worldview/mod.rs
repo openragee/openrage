@@ -396,6 +396,13 @@ impl Viewer {
         self.world.as_ref()?.latest().inside
     }
 
+    /// Whether the camera saw anything of the outside at the last selection: from a room, only through a portal to it.
+    pub fn sees_outside(&self) -> bool {
+        (self.world.as_ref()).is_none_or(|w| {
+            (w.latest().outside_through.as_ref()).is_none_or(|through| !through.is_empty())
+        })
+    }
+
     /// What was selected last for the camera, after the world's thread is told where the camera
     /// is and which models came to the device, will never come (`None`) or left it (`false`).
     pub fn selected(

@@ -16839,3 +16839,6 @@ msgstr "ファイルはテーブルのエントリに従って読み込まれま
 
 msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
 msgstr "このファイルはRPF9テーブルから開かれ、読み取り専用です。別のコピーを保存するには抽出してください。"
+
+msgid "The names of this document's strings need the GTA VI key snapshot"
+msgstr "この文書の文字列の名前には GTA VI のキースナップショットが必要です"

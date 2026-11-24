@@ -106,12 +106,14 @@ fn inside_the_sky_s_ambient_light_comes_in_through_the_openings_to_the_outside_a
 }
 
 #[test]
-fn a_sphere_is_in_the_smallest_room_that_holds_the_whole_of_it() {
+fn a_sphere_is_in_the_smallest_room_that_holds_its_middle_and_is_wider_than_it() {
     let (rooms, ..) = row();
     assert_eq!(room_around(&rooms, Vec3::new(2.0, 0.0, 1.0), 0.5), Some(1));
-    // A shell wider than its room, or a prop across a doorway, is in no room.
-    assert_eq!(room_around(&rooms, Vec3::new(2.0, 0.0, 1.5), 3.0), None);
-    assert_eq!(room_around(&rooms, Vec3::new(4.0, 0.0, 1.0), 0.5), None);
+    // A prop against the wall whose sphere passes the room's box is still in the room.
+    assert_eq!(room_around(&rooms, Vec3::new(2.0, 1.8, 1.0), 1.0), Some(1));
+    // A shell wider than its room is in no room, nor what stands outside every room.
+    assert_eq!(room_around(&rooms, Vec3::new(2.0, 0.0, 1.5), 3.5), None);
+    assert_eq!(room_around(&rooms, Vec3::new(2.0, 5.0, 1.0), 0.5), None);
 }
 
 #[test]
@@ -157,6 +159,33 @@ fn a_portal_that_may_close_is_shut_by_what_it_holds_to_the_outside_and_by_its_do
 }
 
 #[test]
+fn from_a_room_the_outside_is_seen_through_the_doors_to_it_alone() {
+    let (rooms, mut portals, middle) = row();
+    let eye = Vec3::new(2.0, 0.0, 1.0);
+    let outside = |portals: &[Opening]| seen(&rooms, portals, middle, eye).outside;
+    let through = outside(&portals).expect("the camera stands in a room");
+    assert_eq!(through.len(), 1, "one door to the outside");
+    let sees = |p: [f32; 3], r: f32| reaches(&through[0], eye, Vec3::from(p), r);
+    // Straight out of the front door, and a sphere that reaches into its line.
+    assert!(sees([-10.0, 0.0, 1.0], 0.1));
+    assert!(sees([-10.0, 4.0, 1.0], 2.0));
+    // Off to the side of it, and behind the camera, through the walls.
+    assert!(!sees([-10.0, 8.0, 1.0], 1.0));
+    assert!(!sees([10.0, 0.0, 1.0], 1.0));
+    // From the outside nothing of it is hidden; with its one door shut, all of it is.
+    assert_eq!(
+        seen(&rooms, &portals, middle, Vec3::new(-5.0, 0.0, 1.0)).outside,
+        None
+    );
+    portals[0].shut = true;
+    assert_eq!(outside(&portals), Some(Vec::new()));
+    // A link opens on another interior, not on the outside.
+    portals[0].shut = false;
+    portals[0].flags = LINK;
+    assert_eq!(outside(&portals), Some(Vec::new()));
+}
+
+#[test]
 fn a_camera_in_a_doorway_sees_through_the_whole_of_it() {
     let (rooms, portals, middle) = row();
     // Five centimetres into room 2 the door's edges pass behind the camera.
@@ -195,4 +224,23 @@ fn rooms_that_all_open_on_each_other_where_the_camera_stands_are_walked_in_bound
         seen.rooms[1..].iter().all(|room| *room),
         "every room is seen"
     );
+    // A door crossed again through what it was crossed through before is not followed: the walk ends.
+    assert!(seen.outside.is_some(), "the walk was not cut short");
+}
+
+#[test]
+fn an_opening_is_within_another_where_each_of_its_corners_is() {
+    let square = |x: f32, y: f32, half: f32| {
+        [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .map(|(a, b)| Vec3::new(x + a * half, y + b * half, 0.0))
+    };
+    let (big, small) = (square(0.0, 0.0, 2.0), square(0.5, 0.5, 1.0));
+    assert!(within(&small, &big, Vec3::Z));
+    assert!(within(&big, &big, Vec3::Z));
+    assert!(!within(&big, &small, Vec3::Z));
+    assert!(!within(&square(2.5, 0.0, 1.0), &big, Vec3::Z));
+    // Either way round the corners go, and whichever way the plane faces.
+    let mut reversed = big;
+    reversed.reverse();
+    assert!(within(&small, &reversed, -Vec3::Z));
 }

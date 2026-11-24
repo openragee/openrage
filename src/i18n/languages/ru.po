@@ -16982,3 +16982,6 @@ msgstr "Файлы читаются по их записям в таблице. 
 
 msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
 msgstr "Этот файл открыт из таблицы RPF9 и доступен только для чтения. Извлеките его, чтобы сохранить отдельную копию."
+
+msgid "The names of this document's strings need the GTA VI key snapshot"
+msgstr "Для имён строк этого документа нужен снимок ключей GTA VI"

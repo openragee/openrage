@@ -154,7 +154,8 @@ impl Layout {
                         at,
                         slot: slots.start + level(untils, away, view.lod_scale) as u32,
                         away,
-                        shown: whole || view.frustum.sees_sphere(instance.centre, radius),
+                        shown: !instance.cast_only
+                            && (whole || view.frustum.sees_sphere(instance.centre, radius)),
                     })
                 })
             })
@@ -190,6 +191,7 @@ impl Layout {
                 rows: [[0.0; 4]; 3],
                 tint: [1.0; 4],
                 ambient: or_renderer::OUTDOORS,
+                cast_only: 0.0,
             },
         );
         self.spheres.clear();
@@ -206,6 +208,7 @@ impl Layout {
                     instance.fade,
                 ],
                 ambient: instance.ambient,
+                cast_only: f32::from(u8::from(instance.cast_only)),
             };
             // As wide as the cull takes it.
             self.spheres[*end as usize] = instance.centre.extend(instance.radius.max(0.01)).into();
@@ -267,6 +270,7 @@ mod tests {
             fade,
             tint: [1.0; 3],
             ambient: or_renderer::OUTDOORS,
+            cast_only: false,
         }
     }
 
@@ -375,6 +379,27 @@ mod tests {
         assert!(!layout.seen[0].shown);
         layout.place(&instances);
         assert_eq!(layout.run(0), 0..1);
+        assert!(layout.nearest[0].0.is_infinite());
+    }
+
+    #[test]
+    fn one_that_only_casts_is_laid_out_unseen_whatever_its_fade() {
+        let mut instances = [instance(0, Vec3::new(0.0, 5.0, 0.0), 0.5)];
+        instances[0].cast_only = true;
+        let chunks = [Chunk {
+            centre: Vec3::new(0.0, 5.0, 0.0),
+            radius: 1.0,
+            from: 0,
+            to: 1,
+        }];
+        let mut layout = Layout::default();
+        layout.clear();
+        layout.model([f32::INFINITY].into_iter());
+        layout.cull(&chunks, &instances, &view(None));
+        assert!(!layout.seen[0].shown);
+        layout.place(&instances);
+        assert_eq!(layout.laid[0].cast_only, 1.0);
+        assert_eq!(layout.laid[0].tint[3], 0.5);
         assert!(layout.nearest[0].0.is_infinite());
     }
 

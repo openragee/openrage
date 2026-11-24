@@ -214,6 +214,9 @@ msgstr "Daño y fuerza"
 msgid "Declare another archetype in the type file shown, as a copy of the one selected (else the first plain one) under a name nobody holds yet; give it its real name and box in the selection. Undo takes it back"
 msgstr "Declarar otro arquetipo en el archivo de tipos mostrado, como copia del seleccionado (o, si no hay, del primero ordinario) con un nombre que nadie use todavía; asignarle su nombre y su caja reales en la selección. Deshacer lo revierte"
 
+msgid "Detected type: {kind}"
+msgstr "Tipo detectado: {kind}"
+
 msgid "Did again: {what}"
 msgstr "Rehecho: {what}"
 
@@ -975,6 +978,12 @@ msgstr "Girada a la derecha"
 
 msgid "Turns"
 msgstr "Giros"
+
+msgid "Two textures have the same name hash; this dictionary cannot be previewed."
+msgstr "Dos texturas tienen el mismo hash de nombre; no se puede mostrar una vista previa de este diccionario."
+
+msgid "Type (table): {kind}"
+msgstr "Tipo (tabla): {kind}"
 
 msgid "Undid: {what}"
 msgstr "Deshecho: {what}"

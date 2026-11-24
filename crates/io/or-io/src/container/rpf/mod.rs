@@ -14,7 +14,11 @@ pub mod gta6_content;
 #[cfg(feature = "gta6")]
 mod gta6_entry;
 #[cfg(feature = "gta6")]
+mod gta6_entry_type;
+#[cfg(feature = "gta6")]
 pub use gta6_entry::Gta6EntryRead;
+#[cfg(feature = "gta6")]
+pub use gta6_entry_type::{Gta6EntryContent, Gta6EntryType};
 #[cfg(feature = "gta6")]
 pub mod gta6_extract;
 #[cfg(feature = "gta6")]

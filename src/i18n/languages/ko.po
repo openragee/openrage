@@ -214,6 +214,9 @@ msgstr "대미지 및 힘"
 msgid "Declare another archetype in the type file shown, as a copy of the one selected (else the first plain one) under a name nobody holds yet; give it its real name and box in the selection. Undo takes it back"
 msgstr "표시된 타입 파일에 아키타입을 하나 더 선언합니다. 선택한 아키타입(없으면 처음 나오는 일반 아키타입)의 복사본이며, 아직 아무도 쓰지 않는 이름이 붙습니다. 실제 이름과 박스는 선택 항목에서 지정합니다. 실행 취소로 되돌릴 수 있습니다"
 
+msgid "Detected type: {kind}"
+msgstr "감지된 유형: {kind}"
+
 msgid "Did again: {what}"
 msgstr "다시 실행됨: {what}"
 
@@ -975,6 +978,12 @@ msgstr "오른쪽으로 회전"
 
 msgid "Turns"
 msgstr "회전"
+
+msgid "Two textures have the same name hash; this dictionary cannot be previewed."
+msgstr "두 텍스처의 이름 해시가 같아서 이 사전을 미리 볼 수 없습니다."
+
+msgid "Type (table): {kind}"
+msgstr "유형(테이블): {kind}"
 
 msgid "Undid: {what}"
 msgstr "실행 취소됨: {what}"

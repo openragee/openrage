@@ -308,7 +308,7 @@ fn the_cli_and_the_editor_run_the_same_job() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     const RUNS_THE_JOB: &[(&str, &str)] = &[
         (
-            "src/state/extract_job.rs",
+            "src/state/extract_job/run.rs",
             "the editor's archive extraction",
         ),
         (

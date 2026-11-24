@@ -80,8 +80,10 @@ fn collect_textures(
 /// dictionary has nothing to select, and an empty dictionary is exactly the
 /// one a user needs to put a texture into.
 pub(super) fn draw_import_button(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId) {
+    let editable = state
+        .texture_dictionary_is_editable(doc_id, crate::state::textures::TextureSource::Document);
     let clicked = ui
-        .button("Add texture from image\u{2026}")
+        .add_enabled(editable, egui::Button::new(tr!("Add texture from image…")))
         .on_hover_text(format!(
             "Encode a {} file into this dictionary as a new entry. The entry is named after \
              the file, and its format is chosen from the pixels.",

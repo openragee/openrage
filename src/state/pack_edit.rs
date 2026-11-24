@@ -38,7 +38,11 @@ impl AppState {
         label: String,
         writes: &[(Edit, ScalarValue)],
     ) -> bool {
-        let Some(image) = self.document_mut(doc).and_then(|d| d.resource.as_mut()) else {
+        let Some(image) = self
+            .document_mut(doc)
+            .filter(|d| d.read_only != Some(super::document::rpf9::entry::READ_ONLY))
+            .and_then(|d| d.resource.as_mut())
+        else {
             return false;
         };
         let span = |edit: &Edit| edit.offset..edit.offset + scalar(edit.kind).size();

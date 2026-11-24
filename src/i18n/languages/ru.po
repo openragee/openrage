@@ -214,6 +214,9 @@ msgstr "Урон и сила"
 msgid "Declare another archetype in the type file shown, as a copy of the one selected (else the first plain one) under a name nobody holds yet; give it its real name and box in the selection. Undo takes it back"
 msgstr "Объявить ещё один архетип в показанном файле типов как копию выбранного (иначе первого простого) под именем, которого пока нет ни у кого; настоящее имя и бокс ему можно задать в выделении. Команда «Отменить» вернёт прежнее состояние"
 
+msgid "Detected type: {kind}"
+msgstr "Обнаруженный тип: {kind}"
+
 msgid "Did again: {what}"
 msgstr "Повторено: {what}"
 
@@ -975,6 +978,12 @@ msgstr "Повёрнуто вправо"
 
 msgid "Turns"
 msgstr "Повороты"
+
+msgid "Two textures have the same name hash; this dictionary cannot be previewed."
+msgstr "У двух текстур совпадает хеш имени; предпросмотр этого словаря недоступен."
+
+msgid "Type (table): {kind}"
+msgstr "Тип (таблица): {kind}"
 
 msgid "Undid: {what}"
 msgstr "Отменено: {what}"

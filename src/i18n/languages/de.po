@@ -214,6 +214,9 @@ msgstr "Schaden und Kraft"
 msgid "Declare another archetype in the type file shown, as a copy of the one selected (else the first plain one) under a name nobody holds yet; give it its real name and box in the selection. Undo takes it back"
 msgstr "Deklariert einen weiteren Archetyp in der angezeigten Typdatei, als Kopie des ausgewählten (sonst des ersten einfachen) unter einem Namen, den noch niemand trägt; den echten Namen und die Box in der Auswahl festlegen. „Rückgängig“ nimmt es zurück"
 
+msgid "Detected type: {kind}"
+msgstr "Erkannter Typ: {kind}"
+
 msgid "Did again: {what}"
 msgstr "Wiederholt: {what}"
 
@@ -975,6 +978,12 @@ msgstr "Nach rechts gedreht"
 
 msgid "Turns"
 msgstr "Drehungen"
+
+msgid "Two textures have the same name hash; this dictionary cannot be previewed."
+msgstr "Zwei Texturen haben denselben Namens-Hash; für dieses Wörterbuch kann keine Vorschau angezeigt werden."
+
+msgid "Type (table): {kind}"
+msgstr "Typ (Tabelle): {kind}"
 
 msgid "Undid: {what}"
 msgstr "Rückgängig gemacht: {what}"

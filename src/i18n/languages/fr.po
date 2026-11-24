@@ -214,6 +214,9 @@ msgstr "Dégâts et force"
 msgid "Declare another archetype in the type file shown, as a copy of the one selected (else the first plain one) under a name nobody holds yet; give it its real name and box in the selection. Undo takes it back"
 msgstr "Déclare un autre archétype dans le fichier de types affiché, en copie de celui qui est sélectionné (sinon du premier simple) sous un nom que personne n'a encore ; donnez-lui son vrai nom et sa boîte dans la sélection. Annuler le reprend"
 
+msgid "Detected type: {kind}"
+msgstr "Type détecté : {kind}"
+
 msgid "Did again: {what}"
 msgstr "Rétabli : {what}"
 
@@ -975,6 +978,12 @@ msgstr "Tournée à droite"
 
 msgid "Turns"
 msgstr "Rotations"
+
+msgid "Two textures have the same name hash; this dictionary cannot be previewed."
+msgstr "Deux textures ont la même empreinte de nom ; ce dictionnaire ne peut pas être affiché dans l’aperçu."
+
+msgid "Type (table): {kind}"
+msgstr "Type (table) : {kind}"
 
 msgid "Undid: {what}"
 msgstr "Annulé : {what}"

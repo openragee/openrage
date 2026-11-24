@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 
 use or_io::container::rpf::{
-    open_at_bounded, Gta6Archive, Gta6Class, Gta6Entry, GtaViKeys, NameResolver, RPF9_HEADER_SIZE,
-    RPF9_MAGIC,
+    open_at_bounded, Gta6Archive, Gta6Class, Gta6Entry, Gta6EntryType, GtaViKeys, NameResolver,
+    RPF9_HEADER_SIZE, RPF9_MAGIC,
 };
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
 
@@ -36,9 +36,22 @@ pub struct Tree {
     pub selected: Option<(u64, u32)>,
     pub filter: String,
     pending: Option<Pending>,
+    detected: BTreeMap<(u64, u32), Gta6EntryType>,
 }
 
 impl Tree {
+    pub fn entry_type(&self, base: u64, index: u32) -> (Gta6EntryType, bool) {
+        if let Some(kind) = self.detected.get(&(base, index)) {
+            return (*kind, true);
+        }
+        let hint = self.nodes.get(&base).and_then(|node| {
+            let entry = node.archive.entries.get(index as usize)?;
+            let extra = node.archive.entry_extra(index as usize)?;
+            Some(Gta6EntryType::hint(entry, &extra))
+        });
+        (hint.unwrap_or(Gta6EntryType::Unknown), false)
+    }
+
     pub fn pending(&self) -> Option<(u64, u32)> {
         self.pending.as_ref().map(|p| p.entry)
     }
@@ -71,7 +84,7 @@ pub struct Rpf9TableDocument {
     keys: Arc<GtaViKeys>,
     resolver: Arc<NameResolver>,
     metadata: Metadata,
-    tree: Mutex<Tree>,
+    tree: Arc<Mutex<Tree>>,
 }
 
 impl Rpf9TableDocument {
@@ -118,7 +131,7 @@ impl Rpf9TableDocument {
             keys,
             resolver,
             metadata,
-            tree: Mutex::new(tree),
+            tree: Arc::new(Mutex::new(tree)),
         }))
     }
 

@@ -2,6 +2,7 @@
 
 use crate::state::rpf9::{is_archive, Rpf9TableDocument, Tree};
 use crate::ui::theme;
+use or_io::container::rpf::Gta6EntryType;
 
 pub(super) enum Action {
     Open(u64, u32),
@@ -47,6 +48,8 @@ pub(super) fn draw_facts(ui: &mut egui::Ui, doc: &Rpf9TableDocument) -> Option<A
             ui.separator();
             ui.strong(entry.display_name());
             ui.monospace(format!("#{index} · {:016x}", entry.name64));
+            let (kind, detected) = tree.entry_type(base, index);
+            ui.label(type_facts(kind, detected));
             if let Some(start) = entry.start.and_then(|start| base.checked_add(start)) {
                 ui.label(tr!("Offset: {offset}", offset = format!("{start:#X}")));
             }
@@ -85,7 +88,14 @@ fn visible_rows(
     for entry in &node.archive.entries {
         let key = (base, entry.index);
         let archive = is_archive(entry) || tree.expanded.contains(&key);
-        if archive || filter.is_empty() || entry.display_name().to_lowercase().contains(filter) {
+        if archive
+            || filter.is_empty()
+            || matches_filter(
+                &entry.display_name(),
+                tree.entry_type(base, entry.index).0,
+                filter,
+            )
+        {
             rows.push((base, entry.index, depth));
         }
         if tree.expanded.contains(&key) {
@@ -125,6 +135,7 @@ pub(super) fn draw_tree(ui: &mut egui::Ui, doc: &Rpf9TableDocument) -> Option<Ac
                 let key = (base, index);
                 let entry = &tree.nodes[&base].archive.entries[index as usize];
                 let open = tree.expanded.contains(&key);
+                let (kind, detected) = tree.entry_type(base, index);
                 ui.push_id(key, |ui| {
                     ui.horizontal(|ui| {
                         ui.add_space(depth as f32 * ui.spacing().indent);
@@ -180,6 +191,8 @@ pub(super) fn draw_tree(ui: &mut egui::Ui, doc: &Rpf9TableDocument) -> Option<Ac
                                 ui.close();
                             }
                         });
+                        ui.weak(type_name(kind))
+                            .on_hover_text(type_facts(kind, detected));
                         if pending == Some(key) {
                             ui.spinner();
                         }
@@ -200,4 +213,80 @@ pub(super) fn draw_tree(ui: &mut egui::Ui, doc: &Rpf9TableDocument) -> Option<Ac
         ui.ctx().request_repaint();
     }
     action
+}
+
+fn type_name(kind: Gta6EntryType) -> &'static str {
+    match kind {
+        Gta6EntryType::Unknown => tr!("Unknown"),
+        Gta6EntryType::Archive => tr!("Archive"),
+        Gta6EntryType::TextureDictionary => tr!("Texture dictionary"),
+        Gta6EntryType::Resource(role) => crate::state::gta6_resource::role_name(Some(role)),
+        Gta6EntryType::Body(body) => crate::state::gta6_other_bodies::label(body),
+        Gta6EntryType::Rbf => tr!("RBF metadata"),
+    }
+}
+
+fn type_facts(kind: Gta6EntryType, detected: bool) -> String {
+    if detected {
+        tr!("Detected type: {kind}", kind = type_name(kind))
+    } else {
+        tr!("Type (table): {kind}", kind = type_name(kind))
+    }
+}
+
+fn matches_filter(name: &str, kind: Gta6EntryType, filter: &str) -> bool {
+    filter.is_empty()
+        || name.to_lowercase().contains(filter)
+        || type_name(kind).to_lowercase().contains(filter)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use or_io::container::rpf::Rpf9Role;
+
+    #[test]
+    fn a_hash_named_texture_dictionary_can_be_found_by_its_type() {
+        let _language = crate::i18n::pin("en");
+        assert!(matches_filter(
+            "hash_0123456789abcdef",
+            Gta6EntryType::TextureDictionary,
+            "texture"
+        ));
+        assert!(matches_filter(
+            "hash_0123456789abcdef",
+            Gta6EntryType::TextureDictionary,
+            "89abc"
+        ));
+        assert!(!matches_filter(
+            "hash_0123456789abcdef",
+            Gta6EntryType::Resource(Rpf9Role::Dictionary),
+            "texture"
+        ));
+        assert!(!matches_filter(
+            "hash_0123456789abcdef",
+            Gta6EntryType::Unknown,
+            "texture"
+        ));
+    }
+
+    #[test]
+    fn the_type_and_its_evidence_are_translated() {
+        let _language = crate::i18n::pin("fr");
+        let kind = Gta6EntryType::TextureDictionary;
+        assert_eq!(type_name(kind), "Dictionnaire de textures");
+        assert_eq!(
+            type_facts(kind, false),
+            "Type (table) : Dictionnaire de textures"
+        );
+        assert_eq!(
+            type_facts(kind, true),
+            "Type détecté : Dictionnaire de textures"
+        );
+        assert!(matches_filter(
+            "hash_0123456789abcdef",
+            kind,
+            "dictionnaire"
+        ));
+    }
 }

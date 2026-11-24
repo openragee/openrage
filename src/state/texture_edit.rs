@@ -415,6 +415,11 @@ impl AppState {
             return Err(tr!("That document is no longer open").to_string());
         };
         let scanned = super::gta6_edit::is_scanned_dictionary(document);
+        if !scanned {
+            if let Some(why) = document.read_only {
+                return Err(crate::i18n::tr(why).to_string());
+            }
+        }
         let Some(dictionary) = textures::legacy_dictionary_mut(&mut document.payload) else {
             return Err(crate::i18n::tr(NOT_A_LEGACY_DICTIONARY).to_string());
         };
@@ -621,6 +626,51 @@ mod tests {
             declared,
             "importing pixels rewrote what the header declares this texture is"
         );
+    }
+
+    #[test]
+    fn table_texture_previews_refuse_import_and_gta5_conversion() {
+        let mut state = AppState::from_prefs(Default::default());
+        let id = dictionary_document(&mut state, paint());
+        state.document_mut(id).expect("document").read_only =
+            Some(super::super::document::rpf9::entry::READ_ONLY);
+        assert!(!state.texture_dictionary_is_editable(id, TextureSource::Document));
+        assert!(state
+            .import_texture_as_new(
+                id,
+                "decal",
+                &source(0x40),
+                FormatChoice::Automatic,
+                &TextureBuildOptions::default(),
+            )
+            .is_err());
+        assert!(state
+            .import_texture_over(
+                id,
+                TextureSource::Document,
+                "paint",
+                &source(0x40),
+                FormatChoice::Automatic,
+                &TextureBuildOptions::default(),
+            )
+            .is_err());
+        assert!(state
+            .reencode_texture_in_place(
+                id,
+                TextureSource::Document,
+                "paint",
+                FormatChoice::Automatic,
+                &TextureBuildOptions::default(),
+            )
+            .is_err());
+        assert!(state.document_conversion_to(id).is_err());
+        state.convert_document(id);
+        assert!(state.convert.job().is_none());
+        let document = state.document(id).expect("document");
+        assert!(!document.dirty);
+        let dictionary = textures::legacy_dictionary(&document.payload).expect("dictionary");
+        assert!(dictionary.get("paint").is_some());
+        assert!(dictionary.get("decal").is_none());
     }
 
     #[test]

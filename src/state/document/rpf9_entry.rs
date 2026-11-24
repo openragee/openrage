@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::state::{AppState, DocPayload, DocumentKind, LoadResult, LoadingState};
-use or_io::container::rpf::Gta6EntryRead;
+use or_io::container::rpf::{Gta6EntryContent, Gta6EntryExtra, Gta6EntryRead};
 
 const MARKER: &str = ".rpf9-table";
 const LIMIT: u64 = 1 << 30;
@@ -18,6 +18,10 @@ pub struct EntrySource {
     metadata: Metadata,
     keys: Arc<GtaViKeys>,
     read: Gta6EntryRead,
+    entry: Gta6Entry,
+    extra: Gta6EntryExtra,
+    tree: Arc<Mutex<Tree>>,
+    key: (u64, u32),
 }
 
 impl Rpf9TableDocument {
@@ -30,6 +34,10 @@ impl Rpf9TableDocument {
         let read = Gta6EntryRead::from_table(&node.archive, node.extent.clone(), index, u64::MAX)
             .map_err(|e| e.to_string())?;
         let entry = &node.archive.entries[index as usize];
+        let extra = node
+            .archive
+            .entry_extra(index as usize)
+            .ok_or_else(|| tr!("The archive table could not be loaded.").to_string())?;
         let name = file_name(entry);
         let indices = node
             .chain
@@ -45,6 +53,10 @@ impl Rpf9TableDocument {
             metadata: self.metadata.clone(),
             keys: self.keys.clone(),
             read,
+            entry: entry.clone(),
+            extra,
+            tree: Arc::clone(&self.tree),
+            key: (base, index),
         })
     }
 }
@@ -111,10 +123,28 @@ fn address(path: &Path) -> Result<(PathBuf, Vec<u32>), String> {
 }
 
 pub fn read_path(path: &Path) -> Result<DocPayload, String> {
-    let (archive, chain) = address(path)?;
+    let (archive, _) = address(path)?;
     let doc = Rpf9TableDocument::open(&archive)?
         .ok_or_else(|| tr!("The archive table could not be loaded.").to_string())?;
-    let mut source = read_chain(&doc, &chain)?;
+    read_path_with_table(path, &doc)
+}
+
+pub fn read_path_with_table(path: &Path, doc: &Rpf9TableDocument) -> Result<DocPayload, String> {
+    let (archive, chain) = address(path)?;
+    if archive != doc.path {
+        return Err(tr!("The archive table could not be loaded.").to_string());
+    }
+    let base = {
+        let tree = doc.tree();
+        let parent = &chain[..chain.len() - 1];
+        tree.nodes
+            .iter()
+            .find_map(|(base, node)| (node.chain.as_slice() == parent).then_some(*base))
+    };
+    let mut source = match base {
+        Some(base) => doc.entry(base, chain[chain.len() - 1])?,
+        None => read_chain(doc, &chain)?,
+    };
     source.path = path.to_path_buf();
     source.payload()
 }
@@ -176,16 +206,37 @@ impl EntrySource {
     }
 
     fn payload(&self) -> Result<DocPayload, String> {
-        let bytes = self.bytes()?;
-        if DocumentKind::from_path(&self.path) == Some(DocumentKind::Text) {
-            return super::super::TextDocument::open(&self.path, &bytes)
-                .map(DocPayload::Text)
-                .map_err(|e| e.to_string());
+        let result = (|| {
+            let bytes = self.bytes()?;
+            let content = Gta6EntryContent::detect(&self.entry, &self.extra, &bytes)
+                .map_err(|e| e.to_string())?;
+            let payload = if let Some(textures) = content.textures {
+                crate::state::ttpf_document::table_textures(textures)?
+            } else if DocumentKind::from_path(&self.path) == Some(DocumentKind::Text) {
+                DocPayload::Text(
+                    super::super::TextDocument::open(&self.path, &bytes)
+                        .map_err(|e| e.to_string())?,
+                )
+            } else {
+                DocPayload::Hex(super::super::HexDocument {
+                    bytes,
+                    banner: crate::i18n::tr(READ_ONLY).to_string(),
+                })
+            };
+            Ok((content.kind, payload))
+        })();
+        let mut tree = self.tree.lock().unwrap_or_else(|p| p.into_inner());
+        match &result {
+            Ok((kind, _)) => {
+                tree.detected.insert(self.key, *kind);
+                tree.errors.remove(&self.key);
+            }
+            Err(error) => {
+                tree.detected.remove(&self.key);
+                tree.errors.insert(self.key, String::clone(error));
+            }
         }
-        Ok(DocPayload::Hex(super::super::HexDocument {
-            bytes,
-            banner: crate::i18n::tr(READ_ONLY).to_string(),
-        }))
+        result.map(|(_, payload)| payload)
     }
 }
 
@@ -259,3 +310,11 @@ impl AppState {
 #[cfg(test)]
 #[path = "rpf9_entry_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "rpf9_texture_tests.rs"]
+mod texture_tests;
+
+#[cfg(test)]
+#[path = "rpf9_texture_read_only_tests.rs"]
+mod texture_read_only_tests;

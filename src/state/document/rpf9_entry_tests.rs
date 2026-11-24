@@ -373,7 +373,10 @@ mod install {
                         .unwrap_or_else(|e| panic!("open {}: {e}", source.path.display()))
                     {
                         DocPayload::Hex(hex) => hex.bytes,
-                        DocPayload::Text(_) => source.bytes().unwrap(),
+                        DocPayload::Text(_)
+                        | DocPayload::Resource(or_io::Asset::TextureDict(_)) => {
+                            source.bytes().unwrap()
+                        }
                         _ => panic!("unexpected entry document"),
                     },
                 )

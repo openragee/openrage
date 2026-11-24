@@ -214,6 +214,9 @@ msgstr "ダメージと力"
 msgid "Declare another archetype in the type file shown, as a copy of the one selected (else the first plain one) under a name nobody holds yet; give it its real name and box in the selection. Undo takes it back"
 msgstr "表示中のタイプファイルに、選択中のアーキタイプ(なければ最初の通常のもの)のコピーを、まだ使われていない名前で宣言します。本来の名前とボックスは、選択したアーキタイプで設定してください。「元に戻す」で取り消せます"
 
+msgid "Detected type: {kind}"
+msgstr "検出された種類: {kind}"
+
 msgid "Did again: {what}"
 msgstr "やり直しました：{what}"
 
@@ -975,6 +978,12 @@ msgstr "エンティティを右へ回転"
 
 msgid "Turns"
 msgstr "回転"
+
+msgid "Two textures have the same name hash; this dictionary cannot be previewed."
+msgstr "2 つのテクスチャの名前ハッシュが同じため、この辞書をプレビューできません。"
+
+msgid "Type (table): {kind}"
+msgstr "種類（テーブル）: {kind}"
 
 msgid "Undid: {what}"
 msgstr "元に戻しました：{what}"

@@ -190,17 +190,27 @@ impl AppState {
         self.load_receiver = Some((path.clone(), rx));
 
         let provider = self.keys.provider();
+        let table = document::rpf9::entry::archive_path(&path).and_then(|archive| {
+            self.documents.iter().find_map(|doc| match &doc.payload {
+                DocPayload::Rpf9(Rpf9Document::Table(table)) if table.path == archive => {
+                    Some(Arc::clone(table))
+                }
+                _ => None,
+            })
+        });
         let path_clone = path.clone();
         thread::spawn(move || {
-            let result =
-                parse_payload_from_path(&path_clone, kind, provider).map(|(payload, resource)| {
-                    LoadResult::Success {
-                        path: path_clone.clone(),
-                        payload,
-                        binding: None,
-                        resource,
-                    }
-                });
+            let parsed = match table {
+                Some(table) => document::rpf9::entry::read_path_with_table(&path_clone, &table)
+                    .map(|payload| (payload, None)),
+                None => parse_payload_from_path(&path_clone, kind, provider),
+            };
+            let result = parsed.map(|(payload, resource)| LoadResult::Success {
+                path: path_clone.clone(),
+                payload,
+                binding: None,
+                resource,
+            });
 
             let msg = match result {
                 Ok(ok) => ok,

@@ -173,6 +173,9 @@ pub(super) fn resource_image_for(
 
 /// The built-in description of a document's declared format at the target its RSC7 version names, and that target's root type.
 pub fn described_root(doc: &super::Document) -> Option<(Arc<or_io::desc::Pack>, String)> {
+    if doc.read_only == Some(document::rpf9::entry::READ_ONLY) {
+        return None;
+    }
     // ⚠ The format first: a kind with none (a folder, a game root) never has an image to ask for.
     let format = or_io::gta5::formats::format(doc.kind.extension())?;
     let Some(image) = doc.resource.as_ref() else {

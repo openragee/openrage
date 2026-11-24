@@ -83,8 +83,14 @@ its class offers **Open as archive**, which checks only its stated position and 
 
 The table view opens a file with **Open** or a double-click, and **Extract…** writes its decoded
 bytes into a chosen folder, keeping existing files. Both actions use the same bounded reader.
-Text files open as text, other decoded contents as read-only bytes; a resource extension never
+The tree and its filter include the type indicated by the table; the selected entry's facts
+separate that hint from a type detected in its decoded contents. Texture dictionaries open in
+the texture preview, in memory and read-only, after their sections, every entry and every texture's
+pixels have been validated. A partly unreadable dictionary is an error, not a partial preview.
+Names stay as hashes where the vocabulary has no match; a detected type does not invent a filename.
+Text files open as text and other decoded contents as read-only bytes; a resource extension never
 selects a GTA V reader. Reopening an entry follows its archive indices through the tables again.
+Neither type detection nor preview creates an extracted file or searches for content outside the entry.
 
 The reader supports sized raw entries on 24-byte rows. Chunked entries use mode 3 for 24-byte
 rows, mode 2 for 20-byte resource rows, or mode 4 on either shape. Each descriptor gives the exact
@@ -102,6 +108,11 @@ sizes, bounds, limits and decoding failures; app and CLI tests cover opening and
 The app's install test `every_entry_in_the_selected_archive_opens_and_extracts_from_tables` walks
 all tables in `OPENRAGE_GTA6_ARCHIVE`, opens files or nested tables and compares the extracted bytes. Run it
 with the `all` test profile and the key environment variables above; it never scans the archive.
+The app's `every_table_texture_dictionary_in_the_selected_archive_previews_in_memory` test
+checks all texture dictionaries in that selected archive without writing their contents to disk.
+The `selected_entries_across_five_archives_preview_and_reload_without_extracted_files` test uses
+`OPENRAGE_GTA6_PREVIEW_INSTALL` and the same keys to check preview pixels, reopening and other types
+in several archives. Both preview tests also use the `all` profile.
 
 `openrage-cli rpf9 list` also lists from the table, and `rpf9 extract` uses the same strict entry
 reader as the app (`--decrypt` enables ciphered entries). The explicit `openrage-cli rpf scan` command and

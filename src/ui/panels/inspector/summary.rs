@@ -57,6 +57,9 @@ pub(super) fn draw_facts_grid(ui: &mut egui::Ui, id: &str, facts: &Facts) {
 
 /// `Legacy, version 165`: the edition a resource's own version names, and the file's own version once a save would write another.
 pub(super) fn edition(doc: &crate::state::Document) -> Option<String> {
+    if crate::state::ttpf_document::is_gta6(Some(doc)) {
+        return Some(or_title::Game::GtaVI.profile().label().to_string());
+    }
     let version = doc.resource.as_ref()?.seal.version();
     let format = or_io::gta5::formats::format(doc.kind.extension())?;
     let target = format.target_of_version(version).ok()?;
@@ -283,6 +286,20 @@ pub(super) fn metres(v: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gta6_texture_previews_show_their_game_without_a_gta5_resource_version() {
+        let mut doc = crate::state::Document::new(
+            1,
+            Some(std::path::PathBuf::from(
+                "textures.rpf/.rpf9-table/0_0/hash_texture",
+            )),
+            DocPayload::Resource(or_io::Asset::TextureDict(Default::default())),
+        );
+        assert_eq!(edition(&doc).as_deref(), Some("GTA VI"));
+        doc.read_only = Some(crate::state::rpf9_scan::READ_ONLY_BODY);
+        assert_eq!(edition(&doc).as_deref(), Some("GTA VI"));
+    }
 
     #[test]
     fn a_length_reads_in_metres_without_trailing_zeros() {

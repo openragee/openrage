@@ -344,6 +344,9 @@ impl AppState {
     /// The edition the open document `doc` converts to, or why it does not convert.
     pub fn document_conversion_to(&self, doc: DocumentId) -> Result<Generation, &'static str> {
         let document = self.document(doc).ok_or("That document is closed")?;
+        if document.read_only == Some(super::document::rpf9::entry::READ_ONLY) {
+            return Err(crate::i18n::tr(super::document::rpf9::entry::READ_ONLY));
+        }
         match document.kind {
             DocumentKind::Ytd | DocumentKind::Ydr | DocumentKind::Ydd | DocumentKind::Yft => {}
             _ => return Err(ONLY),

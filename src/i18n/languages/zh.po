@@ -214,6 +214,9 @@ msgstr "伤害与力度"
 msgid "Declare another archetype in the type file shown, as a copy of the one selected (else the first plain one) under a name nobody holds yet; give it its real name and box in the selection. Undo takes it back"
 msgstr "在显示的类型文件中再声明一个原型，作为所选原型（未选择时为第一个普通原型）的副本，名称为尚无人使用的名称；在所选内容中为其指定真实名称和边界框。“撤消”可将其撤回"
 
+msgid "Detected type: {kind}"
+msgstr "检测到的类型：{kind}"
+
 msgid "Did again: {what}"
 msgstr "已重做：{what}"
 
@@ -975,6 +978,12 @@ msgstr "已向右旋转"
 
 msgid "Turns"
 msgstr "旋转"
+
+msgid "Two textures have the same name hash; this dictionary cannot be previewed."
+msgstr "两个纹理的名称哈希相同，无法预览此字典。"
+
+msgid "Type (table): {kind}"
+msgstr "类型（表）：{kind}"
 
 msgid "Undid: {what}"
 msgstr "已撤消：{what}"

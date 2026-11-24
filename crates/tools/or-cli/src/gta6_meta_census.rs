@@ -10,7 +10,7 @@ use or_io::container::rpf::{Rpf9BodyKind, Rpf9Content, Rpf9Family, Rpf9Scan, Rpf
 use or_job::Step;
 
 const USAGE: &str =
-    "usage: rpf scan-census <archive.rpf> [--from <offset>] [--to <offset>] [--every <n>] [--kind <kind>|all] [--not <kind>] [--sample <n>] [--jobs <n>] [--limit <bytes>]";
+    "usage: rpf scan-census <archive.rpf> [--from <offset>] [--to <offset>] [--every <n>] [--kind <kind>|all] [--not <kind>[,<kind>...]] [--sample <n>] [--jobs <n>] [--limit <bytes>]";
 
 /// What `scan-open` says when a reader of metadata, not the container, refuses a body.
 const READER_REFUSALS: [&str; 4] = [
@@ -127,8 +127,9 @@ pub(crate) fn cmd_scan_census(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// Whether a census of `kind`, but not of `not`, opens `find`, whose row is `row`: a kind is a
-/// row as `rpf scan` tallies it, a family as `rpf list --kind` names it, or `all`.
+/// Whether a census of `kind`, but not of the kinds `not` lists with commas between them, opens
+/// `find`, whose row is `row`: a kind is a row as `rpf scan` tallies it, a family as
+/// `rpf list --kind` names it, or `all`.
 fn admits(kind: Option<&str>, not: Option<&str>, find: &Rpf9ScanFind, row: &str) -> bool {
     let is = |k: &str| k == row || Rpf9Family::parse(k) == Some(Rpf9Family::of(find));
     let asked = match kind {
@@ -136,7 +137,7 @@ fn admits(kind: Option<&str>, not: Option<&str>, find: &Rpf9ScanFind, row: &str)
         Some("all") => true,
         Some(k) => is(k),
     };
-    asked && !not.is_some_and(is)
+    asked && !not.is_some_and(|kinds| kinds.split(',').any(is))
 }
 
 /// At most `sample` rows of each row label, evenly spaced among that label's, in the order found.
@@ -314,6 +315,25 @@ mod tests {
         assert!(admits(
             Some("all"),
             Some("archives"),
+            &rbf,
+            "raw deflate rbf"
+        ));
+        // Several kinds are left out at once.
+        assert!(!admits(
+            Some("all"),
+            Some("animations,archives"),
+            &entry,
+            "first entry"
+        ));
+        assert!(!admits(
+            Some("all"),
+            Some("archives,raw deflate rbf"),
+            &rbf,
+            "raw deflate rbf"
+        ));
+        assert!(admits(
+            Some("all"),
+            Some("animations,text"),
             &rbf,
             "raw deflate rbf"
         ));

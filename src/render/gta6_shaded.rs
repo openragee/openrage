@@ -232,16 +232,28 @@ pub(crate) struct Own {
 }
 
 /// `said` with how the drawable's own mesh and pixel programs came out: the surfaces they draw
-/// and the bindings left at nought, or why it draws without them.
-pub(crate) fn said_of_own(said: String, own: Option<&Result<Own, String>>) -> String {
+/// and the bindings left at nought, or why it draws without them; `by_cycles` is whether the
+/// install's weather cycles light it.
+pub(crate) fn said_of_own(
+    said: String,
+    own: Option<&Result<Own, String>>,
+    by_cycles: bool,
+) -> String {
     match own {
         None => said,
         Some(Ok(own)) => {
-            let mut said = tr!(
-                "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts",
-                drawn = own.drawn,
-                zeroed = own.zeroed,
-            );
+            let mut said = match by_cycles {
+                false => tr!(
+                    "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts",
+                    drawn = own.drawn,
+                    zeroed = own.zeroed,
+                ),
+                true => tr!(
+                    "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the editor's own sky and exposure. {zeroed} bindings only the game fills read as noughts",
+                    drawn = own.drawn,
+                    zeroed = own.zeroed,
+                ),
+            };
             if let Some(why) = &own.why {
                 said.push('\n');
                 said.push_str(&tr!(
@@ -306,19 +318,24 @@ mod tests {
             rest: 0,
             why: None,
         };
-        let whole = said_of_own(String::new(), Some(&Ok(own.clone())));
+        let whole = said_of_own(String::new(), Some(&Ok(own.clone())), false);
         assert!(
             whole.contains("2 surfaces drawn") && !whole.contains('\n'),
             "{whole}"
         );
+        let lit = said_of_own(String::new(), Some(&Ok(own.clone())), true);
+        assert!(
+            lit.contains("the install's weather cycle") && !whole.contains("weather cycle"),
+            "{lit}"
+        );
         own.rest = 3;
         own.why = Some("an effect: why".into());
-        let partly = said_of_own(String::new(), Some(&Ok(own)));
+        let partly = said_of_own(String::new(), Some(&Ok(own)), false);
         assert!(
             partly.ends_with("Drawn as Material: 3 surfaces; the first: an effect: why"),
             "{partly}"
         );
-        let none = said_of_own("before".into(), Some(&Err("why".into())));
+        let none = said_of_own("before".into(), Some(&Err("why".into())), false);
         assert!(
             none.starts_with("before\n") && none.ends_with("why"),
             "{none}"

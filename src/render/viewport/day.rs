@@ -60,19 +60,21 @@ pub(super) fn sun_towards(
 }
 
 /// The built-in sun and sky a GTA VI drawable's own passes are lit by: the hour, the weather and
-/// the exposure the drivers say and nothing else, which the install's cycles then tint. The
-/// exposure's middle leaves the light as it is, and its ends are a quarter and four times it.
+/// the exposure the drivers say and nothing else, under clouds that hide `cover` of the sky
+/// where an install's cycle says how much. The exposure's middle leaves the light as it is,
+/// and its ends are a quarter and four times it.
 fn gta6_sky(
     hour: f32,
     weather: WeatherState,
+    cover: Option<f32>,
     exposure: f32,
 ) -> or_renderer::game_shaders::meshlets::Sky {
-    let overcast = match weather {
+    let overcast = cover.unwrap_or(match weather {
         WeatherState::Clear => 0.0,
         WeatherState::Cloudy | WeatherState::Fog => 0.6,
         WeatherState::Rain => 0.8,
         WeatherState::Storm => 0.95,
-    };
+    });
     let mut sky = or_renderer::game_shaders::meshlets::Sky::at(hour, overcast);
     sky.exposure = 2f32.powf(4.0 * (exposure - 0.5));
     sky
@@ -87,12 +89,12 @@ impl RenderBridge {
         let days = state.drivers.time_of_day.days;
         let exposure = state.drivers.exposure.value;
         let tables = crate::state::gta6_timecycle::timecycle(state);
-        self.renderer.set_gta6_sky(super::gta6_day::sky(
-            tables.as_deref(),
-            hour,
-            weather,
-            |hour| gta6_sky(hour, weather, exposure),
-        ));
+        let built_in = |hour, cover| gta6_sky(hour, weather, cover, exposure);
+        let by_cycles = tables
+            .as_deref()
+            .and_then(|tables| super::gta6_day::sky(tables, hour, weather, built_in));
+        self.renderer
+            .set_gta6_sky(by_cycles.unwrap_or_else(|| built_in(hour, None)));
         let key = (
             Arc::as_ptr(&data) as usize,
             hour.to_bits(),

@@ -51,19 +51,23 @@ fn the_table_reads_its_samples_and_the_angles_of_the_sun_and_moon_in_radians() {
         [
             TimeSample {
                 hour: 0.0,
-                duration: 4.0
+                duration: 4.0,
+                easing: Easing::Linear,
             },
             TimeSample {
                 hour: 6.0,
-                duration: 0.0
+                duration: 0.0,
+                easing: Easing::Linear,
             },
             TimeSample {
                 hour: 12.0,
-                duration: 0.0
+                duration: 0.0,
+                easing: Easing::Linear,
             },
             TimeSample {
                 hour: 22.0,
-                duration: 0.0
+                duration: 0.0,
+                easing: Easing::Linear,
             },
         ]
     );
@@ -137,4 +141,39 @@ fn a_cycle_that_is_not_read_gives_no_keyframe() {
     assert!(Timecycle::new("")
         .keyframe(12.0, "A", "A", 0.0, 0.0)
         .is_none());
+}
+
+#[test]
+fn a_bent_blend_starts_and_ends_where_a_straight_one_does_and_lags_it_early() {
+    for easing in [Easing::Linear, Easing::QuarticInOut] {
+        assert_eq!(easing.ease(0.0), 0.0);
+        assert_eq!(easing.ease(1.0), 1.0);
+        assert!((easing.ease(0.5) - 0.5).abs() < 1e-6);
+    }
+    assert_eq!(Easing::Linear.ease(0.25), 0.25);
+    assert!((Easing::QuarticInOut.ease(0.25) - 0.03125).abs() < 1e-6);
+    assert!((Easing::QuarticInOut.ease(0.75) - 0.96875).abs() < 1e-6);
+    // A table that names no bend, as GTA V's, goes straight.
+    let table = TimeTable::parse(TIME);
+    assert!(table.samples.iter().all(|s| s.easing == Easing::Linear));
+}
+
+#[test]
+fn a_value_alone_before_a_cycle_is_the_weather_s_and_none_of_its_samples() {
+    let mut timecycle = Timecycle::new(TIME);
+    timecycle.add_cycles(
+        r#"<timecycle_keyframe_data><summary><cover> 0.5</cover><pair> 1 2</pair></summary>
+        <cycle name="CLEAR" regions="1"><region name="GLOBAL"><fog_start> 1 2 3 4</fog_start></region></cycle>
+        </timecycle_keyframe_data>"#,
+    );
+    let clear = timecycle.cycle("clear").expect("read");
+    assert_eq!(clear.overall.get("cover"), Some(&0.5));
+    assert_eq!(
+        clear.overall.len(),
+        1,
+        "a row of several is no single value"
+    );
+    assert_eq!(clear.regions[0].vars.len(), 1);
+    // GTA V's cycles state none.
+    assert!(cycles().cycles.iter().all(|cycle| cycle.overall.is_empty()));
 }

@@ -14659,6 +14659,9 @@ msgstr "着色 — 游戏自身的渲染通道，由 GTA VI 的程序翻译而�
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
 msgstr "着色 — 此 drawable 自身的网格程序和像素程序，由 GTA VI 的程序翻译而来：已绘制 {drawn} 个表面，由编辑器自身的太阳和天空按所设时间和天气照亮。{zeroed} 个仅由游戏填充的绑定读作零"
 
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the editor's own sky and exposure. {zeroed} bindings only the game fills read as noughts"
+msgstr "着色 — 此 drawable 自身的网格程序和像素程序，由 GTA VI 的程序翻译而来：已绘制 {drawn} 个表面，由安装目录的天气循环按所设时间和天气照亮，天空和曝光为编辑器自身的。{zeroed} 个仅由游戏填充的绑定读作零"
+
 msgid "a worker is still decoding its maps"
 msgstr "工作线程仍在解码它的贴图"
 

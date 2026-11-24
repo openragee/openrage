@@ -14761,6 +14761,9 @@ msgstr "С затенением — собственные проходы игр
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
 msgstr "С затенением — собственные программы сетки и пикселей этого drawable, транслированные из программ GTA VI: нарисовано поверхностей — {drawn}, освещение — собственные солнце и небо редактора в заданные час и погоду. Привязок, которые заполняет только игра и которые читаются как нули, — {zeroed}"
 
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the editor's own sky and exposure. {zeroed} bindings only the game fills read as noughts"
+msgstr "С затенением — собственные программы сетки и пикселей этого drawable, транслированные из программ GTA VI: нарисовано поверхностей — {drawn}, освещение — погодный цикл установленной игры в заданные час и погоду, под собственными небом и экспозицией редактора. Привязок, которые заполняет только игра и которые читаются как нули, — {zeroed}"
+
 msgid "a worker is still decoding its maps"
 msgstr "рабочий поток ещё декодирует его текстуры"
 

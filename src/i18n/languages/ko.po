@@ -14659,6 +14659,9 @@ msgstr "셰이디드 — GTA VI 프로그램에서 변환한 게임 자체의 �
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
 msgstr "셰이디드 — GTA VI 프로그램에서 변환한 이 드로어블 자체의 메시 및 픽셀 프로그램입니다: 서피스 {drawn}개가 그려지며, 설정한 시간과 날씨에서 에디터 자체의 태양과 하늘로 조명됩니다. 게임만 채우는 바인딩 {zeroed}개는 0으로 읽힙니다"
 
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the editor's own sky and exposure. {zeroed} bindings only the game fills read as noughts"
+msgstr "셰이디드 — GTA VI 프로그램에서 변환한 이 드로어블 자체의 메시 및 픽셀 프로그램입니다: 서피스 {drawn}개가 그려지며, 설정한 시간과 날씨에서 설치본의 날씨 사이클로 조명되며, 하늘과 노출은 에디터 자체의 것입니다. 게임만 채우는 바인딩 {zeroed}개는 0으로 읽힙니다"
+
 msgid "a worker is still decoding its maps"
 msgstr "워커가 아직 맵을 디코딩하는 중입니다"
 

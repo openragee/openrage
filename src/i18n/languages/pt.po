@@ -14659,6 +14659,9 @@ msgstr "Sombreado — as passagens do próprio jogo, traduzidas dos programas do
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
 msgstr "Sombreado — os programas de malha e de pixel do próprio drawable, traduzidos dos do GTA VI: {drawn} superfícies desenhadas, iluminadas pelo sol e pelo céu do próprio editor na hora e no clima definidos. {zeroed} vínculos que só o jogo preenche são lidos como zeros"
 
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the editor's own sky and exposure. {zeroed} bindings only the game fills read as noughts"
+msgstr "Sombreado — os programas de malha e de pixel do próprio drawable, traduzidos dos do GTA VI: {drawn} superfícies desenhadas, iluminadas pelo ciclo de clima da instalação na hora e no clima definidos, sob o céu e a exposição do próprio editor. {zeroed} vínculos que só o jogo preenche são lidos como zeros"
+
 msgid "a worker is still decoding its maps"
 msgstr "um worker ainda está decodificando as texturas dele"
 

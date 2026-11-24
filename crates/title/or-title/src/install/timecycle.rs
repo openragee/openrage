@@ -139,7 +139,7 @@ mod tests {
         let time = r#"<?xml version="1.0" encoding="UTF-8"?>
 <time_data version="1.000000" mode="dynamic">
   <sample name="00:00" hour="0" uw_tc_mod="underwater"/>
-  <sample name="07:00" hour="7" uw_tc_mod="underwater"/>
+  <sample name="07:00" hour="7" uw_tc_mod="underwater" interpolation_type="EASE_QUARTIC_INOUT"/>
   <sample name="12:00" hour="12" uw_tc_mod="underwater"/>
   <region name="URBAN"/>
 </time_data>"#;
@@ -149,6 +149,14 @@ mod tests {
             .map(|s| s.hour)
             .collect();
         assert_eq!(hours, [0.0, 7.0, 12.0]);
+        use or_io::gta5::data::timecycle::Easing;
+        let bends: Vec<Easing> = (data.timecycle.table.samples.iter())
+            .map(|s| s.easing)
+            .collect();
+        assert_eq!(
+            bends,
+            [Easing::Linear, Easing::QuarticInOut, Easing::Linear]
+        );
         assert_eq!(data.timecycle.cycles.len(), 1);
         let rain = data.timecycle.cycle("RAIN").expect("named in its file");
         assert_eq!(rain.regions.len(), 2);
@@ -156,6 +164,7 @@ mod tests {
             !rain.regions[0].vars.contains_key("overall"),
             "what stands before the cycle is none of its variables"
         );
+        assert_eq!(rain.overall.get("overall"), Some(&0.5));
         let between = (data.timecycle).keyframe_between((1, 2, 0.5), "rain", "rain", 0.0, 0.0);
         assert_eq!(between.expect("read").get("light_dir_mult"), Some(4.0));
         assert_eq!(timecycle_of_documents([other]), TimecycleData::default());

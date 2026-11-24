@@ -328,7 +328,9 @@ impl RenderBridge {
             drawn,
             drawn + left_out.len(),
         );
-        let said = crate::render::gta6_shaded::said_of_own(said, self.gta6_own.as_ref());
+        let by_cycles = crate::state::gta6_timecycle::timecycle(state)
+            .is_some_and(|tables| super::gta6_day::lights(&tables, state.drivers.weather.state));
+        let said = crate::render::gta6_shaded::said_of_own(said, self.gta6_own.as_ref(), by_cycles);
         self.game_scene_report = Some(GameSceneReport {
             drawn,
             left_out,

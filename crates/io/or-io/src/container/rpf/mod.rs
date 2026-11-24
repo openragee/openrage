@@ -6,9 +6,13 @@ pub mod entry;
 #[cfg(feature = "gta6")]
 pub mod gta6_archive;
 #[cfg(feature = "gta6")]
+pub mod gta6_content;
+#[cfg(feature = "gta6")]
 pub mod gta6_keygate;
 #[cfg(feature = "gta6")]
 pub mod gta6_mount;
+#[cfg(feature = "gta6")]
+pub mod gta6_write;
 pub mod header;
 mod layout;
 mod lzb16;
@@ -49,13 +53,16 @@ pub use entry::{
 };
 #[cfg(feature = "gta6")]
 pub use gta6_archive::{
-    Gta6Archive, Gta6Cipher, Gta6Entry, NameResolver, GROUP_CIPHER, GROUP_ENTRY_ROW,
-    GROUP_ENTRY_ROW_20, GROUP_NAME32, GROUP_NAME64,
+    Gta6Archive, Gta6Cipher, Gta6Class, Gta6Entry, Gta6EntryExtra, Gta6NestedRow, NameResolver,
+    GROUP_CIPHER, GROUP_CONTENT_HASH, GROUP_ENTRY_ROW, GROUP_ENTRY_ROW_20, GROUP_NAME32,
+    GROUP_NAME64,
 };
 #[cfg(feature = "gta6")]
 pub use gta6_keygate::{decode_masked, encode_masked, gate_key, is_masked, MASKED_MAGIC};
 #[cfg(feature = "gta6")]
 pub use gta6_mount::{open_at, Gta6Mount};
+#[cfg(feature = "gta6")]
+pub use gta6_write::{Rpf9Builder, Rpf9CipherCore};
 pub use header::{
     FiPackHeader, RpfEncryption, RpfHeader, RPF7_MAGIC, RPF_AES_MAGIC, RPF_DIRECTORY_OFFSET_MARKER,
     RPF_FILE_ALIGNMENT, RPF_FILE_ALIGNMENT_SHIFT, RPF_MAX_RESOURCE_CONSUMED_SIZE,

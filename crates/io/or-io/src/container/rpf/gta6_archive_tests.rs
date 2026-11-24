@@ -268,3 +268,155 @@ fn display_name_falls_back_to_the_hash() {
     entry.name = Some("real/path.dat".into());
     assert_eq!(entry.display_name(), "real/path.dat");
 }
+
+/// A hand-built TOC with a main name64 column and an EXTERNAL content-hash column over two entries,
+/// whose content-hash index is deduplicated: entry 1 shares entry 0's hash row through the external
+/// index array, so a row-order pairing would give it the wrong hash.
+///
+/// Layout: header `[0,0x40)`, a group directory `[0x40,0x70)`, the main index array at 0x70, the
+/// external index array at 0x80 (`split`), the name64 rows at 0x90 and the content-hash rows at 0xA0.
+fn content_hash_toc(hash0: u64, hash1: u64) -> Rpf9Toc {
+    let mut bytes = vec![0u8; 0xC0];
+    bytes[0x08..0x0C].copy_from_slice(&0x80u32.to_le_bytes()); // split = external index base
+    bytes[0x1A..0x1C].copy_from_slice(&0u16.to_le_bytes()); // n
+    bytes[0x1C..0x20].copy_from_slice(&0u32.to_le_bytes()); // m
+    bytes[0x20..0x22].copy_from_slice(&2u16.to_le_bytes()); // group_count (name64 + content hash)
+    bytes[0x22..0x24].copy_from_slice(&1u16.to_le_bytes()); // external_count (the content hash)
+    bytes[0x24..0x28].copy_from_slice(&2u32.to_le_bytes()); // entries
+    bytes[0x2C] = 1; // index_width
+
+    // Main index array at 0x70 (one main column, name64): entry e -> name64 row e.
+    bytes[0x70..0x72].copy_from_slice(&[0, 1]);
+    // External index array at 0x80 (one external column): entry 1 shares entry 0's content-hash row.
+    bytes[0x80..0x82].copy_from_slice(&[0, 0]);
+
+    bytes[0x90..0x98].copy_from_slice(&1u64.to_le_bytes()); // name64 rows
+    bytes[0x98..0xA0].copy_from_slice(&2u64.to_le_bytes());
+    bytes[0xA0..0xA8].copy_from_slice(&hash0.to_le_bytes()); // content-hash rows
+    bytes[0xA8..0xB0].copy_from_slice(&hash1.to_le_bytes());
+
+    Rpf9Toc {
+        bytes,
+        key_id: 0,
+        registry_id: 0,
+        entry_count: 2,
+        groups: vec![
+            Rpf9Group {
+                name_hash: GROUP_NAME64,
+                count: 2,
+                width: 8,
+                external: false,
+                data: 0x90..0xA0,
+            },
+            Rpf9Group {
+                name_hash: GROUP_CONTENT_HASH,
+                count: 2,
+                width: 8,
+                external: true,
+                data: 0xA0..0xB0,
+            },
+        ],
+    }
+}
+
+#[test]
+fn entry_extras_joins_the_external_content_hash_through_the_index() {
+    let (h0, h1) = (0xAABB_CCDD_1122_3344, 0x9988_7766_5544_3322);
+    let archive = Gta6Archive {
+        toc: content_hash_toc(h0, h1),
+        entries: Vec::new(),
+    };
+    let extras = archive.entry_extras();
+    assert_eq!(extras.len(), 2, "one extra per entry");
+    assert_eq!(extras[0].content_hash, Some(h0));
+    // Entry 1's external index points at row 0, so it shares entry 0's hash, not h1 — the external
+    // columns are deduplicated and joined by index, exactly like the entry columns.
+    assert_eq!(extras[1].content_hash, Some(h0));
+    assert!(
+        extras.iter().all(|e| e.nested.is_none()),
+        "no 20-byte column, so no nested descriptor"
+    );
+}
+
+#[test]
+fn entry_extras_decodes_the_full_20_byte_nested_descriptor() {
+    // One entry, one 20-byte row column: the whole descriptor decodes, while the entry itself still
+    // carries only its proven start (so a paged body is not read against the page-bucket `w0`).
+    let mut bytes = vec![0u8; 0x100];
+    bytes[0x20..0x22].copy_from_slice(&1u16.to_le_bytes()); // group_count
+    bytes[0x24..0x28].copy_from_slice(&1u32.to_le_bytes()); // entries
+    bytes[0x2C] = 1; // index_width
+                     // main_base = 0x40 + 24*1 = 0x58; one column, one entry: index[0] = row 0.
+    bytes[0x58] = 0;
+    // The 20-byte row at 0x60: [w0 virtual, w4 flags, w8 stored pages, w12 start/16, w16 type].
+    let row: [u32; 5] = [0x1234, 0x0004_0006, 0x11, 0x50, 0x58];
+    for (i, w) in row.iter().enumerate() {
+        bytes[0x60 + i * 4..0x60 + i * 4 + 4].copy_from_slice(&w.to_le_bytes());
+    }
+    let toc = Rpf9Toc {
+        bytes,
+        key_id: 0,
+        registry_id: 0,
+        entry_count: 1,
+        groups: vec![Rpf9Group {
+            name_hash: GROUP_ENTRY_ROW_20,
+            count: 1,
+            width: 20,
+            external: false,
+            data: 0x60..0x74,
+        }],
+    };
+    let archive = Gta6Archive {
+        toc,
+        entries: Vec::new(),
+    };
+    let extras = archive.entry_extras();
+    assert_eq!(extras.len(), 1);
+    let nested = extras[0]
+        .nested
+        .expect("the 20-byte row decodes to a descriptor");
+    assert_eq!(nested.virtual_size, 0x1234);
+    assert_eq!(nested.flags, 0x0004_0006);
+    assert_eq!(nested.stored_pages, 0x11);
+    assert_eq!(nested.resource_type, 0x58);
+    assert_eq!(
+        nested.stored_size(),
+        0x11 * 16,
+        "16-byte pages scaled to bytes"
+    );
+    assert!(extras[0].content_hash.is_none());
+}
+
+#[test]
+fn the_class_byte_maps_to_an_entry_kind() {
+    // deduplicated_toc builds the three 24-byte rows with class 0x0B, 0x00, 0xFF.
+    let entries = read_entries(&deduplicated_toc(1, 2));
+    assert_eq!(entries[0].kind(), Some(Gta6Class::CompressedResource));
+    assert_eq!(entries[1].kind(), Some(Gta6Class::NestedArchive));
+    assert_eq!(entries[2].kind(), Some(Gta6Class::Media));
+    assert_eq!(Gta6Class::from_byte(0x0E), Gta6Class::Other(0x0E));
+    // A row with no class byte (a 20-byte row or no row) has no kind.
+    let rowless = Gta6Entry {
+        class: None,
+        ..entries[0].clone()
+    };
+    assert_eq!(rowless.kind(), None);
+}
+
+#[test]
+fn the_content_hash_column_is_known_and_an_unknown_column_is_reported() {
+    let mut toc = content_hash_toc(1, 2);
+    // A genuinely unknown column: its hash and width are reported, the content hash is not.
+    toc.groups.push(Rpf9Group {
+        name_hash: 0x1234_5678_9ABC_DEF0,
+        count: 1,
+        width: 28,
+        external: true,
+        data: 0xB0..0xB0,
+    });
+    let archive = Gta6Archive {
+        toc,
+        entries: Vec::new(),
+    };
+    assert_eq!(archive.unknown_columns(), vec![(0x1234_5678_9ABC_DEF0, 28)]);
+}

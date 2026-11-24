@@ -35,8 +35,13 @@ const SNAPSHOT_MAGIC: &[u8; 8] = b"ORGTAVIK";
 const SNAPSHOT_VERSION: u32 = 1;
 /// The mode tag `'BC'`: the TOC cipher runs in CBC.
 const SNAPSHOT_MODE_CBC: u32 = 0x4342;
+/// The mode tag `'CR'`: the content cipher (type 17) runs in CTR. It opens the optional trailing
+/// content-key section, which an index-only snapshot omits.
+const SNAPSHOT_MODE_CTR: u32 = 0x5243;
 /// The marker each per-archive key blob opens with.
 const BLOB_MAGIC: [u8; 4] = [0x8e, 0x9b, 0x3b, 0x4e];
+/// The marker each content key blob opens with (the `5dce1827` white-box representation, big-endian).
+const CONTENT_BLOB_MAGIC: [u8; 4] = [0x5d, 0xce, 0x18, 0x27];
 /// A key blob: the marker, 60 round-key words, then sixteen 256-byte output maps.
 const BLOB_LEN: usize = 4 + WORDS * 4 + MAPS * MAP_LEN;
 /// Round-key words in a blob; the first four key the input, the rest the thirteen rounds.
@@ -74,6 +79,11 @@ pub struct GtaViKeys {
     input_tables: Box<[[u8; MAP_LEN]; MAPS]>,
     round_tables: Box<[[u32; MAP_LEN]; MAPS]>,
     blobs: BTreeMap<u64, KeyBlob>,
+    /// The content cipher's own shared tables and keys (type 17, CTR). `None`/empty when the snapshot
+    /// carries no content section, which leaves content decryption unsupported.
+    content_input_tables: Option<Box<[[u8; MAP_LEN]; MAPS]>>,
+    content_round_tables: Option<Box<[[u32; MAP_LEN]; MAPS]>>,
+    content_blobs: BTreeMap<u64, KeyBlob>,
     snapshot_file: Option<PathBuf>,
 }
 
@@ -219,14 +229,44 @@ impl GtaViKeys {
             );
         }
 
+        // The content-key section (type 17, CTR) is an optional trailing block, so an index-only
+        // snapshot still opens; it is then without content keys and content decryption is refused.
+        let (content_input_tables, content_round_tables, content_blobs) =
+            parse_content_section(&mut c)?;
+
         Ok(Self {
             exe_sha256,
             bootstrap_iv,
             input_tables,
             round_tables,
             blobs,
+            content_input_tables,
+            content_round_tables,
+            content_blobs,
             snapshot_file: None,
         })
+    }
+
+    /// Decrypt `data` in place under the content cipher (type 17), CTR-keystreamed from `iv`, with the
+    /// content key `key_id` selects. Refused when the snapshot carries no content section, or no
+    /// content key for `key_id`. The plaintext of a content body is a zlib stream.
+    pub fn content_decrypt(&self, key_id: u32, iv: &[u8; 16], data: &mut [u8]) -> Result<()> {
+        let (Some(input), Some(round)) = (&self.content_input_tables, &self.content_round_tables)
+        else {
+            return Err(IoError::RpfEncryptionUnsupported { key_id });
+        };
+        let registry_id = (u64::from(key_id) << 32) | 0x0200_0000;
+        let blob = self
+            .content_blobs
+            .get(&registry_id)
+            .ok_or(IoError::RpfEncryptionUnsupported { key_id })?;
+        super::gta6_content::ctr_xor(data, iv, &blob.words, &blob.output, input, round);
+        Ok(())
+    }
+
+    /// Whether the snapshot carries the content-key section, so [`Self::content_decrypt`] can run.
+    pub fn has_content_keys(&self) -> bool {
+        self.content_input_tables.is_some() && !self.content_blobs.is_empty()
     }
 
     /// Parse the snapshot at `path`, unmasking it first when it is a masked (`ORGTAVIM`) container:
@@ -362,6 +402,75 @@ impl GtaViKeys {
         }
         Ok(())
     }
+}
+
+/// The content cipher's shared tables and per-key blobs from the optional trailing section a cursor
+/// is positioned at the start of. A cursor at the end yields no content keys; a malformed section is
+/// refused, never panicking. The layout mirrors the index section: a `'CR'` mode tag, the two shared
+/// tables (lengths `INPUT_TABLES_LEN`, `ROUND_TABLES_LEN`), then a `{registry_id, blob_len, blob}`
+/// descriptor per content key.
+#[allow(clippy::type_complexity)]
+fn parse_content_section(
+    c: &mut Cursor<'_>,
+) -> Result<(
+    Option<Box<[[u8; MAP_LEN]; MAPS]>>,
+    Option<Box<[[u32; MAP_LEN]; MAPS]>>,
+    BTreeMap<u64, KeyBlob>,
+)> {
+    if c.at >= c.bytes.len() {
+        return Ok((None, None, BTreeMap::new()));
+    }
+    let mode = c.u32()?;
+    if mode != SNAPSHOT_MODE_CTR {
+        return Err(snapshot_bad(format!(
+            "content mode tag {mode:#06X}, not the CTR tag {SNAPSHOT_MODE_CTR:#06X}"
+        )));
+    }
+    let input_len = c.u32()? as usize;
+    if input_len != INPUT_TABLES_LEN {
+        return Err(snapshot_bad(format!(
+            "content input tables are {input_len} bytes, not {INPUT_TABLES_LEN}"
+        )));
+    }
+    let input = read_byte_tables(c.take(INPUT_TABLES_LEN)?);
+
+    let round_len = c.u32()? as usize;
+    if round_len != ROUND_TABLES_LEN {
+        return Err(snapshot_bad(format!(
+            "content round tables are {round_len} bytes, not {ROUND_TABLES_LEN}"
+        )));
+    }
+    let round = read_word_tables(c.take(ROUND_TABLES_LEN)?);
+
+    let count = c.u32()? as usize;
+    let mut blobs = BTreeMap::new();
+    for _ in 0..count {
+        let registry_id = c.u64()?;
+        let blob_len = c.u32()? as usize;
+        if blob_len != BLOB_LEN {
+            return Err(snapshot_bad(format!(
+                "a content key blob is {blob_len} bytes, not {BLOB_LEN}"
+            )));
+        }
+        let blob = c.take(BLOB_LEN)?;
+        if blob[..4] != CONTENT_BLOB_MAGIC {
+            return Err(snapshot_bad(format!(
+                "the content key for {registry_id:#018X} does not open with its marker"
+            )));
+        }
+        let mut words = [0u32; WORDS];
+        for (i, word) in words.iter_mut().enumerate() {
+            *word = LE::read_u32(&blob[4 + i * 4..]);
+        }
+        blobs.insert(
+            registry_id,
+            KeyBlob {
+                words,
+                output: read_byte_tables(&blob[4 + WORDS * 4..]),
+            },
+        );
+    }
+    Ok((Some(input), Some(round), blobs))
 }
 
 fn read_byte_tables(bytes: &[u8]) -> Box<[[u8; MAP_LEN]; MAPS]> {
@@ -590,6 +699,37 @@ fn parse_groups(
     Ok((entries as u32, groups))
 }
 
+impl GtaViKeys {
+    /// The shared white-box tables and the bootstrap IV, which the encrypt side (`gta6_write`) derives
+    /// its stage-by-stage inverses from.
+    pub(super) fn shared_tables(&self) -> (&[[u8; 256]; 16], &[[u32; 256]; 16], &[u8; 16]) {
+        (&self.input_tables, &self.round_tables, &self.bootstrap_iv)
+    }
+
+    /// The per-archive round-key words and output byte maps keyed under `registry_id`.
+    pub(super) fn block_key(&self, registry_id: u64) -> Result<(&[u32; 60], &[[u8; 256]; 16])> {
+        let blob = self.blob(registry_id)?;
+        Ok((&blob.words, &blob.output))
+    }
+
+    /// The registry id the metadata table is keyed under, the same for every archive.
+    pub(super) fn bootstrap_registry_id(&self) -> u64 {
+        BOOTSTRAP_REGISTRY_ID
+    }
+
+    /// Decrypt `data` under `registry_id` from `iv`; the public mirror of the encrypt path, so a test
+    /// can check that encrypt is its exact inverse without any game data.
+    #[cfg(test)]
+    pub(super) fn decrypt_region(
+        &self,
+        registry_id: u64,
+        iv: &[u8; 16],
+        data: &mut [u8],
+    ) -> Result<()> {
+        self.cbc_decrypt(registry_id, iv, data)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,5 +862,77 @@ mod tests {
         assert!(GtaViKeys::parse(&recovered).is_ok());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A content key id and the bytes of a trailing content section carrying one content key, with
+    /// distinct synthetic tables (never game-derived). Appended to [`snapshot`]'s index-only bytes.
+    fn with_content_section(mut bytes: Vec<u8>, content_key_id: u32) -> Vec<u8> {
+        bytes.extend_from_slice(&SNAPSHOT_MODE_CTR.to_le_bytes());
+        bytes.extend_from_slice(&(INPUT_TABLES_LEN as u32).to_le_bytes());
+        bytes.extend((0..INPUT_TABLES_LEN).map(|i| (i * 2 + 1) as u8));
+        bytes.extend_from_slice(&(ROUND_TABLES_LEN as u32).to_le_bytes());
+        bytes.extend((0..ROUND_TABLES_LEN).map(|i| (i * 5) as u8));
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        let registry_id = (u64::from(content_key_id) << 32) | 0x0200_0000;
+        bytes.extend_from_slice(&registry_id.to_le_bytes());
+        bytes.extend_from_slice(&(BLOB_LEN as u32).to_le_bytes());
+        bytes.extend_from_slice(&CONTENT_BLOB_MAGIC);
+        bytes.extend((0..WORDS as u32).flat_map(|w| w.wrapping_mul(7).to_le_bytes()));
+        bytes.extend((0..(MAPS * MAP_LEN)).map(|i| (i * 11) as u8));
+        bytes
+    }
+
+    #[test]
+    fn an_index_only_snapshot_has_no_content_keys_and_refuses_content_decrypt() {
+        let (bytes, _) = snapshot();
+        let keys = GtaViKeys::parse(&bytes).unwrap();
+        assert!(!keys.has_content_keys());
+        assert!(matches!(
+            keys.content_decrypt(0x1000_0029, &[0; 16], &mut [0u8; 32]),
+            Err(IoError::RpfEncryptionUnsupported { .. })
+        ));
+    }
+
+    #[test]
+    fn a_content_section_parses_and_content_decrypt_is_its_own_inverse() {
+        let (base, _) = snapshot();
+        let content_key_id = 0x1000_0029u32;
+        let keys = GtaViKeys::parse(&with_content_section(base, content_key_id))
+            .expect("a snapshot with a content section parses");
+        assert!(keys.has_content_keys());
+
+        let iv = [0x33u8; 16];
+        let clear: Vec<u8> = (0..70u16).map(|x| x as u8).collect();
+        let mut buf = clear.clone();
+        keys.content_decrypt(content_key_id, &iv, &mut buf).unwrap();
+        assert_ne!(buf, clear, "the first pass enciphers");
+        keys.content_decrypt(content_key_id, &iv, &mut buf).unwrap();
+        assert_eq!(buf, clear, "CTR applied twice restores the input");
+
+        // A key id the content section does not carry is refused, not mis-read.
+        assert!(matches!(
+            keys.content_decrypt(0x1000_0099, &iv, &mut [0u8; 16]),
+            Err(IoError::RpfEncryptionUnsupported { .. })
+        ));
+    }
+
+    #[test]
+    fn a_malformed_content_section_is_refused_not_panicked() {
+        let (base, _) = snapshot();
+        // The content section begins exactly where the index-only snapshot ended, so that offset is
+        // the content mode tag.
+        let mode_tag_at = base.len();
+        let good = with_content_section(base, 0x1000_0029);
+        // Truncated inside the content section, and a wrong content mode tag, are both refused.
+        assert!(matches!(
+            GtaViKeys::parse(&good[..good.len() - 1]),
+            Err(IoError::Invalid { .. })
+        ));
+        let mut wrong_mode = good.clone();
+        wrong_mode[mode_tag_at..mode_tag_at + 4].copy_from_slice(&0xDEADu32.to_le_bytes());
+        assert!(matches!(
+            GtaViKeys::parse(&wrong_mode),
+            Err(IoError::Invalid { .. })
+        ));
     }
 }

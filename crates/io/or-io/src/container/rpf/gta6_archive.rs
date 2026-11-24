@@ -37,12 +37,45 @@ pub const GROUP_NAME32: u64 = 0xB707_6B62_45D3_5FB5;
 /// The 24-byte entry row: three u64 holding the start (16-byte units, with a class byte above bit 40),
 /// the stored size (16-byte units, rounded up) and the real (inflated) size.
 pub const GROUP_ENTRY_ROW: u64 = 0x33F7_0DFA_F2C5_0989;
-/// The 20-byte entry row, the second row shape, universal in the nested tables: `[x, 3, size,
-/// start/16, 0xB]`. Only the start at +12 is proven; the size word at +8 is not yet decoded.
+/// The 20-byte entry row, the second row shape, universal in the nested tables. Its five little-endian
+/// u32 words are `[w0 virtual size, w4 flags, w8 stored size in 16-byte pages, w12 start/16, w16
+/// resource type]`; [`Gta6Archive::entry_extras`] decodes the lot into a [`Gta6NestedRow`]. The entry
+/// itself still carries only the proven start, so a 20-byte row's body is read by the detector's own
+/// measure, not by `w0` (a page-bucket descriptor, not a byte size, for a paged resource).
 pub const GROUP_ENTRY_ROW_20: u64 = 0xBA18_0AFB_232D_1B4B;
 /// The content-cipher column: 64-byte records whose head is `{u32 keyId, u16 cipherType, byte
-/// iv[16]}`. An entry with such a row has an enciphered body under a cipher this reader does not open.
+/// iv[16]}`. An entry with such a row has an enciphered body; type 17 is opened by
+/// [`super::gta6_mount::Gta6Mount::read_entry_decrypted`], other cipher types are not.
 pub const GROUP_CIPHER: u64 = 0x2860_30A3_58A7_89FB;
+/// The external content-hash column (`0xb6f5`): 8-byte records, a 64-bit content hash of each entry's
+/// body — one per entry, near-unique, and colliding only on byte-identical bodies. A reader may show
+/// it; an in-place rewrite of a body must recompute it.
+pub const GROUP_CONTENT_HASH: u64 = 0xB6F5_BDB2_C66D_A2E9;
+
+/// The coarse content class of a 24-byte entry row, from its class byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gta6Class {
+    /// `0x00`: a nested RPF9 archive.
+    NestedArchive,
+    /// `0x0B`: a compressed resource (it carries the chunk/compression record).
+    CompressedResource,
+    /// `0xFF`: media, markup or raw bytes (Bink, XML, text, a pipeline cache).
+    Media,
+    /// Any other class byte; `0x0E` is the one observed example.
+    Other(u8),
+}
+
+impl Gta6Class {
+    /// The class a 24-byte row's class byte names.
+    pub fn from_byte(byte: u8) -> Self {
+        match byte {
+            0x00 => Self::NestedArchive,
+            0x0B => Self::CompressedResource,
+            0xFF => Self::Media,
+            other => Self::Other(other),
+        }
+    }
+}
 
 /// A content-cipher record: the key id, cipher type and IV an enciphered entry's body is under. The
 /// body itself is not opened here; this marks the entry and carries what the record states.
@@ -73,8 +106,9 @@ pub struct Gta6Entry {
     pub stored: Option<u64>,
     /// The real (inflated) size in bytes; `None` for a 20-byte row or no row.
     pub real: Option<u64>,
-    /// The class byte of the 24-byte row (`0x00`, `0x0B`, `0xFF`, `0x0E` seen); its meaning is not
-    /// measured. `None` for a 20-byte row or no row.
+    /// The class byte of the 24-byte row: a coarse content class ([`Gta6Class`], via [`Self::kind`]) —
+    /// `0x00` a nested archive, `0x0B` a compressed resource, `0xFF` media/raw, `0x0E` a lone other.
+    /// `None` for a 20-byte row or no row.
     pub class: Option<u8>,
     /// The content-cipher record, when the entry's body is enciphered.
     pub cipher: Option<Gta6Cipher>,
@@ -95,6 +129,46 @@ impl Gta6Entry {
             None => format!("hash_{:016x}", self.name64),
         }
     }
+
+    /// The coarse content class of the entry's 24-byte row, where it has one.
+    pub fn kind(&self) -> Option<Gta6Class> {
+        self.class.map(Gta6Class::from_byte)
+    }
+}
+
+/// The 20-byte nested entry row decoded in full: the engine's per-resource descriptor for a headerless
+/// resource inside a nested table, keyed to an entry through the same index as the entry row. Kept off
+/// [`Gta6Entry`] so the row stays the shape existing consumers build.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Gta6NestedRow {
+    /// `w0`: the resource virtual size — the flat inflated byte size for a simple resource, a packed
+    /// RSC8 virtual-page descriptor (not a plain byte size) for a paged one.
+    pub virtual_size: u32,
+    /// `w4`: page / allocation flags; the low byte tracks the resource family.
+    pub flags: u32,
+    /// `w8`: the stored (on-disk) size in 16-byte pages; [`Self::stored_size`] gives the byte size.
+    pub stored_pages: u32,
+    /// `w16`: the resource type code (drawable `0x02`, dictionary `0x04`, bound `0x06`, cloth `0x58`,
+    /// … — the code, reported without splitting any folded version).
+    pub resource_type: u32,
+}
+
+impl Gta6NestedRow {
+    /// The stored on-disk size in bytes: the 16-byte pages scaled up (one of which is a header).
+    pub fn stored_size(&self) -> u64 {
+        u64::from(self.stored_pages) * 16
+    }
+}
+
+/// An entry's columns that are not carried on [`Gta6Entry`]: the external content hash and, for a
+/// 20-byte nested row, its full descriptor. One per entry, in the archive's own order; read with
+/// [`Gta6Archive::entry_extras`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Gta6EntryExtra {
+    /// The `0xb6f5` external content hash of the entry's body, where the archive carries that column.
+    pub content_hash: Option<u64>,
+    /// The decoded 20-byte nested row, where the entry has one (`None` for a 24-byte row or no row).
+    pub nested: Option<Gta6NestedRow>,
 }
 
 /// An opened RPF9 archive's listing: its decrypted table of contents and the entries read from it.
@@ -146,10 +220,18 @@ impl Gta6Archive {
                         | (GROUP_ENTRY_ROW, 24)
                         | (GROUP_ENTRY_ROW_20, 20)
                         | (GROUP_CIPHER, 64)
+                        | (GROUP_CONTENT_HASH, 8)
                 )
             })
             .map(|g| (g.name_hash, g.width))
             .collect()
+    }
+
+    /// The per-entry extra columns — the content hash and the 20-byte nested descriptor — one per
+    /// entry in the archive's own order, joined through the same entry-major index as the entries. The
+    /// data is kept off [`Gta6Entry`] so the row stays the shape the CLI and app already build.
+    pub fn entry_extras(&self) -> Vec<Gta6EntryExtra> {
+        read_extras(&self.toc)
     }
 }
 
@@ -200,27 +282,26 @@ struct KnownColumns {
     row24: Option<Column>,
     row20: Option<Column>,
     cipher: Option<Column>,
+    content_hash: Option<Column>,
 }
 
-/// Build one row per entry by joining the known columns through the entry-major index arrays. An
-/// archive whose index layout is unreadable (an entry count of zero, an index width other than 1 or
-/// 2) lists nothing rather than guessing.
-fn read_entries(toc: &Rpf9Toc) -> Vec<Gta6Entry> {
+/// Locate every known column for the archive's entry-major index arrays, with the entry count. An
+/// archive whose index layout is unreadable (an entry count of zero, an index width other than 1 or 2)
+/// yields `None` rather than a guess.
+fn locate_columns(toc: &Rpf9Toc) -> Option<(KnownColumns, usize)> {
     let bytes = &toc.bytes;
     // The header fields the index arrays are placed by; all lie in the first 0x40 bytes the decrypt
     // guaranteed present.
     let read_u16 = |at: usize| bytes.get(at..at + 2).map(LE::read_u16);
     let read_u32 = |at: usize| bytes.get(at..at + 4).map(LE::read_u32);
-    let (Some(split), Some(n), Some(m), Some(group_count), Some(external_count), Some(entries)) = (
-        read_u32(0x08),
-        read_u16(0x1A),
-        read_u32(0x1C),
-        read_u16(0x20),
-        read_u16(0x22),
-        read_u32(0x24),
-    ) else {
-        return Vec::new();
-    };
+    let (split, n, m, group_count, external_count, entries) = (
+        read_u32(0x08)?,
+        read_u16(0x1A)?,
+        read_u32(0x1C)?,
+        read_u16(0x20)?,
+        read_u16(0x22)?,
+        read_u32(0x24)?,
+    );
     let index_width = bytes.get(0x2C).copied().unwrap_or(0) as usize;
     let (entries, group_count, external_count) = (
         entries as usize,
@@ -228,7 +309,7 @@ fn read_entries(toc: &Rpf9Toc) -> Vec<Gta6Entry> {
         external_count as usize,
     );
     if entries == 0 || !(1..=2).contains(&index_width) || external_count > group_count {
-        return Vec::new();
+        return None;
     }
 
     let metadata_start = 0x40 + round16(8 * n as usize);
@@ -263,6 +344,7 @@ fn read_entries(toc: &Rpf9Toc) -> Vec<Gta6Entry> {
             (GROUP_ENTRY_ROW, 24) => columns.row24 = Some(column),
             (GROUP_ENTRY_ROW_20, 20) => columns.row20 = Some(column),
             (GROUP_CIPHER, 64) => columns.cipher = Some(column),
+            (GROUP_CONTENT_HASH, 8) => columns.content_hash = Some(column),
             _ => {}
         }
         if group.external {
@@ -272,9 +354,51 @@ fn read_entries(toc: &Rpf9Toc) -> Vec<Gta6Entry> {
         }
     }
 
+    Some((columns, entries))
+}
+
+/// Build one row per entry by joining the known columns through the entry-major index arrays. An
+/// archive whose index layout is unreadable lists nothing rather than guessing.
+fn read_entries(toc: &Rpf9Toc) -> Vec<Gta6Entry> {
+    let Some((columns, entries)) = locate_columns(toc) else {
+        return Vec::new();
+    };
     (0..entries)
-        .map(|e| join_entry(bytes, &columns, e))
+        .map(|e| join_entry(&toc.bytes, &columns, e))
         .collect()
+}
+
+/// Build the per-entry extra columns (the content hash and the 20-byte nested descriptor), joined
+/// through the same index arrays as [`read_entries`].
+fn read_extras(toc: &Rpf9Toc) -> Vec<Gta6EntryExtra> {
+    let Some((columns, entries)) = locate_columns(toc) else {
+        return Vec::new();
+    };
+    let bytes = &toc.bytes;
+    (0..entries)
+        .map(|e| Gta6EntryExtra {
+            content_hash: columns
+                .content_hash
+                .as_ref()
+                .and_then(|c| c.row(bytes, e))
+                .map(LE::read_u64),
+            nested: columns
+                .row20
+                .as_ref()
+                .and_then(|c| c.row(bytes, e))
+                .map(read_nested_row),
+        })
+        .collect()
+}
+
+/// Decode a 20-byte nested entry row's five little-endian u32 words into its descriptor.
+fn read_nested_row(row: &[u8]) -> Gta6NestedRow {
+    Gta6NestedRow {
+        virtual_size: LE::read_u32(&row[0..]),
+        flags: LE::read_u32(&row[4..]),
+        stored_pages: LE::read_u32(&row[8..]),
+        resource_type: LE::read_u32(&row[16..]),
+    }
 }
 
 /// Join entry `e`'s columns into one row.

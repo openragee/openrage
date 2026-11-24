@@ -18,6 +18,10 @@ use super::rpf9_scan::read_rpf9_body;
 use super::rpf9_toc::GtaViKeys;
 use crate::error::{IoError, Result};
 
+/// The content cipher type (type 17): an entry whose cipher record states it has a CTR-enciphered body
+/// whose plaintext is zlib. Other cipher types are not opened here.
+const CONTENT_CIPHER_TYPE: u16 = 17;
+
 /// `[offset, offset + len)` of `src`.
 fn read_at<R: Read + Seek>(src: &mut R, offset: u64, len: usize) -> Result<Vec<u8>> {
     src.seek(SeekFrom::Start(offset)).map_err(mount_io)?;
@@ -125,6 +129,88 @@ impl Gta6Mount {
                 why: source.to_string(),
             })
     }
+
+    /// Read `entry`'s body, decrypting it first when it is content-ciphered (type 17). A clear entry is
+    /// read by [`Self::read_entry`]; a ciphered entry's stored bytes are read at `base + start`,
+    /// CTR-decrypted with `keys`, and the resulting zlib stream inflated to exactly the row's real size.
+    ///
+    /// Only the fully-enciphered class is read: the whole stored body is one zlib stream from the IV,
+    /// inflating to the row's stated real size. A body whose encrypted extent is a prefix or a paged
+    /// RSC8 window leaves the continuous-CTR pass with garbage past the enciphered extent, so its
+    /// plaintext does not inflate to the real size and the read is refused rather than returned wrong;
+    /// decoding that framing is follow-up work with the entry reader, where the page table is parsed.
+    pub fn read_entry_decrypted<R: Read + Seek>(
+        &self,
+        mut src: R,
+        entry: &Gta6Entry,
+        keys: &GtaViKeys,
+    ) -> Result<Vec<u8>> {
+        let Some(cipher) = entry.cipher else {
+            return self.read_entry(src, entry);
+        };
+        if cipher.cipher_type != CONTENT_CIPHER_TYPE {
+            return Err(IoError::RpfEncryptionUnsupported {
+                key_id: cipher.key_id,
+            });
+        }
+        let start = self
+            .absolute_start(entry)
+            .ok_or_else(|| no_entry_row(entry))?;
+        let body_bad = |why: String| IoError::Invalid {
+            what: "a content-ciphered RPF9 entry".into(),
+            why,
+        };
+        let stored = entry.stored.ok_or_else(|| {
+            body_bad(format!(
+                "entry {} has no stored size, so its enciphered extent is unknown",
+                entry.index
+            ))
+        })?;
+        // The stated inflated size bounds the output: the fully-enciphered class states one, and
+        // without it a malformed stream could not be told from a short one.
+        let real = entry.real.ok_or_else(|| {
+            body_bad(format!(
+                "entry {} states no inflated size, so its body cannot be bounded",
+                entry.index
+            ))
+        })?;
+        // Check the stored extent against the source before allocating, so a malformed row cannot
+        // force a huge allocation that `read_at` would attempt.
+        let end = src.seek(SeekFrom::End(0)).map_err(mount_io)?;
+        if start.checked_add(stored).is_none_or(|s| s > end) {
+            return Err(body_bad(format!(
+                "entry {}'s stored extent runs past the source",
+                entry.index
+            )));
+        }
+        let mut body = read_at(&mut src, start, stored as usize)?;
+        keys.content_decrypt(cipher.key_id, &cipher.iv, &mut body)?;
+        let out = inflate_zlib(&body, real).map_err(|source| {
+            body_bad(format!(
+                "its plaintext is not a whole zlib stream: {source}"
+            ))
+        })?;
+        if out.len() as u64 != real {
+            return Err(body_bad(format!(
+                "its plaintext inflated to {} bytes, not the {real} the row states (the body is \
+                 likely only partly enciphered, which this reader does not decode)",
+                out.len()
+            )));
+        }
+        Ok(out)
+    }
+}
+
+/// Inflate the zlib stream at the start of `bytes`, capped one byte past `real`: a correct body
+/// inflates to exactly `real`, the extra byte lets the caller tell an over-long (bomb) stream from an
+/// exact one, and trailing padding after the stream's end is ignored.
+fn inflate_zlib(bytes: &[u8], real: u64) -> std::io::Result<Vec<u8>> {
+    let cap = real.saturating_add(1);
+    let mut out = Vec::new();
+    flate2::read::ZlibDecoder::new(bytes)
+        .take(cap)
+        .read_to_end(&mut out)?;
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -211,5 +297,188 @@ mod tests {
             entry_count: 0,
             groups: vec![],
         }
+    }
+
+    /// A parseable `ORGTAVIK` snapshot with no index keys and one content key, so [`GtaViKeys`] can be
+    /// built with content material from synthetic (not game-derived) tables. The layout mirrors
+    /// [`super::super::rpf9_toc`]'s snapshot format exactly.
+    fn content_snapshot(key_id: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"ORGTAVIK");
+        out.extend_from_slice(&1u32.to_le_bytes()); // version
+        out.extend_from_slice(&0x4342u32.to_le_bytes()); // CBC mode tag
+        out.extend_from_slice(&[0u8; 32]); // exe sha256
+        out.extend_from_slice(&[0u8; 16]); // bootstrap iv
+        out.extend_from_slice(&4096u32.to_le_bytes());
+        out.extend((0..4096).map(|i| i as u8)); // index input tables (unused here)
+        out.extend_from_slice(&16384u32.to_le_bytes());
+        out.extend((0..16384).map(|i| i as u8)); // index round tables (unused here)
+        out.extend_from_slice(&0u32.to_le_bytes()); // zero index key blobs
+
+        // The trailing content section: CTR mode, two shared tables, one content key blob.
+        out.extend_from_slice(&0x5243u32.to_le_bytes()); // CTR mode tag
+        out.extend_from_slice(&4096u32.to_le_bytes());
+        out.extend((0..4096).map(|i| (i * 3 + 1) as u8)); // content input tables
+        out.extend_from_slice(&16384u32.to_le_bytes());
+        out.extend((0..16384).map(|i| (i * 5 + 7) as u8)); // content round tables
+        out.extend_from_slice(&1u32.to_le_bytes()); // one content key
+        let registry_id = (u64::from(key_id) << 32) | 0x0200_0000;
+        out.extend_from_slice(&registry_id.to_le_bytes());
+        out.extend_from_slice(&4340u32.to_le_bytes());
+        out.extend_from_slice(&[0x5d, 0xce, 0x18, 0x27]); // content blob magic
+        out.extend((0..60u32).flat_map(|w| w.wrapping_mul(0x12345).to_le_bytes())); // 60 words
+        out.extend((0..4096).map(|i| (i * 7 + 3) as u8)); // 16 output maps
+        out
+    }
+
+    /// A content-ciphered entry reads back to its plaintext: CTR is symmetric, so enciphering with
+    /// `content_decrypt` and reading with `read_entry_decrypted` must round-trip through the zlib body.
+    #[test]
+    fn a_content_ciphered_entry_decrypts_and_inflates() {
+        use flate2::write::ZlibEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let key_id = 0x1000_0029u32;
+        let iv = [0x11u8; 16];
+        let keys =
+            GtaViKeys::parse(&content_snapshot(key_id)).expect("snapshot with content parses");
+        assert!(keys.has_content_keys());
+
+        // A plaintext body, its zlib stream, then enciphered (CTR being its own inverse) to the stored
+        // bytes the archive would hold.
+        let plain: Vec<u8> = (0..5000u32).map(|x| (x ^ (x >> 3)) as u8).collect();
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&plain).unwrap();
+        let zlib = encoder.finish().unwrap();
+        let mut stored = zlib.clone();
+        stored.resize(stored.len().next_multiple_of(16), 0); // pad as the archive stores it
+        keys.content_decrypt(key_id, &iv, &mut stored)
+            .expect("encipher via the symmetric CTR");
+
+        let start = 0x40u64;
+        let mut file = vec![0u8; start as usize];
+        file.extend_from_slice(&stored);
+        let src = Cursor::new(file);
+
+        let entry = Gta6Entry {
+            index: 3,
+            name64: 0,
+            name32: None,
+            name: None,
+            start: Some(start),
+            stored: Some(stored.len() as u64),
+            real: Some(plain.len() as u64),
+            class: Some(0),
+            cipher: Some(super::super::gta6_archive::Gta6Cipher {
+                key_id,
+                cipher_type: 17,
+                iv,
+            }),
+        };
+        let mount = Gta6Mount {
+            base: 0,
+            archive: Gta6Archive {
+                toc: minimal_toc(),
+                entries: vec![],
+            },
+        };
+        let got = mount
+            .read_entry_decrypted(src, &entry, &keys)
+            .expect("a content entry decrypts and inflates");
+        assert_eq!(got, plain, "the body round-trips to its plaintext");
+    }
+
+    /// A content entry of an unsupported cipher type, and one with no content keys, are refused rather
+    /// than mis-read.
+    #[test]
+    fn an_unsupported_content_entry_is_refused() {
+        let keys = GtaViKeys::parse(&content_snapshot(0x1000_0029)).unwrap();
+        let mount = Gta6Mount {
+            base: 0,
+            archive: Gta6Archive {
+                toc: minimal_toc(),
+                entries: vec![],
+            },
+        };
+        let entry = Gta6Entry {
+            index: 0,
+            name64: 0,
+            name32: None,
+            name: None,
+            start: Some(0x40),
+            stored: Some(0x40),
+            real: Some(0x40),
+            class: Some(0),
+            cipher: Some(super::super::gta6_archive::Gta6Cipher {
+                key_id: 0x1000_0029,
+                cipher_type: 99, // not type 17
+                iv: [0; 16],
+            }),
+        };
+        let src = Cursor::new(vec![0u8; 0x100]);
+        assert!(matches!(
+            mount.read_entry_decrypted(src, &entry, &keys),
+            Err(IoError::RpfEncryptionUnsupported { .. })
+        ));
+    }
+
+    /// A body whose enciphered extent is only a prefix (the rest stored clear) must be refused, not
+    /// returned partly garbage: the continuous-CTR pass turns the clear tail into noise, so the
+    /// plaintext does not inflate to the stated real size.
+    #[test]
+    fn a_partly_enciphered_body_is_refused() {
+        use flate2::write::ZlibEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let key_id = 0x1000_0029u32;
+        let iv = [0x11u8; 16];
+        let keys = GtaViKeys::parse(&content_snapshot(key_id)).unwrap();
+
+        let plain: Vec<u8> = (0..5000u32).map(|x| (x ^ (x >> 3)) as u8).collect();
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&plain).unwrap();
+        let zlib = encoder.finish().unwrap();
+        assert!(zlib.len() > 16, "the body must span more than one block");
+
+        // The on-disk body: only the first 16-byte block is enciphered, the rest is stored clear.
+        let mut stored = zlib.clone();
+        stored.resize(stored.len().next_multiple_of(16), 0);
+        let mut head: Vec<u8> = stored[..16].to_vec();
+        keys.content_decrypt(key_id, &iv, &mut head).unwrap();
+        stored[..16].copy_from_slice(&head);
+
+        let start = 0x40u64;
+        let mut file = vec![0u8; start as usize];
+        file.extend_from_slice(&stored);
+        let src = Cursor::new(file);
+
+        let entry = Gta6Entry {
+            index: 4,
+            name64: 0,
+            name32: None,
+            name: None,
+            start: Some(start),
+            stored: Some(stored.len() as u64),
+            real: Some(plain.len() as u64),
+            class: Some(0),
+            cipher: Some(super::super::gta6_archive::Gta6Cipher {
+                key_id,
+                cipher_type: 17,
+                iv,
+            }),
+        };
+        let mount = Gta6Mount {
+            base: 0,
+            archive: Gta6Archive {
+                toc: minimal_toc(),
+                entries: vec![],
+            },
+        };
+        assert!(
+            mount.read_entry_decrypted(src, &entry, &keys).is_err(),
+            "a prefix-enciphered body must not read back as a whole body"
+        );
     }
 }

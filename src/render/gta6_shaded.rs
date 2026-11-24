@@ -44,6 +44,47 @@ pub(crate) fn shaded_surfaces(state: &AppState) -> Option<Vec<(Surface, Material
     Some(out)
 }
 
+/// The box the geometries of the active GTA VI drawable's drawn level fill, from its least
+/// corner to its greatest; `None` where the document shows none, or none of them reads.
+pub(crate) fn bounds(state: &AppState) -> Option<(glam::Vec3, glam::Vec3)> {
+    let doc = state.active_document()?;
+    let DocPayload::Gta6Drawable(resource) = &doc.payload else {
+        return None;
+    };
+    let drawable = drawable_of(resource, state.selection.selected(doc.id))?;
+    let level = drawn_level(drawable, state.preview_scene.lod);
+    // Measured once for a drawable and a level: a frame asks again with the same.
+    type Measured = ((usize, usize), Option<(glam::Vec3, glam::Vec3)>);
+    static KEPT: std::sync::Mutex<Option<Measured>> = std::sync::Mutex::new(None);
+    let key = (
+        std::ptr::from_ref(drawable) as usize,
+        state.preview_scene.lod,
+    );
+    let mut kept = KEPT.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some((_, held)) = kept.as_ref().filter(|(of, _)| *of == key) {
+        return *held;
+    }
+    let geometries = level.flat_map(|model| model.geometries.iter().flatten());
+    let read = geometries.filter_map(|geometry| geometry.positions.as_ref().ok());
+    let measured = bounds_of(read.flatten());
+    *kept = Some((key, measured));
+    measured
+}
+
+/// The box `positions` fill; `None` where there is none.
+fn bounds_of<'a>(
+    positions: impl Iterator<Item = &'a [f32; 3]>,
+) -> Option<(glam::Vec3, glam::Vec3)> {
+    positions.fold(None, |corners, position| {
+        let at = glam::Vec3::from(*position);
+        Some(
+            corners.map_or((at, at), |(least, most): (glam::Vec3, glam::Vec3)| {
+                (least.min(at), most.max(at))
+            }),
+        )
+    })
+}
+
 /// The models of level `lod`, or of the first level where that one has none, as Solid draws them.
 fn drawn_level(drawable: &Drawable, lod: usize) -> impl Iterator<Item = &Model> {
     let held = |level: usize| {
@@ -376,6 +417,11 @@ mod tests {
         };
         let surface = surface(&geometry).unwrap();
         assert_eq!(surface.positions, positions);
+        assert_eq!(
+            bounds_of(positions.iter()),
+            Some((glam::Vec3::ZERO, glam::Vec3::new(1.0, 2.0, 0.5)))
+        );
+        assert_eq!(bounds_of([].iter()), None);
         assert_eq!(surface.indices, vec![0, 1, 2, 2, 1, 0]);
         assert_eq!(surface.normals.len(), 3);
         assert!(surface.tangents.is_empty());

@@ -359,6 +359,7 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
         ground,
         exposure: 1.0,
         tone: Some(tone_of(&frame, &data.visual_settings, air.disc_tangent())),
+        scene: Default::default(),
     })
 }
 

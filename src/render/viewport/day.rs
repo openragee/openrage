@@ -133,8 +133,9 @@ impl RenderBridge {
         let tables = crate::state::gta6_shaders::timecycle::timecycle(state);
         let by_cycles =
             (tables.as_ref()).and_then(|tables| sky_by_cycles(tables, hour, weather, exposure));
-        self.renderer
-            .set_gta6_sky(by_cycles.unwrap_or_else(|| gta6_sky(hour, weather, exposure)));
+        let mut sky = by_cycles.unwrap_or_else(|| gta6_sky(hour, weather, exposure));
+        sky.scene.bounds = crate::render::gta6_shaded::bounds(state);
+        self.renderer.set_gta6_sky(sky);
         let key = (
             Arc::as_ptr(&data) as usize,
             hour.to_bits(),

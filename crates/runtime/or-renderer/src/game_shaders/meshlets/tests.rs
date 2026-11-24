@@ -295,14 +295,15 @@ fn a_stage_s_bindings_are_read_with_their_group_and_a_light_of_no_length_points_
         .all(|(r, count)| r.group == 0 && count.is_none()));
     // A way of no length is the way up.
     let lit = |towards: Vec3| {
-        light_bytes(&super::Lighting {
+        let lighting = super::Lighting {
             view_proj: Mat4::IDENTITY,
             sky: Sky {
                 towards,
                 ..overhead()
             },
             camera: Vec3::ONE,
-        })
+        };
+        light_bytes(&lighting, false)
     };
     assert_eq!(lit(Vec3::ZERO), lit(Vec3::Z));
 }
@@ -316,6 +317,7 @@ fn overhead() -> Sky {
         ground: Vec3::ZERO,
         exposure: 1.0,
         tone: None,
+        scene: Scene::default(),
     }
 }
 

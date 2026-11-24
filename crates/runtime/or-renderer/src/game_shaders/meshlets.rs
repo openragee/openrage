@@ -878,40 +878,6 @@ pub struct Sky {
     pub scene: Scene,
 }
 
-/// What stands round the model a frame lights.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Scene {
-    /// The box the model fills, from its least corner to its greatest: the sun's shadow is
-    /// fitted to it.
-    pub bounds: Option<(Vec3, Vec3)>,
-    pub clouds: Clouds,
-}
-
-/// What a cycle states of the clouds over a model and of the directional light under them.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Clouds {
-    /// The share of the directional light the clouds let through, from nought to one.
-    pub open: f32,
-    /// How far the light's roughness is taken towards one in a cloud's shadow.
-    pub roughness_mod: f32,
-    /// How far a light the clouds hide is taken towards what the surroundings give along its
-    /// way, and the strength of that.
-    pub haze_blend: f32,
-    pub haze: f32,
-}
-
-impl Default for Clouds {
-    /// No cloud.
-    fn default() -> Self {
-        Self {
-            open: 1.0,
-            roughness_mod: 0.0,
-            haze_blend: 0.0,
-            haze: 1.0,
-        }
-    }
-}
-
 fn smoothstep(from: f32, to: f32, x: f32) -> f32 {
     let t = ((x - from) / (to - from)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -965,7 +931,7 @@ impl Default for Sky {
 }
 
 /// The bytes of what the resolve reads of a frame's light.
-const LIGHT_BYTES: usize = 384;
+const LIGHT_BYTES: usize = 480;
 /// The format of the texel the surfaces are metered into: the stops the frame is exposed by.
 const METERED: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -994,13 +960,8 @@ fn light_bytes(lighting: &Lighting, casts: bool) -> [u8; LIGHT_BYTES] {
     let to_tile = sun_shadow::cast_of(sky).unwrap_or(Mat4::IDENTITY);
     words[72..88].copy_from_slice(&to_tile.to_cols_array());
     words[88..92].copy_from_slice(&sun_shadow::words(sky, casts));
-    let clouds = &sky.scene.clouds;
-    words[92..96].copy_from_slice(&[
-        clouds.open.clamp(0.0, 1.0),
-        clouds.roughness_mod,
-        clouds.haze_blend,
-        clouds.haze,
-    ]);
+    words[92..104].copy_from_slice(&sky.scene.words());
+    words[104..120].copy_from_slice(&lighting.view_proj.to_cols_array());
     bytemuck::cast(words)
 }
 
@@ -1377,8 +1338,10 @@ impl MeshletScene {
     }
 }
 
+mod scene;
 mod sun_shadow;
 mod tone;
+pub use scene::{Clouds, Scene};
 pub use sun_shadow::to_tile;
 pub use tone::{metered, Curve, Filmic, Tone};
 

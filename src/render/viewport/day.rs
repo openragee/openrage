@@ -135,6 +135,8 @@ impl RenderBridge {
             (tables.as_ref()).and_then(|tables| sky_by_cycles(tables, hour, weather, exposure));
         let mut sky = by_cycles.unwrap_or_else(|| gta6_sky(hour, weather, exposure));
         sky.scene.bounds = crate::render::gta6_shaded::bounds(state);
+        sky.scene.laid = (state.drivers.world_background.ground)
+            .then_some(glam::Vec3::splat(super::gta6_day::GROUND));
         self.renderer.set_gta6_sky(sky);
         let key = (
             Arc::as_ptr(&data) as usize,

@@ -37,9 +37,11 @@ const LIGHT_FLOOR: f32 = 0.15;
 /// What a cycle states for the cross-fade of sun and moon to leave it to their heights.
 const CROSSFADE_BY_HEIGHT: f32 = -10.0;
 
-/// What the ground under a model sends back of the light that falls on it.
-// An estimate: the game's ground is its world, lit and read through its probes.
-const GROUND: f32 = 0.3;
+/// What the ground under a model sends back of the light that falls on it, of every colour
+/// alike: the ground that lights the model from below, and the one laid under it.
+// A stand-in: the game's ground is its world's own surfaces, and nothing of an install states
+// one for a model alone.
+pub(super) const GROUND: f32 = 0.3;
 /// The tuning value an install states the scale of its exposure curve by, and the stems of that
 /// curve's and of the second curve's values.
 const EXPOSURE_CURVE: [&str; 3] = [

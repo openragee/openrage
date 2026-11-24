@@ -36,6 +36,12 @@ struct Light {
     // its roughness is taken towards one under them, how far a light they hide is taken towards
     // what the surroundings give along its way, and that light's strength.
     clouds: vec4<f32>,
+    // The ground laid under the model: what it sends back of each colour and one where one is
+    // laid, then the middle of its square, how high it lies and half its side.
+    laid: vec4<f32>,
+    plane: vec4<f32>,
+    // From the world to the clip space.
+    project: mat4x4<f32>,
 }
 @group(0) @binding(0) var colour: texture_2d<f32>;
 @group(0) @binding(1) var normal: texture_2d<f32>;
@@ -253,11 +259,53 @@ fn lit_at(texel: vec2<i32>, clip: vec2<f32>, far: f32) -> vec3<f32> {
     return shade(surface_at(texel, clip, far), vec2<f32>(texel));
 }
 
+// A place the ray of a pixel meets the ground at, and how deep it is on the frame.
+struct Met {
+    surface: Surface,
+    far: f32,
+    met: bool,
+}
+
+// Where the ray of the pixel at `clip` meets the ground under the model, seen from above: in
+// its square, or anywhere on its plane where it is taken as `endless`. A matte ground that
+// reflects what a surface that is no metal does.
+fn ground_at(clip: vec2<f32>, endless: bool) -> Met {
+    var none: Met;
+    let near = light.unproject * vec4<f32>(clip, 1.0, 1.0);
+    let further = light.unproject * vec4<f32>(clip, 0.5, 1.0);
+    let start = near.xyz / near.w;
+    let way = normalize(further.xyz / further.w - start);
+    if way.z >= -1e-5 || start.z <= light.plane.z {
+        return none;
+    }
+    let at = start + way * ((light.plane.z - start.z) / way.z);
+    if !endless && any(abs(at.xy - light.plane.xy) > vec2<f32>(light.plane.w)) {
+        return none;
+    }
+    let seen = light.project * vec4<f32>(at, 1.0);
+    let surface = Surface(at, vec3<f32>(0.0, 0.0, 1.0), light.laid.rgb, vec3<f32>(0.04), 1.0);
+    return Met(surface, clamp(seen.z / seen.w, 0.0, 1.0), seen.w > 0.0);
+}
+
+// What the frame shows of the light `seen`: exposed, toned and encoded.
+fn shown_of(seen: vec3<f32>) -> vec3<f32> {
+    if light.tone.x > 0.0 {
+        let exposure = exp2(textureLoad(metered_stops, vec2<i32>(0), 0).x) * light.sun.w;
+        return filmic(seen * exposure, exposure);
+    }
+    return encoded(toned(seen * light.sun.w));
+}
+
 @fragment fn lit(corner: Corner) -> Lit {
     let texel = vec2<i32>(corner.at.xy);
     let far = textureLoad(depth, texel, 0);
     if far <= 0.0 {
-        discard;
+        // No surface of the model: the ground under it, where one is laid and the ray meets it.
+        let ground = ground_at(corner.clip, false);
+        if light.laid.w <= 0.0 || !ground.met || u32(light.camera.w) != 0u {
+            discard;
+        }
+        return Lit(vec4<f32>(shown_of(shade(ground.surface, vec2<f32>(texel))), 1.0), ground.far);
     }
     let shown = u32(light.camera.w);
     if shown != 0u {
@@ -271,12 +319,7 @@ fn lit_at(texel: vec2<i32>, clip: vec2<f32>, far: f32) -> vec3<f32> {
         if shown == 5u { return Lit(vec4<f32>(textureLoad(ambient, texel, 0).rgb, 1.0), far); }
         return Lit(vec4<f32>(albedo.a, packed_normal.a, terms.a, 1.0), far);
     }
-    let seen = lit_at(texel, corner.clip, far);
-    if light.tone.x > 0.0 {
-        let exposure = exp2(textureLoad(metered_stops, vec2<i32>(0), 0).x) * light.sun.w;
-        return Lit(vec4<f32>(filmic(seen * exposure, exposure), 1.0), far);
-    }
-    return Lit(vec4<f32>(encoded(toned(seen * light.sun.w)), 1.0), far);
+    return Lit(vec4<f32>(shown_of(lit_at(texel, corner.clip, far)), 1.0), far);
 }
 
 // A filmic curve fitted to the reference one: light past one rolls off and does not clip.

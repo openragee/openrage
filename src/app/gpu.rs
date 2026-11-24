@@ -314,9 +314,11 @@ impl App {
             return Ok(());
         }
 
+        // `WGPU_BACKEND` is honoured, as the start-up notice of FXC tells a person to set it.
+        let backends = or_renderer::instance::backends_from_env().map_err(anyhow::Error::msg)?;
         let instance =
             wgpu::Instance::new(or_renderer::instance::with_dxc(wgpu::InstanceDescriptor {
-                backends: or_renderer::instance::BACKENDS,
+                backends,
                 flags: wgpu::InstanceFlags::default(),
                 memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
                 backend_options: wgpu::BackendOptions::default(),
@@ -336,6 +338,9 @@ impl App {
         })?;
 
         tracing::info!("Using GPU: {}", adapter.get_info().name);
+        if or_renderer::instance::fell_back_to_fxc(adapter.get_info().backend) {
+            self.app_state.toasts.warning(tr!("Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan."));
+        }
 
         let adapter_features = adapter.features();
         let mut required_features = wgpu::Features::empty();

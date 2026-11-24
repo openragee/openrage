@@ -135,6 +135,19 @@ fn flags_for(flags: wgpu::InstanceFlags, software: bool) -> wgpu::InstanceFlags 
     }
 }
 
+/// Whether a device of `backend` compiles with FXC for want of a compiler: none was `named` by
+/// `WGPU_DX12_COMPILER` and no `dxcompiler.dll` was `found`.
+fn lacks_dxc(backend: wgpu::Backend, named: bool, found: bool) -> bool {
+    backend == wgpu::Backend::Dx12 && !named && !found
+}
+
+/// Whether a device of `backend` compiles with FXC because [`find_dxc`] found no DXC, which the
+/// app tells a person when it starts: [`dx12_compiler`] only logs it.
+pub fn fell_back_to_fxc(backend: wgpu::Backend) -> bool {
+    let named = wgpu::Dx12Compiler::from_env().is_some();
+    lacks_dxc(backend, named, find_dxc().is_some())
+}
+
 /// `descriptor` with [`dx12_compiler`] as Direct3D 12's compiler, and optimised shaders where
 /// [`SOFTWARE_ADAPTER`] is set.
 pub fn with_dxc(mut descriptor: wgpu::InstanceDescriptor) -> wgpu::InstanceDescriptor {
@@ -212,6 +225,16 @@ mod tests {
         assert!(software_or_not_asked(true, Cpu, "a").is_ok());
         assert!(software_or_not_asked(true, DiscreteGpu, "a").is_err());
         assert!(software_or_not_asked(false, DiscreteGpu, "a").is_ok());
+    }
+
+    #[test]
+    fn fxc_is_a_fallback_only_under_direct3d_12_with_no_compiler_named_or_found() {
+        use wgpu::Backend::{Dx12, Vulkan};
+        assert!(lacks_dxc(Dx12, false, false));
+        assert!(!lacks_dxc(Vulkan, false, false));
+        // FXC that was asked for is no fallback, and a compiler found is used.
+        assert!(!lacks_dxc(Dx12, true, false));
+        assert!(!lacks_dxc(Dx12, false, true));
     }
 
     #[test]

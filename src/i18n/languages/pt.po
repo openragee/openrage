@@ -16896,3 +16896,6 @@ msgstr[1] "as luzes de {count} mapas"
 
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "Os nomes das strings deste documento precisam do snapshot de chaves do GTA VI"
+
+msgid "Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan."
+msgstr "O Direct3D 12 está compilando os shaders com FXC, porque nenhum dxcompiler.dll foi encontrado ao lado do OpenRage, no PATH ou em um Windows SDK. O FXC recusa alguns programas de shader do GTA VI e leva minutos com outros, então os modelos que precisam deles são desenhados em Material. Coloque dxcompiler.dll e dxil.dll ao lado de openrage.exe, ou inicie o OpenRage com WGPU_BACKEND=vulkan."

@@ -481,8 +481,10 @@ pub fn view_passes<'f>(
 }
 
 /// The pass of `passes` that draws a geometry whose vertex data is `vertex_data`: the one whose
-/// mesh program reads the most streams among those reading none the data's table of streams
-/// leaves empty.
+/// mesh program reads the fewest streams the data's table of streams leaves empty, and among
+/// those the most streams.
+// A stream every pass of an effect reads and a geometry lacks is read as the game's own program
+// reads it: through the nought its entry of the table is.
 pub fn drawing_pass<'p, P: std::borrow::Borrow<Gta6ShadingPass>>(
     passes: &'p [P],
     vertex_data: &[u8],
@@ -492,9 +494,11 @@ pub fn drawing_pass<'p, P: std::borrow::Borrow<Gta6ShadingPass>>(
         (vertex_data.get(at..at + 4)).is_some_and(|word| word != [0; 4])
     };
     // The first of those that read as many: `max_by_key` keeps the last.
-    (passes.iter().rev())
-        .filter(|pass| pass.borrow().mesh.streams.iter().all(held))
-        .max_by_key(|pass| pass.borrow().mesh.streams.len())
+    (passes.iter().rev()).max_by_key(|pass| {
+        let streams = &pass.borrow().mesh.streams;
+        let missing = streams.iter().filter(|slot| !held(slot)).count();
+        (std::cmp::Reverse(missing), streams.len())
+    })
 }
 
 /// The workers a census runs side by side.

@@ -623,9 +623,15 @@ mod tests {
         );
         assert_eq!(
             chosen(&[0, 1, 2]),
-            None,
-            "a stream every pass reads is missing"
+            Some(0),
+            "a stream every pass reads is missing: the pass that misses the fewest"
         );
+        assert_eq!(
+            chosen(&[0, 1, 2, 6, 8]),
+            Some(2),
+            "each kind misses one stream: the one that reads more"
+        );
+        assert!(pass_of(&passes[..0], &geometry(&[0])).is_none(), "no pass");
     }
 
     #[test]

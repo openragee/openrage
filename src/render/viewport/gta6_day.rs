@@ -7,7 +7,7 @@ use std::f32::consts::{PI, TAU};
 use glam::Vec3;
 use or_io::gta5::data::timecycle::{Keyframe, TimeTable};
 use or_io::gta5::data::visual_settings::VisualSettings;
-use or_renderer::game_shaders::meshlets::{nine_of, Clouds, Curve, Filmic, Scene, Sky, Tone};
+use or_renderer::game_shaders::meshlets::{nine_of, Clouds, Curve, Dome, Filmic, Scene, Sky, Tone};
 use or_title::TimecycleData;
 
 use super::gta6_air::Air;
@@ -299,6 +299,7 @@ fn tone_of(frame: &Keyframe, settings: &VisualSettings, disc: f32) -> Tone {
         dark,
         bright_at,
         dark_at,
+        whole_frame: false,
     }
 }
 
@@ -373,12 +374,23 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
         * rgb(&frame, "ambient_sky_color_mult")
         * frame.get_or("ambient_sky_intensity", 1.0);
     let (of_sun, of_moon) = (lux("sun"), lux("moon"));
-    let seen: Vec<(Vec3, Vec3, f32)> = Air::ways()
+    let bare: Vec<(Vec3, Vec3, f32)> = Air::ways()
         .map(|(way, patch)| {
             let light = air.sky(way, sun) * of_sun + air.sky(way, moon) * of_moon;
-            (way, light * tint, patch)
+            (way, light, patch)
         })
         .collect();
+    // How bright the sky itself is along each way, as a camera sees it: by the sky's own tint,
+    // and not by the rows that multiply what it lights.
+    let mut dome = [0.0; 72];
+    let shown = rgb(&frame, "sky_scattering_sky_col") * Vec3::new(0.2125, 0.7154, 0.0721);
+    for (held, (_, light, _)) in dome.iter_mut().zip(&bare) {
+        *held = light.dot(shown);
+    }
+    let seen = bare
+        .iter()
+        .map(|(way, light, patch)| (*way, *light * tint, *patch));
+    let seen: Vec<(Vec3, Vec3, f32)> = seen.collect();
     let given: Vec3 = (seen
         .iter()
         .map(|(way, light, patch)| *light * way.z * *patch))
@@ -397,6 +409,7 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
         scene: Scene {
             clouds,
             around: Some(nine_of(seen, ground)),
+            dome: Some(Dome(dome)),
             ..Scene::default()
         },
     })

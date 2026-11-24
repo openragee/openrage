@@ -28,6 +28,12 @@ fn two_levels(floored: bool) -> MeshletSurface {
 /// The frames each of `skies` lights `model` onto, seen from straight above, as the bytes of
 /// their pixels; none with no device.
 fn frames_of(test: &str, model: MeshletSurface, skies: &[Sky]) -> Option<Vec<Vec<u8>>> {
+    let seen: Vec<(Mat4, Sky)> = skies.iter().map(|sky| (Mat4::IDENTITY, *sky)).collect();
+    frames_seen(test, model, &seen)
+}
+
+/// The frames each of `skies` lights `model` onto, seen by its matrix; none with no device.
+fn frames_seen(test: &str, model: MeshletSurface, skies: &[(Mat4, Sky)]) -> Option<Vec<Vec<u8>>> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = match crate::instance::headless_adapter(&instance) {
         Ok(adapter) => adapter,
@@ -69,9 +75,9 @@ fn frames_of(test: &str, model: MeshletSurface, skies: &[Sky]) -> Option<Vec<Vec
     );
     let depth = render_target(&device, "depth", size, DEPTH, wgpu::TextureUsages::empty());
     let mut frames = Vec::new();
-    for sky in skies {
+    for (view_proj, sky) in skies {
         let lighting = Lighting {
-            view_proj: Mat4::IDENTITY,
+            view_proj: *view_proj,
             sky: *sky,
             camera: Vec3::new(0.0, 0.0, 4.0),
         };
@@ -233,6 +239,83 @@ fn a_ground_laid_under_the_model_is_lit_where_no_surface_is_and_takes_the_model_
     assert!(dark[0] < lit[0] / 4 && dark[3] == 255, "{dark:?} {lit:?}");
     // The model is drawn over its ground as it was without.
     assert_eq!(seen_at(ground, (0.0, -0.1)), seen_at(bare, (0.0, -0.1)));
+}
+
+/// A tone whose curve exposes a metered frame to a mean of one.
+fn metering(whole_frame: bool) -> Tone {
+    let curve = Curve {
+        scale: -std::f32::consts::LOG2_E,
+        vertical: 10.0,
+        horizontal: 0.0,
+        bending: 0.0,
+    };
+    let filmic = Filmic([0.22, 0.3, 0.1, 0.2, 0.01, 0.3, 11.2]);
+    Tone {
+        roughness_mod: 0.0,
+        disc: 0.0,
+        lowlights: 0.0,
+        highlights: 0.0,
+        curve: [curve; 2],
+        blend: 0.0,
+        key: None,
+        least: -20.0,
+        most: 20.0,
+        added: 0.0,
+        bright: filmic,
+        dark: filmic,
+        bright_at: 1.0,
+        dark_at: 3.0,
+        whole_frame,
+    }
+}
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_meter_that_takes_the_whole_frame_exposes_a_dim_model_under_a_bright_sky_less() {
+    // The triangle alone, dimly lit; where it is not, the ground sends up a hundred times its
+    // light and the sky is as bright, though neither is drawn.
+    let lit = |whole: bool| Sky {
+        sun: Vec3::splat(0.6),
+        ground: Vec3::splat(15.0),
+        tone: Some(metering(whole)),
+        scene: Scene {
+            dome: Some(Dome([15.0; 72])),
+            ..Scene::default()
+        },
+        ..leaning()
+    };
+    // Seen from above the rays go down, to the ground; seen from below, with the depth turned
+    // over, they go up into the sky.
+    let (above, below) = (
+        Mat4::IDENTITY,
+        Mat4::from_translation(Vec3::Z) * Mat4::from_scale(Vec3::new(1.0, 1.0, -1.0)),
+    );
+    let Some(frames) = frames_seen(
+        "a_meter_that_takes_the_whole_frame",
+        two_levels(false),
+        &[
+            (above, lit(false)),
+            (above, lit(true)),
+            (below, lit(false)),
+            (below, lit(true)),
+        ],
+    ) else {
+        return;
+    };
+    let middle = (0.0, -0.1);
+    for (alone, whole) in [(&frames[0], &frames[1]), (&frames[2], &frames[3])] {
+        let (bright, dim) = (seen_at(alone, middle), seen_at(whole, middle));
+        // Metered alone the triangle is exposed to the middle of the curve; with the frame
+        // round it, far under.
+        assert!(
+            bright[0] > 100 && dim[0] < bright[0] / 3,
+            "{bright:?} {dim:?}"
+        );
+        assert_eq!(seen_at(whole, OPEN), [0; 4], "metered, not drawn");
+    }
 }
 
 #[cfg_attr(

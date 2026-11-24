@@ -15,7 +15,15 @@ pub struct Scene {
     /// The light from all around as a probe holds it, [`nine_of`]; none where the sky and the
     /// ground are two colours and no more.
     pub around: Option<[Vec3; 9]>,
+    /// How bright the sky is along each way it is gathered by, for a meter that takes the whole
+    /// frame; none where no sky is computed.
+    pub dome: Option<Dome>,
 }
+
+/// How bright the sky is along seventy-two ways over the upper half: six rings of twelve, from
+/// the top down, each ring begun along +x and turned towards +y.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Dome(pub [f32; 72]);
 
 /// What each of a probe's nine numbers weighs along `way`: one that is the same every way,
 /// three that lean along y, z and x, and five that bend.
@@ -89,7 +97,7 @@ impl Default for Clouds {
 }
 
 /// The words the resolve reads of a scene, after the shadow's.
-pub(super) const WORDS: usize = 48;
+pub(super) const WORDS: usize = 120;
 
 impl Scene {
     /// The ground under the box: the middle of its square, how high it lies and half its side.
@@ -126,6 +134,9 @@ impl Scene {
             words[12 + row * 4..15 + row * 4].copy_from_slice(&held.to_array());
             words[15] = 1.0;
         }
+        if let Some(Dome(dome)) = &self.dome {
+            words[48..].copy_from_slice(dome);
+        }
         words
     }
 }
@@ -142,13 +153,13 @@ mod tests {
         };
         // With no box there is nowhere to lay it: the clouds' words alone.
         assert_eq!(scene.words()[..4], [1.0, 0.0, 0.0, 1.0]);
-        assert_eq!(scene.words()[4..], [0.0; 44]);
+        assert_eq!(scene.words()[4..], [0.0; 116]);
         scene.bounds = Some((Vec3::new(-1.0, 2.0, 3.0), Vec3::new(3.0, 4.0, 5.0)));
         let words = scene.words();
         assert_eq!(words[4..8], [0.25, 0.5, 0.75, 1.0]);
         assert_eq!(words[8..12], [1.0, 3.0, 3.0 - 0.002 * 4.0, 6.0]);
         scene.laid = None;
-        assert_eq!(scene.words()[4..], [0.0; 44], "a box and no ground");
+        assert_eq!(scene.words()[4..], [0.0; 116], "a box and no ground");
         scene.clouds.open = 1.5;
         assert_eq!(scene.words()[0], 1.0, "held to one");
         // The nine numbers follow in rows of four, and the first row says they are there.
@@ -157,7 +168,13 @@ mod tests {
         scene.around = Some(nine);
         let words = scene.words();
         assert_eq!(words[12..16], [0.0, 0.0, 0.0, 1.0]);
-        assert_eq!(words[44..], [1.0, 2.0, 3.0, 0.0]);
+        assert_eq!(words[44..48], [1.0, 2.0, 3.0, 0.0]);
+        // Then the sky's seventy-two ways, as they are.
+        assert_eq!(words[48..], [0.0; 72]);
+        let mut dome = [0.5; 72];
+        dome[71] = 9.0;
+        scene.dome = Some(Dome(dome));
+        assert_eq!((scene.words()[48], scene.words()[119]), (0.5, 9.0));
     }
 
     /// Ways over the upper half, each with the angle its patch fills: `rings` of twice as many.

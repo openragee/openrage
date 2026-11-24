@@ -220,6 +220,27 @@ fn the_cycle_states_the_light_by_its_lux_its_tint_its_multipliers_and_the_air() 
         "{down:?} {:?}",
         noon.ground * PI
     );
+    // And the sky itself along each way, for a meter that takes the whole frame: brighter by
+    // day than by night, by the sky's own tint and not by the rows that multiply what the sky
+    // lights; and nothing asks for that meter unasked.
+    let (by_day, by_night) = (
+        noon.scene.dome.expect("gathered").0,
+        at(noon_hours + 12.0).scene.dome.expect("gathered").0,
+    );
+    assert!(by_day.iter().all(|way| *way > 0.0));
+    assert!(
+        by_day[0] > 50.0 * by_night[0],
+        "{} {}",
+        by_day[0],
+        by_night[0]
+    );
+    let untinted = bare.scene.dome.expect("gathered").0[0];
+    assert!(
+        untinted > by_day[0] && untinted < 1.2 * by_day[0],
+        "{untinted} {}",
+        by_day[0]
+    );
+    assert!(!noon.tone.expect("stated").whole_frame);
     // A shadow that shows by half hides half as much, and the rows of the light under it are
     // the cycle's.
     let mut stated = Keyframe::default();

@@ -113,8 +113,14 @@ fn sky_by_cycles(
         *kept = Some((key.0, key.1, key.2, sky));
         sky
     });
-    sky.map(|sky| or_renderer::game_shaders::meshlets::Sky {
+    // A developer's switch has the frame metered whole, as the game meters one.
+    use or_renderer::game_shaders::meshlets::{whole_frame_meter, Sky, Tone};
+    sky.map(|sky| Sky {
         exposure: exposure_times(exposure),
+        tone: sky.tone.map(|tone| Tone {
+            whole_frame: whole_frame_meter(),
+            ..tone
+        }),
         ..sky
     })
 }

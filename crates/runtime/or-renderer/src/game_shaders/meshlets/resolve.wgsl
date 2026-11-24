@@ -22,7 +22,7 @@ struct Light {
     // take an exposure to how far from the bright filmic curve to the dark one it stands.
     key: vec4<f32>,
     // The bright filmic curve's seven numbers and the tangent of half the light's disc, then
-    // the dark curve's.
+    // the dark curve's and one where the meter takes the whole frame.
     bright: vec4<f32>,
     bright_end: vec4<f32>,
     dark: vec4<f32>,
@@ -43,6 +43,9 @@ struct Light {
     // The nine numbers a probe holds of the light from all around, a row each; the first row's
     // last word is one where they are stated.
     around: array<vec4<f32>, 9>,
+    // How bright the sky is along each of seventy-two ways over the upper half: six rings of
+    // twelve from the top down, four ways a row.
+    dome: array<vec4<f32>, 18>,
     // From the world to the clip space.
     project: mat4x4<f32>,
 }
@@ -284,20 +287,31 @@ struct Met {
     met: bool,
 }
 
-// Where the ray of the pixel at `clip` meets the ground under the model, seen from above: in
-// its square, or anywhere on its plane where it is taken as `endless`. A matte ground that
-// reflects what a surface that is no metal does.
-fn ground_at(clip: vec2<f32>, endless: bool) -> Met {
-    var none: Met;
+// Where the ray of the pixel at `clip` starts on the frame's near side, and its way.
+struct Ray {
+    start: vec3<f32>,
+    way: vec3<f32>,
+}
+
+fn ray_of(clip: vec2<f32>) -> Ray {
     let near = light.unproject * vec4<f32>(clip, 1.0, 1.0);
     let further = light.unproject * vec4<f32>(clip, 0.5, 1.0);
     let start = near.xyz / near.w;
-    let way = normalize(further.xyz / further.w - start);
+    return Ray(start, normalize(further.xyz / further.w - start));
+}
+
+// Where the ray of the pixel at `clip` meets the square of ground under the model, seen from
+// above. A matte ground that reflects what a surface that is no metal does.
+fn ground_at(clip: vec2<f32>) -> Met {
+    var none: Met;
+    let ray = ray_of(clip);
+    let start = ray.start;
+    let way = ray.way;
     if way.z >= -1e-5 || start.z <= light.plane.z {
         return none;
     }
     let at = start + way * ((light.plane.z - start.z) / way.z);
-    if !endless && any(abs(at.xy - light.plane.xy) > vec2<f32>(light.plane.w)) {
+    if any(abs(at.xy - light.plane.xy) > vec2<f32>(light.plane.w)) {
         return none;
     }
     let seen = light.project * vec4<f32>(at, 1.0);
@@ -319,7 +333,7 @@ fn shown_of(seen: vec3<f32>) -> vec3<f32> {
     let far = textureLoad(depth, texel, 0);
     if far <= 0.0 {
         // No surface of the model: the ground under it, where one is laid and the ray meets it.
-        let ground = ground_at(corner.clip, false);
+        let ground = ground_at(corner.clip);
         if light.laid.w <= 0.0 || !ground.met || u32(light.camera.w) != 0u {
             discard;
         }
@@ -370,10 +384,29 @@ fn filmic(x: vec3<f32>, exposure: f32) -> vec3<f32> {
 // The surfaces the meter looks at: a lattice of this many a side over the frame.
 const LATTICE: i32 = 32;
 
+// How bright a pixel no surface of the model covers is, where the meter takes the whole frame
+// as the game sees one: the ground laid under the model where the ray meets it, else the sky
+// along the ray, or under the horizon what the ground sends up.
+fn beyond(texel: vec2<i32>, clip: vec2<f32>) -> f32 {
+    let ground = ground_at(clip);
+    if light.laid.w > 0.0 && ground.met {
+        return dot(shade(ground.surface, vec2<f32>(texel)), LUMINANCE);
+    }
+    let way = ray_of(clip).way;
+    if way.z <= 0.0 {
+        return dot(light.ground.rgb, LUMINANCE);
+    }
+    let ring = min(u32(acos(min(way.z, 1.0)) / (PI / 2.0) * 6.0), 5u);
+    let turn = fract(atan2(way.y, way.x) / (2.0 * PI) + 1.0);
+    let at = ring * 12u + min(u32(turn * 12.0), 11u);
+    return light.dome[at / 4u][at % 4u];
+}
+
 // What the lit surfaces meter to, as GTA VI meters a frame: each sample's luminance goes to one
 // of 256 bins laid evenly over the logarithm between the least and the greatest, the darkest
 // and the brightest shares are left out, the rest average, and the average gives the stops by
-// the curves or by the key. Nought where no surface is seen or no tone is stated.
+// the curves or by the key. Nought where no surface is seen or no tone is stated. The samples
+// are the model's surfaces, or every place of the frame where the light asks for the whole.
 @fragment fn metered(corner: Corner) -> @location(0) vec4<f32> {
     if light.tone.x <= 0.0 {
         return vec4<f32>(0.0);
@@ -387,11 +420,18 @@ const LATTICE: i32 = 32;
         for (var x = 0; x < LATTICE; x++) {
             let texel = (vec2<i32>(x, y) * 2 + 1) * size / (2 * LATTICE);
             let far = textureLoad(depth, texel, 0);
-            if far <= 0.0 {
+            let whole = light.dark_end.w > 0.0;
+            if far <= 0.0 && !whole {
                 continue;
             }
             let at = (vec2<f32>(texel) + 0.5) / vec2<f32>(size) * 2.0 - 1.0;
-            let luminance = dot(lit_at(texel, vec2<f32>(at.x, -at.y), far), LUMINANCE);
+            let clip = vec2<f32>(at.x, -at.y);
+            var luminance = 0.0;
+            if far > 0.0 {
+                luminance = dot(lit_at(texel, clip, far), LUMINANCE);
+            } else {
+                luminance = beyond(texel, clip);
+            }
             if luminance != luminance {
                 continue;
             }

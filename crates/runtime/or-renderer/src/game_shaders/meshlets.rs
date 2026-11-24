@@ -48,7 +48,8 @@ const STAGE_BINDINGS: u32 = 64;
 /// material's numbers head, the rest of which only the game fills; `plain-device` asks the
 /// device for no optional feature and no raised limit, as a device that has none; `unguarded`
 /// has the binder let through a stage whose loop counts to a number only the game fills, and
-/// no pass is then built but on a software adapter.
+/// no pass is then built but on a software adapter; `meter=frame` has a frame lit by an
+/// install's cycles metered whole, as the game meters one, and not by the model's surfaces alone.
 #[derive(Debug, Default, PartialEq)]
 struct Aids {
     target: f32,
@@ -57,6 +58,7 @@ struct Aids {
     record: Option<String>,
     plain_device: bool,
     unguarded: bool,
+    whole_frame: bool,
 }
 
 impl Aids {
@@ -68,6 +70,7 @@ impl Aids {
                 Some(("pixel", file)) => aids.pixel = Some(file.to_owned()),
                 Some(("mesh", file)) => aids.mesh = Some(file.to_owned()),
                 Some(("record", file)) => aids.record = Some(file.to_owned()),
+                Some(("meter", "frame")) => aids.whole_frame = true,
                 None if word == "plain-device" => aids.plain_device = true,
                 None if word == "unguarded" => aids.unguarded = true,
                 _ => {}
@@ -82,6 +85,11 @@ pub fn record_aid() -> Option<Vec<u32>> {
     let bytes = std::fs::read(aids().record.as_ref()?).ok()?;
     let (dwords, _) = bytes.as_chunks::<4>();
     Some(dwords.iter().map(|c| u32::from_le_bytes(*c)).collect())
+}
+
+/// Whether the developer's aid `meter=frame` is given.
+pub fn whole_frame_meter() -> bool {
+    aids().whole_frame
 }
 
 fn aids() -> &'static Aids {
@@ -931,7 +939,7 @@ impl Default for Sky {
 }
 
 /// The bytes of what the resolve reads of a frame's light.
-const LIGHT_BYTES: usize = 624;
+const LIGHT_BYTES: usize = 912;
 /// The format of the texel the surfaces are metered into: the stops the frame is exposed by.
 const METERED: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -960,8 +968,8 @@ fn light_bytes(lighting: &Lighting, casts: bool) -> [u8; LIGHT_BYTES] {
     let to_tile = sun_shadow::cast_of(sky).unwrap_or(Mat4::IDENTITY);
     words[72..88].copy_from_slice(&to_tile.to_cols_array());
     words[88..92].copy_from_slice(&sun_shadow::words(sky, casts));
-    words[92..140].copy_from_slice(&sky.scene.words());
-    words[140..156].copy_from_slice(&lighting.view_proj.to_cols_array());
+    words[92..212].copy_from_slice(&sky.scene.words());
+    words[212..228].copy_from_slice(&lighting.view_proj.to_cols_array());
     bytemuck::cast(words)
 }
 
@@ -1341,7 +1349,7 @@ impl MeshletScene {
 mod scene;
 mod sun_shadow;
 mod tone;
-pub use scene::{falls_on, nine_of, Clouds, Scene};
+pub use scene::{falls_on, nine_of, Clouds, Dome, Scene};
 pub use sun_shadow::to_tile;
 pub use tone::{metered, Curve, Filmic, Tone};
 

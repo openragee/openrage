@@ -74,6 +74,8 @@ const RAY_TRACING: &str = "a program that traces rays: it loads the nodes of an 
     itself where to go next. A device builds its own structure, whose memory no program \
     reads, and gives it to a ray query that walks all of it: neither the nodes nor the test \
     of one node has a counterpart, and a ray query in the walk's place would be another program";
+/// The approximation a load of a texture of no stated kind is counted as.
+const LOADED_AS_FLOATS: &str = "an image loaded as floats";
 const VERTEX_HALF: &str = "the vertex half of a geometry pair: it leaves its vertex in memory \
     its group shares and returns to the pipeline's own code, with no position exported";
 
@@ -1432,6 +1434,9 @@ struct Cx<'a> {
     /// The registers that hold a fold over the wave in this block, and the carry a 64-bit sum's
     /// low half hands its high half.
     waved: HashMap<Reg, Waved>,
+    /// The two constants a choice by a lane mask left in a vector register, within a block,
+    /// with the count of writes the register stood at after it.
+    chosen: HashMap<u8, (u32, [u32; 2])>,
     carry: Option<Handle<E>>,
     /// Whether 16-bit results round toward zero, where the program writes its float mode.
     half_mode: Option<Handle<naga::GlobalVariable>>,
@@ -1515,6 +1520,10 @@ struct Cx<'a> {
     stored: BTreeSet<Handle<naga::GlobalVariable>>,
     resources: Vec<Resource>,
     notes: BTreeMap<&'static str, u32>,
+    /// The single textures the program samples, and those it loads with no kind stated, a
+    /// place a load: one it samples too holds floats, since no integer texture is sampled.
+    sampled: BTreeSet<Loc>,
+    loads_unstated: Vec<Loc>,
 }
 
 /// Where an image instruction's next address operand is: the register, and with 16-bit
@@ -1891,10 +1900,71 @@ impl<'a> Cx<'a> {
             })
     }
 
+    /// Keeps the constants a choice between `a` and `b` is about to leave in `dst`, where
+    /// both are constants the code wrote.
+    // ponytail: a constant moved while some lanes ran counts as one in all (`sym`'s rule),
+    // which holds where the choosing mask is within the lanes that ran at the move.
+    fn choice(&mut self, dst: u8, a: Operand, b: Operand) {
+        let constant = |operand: Operand| match operand {
+            Operand::Int(n) => Some(n as u32),
+            Operand::Float(word) | Operand::Literal(word) => Some(word),
+            Operand::Vgpr(n) => match self.state.moved(n) {
+                Some(Sym::Const(word)) => Some(*word),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let (Some(a), Some(b)) = (constant(a), constant(b)) {
+            let next = self.versions.get(&dst).copied().unwrap_or(0) + 1;
+            self.chosen.insert(dst, (next, [a, b]));
+        }
+    }
+
+    /// A step of a sum of 64-bit floats over the wave, in the pair from `acc`. The sum is made
+    /// where each lane's float is shown to be nought or one, as a count of the ones, which
+    /// a double holds exactly whatever the order the lanes are joined in.
+    fn fold_doubles(&mut self, pc: u32, inst: &Inst, acc: u8) -> Done {
+        let pair = [acc, acc.wrapping_add(1)];
+        if self.waved.get(&Reg::V(acc)) != Some(&Waved::Folded) {
+            let among = |n: u8, allowed: [u32; 2]| {
+                self.chosen.get(&n).is_some_and(|(version, held)| {
+                    self.versions.get(&n) == Some(version)
+                        && held.iter().all(|word| allowed.contains(word))
+                })
+            };
+            let one = 1f64.to_bits();
+            if !(among(pair[0], [0, one as u32]) && among(pair[1], [0, (one >> 32) as u32])) {
+                return Err(form(
+                    pc,
+                    inst,
+                    "a sum over the wave of 64-bit floats not shown to be each nought or one",
+                ));
+            }
+            let high = self.vreg(pc, pair[1])?;
+            let (top, bit) = (self.b.u32(29), self.b.u32(1));
+            let is_one = self.b.bin(Bo::ShiftRight, high, top);
+            let is_one = self.b.bin(Bo::And, is_one, bit);
+            let count = self
+                .collective("v_add_u32", naga::CollectiveOperation::Reduce, is_one)
+                .ok_or_else(|| form(pc, inst, "a fold over the wave with no collective"))?;
+            let words = self.b.double_of_count(count);
+            for (n, word) in pair.into_iter().zip(words) {
+                self.vput(n, word);
+            }
+        }
+        for n in pair {
+            self.waved.insert(Reg::V(n), Waved::Folded);
+        }
+        Ok(())
+    }
+
     /// A step of a fold that joins the accumulator `acc` with another lane's value of it: the
     /// fold itself where no earlier step made it, and nothing more after that.
     fn fold_join(&mut self, pc: u32, inst: &Inst, name: &str, dst: u8, acc: u8) -> Done {
         use naga::CollectiveOperation::Reduce;
+        if name == "v_add_f64" && dst == acc {
+            return self.fold_doubles(pc, inst, acc);
+        }
         let held = self.vreg(pc, acc)?;
         let folded = self.waved.get(&Reg::V(acc)) == Some(&Waved::Folded);
         let none = || form(pc, inst, "a fold over the wave with no collective");
@@ -2347,8 +2417,13 @@ impl<'a> Cx<'a> {
                     let value = self.sv64(pc, src)?;
                     self.sput64(pc, dst, value)?;
                 } else {
+                    // The other half of the wave's result of a fold stays that through a move.
+                    let half = sym::register(src).and_then(|r| self.waved.get(&Reg::S(r)).copied());
                     let value = self.sv(pc, src)?;
                     self.sput(pc, dst, value)?;
+                    if let (Some(half), Some(to)) = (half, sym::register(dst)) {
+                        self.waved.insert(Reg::S(to), half);
+                    }
                 }
             }
             "s_not_b32" | "s_wqm_b32" => {
@@ -3516,6 +3591,14 @@ impl<'a> Cx<'a> {
                 self.vput(dst, b);
                 self.vput(other, a);
             }
+            ("v_cvt_f32_f64", _, None) => {
+                let [low, high] = match src {
+                    Operand::Vgpr(n) => [self.vreg(pc, n)?, self.vreg(pc, n.wrapping_add(1))?],
+                    _ => self.sv64(pc, src)?,
+                };
+                let value = self.b.single_of_double(low, high);
+                self.vput(dst, value);
+            }
             // A table's word at a place a run computed moves as that place.
             ("v_mov_b32", _, None) if self.computed_place(pc, src).is_some() => {
                 if let Some(place) = self.computed_place(pc, src) {
@@ -4125,6 +4208,7 @@ impl<'a> Cx<'a> {
         }
         let value = match (name, values.as_slice()) {
             ("v_cndmask_b32", &[a, b, _]) => {
+                self.choice(dst, srcs[0], srcs[1]);
                 let mask = sym::register(srcs[2]).ok_or_else(|| refused(pc, inst))?;
                 let chosen = self.mask_bit(pc, mask)?;
                 self.b.select(chosen, b, a)
@@ -5845,8 +5929,11 @@ impl<'a> Cx<'a> {
             };
             // The hardware loads what the texture's format holds, floats or integers, which
             // only the texture bound states: the binder's word, or floats and a count.
-            if kind.is_none() {
-                self.note("an image loaded as floats");
+            // A single texture the program samples somewhere is counted at the end, if at all.
+            match sym::descriptor(&self.state, *rsrc, 8).filter(|at| !sym::computed(at)) {
+                _ if kind.is_some() => {}
+                Some(at) => self.loads_unstated.push(at),
+                None => self.note(LOADED_AS_FLOATS),
             }
             let texel = self.b.emit(E::ImageLoad {
                 image,
@@ -5941,6 +6028,10 @@ impl<'a> Cx<'a> {
             return Err(form(pc, inst, "a cube gathered, compared or measured"));
         }
         let image = self.image_of(pc, inst, (*rsrc, *dim, compared, ScalarKind::Float))?;
+        if !gather && !lod {
+            let single = sym::descriptor(&self.state, *rsrc, 8).filter(|at| !sym::computed(at));
+            self.sampled.extend(single);
+        }
         let samplers = match texels {
             true => Vec::new(),
             false => self.sampler_of(pc, *samp, compared)?,
@@ -6382,6 +6473,7 @@ impl<'a> Cx<'a> {
         self.versions.clear();
         self.permuted.clear();
         self.waved.clear();
+        self.chosen.clear();
         self.shared_wave.masks.clear();
         self.carry = None;
         self.b.open();
@@ -7400,6 +7492,7 @@ fn lower_pass(
         subgroups: stage == naga::ShaderStage::Compute || (fragment && options.wave),
         wave_ops: false,
         waved: HashMap::new(),
+        chosen: HashMap::new(),
         carry: None,
         half_mode: None,
         lane: None,
@@ -7450,6 +7543,8 @@ fn lower_pass(
         stored: BTreeSet::new(),
         resources: Vec::new(),
         notes: BTreeMap::new(),
+        sampled: BTreeSet::new(),
+        loads_unstated: Vec::new(),
     };
     if (cfg.blocks.values().flat_map(|b| &b.insts)).any(|(_, inst)| writes_float_mode(inst)) {
         let flag = cx.ty(TypeInner::Scalar(Scalar::BOOL));
@@ -7575,7 +7670,9 @@ fn lower_pass(
         stored,
         buffers,
         mut resources,
-        notes,
+        mut notes,
+        sampled,
+        loads_unstated,
         lane,
         wave_ops,
         atomics,
@@ -7997,6 +8094,12 @@ fn lower_pass(
         task_payload: None,
         incoming_ray_payload: None,
     });
+    let assumed = (loads_unstated.iter())
+        .filter(|at| !sampled.contains(at))
+        .count();
+    if assumed > 0 {
+        *notes.entry(LOADED_AS_FLOATS).or_default() += assumed as u32;
+    }
     let lowered = Lowered {
         module,
         resources,

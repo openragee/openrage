@@ -9,6 +9,7 @@ mod exact;
 mod interp;
 mod link;
 mod pass_w;
+mod pass_y;
 
 const S_ENDPGM: u32 = 0xBF81_0000;
 const ONE: u32 = 0x3F80_0000;

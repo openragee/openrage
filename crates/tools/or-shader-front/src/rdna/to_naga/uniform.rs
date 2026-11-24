@@ -1,7 +1,8 @@
 //! Which `v_readfirstlane_b32` of a program read what this lane holds too, so that a lane
 //! lowered alone reads the hardware's value: the source is one every lane that runs holds the
 //! same value in, or the read opens a loop over the wave's distinct values, which keeps the
-//! wave to the lanes that hold the value read.
+//! wave to the lanes that hold the value read. What the lanes of a saved mask agreed on when
+//! it was saved, and nothing wrote since, they agree on when the mask is put back.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -15,21 +16,63 @@ type Same = [u64; 4];
 /// What the lanes that run agree on: the vector registers they hold one value in, and the
 /// scalar registers that hold a lane mask with one bit for all of them, as a condition every
 /// lane shares is kept.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct Agreed {
     same: Same,
     level: u128,
+    /// By the scalar register a mask of the lanes that ran was saved in: the vector
+    /// registers those lanes agreed on then, less every one written since. `None` before
+    /// any path has said: every register, under every mask.
+    saved: Option<BTreeMap<u8, Same>>,
 }
 
 impl Agreed {
-    const NOTHING: Self = Self {
-        same: [0; 4],
-        level: 0,
-    };
-    const ALL: Self = Self {
-        same: [!0; 4],
-        level: !0,
-    };
+    fn nothing() -> Self {
+        Self {
+            same: [0; 4],
+            level: 0,
+            saved: Some(BTreeMap::new()),
+        }
+    }
+
+    fn all() -> Self {
+        Self {
+            same: [!0; 4],
+            level: !0,
+            saved: None,
+        }
+    }
+
+    /// What the lanes of the mask saved in `r` still agree on.
+    fn kept(&self, operand: &Operand) -> Same {
+        let held = |saved: &BTreeMap<u8, Same>| {
+            sym::register(*operand).and_then(|r| saved.get(&r).copied())
+        };
+        match &self.saved {
+            Some(saved) => held(saved).unwrap_or([0; 4]),
+            None => [!0; 4],
+        }
+    }
+
+    /// What both of two paths leave.
+    fn met(&self, other: &Self) -> Self {
+        let saved = match (&self.saved, &other.saved) {
+            (None, saved) | (saved, None) => saved.clone(),
+            (Some(a), Some(b)) => Some(
+                (a.iter())
+                    .filter_map(|(r, kept)| {
+                        let also = b.get(r)?;
+                        Some((*r, [0, 1, 2, 3].map(|k| kept[k] & also[k])))
+                    })
+                    .collect(),
+            ),
+        };
+        Self {
+            same: [0, 1, 2, 3].map(|k| self.same[k] & other.same[k]),
+            level: self.level & other.level,
+            saved,
+        }
+    }
 
     /// Whether a scalar source is a mask with one bit for every lane that runs: the lanes
     /// that run themselves, none or all, or a register that holds such a mask.
@@ -52,6 +95,9 @@ impl Agreed {
         for beside in [r.wrapping_sub(1), r, r.saturating_add(1)] {
             if beside < 128 {
                 self.level &= !(1 << beside);
+            }
+            if let Some(saved) = &mut self.saved {
+                saved.remove(&beside);
             }
         }
         if on && r < 128 {
@@ -164,8 +210,11 @@ fn vop(same: &mut Same, name: &str, dst: u8, sources: &[Operand], chosen: bool) 
         || ["_ci_", "addc", "subb"]
             .iter()
             .any(|kind| name.contains(kind));
-    // A result that fills part of its register, or adds to it, keeps what the rest held.
-    let keeps = sources.contains(&Operand::Sdwa) || name.contains("16") || name.contains("mac");
+    // A result that fills part of its register, or adds to it, keeps what the rest held. A
+    // 16-bit float widened, and two results packed as halves, fill the register.
+    let whole = name == "v_cvt_f32_f16" || name.starts_with("v_cvt_pk");
+    let keeps =
+        sources.contains(&Operand::Sdwa) || (name.contains("16") && !whole) || name.contains("mac");
     let agreed = !wide
         && !permuted
         && !by_lane
@@ -199,15 +248,106 @@ fn step(agreed: &mut Agreed, inst: &Inst, wave32: bool) {
             Inst::Sop1 { dst, .. } if name.contains("saveexec") => Some(*dst),
             _ => None,
         };
+        let before = agreed.same;
+        // A mask is as wide as the wave: a narrower instruction moves half of one.
+        let whole = name.ends_with(if wave32 { "_b32" } else { "_b64" });
         if !narrows {
-            *agreed = Agreed::NOTHING;
+            // A saved mask put back, or lanes of one: its lanes agree on what they did.
+            let back = match inst {
+                Inst::Sop1 { src, .. } if whole && name.starts_with("s_mov_b") => agreed.kept(src),
+                Inst::Sop2 { src0, src1, .. } if whole && name.starts_with("s_and_b") => {
+                    let (a, b) = (agreed.kept(src0), agreed.kept(src1));
+                    [0, 1, 2, 3].map(|k| a[k] | b[k])
+                }
+                Inst::Sop2 { src0, .. } if whole && name.starts_with("s_andn2_b") => {
+                    agreed.kept(src0)
+                }
+                _ => [0; 4],
+            };
+            agreed.same = back;
+            agreed.level = 0;
         }
         if let Some(dst) = saved {
             agreed.set_level(&dst, narrows);
+            if let (true, Some(r), Some(kept)) = (whole, sym::register(dst), &mut agreed.saved) {
+                kept.insert(r, before);
+            }
         }
         return;
     }
+    // The lanes that run, kept in a scalar register as they stand.
+    let kept = match inst {
+        Inst::Sop1 {
+            dst,
+            src: Operand::ExecLo,
+            ..
+        } if name == if wave32 { "s_mov_b32" } else { "s_mov_b64" } => sym::register(*dst),
+        _ => None,
+    };
     scalar(agreed, inst, wave32);
+    if let (Some(r), Some(saved)) = (kept, &mut agreed.saved) {
+        saved.insert(r, agreed.same);
+    }
+    written(agreed, inst);
+    // A register written is one the lanes of a saved mask no longer all hold their value in.
+    let wrote = wrote(inst);
+    if let Some(saved) = &mut agreed.saved {
+        for kept in saved.values_mut() {
+            *kept = [0, 1, 2, 3].map(|k| kept[k] & !wrote[k]);
+        }
+    }
+}
+
+/// The vector registers an instruction writes, a bit each; every one for an instruction
+/// this front end does not know.
+fn wrote(inst: &Inst) -> Same {
+    let name = inst.name();
+    let mut wrote = [0; 4];
+    let (first, count) = match inst {
+        _ if matches!(name, "v_readfirstlane_b32" | "v_readlane_b32" | "v_nop")
+            || name.starts_with("v_cmp") =>
+        {
+            return wrote
+        }
+        Inst::Unknown { .. } => return [!0; 4],
+        Inst::Vop1 { dst, src, .. } if name == "v_swap_b32" => {
+            if let Operand::Vgpr(other) = src {
+                set(&mut wrote, *other, true);
+            }
+            (*dst, 1)
+        }
+        Inst::Vop1 { dst, .. } if name == "v_movreld_b32" => (*dst, super::REGISTER_ARRAY),
+        Inst::Vop1 { dst, .. }
+        | Inst::Vop2 { dst, .. }
+        | Inst::Vop3 { dst, .. }
+        | Inst::Vop3p { dst, .. }
+        | Inst::Vintrp { dst, .. } => (*dst, if name.contains("64") { 2 } else { 1 }),
+        Inst::Mubuf { data, tfe, .. } | Inst::Mtbuf { data, tfe, .. } => {
+            (*data, sym::loaded_registers(name) + u8::from(*tfe))
+        }
+        Inst::Flat { dst, .. } | Inst::Ds { dst, .. } => (*dst, sym::loaded_registers(name)),
+        Inst::Mimg {
+            data, dmask, tfe, ..
+        } => {
+            let count = match name {
+                "image_store" | "image_store_mip" => 0,
+                _ if name.starts_with("image_gather4") => 4,
+                _ if name.starts_with("image_atomic") => 2,
+                _ => dmask.count_ones() as u8,
+            };
+            (*data, count + u8::from(*tfe))
+        }
+        _ => return wrote,
+    };
+    for k in 0..count {
+        set(&mut wrote, first.wrapping_add(k), true);
+    }
+    wrote
+}
+
+/// What one instruction that leaves the lanes that run as they are leaves of what they agree on.
+fn written(agreed: &mut Agreed, inst: &Inst) {
+    let name = inst.name();
     let chosen = match inst {
         Inst::Vop2 { .. } => agreed.level(&Operand::VccLo),
         Inst::Vop3 { srcs, .. } => agreed.level(&srcs[2]),
@@ -321,7 +461,7 @@ fn step(agreed: &mut Agreed, inst: &Inst, wave32: bool) {
                 set(same, data.wrapping_add(k), false);
             }
         }
-        Inst::Unknown { .. } => *agreed = Agreed::NOTHING,
+        Inst::Unknown { .. } => *agreed = Agreed::nothing(),
         // The scalar encodings, a comparison into a mask and an export write no vector register.
         Inst::Sop2 { .. }
         | Inst::Sopk { .. }
@@ -337,12 +477,17 @@ fn step(agreed: &mut Agreed, inst: &Inst, wave32: bool) {
 /// Whether the instructions after `v_readfirstlane_b32 scalar, vector` keep the wave to the
 /// lanes whose `vector` is the value read, before anything else: the loop a program handles
 /// each distinct value of a wave in. A lane's turn comes with its own value in `scalar`.
+/// A value of 64 bits is read a half at a time and compared whole: the lanes kept hold both.
 fn waterfall(rest: &[(u32, Inst)], scalar: u8, vector: u8) -> bool {
-    let read = |a: &Operand, b: &Operand| {
-        let pair = (Operand::Sgpr(scalar), Operand::Vgpr(vector));
+    let pair = |a: &Operand, b: &Operand, down: u8| {
+        let pair = (Operand::Sgpr(scalar - down), Operand::Vgpr(vector - down));
         (*a, *b) == pair || (*b, *a) == pair
     };
+    let read = |a: &Operand, b: &Operand| pair(a, b, 0);
+    let high = scalar > 0 && vector > 0;
+    let read_wide = |a: &Operand, b: &Operand| pair(a, b, 0) || (high && pair(a, b, 1));
     let equal = |name: &str| matches!(name, "v_cmp_eq_u32" | "v_cmp_eq_i32");
+    let equal_wide = |name: &str| matches!(name, "v_cmp_eq_u64" | "v_cmp_eq_i64");
     // The registers that hold a mask of lanes within those that hold the value read.
     let mut alike = BTreeSet::new();
     let held = |alike: &BTreeSet<u8>, operand: &Operand| {
@@ -361,13 +506,18 @@ fn waterfall(rest: &[(u32, Inst)], scalar: u8, vector: u8) -> bool {
                 }
             }
             Inst::Vopc { src0, src1, .. } if name.starts_with("v_cmp_") => {
-                match equal(name) && read(src0, &Operand::Vgpr(*src1)) {
+                let own = Operand::Vgpr(*src1);
+                let kept = (equal(name) && read(src0, &own))
+                    || (equal_wide(name) && read_wide(src0, &own));
+                match kept {
                     true => alike.insert(sym::VCC),
                     false => alike.remove(&sym::VCC),
                 };
             }
             Inst::Vop3 { dst, srcs, .. } if name.starts_with("v_cmp_") => {
-                match equal(name) && read(&srcs[0], &srcs[1]) {
+                let kept = (equal(name) && read(&srcs[0], &srcs[1]))
+                    || (equal_wide(name) && read_wide(&srcs[0], &srcs[1]));
+                match kept {
                     true => alike.insert(*dst),
                     false => alike.remove(dst),
                 };
@@ -406,11 +556,11 @@ pub(super) fn first_lanes(cfg: &Cfg, wave32: bool) -> BTreeSet<u32> {
     // What every path to a block agrees on: nothing at the entry, whose registers are each
     // lane's own, and everything elsewhere until a path says less.
     let mut entry: BTreeMap<u32, Agreed> =
-        (cfg.blocks.keys().map(|&start| (start, Agreed::ALL))).collect();
-    entry.insert(0, Agreed::NOTHING);
+        (cfg.blocks.keys().map(|&start| (start, Agreed::all()))).collect();
+    entry.insert(0, Agreed::nothing());
     let mut work: BTreeSet<u32> = cfg.blocks.keys().copied().collect();
     while let Some(start) = work.pop_first() {
-        let (Some(block), Some(mut agreed)) = (cfg.blocks.get(&start), entry.get(&start).copied())
+        let (Some(block), Some(mut agreed)) = (cfg.blocks.get(&start), entry.get(&start).cloned())
         else {
             continue;
         };
@@ -421,10 +571,7 @@ pub(super) fn first_lanes(cfg: &Cfg, wave32: bool) -> BTreeSet<u32> {
             let Some(held) = entry.get_mut(&next).filter(|_| next != 0) else {
                 continue;
             };
-            let met = Agreed {
-                same: [0, 1, 2, 3].map(|k| held.same[k] & agreed.same[k]),
-                level: held.level & agreed.level,
-            };
+            let met = held.met(&agreed);
             if met != *held {
                 *held = met;
                 work.insert(next);
@@ -433,7 +580,7 @@ pub(super) fn first_lanes(cfg: &Cfg, wave32: bool) -> BTreeSet<u32> {
     }
     let mut exact = BTreeSet::new();
     for (start, block) in &cfg.blocks {
-        let mut agreed = entry.get(start).copied().unwrap_or(Agreed::NOTHING);
+        let mut agreed = entry.get(start).cloned().unwrap_or_else(Agreed::nothing);
         for (at, (pc, inst)) in block.insts.iter().enumerate() {
             if let Inst::Vop1 {
                 dst,

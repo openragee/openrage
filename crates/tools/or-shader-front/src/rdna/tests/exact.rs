@@ -218,6 +218,25 @@ fn the_first_lane_is_this_lane_where_the_lanes_agree_or_the_program_takes_them_i
     // Fewer lanes still agree on what they agreed on.
     let kept = [vop1(V_MOV, 1, 4), vopc(V_CMPX_GT_F32, F_HALF, 0)];
     assert_eq!(counted(&first_lane(&kept, &[])), 0);
+    // What the lanes of a saved mask agreed on and nothing wrote since, they agree on when
+    // the mask is put back, or the lanes of it that did not run are taken in their turn.
+    for back in [
+        sop1(op(opcodes::SOP1, "s_mov_b64"), 126, 24),
+        sop2(op(opcodes::SOP2, "s_andn2_b64"), 126, 24, 126),
+    ] {
+        let through = [
+            vop1(V_MOV, 1, 4),
+            sop1(op(opcodes::SOP1, "s_mov_b64"), 24, 126),
+            vopc(V_CMPX_GT_F32, F_HALF, 0),
+            vop1(V_MOV, 3, 4),
+            back,
+        ];
+        assert_eq!(counted(&first_lane(&through, &[])), 0);
+        // The register the mask was saved in holds another by then.
+        let mut lost = through;
+        lost[3] = sop1(op(opcodes::SOP1, "s_mov_b64"), 24, 6);
+        assert_eq!(counted(&first_lane(&lost, &[])), 1);
+    }
     // The loop over a wave's distinct values: the lanes that hold the first lane's value
     // run and the others wait their turn, which comes with their own value read.
     let turn = [
@@ -233,6 +252,20 @@ fn the_first_lane_is_this_lane_where_the_lanes_agree_or_the_program_takes_them_i
         sop1(op(opcodes::SOP1, "s_and_saveexec_b64"), 24, 106),
     ];
     assert_eq!(counted(&first_lane(&own, &other)), 1);
+    // A value of 64 bits is read a half at a time and compared whole: both reads are the
+    // turn's own. Compared a register on, only the half that is the comparison's low one is.
+    let wide = |scalar, vector| {
+        [
+            vop1(op(opcodes::VOP1, "v_readfirstlane_b32"), 21, V + 2),
+            vopc(op(opcodes::VOPC, "v_cmp_eq_u64"), scalar, vector),
+            sop1(op(opcodes::SOP1, "s_and_saveexec_b64"), 24, 106),
+        ]
+    };
+    assert_eq!(counted(&first_lane(&own, &wide(20, 1))), 0);
+    assert_eq!(counted(&first_lane(&own, &wide(21, 2))), 1);
+    // A 16-bit float widened fills its register: from a scalar register it is one value.
+    let widened = [vop1(op(opcodes::VOP1, "v_cvt_f32_f16"), 1, 4)];
+    assert_eq!(counted(&first_lane(&widened, &[])), 0);
 }
 
 #[test]

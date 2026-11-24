@@ -78,7 +78,8 @@ pub struct Program {
     pub wave32: bool,
     pub inputs: Vec<PixelInput>,
     pub vertex_inputs: Vec<VertexInput>,
-    /// The components of the position a pixel program's signature says it reads, as a mask.
+    /// The components of the position a pixel program is handed, as a mask: those its signature
+    /// says it reads, and the depth where it writes a depth held to one side of the rasterizer's.
     pub position_read: u8,
     /// Whether a pixel program's signature says it reads which way its triangle faces.
     pub front_face: bool,
@@ -103,6 +104,22 @@ const ELEMENT_READ_MASK: usize = 25;
 /// The system values of a position and of a triangle's facing.
 const SV_POSITION: u32 = 1;
 const SV_IS_FRONT_FACE: u32 = 9;
+/// The system values of a depth output that may only grow or only shrink from the rasterizer's:
+/// the code clamps what it writes against the position's third component, which it is handed.
+const SV_DEPTH_ONE_SIDED: [u32; 2] = [67, 68];
+
+/// Whether an output signature holds a depth held to one side of the rasterizer's.
+fn one_sided_depth(signature: &[u8]) -> bool {
+    let word = |at: usize| {
+        (signature.get(at..at + 4)).map_or(0, |w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+    };
+    let (count, first) = (word(0) as usize, word(4) as usize);
+    (0..count).any(|element| {
+        (element.checked_mul(ELEMENT))
+            .and_then(|by| by.checked_add(first + ELEMENT_SYSTEM_VALUE))
+            .is_some_and(|at| at + 4 <= signature.len() && SV_DEPTH_ONE_SIDED.contains(&word(at)))
+    })
+}
 
 /// The position components an input signature says are read, and whether the facing is.
 fn system_reads(signature: &[u8]) -> (u8, bool) {
@@ -175,7 +192,11 @@ pub fn unwrap(dxbc: &[u8]) -> Result<Vec<Program>, ContainerError> {
         })
         .collect();
     let (position_read, front_face) = match kind {
-        ShaderKind::Pixel => system_reads(container.part(b"ISG1").unwrap_or_default()),
+        ShaderKind::Pixel => {
+            let (read, facing) = system_reads(container.part(b"ISG1").unwrap_or_default());
+            let depth = one_sided_depth(container.part(b"OSG1").unwrap_or_default());
+            (read | u8::from(depth) << 2, facing)
+        }
         _ => (0, false),
     };
     (program.stages.iter().enumerate())

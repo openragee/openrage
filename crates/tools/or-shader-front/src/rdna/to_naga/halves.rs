@@ -1,5 +1,6 @@
 //! 16-bit floats by integer arithmetic on their patterns: a device's own packing rounds as it
 //! likes and may lose a denormal, and a driver may fold a pack and an unpack into nothing.
+//! 64-bit floats likewise, as dword pairs: not every writer has the type.
 
 use naga::{BinaryOperator as Bo, Expression as E, Handle, MathFunction as Mf};
 
@@ -358,6 +359,107 @@ impl Builder {
         let device = self.math(Mf::Fma, &[x, y, z]);
         let device = self.bits(device);
         self.select(plain, device, whole)
+    }
+}
+
+impl Builder {
+    /// A 64-bit float's pattern, low dword and high, as the 32-bit float nearest to it, a tie
+    /// to the even one: what `v_cvt_f32_f64` writes where the mode rounds to the nearest. A
+    /// NaN keeps its sign and the top of its payload, quiet.
+    pub(super) fn single_of_double(&mut self, low: Handle<E>, high: Handle<E>) -> Handle<E> {
+        let (zero, one) = (self.u32(0), self.u32(1));
+        let (sign_bit, top_bits, endless) = (
+            self.u32(0x8000_0000),
+            self.u32(0x000F_FFFF),
+            self.u32(0x7F80_0000),
+        );
+        let sign = self.bin(Bo::And, high, sign_bit);
+        let (twenty, field) = (self.u32(20), self.u32(0x7FF));
+        let exponent = self.bin(Bo::ShiftRight, high, twenty);
+        let exponent = self.bin(Bo::And, exponent, field);
+        // The 23 bits a float keeps of the 52, and the 29 it drops.
+        let (three, kept_by, dropped, tie) = (
+            self.u32(3),
+            self.u32(29),
+            self.u32(0x1FFF_FFFF),
+            self.u32(0x1000_0000),
+        );
+        let upper = self.bin(Bo::And, high, top_bits);
+        let upper = self.bin(Bo::ShiftLeft, upper, three);
+        let lower = self.bin(Bo::ShiftRight, low, kept_by);
+        let kept = self.bin(Bo::InclusiveOr, upper, lower);
+        let rest = self.bin(Bo::And, low, dropped);
+        let odd = self.bin(Bo::And, kept, one);
+        let above = self.bin(Bo::Greater, rest, tie);
+        let above = self.flag(above);
+        let even = self.bin(Bo::Equal, rest, tie);
+        let even = self.flag(even);
+        let even = self.bin(Bo::And, even, odd);
+        let up = self.bin(Bo::InclusiveOr, above, even);
+        // A float's exponent field is the double's less 896; a sum that carries out of the
+        // 23 bits raises it, to an infinity from the greatest.
+        let (least, most, bias, by) = (self.u32(897), self.u32(1150), self.u32(896), self.u32(23));
+        let within = self.math(Mf::Clamp, &[exponent, least, most]);
+        let within = self.bin(Bo::Subtract, within, bias);
+        let within = self.bin(Bo::ShiftLeft, within, by);
+        let normal = self.bin(Bo::InclusiveOr, within, kept);
+        let normal = self.bin(Bo::Add, normal, up);
+        // Under the least normal float: the 24 bits shifted down, what falls off rounded
+        // with the 29 dropped bits behind it.
+        let (implied, lowest) = (self.u32(0x80_0000), self.u32(873));
+        let whole = self.bin(Bo::InclusiveOr, kept, implied);
+        let held = self.math(Mf::Clamp, &[exponent, lowest, bias]);
+        let down = self.bin(Bo::Subtract, least, held);
+        let quotient = self.bin(Bo::ShiftRight, whole, down);
+        let before = self.bin(Bo::Subtract, down, one);
+        let middle = self.bin(Bo::ShiftLeft, one, before);
+        let mask = self.bin(Bo::ShiftLeft, middle, one);
+        let mask = self.bin(Bo::Subtract, mask, one);
+        let fell = self.bin(Bo::And, whole, mask);
+        let more = self.bin(Bo::Greater, fell, middle);
+        let more = self.flag(more);
+        let half = self.bin(Bo::Equal, fell, middle);
+        let half = self.flag(half);
+        let behind = self.bin(Bo::NotEqual, rest, zero);
+        let behind = self.flag(behind);
+        let last = self.bin(Bo::And, quotient, one);
+        let breaks = self.bin(Bo::InclusiveOr, behind, last);
+        let half = self.bin(Bo::And, half, breaks);
+        let raised = self.bin(Bo::InclusiveOr, more, half);
+        let small = self.bin(Bo::Add, quotient, raised);
+        let nothing = self.bin(Bo::Less, exponent, lowest);
+        let small = self.select(nothing, zero, small);
+        // No number, or no end.
+        let quiet = self.u32(0x7FC0_0000);
+        let payload = self.bin(Bo::InclusiveOr, kept, rest);
+        let number = self.bin(Bo::Equal, payload, zero);
+        let no_number = self.bin(Bo::InclusiveOr, quiet, kept);
+        let special = self.select(number, endless, no_number);
+        let is_small = self.bin(Bo::Less, exponent, least);
+        let is_great = self.bin(Bo::Greater, exponent, most);
+        let is_special = self.bin(Bo::Equal, exponent, field);
+        let magnitude = self.select(is_small, small, normal);
+        let magnitude = self.select(is_great, endless, magnitude);
+        let magnitude = self.select(is_special, special, magnitude);
+        self.bin(Bo::InclusiveOr, sign, magnitude)
+    }
+
+    /// A whole number as the 64-bit float that holds it exactly: its low dword and its high.
+    pub(super) fn double_of_count(&mut self, count: Handle<E>) -> [Handle<E>; 2] {
+        let (zero, one, most) = (self.u32(0), self.u32(1), self.u32(31));
+        let (twelve, twenty, bias) = (self.u32(12), self.u32(20), self.u32(1023 + 31));
+        let leading = self.math(Mf::CountLeadingZeros, &[count]);
+        let leading = self.math(Mf::Min, &[leading, most]);
+        // The first set bit leaves at the top: the 31 bits after it are the fraction's first.
+        let fraction = self.bin(Bo::ShiftLeft, count, leading);
+        let fraction = self.bin(Bo::ShiftLeft, fraction, one);
+        let exponent = self.bin(Bo::Subtract, bias, leading);
+        let exponent = self.bin(Bo::ShiftLeft, exponent, twenty);
+        let upper = self.bin(Bo::ShiftRight, fraction, twelve);
+        let high = self.bin(Bo::InclusiveOr, exponent, upper);
+        let low = self.bin(Bo::ShiftLeft, fraction, twenty);
+        let none = self.bin(Bo::Equal, count, zero);
+        [self.select(none, zero, low), self.select(none, zero, high)]
     }
 }
 
@@ -730,6 +832,57 @@ mod tests {
                 u32::from(half | quiet),
                 "{half:#06x}"
             );
+        }
+    }
+
+    #[test]
+    fn a_double_narrows_to_the_float_nearest_to_it() {
+        let mut b = Builder::new();
+        let [low, high] = [0, 1].map(|index| b.emit(E::FunctionArgument(index)));
+        let single = b.single_of_double(low, high);
+        let check = |bits: u64| {
+            let given = [bits as u32, (bits >> 32) as u32];
+            let got = eval_of(&b, single, &given, &mut Vec::new());
+            let want = f64::from_bits(bits) as f32;
+            match want.is_nan() {
+                true => assert!(f32::from_bits(got).is_nan(), "{bits:#018x}"),
+                false => assert_eq!(got, want.to_bits(), "{bits:#018x}"),
+            }
+        };
+        // The doubles about a float and the tie above it, at each exponent a float's range
+        // ends or changes at and a sample of the others.
+        let exponents =
+            (0..=0x7FFu64).filter(|e| e % 97 == 0 || (840..=900).contains(e) || *e >= 1140);
+        for exponent in exponents {
+            for dropped in [0u64, 1, 0x1000_0000, 0x0FFF_FFFF, 0x1000_0001, 0x3000_0000] {
+                for kept in [0u64, 1, 2, 0x7F_FFFF, 0x7F_FFFE, 0x40_0000, 0x3F_FFFF] {
+                    for sign in [0u64, 1] {
+                        check(sign << 63 | exponent << 52 | kept << 29 | dropped);
+                    }
+                }
+            }
+        }
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        for _ in 0..100_000 {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            check(seed);
+            // The exponents a float has, and those just under them.
+            check(seed & !(0x7FF << 52) | (850 + (seed >> 40) % 310) << 52);
+        }
+    }
+
+    #[test]
+    fn a_count_is_the_double_that_holds_it() {
+        let mut b = Builder::new();
+        let x = b.emit(E::FunctionArgument(0));
+        let [low, high] = b.double_of_count(x);
+        let more = [u32::MAX, 0x8000_0000, 0x8000_0001, 0x00FF_FFFF, 0x1234_5678];
+        for count in (0..=4096u32).chain(more) {
+            let bits = f64::from(count).to_bits();
+            assert_eq!(eval(&b, low, count), bits as u32, "{count}");
+            assert_eq!(eval(&b, high, count), (bits >> 32) as u32, "{count}");
         }
     }
 }

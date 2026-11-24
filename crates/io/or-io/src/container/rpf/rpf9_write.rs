@@ -16,7 +16,7 @@ use super::rpf9_scan::{
 use super::version::RSC8_MAGIC;
 
 /// A section is cut into a head of whole pieces and a tail of the rest.
-const PIECE: usize = 0x1_0000;
+pub(super) const PIECE: usize = 0x1_0000;
 /// The bytes of a section a pointer reaches: its low 28 bits.
 pub(super) const SECTION_LIMIT: usize = 1 << 28;
 /// A stored RSC8's version, compressor and key bytes, the same in every measured head.

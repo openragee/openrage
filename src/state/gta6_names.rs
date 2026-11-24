@@ -155,6 +155,28 @@ pub(crate) fn name32(hash: u32) -> Option<String> {
     vocabulary().name32(hash).map(str::to_string)
 }
 
+/// What a 32-bit name hash of a GTA VI body is shown as: the name `vocabulary` holds for it alone,
+/// else the one GTA VI's name snapshot gives, else `hash_` and its digits.
+fn said32_in(vocabulary: &Vocabulary, hash: u32) -> String {
+    vocabulary.name32(hash).map_or_else(
+        || {
+            let _names = or_io::meta::binary::hash_index::title_names();
+            or_io::meta::binary::hash_index::default_hash_index().name_or_literal(hash)
+        },
+        str::to_string,
+    )
+}
+
+/// [`said32_in`] the vocabulary of every archive harvested.
+pub(crate) fn said32(hash: u32) -> String {
+    said32_in(&vocabulary(), hash)
+}
+
+/// The name the 64-bit `word` names in the vocabulary, else `hash_` and its digits.
+pub(crate) fn said64(word: u64) -> String {
+    (vocabulary().name64(word)).map_or_else(|| format!("hash_{word:016X}"), str::to_string)
+}
+
 /// Whether a harvest runs now.
 pub(crate) fn harvesting() -> bool {
     HARVESTING.load(Ordering::Relaxed)
@@ -341,6 +363,17 @@ mod tests {
     use or_io::gta6::hash::{name_hash32, name_hash64};
 
     use super::*;
+
+    #[test]
+    fn a_hash_the_vocabulary_names_is_said_by_its_name_and_another_by_its_digits() {
+        let mut held = Vocabulary::default();
+        held.add("ZQ_State_One", None);
+        assert_eq!(
+            said32_in(&held, name_hash32(b"zq_state_one")),
+            "zq_state_one"
+        );
+        assert_eq!(said32_in(&held, 0xDEAD_BEEF), "hash_DEADBEEF");
+    }
 
     #[test]
     fn the_names_kept_of_an_archive_are_served_and_an_archive_with_none_has_none() {

@@ -12,11 +12,12 @@ use or_io::gta6::map::links::{Links, LodLink, LodTarget};
 use or_io::gta6::map::{
     self, ArchetypeClass, InstanceList, MapBody, MapData, MapTypes, ASSET_TYPES, LOD_LEVELS,
 };
+use or_io::gta6::names::Vocabulary;
 use or_world::extents::{agreement, Aabb as Box3};
 use or_world::transform::{placed_corners, scale_of};
 
 const USAGE: &str =
-    "usage: rpf scan-maps <archive.rpf> [--from <offset>] [--to <offset>] [--limit <bytes>] [--list] [--check] [--extents]";
+    "usage: rpf scan-maps <archive.rpf> [--from <offset>] [--to <offset>] [--limit <bytes>] [--list] [--check] [--extents] [--names]";
 
 /// The entity, list and archetype rows `scan-open` prints of a map body.
 const ROWS: usize = 8;
@@ -254,6 +255,114 @@ impl Tally {
     }
 }
 
+/// How many of a census's name hashes `vocabulary` names: each pair is named, then counted.
+struct Named<'a> {
+    vocabulary: &'a Vocabulary,
+    maps: [u64; 2],
+    archetypes: [u64; 2],
+    entities: [u64; 2],
+    lists: [u64; 2],
+    /// Each archetype word a map types body or an entity states, with whether it is named.
+    words: HashMap<u64, bool>,
+    /// The names of the maps named, and the words of the others, a row each.
+    map_names: Vec<&'a str>,
+    unnamed_maps: Vec<u64>,
+}
+
+impl<'a> Named<'a> {
+    fn new(vocabulary: &'a Vocabulary) -> Self {
+        Self {
+            vocabulary,
+            maps: [0; 2],
+            archetypes: [0; 2],
+            entities: [0; 2],
+            lists: [0; 2],
+            words: HashMap::new(),
+            map_names: Vec::new(),
+            unnamed_maps: Vec::new(),
+        }
+    }
+
+    fn add(&mut self, body: &MapBody) {
+        let count = |pair: &mut [u64; 2], named: bool| {
+            pair[0] += u64::from(named);
+            pair[1] += 1;
+        };
+        match body {
+            MapBody::Data(m) => {
+                let name = m.name_in(self.vocabulary);
+                count(&mut self.maps, name.is_some());
+                match name {
+                    Some(name) => self.map_names.push(name),
+                    None => self.unnamed_maps.push(m.name_word),
+                }
+                for e in &m.entities {
+                    let named = e.archetype_in(self.vocabulary).is_some();
+                    count(&mut self.entities, named);
+                    self.words.insert(e.archetype_word, named);
+                }
+                // An instance list states its archetype's 32-bit name alone.
+                for l in m.prop_lists.iter().chain(&m.grass_lists) {
+                    let named = self.vocabulary.name32(l.archetype_name).is_some();
+                    count(&mut self.lists, named);
+                }
+            }
+            MapBody::Types(t) => {
+                for a in &t.archetypes {
+                    let named = a.name_in(self.vocabulary).is_some();
+                    count(&mut self.archetypes, named);
+                    self.words.insert(a.name_word, named);
+                }
+            }
+        }
+    }
+
+    /// The names the naming rules give the maps no kept name names, by their words.
+    fn by_rule(&self) -> HashMap<u64, String> {
+        let wanted = self.unnamed_maps.iter().copied().collect();
+        or_io::gta6::map_names::name_maps(self.map_names.iter().copied(), &wanted)
+    }
+
+    /// How many maps the rules name from the kept names, and from those names reversed: a control
+    /// that names a map only by chance.
+    fn rule_line(&self, by_rule: &HashMap<u64, String>) -> String {
+        let rows = |named: &HashMap<u64, String>| {
+            (self.unnamed_maps.iter())
+                .filter(|word| named.contains_key(word))
+                .count()
+        };
+        let wanted = self.unnamed_maps.iter().copied().collect();
+        let reversed: Vec<String> = (self.map_names.iter())
+            .map(|name| name.chars().rev().collect())
+            .collect();
+        let control =
+            or_io::gta6::map_names::name_maps(reversed.iter().map(String::as_str), &wanted);
+        format!(
+            "  named maps    {} more of the {} by the naming rules, from the names of the maps named; {} from those names reversed",
+            rows(by_rule),
+            self.maps[1],
+            rows(&control)
+        )
+    }
+
+    fn summary(&self) -> String {
+        let share = |[named, of]: [u64; 2]| match of {
+            0 => "0 of 0".to_string(),
+            _ => format!("{named} of {of} ({:.2}%)", 100.0 * named as f64 / of as f64),
+        };
+        let distinct = self.words.values().filter(|named| **named).count() as u64;
+        format!(
+            "  named         by the {} names kept, a name being one both its hashes agree on: maps {}, archetypes {}, entities' archetypes {}, distinct archetype words {}, instance lists by the 32-bit hash alone {}",
+            self.vocabulary.len(),
+            share(self.maps),
+            share(self.archetypes),
+            share(self.entities),
+            share([distinct, self.words.len() as u64]),
+            share(self.lists),
+        )
+    }
+}
+
 /// What a census is asked for beside its counts.
 #[derive(Default, Clone, Copy)]
 struct Asked {
@@ -461,6 +570,7 @@ fn census_line(
     offset: u64,
     limit: u64,
     tally: &mut Tally,
+    named: &mut Named,
     asked: Asked,
     group: &mut Group,
 ) -> Option<String> {
@@ -486,6 +596,7 @@ fn census_line(
     Some(match opened {
         Ok((body, links)) => {
             tally.add(&body);
+            named.add(&body);
             if asked.check || asked.extents {
                 group.add(offset, &body, links.as_ref(), asked.extents);
             }
@@ -524,8 +635,9 @@ pub(crate) fn cmd_scan_maps(args: &[String]) -> Result<(), String> {
         check: flag("--check"),
         extents: flag("--extents"),
     };
+    let keep_names = flag("--names");
     let rest: Vec<&String> = (args.iter())
-        .filter(|a| !matches!(a.as_str(), "--list" | "--check" | "--extents"))
+        .filter(|a| !matches!(a.as_str(), "--list" | "--check" | "--extents" | "--names"))
         .collect();
     let [path] = rest.as_slice() else {
         return Err(USAGE.to_string());
@@ -533,6 +645,7 @@ pub(crate) fn cmd_scan_maps(args: &[String]) -> Result<(), String> {
     let file = fs::File::open(path).map_err(|e| format!("open({path}): {e}"))?;
     let cancelled = super::jobs::on_interrupt();
     let mut tally = Tally::default();
+    let mut named = Named::new(super::gta6_names::vocabulary());
     let mut group = Group::default();
     for find in Rpf9Scan::new(&file, from.unwrap_or(0)..to.unwrap_or(u64::MAX))
         .map_err(|e| e.to_string())?
@@ -550,13 +663,27 @@ pub(crate) fn cmd_scan_maps(args: &[String]) -> Result<(), String> {
             })
         );
         if starts && find.stored_len.is_some() {
-            let line = census_line(&file, find.offset, limit, &mut tally, asked, &mut group);
+            let line = census_line(
+                &file,
+                find.offset,
+                limit,
+                &mut tally,
+                &mut named,
+                asked,
+                &mut group,
+            );
             if let Some(line) = line {
                 println!("{line}");
             }
         }
     }
     tally.summary().iter().for_each(|l| println!("{l}"));
+    println!("{}", named.summary());
+    let by_rule = named.by_rule();
+    println!("{}", named.rule_line(&by_rule));
+    if keep_names {
+        println!("{}", super::gta6_names::keep(by_rule.values())?);
+    }
     if asked.extents {
         group.extents().iter().for_each(|l| println!("{l}"));
     }
@@ -631,6 +758,33 @@ mod tests {
             prop_lists: vec![list(3), list(4)],
             grass_lists: vec![list(11)],
         })
+    }
+
+    #[test]
+    fn the_named_share_counts_what_the_kept_names_name_and_what_the_rules_add() {
+        use or_io::gta6::hash::{name_hash32, name_hash64};
+        let mut vocabulary = Vocabulary::default();
+        vocabulary.add("zq_07", None);
+        vocabulary.add("zq_bench_01a", None);
+        let mut named = Named::new(&vocabulary);
+        for name in ["zq_07", "zq_07_instances_0", "zr_01"] {
+            let MapBody::Data(mut m) = map(0) else {
+                unreachable!()
+            };
+            (m.name, m.name_word) = (name_hash32(name.as_bytes()), name_hash64(name.as_bytes()));
+            // One entity of an archetype the vocabulary names, by both hashes; two it does not.
+            m.entities[0].archetype_name = name_hash32(b"zq_bench_01a");
+            m.entities[0].archetype_word = name_hash64(b"zq_bench_01a");
+            named.add(&MapBody::Data(m));
+        }
+        assert_eq!((named.maps, named.entities), ([1, 3], [3, 9]));
+        let by_rule = named.by_rule();
+        let given: Vec<&String> = by_rule.values().collect();
+        assert_eq!(given, ["zq_07_instances_0"]);
+        let line = named.rule_line(&by_rule);
+        assert!(line.contains("1 more of the 3"), "{line}");
+        assert!(line.contains("; 0 from those names reversed"), "{line}");
+        assert!(named.summary().contains("maps 1 of 3 (33.33%)"));
     }
 
     fn types() -> MapBody {

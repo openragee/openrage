@@ -26,6 +26,14 @@ fn shown(state: &AppState, name: &Name) -> String {
     harvested.unwrap_or_else(|| super::shown(state, name))
 }
 
+/// A map's name hash, with the name the names harvested hold for it.
+fn map_hash(hash: u32) -> String {
+    match crate::state::gta6_names::name32(hash) {
+        Some(name) => format!("{hash:#010X} ({name})"),
+        None => format!("{hash:#010X}"),
+    }
+}
+
 fn point(p: [f32; 3]) -> String {
     format!("({:.2}, {:.2}, {:.2})", p[0], p[1], p[2])
 }
@@ -61,8 +69,8 @@ pub fn draw_list(ui: &mut egui::Ui, state: &mut AppState) {
     let dictionaries = links::unresolved_dictionaries(scanned);
     let shown_links = std::sync::Arc::clone(&scanned.links);
     ui.label(egui::RichText::new(file(scanned)).strong());
-    row(ui, "name", format!("{:#010X}", m.name));
-    row(ui, "parent", format!("{:#010X}", m.parent));
+    row(ui, "name", map_hash(m.name));
+    row(ui, "parent", map_hash(m.parent));
     row(
         ui,
         "flags",
@@ -306,7 +314,7 @@ pub(super) fn draw_on_plan(
 
 /// What a level-of-detail parent names, for people.
 fn parent_text(p: &Parent) -> String {
-    let map = format!("{:#010X}", p.map);
+    let map = map_hash(p.map);
     let Some((path, target)) = &p.found else {
         return tr!(
             "map {map}, index {index}: open that map body to follow it",

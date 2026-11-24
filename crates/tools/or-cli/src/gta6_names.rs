@@ -58,6 +58,22 @@ fn said(name: Option<&str>) -> String {
     name.map_or_else(String::new, |name| format!(" ({name})"))
 }
 
+/// Holds `names` as plain names in the vocabulary kept in the configuration folder, and says how
+/// many were new.
+pub(crate) fn keep<'a>(names: impl IntoIterator<Item = &'a String>) -> Result<String, String> {
+    let root = or_title::config::config_dir().ok_or("no configuration folder to keep names in")?;
+    let file = names::vocabulary_file(&root);
+    let mut kept = Vocabulary::load(&file);
+    let new = names.into_iter().filter(|n| kept.add(n, None)).count();
+    kept.save(&file)
+        .map_err(|e| format!("write({}): {e}", file.display()))?;
+    Ok(format!(
+        "  kept          {new} names new of {} held in {}",
+        kept.len(),
+        file.display()
+    ))
+}
+
 /// Harvests every body of the archive at `path` a harvest reads, the first `prefix` bytes of
 /// each, on `threads` threads, with a line a second on stderr that says how far it has got.
 fn harvest_archive(

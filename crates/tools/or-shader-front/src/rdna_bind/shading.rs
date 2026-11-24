@@ -177,6 +177,8 @@ pub enum Unfed {
         "it reads vertices a compute pass of the game's skins first, and the editor runs none"
     )]
     SkinnedBefore,
+    #[error("it places the instances of a batch by a list and records only the game fills, at nought here, and draws nothing")]
+    Batch,
 }
 
 /// One stage of a shading pass ready for the renderer: its module, what fills each binding, and
@@ -263,6 +265,18 @@ fn reads_skinned_vertices(feeds: &[Fed]) -> bool {
             .iter()
             .any(|hash| fed.feed == Feed::Zero(Some(*hash)))
     })
+}
+
+/// The list of a batch's instances a draw takes, by the hash of its name: a mesh program of a
+/// batch effect reads an instance's number there and the instance's record, 64 bytes of which
+/// three rows are its matrix, by that number.
+// ⚠ Eleven batch effects drawn with the list at nought and the identity for the record showed
+// nothing where Material shows the model: what the rest of a record states is not read.
+const BATCH: u32 = 0x1AB3_F264;
+
+/// Whether a stage fed `feeds` draws the instances of a batch.
+fn draws_a_batch(feeds: &[Fed]) -> bool {
+    feeds.iter().any(|fed| fed.feed == Feed::Zero(Some(BATCH)))
 }
 
 /// Whether `module` takes an entry of an array it binds by a number it computes, or by a stated
@@ -815,6 +829,9 @@ pub fn feed(
     if reads_skinned_vertices(&feeds) {
         return Err(Unfed::SkinnedBefore);
     }
+    if mesh && draws_a_batch(&feeds) {
+        return Err(Unfed::Batch);
+    }
     if mesh {
         to_pixel_slots(&mut module, &parameter_slots(&native.outputs));
     }
@@ -969,6 +986,25 @@ mod tests {
         }
         let skins_itself = [fed(Feed::Zero(Some(WIND))), fed(Feed::Bones)];
         assert!(!reads_skinned_vertices(&skins_itself));
+    }
+
+    #[test]
+    fn a_stage_that_draws_a_batch_is_told_by_the_list_of_its_instances() {
+        let fed = |feed| Fed {
+            group: 0,
+            binding: 8,
+            feed,
+            header: Some(4),
+        };
+        assert!(draws_a_batch(&[
+            fed(Feed::Placement),
+            fed(Feed::Zero(Some(BATCH)))
+        ]));
+        // The record of an object drawn alone, and another buffer of the game's, are not it.
+        assert!(!draws_a_batch(&[
+            fed(Feed::Placement),
+            fed(Feed::Zero(Some(OTHER)))
+        ]));
     }
 
     #[test]

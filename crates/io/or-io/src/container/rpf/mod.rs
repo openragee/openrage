@@ -12,6 +12,8 @@ pub mod gta6_keygate;
 #[cfg(feature = "gta6")]
 pub mod gta6_mount;
 #[cfg(feature = "gta6")]
+pub mod gta6_strings;
+#[cfg(feature = "gta6")]
 pub mod gta6_write;
 pub mod header;
 mod layout;

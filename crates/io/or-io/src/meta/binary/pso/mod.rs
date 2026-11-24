@@ -11,6 +11,8 @@ pub mod reader;
 pub mod schema;
 pub mod sections;
 #[cfg(feature = "gta6")]
+pub mod string_blob;
+#[cfg(feature = "gta6")]
 mod table_canonical;
 pub mod table_form;
 #[cfg(test)]

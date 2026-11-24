@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use byteorder::{BigEndian, ByteOrder, LE};
 
 use super::gta6_keygate;
+use super::gta6_strings::StringCipher;
 use super::rpf9::Rpf9Header;
 use crate::error::{IoError, Result};
 
@@ -38,6 +39,15 @@ const SNAPSHOT_MODE_CBC: u32 = 0x4342;
 /// The mode tag `'CR'`: the content cipher (type 17) runs in CTR. It opens the optional trailing
 /// content-key section, which an index-only snapshot omits.
 const SNAPSHOT_MODE_CTR: u32 = 0x5243;
+/// The mode tag `'ST'`: the PSO string cipher (type `0x13`, white-box `504f865e`) runs in CBC. It
+/// opens the optional trailing string-key section (its own shared tables, the fixed IV and the one
+/// key), which a snapshot without string support omits.
+const SNAPSHOT_MODE_STR: u32 = 0x5453;
+/// The marker the string key blob opens with (the `504f865e` white-box representation, big-endian).
+const STRING_BLOB_MAGIC: [u8; 4] = [0x50, 0x4f, 0x86, 0x5e];
+/// The key id the PSO string cipher selects (categories 1 and 0x1e both resolve to it), named here for
+/// the refusal message; the blob it points at is carried whole in the string section.
+pub const STRING_KEY_ID: u32 = 0x1000_000e;
 /// The marker each per-archive key blob opens with.
 const BLOB_MAGIC: [u8; 4] = [0x8e, 0x9b, 0x3b, 0x4e];
 /// The marker each content key blob opens with (the `5dce1827` white-box representation, big-endian).
@@ -84,6 +94,9 @@ pub struct GtaViKeys {
     content_input_tables: Option<Box<[[u8; MAP_LEN]; MAPS]>>,
     content_round_tables: Option<Box<[[u32; MAP_LEN]; MAPS]>>,
     content_blobs: BTreeMap<u64, KeyBlob>,
+    /// The PSO string cipher's own tables, key and fixed IV (type `0x13`, CBC). `None` when the
+    /// snapshot carries no string section, which leaves PSO string-section decryption unsupported.
+    string: Option<StringCipher>,
     snapshot_file: Option<PathBuf>,
 }
 
@@ -234,6 +247,10 @@ impl GtaViKeys {
         let (content_input_tables, content_round_tables, content_blobs) =
             parse_content_section(&mut c)?;
 
+        // The string-key section (type 0x13, CBC) is a second optional trailing block, so a snapshot
+        // without it still opens; it is then without string keys and PSO string decryption is refused.
+        let string = parse_string_section(&mut c)?;
+
         Ok(Self {
             exe_sha256,
             bootstrap_iv,
@@ -243,6 +260,7 @@ impl GtaViKeys {
             content_input_tables,
             content_round_tables,
             content_blobs,
+            string,
             snapshot_file: None,
         })
     }
@@ -267,6 +285,26 @@ impl GtaViKeys {
     /// Whether the snapshot carries the content-key section, so [`Self::content_decrypt`] can run.
     pub fn has_content_keys(&self) -> bool {
         self.content_input_tables.is_some() && !self.content_blobs.is_empty()
+    }
+
+    /// Decrypt a PSO string run in place under the string cipher (type `0x13`, white-box `504f865e`):
+    /// CBC-chained from the fixed IV, over the whole 16-byte blocks of `data` (a trailing `< 16` bytes
+    /// is left clear). The IV restarts for every call, so the caller passes one enciphered run at a
+    /// time. Refused when the snapshot carries no string section.
+    pub fn string_decrypt(&self, data: &mut [u8]) -> Result<()> {
+        let cipher = self
+            .string
+            .as_ref()
+            .ok_or(IoError::RpfEncryptionUnsupported {
+                key_id: STRING_KEY_ID,
+            })?;
+        cipher.cbc_decrypt(data);
+        Ok(())
+    }
+
+    /// Whether the snapshot carries the string-key section, so [`Self::string_decrypt`] can run.
+    pub fn has_string_keys(&self) -> bool {
+        self.string.is_some()
     }
 
     /// Parse the snapshot at `path`, unmasking it first when it is a masked (`ORGTAVIM`) container:
@@ -471,6 +509,63 @@ fn parse_content_section(
         );
     }
     Ok((Some(input), Some(round), blobs))
+}
+
+/// The string cipher from the optional trailing section a cursor is positioned at the start of. A
+/// cursor at the end yields `None`; a malformed section is refused, never panicking. The layout is a
+/// `'ST'` mode tag, the two shared tables (lengths `INPUT_TABLES_LEN`, `ROUND_TABLES_LEN`), the fixed
+/// 16-byte IV, then the one key blob (`{blob_len, blob}`) opening `504f865e`, 60 words + 16 maps.
+fn parse_string_section(c: &mut Cursor<'_>) -> Result<Option<StringCipher>> {
+    if c.at >= c.bytes.len() {
+        return Ok(None);
+    }
+    let mode = c.u32()?;
+    if mode != SNAPSHOT_MODE_STR {
+        return Err(snapshot_bad(format!(
+            "string mode tag {mode:#06X}, not the string tag {SNAPSHOT_MODE_STR:#06X}"
+        )));
+    }
+    let input_len = c.u32()? as usize;
+    if input_len != INPUT_TABLES_LEN {
+        return Err(snapshot_bad(format!(
+            "string input tables are {input_len} bytes, not {INPUT_TABLES_LEN}"
+        )));
+    }
+    let input = read_byte_tables(c.take(INPUT_TABLES_LEN)?);
+
+    let round_len = c.u32()? as usize;
+    if round_len != ROUND_TABLES_LEN {
+        return Err(snapshot_bad(format!(
+            "string round tables are {round_len} bytes, not {ROUND_TABLES_LEN}"
+        )));
+    }
+    let round = read_word_tables(c.take(ROUND_TABLES_LEN)?);
+
+    let mut iv = [0u8; 16];
+    iv.copy_from_slice(c.take(16)?);
+
+    let blob_len = c.u32()? as usize;
+    if blob_len != BLOB_LEN {
+        return Err(snapshot_bad(format!(
+            "the string key blob is {blob_len} bytes, not {BLOB_LEN}"
+        )));
+    }
+    let blob = c.take(BLOB_LEN)?;
+    if blob[..4] != STRING_BLOB_MAGIC {
+        return Err(snapshot_bad("the string key does not open with its marker"));
+    }
+    let mut words = [0u32; WORDS];
+    for (i, word) in words.iter_mut().enumerate() {
+        *word = LE::read_u32(&blob[4 + i * 4..]);
+    }
+    let output = read_byte_tables(&blob[4 + WORDS * 4..]);
+    Ok(Some(StringCipher {
+        iv,
+        words,
+        output,
+        input,
+        round,
+    }))
 }
 
 fn read_byte_tables(bytes: &[u8]) -> Box<[[u8; MAP_LEN]; MAPS]> {
@@ -914,6 +1009,131 @@ mod tests {
             keys.content_decrypt(0x1000_0099, &iv, &mut [0u8; 16]),
             Err(IoError::RpfEncryptionUnsupported { .. })
         ));
+    }
+
+    /// Bytes of a trailing string section carrying synthetic tables, a fixed IV and one key blob,
+    /// appended after whatever `bytes` already holds. Never game-derived.
+    fn with_string_section(mut bytes: Vec<u8>) -> Vec<u8> {
+        bytes.extend_from_slice(&SNAPSHOT_MODE_STR.to_le_bytes());
+        bytes.extend_from_slice(&(INPUT_TABLES_LEN as u32).to_le_bytes());
+        bytes.extend((0..INPUT_TABLES_LEN).map(|i| (i * 3 + 7) as u8));
+        bytes.extend_from_slice(&(ROUND_TABLES_LEN as u32).to_le_bytes());
+        bytes.extend((0..ROUND_TABLES_LEN).map(|i| (i * 9) as u8));
+        bytes.extend((0..16u8).map(|i| i.wrapping_mul(17))); // fixed IV
+        bytes.extend_from_slice(&(BLOB_LEN as u32).to_le_bytes());
+        bytes.extend_from_slice(&STRING_BLOB_MAGIC);
+        bytes.extend((0..WORDS as u32).flat_map(|w| w.wrapping_mul(13).to_le_bytes()));
+        bytes.extend((0..(MAPS * MAP_LEN)).map(|i| (i * 2 + 1) as u8));
+        bytes
+    }
+
+    #[test]
+    fn a_string_section_parses_and_string_decrypt_round_trips_a_run() {
+        // The string section is a second trailing block, after the content section the parser reads
+        // first; build index + content + string so the content tag is not mistaken for the string tag.
+        let (base, _) = snapshot();
+        let bytes = with_string_section(with_content_section(base, 0x1000_0029));
+        let keys = GtaViKeys::parse(&bytes).expect("a string section parses");
+        assert!(keys.has_string_keys());
+        // The decrypt is deterministic and leaves a trailing partial block clear.
+        let mut data: Vec<u8> = (0..36u8).collect();
+        let tail = data[32..].to_vec();
+        keys.string_decrypt(&mut data)
+            .expect("the string key decrypts");
+        assert_ne!(
+            &data[..32],
+            &(0..32u8).collect::<Vec<_>>()[..],
+            "whole blocks change"
+        );
+        assert_eq!(
+            &data[32..],
+            &tail[..],
+            "the trailing partial block stays clear"
+        );
+
+        // A snapshot without a string section refuses string decryption.
+        let (plain, _) = snapshot();
+        let no_string = GtaViKeys::parse(&plain).unwrap();
+        assert!(!no_string.has_string_keys());
+        assert!(matches!(
+            no_string.string_decrypt(&mut [0u8; 16]),
+            Err(IoError::RpfEncryptionUnsupported { .. })
+        ));
+    }
+
+    #[test]
+    fn a_malformed_string_section_is_refused_not_panicked() {
+        let (base, _) = snapshot();
+        let good = with_string_section(with_content_section(base, 0x1000_0029));
+        // Truncated inside the string section is refused.
+        assert!(matches!(
+            GtaViKeys::parse(&good[..good.len() - 1]),
+            Err(IoError::Invalid { .. })
+        ));
+    }
+
+    #[cfg(feature = "meta")]
+    #[test]
+    fn decipher_blob_deciphers_each_enciphered_run_independently_and_leaves_the_rest() {
+        use crate::meta::binary::pso::string_blob;
+
+        let (base, _) = snapshot();
+        let bytes = with_string_section(with_content_section(base, 0x1000_0029));
+        let keys = GtaViKeys::parse(&bytes).expect("a string section parses");
+
+        // {count=3; (0x101,16) clear, (0x102,32) enciphered, (0x102,20) enciphered with a 4-byte tail}.
+        let descriptors = [(0x101u32, 16u32), (0x102, 32), (0x102, 20)];
+        let mut body = Vec::new();
+        body.extend_from_slice(&(descriptors.len() as u32).to_le_bytes());
+        for (id, len) in descriptors {
+            body.extend_from_slice(&id.to_le_bytes());
+            body.extend_from_slice(&len.to_le_bytes());
+        }
+        body.extend(0..(16 + 32 + 20) as u8);
+        let original = body.clone();
+
+        let runs = string_blob::parse(&body).expect("the blob parses");
+        let mut deciphered = body.clone();
+        string_blob::decipher_blob(&mut deciphered, &keys).expect("the string key deciphers");
+        for run in &runs {
+            let (off, len) = (run.off, run.len as usize);
+            let whole = len & !0xF;
+            if !run.enciphered {
+                assert_eq!(
+                    &deciphered[off..off + len],
+                    &original[off..off + len],
+                    "clear run kept"
+                );
+                continue;
+            }
+            // Each enciphered run equals string_decrypt applied to its own whole-block prefix alone,
+            // the trailing < 16 bytes left clear: so a run deciphers the same whatever its position,
+            // and carrying the CBC chain across runs would change the second one.
+            let mut want = original[off..off + len].to_vec();
+            keys.string_decrypt(&mut want[..whole]).unwrap();
+            assert_eq!(
+                &deciphered[off..off + len],
+                &want[..],
+                "run deciphers standalone"
+            );
+            assert_eq!(
+                &deciphered[off + whole..off + len],
+                &original[off + whole..off + len],
+                "the trailing partial block stays clear"
+            );
+        }
+        assert_ne!(deciphered, original, "the enciphered runs changed");
+
+        // A snapshot with no string section refuses a blob that carries an enciphered run.
+        let (plain, _) = snapshot();
+        let no_string = GtaViKeys::parse(&plain).unwrap();
+        assert!(string_blob::decipher_blob(&mut body, &no_string).is_err());
+
+        // decipher_stfn deciphers one buffer wholesale, leaving its trailing partial block clear.
+        let mut stfn: Vec<u8> = (0..36u8).collect();
+        let tail = stfn[32..].to_vec();
+        string_blob::decipher_stfn(&mut stfn, &keys).expect("stfn deciphers");
+        assert_eq!(&stfn[32..], &tail[..], "the stfn tail stays clear");
     }
 
     #[test]

@@ -96,7 +96,7 @@ fn devices(test: &str) -> Vec<(wgpu::Device, wgpu::Queue)> {
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
-        force_fallback_adapter: false,
+        force_fallback_adapter: crate::instance::software_asked(),
     }));
     let wanted = wgpu::Features::INDIRECT_FIRST_INSTANCE;
     let second = adapter
@@ -581,8 +581,11 @@ fn a_frame_of_more_instances_than_the_device_s_largest_buffer_holds_draws_what_f
         return;
     }
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = pollster::block_on(instance.request_adapter(&Default::default()))
-        .expect("the adapter the first device came from");
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        force_fallback_adapter: crate::instance::software_asked(),
+        ..Default::default()
+    }))
+    .expect("the adapter the first device came from");
     let most = 1u64 << 20;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("world-test-small-buffers"),

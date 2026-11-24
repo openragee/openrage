@@ -6,7 +6,7 @@ fn gpu(test: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
     let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
-        force_fallback_adapter: false,
+        force_fallback_adapter: crate::instance::software_asked(),
     })) {
         Ok(adapter) => adapter,
         Err(e) => {

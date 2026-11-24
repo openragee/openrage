@@ -27,6 +27,9 @@ pub(crate) mod mutated_tests;
 pub mod names;
 pub mod other_bodies;
 pub mod save;
+// Its natives list is GTA V's `NativeDb`, which `gta5` builds.
+#[cfg(feature = "gta5")]
+pub mod script;
 pub mod script_bodies;
 pub mod slice_sources;
 pub mod text;

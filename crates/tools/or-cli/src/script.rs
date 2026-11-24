@@ -15,6 +15,9 @@ use or_io::gta5::script::natives::{
 use or_io::gta5::script::ScrProgram;
 use or_io::gta5::script::{decompile, disasm};
 
+#[path = "gta6_lifted.rs"]
+mod lifted;
+
 const NATIVES_ENV: &str = "OPENRAGE_NATIVES";
 
 /// What `script download-natives` fetches: `(repository, branch, path, crossmap)`.
@@ -41,6 +44,9 @@ const NATIVES_UPSTREAM: [(&str, &str, &str, bool); 3] = [
 pub fn run(args: &[String]) -> ExitCode {
     if args.first().map(String::as_str) == Some("download-natives") {
         return download_natives_command();
+    }
+    if args.first().map(String::as_str) == Some("lifted") {
+        return lifted::run(&args[1..]);
     }
     let (mode, rest) = match args.first().map(String::as_str) {
         Some("disasm") => (Mode::Disasm, &args[1..]),
@@ -543,6 +549,8 @@ fn print_usage() {
     eprintln!("       openrage-cli script decompile <file.ysc>");
     eprintln!("       openrage-cli script check <file.ysc>...");
     eprintln!("       openrage-cli script download-natives");
+    eprintln!("       openrage-cli script lifted <listing.ysc.cs> [-o <file>]");
+    eprintln!("       openrage-cli script lifted --census <folder> [-o <folder>]");
     eprintln!();
     eprintln!("  disasm      An instruction listing: jump and switch targets resolved,");
     eprintln!("              calls named by function, natives named where a list does.");
@@ -552,6 +560,10 @@ fn print_usage() {
     eprintln!("              code_length bytes, no instruction across a code page, every");
     eprintln!("              jump, case and call on an instruction, every native slot in");
     eprintln!("              the table. Exits non-zero if any script disagrees.");
+    eprintln!("  lifted      Readable source from a lifted listing of a GTA VI script, the");
+    eprintln!("              text another decompiler writes from its bytecode. A compiled");
+    eprintln!("              GTA VI script cannot be read yet; `script lifted --help` says");
+    eprintln!("              what the command takes.");
     eprintln!("  --natives   The natives this script calls, by hash, named where a list does.");
     eprintln!("  --strings   The script's string heap, one entry per line.");
     eprintln!("  --statics   The initial static values; the leading ones are arguments.");

@@ -1,0 +1,149 @@
+//! Structure: blocks back into ifs, loops and switches.
+//!
+//! `graph` rewrites the blocks where a compiler spread one construct over several, `layout` puts
+//! them in the order a source would state them, and `region` writes each jump as the construct
+//! that explains it or as a `goto`.
+//!
+//! ⚠ No block is copied and none that holds a statement is dropped, so every statement comes out
+//! once. `Stats::gotos_out` counts the jumps left as `goto`, on the finished tree.
+
+#[path = "structure_cond.rs"]
+mod cond;
+#[path = "structure_graph.rs"]
+mod graph;
+#[path = "structure_layout.rs"]
+mod layout;
+#[path = "structure_region.rs"]
+mod region;
+
+use std::collections::HashMap;
+
+use crate::gta6::script::cfg;
+use crate::gta6::script::ir::{Expr, Returns};
+use crate::gta6::script::names::Names;
+use crate::gta6::script::tree::{self, Label, Stmt};
+use crate::gta6::script::Stats;
+
+/// The sweeps given to dropping what the sweep before left unreachable.
+const SWEEPS: usize = 4;
+
+/// Rebuilds `if`, `while`, `do`, `for` and `switch` from the blocks, with a `goto` only where no construct explains a jump.
+pub fn run(f: cfg::Function, _names: &Names, _stats: &mut Stats) -> tree::Function {
+    let cfg::Function {
+        mut head,
+        cfg: flow,
+    } = f;
+    let mut blocks = flow.blocks;
+    if blocks.is_empty() {
+        return tree::Function {
+            head,
+            body: Vec::new(),
+        };
+    }
+    graph::thread_joins(&mut blocks, &mut head);
+    graph::switch_trees(&mut blocks);
+    graph::unbias_switches(&mut blocks);
+    graph::merge_conditions(&mut blocks);
+    let order = layout::order(&blocks);
+    let blocks = graph::reordered(blocks, &order);
+    let (mut body, mut named) = region::structured(blocks);
+    tidy(&mut body, &mut named);
+    plain_defaults(&mut body);
+    // A void function returns by running off its end.
+    if head.returns == Returns::Void && matches!(body.last(), Some(Stmt::Return(None))) {
+        body.pop();
+    }
+    tree::Function { head, body }
+}
+
+/// Whether a statement only leaves: nothing written after it in its list runs unless a label is there.
+fn leaves(stmt: &Stmt) -> bool {
+    matches!(
+        stmt,
+        Stmt::Return(_) | Stmt::Break | Stmt::Continue | Stmt::Goto(_) | Stmt::Unreachable
+    )
+}
+
+/// The lists of statements nested in `stmt`.
+fn nested(stmt: &mut Stmt) -> Vec<&mut Vec<Stmt>> {
+    match stmt {
+        Stmt::If { then, els, .. } => vec![then, els],
+        Stmt::While { body, .. } | Stmt::DoWhile { body, .. } | Stmt::For { body, .. } => {
+            vec![body]
+        }
+        Stmt::Switch { cases, .. } => cases.iter_mut().map(|case| &mut case.body).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Drops each label no `goto` names and each jump nothing reaches, and turns an `if` with an empty arm in front of a full one.
+// A jump right after a statement that only leaves is reached by nothing: a label would stand
+// between them otherwise. Dropping a `goto` may leave its label unnamed, hence the sweeps.
+fn tidy(body: &mut Vec<Stmt>, named: &mut HashMap<Label, u32>) {
+    for _ in 0..SWEEPS {
+        let mut dropped = false;
+        let mut work: Vec<&mut Vec<Stmt>> = vec![&mut *body];
+        while let Some(list) = work.pop() {
+            let mut kept: Vec<Stmt> = Vec::with_capacity(list.len());
+            for stmt in list.drain(..) {
+                if let Stmt::Label(label) = &stmt {
+                    if named.get(label).copied().unwrap_or(0) == 0 {
+                        continue;
+                    }
+                }
+                if leaves(&stmt) && kept.last().is_some_and(leaves) {
+                    if let Stmt::Goto(label) = &stmt {
+                        if let Some(count) = named.get_mut(label) {
+                            *count = count.saturating_sub(1);
+                        }
+                        dropped = true;
+                    }
+                    continue;
+                }
+                kept.push(stmt);
+            }
+            *list = kept;
+            for stmt in list {
+                if let Stmt::If { cond, then, els } = &mut *stmt {
+                    if then.is_empty() && !els.is_empty() {
+                        let test = std::mem::replace(cond, Expr::GuidEmpty);
+                        *cond = cond::negate(test);
+                        std::mem::swap(then, els);
+                    }
+                }
+                work.extend(nested(stmt));
+            }
+        }
+        if !dropped {
+            break;
+        }
+    }
+}
+
+/// Drops a `default` that only leaves the switch: a value no case names leaves it anyway.
+// Only where nothing runs into that case from the one before it.
+fn plain_defaults(body: &mut Vec<Stmt>) {
+    let mut work: Vec<&mut Vec<Stmt>> = vec![body];
+    while let Some(list) = work.pop() {
+        for stmt in list {
+            if let Stmt::Switch { cases, .. } = &mut *stmt {
+                let plain = cases.iter().position(|case| {
+                    case.labels.contains(&None) && matches!(case.body.as_slice(), [Stmt::Break])
+                });
+                // The case before runs into this one unless it ends by leaving.
+                let entered = match plain {
+                    Some(at) if at > 0 => !cases[at - 1].body.last().is_some_and(leaves),
+                    _ => false,
+                };
+                if let (Some(at), false) = (plain, entered) {
+                    cases.remove(at);
+                }
+            }
+            work.extend(nested(stmt));
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "structure_tests.rs"]
+mod tests;

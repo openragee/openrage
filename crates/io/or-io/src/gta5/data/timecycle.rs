@@ -237,7 +237,18 @@ impl Timecycle {
         weather: f32,
         urban: f32,
     ) -> Option<Keyframe> {
-        let (first, second, along) = self.table.locate(hours)?;
+        self.keyframe_between(self.table.locate(hours)?, from, to, weather, urban)
+    }
+
+    /// The value of every variable `along` the way from sample `first` to sample `second`, for a day whose samples are not found by the hour; the weathers and the urban region blend as in [`Self::keyframe`].
+    pub fn keyframe_between(
+        &self,
+        (first, second, along): (usize, usize, f32),
+        from: &str,
+        to: &str,
+        weather: f32,
+        urban: f32,
+    ) -> Option<Keyframe> {
         let (a, b) = (self.cycle(from)?, self.cycle(to)?);
         let weather = weather.clamp(0.0, 1.0);
         let urban = urban.clamp(0.0, 1.0);

@@ -24,5 +24,7 @@ pub use sky::{
     read_sky_textures, read_textures_files, read_water_textures, SKY_TEXTURES_ARCHIVE,
     SKY_TEXTURES_FILE, WATER_TEXTURES_FILE,
 };
-pub use timecycle::{load_timecycle, TimecycleData, TIME_VFS_PATH, VISUAL_SETTINGS_VFS_PATH};
+pub use timecycle::{
+    load_timecycle, timecycle_of_documents, TimecycleData, TIME_VFS_PATH, VISUAL_SETTINGS_VFS_PATH,
+};
 pub use virtual_file::read_virtual_file;

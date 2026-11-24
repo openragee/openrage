@@ -228,6 +228,7 @@ mod gta6_texture_naming;
 mod gta6_textures;
 #[cfg(test)]
 mod gta6_textures_resolve_and_save;
+pub(crate) mod gta6_timecycle;
 pub(crate) mod gta6_weapon_parts;
 pub(crate) mod gta6_world;
 pub(crate) mod gta_vi;

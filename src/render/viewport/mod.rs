@@ -14,6 +14,7 @@ mod day;
 mod dressed;
 mod framing;
 mod game_shaders;
+mod gta6_day;
 mod photo;
 pub mod pick;
 mod pick_gta6_bound;

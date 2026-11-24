@@ -29,8 +29,9 @@ pub use install::{
     classify_leaf, load_clip_regions,
     load_from_gta_install as load_material_palette_from_gta_install, load_timecycle,
     read_sky_textures, read_textures_files, read_water_textures, scan_install_names,
-    ClipRegionLoadError, GtaInstall, InstalledNameKind, MaterialPaletteLoadError, TimecycleData,
-    CLIP_REGIONS_VFS_PATH, SKY_TEXTURES_FILE, WATER_TEXTURES_FILE,
+    timecycle_of_documents, ClipRegionLoadError, GtaInstall, InstalledNameKind,
+    MaterialPaletteLoadError, TimecycleData, CLIP_REGIONS_VFS_PATH, SKY_TEXTURES_FILE,
+    WATER_TEXTURES_FILE,
 };
 pub use shader_extract::{ShaderExtractError, DEFAULT_SHADER_DIR};
 pub use vfs::{

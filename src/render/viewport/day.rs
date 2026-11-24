@@ -59,8 +59,8 @@ pub(super) fn sun_towards(
     Some(-lighting.directional_light.truncate())
 }
 
-/// The sun and the sky a GTA VI drawable's own passes are lit by: the hour, the weather and the
-/// exposure the drivers say and nothing else, since no install's timecycle is theirs. The
+/// The built-in sun and sky a GTA VI drawable's own passes are lit by: the hour, the weather and
+/// the exposure the drivers say and nothing else, which the install's cycles then tint. The
 /// exposure's middle leaves the light as it is, and its ends are a quarter and four times it.
 fn gta6_sky(
     hour: f32,
@@ -85,8 +85,14 @@ impl RenderBridge {
         let hour = state.drivers.time_of_day.hour;
         let weather = state.drivers.weather.state;
         let days = state.drivers.time_of_day.days;
-        self.renderer
-            .set_gta6_sky(gta6_sky(hour, weather, state.drivers.exposure.value));
+        let exposure = state.drivers.exposure.value;
+        let tables = crate::state::gta6_timecycle::timecycle(state);
+        self.renderer.set_gta6_sky(super::gta6_day::sky(
+            tables.as_deref(),
+            hour,
+            weather,
+            |hour| gta6_sky(hour, weather, exposure),
+        ));
         let key = (
             Arc::as_ptr(&data) as usize,
             hour.to_bits(),

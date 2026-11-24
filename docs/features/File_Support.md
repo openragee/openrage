@@ -86,12 +86,16 @@ bytes into a chosen folder, keeping existing files. Both actions use the same bo
 Text files open as text, other decoded contents as read-only bytes; a resource extension never
 selects a GTA V reader. Reopening an entry follows its archive indices through the tables again.
 
-The reader supports sized raw entries and counted zlib streams, including content-ciphered entries
-when their key and framing are supported. Unknown layouts, 20-byte resource rows without a proven
-decoded size, stored chunks mixed with compressed chunks, and raw DEFLATE are refused. Extraction
-does not reconstruct a loose resource header around headerless contents. These paths do not scan
-for content or recover from a failed decode. Tests cover the bounded reads, decoding failures and
-the app's open and extraction actions.
+The reader supports sized raw entries and counted zlib streams on 24-byte rows. A 20-byte resource
+row requires its mode-2 chunk table: each descriptor gives the exact stored and decoded sizes and
+selects stored bytes or zlib, including mixtures of both. Reading skips the 16-byte header slot,
+checks the chunks against the row's stored extent, and takes the decoded size from the chunks,
+not the resource's virtual-page descriptor. Both row shapes support content-ciphered entries when
+their key and framing are supported. Missing or inconsistent descriptors, unknown layouts and raw
+DEFLATE are refused. Extraction does not reconstruct a loose resource header around headerless
+contents. These paths do not scan for content or recover from a failed decode. The
+[gta6_resource_reads](../../crates/io/or-io/tests/gta6_resource_reads.rs) suite checks exact chunk
+sizes, bounds, limits and decoding failures; app and CLI tests cover opening and extraction.
 
 `openrage-cli rpf9 list` also lists from the table, and `rpf9 extract` uses the same strict entry
 reader as the app (`--decrypt` enables ciphered entries). The explicit `openrage-cli rpf scan` command and

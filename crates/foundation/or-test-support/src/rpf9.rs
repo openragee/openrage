@@ -104,3 +104,74 @@ pub fn table(entries: &[(u64, u64, u64, u8)]) -> Vec<u8> {
     }
     bytes
 }
+
+/// A plaintext 20-byte entry at 0x1000 with mode-2 `(decoded, stored, compressed)` chunk descriptors.
+pub fn resource_table(chunks: &[(u32, u32, bool)]) -> Vec<u8> {
+    let metadata_start = 64 + 4 * 8;
+    let groups = metadata_start + 0x150;
+    let indices = groups + 3 * 24;
+    let data = (indices + 2usize).next_multiple_of(8);
+    let cell = data + 20;
+    let heap = cell + 8;
+    let split = (heap + chunks.len() * 8).next_multiple_of(16);
+    let end = split + 16;
+    let mut bytes = vec![0; end];
+    let put32 = |bytes: &mut [u8], at: usize, value: usize| {
+        bytes[at..at + 4].copy_from_slice(&(value as u32).to_le_bytes())
+    };
+    bytes[..4].copy_from_slice(b"9FPR");
+    for (at, value) in [
+        (4, end),
+        (8, split),
+        (0x0c, 0x40),
+        (0x1c, 0x150),
+        (0x24, 1),
+        (0x30, 0x10),
+        (metadata_start, 0x1234_5678),
+    ] {
+        put32(&mut bytes, at, value);
+    }
+    bytes[0x19] = 0x7a;
+    bytes[0x1a] = 4;
+    bytes[0x20] = 3;
+    bytes[0x22] = 1;
+    bytes[0x2c] = 1;
+    bytes[0x2d] = 0x0f;
+    bytes[0x2e] = 0x09;
+    bytes[0x40] = 1;
+    bytes[metadata_start + 4] = 0x10;
+    for (i, (hash, width, offset)) in [
+        (0xBA18_0AFB_232D_1B4Bu64, 20, 0),
+        (0xE0C1_2D7A_5D48_84C5, 8, 20),
+        (0x73BC_B72D_CE74_F11F, 8 | (1 << 16), 0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let at = groups + i * 24;
+        bytes[at..at + 8].copy_from_slice(&hash.to_le_bytes());
+        put32(&mut bytes, at + 8, 1);
+        put32(&mut bytes, at + 12, offset);
+        put32(&mut bytes, at + 16, width);
+    }
+    let stored: usize = chunks
+        .iter()
+        .map(|c| (c.1 as usize).next_multiple_of(16))
+        .sum();
+    put32(&mut bytes, data, u32::MAX as usize);
+    put32(&mut bytes, data + 8, 1 + stored / 16);
+    put32(&mut bytes, data + 12, 0x1000 / 16);
+    put32(&mut bytes, cell, heap - cell);
+    put32(&mut bytes, cell + 4, 0x0208_0000 | chunks.len());
+    bytes[split + 8..split + 16].copy_from_slice(&1u64.to_le_bytes());
+    for (i, &(decoded, stored, compressed)) in chunks.iter().enumerate() {
+        assert_eq!(decoded % 16, 0);
+        let aligned = u64::from(stored).next_multiple_of(16);
+        let word = u64::from(decoded / 16)
+            | ((aligned / 16) << 32)
+            | ((aligned - u64::from(stored)) << 58)
+            | (if compressed { 3 } else { 0 } << 62);
+        bytes[heap + i * 8..heap + (i + 1) * 8].copy_from_slice(&word.to_le_bytes());
+    }
+    bytes
+}

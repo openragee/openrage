@@ -388,3 +388,59 @@ fn extract_decrypt_writes_a_deciphered_body() {
         &on_disk[..on_disk.len().min(4)]
     );
 }
+
+#[test]
+fn extraction_reads_a_twenty_byte_nested_entry_and_refuses_a_missing_chunk_table() {
+    use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
+    let keys = GtaViKeys::parse(&or_test_support::rpf9::keys()).unwrap();
+    let encode = |bytes| {
+        Rpf9Builder::serialize(
+            &Rpf9Toc {
+                bytes,
+                key_id: 0,
+                registry_id: 0,
+                entry_count: 0,
+                groups: Vec::new(),
+            },
+            &keys,
+        )
+        .unwrap()
+    };
+    for missing in [false, true] {
+        let mut bytes = encode(or_test_support::rpf9::table(&[(1, 0x1000, 0x1020, 0)]));
+        bytes.resize(0x1000, 0x78);
+        let mut table = or_test_support::rpf9::resource_table(&[(16, 16, false)]);
+        if missing {
+            let metadata_start = 64 + 4 * 8;
+            let index_start = metadata_start + 0x150 + 3 * 24;
+            table[index_start + 1] = 0xff;
+        }
+        bytes.extend(encode(table));
+        bytes.resize(0x2010, 0x78);
+        bytes.extend(b"table only bytes");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resource.rpf");
+        let dest = dir.path().join("out");
+        std::fs::write(&path, bytes).unwrap();
+        let result = do_extract(
+            &path,
+            &dest,
+            &["0".into()],
+            Some("0"),
+            None,
+            false,
+            &keys,
+            &NameResolver::new(),
+        );
+        if missing {
+            assert!(result.is_err());
+            assert_eq!(std::fs::read_dir(&dest).unwrap().count(), 0);
+        } else {
+            assert_eq!(result.unwrap(), 1);
+            assert_eq!(
+                std::fs::read(dest.join("hash_0000000000000001")).unwrap(),
+                b"table only bytes"
+            );
+        }
+    }
+}

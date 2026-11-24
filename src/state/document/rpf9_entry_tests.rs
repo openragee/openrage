@@ -224,3 +224,66 @@ fn text_opens_as_text_and_a_gta_vi_resource_is_not_given_a_gta_v_reader() {
         DocPayload::Hex(_)
     ));
 }
+
+#[test]
+fn a_twenty_byte_nested_entry_opens_reloads_and_extracts_from_its_table() {
+    use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
+    let _serial = crate::ui::theme::serial();
+    let encode = |bytes| {
+        Rpf9Builder::serialize(
+            &Rpf9Toc {
+                bytes,
+                key_id: 0,
+                registry_id: 0,
+                entry_count: 0,
+                groups: Vec::new(),
+            },
+            &keys(),
+        )
+        .unwrap()
+    };
+    let mut bytes = encode(or_test_support::rpf9::table(&[(1, 0x1000, 0x1020, 0)]));
+    bytes.resize(0x1000, 0x78);
+    bytes.extend(encode(or_test_support::rpf9::resource_table(&[(
+        16, 16, false,
+    )])));
+    bytes.resize(0x2010, 0x78);
+    let expected = b"table only bytes";
+    bytes.extend(expected);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("resource.rpf");
+    std::fs::write(&path, bytes).unwrap();
+    let table = Rpf9TableDocument::open_using(&path, || Ok(keys()))
+        .unwrap()
+        .unwrap();
+    table.toggle(0, 0);
+    wait(&table);
+    let source = table.entry(0x1000, 0).unwrap();
+    let (_, chain) = address(&source.path).unwrap();
+    assert_eq!(chain, [0, 0]);
+    let reloaded = Rpf9TableDocument::open_using(&path, || Ok(keys()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        read_chain(&reloaded, &chain).unwrap().bytes().unwrap(),
+        expected
+    );
+    let mut state = AppState::from_prefs(Prefs::default());
+    state.open_rpf9_entry(&table, 0x1000, 0);
+    let dest = dir.path().join("out");
+    assert!(state.extract_rpf9_entry(&table, 0x1000, 0, dest.clone()));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while state.load_receiver.is_some() || state.extract_jobs.is_running() {
+        state.poll_load_result();
+        state.poll_extract_job();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let doc = state.active_document().unwrap();
+    assert_eq!(doc.read_only, Some(READ_ONLY));
+    let DocPayload::Hex(hex) = &doc.payload else {
+        panic!("expected a byte view");
+    };
+    assert_eq!(hex.bytes, expected);
+    assert_eq!(std::fs::read(dest.join(&source.name)).unwrap(), expected);
+}

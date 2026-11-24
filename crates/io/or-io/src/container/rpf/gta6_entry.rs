@@ -3,6 +3,7 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::ops::Range;
 
+use super::gta6_chunk_table::{self, Chunk, Table};
 use super::{Gta6Archive, Gta6Cipher, Gta6Class, Gta6Entry, Gta6EntryExtra, GtaViKeys};
 use crate::error::{IoError, Result};
 
@@ -11,8 +12,15 @@ use crate::error::{IoError, Result};
 pub struct Gta6EntryRead {
     extent: Range<u64>,
     real: usize,
-    chunks: Option<u32>,
+    decoding: Decoding,
     cipher: Option<Gta6Cipher>,
+}
+
+#[derive(Clone)]
+enum Decoding {
+    Raw,
+    CountedZlib(u32),
+    Table(Vec<Chunk>),
 }
 
 fn bad(why: impl Into<String>) -> IoError {
@@ -37,19 +45,81 @@ impl Gta6EntryRead {
         let extra = archive
             .entry_extra(index as usize)
             .ok_or_else(|| bad("entry columns are unreadable"))?;
-        Self::plan(entry, extra, archive.toc.bytes.len() as u64, extent, limit)
+        let table = if extra.nested.is_some() {
+            let at = gta6_chunk_table::cell_offset(archive, index as usize)
+                .ok_or_else(|| bad("a 20-byte resource row requires a chunk table"))?;
+            let heap = &archive.toc.bytes[at..];
+            let mut cell = [0; 8];
+            cell.copy_from_slice(&heap[..8]);
+            Some(gta6_chunk_table::decode(cell, heap)?)
+        } else {
+            None
+        };
+        Self::plan(
+            entry,
+            extra,
+            table,
+            archive.toc.bytes.len() as u64,
+            extent,
+            limit,
+        )
     }
 
     fn plan(
         entry: &Gta6Entry,
         extra: Gta6EntryExtra,
+        table: Option<Table>,
         table_len: u64,
         parent: Range<u64>,
         limit: u64,
     ) -> Result<Self> {
-        let (Some(start), Some(stored), Some(real)) = (entry.start, entry.stored, entry.real)
-        else {
-            return Err(bad("this row does not state a supported stored and decoded size; 20-byte resource rows are not decoded"));
+        let start = entry.start.ok_or_else(|| bad("entry has no start"))?;
+        let (stored, real, skip, decoding) = match (entry.stored, entry.real, extra.nested) {
+            (None, None, Some(row)) if entry.class.is_none() => {
+                let table =
+                    table.ok_or_else(|| bad("a 20-byte resource row requires a chunk table"))?;
+                if table.mode != 2 || table.chunks.is_empty() {
+                    return Err(bad(
+                        "a 20-byte resource row requires a nonempty mode-2 chunk table",
+                    ));
+                }
+                let mut stored = 16u64;
+                let mut real = 0u64;
+                for chunk in &table.chunks {
+                    if chunk.stored == 0 || chunk.inflated == 0 {
+                        return Err(bad("empty resource chunk"));
+                    }
+                    stored += (u64::from(chunk.stored) + 15) & !15;
+                    real += u64::from(chunk.inflated);
+                }
+                if stored != row.stored_size() {
+                    return Err(bad(
+                        "chunk sizes do not match the 20-byte row's stored size",
+                    ));
+                }
+                (stored, real, 16, Decoding::Table(table.chunks))
+            }
+            (Some(stored), Some(real), None) => {
+                let decoding = match (entry.kind(), extra.chunk_count) {
+                    (Some(Gta6Class::Media | Gta6Class::NestedArchive), None)
+                        if real.checked_add(15).map(|n| n & !15) == Some(stored) =>
+                    {
+                        Decoding::Raw
+                    }
+                    (Some(Gta6Class::CompressedResource), Some(count))
+                        if count > 0 && u64::from(count) <= stored / 16 =>
+                    {
+                        Decoding::CountedZlib(count)
+                    }
+                    _ => {
+                        return Err(bad(
+                            "unsupported entry layout or inconsistent sizes/chunk count",
+                        ))
+                    }
+                };
+                (stored, real, 0, decoding)
+            }
+            _ => return Err(bad("unsupported or conflicting entry rows")),
         };
         let begin = parent
             .start
@@ -67,23 +137,6 @@ impl Gta6EntryRead {
         {
             return Err(bad("entry exceeds its parent archive or the size limit, overlaps its table, or is not aligned"));
         }
-        let chunks = match (entry.kind(), extra.chunk_count) {
-            (Some(Gta6Class::Media | Gta6Class::NestedArchive), None)
-                if real.checked_add(15).map(|n| n & !15) == Some(stored) =>
-            {
-                None
-            }
-            (Some(Gta6Class::CompressedResource), Some(count))
-                if count > 0 && u64::from(count) <= stored / 16 =>
-            {
-                Some(count)
-            }
-            _ => {
-                return Err(bad(
-                    "unsupported entry layout or inconsistent sizes/chunk count",
-                ))
-            }
-        };
         if let Some(cipher) = entry.cipher {
             if cipher.cipher_type != 17 {
                 return Err(IoError::RpfEncryptionUnsupported {
@@ -91,7 +144,7 @@ impl Gta6EntryRead {
                 });
             }
             if let Some(reason) =
-                super::gta6_content::framing_reject_reason(&cipher.framing, stored)
+                super::gta6_content::framing_reject_reason(&cipher.framing, stored - skip)
             {
                 return Err(bad(reason));
             }
@@ -100,9 +153,9 @@ impl Gta6EntryRead {
         let real =
             usize::try_from(real).map_err(|_| bad("decoded size exceeds addressable memory"))?;
         Ok(Self {
-            extent: begin..end,
+            extent: begin + skip..end,
             real,
-            chunks,
+            decoding,
             cipher: entry.cipher,
         })
     }
@@ -135,9 +188,10 @@ impl Gta6EntryRead {
             );
             result?;
         }
-        match self.chunks {
-            Some(count) => inflate(&body, count, self.real),
-            None => {
+        match &self.decoding {
+            Decoding::CountedZlib(count) => inflate(&body, *count, self.real),
+            Decoding::Table(chunks) => inflate_table(&body, chunks),
+            Decoding::Raw => {
                 body.truncate(self.real);
                 Ok(body)
             }
@@ -145,40 +199,41 @@ impl Gta6EntryRead {
     }
 }
 
-fn inflate(body: &[u8], count: u32, real: usize) -> Result<Vec<u8>> {
-    use flate2::{Decompress, FlushDecompress, Status};
+fn inflate_table(body: &[u8], chunks: &[Chunk]) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     let mut at = 0usize;
-    let mut buffer = [0; 64 * 1024];
-    for _ in 0..count {
-        let mut decoder = Decompress::new(true);
-        loop {
-            let before_in = decoder.total_in();
-            let before_out = decoder.total_out();
-            let input = body
-                .get(at + before_in as usize..)
-                .ok_or_else(|| bad("chunk extends past its entry"))?;
-            let status = decoder
-                .decompress(input, &mut buffer, FlushDecompress::Finish)
-                .map_err(|e| {
-                    bad(format!(
-                        "invalid zlib chunk: {e}; stored or raw-DEFLATE chunks are not supported"
-                    ))
-                })?;
-            let made = (decoder.total_out() - before_out) as usize;
-            if made > real.saturating_sub(out.len()) {
-                return Err(bad("chunks exceed the decoded size stated by the table"));
+    for chunk in chunks {
+        let end = at + chunk.stored as usize;
+        let bytes = body
+            .get(at..end)
+            .ok_or_else(|| bad("chunk extends past its entry"))?;
+        let expected = out.len() + chunk.inflated as usize;
+        if chunk.zlib {
+            let consumed = inflate_zlib(bytes, &mut out, expected)?;
+            if consumed != bytes.len() || out.len() != expected {
+                return Err(bad("compressed chunk does not match its exact table sizes"));
             }
-            out.extend_from_slice(&buffer[..made]);
-            if status == Status::StreamEnd {
-                break;
-            }
-            if made == 0 && decoder.total_in() == before_in {
-                return Err(bad("truncated zlib chunk"));
-            }
+        } else {
+            out.extend_from_slice(bytes);
         }
+        at = end.next_multiple_of(16);
+    }
+    if at != body.len() {
+        return Err(bad("chunk sizes do not cover the entry body"));
+    }
+    Ok(out)
+}
+
+fn inflate(body: &[u8], count: u32, real: usize) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    for _ in 0..count {
+        let input = body
+            .get(at..)
+            .ok_or_else(|| bad("chunk extends past its entry"))?;
+        let consumed = inflate_zlib(input, &mut out, real)?;
         at = at
-            .checked_add(decoder.total_in() as usize)
+            .checked_add(consumed)
             .and_then(|n| n.checked_add(15))
             .map(|n| n & !15)
             .ok_or_else(|| bad("chunk size overflow"))?;
@@ -189,6 +244,38 @@ fn inflate(body: &[u8], count: u32, real: usize) -> Result<Vec<u8>> {
         ));
     }
     Ok(out)
+}
+
+fn inflate_zlib(input: &[u8], out: &mut Vec<u8>, limit: usize) -> Result<usize> {
+    use flate2::{Decompress, FlushDecompress, Status};
+    let mut decoder = Decompress::new(true);
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let before_in = decoder.total_in();
+        let before_out = decoder.total_out();
+        let status = decoder
+            .decompress(
+                &input[before_in as usize..],
+                &mut buffer,
+                FlushDecompress::Finish,
+            )
+            .map_err(|e| {
+                bad(format!(
+                    "invalid zlib chunk: {e}; raw-DEFLATE chunks are not supported"
+                ))
+            })?;
+        let made = (decoder.total_out() - before_out) as usize;
+        if made > limit.saturating_sub(out.len()) {
+            return Err(bad("chunks exceed the decoded size stated by the table"));
+        }
+        out.extend_from_slice(&buffer[..made]);
+        if status == Status::StreamEnd {
+            return Ok(decoder.total_in() as usize);
+        }
+        if made == 0 && decoder.total_in() == before_in {
+            return Err(bad("truncated zlib chunk"));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -255,6 +342,7 @@ mod tests {
                 chunk_count: chunks,
                 ..Default::default()
             },
+            None,
             64,
             128..1024,
             1024,

@@ -11,8 +11,8 @@
 //! whose name64 column is shorter than their entry count.
 //!
 //! Two entry-row shapes exist (a table may hold both; an entry has a row in exactly one). The 24-byte
-//! row carries start, stored size, real size and a class byte; the 20-byte row, universal in the
-//! nested tables, carries only a proven start. A column whose hash this reader does not know is left
+//! row carries start, stored size, real size and a class byte; the 20-byte row carries a slot extent
+//! and resource descriptors. Its decoded body sizes come from its mode-2 chunk table. A column whose hash this reader does not know is left
 //! undecoded rather than read as a row of a guessed shape, so an entry lists what the known columns
 //! state and nothing invented.
 //!
@@ -40,8 +40,8 @@ pub const GROUP_ENTRY_ROW: u64 = 0x33F7_0DFA_F2C5_0989;
 /// The 20-byte entry row, the second row shape, universal in the nested tables. Its five little-endian
 /// u32 words are `[w0 virtual size, w4 flags, w8 stored size in 16-byte pages, w12 start/16, w16
 /// resource type]`; [`Gta6Archive::entry_extras`] decodes the lot into a [`Gta6NestedRow`]. The entry
-/// itself still carries only the proven start, so a 20-byte row's body is read by the detector's own
-/// measure, not by `w0` (a page-bucket descriptor, not a byte size, for a paged resource).
+/// itself carries only the start; the strict reader gets the body sizes from the chunk table,
+/// not `w0` (a page-bucket descriptor, not a byte size, for a paged resource).
 pub const GROUP_ENTRY_ROW_20: u64 = 0xBA18_0AFB_232D_1B4B;
 /// The content-cipher column: 64-byte records whose head is `{u32 keyId, u16 cipherType, byte
 /// iv[16]}`. An entry with such a row has an enciphered body; type 17 is opened by
@@ -53,7 +53,7 @@ pub const GROUP_CIPHER: u64 = 0x2860_30A3_58A7_89FB;
 pub const GROUP_CONTENT_HASH: u64 = 0xB6F5_BDB2_C66D_A2E9;
 /// The chunk record column (`0xe0c1`): 8-byte records, two u32. The second u32's low half is the
 /// number of 16-aligned chunks a compressed entry's body is stored in — the count a decrypted body's
-/// chunk walk must reproduce. The first u32 is an unresolved byte coordinate into a chunk-length heap.
+/// chunk walk must reproduce. The first u32 is the offset from this cell to its chunk descriptors.
 pub const GROUP_CHUNK_RECORD: u64 = 0xE0C1_2D7A_5D48_84C5;
 
 /// The coarse content class of a 24-byte entry row, from its class byte.
@@ -110,7 +110,7 @@ pub struct Gta6Entry {
     /// archive); `None` when the entry has no entry row.
     pub start: Option<u64>,
     /// The stored (on-disk) size in bytes, rounded up to 16; `None` for a 20-byte row, whose size is
-    /// not yet decoded, or no row.
+    /// carried separately by [`Gta6NestedRow`], or no row.
     pub stored: Option<u64>,
     /// The real (inflated) size in bytes; `None` for a 20-byte row or no row.
     pub real: Option<u64>,

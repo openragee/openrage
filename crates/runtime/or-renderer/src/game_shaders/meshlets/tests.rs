@@ -346,13 +346,15 @@ fn the_built_in_sky_has_a_sun_by_day_a_dim_moon_by_night_and_less_of_both_under_
 
 #[test]
 fn the_developer_s_aids_are_words_separated_by_commas() {
-    let aids = Aids::parse("target=3, pixel=C:/a b/p.wgsl,plain-device,unknown,mesh=m.wgsl");
+    let aids =
+        Aids::parse("target=3, pixel=C:/a b/p.wgsl,plain-device,unknown,mesh=m.wgsl,record=r.bin");
     assert_eq!(
         aids,
         Aids {
             target: 3.0,
             pixel: Some("C:/a b/p.wgsl".into()),
             mesh: Some("m.wgsl".into()),
+            record: Some("r.bin".into()),
             plain_device: true,
         }
     );

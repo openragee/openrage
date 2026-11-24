@@ -291,6 +291,10 @@ fn feeds(
             Filled::Listed(listed) => {
                 let last = listed.iter().map(|(dword, _)| *dword).max();
                 let mut words = vec![0u32; last.map_or(0, |last| last as usize + 1)];
+                if let Some(record) = or_renderer::game_shaders::meshlets::record_aid() {
+                    words.resize(words.len().max(record.len()), 0);
+                    words[..record.len()].copy_from_slice(&record);
+                }
                 for (dword, number) in listed {
                     words[*dword as usize] = number + 1;
                 }

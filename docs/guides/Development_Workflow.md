@@ -459,8 +459,9 @@ commas. `target=N` shows a target of the pass raw in place of the lit frame (1 t
 colour to 6 the fourth channels), `pixel=FILE` and `mesh=FILE` draw with a stage of
 WGSL of one's own in place of the translated one, such as one
 `openrage-cli rpf scan-shading … --wgsl` wrote and a person edited to store a
-value, and `plain-device` asks the device for no optional feature and no raised
-limit. `Aids` in `crates/runtime/or-renderer/src/game_shaders/meshlets.rs` reads it.
+value, `record=FILE` draws with the bytes of FILE as the record a material's
+texture numbers head, whose other bytes only the game fills, and `plain-device`
+asks the device for no optional feature and no raised limit. `Aids` in `crates/runtime/or-renderer/src/game_shaders/meshlets.rs` reads it.
 
 Nothing a script clicks reaches past the app. A self-check's first act,
 `stand_in_for_the_desktop`, sends every call that would to its stand-in in

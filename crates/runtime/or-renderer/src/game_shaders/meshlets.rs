@@ -44,13 +44,15 @@ const STAGE_BINDINGS: u32 = 64;
 /// of the lit frame (1 the colour, 2 the packed normal, 3 the normal, 4 the specular terms, 5
 /// the ambient ones, 6 the fourth channels); `pixel=FILE` and `mesh=FILE` draw with a stage
 /// of WGSL of one's own in place of the translated one, such as one `rpf scan-shading --wgsl`
-/// wrote, edited to store a value; `plain-device` asks the device for no optional feature and
-/// no raised limit, as a device that has none.
+/// wrote, edited to store a value; `record=FILE` draws with the bytes of FILE as the record a
+/// material's numbers head, the rest of which only the game fills; `plain-device` asks the
+/// device for no optional feature and no raised limit, as a device that has none.
 #[derive(Debug, Default, PartialEq)]
 struct Aids {
     target: f32,
     pixel: Option<String>,
     mesh: Option<String>,
+    record: Option<String>,
     plain_device: bool,
 }
 
@@ -62,12 +64,20 @@ impl Aids {
                 Some(("target", n)) => aids.target = n.parse().unwrap_or(0.0),
                 Some(("pixel", file)) => aids.pixel = Some(file.to_owned()),
                 Some(("mesh", file)) => aids.mesh = Some(file.to_owned()),
+                Some(("record", file)) => aids.record = Some(file.to_owned()),
                 None if word == "plain-device" => aids.plain_device = true,
                 _ => {}
             }
         }
         aids
     }
+}
+
+/// The dwords of the file the developer's aid `record=FILE` names, where it is given and reads.
+pub fn record_aid() -> Option<Vec<u32>> {
+    let bytes = std::fs::read(aids().record.as_ref()?).ok()?;
+    let (dwords, _) = bytes.as_chunks::<4>();
+    Some(dwords.iter().map(|c| u32::from_le_bytes(*c)).collect())
 }
 
 fn aids() -> &'static Aids {

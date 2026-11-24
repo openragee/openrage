@@ -208,6 +208,13 @@ impl ViewportRenderer {
         self.deferred_scene.is_some()
     }
 
+    /// The targets of the G-buffer the deferred frame fills, for a test to read what its passes wrote.
+    #[cfg(test)]
+    pub(crate) fn gbuffer_textures(&self) -> Vec<&wgpu::Texture> {
+        let frame = self.deferred.iter();
+        frame.flat_map(|frame| frame.gbuffer.textures()).collect()
+    }
+
     /// Forget what was built for the deferred passes, such as pipelines the device refused or ones made for another pack.
     pub fn reset_deferred_pipelines(&mut self) {
         self.refracts = false;
@@ -549,6 +556,8 @@ impl ViewportRenderer {
                 multiview_mask: None,
             });
             scene.record_gbuffer(&mut pass);
+            self.world
+                .draw_gbuffer(&mut pass, &self.bind_group, &self.fallback_material_bg);
         }
         self.gpu_mark(encoder, "g-buffer");
         if shadow.is_some() {

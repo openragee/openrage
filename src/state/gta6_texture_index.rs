@@ -271,6 +271,21 @@ pub(super) fn pack_keys(
     }
 }
 
+/// The packs of a folder, the pack each key is in, and the format code each key's texture states.
+pub(super) type PackPlaces = (Vec<PathBuf>, HashMap<u64, u32>, HashMap<u64, u16>);
+
+/// A worker's work that gives the packs under `root` and, for each key, which of them holds it and the format code it states, read as the pack index reads them and kept as it keeps them; `None` once cancelled.
+// ⚠ Where the index is kept is found here, on the caller's thread, as [`pack_keys`] finds it.
+pub(super) fn pack_places(
+    root: &Path,
+) -> impl FnOnce(&or_job::Cancel, &or_job::Progress) -> Option<PackPlaces> + Send + 'static {
+    let (root, kept) = (root.to_path_buf(), Kept::of(root));
+    move |cancel, progress| {
+        let (index, _) = index(&root, kept.as_ref(), cancel, progress)?;
+        Some((index.packs, index.keys, index.formats))
+    }
+}
+
 impl AppState {
     /// Open the pack that holds a key the active GTA VI drawable binds and nothing open holds,
     /// indexing the packs of its install or folder first, as a job; whether one opened.

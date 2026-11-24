@@ -426,6 +426,7 @@ Coordinates are points on a 1600×900 screen unless `size` changes it.
 |---|---|
 | `size W H` | sets the screen, in points |
 | `game legacy` or `game enhanced`, then an optional folder | makes the install active, as the start page does, and waits for its rows, so the next step finds them; with no folder, the one discovery finds |
+| `game gta6 FOLDER` | sets the GTA VI folder, as Settings ▸ Games does, and mounts nothing: a GTA VI install is read by scan, and the World screen then indexes it |
 | `wait SECONDS` | draws frames while background work (keys, the name scan, loads) runs |
 | `open PATH` | loads a file through the real load path and waits for it, or opens a folder as Open Folder does and waits for its rows, and for the banner that offers to make it a project to say what the folder holds, so the next step finds them; a file of the other edition than the active game raises the question that ends in "Yes, switch to GTA V (Enhanced)" (`src/app/modals.rs`), so put `game legacy` or `game enhanced` before the `open` or click that button after it |
 | `project PATH` | opens a `.openrage-proj` as Open Project does once its file is picked, and waits for its files and source folders to be read |

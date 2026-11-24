@@ -41,11 +41,13 @@ pub enum Workspace {
     Weapons,
     /// The maps of a map pack; offered only while the project holds maps.
     Map,
+    /// GTA VI's world flown through; offered while a GTA VI folder is set.
+    World,
 }
 
 impl Workspace {
     /// Every workspace in the order of the buttons: the neutral Project view first, and the task screens of a kind of content last.
-    pub const ALL: [Workspace; 10] = [
+    pub const ALL: [Workspace; 11] = [
         Workspace::Project,
         Workspace::Browse,
         Workspace::Model,
@@ -56,6 +58,7 @@ impl Workspace {
         Workspace::Wardrobe,
         Workspace::Weapons,
         Workspace::Map,
+        Workspace::World,
     ];
 
     /// What is offered with no project open, which is every workspace but Project.
@@ -81,6 +84,7 @@ impl Workspace {
             Workspace::Animation => tr!("Animation"),
             Workspace::Particle => tr!("Particle"),
             Workspace::Data => tr!("Data"),
+            Workspace::World => tr!("World"),
             // A task screen with no row is a screen of no content, which has no name.
             _ => "",
         }
@@ -109,6 +113,9 @@ impl Workspace {
             Workspace::Particle => tr!("Particle effects (.ypt)"),
             Workspace::Data => {
                 tr!("Metadata, text, string tables, game data tables and audio (.meta, .ymt, .xml, .gxt2, .dat, .rel, .awc, …)")
+            }
+            Workspace::World => {
+                tr!("GTA VI's world as the game streams it at rest, flown through with a free camera")
             }
             _ => "",
         }
@@ -229,6 +236,8 @@ impl Tab {
     pub const MAPS: Tab = Tab(ids::MAPS);
     pub const MAP_PLAN: Tab = Tab(ids::MAP_PLAN);
     pub const MAP_SCENE: Tab = Tab(ids::MAP_SCENE);
+    pub const WORLD_VIEW: Tab = Tab(ids::WORLD_VIEW);
+    pub const WORLD: Tab = Tab(ids::WORLD);
     pub const EFFECTS: Tab = Tab(ids::EFFECTS);
     pub const ASSETS: Tab = Tab(ids::ASSETS);
     pub const PROBLEMS: Tab = Tab(ids::PROBLEMS);
@@ -458,6 +467,7 @@ fn center_tabs(ws: Workspace) -> Vec<Tab> {
         Workspace::Texture => vec![Tab::GALLERY],
         Workspace::Animation => vec![Tab::VIEWPORT_3D, Tab::CLIP_TABLE],
         Workspace::Data => vec![Tab::DOCUMENT, Tab::TEXT_EDITOR],
+        Workspace::World => vec![Tab::WORLD_VIEW],
         // A task screen's layout names its own centre: the panel it opens with the focus on.
         task => crate::ui::task_screens::of_workspace_alone(task)
             .and_then(|screen| (screen.layout)().find_active_focused().map(|(_, tab)| *tab))
@@ -492,6 +502,9 @@ fn layout_for(ws: Workspace) -> DockState<Tab> {
     if let Some(screen) = crate::ui::task_screens::of_workspace_alone(ws) {
         return (screen.layout)();
     }
+    if ws == Workspace::World {
+        return world_layout();
+    }
     let mut state = DockState::new(center_tabs(ws));
     let surface = state.main_surface_mut();
 
@@ -521,6 +534,19 @@ fn layout_for(ws: Workspace) -> DockState<Tab> {
         node: center,
     });
 
+    state
+}
+
+/// The World workspace: the view, what the mount found and what is streaming beside it, and the jobs under it.
+fn world_layout() -> DockState<Tab> {
+    let mut state = DockState::new(center_tabs(Workspace::World));
+    let surface = state.main_surface_mut();
+    let [center, _] = surface.split_right(NodeIndex::root(), 0.78, vec![Tab::WORLD]);
+    let [center, _] = surface.split_below(center, 0.86, vec![Tab::JOBS, Tab::LOG]);
+    state.set_focused_node_and_surface(egui_dock::NodePath {
+        surface: egui_dock::SurfaceIndex::main(),
+        node: center,
+    });
     state
 }
 

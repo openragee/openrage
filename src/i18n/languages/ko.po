@@ -16508,3 +16508,95 @@ msgid "{count} pair"
 msgid_plural "{count} pairs"
 msgstr[0] "쌍 {count}개"
 msgstr[1] "쌍 {count}개"
+msgid "Set the GTA VI folder in Settings ▸ Games to fly through its world"
+msgstr "설정 ▸ 게임에서 GTA VI 폴더를 지정하면 그 월드를 비행하며 둘러볼 수 있습니다"
+
+msgid "The GTA VI world, flown through"
+msgstr "비행으로 둘러보는 GTA VI 월드"
+
+msgid "Indexing the GTA VI world: {percent} %"
+msgstr "GTA VI 월드 인덱싱 중: {percent} %"
+
+msgid "The GTA VI world was not indexed: {why}"
+msgstr "GTA VI 월드를 인덱싱하지 못했습니다: {why}"
+
+msgid "Drag to look, W A S D or Z Q S D to move, E and C up and down, Shift faster; the wheel sets the speed: {speed} m/s"
+msgstr "끌어서 둘러보기, W A S D 또는 Z Q S D로 이동, E와 C로 위아래, Shift로 가속, 휠로 속도 설정: {speed} m/s"
+
+msgid "Streaming"
+msgstr "스트리밍"
+
+msgid "{loaded} of {wanted} maps streamed in, {waiting} waited for; {nodes} entities and lists"
+msgstr "맵 {wanted}개 중 {loaded}개 스트리밍됨, {waiting}개 대기 중, 엔티티와 목록 {nodes}개"
+
+msgid "{seen} of {selected} instances in view, in {draws} draws"
+msgstr "인스턴스 {selected}개 중 {seen}개가 시야 안에 있음, 드로우 콜 {draws}회"
+
+msgid "{models} models on the device ({megabytes} MB), {waiting} waited for"
+msgstr "그래픽 카드의 모델 {models}개 ({megabytes} MB), {waiting}개 대기 중"
+
+msgid "Lit by the game's own passes"
+msgstr "게임 자체 패스로 조명"
+
+msgid "Lit by the plain pass: no game shader pack is read"
+msgstr "단순 패스로 조명: 게임의 셰이더 팩을 읽지 않음"
+
+msgid "Camera position {axis}, in metres"
+msgstr "카메라 위치 {axis}(미터)"
+
+msgid "Speed (m/s)"
+msgstr "속도(m/s)"
+
+msgid "How fast the camera flies, in metres a second"
+msgstr "카메라가 비행하는 속도(초당 미터)"
+
+msgid "Level-of-detail scale"
+msgstr "세부 수준(LOD) 배율"
+
+msgid "The scale every level-of-detail distance is multiplied by"
+msgstr "모든 세부 수준(LOD) 거리에 곱하는 배율"
+
+msgid "Build the index again"
+msgstr "인덱스 다시 만들기"
+
+msgid "Read the registration documents and every map of the level again, and keep the index in place of the one kept"
+msgstr "등록 문서와 레벨의 모든 맵을 다시 읽고, 보관된 인덱스 대신 새 인덱스를 유지"
+
+msgid "Mount"
+msgstr "마운트"
+
+msgid "The registration documents and the level's maps are being read"
+msgstr "등록 문서와 레벨의 맵을 읽는 중"
+
+msgid "No index of this install"
+msgstr "이 게임 설치의 인덱스 없음"
+
+msgid "{packs} packs; the level's change sets: {read} read, {unread} not readable"
+msgstr "팩 {packs}개, 레벨의 변경 집합: {read}개 읽음, {unread}개 읽을 수 없음"
+
+msgid "{bound} archives bound to the {named} the level names"
+msgstr "레벨이 지정한 {named}개에 연결된 아카이브 {bound}개"
+
+msgid "{registered} of {maps} maps are the level's: {rest} stream at rest, {scripted} are script managed, {empty} hold nothing"
+msgstr "맵 {maps}개 중 {registered}개가 레벨의 것: {rest}개는 기본적으로 스트리밍, {scripted}개는 스크립트로 관리, {empty}개는 비어 있음"
+
+msgid "{archetypes} archetypes, {models} models; {unread} bodies did not read"
+msgstr "아키타입 {archetypes}개, 모델 {models}개, 읽지 못한 본문 {unread}개"
+
+msgid "The GTA VI world is indexed: {maps} maps stream at rest, {archetypes} archetypes, {models} models"
+msgstr "GTA VI 월드 인덱싱 완료: 기본적으로 스트리밍되는 맵 {maps}개, 아키타입 {archetypes}개, 모델 {models}개"
+
+msgid "Indexing the GTA VI world"
+msgstr "GTA VI 월드 인덱싱 중"
+
+msgid "World"
+msgstr "월드"
+
+msgid "GTA VI's world as the game streams it at rest, flown through with a free camera"
+msgstr "자유 카메라로 비행하며 둘러보는, 게임이 기본적으로 스트리밍하는 GTA VI의 월드"
+
+msgid "World view"
+msgstr "월드 보기"
+
+msgid "{textures} textures on the device, {unread} not read, {waiting} waited for"
+msgstr "그래픽 카드의 텍스처 {textures}개, 읽지 못한 것 {unread}개, {waiting}개 대기 중"

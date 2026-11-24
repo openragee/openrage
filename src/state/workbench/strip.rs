@@ -10,8 +10,11 @@ impl AppState {
         let asked = |ws: Workspace| {
             task_screens::of_workspace_alone(ws).is_some_and(|screen| (screen.offered_by)(self))
         };
+        // The World screen is offered by a GTA VI folder, with a project or without.
+        let world = crate::ui::panels::world_viewer::offered(self);
         if self.project_path.is_some() {
             (Workspace::ALL.iter().copied())
+                .filter(|ws| *ws != Workspace::World || world)
                 .filter(|ws| {
                     task_screens::of_workspace_alone(*ws).is_none_or(|screen| {
                         asked(*ws)
@@ -24,6 +27,7 @@ impl AppState {
             let mut offered = Workspace::WITHOUT_A_PROJECT.to_vec();
             let more = Workspace::ALL.iter().copied().filter(|ws| asked(*ws));
             offered.extend(more.filter(|ws| !Workspace::WITHOUT_A_PROJECT.contains(ws)));
+            offered.extend(world.then_some(Workspace::World));
             offered
         }
     }

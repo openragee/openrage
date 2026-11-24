@@ -1,4 +1,6 @@
-//! The rail at the window's left edge: the rooms a person goes between, Home, Game, Project and Automate, with Help and Settings at its foot.
+//! The rail at the window's left edge: the rooms a person goes between, Home, Game, World, Project and Automate, with Help and Settings at its foot.
+//!
+//! World is a screen and not a side panel: it is on the rail while a GTA VI folder is set, and its button goes to the World workspace.
 //!
 //! ⚠ A room is the panel in front in the side column of the screen, and no state of its own: a button brings that panel forward where the screen stands, so the tab in front stays in front.
 
@@ -12,32 +14,47 @@ use crate::ui::theme;
 
 const SIDE: f32 = 30.0;
 const GLYPH: f32 = 18.0;
+const BADGE: f32 = 10.0;
 
 /// The rooms of the rail's head, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Room {
     Home,
     Game,
+    World,
     Project,
     Automate,
 }
 
 impl Room {
-    pub const ALL: [Room; 4] = [Room::Home, Room::Game, Room::Project, Room::Automate];
+    pub const ALL: [Room; 5] = [
+        Room::Home,
+        Room::Game,
+        Room::World,
+        Room::Project,
+        Room::Automate,
+    ];
 
     fn glyph(self) -> &'static str {
         match self {
             Room::Home => ph::HOUSE,
             Room::Game => ph::GAME_CONTROLLER,
+            Room::World => ph::GLOBE_HEMISPHERE_WEST,
             Room::Project => ph::CUBE,
             Room::Automate => ph::LIGHTNING,
         }
+    }
+
+    /// The small glyph at the corner of the room's own, which says what the room is of.
+    fn badge(self) -> Option<&'static str> {
+        (self == Room::World).then_some(ph::GAME_CONTROLLER)
     }
 
     pub fn label(self) -> &'static str {
         match self {
             Room::Home => tr!("Home"),
             Room::Game => tr!("Game"),
+            Room::World => tr!("World"),
             Room::Project => tr!("Project"),
             Room::Automate => tr!("Automate"),
         }
@@ -54,6 +71,8 @@ impl Room {
                     "The files of the game, of a folder or of an archive, beside what is on screen"
                 ),
             )),
+            // Only while a GTA VI folder is set: with none the room is not on the rail.
+            Room::World => commands::workspace(state, Workspace::World),
             Room::Project if state.project_path.is_some() => Some(commands::side(
                 ids::PROJECT,
                 self.label(),
@@ -72,6 +91,9 @@ pub fn room_of(state: &AppState) -> Room {
         ws == Workspace::Browse && state.documents.is_empty() && state.project_path.is_none();
     if state.front_door.raised(ws) || nothing_open {
         return Room::Home;
+    }
+    if ws == Workspace::World {
+        return Room::World;
     }
     let side = (state.workspace_docks.peek(ws)).and_then(crate::ui::dock_commands::side_in_front);
     match side {
@@ -99,7 +121,7 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
             for room in Room::ALL {
                 if let Some(command) = room.command(state) {
                     let on = room == here;
-                    if button(ui, room.glyph(), room.label(), on, &command) {
+                    if button(ui, room.glyph(), room.badge(), room.label(), on, &command) {
                         asked = Some(command);
                     }
                 }
@@ -111,7 +133,7 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
                 ];
                 for (action, glyph) in foot {
                     if let Some(command) = commands::of(state, action) {
-                        if button(ui, glyph, &command.label, false, &command) {
+                        if button(ui, glyph, None, &command.label, false, &command) {
                             asked = Some(command);
                         }
                     }
@@ -123,8 +145,15 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
         });
 }
 
-/// One button of the rail: a glyph, named to a screen reader and a hover by `label`, lit while its room is the one on show.
-fn button(ui: &mut egui::Ui, glyph: &str, label: &str, on: bool, command: &Command) -> bool {
+/// One button of the rail: a glyph, with `badge` small at its corner where it has one, named to a screen reader and a hover by `label`, lit while its room is the one on show.
+fn button(
+    ui: &mut egui::Ui,
+    glyph: &str,
+    badge: Option<&str>,
+    label: &str,
+    on: bool,
+    command: &Command,
+) -> bool {
     let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(SIDE), egui::Sense::click());
     let enabled = command.enabled.is_ok();
     let corner = egui::CornerRadius::same(theme::RADIUS_SMALL);
@@ -155,6 +184,15 @@ fn button(ui: &mut egui::Ui, glyph: &str, label: &str, on: bool, command: &Comma
         egui::FontId::proportional(GLYPH),
         color,
     );
+    if let Some(badge) = badge {
+        painter.text(
+            rect.right_bottom() - egui::vec2(1.0, 1.0),
+            egui::Align2::RIGHT_BOTTOM,
+            badge,
+            egui::FontId::proportional(BADGE),
+            color,
+        );
+    }
     // ⚠ Named as a room: Project and Automate are also menus of the bar, and two controls of one name are told apart by nothing a screen reader says.
     let named = tr!("Room: {room}", room = label);
     response.widget_info(|| {
@@ -176,7 +214,9 @@ mod tests {
         state.active_document = None;
         assert_eq!(room_of(&state), Room::Home, "nothing is open");
         for room in Room::ALL {
-            assert!(room.command(&state).is_some(), "{room:?} leads nowhere");
+            // World needs a GTA VI folder, and with none it is not on the rail.
+            let leads = room.command(&state).is_some();
+            assert_eq!(leads, room != Room::World, "{room:?}");
         }
         let make = Room::Project.command(&state).expect("a command");
         assert_eq!(make.id, "new_project", "with no project the room makes one");

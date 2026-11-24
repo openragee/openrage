@@ -16508,3 +16508,95 @@ msgid "{count} pair"
 msgid_plural "{count} pairs"
 msgstr[0] "{count} Paar"
 msgstr[1] "{count} Paare"
+msgid "Set the GTA VI folder in Settings ▸ Games to fly through its world"
+msgstr "Den GTA VI-Ordner unter Einstellungen ▸ Spiele festlegen, um durch die Welt zu fliegen"
+
+msgid "The GTA VI world, flown through"
+msgstr "Die GTA VI-Welt, im Flug erkundet"
+
+msgid "Indexing the GTA VI world: {percent} %"
+msgstr "GTA VI-Welt wird indiziert: {percent} %"
+
+msgid "The GTA VI world was not indexed: {why}"
+msgstr "Die GTA VI-Welt wurde nicht indiziert: {why}"
+
+msgid "Drag to look, W A S D or Z Q S D to move, E and C up and down, Shift faster; the wheel sets the speed: {speed} m/s"
+msgstr "Ziehen zum Umsehen, W A S D oder Z Q S D zum Bewegen, E und C für nach oben und unten, Shift für schneller; das Mausrad stellt die Geschwindigkeit ein: {speed} m/s"
+
+msgid "Streaming"
+msgstr "Streaming"
+
+msgid "{loaded} of {wanted} maps streamed in, {waiting} waited for; {nodes} entities and lists"
+msgstr "{loaded} von {wanted} Maps per Streaming geladen, auf {waiting} wird gewartet; {nodes} Entitäten und Listen"
+
+msgid "{seen} of {selected} instances in view, in {draws} draws"
+msgstr "{seen} von {selected} Instanzen im Bild, in {draws} Draw-Calls"
+
+msgid "{models} models on the device ({megabytes} MB), {waiting} waited for"
+msgstr "{models} Modelle auf der Grafikkarte ({megabytes} MB), auf {waiting} wird gewartet"
+
+msgid "Lit by the game's own passes"
+msgstr "Beleuchtet von den eigenen Render-Passes des Spiels"
+
+msgid "Lit by the plain pass: no game shader pack is read"
+msgstr "Beleuchtet vom einfachen Pass: Es wird kein Shader-Pack des Spiels gelesen"
+
+msgid "Camera position {axis}, in metres"
+msgstr "Kameraposition {axis} in Metern"
+
+msgid "Speed (m/s)"
+msgstr "Geschwindigkeit (m/s)"
+
+msgid "How fast the camera flies, in metres a second"
+msgstr "Wie schnell die Kamera fliegt, in Metern pro Sekunde"
+
+msgid "Level-of-detail scale"
+msgstr "Skalierung der Detailstufen"
+
+msgid "The scale every level-of-detail distance is multiplied by"
+msgstr "Die Skalierung, mit der jede Entfernung einer Detailstufe multipliziert wird"
+
+msgid "Build the index again"
+msgstr "Index erneut erstellen"
+
+msgid "Read the registration documents and every map of the level again, and keep the index in place of the one kept"
+msgstr "Die Registrierungsdokumente und jede Map des Levels erneut lesen und den neuen Index anstelle des gespeicherten behalten"
+
+msgid "Mount"
+msgstr "Mount"
+
+msgid "The registration documents and the level's maps are being read"
+msgstr "Die Registrierungsdokumente und die Maps des Levels werden gelesen"
+
+msgid "No index of this install"
+msgstr "Kein Index für diese Installation"
+
+msgid "{packs} packs; the level's change sets: {read} read, {unread} not readable"
+msgstr "{packs} Packs; Änderungssätze des Levels: {read} gelesen, {unread} nicht lesbar"
+
+msgid "{bound} archives bound to the {named} the level names"
+msgstr "{bound} Archive den {named} zugeordnet, die das Level nennt"
+
+msgid "{registered} of {maps} maps are the level's: {rest} stream at rest, {scripted} are script managed, {empty} hold nothing"
+msgstr "{registered} von {maps} Maps gehören zum Level: {rest} werden standardmäßig gestreamt, {scripted} werden per Skript verwaltet, {empty} enthalten nichts"
+
+msgid "{archetypes} archetypes, {models} models; {unread} bodies did not read"
+msgstr "{archetypes} Archetypen, {models} Modelle; {unread} Inhalte konnten nicht gelesen werden"
+
+msgid "The GTA VI world is indexed: {maps} maps stream at rest, {archetypes} archetypes, {models} models"
+msgstr "Die GTA VI-Welt ist indiziert: {maps} Maps werden standardmäßig gestreamt, {archetypes} Archetypen, {models} Modelle"
+
+msgid "Indexing the GTA VI world"
+msgstr "GTA VI-Welt wird indiziert"
+
+msgid "World"
+msgstr "Welt"
+
+msgid "GTA VI's world as the game streams it at rest, flown through with a free camera"
+msgstr "Die Welt von GTA VI, wie das Spiel sie standardmäßig streamt, mit einer freien Kamera durchflogen"
+
+msgid "World view"
+msgstr "Weltansicht"
+
+msgid "{textures} textures on the device, {unread} not read, {waiting} waited for"
+msgstr "{textures} Texturen auf der Grafikkarte, {unread} nicht gelesen, auf {waiting} wird gewartet"

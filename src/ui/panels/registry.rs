@@ -35,6 +35,8 @@ pub mod ids {
     pub const MAPS: PanelId = "maps";
     pub const MAP_PLAN: PanelId = "map_plan";
     pub const MAP_SCENE: PanelId = "map_scene";
+    pub const WORLD_VIEW: PanelId = "world_view";
+    pub const WORLD: PanelId = "world";
     pub const EFFECTS: PanelId = "effects";
     pub const COMMAND_LOG: PanelId = "command_log";
     pub const PLUGINS: PanelId = "plugins";
@@ -250,6 +252,18 @@ rendering_panel!(
     tr_key!("Scene"),
     panels::maps::draw_scene
 );
+rendering_panel!(
+    WorldView,
+    ids::WORLD_VIEW,
+    tr_key!("World view"),
+    panels::world_viewer::draw_view
+);
+rendering_panel!(
+    World,
+    ids::WORLD,
+    tr_key!("World"),
+    panels::world_viewer::draw_side
+);
 state_only_panel!(
     Effects,
     ids::EFFECTS,
@@ -367,6 +381,8 @@ static WEAPON_PREVIEW: WeaponPreview = WeaponPreview;
 static MAPS: Maps = Maps;
 static MAP_PLAN: MapPlan = MapPlan;
 static MAP_SCENE: MapScene = MapScene;
+static WORLD_VIEW: WorldView = WorldView;
+static WORLD: World = World;
 static EFFECTS: Effects = Effects;
 static COMMANDS: Commands = Commands;
 static PLUGINS: PluginsPanel = PluginsPanel;
@@ -401,6 +417,8 @@ pub fn register_builtin(registry: &mut PanelRegistry) {
     registry.register(&MAPS);
     registry.register(&MAP_PLAN);
     registry.register(&MAP_SCENE);
+    registry.register(&WORLD_VIEW);
+    registry.register(&WORLD);
     registry.register(&EFFECTS);
     registry.register(&COMMANDS);
     registry.register(&PLUGINS);
@@ -449,6 +467,8 @@ mod tests {
             ids::MAPS,
             ids::MAP_PLAN,
             ids::MAP_SCENE,
+            ids::WORLD_VIEW,
+            ids::WORLD,
             ids::EFFECTS,
             ids::COMMAND_LOG,
             ids::PLUGINS,
@@ -462,7 +482,7 @@ mod tests {
 
     #[test]
     fn ids_are_unique() {
-        assert_eq!(builtin().panels().count(), 32);
+        assert_eq!(builtin().panels().count(), 34);
     }
 
     /// ⚠ View ▸ Panels lists every panel, which is a list and not a door: a panel only it leads to is one nobody finds.

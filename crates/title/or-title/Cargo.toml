@@ -10,8 +10,8 @@ publish.workspace = true
 
 [dependencies]
 # Archives and the crypto that opens them, with the executable mapped and the
-# key scan spread across threads.
-or-io = { workspace = true, features = ["fxc", "mmap", "rayon"] }
+# key scan spread across threads; `gta6` is the scan the GTA VI mount finds its documents by.
+or-io = { workspace = true, features = ["fxc", "gta6", "mmap", "rayon"] }
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

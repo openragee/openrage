@@ -146,13 +146,7 @@ impl ViewportRenderer {
         let mesh_vertex_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<MeshVertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![
-                0 => Float32x3,
-                1 => Float32x3,
-                2 => Float32x2,
-                3 => Float32x4,
-                4 => Float32,
-            ],
+            attributes: &MESH_VERTEX_ATTRIBUTES,
         };
 
         let make_mesh_pipeline = |label: &str, fs_entry: &str, depth_write: bool| {
@@ -211,6 +205,8 @@ impl ViewportRenderer {
         let (fallback_material_bg, fallback_material_bytes) =
             create_fallback_material_bind_group(device, queue, &material_bgl);
 
+        let world = crate::world::World::new(device, &camera_bgl, &material_bgl, colour_format);
+
         let (colour, colour_view, colour_display_view, depth_view) =
             create_targets(device, colour_format, width, height);
         let front_line_pipeline = build_overlay_line_pipeline(
@@ -246,6 +242,7 @@ impl ViewportRenderer {
             fallback_material_bg: Arc::new(fallback_material_bg),
             fallback_material_bytes,
             meshes: Vec::new(),
+            world,
             game_scene: None,
             deferred: None,
             deferred_scene: None,

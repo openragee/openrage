@@ -33,7 +33,7 @@ pub const MATERIAL_DEFAULT: u32 = 0;
 pub const MATERIAL_CLEAR: u32 = 7;
 
 /// A pass that writes the material of the surface it draws into the stencil wherever it draws.
-fn writes_material() -> wgpu::StencilState {
+pub(crate) fn writes_material() -> wgpu::StencilState {
     let face = wgpu::StencilFaceState {
         compare: wgpu::CompareFunction::Always,
         fail_op: wgpu::StencilOperation::Keep,

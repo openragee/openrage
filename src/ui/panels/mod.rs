@@ -64,6 +64,7 @@ pub mod viewport_layout;
 pub mod viewport_texture_badge;
 pub mod wardrobe;
 pub mod weapons;
+pub mod world_viewer;
 pub mod ycd_clips;
 
 /// A question titled `title` that the shell waits on: over a backdrop that takes every click until it is answered.

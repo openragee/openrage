@@ -10,6 +10,7 @@ pub mod config;
 pub mod dlc;
 pub mod game;
 pub mod gta5;
+pub mod gta6_mount;
 pub mod install;
 pub mod mods;
 pub mod oiv;

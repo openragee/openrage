@@ -211,6 +211,7 @@ alone, and `or-io` never depends on it.
 | `game/` | which title and edition this is: profiles, the registry, `Game`, and what its game needs beside the executable to read the `mods` overlay |
 | `vfs/` | which bytes a `common:/…` path names |
 | `dlc/` | which packs exist, their override order, and writing one ([Dlc_Pack_Creation.md](../features/Dlc_Pack_Creation.md)) |
+| `gta6_mount.rs` | which maps a GTA VI install registers, from the registration documents a scan finds, with no table to read ([GTA_VI_World_Viewer.md](../features/GTA_VI_World_Viewer.md)) |
 | `mods/` | which mods an install holds, as `mods` and `mods_` hold them and in the game folder, what each writes, and which of two mods writing one path the load order resolves to |
 | `oiv.rs` | an `.oiv` package: the `assembly.xml` a build writes and reads back, and the stored zip it sits in |
 | `install/` | a table fetched from an install: clip regions, the materials palette, the shader archive, the names `install::names` indexes, and the file at a path the explorer writes (`virtual_file`, which reads archives as folders and goes into a nested archive) |
@@ -598,7 +599,9 @@ no renderer or UI.
 rest), each a view over the reader's `MetaInstance`: it borrows and never
 copies, reads fields by name hash, and `write` edits the tree against the
 document's own layout. `scenario` is the exception: it names a scenario
-region's points over the typed `CScenarioPointRegion`.
+region's points over the typed `CScenarioPointRegion`. `streaming` is the
+other: the rules of which maps a camera streams in and which nodes of their
+level-of-detail forest draw, over plain values, for any title.
 
 - `parentIndex` does not index its own map when bit 3 of `CEntityDef::flags` is
   set, and `write::refuse_if_broken` honours the bit. A map name names a set of

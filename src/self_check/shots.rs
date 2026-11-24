@@ -12,7 +12,10 @@ use std::time::{Duration, Instant};
 use or_renderer::ShadingMode;
 
 mod png;
+mod waits;
 use png::{paint, save_png, target_texture};
+use waits::OPEN_DEADLINE;
+pub(crate) use waits::{activate_game_and_wait, open_and_wait};
 
 use crate::render::RenderBridge;
 use crate::state::front_door::{Offer, Step as DialogStep, Template};
@@ -25,8 +28,6 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 /// Frames drawn before a capture: egui sizes some widgets on a second pass.
 const SETTLE_FRAMES: usize = 3;
-
-const OPEN_DEADLINE: Duration = Duration::from_secs(180);
 
 /// Discovery runs on a worker, so a `game` step with no folder waits for it.
 const DISCOVERY_DEADLINE: Duration = Duration::from_secs(30);
@@ -139,7 +140,8 @@ fn parse_step(line: &str) -> Result<Step, String> {
             let game = match edition {
                 "legacy" => Game::GtaVLegacy,
                 "enhanced" => Game::GtaVEnhanced,
-                other => return Err(format!("no game `{other}`; use legacy or enhanced")),
+                "gta6" => Game::GtaVI,
+                other => return Err(format!("no game `{other}`; use legacy, enhanced or gta6")),
             };
             Ok(Step::Game(
                 game,
@@ -921,71 +923,6 @@ impl Shell {
             }
         }
         Ok(())
-    }
-}
-
-/// Make `game`'s install at `root` active as the start page does, drawing a frame through `frame` until its rows are read.
-pub(crate) fn activate_game_and_wait(
-    state: &mut AppState,
-    game: Game,
-    root: &Path,
-    frame: impl FnMut(&mut AppState) -> Result<(), String>,
-) -> Result<(), String> {
-    state.set_active_game(game, root.to_path_buf());
-    wait_for_rows(state, root, frame)
-}
-
-/// Open `path` as the app does, drawing a frame through `frame` until it has loaded and its rows are read.
-pub(crate) fn open_and_wait(
-    state: &mut AppState,
-    path: &Path,
-    frame: impl FnMut(&mut AppState) -> Result<(), String>,
-) -> Result<(), String> {
-    if path.is_dir() {
-        state.open_folder(path.to_path_buf());
-    } else {
-        state.load_file(path.to_path_buf());
-    }
-    wait_for_rows(state, path, frame)?;
-    match state
-        .documents
-        .iter()
-        .find(|d| d.path.as_deref() == Some(path))
-    {
-        Some(doc) => println!("  opened as {:?}", doc.kind),
-        // Not an error: a script may open a broken file to draw the dialog.
-        None => println!("  did not open: {}", state.error_dialog_message),
-    }
-    Ok(())
-}
-
-/// Draw frames through `frame` until `path`'s document is no longer loading or being listed.
-///
-/// ⚠ Open Folder and an install's root return with their rows still being read on a worker, and
-/// `loading` does not say so: a click straight after would land on "Reading this folder…".
-fn wait_for_rows(
-    state: &mut AppState,
-    path: &Path,
-    mut frame: impl FnMut(&mut AppState) -> Result<(), String>,
-) -> Result<(), String> {
-    let until = Instant::now() + OPEN_DEADLINE;
-    loop {
-        let opened = state
-            .documents
-            .iter()
-            .find(|d| d.path.as_deref() == Some(path));
-        let reading = opened.is_some_and(|doc| state.expander.is_listing(doc.id));
-        if !reading && !matches!(state.loading, LoadingState::Loading) {
-            return Ok(());
-        }
-        if Instant::now() > until {
-            return Err(format!(
-                "{} was still loading after three minutes",
-                path.display()
-            ));
-        }
-        frame(state)?;
-        std::thread::sleep(Duration::from_millis(10));
     }
 }
 

@@ -79,7 +79,10 @@ const INSTANCED: &[Member] = &[
     (lit(b"GrassInstanceList"), 0x18, ARRAY),
 ];
 const PROPS: &[Member] = &[
+    (0xC8A7_B90A, 0x20, HASH64),
     (lit(b"archetypeName"), 0x44, STRING_HASH),
+    (lit(b"lodDist"), 0x60, FLOAT),
+    (lit(b"childLodDist"), 0x64, FLOAT),
     (lit(b"InstanceList"), 0x90, ARRAY),
     (lit(b"BatchAABB"), 0xA0, STRUCT),
 ];
@@ -865,6 +868,9 @@ pub mod world;
 
 #[path = "map_author.rs"]
 pub mod author;
+
+#[path = "map_stream.rs"]
+pub mod stream;
 
 #[cfg(test)]
 #[path = "map_tests.rs"]

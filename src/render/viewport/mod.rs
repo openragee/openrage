@@ -22,6 +22,7 @@ mod posing;
 mod retarget;
 mod texture_upload;
 mod usage;
+mod world;
 
 use retarget::{anim_scene_signature, retarget_uploads};
 
@@ -233,6 +234,9 @@ pub struct RenderBridge {
 
     visible: bool,
 
+    /// The GTA VI world viewer's models on the device.
+    world: world::WorldGpu,
+
     /// What the device came from, which `with_instance` gives for wgpu to count its objects through.
     instance: Option<wgpu::Instance>,
 }
@@ -287,6 +291,7 @@ impl RenderBridge {
             material_bgl,
             inputs: CameraInputs::default(),
             visible: false,
+            world: Default::default(),
             instance: None,
             particle_textures: crate::render::particles::ParticleTextureCache::new(),
             model_meshes: crate::render::particle_models::ParticleModelMeshCache::new(),
@@ -431,6 +436,7 @@ impl RenderBridge {
         self.lines.clear();
         self.inputs = CameraInputs::default();
         self.visible = false;
+        self.world.shown = false;
     }
 
     pub fn refresh_lines(&mut self, state: &AppState) {
@@ -662,12 +668,14 @@ impl RenderBridge {
         self.renderer
             .set_background(state.drivers.world_background.colour);
         self.renderer
-            .set_sky_background(state.drivers.world_background.sky);
+            // The world is seen under its sky, whatever a model's background is set to.
+            .set_sky_background(state.drivers.world_background.sky || self.world.shown);
         self.refresh_day(state);
         self.refresh_key_light(state);
         // The sprites are laid out for the camera of this frame
         self.renderer
             .prepare_game_particles(&self.device, &self.queue, &self.camera);
+        self.end_world();
         self.renderer.prepare_game_frame(&self.device, &self.queue);
         self.renderer
             .render(encoder, &self.queue, &self.camera, self.mode);

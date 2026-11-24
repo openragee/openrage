@@ -16508,3 +16508,95 @@ msgid "{count} pair"
 msgid_plural "{count} pairs"
 msgstr[0] "{count} 个键值对"
 msgstr[1] "{count} 个键值对"
+msgid "Set the GTA VI folder in Settings ▸ Games to fly through its world"
+msgstr "在“设置 ▸ 游戏”中设置 GTA VI 文件夹，即可漫游其世界"
+
+msgid "The GTA VI world, flown through"
+msgstr "GTA VI 世界漫游"
+
+msgid "Indexing the GTA VI world: {percent} %"
+msgstr "正在为 GTA VI 世界建立索引：{percent} %"
+
+msgid "The GTA VI world was not indexed: {why}"
+msgstr "未能为 GTA VI 世界建立索引：{why}"
+
+msgid "Drag to look, W A S D or Z Q S D to move, E and C up and down, Shift faster; the wheel sets the speed: {speed} m/s"
+msgstr "拖动以环顾，W A S D 或 Z Q S D 移动，E 和 C 上升和下降，Shift 加速；滚轮调整速度：{speed} m/s"
+
+msgid "Streaming"
+msgstr "流式加载"
+
+msgid "{loaded} of {wanted} maps streamed in, {waiting} waited for; {nodes} entities and lists"
+msgstr "已流式加载 {wanted} 个地图中的 {loaded} 个，{waiting} 个在等待；{nodes} 个实体和列表"
+
+msgid "{seen} of {selected} instances in view, in {draws} draws"
+msgstr "视野内 {selected} 个实例中的 {seen} 个，共 {draws} 次绘制"
+
+msgid "{models} models on the device ({megabytes} MB), {waiting} waited for"
+msgstr "显卡上有 {models} 个模型（{megabytes} MB），{waiting} 个在等待"
+
+msgid "Lit by the game's own passes"
+msgstr "由游戏自身的渲染通道照明"
+
+msgid "Lit by the plain pass: no game shader pack is read"
+msgstr "由普通通道照明：未读取游戏着色器包"
+
+msgid "Camera position {axis}, in metres"
+msgstr "相机位置 {axis}，单位为米"
+
+msgid "Speed (m/s)"
+msgstr "速度（m/s）"
+
+msgid "How fast the camera flies, in metres a second"
+msgstr "相机的移动速度，单位为米每秒"
+
+msgid "Level-of-detail scale"
+msgstr "细节层次缩放"
+
+msgid "The scale every level-of-detail distance is multiplied by"
+msgstr "每个细节层次距离所乘的缩放比例"
+
+msgid "Build the index again"
+msgstr "重新构建索引"
+
+msgid "Read the registration documents and every map of the level again, and keep the index in place of the one kept"
+msgstr "重新读取注册文档和关卡的每个地图，并保留此索引以取代原有索引"
+
+msgid "Mount"
+msgstr "挂载"
+
+msgid "The registration documents and the level's maps are being read"
+msgstr "正在读取注册文档和关卡的地图"
+
+msgid "No index of this install"
+msgstr "此安装没有索引"
+
+msgid "{packs} packs; the level's change sets: {read} read, {unread} not readable"
+msgstr "{packs} 个包；关卡的变更集：{read} 个已读取，{unread} 个无法读取"
+
+msgid "{bound} archives bound to the {named} the level names"
+msgstr "{bound} 个归档已匹配到关卡命名的 {named} 个"
+
+msgid "{registered} of {maps} maps are the level's: {rest} stream at rest, {scripted} are script managed, {empty} hold nothing"
+msgstr "{maps} 个地图中有 {registered} 个属于关卡：{rest} 个默认流式加载，{scripted} 个由脚本管理，{empty} 个不含任何内容"
+
+msgid "{archetypes} archetypes, {models} models; {unread} bodies did not read"
+msgstr "{archetypes} 个原型，{models} 个模型；{unread} 个数据体未能读取"
+
+msgid "The GTA VI world is indexed: {maps} maps stream at rest, {archetypes} archetypes, {models} models"
+msgstr "GTA VI 世界已建立索引：{maps} 个地图默认流式加载，{archetypes} 个原型，{models} 个模型"
+
+msgid "Indexing the GTA VI world"
+msgstr "正在为 GTA VI 世界建立索引"
+
+msgid "World"
+msgstr "世界"
+
+msgid "GTA VI's world as the game streams it at rest, flown through with a free camera"
+msgstr "游戏默认流式加载的 GTA VI 世界，以自由相机漫游"
+
+msgid "World view"
+msgstr "世界视图"
+
+msgid "{textures} textures on the device, {unread} not read, {waiting} waited for"
+msgstr "显卡上有 {textures} 个纹理，{unread} 个未能读取，{waiting} 个在等待"

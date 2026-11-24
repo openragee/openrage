@@ -70,6 +70,15 @@ impl MeshVertex {
     }
 }
 
+/// The attributes of a [`MeshVertex`], which every pipeline that reads one lays out the same.
+pub(crate) const MESH_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+    0 => Float32x3,
+    1 => Float32x3,
+    2 => Float32x2,
+    3 => Float32x4,
+    4 => Float32,
+];
+
 #[derive(Clone)]
 pub struct MeshDraw {
     pub vertex_buffer: wgpu::Buffer,
@@ -222,6 +231,8 @@ pub struct ViewportRenderer {
     fallback_material_bg: Arc<wgpu::BindGroup>,
     fallback_material_bytes: u64,
     meshes: Vec<MeshDraw>,
+    /// The placed meshes of a world, drawn once for each instance.
+    pub(crate) world: crate::world::World,
     game_scene: Option<crate::game_shaders::mesh::MeshScene>,
     /// The scene drawn by the game's deferred passes, which Shaded draws in place of `game_scene` where there is one.
     deferred: Option<DeferredFrame>,
@@ -674,6 +685,11 @@ impl ViewportRenderer {
             }
 
             self.draw_surface_meshes(&mut pass, mode);
+            // The deferred frame has drawn the world into its G-buffer already, and a wireframe shows no surface
+            if deferred.is_none() && mode != ShadingMode::Wireframe {
+                self.world
+                    .draw_forward(&mut pass, &self.bind_group, &self.fallback_material_bg);
+            }
 
             if let Some(game) = &self.game_particles {
                 game.models.draw(&mut pass, &self.model_batches);

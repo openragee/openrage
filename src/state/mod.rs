@@ -233,6 +233,7 @@ mod gta6_textures;
 mod gta6_textures_resolve_and_save;
 pub(crate) mod gta6_weapon_parts;
 pub(crate) mod gta6_world;
+pub(crate) mod gta6_worldview;
 pub(crate) mod gta_vi;
 #[cfg(test)]
 mod importing_game_files_from_the_app;

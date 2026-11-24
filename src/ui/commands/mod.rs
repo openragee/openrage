@@ -385,6 +385,14 @@ pub fn selected(state: &AppState) -> Result<Target, &'static str> {
 }
 
 /// The command that brings the panel `id` forward in the side column of the screen in front, named `label`: what a room of the rail runs, and nothing a menu lists.
+/// The command that goes to the workspace `ws`, where the window offers it.
+pub fn workspace(state: &AppState, ws: crate::ui::dock::Workspace) -> Option<Command> {
+    let id = format!("workspace: {}", ws.label());
+    workspaces(state)
+        .into_iter()
+        .find(|command| command.id == id)
+}
+
 pub fn side(id: PanelId, label: &str, hover: &str) -> Command {
     let mut command = Command::new(
         format!("side: {id}"),

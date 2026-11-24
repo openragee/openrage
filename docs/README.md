@@ -55,3 +55,4 @@ How a subsystem works today and what it does not do.
 - [BCn_Encoding_And_Mipmaps.md](features/BCn_Encoding_And_Mipmaps.md): how an RGBA image becomes a Gen8 texture.
 - [Shader_Definition_Database.md](features/Shader_Definition_Database.md): what a material's parameters are, extracted from an install.
 - [Dlc_Pack_Creation.md](features/Dlc_Pack_Creation.md): what a DLC pack states about itself and how OpenRage writes one.
+- [GTA_VI_World_Viewer.md](features/GTA_VI_World_Viewer.md): how the World screen mounts a GTA VI install, streams its maps and draws them.

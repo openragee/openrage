@@ -16508,3 +16508,95 @@ msgid "{count} pair"
 msgid_plural "{count} pairs"
 msgstr[0] "{count} 個のペア"
 msgstr[1] "{count} 個のペア"
+msgid "Set the GTA VI folder in Settings ▸ Games to fly through its world"
+msgstr "「設定 ▸ ゲーム」でGTA VIのフォルダーを設定すると、その世界をフライスルーできます"
+
+msgid "The GTA VI world, flown through"
+msgstr "GTA VIの世界をフライスルー"
+
+msgid "Indexing the GTA VI world: {percent} %"
+msgstr "GTA VIの世界をインデックス化中：{percent} %"
+
+msgid "The GTA VI world was not indexed: {why}"
+msgstr "GTA VIの世界をインデックス化できませんでした：{why}"
+
+msgid "Drag to look, W A S D or Z Q S D to move, E and C up and down, Shift faster; the wheel sets the speed: {speed} m/s"
+msgstr "ドラッグで見回し、W A S DまたはZ Q S Dで移動、EとCで上下、Shiftで加速、ホイールで速度を設定：{speed} m/s"
+
+msgid "Streaming"
+msgstr "ストリーミング"
+
+msgid "{loaded} of {wanted} maps streamed in, {waiting} waited for; {nodes} entities and lists"
+msgstr "マップ {wanted} 個中 {loaded} 個をストリーミング済み、{waiting} 個を待機中、エンティティとリスト {nodes} 件"
+
+msgid "{seen} of {selected} instances in view, in {draws} draws"
+msgstr "インスタンス {selected} 個中 {seen} 個が視界内、{draws} 回の描画"
+
+msgid "{models} models on the device ({megabytes} MB), {waiting} waited for"
+msgstr "グラフィックスカード上のモデル {models} 個 ({megabytes} MB)、{waiting} 個を待機中"
+
+msgid "Lit by the game's own passes"
+msgstr "ゲーム独自のパスで照明"
+
+msgid "Lit by the plain pass: no game shader pack is read"
+msgstr "シンプルなパスで照明：ゲームのシェーダーパックは読み込まれません"
+
+msgid "Camera position {axis}, in metres"
+msgstr "カメラの位置 {axis} (メートル)"
+
+msgid "Speed (m/s)"
+msgstr "速度 (m/s)"
+
+msgid "How fast the camera flies, in metres a second"
+msgstr "カメラの移動速度 (メートル毎秒)"
+
+msgid "Level-of-detail scale"
+msgstr "LODスケール"
+
+msgid "The scale every level-of-detail distance is multiplied by"
+msgstr "すべてのLOD距離にかけるスケール"
+
+msgid "Build the index again"
+msgstr "インデックスを再作成"
+
+msgid "Read the registration documents and every map of the level again, and keep the index in place of the one kept"
+msgstr "登録ドキュメントとレベルのすべてのマップを再読み込みし、保存済みのインデックスの代わりに新しいインデックスを保持"
+
+msgid "Mount"
+msgstr "マウント"
+
+msgid "The registration documents and the level's maps are being read"
+msgstr "登録ドキュメントとレベルのマップを読み込み中"
+
+msgid "No index of this install"
+msgstr "このインストールのインデックスはありません"
+
+msgid "{packs} packs; the level's change sets: {read} read, {unread} not readable"
+msgstr "{packs} 個のパック、レベルの変更セット：{read} 件を読み込み済み、{unread} 件は読み取り不可"
+
+msgid "{bound} archives bound to the {named} the level names"
+msgstr "{bound} 個のアーカイブを、レベルが指定する {named} 個に対応付け済み"
+
+msgid "{registered} of {maps} maps are the level's: {rest} stream at rest, {scripted} are script managed, {empty} hold nothing"
+msgstr "{maps} 個のマップのうち {registered} 個がレベルのもの：{rest} 個は既定でストリーミング、{scripted} 個はスクリプト管理、{empty} 個は空"
+
+msgid "{archetypes} archetypes, {models} models; {unread} bodies did not read"
+msgstr "アーキタイプ {archetypes} 個、モデル {models} 個、読み込めなかったボディ {unread} 個"
+
+msgid "The GTA VI world is indexed: {maps} maps stream at rest, {archetypes} archetypes, {models} models"
+msgstr "GTA VIの世界をインデックス化しました：既定でストリーミングされるマップ {maps} 個、アーキタイプ {archetypes} 個、モデル {models} 個"
+
+msgid "Indexing the GTA VI world"
+msgstr "GTA VIの世界をインデックス化中"
+
+msgid "World"
+msgstr "ワールド"
+
+msgid "GTA VI's world as the game streams it at rest, flown through with a free camera"
+msgstr "ゲームが既定でストリーミングするGTA VIの世界を、フリーカメラでフライスルー"
+
+msgid "World view"
+msgstr "ワールドビュー"
+
+msgid "{textures} textures on the device, {unread} not read, {waiting} waited for"
+msgstr "グラフィックスカード上のテクスチャ {textures} 個、読み込めなかったもの {unread} 個、{waiting} 個を待機中"

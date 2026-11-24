@@ -22,6 +22,8 @@ pub struct DocumentCameras {
     views: HashMap<DocumentId, View>,
     /// What the viewport shows with no document active: the grid on its own.
     idle: OrbitCamera,
+    /// What the World screen's flying camera sees, as the viewport renders through it.
+    world: OrbitCamera,
 }
 
 #[derive(Debug)]
@@ -45,6 +47,11 @@ impl AppState {
         // So does the Weapons screen, which assembles a weapon that is no document.
         if self.active_workspace == crate::ui::dock::Workspace::Weapons {
             return self.step_weapon_camera(inputs);
+        }
+        // The World screen flies: its camera is the viewer's, moved by its own panel.
+        if self.active_workspace == crate::ui::dock::Workspace::World {
+            self.cameras.world = super::gta6_worldview::viewer().camera.as_orbit();
+            return &self.cameras.world;
         }
         // And the Map screen, which places a set of maps that is no document.
         if self.active_workspace == crate::ui::dock::Workspace::Map {

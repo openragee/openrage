@@ -10,6 +10,7 @@
 )]
 pub mod context;
 pub mod error;
+pub mod fly;
 pub mod game_shaders;
 pub mod gpu_timer;
 pub mod particle_game;
@@ -23,8 +24,10 @@ pub mod stencil;
 pub mod surface;
 pub mod trails;
 pub mod viewport;
+pub mod world;
 pub use context::{RenderContext, CLEAR_COLOR};
 pub use error::RenderError;
+pub use fly::{FlyCamera, Frustum};
 pub use game_shaders::fog_volumes::{FogLight, FogVolume};
 pub use game_shaders::point_lights::PointLight;
 pub use game_shaders::spot_lights::SpotLight;
@@ -33,3 +36,4 @@ pub use particles::{ParticleAlignment, ParticleBatch, ParticleBlendMode, Particl
 pub use surface::{FrameStats, Renderer};
 pub use trails::{TrailBatch, TrailVertex, MAX_TRAIL_CONTROL_POINTS};
 pub use viewport::{LineVertex, MeshDraw, MeshVertex, OrbitCamera, ShadingMode, ViewportRenderer};
+pub use world::{WorldDraw, WorldInstance, WorldMesh};

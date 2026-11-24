@@ -36,7 +36,7 @@ const ENTITY_READ: usize = 0x84;
 /// An entity-set location with bit 31 set names a portal, not a room.
 const PORTAL_BIT: u32 = 0x8000_0000;
 
-const LAYOUTS: &[(u32, &str, &[Member], Option<u32>)] = &[
+pub(super) const LAYOUTS: &[(u32, &str, &[Member], Option<u32>)] = &[
     (
         C_MAP_DATA,
         "CMapData",

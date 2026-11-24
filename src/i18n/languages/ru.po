@@ -16647,3 +16647,95 @@ msgid_plural "{count} pairs"
 msgstr[0] "{count} пара"
 msgstr[1] "{count} пары"
 msgstr[2] "{count} пар"
+msgid "Set the GTA VI folder in Settings ▸ Games to fly through its world"
+msgstr "Укажите папку GTA VI в разделе Параметры ▸ Игры, чтобы пролететь по её миру"
+
+msgid "The GTA VI world, flown through"
+msgstr "Мир GTA VI в полёте"
+
+msgid "Indexing the GTA VI world: {percent} %"
+msgstr "Индексация мира GTA VI: {percent} %"
+
+msgid "The GTA VI world was not indexed: {why}"
+msgstr "Мир GTA VI не проиндексирован: {why}"
+
+msgid "Drag to look, W A S D or Z Q S D to move, E and C up and down, Shift faster; the wheel sets the speed: {speed} m/s"
+msgstr "Перетаскивание — обзор, W A S D или Z Q S D — движение, E и C — вверх и вниз, Shift — быстрее; колесо мыши задаёт скорость: {speed} m/s"
+
+msgid "Streaming"
+msgstr "Стриминг"
+
+msgid "{loaded} of {wanted} maps streamed in, {waiting} waited for; {nodes} entities and lists"
+msgstr "Загружено карт: {loaded} из {wanted}, ожидается: {waiting}; сущностей и списков: {nodes}"
+
+msgid "{seen} of {selected} instances in view, in {draws} draws"
+msgstr "Экземпляров в поле зрения: {seen} из {selected}, вызовов отрисовки: {draws}"
+
+msgid "{models} models on the device ({megabytes} MB), {waiting} waited for"
+msgstr "Моделей на видеокарте: {models} ({megabytes} MB), ожидается: {waiting}"
+
+msgid "Lit by the game's own passes"
+msgstr "Освещено собственными проходами игры"
+
+msgid "Lit by the plain pass: no game shader pack is read"
+msgstr "Освещено простым проходом: пак шейдеров игры не читается"
+
+msgid "Camera position {axis}, in metres"
+msgstr "Положение камеры по оси {axis}, в метрах"
+
+msgid "Speed (m/s)"
+msgstr "Скорость (m/s)"
+
+msgid "How fast the camera flies, in metres a second"
+msgstr "Скорость полёта камеры, в метрах в секунду"
+
+msgid "Level-of-detail scale"
+msgstr "Масштаб уровня детализации"
+
+msgid "The scale every level-of-detail distance is multiplied by"
+msgstr "Масштаб, на который умножается каждая дистанция уровня детализации"
+
+msgid "Build the index again"
+msgstr "Построить индекс заново"
+
+msgid "Read the registration documents and every map of the level again, and keep the index in place of the one kept"
+msgstr "Заново прочитать регистрационные документы и каждую карту уровня и оставить этот индекс вместо сохранённого"
+
+msgid "Mount"
+msgstr "Монтирование"
+
+msgid "The registration documents and the level's maps are being read"
+msgstr "Читаются регистрационные документы и карты уровня"
+
+msgid "No index of this install"
+msgstr "Нет индекса для этой установки"
+
+msgid "{packs} packs; the level's change sets: {read} read, {unread} not readable"
+msgstr "Паков: {packs}; наборы изменений уровня: прочитано {read}, не читается {unread}"
+
+msgid "{bound} archives bound to the {named} the level names"
+msgstr "Архивов, сопоставленных с названными уровнем ({named}): {bound}"
+
+msgid "{registered} of {maps} maps are the level's: {rest} stream at rest, {scripted} are script managed, {empty} hold nothing"
+msgstr "Карт уровня: {registered} из {maps}. По умолчанию загружаются: {rest}, управляются скриптом: {scripted}, пусты: {empty}"
+
+msgid "{archetypes} archetypes, {models} models; {unread} bodies did not read"
+msgstr "Архетипов: {archetypes}, моделей: {models}; не прочитано тел: {unread}"
+
+msgid "The GTA VI world is indexed: {maps} maps stream at rest, {archetypes} archetypes, {models} models"
+msgstr "Мир GTA VI проиндексирован: карт, загружаемых по умолчанию: {maps}, архетипов: {archetypes}, моделей: {models}"
+
+msgid "Indexing the GTA VI world"
+msgstr "Индексация мира GTA VI"
+
+msgid "World"
+msgstr "Мир"
+
+msgid "GTA VI's world as the game streams it at rest, flown through with a free camera"
+msgstr "Мир GTA VI в том виде, в каком игра загружает его по умолчанию, в полёте со свободной камерой"
+
+msgid "World view"
+msgstr "Вид мира"
+
+msgid "{textures} textures on the device, {unread} not read, {waiting} waited for"
+msgstr "Текстур на видеокарте: {textures}, не прочитано: {unread}, ожидается: {waiting}"

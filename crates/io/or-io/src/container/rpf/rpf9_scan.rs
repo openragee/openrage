@@ -1489,6 +1489,16 @@ impl<R: Read + Seek> Reader<R> {
             .map_err(|source| Rpf9ScanError::Io { offset: at, source })
     }
 
+    /// The bytes the file holds from `at` on.
+    // ⚠ A read that comes back short moves the file's end, even to before a body already found.
+    fn left(&self, at: u64) -> Result<u64, Rpf9ScanError> {
+        let file_len = self.src.len;
+        (file_len.checked_sub(at)).ok_or(Rpf9ScanError::Truncated {
+            offset: at,
+            file_len,
+        })
+    }
+
     /// What starts at `at`; with `out`, its bytes too, refused past `limit`.
     fn find_at(
         &mut self,
@@ -1992,7 +2002,7 @@ impl<R: Read + Seek> Reader<R> {
         Ok(Found::body(Rpf9ScanFind {
             offset: at,
             kind: Rpf9BodyKind::Zlib(run),
-            span: stored.next_multiple_of(RPF9_SLOT).min(self.src.len - at),
+            span: stored.next_multiple_of(RPF9_SLOT).min(self.left(at)?),
             stored_len: certain.then_some(stored),
             inflated_len: certain.then_some(run.inflated),
             container: None,
@@ -2128,7 +2138,7 @@ impl<R: Read + Seek> Reader<R> {
         Ok(Found::body(Rpf9ScanFind {
             offset: at,
             kind: Rpf9BodyKind::Zlib(run),
-            span: (end.next_multiple_of(RPF9_SLOT) - at).min(self.src.len - at),
+            span: (end.next_multiple_of(RPF9_SLOT) - at).min(self.left(at)?),
             stored_len: whole.then_some(end - at),
             inflated_len: whole.then_some(virtual_len + physical_len),
             container: None,
@@ -4469,6 +4479,39 @@ mod tests {
             0,
         );
         bytes
+    }
+
+    #[test]
+    fn a_resource_the_file_no_longer_reaches_once_read_is_refused_as_truncated() {
+        /// A file that reads as ended wherever a read starts before `1`, as one cut down since
+        /// it was measured does.
+        struct Shrunk<'a>(Cursor<&'a [u8]>, u64);
+        impl Read for Shrunk<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if self.0.position() < self.1 {
+                    return Ok(0);
+                }
+                self.0.read(buf)
+            }
+        }
+        impl Seek for Shrunk<'_> {
+            fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+                self.0.seek(to)
+            }
+        }
+        // The zero slot before the resource is read after its first block, and reads as the end.
+        let bytes = lone_resource(&[&virtual_section(0x200, (1, 0))]);
+        let read = read_rpf9_body(Shrunk(Cursor::new(&bytes), 16), 16, u64::MAX);
+        assert!(
+            matches!(
+                read,
+                Err(Rpf9ScanError::Truncated {
+                    offset: 16,
+                    file_len: 0
+                })
+            ),
+            "{read:?}"
+        );
     }
 
     #[test]

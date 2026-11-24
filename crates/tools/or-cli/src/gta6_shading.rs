@@ -571,7 +571,7 @@ fn kept_line(line: &str) -> Option<(u64, Named)> {
 /// The drawables of the model bodies a scan of a range of an archive finds, each n-th, read side by
 /// side: those with a geometry that reads.
 fn census(
-    file: &std::fs::File,
+    path: &str,
     range: std::ops::Range<u64>,
     every: u64,
     limit: u64,
@@ -580,9 +580,10 @@ fn census(
     use or_io::gta6::headerless::{read, Drawable, Entry, Resource};
 
     let cancel = super::jobs::on_interrupt();
+    let open_file = || std::fs::File::open(path).map_err(|e| format!("open({path}): {e}"));
     let mut rows = Vec::new();
     let mut seen = 0u64;
-    for find in Rpf9Scan::new(file, range).map_err(|e| e.to_string())? {
+    for find in Rpf9Scan::new(open_file()?, range).map_err(|e| e.to_string())? {
         if cancel.is_set() {
             return Err("cancelled".to_string());
         }
@@ -618,39 +619,35 @@ fn census(
             })
             .collect()
     };
-    // ⚠ Reading a body panics on some of a large archive: such a body is counted and passed over.
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let opened = side_by_side(&rows, |(at, resource, signature)| {
+    // ⚠ A file handle holds one position, so each read opens its own: reads side by side
+    // through one handle get each other's bytes.
+    let opened = side_by_side(&rows, |(at, resource, signature)| -> Vec<(u64, Named)> {
         if cancel.is_set() {
-            return Some(Vec::new());
+            return Vec::new();
         }
-        let open = || -> Vec<(u64, Named)> {
-            let Ok((_, bytes)) = read_rpf9_body(file, *at, limit) else {
-                return Vec::new();
-            };
-            let (virtual_section, physical) = resource.sections(&bytes);
-            match read(*signature, virtual_section, Some(physical)) {
-                Ok(Resource::Drawable(d)) => vec![(*at, named(&d))],
-                Ok(Resource::DrawableWithBound(r)) => vec![(*at, named(&r.drawable))],
-                Ok(Resource::Dictionary(dict)) => (dict.entries.iter())
-                    .filter_map(|(_, entry)| match entry {
-                        Ok(Entry::Drawable(d)) => Some((*at, named(d))),
-                        _ => None,
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            }
+        let Ok((_, bytes)) = open_file()
+            .and_then(|file| read_rpf9_body(file, *at, limit).map_err(|e| e.to_string()))
+        else {
+            return Vec::new();
         };
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(open)).ok()
+        let (virtual_section, physical) = resource.sections(&bytes);
+        match read(*signature, virtual_section, Some(physical)) {
+            Ok(Resource::Drawable(d)) => vec![(*at, named(&d))],
+            Ok(Resource::DrawableWithBound(r)) => vec![(*at, named(&r.drawable))],
+            Ok(Resource::Dictionary(dict)) => (dict.entries.iter())
+                .filter_map(|(_, entry)| match entry {
+                    Ok(Entry::Drawable(d)) => Some((*at, named(d))),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
     });
-    std::panic::set_hook(hook);
-    let panicked = opened.iter().filter(|opened| opened.is_none()).count();
     println!(
-        "  scan          {} of {seen} model bodies opened (every {every}), {panicked} of them passed over where the reader panicked",
+        "  scan          {} of {seen} model bodies opened (every {every})",
         rows.len()
     );
-    Ok((opened.into_iter().flatten().flatten())
+    Ok((opened.into_iter().flatten())
         .filter(|(_, named)| !named.is_empty())
         .collect())
 }
@@ -683,12 +680,11 @@ pub(crate) fn cmd_scan_effect_use(args: &[String]) -> Result<(), String> {
     };
     let every = every.unwrap_or(1).max(1);
     let offset = super::rpf::parse_offset(offset)?;
-    let file = std::fs::File::open(path).map_err(|e| format!("open({path}): {e}"))?;
     let drawables = match kept.as_deref().map(std::fs::read_to_string) {
         Some(Ok(text)) => text.lines().filter_map(kept_line).collect(),
         _ => {
             let drawables = census(
-                &file,
+                path,
                 from.unwrap_or(0)..to.unwrap_or(u64::MAX),
                 every,
                 limit,

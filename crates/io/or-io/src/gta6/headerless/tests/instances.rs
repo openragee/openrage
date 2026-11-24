@@ -141,3 +141,11 @@ fn a_root_off_the_measured_rules_is_refused() {
     let (zero, _) = instances(&[0]);
     assert!(refused(&zero, &[]), "no record with a structure");
 }
+
+#[test]
+fn a_root_whose_records_start_where_its_block_map_does_is_refused() {
+    let (mut v, p) = instances(&[0x200]);
+    let map = v[0x08..0x10].to_vec();
+    v[0x18..0x20].copy_from_slice(&map);
+    assert!(read_instances(&v, Some(&p)).is_err());
+}

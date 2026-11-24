@@ -157,7 +157,8 @@ mod tests {
 
     #[test]
     fn the_newest_sdk_that_holds_a_compiler_is_the_one_found() {
-        let root = std::env::temp_dir().join(format!("or-dxc-{}", std::process::id()));
+        let held_root = tempfile::tempdir().unwrap();
+        let root = held_root.path().join("sdk");
         let arch = match std::env::consts::ARCH {
             "aarch64" => "arm64",
             _ => "x64",

@@ -73,6 +73,14 @@ const ALLOWED: &[(&str, &str)] = &[
         "crates/tools/or-cli/src/mcp.rs",
         "the pictures of a `shots` call that names no folder, which its caller reads afterwards and no test makes; and a test's path to an install that is not there, where nothing is written",
     ),
+    (
+        "crates/tools/or-cli/src/gta6_rdna.rs",
+        "the scratch of one scan a person runs, which the command removes when it ends and no test makes",
+    ),
+    (
+        "crates/tools/or-shader-tool/src/rdna_devices.rs",
+        "the scratch of one device check a person runs, which the command removes when it ends and no test makes",
+    ),
 ];
 
 fn root() -> PathBuf {

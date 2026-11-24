@@ -7,7 +7,7 @@ use std::f32::consts::{PI, TAU};
 use glam::Vec3;
 use or_io::gta5::data::timecycle::{Keyframe, TimeTable};
 use or_io::gta5::data::visual_settings::VisualSettings;
-use or_renderer::game_shaders::meshlets::{Curve, Filmic, Sky, Tone};
+use or_renderer::game_shaders::meshlets::{Clouds, Curve, Filmic, Scene, Sky, Tone};
 use or_title::TimecycleData;
 
 use super::gta6_air::Air;
@@ -300,14 +300,30 @@ fn tone_of(frame: &Keyframe, settings: &VisualSettings, disc: f32) -> Tone {
     }
 }
 
+/// The clouds over a model in a weather whose cycle says they cover `cover` of the sky, and
+/// what `frame` states of the directional light under them.
+// The open share is a stand-in. The game marches the light's way through its field of clouds
+// for every place, and a model alone has no field: the clouds are taken to hide the share of
+// the ground the cycle says they cover, as deeply as it says a cloud's shadow shows, and the
+// model stands in the mean of that.
+fn clouds_of(cover: f32, frame: &Keyframe) -> Clouds {
+    let shows = frame.get_or("local_atmosphere_cloud_shadow_alpha", 1.0);
+    Clouds {
+        open: 1.0 - cover.clamp(0.0, 1.0) * shows.clamp(0.0, 1.0),
+        roughness_mod: frame.get_or("direct_light_roughness_mod_cloud_shadow", 0.0),
+        haze_blend: frame.get_or("direct_light_haze_blend_scale", 0.0),
+        haze: frame.get_or("direct_light_haze_intensity", 1.0),
+    }
+}
+
 /// The sky a GTA VI model is lit by at `hours` in `weather` by the install's tables of the day,
 /// or none where `data` does not hold them. The sun and the moon stand where the game puts them
 /// and one of them lights, by its lux and the cycle's tint and multipliers, through the air the
 /// cycle states; that air's sky is what surrounds the model; and the frame is metered and toned
 /// as the game's programs do.
-// Estimates left: the ground, a matte one of the editor's own; the moon's round, which is the
-// game's at rest; and what the game adds that a lone model has none of: shadows, clouds, fog,
-// probes and reflections.
+// Estimates left: the ground, a matte one of the editor's own; the clouds' shadow, a mean; the
+// moon's round, which is the game's at rest; and what the game adds that a lone model has none
+// of: fog, probes and reflections.
 pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Option<Sky> {
     if !lights(data, weather) {
         return None;
@@ -321,6 +337,8 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
         frame.set(variable, value);
     }
     let air = Air::of(&frame);
+    let cover = (data.timecycle.cycle(name)).and_then(|cycle| cycle.overall.get("cloud_cover"));
+    let clouds = clouds_of(cover.copied().unwrap_or(0.0), &frame);
 
     let lux = |body: &str| {
         frame.get_or(&format!("sky_scattering_{body}_illuminance"), 0.0)
@@ -350,8 +368,9 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
         * rgb(&frame, "sky_scattering_sky_col")
         * rgb(&frame, "ambient_sky_color_mult")
         * frame.get_or("ambient_sky_intensity", 1.0);
-    let ground =
-        (around + colour * towards.z / PI) * GROUND * frame.get_or("ambient_bounce_intensity", 1.0);
+    let ground = (around + colour * clouds.open * towards.z / PI)
+        * GROUND
+        * frame.get_or("ambient_bounce_intensity", 1.0);
     Some(Sky {
         towards,
         sun: colour,
@@ -359,7 +378,10 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
         ground,
         exposure: 1.0,
         tone: Some(tone_of(&frame, &data.visual_settings, air.disc_tangent())),
-        scene: Default::default(),
+        scene: Scene {
+            clouds,
+            ..Scene::default()
+        },
     })
 }
 

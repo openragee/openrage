@@ -167,3 +167,38 @@ fn the_upper_triangle_shadows_the_floor_on_the_side_away_from_the_light() {
     // The triangle itself faces the light and nothing stands before it.
     assert_eq!(seen_at(&cast, 0.0, -0.1), seen_at(&plain, 0.0, -0.1));
 }
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn the_clouds_dim_the_directional_light_by_the_share_they_let_through() {
+    const WHAT: &str = "the_clouds_dim_the_directional_light";
+    // A light dim enough that the frame's curve does not flatten it.
+    let dim = Sky {
+        sun: Vec3::splat(0.6),
+        ..leaning()
+    };
+    let Some(open) = frame_of(WHAT, dim) else {
+        return;
+    };
+    let mut sky = dim;
+    sky.scene.clouds.open = 0.25;
+    let clouded = frame_of(WHAT, sky).expect("a device a moment ago");
+    let (under, clear) = (seen_at(&clouded, 0.6, -0.2), seen_at(&open, 0.6, -0.2));
+    let (dimmed, whole) = (u32::from(under[0]), u32::from(clear[0]));
+    assert!(
+        whole > 40 && dimmed < whole * 3 / 4 && dimmed > whole / 8,
+        "{under:?} {clear:?}"
+    );
+    // Half hidden, and what is hidden taken all the way towards surroundings that give
+    // nothing: half the light is left, and half of that comes through.
+    sky.scene.clouds = Clouds {
+        open: 0.5,
+        haze_blend: 1.0,
+        ..Clouds::default()
+    };
+    let hazed = frame_of(WHAT, sky).expect("a device a moment ago");
+    assert_eq!(seen_at(&hazed, 0.6, -0.2), under);
+}

@@ -32,6 +32,10 @@ struct Light {
     // itself by, and the penumbra a unit of the tile's depth opens, as a share of that search.
     to_shadow: mat4x4<f32>,
     shadow: vec4<f32>,
+    // The clouds over the model: the share of the directional light they let through, how far
+    // its roughness is taken towards one under them, how far a light they hide is taken towards
+    // what the surroundings give along its way, and that light's strength.
+    clouds: vec4<f32>,
 }
 @group(0) @binding(0) var colour: texture_2d<f32>;
 @group(0) @binding(1) var normal: texture_2d<f32>;
@@ -111,7 +115,9 @@ fn sunlit(world: vec3<f32>, n_l: f32, pixel: vec2<f32>) -> f32 {
     let turn = 6.2831853 * fract(52.9829189 * fract(dot(pixel, vec2<f32>(0.06711056, 0.00583715))));
     let c = cos(turn);
     let s = sin(turn);
-    let beside = deep - 2.0 * texel.x * slope;
+    // A texel holds the depth at its middle: a place anywhere in it lies that much off.
+    let lean = texel.x * slope;
+    let beside = deep - 3.0 * lean;
     let near = (open_at(uv + texel * vec2<f32>(2.0 * c, 0.5 * s), beside)
         + open_at(uv + texel * vec2<f32>(-s, 0.25 * c), beside)
         + open_at(uv + texel * vec2<f32>(0.5 * c, -0.125 * s), beside)) / 3.0;
@@ -124,7 +130,7 @@ fn sunlit(world: vec3<f32>, n_l: f32, pixel: vec2<f32>) -> f32 {
         let angle = turn + f32(i) * 2.6179939;
         let at = clamp(uv + reach * r * vec2<f32>(cos(angle), sin(angle)), vec2<f32>(0.0), vec2<f32>(1.0));
         let held = textureLoad(shadow_map, vec2<i32>(at * (size - 1.0)), 0);
-        hidden[i] = deep - r * reach * slope > held;
+        hidden[i] = deep - r * reach * slope - lean > held;
         if hidden[i] {
             before += (1.0 - r) * held;
             weight += 1.0 - r;
@@ -192,8 +198,10 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
     let n_h = max(dot(n, h), 0.0);
     let v_h = max(dot(h, v), 0.0);
     let game = light.tone.x > 0.0;
-    // The game takes the directional light's roughness part of the way to one.
-    let softened = roughness + select(0.0, light.tone.y, game) * (1.0 - roughness);
+    // The game takes the directional light's roughness part of the way to one, by one number
+    // in the open and by another in a cloud's shadow.
+    let open = light.clouds.x;
+    let softened = roughness + select(0.0, mix(light.clouds.y, light.tone.y, open), game) * (1.0 - roughness);
     let a = max(softened * softened, 0.001);
     let a2 = a * a;
     // The microfacet terms: how many facets face halfway, how many of them are seen and lit,
@@ -225,8 +233,13 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
     }
     var direct = vec3<f32>(0.0);
     if n_l > 0.0 {
-        let reaches = sunlit(surface.at, n_l, pixel);
-        direct = (albedo * (1.0 - reflected) * matte + gloss) * light.sun.rgb * n_l * reaches;
+        // A light the clouds hide goes towards what the surroundings give along its way, then
+        // the model's own shadow and the clouds' dim it.
+        var from_light = light.sun.rgb;
+        let hazed = max(surroundings(l) * PI, vec3<f32>(0.0)) * light.clouds.w / max(open, 0.001);
+        from_light += light.clouds.z * (1.0 - open) * (hazed - from_light);
+        from_light *= sunlit(surface.at, n_l, pixel) * open;
+        direct = (albedo * (1.0 - reflected) * matte + gloss) * from_light * n_l;
     }
     // From all around: the sky and the ground on the colour, and along the mirrored way on the
     // gloss, less as the surface is rougher.

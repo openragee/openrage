@@ -201,8 +201,30 @@ fn the_cycle_states_the_light_by_its_lux_its_tint_its_multipliers_and_the_air() 
         noon.sky
     );
     assert!(noon.sky.z > noon.sky.x, "blue: {:?}", noon.sky);
-    let ground = (noon.sky + noon.sun * noon.towards.z / PI) * GROUND * 2.0;
+    // The clouds cover a quarter of the sky and their shadow shows whole: three quarters of
+    // the light comes through, onto the model and onto the ground that lights it from below.
+    assert_eq!(noon.scene.clouds, clouds_of(0.25, &Keyframe::default()));
+    assert_eq!(noon.scene.clouds.open, 0.75);
+    let ground = (noon.sky + noon.sun * 0.75 * noon.towards.z / PI) * GROUND * 2.0;
     assert!(close(noon.ground, ground), "{:?}", noon.ground);
+    // A shadow that shows by half hides half as much, and the rows of the light under it are
+    // the cycle's.
+    let mut stated = Keyframe::default();
+    stated.set("local_atmosphere_cloud_shadow_alpha", 0.5);
+    stated.set("direct_light_roughness_mod_cloud_shadow", 0.3);
+    stated.set("direct_light_haze_blend_scale", 0.2);
+    stated.set("direct_light_haze_intensity", 4.0);
+    let under = clouds_of(0.8, &stated);
+    assert_eq!(
+        (
+            under.open,
+            under.roughness_mod,
+            under.haze_blend,
+            under.haze
+        ),
+        (0.6, 0.3, 0.2, 4.0)
+    );
+    assert_eq!(clouds_of(0.0, &stated).open, 1.0);
 
     let night = at(noon_hours + 12.0);
     // Two lux of moon, three times, halved by the moon's own multiplier.

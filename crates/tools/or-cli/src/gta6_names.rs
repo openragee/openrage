@@ -13,7 +13,7 @@ use or_io::gta6::texture_names::{name_keys, name_keys_of_plain};
 use or_io::gta6::TexturePack;
 
 const USAGE: &str =
-    "usage: rpf scan-names [<archive.rpf>...] [--prefix <bytes>] [--threads <count>] [--pack <file.ttpf or folder>]...";
+    "usage: rpf scan-names [<archive.rpf>...] [--prefix <bytes>] [--threads <count>] [--names <file>]... [--pack <file.ttpf or folder>]...";
 
 /// The vocabulary kept in the configuration folder, read once; empty where none is kept.
 pub(crate) fn vocabulary() -> &'static Vocabulary {
@@ -189,6 +189,7 @@ fn pack_lines(
 pub(crate) fn cmd_scan_names(args: &[String]) -> Result<(), String> {
     let (mut archives, mut prefix, mut packs) = (Vec::new(), HARVEST_PREFIX, Vec::new());
     let mut threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let mut lists = Vec::new();
     let mut words = args.iter();
     while let Some(word) = words.next() {
         match word.as_str() {
@@ -209,6 +210,7 @@ pub(crate) fn cmd_scan_names(args: &[String]) -> Result<(), String> {
                 let given = words.next().ok_or("--pack needs a file or a folder")?;
                 packs_at(Path::new(given), &mut packs);
             }
+            "--names" => lists.push(words.next().ok_or("--names needs a file")?),
             other if other.starts_with('-') => return Err(USAGE.to_string()),
             path => archives.push(path),
         }
@@ -216,6 +218,11 @@ pub(crate) fn cmd_scan_names(args: &[String]) -> Result<(), String> {
     let root = or_title::config::config_dir();
     let kept = root.as_deref().map(names::vocabulary_file);
     let mut vocabulary = kept.as_deref().map(Vocabulary::load).unwrap_or_default();
+    for file in lists {
+        let bytes = std::fs::read(file).map_err(|e| format!("{file}: {e}"))?;
+        let new = vocabulary.add_lines(&String::from_utf8_lossy(&bytes));
+        println!("  {file}: {new} names new");
+    }
     let cancelled = super::jobs::on_interrupt();
     for path in archives {
         let before = vocabulary.len();

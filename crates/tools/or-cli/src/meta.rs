@@ -1063,6 +1063,11 @@ impl Options {
 pub(crate) fn schema() -> &'static or_io::meta::SchemaLibrary {
     static FOUND: std::sync::Once = std::sync::Once::new();
     FOUND.call_once(|| {
+        if let Some(path) = or_title::schema::find_gta6_snapshot(config_dir().as_deref()) {
+            if let Err(error) = or_io::meta::install_names_snapshot(&path) {
+                tracing::warn!(path = %path.display(), %error, "GTA VI's schema snapshot is unusable");
+            }
+        }
         let Some(path) = or_title::schema::find_snapshot(config_dir().as_deref()) else {
             return;
         };
@@ -1091,6 +1096,7 @@ fn cmd_snapshot(args: &[String]) -> Result<ExitCode, String> {
     let mut psc_root = None;
     let mut out = None;
     let mut status = false;
+    let (mut par_tree, mut store) = (None, None);
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         let mut value = || {
@@ -1101,7 +1107,8 @@ fn cmd_snapshot(args: &[String]) -> Result<ExitCode, String> {
         match arg.as_str() {
             "--psc-root" => psc_root = Some(value()?),
             "--out" => out = Some(value()?),
-            "--store" => out = Some(or_title::schema::store_file(&value()?)),
+            "--par-tree" => par_tree = Some(value()?),
+            "--store" => store = Some(value()?),
             "--status" => status = true,
             other => return Err(format!("unknown argument '{other}'")),
         }
@@ -1110,6 +1117,10 @@ fn cmd_snapshot(args: &[String]) -> Result<ExitCode, String> {
         snapshot_status();
         return Ok(ExitCode::SUCCESS);
     }
+    if let Some(dump) = par_tree {
+        return snapshot_of_par_tree(&dump, out, store);
+    }
+    let out = out.or(store.map(|corpus| or_title::schema::store_file(&corpus)));
 
     let psc_root = psc_root
         .or_else(|| std::env::var_os("OPENRAGE_PSC_ROOT").map(PathBuf::from))
@@ -1181,8 +1192,51 @@ fn cmd_snapshot(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Writes GTA VI's snapshot from the parser dump at `dump`: to `out`, else into the store of the
+/// corpus directory `store`, else into the store above this source tree.
+fn snapshot_of_par_tree(
+    dump: &Path,
+    out: Option<PathBuf>,
+    store: Option<PathBuf>,
+) -> Result<ExitCode, String> {
+    let corpus = || {
+        store.or_else(|| or_title::schema::source_tree().and_then(or_title::schema::corpus_above))
+    };
+    let out = out
+        .or_else(|| Some(corpus()?.join(or_title::schema::GTA6_STORE_FILE)))
+        .ok_or("no openrage-corpus beside or above this source tree; pass --out or --store")?;
+    let json = fs::read(dump).map_err(|e| format!("{}: {e}", dump.display()))?;
+    let lib = or_io::meta::par_tree::library_from_par_tree(&json)
+        .map_err(|e| format!("{}: {e}", dump.display()))?;
+    let bytes = or_io::meta::encode_snapshot(&lib).map_err(|e| format!("encode failed: {e}"))?;
+    if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+    }
+    fs::write(&out, &bytes).map_err(|e| format!("write {}: {e}", out.display()))?;
+    println!(
+        "Wrote {} bytes to {} ({} struct(s), {} enum(s))",
+        bytes.len(),
+        out.display(),
+        lib.structs.len(),
+        lib.enums.len()
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Which snapshot this run finds, what is in it, and which generator wrote it.
 fn snapshot_status() {
+    match or_title::schema::find_gta6_snapshot(config_dir().as_deref()) {
+        Some(path) => match or_io::meta::load_snapshot(&path) {
+            Ok(lib) => println!(
+                "GTA VI snapshot, read for its names: {} ({} struct(s), {} enum(s))",
+                path.display(),
+                lib.structs.len(),
+                lib.enums.len()
+            ),
+            Err(e) => println!("GTA VI snapshot: {} is unusable: {e}", path.display()),
+        },
+        None => println!("GTA VI snapshot: none found."),
+    }
     let Some(path) = or_title::schema::find_snapshot(config_dir().as_deref()) else {
         println!("snapshot: none found, so the schema library is empty.");
         println!(
@@ -1269,7 +1323,14 @@ fn print_usage() {
     eprintln!("  snapshot --psc-root <dir> [--out <file> | --store <corpus-dir>]");
     eprintln!("                                 Build the schema snapshot from a PSC tree;");
     eprintln!("                                 by default into the store above this tree.");
-    eprintln!("  snapshot --status              Which snapshot this run finds, and its age.");
+    eprintln!("  snapshot --par-tree <dump.json> [--out <file> | --store <corpus-dir>]");
+    eprintln!("                                 Build GTA VI's snapshot from a parser dump, into");
+    eprintln!("                                 the shared store beside the first; it is read for");
+    eprintln!(
+        "                                 its names ({}).",
+        or_title::schema::GTA6_SCHEMA_ENV
+    );
+    eprintln!("  snapshot --status             Which snapshot this run finds, and its age.");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --strict     Treat anything the reader cannot decode as an error.");

@@ -92,6 +92,10 @@ Nothing in an archive names a body, and a pack names no texture. Names come from
 
 **The harvest.** `crates/io/or-io/src/gta6/names.rs` reads the start of each body for printable names: the names resources state of themselves and of each other, and plain ones. Each name is hashed both ways, 32-bit and 64-bit (`crates/io/or-io/src/gta6/hash.rs`), into a `Vocabulary` kept in the configuration folder. From then on a hash read anywhere is shown by its name, in the CLI and in the app. The harvest also keeps the name each drawable and fragment states of itself, by its offset, which a scan's list shows beside the row. `openrage-cli rpf scan-names` runs it, and the app runs it as a job (`src/state/gta6_names.rs`, `src/state/gta6_install_harvest.rs`).
 
+**A list of names.** `rpf scan-names --names <file>` holds each line of a file the user supplies as a plain name of the vocabulary, so a hash it names is shown by it wherever the vocabulary is asked. No list ships with OpenRage. ⚠ A list found by searching for hashes can hold a name that hashes right and is wrong, and a 32-bit hash two held names share names nothing.
+
+**Member names.** A metadata body states its own layout and names nothing: a structure, a member, an enum and its values are hashes. `openrage-cli meta snapshot --par-tree <dump.json>` turns a parser dump, the JSON a viewer of the executable's reflection tables carries, into a schema snapshot of GTA V's format (`crates/io/or-io/src/meta/par_tree.rs`), kept beside GTA V's in the shared store and never in the tree. The editor and the CLI read it for its names alone, behind GTA V's, so a GTA VI body opens with the names the dump has in the clear and `hash_XXXXXXXX` for the rest. ⚠ A snapshot holds no offset: a dump's layout is the executable's, and a body may state another, so the body's own table is what is read.
+
 **The naming rules.** A texture's name follows from the name of the drawable that uses it: the drawable's stem, then a map kind, a level-of-detail token swapped, a numbered variant, the stem's first or last tokens, or a ped component's pattern (`Rule` in `crates/io/or-io/src/gta6/texture_names.rs`). The rules make candidates, and a candidate names a key only where it hashes to one, so a rule can miss and cannot name wrongly short of a hash collision. Nothing there is a list of names. A file of names the user picks is read the same way.
 
 **The use label.** A texture no name is found for is still used: the harvest records, for each texture key a model's material binds, the first model that binds it, the shader parameter that binds it there, and how many models bind it. The label is that model and parameter, as in "used by a model as its diffuse texture, and by two models more". It is not a name, since it hashes to no key; it tells a person what a nameless texture is for, and the pack's list filters by it.
@@ -162,7 +166,7 @@ Every command is `openrage-cli` and a row below; `openrage-cli rpf` and `openrag
 | `rpf scan-maps` | every map body's structure; `--list`, `--check` and `--extents` |
 | `rpf scan-world` | a census of an archive's world data, and the lane graph joined |
 | `rpf scan-lights` | the lights of one map body, each where it stands in the world |
-| `rpf scan-names` | harvests names into the kept vocabulary; `--pack` counts the texture keys they name |
+| `rpf scan-names` | harvests names into the kept vocabulary; `--names` adds the lines of a file of names the user supplies; `--pack` counts the texture keys they name |
 | `rpf scan-radio` | the radio stations, their track lists and the streams they play |
 | `rpf scan-dialogue` | the dialogue lines with their audio streams and texts, as a table `awc export --dialogue` reads |
 | `rpf scan-shaders` | how every program of an effect container translates, by outcome and refusal |

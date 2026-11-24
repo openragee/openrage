@@ -204,6 +204,26 @@ fn a_harvest_holds_a_body_s_names_and_two_vocabularies_merge() {
 }
 
 #[test]
+fn a_list_of_names_is_held_a_line_a_name_without_its_comments() {
+    let mut vocabulary = Vocabulary::default();
+    vocabulary.add("zq_crane", Some(*b"dr"));
+    let list =
+        "//found_by_search\r\nZq_Crane\r\n  zq@lift@up  \r\n\r\nnot a name\r\nzq@lift@up\r\n";
+    assert_eq!(vocabulary.add_lines(list), 1);
+    assert_eq!(vocabulary.len(), 2);
+    assert_eq!(
+        vocabulary.name32(name_hash32(b"ZQ@LIFT@UP")),
+        Some("zq@lift@up")
+    );
+    assert_eq!(vocabulary.name64(name_hash64(b"//found_by_search")), None);
+    assert_eq!(
+        vocabulary.counts().plain,
+        1,
+        "a name held with an ending keeps it"
+    );
+}
+
+#[test]
 fn a_vocabulary_reads_back_what_it_wrote_and_passes_over_what_is_no_name() {
     let mut vocabulary = Vocabulary::default();
     vocabulary.harvest(&binary_body(), HARVEST_PREFIX);

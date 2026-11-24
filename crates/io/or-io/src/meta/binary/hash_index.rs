@@ -11,6 +11,13 @@ pub struct HashIndex {
 
 impl HashIndex {
     pub fn from_library(library: &SchemaLibrary) -> Self {
+        let mut index = Self::default();
+        index.add_library(library);
+        index
+    }
+
+    /// Add the names of `library` for the hashes nothing held names yet.
+    pub fn add_library(&mut self, library: &SchemaLibrary) {
         let mut names: Vec<(&str, bool)> =
             Vec::with_capacity(library.structs.len() * 8 + library.enums.len() * 4);
         for s in library.structs.values() {
@@ -28,15 +35,15 @@ impl HashIndex {
         names.sort_unstable();
         names.dedup();
 
-        let mut map: HashMap<u32, String> = HashMap::with_capacity(names.len() * 2);
-        for (name, is_type) in names {
+        self.map.reserve(names.len());
+        // A name a library spells as a hash is no name.
+        for (name, is_type) in names.into_iter().filter(|(n, _)| spelled_hash(n).is_none()) {
             if is_type {
-                insert_type(&mut map, name);
+                insert_type(&mut self.map, name);
             } else {
-                insert(&mut map, name);
+                insert(&mut self.map, name);
             }
         }
-        Self { map }
     }
 
     /// Add the identifiers public sources name, for the hashes a library
@@ -129,13 +136,20 @@ pub fn with_public_names_only<R>(f: impl FnOnce() -> R) -> R {
 pub fn default_hash_index() -> &'static HashIndex {
     static INSTALLED_INDEX: OnceLock<HashIndex> = OnceLock::new();
     static PUBLIC_INDEX: OnceLock<HashIndex> = OnceLock::new();
-    let installed = crate::meta::snapshot::installed().filter(|_| !PUBLIC_ONLY.with(Cell::get));
-    match installed {
-        Some(library) => {
-            INSTALLED_INDEX.get_or_init(|| HashIndex::from_library(library).with_public_names())
-        }
-        None => PUBLIC_INDEX
+    let public_only = PUBLIC_ONLY.with(Cell::get);
+    let installed = crate::meta::snapshot::installed().filter(|_| !public_only);
+    let names = crate::meta::snapshot::names_library().filter(|_| !public_only);
+    match (installed, names) {
+        (None, None) => PUBLIC_INDEX
             .get_or_init(|| HashIndex::from_library(&SchemaLibrary::default()).with_public_names()),
+        _ => INSTALLED_INDEX.get_or_init(|| {
+            let mut index = HashIndex::default();
+            installed
+                .into_iter()
+                .chain(names)
+                .for_each(|l| index.add_library(l));
+            index.with_public_names()
+        }),
     }
 }
 
@@ -192,6 +206,32 @@ mod tests {
         assert_eq!(idx.lookup(h_field), Some("m_Probability"));
         assert_eq!(idx.lookup(h_enum), Some("EFooKind"));
         assert_eq!(idx.lookup(h_value), Some("EFK_Default"));
+    }
+
+    #[test]
+    fn a_second_library_names_only_what_the_first_left_unnamed() {
+        let mut second = SchemaLibrary::new();
+        for name in ["CFooBar", "cfoobar_other", "hash_0000BEEF"] {
+            second.insert_struct(StructDef {
+                name: name.into(),
+                base: None,
+                abstract_: false,
+                simple: true,
+                fields: vec![],
+                source_path: String::new(),
+            });
+        }
+        let mut idx = HashIndex::from_library(&make_library());
+        let before = idx.len();
+        idx.add_library(&second);
+        assert_eq!(
+            idx.len(),
+            before + 1,
+            "one new name; a spelled hash is none"
+        );
+        let other = crate::literal_string_hash(b"cfoobar_other");
+        assert_eq!(idx.lookup(other), Some("cfoobar_other"));
+        assert_eq!(idx.lookup(0xBEEF), None);
     }
 
     #[test]

@@ -199,6 +199,14 @@ impl Vocabulary {
         new
     }
 
+    /// Holds each line of `list`, a file of names the user supplies, as a plain name; how many
+    /// were new. A line that starts with `//` is a comment.
+    pub fn add_lines(&mut self, list: &str) -> usize {
+        let names = list.lines().map(str::trim);
+        let names = names.filter(|line| !line.starts_with("//"));
+        names.filter(|name| self.add(name, None)).count()
+    }
+
     /// Holds every name of `other`, as another archive's harvest.
     pub fn merge(&mut self, other: &Self) {
         for name in other.names.values() {

@@ -21,6 +21,15 @@ pub const STORE_DIR: &str = "openrage-corpus";
 /// regenerated file never breaks a tree still on the older shape.
 pub const STORE_FILE: &str = "or-meta/v3/schema_snapshot.bin";
 
+/// Names GTA VI's snapshot file, which is read for its names beside the first.
+pub const GTA6_SCHEMA_ENV: &str = "OPENRAGE_GTA6_SCHEMA";
+
+/// GTA VI's snapshot in the user's configuration directory.
+pub const GTA6_CONFIG_SNAPSHOT: &str = "gta6_schema_snapshot.bin";
+
+/// GTA VI's snapshot in the shared store, of the same shape as [`STORE_FILE`].
+pub const GTA6_STORE_FILE: &str = "or-meta/v3/gta6_schema_snapshot.bin";
+
 /// ⚠ A word, not an empty value: PowerShell deletes a variable assigned `""`,
 /// so an empty-string convention would silently mean "unset".
 pub const NO_SCHEMA: &[&str] = &["none", "off"];
@@ -85,9 +94,56 @@ pub fn find_snapshot(config_dir: Option<&Path>) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// GTA VI's snapshot to install for its names; none where [`SCHEMA_ENV`] asks for no schema.
+pub fn find_gta6_snapshot(config_dir: Option<&Path>) -> Option<PathBuf> {
+    if std::env::var(SCHEMA_ENV).is_ok_and(|v| asks_for_no_schema(&v)) {
+        return None;
+    }
+    let named = std::env::var(GTA6_SCHEMA_ENV).ok();
+    gta6_candidates(named.as_deref(), config_dir, source_tree())
+        .into_iter()
+        .find(|p| p.is_file())
+}
+
+fn gta6_candidates(
+    named: Option<&str>,
+    config_dir: Option<&Path>,
+    source_tree: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = (named.map(str::trim).filter(|v| !v.is_empty()))
+        .map(PathBuf::from)
+        .into_iter()
+        .collect();
+    paths.extend(config_dir.map(|dir| dir.join(GTA6_CONFIG_SNAPSHOT)));
+    if let Some(corpus) = source_tree.and_then(corpus_above) {
+        paths.push(corpus.join(GTA6_STORE_FILE));
+    }
+    paths
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gta_vi_s_snapshot_is_named_then_configured_and_never_the_first_title_s() {
+        let config = PathBuf::from("C:/cfg");
+        let paths = gta6_candidates(Some(" D:/x/six.bin "), Some(&config), None);
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from("D:/x/six.bin"),
+                config.join(GTA6_CONFIG_SNAPSHOT)
+            ]
+        );
+        assert_ne!(GTA6_CONFIG_SNAPSHOT, CONFIG_SNAPSHOT);
+        assert_ne!(GTA6_STORE_FILE, STORE_FILE);
+        assert_eq!(
+            Path::new(GTA6_STORE_FILE).parent(),
+            Path::new(STORE_FILE).parent(),
+            "one shape, one directory"
+        );
+    }
 
     fn org() -> PathBuf {
         PathBuf::from("D:/org")

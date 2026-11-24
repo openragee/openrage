@@ -77,6 +77,10 @@ rather than an empty value because PowerShell deletes a variable set to `""`.
 the metadata suites still find their own corpus there, so that run tests a corpus with no
 snapshot.
 
+## A second title's snapshot
+
+GTA VI has a snapshot of its own, of the same format, which `openrage-cli meta snapshot --par-tree <dump.json>` writes from a parser dump (`par_tree`). It is found the same three ways under its own names (`OPENRAGE_GTA6_SCHEMA`, `gta6_schema_snapshot.bin` in the configuration directory, `or-meta/v3/gta6_schema_snapshot.bin` in the store), and `OPENRAGE_SCHEMA=none` turns it off with the first. It is installed for its names alone (`install_names_snapshot`): the hash index takes them after the default library's, and no structure of it is laid out, since the two titles declare structures of one name differently and a GTA VI body states its own layout.
+
 ## Producing one
 
 ```bash

@@ -16,6 +16,11 @@ pub fn meta_schema() -> &'static or_io::meta::SchemaLibrary {
     static FOUND: std::sync::Once = std::sync::Once::new();
     FOUND.call_once(|| {
         let config = crate::state::prefs::config_root();
+        if let Some(path) = or_title::schema::find_gta6_snapshot(config.as_deref()) {
+            if let Err(error) = or_io::meta::install_names_snapshot(&path) {
+                tracing::warn!(path = %path.display(), %error, "GTA VI's schema snapshot is unusable");
+            }
+        }
         let Some(path) = or_title::schema::find_snapshot(config.as_deref()) else {
             tracing::info!("no metadata schema snapshot found; field names read as hashes");
             return;

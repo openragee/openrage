@@ -39,6 +39,10 @@ struct Installed {
 /// definitions) would otherwise answer for a library that is gone.
 static INSTALLED: OnceLock<Installed> = OnceLock::new();
 
+/// A second library, read for its names alone: another title's, whose structures may be named as
+/// the default's are and laid out otherwise.
+static NAMES: OnceLock<SchemaLibrary> = OnceLock::new();
+
 static EMPTY: LazyLock<SchemaLibrary> = LazyLock::new(SchemaLibrary::default);
 
 /// Whether a snapshot came out of the `build_library` this source tree has.
@@ -149,6 +153,21 @@ pub fn install_snapshot(path: &Path) -> Result<&'static SchemaLibrary> {
         origin: Some(path.to_path_buf()),
     };
     Ok(&INSTALLED.get_or_init(|| installed).library)
+}
+
+/// Install the snapshot at `path` for its names alone, behind the default's; the first wins.
+///
+/// ⚠ Before the first name is asked for: the hash index is built once.
+pub fn install_names_snapshot(path: &Path) -> Result<&'static SchemaLibrary> {
+    if let Some(held) = NAMES.get() {
+        return Ok(held);
+    }
+    let library = load_snapshot(path)?;
+    Ok(NAMES.get_or_init(|| library))
+}
+
+pub(crate) fn names_library() -> Option<&'static SchemaLibrary> {
+    NAMES.get()
 }
 
 pub(crate) fn installed() -> Option<&'static SchemaLibrary> {

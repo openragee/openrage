@@ -16119,3 +16119,9 @@ msgstr "这是估算值，并非精确图像：{how}"
 
 msgid "Stopped before it finished. The next calibration of this game goes on from where this one stopped"
 msgstr "在完成前已停止。下次校准此游戏时将从这次停止的地方继续"
+
+msgid "The fields below are the ones this GTA VI body's own table states. Names come from GTA VI's name snapshot; a name the snapshot holds only as a hash shows its hash."
+msgstr "下方的字段是这个 GTA VI 主体自身的表所声明的字段。名称来自 GTA VI 的名称快照；快照中只以哈希保存的名称显示为其哈希。"
+
+msgid "No schema is staged for this type, so the fields below are the ones the document itself carries. Names come from the public tables; a field the tables do not name shows its hash."
+msgstr "此类型没有可用的架构，因此下方的字段是文档本身携带的字段。名称来自公开表；表中未命名的字段显示为其哈希。"

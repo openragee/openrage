@@ -16119,3 +16119,9 @@ msgstr "Une estimation, pas l'image exacte : {how}"
 
 msgid "Stopped before it finished. The next calibration of this game goes on from where this one stopped"
 msgstr "Arrêté avant la fin. La prochaine calibration de ce jeu reprendra là où celle-ci s'est arrêtée"
+
+msgid "The fields below are the ones this GTA VI body's own table states. Names come from GTA VI's name snapshot; a name the snapshot holds only as a hash shows its hash."
+msgstr "Les champs ci-dessous sont ceux qu'énonce la table de ce corps GTA VI. Les noms viennent de l'instantané de noms de GTA VI ; un nom que l'instantané ne contient que sous forme de hash affiche son hash."
+
+msgid "No schema is staged for this type, so the fields below are the ones the document itself carries. Names come from the public tables; a field the tables do not name shows its hash."
+msgstr "Aucun schéma n'est disponible pour ce type ; les champs ci-dessous sont donc ceux que le document porte lui-même. Les noms viennent des tables publiques ; un champ que les tables ne nomment pas affiche son hash."

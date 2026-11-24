@@ -16119,3 +16119,9 @@ msgstr "추정값이며 정확한 이미지가 아닙니다: {how}"
 
 msgid "Stopped before it finished. The next calibration of this game goes on from where this one stopped"
 msgstr "끝나기 전에 중지됨. 이 게임의 다음 보정은 이번에 중지된 곳에서 이어집니다"
+
+msgid "The fields below are the ones this GTA VI body's own table states. Names come from GTA VI's name snapshot; a name the snapshot holds only as a hash shows its hash."
+msgstr "아래 필드는 이 GTA VI 본문 자체의 테이블이 명시하는 필드입니다. 이름은 GTA VI의 이름 스냅샷에서 가져오며, 스냅샷이 해시로만 가지고 있는 이름은 해시로 표시됩니다."
+
+msgid "No schema is staged for this type, so the fields below are the ones the document itself carries. Names come from the public tables; a field the tables do not name shows its hash."
+msgstr "이 형식에 사용할 스키마가 없으므로 아래 필드는 문서 자체가 가진 필드입니다. 이름은 공개 테이블에서 가져오며, 테이블에 이름이 없는 필드는 해시로 표시됩니다."

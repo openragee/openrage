@@ -41,6 +41,19 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
     draw_visual_view(ui, state, doc_id);
 }
 
+/// What stands above the fields of a type the schema does not describe: `named` for a GTA VI
+/// body while that game's name snapshot is installed, whose names are not the public tables'.
+fn undescribed_note(named: bool) -> &'static str {
+    match named {
+        true => tr_key!(
+            "The fields below are the ones this GTA VI body's own table states. Names come from GTA VI's name snapshot; a name the snapshot holds only as a hash shows its hash."
+        ),
+        false => tr_key!(
+            "No schema is staged for this type, so the fields below are the ones the document itself carries. Names come from the public tables; a field the tables do not name shows its hash."
+        ),
+    }
+}
+
 fn empty(ui: &mut egui::Ui) {
     ui.centered_and_justified(|ui| {
         ui.label(
@@ -98,6 +111,7 @@ fn draw_visual_view(ui: &mut egui::Ui, state: &mut AppState, doc_id: crate::stat
     let DocPayload::Meta(meta) = &mut doc.payload else {
         return;
     };
+    let meta_is_gta_vi = meta.is_gta_vi_body();
 
     let mut dirty = false;
     egui::ScrollArea::vertical()
@@ -156,14 +170,11 @@ fn draw_visual_view(ui: &mut egui::Ui, state: &mut AppState, doc_id: crate::stat
             }
 
             if !described {
+                let named = meta_is_gta_vi && or_io::meta::has_names_library();
                 ui.label(
-                    egui::RichText::new(
-                        "No schema is staged for this type, so the fields below are the ones \
-                         the document itself carries. Names come from the public tables; a \
-                         field the tables do not name shows its hash.",
-                    )
-                    .small()
-                    .color(theme::TEXT_DIM),
+                    egui::RichText::new(crate::i18n::tr(undescribed_note(named)))
+                        .small()
+                        .color(theme::TEXT_DIM),
                 );
                 ui.add_space(theme::SPACING_SNUG);
             }
@@ -198,6 +209,14 @@ mod tests {
     use crate::state::MetaDocument;
 
     const WHAT: &str = "a_binary_document_opens_with_the_schemas_field_names";
+
+    #[test]
+    fn a_named_gta_vi_body_is_not_told_its_names_are_the_public_tables() {
+        let named = super::undescribed_note(true);
+        assert!(named.contains("GTA VI's name snapshot"), "{named}");
+        assert!(!named.contains("public tables"), "{named}");
+        assert!(super::undescribed_note(false).contains("public tables"));
+    }
 
     /// ⚠ Nothing is compiled in, so a binary document's field names are the
     /// installed schema's or they are hashes: the editor has to install the

@@ -283,6 +283,15 @@ impl MetaDocument {
             Some(ContainerLayout::Pso(p)) if p.is_table_form() || p.is_gta6())
     }
 
+    /// Whether this is a GTA VI body, a PSO of that game or a headerless resource, whose own
+    /// table states its fields.
+    pub fn is_gta_vi_body(&self) -> bool {
+        use or_io::meta::binary::ContainerLayout;
+        self.keeps_a_checksum()
+            || matches!(self.layout.as_ref().map(|l| &l.container),
+                Some(ContainerLayout::Rbm(rbm)) if rbm.seal.is_none())
+    }
+
     /// A GTA VI headerless resource's sections with its tree written in; `None` for any other
     /// document.
     pub fn headerless_sections(

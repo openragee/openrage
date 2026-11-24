@@ -176,6 +176,11 @@ pub(crate) fn names_library() -> Option<&'static SchemaLibrary> {
     NAMES.get()
 }
 
+/// Whether a library for the names of the second title's bodies is installed.
+pub fn has_names_library() -> bool {
+    NAMES.get().is_some()
+}
+
 pub(crate) fn installed() -> Option<&'static SchemaLibrary> {
     INSTALLED.get().map(|i| &i.library)
 }

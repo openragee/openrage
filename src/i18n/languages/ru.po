@@ -16257,3 +16257,9 @@ msgstr "Оценка, а не точное изображение: {how}"
 
 msgid "Stopped before it finished. The next calibration of this game goes on from where this one stopped"
 msgstr "Остановлено до завершения. Следующая калибровка этой игры продолжит с того места, где остановилась эта"
+
+msgid "The fields below are the ones this GTA VI body's own table states. Names come from GTA VI's name snapshot; a name the snapshot holds only as a hash shows its hash."
+msgstr "Поля ниже — те, что указывает собственная таблица этого тела GTA VI. Имена берутся из снимка имён GTA VI; имя, которое снимок хранит только как хеш, показывается хешем."
+
+msgid "No schema is staged for this type, so the fields below are the ones the document itself carries. Names come from the public tables; a field the tables do not name shows its hash."
+msgstr "Для этого типа нет схемы, поэтому поля ниже — те, что содержит сам документ. Имена берутся из общедоступных таблиц; поле, которое таблицы не называют, показывается хешем."

@@ -16119,3 +16119,9 @@ msgstr "推定値であり、正確な画像ではありません：{how}"
 
 msgid "Stopped before it finished. The next calibration of this game goes on from where this one stopped"
 msgstr "完了前に停止しました。このゲームの次のキャリブレーションは、今回停止したところから続行します"
+
+msgid "The fields below are the ones this GTA VI body's own table states. Names come from GTA VI's name snapshot; a name the snapshot holds only as a hash shows its hash."
+msgstr "以下のフィールドは、このGTA VIボディ自身のテーブルが示すものです。名前はGTA VIの名前スナップショットから取得されます。スナップショットがハッシュとしてのみ保持する名前は、そのハッシュで表示されます。"
+
+msgid "No schema is staged for this type, so the fields below are the ones the document itself carries. Names come from the public tables; a field the tables do not name shows its hash."
+msgstr "この型にはスキーマが用意されていないため、以下のフィールドはドキュメント自体が持つものです。名前は公開テーブルから取得されます。テーブルに名前のないフィールドは、そのハッシュで表示されます。"

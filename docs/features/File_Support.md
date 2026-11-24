@@ -80,9 +80,19 @@ opens as a plain folder.
 
 - **Read.** Texture packs (`.ttpf`) and dictionary textures, drawables, fragments, dictionaries of
   drawables and their skeletons, bounds, navigation cells, map placements and map types, clip
-  dictionaries and the other animation bodies, PSO, RBM and RBF metadata, text tables, AWC audio,
-  which plays and exports as Ogg Opus, and the pictures of a Bink movie. A drawable is drawn in
+  dictionaries and the other animation bodies, cloth, a ped's hair grooms among it, PSO, RBM and RBF
+  metadata, ped catalogues among it, text tables, AWC audio,
+  which plays and exports as Ogg Opus, and a Bink movie's pictures and sound. A drawable is drawn in
   Wireframe, Solid and Material and goes out to glTF.
+- **Textures.** A texture stored plainly or as zlib reads as it is. One stored through the pack's
+  entropy coder decodes exactly as BC1; as BC3, BC4, BC5, BC6H or BC7 it decodes through tables
+  that `openrage-cli ttpf calibrate`, or the app's job, fits on your machine from the packs of the
+  folder, and is refused by name before that. Such a texture is an estimate and is marked
+  calibrated wherever it is shown or exported.
+- **Shaded.** Shaded draws a pass of a GTA VI drawable with the game's own programs where both its
+  vertex and its pixel program translate and bind, lit by the hour and the weather the install's
+  time cycle states, and its button says how many programs were refused and why the first was.
+  The sky, the exposure and every pass that is not a model's are the editor's own.
 - **Weapons.** A weapon is a carrier model and a model for each part. Where the archive's names are
   harvested, the carrier is drawn as the first variant of each kind of part at its own level of
   detail, each with its root bone on the bone of the same name that the carrier or another part
@@ -93,6 +103,7 @@ opens as a plain folder.
   loose file. Which values of a model, a bound, a map or a metadata body can be edited is narrower than
   for GTA V, and a refusal names what it cannot write.
 - **Not done.** Nothing is written back into an archive, and no file OpenRage saved has been tried in
-  the game. Scripts do not read, their bodies being enciphered; a `KB2n` movie has no sound; a texture
-  stored through the pack's entropy coder decodes only as BC1; and the Shaded mode does not draw a GTA
-  VI model, since nothing draws with that game's shaders yet.
+  the game. Scripts do not read, their bodies being enciphered. A program the shader front end
+  cannot translate or bind leaves its pass undrawn in Shaded, and no save file of the game has been
+  opened: the save reader was written from a description of the layout.
+  [GTA_VI_Xbox_Build.md](GTA_VI_Xbox_Build.md) has each reader, refusal and command.

@@ -24,8 +24,9 @@ pub use schema::{
 };
 pub use snapshot::{
     builder_stamp, decode as decode_snapshot, default_library, default_origin,
-    encode as encode_snapshot, has_default_library, install_default_library, install_names_library,
-    install_names_snapshot, install_snapshot, load_snapshot, snapshot_age, SnapshotAge,
+    encode as encode_snapshot, has_default_library, has_names_library, install_default_library,
+    install_names_library, install_names_snapshot, install_snapshot, load_snapshot, snapshot_age,
+    SnapshotAge,
 };
 pub use typed::{
     Anchor, CAlternateVariations, CAnchorProps, CBaseArchetypeDef, CBaseArchetypeDefAny,

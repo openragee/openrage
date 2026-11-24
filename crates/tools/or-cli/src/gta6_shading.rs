@@ -322,6 +322,11 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
                         Err(why) => println!("  {word}: not lowered: {why}"),
                         Ok(lowered) => {
                             let kind = native.program.kind;
+                            let (stores, branches) =
+                                or_shader_front::rdna_bind::shading::stores_and_branches(
+                                    &lowered.module,
+                                );
+                            println!("  {word}: {stores} stores, {branches} branches");
                             for resource in &lowered.resources {
                                 let at = rdna_bind::numbered(rdna_bind::place(resource), kind);
                                 let join = rdna_bind::join(at, &native.records, table);
@@ -408,6 +413,9 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
                         "  {word}: textures {:X?}, streams {:?}",
                         stage.textures, stage.streams
                     );
+                    let (stores, branches) =
+                        or_shader_front::rdna_bind::shading::stores_and_branches(&stage.module);
+                    println!("  {word}: {stores} stores, {branches} branches");
                     if let Some(folder) = &wgsl {
                         let text = or_shader_front::rdna_bind::shading::wgsl(&stage.module)?;
                         let file =

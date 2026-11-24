@@ -12,8 +12,8 @@ use or_renderer::{Frustum, ShadingMode, WorldDraw, WorldInstance, WorldMesh};
 use rayon::prelude::*;
 
 use super::RenderBridge;
-use crate::state::gta6_worldview::index::ModelRef;
-use crate::state::gta6_worldview::CpuTexture;
+use crate::state::gta6_world::worldview::index::ModelRef;
+use crate::state::gta6_world::worldview::CpuTexture;
 
 /// The bytes of models, and of textures, put on the device in one frame; the rest wait for the next.
 const MODELS_A_FRAME: u64 = 48 << 20;
@@ -235,7 +235,7 @@ impl RenderBridge {
                 self.renderer.reset_deferred_pipelines();
             }
         }
-        let mut viewer = crate::state::gta6_worldview::viewer();
+        let mut viewer = crate::state::gta6_world::worldview::viewer();
         let world = &mut self.world;
         let mut uploaded = 0u64;
         while uploaded < MODELS_A_FRAME {
@@ -412,7 +412,7 @@ impl RenderBridge {
         }
         wanted.sort_unstable_by_key(|(_, key)| *key);
         wanted.dedup_by_key(|(_, key)| *key);
-        crate::state::gta6_worldview::viewer().want_textures(wanted);
+        crate::state::gta6_world::worldview::viewer().want_textures(wanted);
         world.drawn = WorldDrawn {
             selected: selected.instances.len(),
             seen: world.visible.len(),

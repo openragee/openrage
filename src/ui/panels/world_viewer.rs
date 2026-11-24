@@ -5,7 +5,7 @@
 //! fast. The keys are read only while the pointer is over the view or the view holds the focus.
 
 use crate::render::RenderBridge;
-use crate::state::gta6_worldview::{self, Viewer};
+use crate::state::gta6_world::worldview::{self as gta6_worldview, Viewer};
 use crate::state::AppState;
 use crate::ui::accessible_name::named;
 use crate::ui::theme;

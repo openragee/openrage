@@ -17,7 +17,7 @@ use or_io::gta6::TexturePack;
 use or_job::{Cancel, Progress};
 use or_renderer::{FlyCamera, MeshVertex};
 
-use super::jobs::{JobKind, Outcome, RunningJob, Then};
+use crate::state::jobs::{JobKind, Outcome, RunningJob, Then};
 
 pub(crate) mod index;
 mod pool;
@@ -248,7 +248,7 @@ fn read_model(
                 // A normal map is no colour: a material with that alone draws plain.
                 texture: (m.texture_name.as_deref())
                     .filter(|_| !m.bump)
-                    .and_then(super::gta6_texture_index::key_of),
+                    .and_then(crate::state::gta6_texture_index::key_of),
             })
             .collect(),
     )
@@ -283,7 +283,7 @@ impl Viewer {
         self.have.clear();
         self.textures = None;
         // ⚠ Where the packs' index is kept is found here, on this thread.
-        let places = super::gta6_texture_index::pack_places(&root);
+        let places = crate::state::gta6_texture_index::pack_places(&root);
         let build = Build {
             cancel: Cancel::new(),
             progress: Progress::new(),
@@ -295,7 +295,8 @@ impl Viewer {
             Arc::clone(&build.ended),
         );
         std::thread::spawn(move || {
-            let kept = super::prefs::config_root().map(|config| index::kept_at(&config, &root));
+            let kept =
+                crate::state::prefs::config_root().map(|config| index::kept_at(&config, &root));
             let held = (kept.as_ref().filter(|_| !afresh)).and_then(|file| WorldIndex::kept(file));
             let places = |cancel: &Cancel| {
                 let (packs, keys, formats) = places(cancel, &Progress::new())?;
@@ -393,7 +394,7 @@ impl Viewer {
     }
 
     /// The build while it runs, as the job list draws it.
-    pub(super) fn job(&self) -> Option<RunningJob> {
+    pub(in crate::state) fn job(&self) -> Option<RunningJob> {
         let build = self.build.as_ref()?;
         Some(RunningJob {
             kind: JobKind::ArchetypeSearch,
@@ -404,14 +405,14 @@ impl Viewer {
         })
     }
 
-    pub(super) fn stop(&self) {
+    pub(in crate::state) fn stop(&self) {
         if let Some(build) = &self.build {
             build.cancel.set();
         }
     }
 
     /// How the build ended, as the job list says it, once.
-    pub(super) fn ended(&mut self) -> Option<(Outcome, String)> {
+    pub(in crate::state) fn ended(&mut self) -> Option<(Outcome, String)> {
         self.ended.take()
     }
 

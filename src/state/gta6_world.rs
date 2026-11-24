@@ -452,6 +452,9 @@ impl super::AppState {
 #[path = "gta6_world_fill.rs"]
 pub(crate) mod fill;
 
+#[path = "gta6_worldview/mod.rs"]
+pub(crate) mod worldview;
+
 #[cfg(test)]
 #[path = "gta6_world_tests.rs"]
 mod tests;

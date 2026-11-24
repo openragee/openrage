@@ -460,7 +460,7 @@ impl AppState {
             .chain(self.models_in_place_job())
             .chain(super::gta6_world::fill::job())
             .chain(entity::job())
-            .chain(super::gta6_worldview::viewer().job())
+            .chain(super::gta6_world::worldview::viewer().job())
     }
 
     /// Ask every search to stop; each says it stopped once its worker sees the stop.
@@ -469,7 +469,7 @@ impl AppState {
         self.stop_models_in_place();
         super::gta6_world::fill::stop();
         entity::stop();
-        super::gta6_worldview::viewer().stop();
+        super::gta6_world::worldview::viewer().stop();
     }
 
     /// Say in the job list how each search that ended went, and drop it.
@@ -521,7 +521,7 @@ impl AppState {
         }
         self.poll_entity_edit();
         // ponytail: the world index is listed as an archetype search too, whose Stop stops it.
-        let indexed = super::gta6_worldview::viewer().ended();
+        let indexed = super::gta6_world::worldview::viewer().ended();
         if let Some((outcome, said)) = indexed {
             self.jobs.record(JobKind::ArchetypeSearch, outcome, said);
         }

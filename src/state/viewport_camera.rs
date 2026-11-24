@@ -50,7 +50,7 @@ impl AppState {
         }
         // The World screen flies: its camera is the viewer's, moved by its own panel.
         if self.active_workspace == crate::ui::dock::Workspace::World {
-            self.cameras.world = super::gta6_worldview::viewer().camera.as_orbit();
+            self.cameras.world = super::gta6_world::worldview::viewer().camera.as_orbit();
             return &self.cameras.world;
         }
         // And the Map screen, which places a set of maps that is no document.

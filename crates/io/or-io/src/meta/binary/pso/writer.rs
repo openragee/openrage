@@ -29,16 +29,26 @@ pub fn write(layout: Option<&PsoLayout>, instance: &MetaInstance) -> Result<Vec<
     };
     // A GTA VI P-form tree that no longer fits the allocation it arrived with is laid out anew.
     #[cfg(feature = "gta6")]
-    if layout.is_gta6() && !layout.is_table_form() {
-        return encode(layout, instance, None).or_else(|e| {
+    let mut out = if layout.is_gta6() && !layout.is_table_form() {
+        encode(layout, instance, None).or_else(|e| {
             if e.outgrew_its_layout() {
                 super::pform_layout::write(layout, instance)
             } else {
                 Err(e)
             }
-        });
-    }
-    encode(layout, instance, None)
+        })?
+    } else {
+        encode(layout, instance, None)?
+    };
+    #[cfg(not(feature = "gta6"))]
+    let out = encode(layout, instance, None)?;
+    // The loader recomputes the GTA VI `CHKS` frame's checksum and rejects a mismatch, so recompute
+    // it over the final body here, the one exit every save path returns through (table form, P-form
+    // and the grown P-form). It is idempotent and a no-op for a non-`zppp` frame, so an unchanged
+    // body stays byte-identical.
+    #[cfg(feature = "gta6")]
+    super::chks::write_checksum(&mut out);
+    Ok(out)
 }
 
 #[derive(Debug, Clone, Default)]

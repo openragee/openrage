@@ -50,7 +50,13 @@ pub(crate) fn write(layout: &PsoLayout, instance: &MetaInstance) -> Result<Vec<u
     if laid_out(layout, &original)? != stored {
         return Err(TableFormError::RulesMiss(MISSED.to_string()).into());
     }
-    laid_out(layout, instance)
+    let mut out = laid_out(layout, instance)?;
+    // The loader recomputes the `CHKS` and rejects a mismatch, so a changed body gets a fresh
+    // checksum; a no-op save keeps the stored bytes byte for byte.
+    if out != stored {
+        super::chks::write_checksum(&mut out);
+    }
+    Ok(out)
 }
 
 /// The document `layout` was read from.
@@ -75,8 +81,8 @@ fn stored_bytes(layout: &PsoLayout) -> Vec<u8> {
 fn laid_out(layout: &PsoLayout, instance: &MetaInstance) -> Result<Vec<u8>> {
     let grown = lay_out(layout, instance)?;
     let mut out = super::writer::encode(&grown, instance, None)?;
-    // `CHKS` is last: its frame, then `{u32 length, u32 checksum, tag}` big-endian. The checksum
-    // is carried: the rule that computes it is not known.
+    // `CHKS` is last: its frame, then `{u32 length, u32 checksum, tag}` big-endian. The length is
+    // the new total; the checksum is carried here and recomputed by `write` when the body changed.
     let len = u32::try_from(out.len()).map_err(|_| refused("the document passes 4 GiB"))?;
     if let Some(frame) = out.len().checked_sub(20) {
         if &out[frame..frame + 4] == b"CHKS" {
@@ -626,6 +632,8 @@ mod tests {
         chks.extend_from_slice(&[0; 4]);
         chks.extend_from_slice(b"zppp");
         section(&mut out, b"CHKS", &chks);
+        // The fixture carries the checksum the loader's rule gives, as a real body does.
+        super::super::chks::write_checksum(&mut out);
         out
     }
 

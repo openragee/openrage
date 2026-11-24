@@ -46,7 +46,10 @@ fn laid_body(
     let blocks: Vec<(u32, Vec<u8>)> = (order.iter())
         .map(|&b| (types[b], std::mem::take(&mut bytes[b])))
         .collect();
-    body(classes, &blocks, id(0) as u32)
+    let mut out = body(classes, &blocks, id(0) as u32);
+    // The fixture carries the checksum the loader's rule gives, as a canonical body does.
+    crate::meta::binary::pso::chks::write_checksum(&mut out);
+    out
 }
 
 /// A root that points at an element, its blocks in the rules' order or the reverse of it.

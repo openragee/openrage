@@ -58,13 +58,20 @@ pub(crate) fn write(layout: &PsoLayout, instance: &MetaInstance) -> Result<Vec<u
     let stored: Vec<u8> = sections.iter().flat_map(|s| s.bytes.clone()).collect();
     let original = super::table_form::decode(&model)?;
     let (laid, held) = lay_out(&model, &original, None)?;
-    if emit(&sections, &laid) != stored {
-        return super::table_canonical::write(
+    let mut bytes = if emit(&sections, &laid) != stored {
+        super::table_canonical::write(
             &sections, &model, &stored, &original, &laid, &held, instance,
-        );
+        )?
+    } else {
+        let (laid, _) = lay_out(&model, instance, Some(&held))?;
+        emit(&sections, &laid)
+    };
+    // The loader recomputes the `CHKS` and rejects a mismatch, so a changed body gets a fresh
+    // checksum; a no-op save keeps the stored bytes, stale value and all, byte for byte.
+    if bytes != stored {
+        super::chks::write_checksum(&mut bytes);
     }
-    let (laid, _) = lay_out(&model, instance, Some(&held))?;
-    Ok(emit(&sections, &laid))
+    Ok(bytes)
 }
 
 fn sections_of(layout: &PsoLayout) -> Vec<RawPsoSection> {
@@ -136,8 +143,9 @@ pub(crate) fn emit(sections: &[RawPsoSection], laid: &Laid) -> Vec<u8> {
             _ => out.extend_from_slice(&section.bytes),
         }
     }
-    // `CHKS` is last: its frame, then `{u32 length, u32 checksum, tag}` big-endian. The checksum
-    // is carried: the rule that computes it is not known.
+    // `CHKS` is last: its frame, then `{u32 length, u32 checksum, tag}` big-endian. The length is
+    // the new total; the checksum is carried here and recomputed by the save path when the body
+    // changed (`chks::write_checksum`), so emitting keeps a no-op byte-identical.
     let len = out.len() as u32;
     if let Some(frame) = out.len().checked_sub(20) {
         if &out[frame..frame + 4] == b"CHKS" {

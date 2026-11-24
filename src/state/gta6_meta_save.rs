@@ -1,5 +1,6 @@
 //! An edited GTA VI metadata document saved as a file of its own: a PSO or RBF body as its bytes,
-//! a headerless resource as a loose resource of its edited sections; a PSO keeps its checksum.
+//! a headerless resource as a loose resource of its edited sections. A GTA VI `zppp` PSO's `CHKS`
+//! is recomputed on save; a frame whose rule is not reproduced is left carried.
 
 use or_io::container::rpf::Rpf9Sections;
 
@@ -18,8 +19,8 @@ pub(super) fn edited_sections(payload: &DocPayload) -> Option<Result<Rpf9Section
 }
 
 impl AppState {
-    /// Says, as an edited GTA VI PSO document is saved, that its checksum is the one it was read
-    /// with.
+    /// Says, as an edited PSO document whose `CHKS` a save carries (a GTA V/RDR2 or tagless frame,
+    /// not a recomputed GTA VI `zppp` one) is saved, that its checksum is the one it was read with.
     pub(super) fn say_the_checksum_is_kept(&mut self, doc: DocumentId) {
         if matches!(self.document(doc).map(|d| &d.payload), Some(DocPayload::Meta(m)) if m.keeps_a_checksum() && m.is_edited())
         {
@@ -233,19 +234,20 @@ mod tests {
         assert!(!state.save_active_document_as(archive));
         assert!(!said(&state, ToastType::Warning, &["CHKS checksum"]));
 
-        // A PSO body: its bytes with the edit, the checksum as it was read, and a sentence that says so.
+        // A GTA VI `zppp` PSO body: its bytes with the edit and a checksum the save recomputed, so
+        // no "checksum kept" warning, and the saved word differs from the one it was read with.
         state.toasts.clear();
         opened_and_edited(&mut state, doc, 0x1000, 78);
         let saved = dir.path().join("edited.pso");
         assert!(state.save_active_document_as(saved.clone()));
         finished(&mut state);
-        assert!(said(
-            &state,
-            ToastType::Warning,
-            &["CHKS checksum", "not recomputed"]
-        ));
+        assert!(!said(&state, ToastType::Warning, &["CHKS checksum"]));
         let file = std::fs::read(&saved).expect("the file");
-        assert_eq!(&file[file.len() - 8..file.len() - 4], &CHECKSUM);
+        assert_ne!(
+            &file[file.len() - 8..file.len() - 4],
+            &CHECKSUM,
+            "a GTA VI zppp body's checksum is recomputed on an edit, not carried"
+        );
         let reopened =
             or_io::meta::MetaDocument::parse(&Default::default(), file).expect("it reads");
         assert_eq!(root_value(&reopened.instance), &Value::UInt(78));
@@ -460,7 +462,11 @@ mod tests {
         assert!(state.save_active_document_as(saved.clone()));
         finished(&mut state);
         let file = std::fs::read(&saved).expect("the file");
-        assert_eq!(&file[file.len() - 8..file.len() - 4], &CHECKSUM);
+        assert_ne!(
+            &file[file.len() - 8..file.len() - 4],
+            &CHECKSUM,
+            "a GTA VI zppp body's checksum is recomputed on an edit, not carried"
+        );
         let reopened =
             or_io::meta::MetaDocument::parse(&Default::default(), file).expect("it reads");
         assert_eq!(

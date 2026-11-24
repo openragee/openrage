@@ -21,6 +21,7 @@ fn entry(index: u32, name64: u64, name: Option<&str>, cipher: bool) -> Gta6Entry
             key_id: 0x1000_0029,
             cipher_type: 17,
             iv: [0; 16],
+            framing: [0, 0x400, 0, 0, 4],
         }),
     }
 }

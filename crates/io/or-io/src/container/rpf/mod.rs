@@ -54,13 +54,13 @@ pub use entry::{
 #[cfg(feature = "gta6")]
 pub use gta6_archive::{
     Gta6Archive, Gta6Cipher, Gta6Class, Gta6Entry, Gta6EntryExtra, Gta6NestedRow, NameResolver,
-    GROUP_CIPHER, GROUP_CONTENT_HASH, GROUP_ENTRY_ROW, GROUP_ENTRY_ROW_20, GROUP_NAME32,
-    GROUP_NAME64,
+    GROUP_CHUNK_RECORD, GROUP_CIPHER, GROUP_CONTENT_HASH, GROUP_ENTRY_ROW, GROUP_ENTRY_ROW_20,
+    GROUP_NAME32, GROUP_NAME64,
 };
 #[cfg(feature = "gta6")]
 pub use gta6_keygate::{decode_masked, encode_masked, gate_key, is_masked, MASKED_MAGIC};
 #[cfg(feature = "gta6")]
-pub use gta6_mount::{open_at, Gta6Mount};
+pub use gta6_mount::{open_at, Gta6DecryptedBody, Gta6Mount};
 #[cfg(feature = "gta6")]
 pub use gta6_write::{Rpf9Builder, Rpf9CipherCore};
 pub use header::{

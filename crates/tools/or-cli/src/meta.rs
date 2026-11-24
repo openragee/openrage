@@ -135,7 +135,10 @@ pub(crate) fn print_gta6_save(
     let said = save_verdict(written, stored);
     // `CHKS` ends the body: `{u32 length, u32 checksum, tag}`, big-endian.
     let checksum = (stored.len().checked_sub(8)).and_then(|at| stored.get(at..at + 4));
-    match (keeps_a_checksum(layout), checksum) {
+    // Only warn about a carried checksum for a body a save leaves stale (GTA V/RDR2 `yppp` or a
+    // tagless frame); a GTA VI `zppp` body's checksum is recomputed on save.
+    let kept = keeps_a_checksum(layout) && or_io::meta::binary::pso::keeps_stale_checksum(stored);
+    match (kept, checksum) {
         (true, Some(c)) => println!(
             "  save         {said}; checksum {:#010X} kept: {CHECKSUM_KEPT}",
             u32::from_be_bytes([c[0], c[1], c[2], c[3]])
@@ -374,7 +377,9 @@ fn cmd_from_xml(args: &[String]) -> Result<ExitCode, String> {
                             .1
                     }
                 };
-                if keeps_a_checksum(&layout) {
+                if keeps_a_checksum(&layout)
+                    && or_io::meta::binary::pso::keeps_stale_checksum(&donor)
+                {
                     eprintln!("openrage-cli: {CHECKSUM_KEPT}");
                 }
                 write_meta_binary(format, Some(&layout), &instance).map_err(|e| e.to_string())?
@@ -478,7 +483,7 @@ fn cmd_rewrite(args: &[String]) -> Result<ExitCode, String> {
     let (instance, layout) = parse_meta_binary_full(schema(), &bytes, &mut diags)
         .map_err(|e| format!("{}: {e}", input.display()))?;
     let written = write_meta_binary(format, Some(&layout), &instance).map_err(|e| e.to_string())?;
-    if keeps_a_checksum(&layout) {
+    if keeps_a_checksum(&layout) && or_io::meta::binary::pso::keeps_stale_checksum(&written) {
         eprintln!("openrage-cli: {CHECKSUM_KEPT}");
     }
     fs::write(output, &written).map_err(|e| format!("{}: {e}", output.display()))?;

@@ -961,6 +961,9 @@ mod tests {
             chks.extend_from_slice(&[0; 4]);
             chks.extend_from_slice(&self.tag);
             section(&mut out, b"CHKS", &chks);
+            // A real body's CHKS satisfies the loader's rule; a save recomputes a `zppp` frame, so a
+            // fixture seeds it to survive a byte-identical round trip. A no-op for a non-`zppp` tag.
+            super::super::chks::write_checksum(&mut out);
             out
         }
 

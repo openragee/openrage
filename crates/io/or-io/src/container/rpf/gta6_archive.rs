@@ -51,6 +51,10 @@ pub const GROUP_CIPHER: u64 = 0x2860_30A3_58A7_89FB;
 /// body — one per entry, near-unique, and colliding only on byte-identical bodies. A reader may show
 /// it; an in-place rewrite of a body must recompute it.
 pub const GROUP_CONTENT_HASH: u64 = 0xB6F5_BDB2_C66D_A2E9;
+/// The chunk record column (`0xe0c1`): 8-byte records, two u32. The second u32's low half is the
+/// number of 16-aligned chunks a compressed entry's body is stored in — the count a decrypted body's
+/// chunk walk must reproduce. The first u32 is an unresolved byte coordinate into a chunk-length heap.
+pub const GROUP_CHUNK_RECORD: u64 = 0xE0C1_2D7A_5D48_84C5;
 
 /// The coarse content class of a 24-byte entry row, from its class byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +88,10 @@ pub struct Gta6Cipher {
     pub key_id: u32,
     pub cipher_type: u16,
     pub iv: [u8; 16],
+    /// The framing `(F0, F1, F2, F3, F4)` at record bytes 24..64: five little-endian u64 that bound
+    /// the enciphered extent of the body (the head, the repeating enciphered/clear windows and the
+    /// tail). See [`super::gta6_content::enciphered_ranges`].
+    pub framing: [u64; 5],
 }
 
 /// One entry of an RPF9 archive, joined from the index columns.
@@ -158,6 +166,14 @@ impl Gta6NestedRow {
     pub fn stored_size(&self) -> u64 {
         u64::from(self.stored_pages) * 16
     }
+
+    /// Where a 20-byte row's enciphered body sits and how long it is stored, given the row's slot
+    /// start (`w12 * 16`, already absolute or archive-relative as the caller holds it): the body
+    /// begins 16 bytes past the slot (over the zero header slot) and runs `w8 * 16 - 16` bytes. The
+    /// length is an upper bound within 15 bytes of the true one; the chunk walk, not it, ends the body.
+    pub fn ciphered_body_extent(&self, slot_start: u64) -> (u64, u64) {
+        (slot_start + 16, self.stored_size().saturating_sub(16))
+    }
 }
 
 /// An entry's columns that are not carried on [`Gta6Entry`]: the external content hash and, for a
@@ -169,6 +185,9 @@ pub struct Gta6EntryExtra {
     pub content_hash: Option<u64>,
     /// The decoded 20-byte nested row, where the entry has one (`None` for a 24-byte row or no row).
     pub nested: Option<Gta6NestedRow>,
+    /// The `0xe0c1` chunk count (the record's second u32, low half) of a compressed entry, where the
+    /// archive carries that column: the number of chunks the body's walk should find.
+    pub chunk_count: Option<u32>,
 }
 
 /// An opened RPF9 archive's listing: its decrypted table of contents and the entries read from it.
@@ -221,6 +240,7 @@ impl Gta6Archive {
                         | (GROUP_ENTRY_ROW_20, 20)
                         | (GROUP_CIPHER, 64)
                         | (GROUP_CONTENT_HASH, 8)
+                        | (GROUP_CHUNK_RECORD, 8)
                 )
             })
             .map(|g| (g.name_hash, g.width))
@@ -232,6 +252,14 @@ impl Gta6Archive {
     /// data is kept off [`Gta6Entry`] so the row stays the shape the CLI and app already build.
     pub fn entry_extras(&self) -> Vec<Gta6EntryExtra> {
         read_extras(&self.toc)
+    }
+
+    /// The extra columns of one entry by its index, without building the whole table: the content
+    /// hash, the 20-byte nested descriptor and the chunk count. `None` when the index is out of range
+    /// or the index layout is unreadable. Used by the body reader to resolve a 20-byte row's geometry.
+    pub fn entry_extra(&self, index: usize) -> Option<Gta6EntryExtra> {
+        let (columns, entries) = locate_columns(&self.toc)?;
+        (index < entries).then(|| read_extra_at(&self.toc.bytes, &columns, index))
     }
 }
 
@@ -283,6 +311,7 @@ struct KnownColumns {
     row20: Option<Column>,
     cipher: Option<Column>,
     content_hash: Option<Column>,
+    chunk_record: Option<Column>,
 }
 
 /// Locate every known column for the archive's entry-major index arrays, with the entry count. An
@@ -345,6 +374,7 @@ fn locate_columns(toc: &Rpf9Toc) -> Option<(KnownColumns, usize)> {
             (GROUP_ENTRY_ROW_20, 20) => columns.row20 = Some(column),
             (GROUP_CIPHER, 64) => columns.cipher = Some(column),
             (GROUP_CONTENT_HASH, 8) => columns.content_hash = Some(column),
+            (GROUP_CHUNK_RECORD, 8) => columns.chunk_record = Some(column),
             _ => {}
         }
         if group.external {
@@ -374,21 +404,31 @@ fn read_extras(toc: &Rpf9Toc) -> Vec<Gta6EntryExtra> {
     let Some((columns, entries)) = locate_columns(toc) else {
         return Vec::new();
     };
-    let bytes = &toc.bytes;
     (0..entries)
-        .map(|e| Gta6EntryExtra {
-            content_hash: columns
-                .content_hash
-                .as_ref()
-                .and_then(|c| c.row(bytes, e))
-                .map(LE::read_u64),
-            nested: columns
-                .row20
-                .as_ref()
-                .and_then(|c| c.row(bytes, e))
-                .map(read_nested_row),
-        })
+        .map(|e| read_extra_at(&toc.bytes, &columns, e))
         .collect()
+}
+
+/// Entry `e`'s extra columns, read through the located index arrays.
+fn read_extra_at(bytes: &[u8], columns: &KnownColumns, e: usize) -> Gta6EntryExtra {
+    Gta6EntryExtra {
+        content_hash: columns
+            .content_hash
+            .as_ref()
+            .and_then(|c| c.row(bytes, e))
+            .map(LE::read_u64),
+        nested: columns
+            .row20
+            .as_ref()
+            .and_then(|c| c.row(bytes, e))
+            .map(read_nested_row),
+        // The chunk count is the record's second u32's low half.
+        chunk_count: columns
+            .chunk_record
+            .as_ref()
+            .and_then(|c| c.row(bytes, e))
+            .map(|row| LE::read_u32(&row[4..]) & 0xFFFF),
+    }
 }
 
 /// Decode a 20-byte nested entry row's five little-endian u32 words into its descriptor.
@@ -454,14 +494,20 @@ fn join_entry(bytes: &[u8], columns: &KnownColumns, e: usize) -> Gta6Entry {
     }
 }
 
-/// Read a content-cipher record from its 64-byte row.
+/// Read a content-cipher record from its 64-byte row: the key id, cipher type and IV at the head, then
+/// the five little-endian u64 framing words at bytes 24..64.
 fn read_cipher(row: &[u8]) -> Gta6Cipher {
     let mut iv = [0u8; 16];
     iv.copy_from_slice(&row[6..22]);
+    let mut framing = [0u64; 5];
+    for (i, f) in framing.iter_mut().enumerate() {
+        *f = LE::read_u64(&row[24 + i * 8..]);
+    }
     Gta6Cipher {
         key_id: LE::read_u32(&row[0..]),
         cipher_type: LE::read_u16(&row[4..]),
         iv,
+        framing,
     }
 }
 

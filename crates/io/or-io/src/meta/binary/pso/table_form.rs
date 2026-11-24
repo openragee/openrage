@@ -1556,6 +1556,9 @@ pub(crate) mod tests {
         chks.extend_from_slice(&[0, 0, 0, 0]);
         chks.extend_from_slice(b"zppp");
         frame(&mut out, b"CHKS", &chks);
+        // A real body carries the checksum the loader's rule produces; a save recomputes it, so a
+        // fixture built with a zero checksum would not survive a byte-identical round trip. Seed it.
+        super::super::chks::write_checksum(&mut out);
         out
     }
 

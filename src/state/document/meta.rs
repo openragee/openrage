@@ -278,11 +278,14 @@ impl MetaDocument {
         self.revision() != 0 || self.parsed_at_text_revision < self.text_revision
     }
 
-    /// Whether this is a GTA VI PSO, whose `CHKS` checksum a save keeps as it was read.
+    /// Whether this is a PSO whose `CHKS` checksum a save leaves carried as it was read (a GTA
+    /// V/RDR2 `yppp` frame or a tagless one), so the game may refuse an edited file. A GTA VI
+    /// `zppp` body's checksum is recomputed on save, so it is not reported here.
     pub fn keeps_a_checksum(&self) -> bool {
         use or_io::meta::binary::ContainerLayout;
-        matches!(self.layout.as_ref().map(|l| &l.container),
-            Some(ContainerLayout::Pso(p)) if p.is_table_form() || p.is_gta6())
+        let pso = matches!(self.layout.as_ref().map(|l| &l.container),
+            Some(ContainerLayout::Pso(p)) if p.is_table_form() || p.is_gta6());
+        pso && or_io::meta::binary::pso::keeps_stale_checksum(&self.raw_bytes)
     }
 
     /// A GTA VI headerless resource's sections with its tree written in; `None` for any other

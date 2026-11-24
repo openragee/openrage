@@ -106,6 +106,7 @@ fn document_with(map_subtype: u8, text: &[u8], hashes: bool) -> Vec<u8> {
     chks.extend_from_slice(&[0; 4]);
     chks.extend_from_slice(b"zppp");
     section(&mut out, b"CHKS", &chks);
+    crate::meta::binary::pso::chks::write_checksum(&mut out);
     out
 }
 
@@ -199,6 +200,9 @@ fn an_empty_gta6_group_map_reads_and_saves_and_one_with_pairs_is_refused_by_name
     assert!(err.contains("GTA VI group map"), "{err}");
 
     bytes[AT..AT + 0x18].fill(0);
+    // Clearing the text changed the body, so its CHKS no longer matches; recompute it, as a save
+    // does, before asserting the save is byte-identical.
+    crate::meta::binary::pso::chks::write_checksum(&mut bytes);
     let (instance, layout) = open(&bytes).expect("it reads");
     assert_eq!(instance.get(&named(MAP)), Some(&Value::Map(Vec::new())));
     assert_eq!(write(&instance, &layout).expect("it saves"), bytes);

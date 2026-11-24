@@ -130,87 +130,274 @@ impl Gta6Mount {
             })
     }
 
-    /// Read `entry`'s body, decrypting it first when it is content-ciphered (type 17). A clear entry is
-    /// read by [`Self::read_entry`]; a ciphered entry's stored bytes are read at `base + start`,
-    /// CTR-decrypted with `keys`, and the resulting zlib stream inflated to exactly the row's real size.
-    ///
-    /// Only the fully-enciphered class is read: the whole stored body is one zlib stream from the IV,
-    /// inflating to the row's stated real size. A body whose encrypted extent is a prefix or a paged
-    /// RSC8 window leaves the continuous-CTR pass with garbage past the enciphered extent, so its
-    /// plaintext does not inflate to the real size and the read is refused rather than returned wrong;
-    /// decoding that framing is follow-up work with the entry reader, where the page table is parsed.
+    /// Read `entry`'s body, decrypting it first when it is content-ciphered (type 17): the inflated,
+    /// concatenated bytes. A clear entry is read by [`Self::read_entry`]. For the full account of the
+    /// read — the chunk count and the stored bytes consumed — use [`Self::read_entry_decrypted_report`].
     pub fn read_entry_decrypted<R: Read + Seek>(
+        &self,
+        src: R,
+        entry: &Gta6Entry,
+        keys: &GtaViKeys,
+    ) -> Result<Vec<u8>> {
+        self.read_entry_decrypted_report(src, entry, keys)
+            .map(|body| body.data)
+    }
+
+    /// Read a content-ciphered (type 17) entry's body in full: decipher its enciphered extent, then
+    /// walk and inflate its chunks, reporting the inflated bytes, the chunk count and the stored bytes
+    /// consumed. A clear entry (no cipher record) is read by [`Self::read_entry`] and reported with no
+    /// chunk count.
+    ///
+    /// The extent is the rule of [`super::gta6_content::enciphered_ranges`]: the record's five framing
+    /// words decide which byte ranges are enciphered, and each range is deciphered at its absolute
+    /// counter (the IV advanced by the range's block offset, never restarted). The deciphered body is
+    /// then a run of 16-aligned chunks — zlib, stored (a failed inflate) or, for a nested archive's
+    /// first entry, raw DEFLATE — which are inflated and concatenated. A 24-byte row's real size bounds
+    /// and ends the walk; a 20-byte row (a script body, whose stored real size is unreliable) walks to
+    /// the end of its stored extent, a stored chunk ending at the next 16-aligned zlib head.
+    pub fn read_entry_decrypted_report<R: Read + Seek>(
         &self,
         mut src: R,
         entry: &Gta6Entry,
         keys: &GtaViKeys,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<Gta6DecryptedBody> {
         let Some(cipher) = entry.cipher else {
-            return self.read_entry(src, entry);
+            return self.read_entry(src, entry).map(|data| Gta6DecryptedBody {
+                data,
+                chunk_count: 0,
+                stored_consumed: 0,
+            });
         };
         if cipher.cipher_type != CONTENT_CIPHER_TYPE {
             return Err(IoError::RpfEncryptionUnsupported {
                 key_id: cipher.key_id,
             });
         }
-        let start = self
-            .absolute_start(entry)
-            .ok_or_else(|| no_entry_row(entry))?;
         let body_bad = |why: String| IoError::Invalid {
             what: "a content-ciphered RPF9 entry".into(),
             why,
         };
-        let stored = entry.stored.ok_or_else(|| {
-            body_bad(format!(
-                "entry {} has no stored size, so its enciphered extent is unknown",
-                entry.index
-            ))
-        })?;
-        // The stated inflated size bounds the output: the fully-enciphered class states one, and
-        // without it a malformed stream could not be told from a short one.
-        let real = entry.real.ok_or_else(|| {
-            body_bad(format!(
-                "entry {} states no inflated size, so its body cannot be bounded",
-                entry.index
-            ))
-        })?;
+        let (body_start, stored, real) = self.body_geometry(entry)?;
+        if stored == 0 {
+            return Err(body_bad(format!("entry {} has an empty body", entry.index)));
+        }
+        // A malformed framing or extent is refused, not guessed.
+        if let Some(reason) = super::gta6_content::framing_reject_reason(&cipher.framing, stored) {
+            return Err(body_bad(format!("entry {} {reason}", entry.index)));
+        }
         // Check the stored extent against the source before allocating, so a malformed row cannot
-        // force a huge allocation that `read_at` would attempt.
+        // force a huge allocation.
         let end = src.seek(SeekFrom::End(0)).map_err(mount_io)?;
-        if start.checked_add(stored).is_none_or(|s| s > end) {
+        if body_start.checked_add(stored).is_none_or(|s| s > end) {
             return Err(body_bad(format!(
                 "entry {}'s stored extent runs past the source",
                 entry.index
             )));
         }
-        let mut body = read_at(&mut src, start, stored as usize)?;
-        keys.content_decrypt(cipher.key_id, &cipher.iv, &mut body)?;
-        let out = inflate_zlib(&body, real).map_err(|source| {
-            body_bad(format!(
-                "its plaintext is not a whole zlib stream: {source}"
-            ))
-        })?;
-        if out.len() as u64 != real {
-            return Err(body_bad(format!(
-                "its plaintext inflated to {} bytes, not the {real} the row states (the body is \
-                 likely only partly enciphered, which this reader does not decode)",
-                out.len()
-            )));
+        let mut body = read_at(&mut src, body_start, stored as usize)?;
+
+        // Decipher only the enciphered ranges, each at its absolute counter. The CTR pass itself holds
+        // the key material (`content_decrypt`), so the first failure (a missing key) stops it.
+        let mut cipher_err: Option<IoError> = None;
+        super::gta6_content::decrypt_extent(
+            &mut body,
+            &cipher.framing,
+            &cipher.iv,
+            |slice, ctr| {
+                if cipher_err.is_none() {
+                    if let Err(e) = keys.content_decrypt(cipher.key_id, ctr, slice) {
+                        cipher_err = Some(e);
+                    }
+                }
+            },
+        );
+        if let Some(e) = cipher_err {
+            return Err(e);
         }
-        Ok(out)
+
+        let (data, chunk_count, consumed) = walk_chunks(&body, real)
+            .map_err(|why| body_bad(format!("entry {} {why}", entry.index)))?;
+        // A 24-byte row states the inflated size; the chunks must sum to exactly it.
+        if let Some(real) = real {
+            if data.len() as u64 != real {
+                return Err(body_bad(format!(
+                    "entry {}'s chunks inflated to {} bytes, not the {real} its row states",
+                    entry.index,
+                    data.len()
+                )));
+            }
+        }
+        Ok(Gta6DecryptedBody {
+            data,
+            chunk_count,
+            stored_consumed: consumed,
+        })
+    }
+
+    /// Where a ciphered entry's body sits and how it is sized: a 24-byte row carries the body start,
+    /// the stored size and the real (inflated) size; a 20-byte row carries only a proven start, so its
+    /// body (16 bytes past the slot, `w8 * 16 - 16` long, real size unreliable) is resolved from the
+    /// archive's nested descriptor. Returns `(absolute body start, stored length, real size)`.
+    fn body_geometry(&self, entry: &Gta6Entry) -> Result<(u64, u64, Option<u64>)> {
+        let start = self
+            .absolute_start(entry)
+            .ok_or_else(|| no_entry_row(entry))?;
+        if let (Some(stored), Some(real)) = (entry.stored, entry.real) {
+            return Ok((start, stored, Some(real)));
+        }
+        // A 20-byte row: the body is 16 bytes past the slot, its stored length the paged size less the
+        // slot. The real size is `w0`, which is not the sum of the chunks for a chunked script body, so
+        // it is not used to bound the walk.
+        let nested = self
+            .archive
+            .entry_extra(entry.index as usize)
+            .and_then(|extra| extra.nested)
+            .ok_or_else(|| IoError::Invalid {
+                what: "a content-ciphered RPF9 entry".into(),
+                why: format!(
+                    "entry {} has no 24-byte size and no 20-byte descriptor, so its body cannot be \
+                     located",
+                    entry.index
+                ),
+            })?;
+        let (body_start, stored) = nested.ciphered_body_extent(start);
+        Ok((body_start, stored, None))
     }
 }
 
-/// Inflate the zlib stream at the start of `bytes`, capped one byte past `real`: a correct body
-/// inflates to exactly `real`, the extra byte lets the caller tell an over-long (bomb) stream from an
-/// exact one, and trailing padding after the stream's end is ignored.
-fn inflate_zlib(bytes: &[u8], real: u64) -> std::io::Result<Vec<u8>> {
-    let cap = real.saturating_add(1);
+/// The result of reading a content-ciphered entry: the inflated body, how many chunks it held, and how
+/// many stored bytes the walk consumed (which a 24-byte row's walk ends exactly at its stored size).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Gta6DecryptedBody {
+    pub data: Vec<u8>,
+    pub chunk_count: usize,
+    pub stored_consumed: u64,
+}
+
+/// A per-chunk inflate is capped here to bound a malformed or hostile stream; real chunks inflate to
+/// at most a few 64 KiB pages.
+const MAX_CHUNK_INFLATE: u64 = 32 * 1024 * 1024;
+
+/// Round `x` up to the next 16-byte boundary (chunks start 16-aligned).
+fn round16(x: usize) -> usize {
+    (x + 15) & !15
+}
+
+/// Walk the deciphered `body`'s 16-aligned chunks, inflating each and concatenating. `real` is the
+/// stated inflated size for a 24-byte row, which bounds and ends the walk; `None` (a 20-byte row) walks
+/// to the body's end, taking a stored chunk's length from the next 16-aligned zlib head. Returns the
+/// inflated bytes, the chunk count and the stored offset reached.
+fn walk_chunks(
+    body: &[u8],
+    real: Option<u64>,
+) -> std::result::Result<(Vec<u8>, usize, u64), String> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut pos = 0usize;
+    let mut chunks = 0usize;
+    // The overall output ceiling: the stated real size, or, with none, a generous multiple of the
+    // stored bytes (zlib cannot plausibly exceed it) to stop a runaway.
+    // ponytail: 64x stored ceiling for 20-byte bodies, tighten if a real body is ever denser.
+    let out_cap = real.unwrap_or((body.len() as u64).saturating_mul(64));
+    loop {
+        if pos >= body.len() {
+            break;
+        }
+        match real {
+            Some(real) if out.len() as u64 >= real => break,
+            // With no real size, trailing zero padding ends the body.
+            None if body[pos..].iter().all(|&b| b == 0) => break,
+            _ => {}
+        }
+        let inflate_cap = out_cap.saturating_sub(out.len() as u64).saturating_add(1);
+        if let Some((consumed, inflated)) = inflate_one(&body[pos..], false, inflate_cap) {
+            out.extend_from_slice(&inflated);
+            pos += consumed;
+        } else if pos == 0 {
+            // A nested archive's first entry can be raw DEFLATE, with no zlib header.
+            if let Some((consumed, inflated)) = inflate_one(&body[pos..], true, inflate_cap) {
+                out.extend_from_slice(&inflated);
+                pos += consumed;
+            } else {
+                let len = stored_chunk_len(body, pos, real, out.len() as u64);
+                out.extend_from_slice(&body[pos..pos + len]);
+                pos += len;
+            }
+        } else {
+            // A failed inflate marks a stored chunk; its length comes from the real size (24-byte) or
+            // the next 16-aligned zlib head (20-byte).
+            let len = stored_chunk_len(body, pos, real, out.len() as u64);
+            if len == 0 {
+                break;
+            }
+            out.extend_from_slice(&body[pos..pos + len]);
+            pos += len;
+        }
+        chunks += 1;
+        pos = round16(pos).min(body.len());
+        if out.len() as u64 > out_cap {
+            return Err("inflated past its stored body; the stream is malformed".to_string());
+        }
+    }
+    Ok((out, chunks, pos as u64))
+}
+
+/// Inflate one stream at the start of `data` — zlib, or raw DEFLATE when `raw` — returning the bytes
+/// consumed and the inflated output, or `None` when it is not such a stream (a stored chunk). The
+/// output is capped at `cap` (and [`MAX_CHUNK_INFLATE`]) so a bomb cannot run away.
+///
+/// A streaming `read_to_end` returns `Ok` at an early EOF, so a truncated stream would pass as a
+/// valid chunk; instead the decoder is driven to `FlushDecompress::Finish` and a chunk is counted
+/// only on `Status::StreamEnd`. A stream that does not finish within `data` (or runs past the cap)
+/// yields `None`, i.e. it is treated as a stored chunk, so a reader never accepts bad bytes.
+fn inflate_one(data: &[u8], raw: bool, cap: u64) -> Option<(usize, Vec<u8>)> {
+    use flate2::{Decompress, FlushDecompress, Status};
+    let taken = cap.min(MAX_CHUNK_INFLATE);
+    let mut decoder = Decompress::new(!raw); // a zlib header, unless raw DEFLATE
     let mut out = Vec::new();
-    flate2::read::ZlibDecoder::new(bytes)
-        .take(cap)
-        .read_to_end(&mut out)?;
-    Ok(out)
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let read_in = decoder.total_in() as usize;
+        let before_out = decoder.total_out();
+        let status = decoder
+            .decompress(&data[read_in..], &mut buf, FlushDecompress::Finish)
+            .ok()?;
+        let produced = (decoder.total_out() - before_out) as usize;
+        out.extend_from_slice(&buf[..produced]);
+        if out.len() as u64 > taken {
+            return None; // past the cap: not a plausible chunk
+        }
+        match status {
+            Status::StreamEnd => return Some((decoder.total_in() as usize, out)),
+            // No end and no progress: the stream needs input `data` does not hold, so it is stored.
+            _ if produced == 0 => return None,
+            _ => {}
+        }
+    }
+}
+
+/// The length of a stored chunk at `pos`. With a real size, a middle chunk is 64 KiB (or the remaining
+/// real bytes for the last); with none, the chunk runs to the next 16-aligned zlib head, or to the
+/// body's end when there is none.
+fn stored_chunk_len(body: &[u8], pos: usize, real: Option<u64>, produced: u64) -> usize {
+    match real {
+        Some(real) => {
+            let remaining = real.saturating_sub(produced);
+            (65536u64.min(remaining) as usize).min(body.len() - pos)
+        }
+        None => {
+            let mut p = round16(pos + 16);
+            while p + 1 < body.len() {
+                if body[p] == 0x78
+                    && matches!(body[p + 1], 0xDA | 0x9C | 0x01 | 0x5E)
+                    && inflate_one(&body[p..], false, MAX_CHUNK_INFLATE).is_some()
+                {
+                    return p - pos;
+                }
+                p += 16;
+            }
+            body.len() - pos
+        }
+    }
 }
 
 #[cfg(test)]
@@ -374,6 +561,8 @@ mod tests {
                 key_id,
                 cipher_type: 17,
                 iv,
+                // F0=0, F1=0x400, F2=0: the whole body is enciphered, which is how this test built it.
+                framing: [0, 0x400, 0, 0, 4],
             }),
         };
         let mount = Gta6Mount {
@@ -414,6 +603,7 @@ mod tests {
                 key_id: 0x1000_0029,
                 cipher_type: 99, // not type 17
                 iv: [0; 16],
+                framing: [0, 0x400, 0, 0, 4],
             }),
         };
         let src = Cursor::new(vec![0u8; 0x100]);
@@ -423,50 +613,30 @@ mod tests {
         ));
     }
 
-    /// A body whose enciphered extent is only a prefix (the rest stored clear) must be refused, not
-    /// returned partly garbage: the continuous-CTR pass turns the clear tail into noise, so the
-    /// plaintext does not inflate to the stated real size.
+    /// A cipher record whose framing tuple is none of the five the install uses is refused, not
+    /// decoded with a guessed extent.
     #[test]
-    fn a_partly_enciphered_body_is_refused() {
-        use flate2::write::ZlibEncoder;
-        use flate2::Compression;
-        use std::io::Write;
-
+    fn an_unknown_framing_is_refused() {
         let key_id = 0x1000_0029u32;
-        let iv = [0x11u8; 16];
         let keys = GtaViKeys::parse(&content_snapshot(key_id)).unwrap();
 
-        let plain: Vec<u8> = (0..5000u32).map(|x| (x ^ (x >> 3)) as u8).collect();
-        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&plain).unwrap();
-        let zlib = encoder.finish().unwrap();
-        assert!(zlib.len() > 16, "the body must span more than one block");
-
-        // The on-disk body: only the first 16-byte block is enciphered, the rest is stored clear.
-        let mut stored = zlib.clone();
-        stored.resize(stored.len().next_multiple_of(16), 0);
-        let mut head: Vec<u8> = stored[..16].to_vec();
-        keys.content_decrypt(key_id, &iv, &mut head).unwrap();
-        stored[..16].copy_from_slice(&head);
-
         let start = 0x40u64;
-        let mut file = vec![0u8; start as usize];
-        file.extend_from_slice(&stored);
-        let src = Cursor::new(file);
-
+        let src = Cursor::new(vec![0u8; 0x200]);
         let entry = Gta6Entry {
-            index: 4,
+            index: 5,
             name64: 0,
             name32: None,
             name: None,
             start: Some(start),
-            stored: Some(stored.len() as u64),
-            real: Some(plain.len() as u64),
+            stored: Some(0x80),
+            real: Some(0x80),
             class: Some(0),
             cipher: Some(super::super::gta6_archive::Gta6Cipher {
                 key_id,
                 cipher_type: 17,
-                iv,
+                iv: [0x11; 16],
+                // Not one of the five known tuples.
+                framing: [0x123, 0, 0, 0, 4],
             }),
         };
         let mount = Gta6Mount {
@@ -478,7 +648,105 @@ mod tests {
         };
         assert!(
             mount.read_entry_decrypted(src, &entry, &keys).is_err(),
-            "a prefix-enciphered body must not read back as a whole body"
+            "an unrecognised framing tuple must be refused"
         );
+    }
+
+    fn zlib_stream(data: &[u8]) -> Vec<u8> {
+        use flate2::write::ZlibEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+        let mut e = ZlibEncoder::new(Vec::new(), Compression::default());
+        e.write_all(data).unwrap();
+        e.finish().unwrap()
+    }
+
+    fn raw_deflate(data: &[u8]) -> Vec<u8> {
+        use flate2::write::DeflateEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+        let mut e = DeflateEncoder::new(Vec::new(), Compression::default());
+        e.write_all(data).unwrap();
+        e.finish().unwrap()
+    }
+
+    fn pad16(v: &mut Vec<u8>) {
+        while !v.len().is_multiple_of(16) {
+            v.push(0);
+        }
+    }
+
+    #[test]
+    fn a_truncated_zlib_stream_is_not_inflated() {
+        let data: Vec<u8> = (0..4000u32).map(|x| (x ^ (x >> 3)) as u8).collect();
+        let stream = zlib_stream(&data);
+        // The whole stream inflates and reports exactly the bytes it consumed.
+        let (consumed, out) = inflate_one(&stream, false, u64::MAX).expect("a whole zlib stream");
+        assert_eq!(out, data);
+        assert_eq!(consumed, stream.len());
+        // A stream cut short is not a stream: it is refused (so the walk treats it as a stored
+        // chunk), not accepted with a short `Ok` the way a streaming `read_to_end` would.
+        let truncated = &stream[..stream.len() * 2 / 3];
+        assert!(inflate_one(truncated, false, u64::MAX).is_none());
+    }
+
+    #[test]
+    fn the_chunk_walk_round_trips_a_24_byte_body_of_three_chunks() {
+        // zlib, a 64 KiB stored chunk (a failed inflate), then zlib — the shape a compressed
+        // 24-byte entry is stored in; its real size bounds and ends the walk.
+        let a: Vec<u8> = (0..200u32).map(|x| x as u8).collect();
+        let b = vec![0x55u8; 65536]; // not a zlib stream, so it walks as a stored chunk
+        let c: Vec<u8> = (0..300u32).map(|x| (x * 7) as u8).collect();
+        let real = (a.len() + b.len() + c.len()) as u64;
+
+        let mut body = zlib_stream(&a);
+        pad16(&mut body);
+        body.extend_from_slice(&b); // a 16-aligned 64 KiB stored chunk
+        body.extend_from_slice(&zlib_stream(&c));
+        pad16(&mut body);
+
+        let (out, chunks, consumed) = walk_chunks(&body, Some(real)).expect("the walk");
+        assert_eq!(
+            out,
+            [a, b, c].concat(),
+            "the three chunks concatenate to the plaintext"
+        );
+        assert_eq!(chunks, 3);
+        assert_eq!(consumed, body.len() as u64);
+    }
+
+    #[test]
+    fn the_chunk_walk_takes_a_raw_deflate_first_chunk() {
+        // A nested archive's first entry can be raw DEFLATE, with no zlib header.
+        let a: Vec<u8> = (0..1000u32).map(|x| (x ^ 0x5A) as u8).collect();
+        let mut body = raw_deflate(&a);
+        pad16(&mut body);
+        let (out, chunks, _) = walk_chunks(&body, Some(a.len() as u64)).expect("the walk");
+        assert_eq!(out, a);
+        assert_eq!(chunks, 1);
+    }
+
+    #[test]
+    fn the_chunk_walk_of_a_20_byte_body_ends_a_stored_chunk_at_the_next_zlib_head() {
+        // A 20-byte (script) body states no real size: a stored chunk runs to the next 16-aligned
+        // zlib head, and trailing zero padding ends the body.
+        let a: Vec<u8> = (0..120u32).map(|x| x as u8).collect();
+        let stored = vec![0x55u8; 32]; // non-zlib, 16-aligned length
+        let c: Vec<u8> = (0..90u32).map(|x| (x * 3) as u8).collect();
+
+        let mut body = zlib_stream(&a);
+        pad16(&mut body);
+        body.extend_from_slice(&stored);
+        body.extend_from_slice(&zlib_stream(&c));
+        pad16(&mut body);
+        body.extend_from_slice(&[0u8; 32]); // trailing zero padding ends the body
+
+        let (out, chunks, _) = walk_chunks(&body, None).expect("the walk");
+        assert_eq!(
+            out,
+            [a, stored, c].concat(),
+            "zlib, stored-to-next-head, zlib"
+        );
+        assert_eq!(chunks, 3);
     }
 }

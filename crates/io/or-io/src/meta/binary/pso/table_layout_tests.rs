@@ -111,10 +111,9 @@ fn conformant_in(ids: [u64; 4]) -> Vec<u8> {
     ];
     blocks.sort_by_key(|(id, _)| *id);
     let blocks: Vec<_> = blocks.into_iter().map(|(_, b)| b).collect();
-    let mut bytes = body(&[root, element, pair], &blocks, root_id as u32);
-    let at = bytes.len() - 8;
-    bytes[at..at + 4].copy_from_slice(&CHECKSUM.to_be_bytes());
-    bytes
+    // `body` seeds the loader's CHKS; a save recomputes it, so a conformant body carries the valid
+    // one (not a placeholder) to write back byte-identical.
+    body(&[root, element, pair], &blocks, root_id as u32)
 }
 
 fn write(instance: &MetaInstance, layout: &MetaLayout) -> Result<Vec<u8>> {
@@ -163,10 +162,13 @@ fn an_edited_tree_lays_out_again_reads_back_and_is_a_fixed_point() {
     assert_eq!(again, instance);
     assert_eq!(write(&again, &layout).expect("it writes"), written);
 
-    // The checksum is carried, and the size it follows is the new length.
+    // An edit recomputes the checksum: it satisfies the loader's rule and differs from the stale
+    // value the body carried; the size it follows is the new length.
     let tail = &written[written.len() - 12..];
     assert_eq!(&tail[..4], &(written.len() as u32).to_be_bytes());
-    assert_eq!(&tail[4..8], &CHECKSUM.to_be_bytes());
+    let stored_sum = u32::from_be_bytes(tail[4..8].try_into().unwrap());
+    assert_eq!(super::super::chks::checksum(&written), Some(stored_sum));
+    assert_ne!(stored_sum, CHECKSUM);
     assert_eq!(&tail[8..], b"zppp");
     // The Vec3V's fourth word is carried too.
     let ContainerLayout::Pso(pso) = &layout.container else {
@@ -282,6 +284,9 @@ fn a_hash_table_keeps_its_stored_places_while_its_keys_are_the_ones_stored() {
     slots.fill(0);
     slots[8 * 31..8 * 32].copy_from_slice(&words(&[keys[0], 50]));
     slots[..8].copy_from_slice(&words(&[keys[1], 60]));
+    // The edited slots changed the body, so reseed its CHKS (a save recomputes it) before the
+    // byte-identical assertion.
+    super::super::chks::write_checksum(&mut bytes);
     let (mut instance, layout) = open(&bytes).expect("it reads");
     assert_eq!(write(&instance, &layout).expect("it writes"), bytes);
 

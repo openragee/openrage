@@ -388,6 +388,64 @@ fn entry_extras_decodes_the_full_20_byte_nested_descriptor() {
 }
 
 #[test]
+fn a_cipher_record_reads_its_iv_and_the_five_framing_words() {
+    let mut row = [0u8; 64];
+    row[0..4].copy_from_slice(&0x1000_0029u32.to_le_bytes());
+    row[4..6].copy_from_slice(&17u16.to_le_bytes());
+    let mut iv = [0u8; 16];
+    for (i, b) in iv.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_add(1);
+    }
+    row[6..22].copy_from_slice(&iv);
+    // The framing F0..F4 are five little-endian u64 at bytes 24, 32, 40, 48, 56.
+    let framing = [0x400u64, 0x400, 0x1C00, 0, 4];
+    for (i, f) in framing.iter().enumerate() {
+        row[24 + i * 8..32 + i * 8].copy_from_slice(&f.to_le_bytes());
+    }
+    let cipher = read_cipher(&row);
+    assert_eq!(cipher.key_id, 0x1000_0029);
+    assert_eq!(cipher.cipher_type, 17);
+    assert_eq!(cipher.iv, iv);
+    assert_eq!(cipher.framing, framing);
+}
+
+#[test]
+fn the_chunk_record_decodes_its_low_half_as_the_chunk_count() {
+    let mut bytes = vec![0u8; 0x80];
+    bytes[0x20..0x22].copy_from_slice(&1u16.to_le_bytes()); // group_count
+    bytes[0x24..0x28].copy_from_slice(&1u32.to_le_bytes()); // entries
+    bytes[0x2C] = 1; // index_width
+                     // main_base = 0x40 + 24 = 0x58; one column, one entry: index[0] = row 0.
+    bytes[0x58] = 0;
+    // The chunk record at 0x60: u32[0] is a heap coordinate, u32[1]'s low half is the chunk count.
+    bytes[0x60..0x64].copy_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+    bytes[0x64..0x68].copy_from_slice(&0xABCD_1234u32.to_le_bytes());
+    let toc = Rpf9Toc {
+        bytes,
+        key_id: 0,
+        registry_id: 0,
+        entry_count: 1,
+        groups: vec![Rpf9Group {
+            name_hash: GROUP_CHUNK_RECORD,
+            count: 1,
+            width: 8,
+            external: false,
+            data: 0x60..0x68,
+        }],
+    };
+    let archive = Gta6Archive {
+        toc,
+        entries: Vec::new(),
+    };
+    let extra = archive.entry_extra(0).expect("one entry's extras");
+    assert_eq!(extra.chunk_count, Some(0x1234), "the second u32's low half");
+    assert!(
+        archive.entry_extra(1).is_none(),
+        "an index past the entry count has no extras"
+    );
+}
+
+#[test]
 fn the_class_byte_maps_to_an_entry_kind() {
     // deduplicated_toc builds the three 24-byte rows with class 0x0B, 0x00, 0xFF.
     let entries = read_entries(&deduplicated_toc(1, 2));

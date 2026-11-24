@@ -121,6 +121,7 @@ fn document(patch: impl FnOnce(&mut [u8])) -> Vec<u8> {
     chks.extend_from_slice(&[0; 4]);
     chks.extend_from_slice(b"zppp");
     section(&mut out, b"CHKS", &chks);
+    crate::meta::binary::pso::chks::write_checksum(&mut out);
     out
 }
 

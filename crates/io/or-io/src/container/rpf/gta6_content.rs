@@ -120,6 +120,120 @@ pub fn ctr_xor(
     }
 }
 
+/// The five content-framing tuples `(F0, F1, F2, F3, F4)` the whole install uses, read from the
+/// cipher record's bytes 24..64 as five little-endian u64. A record whose tuple is not one of these is
+/// refused rather than guessed ([`framing_reject_reason`]). `F4` is 4 in every one; its meaning is not
+/// established.
+pub const KNOWN_FRAMINGS: [[u64; 5]; 5] = [
+    [0x400, 0x400, 0x1C00, 0, 4],
+    [0x1000, 0x1000, 0x31000, 0x1000, 4],
+    [0x1000, 0x1000, 0, 0x1000, 4],
+    [0, 0x1000, 0, 0, 4],
+    [0, 0x400, 0, 0, 4],
+];
+
+/// Why a framing tuple is refused for a body of `len` bytes, or `None` when it is accepted: an unknown
+/// tuple, `F4 != 4`, or a tail (`F3`) larger than the body. The extent is never guessed from an
+/// unrecognised framing.
+pub fn framing_reject_reason(framing: &[u64; 5], len: u64) -> Option<String> {
+    if framing[4] != 4 {
+        return Some(format!("its framing word F4 is {}, not 4", framing[4]));
+    }
+    if !KNOWN_FRAMINGS.contains(framing) {
+        return Some(format!(
+            "its framing tuple {framing:x?} is not one of the five the install uses"
+        ));
+    }
+    if framing[3] > len {
+        return Some(format!(
+            "its framing tail F3 ({:#x}) is larger than the {len:#x}-byte body",
+            framing[3]
+        ));
+    }
+    // The absolute counter is `offset / 16`, so every enciphered range must start 16-aligned. A tail
+    // (F3 > 0) starts at `len - F3`; with the five known tuples F3 is a 16-multiple, so an unaligned
+    // body would mis-key that range. Refuse rather than silently truncate the counter.
+    if framing[3] > 0 && !len.is_multiple_of(16) {
+        return Some(format!(
+            "its framing tail F3 is set but the {len:#x}-byte body is not 16-aligned"
+        ));
+    }
+    None
+}
+
+/// The byte ranges of a body of `len` bytes that are enciphered, under a framing tuple: the head
+/// `[0, F0)`, then (when `F2 == 0`) the whole `[F0, len)` or else the window `[s, s + F1)` repeating
+/// every `F1 + F2` from `F0`, plus the tail `[len - F3, len)`. The ranges are returned merged,
+/// disjoint and sorted, so applying each one XORs no byte twice. Every boundary is 16-aligned for the
+/// five known tuples, which the caller relies on for the absolute counter.
+pub fn enciphered_ranges(framing: &[u64; 5], len: u64) -> Vec<(u64, u64)> {
+    let [f0, f1, f2, f3, _] = *framing;
+    let mut ranges: Vec<(u64, u64)> = Vec::new();
+    let mut pos = 0u64;
+    if f0 > 0 {
+        ranges.push((0, f0.min(len)));
+        pos = f0;
+    }
+    if f1 > 0 {
+        if f2 == 0 {
+            if pos < len {
+                ranges.push((pos, len));
+            }
+        } else {
+            // Saturating arithmetic so an out-of-range framing refuses (empty cover) rather than
+            // panicking under overflow checks; the validated tuples never reach these bounds.
+            let period = f1.saturating_add(f2);
+            while pos < len {
+                ranges.push((pos, pos.saturating_add(f1).min(len)));
+                pos = pos.saturating_add(period);
+            }
+        }
+    }
+    if f3 > 0 {
+        ranges.push((len.saturating_sub(f3), len));
+    }
+    merge_ranges(ranges)
+}
+
+/// Coalesce `ranges` into a sorted, disjoint cover: empties dropped, overlapping or byte-adjacent
+/// ranges joined. Adjacency matters — the head and the first periodic window abut at `F0`.
+fn merge_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
+    ranges.retain(|(a, b)| a < b);
+    ranges.sort_unstable();
+    let mut out: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
+    for (a, b) in ranges {
+        match out.last_mut() {
+            Some(last) if a <= last.1 => last.1 = last.1.max(b),
+            _ => out.push((a, b)),
+        }
+    }
+    out
+}
+
+/// A 128-bit big-endian counter advanced by `blocks`: the keystream for body offset `a` starts from
+/// the record IV advanced by `a / 16`, so a range at an absolute offset gets the same keystream the
+/// game would, never a per-range restart. Overflow wraps, as the block increment does.
+pub fn advance_counter_be(iv: &[u8; 16], blocks: u64) -> [u8; 16] {
+    u128::from_be_bytes(*iv)
+        .wrapping_add(blocks as u128)
+        .to_be_bytes()
+}
+
+/// Apply the content cipher over `data`'s enciphered extent (`framing`), calling `decrypt_range` for
+/// each enciphered range with the slice and the IV already advanced to that range's absolute block.
+/// The caller supplies the actual CTR pass (which holds the key material); this owns the extent rule
+/// and the absolute-counter advance, so the two are tested together without the keys.
+pub fn decrypt_extent<F>(data: &mut [u8], framing: &[u64; 5], iv: &[u8; 16], mut decrypt_range: F)
+where
+    F: FnMut(&mut [u8], &[u8; 16]),
+{
+    let len = data.len() as u64;
+    for (a, b) in enciphered_ranges(framing, len) {
+        let advanced = advance_counter_be(iv, a / 16);
+        decrypt_range(&mut data[a as usize..b as usize], &advanced);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +331,94 @@ mod tests {
         let mut want = [0u8; 16];
         want[14] = 1;
         assert_eq!(c, want, "a carry rolls into the next byte up");
+    }
+
+    #[test]
+    fn advance_by_a_block_equals_one_increment() {
+        let iv = [0x5Au8; 16];
+        let mut once = iv;
+        inc_be(&mut once);
+        assert_eq!(advance_counter_be(&iv, 1), once);
+        // Advancing by n and then once equals advancing by n + 1.
+        let mut n_then_one = advance_counter_be(&iv, 40);
+        inc_be(&mut n_then_one);
+        assert_eq!(advance_counter_be(&iv, 41), n_then_one);
+        // The low word carries into the next byte up.
+        let mut iv = [0u8; 16];
+        iv[15] = 0xFF;
+        assert_eq!(advance_counter_be(&iv, 1)[14], 1);
+    }
+
+    #[test]
+    fn the_head_and_first_window_merge_and_the_period_follows() {
+        // Tuple 1 on a 0x5000 body: [0, 0x800) (head + first window), then 0x400 every 0x2000.
+        assert_eq!(
+            enciphered_ranges(&[0x400, 0x400, 0x1C00, 0, 4], 0x5000),
+            vec![(0, 0x800), (0x2400, 0x2800), (0x4400, 0x4800)],
+        );
+        // F2 == 0 enciphers the whole body from F0.
+        assert_eq!(
+            enciphered_ranges(&[0, 0x400, 0, 0, 4], 0x1000),
+            vec![(0, 0x1000)],
+        );
+        // The 0x1000 tuple: head + first window merge to [0, 0x2000), the tail closes the body.
+        let r = enciphered_ranges(&[0x1000, 0x1000, 0x31000, 0x1000, 4], 0x34000);
+        assert_eq!(r.first(), Some(&(0, 0x2000)));
+        assert_eq!(r.last(), Some(&(0x33000, 0x34000)));
+    }
+
+    #[test]
+    fn framing_validation_refuses_what_it_cannot_recognise() {
+        assert!(framing_reject_reason(&[0x400, 0x400, 0x1C00, 0, 4], 0x10000).is_none());
+        assert!(
+            framing_reject_reason(&[0x400, 0x400, 0x1C00, 0, 5], 0x10000).is_some(),
+            "F4 != 4 is refused"
+        );
+        assert!(
+            framing_reject_reason(&[0x123, 0, 0, 0, 4], 0x10000).is_some(),
+            "an unknown tuple is refused"
+        );
+        assert!(
+            framing_reject_reason(&[0x1000, 0x1000, 0, 0x1000, 4], 0x100).is_some(),
+            "a tail larger than the body is refused"
+        );
+    }
+
+    #[test]
+    fn the_extent_uses_an_absolute_counter_not_a_per_range_restart() {
+        let (w, o, i, r) = synthetic();
+        let iv = [0x5Au8; 16];
+        // Tuple 1 over a body long enough for several periodic windows past the first 0x800.
+        let framing = [0x400, 0x400, 0x1C00, 0, 4];
+        let clear: Vec<u8> = (0..0x5000u32).map(|x| (x ^ (x >> 5)) as u8).collect();
+
+        let mut enc = clear.clone();
+        decrypt_extent(&mut enc, &framing, &iv, |slice, ctr| {
+            ctr_xor(slice, ctr, &w, &o, &i, &r)
+        });
+        assert_ne!(
+            enc, clear,
+            "the enciphered extent differs from the plaintext"
+        );
+        // The clear regions (e.g. [0x800, 0x2400)) are untouched.
+        assert_eq!(&enc[0x800..0x2400], &clear[0x800..0x2400]);
+
+        // Applying the same absolute-counter pass again restores the plaintext (CTR is symmetric).
+        let mut back = enc.clone();
+        decrypt_extent(&mut back, &framing, &iv, |slice, ctr| {
+            ctr_xor(slice, ctr, &w, &o, &i, &r)
+        });
+        assert_eq!(
+            back, clear,
+            "the extent round-trips under the absolute counter"
+        );
+
+        // A pass that restarts the counter at the base IV for every range (ignoring the advance) must
+        // NOT restore the body: the windows past the first are keyed at the wrong counter.
+        let mut wrong = enc.clone();
+        decrypt_extent(&mut wrong, &framing, &iv, |slice, _advanced| {
+            ctr_xor(slice, &iv, &w, &o, &i, &r)
+        });
+        assert_ne!(wrong, clear, "a per-range counter restart decrypts wrong");
     }
 }

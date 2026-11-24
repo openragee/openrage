@@ -3,7 +3,8 @@
 //!   `rpf9 list <archive> [inner/path]`     one row per entry: start, stored, real, name64, name
 //!   `rpf9 tree …`                          an alias of `list`, kept for the earlier name
 //!   `rpf9 extract <archive> <dest> …`      write entry bodies to disk, inflated, at their exact extent
-//!   `rpf9 census <build-root>`             walk every archive and nested table and count them
+//!   `rpf9 census <build-root>`             walk every archive and nested table, count them, and
+//!                                          classify each flagged body by its inflated head
 //!
 //! An `inner/path` of slash-separated components navigates nested archives from the entry table:
 //! `data.rpf common.rpf` lists the `common.rpf` held inside `data.rpf`, recursively. A component is
@@ -554,6 +555,62 @@ struct CensusCounts {
     /// Nested tables that could not be probed or opened, or that exceeded the depth cap: a count the
     /// report shows rather than silently dropping from the totals.
     refused: usize,
+    /// The inflated-head classes of the content-ciphered (type 17) entries this mount holds.
+    heads: HeadCounts,
+}
+
+/// How many content-ciphered bodies inflate to each recognised head: a PSO (`PSIN`), an `RBF0`, a
+/// text/XML body (a `<` or UTF-8-BOM start, or a plain-text list), a headerless resource (a leading
+/// 8-byte zero slot then a pointer — the script programs), anything else, and the bodies that would
+/// not decrypt.
+#[derive(Default)]
+struct HeadCounts {
+    psin: usize,
+    rbf0: usize,
+    text: usize,
+    headerless: usize,
+    other: usize,
+    unreadable: usize,
+}
+
+impl HeadCounts {
+    fn add(&mut self, other: &HeadCounts) {
+        self.psin += other.psin;
+        self.rbf0 += other.rbf0;
+        self.text += other.text;
+        self.headerless += other.headerless;
+        self.other += other.other;
+        self.unreadable += other.unreadable;
+    }
+
+    /// Classify one inflated body by its head, bumping the matching class.
+    fn classify(&mut self, body: &[u8]) {
+        if body.starts_with(b"PSIN") {
+            self.psin += 1;
+        } else if body.starts_with(b"RBF0") {
+            self.rbf0 += 1;
+        } else if body.len() >= 8 && body[..8].iter().all(|&b| b == 0) {
+            // A headerless resource (a script program) opens with an 8-byte zero slot, then a pointer.
+            self.headerless += 1;
+        } else if is_text_head(body) {
+            self.text += 1;
+        } else {
+            self.other += 1;
+        }
+    }
+}
+
+/// Whether a body's head reads as text: a `<` start, a UTF-8 BOM, or a run of printable ASCII (a
+/// plain-text list). A binary head (a script program's different leading bytes) is not text.
+fn is_text_head(body: &[u8]) -> bool {
+    if body.first() == Some(&b'<') || body.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return true;
+    }
+    let n = body.len().min(32);
+    n > 0
+        && body[..n]
+            .iter()
+            .all(|&c| matches!(c, b'\t' | b'\r' | b'\n') || (0x20..=0x7E).contains(&c))
 }
 
 /// A self-referential or cyclic mount would recurse forever; real nesting is shallow, so a depth past
@@ -634,6 +691,10 @@ fn do_census(
     report.push_str("| archive | entries | nested | leaf | cipher | names | refused |\n");
     report.push_str("|---|--:|--:|--:|--:|--:|--:|\n");
 
+    // Flagged bodies are decoded only when the snapshot carries content keys; without them every
+    // flagged entry would otherwise be counted "would not decode" with no hint why.
+    let decode = keys.has_content_keys();
+
     let mut total = CensusCounts::default();
     for path in &archives {
         let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -641,7 +702,9 @@ fn do_census(
         match Gta6Mount::open_root(&mut file, keys) {
             Ok(mut mount) => {
                 mount.archive.resolve_names(resolver);
-                census_mount(&mut file, &mount, top_only, keys, resolver, 0, &mut per);
+                census_mount(
+                    &mut file, &mount, top_only, decode, keys, resolver, 0, &mut per,
+                );
             }
             Err(e) => {
                 eprintln!("  {}: {e}", path.display());
@@ -660,6 +723,7 @@ fn do_census(
         total.cipher += per.cipher;
         total.resolved += per.resolved;
         total.refused += per.refused;
+        total.heads.add(&per.heads);
     }
     report.push_str(&format!(
         "| **total ({} top-level + nested)** | {} | {} | {} | {} | {} | {} |\n",
@@ -672,18 +736,50 @@ fn do_census(
         total.refused,
     ));
 
+    let h = &total.heads;
+    let scope = if top_only {
+        "top-level archives only"
+    } else {
+        "all archives, nested included"
+    };
+    report.push_str(&format!(
+        "\n## Flagged (content-ciphered) bodies by inflated head ({scope})\n\n"
+    ));
+    if !decode {
+        report.push_str(
+            "_The key snapshot carries no content keys, so flagged bodies were not decoded._\n\n",
+        );
+    }
+    report.push_str("| head | count |\n|---|--:|\n");
+    report.push_str(&format!("| PSIN (PSO) | {} |\n", h.psin));
+    report.push_str(&format!("| RBF0 | {} |\n", h.rbf0));
+    report.push_str(&format!("| text / XML | {} |\n", h.text));
+    report.push_str(&format!(
+        "| headerless (script programs) | {} |\n",
+        h.headerless
+    ));
+    report.push_str(&format!("| other | {} |\n", h.other));
+    report.push_str(&format!("| would not decode | {} |\n", h.unreadable));
+
     std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
     let file = out.join("rpf9-census.md");
     std::fs::write(&file, &report).map_err(|e| format!("{}: {e}", file.display()))?;
 
     Ok(format!(
-        "{} top-level archives, {} nested, {} entries ({} cipher, {} named, {} refused); wrote {}",
+        "{} top-level archives, {} nested, {} entries ({} cipher, {} named, {} refused); flagged \
+         heads PSIN {} RBF0 {} text {} headerless {} other {} unreadable {}; wrote {}",
         archives.len(),
         total.nested,
         total.entries,
         total.cipher,
         total.resolved,
         total.refused,
+        h.psin,
+        h.rbf0,
+        h.text,
+        h.headerless,
+        h.other,
+        h.unreadable,
         file.display(),
     ))
 }
@@ -691,10 +787,12 @@ fn do_census(
 /// Count one mount's entries and, unless `top_only`, recurse into every nested archive it holds. A
 /// nested table that cannot be probed or opened, or that would nest past [`CENSUS_MAX_DEPTH`], is
 /// counted as a refusal rather than silently dropped.
+#[allow(clippy::too_many_arguments)]
 fn census_mount(
     file: &mut File,
     mount: &Gta6Mount,
     top_only: bool,
+    decode: bool,
     keys: &GtaViKeys,
     resolver: &NameResolver,
     depth: usize,
@@ -702,8 +800,17 @@ fn census_mount(
 ) {
     for entry in &mount.archive.entries {
         acc.entries += 1;
-        if entry.cipher.is_some() {
+        if let Some(cipher) = entry.cipher {
             acc.cipher += 1;
+            // With content keys, decrypt and inflate the flagged body and classify its head; a body
+            // that will not decode is counted as unreadable rather than dropped. Without them the
+            // body is left unclassified (the report says the keys were absent).
+            if cipher.cipher_type == 17 && decode {
+                match mount.read_entry_decrypted(&mut *file, entry, keys) {
+                    Ok(body) => acc.heads.classify(&body),
+                    Err(_) => acc.heads.unreadable += 1,
+                }
+            }
         }
         if entry.name.is_some() {
             acc.resolved += 1;
@@ -721,7 +828,16 @@ fn census_mount(
                 match mount.open_nested(file, entry, keys) {
                     Ok(mut child) => {
                         child.archive.resolve_names(resolver);
-                        census_mount(file, &child, top_only, keys, resolver, depth + 1, acc);
+                        census_mount(
+                            file,
+                            &child,
+                            top_only,
+                            decode,
+                            keys,
+                            resolver,
+                            depth + 1,
+                            acc,
+                        );
                     }
                     Err(_) => acc.refused += 1,
                 }

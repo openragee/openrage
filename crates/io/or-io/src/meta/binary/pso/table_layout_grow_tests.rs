@@ -230,8 +230,27 @@ fn a_table_keyed_by_64_bit_integers_keeps_its_slots_and_refuses_to_grow() {
     let written = write(&instance, &layout).expect("a value changes in its slot");
     let (again, _) = open(&written).expect("it reads back");
     assert_eq!(again, instance);
-    let differ = bytes.iter().zip(&written).filter(|(a, b)| a != b).count();
-    assert_eq!((written.len(), differ), (bytes.len(), 1));
+    // The one value changed in its slot; the loader's CHKS is recomputed too, so the frame's
+    // checksum word differs from the original. Nothing else moved.
+    assert_eq!(written.len(), bytes.len());
+    let chk = written.len() - 8; // the 0x14 CHKS frame's checksum word at [chk, chk + 4)
+    let body_differ = bytes
+        .iter()
+        .zip(&written)
+        .enumerate()
+        .filter(|(i, (a, b))| a != b && !(chk..chk + 4).contains(i))
+        .count();
+    assert_eq!(
+        body_differ, 1,
+        "only the edited value moves outside the checksum"
+    );
+    let stored_sum = u32::from_be_bytes(written[chk..chk + 4].try_into().unwrap());
+    assert_eq!(super::super::chks::checksum(&written), Some(stored_sum));
+    assert_ne!(
+        &bytes[chk..chk + 4],
+        &written[chk..chk + 4],
+        "the CHKS is recomputed for the edit"
+    );
 
     let Value::Map(pairs) = field(&mut instance, 0x6A6A_0000) else {
         panic!("a map")

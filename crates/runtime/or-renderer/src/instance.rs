@@ -124,9 +124,22 @@ pub fn dx12_compiler() -> wgpu::Dx12Compiler {
     }
 }
 
-/// `descriptor` with [`dx12_compiler`] as Direct3D 12's compiler.
+/// `flags` as an instance takes them: without `DEBUG` where the software adapter is asked for.
+// ⚠ `DEBUG`, which a build with debug assertions sets, has Direct3D 12's compiler leave a shader
+// unoptimised, and the software adapter then takes about four times as long for twice the code:
+// a skinned stage it runs in 10 to 20 s optimised did not finish in 150 s. Validation stays.
+fn flags_for(flags: wgpu::InstanceFlags, software: bool) -> wgpu::InstanceFlags {
+    match software {
+        true => flags.difference(wgpu::InstanceFlags::DEBUG),
+        false => flags,
+    }
+}
+
+/// `descriptor` with [`dx12_compiler`] as Direct3D 12's compiler, and optimised shaders where
+/// [`SOFTWARE_ADAPTER`] is set.
 pub fn with_dxc(mut descriptor: wgpu::InstanceDescriptor) -> wgpu::InstanceDescriptor {
     descriptor.backend_options.dx12.shader_compiler = dx12_compiler();
+    descriptor.flags = flags_for(descriptor.flags, software_asked());
     descriptor
 }
 
@@ -183,6 +196,15 @@ pub fn headless_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_software_adapter_is_handed_optimised_shaders_and_no_other_is() {
+        use wgpu::InstanceFlags as Flags;
+        let debug = Flags::DEBUG | Flags::VALIDATION;
+        assert_eq!(flags_for(debug, true), Flags::VALIDATION);
+        assert_eq!(flags_for(debug, false), debug);
+        assert_eq!(flags_for(Flags::empty(), true), Flags::empty());
+    }
 
     #[test]
     fn only_a_cpu_adapter_passes_where_the_software_one_is_asked_for() {

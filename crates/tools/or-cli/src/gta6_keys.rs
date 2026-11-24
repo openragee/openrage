@@ -1,11 +1,48 @@
 //! `keys gta6`: read the GTA VI key snapshot out of the user's own executable and write it masked,
-//! beside the keys cache where the archive readers look for it.
+//! beside the keys cache where the archive readers look for it. Also the keys the `rpf9` verbs read
+//! with, from `--keys`, `--exe` or the environment.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use or_io::container::rpf::gta6_extract::extract_snapshot;
-use or_io::container::rpf::{encode_masked, GtaViKeys, GTA6_EXE_ENV, GTA6_SNAPSHOT_FILE_NAME};
+use or_io::container::rpf::{
+    decode_masked, encode_masked, is_masked, GtaViKeys, GTA6_EXE_ENV, GTA6_SNAPSHOT_ENV,
+    GTA6_SNAPSHOT_FILE_NAME,
+};
+
+/// The keys an `rpf9` verb reads with: the snapshot `--keys` names (unmasked with `--exe` when
+/// masked), else the user's snapshot or the keys the executable yields, cached masked beside the
+/// keys cache. Without `--exe`, the executable is the one `OPENRAGE_GTA6_EXE` names.
+pub(crate) fn load(snapshot: Option<&Path>, exe: Option<&Path>) -> Result<GtaViKeys, String> {
+    if let Some(path) = snapshot {
+        return match exe {
+            Some(exe) => open_with(path, exe),
+            None => GtaViKeys::from_file(path).map_err(|e| e.to_string()),
+        };
+    }
+    GtaViKeys::for_install_with(or_title::config::config_dir().as_deref(), exe)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| {
+            format!(
+                "No GTA VI keys: pass --exe with the path to game_scarlett_master.exe, pass --keys \
+                 with a key snapshot, or set {GTA6_SNAPSHOT_ENV}."
+            )
+        })
+}
+
+/// The snapshot at `path`, unmasked with the executable at `exe` when it is masked.
+fn open_with(path: &Path, exe: &Path) -> Result<GtaViKeys, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    if !is_masked(&bytes) {
+        return GtaViKeys::parse(&bytes).map_err(|e| format!("{}: {e}", path.display()));
+    }
+    let exe_bytes =
+        std::fs::read(exe).map_err(|e| format!("cannot read {}: {e}", exe.display()))?;
+    let plain =
+        decode_masked(&bytes, &exe_bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    GtaViKeys::parse(&plain).map_err(|e| format!("{}: {e}", path.display()))
+}
 
 const USAGE: &str =
     "usage: openrage-cli keys gta6 --exe <game_scarlett_master.exe> [--out <file>] [--force]";
@@ -53,7 +90,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
                 out.display()
             );
             println!(
-                "it opens only with that executable: set {GTA6_EXE_ENV} to {}",
+                "it opens only with that executable: pass --exe {} to the rpf9 verbs, or set {GTA6_EXE_ENV} to it",
                 exe.display()
             );
             ExitCode::SUCCESS
@@ -84,4 +121,49 @@ fn write_masked(exe_path: &Path, out: &Path) -> Result<usize, String> {
     }
     std::fs::write(out, &masked).map_err(|e| format!("cannot write {}: {e}", out.display()))?;
     Ok(masked.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An index-only `ORGTAVIK` snapshot of synthetic tables, with no key.
+    fn index_only_snapshot() -> Vec<u8> {
+        let mut out = b"ORGTAVIK".to_vec();
+        out.extend(1u32.to_le_bytes());
+        out.extend(0x4342u32.to_le_bytes());
+        out.extend([7u8; 32 + 16]);
+        for len in [0x1000u32, 0x4000] {
+            out.extend(len.to_le_bytes());
+            out.extend((0..len).map(|i| (i % 251) as u8));
+        }
+        out.extend(0u32.to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn a_masked_keys_file_opens_with_its_executable_and_no_other() {
+        let dir = tempfile::tempdir().expect("a folder");
+        let exe = dir.path().join("game_scarlett_master.exe");
+        let other = dir.path().join("other.exe");
+        std::fs::write(&exe, b"the keying executable").expect("write");
+        std::fs::write(&other, b"another executable").expect("write");
+        let plain = index_only_snapshot();
+        GtaViKeys::parse(&plain).expect("the synthetic snapshot parses");
+        let masked = dir.path().join("masked.dat");
+        std::fs::write(&masked, encode_masked(&plain, b"the keying executable")).expect("write");
+        let keys = open_with(&masked, &exe).expect("its executable opens it");
+        assert_eq!(keys.exe_sha256(), &[7u8; 32]);
+        let err = open_with(&masked, &other)
+            .err()
+            .expect("another executable is refused");
+        assert!(err.contains("masked.dat"), "{err}");
+
+        let plain_file = dir.path().join("plain.dat");
+        std::fs::write(&plain_file, &plain).expect("write");
+        assert!(
+            open_with(&plain_file, &other).is_ok(),
+            "a plain snapshot needs no executable"
+        );
+    }
 }

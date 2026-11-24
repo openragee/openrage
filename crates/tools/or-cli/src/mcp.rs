@@ -10,6 +10,9 @@ use serde_json::{json, Map, Value};
 
 use super::serve::{self, LineRead, Session};
 
+#[path = "mcp_gta6.rs"]
+mod gta6;
+
 /// The name a client lists this server under.
 const NAME: &str = "openrage";
 
@@ -309,6 +312,7 @@ fn tools() -> Vec<Value> {
             TIMEOUT,
         ],
     ));
+    tools.extend(gta6::tools());
     tools
 }
 
@@ -330,6 +334,7 @@ fn call(params: Option<&Value>, session: &mut Session) -> Result<Value, (i64, St
         "cli" => cli(&args),
         "shots" => shots(&args),
         route if ROUTES.iter().any(|(name, ..)| *name == route) => route_of(route, args, session),
+        rpf9 if gta6::is_tool(rpf9) => gta6::call(rpf9, &args),
         other => return Err((-32602, format!("unknown tool: {other}"))),
     };
     Ok(match outcome {
@@ -705,7 +710,7 @@ mod tests {
             json!({"jsonrpc":"2.0","id":4,"method":"tools/list"}),
         );
         let tools = listed["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), ROUTES.len() + 2);
+        assert_eq!(tools.len(), ROUTES.len() + 2 + gta6::TOOLS.len());
         let search = tools.iter().find(|t| t["name"] == "search").unwrap();
         assert_eq!(
             search["inputSchema"]["properties"]["ext"]["type"],

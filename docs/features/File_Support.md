@@ -73,17 +73,25 @@ the editor lists none of these games as a title.
 
 ## GTA VI
 
-The table of contents of an RPF9 archive is encrypted and OpenRage holds no key for it, so no file is
-listed by name: the editor and `openrage-cli rpf scan` find the bodies an archive stores in the clear,
-and name one only where a body states its own name or a harvested vocabulary holds it. The install
-opens as a plain folder.
+The table of contents of an RPF9 archive is enciphered, and OpenRage ships no key: the keys are read
+from the user's own executable, and [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md) gives the steps.
+With them, `openrage-cli rpf9` lists an archive's entries from its table, nested archives included,
+extracts them, an enciphered one deciphered, and writes a new archive, and View ▸ Panels ▸ Archives
+lists the entries of the archives of the GTA VI folder set in Settings, and of an archive File ▸ Open
+opened, and opens them. An entry is named where a harvested vocabulary or a folder of names holds the
+text of its hash, and by its hash otherwise. Without them, the editor and `openrage-cli rpf scan`
+find the bodies an archive stores in the clear, and an archive's own tab lists it that way, with
+or without keys. The install opens as a plain folder.
 
 - **Read.** Texture packs (`.ttpf`) and dictionary textures, drawables, fragments, dictionaries of
   drawables and their skeletons, bounds, navigation cells, map placements and map types, clip
   dictionaries and the other animation bodies, cloth, a ped's hair grooms among it, PSO, RBM and RBF
   metadata, ped catalogues among it, text tables, AWC audio,
   which plays and exports as Ogg Opus, and a Bink movie's pictures and sound. A drawable is drawn in
-  Wireframe, Solid and Material and goes out to glTF.
+  Wireframe, Solid and Material and goes out to glTF. An enciphered entry opens deciphered: a PSO or
+  RBF in the metadata editor, text as text and a resource in its kind's view. A PSO's enciphered
+  strings name the hash values it holds. A deciphered script body reads as a compiled program, its
+  header, instructions and native calls, through `openrage-cli script compiled`.
 - **Textures.** A texture stored plainly or as zlib reads as it is. One stored through the pack's
   entropy coder decodes exactly as BC1; as BC3, BC4, BC5, BC6H or BC7 it decodes through tables
   that `openrage-cli ttpf calibrate`, or the app's job, fits on your machine from the packs of the
@@ -101,9 +109,14 @@ opens as a plain folder.
   shades a part by its normal map alone.
 - **Written.** A texture pack saves with a texture replaced, and an edit to a scanned body saves as a
   loose file. Which values of a model, a bound, a map or a metadata body can be edited is narrower than
-  for GTA V, and a refusal names what it cannot write.
-- **Not done.** Nothing is written back into an archive, and no file OpenRage saved has been tried in
-  the game. Scripts do not read, their bodies being enciphered. A program the shader front end
-  cannot translate or bind leaves its pass undrawn in Shaded, and no save file of the game has been
-  opened: the save reader was written from a description of the layout.
+  for GTA V, and a refusal names what it cannot write. `openrage-cli rpf9 copy`, `replace`, `remove`,
+  `rename` and `defrag` write a new archive from an existing one, never over it; a plain replace of
+  an entry whose row describes a paged resource is refused by name, and `replace --resource` replaces
+  it by its loose form. The app's File ▸ Save into a copy of the archive… writes a document's edits
+  in place of its entry, in a new copy of the archive it was read from.
+- **Not done.** The game refuses every archive OpenRage writes with a changed table, because only its
+  maker can sign a table, and no file OpenRage saved has been tried in the game. A script is not
+  decompiled from its compiled body. A program the shader front end cannot translate or bind leaves
+  its pass undrawn in Shaded, and no save file of the game has been opened: the save reader was
+  written from a description of the layout.
   [GTA_VI_Xbox_Build.md](GTA_VI_Xbox_Build.md) has each reader, refusal and command.

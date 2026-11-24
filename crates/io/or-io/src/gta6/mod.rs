@@ -42,6 +42,8 @@ mod tiling;
 #[cfg(feature = "gta5")]
 pub mod timecycle;
 pub mod ttpf;
+#[cfg(feature = "authoring")]
+pub mod ttpf_author;
 pub mod ui_tree;
 #[cfg(all(feature = "gta5", feature = "meta"))]
 pub mod water;

@@ -4,12 +4,138 @@
 //!
 //! ⚠ Only an executable whose SHA-256 names a build listed here is read; any other is refused, never
 //! scanned. The addresses, markers and layout are committable; the bytes they point at are not.
+//! What [`snapshot_for_exe`] caches is masked by the executable, never plain (D18).
+
+use std::path::Path;
 
 use byteorder::{ByteOrder, LE};
 use sha2::{Digest, Sha256};
 
-use super::rpf9_toc::STRING_KEY_ID;
+use super::gta6_keygate::{decode_masked, encode_masked};
+use super::rpf9_toc::{GTA6_SNAPSHOT_ENV, STRING_KEY_ID};
 use crate::error::{IoError, Result};
+
+/// The masked snapshot an executable yielded, kept beside the keys cache.
+pub const KEYS_CACHE_FILE_NAME: &str = "gtavi_keys_cache.dat";
+
+/// Where the snapshot [`snapshot_for_exe`] returns came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotSource {
+    /// The masked cache beside the keys cache.
+    Cache,
+    /// The masked snapshot `bundled-keys` embeds.
+    Bundled,
+    /// Read out of the executable itself.
+    Extracted,
+}
+
+/// Where the plaintext snapshot records its executable's SHA-256: after the magic, version and mode.
+const RECORDED_SHA256_AT: usize = SNAPSHOT_MAGIC.len() + 4 + 4;
+
+/// The plaintext snapshot for the executable at `exe_path`, cached masked in `config_dir`.
+///
+/// # Errors
+///
+/// Refused, naming the executable, when no cache, no bundled snapshot and no known build keys it.
+pub fn snapshot_for_exe(
+    config_dir: Option<&Path>,
+    exe_path: &Path,
+) -> Result<(Vec<u8>, SnapshotSource)> {
+    snapshot_for_exe_with(config_dir, exe_path, bundled_snapshot(), BUILDS)
+}
+
+/// [`snapshot_for_exe`] over a given bundled snapshot and build list: the cache when the
+/// executable keys it and it records the executable's SHA-256, else the bundled snapshot on the
+/// same terms, else a fresh extraction of a known build.
+fn snapshot_for_exe_with(
+    config_dir: Option<&Path>,
+    exe_path: &Path,
+    bundled: Option<&[u8]>,
+    builds: &[Build],
+) -> Result<(Vec<u8>, SnapshotSource)> {
+    let exe = std::fs::read(exe_path).map_err(|source| IoError::FileReadFailed {
+        path: exe_path.to_path_buf(),
+        source,
+    })?;
+    let sha256: [u8; 32] = Sha256::digest(&exe).into();
+    let records = |plain: &Vec<u8>| {
+        plain.get(RECORDED_SHA256_AT..RECORDED_SHA256_AT + 32) == Some(&sha256[..])
+    };
+    let unmasked = |masked: Option<&[u8]>| {
+        masked
+            .and_then(|m| decode_masked(m, &exe).ok())
+            .filter(records)
+    };
+    let cache = config_dir.map(|dir| dir.join(KEYS_CACHE_FILE_NAME));
+    let cached = cache.as_deref().and_then(|path| std::fs::read(path).ok());
+    // A cache cut short by another writer still unmasks; only one that parses is taken.
+    let whole = |plain: &Vec<u8>| super::rpf9_toc::GtaViKeys::parse(plain).is_ok();
+    if let Some(plain) = unmasked(cached.as_deref()).filter(whole) {
+        return Ok((plain, SnapshotSource::Cache));
+    }
+    let (plain, source) = match unmasked(bundled) {
+        Some(plain) => (plain, SnapshotSource::Bundled),
+        None => {
+            let hex = sha256_hex(&sha256);
+            let build = builds
+                .iter()
+                .find(|b| b.sha256 == hex)
+                .ok_or_else(|| keys_nothing(exe_path))?;
+            let plain = snapshot_from(&exe, build, &sha256)?;
+            (plain, SnapshotSource::Extracted)
+        }
+    };
+    if let Some(cache) = cache {
+        if let Err(e) = write_cache(&cache, &encode_masked(&plain, &exe)) {
+            tracing::warn!(error = %e, "the GTA VI keys were not cached");
+        }
+    }
+    Ok((plain, source))
+}
+
+fn keys_nothing(exe_path: &Path) -> IoError {
+    IoError::Invalid {
+        what: format!("the GTA VI executable {}", exe_path.display()),
+        why: format!(
+            "it keys neither the bundled key snapshot nor a build OpenRage reads keys from, so set \
+             {GTA6_SNAPSHOT_ENV} to a key snapshot of this build"
+        ),
+    }
+}
+
+fn write_cache(path: &Path, masked: &[u8]) -> Result<()> {
+    let failed = |source| IoError::FileWriteFailed {
+        path: path.to_path_buf(),
+        source,
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(failed)?;
+    }
+    // Written beside the cache and renamed into place, so a reader never sees half of it.
+    static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temporary = path.with_extension(format!("{}.{n}.tmp", std::process::id()));
+    let written =
+        std::fs::write(&temporary, masked).and_then(|()| std::fs::rename(&temporary, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written.map_err(failed)
+}
+
+#[cfg(feature = "bundled-keys")]
+fn bundled_snapshot() -> Option<&'static [u8]> {
+    Some(super::gta6_keygate::BUNDLED_SNAPSHOT)
+}
+
+#[cfg(not(feature = "bundled-keys"))]
+fn bundled_snapshot() -> Option<&'static [u8]> {
+    None
+}
+
+fn sha256_hex(sha256: &[u8; 32]) -> String {
+    sha256.iter().map(|b| format!("{b:02x}")).collect()
+}
 
 /// A build this extractor knows: its executable's SHA-256 and where its key material lies.
 struct Build {
@@ -61,7 +187,7 @@ const STRING_REGISTRY_ID: u64 = ((STRING_KEY_ID as u64) << 32) | 0x0200_0000;
 /// The plaintext `ORGTAVIK` snapshot of the GTA VI executable `exe`; refused unless `exe` is a known build.
 pub fn extract_snapshot(exe: &[u8]) -> Result<Vec<u8>> {
     let sha256: [u8; 32] = Sha256::digest(exe).into();
-    let hex: String = sha256.iter().map(|b| format!("{b:02x}")).collect();
+    let hex = sha256_hex(&sha256);
     let build = BUILDS.iter().find(|b| b.sha256 == hex).ok_or_else(|| {
         let known: Vec<&str> = BUILDS.iter().map(|b| b.name).collect();
         bad(format!(
@@ -384,6 +510,202 @@ mod tests {
             decode_masked(&masked, &exe).expect("its own executable"),
             plain
         );
+    }
+
+    /// The synthetic executable `seed` written as `game_scarlett_master.exe` in `dir`, and its
+    /// build with the SHA-256 the file has.
+    fn exe_file(dir: &Path, seed: u8) -> (std::path::PathBuf, Vec<u8>, Build) {
+        let (exe, mut build) = image(seed);
+        let sha256: [u8; 32] = Sha256::digest(&exe).into();
+        build.sha256 = Box::leak(sha256_hex(&sha256).into_boxed_str());
+        let path = dir.join("game_scarlett_master.exe");
+        std::fs::write(&path, &exe).expect("write the synthetic executable");
+        (path, exe, build)
+    }
+
+    /// The snapshot of `exe` as `build` reads it, recording the executable's own SHA-256.
+    fn plain_of(exe: &[u8], build: &Build) -> Vec<u8> {
+        let sha256: [u8; 32] = Sha256::digest(exe).into();
+        snapshot_from(exe, build, &sha256).expect("the synthetic build extracts")
+    }
+
+    /// The cache file in `config`, checked to be masked by `exe` and to hold no plaintext run.
+    fn masked_cache(config: &Path, exe: &[u8], plain: &[u8]) {
+        let cache = std::fs::read(config.join(KEYS_CACHE_FILE_NAME)).expect("the cache is written");
+        assert!(is_masked(&cache), "the cache is the masked form");
+        assert!(
+            !cache
+                .windows(SNAPSHOT_MAGIC.len())
+                .any(|w| w == SNAPSHOT_MAGIC),
+            "no plaintext snapshot magic in the cache"
+        );
+        let tables = &plain[100..164];
+        assert!(
+            !cache.windows(tables.len()).any(|w| w == tables),
+            "no plaintext table run in the cache"
+        );
+        assert_eq!(
+            decode_masked(&cache, exe).expect("its executable unmasks it"),
+            plain
+        );
+    }
+
+    #[test]
+    fn a_known_executable_is_extracted_once_and_then_read_from_its_masked_cache() {
+        let install = tempfile::tempdir().expect("an install folder");
+        let config = tempfile::tempdir().expect("a config folder");
+        let (path, exe, build) = exe_file(install.path(), 1);
+        let builds = [build];
+        let (plain, source) =
+            snapshot_for_exe_with(Some(config.path()), &path, None, &builds).expect("extracts");
+        assert_eq!(source, SnapshotSource::Extracted);
+        assert_eq!(plain, plain_of(&exe, &builds[0]));
+        masked_cache(config.path(), &exe, &plain);
+
+        let (again, source) =
+            snapshot_for_exe_with(Some(config.path()), &path, None, &[]).expect("the cache opens");
+        assert_eq!(
+            source,
+            SnapshotSource::Cache,
+            "no build list is needed the second time"
+        );
+        assert_eq!(again, plain);
+    }
+
+    #[test]
+    fn a_bundled_snapshot_opens_only_when_it_records_the_executable() {
+        let install = tempfile::tempdir().expect("an install folder");
+        let (path, exe, build) = exe_file(install.path(), 1);
+        let plain = plain_of(&exe, &build);
+        let bundled = encode_masked(&plain, &exe);
+        let (got, source) = snapshot_for_exe_with(None, &path, Some(bundled.as_slice()), &[])
+            .expect("the bundled opens");
+        assert_eq!((got, source), (plain.clone(), SnapshotSource::Bundled));
+
+        let other_build = snapshot_from(&exe, &build, &[9; 32]).expect("extracts");
+        let bundled = encode_masked(&other_build, &exe);
+        let (got, source) = snapshot_for_exe_with(None, &path, Some(bundled.as_slice()), &[build])
+            .expect("extracts");
+        assert_eq!(
+            (got, source),
+            (plain, SnapshotSource::Extracted),
+            "a bundled snapshot of another build gives way to the executable's own"
+        );
+    }
+
+    #[test]
+    fn a_cache_another_executable_keyed_is_replaced() {
+        let install = tempfile::tempdir().expect("an install folder");
+        let config = tempfile::tempdir().expect("a config folder");
+        let (path, exe, build) = exe_file(install.path(), 1);
+        let (other, _) = image(2);
+        let plain = plain_of(&exe, &build);
+        std::fs::write(
+            config.path().join(KEYS_CACHE_FILE_NAME),
+            encode_masked(&plain, &other),
+        )
+        .expect("write a stale cache");
+        let (_, source) =
+            snapshot_for_exe_with(Some(config.path()), &path, None, &[build]).expect("extracts");
+        assert_eq!(source, SnapshotSource::Extracted);
+        masked_cache(config.path(), &exe, &plain);
+    }
+
+    #[test]
+    fn an_executable_that_keys_nothing_is_refused_by_name_and_caches_nothing() {
+        let install = tempfile::tempdir().expect("an install folder");
+        let config = tempfile::tempdir().expect("a config folder");
+        let elsewhere = tempfile::tempdir().expect("another install folder");
+        let (_, exe, build) = exe_file(elsewhere.path(), 1);
+        let bundled = encode_masked(&plain_of(&exe, &build), &exe);
+        let (path, _, _) = exe_file(install.path(), 2);
+        let bundled = Some(bundled.as_slice());
+        let err = snapshot_for_exe_with(Some(config.path()), &path, bundled, &[build])
+            .expect_err("another executable keys nothing");
+        let said = err.to_string();
+        assert!(said.contains("game_scarlett_master.exe"), "{said}");
+        assert!(said.contains(GTA6_SNAPSHOT_ENV), "{said}");
+        assert!(!config.path().join(KEYS_CACHE_FILE_NAME).exists());
+    }
+
+    #[test]
+    fn the_configured_executable_opens_the_install_keys() {
+        let install = tempfile::tempdir().expect("an install folder");
+        let config = tempfile::tempdir().expect("a config folder");
+        let (path, exe, build) = exe_file(install.path(), 1);
+        let plain = plain_of(&exe, &build);
+        std::fs::write(
+            config.path().join(KEYS_CACHE_FILE_NAME),
+            encode_masked(&plain, &exe),
+        )
+        .expect("write the cache");
+        let keys = GtaViKeys::for_install_from(None, Some(config.path()), Some(path.as_path()))
+            .expect("the configured executable opens")
+            .expect("keys");
+        assert_eq!(keys.exe_sha256(), &<[u8; 32]>::from(Sha256::digest(&exe)));
+        assert!(keys.has_content_keys() && keys.has_string_keys());
+
+        assert!(
+            GtaViKeys::for_install_from(None, Some(config.path()), None)
+                .expect("no executable is no error")
+                .is_none(),
+            "without an executable or a snapshot there are no keys"
+        );
+        let (wrong, _, _) = exe_file(config.path(), 2);
+        let err = GtaViKeys::for_install_from(None, Some(config.path()), Some(wrong.as_path()))
+            .err()
+            .expect("a wrong executable is refused");
+        assert!(
+            err.to_string().contains(&wrong.display().to_string()),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_masked_snapshot_the_user_placed_opens_with_the_executable_given() {
+        let install = tempfile::tempdir().expect("an install folder");
+        let config = tempfile::tempdir().expect("a config folder");
+        let (path, exe, build) = exe_file(install.path(), 1);
+        let user = config
+            .path()
+            .join(crate::container::rpf::GTA6_SNAPSHOT_FILE_NAME);
+        std::fs::write(&user, encode_masked(&plain_of(&exe, &build), &exe)).expect("write it");
+        let keys = GtaViKeys::for_install_from(None, Some(config.path()), Some(path.as_path()))
+            .expect("it opens")
+            .expect("keys");
+        assert_eq!(keys.snapshot_file(), Some(user.as_path()));
+        assert!(
+            GtaViKeys::for_install_from(None, Some(config.path()), None).is_err(),
+            "a masked snapshot without its executable is refused"
+        );
+        assert!(!config.path().join(KEYS_CACHE_FILE_NAME).exists());
+    }
+
+    /// Install-gated: the real executable opens the snapshot `bundled-keys` embeds, which records
+    /// its SHA-256, and the next call reads the masked cache that one wrote.
+    #[test]
+    #[cfg(feature = "bundled-keys")]
+    fn the_real_executable_opens_the_bundled_snapshot_and_then_its_cache() {
+        use crate::container::rpf::GTA6_EXE_ENV;
+        let Some(exe_path) = std::env::var_os(GTA6_EXE_ENV)
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_file())
+        else {
+            or_test_support::skip_install(
+                "the bundled GTA VI key snapshot",
+                format_args!("set {GTA6_EXE_ENV}"),
+            );
+            return;
+        };
+        let config = tempfile::tempdir().expect("a config folder");
+        let (plain, source) = snapshot_for_exe(Some(config.path()), &exe_path).expect("opens");
+        assert_eq!(source, SnapshotSource::Bundled);
+        let keys = GtaViKeys::parse(&plain).expect("the bundled snapshot parses");
+        assert!(keys.has_content_keys() && keys.has_string_keys());
+        let exe = std::fs::read(&exe_path).expect("read the executable");
+        masked_cache(config.path(), &exe, &plain);
+        let (again, source) = snapshot_for_exe(Some(config.path()), &exe_path).expect("opens");
+        assert_eq!((again == plain, source), (true, SnapshotSource::Cache));
     }
 
     /// Install-gated: the real executable extracts, the snapshot parses and deciphers a build

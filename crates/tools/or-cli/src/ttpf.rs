@@ -547,6 +547,9 @@ fn cmd_replace(args: &[String]) -> Result<(), String> {
     let mut pack = open(&input)?;
     let index = index_of(&pack, texture)
         .ok_or_else(|| format!("no texture '{texture}' in {}", input.display()))?;
+    if let Some(kind) = or_io::gta6::ttpf_author::bcpack_kind(&pack, index) {
+        return Err(or_io::gta6::ttpf_author::AuthorError::BcPack { index, kind }.to_string());
+    }
     let image = or_io::authoring::texture_import::load(Path::new(image))
         .map_err(|e| format!("{image}: {e}"))?;
     let was = pack.entries[index];

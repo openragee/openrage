@@ -308,6 +308,7 @@ fn file_menu(ui: &mut egui::Ui, state: &mut AppState) {
         ui.separator();
         item(ui, state, Action::Save);
         item(ui, state, Action::SaveAs);
+        item(ui, state, Action::SaveIntoArchiveCopy);
         ui.separator();
         item(ui, state, Action::CloseDocument);
         item(ui, state, Action::NewProject);

@@ -68,3 +68,5 @@ tempfile.workspace = true
 or-test-support.workspace = true
 # The editor's calls that make the small particle list the command tests build a pack from.
 or-particle.workspace = true
+# The zlib chunks of the synthetic GTA VI archive the `mcp` archive tools are tested on.
+flate2.workspace = true

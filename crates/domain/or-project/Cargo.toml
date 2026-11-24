@@ -19,7 +19,7 @@ sha2 = "0.10"
 # The random bytes of the stable id of a thing a kind of content keeps.
 getrandom = "0.3"
 # The readers a build reloads what it wrote through, and the metadata a `.ymt` is read as.
-or-io = { workspace = true, features = ["meta"] }
+or-io = { workspace = true, features = ["meta", "gta6"] }
 # The DLC pack and the .oiv package an output can be.
 or-title.workspace = true
 # How far a build has got and the flag that stops it.
@@ -29,3 +29,5 @@ or-job.workspace = true
 tempfile.workspace = true
 # The shared corpus: real `.ytd` and `.ydr` files for the reload check.
 or-test-support.workspace = true
+# The zlib chunks of the synthetic RPF9 archives the GTA VI project tests lay out.
+flate2.workspace = true

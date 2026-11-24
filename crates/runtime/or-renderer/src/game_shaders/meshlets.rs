@@ -46,7 +46,9 @@ const STAGE_BINDINGS: u32 = 64;
 /// of WGSL of one's own in place of the translated one, such as one `rpf scan-shading --wgsl`
 /// wrote, edited to store a value; `record=FILE` draws with the bytes of FILE as the record a
 /// material's numbers head, the rest of which only the game fills; `plain-device` asks the
-/// device for no optional feature and no raised limit, as a device that has none.
+/// device for no optional feature and no raised limit, as a device that has none; `unguarded`
+/// has the binder let through a stage whose loop counts to a number only the game fills, and
+/// no pass is then built but on a software adapter.
 #[derive(Debug, Default, PartialEq)]
 struct Aids {
     target: f32,
@@ -54,6 +56,7 @@ struct Aids {
     mesh: Option<String>,
     record: Option<String>,
     plain_device: bool,
+    unguarded: bool,
 }
 
 impl Aids {
@@ -66,6 +69,7 @@ impl Aids {
                 Some(("mesh", file)) => aids.mesh = Some(file.to_owned()),
                 Some(("record", file)) => aids.record = Some(file.to_owned()),
                 None if word == "plain-device" => aids.plain_device = true,
+                None if word == "unguarded" => aids.unguarded = true,
                 _ => {}
             }
         }
@@ -652,6 +656,10 @@ fn build(
     stages: (Arc<naga::Module>, Arc<naga::Module>),
     compiled: Option<&wgpu::PipelineCache>,
 ) -> Result<Built, String> {
+    // ⚠ A loop the guard would have refused may never end, and a hardware adapter that waits on one is lost.
+    if aids().unguarded && device.adapter_info().device_type != wgpu::DeviceType::Cpu {
+        return Err("an unguarded stage is drawn on a software adapter only".to_string());
+    }
     let fragment = match &aids().pixel {
         Some(file) => stage_of(file)?,
         None => (*stages.1).clone(),
@@ -1494,5 +1502,7 @@ impl MeshletScene {
 mod tone;
 pub use tone::{metered, Curve, Filmic, Tone};
 
+#[cfg(test)]
+mod far_tests;
 #[cfg(test)]
 mod tests;

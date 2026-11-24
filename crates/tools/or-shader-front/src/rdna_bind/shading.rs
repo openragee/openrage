@@ -169,6 +169,8 @@ pub enum Unfed {
     Loop(u32),
     #[error("{0} of its loops are not shown to end by its translation")]
     NotShown(u32),
+    #[error("it picks an entry of an array of textures or buffers by a number it computes, which no device checks")]
+    Entry,
 }
 
 /// One stage of a shading pass ready for the renderer: its module, what fills each binding, and
@@ -192,6 +194,13 @@ pub struct Stage {
 /// The buffers only the game fills whose state at rest is known, so that a loop may count up to
 /// a number of theirs: none yet.
 const AT_REST: &[u32] = &[];
+
+/// Whether the developer's aid `unguarded` of `OPENRAGE_GTA6_SHADED` is given: a count to a number
+/// only the game fills is then let through, for a renderer that draws it on a software adapter alone.
+fn unguarded() -> bool {
+    std::env::var("OPENRAGE_GTA6_SHADED")
+        .is_ok_and(|aids| aids.split(',').any(|word| word.trim() == "unguarded"))
+}
 
 /// Why a stage that loops is not drawn, where one of its loops may never end.
 fn never_ending(
@@ -218,7 +227,46 @@ fn never_ending(
             _ => None,
         })
         .collect();
+    if unguarded() {
+        return None;
+    }
     loops::counted_to(module, &game).map(Unfed::Loop)
+}
+
+/// Whether `module` takes an entry of an array it binds by a number it computes, or by a stated
+/// one past the array's end.
+// ⚠ No backend checks that number: Direct3D 12 and Vulkan read whatever lies there, or fault.
+fn picks_an_unchecked_entry(module: &naga::Module) -> bool {
+    use naga::{ArraySize, Expression as E, TypeInner};
+    let entries = |global: naga::Handle<naga::GlobalVariable>| match module.types
+        [module.global_variables[global].ty]
+        .inner
+    {
+        TypeInner::BindingArray { size, .. } => Some(match size {
+            ArraySize::Constant(entries) => entries.get(),
+            _ => 0,
+        }),
+        _ => None,
+    };
+    let functions = (module.functions.iter().map(|(_, function)| function))
+        .chain(module.entry_points.iter().map(|entry| &entry.function));
+    for function in functions {
+        let array = |base: naga::Handle<E>| match function.expressions[base] {
+            E::GlobalVariable(global) => entries(global),
+            _ => None,
+        };
+        for (_, expression) in function.expressions.iter() {
+            let unchecked = match *expression {
+                E::Access { base, .. } => array(base).is_some(),
+                E::AccessIndex { base, index } => array(base).is_some_and(|held| index >= held),
+                _ => false,
+            };
+            if unchecked {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// The constant buffers a device with default limits gives a stage.
@@ -726,6 +774,9 @@ pub fn feed(
     if let Some(why) = never_ending(&module, &feeds, &approximations) {
         return Err(why);
     }
+    if picks_an_unchecked_entry(&module) {
+        return Err(Unfed::Entry);
+    }
     if mesh {
         to_pixel_slots(&mut module, &parameter_slots(&native.outputs));
     }
@@ -849,6 +900,31 @@ mod tests {
         }
         let other = counted("a count over the wave's lanes read as this lane's");
         assert_eq!(never_ending(&module, &[], &other), None);
+    }
+
+    #[test]
+    fn an_entry_of_a_bound_array_taken_by_a_computed_number_or_past_its_end_is_told() {
+        let stage = |entry: &str| {
+            let text = format!(
+                "@group(3) @binding(0) var heap: binding_array<texture_2d<f32>, 4>;
+@group(1) @binding(1) var<uniform> number: u32;
+@fragment fn main() -> @location(0) vec4<f32> {{
+    return textureLoad(heap[{entry}], vec2<i32>(0), 0);
+}}"
+            );
+            naga::front::wgsl::parse_str(&text).expect("the WGSL parses")
+        };
+        assert!(picks_an_unchecked_entry(&stage("number")));
+        assert!(picks_an_unchecked_entry(&stage("number / 8u")));
+        assert!(!picks_an_unchecked_entry(&stage("3")));
+        // A stated entry past the end is one the reader of WGSL refuses, so it is made by hand.
+        let mut past = stage("3");
+        for (_, expression) in past.entry_points[0].function.expressions.iter_mut() {
+            if let naga::Expression::AccessIndex { index, .. } = expression {
+                *index = 4;
+            }
+        }
+        assert!(picks_an_unchecked_entry(&past));
     }
 
     fn resource(code: u8, slot: u16, name_hash: u32) -> Sgd5Resource {

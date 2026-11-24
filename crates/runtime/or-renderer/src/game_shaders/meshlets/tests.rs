@@ -46,7 +46,7 @@ fn refused<T>(device: &wgpu::Device, body: impl FnOnce() -> T) -> (T, Option<Str
 
 /// A stage shaped as a lowered mesh program is: no vertex buffer, three corners a thread, an
 /// instance a meshlet, the vertices and the meshlets read from buffers of dwords.
-const MESH: &str = "
+pub(super) const MESH: &str = "
 struct Words { words: array<u32> }
 @group(0) @binding(0) var<storage, read> vertices: Words;
 @group(0) @binding(1) var<storage, read> meshlets: Words;
@@ -103,7 +103,7 @@ struct Targets {
     );
 }";
 
-const SIZE: u32 = 16;
+pub(super) const SIZE: u32 = 16;
 
 fn dwords(values: &[u32]) -> Vec<u8> {
     bytemuck::cast_slice(values).to_vec()
@@ -111,7 +111,7 @@ fn dwords(values: &[u32]) -> Vec<u8> {
 
 /// A model of six vertices and two meshlets of a triangle each: one across the middle of the
 /// frame, one in its upper left corner.
-fn surface() -> MeshletSurface {
+pub(super) fn surface() -> MeshletSurface {
     let vertices: [[f32; 3]; 6] = [
         [-0.6, -0.6, 0.5],
         [0.6, -0.6, 0.5],
@@ -343,8 +343,9 @@ fn the_built_in_sky_has_a_sun_by_day_a_dim_moon_by_night_and_less_of_both_under_
 
 #[test]
 fn the_developer_s_aids_are_words_separated_by_commas() {
-    let aids =
-        Aids::parse("target=3, pixel=C:/a b/p.wgsl,plain-device,unknown,mesh=m.wgsl,record=r.bin");
+    let aids = Aids::parse(
+        "target=3, pixel=C:/a b/p.wgsl,plain-device,unknown,mesh=m.wgsl,record=r.bin,unguarded",
+    );
     assert_eq!(
         aids,
         Aids {
@@ -353,6 +354,7 @@ fn the_developer_s_aids_are_words_separated_by_commas() {
             mesh: Some("m.wgsl".into()),
             record: Some("r.bin".into()),
             plain_device: true,
+            unguarded: true,
         }
     );
     assert_eq!(Aids::parse(""), Aids::default());

@@ -5,12 +5,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use naga::{Expression as E, Handle, Statement as S};
 
-/// How a lowering says that it read a wave's first lane as the one lane it runs.
-pub(super) const FIRST_LANE: &str = "the first lane read as this lane";
-
-/// The two halves of the mask of running lanes, as a lowering names them.
-const MASK: [&str; 2] = ["exec_lo", "exec_hi"];
-
 /// The loops the functions of `module` hold.
 pub fn loops(module: &naga::Module) -> usize {
     fn of(block: &naga::Block) -> usize {
@@ -57,43 +51,6 @@ fn each_statement<'b>(block: &'b naga::Block, visit: &mut dyn FnMut(&'b S)) {
             _ => {}
         }
     }
-}
-
-/// Whether `module` sets running a lane other than the one a lowering runs: it stores a number
-/// with a bit past the first in the mask of lanes. Also where no function names the mask, so
-/// that a lowering that names it otherwise is not taken to set none.
-// ⚠ A lowering computes a comparison for its one lane and leaves the other bits of the mask as
-// they are. A loop that retires the lanes equal to the first running one, as a program picks
-// a texture by a number that differs a lane, never retires those bits and never ends.
-pub fn runs_other_lanes(module: &naga::Module) -> bool {
-    let half = |name: &Option<String>| MASK.iter().position(|half| Some(*half) == name.as_deref());
-    // A lowering keeps the mask in the function it runs in, or in the module where it splits one.
-    let mut named =
-        (module.global_variables.iter()).any(|(_, global)| half(&global.name).is_some());
-    let mut others = false;
-    for function in functions(module) {
-        let locals = &function.local_variables;
-        named |= locals.iter().any(|(_, local)| half(&local.name).is_some());
-        each_statement(&function.body, &mut |statement| {
-            let S::Store { pointer, value } = statement else {
-                return;
-            };
-            let E::Literal(naga::Literal::U32(stored)) = function.expressions[*value] else {
-                return;
-            };
-            let name = match function.expressions[*pointer] {
-                E::LocalVariable(local) => &locals[local].name,
-                E::GlobalVariable(global) => &module.global_variables[global].name,
-                _ => return,
-            };
-            others |= match half(name) {
-                Some(0) => stored & !1 != 0,
-                Some(_) => stored != 0,
-                None => false,
-            };
-        });
-    }
-    others || !named
 }
 
 /// A set of the buffers only the game fills, by their place in the list `counted_to` is given.
@@ -502,18 +459,5 @@ mod tests {
         assert_eq!(counted_to(&counting(None, 1), &game), None);
         // The number is the model's own.
         assert_eq!(counted_to(&hit, &game[..1]), None);
-    }
-
-    #[test]
-    fn a_stage_that_sets_every_lane_running_is_told_from_one_that_runs_its_own() {
-        assert!(!runs_other_lanes(&counting(Some(B::Equal), 1)));
-        assert!(runs_other_lanes(&counting(Some(B::Equal), u32::MAX)));
-        // No mask by the name a lowering gives it: not taken for a stage that sets none.
-        let mut unnamed = counting(Some(B::Equal), 1);
-        let function = unnamed.functions.iter_mut().next().unwrap().1;
-        for (_, local) in function.local_variables.iter_mut() {
-            local.name = None;
-        }
-        assert!(runs_other_lanes(&unnamed));
     }
 }

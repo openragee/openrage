@@ -167,8 +167,8 @@ pub enum Unfed {
     Targets,
     #[error("a loop of it counts up to a number of 0x{0:08X}, which only the game fills and whose state at rest is not known")]
     Loop(u32),
-    #[error("it sets every lane of a wave running and loops over them, which the translation of one lane never ends")]
-    Lanes,
+    #[error("{0} of its loops are not shown to end by its translation")]
+    NotShown(u32),
 }
 
 /// One stage of a shading pass ready for the renderer: its module, what fills each binding, and
@@ -199,11 +199,16 @@ fn never_ending(
     feeds: &[Fed],
     approximations: &BTreeMap<&'static str, u32>,
 ) -> Option<Unfed> {
+    // The lowering's own count comes first: it sees the program's graph, which the module no longer shows.
+    let not_shown: u32 = (approximations.iter())
+        .filter(|(name, _)| name.starts_with(crate::rdna::LOOP_NOT_SHOWN))
+        .map(|(_, loops)| loops)
+        .sum();
+    if not_shown > 0 {
+        return Some(Unfed::NotShown(not_shown));
+    }
     if loops::loops(module) == 0 {
         return None;
-    }
-    if approximations.contains_key(loops::FIRST_LANE) && loops::runs_other_lanes(module) {
-        return Some(Unfed::Lanes);
     }
     let game: Vec<((u32, u32), u32)> = (feeds.iter())
         .filter_map(|fed| match fed.feed {
@@ -833,6 +838,18 @@ mod tests {
     const FILLED: u32 = 0xA000_0004;
     const STREAMS: u32 = 0xA000_0005;
     const OTHER: u32 = 0xA000_0006;
+
+    #[test]
+    fn a_stage_whose_lowering_counts_a_loop_not_shown_to_end_is_refused() {
+        let module = naga::Module::default();
+        let counted = |name| BTreeMap::from([(name, 2u32)]);
+        for name in [crate::rdna::LOOP_OTHER_LANES, crate::rdna::LOOP_UNCHANGING] {
+            let why = never_ending(&module, &[], &counted(name));
+            assert_eq!(why, Some(Unfed::NotShown(2)));
+        }
+        let other = counted("a count over the wave's lanes read as this lane's");
+        assert_eq!(never_ending(&module, &[], &other), None);
+    }
 
     fn resource(code: u8, slot: u16, name_hash: u32) -> Sgd5Resource {
         Sgd5Resource {

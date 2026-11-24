@@ -8,6 +8,7 @@ use or_io::gta5::shaders::sgd5_pack::constant_buffers;
 use or_io::gta5::shaders::spirv_pack::{ConstantBuffer, SignatureElement};
 use or_io::hash::string_hash_str;
 
+use super::loops;
 use super::picks::{deferred_targets, material_textures, picks, Unsettled, TEXTURE_ARRAY};
 use super::plain::plain_textures;
 use super::{join, named, numbered, place, stated, Class, Join, Native, Place, Record, Unbound};
@@ -164,6 +165,10 @@ pub enum Unfed {
     Numbers(#[from] Unsettled),
     #[error("its pixel program writes targets whose contents are not established")]
     Targets,
+    #[error("a loop of it counts up to a number of 0x{0:08X}, which only the game fills and whose state at rest is not known")]
+    Loop(u32),
+    #[error("it sets every lane of a wave running and loops over them, which the translation of one lane never ends")]
+    Lanes,
 }
 
 /// One stage of a shading pass ready for the renderer: its module, what fills each binding, and
@@ -182,6 +187,33 @@ pub struct Stage {
     pub rows: Vec<u32>,
     /// Each way the stage departs from the hardware, counted, as its lowering says them.
     pub approximations: BTreeMap<&'static str, u32>,
+}
+
+/// The buffers only the game fills whose state at rest is known, so that a loop may count up to
+/// a number of theirs: none yet.
+const AT_REST: &[u32] = &[];
+
+/// Why a stage that loops is not drawn, where one of its loops may never end.
+fn never_ending(
+    module: &naga::Module,
+    feeds: &[Fed],
+    approximations: &BTreeMap<&'static str, u32>,
+) -> Option<Unfed> {
+    if loops::loops(module) == 0 {
+        return None;
+    }
+    if approximations.contains_key(loops::FIRST_LANE) && loops::runs_other_lanes(module) {
+        return Some(Unfed::Lanes);
+    }
+    let game: Vec<((u32, u32), u32)> = (feeds.iter())
+        .filter_map(|fed| match fed.feed {
+            Feed::Zero(Some(hash)) if !AT_REST.contains(&hash) => {
+                Some(((fed.group, fed.binding), hash))
+            }
+            _ => None,
+        })
+        .collect();
+    loops::counted_to(module, &game).map(Unfed::Loop)
 }
 
 /// The constant buffers a device with default limits gives a stage.
@@ -685,6 +717,9 @@ pub fn feed(
             feed,
             header,
         });
+    }
+    if let Some(why) = never_ending(&module, &feeds, &approximations) {
+        return Err(why);
     }
     if mesh {
         to_pixel_slots(&mut module, &parameter_slots(&native.outputs));

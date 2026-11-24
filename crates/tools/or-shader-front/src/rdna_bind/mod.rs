@@ -3,6 +3,7 @@
 //! container's table gives that register, and the module named and placed for the pack path.
 
 pub mod kept;
+pub mod loops;
 
 use std::collections::BTreeSet;
 

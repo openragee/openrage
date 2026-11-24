@@ -91,8 +91,8 @@ hours it states.
   held whole while a child that draws has no model on the device yet, so no hole opens while models
   arrive; such a child is asked for even where its own children draw in its place. A parent fading
   out for its children keeps the pixels their dither leaves, so a cross-fade leaves none bare. A
-  model counts as on the device only once the textures of its levels are there too, so no level
-  draws grey while they arrive. A prop list of the batch levels never fades out for its children: each list under it of
+  model something in view waits for counts as on the device only once the textures of the level it
+  first draws at are there too, so no level draws grey while they arrive. A prop list of the batch levels never fades out for its children: each list under it of
   the batch LOD level leaves out the instances it stands in for, all of them where it names none.
 - A node is whole within the distance it draws to and fades out over a band past it: 20 m for the
   high, orphan, first and second levels of detail, 25 m for the three farthest, 5 m for an orphan that

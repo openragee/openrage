@@ -11,7 +11,7 @@ use or_io::gta6::bcpack::Decode;
 use or_io::gta6::hash::name_hash64;
 use or_io::gta6::texture_names::{name_keys, use_label};
 use or_io::gta6::ttpf::{
-    calibrate_packs, coverage, Format, Texture, TexturePack, KIND_STORED, KIND_ZLIB,
+    calibrate_packs_from, coverage, Format, Texture, TexturePack, KIND_STORED, KIND_ZLIB,
 };
 
 /// A cube's faces in the order a pack stores them, D3D's.
@@ -276,7 +276,10 @@ fn cmd_calibrate(args: &[String]) -> Result<(), String> {
             eprint!("\r{percent:>3}%");
         }
     };
-    let found = calibrate_packs(&packs, &mut progress, &|| false).ok_or("stopped")?;
+    // A run cut short is gone on from by the next one, at the pass it was in.
+    let dir = calibration_dir().ok_or("no configuration directory to keep the calibration in")?;
+    let found =
+        calibrate_packs_from(&packs, Some(&dir), &mut progress, &|| false).ok_or("stopped")?;
     eprintln!();
     println!("Calibrated from {} pack(s) under {folder}\n", packs.len());
     println!(
@@ -302,7 +305,6 @@ fn cmd_calibrate(args: &[String]) -> Result<(), String> {
             summary.quadrants
         );
     }
-    let dir = calibration_dir().ok_or("no configuration directory to keep the calibration in")?;
     let path = save_cache(&dir, &found.tables, &found.members)
         .map_err(|e| format!("{}: {e}", dir.display()))?;
     println!("\nKept in {}", path.display());

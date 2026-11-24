@@ -263,7 +263,10 @@ fn coded<'a>(texture: &'a TextureIn, repeated: bool, through: Option<&Presets>) 
         })
         .collect();
     let scaled = |lights: Vec<f32>| -> Vec<f32> { lights.into_iter().map(interpolated).collect() };
-    let targets = agree(&plains);
+    // ponytail: a signed level is drawn as an unsigned one, which is the same picture where no
+    // value is negative; none has a plain level beside it, so only its edges are read. A signed
+    // texture with plain levels needs the signed draw before they can be its targets.
+    let targets = !texture.signed && agree(&plains);
     let mut out = Vec::new();
     for (i, level) in texture.levels.iter().enumerate() {
         let LevelData::Coded { lanes, at } = &level.data else {
@@ -482,12 +485,23 @@ fn vote_ends(
 
 /// Counts, for each value tried for a preset field that block `block` hangs on, the ends that
 /// value sends out of their base's range, the other of a base and its difference being settled.
-fn vote_range(walk: &Walk<'_>, block: usize, shape: &Shape, votes: &mut Votes) {
+///
+/// In the signed format a base's top bit is its sign, and the range is the signed one.
+fn vote_range(walk: &Walk<'_>, block: usize, shape: &Shape, signed: bool, votes: &mut Votes) {
     if !shape.transformed {
         return;
     }
     let standing = walk.fields(block);
     let top = 1 << shape.base;
+    let (low, high) = if signed {
+        (-(top / 2), top / 2)
+    } else {
+        (0, top)
+    };
+    let base_of = |field: u16| match bc6h::base_of(shape, field) {
+        base if base >= high => base - top,
+        base => base,
+    };
     for end in 1..2 * shape.regions {
         for channel in 0..3 {
             let own = 3 * end + channel;
@@ -509,16 +523,16 @@ fn vote_range(walk: &Walk<'_>, block: usize, shape: &Shape, votes: &mut Votes) {
                 0 => 0xFF >> (16 - shape.depth(field)),
                 _ => 0,
             };
-            let base = bc6h::base_of(shape, standing[channel]);
+            let base = base_of(standing[channel]);
             let other = bc6h::difference_of(shape, standing[own], channel);
             let wraps = &mut votes.wraps[CANDIDATES * at..CANDIDATES * (at + 1)];
-            let out = |sum: i32, slack: i32| u32::from(sum + slack < 0 || sum >= top);
+            let out = |sum: i32, slack: i32| u32::from(sum + slack < low || sum >= high);
             if both {
                 let slack = slack(channel) + slack(own);
                 let (bases, others) = (walk.trace(block, channel), walk.trace(block, own));
                 for ((wraps, &tried), &other) in wraps.iter_mut().zip(bases).zip(others) {
                     let other = bc6h::difference_of(shape, other, channel);
-                    *wraps += out(bc6h::base_of(shape, tried) + other, slack);
+                    *wraps += out(base_of(tried) + other, slack);
                 }
             } else if open(own) {
                 let slack = slack(own);
@@ -528,7 +542,7 @@ fn vote_range(walk: &Walk<'_>, block: usize, shape: &Shape, votes: &mut Votes) {
             } else {
                 let slack = slack(channel);
                 for (wraps, &tried) in wraps.iter_mut().zip(walk.trace(block, channel)) {
-                    *wraps += out(bc6h::base_of(shape, tried) + other, slack);
+                    *wraps += out(base_of(tried) + other, slack);
                 }
             }
         }
@@ -554,7 +568,7 @@ pub(super) fn vote(texture: &TextureIn, presets: &Presets, votes: &mut Votes, fi
                 break;
             };
             open |= walk.open(block, of.0);
-            vote_range(&walk, block, of.0, votes);
+            vote_range(&walk, block, of.0, texture.signed, votes);
             let wanted = (level.target.as_ref())
                 .and_then(|target| wanted(target, level.width, level.at[block]));
             let Some(wanted) = wanted else {

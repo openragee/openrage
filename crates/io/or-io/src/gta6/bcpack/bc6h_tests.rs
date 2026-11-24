@@ -1,7 +1,7 @@
 //! Made-up BC6H bodies: blocks coded here into lanes through made-up presets, which the decoder
 //! has to give back and a calibration has to find again from a plain level made up to match.
 
-use super::super::calibrate::{calibrate, LevelData, LevelIn, TextureIn};
+use super::super::calibrate::{calibrate, calibrate_from, LevelData, LevelIn, TextureIn};
 use super::super::tests::encode;
 use super::super::{decode_with, Decode};
 use super::*;
@@ -296,6 +296,7 @@ fn a_calibration_finds_made_up_presets_again_and_the_body_then_decodes() {
     let truth: Vec<u8> = level.iter().flat_map(ten_bytes).collect();
     let top = level_above(&level, width, height);
     let texture = || TextureIn {
+        signed: false,
         kind: 6,
         levels: vec![
             LevelIn {
@@ -315,7 +316,7 @@ fn a_calibration_finds_made_up_presets_again_and_the_body_then_decodes() {
     };
 
     let (tables, summaries) =
-        calibrate(1, &|_| vec![texture()], &mut |_, _| {}, &|| false).expect("not stopped");
+        calibrate(1, &|_, _| vec![texture()], &mut |_, _| {}, &|| false).expect("not stopped");
     let found = tables.hdr();
     assert_eq!(found.ends[254][..6], made.ends[254][..6]);
     assert_eq!(found.ends_bits[254][..6], [16; 6]);
@@ -372,7 +373,8 @@ fn a_level_with_no_plain_level_beside_it_is_fitted_from_the_level_the_fit_draws(
             at: (0..(width * height) as u32).collect(),
         },
     };
-    let texture = || TextureIn {
+    let texture_with = |low: LevelIn| TextureIn {
+        signed: false,
         kind: 6,
         levels: vec![
             LevelIn {
@@ -381,12 +383,78 @@ fn a_level_with_no_plain_level_beside_it_is_fitted_from_the_level_the_fit_draws(
                 data: LevelData::Plain(top.clone()),
             },
             coded(&mid_lanes, 2 * width, 2 * height),
-            coded(&low_lanes, width, height),
+            low,
         ],
     };
+    let texture = || texture_with(coded(&low_lanes, width, height));
 
     let (tables, summaries) =
-        calibrate(1, &|_| vec![texture()], &mut |_, _| {}, &|| false).expect("not stopped");
+        calibrate(1, &|_, _| vec![texture()], &mut |_, _| {}, &|| false).expect("not stopped");
+
+    // The lowest level left out for its size is read by the passes that fill, which ask for it.
+    let asked = std::sync::atomic::AtomicUsize::new(0);
+    let sized = |_: usize, large: bool| {
+        asked.fetch_add(usize::from(large), std::sync::atomic::Ordering::Relaxed);
+        let low = match large {
+            true => coded(&low_lanes, width, height),
+            false => LevelIn {
+                width,
+                height,
+                data: LevelData::Large,
+            },
+        };
+        vec![texture_with(low)]
+    };
+    let (large, _) = calibrate(1, &sized, &mut |_, _| {}, &|| false).expect("not stopped");
+    assert!(asked.into_inner() > 0);
+    assert!(large == tables);
+
+    // A run gone on from where another stood after a pass ends where a whole run ends, and reads less.
+    let mut stood = Vec::new();
+    calibrate_from(
+        1,
+        &|_, _| vec![texture()],
+        &mut |_, _| {},
+        &|| false,
+        None,
+        &mut |bytes| stood.push(bytes.to_vec()),
+    )
+    .expect("not stopped");
+    let reads = std::sync::atomic::AtomicUsize::new(0);
+    let counted = |_: usize, _: bool| {
+        reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        vec![texture()]
+    };
+    let (again, sums) = calibrate_from(
+        1,
+        &counted,
+        &mut |_, _| {},
+        &|| false,
+        Some(&stood[9]),
+        &mut |_| {},
+    )
+    .expect("not stopped");
+    assert!(again == tables);
+    assert_eq!(sums, summaries);
+    let reads = reads.into_inner();
+    // Bytes that are not where a fit of these textures stood start a whole run.
+    let whole = |from: &[u8]| {
+        let reads = std::sync::atomic::AtomicUsize::new(0);
+        let counted = |_: usize, _: bool| {
+            reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            vec![texture()]
+        };
+        calibrate_from(
+            1,
+            &counted,
+            &mut |_, _| {},
+            &|| false,
+            Some(from),
+            &mut |_| {},
+        );
+        reads.into_inner()
+    };
+    assert!(reads < whole(&stood[9][..100]));
     let found = tables.hdr();
     assert_eq!(found.ends[254][..6], made.ends[254][..6]);
     assert_eq!(found.first[255], made.first[255]);
@@ -462,8 +530,9 @@ fn a_field_takes_no_value_that_sends_an_end_out_of_its_base_s_range() {
             at: (0..(width * height) as u32).collect(),
         },
     };
-    let textures = |with_dark: bool| {
+    let textures = |with_dark: Option<bool>| {
         let lit = TextureIn {
+            signed: false,
             kind: 6,
             levels: vec![
                 LevelIn {
@@ -474,26 +543,30 @@ fn a_field_takes_no_value_that_sends_an_end_out_of_its_base_s_range() {
                 coded(&level, width, height),
             ],
         };
-        let dark = TextureIn {
+        let dark = |signed: bool| TextureIn {
+            signed,
             kind: 6,
             levels: vec![coded(&dark, 4, 4)],
         };
-        (std::iter::once(lit).chain(with_dark.then_some(dark))).collect::<Vec<_>>()
+        (std::iter::once(lit).chain(with_dark.map(dark))).collect::<Vec<_>>()
     };
-    let fit = |with_dark: bool| {
-        let (tables, _) =
-            calibrate(1, &|_| textures(with_dark), &mut |_, _| {}, &|| false).expect("not stopped");
+    let fit = |with_dark: Option<bool>| {
+        let (tables, _) = calibrate(1, &|_, _| textures(with_dark), &mut |_, _| {}, &|| false)
+            .expect("not stopped");
         tables.hdr().ends[254]
     };
 
     // The plain level alone says two steps lower, which would send the dark body's ends under 0.
     let lower: [u16; 3] = std::array::from_fn(|c| made.ends[254][3 + c].wrapping_sub(2 << 7));
-    let alone = fit(false);
+    let alone = fit(None);
     assert_eq!(alone[..3], made.ends[254][..3]);
     assert_eq!(alone[3..6], lower);
-    let both = fit(true);
+    let both = fit(Some(false));
     assert_eq!(both[..3], made.ends[254][..3]);
     assert_eq!(both[3..6], made.ends[254][3..6]);
+    // In the signed format an end two steps under 0 is in range, and the dark body forbids nothing.
+    let signed = fit(Some(true));
+    assert_eq!(signed[3..6], lower);
 }
 
 #[test]
@@ -532,12 +605,13 @@ fn plain_levels_that_are_not_one_another_averaged_down_are_no_targets() {
     };
     let run = |with_far: bool| {
         let texture = || TextureIn {
+            signed: false,
             kind: 6,
             levels: (with_far.then(|| plain(&far, 4)).into_iter())
                 .chain([plain(&top, 2), coded()])
                 .collect(),
         };
-        calibrate(1, &|_| vec![texture()], &mut |_, _| {}, &|| false).expect("not stopped")
+        calibrate(1, &|_, _| vec![texture()], &mut |_, _| {}, &|| false).expect("not stopped")
     };
     let (tables, _) = run(false);
     assert!(tables.covers(6));

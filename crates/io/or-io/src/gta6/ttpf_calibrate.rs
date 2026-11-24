@@ -18,6 +18,9 @@ const HEAD: u64 = 4096;
 const MAX_CODED_BLOCKS: usize = 1 << 16;
 /// The blocks of the largest plain level it reads: the level above the largest coded one.
 const MAX_PLAIN_BLOCKS: usize = 4 * MAX_CODED_BLOCKS;
+/// The blocks of the largest coded level a pass that fills reads, of BC6H and BC7: such a pass
+/// reads few textures, so it can hold larger ones.
+const LARGE_CODED_BLOCKS: usize = 2 * MAX_CODED_BLOCKS;
 
 /// What calibrating a set of packs gave.
 pub struct Calibrated {
@@ -70,8 +73,8 @@ impl TexturePack {
             D::Bc3Unorm | D::Bc3UnormSrgb => Some(3),
             D::Bc4Unorm => Some(4),
             D::Bc5Unorm => Some(5),
-            // The signed format's textures have no plain level beside a coded one, so nothing of them can be held against anything.
-            D::Bc6hUf16 => Some(6),
+            // No signed texture has a plain level beside a coded one: one votes only what its blocks say without a target.
+            D::Bc6hUf16 | D::Bc6hSf16 => Some(6),
             D::Bc7Unorm | D::Bc7UnormSrgb => Some(7),
             _ => None,
         }
@@ -126,8 +129,14 @@ impl TexturePack {
     /// rows decode exactly, and coded where one row holds it alone and does not.
     ///
     /// Only the levels of at most [`MAX_PLAIN_BLOCKS`] blocks are read, the coded ones of at most
-    /// [`MAX_CODED_BLOCKS`], and only the rows that hold them.
-    pub fn calibration_input(&self, index: usize, slice: usize) -> Option<TextureIn> {
+    /// [`MAX_CODED_BLOCKS`], and only the rows that hold them; `large` reads the coded ones up to
+    /// [`LARGE_CODED_BLOCKS`], which are otherwise said to be left out for their size.
+    pub fn calibration_input(&self, index: usize, slice: usize, large: bool) -> Option<TextureIn> {
+        let coded_blocks = if large {
+            LARGE_CODED_BLOCKS
+        } else {
+            MAX_CODED_BLOCKS
+        };
         let (kind, plan) = (self.fitted_kind(index)?, self.layout_of(index).ok()?);
         let layout = &plan.layout;
         let slice = slice as u64;
@@ -155,11 +164,30 @@ impl TexturePack {
         // The ranges of the texture's memory read exactly, joined where they touch, and each coded row's lanes.
         let mut exact: Vec<(usize, usize)> = Vec::new();
         let mut coded: Vec<(usize, usize, Vec<Vec<u16>>)> = Vec::new();
+        // The coded rows left out for their size, which a pass that fills reads.
+        let mut left_out: Vec<(usize, usize)> = Vec::new();
         for row in plan.rows.clone() {
             let at = (self.rows[row].virtual_address - plan.start) as usize;
             let end = at + self.size(row) as usize;
             let wanted = |span: &(usize, usize)| span.0 < end && at < span.1;
             if end - at > 2 * element * MAX_PLAIN_BLOCKS || !spans.iter().flatten().any(wanted) {
+                continue;
+            }
+            // No table reads a body of these kinds: its lanes are what a calibration reads, where
+            // it is small enough.
+            if (3..=7).contains(&kind)
+                && self.rows[row].kind == kind
+                && self.replaced_row(row).is_none()
+            {
+                if end - at <= element * coded_blocks {
+                    let lanes = (self.stored(&mut file, row).ok())
+                        .and_then(|stored| bcpack::lanes(kind, &stored, (end - at) as u64).ok());
+                    if let Some(lanes) = lanes {
+                        coded.push((at, end, lanes));
+                    }
+                } else if matches!(kind, 6 | 7) && end - at <= element * LARGE_CODED_BLOCKS {
+                    left_out.push((at, end));
+                }
                 continue;
             }
             match self.body(&mut file, row) {
@@ -178,7 +206,7 @@ impl TexturePack {
                             BcPackError::NoBlockTables { .. } | BcPackError::PresetNotKnown { .. },
                         ..
                     },
-                ) if self.rows[row].kind == kind && end - at <= element * MAX_CODED_BLOCKS => {
+                ) if self.rows[row].kind == kind && end - at <= element * coded_blocks => {
                     let lanes = (self.stored(&mut file, row).ok())
                         .and_then(|stored| bcpack::lanes(kind, &stored, (end - at) as u64).ok());
                     if let Some(lanes) = lanes {
@@ -205,6 +233,9 @@ impl TexturePack {
                     if let Some(blocks) = plain {
                         return Some(LevelData::Plain(blocks));
                     }
+                    if !level.tail && left_out.contains(&(from, to)) {
+                        return Some(LevelData::Large);
+                    }
                     let lanes = (coded.iter_mut())
                         .find(|row| !level.tail && (row.0, row.1) == (from, to))
                         .map(|row| std::mem::take(&mut row.2))?;
@@ -218,7 +249,12 @@ impl TexturePack {
                 }
             })
             .collect();
-        Some(TextureIn { kind, levels })
+        let signed = layout.format.dxgi() == DxgiFormat::Bc6hSf16;
+        Some(TextureIn {
+            kind,
+            signed,
+            levels,
+        })
     }
 }
 
@@ -228,6 +264,17 @@ impl TexturePack {
 /// third, the passes over them the rest.
 pub fn calibrate_packs(
     packs: &[TexturePack],
+    progress: &mut dyn FnMut(u64, u64),
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Option<Calibrated> {
+    calibrate_packs_from(packs, None, progress, stop)
+}
+
+/// [`calibrate_packs`], keeping under `keep` where the fit stands after each pass: a run that is
+/// stopped or cut short is gone on from, by the next run of the same packs, at the pass it was in.
+pub fn calibrate_packs_from(
+    packs: &[TexturePack],
+    keep: Option<&std::path::Path>,
     progress: &mut dyn FnMut(u64, u64),
     stop: &(dyn Fn() -> bool + Sync),
 ) -> Option<Calibrated> {
@@ -246,12 +293,32 @@ pub fn calibrate_packs(
     if stop() {
         return None;
     }
-    let read = |at: usize| {
+    let read = |at: usize, large: bool| {
         let (p, index, slice) = wanted[at];
-        Vec::from_iter(packs[p].calibration_input(index, slice))
+        Vec::from_iter(packs[p].calibration_input(index, slice, large))
     };
     let mut rest = |done: u64, total: u64| progress(total / 2 + done, total + total / 2);
-    let (tables, summaries) = fit::calibrate(wanted.len(), &read, &mut rest, stop)?;
+    // Where a run of these packs that did not end stood, and where this one stands after each pass.
+    let members: Vec<u64> = packs.iter().map(TexturePack::member_key).collect();
+    let part = keep.map(|dir| fit::cache_path(dir, &members).with_extension("part"));
+    let from = part.as_ref().and_then(|part| std::fs::read(part).ok());
+    let mut kept = |stood: &[u8]| {
+        if let Some(part) = &part {
+            // A pass that is not kept is run again by the next run.
+            let _ = fit::write_whole(part, stood);
+        }
+    };
+    let (tables, summaries) = fit::calibrate_from(
+        wanted.len(),
+        &read,
+        &mut rest,
+        stop,
+        from.as_deref(),
+        &mut kept,
+    )?;
+    if let Some(part) = &part {
+        let _ = std::fs::remove_file(part);
+    }
     Some(Calibrated {
         tables,
         summaries,

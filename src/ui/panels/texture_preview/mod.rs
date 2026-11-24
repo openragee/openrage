@@ -258,6 +258,12 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
         .data(|d| d.get_temp::<ViewState>(view_id))
         .unwrap_or_default();
 
+    let estimate = match state.document(doc_id).map(|d| &d.payload) {
+        Some(DocPayload::Ttpf(ttpf)) => {
+            (ttpf.index_of(&texture_name)).and_then(|index| ttpf.estimate_label(index))
+        }
+        _ => None,
+    };
     egui::Panel::top(ui.make_persistent_id("texture_preview_meta"))
         .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 4)))
         .show_inside(ui, |ui| {
@@ -286,6 +292,11 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
                     .small()
                     .color(theme::TEXT_SECONDARY),
                 );
+                // A picture through fitted tables is not the one the game decodes, and says so.
+                if let Some(how) = &estimate {
+                    let said = tr!("An estimate, not the exact picture: {how}", how = how);
+                    named(ui.label(egui::RichText::new(&said).small().strong()), &said);
+                }
                 if levels > 1 {
                     mip_picker(ui, &texture, levels, &mut mip);
                 }

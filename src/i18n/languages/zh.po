@@ -16110,3 +16110,12 @@ msgstr[1] "由 {model} 用作 {parameter}，另有 {count} 个模型也在使用
 
 msgid "Use"
 msgstr "用途"
+
+msgid "Some textures of this game are stored through the console's coder and do not read yet. A calibration fits what they need from the game's own packs, once: about a quarter of an hour, which can be stopped and taken up again. They then read as estimates, marked calibrated"
+msgstr "此游戏的部分纹理通过主机的编码器存储，目前尚无法读取。校准会根据游戏自身的包拟合所需的数据，只需一次：大约一刻钟，可以停止并在之后继续。此后这些纹理将作为估算值读取，并标记为已校准"
+
+msgid "An estimate, not the exact picture: {how}"
+msgstr "这是估算值，并非精确图像：{how}"
+
+msgid "Stopped before it finished. The next calibration of this game goes on from where this one stopped"
+msgstr "在完成前已停止。下次校准此游戏时将从这次停止的地方继续"

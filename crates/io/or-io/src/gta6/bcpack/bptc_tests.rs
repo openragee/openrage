@@ -341,6 +341,7 @@ fn a_calibration_finds_made_up_presets_again_and_the_body_then_decodes() {
     let truth: Vec<u8> = level.iter().flat_map(six_bytes).collect();
     let top = six_level_above(&level, width, height);
     let texture = || TextureIn {
+        signed: false,
         kind: 7,
         levels: vec![
             LevelIn {
@@ -360,7 +361,7 @@ fn a_calibration_finds_made_up_presets_again_and_the_body_then_decodes() {
     };
 
     let (tables, summaries) =
-        calibrate(1, &|_| vec![texture()], &mut |_, _| {}, &|| false).expect("not stopped");
+        calibrate(1, &|_, _| vec![texture()], &mut |_, _| {}, &|| false).expect("not stopped");
     let found = tables.bptc();
     // The one rank the body carries is given its mode; no other rank is.
     let named: Vec<u8> = (found.modes.iter().copied())
@@ -469,12 +470,13 @@ fn a_level_with_no_plain_level_beside_it_is_fitted_from_the_coded_level_above_it
             },
         }));
         TextureIn {
+            signed: false,
             kind: 7,
             levels: all,
         }
     };
     let (tables, summaries) =
-        calibrate(1, &|_| vec![texture()], &mut |_, _| {}, &|| false).expect("not stopped");
+        calibrate(1, &|_, _| vec![texture()], &mut |_, _| {}, &|| false).expect("not stopped");
     let found = tables.bptc();
     assert_eq!(found.ends[250][..8], made.ends[250][..8]);
     assert!(found.ends_known[250][..8].iter().all(|&known| known));

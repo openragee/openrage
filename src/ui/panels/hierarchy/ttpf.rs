@@ -53,6 +53,22 @@ pub(super) fn draw_ttpf(ui: &mut egui::Ui, state: &mut AppState, doc_id: Documen
         }
     }
     // The coder's tables are in no file: they are fitted from every pack of the game together.
+    // A game whose textures wait on that is offered it, until it is done or declined.
+    use crate::state::gta6_bcpack_calibration as calibration;
+    let id = egui::Id::new(("ttpf_offer", doc_id));
+    let offered = ui
+        .data_mut(|d| *d.get_temp_mut_or_insert_with(id, || calibration::offered(&ttpf.pack)))
+        && !ttpf.pack.is_calibrated()
+        && !calibration::running();
+    if offered {
+        ui.label(tr!(
+            "Some textures of this game are stored through the console's coder and do not read yet. A calibration fits what they need from the game's own packs, once: about a quarter of an hour, which can be stopped and taken up again. They then read as estimates, marked calibrated"
+        ));
+        if ui.button(tr!("Not now")).clicked() {
+            calibration::decline(&ttpf.pack);
+            ui.data_mut(|d| d.insert_temp(id, false));
+        }
+    }
     let calibrate = ui.button(tr!("Calibrate decoding")).on_hover_text(tr!(
         "Fit the tables of the console's texture coder from every pack of this game, so that the textures stored through it for BC3, BC4, BC5, BC6H and BC7 read. No file holds those tables, so such a texture is an estimate and is marked calibrated"
     ));

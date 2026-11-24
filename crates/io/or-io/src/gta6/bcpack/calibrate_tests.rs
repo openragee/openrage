@@ -194,7 +194,15 @@ fn chain(kind: u8) -> (TextureIn, Vec<u8>, Vec<u8>) {
             },
         },
     ];
-    (TextureIn { kind, levels }, stream, truth)
+    (
+        TextureIn {
+            signed: false,
+            kind,
+            levels,
+        },
+        stream,
+        truth,
+    )
 }
 
 /// `texture` again, as a calibration reads a texture in every pass.
@@ -209,11 +217,13 @@ fn again(texture: &TextureIn) -> TextureIn {
                     lanes: lanes.clone(),
                     at: at.clone(),
                 },
+                LevelData::Large => LevelData::Large,
                 LevelData::Absent => LevelData::Absent,
             },
         })
         .collect();
     TextureIn {
+        signed: false,
         kind: texture.kind,
         levels,
     }
@@ -221,7 +231,7 @@ fn again(texture: &TextureIn) -> TextureIn {
 
 /// The tables a calibration fits from `texture` alone.
 fn fitted(texture: TextureIn) -> (Tables, Vec<Summary>) {
-    let read = |_: usize| vec![again(&texture)];
+    let read = |_: usize, _: bool| vec![again(&texture)];
     calibrate(1, &read, &mut |_, _| {}, &|| false).expect("not stopped")
 }
 
@@ -409,6 +419,7 @@ fn a_census_names_each_rank_s_mode_from_the_widths_of_its_symbols() {
         }
     }
     let texture = TextureIn {
+        signed: false,
         kind: 7,
         levels: vec![LevelIn {
             width: blocks,
@@ -451,7 +462,7 @@ fn a_fit_s_tallies_do_not_grow_with_the_bodies_it_reads_and_many_workers_fit_wha
     // Forty copies read by as many workers as the machine gives, at most one texture each at a
     // time: the tables are the same from one run to the next, and no more than the workers' textures are held.
     let (held, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
-    let read = |_: usize| {
+    let read = |_: usize, _: bool| {
         let now = held.fetch_add(1, Ordering::SeqCst) + 1;
         most.fetch_max(now, Ordering::SeqCst);
         // A worker asks for its next texture only after it is done with the last.
@@ -470,7 +481,7 @@ fn a_fit_s_tallies_do_not_grow_with_the_bodies_it_reads_and_many_workers_fit_wha
 fn a_calibration_stops_when_asked_and_tells_how_far_it_is() {
     let (texture, _, _) = chain(4);
     let reads = AtomicUsize::new(0);
-    let read = |_: usize| {
+    let read = |_: usize, _: bool| {
         reads.fetch_add(1, Ordering::Relaxed);
         vec![again(&texture)]
     };

@@ -16110,3 +16110,12 @@ msgstr[1] "usata da {model} come {parameter} e da {count} altri modelli"
 
 msgid "Use"
 msgstr "Utilizzo"
+
+msgid "Some textures of this game are stored through the console's coder and do not read yet. A calibration fits what they need from the game's own packs, once: about a quarter of an hour, which can be stopped and taken up again. They then read as estimates, marked calibrated"
+msgstr "Alcune texture di questo gioco sono memorizzate tramite il codificatore della console e non si leggono ancora. Una calibrazione ricava ciò che serve dai pack del gioco, una sola volta: circa un quarto d'ora, che si può interrompere e riprendere. Poi si leggono come stime, contrassegnate come calibrate"
+
+msgid "An estimate, not the exact picture: {how}"
+msgstr "Una stima, non l'immagine esatta: {how}"
+
+msgid "Stopped before it finished. The next calibration of this game goes on from where this one stopped"
+msgstr "Interrotto prima del termine. La prossima calibrazione di questo gioco riprenderà da dove questa si è interrotta"

@@ -7,8 +7,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use or_io::gta6::bcpack::calibrate::save_cache;
-use or_io::gta6::ttpf::calibrate_packs;
+use or_io::gta6::bcpack::calibrate::{cache_path, member_key, save_cache};
+use or_io::gta6::ttpf::calibrate_packs_from;
 use or_io::gta6::TexturePack;
 use or_job::{Cancel, Progress};
 
@@ -82,6 +82,41 @@ pub(crate) fn folder_of(path: &Path) -> PathBuf {
     packs.and_then(Path::parent).unwrap_or(root).to_path_buf()
 }
 
+/// The mark, under `dir`, that the offer of a calibration was declined for the packs under
+/// `folder`: the packs' names and lengths name it, so the same game in another folder has it too.
+fn declined_mark(dir: &Path, folder: &Path) -> PathBuf {
+    let mut paths = Vec::new();
+    packs_under(folder, &mut paths);
+    let members: Vec<u64> = (paths.iter())
+        .filter_map(|path| Some(member_key(path, std::fs::metadata(path).ok()?.len())))
+        .collect();
+    cache_path(dir, &members).with_extension("declined")
+}
+
+/// Whether a calibration is offered for `pack`'s game: the pack holds a body only a calibration
+/// reads, none is kept for it, and the offer was not declined for the game's packs.
+pub(crate) fn offered(pack: &TexturePack) -> bool {
+    let needs = pack.rows.iter().any(|row| (3..=7).contains(&row.kind));
+    needs
+        && !pack.is_calibrated()
+        && super::ttpf_document::calibration_dir()
+            .is_some_and(|dir| !declined_mark(&dir, &folder_of(pack.path())).exists())
+}
+
+/// Do not offer a calibration for `pack`'s game again; the command stays.
+pub(crate) fn decline(pack: &TexturePack) {
+    if let Some(dir) = super::ttpf_document::calibration_dir() {
+        let mark = declined_mark(&dir, &folder_of(pack.path()));
+        // An offer whose mark cannot be kept is made again, which costs a click.
+        let _ = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(mark, []));
+    }
+}
+
+/// Whether a calibration is running.
+pub(crate) fn running() -> bool {
+    job().is_some()
+}
+
 fn work(folder: &Path, cancel: &Cancel, progress: &Progress) -> Ended {
     let mut paths = Vec::new();
     packs_under(folder, &mut paths);
@@ -92,8 +127,10 @@ fn work(folder: &Path, cancel: &Cancel, progress: &Progress) -> Ended {
     if packs.is_empty() {
         return Ended::NoPack;
     }
-    let found = calibrate_packs(
+    let dir = super::ttpf_document::calibration_dir();
+    let found = calibrate_packs_from(
         &packs,
+        dir.as_deref(),
         &mut |done, total| {
             progress.reached(done, total);
         },
@@ -102,7 +139,7 @@ fn work(folder: &Path, cancel: &Cancel, progress: &Progress) -> Ended {
     let Some(found) = found else {
         return Ended::Stopped;
     };
-    let kept = super::ttpf_document::calibration_dir()
+    let kept = dir
         .ok_or_else(|| "no configuration folder".to_string())
         .and_then(|dir| {
             save_cache(&dir, &found.tables, &found.members)
@@ -217,7 +254,7 @@ impl AppState {
             ),
             Ended::Stopped => (
                 Outcome::Stopped(Then::Nothing),
-                tr!("Stopped before it finished").to_string(),
+                tr!("Stopped before it finished. The next calibration of this game goes on from where this one stopped").to_string(),
             ),
         };
         self.jobs.record(JobKind::TextureCalibration, outcome, said);
@@ -261,6 +298,21 @@ mod tests {
             assert_eq!(logged.outcome, Outcome::Failed, "{}", logged.said);
         }
         assert!(job().is_none());
+    }
+
+    #[test]
+    fn an_offer_declined_is_declined_for_the_same_packs_in_any_folder() {
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        let game = |name: &str, bytes: usize| {
+            let folder = dir.path().join(name);
+            std::fs::create_dir_all(&folder).expect("made");
+            std::fs::write(folder.join("a.ttpf"), vec![0; bytes]).expect("written");
+            folder
+        };
+        let (here, moved, other) = (game("here", 10), game("moved", 10), game("other", 11));
+        let kept = dir.path().join("kept");
+        assert_eq!(declined_mark(&kept, &here), declined_mark(&kept, &moved));
+        assert_ne!(declined_mark(&kept, &here), declined_mark(&kept, &other));
     }
 
     #[test]

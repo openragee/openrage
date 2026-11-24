@@ -149,17 +149,35 @@ pub fn member_key(path: &Path, len: u64) -> u64 {
     name_hash64(&text)
 }
 
-/// Writes `tables` under `dir` as the calibration of the packs `members` key, and says where.
-pub fn save_cache(dir: &Path, tables: &Tables, members: &[u64]) -> std::io::Result<PathBuf> {
+/// The packs `members` key, each once and in order, as a calibration file lists them.
+fn listed(members: &[u64]) -> Vec<u8> {
     let mut members = members.to_vec();
     members.sort_unstable();
     members.dedup();
-    let listed: Vec<u8> = members.iter().flat_map(|key| key.to_le_bytes()).collect();
-    let path = dir.join(format!("bcpack-{:016x}.cal", name_hash64(&listed)));
+    members.iter().flat_map(|key| key.to_le_bytes()).collect()
+}
+
+/// The file under `dir` that holds the calibration of the packs `members` key: the packs name it, wherever they lie.
+pub fn cache_path(dir: &Path, members: &[u64]) -> PathBuf {
+    dir.join(format!("bcpack-{:016x}.cal", name_hash64(&listed(members))))
+}
+
+/// Writes `bytes` at `path` whole or not at all: a run cut short leaves the file that was there.
+pub fn write_whole(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let beside = path.with_extension("tmp");
+    std::fs::write(&beside, bytes)?;
+    std::fs::rename(&beside, path)
+}
+
+/// Writes `tables` under `dir` as the calibration of the packs `members` key, and says where.
+pub fn save_cache(dir: &Path, tables: &Tables, members: &[u64]) -> std::io::Result<PathBuf> {
+    let path = cache_path(dir, members);
     let mut bytes = tables.to_bytes();
-    bytes.extend(listed);
-    std::fs::create_dir_all(dir)?;
-    std::fs::write(&path, bytes)?;
+    bytes.extend(listed(members));
+    write_whole(&path, &bytes)?;
     Ok(path)
 }
 
@@ -199,6 +217,8 @@ pub enum LevelData {
     Plain(Vec<u8>),
     /// A coded body's lanes, and where each of its blocks lies in the level's linear rows: `u32::MAX` for one outside it.
     Coded { lanes: Vec<Vec<u16>>, at: Vec<u32> },
+    /// A coded body left out for its size, which a pass that fills reads.
+    Large,
     /// Not read.
     Absent,
 }
@@ -213,6 +233,8 @@ pub struct LevelIn {
 /// One mip chain of codec kind `kind`'s blocks, the top level first.
 pub struct TextureIn {
     pub kind: u8,
+    /// Whether its BC6H blocks are of the signed format.
+    pub signed: bool,
     pub levels: Vec<LevelIn>,
 }
 
@@ -1127,6 +1149,104 @@ impl Part {
     }
 }
 
+/// Where a fit stands after a pass, as the bytes a later run goes on from.
+struct Stood {
+    /// The pass to run next.
+    pass: usize,
+    tables: Tables,
+    plain_bptc: Option<Presets>,
+    held: Vec<u8>,
+    /// What the modes of two halves, BC7 and BC6H counted so far, in that order.
+    sums: Vec<Summary>,
+}
+
+const STOOD_MAGIC: [u8; 4] = *b"ORBS";
+
+impl Stood {
+    fn to_bytes(&self, count: usize, passes: usize) -> Vec<u8> {
+        let mut out = STOOD_MAGIC.to_vec();
+        for number in [
+            u64::from(VERSION),
+            passes as u64,
+            count as u64,
+            self.pass as u64,
+        ] {
+            out.extend(number.to_le_bytes());
+        }
+        out.extend(self.tables.to_bytes());
+        out.push(u8::from(self.plain_bptc.is_some()));
+        match &self.plain_bptc {
+            Some(plain) => out.extend(plain.to_bytes()),
+            None => out.resize(out.len() + PRESETS_BYTES, 0),
+        }
+        out.extend(&self.held);
+        for sum in &self.sums {
+            let numbers = [
+                sum.textures,
+                sum.bodies,
+                sum.blocks,
+                sum.unknown,
+                sum.compared,
+                sum.mismatch.to_bits(),
+                sum.alpha_compared,
+                sum.alpha_mismatch.to_bits(),
+            ];
+            out.extend(numbers.iter().flat_map(|number| number.to_le_bytes()));
+        }
+        out
+    }
+
+    /// What [`Self::to_bytes`] wrote for a fit of `count` textures in `passes` passes; `None` for anything else.
+    fn from_bytes(bytes: &[u8], count: usize, passes: usize) -> Option<Self> {
+        let rest = bytes.strip_prefix(&STOOD_MAGIC)?;
+        let (head, rest) = rest.split_at_checked(32)?;
+        let head: Vec<u64> = (head.as_chunks::<8>().0.iter())
+            .map(|number| u64::from_le_bytes(*number))
+            .collect();
+        let pass = usize::try_from(head[3])
+            .ok()
+            .filter(|&pass| pass <= passes)?;
+        if head[..3] != [u64::from(VERSION), passes as u64, count as u64] {
+            return None;
+        }
+        let (tables, rest) = rest.split_at_checked(TABLES_BYTES)?;
+        let (&has_plain, rest) = rest.split_first()?;
+        let (plain, rest) = rest.split_at_checked(PRESETS_BYTES)?;
+        let (held, rest) = rest.split_at_checked(count)?;
+        let (sums, []) = rest.as_chunks::<64>() else {
+            return None;
+        };
+        let sums = (sums.iter())
+            .map(|sum| {
+                let number =
+                    |at: usize| u64::from_le_bytes(std::array::from_fn(|byte| sum[8 * at + byte]));
+                Summary {
+                    textures: number(0),
+                    bodies: number(1),
+                    blocks: number(2),
+                    unknown: number(3),
+                    compared: number(4),
+                    mismatch: f64::from_bits(number(5)),
+                    alpha_compared: number(6),
+                    alpha_mismatch: f64::from_bits(number(7)),
+                    ..Summary::default()
+                }
+            })
+            .collect::<Vec<_>>();
+        (sums.len() == KINDS.len() + 2).then_some(())?;
+        Some(Self {
+            pass,
+            tables: Tables::from_bytes(tables)?,
+            plain_bptc: match has_plain {
+                0 => None,
+                _ => Some(Presets::from_bytes(plain)?),
+            },
+            held: held.to_vec(),
+            sums,
+        })
+    }
+}
+
 /// Fits every mode's tables from `count` textures, each read again through `texture`, which
 /// gives a texture's mip chains, in every pass that does something with one of its modes;
 /// `None` once `stop` says to stop.
@@ -1134,9 +1254,22 @@ impl Part {
 /// A pass reads its textures on several workers, each of which holds one texture at a time.
 pub fn calibrate(
     count: usize,
-    texture: &(dyn Fn(usize) -> Vec<TextureIn> + Sync),
+    texture: &(dyn Fn(usize, bool) -> Vec<TextureIn> + Sync),
     progress: &mut dyn FnMut(u64, u64),
     stop: &(dyn Fn() -> bool + Sync),
+) -> Option<(Tables, Vec<Summary>)> {
+    calibrate_from(count, texture, progress, stop, None, &mut |_| {})
+}
+
+/// [`calibrate`], going on from where an earlier run of the same textures stood (`from`, what
+/// that run gave `kept` last), and giving `kept` where it stands after each pass.
+pub fn calibrate_from(
+    count: usize,
+    texture: &(dyn Fn(usize, bool) -> Vec<TextureIn> + Sync),
+    progress: &mut dyn FnMut(u64, u64),
+    stop: &(dyn Fn() -> bool + Sync),
+    from: Option<&[u8]>,
+    kept: &mut dyn FnMut(&[u8]),
 ) -> Option<(Tables, Vec<Summary>)> {
     let mut tables = Tables::empty();
     let mut summaries: Vec<Summary> = (KINDS.iter())
@@ -1164,7 +1297,22 @@ pub fn calibrate(
     // The modes each texture gave chains of, a bit for each codec kind, as the first pass found
     // them: a later pass does not read a texture it does nothing with.
     let held: Vec<AtomicU8> = (0..count).map(|_| AtomicU8::new(0)).collect();
-    for pass in 0..passes {
+    let mut first = 0;
+    if let Some(stood) = from.and_then(|bytes| Stood::from_bytes(bytes, count, passes)) {
+        first = stood.pass;
+        tables = stood.tables;
+        plain_bptc = stood.plain_bptc;
+        for (held, was) in held.iter().zip(stood.held) {
+            held.store(was, Ordering::Relaxed);
+        }
+        let (halves, rest) = stood.sums.split_at(KINDS.len());
+        for (summary, was) in summaries.iter_mut().zip(halves) {
+            summary.add(was);
+        }
+        bptc.add(&rest[0]);
+        hdr.add(&rest[1]);
+    }
+    for pass in first..passes {
         let doing = Doing::of(pass, passes);
         let second = doing.second;
         if doing.bptc == BptcPass::Fill && plain_bptc.is_none() {
@@ -1188,13 +1336,23 @@ pub fn calibrate(
                                 done.fetch_add(1, Ordering::Relaxed);
                                 continue;
                             }
-                            let inputs = texture(index);
+                            // A pass that fills reads the larger coded levels too.
+                            let large = pass > 0
+                                && ((kinds >> 6 & 1 != 0 && doing.hdr == BptcPass::Fill)
+                                    || (kinds >> 7 & 1 != 0 && doing.bptc == BptcPass::Fill));
+                            let inputs = texture(index, large);
                             let kinds =
                                 (inputs.iter()).fold(0, |all, input| all | 1 << (input.kind & 7));
+                            let left_out = |input: &TextureIn| {
+                                let large =
+                                    |level: &LevelIn| matches!(level.data, LevelData::Large);
+                                input.levels.iter().any(large)
+                            };
+                            // A level left out for its size may hang on something not known.
+                            let mut lone = inputs.iter().any(left_out);
                             if pass == 0 {
-                                held[index].store(kinds, Ordering::Relaxed);
+                                held[index].store(kinds | u8::from(lone), Ordering::Relaxed);
                             }
-                            let mut lone = false;
                             for input in inputs {
                                 lone |= part.take(&input, standing, doing, plain);
                             }
@@ -1260,6 +1418,16 @@ pub fn calibrate(
         }
         bptc.add(&gathered.bptc);
         hdr.add(&gathered.hdr);
+        if pass + 1 < passes {
+            let stood = Stood {
+                pass: pass + 1,
+                tables: tables.clone(),
+                plain_bptc: plain_bptc.clone(),
+                held: (held.iter().map(|held| held.load(Ordering::Relaxed))).collect(),
+                sums: (summaries.iter().copied()).chain([bptc, hdr]).collect(),
+            };
+            kept(&stood.to_bytes(count, passes));
+        }
     }
     for (summary, fitted) in summaries.iter_mut().zip(&tables.modes) {
         let solved = |fields: &&[u16; FIELDS]| fields.iter().any(|&value| value != UNKNOWN);

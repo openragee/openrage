@@ -1235,7 +1235,7 @@ fn is_sparse(metadata: &std::fs::Metadata) -> bool {
 
 #[path = "ttpf_calibrate.rs"]
 mod calibrate;
-pub use calibrate::{calibrate_packs, coverage, Calibrated, Coverage};
+pub use calibrate::{calibrate_packs, calibrate_packs_from, coverage, Calibrated, Coverage};
 
 #[path = "ttpf_write.rs"]
 mod write;

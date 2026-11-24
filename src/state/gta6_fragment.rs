@@ -155,6 +155,7 @@ mod tests {
             weights: vec![[255, 0, 0, 0, 0, 0, 0, 0]; 9],
             root_triangles: vec![0; 9],
             rest_lengths: vec![1.0; 9],
+            ..ClothMesh::default()
         };
         let cloth = |kind| Cloth {
             flag: 1,

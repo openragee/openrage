@@ -163,7 +163,7 @@ pub(crate) fn print_cloth(c: &Cloth) {
                 m.triangles.len()
             );
             println!(
-                "  not read      the points' w, per-strand arrays 0, 2, 3 and 6 to 10, index arrays 1, 2, 3, 6 and 7, the box at 0x50"
+                "  not read      the points' w, per-strand arrays 0, 3 and 6 to 10, index arrays 1, 2, 3 and 7, what index array 6's four bytes a triangle count, the box at 0x50"
             );
         }
         ClothKind::Collider {

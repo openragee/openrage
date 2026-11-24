@@ -117,6 +117,9 @@ const BONES: [[u8; 8]; 4] = [
 ];
 const REST: [f32; 4] = [0.5, 0.75, 1.0, 1.25];
 const ROOT_TRIANGLES: [u32; 4] = [0, 1, 0, 1];
+/// Halves exactly, and a finite float as the four bytes together.
+const ROOT_UVS: [[f32; 2]; 4] = [[0.0, 0.5], [0.25, 0.5], [1.5, 1.0], [-0.75, 0.125]];
+const TRIANGLE_BYTES: [[u8; 4]; 2] = [[33, 3, 3, 2], [74, 7, 255, 2]];
 /// Where the strands' arrays lie in the physical section.
 const SKIN_BONES: usize = 0x80;
 const SKIN_WEIGHTS: usize = 0xA0;
@@ -160,7 +163,8 @@ fn mesh_body() -> (Image, Vec<u8>) {
     phys.resize(0xC0, 0);
     for (k, triangle) in ROOT_TRIANGLES.into_iter().enumerate() {
         put(&mut phys, 0x60 + 4 * k, triangle);
-        put(&mut phys, 0x70 + 4 * k, f(0.25 * k as f32));
+        let [u, v] = ROOT_UVS[k].map(crate::half::f32_to_half);
+        put(&mut phys, 0x70 + 4 * k, u32::from(v) << 16 | u32::from(u));
     }
     phys[SKIN_BONES..][..32].copy_from_slice(BONES.as_flattened());
     phys[SKIN_WEIGHTS..][..32].copy_from_slice(WEIGHTS.as_flattened());
@@ -179,6 +183,7 @@ fn mesh_body() -> (Image, Vec<u8>) {
     }
     // Index arrays 6 and 7: 4 bytes and 1 byte a triangle, the second padded to 4.
     phys.resize(0x140, 0);
+    phys[0x134..0x13C].copy_from_slice(TRIANGLE_BYTES.as_flattened());
     let words = phys.len() / 4;
     phys.resize(phys.len().next_multiple_of(16), 0);
     let buffer = img.alloc(0x50);
@@ -217,6 +222,8 @@ fn a_type_3_cloth_reads_its_bones_and_triangle_list_from_its_physical_buffer() {
     );
     assert_eq!(mesh.root_triangles, ROOT_TRIANGLES);
     assert_eq!(mesh.rest_lengths, REST);
+    assert_eq!(mesh.root_uvs, ROOT_UVS);
+    assert_eq!(mesh.triangle_bytes, TRIANGLE_BYTES);
 
     let mut more = phys.clone();
     more[0x5A] = 3;

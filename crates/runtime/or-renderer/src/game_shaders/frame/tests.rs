@@ -9,11 +9,7 @@ fn wgsl(source: &str) -> naga::Module {
 
 fn gpu(test: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    })) {
+    let adapter = match crate::instance::headless_adapter(&instance) {
         Ok(adapter) => adapter,
         Err(e) => {
             or_test_support::skip_device(test, format_args!("no wgpu adapter: {e}"));

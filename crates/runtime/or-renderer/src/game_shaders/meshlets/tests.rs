@@ -16,11 +16,7 @@ fn gpu_with(test: &str, plain: bool) -> Option<(wgpu::Device, wgpu::Queue)> {
     let mut backends = wgpu::InstanceDescriptor::new_without_display_handle();
     backends.backends = wgpu::Backends::from_env().unwrap_or(backends.backends);
     let instance = wgpu::Instance::new(backends);
-    let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    })) {
+    let adapter = match crate::instance::headless_adapter(&instance) {
         Ok(adapter) => adapter,
         Err(e) => {
             or_test_support::skip_device(test, format_args!("no wgpu adapter: {e}"));

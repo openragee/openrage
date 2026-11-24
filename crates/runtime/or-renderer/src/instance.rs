@@ -143,9 +143,54 @@ pub fn updates_64_bit_textures(adapter: &wgpu::Adapter) -> bool {
             .contains(wgpu::TextureFormatFeatureFlags::STORAGE_ATOMIC)
 }
 
+/// The variable that, set to anything but `0`, sends every device opened with no surface to the
+/// machine's software adapter: a frame a hardware adapter might never finish is drawn there first.
+pub const SOFTWARE_ADAPTER: &str = "OPENRAGE_SOFTWARE_ADAPTER";
+
+/// Whether [`SOFTWARE_ADAPTER`] asks for the software adapter.
+pub fn software_asked() -> bool {
+    std::env::var_os(SOFTWARE_ADAPTER).is_some_and(|value| !value.is_empty() && value != "0")
+}
+
+/// Refuses an adapter of `kind` named `name` where the software one was asked for and it is not a CPU's.
+fn software_or_not_asked(software: bool, kind: wgpu::DeviceType, name: &str) -> Result<(), String> {
+    match software && kind != wgpu::DeviceType::Cpu {
+        true => Err(format!(
+            "{SOFTWARE_ADAPTER} is set and {name} is no software adapter ({kind:?})"
+        )),
+        false => Ok(()),
+    }
+}
+
+/// The adapter a device with no surface is opened on: the machine's fastest, or its software one
+/// where [`SOFTWARE_ADAPTER`] is set.
+///
+/// # Errors
+/// Where the machine has none, or the software one was asked for and what it offers is no CPU's.
+pub fn headless_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter, String> {
+    let software = software_asked();
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: software,
+    }))
+    .map_err(|e| format!("no GPU adapter without a surface: {e}"))?;
+    let info = adapter.get_info();
+    software_or_not_asked(software, info.device_type, &info.name)?;
+    Ok(adapter)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_cpu_adapter_passes_where_the_software_one_is_asked_for() {
+        use wgpu::DeviceType::{Cpu, DiscreteGpu};
+        assert!(software_or_not_asked(true, Cpu, "a").is_ok());
+        assert!(software_or_not_asked(true, DiscreteGpu, "a").is_err());
+        assert!(software_or_not_asked(false, DiscreteGpu, "a").is_ok());
+    }
 
     #[test]
     fn a_backend_named_that_is_not_supported_is_refused_and_a_supported_one_is_kept() {

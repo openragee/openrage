@@ -995,12 +995,7 @@ fn headless_gpu() -> Result<(std::sync::Arc<wgpu::Device>, std::sync::Arc<wgpu::
         backend_options: wgpu::BackendOptions::default(),
         display: None,
     }));
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .map_err(|e| format!("no GPU adapter without a surface: {e}"))?;
+    let adapter = or_renderer::instance::headless_adapter(&instance)?;
     tracing::info!(backend = ?adapter.get_info().backend, adapter = %adapter.get_info().name, "the self-check's device");
 
     let adapter_features = adapter.features();

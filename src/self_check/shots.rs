@@ -13,6 +13,7 @@ use or_renderer::ShadingMode;
 
 mod lost_device;
 mod png;
+mod watched;
 use png::{paint, save_png, target_texture};
 
 use crate::render::RenderBridge;
@@ -390,6 +391,9 @@ fn file_stem(name: &str) -> Result<String, String> {
 
 /// The exit code.
 pub fn run(script: &Path, out: &Path) -> i32 {
+    if let Some(limit) = watched::limit() {
+        return watched::run(limit);
+    }
     match run_script(script, out) {
         Ok(()) => 0,
         Err(why) => {
@@ -837,6 +841,11 @@ impl Shell {
             &screen,
         );
         queue.submit(std::iter::once(encoder.finish()));
+        // A software adapter draws when it is waited for: a frame it never finishes stops here, where the watch sees it.
+        if or_renderer::instance::software_asked() {
+            let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        }
+        watched::beat();
         let saved = match capture {
             Some(path) => save_png(&device, &queue, target, w, h, path),
             None => Ok(()),

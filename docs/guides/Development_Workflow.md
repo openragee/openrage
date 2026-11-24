@@ -463,6 +463,15 @@ value, `record=FILE` draws with the bytes of FILE as the record a material's
 texture numbers head, whose other bytes only the game fills, and `plain-device`
 asks the device for no optional feature and no raised limit. `Aids` in `crates/runtime/or-renderer/src/game_shaders/meshlets.rs` reads it.
 
+⚠ A translated program that never ends resets the display driver of a hardware
+adapter. `OPENRAGE_SOFTWARE_ADAPTER=1` draws a script, a self-check and the
+`gpu-tests` of `or-renderer` on the machine's software adapter instead (Direct3D
+12's Basic Render Driver on Windows, lavapipe under Vulkan), and refuses to start
+where the adapter it is given is no CPU's. With it a script runs in a child
+process that its parent ends, naming the step, once no frame has finished for
+ten minutes; `OPENRAGE_FRAME_LIMIT=SECONDS` states another limit, and asks for
+the same watch on a hardware adapter. Draw what is not known to draw there first.
+
 Nothing a script clicks reaches past the app. A self-check's first act,
 `stand_in_for_the_desktop`, sends every call that would to its stand-in in
 `src/platform/`, which logs what it was asked: the run prints it and the Log

@@ -12,7 +12,7 @@ use std::ops::Range;
 use byteorder::{ByteOrder, LE};
 
 use super::rpf9_scan::RPF9_SLOT;
-use super::rpf9_write::{cuts, Rpf9Form, Rpf9Sections, PIECE, SECTION_LIMIT};
+use super::rpf9_write::{cuts, Rpf9Form, Rpf9Sections, SECTION_LIMIT};
 
 /// No physical object crosses one of these.
 const PHYSICAL_BLOCK: usize = 0x1_0000;
@@ -79,12 +79,8 @@ pub enum Rpf9GrowError {
     AimsIntoRemoved { at: u64, target: u64 },
     #[error("the virtual section's word at 0x08 is no pointer to a block map inside it")]
     NoBlockMap,
-    #[error("the bytes at {map:#X}, where the word at 0x08 points, state {stated:?} virtual and physical blocks where the sections cut to {cut:?}: they are no block map, so nothing is grown")]
-    NotTheMap {
-        map: u64,
-        stated: (u8, u8),
-        cut: (usize, usize),
-    },
+    #[error("the bytes at {map:#X}, where the word at 0x08 points, are no block map, whose head holds noughts but for its two counts: the byte at {byte:#X} is none, so nothing is grown")]
+    NotTheMap { map: u64, byte: u64 },
     #[error("the edit at {at:#X} falls inside the block map at {map:#X}, whose slots stay zero")]
     InsideMap { at: u64, map: u64 },
     #[error("the physical section is edited at {at:#X}, before its end at {len:#X}: what follows would be packed again into its blocks, which is not done")]
@@ -149,19 +145,19 @@ pub fn grow_section_with_data(
     check_pointers(sections, &pointers)?;
     let map = map_at(&sections.virtual_section)?;
     let v = &sections.virtual_section;
-    // No reader reads the map, so a body whose word at 0x08 points elsewhere reads; growing it
-    // would write the counts into whatever lies there. A map states the counts its sections cut
-    // to, or 2 for a section of whole pieces whose empty tail it counted.
-    let (stated, cut) = ((v[map + 8], v[map + 9]), counts(sections));
-    let states = |stated: u8, cut: usize, len: usize| {
-        usize::from(stated) == cut || (stated == 2 && cut == 1 && len.is_multiple_of(PIECE))
-    };
-    if !(states(stated.0, cut.0, v.len()) && states(stated.1, cut.1, sections.physical.len())) {
-        let map = map as u64;
-        return Err(Rpf9GrowError::NotTheMap { map, stated, cut });
-    }
     let mut room = usize::from(v[map + 8]) + usize::from(v[map + 9]);
     let slots_end = map + 16 + 8 * room;
+    // No reader reads the map, so a body whose word at 0x08 points elsewhere reads; growing it
+    // would write the counts into whatever lies there. A map is told by its head, which is as
+    // the writer holds one to be: noughts but for its two counts.
+    // ⚠ Not by its counts, which may be behind its sections: a caller lengthens a section and
+    // then asks for the growth, which is what brings them up to it. Nor by its slots: a map
+    // may state more of them than it has room for before the next allocation.
+    let counts_at = [map + 8, map + 9];
+    if let Some(byte) = (map..map + 16).find(|at| !counts_at.contains(at) && v[*at] != 0) {
+        let (map, byte) = (map as u64, byte as u64);
+        return Err(Rpf9GrowError::NotTheMap { map, byte });
+    }
     let inside = match by > 0 {
         true => at > map && at < slots_end,
         false => at < slots_end && at + removed > map,
@@ -764,8 +760,23 @@ mod tests {
                 grown,
                 Err(Rpf9GrowError::NotTheMap {
                     map: 0x200,
-                    stated: (1, 0),
-                    cut: (1, 1)
+                    byte: 0x200
+                })
+            ),
+            "{grown:?}"
+        );
+        assert_eq!(sections, before);
+        // One byte of data in the head tells it, the last as the first.
+        sections.virtual_section[0x200..0x20F].fill(0);
+        sections.virtual_section[0x208] = 1;
+        let before = sections.clone();
+        let grown = grow_section(&mut sections, &[], Rpf9Section::Virtual, end, 16);
+        assert!(
+            matches!(
+                grown,
+                Err(Rpf9GrowError::NotTheMap {
+                    map: 0x200,
+                    byte: 0x20F
                 })
             ),
             "{grown:?}"
@@ -775,6 +786,13 @@ mod tests {
         let mut whole = mapped(virtual_section(0x1_0000, 0x100, [2, 1]), physical(0x40));
         let end = whole.virtual_section.len();
         grow_section(&mut whole, &[], Rpf9Section::Virtual, end, 16).expect("grown");
+        // And so is one whose counts are behind its sections, which the growth brings up to them:
+        // a physical section it does not count yet, and a virtual one past its first piece.
+        let mut behind = mapped(virtual_section(0x1_0100, 0x100, [1, 0]), physical(0x40));
+        let end = behind.virtual_section.len();
+        grow_section(&mut behind, &[], Rpf9Section::Virtual, end, 16).expect("grown");
+        let v = &behind.virtual_section;
+        assert_eq!((v[0x108], v[0x109]), (2, 1));
     }
 
     #[test]

@@ -781,18 +781,6 @@ fn formats_of(fragment: &naga::Module) -> Result<Vec<Option<wgpu::ColorTargetSta
     Ok(targets)
 }
 
-/// Lights what the targets hold onto the frame, with the depth the pass drew: the first target's
-/// colour as a surface of the second's normal and smoothness and the third's specular colour,
-/// under a sun and a sky, then a tone curve and the frame's encoding. Where the light states a
-/// tone, the directional light's arithmetic, the metering and the tone curve are GTA VI's: the
-/// surfaces are metered into a texel of their own first, and the frame is exposed by it.
-// The normal is an octahedral one in the world's space. The third target holds, of the specular
-// colour `f`, `sqrt(1 - sqrt(1 - f))`. The fourth target's ambient terms come of buffers the
-// editor leaves at nought, so they are not read.
-// The colour is linear light: a pixel program writes what it samples of a map that states sRGB,
-// scaled, with no transfer of its own.
-const RESOLVE: &str = include_str!("meshlets/resolve.wgsl");
-
 fn targets_of(
     device: &wgpu::Device,
     formats: &[Option<wgpu::TextureFormat>],
@@ -1346,9 +1334,11 @@ impl MeshletScene {
     }
 }
 
+mod resolve;
 mod scene;
 mod sun_shadow;
 mod tone;
+use resolve::RESOLVE;
 pub use scene::{falls_on, nine_of, Clouds, Dome, Scene};
 pub use sun_shadow::to_tile;
 pub use tone::{metered, Curve, Filmic, Tone};

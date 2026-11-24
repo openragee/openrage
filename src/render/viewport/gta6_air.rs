@@ -309,6 +309,7 @@ impl Air {
 
     /// What the whole sky gives a surface that faces up, for each unit of the light of the body
     /// `towards`.
+    #[cfg(test)]
     pub(super) fn sky_on_the_ground(&self, towards: Vec3) -> Vec3 {
         (Self::ways().map(|(way, patch)| self.sky(way, towards) * way.z * patch)).sum()
     }

@@ -1,4 +1,16 @@
-struct Light {
+//! The program that lights what the targets hold onto the frame and meters it, as WGSL.
+
+/// Lights what the targets hold onto the frame, with the depth the pass drew: the first target's
+/// colour as a surface of the second's normal and smoothness and the third's specular colour,
+/// under a sun and a sky, then a tone curve and the frame's encoding. Where the light states a
+/// tone, the directional light's arithmetic, the metering and the tone curve are GTA VI's: the
+/// surfaces are metered into a texel of their own first, and the frame is exposed by it.
+// The normal is an octahedral one in the world's space. The third target holds, of the specular
+// colour `f`, `sqrt(1 - sqrt(1 - f))`. The fourth target's ambient terms come of buffers the
+// editor leaves at nought, so they are not read.
+// The colour is linear light: a pixel program writes what it samples of a map that states sRGB,
+// scaled, with no transfer of its own.
+pub(super) const RESOLVE: &str = r#"struct Light {
     // The way towards the sun or the moon.
     towards: vec4<f32>,
     // What it gives a surface that faces it, and the exposure in w.
@@ -484,3 +496,4 @@ fn beyond(texel: vec2<i32>, clip: vec2<f32>) -> f32 {
     stops = clamp(clamp(stops, light.stops.x, light.stops.y) + light.stops.z, light.stops.x, light.stops.y);
     return vec4<f32>(stops, 0.0, 0.0, 1.0);
 }
+"#;

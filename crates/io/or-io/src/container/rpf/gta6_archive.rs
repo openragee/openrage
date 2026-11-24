@@ -61,11 +61,11 @@ pub const GROUP_CHUNK_RECORD: u64 = 0xE0C1_2D7A_5D48_84C5;
 pub enum Gta6Class {
     /// `0x00`: a nested RPF9 archive.
     NestedArchive,
-    /// `0x0B`: a compressed resource (it carries the chunk/compression record).
+    /// `0x0B`: a compressed resource, with a chunk record or one raw-DEFLATE stream.
     CompressedResource,
     /// `0xFF`: media, markup or raw bytes (Bink, XML, text, a pipeline cache).
     Media,
-    /// Any other class byte; `0x0E` is the one observed example.
+    /// Any other content family; its chunk record determines decoding.
     Other(u8),
 }
 

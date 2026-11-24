@@ -12,6 +12,7 @@
 //! the first file.
 
 use std::collections::{BTreeMap, HashSet};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
@@ -67,6 +68,7 @@ enum ExtractSource {
         entry_index: u32,
         kind: RpfEntryKind,
     },
+    Rpf9Table(Arc<super::document::rpf9::entry::EntrySource>),
     Disk(PathBuf),
     Bytes(Arc<Vec<u8>>),
     /// A body a scan of the GTA VI archive at `archive` found at `offset`.
@@ -134,6 +136,14 @@ impl ExtractItem {
         Self { rel_path, source }
     }
 
+    /// An RPF9 table entry decoded progressively on the worker.
+    pub(super) fn rpf9(source: super::document::rpf9::entry::EntrySource) -> Self {
+        Self {
+            rel_path: source.name.clone(),
+            source: ExtractSource::Rpf9Table(Arc::new(source)),
+        }
+    }
+
     /// `bytes`, written as `rel_path`.
     pub(super) fn bytes(rel_path: String, bytes: Vec<u8>) -> Self {
         let source = ExtractSource::Bytes(Arc::new(bytes));
@@ -169,6 +179,7 @@ impl ExtractItem {
                 edit,
             } => super::gta6_edit::written(archive, *offset, &**edit),
             ExtractSource::Written(write) => write(),
+            ExtractSource::Rpf9Table(source) => source.bytes(),
             ExtractSource::Archive {
                 device,
                 entry_index,
@@ -185,6 +196,9 @@ impl ExtractItem {
             ExtractSource::Archive { device, .. } => {
                 archive_file(device.archive()).map(Path::to_path_buf)
             }
+            ExtractSource::Rpf9Table(source) => {
+                super::document::rpf9::entry::archive_path(&source.path).map(Path::to_path_buf)
+            }
             _ => None,
         }
     }
@@ -192,7 +206,8 @@ impl ExtractItem {
     /// What an export writes: OpenRage's canonical form when `fixes` and the form is decoded, else the bytes as they are.
     pub(super) fn export_bytes(&self, form: BodyForm, fixes: bool) -> Result<Vec<u8>, String> {
         let bytes = self.read(form)?;
-        if !fixes || form != BodyForm::Decoded {
+        if !fixes || form != BodyForm::Decoded || matches!(self.source, ExtractSource::Rpf9Table(_))
+        {
             return Ok(bytes);
         }
         let Some((canonical, repairs)) = canonical_form_repairing(&self.rel_path, &bytes) else {
@@ -215,7 +230,10 @@ fn canonicalising_alters(items: &[ExtractItem], form: BodyForm) -> bool {
     form == BodyForm::Decoded
         && items
             .iter()
-            .filter(|item| has_canonical_form(&item.rel_path))
+            .filter(|item| {
+                !matches!(item.source, ExtractSource::Rpf9Table(_))
+                    && has_canonical_form(&item.rel_path)
+            })
             .any(|item| {
                 item.read(form).is_ok_and(|bytes| {
                     canonical_form(&item.rel_path, &bytes).is_some_and(|c| c != bytes)
@@ -483,6 +501,33 @@ pub(super) fn kept_copy(target: &Path) -> PathBuf {
         .unwrap_or_else(|| target.to_path_buf())
 }
 
+struct Rpf9Output<'a, W> {
+    writer: &'a mut W,
+    cancel: &'a Cancel,
+}
+
+impl<W: Write> Rpf9Output<'_, W> {
+    fn check_cancelled(&self) -> io::Result<()> {
+        if self.cancel.is_set() {
+            // Interrupted is retried by write_all, so cancellation must use a terminal error.
+            return Err(io::Error::other("stopped"));
+        }
+        Ok(())
+    }
+}
+
+impl<W: Write> Write for Rpf9Output<'_, W> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.check_cancelled()?;
+        self.writer.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.check_cancelled()?;
+        self.writer.flush()
+    }
+}
+
 /// Write every item under `dest`, counting what fails and stopping when asked.
 ///
 /// ⚠ Runs on a worker and touches no app state, which is why it is a free
@@ -513,7 +558,8 @@ pub fn run_extraction(
         }
         _ => (items, fixes),
     };
-    or_job::run(items, &cancel, &progress, |item| {
+    let mut rpf9_cancelled = false;
+    let mut report = or_job::run(items, &cancel, &progress, |item| {
         progress.now_on(item.rel_path.clone());
         let mut target = dest.join(&item.rel_path);
         if std::fs::symlink_metadata(&target).is_ok() {
@@ -537,6 +583,32 @@ pub fn run_extraction(
                 return step;
             }
         }
+        if let (ExtractSource::Rpf9Table(source), false) = (&item.source, on_clash == OnClash::Save)
+        {
+            let write = || -> Result<u64, String> {
+                let mut temp = tempfile::NamedTempFile::new_in(&dest).map_err(|e| e.to_string())?;
+                let mut output = Rpf9Output {
+                    writer: temp.as_file_mut(),
+                    cancel: &cancel,
+                };
+                let count = source.extract(&mut output)?;
+                output.check_cancelled().map_err(|e| e.to_string())?;
+                if matches!(on_clash, OnClash::KeepBoth | OnClash::Skip) {
+                    temp.persist_noclobber(&target).map_err(|e| e.to_string())?;
+                } else {
+                    temp.persist(&target).map_err(|e| e.to_string())?;
+                }
+                Ok(count)
+            };
+            return match write() {
+                Ok(count) => Step::Done(count),
+                Err(_) if cancel.is_set() => {
+                    rpf9_cancelled = true;
+                    Step::Skipped
+                }
+                Err(e) => Step::Failed(format!("{}: {e}", item.rel_path)),
+            };
+        }
         let write = |bytes: &[u8]| match on_clash {
             OnClash::Save => super::document_io::atomic_write_with_backup(&target, bytes),
             _ => std::fs::write(&target, bytes),
@@ -548,7 +620,10 @@ pub fn run_extraction(
             },
             Err(e) => Step::Failed(format!("{}: {e}", item.rel_path)),
         }
-    })
+    });
+    // A stop inside the final entry leaves no following iteration for or_job to observe it.
+    report.cancelled |= rpf9_cancelled;
+    report
 }
 
 /// The one extraction the editor has in flight, if any.
@@ -924,6 +999,9 @@ impl AppState {
             .iter()
             .filter_map(|item| match &item.source {
                 ExtractSource::Archive { device, .. } => archive_file(device.archive()),
+                ExtractSource::Rpf9Table(source) => {
+                    super::document::rpf9::entry::archive_path(&source.path)
+                }
                 ExtractSource::Disk(path) => Some(path.as_path()),
                 ExtractSource::Scanned { archive, .. } => Some(archive.as_path()),
                 ExtractSource::Edited { archive, .. } => Some(archive.as_path()),
@@ -1087,6 +1165,44 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rpf9_output_stops_after_cancellation_during_a_write() {
+        struct StopAfterWrite {
+            bytes: Vec<u8>,
+            cancel: super::Cancel,
+        }
+        impl std::io::Write for StopAfterWrite {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.bytes.extend_from_slice(bytes);
+                self.cancel.set();
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        use std::io::Write;
+        let cancel = super::Cancel::new();
+        let mut writer = StopAfterWrite {
+            bytes: Vec::new(),
+            cancel: cancel.clone(),
+        };
+        let mut output = super::Rpf9Output {
+            writer: &mut writer,
+            cancel: &cancel,
+        };
+        assert!(!cancel.is_set());
+        output.write_all(b"first block").unwrap();
+        assert!(cancel.is_set());
+        let error = output.write_all(b"must not be written").unwrap_err();
+        assert_ne!(error.kind(), std::io::ErrorKind::Interrupted);
+        assert!(
+            output.check_cancelled().is_err(),
+            "the last block must not be published either"
+        );
+        assert_eq!(writer.bytes, b"first block");
+    }
+
     use super::*;
 
     fn session_with(files: &[(&str, &[u8])]) -> RpfEditSession {

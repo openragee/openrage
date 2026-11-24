@@ -47,6 +47,30 @@ fn extraction_reads_an_arbitrary_raw_entry_without_a_body_detector() {
 }
 
 #[test]
+fn an_explicit_nested_archive_is_extracted_without_reading_it_into_memory() {
+    let (dir, path, keys) = table_fixture(0);
+    let dest = dir.path().join("out");
+    assert_eq!(
+        do_extract(
+            &path,
+            &dest,
+            &[],
+            Some("0"),
+            None,
+            false,
+            &keys,
+            &NameResolver::new()
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        std::fs::read(dest.join("hash_0000000000000001")).unwrap(),
+        vec![0xa5; 16]
+    );
+}
+
+#[test]
 fn extraction_refuses_an_unsupported_table_layout_without_writing() {
     let (dir, path, keys) = table_fixture(11);
     let dest = dir.path().join("out");

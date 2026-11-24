@@ -132,9 +132,7 @@ pub const KNOWN_FRAMINGS: [[u64; 5]; 5] = [
     [0, 0x400, 0, 0, 4],
 ];
 
-/// Why a framing tuple is refused for a body of `len` bytes, or `None` when it is accepted: an unknown
-/// tuple, `F4 != 4`, or a tail (`F3`) larger than the body. The extent is never guessed from an
-/// unrecognised framing.
+/// Refuse unknown framing or an unaligned tail; known head and tail windows are clipped to the body.
 pub fn framing_reject_reason(framing: &[u64; 5], len: u64) -> Option<String> {
     if framing[4] != 4 {
         return Some(format!("its framing word F4 is {}, not 4", framing[4]));
@@ -142,12 +140,6 @@ pub fn framing_reject_reason(framing: &[u64; 5], len: u64) -> Option<String> {
     if !KNOWN_FRAMINGS.contains(framing) {
         return Some(format!(
             "its framing tuple {framing:x?} is not one of the five the install uses"
-        ));
-    }
-    if framing[3] > len {
-        return Some(format!(
-            "its framing tail F3 ({:#x}) is larger than the {len:#x}-byte body",
-            framing[3]
         ));
     }
     // The absolute counter is `offset / 16`, so every enciphered range must start 16-aligned. A tail
@@ -379,8 +371,8 @@ mod tests {
             "an unknown tuple is refused"
         );
         assert!(
-            framing_reject_reason(&[0x1000, 0x1000, 0, 0x1000, 4], 0x100).is_some(),
-            "a tail larger than the body is refused"
+            framing_reject_reason(&[0x1000, 0x1000, 0, 0x1000, 4], 0x100).is_none(),
+            "the known tail covers a shorter body in full"
         );
     }
 

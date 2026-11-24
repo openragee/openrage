@@ -1,18 +1,19 @@
 //! The RPF9 chunk table: the `0xe0c1` cell of a compressed entry and its slice of 8-byte chunk
-//! descriptors, decoded into exact per-chunk sizes and authored back bit for bit.
+//! descriptors, decoded into exact per-chunk sizes; modes 2 and 3 can be authored back bit for bit.
 //!
 //! The cell is `{u32 u0, u32 u1}`: `u1` holds the chunk count (bits 0..16), a constant `0x08`
 //! (bits 16..24) and the mode (bits 24..32); `u0` is a byte offset from the cell to the entry's
 //! descriptors, which sit in a heap after the column group. Mode 3 (24-byte rows) packs two
 //! complemented 16-bit sizes, a running stored offset and a flag; mode 2 (20-byte rows) packs two
-//! 24-bit sizes in 16-byte units, the stored padding and a flag. Chunks lie 16-aligned in the body.
+//! 24-bit sizes in 16-byte units, the stored padding and a flag. Mode 4 states decoded bytes directly
+//! and aligned stored units on either row shape. Chunks lie 16-aligned in the body.
 
 use byteorder::{ByteOrder, LE};
 
 use super::gta6_archive::{Gta6Archive, GROUP_CHUNK_RECORD};
 use crate::error::{IoError, Result};
 
-/// `u1` bits 16..24, the same in every row of both modes.
+/// `u1` bits 16..24, the same in every chunk-table mode.
 const CELL_MARK: u32 = 0x08;
 /// The flag of a deflate-compressed chunk; `0` is a stored chunk.
 const FLAG_ZLIB: u64 = 3;
@@ -31,7 +32,7 @@ pub struct Chunk {
     pub zlib: bool,
 }
 
-/// A decoded chunk table: its mode (3 on a 24-byte row, 2 on a 20-byte row) and its chunks.
+/// A decoded chunk table: its mode (2, 3 or 4) and its chunks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Table {
     pub mode: u8,
@@ -61,7 +62,7 @@ pub fn decode(cell: [u8; 8], heap: &[u8]) -> Result<Table> {
             (u1 >> 16) & 0xFF
         )));
     }
-    if mode != 2 && mode != 3 {
+    if mode != 2 && mode != 3 && mode != 4 {
         return Err(bad(format!("unknown mode {mode}")));
     }
     let words = u0
@@ -96,6 +97,13 @@ pub fn decode(cell: [u8; 8], heap: &[u8]) -> Result<Table> {
                 0x10000 - ((word >> 16) & 0xFFFF),
                 (word >> 60) & 0x3,
             )
+        } else if mode == 4 {
+            let aligned = ((word >> 28) & MASK24) << 4;
+            let pad = (word >> 52) & 0xF;
+            if pad > aligned {
+                return Err(bad(format!("descriptor {i} pads past its stored size")));
+            }
+            (word & MASK28, aligned - pad, word >> 56)
         } else {
             if word & MODE2_RESERVED != 0 {
                 return Err(bad(format!("descriptor {i} sets a reserved bit")));
@@ -389,7 +397,7 @@ mod tests {
         assert!(decode(cell(&table(3, 1, 0, &ok3)), &table(3, 1, 0, &ok3)).is_ok());
         let refused = |t: Vec<u8>| decode(cell(&t), &t).is_err();
         // An unknown mode.
-        assert!(refused(table(4, 1, 0, &ok3)));
+        assert!(refused(table(5, 1, 0, &ok3)));
         assert!(refused(table(1, 1, 0, &ok3)));
         // A reserved bit in either mode.
         assert!(refused(table(3, 1, 0, &[ok3[0] | (1 << 62)])));

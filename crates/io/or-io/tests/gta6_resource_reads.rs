@@ -313,3 +313,131 @@ fn malformed_mode_three_tables_never_fall_back_to_raw_or_counted_streams() {
         assert_eq!(source.reads, 0);
     }
 }
+
+#[test]
+fn mode_four_sizes_work_on_both_row_shapes() {
+    use or_io::container::rpf::gta6_chunk_table::cell_offset;
+    for resource in [false, true] {
+        let plain = if resource {
+            rpf9::resource_table(&[(16, 16, false)])
+        } else {
+            rpf9::chunked_table(64, &[(16, 16, false)])
+        };
+        let (mut archive, mut source, keys) = fixture_at(
+            plain,
+            b"table only bytes",
+            if resource { 0x1010 } else { 0x1000 },
+        );
+        let at = cell_offset(&archive, 0).unwrap();
+        let heap =
+            at + u32::from_le_bytes(archive.toc.bytes[at..at + 4].try_into().unwrap()) as usize;
+        archive.toc.bytes[at + 7] = 4;
+        archive.toc.bytes[heap..heap + 8].copy_from_slice(&(16u64 | (1u64 << 28)).to_le_bytes());
+        let read = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
+        assert_eq!(read.read(&mut source, &keys).unwrap(), b"table only bytes");
+    }
+}
+
+#[test]
+fn a_resource_without_a_chunk_record_is_one_bounded_raw_deflate_stream() {
+    let expected = b"a single headerless DEFLATE stream";
+    let mut encoder =
+        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(expected).unwrap();
+    let mut packed = encoder.finish().unwrap();
+    packed.resize(packed.len().next_multiple_of(16), 0x78);
+    let (mut archive, mut source, keys) = fixture_at(
+        rpf9::table(&[(1, 0x1000, packed.len() as u64, 11)]),
+        &packed,
+        0x1000,
+    );
+    archive.entries[0].real = Some(expected.len() as u64);
+    let read = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
+    assert_eq!(read.read(&mut source, &keys).unwrap(), expected);
+    source.source.get_mut()[0x1000..0x1010].fill(0);
+    assert!(read.read(&mut source, &keys).is_err());
+}
+
+#[test]
+fn mode_four_streams_across_buffers_and_refuses_bad_flags_sizes_and_padding() {
+    use or_io::container::rpf::gta6_chunk_table::cell_offset;
+    let expected: Vec<u8> = (0..200_003u32)
+        .map(|i| (i.wrapping_mul(1103515245).rotate_left(i % 31) >> 24) as u8)
+        .collect();
+    let compressed = zlib(&expected);
+    assert!(compressed.len() > 65536);
+    let aligned = compressed.len().next_multiple_of(16);
+    let mut body = compressed.clone();
+    body.resize(aligned, 0x78);
+    for resource in [false, true] {
+        let template = if resource {
+            rpf9::resource_table(&[(16, 16, false)])
+        } else {
+            rpf9::chunked_table(105, &[(16, 16, false)])
+        };
+        let (mut archive, mut source, keys) =
+            fixture_at(template, &body, if resource { 0x1010 } else { 0x1000 });
+        let at = cell_offset(&archive, 0).unwrap();
+        let heap =
+            at + u32::from_le_bytes(archive.toc.bytes[at..at + 4].try_into().unwrap()) as usize;
+        archive.toc.bytes[at + 7] = 4;
+        let word = expected.len() as u64
+            | ((aligned as u64 / 16) << 28)
+            | (((aligned - compressed.len()) as u64) << 52)
+            | (3 << 56);
+        archive.toc.bytes[heap..heap + 8].copy_from_slice(&word.to_le_bytes());
+        if resource {
+            use or_io::container::rpf::GROUP_ENTRY_ROW_20;
+            let row = archive
+                .toc
+                .groups
+                .iter()
+                .find(|g| g.name_hash == GROUP_ENTRY_ROW_20)
+                .unwrap()
+                .data
+                .start;
+            archive.toc.bytes[row + 8..row + 12]
+                .copy_from_slice(&(((aligned + 16) / 16) as u32).to_le_bytes());
+        } else {
+            archive.entries[0].stored = Some(aligned as u64);
+            archive.entries[0].real = Some(expected.len() as u64);
+        }
+        let plan = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 1 << 20).unwrap();
+        let mut decoded = Vec::new();
+        assert_eq!(
+            plan.extract(&mut source, &keys, &mut decoded).unwrap(),
+            expected.len() as u64
+        );
+        assert_eq!(decoded, expected);
+        assert!(source.reads > 1);
+        struct Refuse;
+        impl Write for Refuse {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("destination full"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        assert!(plan
+            .extract(&mut source, &keys, &mut Refuse)
+            .unwrap_err()
+            .to_string()
+            .contains("destination full"));
+        for invalid in [
+            word | (1 << 63),
+            (word & !(0xff << 56)) | (1 << 56),
+            (1 << 52) | (3 << 56),
+        ] {
+            archive.toc.bytes[heap..heap + 8].copy_from_slice(&invalid.to_le_bytes());
+            source.reads = 0;
+            assert!(
+                Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 1 << 20).is_err()
+            );
+            assert_eq!(source.reads, 0);
+        }
+        source.source.get_mut()[source.allowed.start as usize..source.allowed.start as usize + 16]
+            .fill(0);
+        assert!(plan.extract(&mut source, &keys, &mut Vec::new()).is_err());
+    }
+}

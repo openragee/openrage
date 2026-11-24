@@ -1,6 +1,9 @@
 //! Bounded entry reads whose layout comes only from the RPF9 table.
 
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, Write};
+
+#[path = "gta6_entry_stream.rs"]
+mod stream;
 use std::ops::Range;
 
 use super::gta6_chunk_table::{self, Chunk, Table};
@@ -11,7 +14,7 @@ use crate::error::{IoError, Result};
 #[derive(Clone)]
 pub struct Gta6EntryRead {
     extent: Range<u64>,
-    real: usize,
+    real: u64,
     decoding: Decoding,
     cipher: Option<Gta6Cipher>,
 }
@@ -19,6 +22,7 @@ pub struct Gta6EntryRead {
 #[derive(Clone)]
 enum Decoding {
     Raw,
+    Deflate,
     Table(Vec<Chunk>),
 }
 
@@ -92,11 +96,14 @@ impl Gta6EntryRead {
                     {
                         Decoding::Raw
                     }
-                    (Some(Gta6Class::Media | Gta6Class::CompressedResource), Some(table)) => {
+                    (Some(_), Some(table)) => {
                         if table_sizes(&table, 3, extra.chunk_count)? != (stored, real) {
                             return Err(bad("chunk sizes do not match the 24-byte row's sizes"));
                         }
                         Decoding::Table(table.chunks)
+                    }
+                    (Some(Gta6Class::CompressedResource), None) if extra.chunk_count.is_none() => {
+                        Decoding::Deflate
                     }
                     _ => {
                         return Err(bad(
@@ -136,9 +143,6 @@ impl Gta6EntryRead {
                 return Err(bad(reason));
             }
         }
-        usize::try_from(stored).map_err(|_| bad("stored size exceeds addressable memory"))?;
-        let real =
-            usize::try_from(real).map_err(|_| bad("decoded size exceeds addressable memory"))?;
         Ok(Self {
             extent: begin + skip..end,
             real,
@@ -147,46 +151,48 @@ impl Gta6EntryRead {
         })
     }
 
-    /// Read exactly the table's extent and decode it without searching for signatures or chunk boundaries.
+    /// The complete decoded length stated by the row or its chunk descriptors.
+    pub fn decoded_len(&self) -> u64 {
+        self.real
+    }
+
+    /// Read the entry into memory using only its table's decoding instructions.
     pub fn read<R: Read + Seek>(&self, source: &mut R, keys: &GtaViKeys) -> Result<Vec<u8>> {
-        if let Some(cipher) = self.cipher {
-            keys.content_decrypt(cipher.key_id, &cipher.iv, &mut [])?;
+        usize::try_from(self.real).map_err(|_| bad("decoded size exceeds addressable memory"))?;
+        let mut bytes = Vec::new();
+        self.extract(source, keys, &mut bytes)?;
+        Ok(bytes)
+    }
+
+    /// Read into memory only when both stored and decoded sizes fit `limit`.
+    pub fn read_limited<R: Read + Seek>(
+        &self,
+        source: &mut R,
+        keys: &GtaViKeys,
+        limit: u64,
+    ) -> Result<Vec<u8>> {
+        if self.real > limit || self.extent.end - self.extent.start > limit {
+            return Err(bad("entry exceeds the in-memory size limit"));
         }
-        let io = |e: std::io::Error| bad(e.to_string());
-        if source.seek(SeekFrom::End(0)).map_err(io)? < self.extent.end {
-            return Err(bad("entry extends past the source file"));
-        }
-        source
-            .seek(SeekFrom::Start(self.extent.start))
-            .map_err(io)?;
-        let mut body = vec![0; (self.extent.end - self.extent.start) as usize];
-        source.read_exact(&mut body).map_err(io)?;
-        if let Some(cipher) = self.cipher {
-            let mut result = Ok(());
-            super::gta6_content::decrypt_extent(
-                &mut body,
-                &cipher.framing,
-                &cipher.iv,
-                |slice, counter| {
-                    if result.is_ok() {
-                        result = keys.content_decrypt(cipher.key_id, counter, slice);
-                    }
-                },
-            );
-            result?;
-        }
-        match &self.decoding {
-            Decoding::Table(chunks) => inflate_table(&body, chunks),
-            Decoding::Raw => {
-                body.truncate(self.real);
-                Ok(body)
-            }
-        }
+        self.read(source, keys)
+    }
+
+    /// Decode into a writer with bounded buffers and no search for signatures or chunk boundaries.
+    pub fn extract<R: Read + Seek, W: Write + ?Sized>(
+        &self,
+        source: &mut R,
+        keys: &GtaViKeys,
+        output: &mut W,
+    ) -> Result<u64> {
+        stream::extract(self, source, keys, output)
     }
 }
 
 fn table_sizes(table: &Table, mode: u8, count: Option<u32>) -> Result<(u64, u64)> {
-    if table.mode != mode || table.chunks.is_empty() || count != Some(table.chunks.len() as u32) {
+    if (table.mode != mode && table.mode != 4)
+        || table.chunks.is_empty()
+        || count != Some(table.chunks.len() as u32)
+    {
         return Err(bad(
             "chunk table mode or count does not match the entry row",
         ));
@@ -206,67 +212,10 @@ fn table_sizes(table: &Table, mode: u8, count: Option<u32>) -> Result<(u64, u64)
     Ok((stored, real))
 }
 
-fn inflate_table(body: &[u8], chunks: &[Chunk]) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    let mut at = 0usize;
-    for chunk in chunks {
-        let end = at + chunk.stored as usize;
-        let bytes = body
-            .get(at..end)
-            .ok_or_else(|| bad("chunk extends past its entry"))?;
-        let expected = out.len() + chunk.inflated as usize;
-        if chunk.zlib {
-            let consumed = inflate_zlib(bytes, &mut out, expected)?;
-            if consumed != bytes.len() || out.len() != expected {
-                return Err(bad("compressed chunk does not match its exact table sizes"));
-            }
-        } else {
-            out.extend_from_slice(bytes);
-        }
-        at = end.next_multiple_of(16);
-    }
-    if at != body.len() {
-        return Err(bad("chunk sizes do not cover the entry body"));
-    }
-    Ok(out)
-}
-
-fn inflate_zlib(input: &[u8], out: &mut Vec<u8>, limit: usize) -> Result<usize> {
-    use flate2::{Decompress, FlushDecompress, Status};
-    let mut decoder = Decompress::new(true);
-    let mut buffer = [0; 64 * 1024];
-    loop {
-        let before_in = decoder.total_in();
-        let before_out = decoder.total_out();
-        let status = decoder
-            .decompress(
-                &input[before_in as usize..],
-                &mut buffer,
-                FlushDecompress::Finish,
-            )
-            .map_err(|e| {
-                bad(format!(
-                    "invalid zlib chunk: {e}; raw-DEFLATE chunks are not supported"
-                ))
-            })?;
-        let made = (decoder.total_out() - before_out) as usize;
-        if made > limit.saturating_sub(out.len()) {
-            return Err(bad("chunks exceed the decoded size stated by the table"));
-        }
-        out.extend_from_slice(&buffer[..made]);
-        if status == Status::StreamEnd {
-            return Ok(decoder.total_in() as usize);
-        }
-        if made == 0 && decoder.total_in() == before_in {
-            return Err(bad("truncated zlib chunk"));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{self, Cursor, Write};
+    use std::io::{self, Cursor, SeekFrom, Write};
 
     struct Bounded {
         source: Cursor<Vec<u8>>,
@@ -434,7 +383,7 @@ mod tests {
     #[test]
     fn unsupported_rows_and_out_of_bounds_extents_are_refused() {
         assert!(plan(&entry(16, 16, 14), None).is_err());
-        assert!(plan(&entry(16, 16, 11), None).is_err());
+        assert!(plan(&entry(16, 16, 11), None).is_ok());
         assert!(plan(&entry(16, 16, 11), Some(&[])).is_err());
         assert!(plan(&entry(16, 17, 255), None).is_err());
         assert!(plan(&entry(32, 1, 255), None).is_err());
@@ -492,18 +441,69 @@ mod tests {
             iv: [0; 16],
             framing: [0, 0x400, 0, 0, 4],
         });
-        assert_eq!(
-            plan(&row, Some(&[chunk]))
-                .unwrap()
-                .read(&mut source(&body), &keys)
-                .unwrap(),
-            expected
-        );
+        for framing in [[0, 0x400, 0, 0, 4], [0x1000, 0x1000, 0, 0x1000, 4]] {
+            row.cipher.as_mut().unwrap().framing = framing;
+            assert_eq!(
+                plan(&row, Some(&[chunk]))
+                    .unwrap()
+                    .read(&mut source(&body), &keys)
+                    .unwrap(),
+                expected
+            );
+        }
         row.cipher.as_mut().unwrap().cipher_type = 19;
         assert!(plan(&row, Some(&[chunk])).is_err());
         row.cipher.as_mut().unwrap().cipher_type = 17;
         row.cipher.as_mut().unwrap().framing[4] = 5;
         assert!(plan(&row, Some(&[chunk])).is_err());
+    }
+
+    #[test]
+    fn streaming_a_large_entry_is_bounded_and_memory_reads_still_refuse_it() {
+        struct Zeros {
+            at: u64,
+            end: u64,
+            reads: usize,
+        }
+        impl Read for Zeros {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                assert!(bytes.len() <= 65536);
+                assert!(self.at >= 128 && self.at + bytes.len() as u64 <= self.end);
+                self.reads += 1;
+                self.at += bytes.len() as u64;
+                bytes.fill(0);
+                Ok(bytes.len())
+            }
+        }
+        impl Seek for Zeros {
+            fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+                self.at = match from {
+                    SeekFrom::Start(at) => at,
+                    SeekFrom::End(0) => self.end,
+                    _ => panic!("unexpected seek"),
+                };
+                Ok(self.at)
+            }
+        }
+        let size = (1u64 << 30) + 16;
+        let row = entry(size, size, 0);
+        let extra = Gta6EntryExtra {
+            ..Default::default()
+        };
+        let plan = Gta6EntryRead::plan(&row, extra, None, 128, 0..128 + size, u64::MAX).unwrap();
+        let mut source = Zeros {
+            at: 0,
+            end: 128 + size,
+            reads: 0,
+        };
+        let keys = keys();
+        assert!(plan.read_limited(&mut source, &keys, 1 << 30).is_err());
+        assert_eq!(source.reads, 0);
+        assert_eq!(
+            plan.extract(&mut source, &keys, &mut io::sink()).unwrap(),
+            size
+        );
+        assert!(source.reads > 1);
     }
 
     #[test]

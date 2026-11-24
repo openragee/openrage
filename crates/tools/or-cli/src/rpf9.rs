@@ -502,21 +502,24 @@ fn do_extract(
                 );
                 continue;
             }
-        } else if entry.kind() == Some(Gta6Class::NestedArchive) {
+        } else if entry.kind() == Some(Gta6Class::NestedArchive) && entry_sel.is_none() {
             eprintln!(
                 "  skipped {} (a nested archive; list it with an inner path)",
                 entry.display_name()
             );
             continue;
         }
-        let bytes = Gta6EntryRead::from_table(&mount.archive, extent.clone(), entry.index, 1 << 30)
-            .and_then(|read| read.read(&mut file, keys))
+        let read = Gta6EntryRead::from_table(&mount.archive, extent.clone(), entry.index, u64::MAX)
             .map_err(|e| format!("{}: {e}", entry.display_name()))?;
         let out = dest.join(safe_out_name(entry));
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
         }
-        std::fs::write(&out, &bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+        let mut temp = tempfile::NamedTempFile::new_in(dest).map_err(|e| e.to_string())?;
+        read.extract(&mut file, keys, temp.as_file_mut())
+            .map_err(|e| format!("{}: {e}", entry.display_name()))?;
+        temp.persist(&out)
+            .map_err(|e| format!("{}: {e}", out.display()))?;
         written += 1;
     }
     Ok(written)

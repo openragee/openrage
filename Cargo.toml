@@ -345,6 +345,8 @@ or-renderer.workspace = true
 or-cli.workspace = true
 or-shader-tool.workspace = true
 or-simulation.workspace = true
+# Stream archive exports to a temporary file before publishing them.
+tempfile.workspace = true
 
 # The baker compresses and translates shaders in parallel.
 rayon.workspace = true
@@ -396,8 +398,6 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [dev-dependencies]
-# Scratch directories that clean up on drop, for the tests that write files.
-tempfile.workspace = true
 # Finds the shared corpus. The bound-rendering tests in `render::lines` and
 # `render::viewport` read `.ybn` files out of the shared corpus.
 or-test-support.workspace = true

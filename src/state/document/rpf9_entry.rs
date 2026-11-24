@@ -27,7 +27,7 @@ impl Rpf9TableDocument {
             .nodes
             .get(&base)
             .ok_or_else(|| tr!("The archive table could not be loaded.").to_string())?;
-        let read = Gta6EntryRead::from_table(&node.archive, node.extent.clone(), index, LIMIT)
+        let read = Gta6EntryRead::from_table(&node.archive, node.extent.clone(), index, u64::MAX)
             .map_err(|e| e.to_string())?;
         let entry = &node.archive.entries[index as usize];
         let name = file_name(entry);
@@ -159,10 +159,20 @@ impl EntrySource {
         let mut file = checked_file(&self.archive, &self.metadata)?;
         let bytes = self
             .read
-            .read(&mut file, &self.keys)
+            .read_limited(&mut file, &self.keys, LIMIT)
             .map_err(|e| e.to_string())?;
         checked_file(&self.archive, &self.metadata)?;
         Ok(bytes)
+    }
+
+    pub fn extract(&self, output: &mut dyn std::io::Write) -> Result<u64, String> {
+        let mut file = checked_file(&self.archive, &self.metadata)?;
+        let count = self
+            .read
+            .extract(&mut file, &self.keys, output)
+            .map_err(|e| e.to_string())?;
+        checked_file(&self.archive, &self.metadata)?;
+        Ok(count)
     }
 
     fn payload(&self) -> Result<DocPayload, String> {
@@ -241,7 +251,7 @@ impl AppState {
         }
         let name = source.name.clone();
         let archive = source.archive.clone();
-        let item = ExtractItem::written(name.clone(), Arc::new(move || source.bytes()));
+        let item = ExtractItem::rpf9(source);
         self.start_archive_extraction(name, dest, archive, vec![item], OnClash::KeepBoth)
     }
 }

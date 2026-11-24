@@ -476,26 +476,15 @@ pub fn view_passes<'f>(
         .collect()
 }
 
-/// Where a pass whose mesh program reads `streams` ranks for a geometry that holds the streams
-/// `held` tells: the fewest streams the geometry leaves empty first, then a program that does
-/// not skin, then the most streams.
-// ⚠ A model is drawn at rest, where a program that skins and one that does not put a vertex
-// at the same place. A ped's head was drawn in place by each program of its effect that does
-// not skin, and not at all by those that skin with every bone at rest: what else those read
-// of the game's is not read.
-fn rank(
-    streams: &BTreeSet<u32>,
-    skins: bool,
-    held: &dyn Fn(&u32) -> bool,
-) -> (std::cmp::Reverse<usize>, bool, usize) {
-    let missing = streams.iter().filter(|slot| !held(slot)).count();
-    (std::cmp::Reverse(missing), !skins, streams.len())
-}
-
-/// The pass of `passes` that draws a geometry whose vertex data is `vertex_data`: the one that
-/// [`rank`]s first for the streams its table holds.
+/// The pass of `passes` that draws a geometry whose vertex data is `vertex_data`: the one whose
+/// mesh program reads the fewest streams the data's table of streams leaves empty, and among
+/// those the most streams.
 // A stream every pass of an effect reads and a geometry lacks is read as the game's own program
 // reads it: through the nought its entry of the table is.
+// ⚠ The most streams, so that a geometry with weights is drawn by a program that skins: a weapon's
+// barrel is drawn in place by its skinned program and not at all by the other. A ped's head is the
+// reverse, drawn by the programs that do not skin and by none that does; its effects are refused
+// for another reason, and what a ped's skinned program reads for its bones is not read.
 pub fn drawing_pass<'p, P: std::borrow::Borrow<Gta6ShadingPass>>(
     passes: &'p [P],
     vertex_data: &[u8],
@@ -504,11 +493,11 @@ pub fn drawing_pass<'p, P: std::borrow::Borrow<Gta6ShadingPass>>(
         let at = 4 * *slot as usize;
         (vertex_data.get(at..at + 4)).is_some_and(|word| word != [0; 4])
     };
-    // The first of those that rank alike: `max_by_key` keeps the last.
+    // The first of those that read as many: `max_by_key` keeps the last.
     (passes.iter().rev()).max_by_key(|pass| {
-        let mesh = &pass.borrow().mesh;
-        let skins = mesh.feeds.iter().any(|fed| fed.feed == Feed::Bones);
-        rank(&mesh.streams, skins, &held)
+        let streams = &pass.borrow().mesh.streams;
+        let missing = streams.iter().filter(|slot| !held(slot)).count();
+        (std::cmp::Reverse(missing), streams.len())
     })
 }
 
@@ -868,25 +857,6 @@ mod tests {
         assert!(draws_in_a_view("deferredalphaclip_drawskinnedmeshlets"));
         assert!(!draws_in_a_view("deferreduvspace_drawmeshlets"));
         assert!(!draws_in_a_view("deferredpacked_drawpreskinnedmeshlets"));
-    }
-
-    #[test]
-    fn a_geometry_is_drawn_by_the_pass_that_misses_the_fewest_streams_then_skins_by_no_bones() {
-        let set = |slots: &[u32]| slots.iter().copied().collect::<BTreeSet<u32>>();
-        let (plain, more, skinned) = (
-            set(&[0, 1, 2]),
-            set(&[0, 1, 2, 3]),
-            set(&[0, 1, 2, 3, 6, 7]),
-        );
-        // A skinned geometry holds every stream: the program that skins reads the most of them.
-        let all = |_: &u32| true;
-        assert!(rank(&more, false, &all) > rank(&skinned, true, &all));
-        assert!(rank(&more, false, &all) > rank(&plain, false, &all));
-        // Where only the skinned program finds its streams, it draws.
-        let no_third = |slot: &u32| *slot != 3;
-        assert!(rank(&plain, false, &no_third) > rank(&skinned, true, &no_third));
-        let lacks_two = |slot: &u32| *slot > 1;
-        assert!(rank(&set(&[2, 3, 6]), true, &lacks_two) > rank(&plain, false, &lacks_two));
     }
 
     #[test]

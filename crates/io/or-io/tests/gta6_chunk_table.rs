@@ -60,7 +60,11 @@ struct Tally {
     mode4: usize,
     failures: Vec<String>,
     flagged_walked: usize,
+    clear_read: usize,
 }
+
+/// A clear body larger than this is not read back: the check is the read, not the volume.
+const CLEAR_READ_CAP: u64 = 4 << 20;
 
 fn ceil16(x: u32) -> u64 {
     (u64::from(x) + 15) & !15
@@ -140,6 +144,22 @@ fn walk(file: &mut File, mount: &Gta6Mount, keys: &GtaViKeys, depth: usize, t: &
         if let Some(at) = cell_offset(&mount.archive, index) {
             let chunks = check_row(mount, index, at, t);
             let flagged = entry.cipher.map(|c| c.cipher_type) == Some(CONTENT_CIPHER_TYPE);
+            // A clear sized entry reads whole through its table, never cut off at a chunk boundary.
+            let clear_sized = entry.cipher.is_none()
+                && entry.stored.is_some()
+                && entry.real.is_some_and(|real| real <= CLEAR_READ_CAP);
+            if chunks.is_some() && clear_sized {
+                t.clear_read += 1;
+                match mount.read_entry(&mut *file, entry) {
+                    Ok(body) if Some(body.len() as u64) == entry.real => {}
+                    Ok(body) => t.failures.push(format!(
+                        "entry {index}: a clear chunked body read {} of {:?} bytes",
+                        body.len(),
+                        entry.real
+                    )),
+                    Err(e) => t.failures.push(format!("entry {index}: clear read: {e}")),
+                }
+            }
             if let (Some(chunks), true) = (chunks, flagged) {
                 t.flagged_walked += 1;
                 match mount.read_entry_decrypted_report(&mut *file, entry, keys) {
@@ -199,12 +219,13 @@ fn every_chunk_row_authors_back_byte_identical_and_drives_the_walk() {
         walk(&mut file, &mount, &keys, 0, &mut t);
     }
     println!(
-        "chunk rows {} (mode 3 {}, mode 2 {}, mode 4 {}), flagged walked {}, failures {}",
+        "chunk rows {} (mode 3 {}, mode 2 {}, mode 4 {}), flagged walked {}, clear read {}, failures {}",
         t.rows,
         t.mode3,
         t.mode2,
         t.mode4,
         t.flagged_walked,
+        t.clear_read,
         t.failures.len()
     );
     for failure in t.failures.iter().take(20) {
@@ -220,4 +241,5 @@ fn every_chunk_row_authors_back_byte_identical_and_drives_the_walk() {
     );
     assert!(t.mode2 > 0, "the nested tables hold mode-2 rows");
     assert!(t.mode4 > 0, "the nested tables hold mode-4 rows");
+    assert!(t.clear_read > 0, "clear chunked bodies were read back");
 }

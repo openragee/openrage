@@ -288,12 +288,15 @@ impl<'a> Walk<'a> {
             E::Binary { op, left, right } => {
                 let (a, b) = (self.of(left), self.of(right));
                 let deps = self.sets.union(a.deps, b.deps);
+                // Logic and arithmetic make a number of what a vote said, which says it no more:
+                // a lane that runs because of a vote is still asked for its own bit.
                 let logic = Known {
                     zero: 0,
                     mask: a.mask || b.mask,
-                    foreign: a.foreign || b.foreign,
+                    foreign: false,
                     deps,
                 };
+                let said = a.foreign || b.foreign;
                 let by = match function.expressions[right] {
                     E::Literal(Literal::U32(by)) if by < 32 => Some(by),
                     _ => None,
@@ -321,7 +324,12 @@ impl<'a> Walk<'a> {
                     },
                     Bo::Equal | Bo::NotEqual => Known {
                         mask: false,
-                        foreign: logic.foreign || vote(a, b) || vote(b, a),
+                        foreign: said || vote(a, b) || vote(b, a),
+                        ..logic
+                    },
+                    Bo::LogicalAnd | Bo::LogicalOr => Known {
+                        mask: false,
+                        foreign: said,
                         ..logic
                     },
                     _ => Known {
@@ -330,11 +338,13 @@ impl<'a> Walk<'a> {
                     },
                 };
             }
-            E::Unary { expr, .. } => {
+            E::Unary { op, expr } => {
+                let of = self.of(expr);
                 return Known {
                     zero: 0,
-                    ..self.of(expr)
-                }
+                    foreign: of.foreign && op == naga::UnaryOperator::LogicalNot,
+                    ..of
+                };
             }
             E::Select {
                 condition,

@@ -196,3 +196,35 @@ fn a_store_walked_by_the_waves_out_of_turn_is_the_store_of_the_wave_in_turn() {
     assert!(!out.subgroups);
     assert_eq!(out.loops_not_shown_to_end(), 0);
 }
+
+#[test]
+fn a_lane_that_runs_by_a_vote_is_still_asked_for_its_own_bit() {
+    // A wave kept in shared memory votes on every branch, and each thread says whether it
+    // runs. The mask of running lanes is narrowed here by what a vote over a stated mask
+    // said; the loop after it counts down, and its exit is the count's.
+    let mut words = wave_fold("v_min_u32");
+    words.extend([
+        s1(S_MOV_B64, 24, I_MINUS_ONE),
+        s2("s_andn2_b64", 24, 24, EXEC),
+        s2("s_cselect_b64", 26, I_ONE, I_ZERO),
+        s2("s_and_b64", EXEC, EXEC, 26),
+        sopk(S_MOVK, 0, 3),
+        sop2(S_ADD_I32, 0, 0, I_MINUS_ONE),
+        sopc(S_CMP_LG_U32, 0, I_ZERO),
+        sopp(S_CBRANCH_SCC1, 0xFFFD),
+        S_ENDPGM,
+    ]);
+    let group = Program {
+        launch: Some(Launch {
+            user_registers: 2,
+            group_axes: 0,
+            group_size: false,
+            threads: [16, 4, 1],
+            shared_dwords: 0,
+        }),
+        ..program(ShaderKind::Compute, words)
+    };
+    let out = translate(&group).unwrap();
+    assert!(!out.subgroups);
+    assert_eq!(out.loops_not_shown_to_end(), 0);
+}

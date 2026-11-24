@@ -265,6 +265,99 @@ impl Gta6Mount {
     }
 }
 
+impl Gta6Mount {
+    /// The deciphered STORED bytes of a content-ciphered (type 17) entry: its enciphered extent read
+    /// and deciphered at its absolute counters, *before* the chunk walk inflates them. These are the
+    /// bytes a clear resource holds on disk, so the table-free resource scan ([`read_rpf9_body`]) can
+    /// classify and inflate a headerless resource — a texture, headerless metadata — from them, the
+    /// path a clear resource takes. The inflated, concatenated form ([`Self::read_entry_decrypted`])
+    /// carries no block map and cannot be fed to that reader. [`Self::inflate_deciphered_stored`]
+    /// inflates these same bytes without a second decipher. A clear entry has no enciphered stored
+    /// body and is refused.
+    pub fn read_entry_deciphered_stored<R: Read + Seek>(
+        &self,
+        mut src: R,
+        entry: &Gta6Entry,
+        keys: &GtaViKeys,
+    ) -> Result<Vec<u8>> {
+        let body_bad = |why: String| IoError::Invalid {
+            what: "a content-ciphered RPF9 entry".into(),
+            why,
+        };
+        let Some(cipher) = entry.cipher else {
+            return Err(body_bad(format!(
+                "entry {} is not content-ciphered, so it has no enciphered stored body",
+                entry.index
+            )));
+        };
+        if cipher.cipher_type != CONTENT_CIPHER_TYPE {
+            return Err(IoError::RpfEncryptionUnsupported {
+                key_id: cipher.key_id,
+            });
+        }
+        let (body_start, stored, _real) = self.body_geometry(entry)?;
+        if stored == 0 {
+            return Err(body_bad(format!("entry {} has an empty body", entry.index)));
+        }
+        // A malformed framing is refused, not guessed — before the body is read.
+        if let Some(reason) = super::gta6_content::framing_reject_reason(&cipher.framing, stored) {
+            return Err(body_bad(format!("entry {} {reason}", entry.index)));
+        }
+        // Check the stored extent against the source before allocating, so a malformed row cannot
+        // force a huge allocation.
+        let end = src.seek(SeekFrom::End(0)).map_err(mount_io)?;
+        if body_start.checked_add(stored).is_none_or(|s| s > end) {
+            return Err(body_bad(format!(
+                "entry {}'s stored extent runs past the source",
+                entry.index
+            )));
+        }
+        let mut body = read_at(&mut src, body_start, stored as usize)?;
+        let mut cipher_err: Option<IoError> = None;
+        super::gta6_content::decrypt_extent(
+            &mut body,
+            &cipher.framing,
+            &cipher.iv,
+            |slice, ctr| {
+                if cipher_err.is_none() {
+                    if let Err(e) = keys.content_decrypt(cipher.key_id, ctr, slice) {
+                        cipher_err = Some(e);
+                    }
+                }
+            },
+        );
+        if let Some(e) = cipher_err {
+            return Err(e);
+        }
+        Ok(body)
+    }
+
+    /// Inflate the deciphered STORED bytes that [`Self::read_entry_deciphered_stored`] returned — the
+    /// same walk [`Self::read_entry_decrypted`] runs on them — into the entry's concatenated body,
+    /// without a second decipher. `entry` gives the row's real size, which bounds a 24-byte row's walk
+    /// and must equal the inflated length. The caller decrypts the stored bytes once, tries the
+    /// table-free resource reader, and inflates here only when that reader declines.
+    pub fn inflate_deciphered_stored(&self, stored: &[u8], entry: &Gta6Entry) -> Result<Vec<u8>> {
+        let body_bad = |why: String| IoError::Invalid {
+            what: "a content-ciphered RPF9 entry".into(),
+            why,
+        };
+        let (_, _, real) = self.body_geometry(entry)?;
+        let (data, _chunks, _consumed) = walk_chunks(stored, real)
+            .map_err(|why| body_bad(format!("entry {} {why}", entry.index)))?;
+        if let Some(real) = real {
+            if data.len() as u64 != real {
+                return Err(body_bad(format!(
+                    "entry {}'s chunks inflated to {} bytes, not the {real} its row states",
+                    entry.index,
+                    data.len()
+                )));
+            }
+        }
+        Ok(data)
+    }
+}
+
 /// The result of reading a content-ciphered entry: the inflated body, how many chunks it held, and how
 /// many stored bytes the walk consumed (which a 24-byte row's walk ends exactly at its stored size).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -576,6 +669,84 @@ mod tests {
             .read_entry_decrypted(src, &entry, &keys)
             .expect("a content entry decrypts and inflates");
         assert_eq!(got, plain, "the body round-trips to its plaintext");
+    }
+
+    /// The deciphered STORED bytes of a content-ciphered entry are its padded zlib with the enciphered
+    /// range turned back to plaintext — the form the table-free resource reader classifies — and those
+    /// bytes inflate through [`Gta6Mount::inflate_deciphered_stored`] with no second decipher. A clear
+    /// entry has no enciphered stored body and is refused.
+    #[test]
+    fn deciphered_stored_bytes_are_the_padded_plaintext_zlib() {
+        let key_id = 0x1000_0029u32;
+        let iv = [0x11u8; 16];
+        let keys =
+            GtaViKeys::parse(&content_snapshot(key_id)).expect("snapshot with content parses");
+
+        // The stored (clear) bytes an archive would hold: the plaintext's zlib, 16-padded. Enciphering
+        // the whole extent (the `[0, 0x400, 0, 0, 4]` framing covers it) gives the bytes on disk.
+        let plain: Vec<u8> = (0..5000u32).map(|x| (x ^ (x >> 3)) as u8).collect();
+        let mut stored = zlib_stream(&plain);
+        stored.resize(stored.len().next_multiple_of(16), 0);
+        let mut enciphered = stored.clone();
+        keys.content_decrypt(key_id, &iv, &mut enciphered)
+            .expect("encipher via the symmetric CTR");
+
+        let start = 0x40u64;
+        let mut file = vec![0u8; start as usize];
+        file.extend_from_slice(&enciphered);
+        let src = Cursor::new(file);
+
+        let entry = Gta6Entry {
+            index: 3,
+            name64: 0,
+            name32: None,
+            name: None,
+            start: Some(start),
+            stored: Some(enciphered.len() as u64),
+            real: Some(plain.len() as u64),
+            class: Some(0),
+            cipher: Some(super::super::gta6_archive::Gta6Cipher {
+                key_id,
+                cipher_type: 17,
+                iv,
+                framing: [0, 0x400, 0, 0, 4],
+            }),
+        };
+        let mount = Gta6Mount {
+            base: 0,
+            archive: Gta6Archive {
+                toc: minimal_toc(),
+                entries: vec![],
+            },
+        };
+        let got = mount
+            .read_entry_deciphered_stored(src, &entry, &keys)
+            .expect("the deciphered stored bytes");
+        assert_eq!(
+            got, stored,
+            "the enciphered range is turned back to the stored plaintext zlib"
+        );
+        // The same bytes inflate without re-deciphering, to the plaintext the row's real size states.
+        let inflated = mount
+            .inflate_deciphered_stored(&got, &entry)
+            .expect("the stored bytes inflate");
+        assert_eq!(
+            inflated, plain,
+            "inflating the deciphered stored bytes gives the plaintext"
+        );
+
+        // A clear entry (no cipher record) has no enciphered stored body.
+        let clear = Gta6Entry {
+            cipher: None,
+            ..entry.clone()
+        };
+        let clear_src = Cursor::new(vec![0u8; 0x100]);
+        assert!(
+            mount
+                .read_entry_deciphered_stored(clear_src, &clear, &keys)
+                .is_err(),
+            "a clear entry has no enciphered stored body"
+        );
     }
 
     /// A content entry of an unsupported cipher type, and one with no content keys, are refused rather

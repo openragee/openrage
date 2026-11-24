@@ -115,7 +115,7 @@ fn print_usage() {
          openrage-cli rpf scan-radio <archive.rpf>... [--tracks] [--language <name>] [--limit <bytes>]   (the radio stations of the archives' GTA VI audio game data: the lists of stations, and each station's track lists and tracks, joined to the streamed sounds they play with each one's length and audio stream ids; a station is named by its key's text in the archives' text tables of the language, the first a change set among the archives registers unless --language names one; --tracks lists every track with the title and artists its text names)\n  \
          openrage-cli rpf scan-dialogue <archive.rpf>... [--out <file.tsv>] [--language <name>] [--limit <bytes>]   (the GTA VI dialogue lines the archives' conversation bodies state, each with its audio stream and its text in every text table that holds its label, with the table's language, tab-separated; a language is the name a change set among the archives registers its text archive under, else the archive's place among its file's; --language reads the tables of one; `awc export --dialogue` reads the file)\n  \
          openrage-cli rpf scan-relayout <archive.rpf> [--from <offset>] [--to <offset>] [--every <n>] [--count <n>] [--limit <bytes>]   (whether each n-th scanned resource's block map, blocks and RSC8 head are what the loose-resource writer derives from its sections, in memory; nothing is written)\n  \
-         openrage-cli rpf scan-census <archive.rpf> [--from <offset>] [--to <offset>] [--every <n>] [--limit <bytes>]   (each n-th metadata row through scan-open, each in a process of its own: how many read and refused per row, the refusals by message with numbers as N, and the save lines; exits 1 when a reader of metadata refuses one; nothing is written)\n  \
+         openrage-cli rpf scan-census <archive.rpf> [--from <offset>] [--to <offset>] [--every <n>] [--kind <kind>|all] [--sample <n>] [--jobs <n>] [--limit <bytes>]   (each n-th metadata row through scan-open, or with --kind each n-th row of a kind as `rpf scan` tallies it, of a family as `rpf list --kind` names it, or of all, at most --sample of each row evenly spaced, each in a process of its own, --jobs of them at a time: how many read and refused per row, the refusals by message with numbers as N, and the save lines; exits 1 when a reader of metadata refuses one; nothing is written)\n  \
          openrage-cli rpf scan-particles <archive.rpf> <offset> [--validate] [--limit <bytes>]   (a GTA VI particle effects list's effects, events, emitter and particle rules and behaviours, a line each; --validate says whether it reads and whether its values written back in place leave its section unchanged, and exits 1 when not)\n  \
          openrage-cli rpf scan-maps <archive.rpf> [--from <offset>] [--to <offset>] [--limit <bytes>] [--list] [--check] [--extents]   (every GTA VI map body a scan finds, CMapData and CMapTypes, as its structure and counts; --list adds every entity, list and archetype, --check resolves each level-of-detail link among the maps found and counts the elements naming each entity against its numChildren, --extents recomputes each map's entities' box from the archetypes found)\n  \
          openrage-cli rpf map-entity add|remove <archive.rpf> <offset> <entity> <out_dir> [--orphan] [--limit <bytes>]   (a GTA VI map body's entity copied to the end, as a sibling of its source or with --orphan as an orphan, or removed, with its parent map's child count and every map of the archive that names it as a parent renumbered; each body that changed written to the folder as <offset>.rsc, a loose resource that scan-open reads at offset 0)\n  \
@@ -828,6 +828,8 @@ fn metadata_xml(find: &Rpf9ScanFind, bytes: &[u8]) -> Result<String, String> {
             if bytes.get(0x10..0x14) == Some(b"0DRP") =>
         {
             let (virtual_section, physical) = resource.sections(bytes);
+            // The names of GTA VI's snapshot are installed by the first ask for the schema.
+            super::meta::schema();
             or_io::meta::binary::rbm::gta6::open(virtual_section, physical)
                 .map_err(|e| format!("GTA VI's RBM reader does not read this body: {e}"))?
                 .0
@@ -1495,6 +1497,8 @@ fn open_headerless(resource: &Rpf9Resource, bytes: &[u8], name: &str) -> Result<
         );
     }
     let (virtual_section, physical) = resource.sections(bytes);
+    // The names of GTA VI's snapshot are installed by the first ask for the schema.
+    super::meta::schema();
     let (instance, layout) = match or_io::meta::binary::rbm::gta6::open(virtual_section, physical) {
         Ok(opened) => opened,
         Err(e) => {

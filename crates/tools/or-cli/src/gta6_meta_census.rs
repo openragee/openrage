@@ -1,15 +1,16 @@
-//! `rpf scan-census`: every metadata row of a GTA VI archive through `rpf scan-open`, each in a
-//! process of its own, tallied by what was read, by refusal and by save line; nothing is written.
+//! `rpf scan-census`: the metadata rows of a GTA VI archive, or with `--kind` those of a kind, a
+//! family or all, through `rpf scan-open`, each in a process of its own, tallied by what was read,
+//! by refusal and by save line; nothing is written.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::process::Command;
 
-use or_io::container::rpf::{Rpf9BodyKind, Rpf9Content, Rpf9Scan};
+use or_io::container::rpf::{Rpf9BodyKind, Rpf9Content, Rpf9Family, Rpf9Scan};
 use or_job::Step;
 
 const USAGE: &str =
-    "usage: rpf scan-census <archive.rpf> [--from <offset>] [--to <offset>] [--every <n>] [--limit <bytes>]";
+    "usage: rpf scan-census <archive.rpf> [--from <offset>] [--to <offset>] [--every <n>] [--kind <kind>|all] [--sample <n>] [--jobs <n>] [--limit <bytes>]";
 
 /// What `scan-open` says when a reader of metadata, not the container, refuses a body.
 const READER_REFUSALS: [&str; 4] = [
@@ -24,9 +25,11 @@ const READER_REFUSALS: [&str; 4] = [
 struct Tally {
     /// Per row: read, refused.
     rows: BTreeMap<String, (u64, u64)>,
-    /// Per refusal: how many, and the first offset that gave it.
-    refusals: BTreeMap<String, (u64, u64)>,
+    /// Per refusal: how many, the first offset that gave it and that body's row.
+    refusals: BTreeMap<String, (u64, u64, String)>,
     saves: BTreeMap<String, u64>,
+    /// Per root type a metadata document states: how many, and the first offset that gave it.
+    roots: BTreeMap<String, (u64, u64)>,
     by_readers: u64,
 }
 
@@ -35,10 +38,14 @@ pub(crate) fn cmd_scan_census(args: &[String]) -> Result<(), String> {
     let (from, args) = super::rpf::split_offset_flag(&args, "--from")?;
     let (to, args) = super::rpf::split_offset_flag(&args, "--to")?;
     let (every, args) = super::rpf::split_offset_flag(&args, "--every")?;
+    let (sample, args) = super::rpf::split_offset_flag(&args, "--sample")?;
+    let (jobs, args) = super::rpf::split_offset_flag(&args, "--jobs")?;
+    let (kind, args) = super::rpf::split_value(&args, "--kind")?;
     let [path] = args.as_slice() else {
         return Err(USAGE.to_string());
     };
     let every = every.unwrap_or(1).max(1);
+    let jobs = jobs.unwrap_or(1).clamp(1, 64) as usize;
     let exe = std::env::current_exe().map_err(|e| format!("where this program is: {e}"))?;
     let file = fs::File::open(path).map_err(|e| format!("open({path}): {e}"))?;
     let cancel = super::jobs::on_interrupt();
@@ -50,36 +57,69 @@ pub(crate) fn cmd_scan_census(args: &[String]) -> Result<(), String> {
             return Err("cancelled".to_string());
         }
         let find = find.map_err(|e| e.to_string())?;
-        if !is_metadata_row(&find.kind) {
+        let row = super::rpf::scan_row(&find);
+        let admitted = match kind.as_deref() {
+            None => is_metadata_row(&find.kind),
+            Some("all") => true,
+            Some(k) => k == row || Rpf9Family::parse(k) == Some(Rpf9Family::of(&find)),
+        };
+        if !admitted {
             continue;
         }
         seen += 1;
         if (seen - 1).is_multiple_of(every) {
-            rows.push((find.offset, super::rpf::scan_row(&find)));
+            rows.push((find.offset, row));
         }
     }
+    let mut found: BTreeMap<String, u64> = BTreeMap::new();
+    for (_, row) in &rows {
+        *found.entry(row.clone()).or_default() += 1;
+    }
+    if let Some(sample) = sample {
+        rows = evenly_spaced(rows, &found, sample.max(1));
+    }
     println!(
-        "  census        {} of {seen} metadata rows (every {every}), each through `rpf scan-open` in a process of its own; nothing is written",
-        rows.len()
+        "  census        {} of {seen} {} rows (every {every}{}), each through `rpf scan-open` in a process of its own, {jobs} at a time; nothing is written",
+        rows.len(),
+        kind.as_deref().unwrap_or("metadata"),
+        sample.map_or(String::new(), |n| format!(
+            ", at most {n} of a row, evenly spaced"
+        )),
     );
+    for (row, count) in &found {
+        println!("  found         {row}: {count}");
+    }
     let progress = or_job::Progress::new();
     let mut ticker = super::jobs::Ticker::new(&progress);
     let mut tally = Tally::default();
     let limit = limit.to_string();
-    let report = or_job::run(rows, &cancel, &progress, |(offset, row)| {
-        ticker.tick();
-        let at = format!("{offset:#X}");
-        let out = Command::new(&exe)
-            .args(["rpf", "scan-open", path.as_str(), at.as_str()])
+    let open = |offset: u64| {
+        Command::new(&exe)
+            .args(["rpf", "scan-open", path.as_str(), &format!("{offset:#X}")])
             .args(["--limit", limit.as_str()])
-            .output();
-        match out {
-            Ok(out) => {
-                tally.add(offset, row, out.status.success(), &out.stdout, &out.stderr);
-                Step::Done(0)
+            .output()
+    };
+    let batches: Vec<&[(u64, String)]> = rows.chunks(jobs).collect();
+    let report = or_job::run(batches, &cancel, &progress, |batch| {
+        ticker.tick();
+        let outs: Vec<_> = std::thread::scope(|scope| {
+            let running: Vec<_> = (batch.iter())
+                .map(|(offset, _)| scope.spawn(|| open(*offset)))
+                .collect();
+            running.into_iter().map(|run| run.join()).collect()
+        });
+        let mut failed = None;
+        for ((offset, row), out) in batch.iter().zip(outs) {
+            match out {
+                Ok(Ok(out)) => {
+                    let read = out.status.success();
+                    tally.add(*offset, row.clone(), read, &out.stdout, &out.stderr);
+                }
+                Ok(Err(e)) => failed = Some(format!("{offset:#X}: scan-open did not start: {e}")),
+                Err(_) => failed = Some(format!("{offset:#X}: the thread that ran scan-open died")),
             }
-            Err(e) => Step::Failed(format!("{offset:#X}: scan-open did not start: {e}")),
         }
+        failed.map_or(Step::Done(0), Step::Failed)
     });
     ticker.finish(&report);
     tally.print();
@@ -89,6 +129,28 @@ pub(crate) fn cmd_scan_census(args: &[String]) -> Result<(), String> {
         (false, None, 0) => Ok(()),
         (false, None, n) => Err(format!("{n} bodies were refused by a reader of metadata")),
     }
+}
+
+/// At most `sample` rows of each row label, evenly spaced among that label's, in the order found.
+fn evenly_spaced(
+    rows: Vec<(u64, String)>,
+    found: &BTreeMap<String, u64>,
+    sample: u64,
+) -> Vec<(u64, String)> {
+    let mut nth: BTreeMap<String, u64> = BTreeMap::new();
+    let mut taken: BTreeMap<String, u64> = BTreeMap::new();
+    rows.into_iter()
+        .filter(|(_, row)| {
+            let of = found[row];
+            let i = nth.entry(row.clone()).or_default();
+            let k = taken.entry(row.clone()).or_default();
+            // The k-th of `sample` stands at index floor((k + 0.5) * of / sample).
+            let keep = of <= sample || (*k < sample && *i == (2 * *k + 1) * of / (2 * sample));
+            *i += 1;
+            *k += u64::from(keep);
+            keep
+        })
+        .collect()
 }
 
 /// Whether a find is a row a reader of metadata may be handed.
@@ -114,7 +176,7 @@ impl Tally {
             String::from_utf8_lossy(stdout),
             String::from_utf8_lossy(stderr),
         );
-        let counts = self.rows.entry(row).or_default();
+        let counts = self.rows.entry(row.clone()).or_default();
         let mut refusal = None;
         match read {
             true => counts.0 += 1,
@@ -138,11 +200,18 @@ impl Tally {
             let cause = self
                 .refusals
                 .entry(numbers_as_n(why))
-                .or_insert((0, offset));
+                .or_insert((0, offset, row));
             cause.0 += 1;
         } else if !read {
             self.refusals
                 .entry("refused, with no message".to_string())
+                .or_insert((0, offset, row))
+                .0 += 1;
+        }
+        if let Some(root) = (stdout.lines()).find_map(|l| l.trim_start().strip_prefix("root type "))
+        {
+            self.roots
+                .entry(root.trim().to_string())
                 .or_insert((0, offset))
                 .0 += 1;
         }
@@ -155,8 +224,15 @@ impl Tally {
         for (row, (read, refused)) in &self.rows {
             println!("  row           {row}: {read} read, {refused} refused");
         }
-        for (cause, (count, first)) in &self.refusals {
-            println!("  refused       {count}  {cause}  (the first at {first:#X})");
+        let mut ranked: Vec<_> = self.refusals.iter().collect();
+        ranked.sort_by_key(|(_, (count, ..))| std::cmp::Reverse(*count));
+        for (cause, (count, first, row)) in ranked {
+            println!("  refused       {count}  {cause}  (the first at {first:#X}, a {row})");
+        }
+        let mut roots: Vec<_> = self.roots.iter().collect();
+        roots.sort_by_key(|(_, (count, _))| std::cmp::Reverse(*count));
+        for (root, (count, first)) in roots {
+            println!("  root          {count}  {root}  (the first at {first:#X})");
         }
         for (save, count) in &self.saves {
             println!("  save          {count}  {save}");
@@ -197,6 +273,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_sample_takes_each_row_evenly_and_a_small_row_whole() {
+        let mut rows: Vec<(u64, String)> = (0..10).map(|i| (i, "many".to_string())).collect();
+        rows.insert(3, (100, "few".to_string()));
+        let found = BTreeMap::from([("many".to_string(), 10), ("few".to_string(), 1)]);
+        let kept: Vec<u64> = (evenly_spaced(rows, &found, 2).iter())
+            .map(|(offset, _)| *offset)
+            .collect();
+        assert_eq!(kept, [2, 100, 7]);
+    }
+
+    #[test]
     fn numbers_become_n_and_words_that_start_with_a_digit_stay() {
         assert_eq!(
             numbers_as_n("block 12 (0x1AE00000) differs from byte 0x1F0"),
@@ -212,21 +299,22 @@ mod tests {
         tally.add(0x100, "zlib other".into(), false, b"", container);
         let reader = b"error: the PSO reader does not read this body: block 3 is short\n";
         tally.add(0x200, "zlib pso".into(), false, b"", reader);
-        let read = b"  save         writes back byte-identical; checksum 0x12345678 kept\n";
+        let read = b"  root type    MetaPed\n  save         writes back byte-identical; checksum 0x12345678 kept\n";
         tally.add(0x300, "zlib pso".into(), true, read, b"");
         let tree =
             b"  tree          GTA VI's RBM reader does not read this body's two sections: x\n";
         tally.add(0x400, "headerless map".into(), true, tree, b"");
 
         assert_eq!(tally.by_readers, 2);
+        assert_eq!(tally.roots["MetaPed"], (1, 0x300));
         assert_eq!(tally.rows["zlib pso"], (1, 1));
         assert_eq!(
             tally.refusals["the zlib chunk at N fails partway through"],
-            (1, 0x100)
+            (1, 0x100, "zlib other".to_string())
         );
         assert_eq!(
             tally.refusals["the PSO reader does not read this body: block N is short"],
-            (1, 0x200)
+            (1, 0x200, "zlib pso".to_string())
         );
         assert_eq!(
             tally.saves["writes back byte-identical; checksum N kept"],

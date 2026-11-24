@@ -105,6 +105,8 @@ impl MetaDocument {
 
     /// A GTA VI headerless RBM resource, from its virtual and its physical section.
     pub fn from_gta_vi_headerless(virtual_section: &[u8], physical: &[u8]) -> Result<Self, String> {
+        // The names of GTA VI's snapshot are installed by the first ask for the schema.
+        meta_schema();
         let (instance, layout) = or_io::meta::binary::rbm::gta6::open(virtual_section, physical)
             .map_err(|e| e.to_string())?;
         let parsed = or_io::meta::MetaDocument {

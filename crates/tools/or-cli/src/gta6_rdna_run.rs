@@ -77,6 +77,9 @@ pub(crate) struct Record {
     /// With `--backends`, each writer that refuses the module, panics on it or was not run, and why.
     #[serde(default)]
     pub backends: BTreeMap<String, String>,
+    /// A digest of the module as it was lowered: two runs differ in it where the lowered code does.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub module: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wgsl: Option<String>,
 }
@@ -121,6 +124,22 @@ fn chain(error: &dyn std::error::Error) -> Vec<String> {
     out
 }
 
+/// A digest of everything `module` holds.
+fn digest(module: &naga::Module) -> String {
+    use std::fmt::Write as _;
+    use std::hash::Hasher as _;
+    struct Hashed(std::collections::hash_map::DefaultHasher);
+    impl std::fmt::Write for Hashed {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            self.0.write(text.as_bytes());
+            Ok(())
+        }
+    }
+    let mut hashed = Hashed(std::collections::hash_map::DefaultHasher::new());
+    let _ = write!(hashed, "{module:?}");
+    format!("{:016x}", hashed.0.finish())
+}
+
 /// `program` translated, validated and, where wanted, written by every back end, into `record`.
 fn judge(
     program: &Program,
@@ -154,6 +173,7 @@ fn judge(
         record.features.push("subgroups".to_owned());
     }
     let module = &lowered.module;
+    record.module = digest(module);
     let started = Instant::now();
     backends::set_doing("validating");
     match Validator::new(ValidationFlags::all(), Capabilities::all()).validate(module) {

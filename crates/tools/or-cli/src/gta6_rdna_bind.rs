@@ -226,6 +226,8 @@ fn shading(container: &Sgd5File, bytes: &[u8], technique: &str) {
     let mut game: BTreeMap<(&str, u32), usize> = BTreeMap::new();
     let (mut effects, mut translated, mut whole) = (0usize, 0usize, 0usize);
     let mut settled = Settled::default();
+    // The passes whose first stage, and whose pixel stage, holds a loop not shown to end.
+    let mut unending = [0usize; 2];
     for effect in &container.effects {
         let Some((first, pixel)) = technique_programs(container, effect, technique) else {
             continue;
@@ -250,10 +252,16 @@ fn shading(container: &Sgd5File, bytes: &[u8], technique: &str) {
             Ok(lowered) => lowered.half_slots.clone(),
             Err(_) => BTreeSet::new(),
         };
-        let outcomes = [
-            rdna_bind::lower(geometry, &halves).map(|_| ()),
-            lowered.map(|_| ()),
-        ];
+        let lowered = [rdna_bind::lower(geometry, &halves), lowered];
+        // The loops of each stage a device may never leave, as far as its lowered code shows.
+        let loops = lowered.each_ref().map(|lowered| match lowered {
+            Ok(lowered) => lowered.loops_not_shown_to_end(),
+            Err(_) => 0,
+        });
+        for (held, loops) in unending.iter_mut().zip(loops) {
+            *held += usize::from(loops > 0);
+        }
+        let outcomes = lowered.map(|lowered| lowered.map(|_| ()));
         let filled = [
             sources(
                 &geometry.records,
@@ -269,12 +277,14 @@ fn shading(container: &Sgd5File, bytes: &[u8], technique: &str) {
             ),
         ];
         println!(
-            "  {}: {stage} {}, {}; pixel {}, {}",
+            "  {}: {stage} {}, {}; pixel {}, {}; loops not shown to end {}, {}",
             effect.name,
             outcome(&outcomes[0]),
             described(&filled[0]),
             outcome(&outcomes[1]),
             described(&filled[1]),
+            loops[0],
+            loops[1],
         );
         settled.add(geometry, fragment, &effect.parameters);
         translated += usize::from(outcomes.iter().all(Result::is_ok));
@@ -290,6 +300,10 @@ fn shading(container: &Sgd5File, bytes: &[u8], technique: &str) {
     println!("  effects       {effects} with the technique {technique}");
     println!(
         "  passes        {translated} translate in both stages; {whole} whose every binding a model's file, the view or the material fills"
+    );
+    println!(
+        "  loops         {} passes hold a loop not shown to end in the first stage, {} in the pixel stage",
+        unending[0], unending[1]
     );
     println!("  settled       {}", settled.said());
     for (why, count) in settled.unsettled.iter().take(TOP_REASONS) {

@@ -16,8 +16,10 @@ use super::decode::{Inst, Operand};
 use super::sym::{self, Index, IndexSource, Loc, State, Sym, EXEC, VCC};
 use super::Program;
 use crate::dxil::ShaderKind;
+pub use ends::{LOOP_NOT_SHOWN, LOOP_OTHER_LANES, LOOP_UNCHANGING};
 
 mod buffers;
+mod ends;
 mod flow;
 mod geometry;
 mod halves;
@@ -173,6 +175,12 @@ pub struct Lowered {
 }
 
 impl Lowered {
+    /// The loops of the program a device may never leave, as far as the lowered code shows: those whose every exit is a vote over lanes the module does not run ([`LOOP_OTHER_LANES`]) and those no turn changes an exit of ([`LOOP_UNCHANGING`]). A module that holds one is not to be run.
+    pub fn loops_not_shown_to_end(&self) -> u32 {
+        let counted = |name| self.approximations.get(name).copied().unwrap_or(0);
+        counted(LOOP_OTHER_LANES) + counted(LOOP_UNCHANGING)
+    }
+
     /// The textures the module loads texels of, by the place of each one's descriptor: each is declared with the kind [`Options::image_kinds`] states of it, and as floats where it states none.
     pub fn image_loads(&self) -> BTreeSet<Loc> {
         let functions = (self.module.functions.iter().map(|(_, function)| function))
@@ -7647,6 +7655,23 @@ fn lower_pass(
     for (block, n) in std::mem::take(&mut cx.rebuilt) {
         if read_after(&lowered, &successors, block as usize, Reg::V(n)) {
             cx.note(REBUILT);
+        }
+    }
+    let not_shown = {
+        let functions: Vec<&naga::Function> = std::iter::once(&cx.b.fun)
+            .chain(parts.iter().skip(1).map(|part| &part.0.fun))
+            .collect();
+        let blocks: Vec<(usize, &Block)> = (homes.iter().zip(&lowered))
+            .map(|(&home, lowering)| (home, &lowering.block))
+            .collect();
+        ends::not_shown_to_end(&cx.module, &functions, &blocks, &successors)
+    };
+    for (name, loops) in [LOOP_OTHER_LANES, LOOP_UNCHANGING]
+        .into_iter()
+        .zip(not_shown)
+    {
+        if loops > 0 {
+            *cx.notes.entry(name).or_default() += loops;
         }
     }
     let (handed, live) = register_flow(&lowered, &successors);

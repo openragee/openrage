@@ -1417,6 +1417,8 @@ struct Cx<'a> {
     vertex: bool,
     /// Whether any instruction changes the lane mask: then every vector write is kept to an active lane.
     masked: bool,
+    /// The words of the instructions that take killed lanes out of a pixel program's live ones ([`kills`]).
+    kills: BTreeSet<u32>,
     locals: HashMap<Reg, Handle<E>>,
     /// Whether the program's statements are spread over several functions: then a register is
     /// a private variable of the module, which every function of it reads and writes.
@@ -1759,8 +1761,64 @@ impl<'a> Cx<'a> {
         self.raw(reg)
     }
 
+    /// Whether `value` holds no bit outside `lanes`, by how it is made of numbers, of the mask
+    /// of running lanes and of logic over those, to `depth` operators.
+    fn within(&self, value: Handle<E>, lanes: u32, depth: u8) -> bool {
+        let both = |a, b| {
+            depth > 0 && self.within(a, lanes, depth - 1) && self.within(b, lanes, depth - 1)
+        };
+        let half = |half: u8| self.locals.get(&Reg::S(EXEC + half)).copied();
+        match self.b.fun.expressions[value] {
+            E::Literal(Literal::U32(word)) => word & !lanes == 0,
+            E::Load { pointer } if self.program.wave32 => Some(pointer) == half(0) && lanes == 1,
+            E::Load { pointer } => {
+                Some(pointer) == half(1) || (Some(pointer) == half(0) && lanes == 1)
+            }
+            E::Binary {
+                op: Bo::And,
+                left,
+                right,
+            } => {
+                depth > 0
+                    && (self.within(left, lanes, depth - 1) || self.within(right, lanes, depth - 1))
+            }
+            E::Binary {
+                op: Bo::InclusiveOr | Bo::ExclusiveOr,
+                left,
+                right,
+            } => both(left, right),
+            E::Select { accept, reject, .. } => both(accept, reject),
+            _ => false,
+        }
+    }
+
+    /// What a store to `reg` stores of `value`. A module runs one lane of its wave, so the mask
+    /// of running lanes holds that lane's bit and no other, whatever a program stores there:
+    /// a vote over it is this lane's, and a loop that takes the wave's lanes in turns while
+    /// any is left takes this lane's turn and ends. A lane's own bit goes through the logic of
+    /// masks as it does in the wave; a count over the mask is this lane's alone.
+    // ⚠ With the other lanes left set, nothing a module runs ever takes them out again, and a
+    // loop that goes round while the mask holds a lane never ends on any device.
+    fn own_lane(&mut self, reg: Reg, value: Handle<E>) -> Handle<E> {
+        match reg {
+            Reg::S(EXEC) => match self.b.fun.expressions[value] {
+                _ if self.within(value, 1, 4) => value,
+                E::Literal(Literal::U32(word)) => self.b.u32(word & 1),
+                _ => {
+                    let one = self.b.u32(1);
+                    self.b.bin(Bo::And, value, one)
+                }
+            },
+            Reg::S(r) if r == EXEC + 1 && !self.program.wave32 && !self.within(value, 0, 4) => {
+                self.b.u32(0)
+            }
+            _ => value,
+        }
+    }
+
     fn put(&mut self, reg: Reg, value: Handle<E>) {
         let pointer = self.local(reg);
+        let value = self.own_lane(reg, value);
         // Where a group's waves take turns, a thread of a wave whose turn it is not walks
         // the block for its barriers alone, and keeps what its registers held.
         let value = match self.turn() {
@@ -2294,10 +2352,10 @@ impl<'a> Cx<'a> {
     /// Whether a mask a scalar instruction wrote holds a lane, as the wave sees it. A pixel
     /// program takes the lanes it kills out of its live mask and leaves if no lane of the wave
     /// is left; a lane killed whose neighbours live runs on as their helper, so here the wave
-    /// always holds one, and the lane is discarded where the program ends.
-    fn lanes_left(&mut self, name: &str, [dst, a, b]: [Operand; 3], value: Handle<E>) -> Handle<E> {
-        let kill = self.fragment
-            && matches!(name, "s_andn2_b64" | "s_andn2_b32")
+    /// always holds one, and the lane is discarded where the program ends. Any other mask is
+    /// this lane's own bit.
+    fn lanes_left(&mut self, pc: u32, [dst, a, b]: [Operand; 3], value: Handle<E>) -> Handle<E> {
+        let kill = self.kills.contains(&pc)
             && sym::register(dst).is_some_and(|r| r != EXEC && r != VCC)
             && sym::register(dst) == sym::register(a)
             && sym::register(b) == Some(EXEC);
@@ -2707,7 +2765,7 @@ impl<'a> Cx<'a> {
                 let value = [low, high];
                 self.sput64(pc, dst, value)?;
                 let either = self.b.bin(Bo::InclusiveOr, value[0], value[1]);
-                let any = self.lanes_left(name, [dst, src0, src1], either);
+                let any = self.lanes_left(pc, [dst, src0, src1], either);
                 self.scc(any);
                 return Ok(());
             }
@@ -2728,7 +2786,7 @@ impl<'a> Cx<'a> {
         let (a, b) = (self.sv(pc, src0)?, self.sv(pc, src1)?);
         if let Some(value) = (bare.strip_suffix("_b32")).and_then(|kind| self.b.logic(kind, a, b)) {
             self.sput(pc, dst, value)?;
-            let any = self.lanes_left(name, [dst, src0, src1], value);
+            let any = self.lanes_left(pc, [dst, src0, src1], value);
             self.scc(any);
             return Ok(());
         }
@@ -7278,6 +7336,35 @@ fn masks_lanes(cfg: &Cfg) -> bool {
     })
 }
 
+/// The words of the instructions that take the lanes a pixel program kills out of its live
+/// lanes: a mask less the running lanes, then a branch taken, with no lane left, to where
+/// the program ends having computed nothing more.
+// ⚠ The same instruction before a branch taken while a lane is left is a loop that takes its
+// lanes in turns: answered as a kill is, that the wave always holds a lane, it never ends.
+fn kills(cfg: &Cfg) -> BTreeSet<u32> {
+    let ends = |start: u32| {
+        cfg.blocks.get(&start).is_some_and(|block| {
+            let scalar =
+                |inst: &Inst| matches!(inst, Inst::Exp { .. }) || inst.name().starts_with("s_");
+            block.terminator == Terminator::End && block.insts.iter().all(|(_, inst)| scalar(inst))
+        })
+    };
+    (cfg.blocks.values())
+        .filter_map(|block| {
+            let Terminator::Branch { taken, .. } = block.terminator else {
+                return None;
+            };
+            let [.., (pc, test), (_, branch)] = &block.insts[..] else {
+                return None;
+            };
+            let kill = matches!(test.name(), "s_andn2_b64" | "s_andn2_b32")
+                && branch.name() == "s_cbranch_scc0"
+                && ends(taken);
+            kill.then_some(*pc)
+        })
+        .collect()
+}
+
 /// Every lane of a vector register an instruction of the graph writes a scalar into.
 fn spilled(cfg: &Cfg) -> BTreeSet<Reg> {
     (cfg.blocks.values().flat_map(|b| &b.insts))
@@ -7510,6 +7597,10 @@ fn lower_pass(
         fragment,
         vertex: program.kind == ShaderKind::Vertex,
         masked: turns || masks_lanes(cfg),
+        kills: match fragment {
+            true => kills(cfg),
+            false => BTreeSet::new(),
+        },
         locals: HashMap::new(),
         spread: nodes
             .as_deref()

@@ -42,12 +42,34 @@ fn lanes_in_turns() -> Vec<u32> {
 }
 
 #[test]
-fn a_loop_over_lanes_the_lowering_does_not_run_is_counted() {
+fn a_loop_over_a_wave_s_lanes_takes_this_lane_s_turn_and_ends() {
     let out = vertex(lanes_in_turns());
-    assert_eq!(out.approximations.get(LOOP_OTHER_LANES), Some(&1));
-    assert_eq!(out.loops_not_shown_to_end(), 1);
+    // The machine stops a loop at 100,000 turns: with the 63 other lanes left in the mask, which
+    // nothing a module runs takes out, this one went round for ever.
+    let ran = interp::run(&out.module, [1, 1, 1], &|_, _| None).remove(0);
+    assert_eq!(ran.reg("v2"), 1);
+    assert_eq!([ran.reg("exec_lo"), ran.reg("exec_hi")], [0, 0]);
+    assert_eq!(out.loops_not_shown_to_end(), 0);
     assert!(LOOP_OTHER_LANES.starts_with(LOOP_NOT_SHOWN));
     assert!(LOOP_UNCHANGING.starts_with(LOOP_NOT_SHOWN));
+}
+
+#[test]
+fn the_mask_of_running_lanes_holds_this_lane_whatever_is_stored_there() {
+    // Every lane set running, the lanes that ran taken out, and the rest put back.
+    let words = vec![
+        s1(S_MOV_B64, EXEC, I_MINUS_ONE),
+        s1(S_MOV_B64, 24, EXEC),
+        vop1(V_MOV, 0, F_ONE),
+        s2("s_andn2_b64", 26, 24, EXEC),
+        s1("s_not_b64", EXEC, EXEC),
+        s1(S_MOV_B64, 28, EXEC),
+        s1(S_MOV_B64, EXEC, 24),
+    ];
+    let ran = interp::run(&vertex(words).module, [1, 1, 1], &|_, _| None).remove(0);
+    let pair = |r: u32| [ran.reg(&format!("s{r}")), ran.reg(&format!("s{}", r + 1))];
+    assert_eq!([pair(24), pair(26), pair(28)], [[1, 0], [0, 0], [0, 0]]);
+    assert_eq!([ran.reg("exec_lo"), ran.reg("exec_hi")], [1, 0]);
 }
 
 #[test]
@@ -103,6 +125,49 @@ fn a_loop_is_shown_to_end_by_an_exit_a_turn_changes() {
         sopp(S_CBRANCH_SCC1, 0xFFFD),
     ];
     assert_eq!(vertex(own).loops_not_shown_to_end(), 0);
+}
+
+#[test]
+fn a_pixel_loop_that_takes_its_lanes_out_as_they_finish_ends() {
+    // `s24` holds the lanes still going round; a lane is done at its second turn, counted in
+    // `v2`, and the loop goes round while a lane is left. A kill takes lanes out of the live
+    // ones by the same instruction, and is told from this by where its branch goes.
+    let target = exp(0, [2, 2, 2, 2]);
+    let words = vec![
+        s1(S_MOV_B64, 24, EXEC),
+        vop1(V_MOV, 2, I_ZERO),
+        vop2(op(opcodes::VOP2, "v_add_u32"), 2, I_ONE, 2),
+        vopc(op(opcodes::VOPC, "v_cmp_le_u32"), I_ZERO + 2, 2),
+        s2("s_and_b64", EXEC, EXEC, VCC),
+        s2("s_andn2_b64", 24, 24, EXEC),
+        s1(S_MOV_B64, EXEC, 24),
+        sopp(S_CBRANCH_SCC1, 0xFFFA),
+        target[0],
+        target[1],
+        S_ENDPGM,
+    ];
+    let out = lowered(ShaderKind::Pixel, words);
+    assert_eq!(out.loops_not_shown_to_end(), 0);
+    let ran = interp::run(&out.module, [1, 1, 1], &|_, _| None).remove(0);
+    assert_eq!(ran.reg("v2"), 2);
+    // A kill: with no lane left the program goes to an end that computes nothing. The lane
+    // killed runs on, as the helper of its quad it may be, and writes `v3`.
+    let end = exp(0, [3, 3, 3, 3]);
+    let kill = vec![
+        s1(S_MOV_B64, 24, EXEC),
+        s2("s_andn2_b64", 24, 24, EXEC),
+        sopp(S_CBRANCH_SCC0, 4),
+        vop1(V_MOV, 3, F_ONE),
+        end[0],
+        end[1],
+        S_ENDPGM,
+        end[0],
+        end[1],
+        S_ENDPGM,
+    ];
+    let out = lowered(ShaderKind::Pixel, kill);
+    let ran = interp::run(&out.module, [1, 1, 1], &|_, _| None).remove(0);
+    assert_eq!([ran.reg("s24"), ran.reg("v3")], [0, ONE]);
 }
 
 #[test]

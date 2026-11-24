@@ -104,3 +104,30 @@ fn a_loop_is_shown_to_end_by_an_exit_a_turn_changes() {
     ];
     assert_eq!(vertex(own).loops_not_shown_to_end(), 0);
 }
+
+#[test]
+fn a_store_walked_by_the_waves_out_of_turn_is_the_store_of_the_wave_in_turn() {
+    // Two waves take turns, so every store keeps what a thread out of turn held. `s24` holds
+    // a mask of lanes, then a number halved until it is nought: no vote over lanes.
+    let mut words = wave_fold("v_min_u32");
+    words.extend([
+        s1(S_MOV_B64, 24, EXEC),
+        sopk(S_MOVK, 24, 8),
+        s2("s_lshr_b32", 24, 24, I_ONE),
+        sopp(S_CBRANCH_SCC1, 0xFFFE),
+        S_ENDPGM,
+    ]);
+    let group = Program {
+        launch: Some(Launch {
+            user_registers: 2,
+            group_axes: 0,
+            group_size: false,
+            threads: [16, 8, 1],
+            shared_dwords: 0,
+        }),
+        ..program(ShaderKind::Compute, words)
+    };
+    let out = translate(&group).unwrap();
+    assert!(!out.subgroups);
+    assert_eq!(out.loops_not_shown_to_end(), 0);
+}

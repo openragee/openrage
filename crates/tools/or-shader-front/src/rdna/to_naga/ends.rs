@@ -15,6 +15,9 @@ pub const LOOP_OTHER_LANES: &str =
 pub const LOOP_UNCHANGING: &str =
     "a loop the lowering cannot show to end: no turn changes what an exit hangs on";
 
+/// Whether a thread's wave is the one whose block runs, as the lowering names it where the
+/// waves of a group take turns.
+const TURN: &str = "wave_turn";
 /// The masks of lanes, as the lowering names their registers.
 const MASKS: [&str; 4] = ["exec_lo", "exec_hi", "vcc_lo", "vcc_hi"];
 
@@ -82,35 +85,52 @@ impl Sets {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Var {
     Local(usize, Handle<naga::LocalVariable>),
     Global(Handle<naga::GlobalVariable>),
+}
+
+/// What a variable of a thread's own is to the walk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    Unseen,
+    /// A register, by its number among those seen.
+    Held(u32),
+    /// What a block's branch is decided by: stored by its block and read by no other.
+    Decides,
 }
 
 /// Where a pointer leads.
 enum Root {
     /// A variable of the thread's own, and whether the pointer is to the whole of it.
     Var(u32, bool),
+    Decides,
     /// Memory nothing the program runs writes.
     Fixed,
     Volatile,
 }
+
+/// What is known of each variable seen, by its number; nothing of one a path says nothing of.
+type State = Vec<Option<Known>>;
 
 struct Walk<'a> {
     module: &'a naga::Module,
     functions: &'a [&'a naga::Function],
     /// The function the block being walked was lowered in.
     home: usize,
-    vars: HashMap<Var, u32>,
-    /// By variable: whether it is a mask of lanes, and the block whose branch it decides.
+    /// Each function's locals, and the module's globals, by their place.
+    locals: Vec<Vec<Slot>>,
+    globals: Vec<Slot>,
+    /// By variable: whether it is a mask of lanes, and the set that holds it alone.
     masks: Vec<bool>,
-    decides: Vec<Option<usize>>,
-    conds: HashMap<usize, u32>,
+    alone: Vec<u32>,
     sets: Sets,
     /// By function and expression.
     values: Vec<Vec<Known>>,
-    state: HashMap<u32, Known>,
+    state: State,
+    /// What the block being walked stored its branch's condition as.
+    decided: Option<Known>,
     /// What each write since the block began replaced.
     log: Vec<(u32, Option<Known>)>,
     shares: HashMap<Handle<naga::Function>, bool>,
@@ -125,24 +145,39 @@ fn fixed(space: naga::AddressSpace) -> bool {
 }
 
 impl<'a> Walk<'a> {
-    fn var(&mut self, var: Var) -> u32 {
-        if let Some(&id) = self.vars.get(&var) {
-            return id;
-        }
-        let name = match var {
-            Var::Local(home, local) => &self.functions[home].local_variables[local].name,
-            Var::Global(global) => &self.module.global_variables[global].name,
+    fn var(&mut self, var: Var) -> Slot {
+        let (slot, name) = match var {
+            Var::Local(home, local) => (
+                &mut self.locals[home][local.index()],
+                &self.functions[home].local_variables[local].name,
+            ),
+            Var::Global(global) => (
+                &mut self.globals[global.index()],
+                &self.module.global_variables[global].name,
+            ),
         };
-        let name = name.as_deref().unwrap_or_default();
-        let id = self.masks.len() as u32;
-        self.masks.push(MASKS.contains(&name));
-        let decides = name.strip_prefix("cond").and_then(|n| n.parse().ok());
-        self.decides.push(decides);
-        if let Some(block) = decides {
-            self.conds.insert(block, id);
+        if *slot == Slot::Unseen {
+            let name = name.as_deref().unwrap_or_default();
+            let decides = (name.strip_prefix("cond")).is_some_and(|n| n.parse::<u32>().is_ok());
+            *slot = match decides {
+                true => Slot::Decides,
+                false => {
+                    let id = self.masks.len() as u32;
+                    self.masks.push(MASKS.contains(&name));
+                    self.alone.push(self.sets.one(id));
+                    self.state.push(None);
+                    Slot::Held(id)
+                }
+            };
         }
-        self.vars.insert(var, id);
-        id
+        *slot
+    }
+
+    fn rooted(&mut self, var: Var, whole: bool) -> Root {
+        match self.var(var) {
+            Slot::Held(id) => Root::Var(id, whole),
+            _ => Root::Decides,
+        }
     }
 
     fn of(&self, expression: Handle<E>) -> Known {
@@ -164,14 +199,11 @@ impl<'a> Walk<'a> {
                     pointer = base;
                 }
                 E::LocalVariable(local) => {
-                    let var = self.var(Var::Local(self.home, local));
-                    return (Root::Var(var, whole), picked);
+                    return (self.rooted(Var::Local(self.home, local), whole), picked);
                 }
                 E::GlobalVariable(global) => {
                     let root = match self.module.global_variables[global].space {
-                        naga::AddressSpace::Private => {
-                            Root::Var(self.var(Var::Global(global)), whole)
-                        }
+                        naga::AddressSpace::Private => self.rooted(Var::Global(global), whole),
                         space if fixed(space) => Root::Fixed,
                         _ => Root::Volatile,
                     };
@@ -183,10 +215,10 @@ impl<'a> Walk<'a> {
     }
 
     /// What a variable hangs on: what its last store in the block did, else itself.
-    fn deps_of(&mut self, var: u32) -> u32 {
-        match self.state.get(&var) {
+    fn deps_of(&self, var: u32) -> u32 {
+        match self.state[var as usize] {
             Some(held) if held.deps != ITSELF => held.deps,
-            _ => self.sets.one(var),
+            _ => self.alone[var as usize],
         }
     }
 
@@ -196,7 +228,7 @@ impl<'a> Walk<'a> {
             Root::Var(var, whole) => {
                 let deps = self.deps_of(var);
                 let deps = self.sets.union(deps, picked);
-                let held = self.state.get(&var).copied().unwrap_or_default();
+                let held = self.state[var as usize].unwrap_or_default();
                 let mask = held.mask || self.masks[var as usize];
                 match whole {
                     true => Known { mask, deps, ..held },
@@ -208,7 +240,7 @@ impl<'a> Walk<'a> {
                     },
                 }
             }
-            Root::Fixed => Known {
+            Root::Fixed | Root::Decides => Known {
                 deps: picked,
                 ..Known::default()
             },
@@ -249,7 +281,7 @@ impl<'a> Walk<'a> {
 
     fn evaluate(&mut self, expression: Handle<E>) -> Known {
         let function = self.functions[self.home];
-        let mut operands: Vec<Handle<E>> = Vec::new();
+        let mut operands = [None; 4];
         let mut volatile = false;
         match function.expressions[expression] {
             E::Load { pointer } => return self.load(pointer),
@@ -327,26 +359,30 @@ impl<'a> Walk<'a> {
             | E::Swizzle { vector: expr, .. }
             | E::Derivative { expr, .. }
             | E::Relational { argument: expr, .. }
-            | E::AccessIndex { base: expr, .. } => operands.push(expr),
-            E::Access { base, index } => operands.extend([base, index]),
-            E::Compose { ref components, .. } => operands.extend(components),
+            | E::AccessIndex { base: expr, .. } => operands[0] = Some(expr),
+            E::Access { base, index } => operands = [Some(base), Some(index), None, None],
+            E::Compose { ref components, .. } => {
+                let mut known = Known::default();
+                for &component in components {
+                    let of = self.of(component);
+                    known.foreign |= of.foreign;
+                    known.deps = self.sets.union(known.deps, of.deps);
+                }
+                return known;
+            }
             E::Math {
                 arg,
                 arg1,
                 arg2,
                 arg3,
                 ..
-            } => operands.extend([Some(arg), arg1, arg2, arg3].into_iter().flatten()),
+            } => operands = [Some(arg), arg1, arg2, arg3],
             E::ImageSample {
                 coordinate,
                 array_index,
                 depth_ref,
                 ..
-            } => operands.extend(
-                [Some(coordinate), array_index, depth_ref]
-                    .into_iter()
-                    .flatten(),
-            ),
+            } => operands = [Some(coordinate), array_index, depth_ref, None],
             E::ImageLoad {
                 image,
                 coordinate,
@@ -355,14 +391,13 @@ impl<'a> Walk<'a> {
                 level,
             } => {
                 volatile = self.stored_image(image);
-                let all = [Some(coordinate), array_index, sample, level];
-                operands.extend(all.into_iter().flatten());
+                operands = [Some(coordinate), array_index, sample, level];
             }
             E::ImageQuery { .. } | E::ArrayLength(_) => {}
             _ => volatile = true,
         }
         let mut known = Known::default();
-        for operand in operands {
+        for operand in operands.into_iter().flatten() {
             let of = self.of(operand);
             known.foreign |= of.foreign;
             known.deps = self.sets.union(known.deps, of.deps);
@@ -374,18 +409,50 @@ impl<'a> Walk<'a> {
     }
 
     fn set(&mut self, var: u32, known: Known) {
-        self.log.push((var, self.state.insert(var, known)));
+        let before = self.state[var as usize].replace(known);
+        self.log.push((var, before));
+    }
+
+    /// The value a store keeps for the wave whose turn it is, where the store is one that a
+    /// thread of another wave only walks, keeping what it held: for the thread a block is
+    /// lowered for, the store is of that value.
+    fn in_turn(&self, pointer: Handle<E>, value: Handle<E>) -> Handle<E> {
+        let function = self.functions[self.home];
+        let E::Select {
+            condition,
+            accept,
+            reject,
+        } = function.expressions[value]
+        else {
+            return value;
+        };
+        let E::Load { pointer: flag } = function.expressions[condition] else {
+            return value;
+        };
+        let turn = matches!(function.expressions[flag], E::GlobalVariable(global)
+            if self.module.global_variables[global].name.as_deref() == Some(TURN));
+        let kept = matches!(function.expressions[reject], E::Load { pointer: p } if p == pointer);
+        match turn && kept {
+            true => accept,
+            false => value,
+        }
     }
 
     fn store(&mut self, pointer: Handle<E>, value: Handle<E>) {
-        let (Root::Var(var, whole), _) = self.root(pointer) else {
-            return;
+        let value = self.in_turn(pointer, value);
+        let (var, whole) = match self.root(pointer).0 {
+            Root::Var(var, whole) => (var, whole),
+            Root::Decides => {
+                self.decided = Some(self.of(value));
+                return;
+            }
+            _ => return,
         };
         let function = self.functions[self.home];
         let mut new = self.of(value);
         if !whole {
             let before = self.deps_of(var);
-            let held = self.state.get(&var).copied().unwrap_or_default();
+            let held = self.state[var as usize].unwrap_or_default();
             new = Known {
                 zero: 0,
                 mask: new.mask || held.mask,
@@ -398,8 +465,8 @@ impl<'a> Walk<'a> {
             reject,
         } = function.expressions[value]
         {
-            // A variable written in some lanes, or by the wave whose turn it is, and kept as
-            // it was otherwise: holding what it held is no change a turn makes.
+            // A variable written in some lanes and kept as it was in the others: holding what
+            // it held is no change a turn makes.
             let keeps =
                 |e| matches!(function.expressions[e], E::Load { pointer: p } if p == pointer);
             let fresh = match (keeps(accept), keeps(reject)) {
@@ -411,7 +478,7 @@ impl<'a> Walk<'a> {
                 new.deps = self
                     .sets
                     .union(self.of(condition).deps, self.of(fresh).deps);
-                if let Some(held) = self.state.get(&var).filter(|held| held.deps != ITSELF) {
+                if let Some(held) = self.state[var as usize].filter(|held| held.deps != ITSELF) {
                     new.deps = self.sets.union(new.deps, held.deps);
                 }
             }
@@ -421,28 +488,29 @@ impl<'a> Walk<'a> {
 
     /// The statements of which one of `bodies` runs, or none where `skips`, as `chooser` says.
     fn arms(&mut self, chooser: Known, bodies: &[&naga::Block], skips: bool) {
-        let mut wrote: Vec<HashMap<u32, Known>> = Vec::with_capacity(bodies.len());
+        let mut wrote: Vec<Vec<(u32, Known)>> = Vec::with_capacity(bodies.len());
+        let mut vars: Vec<u32> = Vec::new();
         for body in bodies {
             let mark = self.log.len();
             self.block(body);
-            let mut arm = HashMap::new();
+            let mut arm: Vec<(u32, Known)> = Vec::new();
             while self.log.len() > mark {
                 let Some((var, before)) = self.log.pop() else {
                     break;
                 };
                 // The first write undone is the last made: what the arm leaves.
-                let left = self.state.get(&var).copied().unwrap_or_default();
-                arm.entry(var).or_insert(left);
-                match before {
-                    Some(before) => self.state.insert(var, before),
-                    None => self.state.remove(&var),
-                };
+                if !arm.iter().any(|(wrote, _)| *wrote == var) {
+                    arm.push((var, self.state[var as usize].unwrap_or_default()));
+                }
+                self.state[var as usize] = before;
+                if !vars.contains(&var) {
+                    vars.push(var);
+                }
             }
             wrote.push(arm);
         }
-        let vars: BTreeSet<u32> = wrote.iter().flat_map(|arm| arm.keys().copied()).collect();
         for var in vars {
-            let before = self.state.get(&var).copied();
+            let before = self.state[var as usize];
             let kept = Known {
                 zero: 0,
                 deps: ITSELF,
@@ -453,8 +521,11 @@ impl<'a> Walk<'a> {
                 deps: chooser.deps,
                 ..Known::default()
             };
-            let ways = (wrote.iter().map(|arm| arm.get(&var).copied().or(before)))
-                .chain(skips.then_some(before));
+            let left = |arm: &Vec<(u32, Known)>| {
+                let wrote = arm.iter().find(|(wrote, _)| *wrote == var);
+                wrote.map(|(_, known)| *known).or(before)
+            };
+            let ways = wrote.iter().map(left).chain(skips.then_some(before));
             for way in ways {
                 let way = way.unwrap_or(kept);
                 joined.zero &= way.zero;
@@ -518,7 +589,7 @@ impl<'a> Walk<'a> {
                     self.block(continuing);
                     let wrote: BTreeSet<u32> = self.log[mark..].iter().map(|(v, _)| *v).collect();
                     for var in wrote {
-                        let left = self.state.get(&var).copied().unwrap_or_default();
+                        let left = self.state[var as usize].unwrap_or_default();
                         let known = Known {
                             zero: 0,
                             mask: left.mask || self.masks[var as usize],
@@ -565,28 +636,26 @@ impl<'a> Walk<'a> {
 }
 
 /// What two paths into a block both leave, into `into`; whether that changed it.
-fn join(into: &mut Option<HashMap<u32, Known>>, out: &HashMap<u32, Known>) -> bool {
+fn join(into: &mut Option<State>, out: &State) -> bool {
     let Some(held) = into else {
         *into = Some(out.clone());
         return true;
     };
-    let before = held.len();
     let mut changed = false;
-    held.retain(|var, known| {
-        let Some(other) = out.get(var) else {
-            return false;
+    for (var, slot) in held.iter_mut().enumerate() {
+        let Some(known) = *slot else {
+            continue;
         };
-        let joined = Known {
+        let joined = out.get(var).copied().flatten().map(|other| Known {
             zero: known.zero & other.zero,
             mask: known.mask || other.mask,
             foreign: known.foreign || other.foreign,
             deps: ITSELF,
-        };
-        changed |= joined != *known;
-        *known = joined;
-        true
-    });
-    changed || held.len() != before
+        });
+        changed |= joined != *slot;
+        *slot = joined;
+    }
+    changed
 }
 
 /// The loops of a program not shown to end, as [`LOOP_OTHER_LANES`] and [`LOOP_UNCHANGING`]
@@ -646,13 +715,16 @@ pub(super) fn not_shown_to_end(
         module,
         functions,
         home: 0,
-        vars: HashMap::new(),
+        locals: (functions.iter())
+            .map(|function| vec![Slot::Unseen; function.local_variables.len()])
+            .collect(),
+        globals: vec![Slot::Unseen; module.global_variables.len()],
         masks: Vec::new(),
-        decides: Vec::new(),
-        conds: HashMap::new(),
+        alone: Vec::new(),
         sets: Sets::default(),
         values: Vec::with_capacity(functions.len()),
-        state: HashMap::new(),
+        state: State::new(),
+        decided: None,
         log: Vec::new(),
         shares: HashMap::new(),
     };
@@ -668,7 +740,6 @@ pub(super) fn not_shown_to_end(
         (walk.values).push(function.expressions.iter().map(literal).collect());
     }
     // A lane starts as the one lane of its wave that runs.
-    let mut entry = HashMap::new();
     let named = |name: &str| {
         let local = (functions[0].local_variables.iter())
             .find(|(_, local)| local.name.as_deref() == Some(name))
@@ -680,19 +751,18 @@ pub(super) fn not_shown_to_end(
         })
     };
     for (name, zero) in [(MASKS[0], !1), (MASKS[1], u32::MAX)] {
-        if let Some(var) = named(name) {
-            let known = Known {
+        if let Some(Slot::Held(var)) = named(name).map(|var| walk.var(var)) {
+            walk.state[var as usize] = Some(Known {
                 zero,
                 mask: true,
                 foreign: false,
                 deps: ITSELF,
-            };
-            entry.insert(walk.var(var), known);
+            });
         }
     }
 
-    let mut ins: Vec<Option<HashMap<u32, Known>>> = vec![None; count];
-    ins[0] = Some(entry);
+    let mut ins: Vec<Option<State>> = vec![None; count];
+    ins[0] = Some(std::mem::take(&mut walk.state));
     // By block: what each variable it stores hangs on, and what its branch is decided by.
     let mut stores: Vec<Vec<(u32, u32)>> = vec![Vec::new(); count];
     let mut decided: Vec<Option<Known>> = vec![None; count];
@@ -706,28 +776,27 @@ pub(super) fn not_shown_to_end(
             }
             any = true;
             walk.home = blocks[block].0;
-            walk.state = ins[block].clone().unwrap_or_default();
+            walk.state
+                .clone_from(ins[block].as_ref().unwrap_or(&State::new()));
+            // A variable seen since the block was last reached is one its paths say nothing of.
+            walk.state.resize(walk.masks.len(), None);
             walk.log.clear();
+            walk.decided = None;
             walk.block(blocks[block].1);
-            stores[block] = (walk.state.iter())
-                .filter(|(_, known)| known.deps != ITSELF)
-                .map(|(&var, known)| (var, known.deps))
-                .collect();
-            decided[block] = (walk.conds.get(&block)).and_then(|var| walk.state.get(var).copied());
-            // What decides a branch is read where the branch is, and by no block after it.
-            let decides = &walk.decides;
-            let out: HashMap<u32, Known> = (walk.state.iter())
-                .filter(|(&var, _)| decides[var as usize].is_none())
-                .map(|(&var, &known)| {
-                    let known = Known {
-                        deps: ITSELF,
-                        ..known
-                    };
-                    (var, known)
-                })
-                .collect();
+            let mut wrote: Vec<u32> = walk.log.iter().map(|(var, _)| *var).collect();
+            wrote.sort_unstable();
+            wrote.dedup();
+            stores[block].clear();
+            for var in wrote {
+                // The blocks after this one hang on a variable as they find it.
+                if let Some(known) = &mut walk.state[var as usize] {
+                    stores[block].push((var, known.deps));
+                    known.deps = ITSELF;
+                }
+            }
+            decided[block] = walk.decided;
             for &to in &successors[block] {
-                dirty[to] |= join(&mut ins[to], &out);
+                dirty[to] |= join(&mut ins[to], &walk.state);
             }
         }
         if !any {
@@ -748,33 +817,41 @@ pub(super) fn not_shown_to_end(
                 stack.extend(&preds[block]);
             }
         }
-        // What a turn of the loop makes each variable it stores hang on.
-        let mut hangs: HashMap<u32, Vec<u32>> = HashMap::new();
+        // What a turn of the loop makes each variable it stores hang on: each set its blocks
+        // store it as, once, then what those hold, once.
+        let vars = walk.masks.len();
+        let mut hangs: Vec<Vec<u32>> = vec![Vec::new(); vars];
         for block in (0..count).filter(|&block| inside[block]) {
             for &(var, deps) in &stores[block] {
-                let on: &mut Vec<u32> = hangs.entry(var).or_default();
-                on.extend(&*walk.sets.list[deps as usize]);
+                hangs[var as usize].push(deps);
             }
+        }
+        for on in &mut hangs {
+            on.sort_unstable();
+            on.dedup();
+            let sets = std::mem::take(on);
+            on.extend(sets.iter().flat_map(|&set| &*walk.sets.list[set as usize]));
+            on.sort_unstable();
+            on.dedup();
         }
         // What may differ from one turn to the next: what hangs, through what the loop stores,
         // on memory or on a variable made of itself, as a count is or a mask lanes are taken
         // from. Everything else a turn finds as the last did.
-        let mut differs: BTreeSet<u32> = hangs.keys().copied().collect();
+        let mut differs: Vec<bool> = hangs.iter().map(|on| !on.is_empty()).collect();
         loop {
-            let settled: Vec<u32> = (differs.iter().copied())
-                .filter(|var| {
-                    !hangs[var]
-                        .iter()
-                        .any(|on| *on == VOLATILE || differs.contains(on))
-                })
-                .collect();
-            if settled.is_empty() {
+            let mut settled = false;
+            for var in 0..vars {
+                let hung = |on: &u32| *on == VOLATILE || differs[*on as usize];
+                if differs[var] && !hangs[var].iter().any(hung) {
+                    differs[var] = false;
+                    settled = true;
+                }
+            }
+            if !settled {
                 break;
             }
-            for var in settled {
-                differs.remove(&var);
-            }
         }
+        let differs = |on: &u32| *on == VOLATILE || differs[*on as usize];
         let exits = (0..count)
             .filter(|&block| inside[block] && successors[block].iter().any(|&to| !inside[to]));
         let (mut shown, mut foreign) = (false, false);
@@ -787,8 +864,7 @@ pub(super) fn not_shown_to_end(
                 ITSELF => &[],
                 deps => &walk.sets.list[deps as usize],
             };
-            shown |=
-                !known.foreign && (on.iter()).any(|on| *on == VOLATILE || differs.contains(on));
+            shown |= !known.foreign && on.iter().any(differs);
         }
         if !shown {
             counts[usize::from(!foreign)] += 1;

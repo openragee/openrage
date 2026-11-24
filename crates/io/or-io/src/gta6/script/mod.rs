@@ -11,6 +11,7 @@
 //! `Global_48`, `func_000100`. A name is never invented.
 
 pub mod cfg;
+pub mod compiled;
 pub mod ir;
 pub mod listing;
 pub mod names;

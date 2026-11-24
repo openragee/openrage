@@ -6,7 +6,13 @@ pub mod entry;
 #[cfg(feature = "gta6")]
 pub mod gta6_archive;
 #[cfg(feature = "gta6")]
+pub mod gta6_chunk_table;
+#[cfg(feature = "gta6")]
+pub mod gta6_container_write;
+#[cfg(feature = "gta6")]
 pub mod gta6_content;
+#[cfg(feature = "gta6")]
+pub mod gta6_extract;
 #[cfg(feature = "gta6")]
 pub mod gta6_keygate;
 #[cfg(feature = "gta6")]
@@ -59,6 +65,8 @@ pub use gta6_archive::{
     GROUP_CHUNK_RECORD, GROUP_CIPHER, GROUP_CONTENT_HASH, GROUP_ENTRY_ROW, GROUP_ENTRY_ROW_20,
     GROUP_NAME32, GROUP_NAME64,
 };
+#[cfg(feature = "gta6")]
+pub use gta6_container_write::{Rpf9ArchiveWriter, Rpf9Piece, Rpf9Plan};
 #[cfg(feature = "gta6")]
 pub use gta6_keygate::{decode_masked, encode_masked, gate_key, is_masked, MASKED_MAGIC};
 #[cfg(feature = "gta6")]

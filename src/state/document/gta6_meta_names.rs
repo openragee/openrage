@@ -38,10 +38,19 @@ pub fn hash_name_or_text(hash: u32) -> String {
     }
 }
 
-/// `xml` as the Text panel shows it: a GTA VI form's named hash values each take a comment.
-pub(super) fn shown_xml(xml: String, layout: Option<&MetaLayout>) -> String {
-    match meta_names_from_the_text(layout) {
-        true => with_text_names(&xml, hash_text_name),
+/// `xml` as the Text panel shows it: a GTA VI form's named hash values each take a comment, the
+/// document's own string first.
+pub(super) fn shown_xml(
+    xml: String,
+    layout: Option<&MetaLayout>,
+    strings: &super::gta6_meta_strings::DocumentStrings,
+) -> String {
+    let vocabulary = meta_names_from_the_text(layout);
+    match vocabulary || strings.has_names() {
+        true => with_text_names(&xml, |hash| {
+            (strings.name(hash).map(str::to_owned))
+                .or_else(|| vocabulary.then(|| hash_text_name(hash)).flatten())
+        }),
         false => xml,
     }
 }
@@ -142,7 +151,8 @@ mod tests {
     fn a_document_read_with_no_layout_is_no_gta6_form_and_its_xml_is_unchanged() {
         assert!(!meta_names_from_the_text(None));
         let xml = "<a>hash_000000AB</a>".to_string();
-        assert_eq!(shown_xml(xml.clone(), None), xml);
+        let none = super::super::gta6_meta_strings::DocumentStrings::default();
+        assert_eq!(shown_xml(xml.clone(), None, &none), xml);
     }
 
     #[test]

@@ -13,6 +13,7 @@ use std::io::{Read, Seek, SeekFrom};
 use byteorder::{ByteOrder, LE};
 
 use super::gta6_archive::{Gta6Archive, Gta6Entry};
+use super::gta6_chunk_table::Chunk;
 use super::rpf9::{Rpf9Header, RPF9_HEADER_SIZE, RPF9_MAGIC};
 use super::rpf9_scan::read_rpf9_body;
 use super::rpf9_toc::GtaViKeys;
@@ -151,10 +152,12 @@ impl Gta6Mount {
     /// The extent is the rule of [`super::gta6_content::enciphered_ranges`]: the record's five framing
     /// words decide which byte ranges are enciphered, and each range is deciphered at its absolute
     /// counter (the IV advanced by the range's block offset, never restarted). The deciphered body is
-    /// then a run of 16-aligned chunks — zlib, stored (a failed inflate) or, for a nested archive's
-    /// first entry, raw DEFLATE — which are inflated and concatenated. A 24-byte row's real size bounds
-    /// and ends the walk; a 20-byte row (a script body, whose stored real size is unreliable) walks to
-    /// the end of its stored extent, a stored chunk ending at the next 16-aligned zlib head.
+    /// then a run of 16-aligned chunks, walked by the entry's `0xe0c1` chunk table where it has one
+    /// ([`super::gta6_chunk_table`]); with no table they are found as zlib, stored (a failed
+    /// inflate) or, for a nested archive's first entry, raw DEFLATE, then inflated and concatenated.
+    /// Without a table, a 24-byte row's real size bounds and ends the walk; a 20-byte row (a script
+    /// body, whose stored real size is unreliable) walks to the end of its stored extent, a stored
+    /// chunk ending at the next 16-aligned zlib head.
     pub fn read_entry_decrypted_report<R: Read + Seek>(
         &self,
         mut src: R,
@@ -215,7 +218,8 @@ impl Gta6Mount {
             return Err(e);
         }
 
-        let (data, chunk_count, consumed) = walk_chunks(&body, real)
+        let (data, chunk_count, consumed) = self
+            .walk_body(&body, entry, real)
             .map_err(|why| body_bad(format!("entry {} {why}", entry.index)))?;
         // A 24-byte row states the inflated size; the chunks must sum to exactly it.
         if let Some(real) = real {
@@ -343,7 +347,8 @@ impl Gta6Mount {
             why,
         };
         let (_, _, real) = self.body_geometry(entry)?;
-        let (data, _chunks, _consumed) = walk_chunks(stored, real)
+        let (data, _chunks, _consumed) = self
+            .walk_body(stored, entry, real)
             .map_err(|why| body_bad(format!("entry {} {why}", entry.index)))?;
         if let Some(real) = real {
             if data.len() as u64 != real {
@@ -356,6 +361,52 @@ impl Gta6Mount {
         }
         Ok(data)
     }
+
+    /// Walk a deciphered `body` by `entry`'s chunk table where it has one, else by [`walk_chunks`].
+    fn walk_body(
+        &self,
+        body: &[u8],
+        entry: &Gta6Entry,
+        real: Option<u64>,
+    ) -> std::result::Result<(Vec<u8>, usize, u64), String> {
+        match super::gta6_chunk_table::entry_chunks(&self.archive, entry.index as usize) {
+            Ok(Some(table)) => walk_table(body, &table),
+            Ok(None) => walk_chunks(body, real),
+            Err(e) => Err(format!("has a malformed chunk table ({e})")),
+        }
+    }
+}
+
+/// Walk `body` by its decoded chunk `table`: each chunk 16-aligned, a deflated one inflating from
+/// exactly its stored bytes to exactly its inflated size. Returns what [`walk_chunks`] returns.
+fn walk_table(body: &[u8], table: &[Chunk]) -> std::result::Result<(Vec<u8>, usize, u64), String> {
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    for (i, chunk) in table.iter().enumerate() {
+        let (stored, inflated) = (chunk.stored as usize, chunk.inflated as usize);
+        let bytes = body
+            .get(pos..pos + stored)
+            .ok_or_else(|| format!("chunk {i} runs past its stored body"))?;
+        if chunk.zlib {
+            // Deflate with or without the zlib header; either must end exactly at the stored size.
+            let cap = u64::from(chunk.inflated);
+            match inflate_one(bytes, false, cap).or_else(|| inflate_one(bytes, true, cap)) {
+                Some((consumed, data)) if consumed == stored && data.len() == inflated => {
+                    out.extend_from_slice(&data)
+                }
+                _ => {
+                    return Err(format!(
+                        "chunk {i} does not inflate from {stored} bytes to the {inflated} its \
+                         table states"
+                    ))
+                }
+            }
+        } else {
+            out.extend_from_slice(bytes);
+        }
+        pos = round16(pos + stored);
+    }
+    Ok((out, table.len(), pos as u64))
 }
 
 /// The result of reading a content-ciphered entry: the inflated body, how many chunks it held, and how
@@ -919,5 +970,93 @@ mod tests {
             "zlib, stored-to-next-head, zlib"
         );
         assert_eq!(chunks, 3);
+    }
+
+    /// zlib, then a 64-byte stored chunk whose bytes from offset 16 happen to be a whole zlib stream,
+    /// then zlib: the body, its chunk table and the plaintext.
+    fn body_with_a_zlib_lookalike() -> (Vec<u8>, Vec<Chunk>, Vec<u8>) {
+        let a: Vec<u8> = (0..120u32).map(|x| x as u8).collect();
+        let mut stored = vec![0x55u8; 16];
+        stored.extend_from_slice(&zlib_stream(b"looks like a chunk"));
+        stored.resize(64, 0x55);
+        let c: Vec<u8> = (0..90u32).map(|x| (x * 3) as u8).collect();
+        let (za, zc) = (zlib_stream(&a), zlib_stream(&c));
+
+        let mut body = za.clone();
+        pad16(&mut body);
+        body.extend_from_slice(&stored);
+        body.extend_from_slice(&zc);
+        pad16(&mut body);
+        let chunk = |inflated: usize, stored: usize, zlib| Chunk {
+            inflated: inflated as u32,
+            stored: stored as u32,
+            zlib,
+        };
+        let table = vec![
+            chunk(a.len(), za.len(), true),
+            chunk(64, 64, false),
+            chunk(c.len(), zc.len(), true),
+        ];
+        (body, table, [a, stored, c].concat())
+    }
+
+    #[test]
+    fn a_table_walk_reads_a_stored_chunk_the_heuristic_splits_at_a_zlib_lookalike() {
+        let (body, table, plain) = body_with_a_zlib_lookalike();
+        // The heuristic ends the stored chunk at the lookalike head 16 bytes in, and reads wrong.
+        let (guessed, _, _) = walk_chunks(&body, None).expect("the heuristic walk");
+        assert_ne!(guessed, plain, "the heuristic is fooled by the lookalike");
+
+        let (out, chunks, consumed) = walk_table(&body, &table).expect("the table walk");
+        assert_eq!(out, plain);
+        assert_eq!(chunks, 3);
+        assert_eq!(consumed, body.len() as u64);
+
+        // A table that states a wrong inflated size, or a chunk past the body, is refused.
+        let mut wrong = table.clone();
+        wrong[0].inflated += 1;
+        assert!(walk_table(&body, &wrong).is_err());
+        assert!(walk_table(&body[..body.len() - 16], &table).is_err());
+    }
+
+    #[test]
+    fn a_mount_walks_an_entry_with_a_chunk_row_by_its_table() {
+        let (body, table, plain) = body_with_a_zlib_lookalike();
+        let (u1, words) =
+            super::super::gta6_chunk_table::author(&super::super::gta6_chunk_table::Table {
+                mode: 3,
+                chunks: table,
+            })
+            .unwrap();
+        let mut cell_and_heap = 8u32.to_le_bytes().to_vec(); // descriptors right after the cell
+        cell_and_heap.extend_from_slice(&u1.to_le_bytes());
+        for word in words {
+            cell_and_heap.extend_from_slice(&word.to_le_bytes());
+        }
+        let mount = Gta6Mount {
+            base: 0,
+            archive: super::super::gta6_chunk_table::one_entry_archive(&cell_and_heap),
+        };
+        let entry = Gta6Entry {
+            index: 0,
+            name64: 0,
+            name32: None,
+            name: None,
+            start: Some(0),
+            stored: Some(body.len() as u64),
+            real: Some(plain.len() as u64),
+            class: Some(0x0B),
+            cipher: None,
+        };
+        assert_eq!(
+            mount.inflate_deciphered_stored(&body, &entry).unwrap(),
+            plain
+        );
+        // Entry 1 has no row, so the heuristic walks it, and does not read the plaintext.
+        let rowless = Gta6Entry { index: 1, ..entry };
+        assert_ne!(
+            mount.inflate_deciphered_stored(&body, &rowless).ok(),
+            Some(plain)
+        );
     }
 }

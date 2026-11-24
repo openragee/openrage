@@ -23,6 +23,8 @@ pub struct EditorCtx {
     pub edits: Rc<RefCell<Vec<MetaEdit>>>,
     /// Whether a hash value no table names shows the vocabulary's name: a GTA VI form's only.
     pub text_names: bool,
+    /// The names the document's own string sections give its hash values.
+    pub strings: Arc<crate::state::DocumentStrings>,
 }
 
 impl EditorCtx {
@@ -70,6 +72,7 @@ impl EditorCtx {
             records: Rc::new(RecordUi::default()),
             edits: Rc::default(),
             text_names: false,
+            strings: Default::default(),
         }
     }
 }

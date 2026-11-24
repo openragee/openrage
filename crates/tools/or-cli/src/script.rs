@@ -15,6 +15,8 @@ use or_io::gta5::script::natives::{
 use or_io::gta5::script::ScrProgram;
 use or_io::gta5::script::{decompile, disasm};
 
+#[path = "gta6_compiled.rs"]
+mod compiled;
 #[path = "gta6_lifted.rs"]
 mod lifted;
 
@@ -47,6 +49,9 @@ pub fn run(args: &[String]) -> ExitCode {
     }
     if args.first().map(String::as_str) == Some("lifted") {
         return lifted::run(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("compiled") {
+        return compiled::run(&args[1..]);
     }
     let (mode, rest) = match args.first().map(String::as_str) {
         Some("disasm") => (Mode::Disasm, &args[1..]),

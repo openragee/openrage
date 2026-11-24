@@ -16782,3 +16782,6 @@ msgid "the lights of {count} map"
 msgid_plural "the lights of {count} maps"
 msgstr[0] "die Lichter von {count} Map"
 msgstr[1] "die Lichter von {count} Maps"
+
+msgid "The names of this document's strings need the GTA VI key snapshot"
+msgstr "Die Namen der Zeichenketten dieses Dokuments benötigen den GTA-VI-Schlüssel-Snapshot"

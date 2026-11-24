@@ -32,6 +32,7 @@ mod gta6_ids;
 mod gta6_import;
 mod gta6_install;
 mod gta6_inverse;
+mod gta6_keys;
 mod gta6_map;
 mod gta6_map_entities;
 mod gta6_map_entity;
@@ -80,6 +81,7 @@ mod registry;
 mod retarget;
 mod rpf;
 mod rpf9;
+mod rpf9_write;
 mod script;
 mod search;
 mod serve;
@@ -178,6 +180,7 @@ pub const COMMANDS: &[&str] = &[
     "weapons",
     "photo",
     "rpf",
+    "keys",
     "script",
     "search",
     "hash",
@@ -262,6 +265,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "texture" => with_cli_tracing(|| texture::run(rest)),
         "ttpf" => ttpf::run(rest),
         "gta6-save" => gta6_save::run(rest),
+        "keys" => with_cli_tracing(|| gta6_keys::run(rest)),
         "gta6-mission" => gta6_mission::run(rest),
         "versions" => with_cli_tracing(|| version_census::run(rest)),
         "gaps" => with_cli_tracing(|| unfixtured_census::run(rest)),
@@ -368,6 +372,9 @@ fn print_usage() {
     eprintln!("  gta6-save  GTA VI saves: info, get or set a value of a story save, key of a name");
     eprintln!(
         "  gta6-mission  The mission state tables in an inflated body of a GTA VI script archive"
+    );
+    eprintln!(
+        "  keys       GTA VI key snapshot from the game executable: keys gta6 --exe <exe> [--out <file>] [--force]"
     );
     eprintln!("  versions   Census the RSC7 resource versions in an install (Legacy vs Enhanced)");
     eprintln!("  gaps       Census the layouts no fixture exercises, over a whole install");

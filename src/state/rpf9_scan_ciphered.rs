@@ -63,9 +63,9 @@ pub(crate) fn decipher_entry(
 }
 
 /// Open the content-ciphered leaf `req.entry` of the archive at `req.base` in the file at `archive`,
-/// deciphering its STORED bytes once: a headerless RSC8 resource — a texture, headerless metadata —
-/// opens through the table-free resource reader a clear resource takes, so it shows in its real
-/// viewer; everything else inflates those same bytes (no second decipher) and opens by their head.
+/// deciphering its STORED bytes once: a headerless RSC8 resource opens through the step a clear
+/// body takes, so it shows in the view a clear open of it shows; everything else inflates those
+/// same bytes (no second decipher) and opens by their head.
 pub(super) fn ciphered_payload(
     path: &Path,
     archive: &Path,
@@ -78,7 +78,7 @@ pub(super) fn ciphered_payload(
     let stored = mount
         .read_entry_deciphered_stored(&mut file, entry, &keys)
         .map_err(|e| e.to_string())?;
-    if let Some(payload) = ciphered_resource(path, &stored) {
+    if let Some(payload) = ciphered_resource(path, archive, &stored) {
         return Ok(payload);
     }
     let bytes = mount
@@ -107,36 +107,23 @@ fn mount_ciphered(archive: &Path, base: u64) -> Result<(GtaViKeys, File, Gta6Mou
     ))
 }
 
-/// A content-ciphered entry's deciphered STORED bytes opened as a headerless RSC8 resource, when they
-/// are one in scope: a texture dictionary in the texture viewer, headerless metadata through the RBM
-/// reader. `None` otherwise — PSO, RBF and text (the reader's head is not a block map), and a drawable,
-/// which is shown as its bytes — so the caller inflates the body and opens it by its head or shows hex.
-fn ciphered_resource(path: &Path, stored: &[u8]) -> Option<DocPayload> {
-    use or_io::container::rpf::Rpf9Role;
+/// A content-ciphered entry's deciphered STORED bytes opened as a headerless RSC8 resource of
+/// `archive`, through [`body_payload`], the step a clear body takes. `None` when they are none — PSO,
+/// RBF and text, whose reader's head is not a block map — so the caller inflates and opens them.
+fn ciphered_resource(path: &Path, archive: &Path, stored: &[u8]) -> Option<DocPayload> {
     if !starts_stored_rpf9_resource(stored, or_io::gta6::anim::RSC8_VERSION) {
         return None;
     }
     let (find, bytes) = resource_body(stored)?;
     let Rpf9BodyKind::Zlib(Rpf9ZlibRun {
-        resource: Some(resource),
-        ..
+        resource: Some(_), ..
     }) = find.kind
     else {
         return None;
     };
-    let payload = match view_of(&find).ok()? {
-        View::Facts(signature) if signature.role() == Some(Rpf9Role::Dictionary) => {
-            let (virtual_section, physical) = resource.sections(&bytes);
-            let dict =
-                or_io::gta6::headerless::read_dictionary(virtual_section, Some(physical)).ok()?;
-            super::super::ttpf_document::scanned_textures(path, dict)?
-        }
-        View::Headerless => headerless(path, &resource, &bytes).ok()?,
-        _ => return None,
-    };
     // No origin is recorded: the deciphered buffer's offset is 0, not the entry's place in the
-    // archive, so the inspector would print a misleading `Offset 0x0`, and the texture route needs none.
-    Some(payload)
+    // archive, so the inspector would print a misleading `Offset 0x0`.
+    body_payload(path, archive, find, bytes).ok()
 }
 
 /// [`read_rpf9_body`] over deciphered stored bytes at offset 0, trimming the trailing pad a lone
@@ -202,7 +189,7 @@ mod ciphered_open {
 
         let path = Path::new("K:/none/archive.rpf/0x1000.bin");
         assert!(
-            ciphered_resource(path, &stored).is_none(),
+            ciphered_resource(path, Path::new("K:/none/archive.rpf"), &stored).is_none(),
             "a PSO stored body must not open through the headerless resource reader"
         );
     }
@@ -236,6 +223,46 @@ mod ciphered_open {
             trimmed.kind, exact.kind,
             "the trimmed read is the same kind"
         );
+    }
+
+    /// The same stored headerless bodies open alike through the clear door and the deciphered door,
+    /// each as a read and not its bytes: headerless metadata, and a clip root, which the deciphered
+    /// door once left as bytes because it routed only a texture dictionary and headerless metadata.
+    #[test]
+    fn a_stored_headerless_body_opens_alike_through_both_doors() {
+        use crate::state::opening_an_rpf9_archive::{
+            animation_set, headerless_rbm, rpf9_head, written, zlib,
+        };
+
+        let mut bytes = rpf9_head(1, 0x1A0);
+        let mut offsets = Vec::new();
+        for body in [zlib(&headerless_rbm(0x5000_00E0)), zlib(&animation_set().0)] {
+            // A headerless resource follows a zero 16-byte slot at the start of a 4 KiB page.
+            bytes.resize(bytes.len().next_multiple_of(0x1000) + 16, 0);
+            offsets.push(bytes.len() as u64);
+            bytes.extend_from_slice(&body);
+        }
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let disk = written(dir.path(), &bytes);
+        let ends = (offsets.iter().skip(1).copied()).chain([bytes.len() as u64]);
+        for (start, end) in offsets.iter().copied().zip(ends) {
+            let clear = read_body(&body_path(&disk, start, View::Headerless), &disk, start)
+                .unwrap_or_else(|e| panic!("the clear door opens {start:#X}: {e}"));
+            // The stored bytes run on to the next body, as a deciphered entry's pad does.
+            let stored = &bytes[start as usize..end as usize];
+            let deciphered =
+                ciphered_resource(&body_path(&disk, start, View::Bytes), &disk, stored)
+                    .unwrap_or_else(|| panic!("the deciphered door opens {start:#X}"));
+            assert!(
+                !matches!(clear, DocPayload::Hex(_)),
+                "the clear door reads the body at {start:#X}"
+            );
+            assert_eq!(
+                std::mem::discriminant(&deciphered),
+                std::mem::discriminant(&clear),
+                "both doors open the body at {start:#X} as the same kind of payload"
+            );
+        }
     }
 }
 

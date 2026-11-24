@@ -16782,3 +16782,6 @@ msgid "the lights of {count} map"
 msgid_plural "the lights of {count} maps"
 msgstr[0] "{count} 个地图的灯光"
 msgstr[1] "{count} 个地图的灯光"
+
+msgid "The names of this document's strings need the GTA VI key snapshot"
+msgstr "此文档字符串的名称需要 GTA VI 密钥快照"

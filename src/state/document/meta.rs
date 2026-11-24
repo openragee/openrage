@@ -90,12 +90,22 @@ pub struct MetaDocument {
     /// so it cannot disagree with the writer. Encoding is not free, so it runs
     /// once per revision rather than once per frame.
     validation: Option<(u64, Option<String>)>,
+    /// The names a GTA VI PSO's own string sections give its hash values.
+    pub strings: std::sync::Arc<DocumentStrings>,
 }
 
 impl MetaDocument {
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        use or_io::meta::binary::ContainerLayout;
         let parse_result = or_io::meta::MetaDocument::parse(meta_schema(), bytes.clone());
-        Self::from_parse(bytes, parse_result)
+        let layout = parse_result.as_ref().ok().and_then(|d| d.layout.as_ref());
+        let strings = match layout.map(|l| &l.container) {
+            Some(ContainerLayout::Pso(p)) if p.is_table_form() || p.is_gta6() => {
+                DocumentStrings::of(&bytes, super::gta6_meta_strings::install_keys)
+            }
+            _ => DocumentStrings::default(),
+        };
+        Self::from_parse(bytes, parse_result, strings)
     }
 
     /// A GTA VI headerless RBM resource, from its virtual and its physical section.
@@ -109,12 +119,17 @@ impl MetaDocument {
             revision: 0,
             source_format: or_io::meta::SourceFormat::Rbm,
         };
-        Ok(Self::from_parse(virtual_section.to_vec(), Ok(parsed)))
+        Ok(Self::from_parse(
+            virtual_section.to_vec(),
+            Ok(parsed),
+            DocumentStrings::default(),
+        ))
     }
 
     fn from_parse(
         bytes: Vec<u8>,
         parse_result: or_io::meta::Result<or_io::meta::MetaDocument>,
+        strings: DocumentStrings,
     ) -> Self {
         let (parsed, parse_error, source_format, layout) = match parse_result {
             Ok(parsed_doc) => (
@@ -137,7 +152,9 @@ impl MetaDocument {
 
         let text_bytes = match (&parsed, source_format) {
             (Some(p), fmt) if fmt.is_binary() => or_io::meta::write_meta(&p.instance)
-                .map(|s| super::gta6_meta_names::shown_xml(s, layout.as_ref()).into_bytes())
+                .map(|s| {
+                    super::gta6_meta_names::shown_xml(s, layout.as_ref(), &strings).into_bytes()
+                })
                 .unwrap_or_else(|_| bytes.clone()),
             _ => bytes.clone(),
         };
@@ -154,6 +171,7 @@ impl MetaDocument {
             layout,
             raw_bytes: bytes,
             validation: None,
+            strings: std::sync::Arc::new(strings),
         }
     }
 
@@ -173,6 +191,7 @@ impl MetaDocument {
             layout: None,
             raw_bytes: Vec::new(),
             validation: None,
+            strings: Default::default(),
         }
     }
 
@@ -231,7 +250,7 @@ impl MetaDocument {
             .as_ref()
             .map(|p| or_io::meta::write_meta(&p.instance).unwrap_or_default())
             .unwrap_or_default();
-        let xml = super::gta6_meta_names::shown_xml(xml, self.layout.as_ref());
+        let xml = super::gta6_meta_names::shown_xml(xml, self.layout.as_ref(), &self.strings);
         self.text = TextDocument::decode(xml.as_bytes());
         self.text_revision = self.text_revision.wrapping_add(1);
         self.parsed_at_text_revision = self.text_revision;

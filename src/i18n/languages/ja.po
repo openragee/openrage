@@ -16782,3 +16782,6 @@ msgid "the lights of {count} map"
 msgid_plural "the lights of {count} maps"
 msgstr[0] "マップ {count} 個のライト"
 msgstr[1] "マップ {count} 個のライト"
+
+msgid "The names of this document's strings need the GTA VI key snapshot"
+msgstr "この文書の文字列の名前には GTA VI のキースナップショットが必要です"

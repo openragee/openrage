@@ -201,6 +201,29 @@ impl Gta6ArchiveExplorer {
         }
     }
 
+    /// The absolute header offset of the node at `node_path`: 0 at the root, then the start of each
+    /// archive row the path expands through. A ciphered open resolves the base here, cheaply, so the
+    /// decipher itself can run on the load worker rather than the UI thread.
+    pub(super) fn node_base(&self, node_path: &[u32]) -> Result<u64, String> {
+        let mut base = 0u64;
+        let mut node = self.root.as_ref().ok_or("no archive is open")?;
+        for &index in node_path {
+            let row = node
+                .rows
+                .iter()
+                .find(|r| r.index == index && r.is_archive)
+                .ok_or_else(|| format!("entry {index} is not an open nested archive"))?;
+            base = row
+                .absolute_start
+                .ok_or_else(|| format!("entry {index} has no start"))?;
+            node = node
+                .children
+                .get(&index)
+                .ok_or_else(|| format!("entry {index} is not mounted"))?;
+        }
+        Ok(base)
+    }
+
     fn child_exists(&self, parent_path: &[u32], entry_index: u32) -> bool {
         self.node_at(parent_path)
             .is_some_and(|p| p.children.contains_key(&entry_index))
@@ -293,4 +316,65 @@ fn load_resolver() -> NameResolver {
         resolver.merge_vocabulary(&Vocabulary::load(&vocabulary_file(&config)));
     }
     resolver
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The real size over which a flagged leaf is left for the cheap smoke test: a huge script body
+    /// would decipher-and-inflate for seconds.
+    const SAMPLE_CAP: u32 = 0x40000;
+
+    /// A flagged root leaf of a real build decrypts to a recognised inflated head, never ciphertext:
+    /// [`crate::state::rpf9_scan::decipher_entry`], which the ciphered-open path runs on the load
+    /// worker, reproduces the mount's deciphered body. Install-gated — it needs the key snapshot and
+    /// the build, and skips cleanly without them.
+    #[test]
+    fn a_flagged_root_entry_decrypts_to_a_recognised_head() {
+        let have = |v: &str| {
+            std::env::var_os(v)
+                .map(PathBuf::from)
+                .is_some_and(|p| p.exists())
+        };
+        if !(have(BUILD_ENV) && have("OPENRAGE_GTA6_KEYS")) {
+            or_test_support::skip_install(
+                "gta6 archive explorer ciphered open",
+                format_args!("set OPENRAGE_GTA6_KEYS (with content keys) and {BUILD_ENV}"),
+            );
+            return;
+        }
+        let mut explorer = Gta6ArchiveExplorer::default();
+        for name in explorer.ensure_listed().to_vec() {
+            explorer.open(&name);
+            let (Some(disk), Some(root)) = (explorer.selected_path(), explorer.root.clone()) else {
+                continue;
+            };
+            let small_leaf = |r: &EntryRow| {
+                r.cipher && !r.is_archive && r.size.is_some_and(|s| s > 0 && s <= SAMPLE_CAP)
+            };
+            for index in root.rows.iter().filter(|r| small_leaf(r)).map(|r| r.index) {
+                let Ok(body) = crate::state::rpf9_scan::decipher_entry(&disk, 0, index) else {
+                    continue;
+                };
+                if body.is_empty() {
+                    continue;
+                }
+                let head_ok = body.starts_with(b"PSIN")
+                    || body.starts_with(b"RBF0")
+                    || body.first().is_some_and(|&b| b == b'<' || b == 0xEF)
+                    || (body.len() >= 8 && body[..8].iter().all(|&b| b == 0));
+                assert!(
+                    head_ok,
+                    "a decrypted flagged entry's head {:02x?} is not a recognised inflated kind",
+                    &body[..body.len().min(4)]
+                );
+                return;
+            }
+        }
+        or_test_support::skip_install(
+            "gta6 archive explorer ciphered open",
+            format_args!("no small flagged root entry decrypted in the build"),
+        );
+    }
 }

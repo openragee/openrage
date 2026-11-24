@@ -430,6 +430,13 @@ fn is_missing(head: &[u8]) -> bool {
 
 /// The body a path [`body_path`] made names, read and given to the view its kind has, or kept as its bytes where no reader reads it.
 pub(super) fn read_body(path: &Path, archive: &Path, offset: u64) -> Result<DocPayload, String> {
+    // A content-ciphered entry the archive explorer opened left a decrypt request here, keyed by
+    // this synthetic path; the decipher runs on this worker, not the UI thread. The clear reader
+    // below reads only bytes stored in the clear.
+    if let Some(req) = take_ciphered(path) {
+        let bytes = decipher_entry(archive, req.base, req.entry)?;
+        return Ok(decrypted_payload(path, bytes));
+    }
     let file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
     let (find, bytes) = match read_rpf9_body(&file, offset, BODY_LIMIT) {
         Err(Rpf9ScanError::ExtentNotKnown { .. }) if offset > 0 => {
@@ -572,6 +579,77 @@ pub(super) fn read_body(path: &Path, archive: &Path, offset: u64) -> Result<DocP
     };
     // A body its reader refuses is shown as its bytes, under the refusal.
     read.or_else(|banner| Ok(DocPayload::Hex(HexDocument { bytes, banner })))
+}
+
+/// The payload a decrypted, inflated body opens as: a PSO or RBF through the metadata reader, text
+/// as text, else its bytes under the reason none reads them. A headerless body (a compiled script, a
+/// texture) is kept as bytes, never decoded as Latin-1 text the way a `.bin` path otherwise would be.
+fn decrypted_payload(path: &Path, bytes: Vec<u8>) -> DocPayload {
+    if bytes.starts_with(b"PSIN") || bytes.starts_with(b"RBF0") {
+        return DocPayload::Meta(MetaDocument::from_bytes(bytes));
+    }
+    if super::document_io::is_text(&bytes) {
+        return super::document_io::text_payload(path, bytes);
+    }
+    let banner = super::document_io::no_reader(path);
+    DocPayload::Hex(HexDocument { bytes, banner })
+}
+
+/// A request to decipher a content-ciphered entry: the enciphered leaf `entry` within the archive
+/// whose header is at absolute `base` in the file the synthetic body path names.
+#[derive(Clone, Copy)]
+struct CipheredRequest {
+    base: u64,
+    entry: u32,
+}
+
+/// Requests the GTA VI archive explorer left for its content-ciphered opens, keyed by the synthetic
+/// body path [`body_path`] made, taken by [`read_body`] when it opens that path. A request is a few
+/// words, not the plaintext, and the decipher runs on the load worker, not the UI thread.
+static CIPHERED: Mutex<BTreeMap<PathBuf, CipheredRequest>> = Mutex::new(BTreeMap::new());
+
+/// Keep a request to decipher the leaf `entry` of the archive at `base`, for the next open of `path`.
+pub(crate) fn remember_ciphered(path: &Path, base: u64, entry: u32) {
+    (CIPHERED.lock())
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(path.to_path_buf(), CipheredRequest { base, entry });
+}
+
+/// Take the decrypt request remembered for `path`, if any; a body opens from it once.
+fn take_ciphered(path: &Path) -> Option<CipheredRequest> {
+    (CIPHERED.lock())
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(path)
+}
+
+/// Decipher and inflate the content-ciphered leaf `entry_index` of the archive whose header is at
+/// `base` in the file at `archive`, loading the GTA VI key snapshot for the decipher.
+pub(crate) fn decipher_entry(
+    archive: &Path,
+    base: u64,
+    entry_index: u32,
+) -> Result<Vec<u8>, String> {
+    use or_io::container::rpf::{open_at, Gta6Mount, GtaViKeys};
+    let keys = match GtaViKeys::for_install(or_title::config::config_dir().as_deref()) {
+        Ok(Some(keys)) => keys,
+        Ok(None) => return Err("no GTA VI key snapshot (set OPENRAGE_GTA6_KEYS)".to_string()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
+    let mounted = open_at(&mut file, base, &keys).map_err(|e| e.to_string())?;
+    let mount = Gta6Mount {
+        base,
+        archive: mounted,
+    };
+    let entry = mount
+        .archive
+        .entries
+        .iter()
+        .find(|e| e.index == entry_index)
+        .ok_or_else(|| format!("entry {entry_index} is not in this table"))?;
+    mount
+        .read_entry_decrypted(&mut file, entry, &keys)
+        .map_err(|e| e.to_string())
 }
 
 /// The archive nested at `offset` of `file`, the file at `archive`, as a scan of its own.
@@ -970,4 +1048,39 @@ fn skeleton_of(virtual_section: &[u8], fragment: bool) -> Result<Skeleton, Strin
         .ok_or_else(|| {
             tr!("This drawable's skeleton pointer is null, so it has no bones to pose.").to_string()
         })
+}
+
+#[cfg(test)]
+mod ciphered_open {
+    use super::*;
+
+    /// A decrypted body opens through the reader its head names, and a headerless binary body keeps
+    /// its bytes under the no-reader banner rather than being decoded as Latin-1 text.
+    #[test]
+    fn a_decrypted_body_opens_by_its_head() {
+        let path = Path::new("K:/none/archive.rpf/0x1000.bin");
+
+        let mut psin = b"PSIN".to_vec();
+        psin.extend_from_slice(&[0u8; 64]);
+        assert!(
+            matches!(decrypted_payload(path, psin), DocPayload::Meta(_)),
+            "a decrypted PSO opens through the metadata reader"
+        );
+
+        let xml = br#"<?xml version="1.0"?><root/>"#.to_vec();
+        assert!(
+            matches!(
+                decrypted_payload(path, xml),
+                DocPayload::Meta(_) | DocPayload::Text(_)
+            ),
+            "decrypted XML opens as text, not as its bytes"
+        );
+
+        let mut binary = vec![0x90u8, 0x00, 0x11, 0x22];
+        binary.extend_from_slice(&[0u8; 32]);
+        assert!(
+            matches!(decrypted_payload(path, binary), DocPayload::Hex(_)),
+            "a headerless binary body keeps its bytes under the banner, not decoded as text"
+        );
+    }
 }

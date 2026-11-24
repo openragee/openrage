@@ -390,7 +390,7 @@ fn text_or_hex(path: &std::path::Path, bytes: Vec<u8>) -> DocPayload {
 }
 
 /// Whether bytes no extension names are text: a UTF-16 byte order mark, or UTF-8 with no NUL in the first 8 KiB.
-fn is_text(bytes: &[u8]) -> bool {
+pub(super) fn is_text(bytes: &[u8]) -> bool {
     if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
         return true;
     }
@@ -399,7 +399,7 @@ fn is_text(bytes: &[u8]) -> bool {
 }
 
 /// The banner over a file whose name no reader claims.
-fn no_reader(path: &std::path::Path) -> String {
+pub(super) fn no_reader(path: &std::path::Path) -> String {
     let name = path
         .file_name()
         .unwrap_or(path.as_os_str())

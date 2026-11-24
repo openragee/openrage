@@ -137,6 +137,7 @@ not (
       | test(/^ui::open_in_offers_every_workspace_and_says_why_one_shows_nothing::/)
       | test(/^ui::panels::empty_state::tests::/)
       | test(/^ui::panels::gallery::tests::/)
+      | test(/^ui::panels::gta6_archive_tree::state::tests::/)
       | test(/^ui::panels::gxt2_table::tests::/)
       | test(/^ui::panels::hierarchy::described_tests::/)
       | test(/^ui::panels::hierarchy::folder_view::tests::/)
@@ -192,7 +193,8 @@ not (
   | binary_id(=or-anim::skinning)
   | binary_id(=or-anim::what_a_matrix_palette_addresses)
   | (binary_id(=or-cli) & (
-      test(/^source::tests::/)
+      test(/^rpf9::tests::extract_decrypt_writes_a_deciphered_body/)
+      | test(/^source::tests::/)
       | test(/^wardrobe_exchange::tests::/)
     ))
   | binary_id(=or-cli::a_build_cooks_what_a_project_imported)

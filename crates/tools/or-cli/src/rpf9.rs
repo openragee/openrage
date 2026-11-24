@@ -3,6 +3,7 @@
 //!   `rpf9 list <archive> [inner/path]`     one row per entry: start, stored, real, name64, name
 //!   `rpf9 tree …`                          an alias of `list`, kept for the earlier name
 //!   `rpf9 extract <archive> <dest> …`      write entry bodies to disk, inflated, at their exact extent
+//!                                          (with `--decrypt`, a content-ciphered body is deciphered first)
 //!   `rpf9 census <build-root>`             walk every archive and nested table, count them, and
 //!                                          classify each flagged body by its inflated head
 //!
@@ -40,7 +41,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
 const USAGE: &str = "\
 usage:
   openrage-cli rpf9 list <archive.rpf> [inner/path] [--names <dir>] [--keys <snapshot>] [--groups] [--nested] [--json]
-  openrage-cli rpf9 extract <archive.rpf> <dest-dir> [inner/path] [--entry <selector>] [--filter <substr>] [--names <dir>] [--keys <snapshot>]
+  openrage-cli rpf9 extract <archive.rpf> <dest-dir> [inner/path] [--entry <selector>] [--filter <substr>] [--decrypt] [--names <dir>] [--keys <snapshot>]
   openrage-cli rpf9 census <build-root> [--names <dir>] [--keys <snapshot>] [--out <dir>] [--top-only]";
 
 fn usage(msg: &str) -> ExitCode {
@@ -370,6 +371,7 @@ fn extract(args: &[String]) -> ExitCode {
     let mut common = Common::default();
     let mut positionals: Vec<&str> = Vec::new();
     let (mut entry_sel, mut filter): (Option<String>, Option<String>) = (None, None);
+    let mut decrypt = false;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match take_common(&mut common, arg, &mut it) {
@@ -386,6 +388,7 @@ fn extract(args: &[String]) -> ExitCode {
                 Some(v) => filter = Some(v.clone()),
                 None => return usage("--filter needs a substring"),
             },
+            "--decrypt" => decrypt = true,
             other if other.starts_with("--") => return usage(&format!("unknown option {other}")),
             other => positionals.push(other),
         }
@@ -410,6 +413,7 @@ fn extract(args: &[String]) -> ExitCode {
         &inner,
         entry_sel.as_deref(),
         filter.as_deref(),
+        decrypt,
         &keys,
         &resolver,
     ) {
@@ -434,6 +438,7 @@ fn do_extract(
     inner: &[String],
     entry_sel: Option<&str>,
     filter: Option<&str>,
+    decrypt: bool,
     keys: &GtaViKeys,
     resolver: &NameResolver,
 ) -> Result<usize, String> {
@@ -448,11 +453,18 @@ fn do_extract(
 
     let mut written = 0usize;
     for entry in &chosen {
+        // A content-ciphered body is written only with `--decrypt`, deciphered and inflated; without
+        // the flag it is skipped, as the clear reader would write ciphertext. A clear entry reads the
+        // same either way.
         if entry.cipher.is_some() {
-            eprintln!("  skipped {} (enciphered body)", entry.display_name());
-            continue;
-        }
-        if mount
+            if !decrypt {
+                eprintln!(
+                    "  skipped {} (enciphered body; pass --decrypt to decipher it)",
+                    entry.display_name()
+                );
+                continue;
+            }
+        } else if mount
             .entry_begins_archive(&mut file, entry)
             .unwrap_or(false)
         {
@@ -462,7 +474,12 @@ fn do_extract(
             );
             continue;
         }
-        let bytes = match mount.read_entry(&mut file, entry) {
+        let read = if entry.cipher.is_some() {
+            mount.read_entry_decrypted(&mut file, entry, keys)
+        } else {
+            mount.read_entry(&mut file, entry)
+        };
+        let bytes = match read {
             Ok(bytes) => bytes,
             Err(e) => {
                 eprintln!("  skipped {} ({e})", entry.display_name());

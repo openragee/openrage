@@ -148,3 +148,132 @@ fn an_inner_path_splits_on_either_separator() {
     assert_eq!(split_inner("/a.rpf//b.rpf/"), vec!["a.rpf", "b.rpf"]);
     assert!(split_inner("").is_empty());
 }
+
+// --- install-gated: extract --decrypt writes a deciphered body -------------------------------------
+
+/// The build root holding `*.rpf`; set with the key snapshot for the install-gated test below.
+const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
+/// The flagged body picked is held small so the decipher-and-inflate stays cheap.
+const SAMPLE_CAP: u64 = 0x40000;
+
+fn env_path(var: &str) -> Option<PathBuf> {
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|p| p.exists())
+}
+
+/// Every file written under `dir`, recursively — the extract lands its output at a name-derived path.
+fn files_under(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(files_under(&path));
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
+/// `rpf9 extract --decrypt` of one flagged entry writes the same deciphered, inflated body the mount
+/// produces, whose head is a recognised kind (PSO `PSIN`, `RBF0`, text, or a headerless script slot).
+/// This fails without `--decrypt` wired through, which skips every flagged entry and writes nothing.
+/// Install-gated: it needs the content-key snapshot and the build, and skips cleanly without them.
+#[test]
+fn extract_decrypt_writes_a_deciphered_body() {
+    let (Some(snapshot), Some(build)) = (
+        env_path(or_io::container::rpf::GTA6_SNAPSHOT_ENV),
+        env_path(BUILD_ENV),
+    ) else {
+        or_test_support::skip_install(
+            "rpf9 extract --decrypt over a build",
+            format_args!(
+                "set {} (with content keys) and {BUILD_ENV}",
+                or_io::container::rpf::GTA6_SNAPSHOT_ENV
+            ),
+        );
+        return;
+    };
+    let keys = GtaViKeys::from_file(&snapshot).expect("the key snapshot parses");
+    if !keys.has_content_keys() {
+        or_test_support::skip_install(
+            "rpf9 extract --decrypt over a build",
+            format_args!("the snapshot carries no content section; rebuild it"),
+        );
+        return;
+    }
+    let resolver = NameResolver::new();
+
+    // Find one flagged, small content-ciphered entry and the archive it lives in, plus the body the
+    // mount deciphers for it — the extract must reproduce exactly these bytes.
+    let mut archives: Vec<PathBuf> = std::fs::read_dir(&build)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("rpf"))
+        .collect();
+    archives.sort();
+
+    let mut found: Option<(PathBuf, u32, Vec<u8>)> = None;
+    'outer: for path in &archives {
+        let mut file = File::open(path).expect("open the archive");
+        let mount = Gta6Mount::open_root(&mut file, &keys).expect("mount the archive");
+        for entry in &mount.archive.entries {
+            // A flagged entry small enough for the smoke test; `read_entry_decrypted` refuses any
+            // cipher it does not handle, so a non-content cipher is skipped by the `Ok` below.
+            if entry.cipher.is_none() || entry.stored.is_none_or(|s| s == 0 || s > SAMPLE_CAP) {
+                continue;
+            }
+            if let Ok(body) = mount.read_entry_decrypted(&mut file, entry, &keys) {
+                if !body.is_empty() {
+                    found = Some((path.clone(), entry.index, body));
+                    break 'outer;
+                }
+            }
+        }
+    }
+    let Some((archive, index, expected)) = found else {
+        or_test_support::skip_install(
+            "rpf9 extract --decrypt over a build",
+            format_args!("no small flagged content entry in the build to extract"),
+        );
+        return;
+    };
+
+    let dest = tempfile::tempdir().expect("a temp dir");
+    let n = do_extract(
+        &archive,
+        dest.path(),
+        &[],
+        Some(&index.to_string()),
+        None,
+        true,
+        &keys,
+        &resolver,
+    )
+    .expect("the extract runs");
+    assert_eq!(n, 1, "exactly the one flagged entry is written");
+
+    let written = files_under(dest.path());
+    assert_eq!(written.len(), 1, "one file on disk, got {written:?}");
+    let on_disk = std::fs::read(&written[0]).expect("read the written body");
+    assert_eq!(
+        on_disk, expected,
+        "the written body matches the mount's deciphered, inflated bytes"
+    );
+
+    // The head is a recognised inflated kind, never ciphertext.
+    let head_ok = on_disk.starts_with(b"PSIN")
+        || on_disk.starts_with(b"RBF0")
+        || is_text_head(&on_disk)
+        || (on_disk.len() >= 8 && on_disk[..8].iter().all(|&b| b == 0));
+    assert!(
+        head_ok,
+        "head {:02x?} is not a recognised inflated kind",
+        &on_disk[..on_disk.len().min(4)]
+    );
+}

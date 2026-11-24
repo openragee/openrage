@@ -45,10 +45,18 @@ pub fn register_into(registry: &mut PanelRegistry) {
 }
 
 /// A deferred action from the tree, applied after the read borrow of the explorer is dropped: toggle
-/// a nested archive's expansion, or open an entry's body in a view.
+/// a nested archive's expansion, open a clear entry's body in a view, or decrypt and open an
+/// enciphered one.
 enum Action {
     Toggle(Vec<u32>),
     Open(PathBuf),
+    /// Decrypt the enciphered leaf `entry` within the node at `node` (a chain of archive entry
+    /// indices) whose body is at absolute `body`, then open the plaintext.
+    OpenCiphered {
+        node: Vec<u32>,
+        entry: u32,
+        body: u64,
+    },
 }
 
 pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
@@ -124,6 +132,22 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
         match action {
             Action::Toggle(path) => state.panels.get::<Gta6ArchiveExplorer>().toggle(&path),
             Action::Open(path) => state.load_file(path),
+            Action::OpenCiphered { node, entry, body } => {
+                // Resolve the node's base and disk cheaply here, then leave a decrypt request for the
+                // load worker: the decipher is slow and must not block the UI thread. Each `get` is
+                // its own short borrow, dropped before `load_file`.
+                let base = state.panels.get::<Gta6ArchiveExplorer>().node_base(&node);
+                let disk = state.panels.get::<Gta6ArchiveExplorer>().selected_path();
+                match (base, disk) {
+                    (Ok(base), Some(disk)) => {
+                        let path = body_path(&disk, body, View::Bytes);
+                        crate::state::rpf9_scan::remember_ciphered(&path, base, entry);
+                        state.load_file(path);
+                    }
+                    (Err(e), _) => state.show_error_toast(e),
+                    (Ok(_), None) => {}
+                }
+            }
         }
     }
 }
@@ -167,10 +191,19 @@ fn draw_node(
             } else {
                 let label = egui::RichText::new(format!("   {size}  {name}{cipher}")).monospace();
                 let resp = ui.selectable_label(false, label);
-                // A double-click opens the body; an enciphered one cannot be opened, so it does not.
-                if resp.double_clicked() && !row.cipher {
+                // A double-click opens the body: a clear one through the scan-body views, an
+                // enciphered one by decrypting it first (the plaintext takes the same views).
+                if resp.double_clicked() {
                     if let Some(off) = row.absolute_start {
-                        actions.push(Action::Open(body_path(disk, off, View::Bytes)));
+                        if row.cipher {
+                            actions.push(Action::OpenCiphered {
+                                node: path.clone(),
+                                entry: row.index,
+                                body: off,
+                            });
+                        } else {
+                            actions.push(Action::Open(body_path(disk, off, View::Bytes)));
+                        }
                     }
                 }
             }

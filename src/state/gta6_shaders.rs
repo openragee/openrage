@@ -10,12 +10,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use or_cli::{
-    is_gta6_shading_pass, translate_gta6_mesh_stage, translate_gta6_pixel_stage,
+    gta6_view_passes, is_gta6_shading_pass, translate_gta6_mesh_stage, translate_gta6_pixel_stage,
     translate_gta6_program, Gta6Program, Gta6ShadingPass,
 };
 use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9Scan};
 use or_io::gta5::shaders::sgd5::{Sgd5Effect, Sgd5File, Sgd5Program, Sgd5Table};
-use or_io::gta5::shaders::sgd5_pack::{first_passes, pack_effect, vertex_pixel_passes};
+use or_io::gta5::shaders::sgd5_pack::{pack_effect, vertex_pixel_passes};
 use or_io::gta5::shaders::spirv_pack::{
     Effect, NagaReach, Outcome, Pass, Production, Program, Reach, Reflection, ShaderStageKind,
     SpirvPack,
@@ -452,7 +452,7 @@ fn shading_passes(
     let mut refused = None;
     // Several passes of an effect run one pixel program: it is translated once.
     let mut pixels = HashMap::new();
-    for (first, pixel) in first_passes(&source.file, effect) {
+    for (first, pixel) in gta6_view_passes(&source.file, effect) {
         if seen.contains(&first.at) {
             continue;
         }

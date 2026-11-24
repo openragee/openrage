@@ -7,7 +7,9 @@ use or_io::gta5::shaders::sgd5::Sgd5Table;
 use or_shader_front::dxil::ShaderKind;
 use or_shader_front::rdna::link::{self, Linked};
 use or_shader_front::rdna_bind::picks::{deferred_targets, picks};
-use or_shader_front::rdna_bind::shading::{feed, parameter_of, parameter_slots, sources, Source};
+use or_shader_front::rdna_bind::shading::{
+    draw_words, feed, parameter_of, parameter_slots, sources, Source,
+};
 
 pub use or_shader_front::rdna_bind::kept as gta6_kept;
 pub use or_shader_front::rdna_bind::shading::{Fed, Feed, Stage};
@@ -58,6 +60,8 @@ pub fn translate_gta6_shading(
 pub struct Gta6PixelStage {
     stage: Stage,
     half_slots: BTreeSet<u8>,
+    /// The user register of the first dword of a draw, where its package lists them.
+    draw: Option<u8>,
 }
 
 fn said(stage: &str, why: &dyn std::fmt::Display) -> String {
@@ -76,7 +80,8 @@ pub fn translate_gta6_pixel_stage(
         rdna_bind::kept::lower(&pixel, &BTreeSet::new()).map_err(|why| said("pixel", &why))?;
     Ok(Gta6PixelStage {
         half_slots: fragment.half_slots.clone(),
-        stage: feed(&pixel, fragment, table, effect).map_err(|why| said("pixel", &why))?,
+        draw: draw_words(&pixel.records),
+        stage: feed(&pixel, fragment, table, effect, None).map_err(|why| said("pixel", &why))?,
     })
 }
 
@@ -95,7 +100,8 @@ pub fn translate_gta6_mesh_stage(
         .filter_map(|slot| parameter_of(&slots, *slot))
         .collect();
     let geometry = rdna_bind::kept::lower(&first, &halves).map_err(|why| said("mesh", &why))?;
-    let mut mesh = feed(&first, geometry, table, effect).map_err(|why| said("mesh", &why))?;
+    let mut mesh =
+        feed(&first, geometry, table, effect, pixel.draw).map_err(|why| said("mesh", &why))?;
     let mut pixel = pixel.stage.clone();
     // The pixel stage is several passes': each pass links a copy of its own. The mesh stage's
     // parameters are at the pixel stage's slots already, and a clip distance crosses as a
@@ -252,9 +258,15 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
             };
             let mesh = native.program.kind == ShaderKind::Mesh;
             let filled = sources(&native.records, mesh, table, &effect.parameters);
-            let game: BTreeSet<String> = (filled.iter())
-                .filter_map(|source| match source {
-                    Source::Game(hash) => Some(format!("{hash:08X}")),
+            // Each with its class, a buffer's element size in bytes and its resource code.
+            let game: BTreeSet<String> = (filled.iter().zip(&native.records))
+                .filter_map(|(source, record)| match source {
+                    Source::Game(hash) => Some(format!(
+                        "{hash:08X}:{:?}/{}/{:#04X}",
+                        record.class,
+                        record.stride,
+                        rdna_bind::named(table, record).map_or(0, |named| named.code)
+                    )),
                     _ => None,
                 })
                 .collect();
@@ -304,6 +316,14 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
                     let Ok(native) = native(container) else {
                         continue;
                     };
+                    for record in &native.records {
+                        if record.class == rdna_bind::Class::RootConstants {
+                            println!(
+                                "  {word}: the dwords of a draw are at user register {}",
+                                record.root
+                            );
+                        }
+                    }
                     match rdna_bind::lower(&native, &BTreeSet::new()) {
                         Err(why) => println!("  {word}: not lowered: {why}"),
                         Ok(lowered) => {
@@ -319,6 +339,43 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
                                     resource.at,
                                     std::mem::discriminant(&join),
                                 );
+                                // A pick by a number a buffer states: which buffer, and its member there.
+                                let index = resource.at.as_ref().and_then(|at| at.index.as_ref());
+                                if let Some(or_shader_front::rdna::Index {
+                                    source:
+                                        or_shader_front::rdna::IndexSource::Data {
+                                            buffer, offset, ..
+                                        },
+                                    ..
+                                }) = index
+                                {
+                                    let place = rdna_bind::Place::Table {
+                                        root: buffer.root,
+                                        offset: buffer.offset,
+                                    };
+                                    let joined = rdna_bind::join(
+                                        rdna_bind::numbered(place, kind),
+                                        &native.records,
+                                        table,
+                                    );
+                                    if let rdna_bind::Join::Named { record, named } = joined {
+                                        let member = (table.constants.iter())
+                                            .filter(|c| c.cbuffer == Some(named.name_hash))
+                                            .filter(|c| u32::from(c.offset) <= *offset)
+                                            .max_by_key(|c| c.offset);
+                                        println!(
+                                            "      number at +{offset} of {:?} 0x{:08X} register {}, {} bytes: member {}",
+                                            record.class,
+                                            named.name_hash,
+                                            record.register,
+                                            named.buffer_size,
+                                            member.map_or("none".to_string(), |c| format!(
+                                                "0x{:08X} stated 0x{:08X} at +{} code {:#04X} count {}",
+                                                c.name_hash, c.semantic_hash, c.offset, c.code, c.count
+                                            )),
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -401,6 +458,28 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether a technique of this name draws a model as a view sees it: one that draws in the
+/// space of a texture bakes a material's decorations, whatever targets it writes.
+fn draws_in_a_view(technique: &str) -> bool {
+    !technique.contains("uvspace")
+}
+
+/// The two programs of the first pass of each technique of `effect` that draws a model as a
+/// view sees it, in the techniques' order.
+pub fn view_passes<'f>(
+    file: &'f or_io::gta5::shaders::sgd5::Sgd5File,
+    effect: &or_io::gta5::shaders::sgd5::Sgd5Effect,
+) -> Vec<(
+    &'f or_io::gta5::shaders::sgd5::Sgd5Program,
+    &'f or_io::gta5::shaders::sgd5::Sgd5Program,
+)> {
+    use or_io::gta5::shaders::sgd5_pack::technique_programs;
+    (effect.techniques.iter())
+        .filter(|technique| draws_in_a_view(&technique.name))
+        .filter_map(|technique| technique_programs(file, effect, &technique.name))
+        .collect()
+}
+
 /// The pass of `passes` that draws a geometry whose vertex data is `vertex_data`: the one whose
 /// mesh program reads the most streams among those reading none the data's table of streams
 /// leaves empty.
@@ -460,85 +539,74 @@ enum Verdict {
 /// of its first level that reads.
 type Named = Vec<(u32, Vec<u8>)>;
 
-/// `rpf scan-effect-use`: the drawables of an archive, or each n-th, by the effects their
-/// geometries name, against what each effect's own passes are to the editor.
-pub(crate) fn cmd_scan_effect_use(args: &[String]) -> Result<(), String> {
-    use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9Content, Rpf9Role, Rpf9Scan};
-    use or_io::gta5::shaders::sgd5::Sgd5File;
-    use or_io::gta5::shaders::sgd5_pack::first_passes;
-    use or_io::gta6::hash::name_hash32;
-    use or_io::gta6::headerless::{read, Drawable, Entry, Resource};
-    use std::collections::BTreeMap;
+/// A census's drawable as the line a file keeps it by: its offset, then each geometry's effect
+/// and table of streams.
+fn line_to_keep((at, named): &(u64, Named)) -> String {
+    let geometries: Vec<String> = (named.iter())
+        .map(|(effect, table)| {
+            let table: String = table.iter().map(|byte| format!("{byte:02x}")).collect();
+            format!("{effect:08x}:{table}")
+        })
+        .collect();
+    format!("{at:x} {}\n", geometries.join(" "))
+}
 
-    let (limit, args) = super::rpf::split_limit(args)?;
-    let (from, args) = super::rpf::split_offset_flag(&args, "--from")?;
-    let (to, args) = super::rpf::split_offset_flag(&args, "--to")?;
-    let (every, args) = super::rpf::split_offset_flag(&args, "--every")?;
-    let [path, effects, offset] = args.as_slice() else {
-        return Err(
-            "usage: rpf scan-effect-use <archive.rpf> <shaders.rpf> <offset> [--from <offset>] [--to <offset>] [--every <n>] [--limit <bytes>]"
-                .to_string(),
-        );
-    };
-    let every = every.unwrap_or(1).max(1);
-    let offset = super::rpf::parse_offset(offset)?;
-    let file = std::fs::File::open(path).map_err(|e| format!("open({path}): {e}"))?;
+/// The drawable a kept line states.
+fn kept_line(line: &str) -> Option<(u64, Named)> {
+    let mut words = line.split(' ');
+    let at = u64::from_str_radix(words.next()?, 16).ok()?;
+    let named = words
+        .map(|word| {
+            let (effect, table) = word.split_once(':')?;
+            if table.len() % 2 != 0 {
+                return None;
+            }
+            let bytes = (0..table.len() / 2)
+                .map(|i| u8::from_str_radix(table.get(2 * i..2 * i + 2)?, 16).ok())
+                .collect::<Option<Vec<u8>>>()?;
+            Some((u32::from_str_radix(effect, 16).ok()?, bytes))
+        })
+        .collect::<Option<Named>>()?;
+    Some((at, named))
+}
+
+/// The drawables of the model bodies a scan of a range of an archive finds, each n-th, read side by
+/// side: those with a geometry that reads.
+fn census(
+    file: &std::fs::File,
+    range: std::ops::Range<u64>,
+    every: u64,
+    limit: u64,
+) -> Result<Vec<(u64, Named)>, String> {
+    use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9Content, Rpf9Role, Rpf9Scan};
+    use or_io::gta6::headerless::{read, Drawable, Entry, Resource};
+
     let cancel = super::jobs::on_interrupt();
     let mut rows = Vec::new();
     let mut seen = 0u64;
-    // ⚠ The scan panics on some bytes of a large archive: it is taken up again past them, by
-    // steps that double, and what was passed over is said.
-    let (mut start, end) = (from.unwrap_or(0), to.unwrap_or(u64::MAX));
-    let (mut step, mut passed) = (0u64, 0u64);
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let scanned = 'scan: loop {
-        let mut scan = match Rpf9Scan::new(&file, start..end) {
-            Ok(scan) => scan,
-            Err(why) => break Err(why.to_string()),
+    for find in Rpf9Scan::new(file, range).map_err(|e| e.to_string())? {
+        if cancel.is_set() {
+            return Err("cancelled".to_string());
+        }
+        let find = find.map_err(|e| e.to_string())?;
+        let Rpf9BodyKind::Zlib(run) = find.kind else {
+            continue;
         };
-        loop {
-            if cancel.is_set() {
-                break 'scan Err("cancelled".to_string());
-            }
-            let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scan.next()));
-            let find = match next {
-                Ok(None) => break 'scan Ok(()),
-                Ok(Some(Err(why))) => break 'scan Err(why.to_string()),
-                Ok(Some(Ok(find))) => find,
-                Err(_) => {
-                    step = (2 * step).max(16);
-                    passed += step;
-                    start += step;
-                    continue 'scan;
-                }
-            };
-            step = 0;
-            start = find.offset + find.span.max(16);
-            let Rpf9BodyKind::Zlib(run) = find.kind else {
-                continue;
-            };
-            let (Rpf9Content::ResourceShaped, Some(resource), Some(signature)) =
-                (run.content, run.resource, run.signature)
-            else {
-                continue;
-            };
-            let model = matches!(
-                signature.role(),
-                Some(Rpf9Role::Drawable | Rpf9Role::DrawableWithBound | Rpf9Role::Dictionary)
-            );
-            if model {
-                seen += 1;
-                if (seen - 1).is_multiple_of(every) {
-                    rows.push((find.offset, resource, signature));
-                }
+        let (Rpf9Content::ResourceShaped, Some(resource), Some(signature)) =
+            (run.content, run.resource, run.signature)
+        else {
+            continue;
+        };
+        let model = matches!(
+            signature.role(),
+            Some(Rpf9Role::Drawable | Rpf9Role::DrawableWithBound | Rpf9Role::Dictionary)
+        );
+        if model {
+            seen += 1;
+            if (seen - 1).is_multiple_of(every) {
+                rows.push((find.offset, resource, signature));
             }
         }
-    };
-    std::panic::set_hook(hook);
-    scanned?;
-    if passed > 0 {
-        println!("  scan          {passed} bytes passed over where the scan panicked");
     }
     let named = |drawable: &Drawable| -> Named {
         let level = drawable.levels.iter().flatten().find(|l| !l.is_empty());
@@ -552,33 +620,91 @@ pub(crate) fn cmd_scan_effect_use(args: &[String]) -> Result<(), String> {
             })
             .collect()
     };
-    let opened = side_by_side(&rows, |(at, resource, signature)| -> Vec<(u64, Named)> {
+    // ⚠ Reading a body panics on some of a large archive: such a body is counted and passed over.
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let opened = side_by_side(&rows, |(at, resource, signature)| {
         if cancel.is_set() {
-            return Vec::new();
+            return Some(Vec::new());
         }
-        let Ok((_, bytes)) = read_rpf9_body(&file, *at, limit) else {
-            return Vec::new();
+        let open = || -> Vec<(u64, Named)> {
+            let Ok((_, bytes)) = read_rpf9_body(file, *at, limit) else {
+                return Vec::new();
+            };
+            let (virtual_section, physical) = resource.sections(&bytes);
+            match read(*signature, virtual_section, Some(physical)) {
+                Ok(Resource::Drawable(d)) => vec![(*at, named(&d))],
+                Ok(Resource::DrawableWithBound(r)) => vec![(*at, named(&r.drawable))],
+                Ok(Resource::Dictionary(dict)) => (dict.entries.iter())
+                    .filter_map(|(_, entry)| match entry {
+                        Ok(Entry::Drawable(d)) => Some((*at, named(d))),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            }
         };
-        let (virtual_section, physical) = resource.sections(&bytes);
-        match read(*signature, virtual_section, Some(physical)) {
-            Ok(Resource::Drawable(d)) => vec![(*at, named(&d))],
-            Ok(Resource::DrawableWithBound(r)) => vec![(*at, named(&r.drawable))],
-            Ok(Resource::Dictionary(dict)) => (dict.entries.iter())
-                .filter_map(|(_, entry)| match entry {
-                    Ok(Entry::Drawable(d)) => Some((*at, named(d))),
-                    _ => None,
-                })
-                .collect(),
-            _ => Vec::new(),
-        }
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(open)).ok()
     });
-    let drawables: Vec<(u64, Named)> = (opened.into_iter().flatten())
-        .filter(|(_, named)| !named.is_empty())
-        .collect();
+    std::panic::set_hook(hook);
+    let panicked = opened.iter().filter(|opened| opened.is_none()).count();
     println!(
-        "  census        {} drawables with a geometry that reads, of {} of {seen} model bodies (every {every})",
-        drawables.len(),
+        "  scan          {} of {seen} model bodies opened (every {every}), {panicked} of them passed over where the reader panicked",
         rows.len()
+    );
+    Ok((opened.into_iter().flatten().flatten())
+        .filter(|(_, named)| !named.is_empty())
+        .collect())
+}
+
+/// `rpf scan-effect-use`: the drawables of an archive, or each n-th, by the effects their
+/// geometries name, against what each effect's own passes are to the editor.
+pub(crate) fn cmd_scan_effect_use(args: &[String]) -> Result<(), String> {
+    use or_io::container::rpf::read_rpf9_body;
+    use or_io::gta5::shaders::sgd5::Sgd5File;
+    use or_io::gta6::hash::name_hash32;
+    use std::collections::BTreeMap;
+
+    let (limit, args) = super::rpf::split_limit(args)?;
+    let (from, args) = super::rpf::split_offset_flag(&args, "--from")?;
+    let (to, args) = super::rpf::split_offset_flag(&args, "--to")?;
+    let (every, mut args) = super::rpf::split_offset_flag(&args, "--every")?;
+    let kept = match args.iter().position(|a| a == "--drawables") {
+        Some(at) if at + 1 < args.len() => {
+            let file = args.remove(at + 1);
+            args.remove(at);
+            Some(file)
+        }
+        _ => None,
+    };
+    let [path, effects, offset] = args.as_slice() else {
+        return Err(
+            "usage: rpf scan-effect-use <archive.rpf> <shaders.rpf> <offset> [--from <offset>] [--to <offset>] [--every <n>] [--drawables <file>] [--limit <bytes>]"
+                .to_string(),
+        );
+    };
+    let every = every.unwrap_or(1).max(1);
+    let offset = super::rpf::parse_offset(offset)?;
+    let file = std::fs::File::open(path).map_err(|e| format!("open({path}): {e}"))?;
+    let drawables = match kept.as_deref().map(std::fs::read_to_string) {
+        Some(Ok(text)) => text.lines().filter_map(kept_line).collect(),
+        _ => {
+            let drawables = census(
+                &file,
+                from.unwrap_or(0)..to.unwrap_or(u64::MAX),
+                every,
+                limit,
+            )?;
+            if let Some(kept) = &kept {
+                let text: String = drawables.iter().map(line_to_keep).collect();
+                std::fs::write(kept, text).map_err(|e| format!("write({kept}): {e}"))?;
+            }
+            drawables
+        }
+    };
+    println!(
+        "  census        {} drawables with a geometry that reads",
+        drawables.len()
     );
 
     let source = std::fs::File::open(effects).map_err(|e| format!("open({effects}): {e}"))?;
@@ -598,6 +724,7 @@ pub(crate) fn cmd_scan_effect_use(args: &[String]) -> Result<(), String> {
         }
     }
     let hashes: Vec<u32> = used.keys().copied().collect();
+    let cancel = super::jobs::on_interrupt();
     let verdicts = side_by_side(&hashes, |hash| {
         let Some(effect) =
             (container.effects.iter()).find(|e| name_hash32(e.name.as_bytes()) == *hash)
@@ -612,7 +739,7 @@ pub(crate) fn cmd_scan_effect_use(args: &[String]) -> Result<(), String> {
         };
         let (mut passes, mut refused, mut other) = (Vec::new(), None, None);
         let mut seen = BTreeSet::new();
-        for (first, pixel) in first_passes(&container, effect) {
+        for (first, pixel) in view_passes(&container, effect) {
             if cancel.is_set() || !seen.insert(first.at) {
                 continue;
             }
@@ -621,9 +748,17 @@ pub(crate) fn cmd_scan_effect_use(args: &[String]) -> Result<(), String> {
             };
             if is_gta6_shading_pass(&a, &b) {
                 let tables = [&first.variables, &pixel.variables];
-                match translate_gta6_shading(&a, &b, tables, &effect.parameters) {
-                    Ok(pass) => passes.push(pass),
-                    Err(why) => refused = refused.or(Some(why)),
+                // A translation that panics is a refusal of its own, and the census goes on.
+                let translated = std::panic::catch_unwind(|| {
+                    translate_gta6_shading(&a, &b, tables, &effect.parameters)
+                });
+                match translated {
+                    Ok(Ok(pass)) => passes.push(pass),
+                    Ok(Err(why)) => refused = refused.or(Some(why)),
+                    Err(_) => {
+                        let why = format!("the translation of {} panicked", first.name);
+                        refused = refused.or(Some(why));
+                    }
                 }
             } else if let (Ok(a), Ok(b)) = (native(&a), native(&b)) {
                 if a.program.kind == ShaderKind::Mesh && other.is_none() {
@@ -710,4 +845,33 @@ pub(crate) fn cmd_scan_effect_use(args: &[String]) -> Result<(), String> {
         println!("  {effects} effects, {geometries} geometries: {reason}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_technique_that_bakes_in_the_space_of_a_texture_draws_no_view_of_a_model() {
+        assert!(draws_in_a_view("deferred_drawmeshlets"));
+        assert!(draws_in_a_view("deferredalphaclip_drawskinnedmeshlets"));
+        assert!(!draws_in_a_view("deferreduvspace_drawmeshlets"));
+    }
+
+    #[test]
+    fn a_kept_drawable_reads_back_as_it_was_written() {
+        let drawable = (
+            0x1F00_0010u64,
+            vec![(0xA9DF_B1E7u32, vec![0x42, 0, 0xFF]), (7, Vec::new())],
+        );
+        let line = line_to_keep(&drawable);
+        assert_eq!(
+            line,
+            "1f000010 a9dfb1e7:4200ff 00000007:
+"
+        );
+        assert_eq!(kept_line(line.trim_end()), Some(drawable));
+        assert_eq!(kept_line("1f000010 a9dfb1e7:4"), None, "half a byte");
+        assert_eq!(kept_line("x"), None);
+    }
 }

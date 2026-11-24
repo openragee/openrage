@@ -284,9 +284,15 @@ const BONE: u32 = 48;
 /// The element size of the buffer that holds an object's own record.
 const INSTANCE: u32 = 288;
 
-/// Whether `resource` lies in the heap, the table the third dword of a draw points at.
-fn heap_root(resource: &Resource, kind: ShaderKind, records: &[Record]) -> bool {
-    let draw = records.iter().find(|r| r.class == Class::RootConstants);
+/// The user register that holds the first dword of a draw, where `records` list it.
+pub fn draw_words(records: &[Record]) -> Option<u8> {
+    let draw = records.iter().find(|r| r.class == Class::RootConstants)?;
+    Some(draw.root)
+}
+
+/// Whether `resource` lies in the heap, the table the third dword of a draw points at; `draw`
+/// is the user register of the first.
+fn heap_root(resource: &Resource, kind: ShaderKind, draw: Option<u8>) -> bool {
     let (Some(at), Some(draw)) = (resource.at.as_ref(), draw) else {
         return false;
     };
@@ -294,25 +300,28 @@ fn heap_root(resource: &Resource, kind: ShaderKind, records: &[Record]) -> bool 
         Place::Words { root } => root,
         _ => at.root,
     };
-    at.path.is_empty() && root == draw.root.wrapping_add(2)
+    at.path.is_empty() && root == draw.wrapping_add(2)
 }
 
 /// What fills the binding of `resource`, which joins nothing by a place of its own: the heap the
 /// third dword of a draw points at, bound whole, or the one entry of it picked by the number at a
-/// stated dword of `numbers`, the buffer the second dword of a draw places.
+/// stated dword of `numbers`, the buffer the second dword of a draw places, or noughts where
+/// the number is a dword of a constant buffer `nought` says the editor leaves at nought: a texture the
+/// game picks by a number it states itself is one it fills itself.
 fn heap(
     resource: &Resource,
     kind: ShaderKind,
-    records: &[Record],
+    draw: Option<u8>,
     numbers: Option<Place>,
+    nought: &dyn Fn(Place) -> bool,
 ) -> Option<Feed> {
     let at = resource.at.as_ref()?;
-    let draw = records.iter().find(|r| r.class == Class::RootConstants)?;
+    let draw = draw?;
     let user = |register: u8| match numbered(Place::Words { root: register }, kind) {
         Place::Words { root } => root,
         _ => register,
     };
-    if !at.path.is_empty() || user(at.root) != draw.root.wrapping_add(2) {
+    if !at.path.is_empty() || user(at.root) != draw.wrapping_add(2) {
         return None;
     }
     match (&resource.kind, resource.count, &at.index) {
@@ -335,10 +344,28 @@ fn heap(
                 root: buffer.root,
                 offset: buffer.offset,
             };
-            let placed = user(*plus) == draw.root.wrapping_add(1)
+            let placed = user(*plus) == draw.wrapping_add(1)
                 && Some(numbered(table, kind)) == numbers
                 && offset % 4 == 0;
             placed.then_some(Feed::Texture(offset / 4))
+        }
+        // A number the game states by itself, in a constant buffer it fills: nought here.
+        (
+            ResourceKind::Texture { .. },
+            None,
+            Some(Index {
+                source:
+                    IndexSource::Data {
+                        buffer, plus: None, ..
+                    },
+                shift: 5,
+            }),
+        ) => {
+            let table = Place::Table {
+                root: buffer.root,
+                offset: buffer.offset,
+            };
+            nought(numbered(table, kind)).then_some(Feed::Zero(None))
         }
         _ => None,
     }
@@ -509,7 +536,9 @@ fn one_entry(module: &mut naga::Module, group: u32, binding: u32) -> bool {
 /// `lowered`, a program of a model's shading pass, with what fills each of its bindings; the
 /// pixel stage's bindings are moved to group 1, and each stage's arrays to the group two above
 /// its own, since a device binds no array beside a constant buffer. `table` is the program's own variable table and
-/// `effect` the first table of the effect that runs it.
+/// `effect` the first table of the effect that runs it. `draw` is the user register of the first
+/// dword of a draw in the pass's other stage: a program whose package lists no such dwords
+/// still reads the heap, at the register the other finds it by.
 // The object's matrix is told by shape: the one buffer of 64-byte elements a mesh program binds
 // that the effect's own table names.
 pub fn feed(
@@ -517,7 +546,9 @@ pub fn feed(
     lowered: Lowered,
     table: &Sgd5Table,
     effect: &Sgd5Table,
+    draw: Option<u8>,
 ) -> Result<Stage, Unfed> {
+    let draw = draw_words(&native.records).or(draw);
     let kind = native.program.kind;
     let mesh = kind == ShaderKind::Mesh;
     let stage_group = u32::from(kind == ShaderKind::Pixel);
@@ -561,6 +592,19 @@ pub fn feed(
             flat.insert(at);
         }
     }
+    // Whether the constant buffer at a place is one only the game fills.
+    // ⚠ Not a buffer of records: the terrain effects read their layers' textures by numbers a
+    // record of the game's states beside how each is tiled and blended, and with that record at
+    // nought their passes drew coloured noise where Material draws the ground.
+    let nought = |place: Place| match join(place, &native.records, table) {
+        Join::Named { record, .. } => {
+            let source = (native.records.iter())
+                .position(|r| *r == record)
+                .and_then(|i| filled.get(i));
+            record.class == Class::Cbv && matches!(source, Some(Source::Game(_)))
+        }
+        _ => false,
+    };
     for resource in &resources {
         let at = numbered(place(resource), kind);
         let mut header = None;
@@ -570,12 +614,12 @@ pub fn feed(
             // The heap's words are the editor's to state. Another table's are descriptors a
             // program loads into registers on the way to the binding the module reads in their
             // place: noughts, so a length or a size read of one as a number is nought too.
-            Join::Words => match heap_root(resource, kind, &native.records) {
+            Join::Words => match heap_root(resource, kind, draw) {
                 true => Feed::HeapWords,
                 false => Feed::Zero(None),
             },
             Join::Picked => {
-                heap(resource, kind, &native.records, material.buffer).ok_or(Unbound::Picked)?
+                heap(resource, kind, draw, material.buffer, &nought).ok_or(Unbound::Picked)?
             }
             Join::NoRecord { root, offset } => {
                 return Err(Unbound::NoRecord { root, offset }.into())
@@ -891,6 +935,94 @@ mod tests {
         assert_eq!(pixel[..2], [Source::View, Source::Material]);
         assert!(Source::Meshlets.held() && Source::Material.held());
         assert!(!Source::Game(FILLED).held() && !Source::DrawWords.held());
+    }
+
+    #[test]
+    fn a_texture_picked_by_a_number_the_game_states_alone_reads_as_noughts() {
+        // The heap is the table the third dword of a draw points at: user register 12 here.
+        let records = [Record {
+            root: 10,
+            ..record(Class::RootConstants, 500, 0)
+        }];
+        let draw = draw_words(&records);
+        assert_eq!((draw, draw_words(&[])), (Some(10), None));
+        let picked = |plus: Option<u8>, shift: u8| Resource {
+            kind: ResourceKind::Texture {
+                dim: 5,
+                compared: false,
+            },
+            at: Some(crate::rdna::Loc {
+                root: 12,
+                path: Vec::new(),
+                offset: 0,
+                index: Some(Index {
+                    source: IndexSource::Data {
+                        buffer: Box::new(crate::rdna::Loc {
+                            root: 9,
+                            path: Vec::new(),
+                            offset: 416,
+                            index: None,
+                        }),
+                        offset: 36,
+                        plus,
+                    },
+                    shift,
+                }),
+            }),
+            words: None,
+            written: false,
+            group: 0,
+            binding: 18,
+            count: None,
+        };
+        let numbers = Some(Place::Table {
+            root: 9,
+            offset: 64,
+        });
+        let fed = |resource: &Resource, nought: bool| {
+            let asked = std::cell::Cell::new(None);
+            let nought = |place: Place| {
+                asked.set(Some(place));
+                nought
+            };
+            let feed = heap(resource, ShaderKind::Pixel, draw, numbers, &nought);
+            (feed, asked.get())
+        };
+        let buffer = Place::Table {
+            root: 9,
+            offset: 416,
+        };
+        assert_eq!(
+            fed(&picked(None, 5), true),
+            (Some(Feed::Zero(None)), Some(buffer))
+        );
+        // A buffer the editor fills states a number it does not know.
+        assert_eq!(fed(&picked(None, 5), false), (None, Some(buffer)));
+        // An entry of another size is no texture's.
+        assert_eq!(fed(&picked(None, 4), true), (None, None));
+        // A number placed by a dword of the draw is the material's, and this one is at no
+        // buffer of its numbers.
+        assert_eq!(fed(&picked(Some(11), 5), true), (None, None));
+        // A mesh program whose package lists no dwords of a draw finds the heap where its
+        // pixel stage does: eight registers higher in its own numbering.
+        let whole = |root: u8| Resource {
+            at: Some(crate::rdna::Loc {
+                root,
+                path: Vec::new(),
+                offset: 0,
+                index: None,
+            }),
+            count: Some(256),
+            ..picked(None, 5)
+        };
+        let mesh = |root: u8, draw: Option<u8>| {
+            heap(&whole(root), ShaderKind::Mesh, draw, None, &|_| false)
+        };
+        assert_eq!(mesh(20, Some(10)), Some(Feed::Heap { dim: 5 }));
+        assert_eq!(mesh(20, None), None);
+        assert_eq!(mesh(12, Some(10)), None);
+        assert!(heap_root(&whole(20), ShaderKind::Mesh, Some(10)));
+        assert!(!heap_root(&whole(20), ShaderKind::Mesh, None));
     }
 
     #[test]
@@ -1258,7 +1390,14 @@ struct Words { words: array<u32> }
             half_slots: Default::default(),
             subgroups: false,
         };
-        let stage = feed(&native, lowered(resources.clone()), &program(), &effect).unwrap();
+        let stage = feed(
+            &native,
+            lowered(resources.clone()),
+            &program(),
+            &effect,
+            None,
+        )
+        .unwrap();
         let fed: Vec<_> = stage.feeds.iter().map(|f| (&f.feed, f.header)).collect();
         assert_eq!(fed[0], (&Feed::Meshlets, Some(1)));
         assert_eq!(fed[1], (&Feed::VertexData, None));
@@ -1292,5 +1431,29 @@ struct Words { words: array<u32> }
         assert!(stage.textures.is_empty());
 
         assert!(stage.streams.is_empty());
+
+        // The package lists no dwords of a draw: the heap, an array at the third of them, is
+        // found by the register the pass's other stage states for the first.
+        let mut table = resources[0].clone();
+        (table.at, table.binding) = (at(8 + 12, 0), 5);
+        // Indexed at a place only a run knows.
+        table.at.as_mut().unwrap().index = Some(Index {
+            source: IndexSource::Runtime { site: 0 },
+            shift: 0,
+        });
+        table.count = Some(256);
+        let with_heap = [resources, vec![table]].concat();
+        let fed = |draw: Option<u8>| {
+            feed(
+                &native,
+                lowered(with_heap.clone()),
+                &program(),
+                &effect,
+                draw,
+            )
+            .map(|stage| stage.feeds[5].feed.clone())
+        };
+        assert_eq!(fed(Some(10)), Ok(Feed::HeapBuffers));
+        assert_eq!(fed(None), Err(Unfed::Unbound(Unbound::Picked)));
     }
 }

@@ -109,8 +109,8 @@ pub use gta6_import::replace_gta6_mesh;
 pub use gta6_name_pool::listing as gta6_name_pool;
 pub use gta6_shading::{
     drawing_pass as gta6_drawing_pass, gta6_kept, is_gta6_shading_pass, translate_gta6_mesh_stage,
-    translate_gta6_pixel_stage, translate_gta6_shading, Fed as Gta6Fed, Feed as Gta6Feed,
-    Gta6PixelStage, Gta6ShadingPass, Stage as Gta6Stage,
+    translate_gta6_pixel_stage, translate_gta6_shading, view_passes as gta6_view_passes,
+    Fed as Gta6Fed, Feed as Gta6Feed, Gta6PixelStage, Gta6ShadingPass, Stage as Gta6Stage,
 };
 pub use gta6_translate::{translate_gta6_program, Gta6Program, Gta6Refusal, DXIL_FRONT};
 pub use mesh::{export_scene, replace_mesh, Exported};

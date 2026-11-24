@@ -1533,6 +1533,7 @@ fn open_headerless(resource: &Rpf9Resource, bytes: &[u8], name: &str) -> Result<
         super::gta6_ids::print(virtual_section);
     }
     super::gta6_anim_scene::print_body(virtual_section, physical)?;
+    super::gta6_ped_catalogue::print_body(virtual_section, physical)?;
     super::gta6_map::print_body(virtual_section, physical).unwrap_or(Ok(()))
 }
 

@@ -170,6 +170,7 @@ their fields: a name says the role a field was measured to play, and nothing the
 | `gta6::text`, `gta6::text_language` | a text table read and written; the language a table has by the order a change set registers its archive |
 | `gta6::audio_data`, `audio_tables`, `audio_links`, `audio_radio`, `gta6::dialogue` | audio game data and the items a table lays out, what they link to, the radio's stations joined to their streams, and dialogue lines joined to their audio and their subtitles |
 | `gta6::ui_tree` | an RBF0 document as a strict element tree |
+| `gta6::ped_catalogue` | a ped catalogue's asset kits and set kits, typed from the value tree by member name |
 | `gta6::mission_tables`, `gta6::script_bodies` | a script body's mission state tables, found by its block table; the script archives' opaque bodies, stated and never read |
 | `gta6::save` | the three save containers: a story save as an owned value, a record read, a packed copy refused |
 | `gta6::other_bodies` | the bodies a scan names by their head |

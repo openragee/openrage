@@ -29,6 +29,7 @@ Each row is a family of bodies, the module that reads it, and where the app show
 | Particle effects lists | `crates/io/or-io/src/gta6/headerless/particles.rs` | the Particle workspace | rule scalars, flags and keyframed values, in place |
 | Animations: clip dictionaries, animation sets, motion dictionaries, expression sets | `crates/io/or-io/src/gta6/anim.rs` | an animation document with its player and timeline | keys, a clip's window, rate and name, tracks added, removed or held; an expression track's id |
 | Anim scenes | `crates/io/or-io/src/gta6/anim_scene.rs` | a timeline over the metadata view | |
+| Ped catalogues | `crates/io/or-io/src/gta6/ped_catalogue.rs` | a metadata document; `rpf scan-open` prints its kits | values, as any metadata body |
 | Map placement and archetypes | `crates/io/or-io/src/gta6/map.rs` | the Map screen | an entity moved, turned, scaled or retyped |
 | Lights, the lane graph, world census | `crates/io/or-io/src/gta6/map_lights.rs`, `crates/io/or-io/src/gta6/map_lanes.rs`, `crates/io/or-io/src/gta6/map_world.rs` | overlays of the Map screen | |
 | Other metadata bodies (PSO, RBM, RBF0) | `or_io::meta`, and `crates/io/or-io/src/gta6/ui_tree.rs` for an RBF0 tree | a metadata document | values, saved as a file of its own |
@@ -40,6 +41,10 @@ Each row is a family of bodies, the module that reads it, and where the app show
 | Effect containers and their programs | `or_io::gta5::shaders::sgd5`, `crates/tools/or-shader-front/src/rdna/` | an effect document; Shaded where the programs translate | |
 | MoVE networks, height maps and the other bodies a head names | `crates/io/or-io/src/gta6/move_network.rs`, `crates/io/or-io/src/gta6/other_bodies.rs` | their own views or the facts the reader reads | a height map's grid |
 | Saves | `crates/io/or-io/src/gta6/save.rs` | a save document | a story save's values |
+
+A ped's hair is among the cloth: a groom is stored as a cloth record whose root holds guide strands over a root mesh, skinned to the ped's bones, one record a level of detail (`crates/io/or-io/src/gta6/headerless/cloth.rs`). It is drawn as its strands and the sheet over their roots; the strands the game grows between the guides are not drawn.
+
+A ped catalogue is a headerless metadata body of two lists of kits. A kit of the first states the assets of one part of a ped, a state at a time: a drawable and its albedo, normal and material maps, each by the 64-bit hash of its name. A kit of the second names kits and a state of each. The reader finds a member by its name hash in the body's own table and leaves the members it does not follow in the generic tree.
 
 A reader names what it does not read. Where the meaning of a field is not known, the reader keeps the field as it was read and the view shows it under its stored form or its hash; the module headers under `crates/io/or-io/src/gta6/headerless/` list those fields file by file.
 

@@ -39,6 +39,7 @@ mod gta6_navmesh;
 mod gta6_navmesh_edit;
 mod gta6_other_bodies;
 mod gta6_particles;
+mod gta6_ped_catalogue;
 mod gta6_rdna;
 mod gta6_rdna_backends;
 mod gta6_rdna_bind;

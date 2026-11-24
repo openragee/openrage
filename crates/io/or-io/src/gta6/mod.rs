@@ -22,6 +22,8 @@ pub mod mission_tables;
 pub mod move_network;
 pub mod names;
 pub mod other_bodies;
+#[cfg(feature = "meta")]
+pub mod ped_catalogue;
 pub mod save;
 pub mod script_bodies;
 pub mod text;

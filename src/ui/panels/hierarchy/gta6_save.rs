@@ -97,11 +97,15 @@ fn row_of(text: &str) -> Row {
     }
 }
 
-/// The names the metadata names hold, each by the hash a save writes for it, which keeps case.
+/// The names the metadata names hold, GTA VI's own among them, each by the hash a save writes for
+/// it, which keeps case: a block's structure and its members are named as the parser names them.
 // ponytail: built once from the names known at the first draw; a schema installed later is not seen.
 fn key_names() -> &'static HashMap<u32, String> {
     static NAMES: OnceLock<HashMap<u32, String>> = OnceLock::new();
     NAMES.get_or_init(|| {
+        // The schema is asked for so that GTA VI's name snapshot is installed before the index is built.
+        crate::state::meta_schema();
+        let _title = or_io::meta::binary::hash_index::title_names();
         (default_hash_index().names())
             .map(|name| (save::key_hash(name), name.to_owned()))
             .collect()
@@ -225,7 +229,9 @@ impl Gta6SaveDocument {
 
     /// What row `k` is called, and the bytes of its text.
     fn row(&self, k: usize) -> Option<(String, usize)> {
-        let hex = |hash: u32| format!("{hash:08X}");
+        // A code block's id is the hash of its save structure's name.
+        let hex =
+            |hash: u32| (key_names().get(&hash).cloned()).unwrap_or_else(|| format!("{hash:08X}"));
         match &self.save {
             Save::Story(story) => {
                 let block = story.blocks().nth(k)?;

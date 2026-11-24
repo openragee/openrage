@@ -1,6 +1,7 @@
 //! `openrage-cli gta6-save`: what a GTA VI save container states, a value of a story save read
 //! or replaced into a new file, and the key a name hashes to.
 
+use std::collections::{BTreeSet, HashMap};
 use std::process::ExitCode;
 
 use or_io::gta6::save::{self, AsavHeader, Block, Jsav, SaveKind, Slayer1};
@@ -67,14 +68,48 @@ fn header_lines(h: &AsavHeader) -> Vec<String> {
     ]
 }
 
-fn block_line(group: &str, block: &Block) -> String {
+/// The names the metadata names hold, GTA VI's parser names among them, each by the hash a save
+/// writes for it.
+fn key_names() -> HashMap<u32, String> {
+    crate::meta::schema();
+    let _title = or_io::meta::binary::hash_index::title_names();
+    (or_io::meta::binary::hash_index::default_hash_index().names())
+        .map(|name| (save::key_hash(name), name.to_owned()))
+        .collect()
+}
+
+/// The distinct hashed keys the blocks' texts write, and how many of them `names` names.
+fn key_tally<'a>(
+    texts: impl IntoIterator<Item = &'a str>,
+    names: &HashMap<u32, String>,
+) -> (usize, usize) {
+    let mut keys = BTreeSet::new();
+    for text in texts {
+        // A key is `"$0x`, eight hex digits and `"`, then a colon.
+        for (at, _) in text.match_indices("\"$0x") {
+            let key = text.get(at + 1..at + 12).and_then(save::parse_key);
+            let after = text.get(at + 12..).unwrap_or_default();
+            if after
+                .strip_prefix('"')
+                .is_some_and(|rest| rest.trim_start().starts_with(':'))
+            {
+                keys.extend(key);
+            }
+        }
+    }
+    let named = keys.iter().filter(|key| names.contains_key(key)).count();
+    (named, keys.len())
+}
+
+fn block_line(group: &str, block: &Block, names: &HashMap<u32, String>) -> String {
     let keys = match block.keys() {
         Some((_, inner)) if inner == block.hash => "keyed by its id".to_string(),
         Some((_, inner)) => format!("keyed {inner:#010X}, not its id"),
         None => "its outer keys are not two hashes".to_string(),
     };
+    let name = names.get(&block.hash).map_or("", String::as_str);
     format!(
-        "    {group} {:#010X}  flags {}, {} bytes; {keys}",
+        "    {group} {:#010X} {name}  flags {}, {} bytes; {keys}",
         block.hash,
         block.flags,
         block.text.len()
@@ -99,12 +134,17 @@ fn info(file: &str) -> Result<(), String> {
                 "differs from the file"
             };
             println!("  rebuild       {rebuild}");
+            let names = key_names();
             for block in &story.code {
-                println!("{}", block_line("code  ", block));
+                println!("{}", block_line("code  ", block, &names));
             }
             for block in &story.script {
-                println!("{}", block_line("script", block));
+                println!("{}", block_line("script", block, &names));
             }
+            let (named, keys) = key_tally(story.blocks().map(|b| b.text.as_str()), &names);
+            println!(
+                "  keys          {named} of its {keys} distinct hashed keys are the hash, case kept, of a name the metadata names hold"
+            );
         }
         SaveKind::Record => {
             let record = save::Asav::open(&bytes).map_err(|e| e.to_string())?;
@@ -215,6 +255,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_keys_a_save_writes_are_counted_once_each_and_by_the_names_that_hash_to_them() {
+        let names = HashMap::from([(save::key_hash("ZqHealth"), "ZqHealth".to_string())]);
+        let health = save::key_text("ZqHealth");
+        let texts = [
+            format!("{{\"{health}\":1,\"$0x0000002a\":{{\"{health}\":2}}}}"),
+            // A reserved key, a key cut short and a value written as a key is are no keys.
+            "{\"$x\":\"$0x0000002b\",\"$0x12\":0,\"$0x0000002c\":0}".to_string(),
+        ];
+        assert_eq!(key_tally(texts.iter().map(String::as_str), &names), (1, 3));
+        assert_eq!(key_tally([], &names), (0, 0));
+    }
+
+    #[test]
     fn a_path_s_names_are_hashed_and_its_written_keys_and_indices_kept() {
         let group = save::key_text("Group");
         let text = format!("{{\"{group}\":{{\"$0x0000002a\":{{}}}}}}");
@@ -239,6 +292,8 @@ mod tests {
         );
         assert_eq!(block_id("0x2A"), Ok(0x2A));
         assert_eq!(block_id("Name"), Ok(save::key_hash("Name")));
-        assert!(block_line("code  ", &story.code[0]).ends_with("keyed by its id"));
+        let names = HashMap::from([(0x2A, "ZqStructure".to_string())]);
+        let line = block_line("code  ", &story.code[0], &names);
+        assert!(line.ends_with("keyed by its id") && line.contains(" ZqStructure "));
     }
 }

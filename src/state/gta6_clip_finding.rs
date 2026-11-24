@@ -2,6 +2,8 @@
 //! clip dictionaries every open scan found, on a worker as a row of the job list, a body at a time
 //! with its progress and Cancel.
 
+use crate::state::Rpf9Document;
+
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -193,7 +195,7 @@ impl AppState {
         }
         let mut bodies: BTreeMap<PathBuf, BTreeSet<u64>> = BTreeMap::new();
         for d in &self.documents {
-            let DocPayload::Rpf9(scan) = &d.payload else {
+            let DocPayload::Rpf9(Rpf9Document::Scan(scan)) = &d.payload else {
                 continue;
             };
             let offsets = (scan.found().rows.iter())

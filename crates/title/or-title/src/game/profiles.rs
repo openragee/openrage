@@ -345,7 +345,7 @@ impl GameProfile for Gta6 {
     }
 
     fn description(&self) -> &'static str {
-        "GTA VI. Its RPF9 archives' tables are encrypted and OpenRage has no key for them, so no entry is listed by name: an archive opens as a scan of the bodies stored in the clear, and the install opens as a plain folder."
+        "GTA VI. Each RPF9 archive opens from its encrypted table using the user's GTA VI keys. Names are resolved from the vocabulary where available. The install opens as a plain folder."
     }
 
     fn container(&self) -> ContainerFamily {

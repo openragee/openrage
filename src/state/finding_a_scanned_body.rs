@@ -2,6 +2,8 @@
 //! archive whose names the scan placed opens as a scan of its own; and a body opened from the list
 //! says where it was found, and why it is shown as its bytes where no reader fits it.
 
+use crate::state::Rpf9Document;
+
 use std::time::{Duration, Instant};
 
 use or_io::container::rpf::{Rpf9BodyKind, Rpf9Content};
@@ -34,7 +36,8 @@ pub(super) fn nested_archive() -> (Vec<u8>, u64) {
 }
 
 fn until_scanned(state: &AppState, doc: DocumentId) {
-    let Some(DocPayload::Rpf9(scan)) = state.document(doc).map(|d| &d.payload) else {
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) = state.document(doc).map(|d| &d.payload)
+    else {
         panic!(
             "not a GTA VI archive document: {}",
             state.error_dialog_message
@@ -80,7 +83,9 @@ fn a_nested_archive_whose_names_were_placed_opens_as_a_scan_of_its_own() {
         Some(DocumentKind::Rpf9)
     );
     until_scanned(&state, nested);
-    let Some(DocPayload::Rpf9(scan)) = state.document(nested).map(|d| &d.payload) else {
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
+        state.document(nested).map(|d| &d.payload)
+    else {
         unreachable!()
     };
     assert_eq!((scan.start, scan.path.as_path()), (NESTED, path.as_path()));
@@ -105,7 +110,9 @@ fn a_nested_archive_whose_names_were_placed_opens_as_a_scan_of_its_own() {
     settle(&mut state);
     let unplaced = state.active_document.expect("an open document");
     until_scanned(&state, unplaced);
-    let Some(DocPayload::Rpf9(scan)) = state.document(unplaced).map(|d| &d.payload) else {
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
+        state.document(unplaced).map(|d| &d.payload)
+    else {
         unreachable!()
     };
     assert!(
@@ -223,7 +230,8 @@ fn the_list_s_archive_heading_lines_up_with_its_bodies_and_the_filter_hides_othe
         "{header_at} against {body_at}"
     );
 
-    let Some(DocPayload::Rpf9(scan)) = state.document(doc).map(|d| &d.payload) else {
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) = state.document(doc).map(|d| &d.payload)
+    else {
         unreachable!()
     };
     scan.list().kinds.insert(RowKind::Text);
@@ -253,7 +261,9 @@ fn a_nested_archive_s_scan_list_is_filtered_and_extracts_as_the_top_one_s_does()
     let nested = state.active_document.expect("an open document");
     assert_ne!(nested, parent);
     until_scanned(&state, nested);
-    let Some(DocPayload::Rpf9(scan)) = state.document(nested).map(|d| &d.payload) else {
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
+        state.document(nested).map(|d| &d.payload)
+    else {
         unreachable!()
     };
     scan.list().kinds.insert(RowKind::Text);
@@ -579,7 +589,9 @@ fn the_extract_button_takes_the_rows_selected_or_else_every_row_shown_and_shift_
     let (bytes, at) = archive();
     let mut state = AppState::new();
     let doc = scanned(&mut state, written(dir.path(), &bytes));
-    let Some(DocPayload::Rpf9(scan)) = state.document(doc).map(|d| d.payload.clone()) else {
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
+        state.document(doc).map(|d| d.payload.clone())
+    else {
         panic!("not a GTA VI archive document");
     };
     let listed = rows(&state, doc);
@@ -647,7 +659,9 @@ fn an_offset_typed_in_the_find_field_marks_its_row_and_hides_none() {
     let (bytes, at) = archive();
     let mut state = AppState::new();
     let doc = scanned(&mut state, written(dir.path(), &bytes));
-    let Some(DocPayload::Rpf9(scan)) = state.document(doc).map(|d| d.payload.clone()) else {
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
+        state.document(doc).map(|d| d.payload.clone())
+    else {
         panic!("not a GTA VI archive document");
     };
     scan.list().text = format!("{:#x}", at[4]);

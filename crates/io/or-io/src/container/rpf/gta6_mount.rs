@@ -9,6 +9,7 @@
 //! body at a time. It is read-only: nothing here writes an archive.
 
 use std::io::{Read, Seek, SeekFrom};
+use std::ops::Range;
 
 use byteorder::{ByteOrder, LE};
 
@@ -50,9 +51,42 @@ fn no_entry_row(entry: &Gta6Entry) -> IoError {
 /// Open the RPF9 archive whose header is at absolute `offset` in `src`, decrypting its table with
 /// `keys`. The header states the table's end; only the header and table are read, never the content.
 pub fn open_at<R: Read + Seek>(src: &mut R, offset: u64, keys: &GtaViKeys) -> Result<Gta6Archive> {
-    let head = read_at(src, offset, RPF9_HEADER_SIZE)?;
+    let end = src.seek(SeekFrom::End(0)).map_err(mount_io)?;
+    open_at_bounded(src, offset..end, keys)
+}
+
+/// Open only the header and table of an archive within its containing entry's bounds.
+pub fn open_at_bounded<R: Read + Seek>(
+    src: &mut R,
+    extent: Range<u64>,
+    keys: &GtaViKeys,
+) -> Result<Gta6Archive> {
+    let bad = |why: &str| IoError::Invalid {
+        what: "an RPF9 table".into(),
+        why: why.into(),
+    };
+    let len = extent
+        .end
+        .checked_sub(extent.start)
+        .filter(|len| *len >= RPF9_HEADER_SIZE as u64)
+        .ok_or_else(|| bad("the archive extent is shorter than its header"))?;
+    let head = read_at(src, extent.start, RPF9_HEADER_SIZE)?;
     let header = Rpf9Header::parse(&head)?;
-    let toc = read_at(src, offset, header.toc_end as usize)?;
+    // Bound both the table bytes and the expanded entry rows before allocating either.
+    const TABLE_LIMIT: u64 = 64 << 20;
+    let listing_bytes = u64::from(header.entry_count) * std::mem::size_of::<Gta6Entry>() as u64;
+    if header.toc_end < RPF9_HEADER_SIZE as u32
+        || u64::from(header.toc_end) > len
+        || u64::from(header.toc_end) + listing_bytes > TABLE_LIMIT
+    {
+        return Err(bad(
+            "the table exceeds its archive extent or the table size limit",
+        ));
+    }
+    let mut toc = head;
+    toc.resize(header.toc_end as usize, 0);
+    src.read_exact(&mut toc[RPF9_HEADER_SIZE..])
+        .map_err(mount_io)?;
     Gta6Archive::open(&toc, keys)
 }
 

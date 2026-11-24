@@ -393,6 +393,7 @@ fn held(kind: JobKind) -> Held {
         JobKind::ArchiveScan => {
             Held::By("a_scan_runs_off_the_ui_thread_in_the_job_list_and_stops_when_asked")
         }
+        JobKind::ArchiveTable => Held::By("a_child_table_is_a_job_that_can_be_cancelled"),
         JobKind::EffectsRead => Held::By(
             "an_effect_container_is_read_as_a_job_with_progress_that_stops_when_asked_and_says_how_it_ended",
         ),
@@ -418,7 +419,7 @@ fn held(kind: JobKind) -> Held {
 }
 
 /// Every kind of job there is.
-const EVERY: [JobKind; 29] = [
+const EVERY: [JobKind; 30] = [
     JobKind::Extraction,
     JobKind::Defragment,
     JobKind::OverlayCopy,
@@ -440,6 +441,7 @@ const EVERY: [JobKind; 29] = [
     JobKind::ProjectImport,
     JobKind::ProjectReopen,
     JobKind::ArchiveScan,
+    JobKind::ArchiveTable,
     JobKind::EffectsRead,
     JobKind::TextureNames,
     JobKind::NeighbourCells,

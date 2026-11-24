@@ -1,6 +1,8 @@
 //! A GTA VI archive opens as what a scan without its table finds in it, a slice at a time off the
 //! UI thread, and each body it lists opens read-only in the view the app has for its kind.
 
+use crate::state::Rpf9Document;
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -220,10 +222,22 @@ pub(super) fn written(dir: &Path, bytes: &[u8]) -> PathBuf {
     path
 }
 
-/// Load `path` and wait for the load to end.
+/// Explicitly start the scanner whose behaviour these tests exercise.
 fn load(state: &mut AppState, path: PathBuf) {
-    state.load_file(path);
-    settle(state);
+    if super::rpf9_scan::scanned_body(&path).is_some() {
+        state.load_file(path);
+        settle(state);
+        return;
+    }
+    let scan = super::rpf9_scan::Rpf9ScanDocument::open(&path)
+        .expect("read")
+        .expect("scan archive");
+    state.insert_document(
+        path,
+        DocPayload::Rpf9(Rpf9Document::Scan(std::sync::Arc::new(scan))),
+        None,
+        None,
+    );
 }
 
 /// Wait for the loads in flight to end.
@@ -241,7 +255,8 @@ pub(super) fn scanned(state: &mut AppState, path: PathBuf) -> DocumentId {
     load(state, path);
     let doc = (state.active_document)
         .unwrap_or_else(|| panic!("the archive did not open: {}", state.error_dialog_message));
-    let Some(DocPayload::Rpf9(scan)) = state.document(doc).map(|d| &d.payload) else {
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) = state.document(doc).map(|d| &d.payload)
+    else {
         panic!(
             "not a GTA VI archive document: {}",
             state.error_dialog_message
@@ -257,7 +272,7 @@ pub(super) fn scanned(state: &mut AppState, path: PathBuf) -> DocumentId {
 
 pub(super) fn rows(state: &AppState, doc: DocumentId) -> Vec<Row> {
     match state.document(doc).map(|d| &d.payload) {
-        Some(DocPayload::Rpf9(scan)) => scan.found().rows.clone(),
+        Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) => scan.found().rows.clone(),
         _ => panic!("not a GTA VI archive document"),
     }
 }
@@ -326,7 +341,8 @@ fn an_rpf9_archive_opens_as_the_bodies_a_scan_finds_with_its_header_facts() {
         state.document(doc).map(|d| d.kind),
         Some(DocumentKind::Rpf9)
     );
-    let Some(DocPayload::Rpf9(scan)) = state.document(doc).map(|d| &d.payload) else {
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) = state.document(doc).map(|d| &d.payload)
+    else {
         unreachable!()
     };
     assert_eq!(scan.found().ended, Some(Ended::Whole));
@@ -371,7 +387,7 @@ fn an_rpf9_archive_opens_as_the_bodies_a_scan_finds_with_its_header_facts() {
     let text = painted(&output);
     let header = or_io::container::rpf::Rpf9Header::parse(&bytes).expect("the head");
     for words in [
-        "cannot be listed by name".to_string(),
+        "read its table".to_string(),
         "a scan without the table".to_string(),
         format!("{} entry", header.entry_count),
         format!("{:#X}", header.toc_end),
@@ -590,7 +606,8 @@ fn a_scan_runs_off_the_ui_thread_in_the_job_list_and_stops_when_asked() {
         "the scan is not in the job list"
     );
     state.cancel_job(JobKind::ArchiveScan);
-    let Some(DocPayload::Rpf9(scan)) = state.document(doc).map(|d| &d.payload) else {
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) = state.document(doc).map(|d| &d.payload)
+    else {
         panic!("a GTA VI archive document");
     };
     assert!(scan.header.is_none(), "a head of zeros is not a header");
@@ -704,7 +721,8 @@ fn a_scan_keeps_at_most_its_cap_of_rows_and_says_where_it_stopped() {
     let mut state = AppState::new();
     let doc = scanned(&mut state, written(dir.path(), &bytes));
     assert_eq!(rows(&state, doc).len(), max);
-    let Some(DocPayload::Rpf9(scan)) = state.document(doc).map(|d| &d.payload) else {
+    let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) = state.document(doc).map(|d| &d.payload)
+    else {
         unreachable!()
     };
     let ended = scan.found().ended.clone();

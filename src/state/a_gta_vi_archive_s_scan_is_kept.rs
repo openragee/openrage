@@ -1,6 +1,8 @@
 //! A scan that read a whole GTA VI archive is kept in the configuration folder, and the archive is
 //! listed from it, unread, until its size or its modification time changes or a person asks for a scan.
 
+use crate::state::Rpf9Document;
+
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,7 +26,7 @@ fn opened(config: &Path, path: &Path) -> (AppState, Arc<Rpf9ScanDocument>) {
     let scan = Arc::new(scan.expect("a GTA VI archive"));
     state.insert_document(
         path.to_path_buf(),
-        DocPayload::Rpf9(Arc::clone(&scan)),
+        DocPayload::Rpf9(Rpf9Document::Scan(Arc::clone(&scan))),
         None,
         None,
     );
@@ -256,7 +258,7 @@ fn a_reload_of_an_archive_s_tab_scans_the_archive_again() {
     rewritten(&path, &emptied(&bytes), later);
     assert_eq!(state.reload_open_file(&path, false), Ok(1));
     let tab = state.documents.iter().find_map(|d| match &d.payload {
-        DocPayload::Rpf9(scan) => Some(Arc::clone(scan)),
+        DocPayload::Rpf9(Rpf9Document::Scan(scan)) => Some(Arc::clone(scan)),
         _ => None,
     });
     let again = tab.expect("the tab is still the archive's scan");

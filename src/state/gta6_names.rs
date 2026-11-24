@@ -265,7 +265,10 @@ impl AppState {
     /// where no tab holds one.
     pub fn harvest_names_of_the_open_gta6_folder(&mut self) {
         let is_gta6 = |folder: &PathBuf| {
-            folder.is_dir() && super::gta_vi::read_by_scan(or_title::Game::detect_from_root(folder))
+            folder.is_dir()
+                && super::gta_vi::opens_archives_individually(or_title::Game::detect_from_root(
+                    folder,
+                ))
         };
         let tabs = (self.active_document().into_iter()).chain(self.documents.iter());
         let root = tabs.filter_map(|doc| doc.path.clone()).find(is_gta6);

@@ -88,7 +88,7 @@ fn gta_vi_is_known_and_unsupported_and_says_why() {
     assert!(Game::all().any(|g| g == Game::GtaVI));
 
     let description = profile.description();
-    for word in ["RPF9", "encrypted", "key", "scan", "plain folder"] {
+    for word in ["RPF9", "encrypted", "key", "table", "plain folder"] {
         assert!(description.contains(word), "{description:?} lacks {word:?}");
     }
     assert!(!description.contains("none of its archives open"));

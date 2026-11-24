@@ -6,6 +6,8 @@
 //! ⚠ Each body an edit renumbers is a document with a step of its own, so Undo takes the edit back
 //! one document at a time. A step holds both trees and both sections of its body.
 
+use crate::state::Rpf9Document;
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -335,7 +337,9 @@ impl AppState {
     /// The offsets of the bodies the finished whole scan of `archive` lists that may be map bodies.
     fn whole_scan_offsets(&self, archive: &Path) -> Option<Vec<u64>> {
         self.documents.iter().find_map(|d| match &d.payload {
-            DocPayload::Rpf9(scan) if scan.path.as_path() == archive && scan.start == 0 => {
+            DocPayload::Rpf9(Rpf9Document::Scan(scan))
+                if scan.path.as_path() == archive && scan.start == 0 =>
+            {
                 let found = scan.found();
                 let whole = matches!(found.ended, Some(ScanEnded::Whole));
                 let offsets: Vec<u64> = (found.rows.iter())

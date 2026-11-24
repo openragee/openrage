@@ -356,8 +356,9 @@ impl AppState {
             self.set_error(tr!("Could not open the file"), message.clone());
             self.error_dialog_title = headline;
             // A body a scan found says what it is and why it does not open, which no plain sentence says.
-            self.error_dialog_plain = (super::rpf9_scan::scanned_body(path).is_none())
-                .then(|| super::load_error::plain_reason(&message).to_string());
+            self.error_dialog_plain = (super::rpf9_scan::scanned_body(path).is_none()
+                && super::gta_vi::rpf9_refusal_at(path).is_none())
+            .then(|| super::load_error::plain_reason(&message).to_string());
         }
     }
 

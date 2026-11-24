@@ -65,6 +65,8 @@ struct App {
     modifiers: ModifiersState,
     /// How a window's AccessKit adapter reaches the event loop.
     proxy: EventLoopProxy<UserEvent>,
+    /// When a new device is next asked for, while the one the windows drew on is lost.
+    device_retry: Option<std::time::Instant>,
 }
 
 impl App {
@@ -76,6 +78,7 @@ impl App {
             app_state: AppState::new(),
             modifiers: ModifiersState::empty(),
             proxy,
+            device_retry: None,
         }
     }
 

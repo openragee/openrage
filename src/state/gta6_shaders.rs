@@ -732,6 +732,23 @@ pub(super) fn stop() {
     });
 }
 
+impl super::AppState {
+    /// What the editor does once its graphics device is lost while the view draws in `mode`: the
+    /// view goes back to Material, what a GTA VI drawable's own passes were drawing is kept from
+    /// the next device, and a person is told.
+    pub(crate) fn graphics_device_lost(&mut self, mode: or_renderer::ShadingMode) {
+        use or_renderer::ShadingMode;
+        let own = self.active_document().map(|doc| &doc.payload);
+        if mode == ShadingMode::Shaded && matches!(own, Some(super::DocPayload::Gta6Drawable(_))) {
+            crate::render::gta6_meshlets::device_lost();
+        }
+        self.remember_shading_mode(ShadingMode::Material);
+        self.show_warning_toast(tr!(
+            "The graphics device was lost. The view is back to Material, and what the Shaded view was drawing when it was lost draws as Material until OpenRage is started again"
+        ));
+    }
+}
+
 #[cfg(test)]
 #[path = "gta6_shaders_tests.rs"]
 mod tests;

@@ -14782,6 +14782,12 @@ msgstr "{effect}: ни один его проход не читает поток
 msgid "{effect}: its programs are not translated yet"
 msgstr "{effect}: его программы ещё не транслированы"
 
+msgid "{effect}: the graphics device was lost while its own passes drew, so it draws as Material until OpenRage is started again"
+msgstr "{effect}: графическое устройство было потеряно, пока рисовали его собственные проходы, поэтому он рисуется как «Материал» до перезапуска OpenRage"
+
+msgid "The graphics device was lost. The view is back to Material, and what the Shaded view was drawing when it was lost draws as Material until OpenRage is started again"
+msgstr "Графическое устройство было потеряно. Вид возвращён к «Материалу», а то, что вид «С затенением» рисовал в этот момент, рисуется как «Материал» до перезапуска OpenRage"
+
 msgid "none of its techniques is a mesh pass that writes the deferred targets"
 msgstr "ни одна его техника не является проходом сетки, который пишет в отложенные цели"
 

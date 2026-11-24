@@ -14680,6 +14680,12 @@ msgstr "{effect}：它的渲染通道均不读取此几何体拥有的流"
 msgid "{effect}: its programs are not translated yet"
 msgstr "{effect}：它的程序尚未翻译"
 
+msgid "{effect}: the graphics device was lost while its own passes drew, so it draws as Material until OpenRage is started again"
+msgstr "{effect}：在它自身的渲染通道绘制时图形设备丢失，因此在重新启动 OpenRage 之前按“材质”绘制"
+
+msgid "The graphics device was lost. The view is back to Material, and what the Shaded view was drawing when it was lost draws as Material until OpenRage is started again"
+msgstr "图形设备已丢失。视图已回到“材质”，丢失时“着色”视图正在绘制的内容在重新启动 OpenRage 之前按“材质”绘制"
+
 msgid "none of its techniques is a mesh pass that writes the deferred targets"
 msgstr "它的技术中没有写入延迟目标的网格通道"
 

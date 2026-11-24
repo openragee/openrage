@@ -252,6 +252,9 @@ pub struct RenderBridge {
 
     /// What the device came from, which `with_instance` gives for wgpu to count its objects through.
     instance: Option<wgpu::Instance>,
+
+    /// Set once the device is lost: nothing drawn on it after that is seen.
+    lost: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl RenderBridge {
@@ -262,7 +265,14 @@ impl RenderBridge {
     ) -> Self {
         let renderer = ViewportRenderer::new(&device, &queue, colour_format, 1, 1);
         let material_bgl = renderer.material_bind_group_layout();
+        let lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let told = Arc::clone(&lost);
+        device.set_device_lost_callback(move |reason, message| {
+            tracing::error!(?reason, %message, "the graphics device was lost");
+            told.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
         Self {
+            lost,
             device,
             queue,
             renderer,
@@ -401,6 +411,12 @@ impl RenderBridge {
 
     pub fn mode(&self) -> ShadingMode {
         self.mode
+    }
+
+    /// Whether the device this draws on is lost. Its owner draws nothing more on it: a painter
+    /// that cannot write a buffer panics.
+    pub fn device_lost(&self) -> bool {
+        self.lost.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Every channel the meshes now on screen carry, in menu order.

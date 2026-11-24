@@ -14680,6 +14680,12 @@ msgstr "{effect}: 이 지오메트리의 스트림을 읽는 패스가 없습니
 msgid "{effect}: its programs are not translated yet"
 msgstr "{effect}: 프로그램이 아직 변환되지 않았습니다"
 
+msgid "{effect}: the graphics device was lost while its own passes drew, so it draws as Material until OpenRage is started again"
+msgstr "{effect}: 자체 패스를 그리는 동안 그래픽 장치가 손실되어, OpenRage를 다시 시작할 때까지 머티리얼로 그려집니다"
+
+msgid "The graphics device was lost. The view is back to Material, and what the Shaded view was drawing when it was lost draws as Material until OpenRage is started again"
+msgstr "그래픽 장치가 손실되었습니다. 보기가 머티리얼로 돌아가며, 손실 당시 셰이디드 보기가 그리던 것은 OpenRage를 다시 시작할 때까지 머티리얼로 그려집니다"
+
 msgid "none of its techniques is a mesh pass that writes the deferred targets"
 msgstr "디퍼드 타깃에 쓰는 메시 패스인 테크닉이 없습니다"
 

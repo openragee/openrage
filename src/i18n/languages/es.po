@@ -14680,6 +14680,12 @@ msgstr "{effect}: ninguno de sus pases lee los flujos que tiene esta geometría"
 msgid "{effect}: its programs are not translated yet"
 msgstr "{effect}: sus programas aún no están traducidos"
 
+msgid "{effect}: the graphics device was lost while its own passes drew, so it draws as Material until OpenRage is started again"
+msgstr "{effect}: el dispositivo gráfico se perdió mientras dibujaban sus propios pases, así que se dibuja como Material hasta que se reinicie OpenRage"
+
+msgid "The graphics device was lost. The view is back to Material, and what the Shaded view was drawing when it was lost draws as Material until OpenRage is started again"
+msgstr "El dispositivo gráfico se perdió. La vista vuelve a Material, y lo que la vista Sombreado dibujaba cuando se perdió se dibuja como Material hasta que se reinicie OpenRage"
+
 msgid "none of its techniques is a mesh pass that writes the deferred targets"
 msgstr "ninguna de sus técnicas es un pase de malla que escriba en los destinos diferidos"
 

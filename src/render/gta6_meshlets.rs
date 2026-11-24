@@ -2,8 +2,8 @@
 //! Solid draws with its two data blocks as the file stores them, its material's constants and
 //! textures, and what the editor fills of the buffers the game fills when it runs.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 
 use or_cli::{Gta6Fed as Fed, Gta6Feed as Filled, Gta6ShadingPass, Gta6Stage as Stage};
 use or_io::gta5::shaders::spirv_pack::ConstantBuffer;
@@ -20,6 +20,21 @@ use crate::state::{gta6_shaders, AppState, DocPayload};
 /// The words a buffer read by address states before its first element: its element size, then
 /// dwords of 32 bits read as unsigned numbers.
 const DWORDS: u32 = (4 << 8) | 32;
+
+/// The effects whose own passes were last handed to the device, and those a device was lost
+/// under: such an effect draws as Material until the program is started again.
+type Under = (Vec<u32>, BTreeSet<u32>);
+static UNDER: Mutex<Under> = Mutex::new((Vec::new(), BTreeSet::new()));
+
+fn lose((drawing, lost): &mut Under) {
+    lost.extend(drawing.drain(..));
+}
+
+/// Keep the effects last handed to the device from one made after it: the device was lost
+/// while it drew them.
+pub(crate) fn device_lost() {
+    lose(&mut UNDER.lock().unwrap_or_else(|p| p.into_inner()));
+}
 
 /// The active GTA VI drawable drawn by its own programs.
 pub(crate) struct Meshlets {
@@ -449,11 +464,17 @@ pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
     let drawn = (models.iter())
         .flat_map(|model| model.geometries.iter().flatten())
         .filter(|geometry| geometry.positions.is_ok());
+    let lost = UNDER.lock().unwrap_or_else(|p| p.into_inner()).1.clone();
+    let mut effects = Vec::new();
     for (mesh, geometry) in drawn.enumerate() {
         let shader = drawable.shaders.get(usize::from(geometry.shader))?;
         let effect = effect_name(shader.name_hash);
         let passes = gta6_shaders::shading(shader.name_hash);
         let pass = match &passes {
+            _ if lost.contains(&shader.name_hash) => Err(tr!(
+                "{effect}: the graphics device was lost while its own passes drew, so it draws as Material until OpenRage is started again",
+                effect = effect,
+            )),
             Some(Ok(passes)) => pass_of(passes, geometry).ok_or_else(|| {
                 tr!(
                     "{effect}: none of its passes reads the streams this geometry has",
@@ -497,8 +518,10 @@ pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
             out.surfaces.push(surface);
             out.of.push((mesh, effect));
             out.zeroed += zeroed;
+            effects.push(shader.name_hash);
         }
     }
+    UNDER.lock().unwrap_or_else(|p| p.into_inner()).0 = effects;
     out.decoding = decoding.get();
     match (out.surfaces.is_empty(), out.why.take()) {
         (true, Some(why)) => Some(Err(why)),
@@ -513,6 +536,16 @@ pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_effects_a_device_was_lost_under_are_kept_and_no_other() {
+        let mut under: Under = (vec![7, 9], BTreeSet::from([3]));
+        lose(&mut under);
+        assert_eq!(under, (Vec::new(), BTreeSet::from([3, 7, 9])));
+        // A device lost with nothing of a drawable's own on it blames no effect.
+        lose(&mut under);
+        assert_eq!(under.1.len(), 3);
+    }
     use or_io::gta5::shaders::spirv_pack::Variable;
     use or_io::gta6::headerless::Parameter;
 

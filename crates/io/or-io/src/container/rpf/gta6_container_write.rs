@@ -601,13 +601,19 @@ fn old_body<R: Read + Seek>(
     entry: &Gta6Entry,
     chunked: bool,
 ) -> Option<Vec<u8>> {
-    if chunked {
+    if chunked && entry.cipher.is_some() {
         return mount.read_entry_decrypted(&mut *src, entry, keys).ok();
     }
-    let mut body = vec![0u8; usize::try_from(entry.real?).ok()?];
+    // A clear chunked body is walked by its chunk table: read by what it holds, it can end short of
+    // the table's last chunk.
+    let len = if chunked { entry.stored? } else { entry.real? };
+    let mut body = vec![0u8; usize::try_from(len).ok()?];
     src.seek(SeekFrom::Start(mount.absolute_start(entry)?))
         .ok()?;
     src.read_exact(&mut body).ok()?;
+    if chunked {
+        return mount.inflate_deciphered_stored(&body, entry).ok();
+    }
     Some(body)
 }
 

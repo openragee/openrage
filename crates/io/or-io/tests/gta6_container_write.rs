@@ -86,7 +86,7 @@ fn assert_identity(plan: &Rpf9Plan, file: &mut File, what: &str) {
     assert_eq!(at, file.metadata().unwrap().len(), "{what}: length");
 }
 
-/// The body the writer compares a replacement with: a chunked entry as the reader inflates it, any
+/// The body the writer compares a replacement with: a chunked entry inflated by its chunk table, any
 /// other as its raw `[start, start + real)`.
 fn body_of(mount: &Gta6Mount, file: &mut File, keys: &GtaViKeys, e: &Gta6Entry) -> Option<Vec<u8>> {
     let chunked = mount
@@ -94,12 +94,15 @@ fn body_of(mount: &Gta6Mount, file: &mut File, keys: &GtaViKeys, e: &Gta6Entry) 
         .entry_extra(e.index as usize)?
         .chunk_count
         .is_some();
-    if chunked {
+    if chunked && e.cipher.is_some() {
         return mount.read_entry_decrypted(&mut *file, e, keys).ok();
     }
-    let mut body = vec![0u8; e.real? as usize];
+    let mut body = vec![0u8; if chunked { e.stored? } else { e.real? } as usize];
     file.seek(SeekFrom::Start(mount.absolute_start(e)?)).ok()?;
     file.read_exact(&mut body).ok()?;
+    if chunked {
+        return mount.inflate_deciphered_stored(&body, e).ok();
+    }
     Some(body)
 }
 

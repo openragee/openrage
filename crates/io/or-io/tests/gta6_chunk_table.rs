@@ -57,6 +57,7 @@ struct Tally {
     rows: usize,
     mode3: usize,
     mode2: usize,
+    mode4: usize,
     failures: Vec<String>,
     flagged_walked: usize,
 }
@@ -105,10 +106,10 @@ fn check_row(mount: &Gta6Mount, index: usize, at: usize, t: &mut Tally) -> Optio
             "authored cell or heap differs from the stored bytes".into(),
         );
     }
-    if mode == 3 {
-        t.mode3 += 1;
-    } else {
-        t.mode2 += 1;
+    match mode {
+        3 => t.mode3 += 1,
+        2 => t.mode2 += 1,
+        _ => t.mode4 += 1,
     }
     let chunks = table.chunks;
 
@@ -198,10 +199,11 @@ fn every_chunk_row_authors_back_byte_identical_and_drives_the_walk() {
         walk(&mut file, &mount, &keys, 0, &mut t);
     }
     println!(
-        "chunk rows {} (mode 3 {}, mode 2 {}), flagged walked {}, failures {}",
+        "chunk rows {} (mode 3 {}, mode 2 {}, mode 4 {}), flagged walked {}, failures {}",
         t.rows,
         t.mode3,
         t.mode2,
+        t.mode4,
         t.flagged_walked,
         t.failures.len()
     );
@@ -217,4 +219,5 @@ fn every_chunk_row_authors_back_byte_identical_and_drives_the_walk() {
         "the top-level tables hold at least 928 mode-3 rows"
     );
     assert!(t.mode2 > 0, "the nested tables hold mode-2 rows");
+    assert!(t.mode4 > 0, "the nested tables hold mode-4 rows");
 }

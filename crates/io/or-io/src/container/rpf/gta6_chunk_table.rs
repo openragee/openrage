@@ -5,7 +5,9 @@
 //! (bits 16..24) and the mode (bits 24..32); `u0` is a byte offset from the cell to the entry's
 //! descriptors, which sit in a heap after the column group. Mode 3 (24-byte rows) packs two
 //! complemented 16-bit sizes, a running stored offset and a flag; mode 2 (20-byte rows) packs two
-//! 24-bit sizes in 16-byte units, the stored padding and a flag. Chunks lie 16-aligned in the body.
+//! 24-bit sizes in 16-byte units, the stored padding and a flag; mode 4 (inside nested archives)
+//! packs a 28-bit exact inflated size, a 24-bit stored size in 16-byte units, the stored padding and
+//! a flag. Chunks lie 16-aligned in the body.
 
 use byteorder::{ByteOrder, LE};
 
@@ -20,6 +22,8 @@ const FLAG_ZLIB: u64 = 3;
 const MODE2_RESERVED: u64 = (0xFF << 24) | (0x3 << 56);
 /// Mode 3's bits that hold no field: 62..64.
 const MODE3_RESERVED: u64 = 0x3 << 62;
+/// Mode 4's bits that hold no field: 58..64.
+const MODE4_RESERVED: u64 = 0x3F << 58;
 const MASK24: u64 = 0xFF_FFFF;
 const MASK28: u64 = 0x0FFF_FFFF;
 
@@ -31,7 +35,7 @@ pub struct Chunk {
     pub zlib: bool,
 }
 
-/// A decoded chunk table: its mode (3 on a 24-byte row, 2 on a 20-byte row) and its chunks.
+/// A decoded chunk table: its mode (3 on a 24-byte row, 2 or 4 on a nested entry's row) and its chunks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Table {
     pub mode: u8,
@@ -61,7 +65,7 @@ pub fn decode(cell: [u8; 8], heap: &[u8]) -> Result<Table> {
             (u1 >> 16) & 0xFF
         )));
     }
-    if mode != 2 && mode != 3 {
+    if !(2..=4).contains(&mode) {
         return Err(bad(format!("unknown mode {mode}")));
     }
     let words = u0
@@ -97,15 +101,30 @@ pub fn decode(cell: [u8; 8], heap: &[u8]) -> Result<Table> {
                 (word >> 60) & 0x3,
             )
         } else {
-            if word & MODE2_RESERVED != 0 {
+            let (reserved, inflated, aligned, pad, flag) = if mode == 2 {
+                (
+                    MODE2_RESERVED,
+                    (word & MASK24) << 4,
+                    ((word >> 32) & MASK24) << 4,
+                    (word >> 58) & 0xF,
+                    word >> 62,
+                )
+            } else {
+                (
+                    MODE4_RESERVED,
+                    word & MASK28,
+                    ((word >> 28) & MASK24) << 4,
+                    (word >> 52) & 0xF,
+                    (word >> 56) & 0x3,
+                )
+            };
+            if word & reserved != 0 {
                 return Err(bad(format!("descriptor {i} sets a reserved bit")));
             }
-            let aligned = ((word >> 32) & MASK24) << 4;
-            let pad = (word >> 58) & 0xF;
             if pad > aligned {
                 return Err(bad(format!("descriptor {i} pads past its stored size")));
             }
-            ((word & MASK24) << 4, aligned - pad, word >> 62)
+            (inflated, aligned - pad, flag)
         };
         if flag != FLAG_ZLIB && flag != 0 {
             return Err(bad(format!("descriptor {i} has unknown flag {flag}")));
@@ -131,7 +150,7 @@ pub fn decode(cell: [u8; 8], heap: &[u8]) -> Result<Table> {
 /// The cell's `u1` and the descriptors for `table`, refusing a size its mode cannot hold.
 pub fn author(table: &Table) -> Result<(u32, Vec<u64>)> {
     let (chunks, mode) = (&table.chunks[..], table.mode);
-    if mode != 2 && mode != 3 {
+    if !(2..=4).contains(&mode) {
         return Err(bad(format!("unknown mode {mode}")));
     }
     if chunks.len() > 0xFFFF {
@@ -142,14 +161,19 @@ pub fn author(table: &Table) -> Result<(u32, Vec<u64>)> {
     }
     let mut cum = 0u64; // the running ceil16(stored), in bytes
     for (i, c) in chunks.iter().enumerate() {
-        let fits = if mode == 3 {
-            (1..=0x10000).contains(&c.inflated)
-                && (1..=0x10000).contains(&c.stored)
-                && cum >> 4 <= MASK28
-        } else {
-            c.inflated.is_multiple_of(16)
-                && u64::from(c.inflated) >> 4 <= MASK24
-                && ceil16(u64::from(c.stored)) >> 4 <= MASK24
+        let stored16 = ceil16(u64::from(c.stored)) >> 4;
+        let fits = match mode {
+            3 => {
+                (1..=0x10000).contains(&c.inflated)
+                    && (1..=0x10000).contains(&c.stored)
+                    && cum >> 4 <= MASK28
+            }
+            2 => {
+                c.inflated.is_multiple_of(16)
+                    && u64::from(c.inflated) >> 4 <= MASK24
+                    && stored16 <= MASK24
+            }
+            _ => u64::from(c.inflated) <= MASK28 && stored16 <= MASK24,
         };
         if !fits || (!c.zlib && c.inflated != c.stored) {
             return Err(bad(format!("chunk {i} cannot be stated in mode {mode}")));
@@ -167,16 +191,17 @@ fn pack(chunks: &[Chunk], mode: u8) -> (u32, Vec<u64>) {
         .map(|c| {
             let (inflated, stored) = (u64::from(c.inflated), u64::from(c.stored));
             let flag = if c.zlib { FLAG_ZLIB } else { 0 };
-            let word = if mode == 3 {
-                (flag << 60)
-                    | (((cum >> 4) & MASK28) << 32)
-                    | (((0x10000 - stored) & 0xFFFF) << 16)
-                    | ((0x10000 - inflated) & 0xFFFF)
-            } else {
-                (flag << 62)
-                    | ((stored.wrapping_neg() & 0xF) << 58)
-                    | (((ceil16(stored) >> 4) & MASK24) << 32)
-                    | ((inflated >> 4) & MASK24)
+            let pad = stored.wrapping_neg() & 0xF;
+            let stored16 = (ceil16(stored) >> 4) & MASK24;
+            let word = match mode {
+                3 => {
+                    (flag << 60)
+                        | (((cum >> 4) & MASK28) << 32)
+                        | (((0x10000 - stored) & 0xFFFF) << 16)
+                        | ((0x10000 - inflated) & 0xFFFF)
+                }
+                2 => (flag << 62) | (pad << 58) | (stored16 << 32) | ((inflated >> 4) & MASK24),
+                _ => (flag << 56) | (pad << 52) | (stored16 << 28) | (inflated & MASK28),
             };
             cum += ceil16(stored);
             word
@@ -382,6 +407,98 @@ mod tests {
         );
     }
 
+    fn m4(inflated: u64, units_aligned: u64, pad: u64, flag: u64) -> u64 {
+        (flag << 56) | (pad << 52) | (units_aligned << 28) | inflated
+    }
+
+    #[test]
+    fn a_mode_4_table_decodes_and_authors_back_bit_for_bit() {
+        // A 1 MiB zlib chunk in 70001 bytes (pad 15), an odd-sized stored chunk, an odd zlib tail.
+        let words = [
+            m4(0x10_0000, 70016 / 16, 15, 3),
+            m4(1000, 1008 / 16, 8, 0),
+            m4(0x0FFF_FFFF, 0xFF_FFFF, 1, 3),
+        ];
+        let t = table(4, 3, 8, &words);
+        let decoded = decode(cell(&t), &t).expect("decodes");
+        assert_eq!(decoded.mode, 4);
+        assert_eq!(
+            decoded.chunks,
+            [
+                Chunk {
+                    inflated: 0x10_0000,
+                    stored: 70001,
+                    zlib: true
+                },
+                Chunk {
+                    inflated: 1000,
+                    stored: 1000,
+                    zlib: false
+                },
+                Chunk {
+                    inflated: 0x0FFF_FFFF,
+                    stored: 0x0FFF_FFEF,
+                    zlib: true
+                },
+            ]
+        );
+        assert_eq!(
+            author(&decoded).unwrap(),
+            (LE::read_u32(&t[4..]), words.to_vec())
+        );
+    }
+
+    #[test]
+    fn a_malformed_mode_4_table_is_refused() {
+        let ok = m4(4000, 63, 8, 3);
+        assert!(decode(cell(&table(4, 1, 0, &[ok])), &table(4, 1, 0, &[ok])).is_ok());
+        let refused = |t: Vec<u8>| decode(cell(&t), &t).is_err();
+        for bit in 58..64 {
+            assert!(
+                refused(table(4, 1, 0, &[ok | (1 << bit)])),
+                "reserved bit {bit}"
+            );
+        }
+        assert!(
+            refused(table(4, 1, 0, &[m4(4000, 63, 8, 1)])),
+            "unknown flag"
+        );
+        assert!(
+            refused(table(4, 1, 0, &[m4(2000, 63, 8, 0)])),
+            "a stored chunk that grows"
+        );
+        assert!(
+            refused(table(4, 1, 0, &[m4(16, 0, 3, 3)])),
+            "padding past the stored size"
+        );
+        assert!(
+            refused(table(4, 2, 0, &[ok])),
+            "a count that overruns the heap"
+        );
+        let of = |c: Chunk| Table {
+            mode: 4,
+            chunks: vec![c],
+        };
+        let too_big = Chunk {
+            inflated: 0x1000_0000,
+            stored: 9000,
+            zlib: true,
+        };
+        assert!(
+            author(&of(too_big)).is_err(),
+            "mode 4 states at most 28 bits inflated"
+        );
+        let too_long = Chunk {
+            inflated: 100,
+            stored: 0x1000_0000,
+            zlib: true,
+        };
+        assert!(
+            author(&of(too_long)).is_err(),
+            "mode 4 states at most 24 bits of stored units"
+        );
+    }
+
     #[test]
     fn a_malformed_table_is_refused() {
         let ok3 = [m3(100, 50, 0, 3)];
@@ -389,7 +506,7 @@ mod tests {
         assert!(decode(cell(&table(3, 1, 0, &ok3)), &table(3, 1, 0, &ok3)).is_ok());
         let refused = |t: Vec<u8>| decode(cell(&t), &t).is_err();
         // An unknown mode.
-        assert!(refused(table(4, 1, 0, &ok3)));
+        assert!(refused(table(5, 1, 0, &ok3)));
         assert!(refused(table(1, 1, 0, &ok3)));
         // A reserved bit in either mode.
         assert!(refused(table(3, 1, 0, &[ok3[0] | (1 << 62)])));
@@ -430,7 +547,8 @@ mod tests {
             zlib: true,
         };
         assert!(author(&of(3, big)).is_err(), "mode 3 states at most 64 KiB");
-        assert!(author(&of(4, big)).is_err(), "no mode 4 writer");
+        assert!(author(&of(5, big)).is_err(), "no mode 5");
+        assert!(author(&of(4, big)).is_ok());
         assert!(author(&of(2, big)).is_ok());
         let empty = Chunk {
             inflated: 0,

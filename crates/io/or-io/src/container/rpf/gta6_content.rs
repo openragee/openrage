@@ -133,8 +133,9 @@ pub const KNOWN_FRAMINGS: [[u64; 5]; 5] = [
 ];
 
 /// Why a framing tuple is refused for a body of `len` bytes, or `None` when it is accepted: an unknown
-/// tuple, `F4 != 4`, or a tail (`F3`) larger than the body. The extent is never guessed from an
-/// unrecognised framing.
+/// tuple, `F4 != 4`, or a tail over an unaligned body. A head or tail window longer than the body is
+/// not refused: [`enciphered_ranges`] clips it to the body, which is how the install's small bodies
+/// under the `0x1000` tuples read. The extent is never guessed from an unrecognised framing.
 pub fn framing_reject_reason(framing: &[u64; 5], len: u64) -> Option<String> {
     if framing[4] != 4 {
         return Some(format!("its framing word F4 is {}, not 4", framing[4]));
@@ -142,12 +143,6 @@ pub fn framing_reject_reason(framing: &[u64; 5], len: u64) -> Option<String> {
     if !KNOWN_FRAMINGS.contains(framing) {
         return Some(format!(
             "its framing tuple {framing:x?} is not one of the five the install uses"
-        ));
-    }
-    if framing[3] > len {
-        return Some(format!(
-            "its framing tail F3 ({:#x}) is larger than the {len:#x}-byte body",
-            framing[3]
         ));
     }
     // The absolute counter is `offset / 16`, so every enciphered range must start 16-aligned. A tail
@@ -163,7 +158,8 @@ pub fn framing_reject_reason(framing: &[u64; 5], len: u64) -> Option<String> {
 
 /// The byte ranges of a body of `len` bytes that are enciphered, under a framing tuple: the head
 /// `[0, F0)`, then (when `F2 == 0`) the whole `[F0, len)` or else the window `[s, s + F1)` repeating
-/// every `F1 + F2` from `F0`, plus the tail `[len - F3, len)`. The ranges are returned merged,
+/// every `F1 + F2` from `F0`, plus the tail `[len - F3, len)`, each window clipped to the body (a tail
+/// longer than the body covers all of it). The ranges are returned merged,
 /// disjoint and sorted, so applying each one XORs no byte twice. Every boundary is 16-aligned for the
 /// five known tuples, which the caller relies on for the absolute counter.
 pub fn enciphered_ranges(framing: &[u64; 5], len: u64) -> Vec<(u64, u64)> {
@@ -379,9 +375,20 @@ mod tests {
             "an unknown tuple is refused"
         );
         assert!(
-            framing_reject_reason(&[0x1000, 0x1000, 0, 0x1000, 4], 0x100).is_some(),
-            "a tail larger than the body is refused"
+            framing_reject_reason(&[0x1000, 0x1000, 0, 0x1000, 4], 0x100).is_none(),
+            "a tail larger than the body is accepted and clipped"
         );
+    }
+
+    #[test]
+    fn windows_longer_than_the_body_are_clipped_to_it() {
+        for framing in [
+            [0x1000, 0x1000, 0, 0x1000, 4],
+            [0x1000, 0x1000, 0x31000, 0x1000, 4],
+        ] {
+            assert_eq!(enciphered_ranges(&framing, 0x60), vec![(0, 0x60)]);
+            assert_eq!(enciphered_ranges(&framing, 0xfd0), vec![(0, 0xfd0)]);
+        }
     }
 
     #[test]

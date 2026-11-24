@@ -17,9 +17,12 @@ pub(crate) struct Column {
 pub(crate) fn column(rect: egui::Rect, row_h: f32, bar_h: f32) -> Column {
     let row = rect.top() + 8.0 + super::viewport::SHADING_PILL_H + 6.0;
     let bar = row + row_h;
+    let top = bar + bar_h + 2.0;
+    // A short viewport under a wrapped bar has less room than the gizmo's size: it shrinks to stay inside.
+    let size = GIZMO_SIZE.min(rect.bottom() - top).max(0.0);
     let gizmo = egui::Rect::from_min_size(
-        egui::pos2(rect.right() - 10.0 - GIZMO_SIZE, bar + bar_h + 2.0),
-        egui::vec2(GIZMO_SIZE, GIZMO_SIZE),
+        egui::pos2(rect.right() - 10.0 - size, top),
+        egui::vec2(size, size),
     );
     Column { row, bar, gizmo }
 }

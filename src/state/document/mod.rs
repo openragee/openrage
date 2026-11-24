@@ -117,6 +117,10 @@ impl Document {
             .unwrap_or(tr!("Untitled"))
             .to_string();
 
+        let read_only = path
+            .as_deref()
+            .filter(|path| rpf9::entry::is_entry(path))
+            .map(|_| rpf9::entry::READ_ONLY);
         Self {
             id,
             path,
@@ -126,7 +130,7 @@ impl Document {
             rpf_entry_binding: None,
             dirty: false,
             seen_in: None,
-            read_only: None,
+            read_only,
             resource: None,
             patched: false,
             unread: false,

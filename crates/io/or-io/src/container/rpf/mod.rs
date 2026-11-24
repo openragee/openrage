@@ -8,6 +8,10 @@ pub mod gta6_archive;
 #[cfg(feature = "gta6")]
 pub mod gta6_content;
 #[cfg(feature = "gta6")]
+mod gta6_entry;
+#[cfg(feature = "gta6")]
+pub use gta6_entry::Gta6EntryRead;
+#[cfg(feature = "gta6")]
 pub mod gta6_keygate;
 #[cfg(feature = "gta6")]
 pub mod gta6_mount;

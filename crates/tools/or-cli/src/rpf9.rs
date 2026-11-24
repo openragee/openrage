@@ -19,7 +19,10 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use or_io::container::rpf::{Gta6Entry, Gta6Mount, GtaViKeys, NameResolver};
+use or_io::container::rpf::{
+    open_at_bounded, Gta6Class, Gta6Entry, Gta6EntryRead, Gta6Mount, GtaViKeys, NameResolver,
+    RPF9_HEADER_SIZE,
+};
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
 
 /// The environment variable that names a folder of recovered-names tables (`vocabulary.txt`,
@@ -126,24 +129,51 @@ fn mount_path(
     inner: &[String],
     keys: &GtaViKeys,
     resolver: &NameResolver,
-) -> Result<Gta6Mount, String> {
-    let mut mount = Gta6Mount::open_root(file, keys).map_err(|e| e.to_string())?;
+) -> Result<(Gta6Mount, std::ops::Range<u64>), String> {
+    if inner.len() > 32 {
+        return Err("the archive nesting limit was reached".into());
+    }
+    let mut extent = 0..file.metadata().map_err(|e| e.to_string())?.len();
+    let mut mount = Gta6Mount {
+        base: 0,
+        archive: open_at_bounded(file, extent.clone(), keys).map_err(|e| e.to_string())?,
+    };
     mount.archive.resolve_names(resolver);
     for component in inner {
         let entry = find_entry(&mount, component)
             .ok_or_else(|| format!("no entry {component:?} in the archive"))?;
-        if !mount
-            .entry_begins_archive(file, &entry)
-            .map_err(|e| e.to_string())?
-        {
-            return Err(format!("{component:?} is an entry, not a nested archive"));
+        let invalid = || format!("{component:?} does not describe a bounded, clear nested archive");
+        if entry.cipher.is_some() {
+            return Err(invalid());
         }
-        mount = mount
-            .open_nested(file, &entry, keys)
-            .map_err(|e| e.to_string())?;
+        let relative = entry
+            .start
+            .filter(|start| *start >= mount.archive.toc.bytes.len() as u64)
+            .ok_or_else(invalid)?;
+        let stored = entry
+            .stored
+            .or_else(|| {
+                mount
+                    .archive
+                    .entry_extra(entry.index as usize)?
+                    .nested
+                    .map(|row| row.stored_size())
+            })
+            .filter(|size| *size >= RPF9_HEADER_SIZE as u64)
+            .ok_or_else(invalid)?;
+        let start = extent.start.checked_add(relative).ok_or_else(invalid)?;
+        let end = start
+            .checked_add(stored)
+            .filter(|end| *end <= extent.end)
+            .ok_or_else(invalid)?;
+        extent = start..end;
+        mount = Gta6Mount {
+            base: start,
+            archive: open_at_bounded(file, extent.clone(), keys).map_err(|e| e.to_string())?,
+        };
         mount.archive.resolve_names(resolver);
     }
-    Ok(mount)
+    Ok((mount, extent))
 }
 
 /// The entry of `mount` a path component or selector names: by recovered name, by `0x…`/`hash_…`
@@ -237,7 +267,7 @@ fn do_list(
     json: bool,
 ) -> Result<(), String> {
     let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mount = mount_path(&mut file, inner, keys, resolver)?;
+    let (mount, _) = mount_path(&mut file, inner, keys, resolver)?;
 
     if json {
         let value = entries_json(&mount.archive.entries);
@@ -443,7 +473,7 @@ fn do_extract(
     resolver: &NameResolver,
 ) -> Result<usize, String> {
     let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mount = mount_path(&mut file, inner, keys, resolver)?;
+    let (mount, extent) = mount_path(&mut file, inner, keys, resolver)?;
 
     let chosen: Vec<Gta6Entry> = select_entries(&mount.archive.entries, entry_sel, filter);
     if chosen.is_empty() {
@@ -464,28 +494,16 @@ fn do_extract(
                 );
                 continue;
             }
-        } else if mount
-            .entry_begins_archive(&mut file, entry)
-            .unwrap_or(false)
-        {
+        } else if entry.kind() == Some(Gta6Class::NestedArchive) {
             eprintln!(
                 "  skipped {} (a nested archive; list it with an inner path)",
                 entry.display_name()
             );
             continue;
         }
-        let read = if entry.cipher.is_some() {
-            mount.read_entry_decrypted(&mut file, entry, keys)
-        } else {
-            mount.read_entry(&mut file, entry)
-        };
-        let bytes = match read {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                eprintln!("  skipped {} ({e})", entry.display_name());
-                continue;
-            }
-        };
+        let bytes = Gta6EntryRead::from_table(&mount.archive, extent.clone(), entry.index, 1 << 30)
+            .and_then(|read| read.read(&mut file, keys))
+            .map_err(|e| format!("{}: {e}", entry.display_name()))?;
         let out = dest.join(safe_out_name(entry));
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;

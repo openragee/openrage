@@ -169,13 +169,28 @@ pub fn draw_scan_list(ui: &mut egui::Ui, state: &mut AppState, doc: DocumentId) 
 }
 
 /// Draw the table-backed archive tree when the active document holds one.
-pub fn draw_archive_table(ui: &mut egui::Ui, state: &AppState) -> bool {
-    let Some(DocPayload::Rpf9(Rpf9Document::Table(table))) =
-        state.active_document().map(|doc| &doc.payload)
+pub fn draw_archive_table(ui: &mut egui::Ui, state: &mut AppState) -> bool {
+    let document = state.active_document().and_then(|active| {
+        let archive = active
+            .path
+            .as_deref()
+            .and_then(crate::state::rpf9::entry::archive_path);
+        match archive {
+            Some(archive) => state
+                .documents
+                .iter()
+                .find(|doc| doc.path.as_deref() == Some(archive)),
+            None => Some(active),
+        }
+    });
+    let Some(DocPayload::Rpf9(Rpf9Document::Table(table))) = document.map(|doc| &doc.payload)
     else {
         return false;
     };
-    rpf9_table::draw_tree(ui, table);
+    let table = table.clone();
+    if let Some(action) = rpf9_table::draw_tree(ui, &table) {
+        action.run(state, &table);
+    }
     true
 }
 

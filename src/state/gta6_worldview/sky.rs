@@ -317,6 +317,14 @@ pub fn exposed(
     let scene = luminance / adapting.stops.exp2();
     let target = or_title::gta6_exposure::target_stops(&settings, &moment.own, scene);
     let exposed = moment.metered(&settings, luminance, adapting.stops, seconds);
+    tracing::debug!(
+        scene,
+        target,
+        stops = exposed.stops,
+        low,
+        high,
+        "the frame metered"
+    );
     adapting.reached = (target - exposed.stops).abs() < REACHED;
     // ponytail: a step too small to see is not taken, so that a still frame keeps its day.
     if (exposed.stops - adapting.stops).abs() >= STEADY {

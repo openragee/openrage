@@ -9,10 +9,6 @@ use or_io::container::rpf::{Rpf9BodyKind, Rpf9Scan};
 use or_io::gta6::headerless::read_object_trees;
 use or_io::gta6::script_bodies::{opaque_bodies, NotOpaque, Placement};
 
-/// Why `script` lists and disassembles no GTA VI program.
-pub(crate) const NO_PROGRAM: &str = "a GTA VI archive: its script programs are opaque \
-     (ciphertext-like) and no program is in the clear, so none is listed or disassembled";
-
 pub(crate) fn print_object_trees(bytes: &[u8]) -> Result<(), String> {
     let trees = read_object_trees(bytes)
         .map_err(|e| format!("the object-tree reader does not read this body: {e}"))?;

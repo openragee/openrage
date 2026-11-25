@@ -16719,3 +16719,94 @@ msgstr[1] "{name}, {count} mapas"
 
 msgid "Choose a place"
 msgstr "Escolher um lugar"
+
+msgid "the decompiler stopped on a fault in this program"
+msgstr "o descompilador parou em uma falha neste programa"
+
+msgid "This is a compiled GTA VI script that does not decompile, so it is shown as its bytes: {e}"
+msgstr "Este é um script compilado do GTA VI que não é descompilado, então ele é exibido como os bytes dele: {e}"
+
+msgid "{count} function"
+msgid_plural "{count} functions"
+msgstr[0] "{count} função"
+msgstr[1] "{count} funções"
+
+msgid "{name}: {count} line from line {line}"
+msgid_plural "{name}: {count} lines from line {line}"
+msgstr[0] "{name}: {count} linha a partir da linha {line}"
+msgstr[1] "{name}: {count} linhas a partir da linha {line}"
+
+msgid "{count} class"
+msgid_plural "{count} classes"
+msgstr[0] "{count} classe"
+msgstr[1] "{count} classes"
+
+msgid "The instructions of this function do not decode: {e}"
+msgstr "As instruções desta função não puderam ser decodificadas: {e}"
+
+msgid "Select a function in the outline to list its instructions"
+msgstr "Selecione uma função na estrutura para listar as instruções dela"
+
+msgid "Decompiling again…"
+msgstr "Descompilando novamente…"
+
+msgid "{count} function has no body in the source"
+msgid_plural "{count} functions have no body in the source"
+msgstr[0] "{count} função não tem corpo no código-fonte"
+msgstr[1] "{count} funções não têm corpo no código-fonte"
+
+msgid "{count} imported program"
+msgid_plural "{count} imported programs"
+msgstr[0] "{count} programa importado"
+msgstr[1] "{count} programas importados"
+
+msgid "Natives are named from {list}"
+msgstr "As nativas são nomeadas a partir de {list}"
+
+msgid "No natives list was supplied, so a native is shown as the program spells it"
+msgstr "Nenhuma lista de nativas foi fornecida, então uma nativa é exibida como o programa a escreve"
+
+msgid "Names are read from {lists}"
+msgstr "Os nomes são lidos de {lists}"
+
+msgid "No names list was supplied, so a type, a field or a method is shown by its hash or its offset"
+msgstr "Nenhuma lista de nomes foi fornecida, então um tipo, um campo ou um método é exibido pelo hash ou pelo offset dele"
+
+msgid "Open names folder"
+msgstr "Abrir a pasta de nomes"
+
+msgid "Put natives lists and names lists in this folder, then open the script again: OpenRage ships none. A file whose name starts with natives is read as a natives list, any other as a names list"
+msgstr "Coloque as listas de nativas e as listas de nomes nesta pasta e reabra o script: o OpenRage não inclui nenhuma. Um arquivo cujo nome começa com natives é lido como lista de nativas, e qualquer outro como lista de nomes"
+
+msgid "The caret is on no name"
+msgstr "O cursor não está sobre nenhum nome"
+
+msgid "{name} follows a dot: it may be defined in another program, and only a name that stands alone is followed"
+msgstr "{name} vem depois de um ponto: pode estar definido em outro programa, e só um nome que está sozinho é seguido"
+
+msgid "This script defines no one thing called {name}"
+msgstr "Este script não define exatamente uma coisa chamada {name}"
+
+msgid "No GTA VI script is in front"
+msgstr "Nenhum script do GTA VI está em primeiro plano"
+
+msgid "Go to definition"
+msgstr "Ir para a definição"
+
+msgid "Move the caret to where this script defines the name under it"
+msgstr "Mover o cursor para onde este script define o nome sob ele"
+
+msgid "Find references"
+msgstr "Localizar referências"
+
+msgid "Find every place of this script that spells the name under the caret"
+msgstr "Localizar cada lugar deste script onde o nome sob o cursor está escrito"
+
+msgid "GTA VI Script"
+msgstr "Script do GTA VI"
+
+msgid "A compiled GTA VI script, read from the archive that holds it or from a deciphered file: the source it decompiles to and the classes and functions that source lists, read-only"
+msgstr "Um script compilado do GTA VI, lido do archive que o contém ou de um arquivo decifrado: o código-fonte em que ele é descompilado e as classes e funções que esse código lista, somente leitura"
+
+msgid "a GTA VI script holds compiled bytecode; OpenRage reads one and does not write one"
+msgstr "um script do GTA VI contém bytecode compilado; o OpenRage lê um e não grava nenhum"

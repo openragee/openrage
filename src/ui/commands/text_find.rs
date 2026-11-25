@@ -1,6 +1,6 @@
 //! The find bar of a text document, which the Find commands open.
 
-use crate::state::{AppState, DocPayload};
+use crate::state::AppState;
 use crate::ui::panels;
 
 /// The editor of the active text document, else of the first one open, which it makes active.
@@ -11,7 +11,7 @@ pub(super) fn text_editor_for(
     let is_text = |state: &AppState, id| {
         state
             .document(id)
-            .is_some_and(|d| matches!(d.payload, DocPayload::Text(_)))
+            .is_some_and(|d| d.payload.found_in().is_some())
     };
     let target = state
         .active_document
@@ -20,7 +20,7 @@ pub(super) fn text_editor_for(
             state
                 .documents
                 .iter()
-                .find(|d| matches!(d.payload, DocPayload::Text(_)))
+                .find(|d| d.payload.found_in().is_some())
                 .map(|d| d.id)
         });
     let doc_id = target?;

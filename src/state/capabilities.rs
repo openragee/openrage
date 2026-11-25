@@ -526,6 +526,7 @@ static BUILTIN: &[FormatCapabilities] = &[
     crate::ui::panels::inspector::gta6_text::AUDIO_DATA_CAPABILITIES,
     crate::ui::panels::hierarchy::gta6_expressions::CAPABILITIES,
     crate::ui::panels::hierarchy::gta6_save::CAPABILITIES,
+    crate::ui::panels::hierarchy::gta6_script::CAPABILITIES,
     FormatCapabilities {
         kind: DocumentKind::Rpf,
         selection_summary: Some(rpf_summary),

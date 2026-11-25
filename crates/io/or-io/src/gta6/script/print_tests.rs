@@ -4,7 +4,7 @@ use crate::gta6::script::ir::VarInfo;
 use crate::gta6::script::sample;
 use crate::gta6::script::tree::Label;
 
-fn head() -> Head {
+pub(super) fn head() -> Head {
     Head {
         program: 0x1122_3344,
         at: 0x40,
@@ -18,7 +18,7 @@ fn head() -> Head {
 }
 
 /// A head whose variables have the kinds given.
-fn kinds(of: &[(Var, Kind)]) -> Head {
+pub(super) fn kinds(of: &[(Var, Kind)]) -> Head {
     let mut head = head();
     for (var, kind) in of {
         let mut info = VarInfo::new(Width::Cell);
@@ -59,30 +59,30 @@ fn written(f: &tree::Function, names: &Names) -> String {
     out
 }
 
-fn local(n: u32) -> Expr {
+pub(super) fn local(n: u32) -> Expr {
     Expr::Var(Var::Local(n))
 }
 
-fn param(n: u32) -> Expr {
+pub(super) fn param(n: u32) -> Expr {
     Expr::Var(Var::Param(n))
 }
 
-fn int(value: i32) -> Expr {
+pub(super) fn int(value: i32) -> Expr {
     Expr::Const(Const::i32(value))
 }
 
-fn constant_of(bits: u64, kind: Kind) -> Expr {
+pub(super) fn constant_of(bits: u64, kind: Kind) -> Expr {
     Expr::Const(Const { bits, kind })
 }
 
-fn not(e: Expr) -> Expr {
+pub(super) fn not(e: Expr) -> Expr {
     Expr::Unary {
         op: UnOp::Not,
         e: Box::new(e),
     }
 }
 
-fn truth(e: Expr) -> Expr {
+pub(super) fn truth(e: Expr) -> Expr {
     Expr::Truth(Box::new(e))
 }
 
@@ -95,7 +95,7 @@ fn less() -> Expr {
     )
 }
 
-fn load(ty: Scalar, addr: Expr, offset: u32) -> Expr {
+pub(super) fn load(ty: Scalar, addr: Expr, offset: u32) -> Expr {
     Expr::Load {
         ty,
         addr: Box::new(addr),
@@ -103,7 +103,7 @@ fn load(ty: Scalar, addr: Expr, offset: u32) -> Expr {
     }
 }
 
-fn address(var: Var, cell: u32) -> Expr {
+pub(super) fn address(var: Var, cell: u32) -> Expr {
     Expr::AddrOf { var, cell }
 }
 
@@ -114,7 +114,7 @@ fn offset(addr: Expr, by: Expr) -> Expr {
     }
 }
 
-fn intrinsic(name: &str, args: Vec<Expr>) -> Expr {
+pub(super) fn intrinsic(name: &str, args: Vec<Expr>) -> Expr {
     Expr::Call {
         callee: Callee::Intrinsic {
             name: name.to_owned(),
@@ -126,7 +126,7 @@ fn intrinsic(name: &str, args: Vec<Expr>) -> Expr {
     }
 }
 
-fn native(name: &str, args: Vec<Expr>) -> Expr {
+pub(super) fn native(name: &str, args: Vec<Expr>) -> Expr {
     Expr::Call {
         callee: Callee::Native {
             namespace: Some("DEMO".to_owned()),
@@ -139,7 +139,7 @@ fn native(name: &str, args: Vec<Expr>) -> Expr {
     }
 }
 
-fn assign(target: Var, value: Expr) -> Stmt {
+pub(super) fn assign(target: Var, value: Expr) -> Stmt {
     Stmt::Assign { target, value }
 }
 
@@ -742,6 +742,62 @@ fn memory_is_written_as_the_fields_of_what_an_address_points_at() {
 }
 
 #[test]
+fn a_store_of_a_whole_cell_says_so_where_its_value_is_narrower() {
+    let typed = kinds(&[
+        (Var::Local(0), Kind::I32),
+        (Var::Local(1), Kind::F32),
+        (Var::Local(2), Kind::Bool),
+    ]);
+    let stored = |kind: StoreKind, value: Expr| {
+        let (names, mut out) = (Names::default(), String::new());
+        let cx = at(&names, Level::Structured);
+        let store = Stmt::Store {
+            kind,
+            addr: param(1),
+            offset: 0x8,
+            value,
+        };
+        Writer::in_context(&mut out, &cx, &typed).simple(&store)
+    };
+    // ⚠ A store reads as wide as its value: eight bytes of an `int` would read as four.
+    assert_eq!(stored(StoreKind::U64, local(0)), "p1->f_8 = (long)local_0");
+    assert_eq!(stored(StoreKind::I32, local(0)), "p1->f_8 = local_0");
+    assert_eq!(
+        stored(StoreKind::U64, local(1)),
+        "p1->f_8 = as_u64(local_1)"
+    );
+    assert_eq!(stored(StoreKind::U64, local(2)), "p1->f_8 = (long)local_2");
+    // A whole cell stored whole says nothing more, and a number says `L`.
+    assert_eq!(stored(StoreKind::U64, local(3)), "p1->f_8 = local_3");
+    assert_eq!(stored(StoreKind::U64, int(5)), "p1->f_8 = 5L");
+}
+
+#[test]
+fn a_sum_of_whole_cells_is_not_written_as_one_of_narrower_numbers() {
+    let typed = kinds(&[(Var::Local(0), Kind::I32), (Var::Local(1), Kind::U32)]);
+    let names = Names::default();
+    let cx = at(&names, Level::Structured);
+    let whole = |op: BinOp, l: Expr, r: Expr| {
+        let sum = Expr::Binary {
+            op,
+            at: Kind::I64,
+            l: Box::new(Expr::cast(Scalar::I64, l)),
+            r: Box::new(Expr::cast(Scalar::I64, r)),
+        };
+        sharp_in(&typed, &cx, &sum)
+    };
+    // ⚠ C# adds two `int`s in 32 bits: the sum of their cells is of 64.
+    let narrow = whole(BinOp::Add, local(0), local(1));
+    assert_eq!(narrow, "(long)local_0 + local_1");
+    assert_eq!(whole(BinOp::Mul, local(0), int(3)), "(long)local_0 * 3");
+    assert_eq!(whole(BinOp::Sub, int(3), local(0)), "3 - (long)local_0");
+    // A cell of no proved kind is 64 bits to C# already, and so is the sum with it.
+    assert_eq!(whole(BinOp::Add, local(2), local(0)), "local_2 + local_0");
+    // What the sign of a cell does not count to keeps no reading.
+    assert_eq!(whole(BinOp::Or, local(0), local(1)), "local_0 | local_1");
+}
+
+#[test]
 fn a_step_prints_as_the_listing_wrote_it() {
     let one = Var::Local(1);
     let stepped = |op, from: u32, by| {
@@ -750,8 +806,18 @@ fn a_step_prints_as_the_listing_wrote_it() {
             Expr::binary(op, Expr::cast(Scalar::I32, local(from)), int(by)),
         )
     };
-    assert_eq!(stmt_of(&stepped(BinOp::Add, 1, 1)), "local_1++");
-    assert_eq!(stmt_of(&stepped(BinOp::Sub, 1, 1)), "local_1--");
+    let ints = kinds(&[(one, Kind::I32)]);
+    let step_of = |s: &Stmt| {
+        let (names, mut out) = (Names::default(), String::new());
+        Writer::new(&mut out, false, &names, &ints).simple(s)
+    };
+    assert_eq!(step_of(&stepped(BinOp::Add, 1, 1)), "local_1++");
+    assert_eq!(step_of(&stepped(BinOp::Sub, 1, 1)), "local_1--");
+    // ⚠ On a variable of no proved kind `++` would read as a step of the whole cell.
+    assert_eq!(
+        stmt_of(&stepped(BinOp::Add, 1, 1)),
+        "local_1 = (int)local_1 + 1"
+    );
     // Another variable, another amount and another operator are no step.
     assert_eq!(
         stmt_of(&stepped(BinOp::Add, 0, 1)),
@@ -1113,9 +1179,9 @@ void func_000040(var p0)
         local_3 = 1;
         DEMO.FILL(&local_3);
     }
-    local_2++;
+    local_2 = (int)local_2 + 1;
     DEMO.USE(local_1, local_2);
-    for (var local_4 = 0; (int)local_4 < 4; local_4++)
+    for (var local_4 = 0; (int)local_4 < 4; local_4 = (int)local_4 + 1)
     {
         continue;
     }
@@ -1287,4 +1353,822 @@ void func_000000(var p0, var p1)
         named.contains("    LISTED.NAMED_BY_THE_LIST(p0, BuiltinGlobal(0)[0]);\n"),
         "{named}"
     );
+}
+
+/// A context of every pass of `level`, with nothing gathered over an install.
+pub(super) fn at(names: &Names, level: Level) -> Context<'_> {
+    Context::new(names, Project::empty(), Options::at(level))
+}
+
+/// `e` as true C# writes it in a function of the head given.
+fn sharp_in(head: &Head, cx: &Context<'_>, e: &Expr) -> String {
+    let mut out = String::new();
+    Writer::in_context(&mut out, cx, head).expr(e, 0)
+}
+
+fn sharp(e: &Expr) -> String {
+    let (head, names) = (head(), Names::default());
+    sharp_in(&head, &at(&names, Level::Structured), e)
+}
+
+/// `e` as true C# writes the condition of an `if`.
+fn sharp_cond_in(head: &Head, e: &Expr) -> String {
+    let (names, mut out) = (Names::default(), String::new());
+    let cx = at(&names, Level::Structured);
+    Writer::in_context(&mut out, &cx, head).cond(e, 0)
+}
+
+/// A simple statement of true C#, without its semicolon.
+fn sharp_stmt(s: &Stmt) -> String {
+    let (head, names, mut out) = (head(), Names::default(), String::new());
+    let cx = at(&names, Level::Structured);
+    Writer::in_context(&mut out, &cx, &head).simple(s)
+}
+
+pub(super) fn written_in(f: &tree::Function, cx: &Context<'_>) -> String {
+    let mut out = String::new();
+    function_in(&mut out, f, cx);
+    out
+}
+
+/// `f` as true C# with no name supplied.
+fn written_sharp(f: &tree::Function) -> String {
+    let names = Names::default();
+    written_in(f, &at(&names, Level::Structured))
+}
+
+pub(super) fn simple(s: Stmt) -> tree::Stmt {
+    tree::Stmt::Simple(s)
+}
+
+pub(super) fn function_of(head: Head, body: Vec<tree::Stmt>) -> tree::Function {
+    tree::Function { head, body }
+}
+
+/// A 32-bit constant with its top bit set, as an `int`.
+pub(super) fn high() -> Expr {
+    int(0x9A3B_5C7Du32 as i32)
+}
+
+#[test]
+fn true_c_sharp_is_what_any_pass_beyond_the_four_first_asks_for() {
+    // ⚠ The four first passes, and fewer of them, write what `decompile` always wrote.
+    assert!(!true_csharp(&Options::baseline()));
+    assert!(!true_csharp(&Options::baseline().without(Pass::Structure)));
+    assert!(!true_csharp(&Options::at(Level::Lifted)));
+    assert!(true_csharp(&Options::baseline().with(Pass::HashText)));
+    assert!(true_csharp(&Options::at(Level::Structured)));
+    assert!(true_csharp(&Options::default()));
+
+    // The entry that takes a context writes the form of old for the four first passes.
+    let names = Names::default();
+    let returned = Expr::Cells(vec![local(0), local(1)]);
+    let f = function_of(head(), vec![tree::Stmt::Return(Some(returned))]);
+    let baseline = written_in(&f, &Context::baseline(&names));
+    assert_eq!(baseline, written(&f, &names));
+    assert!(
+        baseline.contains("return { local_0, local_1 };"),
+        "{baseline}"
+    );
+}
+
+#[test]
+fn true_c_sharp_names_no_type_and_writes_no_group_that_c_sharp_has_not() {
+    let v = Var::Value { at: 0x10, index: 0 };
+    let wide = Expr::LoadBytes {
+        addr: Box::new(param(0)),
+        offset: 0x58,
+        bytes: 16,
+    };
+    let used = native("USE", vec![wide, Expr::ZeroSlots(2), local(3)]);
+    let body = vec![
+        simple(assign(Var::Local(0), Expr::ZeroSlots(2))),
+        simple(assign(v, Expr::Cells(vec![param(0), int(1)]))),
+        simple(assign(Var::Local(1), param(0))),
+        simple(assign(Var::Local(2), Expr::ZeroSlots(1))),
+        simple(Stmt::Eval(used)),
+        tree::Stmt::Return(Some(Expr::Cells(vec![local(1), local(2)]))),
+    ];
+    let mut head = head();
+    head.returns = Returns::Cells;
+    head.locals = 4;
+    head.vars.insert(v, VarInfo::new(Width::Cells));
+    let mut pair = VarInfo::new(Width::Cells);
+    pair.kind = Kind::Aggregate(2);
+    head.vars.insert(Var::Local(0), pair);
+    let f = function_of(head, body);
+
+    // `var` only where a value says the type; `Cell` and `Cells` where a type must stand.
+    let expected = "\
+Cells func_000040(Cell p0)
+{
+    Cell local_3;
+    Cells2 local_0 = default;
+    Cells v_000010_0 = (p0, 1);
+    Cell local_1 = p0;
+    Cell local_2 = default;
+    DEMO.USE((Cells2)p0->f_58, default(Cells2), local_3);
+    return (local_1, local_2);
+}
+";
+    assert_eq!(written_sharp(&f), expected);
+
+    // The form of old, which the four first passes still write, is untouched.
+    let old = "\
+var[] func_000040(var p0)
+{
+    var local_3;
+    var[2] local_0 = default;
+    var[] v_000010_0 = { p0, 1 };
+    var local_1 = p0;
+    var local_2 = default;
+    DEMO.USE((var[2])p0->f_58, default(var[2]), local_3);
+    return { local_1, local_2 };
+}
+";
+    assert_eq!(written(&f, &Names::default()), old);
+
+    // One cell gathered alone is that cell, and cells set in an array are a tuple.
+    let one = Expr::Cells(vec![local(1)]);
+    assert_eq!(sharp(&one), "local_1");
+    assert_eq!(readable(&one), "{ local_1 }");
+    let cells = vec![local(0), local(1), local(2), int(0)];
+    let set = Stmt::Eval(intrinsic("array_set_slots", cells));
+    assert_eq!(sharp_stmt(&set), "local_0[local_1] = (local_2, 0)");
+}
+
+#[test]
+fn an_expression_that_is_no_statement_is_given_to_a_discard() {
+    let (a, i, x) = (local(0), local(1), local(2));
+    let object = VmType {
+        name: "type_00000000000000AB".to_owned(),
+        byte_size: 16,
+        id: 7,
+        flags: 0,
+    };
+    let array = Expr::NewArray {
+        ty: VmType {
+            name: "System.Int32".to_owned(),
+            byte_size: 4,
+            id: 0x8000_0003,
+            flags: 0,
+        },
+        len: Box::new(int(4)),
+        wrapper: "NewArray_3".to_owned(),
+    };
+    let cases = [
+        (load(Scalar::U64, param(0), 0x8), "_ = p0->f_8"),
+        (
+            Expr::binary(BinOp::Eq, a.clone(), i.clone()),
+            "_ = local_0 == local_1",
+        ),
+        (
+            intrinsic("array_get_u64", vec![a.clone(), i.clone()]),
+            "_ = local_0[local_1]",
+        ),
+        (
+            intrinsic("try_cast<type_00000000000000DD>", vec![a.clone()]),
+            "_ = local_0 as type_00000000000000DD",
+        ),
+        (array, "_ = new int[4]"),
+        // What C# takes for a statement stands as it is: a call, a new object, an assignment.
+        (native("USE", vec![]), "DEMO.USE()"),
+        (intrinsic("invoke_delegate", vec![a.clone()]), "local_0()"),
+        (Expr::NewObject(object), "new type_00000000000000AB()"),
+        (
+            intrinsic("array_set_ref", vec![a.clone(), i.clone(), x.clone()]),
+            "local_0[local_1] = local_2",
+        ),
+    ];
+    for (e, text) in cases {
+        assert_eq!(sharp_stmt(&Stmt::Eval(e)), text);
+    }
+    // The form of old writes the expression bare.
+    let read = Stmt::Eval(load(Scalar::U64, param(0), 0x8));
+    assert_eq!(stmt_of(&read), "p0->f_8");
+}
+
+#[test]
+fn a_case_of_true_c_sharp_says_where_it_goes_on_to() {
+    let used = || simple(Stmt::Eval(native("USE", vec![])));
+    let leaves = |els: Vec<tree::Stmt>| tree::Stmt::If {
+        cond: param(0),
+        then: vec![tree::Stmt::Break],
+        els,
+    };
+    let case = |label: Option<i64>, body: Vec<tree::Stmt>| tree::Case {
+        labels: vec![label],
+        body,
+    };
+    let body = vec![
+        tree::Stmt::Switch {
+            value: Expr::cast(Scalar::I32, local(0)),
+            cases: vec![
+                case(Some(0), vec![used()]),
+                case(Some(1), Vec::new()),
+                case(Some(2), vec![tree::Stmt::Return(None)]),
+                case(Some(3), vec![leaves(vec![tree::Stmt::Return(None)])]),
+                case(Some(4), vec![leaves(Vec::new())]),
+                case(None, vec![used()]),
+            ],
+        },
+        tree::Stmt::Unreachable,
+    ];
+    let f = function_of(head(), body);
+    // A body that can be left by its end names the next case; one that cannot, and an empty
+    // one whose labels share the next case's, are written as they are.
+    let expected = "\
+void func_000040(Cell p0)
+{
+    Cell local_0;
+    switch ((int)local_0)
+    {
+        case 0:
+            DEMO.USE();
+            goto case 1;
+        case 1:
+        case 2:
+            return;
+        case 3:
+            if (p0)
+            {
+                break;
+            }
+            else
+            {
+                return;
+            }
+        case 4:
+            if (p0)
+            {
+                break;
+            }
+            goto default;
+        default:
+            DEMO.USE();
+            break;
+    }
+    throw new System.Diagnostics.UnreachableException();
+}
+";
+    assert_eq!(written_sharp(&f), expected);
+
+    let old = written(&f, &Names::default());
+    assert!(!old.contains("goto "), "{old}");
+    assert_eq!(old.matches("break;").count(), 2, "{old}");
+    assert!(old.contains("    unreachable;\n"), "{old}");
+}
+
+#[test]
+fn a_switch_on_hashes_is_written_in_32_unsigned_bits() {
+    let switch = |value: Expr, labels: Vec<Option<i64>>| {
+        let first = tree::Case {
+            labels,
+            body: vec![tree::Stmt::Break],
+        };
+        let other = tree::Case {
+            labels: vec![None],
+            body: vec![tree::Stmt::Return(None)],
+        };
+        let cases = vec![first, other];
+        vec![tree::Stmt::Switch { value, cases }]
+    };
+    let has = |text: &str, line: &str| text.lines().any(|l| l == line);
+    let hashes = vec![Some(-1_978_987_507), Some(5)];
+
+    let narrow = Expr::cast(Scalar::I32, param(0));
+    let f = function_of(head(), switch(narrow.clone(), hashes.clone()));
+    let text = written_sharp(&f);
+    for line in [
+        "    switch ((uint)p0)",
+        "        case 0x8A0B0C0D:",
+        "        case 0x00000005:",
+    ] {
+        assert!(has(&text, line), "no line `{line}` in:\n{text}");
+    }
+
+    // ⚠ The labels are compared with the low 32 bits: on a whole cell the text says so.
+    let f = function_of(head(), switch(param(0), hashes.clone()));
+    let whole = written_sharp(&f);
+    assert!(has(&whole, "    switch ((int)p0)"), "{whole}");
+    assert!(has(&whole, "        case -1978987507:"), "{whole}");
+    // Small labels stay numbers, and a label that fits no 32 bits leaves them all decimal.
+    let labels = vec![Some(-3), Some(65_536)];
+    let small = written_sharp(&function_of(head(), switch(narrow.clone(), labels.clone())));
+    assert!(has(&small, "    switch ((int)p0)"), "{small}");
+    assert!(has(&small, "        case -3:"), "{small}");
+    // A subject declared an `int` is compared as one already, and a byte widens to one.
+    for kind in [Kind::I32, Kind::U8] {
+        let declared = kinds(&[(Var::Param(0), kind)]);
+        let bare = written_sharp(&function_of(declared, switch(param(0), labels.clone())));
+        assert!(has(&bare, "    switch (p0)"), "{bare}");
+    }
+    let labels = vec![Some(0x1_0000_0001)];
+    let long = written_sharp(&function_of(head(), switch(narrow, labels)));
+    assert!(has(&long, "        case 4294967297:"), "{long}");
+
+    // A value that is a hash shows the text a supplied vocabulary has for a label.
+    let mut names = Names::default();
+    names.texts.insert(0x8A0B_0C0D, "door_left".to_owned());
+    let hashed = kinds(&[(Var::Param(0), Kind::Hash)]);
+    let f = function_of(hashed, switch(param(0), hashes));
+    let named = written_in(&f, &at(&names, Level::Structured));
+    assert!(has(&named, "    switch (p0)"), "{named}");
+    assert!(has(&named, "        case Hash(\"door_left\"):"), "{named}");
+    assert!(has(&named, "        case 0x00000005:"), "{named}");
+    // With `hash-text` off the label is its eight digits.
+    let off = Options::at(Level::Structured).without(Pass::HashText);
+    let unnamed = written_in(&f, &Context::new(&names, Project::empty(), off));
+    assert!(has(&unnamed, "        case 0x8A0B0C0D:"), "{unnamed}");
+    assert!(!unnamed.contains("door_left"), "{unnamed}");
+}
+
+#[test]
+fn a_hash_constant_shows_its_text_only_under_its_pass_and_its_kind() {
+    let mut names = Names::default();
+    names.texts.insert(0x8A0B_0C0D, "door_left".to_owned());
+    let head = head();
+    let hash = constant_of(0x8A0B_0C0D, Kind::Hash);
+    let on = at(&names, Level::Structured);
+    assert_eq!(sharp_in(&head, &on, &hash), "Hash(\"door_left\")");
+    // The same bits of another kind are a number: a text of the vocabulary may be theirs by accident.
+    let number = constant_of(0x8A0B_0C0D, Kind::U32);
+    assert_eq!(sharp_in(&head, &on, &number), "0x8A0B0C0D");
+    let off = Options::at(Level::Structured).without(Pass::HashText);
+    let off = Context::new(&names, Project::empty(), off);
+    assert_eq!(sharp_in(&head, &off, &hash), "0x8A0B0C0D");
+    assert_eq!(text_in(&head, &names, &hash, false), "0x8A0B0C0D");
+}
+
+#[test]
+fn bits_read_as_a_float_are_never_written_as_a_cast() {
+    let typed = kinds(&[(Var::Local(0), Kind::F32)]);
+    let names = Names::default();
+    let cx = at(&names, Level::Structured);
+    let field = |offset| load(Scalar::F32, param(0), offset);
+    let cases = [
+        (Expr::cast(Scalar::F32, local(1)), "as_f32(local_1)"),
+        (field(0x20), "as_f32(p0->f_20)"),
+        (
+            Expr::Binary {
+                op: BinOp::Mul,
+                at: Kind::F32,
+                l: Box::new(field(0x20)),
+                r: Box::new(field(0x24)),
+            },
+            "as_f32(p0->f_20) * as_f32(p0->f_24)",
+        ),
+        // ⚠ Whole cells compared are their bits compared: C# would compare two floats as floats.
+        (
+            Expr::Binary {
+                op: BinOp::Eq,
+                at: Kind::U64,
+                l: Box::new(local(0)),
+                r: Box::new(field(0x24)),
+            },
+            "as_i64(local_0) == as_i64(as_f32(p0->f_24))",
+        ),
+        (
+            intrinsic("array_get_f32", vec![local(1), local(2)]),
+            "as_f32(local_1[local_2])",
+        ),
+        (Expr::cast(Scalar::F64, local(1)), "as_f64(local_1)"),
+        // A float read as a float says nothing, and an integer reading of one keeps its word.
+        (Expr::cast(Scalar::F32, local(0)), "local_0"),
+        (Expr::cast(Scalar::I32, local(0)), "as_i32(local_0)"),
+        // An integer reading is the cast it always was.
+        (Expr::cast(Scalar::I32, local(1)), "(int)local_1"),
+        (load(Scalar::I32, param(0), 0x10), "(int)p0->f_10"),
+    ];
+    for (e, text) in &cases {
+        assert_eq!(sharp_in(&typed, &cx, e), *text);
+    }
+    // The form of old: `(float)x` for the bits of a cell of no known kind.
+    let cast = Expr::cast(Scalar::F32, local(1));
+    assert_eq!(readable(&cast), "(float)local_1");
+    assert_eq!(readable(&field(0x20)), "(float)p0->f_20");
+}
+
+#[test]
+fn equality_with_a_hex_constant_reads_the_other_side_unsigned() {
+    let int_p0 = || Expr::cast(Scalar::I32, param(0));
+    let at_i32 = |op, l: Expr, r: Expr| Expr::Binary {
+        op,
+        at: Kind::I32,
+        l: Box::new(l),
+        r: Box::new(r),
+    };
+    let typed = kinds(&[(Var::Local(0), Kind::I32)]);
+    let names = Names::default();
+    let cx = at(&names, Level::Structured);
+    let unsigned = Expr::cast(Scalar::U32, param(0));
+    let top = constant_of(0x8000_0000, Kind::U32);
+    let cases = [
+        (
+            Expr::binary(BinOp::Eq, int_p0(), high()),
+            "(uint)p0 == 0x9A3B5C7D",
+        ),
+        (
+            at_i32(BinOp::Ne, load(Scalar::I32, param(0), 0x10), high()),
+            "(uint)p0->f_10 != 0x9A3B5C7D",
+        ),
+        (
+            Expr::binary(BinOp::Eq, high(), int_p0()),
+            "0x9A3B5C7D == (uint)p0",
+        ),
+        (
+            at_i32(BinOp::Eq, local(0), high()),
+            "(uint)local_0 == 0x9A3B5C7D",
+        ),
+        // ⚠ Never for an order: which of two numbers is the greater asks their sign.
+        (
+            Expr::binary(BinOp::Lt, int_p0(), high()),
+            "(int)p0 < (int)0x9A3B5C7D",
+        ),
+        (
+            Expr::binary(BinOp::Lt, unsigned, top),
+            "(uint)p0 < 0x80000000",
+        ),
+        // A small number and one with its top bit clear are an `int` as they are written.
+        (Expr::binary(BinOp::Eq, int_p0(), int(-1)), "(int)p0 == -1"),
+        (
+            Expr::binary(BinOp::Eq, int_p0(), int(0x1A3B_5C7D)),
+            "(int)p0 == 0x1A3B5C7D",
+        ),
+    ];
+    for (e, text) in &cases {
+        assert_eq!(sharp_in(&typed, &cx, e), *text);
+    }
+    // A comparison of whole cells needs nothing.
+    let wide = kinds(&[(Var::Local(0), Kind::I64)]);
+    let whole = Expr::Binary {
+        op: BinOp::Eq,
+        at: Kind::I64,
+        l: Box::new(local(0)),
+        r: Box::new(constant_of(0x9A3B_5C7D, Kind::I64)),
+    };
+    assert_eq!(sharp_in(&wide, &cx, &whole), "local_0 == 0x9A3B5C7D");
+    // The form of old.
+    let old = Expr::binary(BinOp::Eq, int_p0(), high());
+    assert_eq!(readable(&old), "(int)p0 == 0x9A3B5C7D");
+}
+
+#[test]
+fn a_shift_of_64_bits_says_so_on_a_bare_number() {
+    let shift = |at: Kind, kind: Kind| Expr::Binary {
+        op: BinOp::Shl,
+        at,
+        l: Box::new(constant_of(1, kind)),
+        r: Box::new(Expr::cast(Scalar::I32, local(1))),
+    };
+    assert_eq!(sharp(&shift(Kind::I64, Kind::I64)), "1L << (int)local_1");
+    assert_eq!(sharp(&shift(Kind::U64, Kind::U64)), "1UL << (int)local_1");
+    let cell = shift(Kind::Unknown, Kind::Unknown);
+    assert_eq!(sharp(&cell), "1L << (int)local_1");
+    // ⚠ A shift of 32 bits stays bare: `1L` there would shift 64.
+    let narrow = Expr::binary(BinOp::Shl, int(1), Expr::cast(Scalar::I32, local(1)));
+    assert_eq!(sharp(&narrow), "1 << (int)local_1");
+    // A variable on the left states its own width.
+    let var = Expr::Binary {
+        op: BinOp::Shl,
+        at: Kind::I64,
+        l: Box::new(local(0)),
+        r: Box::new(int(3)),
+    };
+    assert_eq!(sharp(&var), "local_0 << 3");
+    let old = readable(&shift(Kind::I64, Kind::I64));
+    assert_eq!(old, "1 << (int)local_1", "the form of old");
+}
+
+#[test]
+fn a_reference_is_compared_with_null() {
+    let class = Kind::Object("type_00000000000000AA".to_owned());
+    let object = kinds(&[(Var::Local(0), class), (Var::Local(2), Kind::String)]);
+    let names = Names::default();
+    let cx = at(&names, Level::Structured);
+    let as_cast = || intrinsic("try_cast<type_00000000000000DD>", vec![local(1)]);
+    let signed = Expr::Binary {
+        op: BinOp::Gt,
+        at: Kind::I64,
+        l: Box::new(local(0)),
+        r: Box::new(int(0)),
+    };
+    let cases = [
+        (
+            Expr::binary(BinOp::Gt, Expr::cast(Scalar::U64, as_cast()), int(0)),
+            "(local_1 as type_00000000000000DD) != null",
+        ),
+        (
+            Expr::binary(BinOp::Eq, as_cast(), int(0)),
+            "(local_1 as type_00000000000000DD) == null",
+        ),
+        (Expr::binary(BinOp::Ne, local(0), int(0)), "local_0 != null"),
+        (Expr::binary(BinOp::Eq, local(2), int(0)), "local_2 == null"),
+        // A cell of no known kind is compared with the number, and a signed order is no null test.
+        (Expr::binary(BinOp::Eq, local(1), int(0)), "local_1 == 0"),
+        (signed, "local_0 > 0"),
+        (Expr::binary(BinOp::Eq, local(0), int(5)), "local_0 == 5"),
+    ];
+    for (e, text) in &cases {
+        assert_eq!(sharp_in(&object, &cx, e), *text);
+    }
+    // A reference tested for being set is one tested against `null`.
+    assert_eq!(sharp_cond_in(&object, &truth(local(0))), "local_0 != null");
+    let unset = not(truth(local(0)));
+    assert_eq!(sharp_cond_in(&object, &unset), "local_0 == null");
+    assert_eq!(sharp_cond_in(&object, &truth(local(1))), "local_1");
+    // The form of old compares with the number.
+    let set = Expr::binary(BinOp::Ne, local(0), int(0));
+    assert_eq!(text_in(&object, &names, &set, false), "local_0 != 0");
+}
+
+#[test]
+fn true_c_sharp_names_a_call_by_the_type_and_the_names_supplied() {
+    let virtual_call = |class: &str, ty: &str, slot: u32, args: Vec<Expr>| Expr::Call {
+        callee: Callee::Virtual {
+            class: class.to_owned(),
+            method: format!("Method_{slot}"),
+            ty: ty.to_owned(),
+            slot,
+        },
+        args,
+        returns: Some(1),
+    };
+    // ⚠ The listing's wrapper class is no type: the type the slot is of is.
+    let dispose = virtual_call(
+        "System_IDisposable",
+        "System.IDisposable",
+        0,
+        vec![local(0)],
+    );
+    assert_eq!(sharp(&dispose), "System.IDisposable.Method_0(local_0)");
+    assert_eq!(readable(&dispose), "System_IDisposable.Method_0(local_0)");
+
+    // A receiver's type no longer makes a call a method's: the receivers pass does.
+    let class = "type_00000000000000AA";
+    let update = virtual_call(class, class, 3, vec![param(0), local(1)]);
+    let typed = kinds(&[(Var::Param(0), Kind::Object(class.to_owned()))]);
+    let mut names = Names::default();
+    let plain = sharp_in(&typed, &at(&names, Level::Structured), &update);
+    assert_eq!(plain, "type_00000000000000AA.Method_3(p0, local_1)");
+    names
+        .methods
+        .insert((TypeKey(0xAA), 3), "Update".to_owned());
+    names.types.insert(0xAA, "CThing".to_owned());
+    let named = sharp_in(&typed, &at(&names, Level::Structured), &update);
+    assert_eq!(named, "CThing.Update(p0, local_1)");
+
+    // A .NET primitive is its keyword wherever a type is named.
+    let int32 = VmType {
+        name: "System.Int32".to_owned(),
+        byte_size: 4,
+        id: 0x8000_0003,
+        flags: 0,
+    };
+    let array = Expr::NewArray {
+        ty: int32,
+        len: Box::new(int(72)),
+        wrapper: "NewArray_3".to_owned(),
+    };
+    let compare = Expr::Call {
+        callee: Callee::Builtin {
+            path: "System.Int32.CompareTo".to_owned(),
+            ty: 3,
+            method: 1,
+        },
+        args: vec![local(0), local(1)],
+        returns: Some(1),
+    };
+    let boxed = intrinsic("box<System.Int32>", vec![local(0)]);
+    for (e, new, old) in [
+        (&array, "new int[72]", "new System.Int32[72]"),
+        (
+            &compare,
+            "int.CompareTo(local_0, local_1)",
+            "System.Int32.CompareTo(local_0, local_1)",
+        ),
+        (&boxed, "box<int>(local_0)", "box<System.Int32>(local_0)"),
+    ] {
+        assert_eq!(sharp(e), new);
+        assert_eq!(readable(e), old);
+    }
+}
+
+#[test]
+fn a_function_goes_by_the_users_name_at_its_head_and_wherever_it_is_named() {
+    let mut names = Names::default();
+    names.programs.insert(0xAB, "shared".to_owned());
+    let own = FunctionKey::new(0x1122_3344, 0x40);
+    names.functions.insert(own, "DoThing".to_owned());
+    let other = FunctionKey::new(0xAB, 0xB0);
+    names.functions.insert(other, "Helper".to_owned());
+    let call = Expr::Call {
+        callee: Callee::Local {
+            at: 0x40,
+            name: "func_000040".to_owned(),
+        },
+        args: vec![],
+        returns: Some(0),
+    };
+    let import = Expr::Call {
+        callee: Callee::Import {
+            module: "module_0x00000000000000EE".to_owned(),
+            name: "func_0000B0".to_owned(),
+            program: 0xAB,
+            at: 0xB0,
+        },
+        args: vec![],
+        returns: Some(0),
+    };
+    let reference = Expr::FunctionRef {
+        program: 0x1122_3344,
+        at: 0x40,
+    };
+    let head = head();
+    let cx = at(&names, Level::Structured);
+    for (e, new, old) in [
+        (&call, "DoThing()", "func_000040()"),
+        (&import, "shared.Helper()", "shared.func_0000B0()"),
+        (&reference, "&DoThing", "&func_000040"),
+    ] {
+        assert_eq!(sharp_in(&head, &cx, e), new);
+        assert_eq!(text_in(&head, &names, e, false), old);
+    }
+
+    // A head whose name is not its offset says the offset after it, always.
+    let f = function_of(head.clone(), vec![tree::Stmt::Return(None)]);
+    let named = written_in(&f, &cx);
+    let first = "void DoThing(Cell p0) // func_000040\n";
+    assert!(named.starts_with(first), "{named}");
+    let mut entry = head.clone();
+    entry.name = "main".to_owned();
+    entry.at = 0x80;
+    let main = function_of(entry, vec![tree::Stmt::Return(None)]);
+    let entered = written_in(&main, &cx);
+    let first = "void main(Cell p0) // func_000080\n";
+    assert!(entered.starts_with(first), "{entered}");
+    // One that is its offset says nothing more, and the form of old never does.
+    let unnamed = written_sharp(&f);
+    let first = "void func_000040(Cell p0)\n";
+    assert!(unnamed.starts_with(first), "{unnamed}");
+    let old = written(&main, &names);
+    assert!(old.starts_with("void main(var p0)\n"), "{old}");
+
+    // A function with no body is a comment under its offset.
+    let mut unread = head;
+    unread.incomplete = Some("Widths are underdetermined.".to_owned());
+    assert_eq!(
+        written_sharp(&function_of(unread, Vec::new())),
+        "// func_000040: no body (Widths are underdetermined.)\n"
+    );
+}
+
+#[test]
+fn a_parameter_of_several_cells_is_written_once() {
+    let mut head = head();
+    head.params = 4;
+    let mut vector = VarInfo::new(Width::Cells);
+    vector.kind = Kind::Vector;
+    head.vars.insert(Var::Param(1), vector);
+    let quiet = function_of(head.clone(), vec![tree::Stmt::Return(None)]);
+    let text = written_sharp(&quiet);
+    let first = "void func_000040(Cell p0, Vector3 p1, Cell p3)\n";
+    assert!(text.starts_with(first), "{text}");
+    // ⚠ A slot the body names is a parameter of its own, and is never dropped.
+    let used = simple(Stmt::Eval(native("USE", vec![param(2)])));
+    let named = written_sharp(&function_of(head.clone(), vec![used]));
+    let first = "void func_000040(Cell p0, Vector3 p1, Cell p2, Cell p3)\n";
+    assert!(named.starts_with(first), "{named}");
+    // So is one a pass knows something of.
+    let mut known = head;
+    let mut flag = VarInfo::new(Width::Cell);
+    flag.kind = Kind::Bool;
+    known.vars.insert(Var::Param(2), flag);
+    let typed = written_sharp(&function_of(known, vec![tree::Stmt::Return(None)]));
+    let first = "void func_000040(Cell p0, Vector3 p1, bool p2, Cell p3)\n";
+    assert!(typed.starts_with(first), "{typed}");
+    let old = written(&quiet, &Names::default());
+    let first = "void func_000040(var p0, Vector3 p1, var p2, var p3)\n";
+    assert!(old.starts_with(first), "{old}");
+}
+
+#[test]
+fn a_statement_of_true_c_sharp_is_broken_at_the_width() {
+    let args: Vec<Expr> = (0..30).map(local).collect();
+    let test = |n: u32| {
+        let object = load(Scalar::U64, param(0), 0x18);
+        let field = load(Scalar::U64, object, 0x10 + n);
+        let read = Expr::cast(Scalar::I32, field);
+        Expr::binary(BinOp::Lt, read, int(1000 + n as i32))
+    };
+    let either = |l: Expr, r: Expr| Expr::Binary {
+        op: BinOp::LogicalOr,
+        at: Kind::Bool,
+        l: Box::new(l),
+        r: Box::new(r),
+    };
+    let last = either(test(3), test(4));
+    let chain = either(test(0), either(test(1), either(test(2), last)));
+    let body = vec![tree::Stmt::If {
+        cond: chain,
+        then: vec![simple(Stmt::Eval(native("USE", args)))],
+        els: Vec::new(),
+    }];
+    let f = function_of(head(), body);
+    let text = written_sharp(&f);
+    let fits = |line: &str| line.chars().count() <= 120;
+    assert!(text.lines().all(fits), "{text}");
+    // A chain of tests breaks before every operator, and a list after a comma where a line is full.
+    let head = "    if ((int)p0->f_18->f_10 < 1000
+        || (int)p0->f_18->f_11 < 1001
+        || (int)p0->f_18->f_12 < 1002
+        || (int)p0->f_18->f_13 < 1003
+        || (int)p0->f_18->f_14 < 1004)
+    {
+        DEMO.USE(local_0, local_1,";
+    assert!(text.contains(head), "{text}");
+    assert!(text.contains(",\n            local_"), "{text}");
+    assert!(text.contains("local_29);\n    }\n"), "{text}");
+
+    // The form of old breaks a chain of tests and nothing else.
+    let old = written(&f, &Names::default());
+    let broken = "\n        || (int)p0->f_18->f_14 < 1004)\n";
+    assert!(old.contains(broken), "{old}");
+    assert!(old.lines().any(|line| !fits(line)), "{old}");
+}
+
+#[test]
+fn a_listing_of_true_c_sharp_opens_with_one_fact_a_line() {
+    let (listing, functions) = read(sample::LISTING);
+    let stats = Stats {
+        functions: 5,
+        incomplete: 1,
+        gotos_in: 3,
+        gotos_out: 2,
+        ..Stats::default()
+    };
+    let source = |cx: &Context<'_>| {
+        let mut writer = SourceWriter::in_context(cx);
+        for f in &functions {
+            writer.function(f);
+        }
+        writer.finish(&listing, &stats)
+    };
+    let names = Names::default();
+    let text = source(&at(&names, Level::Structured));
+    let head = format!(
+        "\
+// OpenRage: GTA VI script, program 0x11223344
+// read from: a lifted listing, the text another decompiler wrote of this script
+// level: structured; passes off: none
+// imports: 0x0A0B0C0D, 0x1A2B3C4D
+// natives: 3 declared: 2 named by the program itself, 1 shown by hash; no natives list supplied
+// names: no names list supplied
+// 5 function(s), 1 with no body; 2 goto(s) left
+{WORDS}
+void func_000000(Cell p0, Cell p1)
+"
+    );
+    assert!(text.starts_with(&head), "{text}");
+    let next = "}\n\nCell func_000100(Cell p0)\n{\n";
+    assert!(text.contains(next), "{text}");
+    let unread = "\n// func_000300: no body (Widths are underdetermined.)\n";
+    assert!(text.contains(unread), "{text}");
+    let again = source(&at(&names, Level::Structured));
+    assert_eq!(text, again, "the same bytes twice");
+    // No path, no date and no token that spans a line: every line of the header is a comment.
+    let top: Vec<&str> = text.lines().take_while(|line| !line.is_empty()).collect();
+    assert_eq!(top.len(), 8);
+    assert!(top.iter().all(|line| line.starts_with("// ")), "{text}");
+
+    // A pass switched off is named, in the order of `Pass::ALL`.
+    let off = Options::at(Level::Structured)
+        .without(Pass::RoleNames)
+        .without(Pass::Gotos);
+    let partly = source(&Context::new(&names, Project::empty(), off));
+    let said = "\n// level: structured; passes off: gotos, role-names\n";
+    assert!(partly.contains(said), "{partly}");
+
+    // The lists that named things are named by their labels.
+    let listed = NativeName {
+        namespace: Some("LISTED".to_owned()),
+        name: "NAMED_BY_THE_LIST".to_owned(),
+        ..NativeName::default()
+    };
+    let mut named = Names {
+        natives: Some(NativeDb::from_names("a test's", [(0xBB, listed)])),
+        ..Names::default()
+    };
+    let list = "0x11223344 demo.program\n0x0A0B0C0D shared\n";
+    named.read_list("names.txt", list).expect("the list reads");
+    let text = source(&at(&named, Level::Structured));
+    let head = "\
+// OpenRage: GTA VI script, program 0x11223344 (demo.program)
+// read from: a lifted listing, the text another decompiler wrote of this script
+// level: structured; passes off: none
+// imports: 0x0A0B0C0D (shared), 0x1A2B3C4D
+// natives: 3 declared: 1 named by `a test's`, 2 by the program itself, 0 shown by hash
+// names: types and programs from `names.txt`
+";
+    assert!(text.starts_with(head), "{text}");
 }

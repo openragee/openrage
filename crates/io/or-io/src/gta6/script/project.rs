@@ -1,0 +1,258 @@
+//! Facts gathered over every program of an install before any one of them is decompiled.
+//!
+//! [`index`] reads each program to a part, parts merge to one [`Project`], and each table is a
+//! plain map in a fixed order, so that a project, the file it is kept in and all output made with
+//! it are the same from run to run. [`Project::empty`] holds nothing, and a program decompiles
+//! alone with it.
+//!
+//! ⚠ A project holds what programs state and what their code shows, never a name: names are the
+//! user's, in [`super::Names`].
+
+pub mod index;
+pub mod layouts;
+pub mod signatures;
+pub mod types;
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::LazyLock;
+
+use serde::{Deserialize, Serialize};
+
+use super::cfg::LowerError;
+use super::class::Role;
+use super::ir::{FunctionKey, Kind, TypeKey};
+use super::lift::LiftError;
+use super::listing::ListingError;
+use super::program::ProgramError;
+
+/// The base types a lookup follows before it gives up: no hierarchy is that deep, and a ring of bases must end.
+const MAX_BASES: usize = 64;
+
+/// Why a project was not built, or not read back.
+#[derive(Debug, thiserror::Error)]
+pub enum ProjectError {
+    #[error(transparent)]
+    Listing(#[from] ListingError),
+    #[error(transparent)]
+    Program(#[from] ProgramError),
+    #[error(transparent)]
+    Lift(#[from] LiftError),
+    #[error("{function}: {source}")]
+    Lower {
+        function: String,
+        source: LowerError,
+    },
+    #[error("{path}: {source}")]
+    Io {
+        path: String,
+        source: std::io::Error,
+    },
+    /// A file that was read and refused for what it holds.
+    #[error("{path}: {source}")]
+    File {
+        path: String,
+        source: Box<ProjectError>,
+    },
+    #[error("the project file is refused: {0}")]
+    Sidecar(String),
+}
+
+/// What one program states of itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProgramInfo {
+    /// The program's 32-bit hash.
+    pub program: u32,
+    pub imports: Vec<ImportInfo>,
+    /// The program's own types, by the id the program gives each.
+    pub types: BTreeMap<u32, TypeKey>,
+    /// What the global at each byte offset holds.
+    pub globals: BTreeMap<u32, Kind>,
+    /// What the static at each byte offset holds.
+    pub statics: BTreeMap<u32, Kind>,
+    /// The strings of the program's heap, by offset.
+    pub strings: BTreeMap<u32, String>,
+}
+
+/// A program another imports, and the run of the importer's type ids that are its types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportInfo {
+    pub program: u32,
+    pub first: u32,
+    pub end: u32,
+}
+
+/// What is known of one type.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeFacts {
+    pub byte_size: u32,
+    pub flags: u32,
+    /// The program that defines the type.
+    pub home: u32,
+    pub base: Option<TypeKey>,
+    pub interfaces: Vec<TypeKey>,
+    /// The function each virtual slot resolves to on this type, where the type itself fills the slot.
+    pub slots: BTreeMap<u32, FunctionKey>,
+    /// The generic type this is an instance of, and its arguments.
+    pub generic: Option<(TypeKey, Vec<TypeKey>)>,
+    /// The values the constants of an enum take.
+    pub constants: Vec<i64>,
+    /// The cells a call of a virtual slot returns: those the type's one method record for the slot states, else, for an interface, those every function a type fills the slot with returns.
+    pub returns: BTreeMap<u32, u32>,
+}
+
+impl TypeFacts {
+    /// Whether a value of the type is held in place, as an array element or a field is, and never made as an object.
+    pub fn is_value(&self) -> bool {
+        self.flags & 0x1C != 0
+    }
+}
+
+/// What is known of one field of a type.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldFacts {
+    /// The byte offset from the object's start; an object's first field is at 8.
+    pub offset: u32,
+    pub bytes: u32,
+    pub kind: Kind,
+}
+
+/// One parameter of a function: what it is and the cells it takes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Param {
+    pub kind: Kind,
+    pub cells: u32,
+}
+
+/// What is known of one function across the calls of it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Signature {
+    /// One entry a parameter, in order; their cells add up to the function's parameter cells.
+    pub params: Vec<Param>,
+    /// The cells the function returns.
+    pub returns: u32,
+    /// What the returned cells are.
+    pub result: Kind,
+}
+
+/// The type a function is proved to belong to, and as what.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Member {
+    pub owner: TypeKey,
+    pub role: Role,
+    /// Whether the function takes no receiver.
+    pub is_static: bool,
+    /// The virtual slot of `owner` the function fills.
+    pub slot: Option<u32>,
+}
+
+/// The facts of an install, each table in key order.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Project {
+    pub programs: BTreeMap<u32, ProgramInfo>,
+    pub types: BTreeMap<TypeKey, TypeFacts>,
+    /// A type's own fields, by rising offset; a base type's are under the base.
+    pub fields: BTreeMap<TypeKey, Vec<FieldFacts>>,
+    pub signatures: BTreeMap<FunctionKey, Signature>,
+    /// The call graph: the functions each function calls, each once, in key order.
+    pub calls: BTreeMap<FunctionKey, Vec<FunctionKey>>,
+    pub members: BTreeMap<FunctionKey, Member>,
+    /// The functions the types that implement an interface fill each of its slots with; empty once a project is settled, when `TypeFacts::returns` holds what they say.
+    #[serde(skip)]
+    pub implemented: BTreeMap<TypeKey, BTreeMap<u32, BTreeSet<FunctionKey>>>,
+}
+
+static EMPTY: LazyLock<Project> = LazyLock::new(Project::default);
+
+impl Project {
+    /// The project that holds nothing: what a program decompiled alone is given.
+    pub fn empty() -> &'static Project {
+        &EMPTY
+    }
+
+    /// The type a program means by one of its type ids: its own, an import's through the import's range, or a builtin.
+    pub fn type_key(&self, program: u32, id: u32) -> Option<TypeKey> {
+        if id & 0x8000_0000 != 0 {
+            return Some(TypeKey(u64::from(id)));
+        }
+        let info = self.programs.get(&program)?;
+        let imported = info.imports.iter().find(|i| (i.first..i.end).contains(&id));
+        match imported {
+            Some(import) => {
+                let home = self.programs.get(&import.program)?;
+                home.types.get(&(id - import.first)).copied()
+            }
+            None => info.types.get(&id).copied(),
+        }
+    }
+
+    /// The field at byte `offset` of an object of type `ty`, its own or a base type's.
+    pub fn field(&self, ty: TypeKey, offset: u32) -> Option<&FieldFacts> {
+        let mut ty = ty;
+        for _ in 0..MAX_BASES {
+            let own = self.fields.get(&ty);
+            let field = own.and_then(|fields| fields.iter().find(|f| f.offset == offset));
+            if field.is_some() {
+                return field;
+            }
+            ty = self.types.get(&ty)?.base?;
+        }
+        None
+    }
+
+    /// The function a virtual slot resolves to on type `ty`: the type's own, else the nearest base type's.
+    pub fn slot(&self, ty: TypeKey, slot: u32) -> Option<FunctionKey> {
+        let mut ty = ty;
+        for _ in 0..MAX_BASES {
+            let facts = self.types.get(&ty)?;
+            if let Some(function) = facts.slots.get(&slot) {
+                return Some(*function);
+            }
+            ty = facts.base?;
+        }
+        None
+    }
+
+    /// The cells a call of virtual slot `slot` of type `ty` returns: by the nearest method record of its line, else by the function the slot resolves to.
+    pub fn slot_returns(&self, ty: TypeKey, slot: u32) -> Option<u32> {
+        let mut at = ty;
+        for _ in 0..MAX_BASES {
+            let Some(facts) = self.types.get(&at) else {
+                break;
+            };
+            if let Some(cells) = facts.returns.get(&slot) {
+                return Some(*cells);
+            }
+            let Some(base) = facts.base else {
+                break;
+            };
+            at = base;
+        }
+        let function = self.slot(ty, slot)?;
+        self.signatures.get(&function).map(|held| held.returns)
+    }
+
+    /// Whether `ty` is `ancestor`, derives from it or implements it.
+    pub fn is_a(&self, ty: TypeKey, ancestor: TypeKey) -> bool {
+        let mut ty = ty;
+        for _ in 0..MAX_BASES {
+            if ty == ancestor {
+                return true;
+            }
+            let Some(facts) = self.types.get(&ty) else {
+                return false;
+            };
+            if facts.interfaces.contains(&ancestor) {
+                return true;
+            }
+            match facts.base {
+                Some(base) => ty = base,
+                None => return false,
+            }
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+#[path = "project_tests.rs"]
+mod tests;

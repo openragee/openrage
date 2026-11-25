@@ -3,9 +3,11 @@ use std::collections::BTreeMap;
 use super::*;
 use crate::gta5::script::natives::{NativeDb, NativeName, NativeParam};
 use crate::gta6::script::cfg::{Block, Cfg, Function};
-use crate::gta6::script::ir::{Head, Returns, VmType};
+use crate::gta6::script::ir::VmType;
 use crate::gta6::script::listing::Listing;
+use crate::gta6::script::project::{FieldFacts, Param, TypeFacts};
 use crate::gta6::script::sample;
+use crate::gta6::script::Options;
 
 fn local(n: u32) -> Expr {
     Expr::Var(Var::Local(n))
@@ -902,4 +904,502 @@ fn the_sample_listing_types_with_every_statement_kept() {
     );
     assert_eq!(kind_of(counter, Var::Local(0)), Kind::I32);
     assert_eq!(kind_of(counter, result), Kind::I32);
+}
+
+/// The names a listing gives three types.
+const THING: &str = "type_00000000000000AA";
+const OTHER: &str = "type_00000000000000BB";
+const THIRD: &str = "type_00000000000000CC";
+
+/// `new T()`.
+fn made(name: &str) -> Expr {
+    Expr::NewObject(VmType {
+        name: name.to_owned(),
+        byte_size: 32,
+        id: 7,
+        flags: 0,
+    })
+}
+
+fn object(name: &str) -> Kind {
+    Kind::Object(name.to_owned())
+}
+
+/// A context with `kinds` and `signs` on over `project`.
+fn kinded<'a>(names: &'a Names, project: &'a Project) -> Context<'a> {
+    let options = Options::baseline().with(Pass::Kinds).with(Pass::Signs);
+    Context::new(names, project, options)
+}
+
+/// A function of one block that holds `stmts`, typed with `kinds` and `signs` on and `project` at hand.
+fn typed_in(stmts: Vec<Stmt>, project: &Project) -> Function {
+    let mut f = function(stmts);
+    let names = Names::default();
+    run_in(&mut f, &kinded(&names, project), &mut Stats::default());
+    f
+}
+
+/// A project that knows the function at `at` of the tests' program: one cell a parameter, and one cell yielded.
+fn signed(at: u32, params: Vec<Kind>, result: Kind) -> Project {
+    let params = params.into_iter().map(|kind| Param { kind, cells: 1 });
+    let signature = Signature {
+        params: params.collect(),
+        returns: 1,
+        result,
+    };
+    let mut project = Project::default();
+    let key = FunctionKey::new(0x1122_3344, at);
+    project.signatures.insert(key, signature);
+    project
+}
+
+/// A project in which an object of `THING` holds a float at 0x10 and a reference to an `OTHER` at 0x18.
+fn laid_out() -> Project {
+    let field = |offset: u32, bytes: u32, kind: Kind| FieldFacts {
+        offset,
+        bytes,
+        kind,
+    };
+    let fields = vec![field(0x10, 4, Kind::F32), field(0x18, 8, object(OTHER))];
+    let mut project = Project::default();
+    project.fields.insert(TypeKey(0xAA), fields);
+    project
+}
+
+#[test]
+fn references_that_have_nothing_to_do_with_each_other_stay_some_reference() {
+    assert_eq!(Lat::Refs.join(&Lat::Is(object(THING))), Lat::Refs);
+    assert_eq!(Lat::Is(Kind::Pointer).join(&Lat::Refs), Lat::Refs);
+    assert_eq!(Lat::Refs.join(&Lat::Int32), Lat::Conflict);
+    assert_eq!(Lat::Refs.join(&Lat::Is(Kind::F32)), Lat::Conflict);
+    assert_eq!(Lat::Refs.kind(), Kind::Pointer);
+}
+
+#[test]
+fn a_signature_says_what_a_call_yields_only_where_kinds_is_on() {
+    let project = signed(0x100, vec![], Kind::Bool);
+    let tested = || vec![set(0, listed(BinOp::Eq, as_u32(call(vec![])), int(0)))];
+    let f = typed_in(tested(), &project);
+    assert_eq!(f.cfg.blocks[0].stmts, [set(0, not(call(vec![])))]);
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Bool);
+
+    // With the name off the project is not read: the cast is what makes 32 bits of the cell.
+    let names = Names::default();
+    let off = Context::new(&names, &project, Options::baseline());
+    let mut f = function(tested());
+    run_in(&mut f, &off, &mut Stats::default());
+    assert_eq!(f.cfg.blocks[0].stmts, tested());
+}
+
+#[test]
+fn a_signature_types_the_arguments_only_of_a_call_it_fits() {
+    let project = signed(0x100, vec![Kind::F32, Kind::Bool], Kind::Unknown);
+    let f = typed_in(
+        vec![
+            used(vec![int(0x4170_0000), param(0)]),
+            // An argument short of the signature: nothing says which parameter each cell is.
+            used(vec![param(1)]),
+        ],
+        &project,
+    );
+    assert_eq!(
+        f.cfg.blocks[0].stmts,
+        [used(vec![float(15.0), param(0)]), used(vec![param(1)]),]
+    );
+    assert_eq!(kind_of(&f, Var::Param(0)), Kind::Bool);
+    assert_eq!(kind_of(&f, Var::Param(1)), Kind::Unknown);
+}
+
+#[test]
+fn a_functions_own_signature_types_its_parameters_and_what_it_returns() {
+    let names = Names::default();
+    let typed_with = |project: &Project| {
+        let mut f = function(vec![set(0, param(2))]);
+        f.head.returns = Returns::Cell;
+        f.cfg.blocks[0].term = Terminator::Return(Some(int(1)));
+        run_in(&mut f, &kinded(&names, project), &mut Stats::default());
+        f
+    };
+    let none = || Kind::Unknown;
+    let f = typed_with(&signed(
+        0,
+        vec![none(), none(), Kind::F32, none()],
+        Kind::Bool,
+    ));
+    assert_eq!(kind_of(&f, Var::Param(2)), Kind::F32);
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::F32);
+    let yes = Expr::Const(Const::bool(true));
+    assert_eq!(f.cfg.blocks[0].term, Terminator::Return(Some(yes)));
+
+    // Three cells of parameters where the function takes four: the signature is another function's.
+    let f = typed_with(&signed(0, vec![none(), none(), Kind::F32], Kind::Bool));
+    assert_eq!(kind_of(&f, Var::Param(2)), Kind::Unknown);
+}
+
+#[test]
+fn a_reference_passed_where_a_signature_takes_a_type_is_of_it_unless_an_assignment_names_another() {
+    let project = signed(0x100, vec![object(THING)], Kind::Unknown);
+    let f = typed_in(
+        vec![
+            used(vec![param(0)]),
+            set(0, made(OTHER)),
+            used(vec![local(0)]),
+        ],
+        &project,
+    );
+    assert_eq!(kind_of(&f, Var::Param(0)), object(THING));
+    // What is passed may derive from what is taken: the object made says more.
+    assert_eq!(kind_of(&f, Var::Local(0)), object(OTHER));
+}
+
+#[test]
+fn a_variable_read_under_both_signs_takes_the_sign_more_reads_take() {
+    let stmts = || {
+        vec![
+            set(2, listed(BinOp::Lt, as_i32(local(0)), as_i32(param(0)))),
+            set(3, listed(BinOp::Lt, as_i32(local(0)), as_i32(param(1)))),
+            set(4, listed(BinOp::Lt, as_u32(local(0)), as_u32(param(2)))),
+        ]
+    };
+    let f = typed_in(stmts(), Project::empty());
+    assert_eq!(
+        f.cfg.blocks[0].stmts,
+        [
+            set(2, at(Kind::I32, BinOp::Lt, local(0), param(0))),
+            set(3, at(Kind::I32, BinOp::Lt, local(0), param(1))),
+            // The one unsigned read keeps the cast that makes it one.
+            set(4, at(Kind::U32, BinOp::Lt, as_u32(local(0)), param(2))),
+        ]
+    );
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::I32);
+
+    // With `signs` off the two readings are a conflict.
+    let f = typed_function(stmts(), &Names::default());
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+}
+
+#[test]
+fn the_sign_an_assignment_gives_stands_against_more_reads_of_the_other() {
+    let f = typed_in(
+        vec![
+            set(0, listed(BinOp::Add, as_i32(param(0)), as_i32(param(1)))),
+            set(2, listed(BinOp::Lt, as_u32(local(0)), as_u32(param(2)))),
+            set(3, listed(BinOp::Lt, as_u32(local(0)), as_u32(param(3)))),
+        ],
+        Project::empty(),
+    );
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::I32);
+    assert_eq!(
+        f.cfg.blocks[0].stmts[1],
+        set(2, at(Kind::U32, BinOp::Lt, as_u32(local(0)), param(2)))
+    );
+}
+
+#[test]
+fn variables_copied_into_each_other_take_one_sign_together() {
+    // `local_0` is read signed once; `local_1`, which it is copied into, unsigned twice.
+    let f = typed_in(
+        vec![
+            set(1, local(0)),
+            set(2, listed(BinOp::Lt, as_i32(local(0)), as_i32(param(0)))),
+            set(3, listed(BinOp::Lt, as_u32(local(1)), as_u32(param(1)))),
+            set(4, listed(BinOp::Lt, as_u32(local(1)), as_u32(param(2)))),
+        ],
+        Project::empty(),
+    );
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::U32);
+    assert_eq!(kind_of(&f, Var::Local(1)), Kind::U32);
+    assert_eq!(
+        f.cfg.blocks[0].stmts[1],
+        set(2, at(Kind::I32, BinOp::Lt, as_i32(local(0)), param(0)))
+    );
+}
+
+#[test]
+fn a_complement_reads_no_sign() {
+    let flipped = || Expr::Unary {
+        op: UnOp::BitNot,
+        e: Box::new(as_u32(local(0))),
+    };
+    let f = typed_in(
+        vec![
+            set(1, listed(BinOp::Lt, as_i32(local(0)), int(5))),
+            set(2, flipped()),
+            set(3, flipped()),
+        ],
+        Project::empty(),
+    );
+    // Counted as reads of a `uint`, the two would outnumber the one read that orders.
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::I32);
+    // The cast under `~` says how wide the result is, and stays.
+    assert_eq!(f.cfg.blocks[0].stmts[1], set(2, flipped()));
+}
+
+#[test]
+fn a_test_of_32_bits_against_zero_reads_no_sign() {
+    let unset = || not(as_u32(local(0)));
+    let f = typed_in(
+        vec![
+            set(1, listed(BinOp::Lt, as_i32(local(0)), int(5))),
+            set(2, unset()),
+            set(3, unset()),
+        ],
+        Project::empty(),
+    );
+    // Counted as reads of a `uint`, the two tests would outnumber the one read that orders.
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::I32);
+    assert_eq!(
+        f.cfg.blocks[0].stmts[0],
+        set(1, at(Kind::I32, BinOp::Lt, local(0), int(5)))
+    );
+}
+
+#[test]
+fn a_variable_given_constants_and_read_by_narrow_stores_alone_is_as_wide_as_they_are() {
+    let stmts = || {
+        vec![
+            set(0, int(0x4C48_1189)),
+            store(StoreKind::I32, param(0), 0x10, local(0)),
+            set(1, int(1)),
+            store(StoreKind::U8, param(0), 0x20, local(1)),
+            // Passed whole as well: the cell may hold more than its low four bytes.
+            set(2, int(7)),
+            store(StoreKind::I32, param(0), 0x14, local(2)),
+            used(vec![local(2)]),
+            // Given a loaded cell: nothing says those four bytes are an integer.
+            set(3, load(Scalar::I32, param(1), 8)),
+            store(StoreKind::I32, param(0), 0x18, local(3)),
+            // Its address handed on: what is called may fill it with anything.
+            set(4, int(9)),
+            used(vec![address(4)]),
+            store(StoreKind::I32, param(0), 0x1C, local(4)),
+        ]
+    };
+    let f = typed_in(stmts(), Project::empty());
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::I32);
+    assert_eq!(kind_of(&f, Var::Local(1)), Kind::U8);
+    assert_eq!(f.cfg.blocks[0].stmts[2], set(1, constant(1, Kind::U8)));
+    for n in 2..=4 {
+        assert_eq!(kind_of(&f, Var::Local(n)), Kind::Unknown, "local_{n}");
+    }
+
+    // With `kinds` off a store's width types nothing.
+    let f = typed_function(stmts(), &Names::default());
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+    assert_eq!(kind_of(&f, Var::Local(1)), Kind::Unknown);
+}
+
+#[test]
+fn a_layout_types_what_is_loaded_from_a_field_of_an_object_of_known_type() {
+    let f = typed_in(
+        vec![
+            set(0, made(THING)),
+            set(1, load(Scalar::U64, local(0), 0x18)),
+            store(StoreKind::I32, local(0), 0x10, int(0x4170_0000)),
+            // Four bytes where the layout holds eight: another field, or another type.
+            set(2, load(Scalar::I32, local(0), 0x18)),
+        ],
+        &laid_out(),
+    );
+    assert_eq!(kind_of(&f, Var::Local(1)), object(OTHER));
+    assert_eq!(kind_of(&f, Var::Local(2)), Kind::Unknown);
+    assert_eq!(
+        f.cfg.blocks[0].stmts[2],
+        store(StoreKind::I32, local(0), 0x10, float(15.0))
+    );
+}
+
+#[test]
+fn a_layout_says_nothing_of_a_base_that_is_of_one_type_or_of_another() {
+    let f = typed_in(
+        vec![
+            set(0, made(THING)),
+            set(0, made(OTHER)),
+            set(1, load(Scalar::U64, local(0), 0x18)),
+        ],
+        &laid_out(),
+    );
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Pointer);
+    assert_eq!(kind_of(&f, Var::Local(1)), Kind::Unknown);
+}
+
+#[test]
+fn layout_evidence_that_undoes_the_kind_it_rests_on_is_not_taken() {
+    // The field's `OTHER`, copied back into the base, would leave the base of no one type.
+    let f = typed_in(
+        vec![
+            set(0, made(THING)),
+            set(1, load(Scalar::U64, local(0), 0x18)),
+            set(0, local(1)),
+        ],
+        &laid_out(),
+    );
+    assert_eq!(kind_of(&f, Var::Local(0)), object(THING));
+    // What the copy alone says, as with no layout at hand.
+    assert_eq!(kind_of(&f, Var::Local(1)), object(THING));
+}
+
+#[test]
+fn objects_of_unrelated_types_leave_some_reference_and_a_derived_one_its_base() {
+    let names = Names::default();
+    let kind_in = |project: &Project| {
+        let stmts = vec![
+            set(0, made(THING)),
+            set(0, made(OTHER)),
+            set(0, made(THIRD)),
+        ];
+        let mut f = function(stmts);
+        run_in(&mut f, &kinded(&names, project), &mut Stats::default());
+        kind_of(&f, Var::Local(0))
+    };
+    // Not the last of the three.
+    assert_eq!(kind_in(Project::empty()), Kind::Pointer);
+
+    let mut project = Project::default();
+    for derived in [0xBB, 0xCC] {
+        let facts = TypeFacts {
+            base: Some(TypeKey(0xAA)),
+            ..TypeFacts::default()
+        };
+        project.types.insert(TypeKey(derived), facts);
+    }
+    assert_eq!(kind_in(&project), object(THING));
+}
+
+#[test]
+fn a_global_the_project_types_types_what_is_read_from_it() {
+    let global = |offset: u32| {
+        Expr::Var(Var::Global {
+            program: 0x1122_3344,
+            offset,
+            statics: false,
+        })
+    };
+    let mut project = Project::default();
+    let info = project.programs.entry(0x1122_3344).or_default();
+    info.globals.insert(0x48, object(THING));
+    let f = typed_in(vec![set(0, global(0x48)), set(1, global(0x50))], &project);
+    assert_eq!(kind_of(&f, Var::Local(0)), object(THING));
+    assert_eq!(kind_of(&f, Var::Local(1)), Kind::Unknown);
+}
+
+#[test]
+fn a_kind_another_pass_wrote_is_evidence_and_goes_where_the_code_disagrees() {
+    let stated = |kind: Kind| VarInfo {
+        width: Width::Cell,
+        kind,
+        name: None,
+    };
+    let mut f = function(vec![
+        set(2, listed(BinOp::Lt, as_i32(param(0)), int(5))),
+        set(3, listed(BinOp::Mul, as_f32(param(1)), float(2.0))),
+        set(4, param(2)),
+    ]);
+    for n in 0..3 {
+        f.head.vars.insert(Var::Param(n), stated(Kind::I32));
+    }
+    let names = Names::default();
+    run_in(
+        &mut f,
+        &kinded(&names, Project::empty()),
+        &mut Stats::default(),
+    );
+    assert_eq!(kind_of(&f, Var::Param(0)), Kind::I32);
+    // Read as a float: neither kind is the parameter's.
+    assert_eq!(kind_of(&f, Var::Param(1)), Kind::Unknown);
+    // Nothing in the code types the copy but the kind its source was given.
+    assert_eq!(kind_of(&f, Var::Local(4)), Kind::I32);
+}
+
+#[test]
+fn a_value_of_several_cells_keeps_the_type_another_pass_proved() {
+    let slot = Var::Value { at: 0x10, index: 0 };
+    let proved = Kind::Value {
+        ty: THING.to_owned(),
+        cells: 3,
+    };
+    let mut f = function(vec![Stmt::Assign {
+        target: slot,
+        value: Expr::ZeroSlots(3),
+    }]);
+    let info = VarInfo {
+        width: Width::Cells,
+        kind: proved.clone(),
+        name: None,
+    };
+    f.head.vars.insert(slot, info);
+    run(&mut f, &Names::default(), &mut Stats::default());
+    assert_eq!(kind_of(&f, slot), proved);
+}
+
+#[test]
+fn a_narrower_variable_read_as_an_int_keeps_its_kind_and_a_bool_its_cast() {
+    let stmts = || {
+        vec![
+            // Above an address handed on, so that no cell here is known to be widened as its kind.
+            used(vec![address(0)]),
+            set(1, load(Scalar::U8, param(0), 0x20)),
+            set(2, listed(BinOp::Lt, as_i32(local(1)), int(3))),
+            set(3, listed(BinOp::Lt, as_i32(param(1)), as_i32(param(2)))),
+            set(4, listed(BinOp::Add, as_i32(local(3)), int(1))),
+        ]
+    };
+    let f = typed_in(stmts(), Project::empty());
+    // ⚠ Read past the byte it is given and not proved to hold no more: no kind, and its cast stays.
+    assert_eq!(kind_of(&f, Var::Local(1)), Kind::Unknown);
+    assert_eq!(
+        f.cfg.blocks[0].stmts[2],
+        set(2, at(Kind::I32, BinOp::Lt, as_i32(local(1)), int(3)))
+    );
+    // C# adds no `bool` to a number: the cast is what makes one of it.
+    assert_eq!(kind_of(&f, Var::Local(3)), Kind::Bool);
+    assert_eq!(
+        f.cfg.blocks[0].stmts[4],
+        set(4, at(Kind::I32, BinOp::Add, as_i32(local(3)), int(1)))
+    );
+
+    // With `signs` off the read makes an `int` of the variable, as it always did.
+    let f = typed_function(stmts(), &Names::default());
+    assert_eq!(kind_of(&f, Var::Local(1)), Kind::I32);
+}
+
+#[test]
+fn a_number_read_past_its_kind_and_not_proved_widened_keeps_no_kind() {
+    let ordered = |n: u32| set(n, listed(BinOp::Lt, as_i32(local(0)), int(5)));
+    let loaded = || set(0, load(Scalar::U64, param(0), 8));
+    // Eight bytes loaded, read as an `int` and handed on whole: an `int` would hide the other 32 bits.
+    let f = typed_function(
+        vec![loaded(), ordered(1), used(vec![local(0)])],
+        &Names::default(),
+    );
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+    assert_eq!(f.cfg.blocks[0].stmts[1], ordered(1));
+
+    // Read as an `int` alone, nothing sees more of the cell than an `int` holds.
+    let f = typed_function(vec![loaded(), ordered(1)], &Names::default());
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::I32);
+    assert_eq!(
+        f.cfg.blocks[0].stmts[1],
+        set(1, at(Kind::I32, BinOp::Lt, local(0), int(5)))
+    );
+
+    // Four bytes loaded widen as an `int` does: the whole cell is the `int`.
+    let narrow = set(0, load(Scalar::I32, param(0), 8));
+    let f = typed_function(
+        vec![narrow, ordered(1), used(vec![local(0)])],
+        &Names::default(),
+    );
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::I32);
+
+    // A copy of a variable that lost its kind takes a whole cell from it, and loses its own.
+    let copied = vec![
+        loaded(),
+        set(2, local(0)),
+        set(3, listed(BinOp::Lt, as_i32(local(2)), int(5))),
+        used(vec![local(2)]),
+        ordered(1),
+    ];
+    let f = typed_function(copied, &Names::default());
+    assert_eq!(kind_of(&f, Var::Local(2)), Kind::Unknown);
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
 }

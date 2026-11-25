@@ -229,6 +229,7 @@ not (
       test(/^codec::texture::image::tests::/)
       | test(/^container::rpf::crypto::encrypt_cache::tests::/)
       | test(/^gta5::texture_dict::tests::/)
+      | test(/^gta6::script::exec::corpus::/)
       | test(/^meta::binary::pso::chks::tests::every_clear_pso_body/)
       | test(/^meta::typed::tests::/)
       | test(/^mrf::tests::/)
@@ -247,6 +248,7 @@ not (
   | binary_id(=or-io::gta6_mount_every_nested_table)
   | binary_id(=or-io::gta6_string_blobs)
   | binary_id(=or-io::gta6_rpf9_toc_roundtrips_through_encrypt)
+  | binary_id(=or-io::gta6_script_refuses_hostile_input)
   | binary_id(=or-io-verify::a_save_pads_a_chain_the_size_word_cannot_state)
   | binary_id(=or-io-verify::bounds)
   | binary_id(=or-io-verify::clip_dict)
@@ -479,5 +481,13 @@ priority = 100
 # It took three minutes alone, so under the load of a whole-workspace run it is held to forty-five, and starts first.
 [[profile.all.overrides]]
 filter = 'test(the_typed_world_family_names_only_what_the_install_states_and_the_rules_fire_on_few_of_its_maps)'
+slow-timeout = { period = "60s", terminate-after = 45 }
+priority = 100
+
+# The GTA VI script suites over a folder run every function of 1.9 GiB of listings through the passes on eight threads
+# of their own. No run of them is timed yet, so they are held to forty-five minutes, and start first.
+[[profile.all.overrides]]
+filter = 'test(/^gta6::script::exec::corpus::/)'
+threads-required = 8
 slow-timeout = { period = "60s", terminate-after = 45 }
 priority = 100

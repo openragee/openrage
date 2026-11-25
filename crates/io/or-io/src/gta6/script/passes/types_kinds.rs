@@ -13,6 +13,9 @@ pub(super) enum Lat {
     /// A 32-bit integer of either sign: only zero tests, equality and bit operations read it.
     Int32,
     Is(Kind),
+    /// A reference to one of several types that have nothing to do with each other.
+    // ⚠ Not `Is(Pointer)`, which the next named type would replace: this one stays.
+    Refs,
     /// The evidence disagrees, so the value stays untyped.
     Conflict,
 }
@@ -23,6 +26,9 @@ impl Lat {
         match (self, other) {
             (Lat::None, known) | (known, Lat::None) => known.clone(),
             (Lat::Conflict, _) | (_, Lat::Conflict) => Lat::Conflict,
+            (Lat::Refs, Lat::Refs) => Lat::Refs,
+            (Lat::Refs, Lat::Is(kind)) | (Lat::Is(kind), Lat::Refs) if reference(kind) => Lat::Refs,
+            (Lat::Refs, _) | (_, Lat::Refs) => Lat::Conflict,
             (Lat::Int32, Lat::Int32) => Lat::Int32,
             (Lat::Int32, Lat::Is(kind)) | (Lat::Is(kind), Lat::Int32) => match int32_like(kind) {
                 true => Lat::Is(kind.clone()),
@@ -45,8 +51,43 @@ impl Lat {
         match self {
             Lat::Int32 => Kind::I32,
             Lat::Is(kind) => kind.clone(),
+            Lat::Refs => Kind::Pointer,
             Lat::None | Lat::Conflict => Kind::Unknown,
         }
+    }
+}
+
+/// What a kind that a signature, a layout or another pass states says of one cell.
+// A value of several cells, or of a type held in place, is not a kind this lattice joins.
+pub(super) fn stated(kind: &Kind) -> Lat {
+    match kind {
+        Kind::Unknown | Kind::Vector | Kind::Handle | Kind::Aggregate(_) | Kind::Value { .. } => {
+            Lat::None
+        }
+        kind => Lat::Is(kind.clone()),
+    }
+}
+
+/// What a field of this kind says of the cell an access of `bytes` bytes loads from it or stores to it.
+// ⚠ No sign for a 32-bit integer: a layout's sign may be a default, and the reads of the value decide.
+pub(super) fn field(kind: &Kind, bytes: u32) -> Lat {
+    match (kind, bytes) {
+        (Kind::I32 | Kind::U32, 4) => Lat::Int32,
+        (Kind::F32 | Kind::Hash, 4) | (Kind::F64, 8) => Lat::Is(kind.clone()),
+        (kind, 8) if reference(kind) => Lat::Is(kind.clone()),
+        _ => Lat::None,
+    }
+}
+
+/// The bytes an integer constant fills, 1, 2 or 4; 0 for a float and for a cell 32 bits do not widen to.
+pub(super) fn integer_bytes(c: &Const) -> u32 {
+    let odd = c.kind == Kind::F32 && !plausible_float(c.bits as u32);
+    let fits = normal(&Kind::I32, c.bits) || normal(&Kind::U32, c.bits);
+    match c.kind.is_integer() || odd {
+        true if c.bits <= 0xFF => 1,
+        true if c.bits <= 0xFFFF => 2,
+        true if fits => 4,
+        _ => 0,
     }
 }
 
@@ -66,8 +107,16 @@ fn int32_like(kind: &Kind) -> bool {
 }
 
 /// Whether a value of this kind is a reference.
-fn reference(kind: &Kind) -> bool {
-    matches!(kind, Kind::Pointer | Kind::Object(_) | Kind::String)
+pub(super) fn reference(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Pointer | Kind::Object(_) | Kind::String | Kind::Array(_)
+    )
+}
+
+/// Whether a kind says what a reference points at.
+pub(super) fn named(kind: &Kind) -> bool {
+    reference(kind) && *kind != Kind::Pointer
 }
 
 /// Whether evidence of `narrow` and of `wide` together is a variable of kind `wide`.
@@ -80,7 +129,7 @@ pub(super) fn thin(lat: &Lat) -> bool {
     match lat {
         Lat::Int32 => true,
         Lat::Is(kind) => int32_like(kind) || *kind == Kind::F32,
-        Lat::None | Lat::Conflict => false,
+        Lat::None | Lat::Refs | Lat::Conflict => false,
     }
 }
 
@@ -97,6 +146,16 @@ pub(super) fn narrow(kind: &Kind) -> bool {
             | Kind::U32
             | Kind::F32
     )
+}
+
+/// The bytes a number narrower than a cell fills; `None` for any other kind.
+pub(super) fn number_bytes(kind: &Kind) -> Option<u32> {
+    match kind {
+        Kind::I8 | Kind::U8 => Some(1),
+        Kind::I16 | Kind::U16 => Some(2),
+        Kind::I32 | Kind::U32 | Kind::F32 => Some(4),
+        _ => None,
+    }
 }
 
 /// Whether a cell widened as a value of `from` reads as the same value through `to`.
@@ -189,7 +248,9 @@ pub(super) fn retype(c: &mut Const, want: &Kind) {
             c.kind = want.clone();
         }
         Kind::I64 | Kind::U64 if integer => c.kind = want.clone(),
-        Kind::Pointer | Kind::Object(_) | Kind::String if integer && c.bits == 0 => {
+        Kind::Pointer | Kind::Object(_) | Kind::String | Kind::Array(_)
+            if integer && c.bits == 0 =>
+        {
             c.kind = Kind::Pointer;
         }
         // Nothing reads it as a float: the cell is the same number either way.

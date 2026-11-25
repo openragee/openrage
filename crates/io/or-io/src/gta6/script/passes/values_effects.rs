@@ -3,12 +3,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::gta6::script::cfg::{self, Cfg};
-use crate::gta6::script::ir::{Callee, Expr, Head, Kind, Scalar, Stmt, Var, Width};
+use crate::gta6::script::cfg::{self, BlockId, Cfg};
+use crate::gta6::script::ir::{BinOp, Callee, Expr, Head, Kind, Scalar, Stmt, Var, Width};
+
+/// How many statements past its assignment a new object is followed before it is taken to be in other hands.
+const HELD: usize = 256;
 
 /// How one variable is used over a whole function.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct Uses {
+pub(in crate::gta6::script::passes) struct Uses {
     /// Assignments that name it.
     pub defs: u32,
     /// Times its value is read by name.
@@ -21,7 +24,7 @@ pub(super) struct Uses {
 
 /// A variable, or a run of frame cells, that an evaluation reads or writes without a pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Place {
+pub(in crate::gta6::script::passes) enum Place {
     /// Cells `lo..=hi` of the locals, or of the parameters.
     Frame {
         params: bool,
@@ -52,6 +55,60 @@ impl Place {
     }
 }
 
+/// The statements of one block through which a new object is in no hands but its variable's: those after `from` and before `until`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Window {
+    block: BlockId,
+    from: usize,
+    until: usize,
+}
+
+impl Window {
+    fn holds(self, at: Option<(BlockId, usize)>) -> bool {
+        at.is_some_and(|(block, k)| block == self.block && self.from < k && k < self.until)
+    }
+}
+
+/// A load or a store through a variable that holds an address, and the bytes it covers from there.
+#[derive(Clone, Copy, Debug)]
+struct Based {
+    base: Var,
+    lo: u32,
+    /// `None` where nothing states how far the access runs.
+    hi: Option<u32>,
+    /// Where the object the variable holds is in no other hands, if the function made it.
+    window: Option<Window>,
+}
+
+impl Based {
+    fn apart(&self, other: &Based) -> bool {
+        self.hi.is_some_and(|hi| hi < other.lo) || other.hi.is_some_and(|hi| hi < self.lo)
+    }
+}
+
+/// The reads of `var` in `top` that are not the address a load goes through.
+fn loose(top: &Expr, var: Var) -> i64 {
+    let mut count = 0;
+    top.walk(&mut |e| match e {
+        Expr::Var(read) if *read == var => count += 1,
+        Expr::Load { addr, .. } | Expr::LoadBytes { addr, .. }
+            if matches!(&**addr, Expr::Var(base) if *base == var) =>
+        {
+            count -= 1;
+        }
+        _ => {}
+    });
+    count
+}
+
+/// The reads of `var` in a statement that are not the address a load or a store goes through.
+fn loose_in(stmt: &Stmt, var: Var) -> i64 {
+    let mut count = 0;
+    stmt.each_expr(&mut |top| count += loose(top, var));
+    let through = matches!(stored(stmt), Some((Expr::Var(base), ..)) if *base == var);
+    count - i64::from(through)
+}
+
 /// The cells `bytes` bytes at `offset` from cell `first` cover; a count nothing states runs to the frame's end.
 fn span(first: u32, offset: u32, bytes: Option<u32>) -> (u32, u32) {
     let lo = first.saturating_add(offset / 8);
@@ -63,7 +120,7 @@ fn span(first: u32, offset: u32, bytes: Option<u32>) -> (u32, u32) {
 }
 
 /// The address a store goes through, the offset it writes at and the bytes it writes, where the statement says.
-pub(super) fn stored(stmt: &Stmt) -> Option<(&Expr, u32, Option<u32>)> {
+pub(in crate::gta6::script::passes) fn stored(stmt: &Stmt) -> Option<(&Expr, u32, Option<u32>)> {
     match stmt {
         Stmt::Store {
             kind, addr, offset, ..
@@ -82,7 +139,7 @@ pub(super) fn stored(stmt: &Stmt) -> Option<(&Expr, u32, Option<u32>)> {
 }
 
 /// Calls `f` on every expression at the top of a statement or of a terminator.
-pub(super) fn each_top<'a>(cfg: &'a Cfg, f: &mut impl FnMut(&'a Expr)) {
+pub(in crate::gta6::script::passes) fn each_top<'a>(cfg: &'a Cfg, f: &mut impl FnMut(&'a Expr)) {
     for block in &cfg.blocks {
         for stmt in &block.stmts {
             stmt.each_expr(f);
@@ -93,7 +150,7 @@ pub(super) fn each_top<'a>(cfg: &'a Cfg, f: &mut impl FnMut(&'a Expr)) {
     }
 }
 
-pub(super) fn each_top_mut(cfg: &mut Cfg, f: &mut impl FnMut(&mut Expr)) {
+pub(in crate::gta6::script::passes) fn each_top_mut(cfg: &mut Cfg, f: &mut impl FnMut(&mut Expr)) {
     for block in &mut cfg.blocks {
         for stmt in &mut block.stmts {
             stmt.each_expr_mut(f);
@@ -118,6 +175,7 @@ fn operands<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
         | Expr::StringConstant { .. }
         | Expr::BuiltinGlobal(_) => {}
         Expr::Cell { base: inner, .. }
+        | Expr::Sugar { e: inner, .. }
         | Expr::Cast { e: inner, .. }
         | Expr::Truth(inner)
         | Expr::Unary { e: inner, .. }
@@ -156,7 +214,7 @@ fn operands<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
 
 /// Appends the nodes of `top`, each after the nodes it works on: the order evaluation finishes them in.
 // An arm of a ternary is listed whether or not it would run, which only adds to what came before.
-pub(super) fn evaluated<'a>(top: &'a Expr, out: &mut Vec<&'a Expr>) {
+pub(in crate::gta6::script::passes) fn evaluated<'a>(top: &'a Expr, out: &mut Vec<&'a Expr>) {
     let mut stack = vec![(top, false)];
     while let Some((e, opened)) = stack.pop() {
         if opened {
@@ -170,8 +228,29 @@ pub(super) fn evaluated<'a>(top: &'a Expr, out: &mut Vec<&'a Expr>) {
     }
 }
 
+/// Calls `f` on the address of every load that evaluating `top` is sure to make: an arm that may not run is not looked into.
+pub(in crate::gta6::script::passes) fn sure_loads<'a>(top: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
+    let mut stack = vec![top];
+    while let Some(e) = stack.pop() {
+        match e {
+            Expr::Select { cond, .. } => stack.push(cond),
+            Expr::Binary {
+                op: BinOp::LogicalAnd | BinOp::LogicalOr,
+                l,
+                ..
+            } => stack.push(l),
+            other => {
+                if let Expr::Load { addr, .. } | Expr::LoadBytes { addr, .. } = other {
+                    f(addr);
+                }
+                operands(other, &mut |operand| stack.push(operand));
+            }
+        }
+    }
+}
+
 /// How many expressions deep `top` nests.
-pub(super) fn depth(top: &Expr) -> usize {
+pub(in crate::gta6::script::passes) fn depth(top: &Expr) -> usize {
     let mut deepest = 0;
     let mut stack = vec![(top, 1usize)];
     while let Some((e, at)) = stack.pop() {
@@ -182,7 +261,7 @@ pub(super) fn depth(top: &Expr) -> usize {
 }
 
 /// Whether evaluating `e` reads nothing but variables and changes nothing, so that not evaluating it loses nothing.
-pub(super) fn inert(e: &Expr) -> bool {
+pub(in crate::gta6::script::passes) fn inert(e: &Expr) -> bool {
     let mut inert = true;
     e.walk(&mut |node| {
         inert &= match node {
@@ -202,7 +281,7 @@ pub(super) fn inert(e: &Expr) -> bool {
 }
 
 /// Whether an expression is one cell wide by its form.
-pub(super) fn one_cell(head: &Head, e: &Expr) -> bool {
+pub(in crate::gta6::script::passes) fn one_cell(head: &Head, e: &Expr) -> bool {
     match e {
         Expr::Var(var) => head
             .vars
@@ -221,7 +300,10 @@ pub(super) fn one_cell(head: &Head, e: &Expr) -> bool {
 }
 
 /// The cells a many-cell expression yields, where its own form says.
-pub(super) fn cells_of(e: &Expr, widths: &HashMap<Var, u32>) -> Option<u32> {
+pub(in crate::gta6::script::passes) fn cells_of(
+    e: &Expr,
+    widths: &HashMap<Var, u32>,
+) -> Option<u32> {
     match e {
         Expr::ZeroSlots(cells) => Some(*cells),
         Expr::Call {
@@ -277,7 +359,7 @@ impl Scan {
 }
 
 /// What holds of a function's variables wherever they are used.
-pub(super) struct Facts {
+pub(in crate::gta6::script::passes) struct Facts {
     pub uses: HashMap<Var, Uses>,
     /// The cells of each many-cell variable whose width something states.
     pub widths: HashMap<Var, u32>,
@@ -293,6 +375,10 @@ pub(super) struct Facts {
     addressed: [Option<u32>; 2],
     /// The lowest of each whose address goes where a later call or store may use it.
     escaped: [Option<u32>; 2],
+    /// Whether two accesses are told apart by the variables their addresses are in (`escape`).
+    fine: bool,
+    /// The variables given an object the function makes, and where each object is still in no other hands.
+    fresh: HashMap<Var, Window>,
 }
 
 impl Facts {
@@ -457,7 +543,75 @@ impl Facts {
             held,
             addressed,
             escaped,
+            fine: false,
+            fresh: HashMap::new(),
         }
+    }
+
+    /// [`Facts::of`] with the finer model of what two accesses may share: by the variable each address is in, and by the objects the function has just made.
+    // ⚠ An object is in no other hands only until the first statement that mentions its variable
+    // other than as the address of a load or a store: from there a copy of the reference may be
+    // anywhere.
+    pub fn finer(f: &cfg::Function) -> Facts {
+        let mut facts = Facts::of(f);
+        facts.fine = true;
+        for (b, block) in f.cfg.blocks.iter().enumerate() {
+            for (i, stmt) in block.stmts.iter().enumerate() {
+                let Stmt::Assign {
+                    target,
+                    value: Expr::NewObject(_) | Expr::NewArray { .. },
+                } = stmt
+                else {
+                    continue;
+                };
+                let var = *target;
+                let once = facts.uses.get(&var).is_some_and(|uses| uses.defs == 1);
+                let narrow = (f.head.vars.get(&var)).is_none_or(|info| info.width != Width::Cells);
+                if !(once && narrow && facts.named_only(var)) {
+                    continue;
+                }
+                let end = block.stmts.len().min(i + 1 + HELD);
+                let handed = (i + 1..end).find(|k| loose_in(&block.stmts[*k], var) > 0);
+                let until = match handed {
+                    Some(k) => k,
+                    None if end < block.stmts.len() => end,
+                    None => match block.term.expr().is_some_and(|e| loose(e, var) > 0) {
+                        true => end,
+                        false => end + 1,
+                    },
+                };
+                let window = Window {
+                    block: b,
+                    from: i,
+                    until,
+                };
+                facts.fresh.insert(var, window);
+            }
+        }
+        facts
+    }
+
+    /// Whether `var` holds an object the function made that is in no other hands at statement `at.1` of block `at.0`.
+    pub fn fresh_at(&self, var: Var, at: (BlockId, usize)) -> bool {
+        (self.fresh.get(&var)).is_some_and(|window| window.holds(Some(at)))
+    }
+
+    /// Whether `var` only holds the address of a variable, to load and store through.
+    pub fn holds_address(&self, var: Var) -> bool {
+        self.holders.contains_key(&var)
+    }
+
+    /// The access a load or a store of `bytes` bytes at `offset` from `addr` is, where the address is a variable only an assignment changes.
+    fn based(&self, addr: &Expr, offset: u32, bytes: Option<u32>) -> Option<Based> {
+        let Expr::Var(base) = addr else {
+            return None;
+        };
+        (self.fine && self.named_only(*base)).then(|| Based {
+            base: *base,
+            lo: offset,
+            hi: bytes.map(|bytes| offset.saturating_add(bytes.max(1) - 1)),
+            window: self.fresh.get(base).copied(),
+        })
     }
 
     /// The place a variable's own name reads or writes; a global has none.
@@ -620,7 +774,7 @@ fn class(name: &str) -> Class {
 
 /// What evaluating something does that bears on moving it past something else.
 #[derive(Clone, Debug, Default)]
-pub(super) struct Effects {
+pub(in crate::gta6::script::passes) struct Effects {
     /// A call, which may read and write whatever a pointer reaches.
     pub call: bool,
     /// A write through a pointer or to a global.
@@ -635,17 +789,33 @@ pub(super) struct Effects {
     writes_exposed: bool,
     reads: Vec<Place>,
     writes: Vec<Place>,
+    /// The finer model of [`Facts::finer`] is the one asked for.
+    fine: bool,
+    /// A load, and a store, that the finer model knows no variable for: through a computed address, or of a global.
+    loose_load: bool,
+    loose_store: bool,
+    /// The loads and the stores through a variable that holds an address.
+    loads: Vec<Based>,
+    stores: Vec<Based>,
+    /// The statement these are the effects of, where one moving value is weighed against it.
+    site: Option<(BlockId, usize)>,
 }
 
 impl Effects {
     pub fn of_expr(facts: &Facts, e: &Expr) -> Effects {
-        let mut effects = Effects::default();
+        let mut effects = Effects {
+            fine: facts.fine,
+            ..Effects::default()
+        };
         e.walk(&mut |node| effects.node(facts, node));
         effects
     }
 
     pub fn of_stmt(facts: &Facts, stmt: &Stmt) -> Effects {
-        let mut effects = Effects::default();
+        let mut effects = Effects {
+            fine: facts.fine,
+            ..Effects::default()
+        };
         stmt.each_expr(&mut |e| e.walk(&mut |node| effects.node(facts, node)));
         match stmt {
             Stmt::Assign { target, .. } => effects.write(facts, facts.place(*target)),
@@ -683,16 +853,18 @@ impl Effects {
                 ..
             } => match class(name) {
                 Class::Pure => {}
-                Class::Reads => self.load = true,
+                Class::Reads => self.read(facts, None),
                 Class::Boxes => {
                     self.alloc = true;
-                    self.load |= name == "box_at";
+                    if name == "box_at" {
+                        self.read(facts, None);
+                    }
                 }
                 Class::Calls => self.call = true,
             },
             Expr::Call { .. } => self.call = true,
             Expr::NewObject(_) | Expr::NewArray { .. } => self.alloc = true,
-            Expr::VirtualFunctionRef { .. } | Expr::BuiltinGlobal(_) => self.load = true,
+            Expr::VirtualFunctionRef { .. } | Expr::BuiltinGlobal(_) => self.read(facts, None),
             _ => {}
         }
     }
@@ -704,8 +876,13 @@ impl Effects {
         for place in places {
             self.read(facts, Some(place));
         }
-        if !known {
-            self.read(facts, None);
+        match (known, facts.based(addr, offset, bytes)) {
+            (true, _) => {}
+            (false, Some(access)) => {
+                self.load = true;
+                self.loads.push(access);
+            }
+            (false, None) => self.read(facts, None),
         }
     }
 
@@ -716,8 +893,13 @@ impl Effects {
         for place in places {
             self.write(facts, Some(place));
         }
-        if !known {
-            self.write(facts, None);
+        match (known, facts.based(addr, offset, bytes)) {
+            (true, _) => {}
+            (false, Some(access)) => {
+                self.store = true;
+                self.stores.push(access);
+            }
+            (false, None) => self.write(facts, None),
         }
     }
 
@@ -727,7 +909,10 @@ impl Effects {
                 self.reads_exposed |= facts.exposed(place);
                 self.reads.push(place);
             }
-            None => self.load = true,
+            None => {
+                self.load = true;
+                self.loose_load = true;
+            }
         }
     }
 
@@ -737,8 +922,43 @@ impl Effects {
                 self.writes_exposed |= facts.exposed(place);
                 self.writes.push(place);
             }
-            None => self.store = true,
+            None => {
+                self.store = true;
+                self.loose_store = true;
+            }
         }
+    }
+
+    /// These, as the effects of the statement at `site`.
+    pub fn placed(mut self, site: (BlockId, usize)) -> Effects {
+        self.site = Some(site);
+        self
+    }
+
+    /// Whether this may change what a load through a pointer reads.
+    pub fn writes_memory(&self) -> bool {
+        self.call || self.store || self.writes_exposed
+    }
+
+    /// Whether no store of `crossed` can write what a load of this reads, as far as the finer model tells two addresses apart.
+    // Through one variable two accesses meet only where their bytes do. Through two, they may
+    // meet unless one of the variables holds an object that is in no other hands where
+    // `crossed` stands.
+    fn clear_of(&self, crossed: &Effects) -> bool {
+        if !self.fine || crossed.loose_store {
+            return false;
+        }
+        crossed.stores.iter().all(|store| {
+            let fresh = store
+                .window
+                .is_some_and(|window| window.holds(crossed.site));
+            let others = !self.loose_load || fresh;
+            others
+                && self.loads.iter().all(|load| match load.base == store.base {
+                    true => load.apart(store),
+                    false => fresh || load.window.is_some_and(|window| window.holds(crossed.site)),
+                })
+        })
     }
 
     /// Whether evaluating this only reads variables and works on them: it changes nothing and cannot fail.
@@ -762,13 +982,17 @@ impl Effects {
         let through_pointer = crossed.call || crossed.store;
         // A call keeps its place among calls, stores, loads and allocations, and sees every variable a pointer reaches.
         let seen = crossed.reads_exposed || crossed.writes_exposed;
-        if self.call && (through_pointer || crossed.alloc || crossed.load || seen) {
+        // An allocation reads nothing a call or a store writes and writes nothing either reads:
+        // the finer model lets the two change places.
+        let coarse = !self.fine;
+        if self.call && (through_pointer || (crossed.alloc && coarse) || crossed.load || seen) {
             return false;
         }
-        if (self.alloc || self.reads_exposed) && through_pointer {
+        if (self.reads_exposed || (self.alloc && coarse)) && through_pointer {
             return false;
         }
-        if self.load && (through_pointer || crossed.writes_exposed) {
+        let stored = crossed.store && !self.clear_of(crossed);
+        if self.load && (crossed.call || stored || crossed.writes_exposed) {
             return false;
         }
         !self

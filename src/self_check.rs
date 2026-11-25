@@ -23,6 +23,7 @@ use crate::ui::dock::{Tab, Workspace};
 use crate::ui::panel_registry;
 
 mod front_door;
+mod gta6_script;
 #[cfg(test)]
 mod judged_without_an_install;
 #[cfg(test)]

@@ -57,6 +57,8 @@ pub enum DocPayload {
     Gta6Expressions(std::sync::Arc<or_io::gta6::anim::Expressions>),
     /// A GTA VI save, a story save or a record, read from a file.
     Gta6Save(std::sync::Arc<crate::ui::panels::hierarchy::gta6_save::Gta6SaveDocument>),
+    /// A compiled GTA VI script as the source it decompiles to, read only.
+    Gta6Script(std::sync::Arc<super::Gta6ScriptDocument>),
     Text(TextDocument),
     Meta(MetaDocument),
     Hex(HexDocument),
@@ -101,6 +103,7 @@ impl DocPayload {
             DocPayload::Gta6AudioData(_) => DocumentKind::Gta6AudioData,
             DocPayload::Gta6Expressions(_) => DocumentKind::Gta6Expressions,
             DocPayload::Gta6Save(_) => DocumentKind::Gta6Save,
+            DocPayload::Gta6Script(_) => DocumentKind::Gta6Script,
             DocPayload::Text(_) => DocumentKind::Text,
             DocPayload::Meta(_) => DocumentKind::Meta,
             DocPayload::Hex(_) => DocumentKind::Hex,
@@ -120,5 +123,14 @@ impl DocPayload {
 
     pub fn is_enhanced(&self) -> bool {
         self.generation().is_gen9()
+    }
+
+    /// The text a find reads: a text document's, or the source of a GTA VI script.
+    pub fn found_in(&self) -> Option<&ropey::Rope> {
+        match self {
+            DocPayload::Text(text) => Some(&text.text),
+            DocPayload::Gta6Script(script) => Some(&script.source),
+            _ => None,
+        }
     }
 }

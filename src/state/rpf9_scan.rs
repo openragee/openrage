@@ -585,6 +585,9 @@ pub(super) fn read_body(path: &Path, archive: &Path, offset: u64) -> Result<DocP
 /// as text, else its bytes under the reason none reads them. A headerless body (a compiled script, a
 /// texture) is kept as bytes, never decoded as Latin-1 text the way a `.bin` path otherwise would be.
 fn decrypted_payload(path: &Path, bytes: Vec<u8>) -> DocPayload {
+    if let Some(script) = super::document::gta6_script::sniffed(&bytes) {
+        return script;
+    }
     if bytes.starts_with(b"PSIN") || bytes.starts_with(b"RBF0") {
         return DocPayload::Meta(MetaDocument::from_bytes(bytes));
     }
@@ -1081,6 +1084,14 @@ mod ciphered_open {
         assert!(
             matches!(decrypted_payload(path, binary), DocPayload::Hex(_)),
             "a headerless binary body keeps its bytes under the banner, not decoded as text"
+        );
+
+        // A compiled script starts with eight zero bytes, and so does a body that is none.
+        let zeros = vec![0u8; 64];
+        let banner = super::super::document_io::no_reader(path);
+        assert!(
+            matches!(decrypted_payload(path, zeros), DocPayload::Hex(hex) if hex.banner == banner),
+            "a body of zero bytes is no script and keeps its bytes under the banner"
         );
     }
 }

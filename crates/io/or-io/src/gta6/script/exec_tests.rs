@@ -7,15 +7,21 @@
 //! ⚠ A load is no event: two loads may change places, and one nothing reads may go.
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use super::cfg::{self, Terminator};
-use super::ir::{BinOp, Callee, Expr, Kind, Returns, Scalar, Stmt, UnOp, Var, Width};
+use super::ir::{
+    BinOp, Callee, Expr, FunctionKey, Kind, Returns, Scalar, Stmt, UnOp, Var, VarInfo, Width,
+};
 use super::listing::Listing;
 use super::passes;
+use super::project::Signature;
 use super::tree;
-use super::{Names, Stats};
+use super::{Context, Level, Names, Options, Project, Stats};
+
+#[path = "exec_corpus_tests.rs"]
+mod corpus;
 
 const LOCALS: u64 = 0xA1 << 56;
 const PARAMS: u64 = 0xA2 << 56;
@@ -24,9 +30,36 @@ const GLOBALS: u64 = 0xA4 << 56;
 const STATICS: u64 = 0xA5 << 56;
 const HEAP: u64 = 0xA6 << 56;
 
-/// The statements and jumps one run may take, and the events it may record.
-const STEPS: usize = 3000;
-const EVENTS: usize = 200;
+/// What a run may take: statements and jumps, events, and the seeds past the first [`SEEDS`] that are tried for blocks none has entered.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Limits {
+    pub steps: usize,
+    pub events: usize,
+    pub more: u64,
+}
+
+impl Limits {
+    /// What a test written by hand runs at.
+    pub(crate) const DEFAULT: Limits = Limits {
+        steps: 3000,
+        events: 200,
+        more: 0,
+    };
+    /// What the suite over a folder runs at: some of its functions hold more than 3,000 statements.
+    pub(crate) const CORPUS: Limits = Limits {
+        steps: 20_000,
+        events: 2000,
+        more: 60,
+    };
+}
+
+/// The seeds in a row that enter no new block before no more are tried.
+const STALE: u64 = 8;
+
+/// The most cells one value is made of, and the most a frame holds.
+// ⚠ A count is what the input states: past these a run is recorded as not made, never sized.
+const CELLS: u32 = 4096;
+const FRAME_CELLS: u32 = 1 << 16;
 
 fn mix(x: u64) -> u64 {
     let x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -106,6 +139,12 @@ pub(crate) struct Run {
     pub cut: bool,
     /// What the oracle could not run, where it met such a thing.
     pub unsupported: Option<String>,
+    /// The blocks the run entered, by `BlockId`.
+    pub reached: Vec<bool>,
+    /// The cells handed back by script functions whose result the project gives no kind.
+    // Such a function may return constants alone, whose range no table keeps: a function that
+    // hands its result on is then proved of a kind the made-up cell need not be.
+    pub unstated: HashSet<u64>,
 }
 
 enum Val {
@@ -279,6 +318,8 @@ fn var_addr(var: Var) -> u64 {
 
 struct Machine<'f> {
     f: &'f cfg::Function,
+    /// What states the cells a script function returns where a call of it does not.
+    project: &'f Project,
     seed: u64,
     /// The cells written, by address; one never written reads as its default.
     cells: HashMap<u64, u64>,
@@ -296,13 +337,22 @@ struct Machine<'f> {
     low_temps: BTreeMap<u64, u64>,
     run: Run,
     steps: usize,
+    limits: Limits,
 }
 
-impl Machine<'_> {
+impl<'f> Machine<'f> {
     fn unsupported(&mut self, what: &str) {
         if self.run.unsupported.is_none() {
             self.run.unsupported = Some(what.to_owned());
         }
+    }
+
+    /// Whether a value of `cells` cells is made; one of more than [`CELLS`] is what the oracle does not run.
+    fn sized(&mut self, cells: u32) -> bool {
+        if cells > CELLS {
+            self.unsupported("a value of more cells than the oracle makes");
+        }
+        cells <= CELLS
     }
 
     fn cell(&self, addr: u64) -> u64 {
@@ -417,7 +467,9 @@ impl Machine<'_> {
             (_, Width::Cells) if temporary => {
                 Some(self.widths.get(&var_addr(var)).copied().unwrap_or(1))
             }
-            (Kind::Aggregate(cells), _) => Some(*cells as usize),
+            (Kind::Aggregate(cells), _) => Some((*cells).min(CELLS) as usize),
+            // A struct held in place, a parameter as much as a local.
+            (Kind::Value { cells, .. }, Width::Cells) => Some((*cells).min(CELLS) as usize),
             (Kind::Vector | Kind::Handle, Width::Cells) => Some(2),
             _ => None,
         }
@@ -451,7 +503,24 @@ impl Machine<'_> {
         HEAP | ((what & 0xFF_FFFF) << 32) | ((*count & 0xFFFF) << 16)
     }
 
+    /// What the project states of the script function a call reaches.
+    fn signature(&self, callee: &Callee) -> Option<&'f Signature> {
+        let key = match callee {
+            Callee::Local { at, .. } => FunctionKey::new(self.f.head.program, *at),
+            Callee::Import { program, at, .. } => FunctionKey::new(*program, *at),
+            _ => return None,
+        };
+        self.project.signatures.get(&key)
+    }
+
     fn call(&mut self, callee: &Callee, args: &[Expr], returns: Option<u32>) -> Val {
+        // ⚠ A call that states no cells yields those its callee's signature states: a pass that
+        // writes them into the call must find the run it is held against made of the same cells.
+        let stated = self.signature(callee);
+        let returns = returns.or_else(|| stated.map(|held| held.returns));
+        if returns.is_some_and(|cells| !self.sized(cells)) {
+            return Val::One(0);
+        }
         let mut cells = Vec::with_capacity(args.len());
         for arg in args {
             match (arg, self.eval(arg)) {
@@ -467,6 +536,10 @@ impl Machine<'_> {
                 if let Some(ty) = read_as(name, n) {
                     *cell = cast(ty, *cell);
                 }
+            }
+            // A conversion between integers is what the runtime computes of the cell, and nothing made up.
+            if let Some(exact) = converted(name, cells.first().copied()) {
+                return Val::One(exact);
             }
             let of_args = cells.iter().fold(id, |h, cell| mix2(h, typed(*cell)));
             // What the runtime computes comes out as the type it computed at.
@@ -517,7 +590,21 @@ impl Machine<'_> {
             let new = made(mix2(mix2(self.seed ^ 0xC10B, addr), n));
             self.cells.insert(addr, new);
         }
-        self.yielded(mix2(mix2(self.seed, id), n), returns)
+        // ⚠ A function whose own code proves what its one cell is returns a cell widened as
+        // that: a pass may read `f() != 0` as `f()`, or `as_u32(f())` as `f()`, on that proof,
+        // which a made-up cell of any bits would deny. `check_blocks` holds the proof to the code.
+        match (stated, self.yielded(mix2(mix2(self.seed, id), n), returns)) {
+            (Some(stated), Val::One(cell)) if stated.result != Kind::Unknown => {
+                Val::One(widened(&stated.result, cell))
+            }
+            (_, Val::One(cell)) => {
+                if matches!(callee, Callee::Local { .. } | Callee::Import { .. }) {
+                    self.run.unstated.insert(cell);
+                }
+                Val::One(cell)
+            }
+            (_, made) => made,
+        }
     }
 
     /// The cells something yields: as many as it states, four where it states none.
@@ -545,6 +632,8 @@ impl Machine<'_> {
                 (None, _) => self.cell(var_addr(*var)),
             },
             Expr::GuidEmpty => return Val::Many(vec![0, 0]),
+            // A source reading changes nothing of what is evaluated.
+            Expr::Sugar { e, .. } => return self.eval(e),
             Expr::Cell { base, index } => match self.eval(base) {
                 Val::One(cell) if *index == 0 => cell,
                 Val::One(_) => 0,
@@ -611,6 +700,9 @@ impl Machine<'_> {
             } => {
                 let addr = self.eval(addr).one().wrapping_add(u64::from(*offset));
                 let cells = bytes.div_ceil(8);
+                if !self.sized(cells) {
+                    return Val::One(0);
+                }
                 let load = |n: u32| {
                     self.read(addr.wrapping_add(8 * u64::from(n)), (*bytes - 8 * n).min(8))
                 };
@@ -621,6 +713,9 @@ impl Machine<'_> {
                 offset,
                 bytes,
             } => {
+                if !self.sized(bytes.div_ceil(8)) {
+                    return Val::One(0);
+                }
                 let mut cells = Vec::new();
                 self.eval(value).push_to(&mut cells);
                 let byte = |at: u32| -> u64 {
@@ -640,7 +735,12 @@ impl Machine<'_> {
                 base.wrapping_add(self.eval(offset).one())
             }
             Expr::AddrOf { var, cell } => var_addr(*var).wrapping_add(8 * u64::from(*cell)),
-            Expr::ZeroSlots(cells) => return Val::Many(vec![0; *cells as usize]),
+            Expr::ZeroSlots(cells) => {
+                return match self.sized(*cells) {
+                    true => Val::Many(vec![0; *cells as usize]),
+                    false => Val::One(0),
+                }
+            }
             Expr::Vector3(parts) => {
                 let x = self.eval(&parts[0]).one() & 0xFFFF_FFFF;
                 let y = self.eval(&parts[1]).one() & 0xFFFF_FFFF;
@@ -851,6 +951,9 @@ impl Machine<'_> {
                 bytes,
                 value,
             } => {
+                if !self.sized(bytes.div_ceil(8)) {
+                    return;
+                }
                 let addr = self.eval(addr).one().wrapping_add(u64::from(*offset));
                 let mut cells = Vec::new();
                 self.eval(value).push_to(&mut cells);
@@ -876,6 +979,9 @@ impl Machine<'_> {
                 }
             }
             Stmt::ZeroBytes { addr, bytes } => {
+                if !self.sized(bytes.div_ceil(8)) {
+                    return;
+                }
                 let addr = self.eval(addr).one();
                 for n in 0..bytes.div_ceil(8) {
                     self.write(
@@ -909,12 +1015,16 @@ impl Machine<'_> {
                 self.unsupported("a jump to no block");
                 return;
             };
+            if let Some(entered) = self.run.reached.get_mut(b) {
+                *entered = true;
+            }
             for stmt in &block.stmts {
                 self.stmt(stmt);
                 self.steps += 1;
             }
             self.steps += 1;
-            let over = self.steps > STEPS || self.run.events.len() > EVENTS;
+            let limits = self.limits;
+            let over = self.steps > limits.steps || self.run.events.len() > limits.events;
             if over || self.run.unsupported.is_some() {
                 self.run.cut = true;
                 return;
@@ -968,8 +1078,19 @@ fn cast(to: Scalar, bits: u64) -> u64 {
 
 /// Runs a function's blocks on the inputs `seed` makes up.
 pub(crate) fn run(f: &cfg::Function, seed: u64) -> Run {
+    run_within(f, seed, Limits::DEFAULT)
+}
+
+/// [`run`], within `limits`.
+pub(crate) fn run_within(f: &cfg::Function, seed: u64, limits: Limits) -> Run {
+    run_in(f, seed, limits, Project::empty())
+}
+
+/// [`run_within`], with the signatures of `project` for the cells of a call that states none.
+pub(crate) fn run_in(f: &cfg::Function, seed: u64, limits: Limits, project: &Project) -> Run {
     let mut machine = Machine {
         f,
+        project,
         seed: mix(seed),
         cells: HashMap::new(),
         widths: HashMap::new(),
@@ -979,13 +1100,85 @@ pub(crate) fn run(f: &cfg::Function, seed: u64) -> Run {
         low_local: None,
         low_param: None,
         low_temps: BTreeMap::new(),
-        run: Run::default(),
+        run: Run {
+            reached: vec![false; f.cfg.blocks.len()],
+            ..Run::default()
+        },
         steps: 0,
+        limits,
     };
-    if !f.cfg.blocks.is_empty() {
+    if f.head.locals > FRAME_CELLS || f.head.params > FRAME_CELLS {
+        machine.unsupported("a frame of more cells than the oracle makes");
+    } else if !f.cfg.blocks.is_empty() {
         machine.go();
     }
     machine.run
+}
+
+/// What the conversion `name` from one integer to another makes of a cell: the cell read as the one and widened as the other.
+fn converted(name: &str, cell: Option<u64>) -> Option<u64> {
+    let (from, to) = name.split_once("_to_")?;
+    let (from, to) = (Scalar::from_name(from)?, Scalar::from_name(to)?);
+    let integer = |ty: Scalar| !matches!(ty, Scalar::F32 | Scalar::F64);
+    (integer(from) && integer(to)).then_some(cast(to, cast(from, cell?)))
+}
+
+/// A cell as a value of `kind` widens to it; any cell for a kind that fills one or says nothing of its bits.
+fn widened(kind: &Kind, cell: u64) -> u64 {
+    match kind {
+        Kind::Bool => cell & 1,
+        Kind::I8 => cast(Scalar::I8, cell),
+        Kind::U8 => cast(Scalar::U8, cell),
+        Kind::I16 => cast(Scalar::I16, cell),
+        Kind::U16 => cast(Scalar::U16, cell),
+        Kind::I32 => cast(Scalar::I32, cell),
+        Kind::U32 | Kind::Hash | Kind::F32 => cast(Scalar::U32, cell),
+        _ => cell,
+    }
+}
+
+/// How two events differ, in words a tally can count.
+fn differing(was: &Event, is: &Event) -> &'static str {
+    let low = |a: &u64, b: &u64| *a as u32 == *b as u32;
+    match (was, is) {
+        (
+            Event::Call {
+                callee: a, args: x, ..
+            },
+            Event::Call {
+                callee: b, args: y, ..
+            },
+        ) => match x.iter().zip(y).find(|(p, q)| p != q) {
+            _ if a != b => "another callee",
+            _ if x.len() != y.len() => "a call of other cells",
+            Some((p, q)) if low(p, q) => "the upper half of an argument",
+            Some(_) => "an argument",
+            None => "what a callee can see of the frame",
+        },
+        (
+            Event::Store {
+                addr: a,
+                bytes: m,
+                value: v,
+            },
+            Event::Store {
+                addr: b,
+                bytes: n,
+                value: w,
+            },
+        ) => match (a == b, m == n) {
+            (false, _) => "a store elsewhere",
+            (true, false) => "a store of other bytes",
+            (true, true) if low(v, w) => "the upper half of a stored value",
+            (true, true) => "a stored value",
+        },
+        (Event::Return(x), Event::Return(y)) if x.len() != y.len() => "a return of other cells",
+        (Event::Return(x), Event::Return(y)) => match x.iter().zip(y).all(|(p, q)| low(p, q)) {
+            true => "the upper half of a returned value",
+            false => "a returned value",
+        },
+        _ => "another kind of event",
+    }
 }
 
 /// Whether two runs did the same, as far as both went.
@@ -994,8 +1187,10 @@ pub(crate) fn same(was: &Run, is: &Run) -> Result<(), String> {
     for n in 0..shared {
         if was.events[n] != is.events[n] {
             return Err(format!(
-                "event {n}: {:X?} became {:X?}",
-                was.events[n], is.events[n]
+                "event {n}, {}: {:X?} became {:X?}",
+                differing(&was.events[n], &is.events[n]),
+                was.events[n],
+                is.events[n]
             ));
         }
     }
@@ -1015,45 +1210,184 @@ pub(crate) const SEEDS: u64 = 4;
 /// What checking one function came to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Checked {
-    /// The function held something the oracle does not run.
+    /// The function held something the oracle does not run: nothing was compared.
     pub skipped: bool,
+    /// The seeds every form of the function was run on.
+    pub seeds: u32,
+    /// The blocks of the form read that a seed entered, and the blocks it has.
+    // ⚠ A statement no seed reaches is compared by nothing.
+    pub reached: u32,
+    pub blocks: u32,
 }
 
-/// Runs a function before the passes and after each of them; `Err` names the first pass whose result does otherwise.
+/// Runs a function as it was read and after the passes, by the four first and then by every one; `Err` names the pass whose result does otherwise.
 pub(crate) fn check(f: tree::Function, names: &Names) -> Result<Checked, String> {
+    let done = check_in(f.clone(), &Context::baseline(names), Limits::DEFAULT)?;
+    let every = Context::new(names, Project::empty(), Options::default());
+    check_in(f, &every, Limits::DEFAULT)?;
+    Ok(done)
+}
+
+/// [`check_blocks`] of a function in the structured form, as a listing reads.
+pub(crate) fn check_in(
+    f: tree::Function,
+    cx: &Context<'_>,
+    limits: Limits,
+) -> Result<Checked, String> {
     if f.head.incomplete.is_some() {
-        return Ok(Checked { skipped: true });
+        return Ok(Checked {
+            skipped: true,
+            ..Checked::default()
+        });
     }
     let read = cfg::lower(f).map_err(|e| format!("does not lower: {e}"))?;
-    let was: Vec<Run> = (0..SEEDS).map(|seed| run(&read, seed)).collect();
-    if was.iter().any(|run| run.unsupported.is_some()) {
-        return Ok(Checked { skipped: true });
+    check_blocks(&read, cx, limits)
+}
+
+/// Runs a function's blocks as a front end made them and after the passes `cx` asks; `Err` names the pass that makes the runs differ once it is switched on after those before it.
+// ⚠ The way back from a source construct is `cfg::lower`, which writes each as the statements
+// it holds: a construct made wrongly differs here like any other rewrite.
+pub(crate) fn check_blocks(
+    read: &cfg::Function,
+    cx: &Context<'_>,
+    limits: Limits,
+) -> Result<Checked, String> {
+    // The seeds are chosen on the form read, once: every other form is run on exactly those.
+    let mut was: Vec<(u64, Run)> = Vec::new();
+    let mut reached = vec![false; read.cfg.blocks.len()];
+    let mut stale = 0;
+    for seed in 0..SEEDS + limits.more {
+        // More seeds are for blocks none has entered yet: with none left, or none found, no more.
+        if stale >= STALE || (seed >= SEEDS && reached.iter().all(|entered| *entered)) {
+            break;
+        }
+        let run = run_in(read, seed, limits, cx.project);
+        let enters = |(now, before): (&bool, &bool)| *now && !*before;
+        if seed < SEEDS || run.reached.iter().zip(&reached).any(enters) {
+            for (before, now) in reached.iter_mut().zip(&run.reached) {
+                *before |= *now;
+            }
+            was.push((seed, run));
+            stale = 0;
+        } else {
+            stale += 1;
+        }
     }
-    let compare = |pass: &str, f: &cfg::Function| -> Result<bool, String> {
-        for (seed, was) in (0..SEEDS).zip(&was) {
-            let is = run(f, seed);
+    let mut checked = Checked {
+        skipped: was.iter().any(|(_, run)| run.unsupported.is_some()),
+        seeds: was.len() as u32,
+        reached: reached.iter().filter(|entered| **entered).count() as u32,
+        blocks: reached.len() as u32,
+    };
+    if checked.skipped {
+        return Ok(checked);
+    }
+    // ⚠ A callee's result is made up as its signature says it widens, so the signature of this
+    // function is held to what its own code returned: a proof that is wrong is found here.
+    let own = FunctionKey::new(read.head.program, read.head.at);
+    if let Some(stated) = cx.project.signatures.get(&own) {
+        for (seed, run) in &was {
+            let one = run.events.iter().find_map(|event| match event {
+                Event::Return(cells) if cells.len() == 1 => cells.first().copied(),
+                _ => None,
+            });
+            let told = |cell: &u64| widened(&stated.result, *cell) == *cell;
+            if let Some(cell) = one.filter(|cell| !told(cell) && !run.unstated.contains(cell)) {
+                let kind = &stated.result;
+                return Err(format!(
+                    "signature, seed {seed}: {cell:X} is returned, and is no {kind:?}"
+                ));
+            }
+        }
+    }
+    // `Err` where a run differs, `Ok(false)` where the passes left what the oracle does not run.
+    let holds = |options: Options| -> Result<bool, String> {
+        let cx = Context::new(cx.names, cx.project, options);
+        let mut done = super::blocks_in(read.clone(), &cx, &mut Stats::default());
+        // A void function returns by running off its end, which the blocks must say.
+        if done.head.returns == Returns::Void {
+            done.body.push(tree::Stmt::Return(None));
+        }
+        let back = cfg::lower(done).map_err(|e| format!("does not lower: {e}"))?;
+        for (seed, was) in &was {
+            let is = run_in(&back, *seed, limits, cx.project);
             if is.unsupported.is_some() {
                 return Ok(false);
             }
-            same(was, &is).map_err(|why| format!("{pass}, seed {seed}: {why}"))?;
+            same(was, &is).map_err(|why| format!("seed {seed}: {why}"))?;
         }
         Ok(true)
     };
-    let mut stats = Stats::default();
-    let mut f = read.clone();
-    passes::values::run(&mut f, names, &mut stats);
-    let mut ran = compare("values", &f)?;
-    passes::types::run(&mut f, names, &mut stats);
-    ran &= compare("types", &f)?;
-    let mut done = passes::structure::run(f, names, &mut stats);
-    passes::names::run(&mut done, names, &mut stats);
-    // A void function returns by running off its end, which the blocks must say.
-    if done.head.returns == Returns::Void {
-        done.body.push(tree::Stmt::Return(None));
+    if let Ok(ran) = holds(cx.options) {
+        checked.skipped = !ran;
+        return Ok(checked);
     }
-    let back = cfg::lower(done).map_err(|e| format!("structure: does not lower: {e}"))?;
-    ran &= compare("structure", &back)?;
-    Ok(Checked { skipped: !ran })
+    // The passes switched on one after another, in their order: the first set that differs
+    // ends in the pass to read. With none on, the blocks only go to labels and jumps and back.
+    let mut some = Options {
+        level: cx.options.level,
+        ..Options::at(Level::Lifted)
+    };
+    holds(some).map_err(|why| format!("no pass, {why}"))?;
+    for pass in cx.options.passes.iter() {
+        some = some.with(pass);
+        holds(some).map_err(|why| format!("{}, {why}", pass.name()))?;
+    }
+    Err("the passes do not give the same result twice".to_owned())
+}
+
+/// What holding two forms of one function against each other came to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Agreed {
+    /// Either form holds what the oracle does not run: nothing was compared.
+    pub skipped: bool,
+    /// Every block of both forms was entered by a seed.
+    // ⚠ Without it the two do the same only as far as the seeds went: a block none entered is compared by nothing.
+    pub whole: bool,
+}
+
+/// Whether two forms of one function do the same on every seed, with the signatures of `project`; more seeds are tried while one enters a block of either form that none had.
+pub(crate) fn agree(
+    a: &cfg::Function,
+    b: &cfg::Function,
+    limits: Limits,
+    project: &Project,
+) -> Result<Agreed, String> {
+    let mut entered = (
+        vec![false; a.cfg.blocks.len()],
+        vec![false; b.cfg.blocks.len()],
+    );
+    let whole = |entered: &(Vec<bool>, Vec<bool>)| entered.0.iter().chain(&entered.1).all(|e| *e);
+    let mut stale = 0;
+    for seed in 0..SEEDS + limits.more {
+        if stale >= STALE || (seed >= SEEDS && whole(&entered)) {
+            break;
+        }
+        let was = run_in(a, seed, limits, project);
+        let is = run_in(b, seed, limits, project);
+        if was.unsupported.is_some() || is.unsupported.is_some() {
+            return Ok(Agreed {
+                skipped: true,
+                whole: false,
+            });
+        }
+        same(&was, &is).map_err(|why| format!("seed {seed}: {why}"))?;
+        let mut news = false;
+        for (held, run) in [(&mut entered.0, &was), (&mut entered.1, &is)] {
+            for (before, now) in held.iter_mut().zip(&run.reached) {
+                news |= *now && !*before;
+                *before |= *now;
+            }
+        }
+        stale = match news || seed < SEEDS {
+            true => 0,
+            false => stale + 1,
+        };
+    }
+    Ok(Agreed {
+        skipped: false,
+        whole: whole(&entered),
+    })
 }
 
 /// Checks every function of a listing written by hand.
@@ -1471,92 +1805,57 @@ fn a_copy_of_a_whole_value_reads_as_the_value_it_copies() {
 }
 
 #[test]
-#[ignore = "needs a folder of lifted listings in OPENRAGE_LIFTED_LISTINGS; run by name"]
-fn every_function_of_a_folder_of_listings_does_what_it_did() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
+fn a_value_of_a_billion_cells_is_not_made() {
+    // The count is the listing's word: the oracle records that it did not run, and sizes nothing.
+    let f = function("v_000028_3 = zero_slots(4000000000); return 0;");
+    assert!(run(&f, 0).unsupported.is_some());
+    let small = function("v_000028_3 = zero_slots(2); return 0;");
+    assert!(run(&small, 0).unsupported.is_none());
+}
 
-    let folder = std::env::var("OPENRAGE_LIFTED_LISTINGS").expect("the folder is named");
-    let only = std::env::var("OPENRAGE_LIFTED_ONLY").ok();
-    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(&folder)
-        .expect("the folder reads")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            let name = path.to_string_lossy();
-            name.ends_with(".ysc.cs") && only.as_ref().is_none_or(|only| name.contains(only))
-        })
-        .collect();
-    // The small listings first, so that a first failure shows soon.
-    paths.sort_by_key(|path| std::fs::metadata(path).map_or(0, |meta| meta.len()));
-    let next = AtomicUsize::new(0);
-    let ran = AtomicUsize::new(0);
-    let skipped = AtomicUsize::new(0);
-    let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
-    let names = Names::default();
-    std::thread::scope(|scope| {
-        for _ in 0..8 {
-            let worker = std::thread::Builder::new().stack_size(256 << 20);
-            let spawned = worker.spawn_scoped(scope, || loop {
-                let n = next.fetch_add(1, Ordering::Relaxed);
-                let Some(path) = paths.get(n) else {
-                    break;
-                };
-                let text = std::fs::read_to_string(path).expect("the listing is text");
-                let listing = Listing::open(&text).expect("the listing opens");
-                let stem = path.file_name().map(|n| n.to_string_lossy().into_owned());
-                let stem = stem.unwrap_or_default();
-                let mut bad = Vec::new();
-                for f in listing.functions() {
-                    let f = f.expect("the function reads");
-                    let name = f.head.name.clone();
-                    let caught =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(f, &names)));
-                    let checked = caught.unwrap_or_else(|_| Err("a panic".to_owned()));
-                    match checked {
-                        Ok(done) if done.skipped => skipped.fetch_add(1, Ordering::Relaxed),
-                        Ok(_) => ran.fetch_add(1, Ordering::Relaxed),
-                        Err(why) => {
-                            let why: String = why.chars().take(600).collect();
-                            bad.push(format!("{stem}: {name}: {why}"));
-                            0
-                        }
-                    };
-                }
-                failures.lock().expect("no worker panicked").extend(bad);
-            });
-            spawned.expect("a worker starts");
-        }
-    });
-    let failures = failures.into_inner().expect("no worker panicked");
-    eprintln!(
-        "ORACLE: {} listing(s), {} function(s) run, {} not run, {} differ",
-        paths.len(),
-        ran.load(Ordering::Relaxed),
-        skipped.load(Ordering::Relaxed),
-        failures.len()
+#[test]
+fn a_run_marks_the_blocks_it_enters() {
+    let f = function(
+        "if (((as_u32(p0) == 0))) { Native.DEMO.USE(1); } else { Native.DEMO.USE(2); } return 0;",
     );
-    let mut by_pass: BTreeMap<&str, usize> = BTreeMap::new();
-    for failure in &failures {
-        let pass = ["values", "types", "structure"]
-            .into_iter()
-            .find(|pass| failure.contains(&format!(": {pass}")))
-            .unwrap_or("other");
-        *by_pass.entry(pass).or_default() += 1;
-    }
-    eprintln!("ORACLE BY PASS: {by_pass:?}");
-    for pass in ["values", "types", "structure", "other"] {
-        let of_pass = failures.iter().filter(|f| match pass {
-            "other" => !["values", "types", "structure"]
-                .iter()
-                .any(|p| f.contains(&format!(": {p}"))),
-            pass => f.contains(&format!(": {pass}")),
-        });
-        for failure in of_pass.take(40) {
-            eprintln!("ORACLE FAILURE: {failure}");
-        }
-    }
-    assert!(failures.is_empty());
+    // One arm of the two is left out by any one run, and so by what that run compares.
+    let entered = |seed| run(&f, seed).reached.iter().filter(|e| **e).count();
+    assert_eq!(entered(0) + 1, f.cfg.blocks.len());
+    let checked = check_blocks(&f, &Context::baseline(&Names::default()), Limits::DEFAULT);
+    let checked = checked.expect("the passes keep it");
+    assert_eq!(checked.blocks as usize, f.cfg.blocks.len());
+    assert!(checked.reached >= entered(0) as u32 && checked.reached <= checked.blocks);
+    assert_eq!(u64::from(checked.seeds), SEEDS);
+}
+
+#[test]
+fn a_parameter_that_is_one_value_of_two_cells_is_passed_whole() {
+    let mut f = function("Native.DEMO.USE(p0); return 0;");
+    let passed = |f: &cfg::Function| match run(f, 0).events.first() {
+        Some(Event::Call { args, .. }) => args.len(),
+        other => panic!("no call: {other:?}"),
+    };
+    assert_eq!(passed(&f), 1);
+    let mut pair = VarInfo::new(Width::Cells);
+    pair.kind = Kind::Value {
+        ty: "type_0000000000000001".to_owned(),
+        cells: 2,
+    };
+    f.head.vars.insert(Var::Param(0), pair);
+    assert_eq!(passed(&f), 2);
+}
+
+#[test]
+fn two_forms_that_differ_do_not_agree() {
+    let was = function("v_000010_0 = Native.DEMO.GET(p0); Native.DEMO.USE(p1); return v_000010_0;");
+    let is = function("Native.DEMO.USE(p1); v_000010_0 = Native.DEMO.GET(p0); return v_000010_0;");
+    let none = Project::empty();
+    let all = Agreed {
+        skipped: false,
+        whole: true,
+    };
+    assert_eq!(agree(&was, &was.clone(), Limits::DEFAULT, none), Ok(all));
+    assert!(agree(&was, &is, Limits::DEFAULT, none).is_err());
 }
 
 /// The blocks as a body of labels and jumps, one label a block, for reading them.
@@ -1614,7 +1913,7 @@ fn shows_the_blocks_of_one_function_after_each_pass() {
         if f.head.name != wanted {
             continue;
         }
-        let show = |stage: &str, f: &cfg::Function| {
+        let shown = |f: &cfg::Function| {
             let mut writer = super::print::ListingWriter::new(f.head.program, &[]);
             writer.function(&flat(f));
             let text = writer.finish();
@@ -1625,8 +1924,10 @@ fn shows_the_blocks_of_one_function_after_each_pass() {
                 .skip(3)
                 .take_while(|line| !line.contains("    public static class "))
                 .collect();
-            eprintln!("======== {stage} ========\n{}", body.join("\n"));
+            body.join("\n")
         };
+        let show =
+            |stage: &str, f: &cfg::Function| eprintln!("======== {stage} ========\n{}", shown(f));
         let mut stats = Stats::default();
         let mut f = cfg::lower(f).expect("the function lowers");
         let read = f.clone();
@@ -1651,6 +1952,70 @@ fn shows_the_blocks_of_one_function_after_each_pass() {
                             was.events.get(n),
                             now.events.get(n)
                         );
+                    }
+                    break;
+                }
+            }
+        }
+        // Every pass switched on after those before it, as `check_blocks` does, with the project
+        // the corpus suites are given: the blocks each leaves where it changes them, and the
+        // event its result first parts from the function read at.
+        let whole = corpus::whole_project();
+        let project = whole.as_ref().unwrap_or(Project::empty());
+        let mut some = Options {
+            level: Level::Source,
+            ..Options::at(Level::Lifted)
+        };
+        let mut last = String::new();
+        let mut before = read.clone();
+        for pass in Options::default().passes.iter() {
+            some = some.with(pass);
+            let cx = Context::new(&names, project, some);
+            let mut done = super::blocks_in(read.clone(), &cx, &mut Stats::default());
+            if done.head.returns == Returns::Void {
+                done.body.push(tree::Stmt::Return(None));
+            }
+            let back = cfg::lower(done).expect("the function lowers back");
+            let text = shown(&back);
+            if text != last {
+                eprintln!("======== with {} ========\n{text}", pass.name());
+                last = text;
+            }
+            // What the listing's syntax does not write: the statements whose debug form the pass changed.
+            let stmts = |f: &cfg::Function| -> Vec<String> {
+                let all = f.cfg.blocks.iter().flat_map(|block| {
+                    let term = format!("{:?}", block.term);
+                    (block.stmts.iter().map(|stmt| format!("{stmt:?}"))).chain([term])
+                });
+                all.collect()
+            };
+            let (old, new) = (stmts(&before), stmts(&back));
+            if old.len() == new.len() {
+                let changed = old.iter().zip(&new).filter(|(a, b)| a != b);
+                for (a, b) in changed.take(12) {
+                    let (a, b): (String, String) =
+                        (a.chars().take(900).collect(), b.chars().take(900).collect());
+                    eprintln!(
+                        "---- {}: a statement was\n{a}\n---- and is\n{b}",
+                        pass.name()
+                    );
+                }
+            }
+            before = back.clone();
+            // Every seed the corpus suites may run a function on.
+            for seed in 0..SEEDS + Limits::CORPUS.more {
+                let was = run_in(&read, seed, Limits::CORPUS, project);
+                let now = run_in(&back, seed, Limits::CORPUS, project);
+                if same(&was, &now).is_err() {
+                    let shared = was.events.iter().zip(&now.events);
+                    let parted = shared.take_while(|(a, b)| a == b).count();
+                    eprintln!(
+                        "======== with {}, seed {seed}: parts at event {parted} ========",
+                        pass.name()
+                    );
+                    for n in parted.saturating_sub(3)..=parted {
+                        let (a, b) = (was.events.get(n), now.events.get(n));
+                        eprintln!("{n}: {a:X?}\n   {b:X?}");
                     }
                     break;
                 }

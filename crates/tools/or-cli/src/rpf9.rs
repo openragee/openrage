@@ -81,7 +81,7 @@ fn take_common<'a>(
 }
 
 /// The key snapshot: the one `--keys` names, else the one a session supplies for the install.
-fn load_keys(explicit: Option<&Path>) -> Result<GtaViKeys, String> {
+pub(crate) fn load_keys(explicit: Option<&Path>) -> Result<GtaViKeys, String> {
     if let Some(path) = explicit {
         return GtaViKeys::from_file(path).map_err(|e| e.to_string());
     }
@@ -100,7 +100,7 @@ fn load_keys(explicit: Option<&Path>) -> Result<GtaViKeys, String> {
 /// Load the recovered-names corpus from `dir` (or the folder [`NAMES_ENV`] names): the `vocabulary.txt`
 /// hashed at load, plus the per-build tables as a shortcut. An empty resolver is returned when the
 /// folder is absent, so a missing corpus never blocks — entries show as their hash.
-fn load_resolver(dir: Option<&Path>) -> NameResolver {
+pub(crate) fn load_resolver(dir: Option<&Path>) -> NameResolver {
     let mut resolver = match dir
         .map(Path::to_path_buf)
         .or_else(|| std::env::var_os(NAMES_ENV).map(PathBuf::from))
@@ -159,7 +159,7 @@ fn find_entry(mount: &Gta6Mount, selector: &str) -> Option<Gta6Entry> {
 
 /// Whether `entry` is named by `selector`: its recovered name, its `0x{hash}` or `hash_{hash}` form,
 /// or its decimal index.
-fn entry_matches(entry: &Gta6Entry, selector: &str) -> bool {
+pub(crate) fn entry_matches(entry: &Gta6Entry, selector: &str) -> bool {
     if entry.name.as_deref() == Some(selector) {
         return true;
     }
@@ -878,7 +878,7 @@ fn split_inner(path: &str) -> Vec<String> {
 
 /// Every `*.rpf` directly under `root` and every `pack/*/*.rpf`, sorted — the build's archive set,
 /// matching the explorer test's walk.
-fn build_archives(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn build_archives(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut rpfs_in = |dir: &Path| {
         if let Ok(entries) = std::fs::read_dir(dir) {

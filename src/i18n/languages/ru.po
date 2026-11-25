@@ -16859,3 +16859,99 @@ msgstr[2] "{name}, {count} карт"
 
 msgid "Choose a place"
 msgstr "Выберите место"
+
+msgid "the decompiler stopped on a fault in this program"
+msgstr "декомпилятор остановился из-за сбоя в этой программе"
+
+msgid "This is a compiled GTA VI script that does not decompile, so it is shown as its bytes: {e}"
+msgstr "Это скомпилированный скрипт GTA VI, который не декомпилируется, поэтому он показан как байты: {e}"
+
+msgid "{count} function"
+msgid_plural "{count} functions"
+msgstr[0] "{count} функция"
+msgstr[1] "{count} функции"
+msgstr[2] "{count} функций"
+
+msgid "{name}: {count} line from line {line}"
+msgid_plural "{name}: {count} lines from line {line}"
+msgstr[0] "{name}: {count} строка, начиная со строки {line}"
+msgstr[1] "{name}: {count} строки, начиная со строки {line}"
+msgstr[2] "{name}: {count} строк, начиная со строки {line}"
+
+msgid "{count} class"
+msgid_plural "{count} classes"
+msgstr[0] "{count} класс"
+msgstr[1] "{count} класса"
+msgstr[2] "{count} классов"
+
+msgid "The instructions of this function do not decode: {e}"
+msgstr "Инструкции этой функции не декодируются: {e}"
+
+msgid "Select a function in the outline to list its instructions"
+msgstr "Выберите функцию в структуре, чтобы показать её инструкции"
+
+msgid "Decompiling again…"
+msgstr "Повторная декомпиляция…"
+
+msgid "{count} function has no body in the source"
+msgid_plural "{count} functions have no body in the source"
+msgstr[0] "{count} функция не имеет тела в исходном тексте"
+msgstr[1] "{count} функции не имеют тела в исходном тексте"
+msgstr[2] "{count} функций не имеют тела в исходном тексте"
+
+msgid "{count} imported program"
+msgid_plural "{count} imported programs"
+msgstr[0] "{count} импортированная программа"
+msgstr[1] "{count} импортированные программы"
+msgstr[2] "{count} импортированных программ"
+
+msgid "Natives are named from {list}"
+msgstr "Нативные функции названы по списку {list}"
+
+msgid "No natives list was supplied, so a native is shown as the program spells it"
+msgstr "Список нативных функций не предоставлен, поэтому нативная функция показана так, как её записывает программа"
+
+msgid "Names are read from {lists}"
+msgstr "Имена прочитаны из {lists}"
+
+msgid "No names list was supplied, so a type, a field or a method is shown by its hash or its offset"
+msgstr "Список имён не предоставлен, поэтому тип, поле или метод показаны по хешу или по смещению"
+
+msgid "Open names folder"
+msgstr "Открыть папку имён"
+
+msgid "Put natives lists and names lists in this folder, then open the script again: OpenRage ships none. A file whose name starts with natives is read as a natives list, any other as a names list"
+msgstr "Поместите списки нативных функций и списки имён в эту папку, затем снова откройте скрипт: OpenRage их не поставляет. Файл, имя которого начинается с natives, читается как список нативных функций, любой другой — как список имён"
+
+msgid "The caret is on no name"
+msgstr "Курсор не стоит на имени"
+
+msgid "{name} follows a dot: it may be defined in another program, and only a name that stands alone is followed"
+msgstr "{name} стоит после точки: оно может быть определено в другой программе, а переход выполняется только по имени, стоящему отдельно"
+
+msgid "This script defines no one thing called {name}"
+msgstr "В этом скрипте нет ровно одного определения с именем {name}"
+
+msgid "No GTA VI script is in front"
+msgstr "На переднем плане нет скрипта GTA VI"
+
+msgid "Go to definition"
+msgstr "Перейти к определению"
+
+msgid "Move the caret to where this script defines the name under it"
+msgstr "Переместить курсор туда, где этот скрипт определяет имя под курсором"
+
+msgid "Find references"
+msgstr "Найти ссылки"
+
+msgid "Find every place of this script that spells the name under the caret"
+msgstr "Найти каждое место этого скрипта, где записано имя под курсором"
+
+msgid "GTA VI Script"
+msgstr "Скрипт GTA VI"
+
+msgid "A compiled GTA VI script, read from the archive that holds it or from a deciphered file: the source it decompiles to and the classes and functions that source lists, read-only"
+msgstr "Скомпилированный скрипт GTA VI, прочитанный из архива, который его содержит, или из расшифрованного файла: исходный текст, в который он декомпилируется, и классы и функции, перечисленные в этом тексте, только чтение"
+
+msgid "a GTA VI script holds compiled bytecode; OpenRage reads one and does not write one"
+msgstr "скрипт GTA VI содержит скомпилированный байт-код; OpenRage читает такой скрипт и не записывает его"

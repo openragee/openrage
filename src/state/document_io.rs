@@ -43,9 +43,13 @@ pub fn never_written(kind: DocumentKind) -> Option<&'static str> {
         DocumentKind::Bik => Some(READ_ONLY_BIK),
         DocumentKind::Rpf9 => Some(crate::i18n::tr(READ_ONLY_RPF9)),
         DocumentKind::Gta6AudioData => Some(crate::i18n::tr(READ_ONLY_GTA6_AUDIO_DATA)),
+        DocumentKind::Gta6Script => Some(crate::i18n::tr(READ_ONLY_GTA6_SCRIPT)),
         _ => None,
     }
 }
+
+const READ_ONLY_GTA6_SCRIPT: &str =
+    tr_key!("a GTA VI script holds compiled bytecode; OpenRage reads one and does not write one");
 
 const READ_ONLY_BIK: &str =
     "a .bik is previewed and played; OpenRage writes no video, so it does not write one";
@@ -260,6 +264,12 @@ pub(super) fn parse_payload(
     if let Some(save) = sniffed_save(data) {
         return Ok(save);
     }
+    // A deciphered GTA VI script has no extension, so it arrives as a file no name claims.
+    if matches!(kind, DocumentKind::Hex) {
+        if let Some(script) = document::gta6_script::sniffed(data) {
+            return Ok(script);
+        }
+    }
     if let Some(resource) = kind.resource_type() {
         let target = rsc7_version(data)
             .and_then(|version| target_of(resource.extension(), version))
@@ -360,6 +370,7 @@ pub(super) fn parse_payload(
         DocumentKind::Gta6AudioData => Err(crate::i18n::tr(READ_ONLY_GTA6_AUDIO_DATA).to_string()),
         DocumentKind::Gta6Expressions => Err(crate::i18n::tr(EXPRESSIONS_FROM_SCAN).to_string()),
         DocumentKind::Gta6Save => Err(crate::i18n::tr(GTA6_SAVE_FROM_FILE).to_string()),
+        DocumentKind::Gta6Script => document::gta6_script::open(data),
         other => Err(unhandled(other, "reader")),
     }
 }
@@ -455,6 +466,7 @@ pub(super) fn serialize_payload(
         DocPayload::Gta6AudioData(_) => Err(crate::i18n::tr(READ_ONLY_GTA6_AUDIO_DATA).to_string()),
         DocPayload::Gta6Expressions(_) => Err(crate::i18n::tr(EXPRESSIONS_FROM_SCAN).to_string()),
         DocPayload::Gta6Save(save) => save.to_bytes(),
+        DocPayload::Gta6Script(_) => Err(crate::i18n::tr(READ_ONLY_GTA6_SCRIPT).to_string()),
         DocPayload::Compare(_) => Err(NO_FILE_COMPARE.to_string()),
         other => Err(unhandled(other.kind(), "writer")),
     }
@@ -591,6 +603,7 @@ fn empty_non_resource_payload(kind: DocumentKind) -> Option<DocPayload> {
         | DocumentKind::Gta6AudioData
         | DocumentKind::Gta6Expressions
         | DocumentKind::Gta6Save
+        | DocumentKind::Gta6Script
         | DocumentKind::Hex
         | DocumentKind::Compare => return None,
         DocumentKind::Rpf | DocumentKind::GameRoot | DocumentKind::Folder => {
@@ -709,6 +722,7 @@ fn author_blank(kind: DocumentKind) -> Result<Vec<u8>, String> {
         DocumentKind::Gta6AudioData => Err(crate::i18n::tr(READ_ONLY_GTA6_AUDIO_DATA).to_string()),
         DocumentKind::Gta6Expressions => Err(crate::i18n::tr(EXPRESSIONS_FROM_SCAN).to_string()),
         DocumentKind::Gta6Save => Err(crate::i18n::tr(GTA6_SAVE_FROM_FILE).to_string()),
+        DocumentKind::Gta6Script => Err(crate::i18n::tr(READ_ONLY_GTA6_SCRIPT).to_string()),
         DocumentKind::Compare => Err(NO_FILE_COMPARE.to_string()),
         DocumentKind::Rpf => RpfBuilder::default().to_bytes().map_err(|e| e.to_string()),
         DocumentKind::GameRoot => {

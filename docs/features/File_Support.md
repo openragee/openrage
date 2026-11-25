@@ -93,6 +93,8 @@ opens as a plain folder.
   loose file. Which values of a model, a bound, a map or a metadata body can be edited is narrower than
   for GTA V, and a refusal names what it cannot write.
 - **Not done.** Nothing is written back into an archive, and no file OpenRage saved has been tried in
-  the game. Scripts do not read, their bodies being enciphered; a `KB2n` movie has no sound; a texture
+  the game. A compiled script, which `openrage-cli script` reads, has a native named only where a
+  supplied names list gives the hash of the handler its code calls by address, and comes out of an
+  archive only with a key snapshot that holds content keys; a `KB2n` movie has no sound; a texture
   stored through the pack's entropy coder decodes only as BC1; and the Shaded mode does not draw a GTA
   VI model, since nothing draws with that game's shaders yet.

@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 
 use egui::Align2;
 
-use crate::state::{AppState, DocPayload, DocumentId};
+use crate::state::{AppState, DocumentId};
 use crate::ui::panel_state::PanelState;
 use crate::ui::theme;
 
@@ -187,21 +187,21 @@ fn run_cross_doc_search(app_state: &AppState, find: &mut CrossDocFindState) {
     let cancel = AtomicBool::new(false);
     let mut remaining_global = MATCH_CAP;
     for doc in app_state.documents.iter() {
-        let DocPayload::Text(t) = &doc.payload else {
+        let Some(text) = doc.payload.found_in() else {
             continue;
         };
         let doc_id = doc.id;
         let doc_name = doc.name.clone();
         let mut local_emitted = 0usize;
-        let _ = find_iter(&t.text, 0..t.text.len_chars(), &query, &cancel, &mut |b| {
+        let _ = find_iter(text, 0..text.len_chars(), &query, &cancel, &mut |b| {
             for m in b {
                 if remaining_global == 0 {
                     return ControlFlow::Break(());
                 }
-                let line_no = t.text.char_to_line(m.start);
-                let line_start = t.text.line_to_char(line_no);
-                let line_end = t.text.line_to_char((line_no + 1).min(t.text.len_lines()));
-                let preview = preview_line(&t.text, line_start, line_end, 160);
+                let line_no = text.char_to_line(m.start);
+                let line_start = text.line_to_char(line_no);
+                let line_end = text.line_to_char((line_no + 1).min(text.len_lines()));
+                let preview = preview_line(text, line_start, line_end, 160);
                 find.results.push(CrossDocResult {
                     doc_id,
                     doc_name: doc_name.clone(),

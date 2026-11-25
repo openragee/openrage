@@ -76,6 +76,8 @@ pub enum Action {
     TextReplace,
     TextGoToLine,
     TextFindInOpenDocs,
+    ScriptGoToDefinition,
+    ScriptFindReferences,
     OpenSelection,
     RevealInTree,
     RevealOnDisk,
@@ -835,6 +837,8 @@ pub const COMMANDS: &[Spec] = &[
         },
         ..BASE
     },
+    super::script::GO_TO_DEFINITION,
+    super::script::FIND_REFERENCES,
 ];
 
 pub fn spec(action: Action) -> Option<&'static Spec> {

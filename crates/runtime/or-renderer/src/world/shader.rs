@@ -9,7 +9,7 @@ struct Camera {
     camera_misc: vec4<f32>,
     key_light: vec4<f32>,
 };
-// A lamp that lights what blends, as `WorldLamp`'s rows: its place and reach, its colour times its strength and a spot's outer cosine, and a spot's way and one over its span.
+// A lamp that lights what blends, as `WorldLamp`'s rows: its place and reach, its colour times its strength and a spot's outer cosine, and a spot's way and one over its span, or a capsule's half segment and a span below nought.
 struct Lamp {
     at: vec4<f32>,
     colour: vec4<f32>,
@@ -887,7 +887,14 @@ fn lamps_lit(s: Surface, world_pos: vec3<f32>) -> vec3<f32> {
     let count = u32(light.frame.z);
     for (var i = 0u; i < count; i = i + 1u) {
         let l = light.lamps[i];
-        let to = l.at.xyz - world_pos;
+        var at = l.at.xyz;
+        // A capsule's way is half its segment, and its span below nought: it lights from the nearest point of the segment
+        let capsule = l.way.w < 0.0;
+        if (capsule) {
+            let along = clamp(dot(world_pos - at, l.way.xyz) / max(dot(l.way.xyz, l.way.xyz), 1e-12), -1.0, 1.0);
+            at = at + l.way.xyz * along;
+        }
+        let to = at - world_pos;
         // A centimetre at the least: the glass of a lamp lies a hand's breadth from it, never on it.
         let d2 = max(dot(to, to), 1e-4);
         let t = d2 / (l.at.w * l.at.w);
@@ -897,7 +904,7 @@ fn lamps_lit(s: Surface, world_pos: vec3<f32>) -> vec3<f32> {
         let w = 1.0 - t * t;
         let towards = to * inverseSqrt(d2);
         var a = 1.0;
-        if (dot(l.way.xyz, l.way.xyz) > 0.0) {
+        if (!capsule && dot(l.way.xyz, l.way.xyz) > 0.0) {
             let x = clamp((dot(l.way.xyz, -towards) - l.colour.w) * l.way.w, 0.0, 1.0);
             a = x * (x - x * x + x * x * x * x * (3.0 - 2.0 * x * x));
         }

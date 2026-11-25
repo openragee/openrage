@@ -19,6 +19,17 @@ pub struct WorldLamp {
     pub cone: [f32; 2],
 }
 
+impl WorldLamp {
+    /// This lamp as a segment from `position - half` to `position + half`, lit from its nearest point: the program knows it by a span below nought.
+    pub fn capsule(self, half: Vec3) -> Self {
+        Self {
+            direction: half,
+            cone: [self.cone[0], -1.0],
+            ..self
+        }
+    }
+}
+
 /// The rows the program reads of the first [`WORLD_LAMPS`] of `lamps`, each slot past them nought.
 pub(crate) fn rows(lamps: &[WorldLamp]) -> Vec<[f32; 4]> {
     let mut out = vec![[0.0; 4]; WORLD_LAMPS * 3];

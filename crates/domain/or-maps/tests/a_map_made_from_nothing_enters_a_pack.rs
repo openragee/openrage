@@ -12,8 +12,8 @@ use or_io::meta::instance::HashedString;
 use or_io::meta::typed::{CMapData, CMapTypes};
 use or_io::meta::{detect_binary_format, BinaryFormat, MetaDocument, SchemaLibrary};
 use or_maps::edit::{
-    add_entity, add_new_archetype, add_new_entity, archetype_boxes, edit_map, edit_types,
-    grow_extents, pose_of, Pose,
+    add_entity, add_new_archetype, add_new_entity, edit_map, edit_types, grow_extents, pose_of,
+    Pose,
 };
 use or_maps::facts::{cooked, Name};
 use or_maps::import::{add_files, Incoming};
@@ -114,7 +114,20 @@ fn vec3(v: or_io::decl::Vec3) -> Vec3 {
 fn boxes(folder: &Path) -> std::collections::BTreeMap<u32, (Vec3, Vec3, f32)> {
     let model = Maps::read(folder).expect("the pack reads");
     let facts = inspect(folder, &model, Depth::Open);
-    archetype_boxes(&model.maps[0], &facts)
+    let mut boxes = std::collections::BTreeMap::new();
+    for path in &model.maps[0].sources {
+        let Some(types) = facts.source(path).and_then(|s| s.types()) else {
+            continue;
+        };
+        for archetype in &types.archetypes {
+            boxes.entry(archetype.name.hash).or_insert((
+                Vec3::from(archetype.bb_min),
+                Vec3::from(archetype.bb_max),
+                archetype.lod_dist,
+            ));
+        }
+    }
+    boxes
 }
 
 #[test]

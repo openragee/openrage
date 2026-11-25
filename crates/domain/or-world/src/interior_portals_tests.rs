@@ -257,7 +257,7 @@ fn the_point_to_polygon_distance_is_worked_by_hand() {
 fn only_populated_interiors_near_the_camera_give_distances() {
     // The wall at x 1 is 1 m from the camera: its foot (1, 0.5, 0.5) is inside the quad.
     let near = interior(vec![portal(0, 1, 0, 1.0)], vec![vec![0], vec![0]]);
-    let distances = exterior_portal_distances(CAMERA, &[near.clone()]);
+    let distances = exterior_portal_distances(CAMERA, std::slice::from_ref(&near));
     assert_eq!(distances.len(), 1);
     assert!((distances[0] - 1.0).abs() < 1e-6);
     // Proxy state 3 is under 4.
@@ -267,7 +267,7 @@ fn only_populated_interiors_near_the_camera_give_distances() {
     // Bounds from x 5: the camera box ends at x 4. From x 3 they overlap.
     let mut away = near.clone();
     away.bounds_min = Vec3::new(5.0, -10.0, -10.0);
-    assert!(exterior_portal_distances(CAMERA, &[away.clone()]).is_empty());
+    assert!(exterior_portal_distances(CAMERA, std::slice::from_ref(&away)).is_empty());
     away.bounds_min = Vec3::new(3.0, -10.0, -10.0);
     assert_eq!(exterior_portal_distances(CAMERA, &[away]).len(), 1);
 }

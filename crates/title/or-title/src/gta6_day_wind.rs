@@ -405,7 +405,8 @@ impl WindState {
             base_speed: 0.0,
             timecycle_speeds: [0.0, 0.0],
             gusts: Vec::new(),
-            next_gust_time: 0.0,
+            // A gust is due once the clock is past this, so 0 would hold the first back from a clock of 0.
+            next_gust_time: f32::NEG_INFINITY,
             scroll_offsets: [Vec3::ZERO; 2],
         }
     }

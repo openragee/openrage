@@ -1,5 +1,5 @@
 use super::*;
-use or_world::interior_portals::{
+use or_world::streaming_rules::{
     PORTAL_ALLOW_CLOSING, PORTAL_LINK as LINK, PORTAL_MIRROR as MIRROR,
 };
 

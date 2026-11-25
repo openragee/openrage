@@ -5,83 +5,13 @@ use std::collections::{HashSet, VecDeque};
 
 use glam::{Vec3, Vec4};
 
-// ⚠ The portal bits, the door constants and `portal_leads_outside`, `portal_opacity`,
-// `portal_is_shut` and `door_keeps_portal_open` are also in the streaming rules' module, which
-// lands apart: one copy goes once both are in the tree.
-
-/// Portal flag bit of a link portal, through which a walk continues into the other instance's room-0 portal; read from this build.
-pub const PORTAL_LINK: u32 = 0x02;
-
-/// Portal flag bit of a mirror, which every walk that tests it skips; read from this build.
-pub const PORTAL_MIRROR: u32 = 0x04;
-
-/// Portal flag bit that lets a portal close; read from this build.
-pub const PORTAL_ALLOW_CLOSING: u32 = 0x40;
-
-/// Half size of the box about the camera that an interior's bounds must overlap for the portal factor, metres; read from this build.
-pub const PORTAL_FACTOR_CAMERA_BOX: f32 = 4.0;
-
-/// Door open ratio below which a door counts as shut, 0.005, unitless; read from this build.
-pub const DOOR_OPEN_RATIO: f32 = f32::from_bits(0x3BA3_D70A);
-
-/// Door flags (dword +0x34) mask of the keep-open test; read from this build.
-pub const DOOR_KEEP_OPEN_MASK: u32 = 0x28_0000;
-
-/// Value the keep-open mask must equal to keep the portal open; read from this build.
-pub const DOOR_KEEP_OPEN_VALUE: u32 = 0x8_0000;
-
-/// Door flag bit 22 (dword +0x34; byte +0x36 bit 0x40 is the same bit), which keeps the portal open; read from this build.
-pub const DOOR_HOLDS_OPEN_BIT: u32 = 1 << 22;
-
-/// Archetype flag bit (+0x54) of a door that keeps its portal open; read from this build.
-pub const DOOR_ARCHETYPE_KEEP_OPEN_BIT: u32 = 0x1;
+use crate::streaming_rules::{PORTAL_FACTOR_CAMERA_BOX, PORTAL_LINK, PORTAL_MIRROR};
 
 /// Proxy state byte (+0xC1) from which an interior counts as populated for the camera factor; read from this build.
 pub const POPULATED_PROXY_STATE: u8 = 4;
 
 /// Recursion depth of the game's room flood, a `max_depth` a caller may pass; read from this build, what the flood serves is not known.
 pub const ROOM_FLOOD_MAX_DEPTH: u32 = 4;
-
-/// Whether a portal leads outside: it touches room 0 and is not a link portal.
-pub fn portal_leads_outside(room_a: u32, room_b: u32, flags: u32) -> bool {
-    (room_a == 0 || room_b == 0) && (flags & PORTAL_LINK) == 0
-}
-
-/// A portal object's opacity, 0..=1, from the definition's percentage; that the value at 100 or more is 1.0 is inferred.
-pub fn portal_opacity(def_opacity: u32) -> f32 {
-    if def_opacity >= 100 {
-        1.0
-    } else {
-        def_opacity as f32 * 0.01
-    }
-}
-
-/// One door on a portal.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PortalDoor {
-    /// Open ratio; its magnitude is compared against 0.005.
-    pub open_ratio: f32,
-    /// True when a keep-open condition holds for this door.
-    pub keeps_open: bool,
-}
-
-/// Whether a door's own flags (+0x34) or its archetype's flags (+0x54) keep its portal open.
-pub fn door_keeps_portal_open(door_flags: u32, archetype_flags: u32) -> bool {
-    (door_flags & DOOR_KEEP_OPEN_MASK) == DOOR_KEEP_OPEN_VALUE
-        || (door_flags & DOOR_HOLDS_OPEN_BIT) != 0
-        || (archetype_flags & DOOR_ARCHETYPE_KEEP_OPEN_BIT) != 0
-}
-
-/// Whether a portal is shut: allow-closing set, the proxy's state byte non-zero, a door placed, every door shut with none keeping it open; a link portal's other side is the caller's.
-pub fn portal_is_shut(portal_flags: u32, proxy_state_set: bool, doors: &[PortalDoor]) -> bool {
-    // `proxy_state_set` is the proxy's state byte +0xC1 being non-zero, not the populated test (>= 4).
-    if !proxy_state_set || (portal_flags & PORTAL_ALLOW_CLOSING) == 0 || doors.is_empty() {
-        return false;
-    }
-    doors
-        .iter()
-        .all(|door: &PortalDoor| door.open_ratio.abs() < DOOR_OPEN_RATIO && !door.keeps_open)
-}
 
 /// The fields of a portal definition the walks read.
 #[derive(Clone, Debug, Default, PartialEq)]

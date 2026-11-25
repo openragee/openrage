@@ -6,7 +6,7 @@
 
 use glam::Vec3;
 use or_io::gta6::timecycle::ARTIFICIAL_AMBIENT_LUX;
-use or_world::interior_portals::{
+use or_world::streaming_rules::{
     portal_is_shut, portal_leads_outside, PortalDoor, PORTAL_LINK, PORTAL_MIRROR,
 };
 

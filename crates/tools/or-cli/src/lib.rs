@@ -28,6 +28,7 @@ mod gta6_expressions;
 mod gta6_fragment;
 mod gta6_fragment_regroup;
 mod gta6_group_map;
+mod gta6_hashes;
 mod gta6_ids;
 mod gta6_import;
 mod gta6_install;
@@ -41,15 +42,18 @@ mod gta6_meta_census;
 mod gta6_meta_import;
 mod gta6_meta_names;
 mod gta6_mission;
+mod gta6_model;
 mod gta6_motion_detail;
 mod gta6_name_pool;
 mod gta6_names;
+mod gta6_names_mine;
 mod gta6_navmesh;
 mod gta6_navmesh_edit;
 mod gta6_other_bodies;
 mod gta6_particle_copies;
 mod gta6_particles;
 mod gta6_ped_catalogue;
+mod gta6_project;
 mod gta6_rdna;
 mod gta6_rdna_backends;
 mod gta6_rdna_bind;
@@ -66,6 +70,7 @@ mod gta6_shading;
 mod gta6_spans;
 mod gta6_text;
 mod gta6_texture;
+mod gta6_texture_replace;
 mod gta6_translate;
 mod gta6_uidata;
 mod gta6_world;
@@ -89,6 +94,7 @@ mod registry;
 mod retarget;
 mod rpf;
 mod rpf9;
+mod rpf9_diff;
 mod rpf9_write;
 mod script;
 mod search;
@@ -119,6 +125,7 @@ pub use dlc::{create_dlc_pack, dlc_pack_of_folder, dlc_refusals};
 pub use gta6_export::carry_images as gta6_carry_images;
 pub use gta6_export::{scene as gta6_scene, Names as Gta6Names};
 pub use gta6_import::{replace_gta6_mesh, replace_gta6_mesh_with};
+pub use gta6_model::{replace_gta6_model, ModelLods, ModelReplace};
 pub use gta6_name_pool::listing as gta6_name_pool;
 pub use gta6_shading::{
     drawing_pass as gta6_drawing_pass, gta6_kept, is_gta6_shading_pass, translate_gta6_mesh_stage,
@@ -183,6 +190,7 @@ pub const COMMANDS: &[&str] = &[
     "describe",
     "inspect",
     "mesh",
+    "model",
     "meta",
     "world",
     "project",
@@ -247,6 +255,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "describe" => with_cli_tracing(|| describe::run(rest)),
         "inspect" => with_cli_tracing(|| inspect::run(rest)),
         "mesh" => with_cli_tracing_at("warn", || mesh::run(rest)),
+        "model" => with_cli_tracing_at("warn", || gta6_model::run(rest)),
         "meta" => with_cli_tracing(|| meta::run(rest)),
         "world" => with_cli_tracing(|| world::run(rest)),
         "project" => with_cli_tracing(|| match rest.split_first() {
@@ -261,6 +270,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "photo" => photo::run(rest),
         "rpf" => rpf::run(rest),
         "rpf9" | "gta6-rpf9" => with_cli_tracing(|| rpf9::run(rest)),
+        "rpf9-diff" => with_cli_tracing(|| rpf9_diff::run(rest)),
         "script" => with_cli_tracing(|| script::run(rest)),
         "search" => {
             let level = if rest.iter().any(|a| a == "--verify") {
@@ -272,13 +282,21 @@ pub fn run(args: &[String]) -> ExitCode {
         }
         "hash" => names::run_hash(rest),
         "names" => with_cli_tracing(|| names::run_names(rest)),
+        "hashes" if rest.first().is_some_and(|w| w == "mine") => {
+            with_cli_tracing(|| gta6_names_mine::run(rest))
+        }
         "serve" => serve::run(rest),
         "mcp" => mcp::run(rest),
         "source" => with_cli_tracing(|| source::run(rest)),
+        "texture" if rest.first().is_some_and(|w| w == "replace") => {
+            with_cli_tracing(|| gta6_texture_replace::run(&rest[1..]))
+        }
         "texture" => with_cli_tracing(|| texture::run(rest)),
         "ttpf" => ttpf::run(rest),
         "gta6-save" => gta6_save::run(rest),
+        "gta6-project" => with_cli_tracing(|| gta6_project::run(rest)),
         "keys" => with_cli_tracing(|| gta6_keys::run(rest)),
+        "hashes" => with_cli_tracing_at("warn", || gta6_hashes::run(rest)),
         "gta6-mission" => gta6_mission::run(rest),
         "versions" => with_cli_tracing(|| version_census::run(rest)),
         "gaps" => with_cli_tracing(|| unfixtured_census::run(rest)),
@@ -347,6 +365,9 @@ fn print_usage() {
     eprintln!("  gfx        Scaleform movies: list tags, export to SWF, import from SWF");
     eprintln!("  inspect    Deep inspection: stats, textures, drawables, diff, layout");
     eprintln!("  mesh       Export a drawable to glTF, and census what an export assumes");
+    eprintln!(
+        "  model      GTA VI models: replace a loose model's meshes from a glTF, as a new file"
+    );
     eprintln!("  meta       Metadata (PSO/RBM/RBF0/XML): info, to-xml, from-xml, roundtrip");
     eprintln!("  world      World data (.ymap/.ytyp): info, check, extents, states, create, delete, prefab");
     eprintln!("  depends    What an asset needs and where a model is placed: of,");
@@ -377,12 +398,19 @@ fn print_usage() {
     eprintln!("  search     Find files by name across an install (raw or mounted DLC sim)");
     eprintln!("  hash       Hash names the way RAGE does (both functions, hex or decimal)");
     eprintln!("  names      Build a hash -> name index over an install and query it");
+    eprintln!(
+        "  hashes     Census how many hashes of an install resolve to a name, or mine names for those that do not"
+    );
     eprintln!("  serve      Persistent NDJSON server (mount once, many commands over stdio)");
     eprintln!("  mcp        MCP server for AI agents over stdio; `mcp install` registers it with a client");
     eprintln!("  source     One source folder: replace a drawable source's geometry from a glTF, GLB or FBX");
     eprintln!("  texture    Author textures: export/import PNG+DDS, re-encode BCn, PSNR");
+    eprintln!("             texture replace puts an image into a GTA VI pack, as a new file");
     eprintln!("  ttpf       GTA VI texture packs: list, export the readable textures, replace one");
     eprintln!("  gta6-save  GTA VI saves: info, get or set a value of a story save, key of a name");
+    eprintln!(
+        "  gta6-project  A GTA VI mod as a project: build edits into copies of its archives, check, revert"
+    );
     eprintln!(
         "  gta6-mission  The mission state tables in an inflated body of a GTA VI script archive"
     );

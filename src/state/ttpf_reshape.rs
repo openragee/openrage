@@ -57,6 +57,9 @@ pub(in crate::state) fn reshape(
     let Some((index, entry)) = texture_of(ttpf, name) else {
         return Some(Err(tr!("{name} is not in this pack", name = name)));
     };
+    if let Some(refused) = super::bcpack_refusal(&ttpf.pack, index) {
+        return Some(Err(refused));
+    }
     let image = (image, shown.unwrap_or(0));
     Some(reshaped(ttpf, index, &entry, name, image, choice, options))
 }

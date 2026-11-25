@@ -219,6 +219,7 @@ impl Document {
                 .sum(),
             DocPayload::Rpf(rpf) => rpf.session.held_bytes(),
             DocPayload::Rpf9(scan) => scan.held_bytes(),
+            DocPayload::Rpf9Table(table) => table.held_bytes(),
             DocPayload::Resource(asset) => asset.heap_bytes(),
             // Counted as the image it was decoded from: nothing walks these values' heap.
             DocPayload::Ypdb(_)

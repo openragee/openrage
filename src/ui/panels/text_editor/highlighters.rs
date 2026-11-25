@@ -181,7 +181,9 @@ pub(crate) fn highlight_xml(line: &str) -> Vec<Token<'_>> {
                     j = upto;
                     continue;
                 }
-                if (ch as char).is_whitespace() {
+                // ⚠ The character and not its first byte: the search for a word's end below stops at
+                // any space, and one outside ASCII would otherwise never be stepped over.
+                if line[j..].starts_with(char::is_whitespace) {
                     let ws_end = line[j..]
                         .char_indices()
                         .find(|(_, c)| !c.is_whitespace())
@@ -475,9 +477,13 @@ pub(crate) fn highlight_log(line: &str) -> Vec<Token<'_>> {
     let mut i = ts_end;
     while i < bytes.len() {
         let ch = bytes[i];
-        if (ch as char).is_whitespace() || matches!(ch, b'[' | b']' | b'(' | b')' | b':' | b',') {
-            push_token(&mut out, &line[i..i + 1], theme::TEXT_PRIMARY.get());
-            i += 1;
+        // ⚠ The character and not its first byte, as in `highlight_xml`.
+        if line[i..].starts_with(char::is_whitespace)
+            || matches!(ch, b'[' | b']' | b'(' | b')' | b':' | b',')
+        {
+            let width = line[i..].chars().next().map_or(1, char::len_utf8);
+            push_token(&mut out, &line[i..i + width], theme::TEXT_PRIMARY.get());
+            i += width;
             continue;
         }
         if ch == b'"' || ch == b'\'' {
@@ -540,6 +546,18 @@ mod tests {
 
     fn joined_text(toks: &[Token<'_>]) -> String {
         toks.iter().map(|t| t.text).collect()
+    }
+
+    /// ⚠ A space outside ASCII is several bytes, none of which is a space taken alone.
+    #[test]
+    fn a_space_outside_ascii_ends_a_word_and_the_line_is_all_there() {
+        let _palette = crate::ui::theme::serial();
+        for line in ["<a\u{a0}b=\"1\">", "<\u{a0}>", "<Item\u{2028}/>"] {
+            assert_eq!(joined_text(&highlight_xml(line)), line);
+        }
+        for line in ["warn\u{a0}ing: x", "\u{a0}", "a\u{3000}b"] {
+            assert_eq!(joined_text(&highlight_log(line)), line);
+        }
     }
 
     #[test]

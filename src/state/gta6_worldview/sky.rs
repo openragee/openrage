@@ -179,17 +179,24 @@ pub fn day_of(
     y: f32,
 ) -> Option<Day> {
     let moment = moment(tables, hour, weather, y)?;
-    Some(day_of_moment(tables, moment, (hour, days), weather, 0.0))
+    Some(day_of_moment(
+        tables,
+        moment,
+        (hour, days),
+        weather,
+        Vec3::new(0.0, y, 0.0),
+    ))
 }
 
-/// The day the frame is lit by from `moment`, at `hour` of the `days`th day in `weather`, for a camera `height` metres above the sea.
+/// The day the frame is lit by from `moment`, at `hour` of the `days`th day in `weather`, for a camera at `eye` (z metres above the sea, y metres north).
 pub fn day_of_moment(
     tables: &DayTables,
     moment: Moment,
     (hour, days): (f32, f32),
     weather: WeatherState,
-    height: f32,
+    eye: Vec3,
 ) -> Day {
+    let height = eye.z;
     let visual = &tables.visual_settings;
     // The moment's light is stated whole, faded already by its own bodies.
     let stated = Stated {
@@ -205,6 +212,12 @@ pub fn day_of_moment(
         clouds: clouds_of(&moment, &radiance),
         radiance,
         exposure: moment.light.exposure,
+        night: Some(super::sky_night::night_of(
+            tables,
+            &moment,
+            tables.latitude(eye.y),
+        )),
+        maps: super::sky_night::maps(),
     };
     let post = post_of(&|name, default| visual.get_f32(name, default), &moment.own);
     Day {
@@ -315,6 +328,7 @@ fn clouds_of(moment: &Moment, radiance: &[[f32; 3]]) -> Option<Clouds> {
         light: through.map(|t| t * strength),
         sky: hemisphere_radiance(radiance).map(|c| c * exposure),
         haze: moment.light.haze,
+        planet: moment.own.get_or("sky_new_planet_radius", 6360.0) * 1000.0,
     })
 }
 
@@ -516,7 +530,13 @@ mod tests {
                 (scale - exposed).abs() <= 1e-6 * exposed,
                 "{scale} {exposed}"
             );
-            let once = day_of_moment(&tables, moment, (hour, 0.0), WeatherState::Clear, 0.0);
+            let once = day_of_moment(
+                &tables,
+                moment,
+                (hour, 0.0),
+                WeatherState::Clear,
+                Vec3::ZERO,
+            );
             assert_eq!(once.hours, day.hours, "at {hour}");
         }
         let none = light_scale(None, 12.0, WeatherState::Clear, 0.0);
@@ -584,6 +604,36 @@ mod tests {
         }
         let day = day_of(&tables(), 12.0, 0.0, WeatherState::Clear, 0.0).expect("a day");
         assert!(day.sky_view.expect("a table").clouds.is_none());
+    }
+
+    #[test]
+    fn the_night_glows_by_the_moments_own_air_glow_in_thousandths() {
+        let mut tables = tables();
+        // ⚠ The last moment is held by the tables' address and the hour: each reading takes an hour of its own.
+        let at = |tables: &DayTables, hour: f32| {
+            let day = day_of(tables, hour, 0.0, WeatherState::Clear, 0.0).expect("a day");
+            day.sky_view.expect("a table").night.expect("a night")
+        };
+        assert_eq!(
+            at(&tables, 0.0).fill,
+            [0.0; 3],
+            "these tables state no glow"
+        );
+        // A cycle that states the air's glow: its base colour times its intensity, in thousandths.
+        for (hour, intensity) in [(1.0, 1.0f32), (2.0, 0.1)] {
+            let cycle = format!(
+                r#"<timecycle_keyframe_data><cycle name="Sunny" regions="1"><region name="GLOBAL">
+                <sky_air_glow_base_color_b>{}</sky_air_glow_base_color_b>
+                <sky_air_glow_base_intensity>{}</sky_air_glow_base_intensity>
+                </region></cycle></timecycle_keyframe_data>"#,
+                " 0.5".repeat(13),
+                format!(" {intensity}").repeat(13),
+            );
+            tables.timecycle = DayTables::of_texts([cycle.as_str()]).timecycle;
+            let fill = at(&tables, hour).fill;
+            let want = 0.5 * intensity * 0.001;
+            assert!((fill[2] - want).abs() < 1e-8, "{fill:?} {want}");
+        }
     }
 
     #[test]

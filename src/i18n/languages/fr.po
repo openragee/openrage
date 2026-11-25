@@ -14177,9 +14177,6 @@ msgstr "film Scaleform"
 msgid "EDUP, high entropy"
 msgstr "EDUP, entropie élevée"
 
-msgid "This body starts with EDUP and its bytes after that are of high entropy with no structure found, so it is not read and no view shows it."
-msgstr "Ce corps commence par EDUP et ses octets suivants sont d'une entropie élevée sans structure trouvée, si bien qu'il n'est pas lu et qu'aucune vue ne le montre."
-
 msgid "The reader of this {what} does not read it: {e}"
 msgstr "Le lecteur de ce corps ({what}) ne le lit pas : {e}"
 
@@ -16902,3 +16899,134 @@ msgstr "Direct3D 12 compile les shaders avec FXC, car aucun dxcompiler.dll n'a �
 
 msgid "It casts no shadow: one of its surfaces reads the view at an offset the light's view cannot be copied to"
 msgstr "Il ne projette aucune ombre : l'une de ses surfaces lit la vue à un décalage où la vue de la lumière ne peut pas être copiée"
+
+msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
+msgstr "Seul un document ouvert depuis une archive de GTA VI est enregistré dans une copie de celle-ci"
+
+msgid "Cannot save into a copy of the archive: {reason}"
+msgstr "Impossible d'enregistrer dans une copie de l'archive : {reason}"
+
+msgid "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale."
+msgstr "{file} est une nouvelle archive avec la modification à la place de son entrée, que le jeu refuse parce que la signature de sa table est périmée."
+
+msgid "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds."
+msgstr "{file} est une nouvelle archive identique à celle dont elle est lue : la modification écrit les octets que l'entrée contient."
+
+msgid "nothing this view holds is edited, or OpenRage writes none of its edits to a GTA VI body"
+msgstr "rien de ce que contient cette vue n'est modifié, ou OpenRage n'écrit aucune de ses modifications dans un contenu de GTA VI"
+
+msgid "the copy is a new file, and the archive it is read from is never written"
+msgstr "la copie est un nouveau fichier, et l'archive dont elle est lue n'est jamais écrite"
+
+msgid "more than one entry holds the body at {offset}, so which one to replace is not known"
+msgstr "plus d'une entrée contient le contenu à {offset}, on ne sait donc pas laquelle remplacer"
+
+msgid "no entry of the archive holds the body at {offset}"
+msgstr "aucune entrée de l'archive ne contient le contenu à {offset}"
+
+msgid "Save into a copy of the archive…"
+msgstr "Enregistrer dans une copie de l'archive…"
+
+msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"
+msgstr "Écrire les modifications du document de GTA VI à la place de son entrée, dans une nouvelle copie de l'archive dont il est lu. Le jeu refuse cette copie, parce que la signature de sa table est périmée"
+
+msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
+msgstr "Aucune clé de GTA VI : choisissez le dossier d'installation de GTA VI dans Paramètres ▸ Jeux pour que son exécutable puisse les déverrouiller."
+
+msgid "resource"
+msgstr "ressource"
+
+msgid "media"
+msgstr "média"
+
+msgid "other class"
+msgstr "autre classe"
+
+msgid "{file} is listed by a scan without its table: {why}"
+msgstr "{file} est listée par un balayage sans sa table : {why}"
+
+msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
+msgstr "Choisissez le dossier de GTA VI dans les Paramètres, ou ouvrez l'une de ses archives, pour lister ses archives d'après leurs tables."
+
+msgid "Find by name, or by hash as 0x hex"
+msgstr "Chercher par nom, ou par hash en hexadécimal 0x"
+
+msgid "Only the archives expanded are searched."
+msgstr "Seules les archives dépliées sont parcourues."
+
+msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
+msgstr "{file} est une nouvelle archive avec la modification à la place de son entrée et sa table telle qu'elle a été lue."
+
+msgid "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}."
+msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
+msgstr[0] "Listée depuis sa table déchiffrée : {count} entrée, dont {named} nommée, sous la clé de table {key}."
+msgstr[1] "Listée depuis sa table déchiffrée : {count} entrées, dont {named} nommées, sous la clé de table {key}."
+
+msgid "This entry's row states no start, so its body cannot be read."
+msgstr "La ligne de cette entrée n'indique aucun début, son corps ne peut donc pas être lu."
+
+msgid "Click to expand or collapse this nested archive, listed from its own table."
+msgstr "Cliquez pour déplier ou replier cette archive imbriquée, listée depuis sa propre table."
+
+msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
+msgstr "Cliquez pour l'ouvrir dans l'onglet d'aperçu, et double-cliquez pour la garder dans un onglet à part ; un corps chiffré est d'abord déchiffré."
+
+msgid "Extract to a file…"
+msgstr "Extraire vers un fichier…"
+
+msgid "Replace with a file…"
+msgstr "Remplacer par un fichier…"
+
+msgid "Writes a new copy of the archive with this entry replaced, which the game refuses: only its maker can sign the table."
+msgstr "Écrit une nouvelle copie de l'archive où cette entrée est remplacée, que le jeu refuse : seul son auteur peut signer la table."
+
+msgid "Replace with a file"
+msgstr "Remplacer par un fichier"
+
+msgid "Save the new archive"
+msgstr "Enregistrer la nouvelle archive"
+
+msgid "Wrote {entry} to {file}."
+msgstr "{entry} écrit dans {file}."
+
+msgid "Cannot extract {entry}: {reason}"
+msgstr "Impossible d'extraire {entry} : {reason}"
+
+msgid "{file} is a new archive with {entry} replaced, which the game refuses because only its maker can sign the table this changed."
+msgstr "{file} est une nouvelle archive où {entry} est remplacé, que le jeu refuse car seul son auteur peut signer la table que cela a modifiée."
+
+msgid "{file} is a new archive the same as the one it was read from: the file holds the bytes {entry} holds."
+msgstr "{file} est une nouvelle archive identique à celle d'où elle a été lue : le fichier contient les octets que contient {entry}."
+
+msgid "Cannot replace {entry}: {reason}"
+msgstr "Impossible de remplacer {entry} : {reason}"
+
+msgid "the file written is a new one, and the archive it is read from is never written"
+msgstr "le fichier écrit est un nouveau fichier, et l'archive d'où il est lu n'est jamais écrite"
+
+msgid "entry {index} is not in its table"
+msgstr "l'entrée {index} n'est pas dans sa table"
+
+msgid "the entry's row states no start, so its body is not known"
+msgstr "la ligne de l'entrée n'indique aucun début, son corps n'est donc pas connu"
+
+msgid "a nested archive whose row states no stored size"
+msgstr "une archive imbriquée dont la ligne n'indique aucune taille stockée"
+
+msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
+msgstr "l'archive se termine à {copied} octets dans l'archive imbriquée de {stored} octets"
+
+msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
+msgstr "Un corps EDUP : son mot de compte en 0x04 vaut {count}, et {length} octets de charge suivent son en-tête de 8 octets."
+
+msgid "With a count of zero, the word at 0x08 states {stated} bytes, and that many follow it."
+msgstr "Avec un compte nul, le mot en 0x08 indique {stated} octets, et autant le suivent."
+
+msgid "Its payload is not read: no record width divides it by its count, and its bytes are of high entropy with no cipher record, so what it holds is not known and no view shows it."
+msgstr "Sa charge n'est pas lue : aucune largeur d'enregistrement ne la divise par son compte, et ses octets sont d'une entropie élevée sans enregistrement de chiffrement, si bien que ce qu'elle contient n'est pas connu et qu'aucune vue ne la montre."
+
+msgid "Replace the lower levels of detail too"
+msgstr "Remplacer aussi les niveaux de détail inférieurs"
+
+msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
+msgstr "Désactivé, un niveau de détail dont le maillage ne nomme aucune géométrie reste tel que le modèle le contient. Activé, chacune de ces géométries prend le maillage du niveau 0 à son modèle et à sa place, là où les deux se dessinent avec un même shader."

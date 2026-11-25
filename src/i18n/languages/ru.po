@@ -14311,9 +14311,6 @@ msgstr "ролик Scaleform"
 msgid "EDUP, high entropy"
 msgstr "EDUP, высокая энтропия"
 
-msgid "This body starts with EDUP and its bytes after that are of high entropy with no structure found, so it is not read and no view shows it."
-msgstr "Это тело начинается с EDUP, а его последующие байты имеют высокую энтропию, и структуры в них не найдено, поэтому оно не читается и ни один вид его не показывает."
-
 msgid "The reader of this {what} does not read it: {e}"
 msgstr "Средство чтения этого тела ({what}) его не читает: {e}"
 
@@ -17048,3 +17045,135 @@ msgstr "Direct3D 12 компилирует шейдеры с помощью FXC,
 
 msgid "It casts no shadow: one of its surfaces reads the view at an offset the light's view cannot be copied to"
 msgstr "Он не отбрасывает тень: одна из его поверхностей читает вид по смещению, в которое вид источника света нельзя скопировать"
+
+msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
+msgstr "В копию архива сохраняется только документ, открытый из архива GTA VI"
+
+msgid "Cannot save into a copy of the archive: {reason}"
+msgstr "Не удаётся сохранить в копию архива: {reason}"
+
+msgid "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale."
+msgstr "{file} — новый архив с правкой на месте его записи; игра отвергает его, потому что подпись его таблицы устарела."
+
+msgid "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds."
+msgstr "{file} — новый архив, такой же, как тот, из которого он прочитан: правка записывает байты, которые содержит запись."
+
+msgid "nothing this view holds is edited, or OpenRage writes none of its edits to a GTA VI body"
+msgstr "в этом представлении ничего не изменено, или OpenRage не записывает ни одной из его правок в содержимое GTA VI"
+
+msgid "the copy is a new file, and the archive it is read from is never written"
+msgstr "копия — новый файл, а архив, из которого она читается, никогда не записывается"
+
+msgid "more than one entry holds the body at {offset}, so which one to replace is not known"
+msgstr "содержимое по адресу {offset} есть больше чем в одной записи, поэтому неизвестно, какую заменить"
+
+msgid "no entry of the archive holds the body at {offset}"
+msgstr "ни одна запись архива не содержит содержимое по адресу {offset}"
+
+msgid "Save into a copy of the archive…"
+msgstr "Сохранить в копию архива…"
+
+msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"
+msgstr "Записать правки документа GTA VI на место его записи в новую копию архива, из которого он прочитан. Игра отвергает эту копию, потому что подпись её таблицы устарела"
+
+msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
+msgstr "Нет ключей GTA VI: укажите папку установки GTA VI в разделе Параметры ▸ Игры, чтобы её исполняемый файл мог их открыть."
+
+msgid "resource"
+msgstr "ресурс"
+
+msgid "media"
+msgstr "медиа"
+
+msgid "other class"
+msgstr "другой класс"
+
+msgid "{file} is listed by a scan without its table: {why}"
+msgstr "{file} перечислен сканированием без его таблицы: {why}"
+
+msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
+msgstr "Выберите папку GTA VI в параметрах или откройте один из её архивов, чтобы перечислить её архивы по их таблицам."
+
+msgid "Find by name, or by hash as 0x hex"
+msgstr "Искать по имени или по хешу в виде 0x hex"
+
+msgid "Only the archives expanded are searched."
+msgstr "Поиск идёт только по развёрнутым архивам."
+
+msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
+msgstr "{file} — новый архив с правкой на месте его записи и с таблицей в том виде, в каком она прочитана."
+
+msgid "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}."
+msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
+msgstr[0] "Перечислено по расшифрованной таблице: {count} запись, из них с именем {named}, под ключом таблицы {key}."
+msgstr[1] "Перечислено по расшифрованной таблице: {count} записи, из них с именем {named}, под ключом таблицы {key}."
+msgstr[2] "Перечислено по расшифрованной таблице: {count} записей, из них с именем {named}, под ключом таблицы {key}."
+
+msgid "This entry's row states no start, so its body cannot be read."
+msgstr "Строка этой записи не указывает начала, поэтому её тело нельзя прочитать."
+
+msgid "Click to expand or collapse this nested archive, listed from its own table."
+msgstr "Нажмите, чтобы развернуть или свернуть этот вложенный архив, перечисленный по его собственной таблице."
+
+msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
+msgstr "Нажмите, чтобы открыть его во вкладке предпросмотра, и дважды нажмите, чтобы оставить его в отдельной вкладке; зашифрованное тело сначала расшифровывается."
+
+msgid "Extract to a file…"
+msgstr "Извлечь в файл…"
+
+msgid "Replace with a file…"
+msgstr "Заменить файлом…"
+
+msgid "Writes a new copy of the archive with this entry replaced, which the game refuses: only its maker can sign the table."
+msgstr "Записывает новую копию архива с заменённой записью, которую игра отвергает: подписать таблицу может только её создатель."
+
+msgid "Replace with a file"
+msgstr "Заменить файлом"
+
+msgid "Save the new archive"
+msgstr "Сохранить новый архив"
+
+msgid "Wrote {entry} to {file}."
+msgstr "{entry} записан в {file}."
+
+msgid "Cannot extract {entry}: {reason}"
+msgstr "Не удалось извлечь {entry}: {reason}"
+
+msgid "{file} is a new archive with {entry} replaced, which the game refuses because only its maker can sign the table this changed."
+msgstr "{file} — новый архив с заменённым {entry}, который игра отвергает, потому что подписать изменённую этим таблицу может только её создатель."
+
+msgid "{file} is a new archive the same as the one it was read from: the file holds the bytes {entry} holds."
+msgstr "{file} — новый архив, такой же, как тот, из которого он прочитан: файл содержит те же байты, что и {entry}."
+
+msgid "Cannot replace {entry}: {reason}"
+msgstr "Не удалось заменить {entry}: {reason}"
+
+msgid "the file written is a new one, and the archive it is read from is never written"
+msgstr "записываемый файл — новый, а архив, из которого идёт чтение, никогда не записывается"
+
+msgid "entry {index} is not in its table"
+msgstr "записи {index} нет в её таблице"
+
+msgid "the entry's row states no start, so its body is not known"
+msgstr "строка записи не указывает начала, поэтому её тело неизвестно"
+
+msgid "a nested archive whose row states no stored size"
+msgstr "вложенный архив, строка которого не указывает хранимого размера"
+
+msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
+msgstr "архив заканчивается через {copied} байт внутри вложенного архива размером {stored} байт"
+
+msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
+msgstr "Тело EDUP: его слово счётчика по 0x04 равно {count}, и за его 8-байтовым заголовком следуют {length} байт полезных данных."
+
+msgid "With a count of zero, the word at 0x08 states {stated} bytes, and that many follow it."
+msgstr "При нулевом счётчике слово по 0x08 указывает {stated} байт, и столько же следует за ним."
+
+msgid "Its payload is not read: no record width divides it by its count, and its bytes are of high entropy with no cipher record, so what it holds is not known and no view shows it."
+msgstr "Его полезные данные не читаются: ни одна ширина записи не делит их на счётчик, а их байты имеют высокую энтропию без записи шифра, поэтому неизвестно, что в них, и ни одно представление их не показывает."
+
+msgid "Replace the lower levels of detail too"
+msgstr "Заменить и более низкие уровни детализации"
+
+msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
+msgstr "Выключено: уровень детализации, для которого меш не называет геометрии, остаётся таким, как его хранит модель. Включено: каждая такая геометрия получает меш уровня 0 в своей модели и месте, где обе рисуются одним шейдером."

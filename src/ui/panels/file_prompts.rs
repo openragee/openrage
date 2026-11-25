@@ -267,6 +267,13 @@ fn import_body(ui: &mut egui::Ui, asked: &mut Import, answer: &mut Option<Answer
             )
             .changed();
         weak(ui, tr!("Each geometry the mesh names takes its positions, normals, tangents, texcoords, colours and triangles, and its weights and blend indices from the mesh's joints, adding to its palette a bone it lacks. A channel the mesh leaves out is kept as the geometry holds it at its own vertex count and refused at another, unless the box above is ticked: then a normal is filled with +Z, a tangent with +X, a colour with white, a UV with 0 and a skin with a whole weight on its first bone."));
+        let filled = filled
+            | ui.checkbox(
+                &mut asked.choice.lower_lods,
+                tr!("Replace the lower levels of detail too"),
+            )
+            .changed();
+        weak(ui, tr!("Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."));
         match buttons(ui, tr!("Replace"), ready) {
             Some(true) => *answer = Some(Answer::Import),
             Some(false) => *answer = Some(Answer::Cancel),

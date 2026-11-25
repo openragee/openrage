@@ -15,6 +15,7 @@ pub mod compiled;
 pub mod ir;
 pub mod listing;
 pub mod names;
+pub mod native_addresses;
 pub mod passes;
 pub mod print;
 pub mod tree;

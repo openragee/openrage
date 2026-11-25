@@ -50,6 +50,8 @@ pub struct ImportChoice {
     pub entry: usize,
     pub fill_missing: bool,
     pub keep_skinning: bool,
+    /// `--lods replaced`: a GTA VI drawable's lower levels take the level-0 mesh.
+    pub lower_lods: bool,
 }
 
 pub struct Export {
@@ -488,6 +490,10 @@ impl AppState {
                     (asked.mesh.clone(), asked.choice.clone(), asked.handler);
                 let gta6 = asked.gta6.clone();
                 let fill = choice.fill_missing;
+                let fill = super::gta6_gltf_import::Choice {
+                    fill,
+                    lower_lods: choice.lower_lods,
+                };
                 let doing = tr!(
                     "Replacing {name} from {mesh}",
                     name = name,

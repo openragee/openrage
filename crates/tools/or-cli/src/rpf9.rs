@@ -1,11 +1,17 @@
 //! `rpf9`: the GTA VI (RPF9) archive explorer, over the decrypted table of contents.
 //!
-//!   `rpf9 list <archive> [inner/path]`     one row per entry: start, stored, real, name64, name
+//!   `rpf9 list <archive> [inner/path]`     one row per entry: index, name64, size, kind, name
 //!   `rpf9 tree …`                          an alias of `list`, kept for the earlier name
 //!   `rpf9 extract <archive> <dest> …`      write entry bodies to disk, inflated, at their exact extent
-//!                                          (with `--decrypt`, a content-ciphered body is deciphered first)
+//!                                          (with `--decrypt`, a content-ciphered body is deciphered first);
+//!                                          a nested archive is written as its row's extent
+//!   `rpf9 find <install-dir> …`            every entry of every archive, nested ones included, whose
+//!                                          name, hash or kind matches
 //!   `rpf9 census <build-root>`             walk every archive and nested table, count them, and
 //!                                          classify each flagged body by its inflated head
+//!
+//! With `--strings`, `list` and `extract` show the strings a PSO document carries, its enciphered runs
+//! deciphered with the key snapshot. `--exe` names the game executable a masked snapshot opens with.
 //!
 //! An `inner/path` of slash-separated components navigates nested archives from the entry table:
 //! `data.rpf common.rpf` lists the `common.rpf` held inside `data.rpf`, recursively. A component is
@@ -15,12 +21,21 @@
 //! committed. Without a snapshot the archive cannot be deciphered and the command says so; without
 //! the names corpus every entry shows as its hash.
 
+use std::collections::BTreeMap;
 use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use or_io::container::rpf::{Gta6Entry, Gta6Mount, GtaViKeys, NameResolver};
+use or_io::container::rpf::gta6_kinds::entry_kinds;
+use or_io::container::rpf::{
+    decode_masked, is_masked, Gta6Archive, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver,
+};
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
+use or_io::meta::binary::pso::string_names;
+
+#[path = "rpf9_find.rs"]
+mod find;
 
 /// The environment variable that names a folder of recovered-names tables (`vocabulary.txt`,
 /// `resolved-names.tsv`, `toc-entries-resolved.tsv`), used when `--names` is not given.
@@ -30,10 +45,12 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
         Some("list" | "tree") => list(&args[1..]),
         Some("extract") => extract(&args[1..]),
+        Some("find") => find::run(&args[1..]),
         Some("census") => census(&args[1..]),
         Some(verb @ ("copy" | "replace" | "remove" | "rename" | "defrag")) => {
             crate::rpf9_write::run(verb, &args[1..])
         }
+        Some(verb @ ("add" | "build")) => crate::rpf9_write::run(verb, &args[1..]),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -43,14 +60,17 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
 
 const USAGE: &str = "\
 usage:
-  openrage-cli rpf9 list <archive.rpf> [inner/path] [--names <dir>] [--keys <snapshot>] [--groups] [--nested] [--json]
-  openrage-cli rpf9 extract <archive.rpf> <dest-dir> [inner/path] [--entry <selector>] [--filter <substr>] [--decrypt] [--names <dir>] [--keys <snapshot>]
-  openrage-cli rpf9 census <build-root> [--names <dir>] [--keys <snapshot>] [--out <dir>] [--top-only]
+  openrage-cli rpf9 list <archive.rpf> [inner/path] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>] [--groups] [--nested] [--strings] [--json]
+  openrage-cli rpf9 extract <archive.rpf> <dest-dir> [inner/path] [--entry <selector>] [--filter <substr>] [--decrypt] [--strings] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 find <install-dir> [--name <substr>] [--hash <hex>] [--kind <archive|resource|media|0xNN|kind label>] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 census <build-root> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>] [--out <dir>] [--top-only]
   openrage-cli rpf9 copy <archive.rpf> --out <new.rpf> [--keys <snapshot>]
   openrage-cli rpf9 replace <archive.rpf> [inner/path] --entry <selector> --with <file> --out <new.rpf> [--names <dir>] [--keys <snapshot>]
   openrage-cli rpf9 remove <archive.rpf> [inner/path] --entry <selector> --out <new.rpf> [--names <dir>] [--keys <snapshot>]
   openrage-cli rpf9 rename <archive.rpf> [inner/path] --entry <selector> --name <path> --out <new.rpf> [--names <dir>] [--keys <snapshot>]
-  openrage-cli rpf9 defrag <archive.rpf> --out <new.rpf> [--keys <snapshot>]";
+  openrage-cli rpf9 defrag <archive.rpf> --out <new.rpf> [--keys <snapshot>]
+  openrage-cli rpf9 add <archive.rpf> [inner/path] --name <path> --with <file> [--type <code>] --out <new.rpf> [--names <dir>] [--keys <snapshot>]
+  openrage-cli rpf9 build <folder> --key-from <archive.rpf> --out <new.rpf> [--keys <snapshot>]";
 
 fn usage(msg: &str) -> ExitCode {
     eprintln!("Error: {msg}");
@@ -60,15 +80,18 @@ fn usage(msg: &str) -> ExitCode {
 
 // --- shared option parsing --------------------------------------------------
 
-/// The options every verb shares: the names folder and the key snapshot override.
+/// The options every verb shares: the names folder, the key snapshot override and the executable a
+/// masked snapshot opens with.
 #[derive(Default)]
 struct Common {
     names_dir: Option<PathBuf>,
     keys_path: Option<PathBuf>,
+    exe_path: Option<PathBuf>,
 }
 
-/// Consume a `--names`/`--keys` option from `arg`, reading its value from `it`; `Ok(true)` when it
-/// was one of them, `Ok(false)` when `arg` is for the caller to handle, `Err` on a missing value.
+/// Consume a `--names`/`--keys`/`--exe` option from `arg`, reading its value from `it`; `Ok(true)`
+/// when it was one of them, `Ok(false)` when `arg` is for the caller to handle, `Err` on a missing
+/// value.
 fn take_common<'a>(
     common: &mut Common,
     arg: &str,
@@ -83,26 +106,48 @@ fn take_common<'a>(
             Some(path) => common.keys_path = Some(PathBuf::from(path)),
             None => return Err(usage("--keys needs a snapshot file")),
         },
+        "--exe" => match it.next() {
+            Some(path) => common.exe_path = Some(PathBuf::from(path)),
+            None => return Err(usage("--exe needs the GTA VI executable")),
+        },
         _ => return Ok(false),
     }
     Ok(true)
 }
 
-/// The key snapshot: the one `--keys` names, else the one a session supplies for the install.
-fn load_keys(explicit: Option<&Path>) -> Result<GtaViKeys, String> {
+/// The key snapshot: the one `--keys` names, else the one a session supplies for the install; `exe`
+/// is the executable a masked snapshot opens with.
+fn load_keys(explicit: Option<&Path>, exe: Option<&Path>) -> Result<GtaViKeys, String> {
     if let Some(path) = explicit {
-        return GtaViKeys::from_file(path).map_err(|e| e.to_string());
+        return match exe {
+            Some(exe) => keys_with_exe(path, exe),
+            None => GtaViKeys::from_file(path).map_err(|e| e.to_string()),
+        };
     }
-    match GtaViKeys::for_install(or_title::config::config_dir().as_deref())
+    match GtaViKeys::for_install_with(or_title::config::config_dir().as_deref(), exe)
         .map_err(|e| e.to_string())?
     {
         Some(keys) => Ok(keys),
         None => Err(format!(
-            "No GTA VI key snapshot: set {}, pass --keys, or place {} beside the keys cache.",
+            "No GTA VI key snapshot: set {}, pass --keys, or place {} beside the keys cache; a \
+             masked snapshot also needs --exe or {}.",
             or_io::container::rpf::GTA6_SNAPSHOT_ENV,
             or_io::container::rpf::GTA6_SNAPSHOT_FILE_NAME,
+            or_io::container::rpf::GTA6_EXE_ENV,
         )),
     }
+}
+
+/// The snapshot at `path`, unmasked with the executable at `exe` when it is masked.
+fn keys_with_exe(path: &Path, exe: &Path) -> Result<GtaViKeys, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let plain = if is_masked(&bytes) {
+        let exe_bytes = std::fs::read(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
+        decode_masked(&bytes, &exe_bytes).map_err(|e| format!("{}: {e}", path.display()))?
+    } else {
+        bytes
+    };
+    GtaViKeys::parse(&plain).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Load the recovered-names corpus from `dir` (or the folder [`NAMES_ENV`] names): the `vocabulary.txt`
@@ -186,6 +231,7 @@ fn list(args: &[String]) -> ExitCode {
     let mut common = Common::default();
     let mut positionals: Vec<&str> = Vec::new();
     let (mut show_groups, mut nested, mut json) = (false, false, false);
+    let mut strings = false;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match take_common(&mut common, arg, &mut it) {
@@ -197,6 +243,7 @@ fn list(args: &[String]) -> ExitCode {
             "--groups" => show_groups = true,
             "--nested" => nested = true,
             "--json" => json = true,
+            "--strings" => strings = true,
             other if other.starts_with("--") => return usage(&format!("unknown option {other}")),
             other => positionals.push(other),
         }
@@ -206,7 +253,7 @@ fn list(args: &[String]) -> ExitCode {
     };
     let inner: Vec<String> = inner.iter().flat_map(|p| split_inner(p)).collect();
 
-    let keys = match load_keys(common.keys_path.as_deref()) {
+    let keys = match load_keys(common.keys_path.as_deref(), common.exe_path.as_deref()) {
         Ok(keys) => keys,
         Err(e) => {
             eprintln!("{e}");
@@ -217,16 +264,17 @@ fn list(args: &[String]) -> ExitCode {
     if resolver.is_empty() {
         eprintln!("(no recovered names found; entries show as their hash)");
     }
+    if strings && !keys.has_content_keys() {
+        eprintln!("(the key snapshot has no content keys; enciphered bodies show no strings)");
+    }
 
-    match do_list(
-        Path::new(archive),
-        &inner,
-        &keys,
-        &resolver,
-        show_groups,
+    let show = Show {
+        groups: show_groups,
         nested,
         json,
-    ) {
+        strings,
+    };
+    match do_list(Path::new(archive), &inner, &keys, &resolver, &show) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -235,20 +283,38 @@ fn list(args: &[String]) -> ExitCode {
     }
 }
 
+/// What a listing shows beside the entry rows.
+struct Show {
+    groups: bool,
+    nested: bool,
+    json: bool,
+    strings: bool,
+}
+
 fn do_list(
     path: &Path,
     inner: &[String],
     keys: &GtaViKeys,
     resolver: &NameResolver,
-    show_groups: bool,
-    nested: bool,
-    json: bool,
+    show: &Show,
 ) -> Result<(), String> {
     let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mount = mount_path(&mut file, inner, keys, resolver)?;
+    let strings = if show.strings {
+        mount_strings(&mount, &mut file, keys)
+    } else {
+        Strings::new()
+    };
 
-    if json {
-        let value = entries_json(&mount.archive.entries);
+    if show.json {
+        let mut value = entries_json(&mount.archive.entries);
+        let kinds = entry_kinds(&mount.archive);
+        for (row, kind) in value.as_array_mut().into_iter().flatten().zip(&kinds) {
+            row["kind"] = serde_json::json!(kind);
+        }
+        if show.strings {
+            add_strings_json(&mut value, &mount.archive.entries, &strings);
+        }
         println!(
             "{}",
             serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?
@@ -258,14 +324,9 @@ fn do_list(
 
     let label = display_path(path, inner);
     println!("{label}: {}", counts(&mount));
-    print_listing(
-        &mount.archive.entries,
-        mount.archive.groups(),
-        show_groups,
-        1,
-    );
+    print_listing(&mount.archive, show.groups, 1, &strings);
 
-    if nested {
+    if show.nested {
         // One level of nested archives, mounted from the table (no scan). Deeper nesting is reached
         // with a longer inner path.
         let children: Vec<Gta6Entry> = mount
@@ -281,16 +342,80 @@ fn do_list(
                 .open_nested(&mut file, entry, keys)
                 .map_err(|e| e.to_string())?;
             child.archive.resolve_names(resolver);
+            let child_strings = if show.strings {
+                mount_strings(&child, &mut file, keys)
+            } else {
+                Strings::new()
+            };
             println!("  {}: {}", entry.display_name(), counts(&child));
-            print_listing(
-                &child.archive.entries,
-                child.archive.groups(),
-                show_groups,
-                2,
-            );
+            print_listing(&child.archive, show.groups, 2, &child_strings);
         }
     }
     Ok(())
+}
+
+/// The PSO strings of a mount's entries by entry index: the strings, or why they were refused.
+type Strings = BTreeMap<u32, Result<Vec<String>, String>>;
+
+/// Bodies larger than this are not read for their PSO strings.
+const STRINGS_CAP: u64 = 32 << 20;
+
+/// The strings every leaf entry of `mount` carries as a PSO document; an entry whose body does not
+/// read (an enciphered body without content keys among them) or is not a PSO is left out.
+fn mount_strings(mount: &Gta6Mount, file: &mut File, keys: &GtaViKeys) -> Strings {
+    let mut out = Strings::new();
+    for entry in &mount.archive.entries {
+        if entry.real.or(entry.stored).is_some_and(|n| n > STRINGS_CAP)
+            || mount
+                .entry_begins_archive(&mut *file, entry)
+                .unwrap_or(true)
+        {
+            continue;
+        }
+        let read = if entry.cipher.is_some() {
+            mount.read_entry_decrypted(&mut *file, entry, keys)
+        } else {
+            mount.read_entry(&mut *file, entry)
+        };
+        let Ok(body) = read else { continue };
+        match body_strings(&body, keys) {
+            Ok(Some(strings)) => {
+                out.insert(entry.index, Ok(strings));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                out.insert(entry.index, Err(e));
+            }
+        }
+    }
+    out
+}
+
+/// The strings a PSO `body` carries, enciphered runs deciphered with `keys`; `None` for a body that is
+/// not a PSO document or holds no string.
+fn body_strings(body: &[u8], keys: &GtaViKeys) -> Result<Option<Vec<String>>, String> {
+    if !body.starts_with(b"PSIN") {
+        return Ok(None);
+    }
+    let strings = string_names::document_strings(body, Some(keys)).map_err(|e| e.to_string())?;
+    Ok((!strings.is_empty()).then_some(strings))
+}
+
+/// Add each listed entry's strings (or the reason they were refused) to its JSON row.
+fn add_strings_json(value: &mut serde_json::Value, entries: &[Gta6Entry], strings: &Strings) {
+    let Some(rows) = value.as_array_mut() else {
+        return;
+    };
+    for (row, entry) in rows.iter_mut().zip(entries) {
+        let (key, item) = match strings.get(&entry.index) {
+            Some(Ok(list)) => ("strings", serde_json::json!(list)),
+            Some(Err(e)) => ("strings_refused", serde_json::json!(e)),
+            None => continue,
+        };
+        if let Some(object) = row.as_object_mut() {
+            object.insert(key.to_string(), item);
+        }
+    }
 }
 
 /// The entry-count line for a mount: how many entries the table lists and the index key.
@@ -314,16 +439,11 @@ fn display_path(path: &Path, inner: &[String]) -> String {
     }
 }
 
-fn print_listing(
-    entries: &[Gta6Entry],
-    groups: &[or_io::container::rpf::Rpf9Group],
-    show_groups: bool,
-    depth: usize,
-) {
+fn print_listing(archive: &Gta6Archive, show_groups: bool, depth: usize, strings: &Strings) {
     let indent = "  ".repeat(depth);
     if show_groups {
         println!("{indent}groups:");
-        for group in groups {
+        for group in archive.groups() {
             println!(
                 "{indent}  {:#018X}  count {:>6}  width {:>3}  {}  [{}, {})",
                 group.name_hash,
@@ -336,7 +456,7 @@ fn print_listing(
         }
         println!("{indent}entries:");
     }
-    for entry in entries {
+    for (entry, kind) in archive.entries.iter().zip(entry_kinds(archive)) {
         let size = entry
             .size()
             .map(|s| format!("{s:>10}"))
@@ -347,11 +467,20 @@ fn print_listing(
             ""
         };
         println!(
-            "{indent}  {:>6}  {:#018X}  {size}  {}{cipher}",
+            "{indent}  {:>6}  {:#018X}  {size}  {kind:<22}  {}{cipher}",
             entry.index,
             entry.name64,
             entry.display_name(),
         );
+        match strings.get(&entry.index) {
+            Some(Ok(list)) => {
+                for text in list {
+                    println!("{indent}          string  {text}");
+                }
+            }
+            Some(Err(e)) => println!("{indent}          strings refused: {e}"),
+            None => {}
+        }
     }
 }
 
@@ -379,7 +508,7 @@ fn extract(args: &[String]) -> ExitCode {
     let mut common = Common::default();
     let mut positionals: Vec<&str> = Vec::new();
     let (mut entry_sel, mut filter): (Option<String>, Option<String>) = (None, None);
-    let mut decrypt = false;
+    let (mut decrypt, mut strings) = (false, false);
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match take_common(&mut common, arg, &mut it) {
@@ -388,6 +517,7 @@ fn extract(args: &[String]) -> ExitCode {
             Ok(false) => {}
         }
         match arg.as_str() {
+            "--strings" => strings = true,
             "--entry" => match it.next() {
                 Some(v) => entry_sel = Some(v.clone()),
                 None => return usage("--entry needs a selector"),
@@ -406,7 +536,7 @@ fn extract(args: &[String]) -> ExitCode {
     };
     let inner: Vec<String> = inner.iter().flat_map(|p| split_inner(p)).collect();
 
-    let keys = match load_keys(common.keys_path.as_deref()) {
+    let keys = match load_keys(common.keys_path.as_deref(), common.exe_path.as_deref()) {
         Ok(keys) => keys,
         Err(e) => {
             eprintln!("{e}");
@@ -415,13 +545,17 @@ fn extract(args: &[String]) -> ExitCode {
     };
     let resolver = load_resolver(common.names_dir.as_deref());
 
+    let pick = Pick {
+        entry: entry_sel.as_deref(),
+        filter: filter.as_deref(),
+        decrypt,
+        strings,
+    };
     match do_extract(
         Path::new(archive),
         Path::new(dest),
         &inner,
-        entry_sel.as_deref(),
-        filter.as_deref(),
-        decrypt,
+        &pick,
         &keys,
         &resolver,
     ) {
@@ -439,21 +573,26 @@ fn extract(args: &[String]) -> ExitCode {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Which entries an extract writes and how.
+struct Pick<'a> {
+    entry: Option<&'a str>,
+    filter: Option<&'a str>,
+    decrypt: bool,
+    strings: bool,
+}
+
 fn do_extract(
     path: &Path,
     dest: &Path,
     inner: &[String],
-    entry_sel: Option<&str>,
-    filter: Option<&str>,
-    decrypt: bool,
+    pick: &Pick<'_>,
     keys: &GtaViKeys,
     resolver: &NameResolver,
 ) -> Result<usize, String> {
     let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mount = mount_path(&mut file, inner, keys, resolver)?;
 
-    let chosen: Vec<Gta6Entry> = select_entries(&mount.archive.entries, entry_sel, filter);
+    let chosen: Vec<Gta6Entry> = select_entries(&mount.archive.entries, pick.entry, pick.filter);
     if chosen.is_empty() {
         return Err("no entry matched".to_string());
     }
@@ -461,11 +600,19 @@ fn do_extract(
 
     let mut written = 0usize;
     for entry in &chosen {
+        let out = dest.join(safe_out_name(entry));
+        if crate::rpf9_write::same_file(&out, path) {
+            eprintln!(
+                "  skipped {} (it would be written over the archive it is read from)",
+                entry.display_name()
+            );
+            continue;
+        }
         // A content-ciphered body is written only with `--decrypt`, deciphered and inflated; without
         // the flag it is skipped, as the clear reader would write ciphertext. A clear entry reads the
         // same either way.
         if entry.cipher.is_some() {
-            if !decrypt {
+            if !pick.decrypt {
                 eprintln!(
                     "  skipped {} (enciphered body; pass --decrypt to decipher it)",
                     entry.display_name()
@@ -476,10 +623,10 @@ fn do_extract(
             .entry_begins_archive(&mut file, entry)
             .unwrap_or(false)
         {
-            eprintln!(
-                "  skipped {} (a nested archive; list it with an inner path)",
-                entry.display_name()
-            );
+            match write_nested(&mount, &mut file, entry, &out) {
+                Ok(()) => written += 1,
+                Err(e) => eprintln!("  skipped {} ({e})", entry.display_name()),
+            }
             continue;
         }
         let read = if entry.cipher.is_some() {
@@ -494,14 +641,61 @@ fn do_extract(
                 continue;
             }
         };
-        let out = dest.join(safe_out_name(entry));
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
         }
         std::fs::write(&out, &bytes).map_err(|e| format!("{}: {e}", out.display()))?;
         written += 1;
+        if pick.strings {
+            match body_strings(&bytes, keys) {
+                Ok(Some(strings)) => {
+                    let side = strings_file(&out);
+                    std::fs::write(&side, strings.join("\n") + "\n")
+                        .map_err(|e| format!("{}: {e}", side.display()))?;
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("  strings of {} refused ({e})", entry.display_name()),
+            }
+        }
     }
     Ok(written)
+}
+
+/// Where an extracted body's PSO strings are written: beside it, `.strings.txt` appended.
+fn strings_file(body: &Path) -> PathBuf {
+    let mut name = body.as_os_str().to_owned();
+    name.push(".strings.txt");
+    PathBuf::from(name)
+}
+
+/// Write the nested archive `entry` holds to `out` as its row states it, `[start, start + stored)`:
+/// its entries' starts are relative to its own header, so the file opens as an archive on its own.
+fn write_nested(
+    mount: &Gta6Mount,
+    file: &mut File,
+    entry: &Gta6Entry,
+    out: &Path,
+) -> Result<(), String> {
+    let (Some(start), Some(stored)) = (mount.absolute_start(entry), entry.stored) else {
+        return Err("a nested archive whose row states no stored size".to_string());
+    };
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    file.seek(SeekFrom::Start(start))
+        .map_err(|e| e.to_string())?;
+    let mut sink = File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let copied = std::io::copy(&mut file.by_ref().take(stored), &mut sink)
+        .map_err(|e| format!("{}: {e}", out.display()))?;
+    if copied != stored {
+        drop(sink);
+        // A short copy is not the nested archive; leave no partial file behind.
+        let _ = std::fs::remove_file(out);
+        return Err(format!(
+            "the archive ends {copied} bytes into the {stored}-byte nested archive"
+        ));
+    }
+    Ok(())
 }
 
 /// The entries to extract: the one `--entry` names, those whose name holds `--filter`, or, with
@@ -675,7 +869,7 @@ fn census(args: &[String]) -> ExitCode {
     // into the tracked tree. The folder is created if absent.
     let out = out.unwrap_or_else(|| PathBuf::from("docs/extra/gta6/parity"));
 
-    let keys = match load_keys(common.keys_path.as_deref()) {
+    let keys = match load_keys(common.keys_path.as_deref(), common.exe_path.as_deref()) {
         Ok(keys) => keys,
         Err(e) => {
             eprintln!("{e}");

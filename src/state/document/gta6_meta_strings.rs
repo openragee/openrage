@@ -2,9 +2,10 @@
 //! carries; without the snapshot the document opens as it reads and says what the names need.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use or_io::container::rpf::GtaViKeys;
-use or_io::meta::binary::pso::string_names;
+use or_io::meta::binary::pso::string_names::{self, CategoryString};
 
 /// What a document shows in place of the names its enciphered strings would give.
 pub const STRING_NAMES_NEED_KEYS: &str =
@@ -14,15 +15,16 @@ pub const STRING_NAMES_NEED_KEYS: &str =
 #[derive(Debug, Clone, Default)]
 pub struct DocumentStrings {
     names: HashMap<u32, String>,
+    wide: HashMap<u64, String>,
     /// Whether the document's strings are enciphered and no key snapshot deciphers them.
     pub needs_keys: bool,
 }
 
 impl DocumentStrings {
     /// The names the PSO `bytes` give their own hash values; `keys` is loaded only to decipher them.
-    pub fn of(bytes: &[u8], keys: impl FnOnce() -> Option<GtaViKeys>) -> Self {
+    pub fn of(bytes: &[u8], keys: impl FnOnce() -> Option<Arc<GtaViKeys>>) -> Self {
         let keys = if string_names::has_enciphered_strings(bytes) {
-            let Some(keys) = keys().filter(GtaViKeys::has_string_keys) else {
+            let Some(keys) = keys().filter(|k| k.has_string_keys()) else {
                 return Self {
                     needs_keys: true,
                     ..Self::default()
@@ -32,7 +34,7 @@ impl DocumentStrings {
         } else {
             None
         };
-        match string_names::document_strings(bytes, keys.as_ref()) {
+        match string_names::registered_strings(bytes, keys.as_deref()) {
             Ok(strings) => Self::from_strings(strings),
             Err(e) => {
                 tracing::warn!(error = %e, "the document's string sections do not read; its hash values keep no names from them");
@@ -41,33 +43,42 @@ impl DocumentStrings {
         }
     }
 
-    fn from_strings(strings: Vec<String>) -> Self {
-        let names = (strings.into_iter())
-            .map(|text| (or_io::string_hash(text.as_bytes()), text))
-            .collect();
-        Self {
-            names,
-            needs_keys: false,
+    /// Each string under its category's 32-bit hash and the 64-bit string hash; the first wins.
+    fn from_strings(strings: Vec<CategoryString>) -> Self {
+        let mut out = Self::default();
+        for CategoryString { category, text } in strings {
+            let bytes = text.as_bytes();
+            let wide = or_io::gta6::hash::name_hash64(bytes);
+            out.wide.entry(wide).or_insert_with(|| text.clone());
+            if let Some(hash) = string_names::category_hash(category, bytes) {
+                out.names.entry(hash).or_insert(text);
+            }
         }
+        out
     }
 
     /// Whether any string names a hash value.
     pub fn has_names(&self) -> bool {
-        !self.names.is_empty()
+        !self.names.is_empty() || !self.wide.is_empty()
     }
 
     /// The document's own string `hash` names.
     pub fn name(&self, hash: u32) -> Option<&str> {
         self.names.get(&hash).map(String::as_str)
     }
+
+    /// The document's own string the 64-bit string hash `hash` names.
+    pub fn name64(&self, hash: u64) -> Option<&str> {
+        self.wide.get(&hash).map(String::as_str)
+    }
 }
 
-/// The user's GTA VI key snapshot, where one is found and reads.
-pub fn install_keys() -> Option<GtaViKeys> {
-    match GtaViKeys::for_install(or_title::config::config_dir().as_deref()) {
-        Ok(keys) => keys,
+/// GTA VI's keys as every app path loads them, where they are found.
+pub fn install_keys() -> Option<Arc<GtaViKeys>> {
+    match crate::state::rpf9_scan::rpf9_table::keys() {
+        Ok(keys) => Some(keys),
         Err(e) => {
-            tracing::warn!(error = %e, "the GTA VI key snapshot does not read");
+            tracing::debug!(error = %e, "no GTA VI keys");
             None
         }
     }
@@ -144,7 +155,7 @@ mod tests {
     #[test]
     fn with_the_key_snapshot_a_hash_the_document_carries_shows_its_deciphered_string() {
         let (doc, keys) = enciphered_document();
-        let strings = DocumentStrings::of(&doc, || Some(keys));
+        let strings = DocumentStrings::of(&doc, || Some(Arc::new(keys)));
         let hash = or_io::string_hash(NAME.as_bytes());
         assert_eq!(strings.name(hash), Some(NAME));
         assert!(!strings.needs_keys);
@@ -168,20 +179,64 @@ mod tests {
     #[test]
     fn a_clear_document_names_its_hashes_without_loading_the_key_snapshot() {
         let clear_name = "zq_clear_name";
-        let mut blob = 1u32.to_le_bytes().to_vec();
-        blob.extend_from_slice(&0x101u32.to_le_bytes());
-        blob.extend_from_slice(&16u32.to_le_bytes());
-        blob.extend_from_slice(b"zq_clear_name\0\0\0");
-        let mut doc = Vec::new();
-        frame(&mut doc, b"PSIN", &[0; 8]);
-        frame(&mut doc, b"LSNS", &blob);
-        let strings = DocumentStrings::of(&doc, || -> Option<GtaViKeys> {
+        let doc = clear_document(0x01, b"zq_clear_name\0\0\0");
+        let strings = DocumentStrings::of(&doc, || -> Option<Arc<GtaViKeys>> {
             panic!("a clear document loads no key snapshot")
         });
         assert!(!strings.needs_keys);
         assert_eq!(
             strings.name(or_io::string_hash(clear_name.as_bytes())),
             Some(clear_name)
+        );
+    }
+
+    /// A PSO whose `LSNS` holds the one clear run `(id, data)`.
+    fn clear_document(id: u32, data: &[u8]) -> Vec<u8> {
+        let mut blob = 1u32.to_le_bytes().to_vec();
+        blob.extend_from_slice(&id.to_le_bytes());
+        blob.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        blob.extend_from_slice(data);
+        let mut doc = Vec::new();
+        frame(&mut doc, b"PSIN", &[0; 8]);
+        frame(&mut doc, b"LSNS", &blob);
+        doc
+    }
+
+    #[test]
+    fn each_category_names_by_its_own_hasher_and_a_category_nothing_registers_names_nothing() {
+        let text = "Zq_Literal_Name";
+        let literal = or_io::literal_string_hash(text.as_bytes());
+        let folded = or_io::string_hash(text.as_bytes());
+        let strings = DocumentStrings::of(&clear_document(0x1E, b"Zq_Literal_Name\0"), || None);
+        assert_eq!(strings.name(literal), Some(text));
+        assert_eq!(
+            strings.name(folded),
+            None,
+            "category 0x1E does not fold case"
+        );
+        let folding = DocumentStrings::of(&clear_document(0x01, b"Zq_Literal_Name\0"), || None);
+        assert_eq!(folding.name(folded), Some(text));
+        assert_eq!(folding.name(literal), None, "category 1 folds case");
+        // Category 0 is not text the game registers, so its bytes name nothing.
+        let category_zero = clear_document(0x101, b"Zq_Literal_Name\0");
+        assert!(!DocumentStrings::of(&category_zero, || None).has_names());
+    }
+
+    #[test]
+    fn a_64_bit_string_hash_the_document_carries_shows_its_string() {
+        let text = "zq_wide_name";
+        let wide = or_io::gta6::hash::name_hash64(text.as_bytes());
+        let strings = DocumentStrings::of(&clear_document(0x01, b"zq_wide_name\0"), || None);
+        assert_eq!(strings.name64(wide), Some(text));
+        assert_eq!(strings.name64(wide ^ 1), None);
+        let xml = format!("<Root>\n  <key value=\"{wide}\"/>\n  <n value=\"7\"/>\n</Root>\n");
+        let shown = super::super::gta6_meta_names::shown_xml(xml.clone(), None, &strings);
+        let named = format!("<key value=\"{wide}\"/><!-- {text} -->\n");
+        assert!(shown.contains(&named), "{shown}");
+        assert!(shown.contains("<n value=\"7\"/>\n"), "{shown}");
+        assert_eq!(
+            super::super::gta6_meta_names::without_text_names(&shown),
+            xml
         );
     }
 }

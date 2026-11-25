@@ -449,7 +449,8 @@ fn a_zero_first_ascending_list_and_distinct_hashes_out_of_order_are_hash_palette
 #[test]
 fn a_palette_past_255_entries_takes_its_count_from_the_geometry_whose_low_byte_the_model_keeps() {
     let hashes: Vec<u32> = (0..300).map(|k| 0x0100_0000 + 7 * k).collect();
-    let read = |byte: u8| {
+    // The u16 at +0x2E is another word, so the palette is only the u16 at +0x2C.
+    let read = |byte: u8, after: u32| {
         let (mut img, phys, parts) = drawable([1.0, 1.0, 0.0]);
         let model = model_record(&img, &parts);
         let list = img.alloc(4 * hashes.len());
@@ -464,17 +465,18 @@ fn a_palette_past_255_entries_takes_its_count_from_the_geometry_whose_low_byte_t
         );
         img.u32(
             (geometry as usize & 0x0FFF_FFFF) + 0x2C,
-            hashes.len() as u32,
+            hashes.len() as u32 | after << 16,
         );
         let mut d = read_drawable(&img.bytes, Some(&phys)).expect("the drawable reads");
         d.levels[0].take().expect("level 0").remove(0).palette
     };
     assert_eq!(
-        read(44).unwrap(),
+        read(44, 0).unwrap(),
         Palette::Hashes(hashes.clone()),
         "300 & 0xFF = 44"
     );
-    assert_eq!(read(45).unwrap(), Palette::Hashes(hashes[..45].to_vec()));
+    assert_eq!(read(45, 0).unwrap(), Palette::Hashes(hashes[..45].to_vec()));
+    assert_eq!(read(44, 1).unwrap(), Palette::Hashes(hashes.clone()));
 }
 
 #[test]

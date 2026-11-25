@@ -1,6 +1,6 @@
 //! The sky drawn from a table of its radiance in every direction above the horizon, worked out by an atmosphere model for a moment of the day, in place of the colours the game's dome blends.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
@@ -19,6 +19,51 @@ pub struct SkyView {
     pub radiance: Arc<Vec<[f32; 3]>>,
     pub exposure: f32,
     pub clouds: Option<Clouds>,
+    /// What the night adds over the table: the glow of the air and the stars.
+    pub night: Option<Night>,
+    pub maps: Option<Arc<SkyMaps>>,
+}
+
+/// One map of the night sky, every level as 8-bit RGBA, the largest first.
+#[derive(Debug)]
+pub struct SkyMap {
+    pub width: u32,
+    pub height: u32,
+    pub srgb: bool,
+    pub levels: Vec<Vec<u8>>,
+}
+
+/// The maps the night sky is drawn with: the star field (red the band of the galaxy, green the sparse stars, alpha the dense ones) and the glow of the air.
+#[derive(Debug, Default)]
+pub struct SkyMaps {
+    pub stars: Option<SkyMap>,
+    pub airglow: Option<SkyMap>,
+}
+
+/// Maps are read once and held: two are the same only where they are one.
+impl PartialEq for SkyMaps {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+/// What the night adds to the sky in cd/m² before the exposure, as the build's sky program sums it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Night {
+    /// The air's glow everywhere, and the glow its map lays over that.
+    pub fill: [f32; 3],
+    pub glow: [f32; 3],
+    /// Each of the galaxy's band, the dense stars and the sparse stars: a colour times its strength, and how it blends towards the star map's axis.
+    pub cloud: [f32; 4],
+    pub dense: [f32; 4],
+    pub sparse: [f32; 4],
+    /// How often the dense and the sparse stars tile a face of the star map, and one over the heights the stars and their blinking blend in over, in metres.
+    pub scales: [f32; 4],
+    /// The blink's gain and bias, the cosine inside which the moon's disc hides the stars, and the blink's phase.
+    pub blink: [f32; 4],
+    /// The rows of the turn from the frame's axes (x east, y north, z up) to the star map's.
+    pub turn: [[f32; 3]; 3],
+    pub moon: [f32; 3],
 }
 
 /// A layer of clouds marched through over the table, its light in the frame's units.
@@ -35,6 +80,8 @@ pub struct Clouds {
     pub sky: [f32; 3],
     /// What the air takes out of light per metre between the camera and a cloud.
     pub haze: f32,
+    /// The planet's radius in metres, whose sea hides a cloud seen past it.
+    pub planet: f32,
 }
 
 impl std::fmt::Debug for SkyView {
@@ -66,6 +113,8 @@ impl SkyView {
             radiance: Arc::new(texels),
             exposure,
             clouds: None,
+            night: None,
+            maps: None,
         }
     }
 
@@ -103,10 +152,25 @@ struct Frame {
     towards: vec4<f32>,
     light: vec4<f32>,
     sky: vec4<f32>,
+    // rgb the air's glow everywhere, w one where the night is drawn
+    fill: vec4<f32>,
+    glow: vec4<f32>,
+    cloud: vec4<f32>,
+    dense: vec4<f32>,
+    sparse: vec4<f32>,
+    scales: vec4<f32>,
+    blink: vec4<f32>,
+    turn0: vec4<f32>,
+    turn1: vec4<f32>,
+    turn2: vec4<f32>,
+    moon: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var table: texture_2d<f32>;
 @group(0) @binding(2) var linear: sampler;
+@group(0) @binding(3) var stars: texture_2d<f32>;
+@group(0) @binding(4) var airglow: texture_2d<f32>;
+@group(0) @binding(5) var tiled: sampler;
 
 struct Out {
     @builtin(position) position: vec4<f32>,
@@ -215,6 +279,20 @@ fn sphere(view: vec3<f32>, r: f32) -> vec2<f32> {
     return vec2<f32>(min(q, other), max(q, other));
 }
 
+// How far the way from the camera goes before it meets the sea on the planet, or a long way where it never does.
+fn ground(view: vec3<f32>) -> f32 {
+    let planet = frame.sky.w;
+    let h = frame.eye.z;
+    let b = (h + planet) * view.z;
+    let c = h * (h + 2.0 * planet);
+    let d = b * b - c;
+    if (view.z >= 0.0 || d < 0.0 || planet <= 0.0 || h <= 0.0) {
+        return 1e9;
+    }
+    // The nearer root as c over the farther, which keeps the metres the camera stands at.
+    return c / (sqrt(d) - b);
+}
+
 fn henyey_greenstein(c: f32, g: f32) -> f32 {
     let g2 = g * g;
     return (1.0 - g2) / (12.566371 * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
@@ -241,6 +319,8 @@ fn clouded(view: vec3<f32>, behind: vec3<f32>, pixel: vec2<f32>) -> vec4<f32> {
     } else if (base.x > 0.0) {
         end = min(end, base.x);
     }
+    // The shell is curved far tighter than the planet: a way down that meets the sea sees no cloud past it.
+    end = min(end, ground(view));
     if (start >= end || start > FARTHEST) {
         return vec4<f32>(behind, 1.0);
     }
@@ -298,13 +378,67 @@ fn clouded(view: vec3<f32>, behind: vec3<f32>, pixel: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(behind * through + cloud, through);
 }
 
+// Where on the face of a cube the way `d` meets it, from nought to one each way.
+// ⚠ Inferred: the program's cube coordinates over the absolute major axis, as a cube's lookup takes them.
+fn cube_face(d: vec3<f32>) -> vec2<f32> {
+    let a = abs(d);
+    var st = vec2<f32>(0.0);
+    var major = 1.0;
+    if (a.z >= a.y && a.z >= a.x) {
+        major = a.z;
+        st = vec2<f32>(select(d.x, -d.x, d.z < 0.0), -d.y);
+    } else if (a.y >= a.x) {
+        major = a.y;
+        st = vec2<f32>(d.x, select(d.z, -d.z, d.y < 0.0));
+    } else {
+        major = a.x;
+        st = vec2<f32>(select(-d.z, d.z, d.x < 0.0), -d.y);
+    }
+    return st / (2.0 * major) + 0.5;
+}
+
+// The level of a map `texels` wide laid `tiles` times over a quarter turn, seen by a pixel `angle` radians across.
+fn level(texels: f32, tiles: f32, angle: f32) -> f32 {
+    return max(log2(texels * tiles / 1.5707963 * angle), 0.0);
+}
+
+// What the night adds towards `view` in cd/m², as the build's sky program sums it: the air's glow, then the
+// galaxy's band, the dense and the sparse stars of its star map, faded to nothing at the horizon.
+fn night_sky(view: vec3<f32>, clip: vec2<f32>, angle: f32) -> vec3<f32> {
+    let screen = vec2<f32>(clip.x, -clip.y) * 0.5 + 0.5;
+    let width = f32(textureDimensions(stars).x);
+    let s = normalize(vec3<f32>(dot(frame.turn0.xyz, view), dot(frame.turn1.xyz, view), dot(frame.turn2.xyz, view)));
+    let face = cube_face(s);
+    let dense_a = textureSampleLevel(stars, tiled, face * frame.scales.x, level(width, frame.scales.x, angle)).a;
+    let sparse_g = textureSampleLevel(stars, tiled, face * frame.scales.y, level(width, frame.scales.y, angle)).g;
+    let band = textureSampleLevel(stars, tiled, vec2<f32>(atan2(s.x, s.y) / 3.1415927 + 0.5, s.z * 0.5 + 0.5), 0.0).r;
+    // The air's map is laid twice across the screen, as the program lays it.
+    var sky = frame.fill.rgb + frame.glow.rgb * textureSampleLevel(airglow, tiled, screen * 2.0, 0.0).r;
+    let c = frame.cloud.w * (1.0 - s.z) * band;
+    let reach = frame.scales.w * 20000.0 * view.z + 1.0;
+    let phase = 3.1415927 * fract(43759.0 * sin(dot(screen, vec2<f32>(12.99, 78.233)))) + frame.blink.w;
+    let b = 1.0 + reach * reach * (sin(phase) - 1.0);
+    let dense = frame.dense.rgb * (dense_a * dense_a * b) * c * (frame.dense.w * (1.0 - s.z));
+    let gain = (2.0 * b - 1.0) * frame.blink.x + frame.blink.y;
+    let sparse = frame.sparse.rgb * (sparse_g * sparse_g * gain) * ((frame.sparse.w - 1.0) * sqrt(max(s.z, 0.0)) + 1.0);
+    let height = frame.scales.z * 20000.0 * view.z;
+    let seen = select(0.0, 1.0, view.z > 0.0 && dot(view, frame.moon.xyz) <= frame.blink.z);
+    sky = sky + (frame.cloud.rgb * c * c * c + dense + sparse) * height * height * seen;
+    // ⚠ Inferred: the program's sky target holds no negative light, so a star blinked below nought adds nothing.
+    return max(sky, vec3<f32>(0.0));
+}
+
 @fragment
 fn fs(in: Out) -> @location(0) vec4<f32> {
     let point = frame.unproject * vec4<f32>(in.clip, 1.0, 1.0);
     let view = normalize(point.xyz / point.w);
+    let angle = max(length(dpdx(view)), length(dpdy(view)));
     let u = atan2(view.y, view.x) / 6.2831853 + 0.5;
     let v = sqrt(asin(clamp(view.z, 0.0, 1.0)) / 1.5707963);
-    let radiance = textureSampleLevel(table, linear, vec2<f32>(u, v), 0.0).rgb * frame.exposure.x;
+    var radiance = textureSampleLevel(table, linear, vec2<f32>(u, v), 0.0).rgb * frame.exposure.x;
+    if (frame.fill.w > 0.5) {
+        radiance = radiance + night_sky(view, in.clip, angle) * frame.exposure.x;
+    }
     if (frame.eye.w < 0.5) {
         return vec4<f32>(radiance, 1.0);
     }
@@ -312,8 +446,8 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// The bytes of the pass's uniforms: the unprojection and seven rows of four.
-const UNIFORM_BYTES: u64 = 176;
+/// The bytes of the pass's uniforms: the unprojection and eighteen rows of four.
+const UNIFORM_BYTES: u64 = 352;
 
 /// The uniforms of a frame looking through `unproject` from `eye` at `view`, as the shader's `Frame` lays them.
 fn words(unproject: Mat4, eye: Vec3, view: &SkyView) -> Vec<f32> {
@@ -328,6 +462,7 @@ fn words(unproject: Mat4, eye: Vec3, view: &SkyView) -> Vec<f32> {
         light: [0.0; 3],
         sky: [0.0; 3],
         haze: 0.0,
+        planet: 0.0,
     });
     words.extend(clouds.layer);
     words.extend(clouds.shape);
@@ -336,19 +471,152 @@ fn words(unproject: Mat4, eye: Vec3, view: &SkyView) -> Vec<f32> {
     words.extend(clouds.light);
     words.push(0.0);
     words.extend(clouds.sky);
+    words.push(clouds.planet);
+    let night = view.night.unwrap_or_default();
+    words.extend(night.fill);
+    words.push(f32::from(u8::from(view.night.is_some())));
+    words.extend(night.glow);
     words.push(0.0);
+    for row in [
+        night.cloud,
+        night.dense,
+        night.sparse,
+        night.scales,
+        night.blink,
+    ] {
+        words.extend(row);
+    }
+    for row in night.turn.into_iter().chain([night.moon]) {
+        words.extend(row);
+        words.push(0.0);
+    }
     words
+}
+
+/// A texture of `map`'s levels, or one black texel where there is none.
+fn map_texture(device: &wgpu::Device, queue: &wgpu::Queue, map: Option<&SkyMap>) -> wgpu::Texture {
+    let black = SkyMap {
+        width: 1,
+        height: 1,
+        srgb: false,
+        levels: vec![vec![0; 4]],
+    };
+    let map = map.filter(|m| !m.levels.is_empty()).unwrap_or(&black);
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sky-night-map"),
+        size: wgpu::Extent3d {
+            width: map.width,
+            height: map.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: map.levels.len() as u32,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: match map.srgb {
+            true => wgpu::TextureFormat::Rgba8UnormSrgb,
+            false => wgpu::TextureFormat::Rgba8Unorm,
+        },
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    for (level, bytes) in map.levels.iter().enumerate() {
+        let (width, height) = ((map.width >> level).max(1), (map.height >> level).max(1));
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    texture
 }
 
 /// The pass that adds the table's sky over the pixels nothing was drawn at, after the game's dome has laid its stars and discs there, and the clouds in front of all of it.
 pub struct SkyViewPass {
+    device: wgpu::Device,
     pipeline: wgpu::RenderPipeline,
     uniforms: wgpu::Buffer,
     texture: wgpu::Texture,
-    bind: wgpu::BindGroup,
-    /// The table last written, and whether the frame has one to draw.
+    samplers: [wgpu::Sampler; 2],
+    bind: RefCell<wgpu::BindGroup>,
+    /// The table last written, the night's maps last bound, and whether the frame has a table to draw.
     written: Cell<Option<Arc<Vec<[f32; 3]>>>>,
+    maps: RefCell<Option<Arc<SkyMaps>>>,
     shown: Cell<bool>,
+}
+
+/// A one-texel map left as the device made it, all zeros.
+fn map_texture_unwritten(device: &wgpu::Device) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sky-night-none"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    })
+}
+
+/// The pass's bindings: its uniforms, the table, the star map and the air's map, and the two samplers.
+fn bind_group(
+    device: &wgpu::Device,
+    pipeline: &wgpu::RenderPipeline,
+    uniforms: &wgpu::Buffer,
+    table: &wgpu::Texture,
+    [stars, airglow]: [&wgpu::Texture; 2],
+    [linear, tiled]: &[wgpu::Sampler; 2],
+) -> wgpu::BindGroup {
+    let view = |t: &wgpu::Texture| t.create_view(&Default::default());
+    let (table, stars, airglow) = (view(table), view(stars), view(airglow));
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sky-view"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniforms.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&table),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(linear),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&stars),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(&airglow),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::Sampler(tiled),
+            },
+        ],
+    })
 }
 
 /// The rows of a table in its texture, each a half-float colour and an alpha of one.
@@ -433,32 +701,36 @@ impl SkyViewPass {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("sky-view"),
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniforms.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(
-                        &texture.create_view(&Default::default()),
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
+        // The star map tiles and is seen from afar, so it is filtered between its levels.
+        let tiled = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("sky-night"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
         });
+        // Textures start as zeros: one black texel stands for a map not read yet.
+        let black = map_texture_unwritten(device);
+        let samplers = [sampler, tiled];
+        let bind = bind_group(
+            device,
+            &pipeline,
+            &uniforms,
+            &texture,
+            [&black, &black],
+            &samplers,
+        );
         Self {
+            device: device.clone(),
             pipeline,
             uniforms,
             texture,
-            bind,
+            samplers,
+            bind: RefCell::new(bind),
             written: Cell::new(None),
+            maps: RefCell::new(None),
             shown: Cell::new(false),
         }
     }
@@ -495,6 +767,21 @@ impl SkyViewPass {
             );
         }
         self.written.set(Some(Arc::clone(&view.radiance)));
+        let maps_changed = *self.maps.borrow() != view.maps;
+        if maps_changed {
+            let maps = view.maps.as_deref();
+            let stars = map_texture(&self.device, queue, maps.and_then(|m| m.stars.as_ref()));
+            let airglow = map_texture(&self.device, queue, maps.and_then(|m| m.airglow.as_ref()));
+            *self.bind.borrow_mut() = bind_group(
+                &self.device,
+                &self.pipeline,
+                &self.uniforms,
+                &self.texture,
+                [&stars, &airglow],
+                &self.samplers,
+            );
+            *self.maps.borrow_mut() = view.maps.clone();
+        }
         // The way each pixel looks, with the camera at the centre of the sky.
         let turn = Mat4::from_mat3(glam::Mat3::from_mat4(engine.view));
         let unproject = (engine.projection * turn).inverse();
@@ -510,7 +797,7 @@ impl SkyViewPass {
     pub fn record(&self, pass: &mut wgpu::RenderPass<'_>) {
         if self.shown.get() {
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.bind, &[]);
+            pass.set_bind_group(0, &*self.bind.borrow(), &[]);
             pass.draw(0..3, 0..1);
         }
     }
@@ -543,6 +830,7 @@ mod tests {
             light: [1.0; 3],
             sky: [0.5; 3],
             haze: 1e-5,
+            planet: 6_360_000.0,
         });
         let drawn = words(Mat4::IDENTITY, Vec3::new(1.0, 2.0, 3.0), &view);
         assert_eq!(&drawn[20..24], &[1.0, 2.0, 3.0, 1.0]);

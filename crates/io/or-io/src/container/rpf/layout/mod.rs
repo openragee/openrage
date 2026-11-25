@@ -106,7 +106,7 @@ pub(super) fn read(version: RpfVersion, input: &Input) -> Result<Toc> {
         RpfVersion::Rpf6 => rpf6::read(input),
         RpfVersion::Rpf8 => rpf8::read(input),
         RpfVersion::Img2 | RpfVersion::Img3 => img::read(version, input),
-        RpfVersion::Rpf7 | RpfVersion::Img1 => Err(IoError::RpfBadHeader {
+        RpfVersion::Rpf7 | RpfVersion::Rpf9 | RpfVersion::Img1 => Err(IoError::RpfBadHeader {
             message: format!("{version} is not read as a table of this layout"),
         }),
     }
@@ -125,7 +125,7 @@ pub(super) fn prologue(version: RpfVersion, names: &[String], heap: usize) -> u6
             names.len(),
             names.iter().map(|n| n.len() + 1).sum(),
         ),
-        RpfVersion::Rpf7 | RpfVersion::Img1 => 0,
+        RpfVersion::Rpf7 | RpfVersion::Rpf9 | RpfVersion::Img1 => 0,
     }
 }
 
@@ -143,7 +143,7 @@ pub(super) fn write<W: Write + Seek>(
         RpfVersion::Rpf6 => rpf6::write(w, plan, crypto),
         RpfVersion::Rpf8 => rpf8::write(w, plan, crypto),
         RpfVersion::Img2 | RpfVersion::Img3 => img::write(version, w, plan),
-        RpfVersion::Rpf7 | RpfVersion::Img1 => Err(IoError::RpfBadHeader {
+        RpfVersion::Rpf7 | RpfVersion::Rpf9 | RpfVersion::Img1 => Err(IoError::RpfBadHeader {
             message: format!("{version} is not written as a table of this layout"),
         }),
     }

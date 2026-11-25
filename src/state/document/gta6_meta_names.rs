@@ -39,20 +39,91 @@ pub fn hash_name_or_text(hash: u32) -> String {
 }
 
 /// `xml` as the Text panel shows it: a GTA VI form's named hash values each take a comment, the
-/// document's own string first.
+/// document's own string first, and a 64-bit value one of its own strings hashes to takes one too.
 pub(super) fn shown_xml(
     xml: String,
     layout: Option<&MetaLayout>,
     strings: &super::gta6_meta_strings::DocumentStrings,
 ) -> String {
     let vocabulary = meta_names_from_the_text(layout);
-    match vocabulary || strings.has_names() {
-        true => with_text_names(&xml, |hash| {
-            (strings.name(hash).map(str::to_owned))
-                .or_else(|| vocabulary.then(|| hash_text_name(hash)).flatten())
-        }),
-        false => xml,
+    if !(vocabulary || strings.has_names()) {
+        return xml;
     }
+    let named = with_text_names(&xml, |hash| {
+        (strings.name(hash).map(str::to_owned))
+            .or_else(|| vocabulary.then(|| hash_text_name(hash)).flatten())
+    });
+    with_wide_names(&named, |hash| strings.name64(hash).map(str::to_owned))
+}
+
+const WIDE: &str = " value=\"";
+
+/// The number a ` value="` attribute's text states and the length through its `"/>`, where the text
+/// is all digits and closes the element.
+fn wide_value(rest: &str) -> Option<(u64, usize)> {
+    let end = rest.find('"')?;
+    let digits = &rest[..end];
+    let value: u64 = (digits.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| digits.parse().ok())
+        .flatten()?;
+    rest[end..].starts_with("\"/>").then_some((value, end + 3))
+}
+
+/// `xml` with `<!-- name -->` after each `value="N"/>` element whose number `name` names; a reader
+/// skips a comment, so the text parses to the same tree.
+fn with_wide_names(xml: &str, name: impl Fn(u64) -> Option<String>) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(at) = rest.find(WIDE) {
+        let (head, tail) = rest.split_at(at + WIDE.len());
+        out.push_str(head);
+        rest = tail;
+        let Some((value, len)) = wide_value(rest) else {
+            continue;
+        };
+        out.push_str(&rest[..len]);
+        rest = &rest[len..];
+        push_comment(&mut out, name(value));
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `<!-- said -->` onto `out`, where there is something to say; a comment holds no `--`.
+fn push_comment(out: &mut String, said: Option<String>) {
+    if let Some(said) = said.filter(|said| !said.contains("--")) {
+        out.push_str("<!-- ");
+        out.push_str(&said);
+        out.push_str(" -->");
+    }
+}
+
+/// `rest` past the `<!-- name -->` comment it starts with, else `rest`.
+fn past_comment(rest: &str) -> &str {
+    (rest.strip_prefix("<!-- "))
+        .and_then(|stripped| {
+            stripped
+                .find(" -->")
+                .map(|end| &stripped[end + " -->".len()..])
+        })
+        .unwrap_or(rest)
+}
+
+/// The inverse of [`with_wide_names`].
+fn without_wide_names(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(at) = rest.find(WIDE) {
+        let (head, tail) = rest.split_at(at + WIDE.len());
+        out.push_str(head);
+        rest = tail;
+        if let Some((_, len)) = wide_value(rest) {
+            out.push_str(&rest[..len]);
+            rest = past_comment(&rest[len..]);
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `xml` with `<!-- name -->` after each element text `hash_XXXXXXXX` that `name` names; a
@@ -72,19 +143,14 @@ fn with_text_names(xml: &str, name: impl Fn(u32) -> Option<String>) -> String {
         };
         out.push_str(&rest[..8]);
         rest = &rest[8..];
-        // A comment holds no `--`.
-        if let Some(said) = name(hash).filter(|said| !said.contains("--")) {
-            out.push_str("<!-- ");
-            out.push_str(&said);
-            out.push_str(" -->");
-        }
+        push_comment(&mut out, name(hash));
     }
     out.push_str(rest);
     out
 }
 
-/// The inverse of [`with_text_names`]: the `<!-- name -->` comments it inserts after an element's
-/// `hash_XXXXXXXX` text removed, so the bytes are the deterministic document the CLI writes.
+/// The inverse of [`with_text_names`] and [`with_wide_names`]: the `<!-- name -->` comments they
+/// insert removed, so the bytes are the deterministic document the CLI writes.
 pub(super) fn without_text_names(xml: &str) -> String {
     const LITERAL: &str = ">hash_";
     let mut out = String::with_capacity(xml.len());
@@ -98,15 +164,10 @@ pub(super) fn without_text_names(xml: &str) -> String {
             continue;
         }
         out.push_str(&rest[..8]);
-        rest = &rest[8..];
-        if let Some(stripped) = rest.strip_prefix("<!-- ") {
-            if let Some(end) = stripped.find(" -->") {
-                rest = &stripped[end + " -->".len()..];
-            }
-        }
+        rest = past_comment(&rest[8..]);
     }
     out.push_str(rest);
-    out
+    without_wide_names(&out)
 }
 
 #[cfg(test)]
@@ -170,6 +231,30 @@ mod tests {
             xml,
             "a document with no comment is untouched"
         );
+    }
+
+    #[test]
+    fn only_a_closed_all_digit_value_takes_a_wide_name_and_the_save_drops_it() {
+        let xml = concat!(
+            "<Root>\n  <a value=\"171\"/>\n  <b value=\"+171\"/>\n",
+            "  <c value=\"171\" x=\"1\"/>\n  <d value=\"9\"/>\n</Root>\n"
+        );
+        let shown = with_wide_names(xml, |v| (v == 171).then(|| "zq_wide".to_string()));
+        let wanted = xml.replacen(
+            "<a value=\"171\"/>",
+            "<a value=\"171\"/><!-- zq_wide -->",
+            1,
+        );
+        assert_eq!(shown, wanted);
+        assert_eq!(without_text_names(&shown), xml);
+        let read = |text: &str| {
+            or_io::meta::instance::parse_schemaless(text.as_bytes()).expect("the XML parses")
+        };
+        // An element with an attribute beside its value reads with a schema only.
+        let plain = xml.replace("  <c value=\"171\" x=\"1\"/>\n", "");
+        let shown = with_wide_names(&plain, |v| (v == 171).then(|| "zq_wide".to_string()));
+        assert_ne!(shown, plain);
+        assert_eq!(read(&shown), read(&plain));
     }
 
     #[test]

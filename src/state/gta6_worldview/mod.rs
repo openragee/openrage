@@ -31,6 +31,7 @@ mod model;
 mod occluders;
 mod pool;
 pub(crate) mod sky;
+mod sky_night;
 pub(crate) mod stream;
 mod texture;
 pub(crate) mod water;
@@ -94,7 +95,8 @@ pub struct Viewer {
     root: Option<PathBuf>,
     pub index: Option<Arc<WorldIndex>>,
     world: Option<World>,
-    /// The models on the device (`Some(true)`) or known never to come (`None`), which are not asked for again.
+    /// The models on the device (`Some(true)`), there but held back for their textures
+    /// (`Some(false)`) or known never to come (`None`), which are not asked for again.
     have: HashMap<ModelRef, Option<bool>>,
     /// How many times the world's thread was found dead and started again.
     pub world_restarts: u32,
@@ -284,6 +286,7 @@ impl Viewer {
     fn take(&mut self, index: WorldIndex, places: Option<Places>) {
         let places = places.map(Arc::new);
         if let Some(places) = places.clone() {
+            sky_night::read(Arc::clone(&places));
             let held = Arc::clone(&self.held);
             let weigh = |read: &Option<CpuTexture>| read.as_ref().map_or(0, CpuTexture::bytes);
             self.textures = Some(Pool::bounded(
@@ -522,6 +525,11 @@ impl Viewer {
         }
     }
 
+    /// Say `model` is on the device though not yet told ready: it is not read again meanwhile.
+    pub fn on_device(&mut self, model: ModelRef) {
+        self.have.entry(model).or_insert(Some(false));
+    }
+
     /// Whether any texture is read: with no pack indexed none is.
     pub fn reads_textures(&self) -> bool {
         self.textures.is_some()
@@ -582,9 +590,9 @@ impl Viewer {
             ))
         });
         let scale = sky::scale_of(moment.as_ref());
-        let day = (tables.as_ref()).zip(moment).map(|(tables, moment)| {
-            sky::day_of_moment(tables, moment, (hour, days), weather, eye.z)
-        });
+        let day = (tables.as_ref())
+            .zip(moment)
+            .map(|(tables, moment)| sky::day_of_moment(tables, moment, (hour, days), weather, eye));
         if let (Some(tables), Some(world)) = (&tables, &self.world) {
             world.set_fade(stream::fade_of(&tables.visual_settings));
         }

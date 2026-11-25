@@ -1468,5 +1468,8 @@ mod slice_replace;
 #[path = "ttpf_bcpack_tests.rs"]
 mod coder;
 
+#[cfg(feature = "authoring")]
+#[path = "ttpf_author_tests.rs"]
+mod author;
 #[path = "ttpf_calibrate_tests.rs"]
 mod calibrated;

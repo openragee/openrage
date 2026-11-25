@@ -279,6 +279,7 @@ impl RenderBridge {
                     let slot = world.put(&self.device, &self.queue, &budgets, &read, (frame, eye));
                     uploaded += world.model_bytes - before;
                     world.pending.insert(model);
+                    viewer.on_device(model);
                     slot
                 }
                 None => {
@@ -558,8 +559,14 @@ impl RenderBridge {
             world.changes += 1;
         }
         wanted.extend(asks.textures);
+        let frustum = Frustum::of(view_proj);
+        let seen = |model: &ModelRef| {
+            let at = selected.waiting_at.get(model);
+            at.is_some_and(|at| at.iter().any(|(c, r)| frustum.sees_sphere(*c, *r)))
+        };
         wanted.extend(world.ask_whole(
             &selected.wanted,
+            seen,
             (eye, lod_scale),
             (per_metre, budgets.most_side),
             frame,

@@ -500,19 +500,20 @@ fn model(v: Bytes, p: Bytes, at: usize, shaders: u16) -> Result<Model> {
             bounds,
         ));
     }
-    // The model's byte keeps a palette count's low 8 bits; a geometry's +0x2C states it whole.
+    // The model's byte keeps a palette count's low 8 bits; a geometry's u16 at +0x2C states it
+    // whole, and the u16 at +0x2E is another word.
     let byte = v.u8("palette count", at + 0x30)?;
     let whole = match count {
         0 => None,
         _ => v
-            .u32(
+            .u16(
                 "geometry's palette count",
                 v.to("geometry", geometries)? + 0x2C,
             )
             .ok(),
     };
     let palette_count = whole
-        .filter(|&n| n > 0xFF && n & 0xFF == u32::from(byte))
+        .filter(|&n| n > 0xFF && n & 0xFF == u16::from(byte))
         .map_or(usize::from(byte), |n| n as usize);
     Ok(Model {
         geometries: read,

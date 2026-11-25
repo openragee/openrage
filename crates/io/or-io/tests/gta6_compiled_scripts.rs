@@ -2,6 +2,9 @@
 //! nested) reads its program header, whose hash and check copy agree, and decodes from code start to
 //! code end with as many distinct natives called as the header states.
 //!
+//! ⚠ The file's own native tables (header +0xA8 and +0xB0) are not decoded, so the called set is
+//! checked against the header's count only, not against a declared set.
+//!
 //! Install-gated and game-derived, so it needs the key snapshot and the build and skips cleanly
 //! without them (a clean `just test-no-pack` passes):
 //!   `OPENRAGE_GTA6_KEYS`   the key snapshot with the content section (never committed)
@@ -13,7 +16,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use or_io::container::rpf::{Gta6Mount, GtaViKeys, GTA6_SNAPSHOT_ENV};
-use or_io::gta6::script::compiled::{Compiled, CompiledError};
+use or_io::gta6::script::compiled::Compiled;
 use or_test_support::skip_install;
 
 const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
@@ -57,8 +60,8 @@ struct Tally {
     programs: usize,
     instructions: usize,
     native_calls: usize,
-    /// Programs whose decode stops at 0x1D3 or 0x1D4, the opcodes of no known length.
-    unsized_stops: usize,
+    /// Programs that use 0x1D3 or 0x1D4, the two opcodes one handler sizes apart.
+    count_users: usize,
     failures: Vec<String>,
 }
 
@@ -79,11 +82,16 @@ fn walk(file: &mut File, mount: &Gta6Mount, keys: &GtaViKeys, depth: usize, t: &
                     continue;
                 }
             };
-            match Compiled::open(&body).and_then(|p| p.facts()) {
-                Ok(facts) => {
+            let read = Compiled::open(&body).and_then(|p| Ok((p.facts()?, p)));
+            match read {
+                Ok((facts, program)) => {
                     t.programs += 1;
                     t.instructions += facts.instructions;
                     t.native_calls += facts.native_calls;
+                    let mut ops = program.instructions().flatten().map(|i| i.opcode);
+                    if ops.any(|op| op == 0x1D3 || op == 0x1D4) {
+                        t.count_users += 1;
+                    }
                     if facts.natives_found != facts.header.natives as usize {
                         fail(
                             t,
@@ -94,10 +102,6 @@ fn walk(file: &mut File, mount: &Gta6Mount, keys: &GtaViKeys, depth: usize, t: &
                         );
                     }
                 }
-                Err(CompiledError::Unsized {
-                    opcode: 0x1D3 | 0x1D4,
-                    ..
-                }) => t.unsized_stops += 1,
                 Err(e) => fail(t, e.to_string()),
             }
             continue;
@@ -149,16 +153,20 @@ fn every_compiled_script_reads_its_header_and_decodes() {
         t.native_calls,
         t.failures.len()
     );
+    println!(
+        "still open: the native tables at header +0xA8 and +0xB0 are not decoded, so the called \
+         natives are checked against the header's count, not a declared set"
+    );
     for failure in t.failures.iter().take(20) {
         eprintln!("  {failure}");
     }
     assert!(
         t.failures.is_empty(),
-        "every compiled script must read and decode"
+        "every compiled script must read and decode end to end"
     );
-    assert_eq!(
-        t.unsized_stops, 1,
-        "one program uses 0x1D3 and 0x1D4, whose lengths are not known, and stops there"
+    assert!(
+        t.count_users >= 1,
+        "the build has a program using 0x1D3 or 0x1D4, which must decode through them"
     );
     assert!(
         t.programs >= 700,

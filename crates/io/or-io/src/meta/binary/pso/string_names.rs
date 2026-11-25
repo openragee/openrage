@@ -1,8 +1,13 @@
 //! The strings a GTA VI PSO document's string sections hold, enciphered runs deciphered with the key
 //! snapshot, so the hash values the document carries can be shown by the text they hash.
 //!
-//! `STDN` carries the `STNS` blob again byte for byte wherever it was measured, so it is read by the
-//! same descriptor layout and the same per-run id gate; the executable's loader leaves it as it is.
+//! Where `STDN` is a blob it carries the `STNS` blob again byte for byte, so [`document_strings`]
+//! reads it by the same descriptor layout; in 3 documents of the build it is no blob. The
+//! executable's loader leaves it as it is, so [`registered_strings`] does not read it.
+//!
+//! The executable registers a run's strings only under category 1 or 0x1E, keyed by that category's
+//! 32-bit hasher; a run of any other category (the high-entropy id `0x101` runs among them) is not
+//! text it reads, so [`registered_strings`] leaves it out.
 
 use super::sections::{split_sections, PsoSection, RawPsoSection};
 use super::string_blob::{self, Run};
@@ -11,6 +16,8 @@ use crate::meta::error::{MetaError, Result};
 
 /// The sections laid out as a descriptor blob, `{u32 count; count × (u32 id, u32 len); data}`.
 const BLOBS: [&[u8; 4]; 3] = [b"LSNS", b"STNS", b"STDN"];
+/// The blob sections the executable registers strings from.
+const REGISTERED_BLOBS: [&[u8; 4]; 2] = [b"LSNS", b"STNS"];
 /// The section that is one buffer, enciphered wholesale as category 1.
 const STFN: &[u8; 4] = b"STFN";
 
@@ -55,10 +62,60 @@ fn enciphered_blob(body: &[u8]) -> bool {
     runs.iter().any(|r| r.enciphered && r.len >= 16)
 }
 
+/// A string the executable registers from a document's string section, and the category it is in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CategoryString {
+    pub category: u32,
+    pub text: String,
+}
+
+/// The category a run with descriptor `id` registers its strings under: an id below 0x100 names it in
+/// the clear, one from 0x101 names `id - 0x101`; `None` for every category but 1 and 0x1E.
+fn registered_category(id: u32) -> Option<u32> {
+    let category = match id < 0x100 {
+        true => id,
+        false => string_blob::category(id)?,
+    };
+    matches!(category, 1 | 0x1E).then_some(category)
+}
+
+/// The 32-bit hash `category`'s registry keys `text` by; `None` where nothing registers it.
+// Category 1 folds as `atStringHash`; 0x1E hashes literally, its bytes as signed chars, so a byte
+// above 0x7F would hash otherwise than the crate's literal hash and such text is not hashed.
+pub fn category_hash(category: u32, text: &[u8]) -> Option<u32> {
+    match category {
+        1 => Some(crate::string_hash(text)),
+        0x1E if text.is_ascii() => Some(crate::literal_string_hash(text)),
+        _ => None,
+    }
+}
+
+/// The strings the PSO `bytes` register, with their categories; refused as [`document_strings`] is,
+/// with `STDN` not read.
+pub fn registered_strings(bytes: &[u8], keys: Option<&GtaViKeys>) -> Result<Vec<CategoryString>> {
+    let runs = run_strings(bytes, keys, &REGISTERED_BLOBS)?;
+    let registered = runs.into_iter().filter_map(|(id, text)| {
+        registered_category(id).map(|category| CategoryString { category, text })
+    });
+    Ok(registered.collect())
+}
+
 /// The strings of the PSO `bytes`' `LSNS`, `STNS`, `STDN` and `STFN` sections in order, each
 /// enciphered run deciphered with `keys`; a malformed blob, or an enciphered run with no `keys` or
 /// that `keys` cannot decipher, is refused.
 pub fn document_strings(bytes: &[u8], keys: Option<&GtaViKeys>) -> Result<Vec<String>> {
+    Ok(run_strings(bytes, keys, &BLOBS)?
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect())
+}
+
+/// Each string of `STFN` and the `blobs` sections with the descriptor id of the run it is in.
+fn run_strings(
+    bytes: &[u8],
+    keys: Option<&GtaViKeys>,
+    blobs: &[&[u8; 4]],
+) -> Result<Vec<(u32, String)>> {
     let needs_keys = |what: &str| {
         MetaError::Other(format!(
             "GTA VI PSO string blob: {what} is enciphered and no key snapshot was given"
@@ -73,10 +130,15 @@ pub fn document_strings(bytes: &[u8], keys: Option<&GtaViKeys>) -> Result<Vec<St
                 None if data.len() >= 16 => return Err(needs_keys("STFN")),
                 None => {}
             }
-            out.extend(string_blob::run_strings(&data, &stfn_run(&data)));
+            let run = stfn_run(&data);
+            out.extend(
+                string_blob::run_strings(&data, &run)
+                    .into_iter()
+                    .map(|s| (run.id, s)),
+            );
             continue;
         }
-        if !BLOBS.iter().any(|tag| is(&section, tag)) {
+        if !blobs.iter().any(|tag| is(&section, tag)) {
             continue;
         }
         match keys {
@@ -85,7 +147,11 @@ pub fn document_strings(bytes: &[u8], keys: Option<&GtaViKeys>) -> Result<Vec<St
             None => {}
         }
         for run in string_blob::parse(&data)? {
-            out.extend(string_blob::run_strings(&data, &run));
+            out.extend(
+                string_blob::run_strings(&data, &run)
+                    .into_iter()
+                    .map(|s| (run.id, s)),
+            );
         }
     }
     Ok(out)
@@ -103,10 +169,19 @@ mod tests {
 
     /// A blob of one run `(id, data)`.
     fn blob(id: u32, data: &[u8]) -> Vec<u8> {
-        let mut b = 1u32.to_le_bytes().to_vec();
-        b.extend_from_slice(&id.to_le_bytes());
-        b.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        b.extend_from_slice(data);
+        blob_of(&[(id, data)])
+    }
+
+    /// A blob of the runs `(id, data)` in order.
+    fn blob_of(runs: &[(u32, &[u8])]) -> Vec<u8> {
+        let mut b = (runs.len() as u32).to_le_bytes().to_vec();
+        for (id, data) in runs {
+            b.extend_from_slice(&id.to_le_bytes());
+            b.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        }
+        for (_, data) in runs {
+            b.extend_from_slice(data);
+        }
         b
     }
 
@@ -200,5 +275,82 @@ mod tests {
         let mut bad = Vec::new();
         frame(&mut bad, b"LSNS", &[9, 0, 0, 0]); // nine descriptors in a 4-byte body
         assert!(document_strings(&bad, Some(&snapshot([0; 16]))).is_err());
+    }
+
+    #[test]
+    fn only_categories_1_and_1e_register_whether_clear_or_enciphered() {
+        let (cipher, keys) = enciphered(PLAIN);
+        let runs: [(u32, &[u8]); 5] = [
+            (0x101, b"zq_category_zero\0"),
+            (0x01, b"zq_clear_one\0"),
+            (0x1E, b"Zq_Clear_Thirty\0"),
+            (0x103, b"zq_category_two\0"),
+            (0x102, &cipher),
+        ];
+        let mut doc = Vec::new();
+        frame(&mut doc, b"LSNS", &blob_of(&runs));
+        let registered = registered_strings(&doc, Some(&keys)).expect("it reads");
+        let got: Vec<(u32, &str)> = (registered.iter())
+            .map(|s| (s.category, s.text.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (1, "zq_clear_one"),
+                (0x1E, "Zq_Clear_Thirty"),
+                (1, "zq_lsns_name")
+            ]
+        );
+        // Every run still reads as text for a caller that wants all of them.
+        assert_eq!(
+            document_strings(&doc, Some(&keys)).expect("it reads").len(),
+            5
+        );
+        assert_eq!(registered_category(0x100), None);
+        assert_eq!(registered_category(0x11F), Some(0x1E));
+        assert_eq!(registered_category(0x120), None);
+    }
+
+    #[test]
+    fn stdn_registers_nothing_so_one_that_is_no_blob_leaves_the_registered_strings_readable() {
+        let mut doc = Vec::new();
+        frame(&mut doc, b"STDN", &[0xFF; 16]); // a count of 2^32 - 1 descriptors in 16 bytes
+        frame(&mut doc, b"STNS", &blob(0x01, b"zq_stns_name\0\0\0\0"));
+        let registered = registered_strings(&doc, None).expect("STDN is not read");
+        assert_eq!(
+            registered,
+            [CategoryString {
+                category: 1,
+                text: "zq_stns_name".into()
+            }]
+        );
+        assert!(document_strings(&doc, None).is_err());
+
+        // A blob STDN copying STNS adds no second registered string.
+        let mut copied = Vec::new();
+        let stns = blob(0x01, b"zq_stns_name\0\0\0\0");
+        frame(&mut copied, b"STDN", &stns);
+        frame(&mut copied, b"STNS", &stns);
+        assert_eq!(
+            registered_strings(&copied, None).expect("it reads").len(),
+            1
+        );
+        assert_eq!(document_strings(&copied, None).expect("it reads").len(), 2);
+    }
+
+    #[test]
+    fn category_1_hashes_folded_and_category_1e_literally() {
+        let text = b"Zq\\Mixed_Case";
+        assert_eq!(category_hash(1, text), Some(crate::string_hash(text)));
+        assert_eq!(
+            category_hash(0x1E, text),
+            Some(crate::literal_string_hash(text))
+        );
+        assert_ne!(crate::string_hash(text), crate::literal_string_hash(text));
+        assert_eq!(category_hash(0, text), None);
+        assert_eq!(category_hash(2, text), None);
+        // The literal hasher sign-extends a byte above 0x7F, which the crate's literal hash does not.
+        assert_eq!(category_hash(0x1E, "zq_é".as_bytes()), None);
+        assert!(category_hash(1, "zq_é".as_bytes()).is_some());
     }
 }

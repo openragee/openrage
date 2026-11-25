@@ -386,13 +386,6 @@ pub enum StructLayoutError {
         offset: u32,
         size: u32,
     },
-    #[error("parStructure {structure:#010X}: member {member:#010X} at offset {offset:#X} precedes the member before it at {prev:#X}, where members ascend by offset")]
-    MembersOutOfOrder {
-        structure: u32,
-        member: u32,
-        offset: u32,
-        prev: u32,
-    },
 }
 
 impl From<StructLayoutError> for MetaError {
@@ -401,16 +394,19 @@ impl From<StructLayoutError> for MetaError {
     }
 }
 
-/// Checks a parsed `parStructure` against the engine's layout invariants: each member starts inside
-/// the declared `size`, a fixed-size member ends inside it, and members ascend by offset. The array
-/// element descriptors (name hash [`ARRAY_INFO_NAME_HASH`]) are not members, and are skipped as the
-/// readers skip them. `members` are `(name hash, offset, engine type)`.
+/// Checks a parsed `parStructure` against the engine's layout invariants: no member starts past
+/// the declared `size`, and a fixed-size member ends inside it. The array element descriptors
+/// (name hash [`ARRAY_INFO_NAME_HASH`]) are not members, and are skipped as the readers skip them.
+/// `members` are `(name hash, offset, engine type)`.
+///
+/// ⚠ Two rules shipped GTA V files break, so neither is checked: members do not ascend by offset
+/// (`junctions.pso` lists the member at 0x21 before the one at 0x20), and a member with no stated
+/// width may start at `size` itself (an empty structure as the last member).
 pub(crate) fn validate_struct_layout(
     structure: u32,
     size: u32,
     members: impl IntoIterator<Item = (u32, u32, PsoDataType)>,
 ) -> std::result::Result<(), StructLayoutError> {
-    let mut prev: Option<u32> = None;
     for (member, offset, data_type) in members {
         if member == ARRAY_INFO_NAME_HASH {
             continue;
@@ -418,7 +414,7 @@ pub(crate) fn validate_struct_layout(
         let end = data_type
             .fixed_size()
             .map_or(offset, |bytes| offset.saturating_add(bytes as u32));
-        if offset >= size || end > size {
+        if end > size {
             return Err(StructLayoutError::MemberPastEnd {
                 structure,
                 member,
@@ -426,15 +422,6 @@ pub(crate) fn validate_struct_layout(
                 size,
             });
         }
-        if let Some(prev) = prev.filter(|&p| offset < p) {
-            return Err(StructLayoutError::MembersOutOfOrder {
-                structure,
-                member,
-                offset,
-                prev,
-            });
-        }
-        prev = Some(offset);
     }
     Ok(())
 }
@@ -780,15 +767,17 @@ mod tests {
         // A declared size too small for the last member to fit.
         assert!(PsoSchemaSection::parse(&one_struct(0x08, &good)).is_err());
 
-        // Members that do not ascend by offset.
-        let unordered = [
-            (0x1111_1111, PsoDataType::Float, 0x10),
-            (0x2222_2222, PsoDataType::Float, 0x08),
+        // What shipped files hold: members out of offset order, and one of no width at the end.
+        let shipped = [
+            (0x1111_1111, PsoDataType::Bool, 0x09),
+            (0x2222_2222, PsoDataType::Bool, 0x08),
+            (0x3333_3333, PsoDataType::Structure, 0x20),
         ];
-        let err = PsoSchemaSection::parse(&one_struct(0x20, &unordered))
-            .expect_err("members out of order are refused")
-            .to_string();
-        assert!(err.contains("precedes"), "{err}");
+        PsoSchemaSection::parse(&one_struct(0x20, &shipped)).expect("a shipped layout reads");
+
+        // A member of no width past the end is still past the end.
+        let past = [(0x1111_1111, PsoDataType::Structure, 0x21)];
+        assert!(PsoSchemaSection::parse(&one_struct(0x20, &past)).is_err());
     }
 
     #[test]

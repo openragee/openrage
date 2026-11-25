@@ -29,6 +29,7 @@ pub enum Action {
     ClearRecentFolders,
     Save,
     SaveAs,
+    SaveIntoArchiveCopy,
     CloseDocument,
     PreviousTab,
     ReopenClosedTab,
@@ -339,6 +340,22 @@ pub const COMMANDS: &[Spec] = &[
         run: |state, _| {
             if let Some(path) = panels::menu::save_dialog_for_active(state) {
                 state.save_active_document_as(path);
+            }
+        },
+        ..BASE
+    },
+    Spec {
+        action: Action::SaveIntoArchiveCopy,
+        id: "save_into_archive_copy",
+        label: tr_key!("Save into a copy of the archive…"),
+        category: tr_key!("File"),
+        hover: tr_key!("Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"),
+        enabled: |state| state.can_save_into_archive_copy(),
+        run: |state, _| {
+            let name = state.archive_copy_name();
+            let kind = crate::state::DocumentKind::Rpf9;
+            if let Some(path) = file_dialogs::save_any_file(kind, name.as_deref()) {
+                state.save_into_archive_copy(path);
             }
         },
         ..BASE

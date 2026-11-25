@@ -122,6 +122,50 @@ fn body() -> Rpf9Sections {
     }
 }
 
+/// [`body`] with a level 1 of its own: a copy of level 0's objects, from the level to its index
+/// buffer's record, placed past the block map over a copy of the physical section.
+fn two_levels() -> Rpf9Sections {
+    let mut s = body();
+    let (from, to) = (0x190usize, 0x4A0usize);
+    let (shift, physical) = (s.virtual_section.len() - from, s.physical.len());
+    let mut copy = s.virtual_section[from..to].to_vec();
+    for k in (0..copy.len()).step_by(8) {
+        let word = u64::from_le_bytes(copy[k..k + 8].try_into().expect("eight bytes"));
+        let target = (word & 0x0FFF_FFFF) as usize;
+        let moved = match word >> 28 {
+            5 if (from..to).contains(&target) => word + shift as u64,
+            6 => word + physical as u64,
+            _ => continue,
+        };
+        put(&mut copy, k, &moved.to_le_bytes());
+    }
+    let level = s.virtual_section.len();
+    s.virtual_section.extend(copy);
+    put(
+        &mut s.virtual_section,
+        0x58,
+        &(V + level as u64).to_le_bytes(),
+    );
+    let bytes = s.physical.clone();
+    s.physical.extend(bytes);
+    s
+}
+
+/// The vertex count of the one geometry at `level` of the drawable `payload` shows.
+fn count_at(payload: &DocPayload, level: usize) -> u32 {
+    let DocPayload::Gta6Drawable(r) = payload else {
+        panic!("a GTA VI body");
+    };
+    let Resource::Drawable(d) = &**r else {
+        panic!("a drawable");
+    };
+    let models = d.levels[level].as_ref().expect("the level");
+    let g = models[0].geometries[0]
+        .as_ref()
+        .expect("the geometry reads");
+    g.vertex_count
+}
+
 /// The one geometry of the drawable `sections` hold.
 fn only(sections: &Rpf9Sections) -> Geometry {
     let (v, p) = (
@@ -249,6 +293,60 @@ fn a_gltf_replaces_a_gta_vi_drawable_s_geometry_as_a_step_that_undoes_and_saves(
 }
 
 #[test]
+fn a_gltf_import_is_in_the_loose_resource_a_save_or_a_write_into_an_archive_carries() {
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let path = dir.path().join("tri.rsc");
+    let sections = body();
+    std::fs::write(&path, write_rpf9_resource(&sections).expect("writes")).expect("written");
+    let mut state = AppState::new();
+    state.load_file(path.clone());
+    settle(&mut state);
+    let doc =
+        (state.active_document).unwrap_or_else(|| panic!("opened: {}", state.error_dialog_message));
+
+    let drawable = read_drawable(&sections.virtual_section, Some(&sections.physical))
+        .expect("the drawable reads");
+    let names = or_cli::Gta6Names {
+        effect: &|hash| format!("hash_{hash:08X}"),
+        texture: &|key| format!("hash_{key:016X}"),
+    };
+    let mut scene = or_cli::gta6_scene(&drawable, None, "tri", false, &names);
+    let p = &mut scene.objects[0].meshes[0].primitives[0];
+    p.positions.push([-1.0, -1.0, -1.0]);
+    p.normals.push([0.0, 0.0, 1.0]);
+    p.uvs[0].push([1.0, 1.0]);
+    p.indices.extend([1, 3, 2]);
+    let mesh = dir.path().join("tri.glb");
+    std::fs::write(&mesh, gltf::write(&scene, "tri", Container::Glb).primary).expect("written");
+    state.import_gltf(doc, mesh);
+    worked_out(&mut state);
+    state.apply_gltf_import();
+
+    // What the row hands a save, and a write into an archive, is the body with the import made.
+    let Some(Ok(EditedSave::Body {
+        archive,
+        offset,
+        edit,
+    })) = state.edited_sections(doc)
+    else {
+        panic!("the import is an edit a save writes");
+    };
+    let loose = super::super::gta6_edit::written(&archive, offset, &*edit).expect("written");
+    let (find, read) = read_rpf9_body(Cursor::new(&loose), 0, u64::MAX).expect("it reads");
+    assert_eq!(
+        only(&Rpf9Sections::of(&find, &read).expect("a resource")).vertex_count,
+        4
+    );
+
+    state.active_document = Some(doc);
+    assert!(state.save_active_document());
+    finished(&mut state);
+    let saved = std::fs::read(&path).expect("the saved file");
+    assert_eq!(saved, loose, "a save writes that same loose resource");
+}
+
+#[test]
 fn a_mesh_without_normals_at_another_count_is_refused_until_the_fill_is_ticked_and_saves_filled() {
     let _serial = crate::ui::theme::serial();
     let dir = tempfile::tempdir().expect("a scratch directory");
@@ -312,4 +410,95 @@ fn a_mesh_without_normals_at_another_count_is_refused_until_the_fill_is_ticked_a
     let g = only(&saved);
     assert_eq!(g.vertex_count, 4);
     assert_eq!(g.vertices.normals, vec![[0.0, 0.0, 1.0]; 4]);
+}
+
+#[test]
+fn the_lower_levels_are_left_unless_asked_and_then_take_the_level_0_mesh_through_the_save() {
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let path = dir.path().join("tri.rsc");
+    let sections = two_levels();
+    std::fs::write(&path, write_rpf9_resource(&sections).expect("writes")).expect("written");
+    let mut state = AppState::new();
+    state.load_file(path.clone());
+    settle(&mut state);
+    let doc =
+        (state.active_document).unwrap_or_else(|| panic!("opened: {}", state.error_dialog_message));
+
+    // Level 0's own glTF, a fourth vertex and a second triangle added; it names no level 1.
+    let drawable = read_drawable(&sections.virtual_section, Some(&sections.physical))
+        .expect("the drawable reads");
+    let names = or_cli::Gta6Names {
+        effect: &|hash| format!("hash_{hash:08X}"),
+        texture: &|key| format!("hash_{key:016X}"),
+    };
+    let mut scene = or_cli::gta6_scene(&drawable, None, "tri", false, &names);
+    let p = &mut scene.objects[0].meshes[0].primitives[0];
+    p.positions.push([-1.0, -1.0, -1.0]);
+    p.normals.push([0.0, 0.0, 1.0]);
+    p.uvs[0].push([1.0, 1.0]);
+    p.indices.extend([1, 3, 2]);
+    let mesh = dir.path().join("tri.glb");
+    std::fs::write(&mesh, gltf::write(&scene, "tri", Container::Glb).primary).expect("written");
+
+    state.import_gltf(doc, mesh);
+    worked_out(&mut state);
+    let Some(Asked::Import(asked)) = &mut state.gltf.asked else {
+        panic!("the import's question");
+    };
+    assert!(
+        !asked.choice.lower_lods,
+        "the lower levels are left unless asked"
+    );
+    let Some(Ok((payload, report))) = &asked.made else {
+        panic!(
+            "worked out: {:?}",
+            asked.made.as_ref().map(|m| m.as_ref().err())
+        );
+    };
+    assert_eq!((count_at(payload, 0), count_at(payload, 1)), (4, 3));
+    let left = report
+        .splits
+        .iter()
+        .any(|l| l.starts_with("lod1 left as the drawable holds"));
+    assert!(left, "{:?}", report.splits);
+
+    asked.choice.lower_lods = true;
+    state.rerun_gltf();
+    worked_out(&mut state);
+    let Some(Asked::Import(asked)) = &state.gltf.asked else {
+        panic!("the import's question");
+    };
+    let Some(Ok((payload, report))) = &asked.made else {
+        panic!(
+            "worked out: {:?}",
+            asked.made.as_ref().map(|m| m.as_ref().err())
+        );
+    };
+    assert_eq!((count_at(payload, 0), count_at(payload, 1)), (4, 4));
+    let taken = "lower levels: 1 geometries take the level-0 mesh at their model and place";
+    assert!(
+        report.splits.iter().any(|l| l == taken),
+        "{:?}",
+        report.splits
+    );
+
+    state.apply_gltf_import();
+    let shown =
+        |state: &AppState, level| count_at(&state.document(doc).expect("open").payload, level);
+    assert_eq!((shown(&state, 0), shown(&state, 1)), (4, 4));
+
+    // The save makes the import again as it was asked, its lower level replaced too.
+    state.active_document = Some(doc);
+    assert!(state.save_active_document());
+    finished(&mut state);
+    let bytes = std::fs::read(&path).expect("the saved file");
+    let (find, read) = read_rpf9_body(Cursor::new(bytes), 0, u64::MAX).expect("it reads");
+    let saved = Rpf9Sections::of(&find, &read).expect("a resource");
+    let d = read_drawable(&saved.virtual_section, Some(&saved.physical)).expect("it reads");
+    let level1 = d.levels[1].as_ref().expect("level 1");
+    let g = level1[0].geometries[0]
+        .as_ref()
+        .expect("the geometry reads");
+    assert_eq!(g.vertex_count, 4);
 }

@@ -35,6 +35,7 @@ pub mod prefab;
 pub mod scenario;
 pub mod state;
 pub mod streaming;
+pub mod streaming_rules;
 pub mod validate;
 pub mod write;
 pub mod xml;

@@ -59,6 +59,14 @@ impl BoundCollider {
         self.shapeless
     }
 
+    /// The bytes the collider holds in memory: itself, its shapes and its tree.
+    pub fn size_in_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + std::mem::size_of_val(self.shapes.as_slice())
+            + std::mem::size_of_val(self.sources.as_slice())
+            + self.tree.size_in_bytes()
+    }
+
     /// The box of every shape in the bound's own space; empty for a bound of none.
     pub fn local_box(&self) -> Aabb {
         self.tree.bounds()
@@ -486,4 +494,31 @@ fn affine(m: &Mat34V) -> Affine3A {
         column(&m.col2),
         column(&m.col3),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use or_io::gta5::bounds::build::{self, BoundMesh};
+
+    #[test]
+    fn a_collider_counts_the_bytes_of_itself_its_shapes_their_sources_and_its_tree() {
+        let positions: Vec<[f32; 3]> = (0..62u16)
+            .map(|v| [f32::from(v / 2), f32::from(v % 2), 0.0])
+            .collect();
+        let triangles: Vec<[u16; 3]> = (0..60).map(|t| [t, t + 1, t + 2]).collect();
+        let mesh = BoundMesh::new(positions, triangles);
+        let geometry = build::geometry(&mesh).expect("a mesh a bound can hold");
+        let collider = BoundCollider::new(&PhBoundAny::PhBoundGeometry(geometry)).expect("whole");
+        assert_eq!((collider.shapes.len(), collider.sources.len()), (60, 60));
+        let tree = collider.tree.size_in_bytes();
+        assert!(tree > 0);
+        assert_eq!(
+            collider.size_in_bytes(),
+            std::mem::size_of::<BoundCollider>()
+                + 60 * std::mem::size_of::<Shape>()
+                + 60 * std::mem::size_of::<Source>()
+                + tree
+        );
+    }
 }

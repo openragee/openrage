@@ -30,15 +30,20 @@ pub(crate) struct BoxTree {
     items: Vec<Item>,
 }
 
+/// Whether a tree takes the box: every corner a finite number, and no minimum past its maximum.
+pub(crate) fn is_a_box(min: Vec3, max: Vec3) -> bool {
+    min.is_finite() && max.is_finite() && min.cmple(max).all()
+}
+
 impl BoxTree {
     /// A tree over `boxes`, each `(min, max, id)`.
     ///
-    /// ⚠ A box with a corner that is not a finite number, or whose minimum passes its maximum,
-    /// is left out and answers no point: one infinite corner would grow every node above it.
+    /// ⚠ A box that [`is_a_box`] refuses is left out and answers no point: one infinite corner
+    /// would grow every node above it.
     pub fn build(boxes: impl IntoIterator<Item = (Vec3, Vec3, u32)>) -> Self {
         let items: Vec<Item> = boxes
             .into_iter()
-            .filter(|(min, max, _)| min.is_finite() && max.is_finite() && min.cmple(*max).all())
+            .filter(|(min, max, _)| is_a_box(*min, *max))
             .map(|(min, max, id)| Item { min, max, id })
             .collect();
         let mut tree = Self {
@@ -103,7 +108,31 @@ impl BoxTree {
 
     /// [`Self::holding`], and how many boxes were tested to answer it.
     pub fn holding_counted(&self, at: Vec3) -> (Vec<u32>, usize) {
-        let holds = |min: Vec3, max: Vec3| at.cmpge(min).all() && at.cmple(max).all();
+        self.walk(|min, max| at.cmpge(min).all() && at.cmple(max).all())
+    }
+
+    /// The numbers of the boxes that come within `radius` metres of the upright line through `x` and `y`, at any height, lowest first.
+    pub fn in_column(&self, x: f32, y: f32, radius: f32) -> Vec<u32> {
+        self.in_column_counted(x, y, radius).0
+    }
+
+    /// [`Self::in_column`], and how many boxes were tested to answer it.
+    pub fn in_column_counted(&self, x: f32, y: f32, radius: f32) -> (Vec<u32>, usize) {
+        // ⚠ `max` passes over a NaN, which would put a line that is nowhere inside every box.
+        if x.is_nan() || y.is_nan() || radius.is_nan() || radius < 0.0 {
+            return (Vec::new(), 0);
+        }
+        self.walk(|min, max| {
+            let out_x = (min.x - x).max(x - max.x).max(0.0);
+            let out_y = (min.y - y).max(y - max.y).max(0.0);
+            out_x * out_x + out_y * out_y <= radius * radius
+        })
+    }
+
+    /// The numbers of the boxes `holds` takes, lowest first, and how many boxes were tested.
+    ///
+    /// ⚠ `holds` must take a node's box wherever it takes a box inside it.
+    fn walk(&self, holds: impl Fn(Vec3, Vec3) -> bool) -> (Vec<u32>, usize) {
         let mut found = Vec::new();
         let mut tested = 0;
         let mut pending: Vec<u32> = Vec::new();
@@ -206,6 +235,124 @@ mod tests {
             }
         }
         assert_eq!(asked, 1600);
+    }
+
+    /// A repeatable stream of numbers in `0..1`.
+    struct Dice(u64);
+
+    impl Dice {
+        fn between(&mut self, low: f32, high: f32) -> f32 {
+            self.0 = (self.0)
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            low + (high - low) * ((self.0 >> 40) as f32 / (1u64 << 24) as f32)
+        }
+    }
+
+    /// How far the rectangle a box stands on is from a point of the plane, by its nearest point.
+    fn rectangle_distance(min: Vec3, max: Vec3, x: f32, y: f32) -> f32 {
+        let nearest = (x.clamp(min.x, max.x), y.clamp(min.y, max.y));
+        (nearest.0 - x).hypot(nearest.1 - y)
+    }
+
+    fn column_by_scanning(boxes: &[(Vec3, Vec3, u32)], x: f32, y: f32, radius: f32) -> Vec<u32> {
+        let mut found: Vec<u32> = boxes
+            .iter()
+            .filter(|(min, max, _)| rectangle_distance(*min, *max, x, y) <= radius)
+            .map(|(_, _, id)| *id)
+            .collect();
+        found.sort_unstable();
+        found
+    }
+
+    #[test]
+    fn a_column_answers_what_a_scan_of_every_box_answers() {
+        let mut dice = Dice(0x70_67);
+        // Boxes from a metre to four hundred across, at every height, so many stand over others.
+        let boxes: Vec<(Vec3, Vec3, u32)> = (0..400u32)
+            .map(|id| {
+                let corner = Vec3::new(
+                    dice.between(-2000.0, 2000.0),
+                    dice.between(-2000.0, 2000.0),
+                    dice.between(-200.0, 800.0),
+                );
+                let wide = if id % 7 == 0 { 400.0 } else { 60.0 };
+                let size = Vec3::new(
+                    dice.between(1.0, wide),
+                    dice.between(1.0, wide),
+                    dice.between(1.0, 90.0),
+                );
+                (corner, corner + size, id)
+            })
+            .collect();
+        let tree = BoxTree::build(boxes.clone());
+        let (mut asked, mut answered, mut stacked) = (0, 0, 0);
+        for _ in 0..600 {
+            let (x, y) = (dice.between(-2100.0, 2500.0), dice.between(-2100.0, 2500.0));
+            for radius in [0.0f32, 35.0, 500.0] {
+                let found = tree.in_column(x, y, radius);
+                assert_eq!(
+                    found,
+                    column_by_scanning(&boxes, x, y, radius),
+                    "{x} {y} within {radius}"
+                );
+                asked += 1;
+                answered += usize::from(!found.is_empty());
+            }
+            // A column holds every box a point of it does, and those above and below as well.
+            let in_column = tree.in_column(x, y, 0.0);
+            let at_a_height = tree.holding(Vec3::new(x, y, 300.0));
+            assert!(at_a_height.iter().all(|id| in_column.contains(id)));
+            stacked += usize::from(in_column.len() > at_a_height.len());
+        }
+        assert_eq!(asked, 1800);
+        assert!(
+            answered > 600 && stacked > 50,
+            "{answered} answers held a box, {stacked} columns more than one of their points"
+        );
+        // A corner of a box is in the column that runs through it, and a metre off is not.
+        let (min, max, id) = boxes[0];
+        assert!(tree.in_column(max.x, min.y, 0.0).contains(&id));
+        assert!(!tree.in_column(max.x + 1.0, min.y, 0.0).contains(&id));
+        assert!(tree.in_column(max.x + 1.0, min.y, 1.0).contains(&id));
+    }
+
+    #[test]
+    fn a_column_is_answered_from_the_boxes_near_it_and_not_from_all() {
+        let side = 32;
+        let boxes = tiles(side);
+        let tree = BoxTree::build(boxes.clone());
+        let (x, y) = (20.0 * 17.0 + 5.0, 20.0 * 9.0 + 5.0);
+        // Far above every box: no point holds it, and its column does.
+        let (found, tested) = tree.in_column_counted(x, y, 0.0);
+        assert_eq!(found, vec![9 * side + 17]);
+        assert!(tree.holding(Vec3::new(x, y, 900.0)).is_empty());
+        assert!(
+            tested <= 4 * LEAF,
+            "{tested} of {} boxes were tested for one column",
+            boxes.len()
+        );
+    }
+
+    #[test]
+    fn a_column_that_is_nowhere_holds_nothing() {
+        let tree = BoxTree::build(tiles(4));
+        assert_eq!(tree.in_column(5.0, 5.0, 0.0), vec![0]);
+        for (x, y, radius) in [
+            (f32::NAN, 5.0, 0.0),
+            (5.0, f32::NAN, 0.0),
+            (5.0, 5.0, f32::NAN),
+            (5.0, 5.0, -1.0),
+            (f32::INFINITY, 5.0, 10.0),
+        ] {
+            assert_eq!(
+                tree.in_column(x, y, radius),
+                Vec::<u32>::new(),
+                "{x} {y} {radius}"
+            );
+        }
+        assert_eq!(tree.in_column(5.0, 5.0, f32::INFINITY).len(), 16);
+        assert!(BoxTree::default().in_column(0.0, 0.0, 10.0).is_empty());
     }
 
     #[test]

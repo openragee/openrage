@@ -335,7 +335,63 @@ and what one level walked is never kept for another
 (`a_root_a_level_keeps_folders_out_of_is_read_at_every_build_and_never_kept_for_another_level`).
 With
 no `--kept` the index is kept under the configuration directory, a file an
-install.
+install. `maps_in_column`, `bounds_in_column` and `bounds_near_column` answer the
+maps and the carried bounds over or under a point at any height, and within a
+radius of it, through the same trees and with no scan of every entry
+(`a_column_answers_the_maps_and_the_bounds_a_scan_of_every_entry_answers`).
+`boxless_bounds_near_column` answers the carried bounds whose file states no
+box, or a box no place is in, by the maps that carry them and stream there.
+
+`world_collision::WorldCollision` is the static collision of a mounted install,
+read as a place asks for it. `stream` opens the bounds files whose box comes
+within a radius of a column, each from the archive that lists it
+(`Bound::archive`), builds a `BoundCollider` of each once and places it as the
+file states, because a file a map group or a map's name carries is in world
+space. It holds them in a `CollisionSet` under a budget of bytes
+(`BoundCollider::size_in_bytes`) and drops the file asked for longest ago, never
+one the question being answered asked for, so a later question reads a dropped
+file again
+(`the_budget_drops_the_file_asked_for_longest_ago_and_a_later_question_reads_it_again`).
+`ground` answers the ground under a point and `highest_ground` the highest of a
+column, each with the files held and the files that gave no collider, with why
+(`Unread`); a file that does not read is opened once, and a file of the
+question that is already held is never the one dropped for a file read beside it
+(`a_file_of_the_column_that_is_held_is_not_dropped_for_the_file_read_beside_it`).
+⚠ A file is found by the box its header states. One that states none is asked
+wherever a map that carries it streams, so a file that does not read is named
+and not passed over
+(`a_bound_whose_file_states_no_box_is_asked_wherever_its_map_stands`); a shape
+that lies outside the box its file states is still not found by a column only it
+covers. `colliders` is the set itself, for a ray, a swept sphere or a box.
+
+⚠ A bound an interior alone carries is named (`Streamed::unplaced`) and not
+read: its file states its box about the interior, as an archetype's own `.ybn`
+does about its model, and what puts it in the world is the entity's placement,
+which nothing here reads. So it is named by the maps that stream over the column
+and place the interior (`interior_bounds_near_column`), never by that box.
+`place` is the seam: a caller that knows the placement hands the collider in
+with its rotation, one scale and translation
+(`an_interiors_collision_is_named_and_not_loaded_until_a_caller_places_it`).
+
+`openrage-cli world ground` asks it of one position: with no height the highest
+ground of the column, with one the ground from `--rise` metres above it down, no
+steeper than `--slope` degrees. It says the height, the normal, the material and
+the bounds file, or none, and in both cases the files it looked in, those that
+did not read and those not loaded. A material is its `phMaterialMgr::Id` word,
+the type in its low byte, and the name the install's own table gives that type.
+`--level` and `--mode` mount as `dlc-list` does; an index at a level is kept in a
+file of its own, and a mode leaves out no bounds file, because it takes or
+leaves a pack's change sets and the index reads every bounds file of every
+archive mounted; the note names the change sets the mode did leave out
+(`a_level_leaves_out_the_bounds_of_the_packs_after_it_and_a_mode_leaves_out_none`).
+The flags are held through the verb itself, in a child process, by
+`a_level_a_mode_a_kept_file_and_a_fresh_read_are_taken_from_the_command_line`.
+The install suite
+(`the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them`, slow
+tier, not yet run on an install) asks the ground at an install's vehicle path
+nodes. ⚠ Nothing in a `.ynd` states the scale of a node's stored integers, so
+the suite tests one reading of it against four rivals (`NODE_SCALES`), and the
+share of nodes it asks to be within a step is a floor, not a measurement.
 
 ⚠ A declared `drawableDictionary` outranks a loose file of the same stem, and
 `assetName` is then an entry inside that `.ydd`. Read as a filename, 76,898
@@ -772,7 +828,11 @@ box overlap and the ground under a point in world space.
   staged capsule, disc, cylinder and box bounds each fill the box their header
   states, which holds the axis and the radius each is read with
   (`every_staged_primitive_bound_fills_the_box_it_states`); no sphere bound is
-  staged, so a sphere's reading is held by bounds built by hand alone.
+  staged, so a sphere's reading is held by bounds built by hand alone. Of the
+  staged corpus, 948 bounds become colliders with none refused
+  (`every_staged_bound_becomes_a_collider_whose_ray_and_swept_sphere_agree`,
+  2026-11-25). `BoundCollider::size_in_bytes` is what a collider holds in memory,
+  which is what `or-depends` budgets by.
 - An archetype's bounds match its drawable's only about half the time, because
   the archetype's frame is not recorded in the drawable, and `lodDist` and
   `textureDictionary` are authoring decisions

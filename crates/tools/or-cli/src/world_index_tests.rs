@@ -1,7 +1,6 @@
 //! `world index` and `world at` over an install built by hand.
 
-#[path = "../../../domain/or-depends/tests/world_fixture/mod.rs"]
-mod world_fixture;
+use crate::world_fixture;
 
 use super::*;
 
@@ -233,12 +232,12 @@ fn the_index_verb_says_why_a_kept_index_did_not_serve() {
 #[test]
 fn an_install_has_one_kept_index_of_its_own_under_the_configuration_folder() {
     let (a, b) = (Path::new("/games/one"), Path::new("/games/two"));
-    let Some(of_a) = default_kept(a) else {
+    let Some(of_a) = default_kept(a, None) else {
         // No configuration directory on this machine: `open` asks for `--kept`.
         return;
     };
-    assert_eq!(default_kept(a), Some(of_a.clone()));
-    assert_ne!(default_kept(b), Some(of_a.clone()));
+    assert_eq!(default_kept(a, None), Some(of_a.clone()));
+    assert_ne!(default_kept(b, None), Some(of_a.clone()));
     assert_eq!(of_a.extension().and_then(|e| e.to_str()), Some("index"));
     let folder = of_a.parent().expect("a folder");
     assert_eq!(

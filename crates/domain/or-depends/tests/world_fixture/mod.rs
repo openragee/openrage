@@ -9,8 +9,11 @@ use std::sync::Arc;
 use or_io::container::rpf::crypto::NoOpCryptoProvider;
 use or_io::container::rpf::RpfBuilder;
 use or_io::decl::File as _;
+use or_io::gta5::bounds::build::{self, BoundMesh};
 use or_io::gta5::shared::Vec4V;
-use or_io::gta5::{PhBoundAny, PhBoundSphere};
+use or_io::gta5::{
+    CPathNode, CPathRegion, PhBoundAny, PhBoundGeometry, PhBoundSphere, PhMaterialMgrId,
+};
 use or_io::meta::canonical;
 use or_io::meta::instance::HashedString;
 use or_io::meta::{
@@ -178,8 +181,14 @@ pub fn manifest_bytes(groups: &[(&str, &[&str])], interiors: &[(&str, &[&str])])
 
 /// A `.ybn`'s bytes: a bound whose header box is `span`.
 pub fn bound_bytes(span: Span) -> Vec<u8> {
+    sphere_bytes(span, 0.0)
+}
+
+/// A `.ybn`'s bytes: a sphere whose header states the box `span` and the radius `radius`.
+pub fn sphere_bytes(span: Span, radius: f32) -> Vec<u8> {
     let (min, max) = span;
     let mut sphere = PhBoundSphere::default();
+    sphere.base.radius_around_centroid = radius;
     sphere.base.bounding_box_max_xyz_margin_w = Vec4V {
         x: max[0],
         y: max[1],
@@ -188,6 +197,50 @@ pub fn bound_bytes(span: Span) -> Vec<u8> {
     };
     sphere.base.set_bounding_box_min(min);
     PhBoundAny::PhBoundSphere(sphere)
+        .to_bytes()
+        .expect("a bound")
+}
+
+/// A geometry of `triangles` over `positions`, each with the material `materials` lists for it by index.
+pub fn mesh_bound(
+    positions: &[[f32; 3]],
+    triangles: &[[u16; 3]],
+    materials: &[u64],
+    triangle_materials: &[u8],
+) -> PhBoundGeometry {
+    let mesh = BoundMesh {
+        positions: positions.to_vec(),
+        triangles: triangles.to_vec(),
+        materials: (materials.iter())
+            .map(|id| PhMaterialMgrId {
+                id: *id,
+                ..Default::default()
+            })
+            .collect(),
+        triangle_materials: triangle_materials.to_vec(),
+    };
+    build::geometry(&mesh).expect("a mesh a bound can hold")
+}
+
+/// A level square of two triangles from `corner`, `side` metres wide, of one material.
+pub fn level_square(corner: [f32; 3], side: f32, material: u64) -> PhBoundGeometry {
+    let [x, y, z] = corner;
+    mesh_bound(
+        &[
+            [x, y, z],
+            [x + side, y, z],
+            [x + side, y + side, z],
+            [x, y + side, z],
+        ],
+        &[[0, 1, 2], [0, 2, 3]],
+        &[material],
+        &[0, 0],
+    )
+}
+
+/// A `.ybn`'s bytes: `geometry` as the file's one bound.
+pub fn mesh_bound_bytes(geometry: PhBoundGeometry) -> Vec<u8> {
+    PhBoundAny::PhBoundGeometry(geometry)
         .to_bytes()
         .expect("a bound")
 }
@@ -437,4 +490,98 @@ pub fn held_to_its_mount(mount: &dyn Fn() -> MountedGame, root: &Path, file: &Pa
         maps_asked,
         bounds_asked,
     }
+}
+
+/// A `.ynd`'s bytes: a region of `car` vehicle nodes and then `ped` pedestrian ones, each at the
+/// three integers a node stores for its place.
+pub fn path_region_bytes(car: &[[i16; 3]], ped: &[[i16; 3]]) -> Vec<u8> {
+    let node = |[x, y, z]: &[i16; 3]| CPathNode {
+        coors_x: *x,
+        coors_y: *y,
+        as_integer1: u32::from(*z as u16) << 16,
+        ..Default::default()
+    };
+    CPathRegion {
+        nodes: car.iter().chain(ped).map(node).collect(),
+        num_nodes_car_nodes: car.len() as i32,
+        num_nodes_ped_nodes: ped.len() as i32,
+        ..Default::default()
+    }
+    .to_bytes()
+    .expect("a path region")
+}
+
+/// How many of a path node's stored units make a metre, across the ground and in height.
+///
+/// ⚠ Nothing in a `.ynd` states either: a node holds integers. Each pair is a reading a suite
+/// holds to the ground, the first the one asked to hold and the others its rivals.
+pub const NODE_SCALES: [(f32, f32); 5] = [
+    (4.0, 32.0),
+    (8.0, 32.0),
+    (2.0, 32.0),
+    (4.0, 16.0),
+    (4.0, 64.0),
+];
+
+/// How far over or under a road node its ground may be and still be the road, in metres.
+pub const STEP: f32 = 1.0;
+
+/// How the ground of a mount stands to the vehicle nodes of its own path regions, under one
+/// reading of what a node stores.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NodesHeld {
+    /// The `.ynd` files the mount would load, and how many of them did not read.
+    pub regions: usize,
+    pub unread: usize,
+    /// The vehicle nodes asked.
+    pub asked: usize,
+    /// Those with no static bounds file over or under them.
+    pub no_file: usize,
+    /// Those with ground within [`STEP`] of them.
+    pub within_a_step: usize,
+    /// The bounds files that gave no collider, each counted once a node that asked for it.
+    pub unread_bounds: usize,
+}
+
+/// Ask the ground at every `every`th vehicle node of each path region of `game`, reading a node's
+/// place at `scale` units a metre, over the static collision `index` names.
+pub fn ground_at_the_road_nodes(
+    game: &MountedGame,
+    index: &or_depends::WorldIndex,
+    source: &dyn or_depends::WorldSource,
+    scale: (f32, f32),
+    every: usize,
+) -> NodesHeld {
+    use or_world::collision::GroundProbe;
+
+    let mut world = or_depends::WorldCollision::new(index, source, 512 << 20);
+    // A step up and a step down: ground the probe meets is ground within a step of the node.
+    let probe = GroundProbe {
+        max_rise: STEP,
+        max_drop: STEP,
+        max_slope: 60f32.to_radians(),
+    };
+    let mut held = NodesHeld::default();
+    for logical in winners(game, ".ynd").values() {
+        held.regions += 1;
+        let region = (game.vfs.open(logical)).and_then(|file| CPathRegion::from_bytes(&file).ok());
+        let Some(region) = region else {
+            held.unread += 1;
+            continue;
+        };
+        let car = usize::try_from(region.num_nodes_car_nodes).unwrap_or(0);
+        for node in region.nodes.iter().take(car).step_by(every.max(1)) {
+            let at = glam::Vec3::new(
+                f32::from(node.coors_x) / scale.0,
+                f32::from(node.coors_y) / scale.0,
+                f32::from(node.coors_z()) / scale.1,
+            );
+            let answer = world.ground(at, &probe);
+            held.asked += 1;
+            held.no_file += usize::from(answer.streamed.held.is_empty());
+            held.within_a_step += usize::from(answer.ground.is_some());
+            held.unread_bounds += answer.streamed.unread.len();
+        }
+    }
+    held
 }

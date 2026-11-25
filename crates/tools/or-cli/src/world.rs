@@ -37,6 +37,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "archetypes" => super::world_archetypes::run(rest),
         "index" => super::world_index::cmd_index(rest),
         "at" => super::world_index::cmd_at(rest),
+        "ground" => super::world_ground::cmd_ground(rest),
         "-h" | "--help" | "help" => {
             print_usage();
             ExitCode::SUCCESS
@@ -1271,6 +1272,16 @@ fn print_usage() {
     eprintln!("  at --game <dir> <x> <y> <z>   (or one argument: x,y,z or \"vector3(x, y, z)\")");
     eprintln!("                           The maps whose streaming extents hold a position and");
     eprintln!("                           the bounds whose box does, from the world index.");
+    eprintln!("  ground --game <dir> <x> <y> [<z>]");
+    eprintln!("                           The ground under a position: its height, material");
+    eprintln!("                           and bounds file, or none and the files looked in.");
+    eprintln!("                           With no z, the highest ground of the column; with");
+    eprintln!("                           one, from --rise <m> above it (1) down. --slope");
+    eprintln!("                           <degrees> is the steepest ground (60). --level");
+    eprintln!("                           <pack> and --mode story|multiplayer mount as");
+    eprintln!("                           `dlc-list` does. Static map collision only: an");
+    eprintln!("                           interior's is named and not loaded, and a placed");
+    eprintln!("                           prop's is not read.");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --types <dir>   Where to find `.ytyp` for archetype bounds. Defaults to");

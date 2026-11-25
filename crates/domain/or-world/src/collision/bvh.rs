@@ -36,6 +36,11 @@ impl Bvh {
         Self { nodes, order }
     }
 
+    /// The bytes the tree's nodes and order hold.
+    pub fn size_in_bytes(&self) -> usize {
+        std::mem::size_of_val(self.nodes.as_slice()) + std::mem::size_of_val(self.order.as_slice())
+    }
+
     /// The box of every item; empty for a tree over none.
     pub fn bounds(&self) -> Aabb {
         self.nodes.first().map_or_else(Aabb::default, |n| n.aabb)
@@ -196,6 +201,20 @@ mod tests {
         (0..boxes.len() as u32)
             .filter(|i| reaches(&boxes[*i as usize], origin, direction, max, 0.0))
             .collect()
+    }
+
+    #[test]
+    fn a_tree_counts_the_bytes_of_its_nodes_and_its_order() {
+        let boxes = grid();
+        let tree = Bvh::build(&boxes);
+        assert_eq!(tree.order.len(), boxes.len());
+        assert!(tree.nodes.len() >= boxes.len() / LEAF_ITEMS);
+        assert_eq!(
+            tree.size_in_bytes(),
+            tree.nodes.len() * std::mem::size_of::<Node>()
+                + tree.order.len() * std::mem::size_of::<u32>()
+        );
+        assert_eq!(Bvh::default().size_in_bytes(), 0);
     }
 
     #[test]

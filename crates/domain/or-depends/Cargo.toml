@@ -14,7 +14,8 @@ glam.workspace = true
 or-io = { workspace = true, features = ["awc", "meta", "rel"] }
 # The placement substrate, borrowed rather than re-derived. An index that
 # built its own model of map data would be the second model `or-world`
-# exists to avoid.
+# exists to avoid. The collision query the bounds of a mount are asked through
+# is there too, and reads no file: this crate hands it what the mount holds.
 or-world.workspace = true
 # ⚠ The one thing that puts this crate above the domain line rather than
 # inside `or-world`: a dependency is a name until something says which file

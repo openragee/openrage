@@ -180,6 +180,8 @@ pub struct Bound {
     pub name: String,
     pub hash: u32,
     pub logical: String,
+    /// The root archive that lists it, by its place in mount order, which is where [`WorldSource::open`] reads it from.
+    pub archive: usize,
     /// The box its header states, as the file has it.
     pub span: Option<Span>,
 }
@@ -255,6 +257,8 @@ pub struct WorldIndex {
     stem_bounds: HashMap<u32, Vec<u32>>,
     tables: InstallTables,
     carriers: HashMap<u32, Vec<Carrier>>,
+    /// By a map's hash, the places in `bounds` of what it carries whose file states no box.
+    boxless: HashMap<u32, Vec<u32>>,
     map_tree: BoxTree,
     bound_tree: BoxTree,
 }
@@ -488,6 +492,7 @@ impl WorldIndex {
             stem_bounds: HashMap::new(),
             tables: InstallTables::new(),
             carriers: HashMap::new(),
+            boxless: HashMap::new(),
             map_tree: BoxTree::default(),
             bound_tree: BoxTree::default(),
         };
@@ -557,6 +562,7 @@ impl WorldIndex {
                     name,
                     hash,
                     logical: row.logical.clone(),
+                    archive: a,
                     span: row.span,
                 });
             }
@@ -606,6 +612,23 @@ impl WorldIndex {
                 let (min, max) = bound.span?;
                 (self.carriers.contains_key(&bound.hash)).then_some((min, max, at as u32))
             }));
+        // ⚠ A carried bound with no box the tree takes is in no column by its own word, so it is
+        // kept under each map that carries it and asked where that map streams.
+        let mut boxless: HashMap<u32, Vec<u32>> = HashMap::new();
+        for (at, bound) in self.bounds.iter().enumerate() {
+            if bound
+                .span
+                .is_some_and(|(min, max)| tree::is_a_box(min, max))
+            {
+                continue;
+            }
+            for carrier in self.carriers.get(&bound.hash).into_iter().flatten() {
+                if !matches!(carrier.via, Via::ManifestInterior) {
+                    boxless.entry(carrier.name).or_default().push(at as u32);
+                }
+            }
+        }
+        self.boxless = boxless;
     }
 
     /// The bounds a map's own stem names, where no manifest group names any for it.
@@ -684,6 +707,11 @@ impl WorldIndex {
         self.bound_by_hash.get(&name).map(|at| &self.bounds[*at])
     }
 
+    /// The place in [`Self::bounds`] of the `.ybn` whose stem hashes to `name`.
+    pub(crate) fn place_of_bound(&self, name: u32) -> Option<u32> {
+        self.bound_by_hash.get(&name).map(|at| *at as u32)
+    }
+
     /// How many bounds a map group, a map's stem or an interior carries.
     pub fn carried_bounds(&self) -> usize {
         self.carriers.len()
@@ -736,7 +764,52 @@ impl WorldIndex {
 
     /// The bounds something carries whose box holds `at`, in the mount's order.
     pub fn bounds_at(&self, at: Vec3) -> Vec<BoundAt<'_>> {
-        let found = self.bound_tree.holding(at);
+        self.carried(&self.bound_tree.holding(at))
+    }
+
+    /// The maps whose streaming extents hold `x` and `y` at any height, in the mount's order.
+    pub fn maps_in_column(&self, x: f32, y: f32) -> Vec<&Map> {
+        let found = self.map_tree.in_column(x, y, 0.0);
+        found.iter().map(|&at| &self.maps[at as usize]).collect()
+    }
+
+    /// The bounds something carries whose box holds `x` and `y` at any height, in the mount's order.
+    pub fn bounds_in_column(&self, x: f32, y: f32) -> Vec<BoundAt<'_>> {
+        self.bounds_near_column(x, y, 0.0)
+    }
+
+    /// The bounds something carries whose box comes within `radius` metres of the upright line through `x` and `y`, in the mount's order.
+    pub fn bounds_near_column(&self, x: f32, y: f32, radius: f32) -> Vec<BoundAt<'_>> {
+        self.carried(&self.bound_tree.in_column(x, y, radius))
+    }
+
+    /// The bounds whose file states no box, carried by a map whose streaming extents come within `radius` metres of the upright line through `x` and `y`, in the mount's order.
+    pub fn boxless_bounds_near_column(&self, x: f32, y: f32, radius: f32) -> Vec<BoundAt<'_>> {
+        let maps = self.map_tree.in_column(x, y, radius);
+        let carried = |at: &u32| self.boxless.get(&self.maps[*at as usize].hash);
+        let mut found: Vec<u32> = maps.iter().filter_map(carried).flatten().copied().collect();
+        found.sort_unstable();
+        found.dedup();
+        self.carried(&found)
+    }
+
+    /// The bounds a manifest names for the interiors placed by a map whose streaming extents come within `radius` metres of the upright line through `x` and `y`, in the mount's order.
+    pub fn interior_bounds_near_column(&self, x: f32, y: f32, radius: f32) -> Vec<BoundAt<'_>> {
+        let maps = self.map_tree.in_column(x, y, radius);
+        let interiors = maps
+            .iter()
+            .flat_map(|at| &self.maps[*at as usize].interiors);
+        let named = interiors.flat_map(|interior| self.tables.interior_bounds_of(*interior));
+        let mut found: Vec<u32> = named
+            .filter_map(|name| self.place_of_bound(*name))
+            .collect();
+        found.sort_unstable();
+        found.dedup();
+        self.carried(&found)
+    }
+
+    /// Each bound of `found`, by its place in [`Self::bounds`], with what carries it.
+    fn carried(&self, found: &[u32]) -> Vec<BoundAt<'_>> {
         let bound_at = |&at: &u32| {
             let bound = &self.bounds[at as usize];
             let carriers = self

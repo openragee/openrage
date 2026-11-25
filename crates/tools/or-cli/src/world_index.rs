@@ -18,17 +18,34 @@ const VALUED_FLAGS: &[&str] = &["--game", "--keys", "--kept"];
 /// The folder under the configuration directory that holds an index an install.
 const KEPT_FOLDER: &str = "gta5_world_index";
 
-/// Where the index of the install at `root` is kept, with no `--kept`: a file named for the
-/// install's path; `None` with no configuration directory.
-fn default_kept(root: &Path) -> Option<PathBuf> {
-    let name = or_io::gta6::hash::name_hash64(root.to_string_lossy().as_bytes());
+/// The name of the file the index of the install at `root` is kept in: for the install's path,
+/// and for the level of DLC of a mount that stops at one, which holds other archives.
+pub(super) fn kept_name(root: &Path, level: Option<&str>) -> String {
+    let mut named = root.to_string_lossy().into_owned();
+    if let Some(level) = level {
+        // A newline is in no path, so no install's name reads as another's at a level.
+        named.push('\n');
+        named.push_str(&level.trim().to_ascii_lowercase());
+    }
+    let name = or_io::gta6::hash::name_hash64(named.as_bytes());
+    format!("{name:016x}.index")
+}
+
+/// Where the index of the install at `root` is kept, with no `--kept`; `None` with no
+/// configuration directory.
+pub(super) fn default_kept(root: &Path, level: Option<&str>) -> Option<PathBuf> {
     let folder = or_title::config::config_dir()?.join(KEPT_FOLDER);
-    Some(folder.join(format!("{name:016x}.index")))
+    Some(folder.join(kept_name(root, level)))
 }
 
 /// The index of `game`, mounted from `root`: from `kept` where the install stands as it did, and
 /// read whole, ignoring what is kept, when `fresh` says so.
-fn indexed(game: &MountedGame, root: &Path, kept: &Path, fresh: bool) -> (WorldIndex, Report) {
+pub(super) fn indexed(
+    game: &MountedGame,
+    root: &Path,
+    kept: &Path,
+    fresh: bool,
+) -> (WorldIndex, Report) {
     let source = MountedWorld::new(game, root);
     if !fresh {
         return refresh(&source, kept);
@@ -45,7 +62,7 @@ fn open(args: &[String]) -> Result<(WorldIndex, Report, PathBuf, PathBuf), Strin
     let root = std::fs::canonicalize(game).map_err(|e| format!("{game}: {e}"))?;
     let kept = match flag_value(args, "--kept") {
         Some(file) => PathBuf::from(file),
-        None => default_kept(&root).ok_or(
+        None => default_kept(&root, None).ok_or(
             "no configuration directory to keep the index in: name a file with --kept <file>",
         )?,
     };
@@ -191,9 +208,28 @@ pub(crate) fn cmd_index(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The numbers of `args` that are neither a flag nor the value of one of `valued`.
+pub(super) fn numbers_of(args: &[String], valued: &[&str]) -> Result<Vec<f32>, String> {
+    let mut numbers = Vec::new();
+    let mut skip = false;
+    for arg in args {
+        if skip {
+            skip = false;
+        } else if valued.contains(&arg.as_str()) {
+            skip = true;
+        } else if let Some(number) = arg.parse::<f32>().ok().filter(|n| n.is_finite()) {
+            // A coordinate may be negative, so a leading dash does not make an argument a flag.
+            numbers.push(number);
+        } else if !arg.starts_with("--") {
+            // ⚠ `nan` and `inf` parse as numbers and are no place.
+            return Err(format!("`{arg}` is not a number"));
+        }
+    }
+    Ok(numbers)
+}
+
 /// The position, in metres, that the arguments of `args` that are neither a flag nor a flag's value give: three numbers, or one argument that writes a place as a script does.
 fn position_of(args: &[String]) -> Result<Vec3, String> {
-    let mut numbers = Vec::new();
     let mut skip = false;
     let mut words = Vec::new();
     for arg in args {
@@ -219,20 +255,7 @@ fn position_of(args: &[String]) -> Result<Vec3, String> {
             Ok(_) => {}
         }
     }
-    skip = false;
-    for arg in args {
-        if skip {
-            skip = false;
-        } else if VALUED_FLAGS.contains(&arg.as_str()) {
-            skip = true;
-        } else if let Some(number) = arg.parse::<f32>().ok().filter(|n| n.is_finite()) {
-            // A coordinate may be negative, so a leading dash does not make an argument a flag.
-            numbers.push(number);
-        } else if !arg.starts_with("--") {
-            // ⚠ `nan` and `inf` parse as numbers and are no place.
-            return Err(format!("`{arg}` is not a number"));
-        }
-    }
+    let numbers = numbers_of(args, VALUED_FLAGS)?;
     match numbers[..] {
         [x, y, z] => Ok(Vec3::new(x, y, z)),
         _ => Err(format!(

@@ -122,6 +122,11 @@ mod weapons;
 mod world;
 mod world_archetypes;
 mod world_edit;
+/// The install built by hand that the world verbs' tests share with `or-depends`' own.
+#[cfg(test)]
+#[path = "../../../domain/or-depends/tests/world_fixture/mod.rs"]
+mod world_fixture;
+mod world_ground;
 mod world_index;
 mod world_new;
 

@@ -1554,3 +1554,47 @@ fn a_polygon_takes_the_material_its_index_names_or_the_first_or_none() {
     g.material_ids.clear();
     assert_eq!(down(g), None, "none, where the bound lists none");
 }
+
+/// A strip of `count` triangles along X.
+fn strip(count: u16) -> PhBoundAny {
+    let positions: Vec<Vec3> = (0..count + 2)
+        .map(|v| Vec3::new(f32::from(v / 2), f32::from(v % 2), 0.0))
+        .collect();
+    let triangles: Vec<[u16; 3]> = (0..count).map(|t| [t, t + 1, t + 2]).collect();
+    PhBoundAny::PhBoundGeometry(bounds::triangles(&positions, &triangles))
+}
+
+#[test]
+fn a_collider_says_how_many_bytes_it_holds() {
+    let bytes = |bound: &PhBoundAny| collider(bound).size_in_bytes();
+    let none = bytes(&PhBoundAny::PhBoundPlane(PhBoundPlane {
+        base: bounds::header(
+            BoundType::Plane,
+            Vec3::splat(-1.0),
+            Vec3::splat(1.0),
+            0.0,
+            1.0,
+            0,
+        ),
+        ..Default::default()
+    }));
+    assert_eq!(
+        none,
+        std::mem::size_of::<BoundCollider>(),
+        "a bound of no shape holds itself alone"
+    );
+    let (thousand, two_thousand) = (bytes(&strip(1000)), bytes(&strip(2000)));
+    // A triangle is three corners of three floats, and one place in the tree's order.
+    let least = 3 * std::mem::size_of::<Vec3>() + std::mem::size_of::<u32>();
+    assert!(
+        thousand - none >= 1000 * least,
+        "{} bytes for a thousand triangles",
+        thousand - none
+    );
+    // Twice the triangles are twice the bytes, to the few nodes a tree's last level rounds by.
+    let (first, second) = ((thousand - none) as f64, (two_thousand - thousand) as f64);
+    assert!(
+        (second / first - 1.0).abs() < 0.1,
+        "{first} bytes for the first thousand, {second} for the second"
+    );
+}

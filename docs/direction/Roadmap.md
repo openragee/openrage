@@ -9778,15 +9778,22 @@ caller, and `openrage-cli world ground` answers a position
 `CollisionSet` holds the colliders its caller hands it by key and answers a ray, a swept sphere, a
 box overlap and the ground, held on bounds built by hand
 (`crates/domain/or-world/tests/collision_queries.rs`,
-`crates/domain/or-world/tests/collision_world.rs`). Of the staged corpus, 948 bounds become
-colliders with none refused
+`crates/domain/or-world/tests/collision_world.rs`).
+`crates/domain/or-depends/src/world_collision.rs` is the caller that hands it a mount's: the static
+bounds the index names for a column, held under a budget of bytes, behind
+`openrage-cli world ground`, on mounts built by hand
+(`crates/domain/or-depends/tests/the_ground_under_a_place_of_a_mount.rs`). Named and not loaded:
+the collision of an interior and of a placed prop, which needs the entity's placement and is next;
+`WorldCollision::place` is its seam. The install check is written and has not run
+(`the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them`). Of the staged corpus, 948
+bounds become colliders with none refused
 (`every_staged_bound_becomes_a_collider_whose_ray_and_swept_sphere_agree`, 2026-11-25), and 897 of
 971 geometries stop 40 mm short of the box they state
 (`every_staged_geometry_lies_in_the_box_it_states`, 2026-11-25), so whether the game's surface is
-the polygons is open. Left: a caller that hands the set the index's bounds;
-`openrage-cli world ground`; the install check; and the particle collider, `BvhCollider` in
-`crates/runtime/or-simulation/src/collision.rs`, unchanged because it makes triangles of the curved
-shapes the query meets exactly, which is the owner's to rule on.
+the polygons is open. Left: the collision of interiors and placed props; the install check, run;
+and the particle collider, `BvhCollider` in `crates/runtime/or-simulation/src/collision.rs`,
+unchanged because it makes triangles of the curved shapes the query meets exactly, which is the
+owner's to rule on.
 
 **Depends on.** Nothing for the primitives; [R70b](#r70b-the-gta-v-world-index) for the bounds near
 a position.

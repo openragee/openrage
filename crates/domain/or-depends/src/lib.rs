@@ -24,6 +24,7 @@ pub mod placement;
 pub mod resolve;
 pub mod rules;
 pub mod tables;
+pub mod world_collision;
 pub mod world_index;
 
 #[cfg(test)]
@@ -39,4 +40,5 @@ pub use resolve::{
 };
 pub use rules::{Derivable, Rule, Stated, RULES};
 pub use tables::InstallTables;
+pub use world_collision::WorldCollision;
 pub use world_index::{MountedWorld, WorldIndex, WorldSource};

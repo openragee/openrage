@@ -169,10 +169,16 @@ pub enum Unfed {
     Loop(u32),
     #[error("{0} of its loops are not shown to end by its translation")]
     NotShown(u32),
-    #[error("it picks an entry of an array of textures or buffers by a number it computes, which no device checks")]
+    #[error("it picks an entry of an array of textures or buffers by a number nothing holds to the array's length, and no device checks one")]
     Entry,
-    #[error("it reads the game's wind records, at nought here, and every stage that does faults on a software adapter")]
-    Wind,
+    #[error("it is too large and branches too often for the software adapter to draw ({0} stores, {1} branches), so it has not been checked there, and it stays undrawn on a hardware adapter until its owner allows a check")]
+    Unchecked(u32, u32),
+    #[error(
+        "it reads vertices a compute pass of the game's skins first, and the editor runs none"
+    )]
+    SkinnedBefore,
+    #[error("it places the instances of a batch by a list and records only the game fills, at nought here, and draws nothing")]
+    Batch,
 }
 
 /// One stage of a shading pass ready for the renderer: its module, what fills each binding, and
@@ -235,51 +241,90 @@ fn never_ending(
     loops::counted_to(module, &game).map(Unfed::Loop)
 }
 
-/// The buffer of 80-byte records a mesh program sways a vertex by, by the hash of its name.
-// ⚠ Each of the three effects drawn that read it (a hedge's, a trunk's and a batch of emissive
-// leaves') ended the process on a software adapter, by an access violation or a corrupted heap,
-// where their siblings that do not read it drew: what in that path faults is not read.
-const WIND: u32 = 0x1948_E9AA;
-
-/// Whether a stage fed `feeds` reads the wind records, which the editor leaves at nought.
-fn sways(feeds: &[Fed]) -> bool {
-    feeds.iter().any(|fed| fed.feed == Feed::Zero(Some(WIND)))
-}
-
-/// Whether `module` takes an entry of an array it binds by a number it computes, or by a stated
-/// one past the array's end.
-// ⚠ No backend checks that number: Direct3D 12 and Vulkan read whatever lies there, or fault.
-fn picks_an_unchecked_entry(module: &naga::Module) -> bool {
-    use naga::{ArraySize, Expression as E, TypeInner};
-    let entries = |global: naga::Handle<naga::GlobalVariable>| match module.types
-        [module.global_variables[global].ty]
-        .inner
-    {
-        TypeInner::BindingArray { size, .. } => Some(match size {
-            ArraySize::Constant(entries) => entries.get(),
-            _ => 0,
-        }),
-        _ => None,
-    };
-    let functions = (module.functions.iter().map(|(_, function)| function))
-        .chain(module.entry_points.iter().map(|entry| &entry.function));
-    for function in functions {
-        let array = |base: naga::Handle<E>| match function.expressions[base] {
-            E::GlobalVariable(global) => entries(global),
-            _ => None,
-        };
-        for (_, expression) in function.expressions.iter() {
-            let unchecked = match *expression {
-                E::Access { base, .. } => array(base).is_some(),
-                E::AccessIndex { base, index } => array(base).is_some_and(|held| index >= held),
-                _ => false,
-            };
-            if unchecked {
-                return true;
+/// How many stores `module` holds and how many times it branches (an `if`, a `switch` or a
+/// loop), over all its functions: the measure of how much branching code a driver is handed.
+pub fn stores_and_branches(module: &naga::Module) -> (u32, u32) {
+    fn walk(block: &naga::Block, count: &mut (u32, u32)) {
+        use naga::Statement as S;
+        for statement in block.iter() {
+            match statement {
+                S::Store { .. } => count.0 += 1,
+                S::Block(inner) => walk(inner, count),
+                S::If { accept, reject, .. } => {
+                    count.1 += 1;
+                    walk(accept, count);
+                    walk(reject, count);
+                }
+                S::Switch { cases, .. } => {
+                    count.1 += 1;
+                    cases.iter().for_each(|case| walk(&case.body, count));
+                }
+                S::Loop {
+                    body, continuing, ..
+                } => {
+                    count.1 += 1;
+                    walk(body, count);
+                    walk(continuing, count);
+                }
+                _ => {}
             }
         }
     }
-    false
+    let mut count = (0, 0);
+    let functions = (module.functions.iter().map(|(_, function)| function))
+        .chain(module.entry_points.iter().map(|entry| &entry.function));
+    functions.for_each(|function| walk(&function.body, &mut count));
+    count
+}
+
+/// The most a mesh stage's stores times its branches come to where Direct3D 12's software
+/// adapter still draws it: the largest that drew of the made-up stages tried.
+// ⚠ Past it that adapter runs past a buffer of its own while it prepares the stage for its first
+// draw, whatever the stage reads: a made-up stage of 4,000 masked stores and 200 branches drew
+// and one of 6,000 and 300 ended the process, as did every mesh stage past the measure that was
+// drawn (a hedge's, a trunk's, a batch of leaves'). So no such stage can be drawn there first.
+// Nothing found says one is unsafe on a hardware adapter, and none has been seen drawn on one.
+const CHECKED_ON_SOFTWARE: u64 = 800_000;
+
+/// The same for a pixel stage, most of whose branches are the `switch` that picks a texture.
+// A four-layer parallax stage of 13,681 stores and 3,515 branches ended the process after its
+// first frame; a three-layer one of 7,746 and 2,152, the largest that draws, is under it.
+const PIXEL_CHECKED_ON_SOFTWARE: u64 = 17_000_000;
+
+/// Whether a stage of so many stores and branches is past what the software adapter draws.
+fn past_the_software_adapter(mesh: bool, stores: u32, branches: u32) -> bool {
+    let most = match mesh {
+        true => CHECKED_ON_SOFTWARE,
+        false => PIXEL_CHECKED_ON_SOFTWARE,
+    };
+    u64::from(stores) * u64::from(branches) > most
+}
+
+/// The two buffers the game's compute pass that skins a ped writes each frame, by the hashes of
+/// the names a mesh program reads them by: a program named for vertices skinned beforehand takes
+/// its vertices from them and reads no bone.
+const SKINNED_BEFORE: [u32; 2] = [0x3450_B596, 0x580D_0575];
+
+/// Whether a stage fed `feeds` reads the vertices a compute pass skins, which are nought here: a
+/// ped's head and a garment drew nothing by such a stage.
+fn reads_skinned_vertices(feeds: &[Fed]) -> bool {
+    (feeds.iter()).any(|fed| {
+        SKINNED_BEFORE
+            .iter()
+            .any(|hash| fed.feed == Feed::Zero(Some(*hash)))
+    })
+}
+
+/// The list of a batch's instances a draw takes, by the hash of its name: a mesh program of a
+/// batch effect reads an instance's number there and the instance's record, 64 bytes of which
+/// three rows are its matrix, by that number.
+// ⚠ Eleven batch effects drawn with the list at nought and the identity for the record showed
+// nothing where Material shows the model: what the rest of a record states is not read.
+const BATCH: u32 = 0x1AB3_F264;
+
+/// Whether a stage fed `feeds` draws the instances of a batch.
+fn draws_a_batch(feeds: &[Fed]) -> bool {
+    feeds.iter().any(|fed| fed.feed == Feed::Zero(Some(BATCH)))
 }
 
 /// The constant buffers a device with default limits gives a stage.
@@ -784,14 +829,23 @@ pub fn feed(
             header,
         });
     }
+    let (stores, branches) = stores_and_branches(&module);
+    if !unguarded() && past_the_software_adapter(mesh, stores, branches) {
+        return Err(Unfed::Unchecked(stores, branches));
+    }
     if let Some(why) = never_ending(&module, &feeds, &approximations) {
         return Err(why);
     }
-    if picks_an_unchecked_entry(&module) {
+    // ⚠ No backend checks an entry of a bound array: Direct3D 12 and Vulkan read whatever lies
+    // past its end, or fault.
+    if !crate::rdna::bound_entries_checked(&module) {
         return Err(Unfed::Entry);
     }
-    if sways(&feeds) && !unguarded() {
-        return Err(Unfed::Wind);
+    if reads_skinned_vertices(&feeds) {
+        return Err(Unfed::SkinnedBefore);
+    }
+    if mesh && draws_a_batch(&feeds) {
+        return Err(Unfed::Batch);
     }
     if mesh {
         to_pixel_slots(&mut module, &parameter_slots(&native.outputs));
@@ -918,44 +972,136 @@ mod tests {
         assert_eq!(never_ending(&module, &[], &other), None);
     }
 
+    /// A stage of `stores` stores, an `if` around every `every` of them.
+    fn branchy(stores: usize, every: usize) -> naga::Module {
+        let mut body = String::new();
+        for at in 0..stores {
+            let open = at % every == 0;
+            body += if open {
+                "if x > 0.5 { x = x + 1.0; }
+"
+            } else {
+                "x = x * 2.0;
+"
+            };
+        }
+        let text = format!(
+            "@fragment fn main() -> @location(0) vec4<f32> {{
+var x = 0.0;
+{body}return vec4<f32>(x);
+}}"
+        );
+        naga::front::wgsl::parse_str(&text).expect("the WGSL parses")
+    }
+
     #[test]
-    fn a_stage_that_reads_the_wind_records_is_told_from_one_that_reads_another_buffer() {
+    fn a_stage_is_measured_by_its_stores_and_its_branches() {
+        // The variable's own first value is no store; a loop and a switch are branches too.
+        assert_eq!(stores_and_branches(&branchy(40, 10)), (40, 4));
+        let text = "@fragment fn main() -> @location(0) vec4<f32> {
+    var x = 0.0;
+    loop { x = x + 1.0; if x > 3.0 { break; } }
+    switch u32(x) { case 1u { x = 0.5; } default { x = 0.25; } }
+    return vec4<f32>(x);
+}";
+        let module = naga::front::wgsl::parse_str(text).expect("the WGSL parses");
+        assert_eq!(stores_and_branches(&module), (3, 3));
+    }
+
+    #[test]
+    fn a_stage_past_what_the_software_adapter_draws_is_told_by_stores_times_branches() {
+        // 4,000 stores and 200 branches drew there; 4,020 and 201 are the first past it.
+        assert!(!past_the_software_adapter(true, 4000, 200));
+        assert!(past_the_software_adapter(true, 4020, 201));
+        // Many stores with few branches, and many branches over few stores, are not past it.
+        assert!(!past_the_software_adapter(true, 9000, 60));
+        assert!(!past_the_software_adapter(true, 1800, 360));
+        // A pixel stage branches far more for its size: one that draws, and one that does not.
+        assert!(!past_the_software_adapter(false, 7746, 2152));
+        assert!(past_the_software_adapter(false, 13681, 3515));
+        // The numbers are multiplied past what 32 bits hold.
+        assert!(past_the_software_adapter(false, u32::MAX, u32::MAX));
+    }
+
+    #[test]
+    fn a_stage_that_reads_vertices_skinned_beforehand_is_told_by_either_buffer_and_no_other() {
         let fed = |feed| Fed {
             group: 0,
             binding: 3,
             feed,
             header: None,
         };
-        assert!(sways(&[fed(Feed::Bones), fed(Feed::Zero(Some(WIND)))]));
-        assert!(!sways(&[
-            fed(Feed::Zero(Some(OTHER))),
-            fed(Feed::Zero(None))
-        ]));
+        for hash in SKINNED_BEFORE {
+            let feeds = [fed(Feed::Bones), fed(Feed::Zero(Some(hash)))];
+            assert!(reads_skinned_vertices(&feeds));
+        }
+        let skins_itself = [fed(Feed::Zero(Some(OTHER))), fed(Feed::Bones)];
+        assert!(!reads_skinned_vertices(&skins_itself));
     }
 
     #[test]
-    fn an_entry_of_a_bound_array_taken_by_a_computed_number_or_past_its_end_is_told() {
-        let stage = |entry: &str| {
+    fn a_stage_that_draws_a_batch_is_told_by_the_list_of_its_instances() {
+        let fed = |feed| Fed {
+            group: 0,
+            binding: 8,
+            feed,
+            header: Some(4),
+        };
+        assert!(draws_a_batch(&[
+            fed(Feed::Placement),
+            fed(Feed::Zero(Some(BATCH)))
+        ]));
+        // The record of an object drawn alone, and another buffer of the game's, are not it.
+        assert!(!draws_a_batch(&[
+            fed(Feed::Placement),
+            fed(Feed::Zero(Some(OTHER)))
+        ]));
+    }
+
+    /// A mesh program that binds nothing a record names.
+    fn bare_mesh() -> Native {
+        Native {
+            program: crate::rdna::Program {
+                kind: ShaderKind::Mesh,
+                slot: 8,
+                words: Vec::new(),
+                wave32: false,
+                inputs: Vec::new(),
+                vertex_inputs: Vec::new(),
+                position_read: 0,
+                front_face: false,
+                launch: None,
+            },
+            records: Vec::new(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_stage_is_fed_where_each_computed_entry_of_a_bound_array_is_held_to_its_length() {
+        let fed = |entry: &str| {
             let text = format!(
-                "@group(3) @binding(0) var heap: binding_array<texture_2d<f32>, 4>;
-@group(1) @binding(1) var<uniform> number: u32;
-@fragment fn main() -> @location(0) vec4<f32> {{
+                "@group(2) @binding(0) var heap: binding_array<texture_2d<f32>, 256>;
+@group(0) @binding(1) var<uniform> number: u32;
+@vertex fn main() -> @builtin(position) vec4<f32> {{
     return textureLoad(heap[{entry}], vec2<i32>(0), 0);
 }}"
             );
-            naga::front::wgsl::parse_str(&text).expect("the WGSL parses")
+            let lowered = Lowered {
+                module: naga::front::wgsl::parse_str(&text).expect("the WGSL parses"),
+                resources: Vec::new(),
+                approximations: Default::default(),
+                half_slots: Default::default(),
+                subgroups: false,
+            };
+            feed(&bare_mesh(), lowered, &program(), &Sgd5Table::default()).map(|_| ())
         };
-        assert!(picks_an_unchecked_entry(&stage("number")));
-        assert!(picks_an_unchecked_entry(&stage("number / 8u")));
-        assert!(!picks_an_unchecked_entry(&stage("3")));
-        // A stated entry past the end is one the reader of WGSL refuses, so it is made by hand.
-        let mut past = stage("3");
-        for (_, expression) in past.entry_points[0].function.expressions.iter_mut() {
-            if let naga::Expression::AccessIndex { index, .. } = expression {
-                *index = 4;
-            }
-        }
-        assert!(picks_an_unchecked_entry(&past));
+        // The last entry stands for any past the array, as the lowering holds one.
+        assert_eq!(fed("min(number / 8u, 255u)"), Ok(()));
+        assert_eq!(fed("3"), Ok(()));
+        assert_eq!(fed("number / 8u"), Err(Unfed::Entry));
+        assert_eq!(fed("min(number, 256u)"), Err(Unfed::Entry));
     }
 
     fn resource(code: u8, slot: u16, name_hash: u32) -> Sgd5Resource {

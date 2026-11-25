@@ -110,6 +110,9 @@ pub struct Run {
     /// Whether each pipeline counted as created was also drawn with.
     #[serde(default)]
     pub drawn: bool,
+    /// Whether each was drawn with vertices or dispatched with a group, so that its programs ran.
+    #[serde(default)]
+    pub ran: bool,
     pub created: usize,
     /// The units the device refused, by the refusal with its numbers taken out.
     pub rejected: BTreeMap<String, Vec<String>>,
@@ -261,9 +264,10 @@ impl Run {
 
     /// What tells this run from another: the container, the adapter, its backend and its driver,
     /// and whether it drew.
-    fn key(&self) -> [&str; 7] {
+    fn key(&self) -> [&str; 8] {
         let a = &self.adapter;
         [
+            if self.ran { "ran" } else { "" },
             if self.drawn { "drawn" } else { "" },
             &self.container,
             &a.name,
@@ -364,9 +368,10 @@ pub fn table(report: &Report) -> String {
             a.name,
             format!("{} {}", a.backend, a.shader_compiler),
             format!("{} {}", a.driver, a.driver_info),
-            match run.drawn {
-                true => format!("{} drawn", run.created),
-                false => run.created.to_string(),
+            match (run.ran, run.drawn) {
+                (true, _) => format!("{} run", run.created),
+                (false, true) => format!("{} drawn", run.created),
+                (false, false) => run.created.to_string(),
             },
             run.rejected_count(),
             run.skipped_count(),

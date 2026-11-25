@@ -655,6 +655,20 @@ fn body_names(
     Some(name)
 }
 
+/// The word a map data body states of its own name; `None` for any other body.
+#[cfg(feature = "meta")]
+fn map_word(find: &Rpf9ScanFind, bytes: &[u8]) -> Option<u64> {
+    let Rpf9BodyKind::Zlib(Rpf9ZlibRun {
+        resource: Some(resource),
+        ..
+    }) = find.kind
+    else {
+        return None;
+    };
+    let (virtual_section, physical) = resource.sections(bytes);
+    super::map::stated_name_word(virtual_section, physical)
+}
+
 /// What a harvest of one archive gave.
 #[derive(Debug, Default)]
 pub struct ArchiveHarvest {
@@ -665,6 +679,8 @@ pub struct ArchiveHarvest {
     pub textures: TextureUses,
     /// The bodies read for names.
     pub bodies: usize,
+    /// The 64-bit word each map data body states of its own name.
+    pub map_words: Vec<u64>,
     /// Whether it was stopped before the archive's end; what it read until then is given.
     pub stopped: bool,
 }
@@ -692,6 +708,8 @@ struct Ranged {
     names: HashMap<u64, Seen>,
     /// Each model that names textures: where its body starts, its name and the keys.
     textures: Vec<ModelTextures>,
+    /// Each map data body: where it starts and the word it states of its name.
+    maps: Vec<(u64, u64)>,
     /// Where the scan ended: past the limit where its last body is.
     end: u64,
 }
@@ -752,6 +770,10 @@ fn scan_range(
         if let Some(name) = label {
             ranged.labels.push((at, name));
         }
+        #[cfg(feature = "meta")]
+        ranged
+            .maps
+            .extend(map_word(&find, bytes).map(|word| (at, word)));
         let models = body_textures(&find, bytes).into_iter();
         (ranged.textures).extend(models.map(|(model, keys)| (at, model, keys)));
     }
@@ -784,6 +806,8 @@ impl Joined {
         for (_, model, keys) in ranged.textures.iter().filter(|(at, ..)| *at >= from) {
             add_texture_uses(&mut self.harvest.textures, model, keys);
         }
+        let maps = ranged.maps.iter().filter(|(at, _)| *at >= from);
+        self.harvest.map_words.extend(maps.map(|(_, word)| *word));
         for seen in ranged.names.values().filter(|seen| seen.last >= from) {
             let kind = seen.kind.filter(|(_, at)| *at >= from);
             (self.harvest.vocabulary).add(&seen.text, kind.map(|(kind, _)| kind));

@@ -11,7 +11,8 @@ pub fn print_usage(program: &str) {
     );
     eprintln!("               [--adapter <TEXT>] [--jobs <N>] [--chunk <N>] [--timeout <SECONDS>] [--units <FROM>..<TO>]");
     eprintln!("               [--stack-mib <N>] [--technique <NAME>[,<NAME>...]] [--draw] [--msl]");
-    eprintln!("               [--skip-crashed <REPORT.json>]");
+    eprintln!("               [--skip-crashed <REPORT.json>] [--software] [--run] [--pick <FILE>] [--msl-dir <DIR>]");
+    eprintln!("               [--try-refused]");
     eprintln!("                                translate every native program of the GTA VI effect container at OFFSET");
     eprintln!("                                (or of a container saved as a file, with no OFFSET) and build a pipeline");
     eprintln!("                                of each on every adapter of this machine, of every backend, the software");
@@ -32,6 +33,24 @@ pub fn print_usage(program: &str) {
     eprintln!("                                adapter is opened: OpenRage does not support OpenGL. --skip-crashed");
     eprintln!("                                passes over, on the same adapter and driver, each unit an earlier");
     eprintln!("                                report counts as having ended the process, and counts it as skipped.");
+    eprintln!("                                --software (or OPENRAGE_SOFTWARE_ADAPTER=1) opens the machine's software");
+    eprintln!("                                adapter and no other. --run, which implies it, draws three vertices as");
+    eprintln!("                                points or dispatches one group, so that each program runs on the");
+    eprintln!("                                stand-ins; a step that says nothing for --timeout seconds is ended and");
+    eprintln!("                                counted as timed out, one that ends its process twice as crashed.");
+    eprintln!("                                --pick checks the units whose numbers FILE lists and no other.");
+    eprintln!("                                --msl-dir <DIR> is --msl with each stage's text kept in DIR, a folder a");
+    eprintln!("                                version of Metal's language, for a Mac's own compiler to build.");
+    eprintln!("                                A unit the renderer refuses for an adapter's driver (a mesh stage that");
+    eprintln!("                                nests loops, on an AMD adapter under Direct3D 12) is counted as skipped");
+    eprintln!("                                there; --try-refused puts it to that driver all the same, which may end");
+    eprintln!(
+        "                                the worker: the way to see whether the driver still does."
+    );
+    eprintln!("  {program} rdna-devices <ARCHIVE.rpf> <OFFSET> --list");
+    eprintln!("                                every unit on a line: its number, its name in a report, then a program's");
+    eprintln!("                                kind (pixel, vertex, compute, mesh) and name, or the effects and");
+    eprintln!("                                techniques that draw with a pair");
     eprintln!("  {program} rdna-devices --merge <REPORT.json>... [--out <MERGED.json>]");
     eprintln!("                                several machines' reports as one table; a merged file merges again");
     eprintln!("  {program} rdna-devices --help");
@@ -156,7 +175,7 @@ fn check(mut args: Vec<String>, out: Option<PathBuf>) -> Result<(), String> {
     use std::time::Duration;
 
     use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind};
-    use or_shader_tool::rdna_devices::{self, Options, Programs, Resume};
+    use or_shader_tool::rdna_devices::{self, Draw, Options, Programs, Resume};
 
     /// The most a container inflates to.
     const BODY_LIMIT: u64 = 1 << 30;
@@ -168,15 +187,28 @@ fn check(mut args: Vec<String>, out: Option<PathBuf>) -> Result<(), String> {
         .map_err(|e| format!("{word} is not a number: {e}"))
     };
     let adapter = take(&mut args, "--adapter")?;
+    let msl_dir = take(&mut args, "--msl-dir")?.map(PathBuf::from);
     let mut flag = |name: &str| {
         let before = args.len();
         args.retain(|arg| arg != name);
         args.len() < before
     };
+    let (drawn, run, software) = (flag("--draw"), flag("--run"), flag("--software"));
     let ways = rdna_devices::Ways {
-        draw: flag("--draw"),
-        msl: flag("--msl"),
+        draw: match (run, drawn) {
+            (true, _) => Draw::Run,
+            (false, true) => Draw::Empty,
+            (false, false) => Draw::No,
+        },
+        msl: flag("--msl") || msl_dir.is_some(),
+        msl_dir,
+        try_refused: flag("--try-refused"),
     };
+    let list = flag("--list");
+    // Before any thread: the workers this process starts inherit it.
+    if run || software {
+        std::env::set_var(or_renderer::instance::SOFTWARE_ADAPTER, "1");
+    }
     // A backend the app does not draw through is refused here, not half-run.
     or_renderer::instance::backends_from_env()?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -196,7 +228,7 @@ fn check(mut args: Vec<String>, out: Option<PathBuf>) -> Result<(), String> {
             return rdna_devices::on_worker_stack(|| {
                 let mut stdout = std::io::stdout().lock();
                 let only = adapter.as_deref();
-                rdna_devices::worker(&programs, range, resume, only, ways, &mut stdout)
+                rdna_devices::worker(&programs, range, resume, only, &ways, &mut stdout)
             })?;
         }
         Some("--cache-worker") => {
@@ -251,6 +283,14 @@ fn check(mut args: Vec<String>, out: Option<PathBuf>) -> Result<(), String> {
     if let Some(earlier) = take(&mut args, "--skip-crashed")? {
         options.avoid = Some(read_report(&earlier)?);
     }
+    if let Some(file) = take(&mut args, "--pick")? {
+        let text = std::fs::read_to_string(&file).map_err(|e| format!("{file}: {e}"))?;
+        let numbers = text.split(|c: char| !c.is_ascii_alphanumeric());
+        let picked: Result<_, String> = (numbers.filter(|word| !word.is_empty()))
+            .map(&number)
+            .collect();
+        options.picked = Some(picked?);
+    }
     if let Some(units) = take(&mut args, "--units")? {
         let (from, to) = units.split_once("..").ok_or("--units takes FROM..TO")?;
         options.units = Some(number(from)?..number(to)?);
@@ -269,6 +309,11 @@ fn check(mut args: Vec<String>, out: Option<PathBuf>) -> Result<(), String> {
         }
         _ => return Err("usage: rdna-devices <ARCHIVE.rpf> <OFFSET> [--out <REPORT.json>], or --merge <REPORT.json>...".into()),
     };
+    if list {
+        let file = or_io::gta5::shaders::sgd5::Sgd5File::open(&body).map_err(|e| e.to_string())?;
+        print!("{}", rdna_devices::listing(&file, &body));
+        return Ok(());
+    }
     let progress = |done: usize, of: usize| {
         eprint!("\r  {done} of {of} units");
         let _ = std::io::stderr().flush();

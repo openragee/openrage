@@ -1,7 +1,9 @@
 //! What `rpf scan-open` prints of a GTA VI body its head names: the facts its reader reads.
 
 use or_io::gta6::move_network::MoveOutline;
-use or_io::gta6::other_bodies::{Gta6HeightGrid, Gta6HeightMap, OtherBody, SpanGrid};
+use or_io::gta6::other_bodies::{
+    Gta6HeightGrid, Gta6HeightMap, MoveNetworkHead, OtherBody, SpanGrid,
+};
 
 pub(crate) fn print(body: OtherBody, bytes: &[u8]) -> Result<(), String> {
     let refused = |e: or_io::IoError| {
@@ -73,6 +75,10 @@ pub(crate) fn print(body: OtherBody, bytes: &[u8]) -> Result<(), String> {
                 head.list_d.len(),
                 head.word_after_b
             );
+            let said = |h: u32| format!("hash_{h:08X}{}", super::gta6_names::said32(h));
+            for line in list_lines(head, said) {
+                println!("{line}");
+            }
             let named = (super::gta6_names::vocabulary().name32(head.root_id))
                 .map_or_else(String::new, |name| format!(" ({name}, from the text)"));
             println!(
@@ -116,4 +122,57 @@ fn hex(bytes: &[u8]) -> String {
         .map(|b| format!("{b:02X}"))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// The head's lists A, B and D, each hash as `hash` names it and a list D entry's byte after it.
+fn list_lines(head: &MoveNetworkHead, hash: impl Fn(u32) -> String) -> Vec<String> {
+    let line = |list: &str, entries: Vec<String>| {
+        let entries = if entries.is_empty() {
+            "-".to_string()
+        } else {
+            entries.join(", ")
+        };
+        format!("  list {list}        {entries}")
+    };
+    let d = (head.list_d.iter())
+        .map(|(h, byte)| format!("{} [{byte:02X}]", hash(*h)))
+        .collect();
+    vec![
+        line("A", head.list_a.iter().map(|h| hash(*h)).collect()),
+        line("B", head.list_b.iter().map(|h| hash(*h)).collect()),
+        line("D", d),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_head_s_lists_print_their_hashes_named_where_the_names_hold_them() {
+        let head = MoveNetworkHead {
+            name_hash: 0,
+            list_a: vec![0xA1, 0xA2],
+            list_b: Vec::new(),
+            word_after_b: 0,
+            list_d: vec![(0xD1, 0), (0xA1, 2)],
+            before_root: [0; 10],
+            root_type: 2,
+            root_index: 0,
+            root_id: 7,
+            rest: Vec::new(),
+        };
+        let said = |h: u32| match h {
+            0xA1 => format!("hash_{h:08X} (walk)"),
+            h => format!("hash_{h:08X}"),
+        };
+        assert_eq!(
+            list_lines(&head, said),
+            [
+                "  list A        hash_000000A1 (walk), hash_000000A2",
+                "  list B        -",
+                "  list D        hash_000000D1 [00], hash_000000A1 (walk) [02]",
+            ]
+        );
+    }
 }

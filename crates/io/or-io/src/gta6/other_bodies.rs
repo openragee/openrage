@@ -1,5 +1,6 @@
 //! GTA VI zlib bodies a scan names by their head: GTA V's height map stored little-endian, the same
-//! grid with one array, a two-plane span grid, and the head of a MoVE network at version 0x13.
+//! grid with one array, a two-plane span grid, and the heads of a MoVE network at version 0x13
+//! and of an `EDUP` body.
 
 use crate::error::{IoError, Result};
 use crate::height_map::HeightMap;
@@ -17,7 +18,7 @@ pub enum OtherBody {
     MoveNetwork,
     /// A Scaleform movie, which `gfx::GfxMovie` reads.
     Gfx,
-    /// `EDUP`, then bytes of high entropy in which no structure was found: not read.
+    /// `EDUP`, a count, then bytes of high entropy: [`EdupHead`] reads the head, the payload is not read.
     Edup,
     /// An offset table of object trees with no block map, read by `read_object_trees`.
     ObjectTrees,
@@ -723,6 +724,59 @@ impl MoveNetworkHead {
     }
 }
 
+/// The bytes of an `EDUP` body's head: the tag and the count.
+const EDUP_HEAD: usize = 8;
+
+/// The head of an `EDUP` body; its payload has no record width its count divides and is not read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdupHead {
+    /// The word at +4.
+    pub count: u32,
+    /// The bytes after the 8-byte head.
+    pub payload_len: u64,
+    /// With a count of zero, the word at +8, which states the length of the bytes after it.
+    pub stated_len: Option<u32>,
+}
+
+impl EdupHead {
+    pub fn open(bytes: &[u8]) -> Result<Self> {
+        const WHAT: &str = "GTA VI EDUP body";
+        let head = bytes
+            .get(..EDUP_HEAD)
+            .ok_or_else(|| short(WHAT, bytes.len()))?;
+        if head[..4] != *b"EDUP" {
+            return Err(refuse(WHAT, "the head is not `EDUP`".into()));
+        }
+        let count = u32_at(head, 4);
+        let payload_len = (bytes.len() - EDUP_HEAD) as u64;
+        let stated_len = if count == 0 {
+            let after = bytes.len().checked_sub(EDUP_HEAD + 4).ok_or_else(|| {
+                refuse(
+                    WHAT,
+                    format!(
+                        "a count of zero with {payload_len} payload bytes leaves no length word"
+                    ),
+                )
+            })?;
+            let stated = u32_at(bytes, EDUP_HEAD);
+            if u64::from(stated) != after as u64 {
+                return Err(refuse(
+                    WHAT,
+                    format!("a count of zero, and its length word states {stated} bytes where {after} follow it"),
+                ));
+            }
+            Some(stated)
+        } else {
+            None
+        };
+        Ok(Self {
+            count,
+            payload_len,
+            stated_len,
+        })
+    }
+}
+
 fn count(n: usize) -> Result<u32> {
     u32::try_from(n).map_err(|_| refuse("GTA VI MoVE network", format!("a list of {n} passes u32")))
 }
@@ -757,3 +811,7 @@ fn refuse(what: &str, why: String) -> IoError {
 #[cfg(test)]
 #[path = "other_bodies_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "other_bodies_edup_tests.rs"]
+mod edup_tests;

@@ -6,8 +6,8 @@ pub(super) fn draw_ypt_behaviour_mut<T: ParticleTarget>(
     particle_idx: usize,
     behaviour_idx: usize,
 ) {
-    use or_particle::Behaviour;
-    let (mut dirty, mut before) = (false, None);
+    let gta6 = crate::state::gta6_particles::written_in_place(state, doc_id);
+    let mut before = None;
     {
         let Some(doc) = state.document_mut(doc_id) else {
             return;
@@ -35,6 +35,42 @@ pub(super) fn draw_ypt_behaviour_mut<T: ParticleTarget>(
             .color(theme::TEXT_PRIMARY),
         );
         ui.add_space(crate::ui::theme::SPACING_TIGHT);
+        if members(ui, behaviour, gta6) {
+            before = Some(rule.clone());
+            or_particle::list::set_behaviours(rule, &behaviours);
+        }
+    }
+    if let Some(before) = before {
+        super::ypt_steps::particle(state, doc_id, before);
+    }
+}
+
+/// The members a scanned GTA VI list writes back, drawn editable above the rest.
+fn written_members(ui: &mut egui::Ui, behaviour: &mut or_particle::Behaviour, dirty: &mut bool) {
+    use or_particle::Behaviour;
+    match behaviour {
+        Behaviour::Colour(d) => check_bool(ui, "rgba_max_enable", &mut d.rgba_max_enable, dirty),
+        Behaviour::DrawSprite(d) => {
+            drag_f32(ui, "flip_chance_u", &mut d.flip_chance_u, 0.01, dirty);
+            drag_f32(ui, "flip_chance_v", &mut d.flip_chance_v, 0.01, dirty);
+        }
+        Behaviour::ZCulling(d) => drag_u32(ui, "mode", &mut d.mode, dirty),
+        _ => {}
+    }
+}
+
+/// The behaviour's members drawn, where `gta6` only those its list writes back editable; whether
+/// one was edited.
+fn members(ui: &mut egui::Ui, behaviour: &mut or_particle::Behaviour, gta6: bool) -> bool {
+    use or_particle::Behaviour;
+    let mut dirty = false;
+    if gta6 {
+        written_members(ui, behaviour, &mut dirty);
+    }
+    ui.scope(|ui| {
+        if gta6 {
+            ui.disable();
+        }
         match behaviour {
             Behaviour::Acceleration(d) => {
                 drag_vec3(ui, "xyz_min", &mut d.xyz_min, &mut dirty);
@@ -79,7 +115,9 @@ pub(super) fn draw_ypt_behaviour_mut<T: ParticleTarget>(
                 drag_vec3(ui, "axis", &mut d.axis, &mut dirty);
             }
             Behaviour::Colour(d) => {
-                check_bool(ui, "rgba_max_enable", &mut d.rgba_max_enable, &mut dirty);
+                if !gta6 {
+                    check_bool(ui, "rgba_max_enable", &mut d.rgba_max_enable, &mut dirty);
+                }
                 check_bool(
                     ui,
                     "rgba_proportional",
@@ -181,8 +219,10 @@ pub(super) fn draw_ypt_behaviour_mut<T: ParticleTarget>(
             Behaviour::DrawSprite(d) => {
                 drag_f32(ui, "near_clip_dist", &mut d.near_clip_dist, 0.1, &mut dirty);
                 drag_f32(ui, "far_clip_dist", &mut d.far_clip_dist, 0.1, &mut dirty);
-                drag_f32(ui, "flip_chance_u", &mut d.flip_chance_u, 0.01, &mut dirty);
-                drag_f32(ui, "flip_chance_v", &mut d.flip_chance_v, 0.01, &mut dirty);
+                if !gta6 {
+                    drag_f32(ui, "flip_chance_u", &mut d.flip_chance_u, 0.01, &mut dirty);
+                    drag_f32(ui, "flip_chance_v", &mut d.flip_chance_v, 0.01, &mut dirty);
+                }
                 check_bool(ui, "is_screen_space", &mut d.is_screen_space, &mut dirty);
                 check_bool(ui, "near_clip", &mut d.near_clip, &mut dirty);
                 check_bool(ui, "far_clip", &mut d.far_clip, &mut dirty);
@@ -310,7 +350,9 @@ pub(super) fn draw_ypt_behaviour_mut<T: ParticleTarget>(
                 drag_f32(ui, "age_rate", &mut d.age_rate, 0.01, &mut dirty);
             }
             Behaviour::ZCulling(d) => {
-                drag_u32(ui, "mode", &mut d.mode, &mut dirty);
+                if !gta6 {
+                    drag_u32(ui, "mode", &mut d.mode, &mut dirty);
+                }
                 ui.label(
                     egui::RichText::new(format!("reference_space: {:?}", d.reference_space))
                         .small()
@@ -499,14 +541,8 @@ pub(super) fn draw_ypt_behaviour_mut<T: ParticleTarget>(
                 );
             }
         }
-        if dirty {
-            before = Some(rule.clone());
-            or_particle::list::set_behaviours(rule, &behaviours);
-        }
-    }
-    if let Some(before) = before {
-        super::ypt_steps::particle(state, doc_id, before);
-    }
+    });
+    dirty
 }
 fn behaviour_type_name(behaviour: &or_particle::Behaviour) -> &'static str {
     use or_particle::Behaviour;
@@ -540,5 +576,94 @@ fn behaviour_type_name(behaviour: &or_particle::Behaviour) -> &'static str {
         Behaviour::ZCulling(_) => "Z Culling",
         Behaviour::MatrixWeight(_) => "Matrix Weight",
         Behaviour::Unknown { .. } => "Unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::epaint::ClippedShape;
+    use or_particle::Behaviour;
+
+    /// The members of a scanned GTA VI list's behaviour drawn frame by frame.
+    #[derive(Default)]
+    struct Frames {
+        ctx: egui::Context,
+        time: f64,
+    }
+
+    impl Frames {
+        /// A frame of `events`: whether it edited the behaviour, and what it painted.
+        fn frame(
+            &mut self,
+            b: &mut Behaviour,
+            events: Vec<egui::Event>,
+        ) -> (bool, Vec<ClippedShape>) {
+            // ⚠ A press held past egui's click duration is a drag, not a click.
+            self.time += 0.1;
+            let input = egui::RawInput {
+                events,
+                time: Some(self.time),
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 1200.0),
+                )),
+                ..Default::default()
+            };
+            let mut dirty = false;
+            let output = self.ctx.run_ui(input, |ui| dirty |= members(ui, b, true));
+            (dirty, output.shapes)
+        }
+
+        /// A drag 40 points to the right across the value beside `label`; whether it edited.
+        fn drag(&mut self, b: &mut Behaviour, label: &str) -> bool {
+            let (_, shapes) = self.frame(b, Vec::new());
+            let at = value_beside(&shapes, label).expect(label);
+            let to = at + egui::vec2(40.0, 0.0);
+            let press = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            let pressed = vec![egui::Event::PointerMoved(at), press(at, true)];
+            let mut dirty = self.frame(b, pressed).0;
+            dirty |= self.frame(b, vec![egui::Event::PointerMoved(to)]).0;
+            dirty | self.frame(b, vec![press(to, false)]).0
+        }
+    }
+
+    /// Where egui painted the first text to the right of `label`, on its row.
+    fn value_beside(shapes: &[ClippedShape], label: &str) -> Option<egui::Pos2> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+            match shape {
+                egui::Shape::Text(t) => {
+                    let rect = t.galley.rect.translate(t.pos.to_vec2());
+                    out.push((t.galley.text().to_string(), rect));
+                }
+                egui::Shape::Vec(inner) => inner.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut texts = Vec::new();
+        shapes.iter().for_each(|c| walk(&c.shape, &mut texts));
+        let (_, at) = texts.iter().find(|(text, _)| text == label)?;
+        (texts.iter())
+            .filter(|(_, r)| r.min.x >= at.max.x && (r.center().y - at.center().y).abs() < 8.0)
+            .min_by(|a, b| a.1.min.x.total_cmp(&b.1.min.x))
+            .map(|(_, r)| r.center())
+    }
+
+    #[test]
+    fn a_gta_vi_sprite_takes_a_flip_chance_edit_and_no_edit_of_a_member_it_does_not_write() {
+        let mut sprite = Behaviour::DrawSprite(Default::default());
+        let mut frames = Frames::default();
+        assert!(!frames.drag(&mut sprite, "near_clip_dist"), "not written");
+        assert!(frames.drag(&mut sprite, "flip_chance_u"), "written");
+        let Behaviour::DrawSprite(d) = &sprite else {
+            unreachable!("a sprite");
+        };
+        assert_eq!(d.near_clip_dist, 0.0);
+        assert!(d.flip_chance_u > 0.0, "{}", d.flip_chance_u);
     }
 }

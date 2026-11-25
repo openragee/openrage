@@ -3,8 +3,9 @@
 //!   `rpf9-diff <a.rpf> <b.rpf> [--names <dir>] [--keys <snapshot>] [--exe <exe>] [--json]`
 //!
 //! Entries are paired through the decrypted tables by their name64 hash, never by position. An entry
-//! only in B is added, one only in A removed, and an unpaired pair holding the same stored bytes is a
-//! rename. A pair whose stored bytes or row differ is changed: a nested archive is compared again
+//! only in B is added, one only in A removed, and an unpaired pair holding the same stored bytes or
+//! the same decoded body is a rename. A pair whose stored bytes or row differ is changed, stored apart
+//! only when the decoded bodies agree; otherwise a nested archive is compared again
 //! inside, a PSO or RBF body field by field through the metadata reader, and a text or XML body line
 //! by line. Both archives are only read.
 
@@ -15,6 +16,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use or_io::container::rpf::gta6_chunk_table::entry_chunks;
 use or_io::container::rpf::{
     Gta6Class, Gta6Entry, Gta6EntryExtra, Gta6Mount, GtaViKeys, NameResolver,
 };
@@ -431,8 +433,8 @@ fn leaf_summary<A: Read + Seek, B: Read + Seek>(
     }
 }
 
-/// An entry's body as a reader takes it: deciphered and inflated, or a media entry's raw bytes when
-/// they open with a head [`head_kind`] knows.
+/// An entry's body as a reader takes it: deciphered and inflated, or the raw bytes of a media entry
+/// with no chunk table when they open with a head [`head_kind`] knows.
 fn body<R: Read + Seek>(
     src: &mut R,
     mount: &Gta6Mount,
@@ -452,8 +454,10 @@ fn body<R: Read + Seek>(
             .read_entry_decrypted(&mut *src, entry, keys)
             .map_err(|e| e.to_string());
     }
-    if let (Some(Gta6Class::Media), Some((start, len)), Some(real)) =
-        (entry.kind(), stored, entry.real)
+    // A tabled body's stored bytes are its chunks, padded apart: only the table reads them.
+    let untabled = matches!(entry_chunks(&mount.archive, entry.index as usize), Ok(None));
+    if let (true, Some(Gta6Class::Media), Some((start, len)), Some(real)) =
+        (untabled, entry.kind(), stored, entry.real)
     {
         if real <= len {
             let mut raw = vec![0u8; real as usize];

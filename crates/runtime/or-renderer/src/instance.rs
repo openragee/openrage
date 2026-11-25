@@ -124,9 +124,35 @@ pub fn dx12_compiler() -> wgpu::Dx12Compiler {
     }
 }
 
-/// `descriptor` with [`dx12_compiler`] as Direct3D 12's compiler.
+/// `flags` as an instance takes them: without `DEBUG` where the software adapter is asked for.
+// ⚠ `DEBUG`, which a build with debug assertions sets, has Direct3D 12's compiler leave a shader
+// unoptimised, and the software adapter then takes about four times as long for twice the code:
+// a skinned stage it runs in 10 to 20 s optimised did not finish in 150 s. Validation stays.
+fn flags_for(flags: wgpu::InstanceFlags, software: bool) -> wgpu::InstanceFlags {
+    match software {
+        true => flags.difference(wgpu::InstanceFlags::DEBUG),
+        false => flags,
+    }
+}
+
+/// Whether a device of `backend` compiles with FXC for want of a compiler: none was `named` by
+/// `WGPU_DX12_COMPILER` and no `dxcompiler.dll` was `found`.
+fn lacks_dxc(backend: wgpu::Backend, named: bool, found: bool) -> bool {
+    backend == wgpu::Backend::Dx12 && !named && !found
+}
+
+/// Whether a device of `backend` compiles with FXC because [`find_dxc`] found no DXC, which the
+/// app tells a person when it starts: [`dx12_compiler`] only logs it.
+pub fn fell_back_to_fxc(backend: wgpu::Backend) -> bool {
+    let named = wgpu::Dx12Compiler::from_env().is_some();
+    lacks_dxc(backend, named, find_dxc().is_some())
+}
+
+/// `descriptor` with [`dx12_compiler`] as Direct3D 12's compiler, and optimised shaders where
+/// [`SOFTWARE_ADAPTER`] is set.
 pub fn with_dxc(mut descriptor: wgpu::InstanceDescriptor) -> wgpu::InstanceDescriptor {
     descriptor.backend_options.dx12.shader_compiler = dx12_compiler();
+    descriptor.flags = flags_for(descriptor.flags, software_asked());
     descriptor
 }
 
@@ -141,6 +167,85 @@ pub fn updates_64_bit_textures(adapter: &wgpu::Adapter) -> bool {
             .get_texture_format_features(wgpu::TextureFormat::R64Uint)
             .flags)
             .contains(wgpu::TextureFormatFeatureFlags::STORAGE_ATOMIC)
+}
+
+/// AMD's number as the vendor of an adapter.
+pub(crate) const AMD: u32 = 0x1002;
+
+/// A made-up adapter: `vendor`'s card `device` under `backend`.
+#[cfg(test)]
+pub(crate) fn made_up(vendor: u32, device: u32, backend: wgpu::Backend) -> wgpu::AdapterInfo {
+    wgpu::AdapterInfo {
+        name: "a made-up card".into(),
+        vendor,
+        device,
+        device_type: wgpu::DeviceType::IntegratedGpu,
+        device_pci_bus_id: String::new(),
+        driver: String::new(),
+        driver_info: String::new(),
+        backend,
+        subgroup_min_size: 4,
+        subgroup_max_size: 64,
+        transient_saves_memory: false,
+    }
+}
+
+/// Whether `info` is an AMD adapter under Direct3D 12, whose driver ends the process while it
+/// builds some passes ([`refused_by_driver`]).
+pub fn amd_under_dx12(info: &wgpu::AdapterInfo) -> bool {
+    info.backend == wgpu::Backend::Dx12 && info.vendor == AMD
+}
+
+/// The loops `block` nests one in another at its deepest: nought where it holds none. A call
+/// counts as the loops of the function it calls, which a compiler puts in its place: `called`
+/// holds that of each function, by its place in the module.
+// It recurses once a nested block: a pass is built on a thread with the stack a lowered program takes.
+fn loop_depth(block: &naga::Block, called: &[usize]) -> usize {
+    let of = |statement: &naga::Statement| match statement {
+        naga::Statement::Loop {
+            body, continuing, ..
+        } => 1 + loop_depth(body, called).max(loop_depth(continuing, called)),
+        naga::Statement::Block(inner) => loop_depth(inner, called),
+        naga::Statement::If { accept, reject, .. } => {
+            loop_depth(accept, called).max(loop_depth(reject, called))
+        }
+        naga::Statement::Switch { cases, .. } => {
+            let depths = cases.iter().map(|case| loop_depth(&case.body, called));
+            depths.max().unwrap_or(0)
+        }
+        naga::Statement::Call { function, .. } => {
+            called.get(function.index()).copied().unwrap_or(0)
+        }
+        _ => 0,
+    };
+    block.iter().map(of).max().unwrap_or(0)
+}
+
+/// Whether a function or an entry point of `stage` holds a loop inside a loop, a loop reached
+/// through a call among them.
+fn nests_loops(stage: &naga::Module) -> bool {
+    // A function is called only by one after it: each one's loops are known before its callers'.
+    let mut called = Vec::with_capacity(stage.functions.len());
+    for (_, function) in stage.functions.iter() {
+        called.push(loop_depth(&function.body, &called));
+    }
+    let entries =
+        (stage.entry_points.iter()).map(|entry| loop_depth(&entry.function.body, &called));
+    called.iter().copied().chain(entries).any(|depth| depth > 1)
+}
+
+/// Why a pass whose mesh stage is `stage` is not built on the adapter `info`, or `None` where it
+/// is: AMD's Direct3D 12 driver ends the process while it builds a mesh stage that holds a loop
+/// inside a loop, so such a stage is refused there by what it does.
+// Measured on the pairs that shade a GTA VI model, driver 32.0.21042.62 through DXC: every pair
+// it ended the process on nests loops in its mesh stage, and no pair that nests none ended it.
+// It built some that nest loops, which this refuses too.
+pub fn refused_by_driver(info: &wgpu::AdapterInfo, stage: &naga::Module) -> Option<String> {
+    (amd_under_dx12(info) && nests_loops(stage)).then(|| {
+        "its mesh stage holds a loop inside a loop, and AMD's Direct3D 12 driver ends the \
+         program while it builds such a stage: it is drawn under Vulkan (WGPU_BACKEND=vulkan)"
+            .to_owned()
+    })
 }
 
 /// The variable that, set to anything but `0`, sends every device opened with no surface to the
@@ -185,11 +290,115 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_software_adapter_is_handed_optimised_shaders_and_no_other_is() {
+        use wgpu::InstanceFlags as Flags;
+        let debug = Flags::DEBUG | Flags::VALIDATION;
+        assert_eq!(flags_for(debug, true), Flags::VALIDATION);
+        assert_eq!(flags_for(debug, false), debug);
+        assert_eq!(flags_for(Flags::empty(), true), Flags::empty());
+    }
+
+    #[test]
     fn only_a_cpu_adapter_passes_where_the_software_one_is_asked_for() {
         use wgpu::DeviceType::{Cpu, DiscreteGpu};
         assert!(software_or_not_asked(true, Cpu, "a").is_ok());
         assert!(software_or_not_asked(true, DiscreteGpu, "a").is_err());
         assert!(software_or_not_asked(false, DiscreteGpu, "a").is_ok());
+    }
+
+    use super::made_up as adapter;
+
+    const NVIDIA: u32 = 0x10DE;
+
+    #[test]
+    fn an_amd_card_is_told_under_direct3d_12_and_under_no_other_backend() {
+        use wgpu::Backend::{Dx12, Vulkan};
+        assert!(amd_under_dx12(&adapter(AMD, 0x1681, Dx12)));
+        assert!(!amd_under_dx12(&adapter(AMD, 0x1681, Vulkan)));
+        assert!(!amd_under_dx12(&adapter(NVIDIA, 0x2684, Dx12)));
+    }
+
+    /// A mesh stage whose `work` is its body.
+    fn stage(work: &str) -> naga::Module {
+        let source = format!(
+            "@vertex fn main(@builtin(vertex_index) at: u32) -> @builtin(position) vec4<f32> {{
+                var sum = 0u;
+                {work}
+                return vec4<f32>(f32(sum));
+            }}"
+        );
+        naga::front::wgsl::parse_str(&source).expect("the test's stage parses")
+    }
+
+    #[test]
+    fn a_stage_that_nests_loops_is_refused_on_an_amd_card_under_direct3d_12_and_nowhere_else() {
+        use wgpu::Backend::{Dx12, Vulkan};
+        let one = "for (var i = 0u; i < at; i++) { sum += i; }";
+        let apart = format!("{one} if at > 2u {{ {one} }}");
+        let nested = "for (var i = 0u; i < at; i++) {
+            if i > 1u { for (var j = 0u; j < i; j++) { sum += j; } }
+        }";
+        let amd = adapter(AMD, 0x1681, Dx12);
+        let why = refused_by_driver(&amd, &stage(nested)).expect("a nested loop is refused");
+        assert!(why.contains("Vulkan"), "{why}");
+        // A loop, and two that stand apart, are built there.
+        for built in [one, apart.as_str(), "sum = at;"] {
+            assert_eq!(refused_by_driver(&amd, &stage(built)), None, "{built}");
+        }
+        // The same stage is built by the same card under Vulkan, and by another vendor's driver.
+        let nested = stage(nested);
+        assert_eq!(
+            refused_by_driver(&adapter(AMD, 0x1681, Vulkan), &nested),
+            None
+        );
+        assert_eq!(
+            refused_by_driver(&adapter(NVIDIA, 0x2684, Dx12), &nested),
+            None
+        );
+    }
+
+    #[test]
+    fn a_loop_reached_through_a_call_from_inside_a_loop_is_a_loop_inside_a_loop() {
+        let amd = adapter(AMD, 0x1681, wgpu::Backend::Dx12);
+        let called = |work: &str| {
+            let source = format!(
+                "fn summed(to: u32) -> u32 {{
+                    var sum = 0u;
+                    for (var j = 0u; j < to; j++) {{ sum += j; }}
+                    return sum;
+                }}
+                fn through(to: u32) -> u32 {{ return summed(to) + 1u; }}
+                @vertex fn main(@builtin(vertex_index) at: u32) -> @builtin(position) vec4<f32> {{
+                    var sum = 0u;
+                    {work}
+                    return vec4<f32>(f32(sum));
+                }}"
+            );
+            naga::front::wgsl::parse_str(&source).expect("the test's stage parses")
+        };
+        // The compiler puts a function's body where it is called: in a loop, and through another.
+        for nested in [
+            "for (var i = 0u; i < at; i++) { sum += summed(i); }",
+            "for (var i = 0u; i < at; i++) { if i > 1u { sum += through(i); } }",
+        ] {
+            assert!(
+                refused_by_driver(&amd, &called(nested)).is_some(),
+                "{nested}"
+            );
+        }
+        // Called beside a loop, the two stand apart.
+        let apart = "for (var i = 0u; i < at; i++) { sum += i; } sum += through(at);";
+        assert_eq!(refused_by_driver(&amd, &called(apart)), None);
+    }
+
+    #[test]
+    fn fxc_is_a_fallback_only_under_direct3d_12_with_no_compiler_named_or_found() {
+        use wgpu::Backend::{Dx12, Vulkan};
+        assert!(lacks_dxc(Dx12, false, false));
+        assert!(!lacks_dxc(Vulkan, false, false));
+        // FXC that was asked for is no fallback, and a compiler found is used.
+        assert!(!lacks_dxc(Dx12, true, false));
+        assert!(!lacks_dxc(Dx12, false, true));
     }
 
     #[test]

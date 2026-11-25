@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+use or_io::gta6::names::Vocabulary;
 use or_io::gta6::save::{self, Save, SaveError};
 use or_io::meta::binary::hash_index::default_hash_index;
 use serde_json::Value;
@@ -97,20 +98,27 @@ fn row_of(text: &str) -> Row {
     }
 }
 
-/// The names the metadata names hold, each by the hash a save writes for it, which keeps case.
+/// The names the metadata names hold, GTA VI's own among them, each by the hash a save writes for
+/// it, which keeps case: a block's structure and its members are named as the parser names them.
 // ponytail: built once from the names known at the first draw; a schema installed later is not seen.
 fn key_names() -> &'static HashMap<u32, String> {
     static NAMES: OnceLock<HashMap<u32, String>> = OnceLock::new();
     NAMES.get_or_init(|| {
+        // The schema is asked for so that GTA VI's name snapshot is installed before the index is built.
+        crate::state::meta_schema();
+        let _title = or_io::meta::binary::hash_index::title_names();
         (default_hash_index().names())
             .map(|name| (save::key_hash(name), name.to_owned()))
             .collect()
     })
 }
 
-/// The known name whose hash the key `key` states.
-fn key_name(key: &str) -> Option<&'static str> {
-    key_names().get(&save::parse_key(key)?).map(String::as_str)
+/// The known name whose hash the key `key` states: the metadata names' first, else the one
+/// `vocabulary` holds, which is lower case and so names only a key hashed from lower case.
+fn key_name<'a>(vocabulary: &'a Vocabulary, key: &str) -> Option<&'a str> {
+    let hash = save::parse_key(key)?;
+    let held = || (vocabulary.name32(hash)).filter(|name| save::key_hash(name) == hash);
+    (key_names().get(&hash).map(String::as_str)).or_else(held)
 }
 
 /// The key a member typed as `typed` is written under: a reserved key as it is, a name as its hash.
@@ -225,7 +233,9 @@ impl Gta6SaveDocument {
 
     /// What row `k` is called, and the bytes of its text.
     fn row(&self, k: usize) -> Option<(String, usize)> {
-        let hex = |hash: u32| format!("{hash:08X}");
+        // A code block's id is the hash of its save structure's name.
+        let hex =
+            |hash: u32| (key_names().get(&hash).cloned()).unwrap_or_else(|| format!("{hash:08X}"));
         match &self.save {
             Save::Story(story) => {
                 let block = story.blocks().nth(k)?;
@@ -382,6 +392,8 @@ struct Held {
 /// The outline of one save while it is drawn: what it filters by, and the edits its rows asked for.
 struct Tree<'a> {
     doc: &'a Gta6SaveDocument,
+    /// The names of every archive harvested, as served when the outline is drawn.
+    vocabulary: &'a Vocabulary,
     /// The filter, in lower case.
     filter: String,
     held: &'a mut Held,
@@ -396,7 +408,7 @@ impl Tree<'_> {
     /// Whether `key` as it is written, or the known name it hashes, holds the filter.
     fn names(&self, key: &str) -> bool {
         let holds = |text: &str| text.to_lowercase().contains(&self.filter);
-        holds(key) || key_name(key).is_some_and(holds)
+        holds(key) || key_name(self.vocabulary, key).is_some_and(holds)
     }
 
     /// Whether a key under `value` holds the filter.
@@ -439,7 +451,7 @@ impl Tree<'_> {
                 continue;
             }
             drawn += 1;
-            let shown = match key_name(&key).filter(|_| is_object) {
+            let shown = match key_name(self.vocabulary, &key).filter(|_| is_object) {
                 Some(name) => format!("{key}  {name}"),
                 None => key.clone(),
             };
@@ -585,8 +597,10 @@ fn draw_rows(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId) {
             "Keeps the rows whose key, or the known name it hashes, holds this text"
         ));
     });
+    let vocabulary = crate::state::gta6_names::vocabulary();
     let mut tree = Tree {
         doc: &doc,
+        vocabulary: &vocabulary,
         filter: held.filter.trim().to_lowercase(),
         held: &mut held,
         edits: Vec::new(),
@@ -847,8 +861,10 @@ mod tests {
     fn a_filter_keeps_the_rows_whose_key_or_known_name_holds_it() {
         let doc = document(&story());
         let mut held = Held::default();
+        let none = Vocabulary::default();
         let mut tree = Tree {
             doc: &doc,
+            vocabulary: &none,
             filter: "b1".to_owned(),
             held: &mut held,
             edits: Vec::new(),
@@ -863,10 +879,41 @@ mod tests {
         let known = (default_hash_index().names().next()).map(str::to_owned);
         if let Some(name) = known {
             let key = save::key_text(&name);
-            assert_eq!(key_name(&key), Some(name.as_str()));
+            assert_eq!(key_name(&none, &key), Some(name.as_str()));
             tree.filter = name.to_lowercase();
             assert!(tree.names(&key));
         }
-        assert_eq!(key_name("$x"), None);
+        assert_eq!(key_name(&none, "$x"), None);
+    }
+
+    #[test]
+    fn a_key_hashed_from_a_vocabulary_name_is_shown_by_it() {
+        let name = "zq_save_vocabulary_key";
+        let key = save::key_text(name);
+        let none = Vocabulary::default();
+        assert_eq!(key_name(&none, &key), None, "no metadata name hashes to it");
+        let mut vocabulary = Vocabulary::default();
+        assert!(vocabulary.add(name, None));
+        assert_eq!(key_name(&vocabulary, &key), Some(name));
+        // The vocabulary holds lower case, so a key a save hashed from other case is not its name.
+        assert_eq!(
+            key_name(&vocabulary, &save::key_text("Zq_Save_Vocabulary_Key")),
+            None
+        );
+        // A name whose folded hash meets the key but whose own hash does not is not its name.
+        assert!(vocabulary.add("zq\\folded", None));
+        assert_eq!(key_name(&vocabulary, &save::key_text("zq/folded")), None);
+        // The outline's filter finds the key by the name.
+        let doc = document(&story());
+        let mut held = Held::default();
+        let tree = Tree {
+            doc: &doc,
+            vocabulary: &vocabulary,
+            filter: "vocabulary_key".to_owned(),
+            held: &mut held,
+            edits: Vec::new(),
+        };
+        assert!(tree.names(&key));
+        assert!(!tree.names("$0x000000b1"));
     }
 }

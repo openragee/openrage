@@ -913,6 +913,9 @@ msgstr "プロジェクトの武器は書き込めません"
 msgid "The world stopped on an internal error and was started again ({times} times so far)"
 msgstr "世界は内部エラーで停止し、再起動されました（これまでに {times} 回）"
 
+msgid "The world leaves out {maps} maps it stopped on as they came in"
+msgstr "読み込み時に停止の原因となった {maps} 個のマップを除外しています"
+
 msgid "The world stopped on an internal error {times} times and is not started again: it stands as it was last drawn. Build the index again to start afresh."
 msgstr "世界は内部エラーで {times} 回停止したため、再起動しません。最後に描画された状態のままです。最初からやり直すにはインデックスを再作成してください。"
 
@@ -12628,8 +12631,8 @@ msgstr[1] "{name}という名前のフレームフィルター、{count} 個の�
 msgid "Track {track}: weight {weight}, group {group}, word at 0x2C {word}."
 msgstr "トラック {track}：ウェイト {weight}、グループ {group}、0x2Cのワード {word}。"
 
-msgid "Bone hash_{bone}: kind {kind}, flags {flags}, values {values}."
-msgstr "ボーン hash_{bone}：種類 {kind}、フラグ {flags}、値 {values}。"
+msgid "Bone {bone}: kind {kind}, flags {flags}, values {values}."
+msgstr "ボーン {bone}：種類 {kind}、フラグ {flags}、値 {values}。"
 
 msgid "An animation record named {name}, with settings for {count} skeleton bone."
 msgid_plural "An animation record named {name}, with settings for {count} skeleton bones."
@@ -14177,9 +14180,6 @@ msgstr "Scaleformムービー"
 msgid "EDUP, high entropy"
 msgstr "EDUP、高エントロピー"
 
-msgid "This body starts with EDUP and its bytes after that are of high entropy with no structure found, so it is not read and no view shows it."
-msgstr "このボディはEDUPで始まり、それ以降のバイト列はエントロピーが高く、構造が見つかっていないため、読み取られず、表示できるビューもありません。"
-
 msgid "The reader of this {what} does not read it: {e}"
 msgstr "この{what}のリーダーは、これを読み取れません：{e}"
 
@@ -14195,8 +14195,8 @@ msgstr "種類は{kind}、{at}のワードは{word}です：下位半分は、�
 msgid "It lies on the height map tile of the same entry number in the nested archive beside its own; with no archive table, the scan's order of the two archives' bodies is their entry order."
 msgstr "自身のアーカイブの隣にある入れ子のアーカイブ内の、同じエントリ番号のハイトマップタイル上に位置します。アーカイブのテーブルがない場合は、スキャンで2つのアーカイブのボディが見つかった順序が、エントリの順序になります。"
 
-msgid "A GTA VI MoVE network at version 0x13 whose name hash is hash_{hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
-msgstr "バージョン0x13のGTA VI MoVEネットワークで、名前ハッシュは hash_{hash}です：{a}、{b}、{d} 個のエントリのリストに続き、タイプ {kind}、インデックス {index}、ID {id}のルートノードがあります。"
+msgid "A GTA VI MoVE network at version 0x13 whose name hash is {hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
+msgstr "バージョン0x13のGTA VI MoVEネットワークで、名前ハッシュは {hash}です：{a}、{b}、{d} 個のエントリのリストに続き、タイプ {kind}、インデックス {index}、ID {id}のルートノードがあります。"
 
 msgid "Its {nodes} nodes tile the body from the root to its end, with {tails} tails no offset names between them. A kind's name is GTA V's at the same place in GTA V's list, which is not confirmed."
 msgstr "{nodes} 個のノードが、ルートから終端までボディを隙間なく埋めており、その間にどのオフセットも指していない末尾部分が {tails} 個あります。種類の名前はGTA Vの一覧の同じ位置にある名前ですが、確認されていません。"
@@ -14328,8 +14328,8 @@ msgstr "要素 {index}：{a}、{b}、{c}、{d}。"
 msgid "The expression reader does not read this body: {e}"
 msgstr "エクスプレッションリーダーは、このボディを読み取れません：{e}"
 
-msgid "A GTA VI expression set of key hash_{key}, whose name is not known."
-msgstr "キー hash_{key}のGTA VIエクスプレッションセットで、名前は不明です。"
+msgid "A GTA VI expression set of key {key}."
+msgstr "キー {key}のGTA VIエクスプレッションセットです。"
 
 msgid "It reads {count} track: the facial controls, or bones, a clip carries."
 msgid_plural "It reads {count} tracks: the facial controls, or bones, a clip carries."
@@ -15137,10 +15137,10 @@ msgstr "GTA VIのオブジェクトツリーリーダーはこのボディを読
 msgid "A GTA VI table of {items} objects in {trees} trees, of {types} types. Each tree's root is keyed by the 32-bit name hash of a model's name, and an object points at later objects of its tree by their offsets. What the objects' fields hold and what the type tags name are not known."
 msgstr "{trees} 本のツリーに {items} 個のオブジェクトを収めた、GTA VIのテーブルです。タイプは {types} 種類あります。各ツリーのルートは、モデル名の32ビットの名前ハッシュをキーとし、オブジェクトは同じツリー内の後続のオブジェクトをオフセットで指します。オブジェクトのフィールドの内容と、タイプタグが何を指すかは不明です。"
 
-msgid "hash_{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
-msgid_plural "hash_{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
-msgstr[0] "hash_{key}：タイプ {tag}のルートで、ツリー内にこれ1つだけです。[{children}]を指します"
-msgstr[1] "hash_{key}：タイプ {tag}のルートで、ツリー内に {count} 個のオブジェクトがあります。[{children}]を指します"
+msgid "{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
+msgid_plural "{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
+msgstr[0] "{key}：タイプ {tag}のルートで、ツリー内にこれ1つだけです。[{children}]を指します"
+msgstr[1] "{key}：タイプ {tag}のルートで、ツリー内に {count} 個のオブジェクトがあります。[{children}]を指します"
 
 msgid "16 entries {entries}"
 msgstr "16個のエントリ {entries}"
@@ -15466,11 +15466,11 @@ msgid_plural "{group}: {count} tracks"
 msgstr[0] "{group}：{count} トラック"
 msgstr[1] "{group}：{count} トラック"
 
-msgid "{group}: hash_{id} {word} ({at} of {total}), {detail}"
-msgstr "{group}：hash_{id} {word} ({at}/{total})、{detail}"
+msgid "{group}: {id} {word} ({at} of {total}), {detail}"
+msgstr "{group}：{id} {word} ({at}/{total})、{detail}"
 
-msgid "Expression set hash_{key}, tracks read: {reads}, tracks written: {writes}"
-msgstr "エクスプレッションセット hash_{key}、読み取るトラック：{reads}、書き込むトラック：{writes}"
+msgid "Expression set {key}, tracks read: {reads}, tracks written: {writes}"
+msgstr "エクスプレッションセット {key}、読み取るトラック：{reads}、書き込むトラック：{writes}"
 
 msgid "Keyframed values GTA V's records have no member for are listed at the end, raw: a velocity's angle, a colour's last three unnamed values and a domain's fifth and sixth. A colour's first two unnamed values are shown as its minimum and maximum, which is inferred; the preview draws the maximum, as GTA V does, where the colour's word at +0x19C counts two or more colours in use, which is inferred too."
 msgstr "GTA V のレコードにメンバーがないキーフレーム値は末尾に生のまま一覧表示されます: 速度の角度、色の名前のない最後の 3 つの値、ドメインの 5 番目と 6 番目。色の名前のない最初の 2 つの値はその最小値と最大値として表示されますが、これは推定です。プレビューは、色の +0x19C のワードが使用中の色を 2 つ以上数える場合に GTA V と同様に最大値を描画しますが、これも推定です。"
@@ -16625,6 +16625,7 @@ msgid "{count} pair"
 msgid_plural "{count} pairs"
 msgstr[0] "{count} 個のペア"
 msgstr[1] "{count} 個のペア"
+
 msgid "Set the GTA VI folder in Settings ▸ Games to fly through its world"
 msgstr "「設定 ▸ ゲーム」でGTA VIのフォルダーを設定すると、その世界をフライスルーできます"
 
@@ -16849,8 +16850,8 @@ msgstr "読み込み中：{what}"
 msgid "the ground and fog under the water"
 msgstr "水中の地面と霧"
 
-msgid "The level from above: the brighter, the more maps; click to look over a place"
-msgstr "上から見たレベル：明るいほどマップが多い。クリックすると場所を見渡します"
+msgid "The level from above: the water, the land by its height, and the brighter, the more maps; click to look over a place"
+msgstr "上から見たレベル：水、高さで示した陸地、明るいほど多くのマップ。クリックするとその場所を見ます"
 
 msgid "Click to look north over a place, from 250 m south of it"
 msgstr "クリックすると、その場所の 250 m 南から北向きに見渡します"
@@ -16897,6 +16898,12 @@ msgstr[1] "マップ {count} 個のライト"
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "この文書の文字列の名前には GTA VI のキースナップショットが必要です"
 
+msgid "Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan."
+msgstr "dxcompiler.dll が OpenRage の隣にも、PATH にも、Windows SDK にも見つからなかったため、Direct3D 12 は FXC でシェーダーをコンパイルしています。FXC は GTA VI のシェーダープログラムの一部を拒否し、ほかのものには数分かかるため、それらを必要とするモデルは「マテリアル」で描画されます。dxcompiler.dll と dxil.dll を openrage.exe の隣に置くか、WGPU_BACKEND=vulkan を指定して OpenRage を起動してください。"
+
+msgid "It casts no shadow: one of its surfaces reads the view at an offset the light's view cannot be copied to"
+msgstr "影を落としません：サーフェスの 1 つが、ライトのビューをコピーできないオフセットでビューを読み取っています"
+
 msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
 msgstr "GTA VIアーカイブから開いたドキュメントだけが、そのアーカイブのコピーに保存されます"
 
@@ -16930,26 +16937,89 @@ msgstr "GTA VIドキュメントの編集を、読み込み元アーカイブの
 msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
 msgstr "GTA VIのキーがありません: 設定 ▸ ゲーム でGTA VIのインストールフォルダーを設定すると、その実行ファイルでキーを解除できます。"
 
-msgid "resource"
-msgstr "リソース"
-
-msgid "media"
-msgstr "メディア"
-
-msgid "other class"
-msgstr "その他のクラス"
-
 msgid "{file} is listed by a scan without its table: {why}"
 msgstr "{file} はテーブルなしでスキャンにより一覧表示されています: {why}"
 
-msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
-msgstr "設定でGTA VIフォルダーを選択するか、そのアーカイブを1つ開くと、テーブルからアーカイブを一覧表示します。"
-
-msgid "Find by name, or by hash as 0x hex"
-msgstr "名前、または0x 16進数のハッシュで検索"
-
-msgid "Only the archives expanded are searched."
-msgstr "展開したアーカイブだけが検索されます。"
-
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} はエントリの位置に編集を書き込み、テーブルは読み込んだときのままの新しいアーカイブです。"
+
+msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
+msgstr "EDUP 本体：0x04 のカウントワードは {count} で、8 バイトのヘッダーの後に {length} バイトのペイロードが続きます。"
+
+msgid "With a count of zero, the word at 0x08 states {stated} bytes, and that many follow it."
+msgstr "カウントが 0 のとき、0x08 のワードは {stated} バイトを示し、その分のバイトが後に続きます。"
+
+msgid "Its payload is not read: no record width divides it by its count, and its bytes are of high entropy with no cipher record, so what it holds is not known and no view shows it."
+msgstr "ペイロードは読み込まれません：どのレコード幅でもカウントで割り切れず、バイトのエントロピーが高く暗号レコードもないため、内容は不明で、どのビューにも表示されません。"
+
+msgid "Replace the lower levels of detail too"
+msgstr "下位の詳細レベルも置き換える"
+
+msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
+msgstr "オフの場合、メッシュがジオメトリを指定していない詳細レベルはモデルのまま残ります。オンの場合、そのような各ジオメトリは、両者が同じシェーダーで描画される場所で、そのモデルと位置にレベル 0 のメッシュを使います。"
+
+msgid "In {place}"
+msgstr "{place} にいます"
+
+msgid "Look north over the square of 512 m where most maps of this place lie"
+msgstr "この場所のマップの大半がある 512 m 四方を北向きに見下ろします"
+
+msgid "entry {entry} is not in this table"
+msgstr "エントリ {entry} はこのテーブルにありません"
+
+msgid "Real size"
+msgstr "実サイズ"
+
+msgid "Enciphered"
+msgstr "暗号化"
+
+msgid "24 bytes"
+msgstr "24 バイト"
+
+msgid "20 bytes, a headerless resource's"
+msgstr "20 バイト（ヘッダーなしリソースの行）"
+
+msgid "Row"
+msgstr "行"
+
+msgid "Name hash"
+msgstr "名前ハッシュ"
+
+msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
+msgstr "{file} は GTA VI のアーカイブで、その場では書き込まれません。「名前を付けて保存…」は編集を新しいファイルに書き込みますが、署名がテーブルを覆っているため、ゲームはそのファイルを拒否します。"
+
+msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
+msgstr "{file} は GTA VI のアーカイブで、その場では書き込まれません。単独で開くと「名前を付けて保存…」が編集を新しいファイルに書き込みますが、署名がテーブルを覆っているため、ゲームはそのファイルを拒否します。"
+
+msgid "{file} is a new archive with the tree's edits, which the game refuses because only its maker can sign the table they changed."
+msgstr "{file} はツリーの編集を含む新しいアーカイブですが、変更されたテーブルに署名できるのは作成者だけなので、ゲームはこれを拒否します。"
+
+msgid "Save the edits to a new archive, which the game refuses because its signature covers the table"
+msgstr "編集を新しいアーカイブに保存（署名がテーブルを覆っているため、ゲームはこれを拒否します）"
+
+msgid "the tree is no GTA VI archive opened on its own"
+msgstr "このツリーは単独で開いた GTA VI のアーカイブではありません"
+
+msgid "an archive of the tree is no longer open"
+msgstr "ツリーのアーカイブの一つがもう開いていません"
+
+msgid "entry {index} states no start"
+msgstr "エントリ {index} は開始位置を示していません"
+
+msgid "{name} has no body of its own"
+msgstr "{name} には独自の本体がありません"
+
+msgid "{name} is an archive moved in from another, which the GTA VI writer does not add"
+msgstr "{name} は別のアーカイブから移されたアーカイブで、GTA VI の書き込み処理は追加しません"
+
+msgid "{name} holds no bytes"
+msgstr "{name} にはバイトがありません"
+
+msgid "list {list}: {entries}"
+msgstr "リスト {list}: {entries}"
+
+msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the scan is searched for them: a cell the scan holds no body of has no special link into this one. Try again once the search ends."
+msgstr "隣接セル {cells} の本体が開かれておらず、スキャン内で検索中のため、ポリゴン {polygon} は変更されません。スキャンに本体がないセルは、このセルへの特殊リンクを持ちません。検索が終わったら再試行してください。"
+
+msgid "Add to the facial controls it writes"
+msgstr "書き込む顔の制御に追加"

@@ -1,7 +1,8 @@
-//! Every 20-byte nested row of a build is authored back from its own sections and chunk table:
-//! `w0`, `w4`, `w8` and `w16` equal the stored words, per type code. A sample of each code's clear
-//! bodies is the zero slot and 16-aligned chunks `stored_body` lays out, each chunk inflating from
-//! exactly its stored bytes to its stated size, the sizes summing to the two sections.
+//! Every 20-byte nested row of a build is authored back from its own sections and chunk table, of
+//! mode 2 or mode 4: `w0`, `w4`, `w8` and `w16` equal the stored words, per type code. A sample of
+//! each code's clear bodies is the zero slot and 16-aligned chunks `stored_body` lays out, each chunk
+//! inflating from exactly its stored bytes to its stated size, the sizes summing to the two sections.
+//! No table's chunk tables mix mode 4 with another mode, the rule the container writer follows.
 //!
 //! Install-gated and slow (it mounts every nested table of a build), so it skips cleanly without:
 //!   `OPENRAGE_GTA6_KEYS`   the key snapshot (never committed)
@@ -9,7 +10,7 @@
 
 #![cfg(feature = "gta6")]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -25,8 +26,8 @@ const CONTENT_CIPHER_TYPE: u16 = 17;
 const MAX_DEPTH: usize = 8;
 /// Clear bodies read per type code; the rows are checked without reading any body.
 const BODIES_PER_CODE: usize = 16;
-/// The chunk-table mode this tree does not decode; its rows are counted, not authored.
-const UNDECODED_MODE: u8 = 4;
+/// The chunk-table mode that states exact inflated sizes, found only inside nested archives.
+const MODE4: u8 = 4;
 
 fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var)
@@ -63,13 +64,16 @@ struct Code {
     rows: usize,
     authored: usize,
     no_table: usize,
-    undecoded_mode: usize,
+    authored_mode4: usize,
     bodies: usize,
 }
 
 #[derive(Default)]
 struct Tally {
     codes: BTreeMap<u32, Code>,
+    /// Tables holding a chunk table, and those whose chunk tables take mode 4.
+    tables: usize,
+    mode4_tables: usize,
     failures: Vec<String>,
 }
 
@@ -95,7 +99,9 @@ fn check(
 ) {
     let index = entry.index as usize;
     let type_code = nested.resource_type;
-    let Tally { codes, failures } = t;
+    let Tally {
+        codes, failures, ..
+    } = t;
     let code = codes.entry(type_code).or_default();
     code.rows += 1;
     let mut fail =
@@ -104,10 +110,7 @@ fn check(
         code.no_table += 1;
         return;
     };
-    if mount.archive.toc.bytes[at + 7] == UNDECODED_MODE {
-        code.undecoded_mode += 1;
-        return;
-    }
+    let mode4 = mount.archive.toc.bytes[at + 7] == MODE4;
     let chunks = match entry_chunks(&mount.archive, index) {
         Ok(Some(chunks)) => chunks,
         Ok(None) => {
@@ -135,6 +138,7 @@ fn check(
         ));
     }
     code.authored += 1;
+    code.authored_mode4 += usize::from(mode4);
 
     let ciphered = entry.cipher.map(|c| c.cipher_type) == Some(CONTENT_CIPHER_TYPE);
     if ciphered || code.bodies >= BODIES_PER_CODE {
@@ -186,6 +190,20 @@ fn check(
 }
 
 fn walk(file: &mut File, mount: &Gta6Mount, keys: &GtaViKeys, depth: usize, t: &mut Tally) {
+    let modes: BTreeSet<u8> = (0..mount.archive.entries.len())
+        .filter_map(|i| cell_offset(&mount.archive, i))
+        .map(|at| mount.archive.toc.bytes[at + 7])
+        .collect();
+    if !modes.is_empty() {
+        t.tables += 1;
+    }
+    if modes.contains(&MODE4) {
+        t.mode4_tables += 1;
+        if modes.len() > 1 {
+            t.failures
+                .push(format!("a table's chunk tables take modes {modes:?}"));
+        }
+    }
     let extras = mount.archive.entry_extras();
     for (entry, extra) in mount.archive.entries.iter().zip(extras) {
         if let Some(nested) = extra.nested {
@@ -226,16 +244,33 @@ fn every_headerless_row_authors_back_from_its_sections_and_chunks() {
     }
     for (type_code, c) in &t.codes {
         println!(
-            "type {type_code:#04x}: rows {}, authored {}, no table {}, mode {UNDECODED_MODE} {}, \
+            "type {type_code:#04x}: rows {}, authored {} (mode {MODE4} {}), no table {}, \
              bodies {}",
-            c.rows, c.authored, c.no_table, c.undecoded_mode, c.bodies
+            c.rows, c.authored, c.authored_mode4, c.no_table, c.bodies
         );
     }
-    println!("failures {}", t.failures.len());
+    println!(
+        "tables with chunk tables {}, of them mode {MODE4} {}; failures {}",
+        t.tables,
+        t.mode4_tables,
+        t.failures.len()
+    );
     for failure in t.failures.iter().take(20) {
         eprintln!("  {failure}");
     }
     assert!(t.failures.is_empty(), "every 20-byte row must author back");
+    for (type_code, c) in &t.codes {
+        assert_eq!(
+            c.authored,
+            c.rows - c.no_table,
+            "type {type_code:#x}: every row with a chunk table authors back"
+        );
+    }
     let authored: usize = t.codes.values().map(|c| c.authored).sum();
+    let mode4: usize = t.codes.values().map(|c| c.authored_mode4).sum();
     assert!(authored > 0, "the build's nested tables hold 20-byte rows");
+    assert!(
+        mode4 > 0,
+        "the build's nested tables hold mode-{MODE4} rows"
+    );
 }

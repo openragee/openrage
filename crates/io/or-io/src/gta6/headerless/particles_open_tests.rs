@@ -357,6 +357,52 @@ fn a_ptxu_zcull_states_its_mode_and_space_and_lets_the_third_spawner_start_an_ef
 }
 
 #[test]
+fn an_edited_flip_chance_and_zcull_mode_are_written_in_place_and_read_back() {
+    let (mut b, added) = listing(&[(0xA0, 12), (0x50, 27)]);
+    let [zcull, sprite] = added[..] else {
+        panic!("two behaviours added");
+    };
+    let height = hash("ptxu_ZCull:m_heightKFP");
+    b.kfp(zcull + 8, height, height, &[]);
+    b.u32(zcull + 0x94, 1);
+    b.f32(sprite + 8, 0.5);
+    b.f32(sprite + 0xC, 0.25);
+    let mut list = read_list(&b.v).expect("it reads");
+    for held in &mut list.behaviours {
+        match &mut held.fields {
+            BehaviourFields::Sprite { flip_chance, .. } => *flip_chance = [0.125, 1.0],
+            BehaviourFields::ZCull { mode, .. } => *mode = 4,
+            _ => {}
+        }
+    }
+    let mut v = b.v.clone();
+    write_particle_effects(&mut v, &list).expect("it writes");
+    let back = read_list(&v).expect("it reads back");
+    let drawn = BehaviourFields::Sprite {
+        flip_chance: [0.125, 1.0],
+        alignment: 0,
+        bytes: [0; 16],
+    };
+    assert_eq!(behaviour_at(&back, sprite).fields, drawn);
+    let culled = BehaviourFields::ZCull {
+        mode: 4,
+        reference_space: 0,
+    };
+    assert_eq!(behaviour_at(&back, zcull).fields, culled);
+
+    // A mode no file holds is refused, writing nothing.
+    let mut wrong = back.clone();
+    for held in &mut wrong.behaviours {
+        if let BehaviourFields::ZCull { mode, .. } = &mut held.fields {
+            *mode = 9;
+        }
+    }
+    let before = v.clone();
+    assert!(write_particle_effects(&mut v, &wrong).is_err());
+    assert_eq!(v, before);
+}
+
+#[test]
 fn behaviours_no_value_classes_are_labelled_by_id_and_class_bit() {
     let (mut b, added) = listing(&[(0x60, 11), (0x10, 20), (0x50, 27)]);
     let [wind, fire, sprite] = added[..] else {

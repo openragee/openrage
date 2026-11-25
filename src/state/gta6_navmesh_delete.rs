@@ -22,6 +22,9 @@ use super::{AppState, DocPayload, DocumentId};
 #[path = "gta6_navmesh_links.rs"]
 pub(super) mod links;
 
+#[path = "gta6_navmesh_look.rs"]
+mod look;
+
 /// A deletion, or a disable that moves the arrays, as a save makes it again: the polygon, and the
 /// records the cell held before it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,17 +78,23 @@ impl Swap for CellPart {
     }
 }
 
+/// Why polygon `polygon` waits: the scan is searched for the bodies of the neighbouring `cells`.
+fn looking(polygon: usize, cells: &str) -> String {
+    tr!(
+        "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the scan is searched for them: a cell the scan holds no body of has no special link into this one. Try again once the search ends.",
+        polygon = polygon,
+        cells = cells
+    )
+}
+
 /// The open bodies of the cells across `cell`'s borders and at its corners, which a deletion checks
-/// for links into it, or why it needs more of them.
+/// for links into it, or why it needs more of them: the `closed` cells, which may hold a body.
 fn others(
+    closed: &[String],
     cell: &NavMesh,
     near: &[(u32, Option<Arc<NavMesh>>)],
     polygon: usize,
 ) -> Result<Vec<Arc<NavMesh>>, String> {
-    let closed: Vec<String> = (near.iter())
-        .filter(|(_, body)| body.is_none())
-        .map(|(c, _)| c.to_string())
-        .collect();
     if !closed.is_empty() {
         return Err(tr!(
             "Polygon {polygon} is not deleted while the bodies of the neighbouring cells {cells} are not open: their special links may number this cell's polygons. Find the neighbouring cells in the scan first.",
@@ -130,7 +139,8 @@ impl AppState {
         polygon: usize,
     ) -> Result<String, String> {
         let near = super::gta6_navmesh::linked_cells(path, cell);
-        let open = others(cell, &near, polygon)?;
+        let closed = (self.unopened(path, &near)).map_err(|cells| looking(polygon, &cells))?;
+        let open = others(&closed, cell, &near, polygon)?;
         let bodies: Vec<&NavMesh> = open.iter().map(|b| &**b).collect();
         let made = deletion(cell, polygon, &bodies).map_err(|e| e.to_string())?;
         let left = made.mesh.polygons.len();
@@ -187,10 +197,10 @@ impl AppState {
             Err(e) => return Some(Err(e.to_string())),
         };
         if made.records.len() < cell.polygons.len() {
-            let closed: Vec<String> = (near.iter())
-                .filter(|(_, body)| body.is_none())
-                .map(|(c, _)| c.to_string())
-                .collect();
+            let closed = match self.unopened(path, near) {
+                Ok(closed) => closed,
+                Err(cells) => return Some(Err(looking(polygon, &cells))),
+            };
             if !closed.is_empty() {
                 return Some(Err(tr!(
                     "Polygon {polygon} is not disabled while the bodies of the neighbouring cells {cells} are not open: a side record it empties goes, and their special links may number the records after it. Find the neighbouring cells in the scan first.",
@@ -199,7 +209,7 @@ impl AppState {
                 )
                 .to_string()));
             }
-            if let Err(why) = others(cell, near, polygon) {
+            if let Err(why) = others(&closed, cell, near, polygon) {
                 return Some(Err(why));
             }
         }
@@ -398,14 +408,137 @@ mod tests {
         read_navmesh(&navmesh_cell()).expect("the cell reads")
     }
 
+    fn archive_of(state: &AppState, doc: DocumentId) -> PathBuf {
+        let path = state.document(doc).and_then(|d| d.path.clone());
+        let path = path.expect("a path");
+        path.parent().expect("its archive").to_path_buf()
+    }
+
     #[test]
-    fn a_polygon_whose_neighbours_bodies_are_not_open_is_not_deleted_and_makes_no_step() {
+    fn a_polygon_whose_neighbours_bodies_are_not_open_waits_for_the_scan_and_makes_no_step() {
         let _serial = crate::ui::theme::serial();
         let dir = tempfile::tempdir().expect("a scratch directory");
         let (mut state, doc) = opened(dir.path(), &navmesh_cell());
         let refused = state.delete_navmesh_polygon(doc, 0).unwrap_err();
-        assert!(refused.contains("are not open"), "{refused}");
+        assert!(
+            refused.contains("the scan is searched for them"),
+            "{refused}"
+        );
+        look::settled(&archive_of(&state, doc));
+        // The scan holds no other cell, so only the cell's own rules refuse it now.
+        let refused = state.delete_navmesh_polygon(doc, 0).unwrap_err();
+        assert!(refused.contains("last chunk"), "{refused}");
         assert!(!state.document(doc).expect("open").history.can_undo());
+    }
+
+    /// The virtual section of a cell at [`navmesh_cell`]'s grid place of two water triangles over
+    /// 128 m whose edges lead nowhere, so either goes alone.
+    fn two_triangles() -> Vec<u8> {
+        let mut v = vec![0u8; 0x3B0];
+        let put = |v: &mut Vec<u8>, at: usize, bytes: &[u8]| {
+            v[at..at + bytes.len()].copy_from_slice(bytes)
+        };
+        let ptr = |v: &mut Vec<u8>, at: usize, to: usize| {
+            put(v, at, &(0x5000_0000 + to as u64).to_le_bytes())
+        };
+        // A split array at `at` of one chunk: header, chunk row, start, then the items.
+        let list = |v: &mut Vec<u8>, at: usize, items: &[u8], stride: usize| {
+            let count = (items.len() / stride) as u64;
+            put(v, at + 8, &count.to_le_bytes());
+            ptr(v, at + 0x10, at + 0x30);
+            ptr(v, at + 0x18, at + 0x40);
+            put(v, at + 0x20, &1u64.to_le_bytes());
+            ptr(v, at + 0x30, at + 0x50);
+            put(v, at + 0x38, &count.to_le_bytes());
+            put(v, at + 0x50, items);
+        };
+        ptr(&mut v, 0x08, 0xF0);
+        v[0xF8] = 1;
+        put(&mut v, 0x10, &9u32.to_le_bytes());
+        put(&mut v, 0x14, &0x0001_0015u32.to_le_bytes());
+        for at in [0x20, 0x34, 0x48] {
+            put(&mut v, at, &1.0f32.to_le_bytes());
+        }
+        let vertices: Vec<u8> = [0u16, 0, 0, 65535, 0, 0, 0, 65535, 0, 65535, 65535, 0]
+            .iter()
+            .flat_map(|q| q.to_le_bytes())
+            .collect();
+        list(&mut v, 0x100, &vertices, 6);
+        list(&mut v, 0x170, &[0, 0, 1, 0, 2, 0, 1, 0, 3, 0, 2, 0], 2);
+        let edges = [[0xFF; 4], [0; 4], [0; 4]].repeat(6).concat();
+        list(&mut v, 0x1D0, &edges, 12);
+        // The second triangle's corners start at index 3.
+        let mut polygons = [0u8; 88];
+        (polygons[4], polygons[8]) = (3, 0x80);
+        (polygons[44 + 4], polygons[44 + 8]) = (0x33, 0x80);
+        list(&mut v, 0x270, &polygons, 44);
+        for (slot, at) in [
+            (0x70, 0x100),
+            (0x80, 0x170),
+            (0x88, 0x1D0),
+            (0x98, 0x270),
+            (0xA0, 0x320),
+        ] {
+            ptr(&mut v, slot, at);
+        }
+        put(&mut v, 0x90, &6u32.to_le_bytes());
+        for (at, x) in [(0x330, 128.0f32), (0x334, 128.0), (0x338, 4.0)] {
+            put(&mut v, at, &x.to_le_bytes());
+        }
+        // The quadtree's one leaf names both triangles.
+        ptr(&mut v, 0x320 + 0x2C, 0x380);
+        ptr(&mut v, 0x380 + 0x08, 0x3A0);
+        v[0x380 + 0x18] = 2;
+        put(&mut v, 0x3A0, &[0, 0, 1, 0]);
+        let cell = read_navmesh(&navmesh_cell()).expect("the cell reads").cell;
+        for (at, word) in [
+            (0xC0, 4),
+            (0xC4, 2),
+            (0xC8, cell),
+            (0xCC, 6 * 4 + 14 * 6 + 44 * 2),
+        ] {
+            put(&mut v, at, &word.to_le_bytes());
+        }
+        v
+    }
+
+    fn finished(state: &mut AppState) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while state.extract_jobs.is_running() {
+            state.poll_extract_job();
+            assert!(std::time::Instant::now() < deadline, "the save never ended");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_deletion_at_a_cell_whose_neighbours_the_scan_holds_no_body_of_saves_and_reads_back() {
+        let _serial = crate::ui::theme::serial();
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let (mut state, doc) = opened(dir.path(), &two_triangles());
+        let refused = state.delete_navmesh_polygon(doc, 0).unwrap_err();
+        assert!(
+            refused.contains("the scan is searched for them"),
+            "{refused}"
+        );
+        assert!(!state.document(doc).expect("open").history.can_undo());
+        look::settled(&archive_of(&state, doc));
+
+        let said = state.delete_navmesh_polygon(doc, 0).expect("deleted");
+        assert!(said.contains("Polygons left: 1."), "{said}");
+        let saved = dir.path().join("saved.rsc");
+        assert!(state.save_active_document_as(saved.clone()));
+        finished(&mut state);
+        let bytes = std::fs::read(&saved).unwrap_or_else(|e| panic!("{}: {e}", saved.display()));
+        let (find, read) =
+            or_io::container::rpf::read_rpf9_body(std::io::Cursor::new(bytes), 0, u64::MAX)
+                .expect("it reads");
+        let s = Rpf9Sections::of(&find, &read).expect("a resource");
+        let m = read_navmesh(&s.virtual_section).expect("the saved cell reads");
+        assert_eq!(
+            (m.polygons.len(), m.vertices.len(), m.indices),
+            (1, 3, vec![0, 2, 1])
+        );
     }
 
     #[test]
@@ -429,17 +562,16 @@ mod tests {
         let diagonal = m.cell + 512 + 1;
         let farther = m.cell + 2;
         m.special_links.push(link(diagonal));
-        let open = others(&m, &near, 0).expect("the corner cell's body is open");
+        let open = others(&[], &m, &near, 0).expect("the corner cell's body is open");
         assert_eq!(open.len(), near.len());
-        let mut closed = near.clone();
-        closed[4].1 = None;
-        let refused = others(&m, &closed, 0).unwrap_err();
-        assert!(refused.contains(&closed[4].0.to_string()), "{refused}");
+        let closed = near[4].0.to_string();
+        let refused = others(std::slice::from_ref(&closed), &m, &near, 0).unwrap_err();
+        assert!(refused.contains(&closed), "{refused}");
         m.special_links.push(link(farther));
-        let refused = others(&m, &near, 0).unwrap_err();
+        let refused = others(&[], &m, &near, 0).unwrap_err();
         assert!(refused.contains(&farther.to_string()), "{refused}");
         m.special_links.clear();
-        let open = others(&m, &near, 0).expect("every border's body is open");
+        let open = others(&[], &m, &near, 0).expect("every border's body is open");
         assert_eq!(open.len(), near.len());
         // The cell's one polygon takes its vertices with it, and a split array keeps its chunk.
         let bodies: Vec<&NavMesh> = open.iter().map(|b| &**b).collect();

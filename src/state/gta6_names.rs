@@ -229,6 +229,7 @@ fn harvest_into(
         .collect();
     let total = sizes.iter().sum::<u64>().max(1);
     let (before, mut done, mut labelled) = (vocabulary.len(), 0u64, 0);
+    let mut map_words = HashSet::new();
     for (path, &size) in archives.iter().zip(&sizes) {
         if cancel.is_set() {
             break;
@@ -240,6 +241,7 @@ fn harvest_into(
             match names::harvest_archive(path, HARVEST_PREFIX, threads, &stop, &reached) {
                 Ok(gave) => {
                     vocabulary.merge(&gave.vocabulary);
+                    map_words.extend(gave.map_words.iter().copied());
                     if !gave.stopped {
                         labelled += gave.labels.len();
                         if let Err(error) = names::save_labels(config, path, &gave.labels) {
@@ -258,6 +260,8 @@ fn harvest_into(
         done += size;
         progress.reached(done, total);
     }
+    // A map body spells no name: the rules give the maps read the names that follow from those held.
+    or_io::gta6::map_names::hold_map_names(vocabulary, &map_words);
     (vocabulary.len() - before, labelled, cancel.is_set())
 }
 

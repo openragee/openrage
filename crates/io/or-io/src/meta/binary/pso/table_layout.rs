@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::container::rpf::GtaViKeys;
 use crate::meta::binary::enum_text;
 use crate::meta::binary::hash_index::default_hash_index;
 use crate::meta::binary::layout::PsoLayout;
@@ -31,7 +32,7 @@ pub(super) const DEPTH: usize = 64;
 const BLOCK_CAP: usize = 1 << 20;
 
 /// The namespaced string hashes a document holds, by whether they are 64-bit: their text is in
-/// `LSNS`, which is encrypted, so a save may write only these.
+/// `LSNS`, which is encrypted, so a save writes only these and the texts it adds to `LSNS`.
 pub(crate) type Held = HashSet<(bool, u64)>;
 
 /// The key a [`Held`] holds for a namespace whose 64-bit hashes a save may add.
@@ -40,6 +41,14 @@ pub(crate) type Held = HashSet<(bool, u64)>;
 pub(crate) fn free_namespace(namespace: u8) -> (bool, u64) {
     (false, (1 << 63) | u64::from(namespace))
 }
+
+/// The key a [`Held`] holds for a `StringHash` value, which no namespaced hash sets bit 62 of.
+fn plain_hash(hash: u32) -> (bool, u64) {
+    (false, (1 << 62) | u64::from(hash))
+}
+
+/// A text a registered run of the document's `LSNS` must gain: the run's id and the text.
+pub(crate) type Added = Vec<(u32, String)>;
 
 /// The blocks a value tree lays out as: `(type, bytes)` in block-table order, the root block's id.
 #[derive(Debug, PartialEq, Eq)]
@@ -53,15 +62,37 @@ pub(crate) struct Laid {
 /// A table-form document's bytes with `instance` laid out in it, refused when the rules do not
 /// give back the document `layout` was read from.
 pub(crate) fn write(layout: &PsoLayout, instance: &MetaInstance) -> Result<Vec<u8>> {
+    write_with_keys(layout, instance, None)
+}
+
+/// [`write`], adding to the document's enciphered `LSNS` runs the texts the tree holds and they do
+/// not, enciphered with `keys`; such a save with no `keys` is refused.
+pub(crate) fn write_with_keys(
+    layout: &PsoLayout,
+    instance: &MetaInstance,
+    keys: Option<&GtaViKeys>,
+) -> Result<Vec<u8>> {
     let _names = crate::meta::binary::hash_index::title_names();
-    let sections = sections_of(layout);
+    let mut sections = sections_of(layout);
     let model = super::table_form::model(&sections)?;
     let stored: Vec<u8> = sections.iter().flat_map(|s| s.bytes.clone()).collect();
     let original = super::table_form::decode(&model)?;
-    let (laid, held) = lay_out(&model, &original, None)?;
-    let mut bytes = if emit(&sections, &laid) != stored {
+    let (laid, mut held) = lay_out(&model, &original, None)?;
+    let grown = super::table_strings::add_texts(&mut sections, &model, instance, &mut held, keys)?;
+    // With an added text the stored document is the one whose `LSNS` holds it.
+    let stored_now: Vec<u8> = match grown {
+        true => sections.iter().flat_map(|s| s.bytes.clone()).collect(),
+        false => stored.clone(),
+    };
+    let mut bytes = if emit(&sections, &laid) != stored_now {
         super::table_canonical::write(
-            &sections, &model, &stored, &original, &laid, &held, instance,
+            &sections,
+            &model,
+            &stored_now,
+            &original,
+            &laid,
+            &held,
+            instance,
         )?
     } else {
         let (laid, _) = lay_out(&model, instance, Some(&held))?;
@@ -176,7 +207,19 @@ pub(crate) fn lay_out(
     held: Option<&Held>,
 ) -> Result<(Laid, Held)> {
     let _names = crate::meta::binary::hash_index::title_names();
-    walk(model, instance, held, false, false)
+    walk(model, instance, held, false, false, &[]).map(|(laid, held, _)| (laid, held))
+}
+
+/// The texts `instance` holds that the registered runs `runs` of the document must gain, and the
+/// hashes its layout holds once they do; refused as [`lay_out`] is with `held`.
+pub(crate) fn texts_to_add(
+    model: &RbmModel,
+    instance: &MetaInstance,
+    held: &Held,
+    runs: &[u32],
+) -> Result<(Added, Held)> {
+    let _names = crate::meta::binary::hash_index::title_names();
+    walk(model, instance, Some(held), false, false, runs).map(|(_, held, added)| (added, held))
 }
 
 /// [`lay_out`] into the blocks `model` stores, each region where the document had it, refused
@@ -187,7 +230,7 @@ pub(crate) fn lay_out_in_place(
     held: Option<&Held>,
 ) -> Result<(Laid, Held)> {
     let _names = crate::meta::binary::hash_index::title_names();
-    walk(model, instance, held, true, false)
+    walk(model, instance, held, true, false, &[]).map(|(laid, held, _)| (laid, held))
 }
 
 /// [`lay_out`] for a headerless resource: its blocks in their stored order and a new one after
@@ -197,7 +240,7 @@ pub(crate) fn lay_out_headerless(
     instance: &MetaInstance,
     held: Option<&Held>,
 ) -> Result<(Laid, Held)> {
-    walk(model, instance, held, false, true)
+    walk(model, instance, held, false, true, &[]).map(|(laid, held, _)| (laid, held))
 }
 
 /// A headerless member's byte 9 bit that keeps its regions out of every other member's blocks,
@@ -216,7 +259,8 @@ fn walk(
     held: Option<&Held>,
     in_place: bool,
     headerless: bool,
-) -> Result<(Laid, Held)> {
+    runs: &[u32],
+) -> Result<(Laid, Held, Added)> {
     let index = default_hash_index();
     let by_name = (model.classes.values())
         .map(|c| (index.name_or_literal(c.name_hash), c))
@@ -257,6 +301,8 @@ fn walk(
         fixups: Vec::new(),
         held,
         laid: Held::new(),
+        runs,
+        added: Added::new(),
         path: Vec::new(),
         depth: 0,
         stored_count: None,
@@ -264,7 +310,9 @@ fn walk(
     let size = root.data_size as usize;
     let (b, at) = w.region(root.name_hash, size, stored, size, background)?;
     w.structure(root, b, at, instance, background)?;
-    w.finish()
+    let added = std::mem::take(&mut w.added);
+    let (laid, held) = w.finish()?;
+    Ok((laid, held, added))
 }
 
 fn root_type(
@@ -309,6 +357,10 @@ struct Writer<'m, 'h> {
     fixups: Vec<(usize, usize, usize, usize)>,
     held: Option<&'h Held>,
     laid: Held,
+    /// The registered runs of the document's `LSNS` a text a value spells may be added to.
+    runs: &'h [u32],
+    /// The texts those runs must gain.
+    added: Added,
     path: Vec<String>,
     depth: usize,
     /// The stored count of the [`COUNTED_POINTER`] being written, which bounds what it carries.
@@ -683,11 +735,14 @@ impl<'m> Writer<'m, '_> {
             }
             StringHash | PartialStringHash => {
                 let h = hash32(value).ok_or_else(|| wrong(self))?;
+                if entry.data_type == StringHash {
+                    self.hold_plain(h, value)?;
+                }
                 self.put(b, at, &h.to_le_bytes());
             }
             NsStringHash => {
                 let h = hash32(value).ok_or_else(|| wrong(self))?;
-                self.hold(false, h.into())?;
+                self.hold_ns(entry.union_9h, h, value)?;
                 self.put(b, at, &h.to_le_bytes());
             }
             Unknown(WIDE_NS_HASH) => {
@@ -947,11 +1002,60 @@ impl<'m> Writer<'m, '_> {
     fn hold(&mut self, wide: bool, hash: u64) -> Result<()> {
         if hash != 0 && self.held.is_some_and(|held| !held.contains(&(wide, hash))) {
             return Err(self.fail(format!(
-                "holds the string hash {hash:#X}, which the document did not hold: its text belongs in LSNS, which is encrypted, so none can be added"
+                "holds the string hash {hash:#X}, which the document did not hold: a text is added only to a run of category 1 or 0x1E that the document holds, which this member's namespace does not name"
             )));
         }
         self.laid.insert((wide, hash));
         Ok(())
+    }
+
+    /// A `StringHash`'s hash, and its text where it is new and the document holds the category-1 run.
+    fn hold_plain(&mut self, hash: u32, value: &Value) -> Result<()> {
+        let key = plain_hash(hash);
+        if hash != 0 && self.held.is_some_and(|held| !held.contains(&key)) {
+            self.add_text(super::string_blob::CATEGORY_1_RUN, hash, value)?;
+        }
+        self.laid.insert(key);
+        Ok(())
+    }
+
+    /// [`Self::hold`] for an `NsStringHash` of `namespace`, whose new hash its run of the document
+    /// takes when that run is registered and the value spells the text.
+    fn hold_ns(&mut self, namespace: u8, hash: u32, value: &Value) -> Result<()> {
+        let key = (false, u64::from(hash));
+        let new = hash != 0 && self.held.is_some_and(|held| !held.contains(&key));
+        let run = 0x101 + u32::from(namespace);
+        if new && self.add_text(run, hash, value)? {
+            self.laid.insert(key);
+            return Ok(());
+        }
+        if new && self.runs.contains(&run) {
+            return Err(self.fail(format!(
+                "holds the string hash {hash:#X}, which the document did not hold, and no text that hashes to it for run {run:#X} to take"
+            )));
+        }
+        self.hold(false, hash.into())
+    }
+
+    /// Records the text `value` spells for `hash` as one registered run `run` must gain; `false`
+    /// when the document holds no such run or the value spells no text.
+    fn add_text(&mut self, run: u32, hash: u32, value: &Value) -> Result<bool> {
+        let Some(text) = self
+            .runs
+            .contains(&run)
+            .then(|| spelled(value, hash))
+            .flatten()
+        else {
+            return Ok(false);
+        };
+        let category = run - 0x101;
+        if super::string_names::category_hash(category, text.as_bytes()) != Some(hash) {
+            return Err(self.fail(format!(
+                "holds the text \"{text}\", which run {run:#X} registers under another hash than the {hash:#X} the member holds, so it cannot be added"
+            )));
+        }
+        self.added.push((run, text));
+        Ok(true)
     }
 
     /// [`Self::hold`] for a 64-bit hash of `namespace`, which a free namespace takes unheld.
@@ -1271,6 +1375,17 @@ impl<'m> Writer<'m, '_> {
             .map_or(0, |e| e.offset as usize);
         let stored_slots = read_le(bg, 0, 4).unwrap_or(0);
         let stored_table = stored.map(|s| bounded(s.bytes, unit_size, stored_slots));
+        // A table keeps a stored size larger than the rule's while it holds the table: one is
+        // stored at 64 groups for 447 pairs, and an added or removed pair keeps that size.
+        let slots = match stored_table {
+            Some(t)
+                if stored_slots.is_power_of_two()
+                    && stored_slots.checked_mul(unit_size) == Some(t.len()) =>
+            {
+                slots.max(stored_slots)
+            }
+            _ => slots,
+        };
         // The tree lists a table's entries in their stored slot order, so the i-th stored entry is
         // the i-th entry's background.
         let stored_starts = stored_table.map_or_else(Vec::new, |bytes| {
@@ -1293,28 +1408,53 @@ impl<'m> Writer<'m, '_> {
                 "its keys are 64-bit integers, whose places in a table no measured hash gives, so it is written only with the keys it held, in their slots",
             ));
         }
-        // Where each entry goes, in the order given: home is the hash's low bits, then linear.
-        let mut places = Vec::with_capacity(n);
+        // A changed table is filled from the stored unit after its first that is not full, round
+        // to the end and on from 0, its stored entries in stored slot order and a new one last:
+        // no probe chain crosses such a unit, so an entry whose chain is unchanged keeps its place.
+        let order: Vec<usize> = match kept {
+            true => (0..n).collect(),
+            false => {
+                let units = stored_table.map_or(0, |t| t.len() / unit_size);
+                let full = if grouped { 16 } else { 1 };
+                let mut held = vec![0usize; units];
+                let mut stored_at = HashMap::with_capacity(stored_starts.len());
+                for &s in &stored_starts {
+                    held[s / unit_size] += 1;
+                    if let Some(k) = read_le(stored_table, s + key_off, key_width) {
+                        stored_at.entry(k as u64).or_insert(s);
+                    }
+                }
+                let start = held.iter().position(|&h| h < full).map_or(0, |u| u + 1);
+                let mut order: Vec<usize> = (0..n).collect();
+                order.sort_by_key(|&i| match stored_at.get(&bits[i]) {
+                    Some(&s) => (0, (s / unit_size + units - start) % units, s),
+                    None => (1, 0, i),
+                });
+                order
+            }
+        };
+        // Where each entry goes, in the fill order: home is the hash's low bits, then linear.
+        let mut places = vec![(0usize, None); n];
         let mut used = vec![0usize; slots];
         let mut taken = vec![false; slots];
-        for (i, &bits) in bits.iter().enumerate() {
-            let h = key_hash(key.data_type, bits);
+        for &i in &order {
+            let h = key_hash(key.data_type, bits[i]);
             let control = (h & 0x7F) as u8;
             if kept {
                 let pos = stored_starts[i];
                 let g = pos / unit_size;
                 let control =
                     grouped.then(|| (g * unit_size + (pos - g * unit_size - 16) / width, control));
-                places.push((pos, control));
+                places[i] = (pos, control);
             } else if grouped {
                 let mut g = ((h >> 7) as usize) & (slots - 1);
                 while used[g] == 16 {
                     g = (g + 1) & (slots - 1);
                 }
-                places.push((
+                places[i] = (
                     g * unit_size + 16 + width * used[g],
                     Some((g * unit_size + used[g], control)),
-                ));
+                );
                 used[g] += 1;
             } else {
                 let mut s = (h as usize) & (slots - 1);
@@ -1322,7 +1462,7 @@ impl<'m> Writer<'m, '_> {
                     s = (s + 1) & (slots - 1);
                 }
                 taken[s] = true;
-                places.push((s * unit_size, None));
+                places[i] = (s * unit_size, None);
             }
         }
         let len = slots * unit_size;
@@ -1585,6 +1725,19 @@ impl Table<'_> {
             Table::Keys(k) => &k[i],
         }
     }
+}
+
+/// The text a hash value spells: a text or a named hash that hashes to `hash`, never a spelled number.
+fn spelled(value: &Value, hash: u32) -> Option<String> {
+    let text = match value {
+        Value::String(s) => s.trim(),
+        Value::Hash(h) => h.raw.as_str(),
+        _ => return None,
+    };
+    let spells = !text.is_empty()
+        && crate::meta::binary::hash_index::spelled_hash(text).is_none()
+        && crate::string_hash(text.as_bytes()) == hash;
+    spells.then(|| text.to_string())
 }
 
 /// The first `count` elements of `stride` bytes of `bytes`, as many as it holds.

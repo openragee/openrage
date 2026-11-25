@@ -12,8 +12,8 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
     super::rows::focus_on_drop(ui, state, ids::FILES);
     history_input(ui, state);
 
-    // A GTA VI archive has no tree: its tab, and the tab of a body opened from it, list what its
-    // scan found.
+    // A GTA VI archive no key opens has no tree: its tab, and the tab of a body opened from it, list
+    // what its scan found.
     if let Some(scan) = state.scan_listing_the_active_tab() {
         crate::ui::panels::inspector::draw_scan_list(ui, state, scan);
         return;

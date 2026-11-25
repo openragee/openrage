@@ -20,6 +20,8 @@ pub mod gta6_form_h;
 #[cfg(feature = "gta6")]
 pub mod gta6_keygate;
 #[cfg(feature = "gta6")]
+pub mod gta6_kinds;
+#[cfg(feature = "gta6")]
 pub mod gta6_mount;
 #[cfg(feature = "gta6")]
 pub mod gta6_rpf;
@@ -78,7 +80,7 @@ pub use gta6_keygate::{decode_masked, encode_masked, gate_key, is_masked, MASKED
 #[cfg(feature = "gta6")]
 pub use gta6_mount::{open_at, Gta6DecryptedBody, Gta6Mount};
 #[cfg(feature = "gta6")]
-pub use gta6_rpf::{Gta6Context, Rpf9Place, GTA6_NAMES_ENV};
+pub use gta6_rpf::{Gta6Context, Rpf9Kind, Rpf9Place, GTA6_NAMES_ENV};
 #[cfg(feature = "gta6")]
 pub use gta6_write::{Rpf9Builder, Rpf9CipherCore};
 pub use header::{

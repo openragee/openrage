@@ -713,12 +713,23 @@ compiled by DXC, since FXC refuses valid ones (a gradient inside a loop, a barri
 branch) and has no 64-bit integers: `instance::dx12_compiler` takes the
 `dxcompiler.dll` beside the program, else the first on `PATH`, else the newest
 Windows SDK's, and falls back to FXC with a warning that says so where there is
-none. `WGPU_DX12_COMPILER` overrides the choice. A compiler older than 1.8.2502,
+none; the app then says it in a notice when it starts (`instance::fell_back_to_fxc`),
+since a package for Windows ships neither `dxcompiler.dll` nor `dxil.dll`
+(whether the SDK's licence lets them be shipped is the owner's to rule on).
+`WGPU_DX12_COMPILER` overrides the choice,
+and the app takes `WGPU_BACKEND` as the self-check and the tools do. A compiler older than 1.8.2502,
 such as an SDK's, loads `dxil.dll` by name and Direct3D 12 opens no device on it
 without one, so the folder of a compiler found with its `dxil.dll` is put on the
 process's `PATH`. On Direct3D 12 the feature `TEXTURE_INT64_ATOMIC` is offered
 and the layout of such a texture refused; `updates_64_bit_textures` asks the
-adapter instead.
+adapter instead. AMD's Direct3D 12 driver ends the process while it builds a mesh
+stage that holds a loop inside a loop: `instance::refused_by_driver` gives the
+reason such a stage is not built on such an adapter (`amd_under_dx12`), a loop
+reached through a call counting as one, and the builder of a GTA VI pass
+(`game_shaders::meshlets`) asks it of the mesh stage it builds with, so the
+surface draws as Material with that reason. The app opens a card two backends
+hold under Vulkan with no code of its own: an instance ranks adapters by their
+kind and lists Vulkan's first.
 
 ## Tool crates
 

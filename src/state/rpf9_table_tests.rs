@@ -1,7 +1,6 @@
-//! Hermetic checks of the table-backed listing, on archives laid out here and enciphered under a
-//! synthetic white-box key, so no game byte is involved.
+//! Hermetic checks of why an archive is listed by its scan, on archives laid out here and
+//! enciphered under a synthetic white-box key, so no game byte is involved.
 
-use std::fs::File;
 use std::time::{Duration, Instant};
 
 use or_io::container::rpf::{
@@ -233,69 +232,17 @@ fn sample() -> (tempfile::TempDir, PathBuf) {
     (dir, path)
 }
 
-fn names() -> NameResolver {
-    let mut resolver = NameResolver::new();
-    for name in [ALPHA, NESTED_NAME, DEEP] {
-        resolver.insert(name_hash64(name.as_bytes()), name);
-    }
-    resolver
-}
-
 #[test]
-fn an_archive_opened_with_a_key_lists_its_entries_from_the_table() {
+fn an_archive_whose_table_opens_with_the_key_held_has_nothing_to_say() {
     let (_dir, path) = sample();
-    let keys = synthetic_keys();
-    let node = listing(&path, Ok(&keys), &names()).expect("the table lists the archive");
-    assert_eq!(node.key_id, KEY_ID);
-    assert_eq!(node.rows.len(), 3);
-
-    let alpha = &node.rows[0];
-    assert_eq!(alpha.name.as_deref(), Some(ALPHA));
-    assert_eq!(alpha.size, Some(22));
-    assert_eq!(alpha.kind, TableKind::Media);
-    assert!(!alpha.is_archive);
-
-    let unnamed = &node.rows[1];
-    assert_eq!(unnamed.name, None);
-    let hash = name_hash64(UNNAMED.as_bytes());
-    assert_eq!(unnamed.display_name(), format!("hash_{hash:016x}"));
-    assert_eq!(unnamed.name32, Some(name_hash32(UNNAMED.as_bytes())));
-    assert_eq!(unnamed.kind, TableKind::Resource);
-
-    let inner = &node.rows[2];
-    assert!(
-        inner.is_archive,
-        "a body that opens with 9FPR is an archive"
-    );
-    assert_eq!(inner.kind, TableKind::Archive);
-    assert!(
-        node.children.is_empty(),
-        "a nested archive waits to be expanded"
-    );
-
-    // Expanding mounts the nested table from its row's start, relative to which its entries stand.
-    let base = inner.absolute_start.expect("the row states a start");
-    let mut file = File::open(&path).expect("the archive opens");
-    let child = mount(&mut file, base, &keys, &names()).expect("the nested table mounts");
-    assert_eq!(child.rows.len(), 1);
-    assert_eq!(child.rows[0].name.as_deref(), Some(DEEP));
-    assert_eq!(child.rows[0].size, Some(7));
-    let start = child.rows[0].absolute_start.expect("a start");
-    assert!(
-        start > base,
-        "a nested entry's start is past its archive's header"
-    );
+    assert_eq!(table_opens(&path, Ok(&synthetic_keys())), Ok(()));
 }
 
 #[test]
 fn without_a_key_the_open_falls_back_to_the_scan_and_says_so() {
     let (_dir, path) = sample();
-    let why = listing(
-        &path,
-        Err("no GTA VI key snapshot was found".into()),
-        &names(),
-    )
-    .expect_err("no key, no table");
+    let why = table_opens(&path, Err("no GTA VI key snapshot was found".into()))
+        .expect_err("no key, no table");
     assert!(
         why.contains("top.rpf") && why.contains("scan without its table"),
         "{why}"
@@ -306,7 +253,8 @@ fn without_a_key_the_open_falls_back_to_the_scan_and_says_so() {
     let mut other = snapshot();
     other[48] ^= 0x01;
     let other = GtaViKeys::parse(&other).expect("the altered snapshot parses");
-    assert!(listing(&path, Ok(&other), &names()).is_err());
+    let why = table_opens(&path, Ok(&other)).expect_err("a key not the archive's");
+    assert!(why.contains("scan without its table"), "{why}");
 }
 
 #[test]
@@ -333,86 +281,6 @@ fn the_open_of_an_archive_no_held_key_opens_is_a_scan_and_a_toast_says_why() {
             && t.message.contains("scan without its table")
     });
     assert!(said, "no toast said the scan lists the archive");
-}
-
-fn row(name: Option<&str>, name64: u64, name32: Option<u32>, kind: TableKind) -> TableRow {
-    TableRow {
-        index: 0,
-        name64,
-        name32,
-        name: name.map(str::to_owned),
-        size: None,
-        absolute_start: None,
-        is_archive: kind == TableKind::Archive,
-        cipher: false,
-        kind,
-    }
-}
-
-#[test]
-fn the_filter_keeps_rows_by_name_hex_hash_and_kind() {
-    let named = row(
-        Some("common/data/alpha.meta"),
-        0x0123_4567_89AB_CDEF,
-        Some(0xDEAD_BEEF),
-        TableKind::Media,
-    );
-    let unnamed = row(None, 0xFEDC_BA98_7654_3210, None, TableKind::Resource);
-    let keeps = |text: &str, kinds: &[TableKind]| {
-        let filter = TableFilter {
-            text: text.to_string(),
-            kinds: kinds.iter().copied().collect(),
-        };
-        (filter.keeps(&named), filter.keeps(&unnamed))
-    };
-    assert_eq!(keeps("", &[]), (true, true));
-    assert_eq!(
-        keeps("ALPHA", &[]),
-        (true, false),
-        "a name matches in any case"
-    );
-    assert_eq!(
-        keeps("0x89ab", &[]),
-        (true, false),
-        "0x hex finds the name64"
-    );
-    assert_eq!(keeps("0xDEADBEEF", &[]), (true, false), "and the name32");
-    assert_eq!(
-        keeps("7654", &[]),
-        (false, true),
-        "bare hex finds a hash too"
-    );
-    assert_eq!(
-        keeps("0xalpha", &[]),
-        (false, false),
-        "0x text finds a hash only"
-    );
-    assert_eq!(keeps("", &[TableKind::Resource]), (false, true));
-    assert_eq!(keeps("fedc", &[TableKind::Media]), (false, false));
-
-    let mut archive = row(Some("levels/inner.rpf"), 1, None, TableKind::Archive);
-    archive.index = 4;
-    let mut node = TableNode {
-        rows: vec![archive],
-        ..TableNode::default()
-    };
-    node.children.insert(
-        4,
-        TableNode {
-            rows: vec![named],
-            ..TableNode::default()
-        },
-    );
-    let filter = TableFilter {
-        text: "alpha".into(),
-        kinds: Default::default(),
-    };
-    assert!(
-        !filter.keeps_under(&node),
-        "a collapsed archive is not searched"
-    );
-    node.open.insert(4);
-    assert!(filter.keeps_under(&node), "an expanded one is");
 }
 
 #[test]

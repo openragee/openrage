@@ -9,7 +9,9 @@ Settings ▸ Games names, and writes nothing into it.
 The rail shows **World**, a globe with a small gamepad, once a GTA VI folder is set. It opens the
 World workspace: the view the whole height of the window, and beside it the World panel, with
 **Jobs** and **Log** as tabs behind it. With no folder set, both say so and offer
-**Settings ▸ Games…**. While the World screen shows a GTA VI folder, the status bar names GTA VI.
+**Settings ▸ Games…**. While the World screen shows a GTA VI folder, the status bar names GTA VI,
+and says **No game** once that folder is found to hold no world. A World arrangement saved before
+the view took the whole height starts over once from this one; the other workspaces keep theirs.
 
 The first visit builds an index of the install as a job, **GTA VI world index**, with progress and
 Stop; until the index is held the view is a plain backdrop. The index is kept in the configuration
@@ -28,7 +30,7 @@ The World panel lists its sections in the order they are used:
 3. **Camera**: **Go to**, the overhead map, where the camera stands in words, the interior and room
    it stands in, its position, its speed and the level-of-detail scale.
 4. **What streams**: the story pack, the shared minigames and the script-managed groups.
-5. **Capture**.
+5. **Capture**, closed until opened.
 6. **Streaming**, what is streamed in and on the device, and **Mount**, what the index holds, closed
    until opened.
 
@@ -201,18 +203,25 @@ ground the level's height map gives and by the day's water.
 The keys are read while the pointer is over the view or the view holds the focus.
 
 **Go to** lists up to eight places found in the index when it is opened: the squares of 512 m that
-hold the most maps streaming at rest, one for each run of letters their maps' names start with
-(the letters before the first digit or underscore), densest first. A place none of whose maps is
-named is listed by its coordinates. Choosing one puts the camera 250 m south of the middle of its maps and 80 m over the
+hold the most maps streaming at rest, densest first, one for each name. A square is named by the
+place the world-state data outlines at its middle (a region such as Little Cuba, an island or a
+district), else by the run of letters most of its maps' names start with (the letters before the
+first digit or underscore), else by its coordinates. Choosing one puts the camera 250 m south of the middle of its maps and 80 m over the
 tallest of them, looking north.
 
 The **overhead map** under it is drawn when the index is opened: the square over the maps that
-stream at rest, north up, each cell as bright as the number of maps whose middle lies in it. The
-camera is a dot with a stroke the way it looks. A click puts the camera 250 m south of the point
+stream at rest, north up, each cell as bright as the number of maps whose middle lies in it, over
+the land and the water. The land is shaded by the height the level's height map gives it, lit from
+the north-west; a cell is water where a quad of the level's water stands over its ground, or, past
+every quad, where its ground lies under the sea. Both are drawn once the viewer has read them. It
+takes at most three tenths of the panel's height. The camera is a dot with a stroke the way it
+looks. A click puts the camera 250 m south of the point
 clicked and 80 m over the tallest building within 256 m of it (or the ground, where none stands),
 looking north.
 
-The line under the map says where the camera is in words: the smallest map at rest under it whose
+The lines under the map say where the camera is in words: **In** the smallest place the world-state
+data outlines around it that the vocabulary names (by its label, said as words: the label of Vice
+Beach is region, vice, beach, name), then the smallest map at rest under it whose
 name is known, how high it is over the ground the level's height map gives, and which of the eight
 points of the compass it looks to.
 

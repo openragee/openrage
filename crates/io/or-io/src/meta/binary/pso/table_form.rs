@@ -1647,6 +1647,9 @@ pub(crate) mod tests {
 
     #[test]
     fn a_table_form_body_reads_back_to_the_values_it_was_built_with() {
+        // The expected names come from the index the read names by, whatever library another
+        // test of the process installed.
+        let _names = crate::meta::binary::hash_index::title_names();
         let (instance, layout) = open(&sample()).expect("it reads");
         let mut expected = MetaInstance::new(name(ROOT));
         let pointed = match element(30, 0.75) {

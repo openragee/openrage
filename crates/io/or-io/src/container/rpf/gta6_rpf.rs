@@ -19,6 +19,7 @@ use super::gta6_mount::{open_at, Gta6Mount};
 use super::header::{RpfEncryption, RpfHeader};
 use super::layout::{Input, Toc};
 use super::reader::{read_at, BodyForm};
+use super::rpf9_scan::RPF9_SLOT;
 use super::rpf9_toc::GtaViKeys;
 use crate::error::{IoError, Result};
 
@@ -41,6 +42,12 @@ impl Gta6Context {
     /// Give the process the keys and names GTA VI archives are read with, in place of the environment's.
     pub fn give(context: Gta6Context) {
         *GIVEN.write().unwrap_or_else(|held| held.into_inner()) = Some(Arc::new(context));
+    }
+
+    /// Put `next` in place of the context a caller gave, `None` leaving the environment's, and return the one it held.
+    pub fn swap_given(next: Option<Arc<Gta6Context>>) -> Option<Arc<Gta6Context>> {
+        let mut given = GIVEN.write().unwrap_or_else(|held| held.into_inner());
+        std::mem::replace(&mut *given, next)
     }
 
     /// The context a caller gave, else the environment's; `None` with no keys.
@@ -88,7 +95,50 @@ struct Leaf {
     real: u64,
     /// A nested archive, which opens as a folder.
     archive: bool,
+    /// Its row is the 20-byte one of a headerless resource, whose body follows a 16-byte zero slot.
+    slot: bool,
     ciphered: bool,
+    kind: Option<Rpf9Kind>,
+}
+
+/// What an RPF9 entry is, as its row's class byte or type code names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rpf9Kind {
+    /// The kind in words, as `rpf9 list` prints it.
+    pub label: &'static str,
+    /// The extension GTA V gives a file of the same format, where it has one.
+    pub extension: Option<&'static str>,
+}
+
+/// The GTA V extension of each kind label that names the same format.
+const EXTENSIONS: [(&str, &str); 11] = [
+    ("archive", "rpf"),
+    ("drawable", "ydr"),
+    ("fragment", "yft"),
+    ("texture dictionary", "ytd"),
+    ("bound", "ybn"),
+    ("clip dictionary", "ycd"),
+    ("particles", "ypt"),
+    ("map data", "ymap"),
+    ("map types", "ytyp"),
+    ("navigation mesh", "ynv"),
+    ("script program", "ysc"),
+];
+
+/// The kind of an entry: a 24-byte row's class byte wins over a 20-byte row's type code, and a row
+/// whose class says archive is one only when its body begins one. `None` where no table names it.
+fn row_kind(entry: &Gta6Entry, type_code: Option<u32>, archive: bool) -> Option<Rpf9Kind> {
+    use super::gta6_kinds::{CLASSES, TYPES};
+    if !archive && entry.kind() == Some(Gta6Class::NestedArchive) {
+        return None;
+    }
+    let label = match (entry.class, type_code) {
+        (Some(class), _) => CLASSES.iter().find(|(byte, _)| *byte == class)?.1,
+        (None, Some(code)) => TYPES.iter().find(|(c, _)| *c == code)?.1,
+        (None, None) => return None,
+    };
+    let extension = (EXTENSIONS.iter().find(|(l, _)| *l == label)).map(|(_, ext)| *ext);
+    Some(Rpf9Kind { label, extension })
 }
 
 /// An opened RPF9's decrypted table and what its bodies are read with.
@@ -157,6 +207,8 @@ fn leaf<R: Read + Seek>(mount: &Gta6Mount, src: &mut R, at: usize, entry: &Gta6E
         real,
         archive,
         ciphered: entry.cipher.is_some(),
+        slot: entry.stored.is_none() && row.is_some(),
+        kind: row_kind(entry, row.map(|row| row.resource_type), archive),
     }
 }
 
@@ -379,10 +431,18 @@ impl RpfArchive {
         Some(Rpf9Place {
             file: file_of(&self.source)?.to_path_buf(),
             base: self.start_pos,
-            offset: self.start_pos + offset,
+            offset: self.start_pos + offset + if leaf.slot { RPF9_SLOT } else { 0 },
             entry: entry.index,
             ciphered: leaf.ciphered,
         })
+    }
+
+    /// What entry `entry_index` of an RPF9 is, as its row names it; `None` for a folder, a row no table names or any other generation.
+    pub fn rpf9_kind(&self, entry_index: u32) -> Option<Rpf9Kind> {
+        // ⚠ Asked of every row a tree draws, so a GTA V row costs no error built and dropped.
+        let state = self.rpf9.as_deref()?;
+        let at = *state.entry_of.get(entry_index as usize)?;
+        state.leaves.get(at as usize)?.kind
     }
 }
 
@@ -432,6 +492,9 @@ impl Seek for Bytes<'_> {
     }
 }
 
+#[path = "gta6_rpf_row.rs"]
+pub mod row;
+
 #[cfg(test)]
 mod tests {
     use super::super::reader::build_tree;
@@ -463,6 +526,8 @@ mod tests {
                     real: e.real.unwrap_or(0),
                     archive,
                     ciphered: false,
+                    slot: false,
+                    kind: row_kind(e, None, archive),
                 }
             })
             .collect()
@@ -555,6 +620,62 @@ mod tests {
         let (nodes, _) = build_tree(&table, &names).expect("a lone root is a tree");
         assert_eq!(nodes.len(), 1);
         assert!(nodes[0].is_dir());
+    }
+
+    #[test]
+    fn a_24_byte_row_is_named_by_its_class_and_a_20_byte_row_by_its_type_code() {
+        let media = row_kind(&entry(0, None, 0xFF), None, false);
+        assert_eq!(
+            media,
+            Some(Rpf9Kind {
+                label: "media",
+                extension: None
+            })
+        );
+        // A 20-byte row has no class byte; its type code names it.
+        let mut headerless = entry(1, None, 0);
+        headerless.class = None;
+        let drawable = row_kind(&headerless, Some(0x02), false);
+        assert_eq!(
+            drawable,
+            Some(Rpf9Kind {
+                label: "drawable",
+                extension: Some("ydr")
+            })
+        );
+        assert_eq!(
+            row_kind(&headerless, Some(0x58), false).map(|k| k.label),
+            Some("cloth")
+        );
+        assert_eq!(
+            row_kind(&headerless, Some(0x58), false).and_then(|k| k.extension),
+            None
+        );
+        // The class wins over any code, as `rpf9 list` reads a row.
+        let resource = row_kind(&entry(2, None, 0x0B), Some(0x02), false);
+        assert_eq!(resource.map(|k| k.label), Some("resource"));
+    }
+
+    #[test]
+    fn a_row_no_table_names_has_no_kind_and_an_archive_is_one_only_when_its_body_begins_one() {
+        assert_eq!(row_kind(&entry(0, None, 0x0E), None, false), None);
+        let mut headerless = entry(1, None, 0);
+        headerless.class = None;
+        assert_eq!(row_kind(&headerless, Some(0x7F), false), None);
+        assert_eq!(row_kind(&headerless, None, false), None);
+        let nested = row_kind(&entry(2, None, 0x00), None, true);
+        assert_eq!(nested.and_then(|k| k.extension), Some("rpf"));
+        assert_eq!(row_kind(&entry(3, None, 0x00), None, false), None);
+    }
+
+    #[test]
+    fn every_extension_given_a_kind_is_one_a_table_names() {
+        use super::super::gta6_kinds::{CLASSES, TYPES};
+        for (label, _) in EXTENSIONS {
+            let named =
+                CLASSES.iter().any(|(_, l)| *l == label) || TYPES.iter().any(|(_, l)| *l == label);
+            assert!(named, "{label} is no kind a row names");
+        }
     }
 
     #[test]

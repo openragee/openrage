@@ -5,8 +5,27 @@ use super::rows::{
 };
 use super::rpf::{classify_rename_response, finish_rename, rpf_context_menu, rpf_path_supported};
 use super::*;
+use crate::state::explorer::{gta6_kind, row_matches};
 use crate::ui::commands::{self, Action, Command, Target};
 use crate::ui::panels::registry::ids;
+use or_io::container::rpf::Rpf9Kind;
+
+/// The name a GTA VI row's icon is chosen by: its own, with the extension GTA V gives its kind.
+///
+/// ⚠ Only the icon's: the row keeps the name its table states.
+fn icon_name(name: &str, kind: Option<Rpf9Kind>) -> Option<String> {
+    kind?.extension.map(|ext| format!("{name}.{ext}"))
+}
+
+/// The dimmed words after a file row's name: its kind where its archive's table names one, then its size.
+fn detail_text(kind: Option<Rpf9Kind>, size: Option<u64>) -> String {
+    let size = size.map(|sz| format!("{:.1} KiB", (sz as f32) / 1024.0));
+    match (kind, size) {
+        (Some(kind), Some(size)) => format!("{} · {size}", kind.label),
+        (Some(kind), None) => kind.label.to_owned(),
+        (None, size) => size.unwrap_or_default(),
+    }
+}
 
 /// A row of the tree as one frame lists it.
 pub(super) struct ListedRow {
@@ -64,7 +83,10 @@ pub(super) fn list_rows(
             };
             let id_here = parent.with(("rpf_node", id));
             if !node.is_dir() {
-                if shown && (needle.is_empty() || node.name.to_ascii_lowercase().contains(needle)) {
+                if shown
+                    && (needle.is_empty()
+                        || row_matches(&node.name, gta6_kind(session, node), needle))
+                {
                     rows.push(ListedRow {
                         node: id,
                         depth,
@@ -196,18 +218,20 @@ pub(super) fn draw_row(
         );
         return;
     }
-    let Some((node, unsaved, size, bound_doc_id)) =
+    let Some((node, unsaved, size, bound_doc_id, kind)) =
         state.document(doc_id).and_then(|d| match &d.payload {
             DocPayload::Rpf(rpf) => {
                 let node = rpf.session.node(node_id)?.clone();
                 let size = (!node.is_dir())
                     .then(|| rpf.session.size_for(node_id))
                     .flatten();
+                let kind = gta6_kind(&rpf.session, &node);
                 Some((
                     node,
                     rpf.session.archive_unsaved(node_id),
                     size,
                     rpf.entry_documents.get(&node_id).copied(),
+                    kind,
                 ))
             }
             _ => None,
@@ -334,7 +358,13 @@ pub(super) fn draw_row(
             rpf_context_menu(&resp, state, doc_id, &node, asked, false);
         }
     } else {
-        let supported = rpf_path_supported(&node.name);
+        // A GTA VI row's kind picks its icon as a GTA V row's extension does.
+        let shown = icon_name(&node.name, kind).map(|name| RpfSessionNode {
+            name,
+            ..node.clone()
+        });
+        let shown = shown.as_ref().unwrap_or(&node);
+        let supported = rpf_path_supported(&shown.name);
         let color = if !supported {
             theme::TEXT_SECONDARY
         } else if selected {
@@ -348,11 +378,10 @@ pub(super) fn draw_row(
             rename_action = classify_rename_response(ui, &r);
             r
         } else {
-            let icon = icons::rpf_node_icon(&node, unsaved, in_flight, supported, false);
+            let icon = icons::rpf_node_icon(shown, unsaved, in_flight, supported, false);
             let label = icons::icon_label(&icon, &node.name, color.into());
             let r = selectable_header(ui, selected, label);
-            let detail = size.map(|sz| format!("{:.1} KiB", (sz as f32) / 1024.0));
-            ui.add(detail_label(detail.unwrap_or_default()));
+            ui.add(detail_label(detail_text(kind, size)));
             r
         };
         note_row(state, doc_id, node_id, resp.rect);
@@ -381,5 +410,79 @@ pub(super) fn draw_row(
 
     if let Some(rename) = taken_rename {
         finish_rename(state, doc_id, node_id, &node.name, rename, rename_action);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::RpfSessionNodeKind;
+
+    const DRAWABLE: Rpf9Kind = Rpf9Kind {
+        label: "drawable",
+        extension: Some("ydr"),
+    };
+    const MEDIA: Rpf9Kind = Rpf9Kind {
+        label: "media",
+        extension: None,
+    };
+
+    fn file(name: &str) -> RpfSessionNode {
+        RpfSessionNode {
+            id: 1,
+            parent: None,
+            name: name.to_owned(),
+            kind: RpfSessionNodeKind::BinaryFile,
+            children: Vec::new(),
+            backing: RpfNodeBacking::InMemoryFile {
+                bytes: std::sync::Arc::new(Vec::new()),
+            },
+        }
+    }
+
+    #[test]
+    fn a_gta_vi_row_shows_its_kind_where_the_size_is_and_takes_the_icon_of_its_gta_v_kind() {
+        let name = "hash_00000000000000ab";
+        assert_eq!(
+            detail_text(Some(DRAWABLE), Some(2048)),
+            "drawable · 2.0 KiB"
+        );
+        assert_eq!(detail_text(Some(MEDIA), None), "media");
+        let shown = file(&icon_name(name, Some(DRAWABLE)).expect("a drawable has an extension"));
+        assert!(rpf_path_supported(&shown.name));
+        let icon = icons::rpf_node_icon(&shown, false, false, true, false);
+        assert_eq!(
+            icon.glyph,
+            icons::doc_kind_icon(DocumentKind::Ydr, false).glyph
+        );
+        assert_eq!(
+            icon_name(name, Some(MEDIA)),
+            None,
+            "media names no GTA V format"
+        );
+    }
+
+    #[test]
+    fn the_filter_finds_a_gta_vi_row_by_its_kind_or_its_gta_v_extension() {
+        let name = "hash_00000000000000ab";
+        for needle in ["drawable", "draw", ".ydr", "ydr", "00ab"] {
+            assert!(row_matches(name, Some(DRAWABLE), needle), "{needle}");
+        }
+        assert!(!row_matches(name, Some(DRAWABLE), "texture"));
+        assert!(!row_matches(name, Some(MEDIA), ".ydr"));
+        assert!(row_matches(name, None, "0xab"));
+        assert!(!row_matches(name, None, "0xcd"));
+        assert!(!row_matches("0xab.ydr", None, "0xcd"));
+    }
+
+    #[test]
+    fn a_row_with_no_kind_draws_and_filters_as_it_did() {
+        let name = "hash_00000000000000ab";
+        assert_eq!(detail_text(None, Some(2048)), "2.0 KiB");
+        assert_eq!(detail_text(None, None), "");
+        assert_eq!(icon_name(name, None), None);
+        assert!(row_matches(name, None, "hash_"));
+        assert!(!row_matches(name, None, "drawable"));
+        assert!(row_matches("a.ydr", None, ".ydr"));
     }
 }

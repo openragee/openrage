@@ -7,7 +7,7 @@ use std::f32::consts::{PI, TAU};
 use glam::Vec3;
 use or_io::gta5::data::timecycle::{Keyframe, TimeTable};
 use or_io::gta5::data::visual_settings::VisualSettings;
-use or_renderer::game_shaders::meshlets::{Curve, Filmic, Sky, Tone};
+use or_renderer::game_shaders::meshlets::{nine_of, Clouds, Curve, Dome, Filmic, Scene, Sky, Tone};
 use or_title::TimecycleData;
 
 use super::gta6_air::Air;
@@ -37,9 +37,11 @@ const LIGHT_FLOOR: f32 = 0.15;
 /// What a cycle states for the cross-fade of sun and moon to leave it to their heights.
 const CROSSFADE_BY_HEIGHT: f32 = -10.0;
 
-/// What the ground under a model sends back of the light that falls on it.
-// An estimate: the game's ground is its world, lit and read through its probes.
-const GROUND: f32 = 0.3;
+/// What the ground under a model sends back of the light that falls on it, of every colour
+/// alike: the ground that lights the model from below, and the one laid under it.
+// A stand-in: the game's ground is its world's own surfaces, and nothing of an install states
+// one for a model alone.
+pub(super) const GROUND: f32 = 0.3;
 /// The tuning value an install states the scale of its exposure curve by, and the stems of that
 /// curve's and of the second curve's values.
 const EXPOSURE_CURVE: [&str; 3] = [
@@ -297,6 +299,23 @@ fn tone_of(frame: &Keyframe, settings: &VisualSettings, disc: f32) -> Tone {
         dark,
         bright_at,
         dark_at,
+        whole_frame: false,
+    }
+}
+
+/// The clouds over a model in a weather whose cycle says they cover `cover` of the sky, and
+/// what `frame` states of the directional light under them.
+// The open share is a stand-in. The game marches the light's way through its field of clouds
+// for every place, and a model alone has no field: the clouds are taken to hide the share of
+// the ground the cycle says they cover, as deeply as it says a cloud's shadow shows, and the
+// model stands in the mean of that.
+fn clouds_of(cover: f32, frame: &Keyframe) -> Clouds {
+    let shows = frame.get_or("local_atmosphere_cloud_shadow_alpha", 1.0);
+    Clouds {
+        open: 1.0 - cover.clamp(0.0, 1.0) * shows.clamp(0.0, 1.0),
+        roughness_mod: frame.get_or("direct_light_roughness_mod_cloud_shadow", 0.0),
+        haze_blend: frame.get_or("direct_light_haze_blend_scale", 0.0),
+        haze: frame.get_or("direct_light_haze_intensity", 1.0),
     }
 }
 
@@ -304,10 +323,13 @@ fn tone_of(frame: &Keyframe, settings: &VisualSettings, disc: f32) -> Tone {
 /// or none where `data` does not hold them. The sun and the moon stand where the game puts them
 /// and one of them lights, by its lux and the cycle's tint and multipliers, through the air the
 /// cycle states; that air's sky is what surrounds the model; and the frame is metered and toned
-/// as the game's programs do.
-// Estimates left: the ground, a matte one of the editor's own; the moon's round, which is the
-// game's at rest; and what the game adds that a lone model has none of: shadows, clouds, fog,
-// probes and reflections.
+/// as the game's programs do. The light from all around is what a probe of the game would hold
+/// for a model that stands in the open: the sky's light and the ground's as nine numbers.
+// The game lights a place from all around by what its gather of rays and probes wrote for the
+// pixel; a model alone has nothing to gather but the sky over it and a ground under it.
+// Estimates left: the ground, a matte one of the editor's own; the clouds' shadow, a mean; the
+// moon's round, which is the game's at rest; and what the game adds that a lone model has none
+// of: fog, and what its reflections show.
 pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Option<Sky> {
     if !lights(data, weather) {
         return None;
@@ -321,6 +343,8 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
         frame.set(variable, value);
     }
     let air = Air::of(&frame);
+    let cover = (data.timecycle.cycle(name)).and_then(|cycle| cycle.overall.get("cloud_cover"));
+    let clouds = clouds_of(cover.copied().unwrap_or(0.0), &frame);
 
     let lux = |body: &str| {
         frame.get_or(&format!("sky_scattering_{body}_illuminance"), 0.0)
@@ -344,14 +368,37 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
     let (towards, colour) = light.unwrap_or((sun, Vec3::ZERO));
     let towards = Vec3::new(towards.x, towards.y, towards.z.max(LIGHT_FLOOR)).normalize();
 
-    // What a matte surface that faces up sends back of the whole sky, under both bodies.
-    let given = air.sky_on_the_ground(sun) * lux("sun") + air.sky_on_the_ground(moon) * lux("moon");
-    let around = given / PI
-        * rgb(&frame, "sky_scattering_sky_col")
+    // The sky along each way it is gathered by, under both bodies, by the rows that multiply
+    // it; and what a matte surface that faces up sends back of the whole of it.
+    let tint = rgb(&frame, "sky_scattering_sky_col")
         * rgb(&frame, "ambient_sky_color_mult")
         * frame.get_or("ambient_sky_intensity", 1.0);
-    let ground =
-        (around + colour * towards.z / PI) * GROUND * frame.get_or("ambient_bounce_intensity", 1.0);
+    let (of_sun, of_moon) = (lux("sun"), lux("moon"));
+    let bare: Vec<(Vec3, Vec3, f32)> = Air::ways()
+        .map(|(way, patch)| {
+            let light = air.sky(way, sun) * of_sun + air.sky(way, moon) * of_moon;
+            (way, light, patch)
+        })
+        .collect();
+    // How bright the sky itself is along each way, as a camera sees it: by the sky's own tint,
+    // and not by the rows that multiply what it lights.
+    let mut dome = [0.0; 72];
+    let shown = rgb(&frame, "sky_scattering_sky_col") * Vec3::new(0.2125, 0.7154, 0.0721);
+    for (held, (_, light, _)) in dome.iter_mut().zip(&bare) {
+        *held = light.dot(shown);
+    }
+    let seen = bare
+        .iter()
+        .map(|(way, light, patch)| (*way, *light * tint, *patch));
+    let seen: Vec<(Vec3, Vec3, f32)> = seen.collect();
+    let given: Vec3 = (seen
+        .iter()
+        .map(|(way, light, patch)| *light * way.z * *patch))
+    .sum();
+    let around = given / PI;
+    let ground = (around + colour * clouds.open * towards.z / PI)
+        * GROUND
+        * frame.get_or("ambient_bounce_intensity", 1.0);
     Some(Sky {
         towards,
         sun: colour,
@@ -359,6 +406,12 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
         ground,
         exposure: 1.0,
         tone: Some(tone_of(&frame, &data.visual_settings, air.disc_tangent())),
+        scene: Scene {
+            clouds,
+            around: Some(nine_of(seen, ground)),
+            dome: Some(Dome(dome)),
+            ..Scene::default()
+        },
     })
 }
 

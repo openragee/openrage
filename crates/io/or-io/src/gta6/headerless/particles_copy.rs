@@ -1,8 +1,10 @@
 //! An effect rule copied under a new name past a particle effects list's virtual section's end:
 //! the rule, its name, keyframed values, events and evolution lists laid out anew, the dictionary's
-//! two arrays laid out anew in ascending code order, and each rule an event names counted once more.
+//! two arrays laid out anew in ascending code order, each event's +0x60 object its own with its
+//! buffer's data past the physical section's end, and each rule an event names counted once more.
 //! Nothing already in the section moves, so the words no reader types stay valid.
 
+use super::dup::event_object::{data_copied, object_copied, own_copy};
 use super::*;
 use crate::container::rpf::{grow_section, Rpf9Section, Rpf9Sections};
 
@@ -11,8 +13,6 @@ const VIRTUAL: u64 = 0x5000_0000;
 const EFFECT_RULE: usize = 0x240;
 const EVENT: usize = 0x88;
 const EVOLUTION_LIST: usize = 0x38;
-/// An event's object whose extent and inner pointers are not stated.
-const EVENT_OBJECT: usize = 0x60;
 
 /// The list's effect rule `source` copied as `name` past the section's end, or refused unchanged.
 pub fn duplicate_particle_effect(
@@ -25,12 +25,18 @@ pub fn duplicate_particle_effect(
         !name.is_empty() && name.len() <= 512 && name.bytes().all(|b| (32..127).contains(&b)),
         "a name is not printable ASCII of at most 512 bytes",
     )?;
-    let end = body.virtual_section.len().next_multiple_of(16);
-    let (dry, _) = sections(&body.virtual_section, None, |v, _| {
-        laid_out(&v, end, &stored, source, name)
+    let events = stored.effects.get(source).map_or(0, |e| e.events.len());
+    let mut grown = body.clone();
+    // Each event's object's buffer is given data first, which may grow the block map: read again.
+    let data = (0..events)
+        .map(|event| data_copied(&mut grown, source, event))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let stored = read_particle_effects(&grown.virtual_section, None)?;
+    let end = grown.virtual_section.len().next_multiple_of(16);
+    let (dry, _) = sections(&grown.virtual_section, None, |v, _| {
+        laid_out(&v, end, &stored, (source, &data), name)
     })?;
     let len = dry.bytes.len().next_multiple_of(16);
-    let mut grown = body.clone();
     grown.virtual_section.resize(end, 0);
     let start = grow_section(&mut grown, &[0x08], Rpf9Section::Virtual, end, len as isize)?;
     // The block map's slots may have grown, which moves what follows them: read the list again.
@@ -40,7 +46,7 @@ pub fn duplicate_particle_effect(
         "growing the section changes how what it holds reads, such as its last behaviour",
     )?;
     let (tail, rule) = sections(&grown.virtual_section, None, |v, _| {
-        laid_out(&v, start, &moved, source, name)
+        laid_out(&v, start, &moved, (source, &data), name)
     })?;
     let v = &mut grown.virtual_section;
     for (at, bytes) in std::iter::once((start, tail.bytes)).chain(tail.patches) {
@@ -70,9 +76,13 @@ pub fn duplicate_particle_effect(
     }
     let read = read_particle_effects(&grown.virtual_section, None)?;
     need(
-        remover::sizes_cleared(read) == remover::sizes_cleared(expected),
+        remover::sizes_cleared(read.clone()) == remover::sizes_cleared(expected),
         "the copy does not read back as its source under its new name, or changes what else the list holds",
     )?;
+    let from = source + usize::from(source >= place);
+    for event in 0..events {
+        own_copy(&grown, &read, (from, event), (place, event))?;
+    }
     *body = grown;
     Ok(())
 }
@@ -151,13 +161,14 @@ impl Tail {
     }
 }
 
-/// The copy of the effect rule at `source` of `list` named `name` laid out from `base`, with the
-/// dictionary and reference count words it changes; and where the copy is.
+/// The copy of the effect rule at `source` of `list` named `name` laid out from `base`, each
+/// event's object's buffer data at the place `data` gives, with the dictionary and reference count
+/// words it changes; and where the copy is.
 fn laid_out(
     v: &Bytes,
     base: usize,
     list: &ParticleEffects,
-    source: usize,
+    (source, data): (usize, &[Option<usize>]),
     name: &str,
 ) -> Result<(Tail, usize)> {
     let Some(from) = list.effects.get(source) else {
@@ -168,7 +179,7 @@ fn laid_out(
         bytes: Vec::new(),
         patches: Vec::new(),
     };
-    let rule = effect(&mut t, v, from.at as usize, name)?;
+    let rule = effect(&mut t, v, (from, data), name)?;
     dictionary(&mut t, v, 0x28, name_hash32(name.as_bytes()), rule)?;
     let mut named: BTreeMap<u64, u32> = BTreeMap::new();
     for ev in &from.events {
@@ -199,8 +210,14 @@ pub(super) fn kfp(t: &mut Tail, v: &Bytes, from: usize, to: usize) -> Result<()>
     Ok(())
 }
 
-fn effect(t: &mut Tail, v: &Bytes, from: usize, name: &str) -> Result<usize> {
+fn effect(
+    t: &mut Tail,
+    v: &Bytes,
+    (rule, data): (&EffectRule, &[Option<usize>]),
+    name: &str,
+) -> Result<usize> {
     const WHAT: &str = "effect rule";
+    let from = rule.at as usize;
     let at = t.copy(v, WHAT, from, EFFECT_RULE)?;
     let text = t.alloc(name.len() + 1);
     t.put(text, name.as_bytes())?;
@@ -235,11 +252,11 @@ fn effect(t: &mut Tail, v: &Bytes, from: usize, name: &str) -> Result<usize> {
     t.ptr(at + 0x38, held)?;
     for i in 0..count {
         let e = v.to("event", events + 8 * i)?;
-        need(
-            v.u64("event", e + EVENT_OBJECT)? == 0,
-            "an effect rule whose event holds an object at +0x60 is not copied whole: copy that event on its own, which gives its object's buffer data of its own",
-        )?;
+        let Some(ev) = rule.events.get(i) else {
+            return refuse("an effect rule's event array holds more events than its list reads");
+        };
         let copied = t.copy(v, "event", e, EVENT)?;
+        object_copied(t, v, (e, ev), copied, data.get(i).copied().flatten())?;
         t.ptr(held + 8 * i, copied)?;
         if let Some(l) = v.ptr("event", e + 0x30)? {
             let list = evolution_list(t, v, l)?;

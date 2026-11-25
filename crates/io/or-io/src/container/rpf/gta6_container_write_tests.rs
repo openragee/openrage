@@ -5,6 +5,8 @@ use std::io::Cursor;
 
 use super::*;
 use crate::container::rpf::gta6_archive::GROUP_CONTENT_HASH;
+use crate::container::rpf::gta6_chunk_table::entry_chunks;
+use crate::container::rpf::gta6_dependencies::{self, GROUP_DEPENDENCIES};
 use crate::container::rpf::rpf9::RPF9_MAGIC;
 
 const REGISTRY_ID: u64 = 0xDEAD_BEEF_0200_0000;
@@ -94,6 +96,11 @@ enum Body {
 /// 5, 6 and 9) in 0x150 bytes of metadata, the columns row24, name64, name32 and `0xe0c1` in the main
 /// region and `0xb6f5` external, bodies `GAP` apart, and a names heap of 0x5A bytes.
 fn archive(entries: &[(&str, Body)]) -> Vec<u8> {
+    archive_in(entries, ROW24_CHUNK_MODE)
+}
+
+/// As [`archive`], its chunk tables in `mode`.
+fn archive_in(entries: &[(&str, Body)], mode: u8) -> Vec<u8> {
     let n = entries.len();
     let mut stored = Vec::new();
     let mut slices = Vec::new();
@@ -109,7 +116,7 @@ fn archive(entries: &[(&str, Body)]) -> Vec<u8> {
             Body::Chunked(b) => {
                 let (s, chunks) = chunk_body(b).unwrap();
                 *chunk_slot.last_mut().unwrap() = slices.len() as u8;
-                slices.push(author(&ChunkTable { mode: 3, chunks }).unwrap());
+                slices.push(author(&ChunkTable { mode, chunks }).unwrap());
                 stored.push((0x0B, s, b.len() as u64));
             }
             Body::Nested(b) => stored.push((0x00, b.clone(), b.len() as u64)),
@@ -549,6 +556,15 @@ const KEYS: [u64; 3] = [
     0x0200_0000_0000_00B2,
     0x0300_0000_0000_00C3,
 ];
+/// Where the heaped fixture's metadata starts, past its five descriptors, and its length.
+const HEAPED_METADATA: usize = 0x70;
+const HEAPED_METADATA_LEN: usize = 0x170;
+/// Where its type-4 table sits, metadata offset 0x140.
+const KEYS_AT: usize = HEAPED_METADATA + 0x140;
+/// Where its type-9 payload sits, past the type-4 table, and its bytes: a count of two and two
+/// bytes, padded to 8, then the metadata's padding to 16.
+const TYPE9_AT: usize = KEYS_AT + 8 + 8 * KEYS.len();
+const TYPE9: [u8; 16] = [2, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 /// A headerless resource of the heaped fixture: its sections, its dependency list as indices into
 /// [`KEYS`], and its `0xd07a` floats.
@@ -612,11 +628,16 @@ fn resources() -> Vec<Res> {
     ]
 }
 
-/// A nested archive of headerless resources laid out by hand: a type-4 key table in the metadata,
-/// the main columns name64, name32, row20, `0x97c2`, `0xd07a` and `0xe0c1`, then from a 16-byte
-/// boundary their three heaps (the lists packed, the floats 4-aligned, the descriptors 8-aligned),
-/// and `0xb6f5` external.
+/// A nested archive of headerless resources laid out by hand: a type-4 key table opening the
+/// metadata's index-keyed tail and a type-9 payload of two bytes ending it, the main columns name64,
+/// name32, row20, `0x97c2`, `0xd07a` and `0xe0c1`, then from a 16-byte boundary their three heaps
+/// (the lists packed, the floats 4-aligned, the descriptors 8-aligned), and `0xb6f5` external.
 fn heaped(res: &[Res]) -> Vec<u8> {
+    heaped_in(res, ROW20_CHUNK_MODE)
+}
+
+/// As [`heaped`], its chunk tables in `mode`.
+fn heaped_in(res: &[Res], mode: u8) -> Vec<u8> {
     let n = res.len();
     let written: Vec<_> = res
         .iter()
@@ -633,14 +654,14 @@ fn heaped(res: &[Res]) -> Vec<u8> {
         .iter()
         .map(|w| {
             author(&ChunkTable {
-                mode: 2,
+                mode,
                 chunks: w.chunks.clone(),
             })
             .unwrap()
         })
         .collect();
 
-    let groups_start = 0x1B0;
+    let groups_start = HEAPED_METADATA + HEAPED_METADATA_LEN;
     let main_index = groups_start + 7 * 24;
     let main_start = round8(main_index + 6 * n);
     let o32 = round8(8 * n);
@@ -656,11 +677,33 @@ fn heaped(res: &[Res]) -> Vec<u8> {
     let ext_start = round8(split + n);
     let toc_end = round16((ext_start + 8 * n) as u64) as usize;
 
-    let mut t = head(toc_end, split, n, 7, 4);
-    LE::write_u32(&mut t[0x80..], KEYS.len() as u32);
-    t[0x84..0x88].copy_from_slice(&[1, 0, 0, 0]);
+    // Five descriptors, as a measured table with a type-4 table holds them: that table opens the
+    // index-keyed tail at metadata offset 0x140, and the type-9 payload follows it.
+    let mut t = head(toc_end, split, n, 7, 5);
+    t[0x1A] = 5;
+    LE::write_u32(&mut t[0x1C..], HEAPED_METADATA_LEN as u32);
+    LE::write_u32(&mut t[0x30..], (HEAPED_METADATA_LEN - 0x140) as u32);
+    t[0x40..HEAPED_METADATA_LEN + HEAPED_METADATA].fill(0);
+    let type9 = TYPE9_AT - HEAPED_METADATA;
+    for (i, (kind, off)) in [(1u16, 0), (5, 0x20), (6, 0x40), (4, 0x140), (9, type9)]
+        .iter()
+        .enumerate()
+    {
+        LE::write_u16(&mut t[0x40 + 8 * i..], *kind);
+        LE::write_u32(&mut t[0x44 + 8 * i..], *off as u32);
+    }
+    let m = HEAPED_METADATA;
+    LE::write_u32(&mut t[m..], KEY_ID);
+    LE::write_u16(&mut t[m + 4..], 16);
+    t[m + 6..m + 0x16].fill(0x33);
+    for (i, b) in t[m + 0x20..m + 0x140].iter_mut().enumerate() {
+        *b = (i * 7 + 1) as u8;
+    }
+    t[TYPE9_AT..TYPE9_AT + 16].copy_from_slice(&TYPE9);
+    LE::write_u32(&mut t[KEYS_AT..], KEYS.len() as u32);
+    t[KEYS_AT + 4..KEYS_AT + 8].copy_from_slice(&[1, 0, 0, 0]);
     for (i, key) in KEYS.iter().enumerate() {
-        LE::write_u64(&mut t[0x88 + 8 * i..], *key);
+        LE::write_u64(&mut t[KEYS_AT + 8 + 8 * i..], *key);
     }
     let directory = [
         (GROUP_NAME64, n, 0, 8, 0),
@@ -792,7 +835,7 @@ fn a_table_with_heaps_lays_out_again_byte_identical() {
 
     // A heap column the writer did not know would be dropped from the layout, which then differs.
     let mut toc = mount.archive.toc.clone();
-    let d07a = 0x1B0 + 24 * 4;
+    let d07a = HEAPED_METADATA + HEAPED_METADATA_LEN + 24 * 4;
     LE::write_u64(&mut toc.bytes[d07a..], 0x0123_4567_89AB_CDEF);
     toc.groups[4].name_hash = 0x0123_4567_89AB_CDEF;
     assert!(!relays_identically(&toc).unwrap());
@@ -900,10 +943,252 @@ fn replace_resource_sets_a_dependency_list_from_the_table_s_keys() {
     })
     .unwrap();
     assert_eq!(dependencies(&open(&out), 0), None);
-    assert!(write(&file, |w| {
+
+    // A key the table lacks is added to it; 0x42 sorts first, so every other list's indices move.
+    let (_, out) = write(&file, |w| {
         w.replace_resource(&[0], same(0), Some(vec![0x42]));
     })
+    .unwrap();
+    let mount = open(&out);
+    assert_eq!(dependencies(&mount, 0), Some(vec![0x42]));
+    assert_eq!(dependencies(&mount, 1), Some(vec![KEYS[1]]));
+}
+
+/// A key between `KEYS[1]` and `KEYS[2]`, so adding it moves the index of `KEYS[2]`.
+const NEW_KEY: u64 = 0x0250_0000_0000_00D4;
+
+/// The metadata length and the index-keyed tail's length a table's header states.
+fn metadata_lengths(mount: &Gta6Mount) -> (u32, u32) {
+    let b = &mount.archive.toc.bytes;
+    (LE::read_u32(&b[0x1C..]), LE::read_u32(&b[0x30..]))
+}
+
+#[test]
+fn a_dependency_key_the_table_lacks_is_added_and_every_list_re_indexed() {
+    let res = resources();
+    let file = heaped(&res);
+    let before = open(&file);
+    let same = |e: usize| loose(&res[e].v, &res[e].p);
+    let (plan, out) = write(&file, |w| {
+        w.replace_resource(&[1], same(1), Some(vec![NEW_KEY, KEYS[1]]));
+    })
+    .unwrap();
+    assert_eq!((plan.tables_changed, plan.bodies_changed), (1, 0));
+    let mount = open(&out);
+    let deps = gta6_dependencies::read(&mount.archive.toc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(deps.keys, [KEYS[0], KEYS[1], NEW_KEY, KEYS[2]]);
+    assert_eq!(deps.width, 1);
+    assert_eq!(deps.entry(0), Some(&[KEYS[0], KEYS[2]][..]));
+    assert_eq!(deps.entry(1), Some(&[KEYS[1], NEW_KEY][..]));
+    assert_eq!(deps.entry(2), None);
+    for e in 0..3 {
+        assert_eq!(resource(&out, &mount, e), resource(&file, &before, e));
+    }
+    assert_eq!(floats(&mount, 0), floats(&before, 0));
+
+    // One key more fills the type-9 payload's padding: that payload moves by 8 and keeps its
+    // bytes, what comes before the table is as it was, and the metadata keeps its length.
+    let (old, new) = (&before.archive.toc.bytes, &mount.archive.toc.bytes);
+    assert_eq!(metadata_lengths(&mount), (0x170, 0x30));
+    assert_eq!(
+        (LE::read_u32(&new[0x5C..]), LE::read_u32(&new[0x64..])),
+        (0x140, 0x168)
+    );
+    assert_eq!(new[HEAPED_METADATA..KEYS_AT], old[HEAPED_METADATA..KEYS_AT]);
+    assert_eq!(new[TYPE9_AT + 8..TYPE9_AT + 16], TYPE9[..8]);
+
+    // Two keys more pass it, and the metadata grows to the next 16 bytes.
+    let (_, out) = write(&file, |w| {
+        w.replace_resource(&[1], same(1), Some(vec![NEW_KEY, NEW_KEY + 1]));
+    })
+    .unwrap();
+    let mount = open(&out);
+    assert_eq!(metadata_lengths(&mount), (0x180, 0x40));
+    assert_eq!(dependencies(&mount, 1), Some(vec![NEW_KEY, NEW_KEY + 1]));
+    assert_eq!(dependencies(&mount, 0), Some(vec![KEYS[0], KEYS[2]]));
+    assert_eq!(resource(&out, &mount, 2), resource(&file, &before, 2));
+    assert!(relays_identically(&mount.archive.toc).unwrap());
+}
+
+#[test]
+fn growing_the_key_table_past_256_keys_widens_every_list() {
+    let res = resources();
+    let file = heaped(&res);
+    let same = loose(&res[1].v, &res[1].p);
+    let added = |n: u64| {
+        (0..n)
+            .map(|i| 0x0400_0000_0000_0000 + i)
+            .collect::<Vec<u64>>()
+    };
+    let grown = |n: u64| {
+        let (_, out) = write(&file, |w| {
+            w.replace_resource(&[1], same.clone(), Some(added(n)));
+        })
+        .unwrap();
+        let deps = gta6_dependencies::read(&open(&out).archive.toc)
+            .unwrap()
+            .unwrap();
+        (deps, out)
+    };
+    let (at_256, _) = grown(253);
+    assert_eq!((at_256.keys.len(), at_256.width), (256, 1));
+
+    let (past, out) = grown(254);
+    assert_eq!((past.keys.len(), past.width), (257, 2));
+    assert_eq!(past.entry(0), Some(&[KEYS[0], KEYS[2]][..]));
+    assert_eq!(past.entry(1), Some(&added(254)[..]));
+    let mount = open(&out);
+    let table = Table::from_toc(&mount.archive.toc).unwrap();
+    let c = table.col(GROUP_DEPENDENCIES, 8).unwrap();
+    assert!((table.columns[c].rows.iter()).all(|r| LE::read_u32(&r.cell[4..]) >> 29 == 2));
+    assert_eq!(resource(&out, &mount, 1), sections_of(&same));
+    assert!(relays_identically(&mount.archive.toc).unwrap());
+}
+
+#[test]
+fn growing_the_key_table_moves_what_follows_and_refuses_what_it_cannot_lay_out() {
+    let prefix = open(&heaped(&resources())).archive.toc.bytes
+        [..HEAPED_METADATA + HEAPED_METADATA_LEN]
+        .to_vec();
+    let grown = |prefix: &[u8], keys: &[u64]| gta6_dependencies::grow_table(prefix, keys);
+    assert_eq!(
+        grown(&prefix, &KEYS).unwrap(),
+        prefix,
+        "the same keys lay out as they were"
+    );
+    assert!(
+        grown(&prefix, &[KEYS[0], KEYS[2]]).is_err(),
+        "a key dropped"
+    );
+    assert!(
+        grown(&prefix, &[KEYS[1], KEYS[0], KEYS[2]]).is_err(),
+        "out of order"
+    );
+    let more = [KEYS[0], KEYS[1], NEW_KEY, KEYS[2]];
+    let mut before_tail = prefix.clone();
+    LE::write_u32(&mut before_tail[0x30..], 0x10);
+    assert!(
+        grown(&before_tail, &more).is_err(),
+        "a table before the index-keyed tail"
+    );
+
+    // Padding that holds a byte is no padding: every byte is kept, the metadata padded past it.
+    let mut held = prefix.clone();
+    held[TYPE9_AT + 12] = 7;
+    let out = grown(&held, &more).unwrap();
+    assert_eq!(LE::read_u32(&out[0x1C..]), 0x180);
+    assert_eq!(
+        out[TYPE9_AT + 8..TYPE9_AT + 24],
+        held[TYPE9_AT..TYPE9_AT + 16]
+    );
+    assert!(out[TYPE9_AT + 24..HEAPED_METADATA + 0x180]
+        .iter()
+        .all(|&b| b == 0));
+}
+
+#[test]
+fn an_added_resource_takes_a_dependency_list_and_grows_the_table() {
+    let parent = archive(&[
+        ("child.rpf", Body::Nested(heaped(&resources()))),
+        ("top.bin", Body::Raw(b"top".to_vec())),
+    ]);
+    let (v, p) = sections(0x300, 0x100, 7);
+    let new = loose(&v, &p);
+    let (plan, out) = write(&parent, |w| {
+        w.add_with_dependencies(
+            &[0],
+            "maps/d.ydr",
+            Rpf9NewBody::Resource {
+                type_code: 0x02,
+                loose: new.clone(),
+            },
+            vec![NEW_KEY, KEYS[1]],
+        );
+    })
+    .unwrap();
+    assert_eq!(plan.tables_changed, 2);
+    let top = open(&out);
+    let child = top
+        .open_nested(&mut Cursor::new(&out[..]), &top.archive.entries[0], &keys())
+        .expect("the nested archive reopens");
+    let d = index_of(&child, "maps/d.ydr");
+    assert_eq!(resource(&out, &child, d), sections_of(&new));
+    assert_eq!(dependencies(&child, d), Some(vec![KEYS[1], NEW_KEY]));
+    let a = index_of(&child, "maps/a.ydr");
+    assert_eq!(dependencies(&child, a), Some(vec![KEYS[0], KEYS[2]]));
+
+    // An archive with no dependency lists has no table to set one against.
+    assert!(write(&sample(), |w| {
+        w.add_with_dependencies(&[], "x.txt", Rpf9NewBody::Chunked(beta()), vec![KEYS[0]]);
+    })
     .is_err());
+}
+
+/// Entry `e`'s chunk-table mode, the top byte of its `0xe0c1` cell.
+fn chunk_mode(mount: &Gta6Mount, e: usize) -> Option<u8> {
+    let table = Table::from_toc(&mount.archive.toc).unwrap();
+    let k = table.col(GROUP_CHUNK_RECORD, 8)?;
+    table.cell(e, k).map(|cell| cell[7])
+}
+
+#[test]
+fn a_body_written_into_a_mode_4_table_takes_mode_4() {
+    let res = resources();
+    let (v, p) = sections(0x900, 0x2_0040, 9);
+    let new = loose(&v, &p);
+    let edits = |w: &mut Rpf9ArchiveWriter| {
+        w.replace_resource(&[0], new.clone(), None);
+        w.add(
+            &[],
+            "maps/d.ydr",
+            Rpf9NewBody::Resource {
+                type_code: 0x02,
+                loose: new.clone(),
+            },
+        );
+    };
+    // Each written row takes the mode the table's rows take.
+    for mode in [MODE4, ROW20_CHUNK_MODE] {
+        let file = heaped_in(&res, mode);
+        assert_eq!(chunk_mode(&open(&file), 1), Some(mode));
+        let (_, out) = write(&file, edits).unwrap();
+        let mount = open(&out);
+        for name in ["maps/a.ydr", "maps/d.ydr"] {
+            let e = index_of(&mount, name);
+            assert_eq!(chunk_mode(&mount, e), Some(mode), "{name} in mode {mode}");
+            assert_eq!(resource(&out, &mount, e), sections_of(&new));
+            let chunks = entry_chunks(&mount.archive, e).unwrap().unwrap();
+            let inflated: u64 = chunks.iter().map(|c| u64::from(c.inflated)).sum();
+            assert_eq!(inflated, 0x900 + 0x2_0040);
+        }
+        assert_eq!(
+            chunk_mode(&mount, index_of(&mount, "maps/b.ytd")),
+            Some(mode)
+        );
+    }
+
+    // A 24-byte row's chunked body in a mode-4 table, replaced and added.
+    let file = archive_in(
+        &[
+            ("alpha.bin", Body::Raw(alpha())),
+            ("beta.txt", Body::Chunked(beta())),
+        ],
+        MODE4,
+    );
+    let body = text("mode four text ", 90_000);
+    let (_, out) = write(&file, |w| {
+        w.replace(&[1], body.clone());
+        w.add(&[], "added.txt", Rpf9NewBody::Chunked(body.clone()));
+    })
+    .unwrap();
+    let mount = open(&out);
+    for name in ["beta.txt", "added.txt"] {
+        let e = index_of(&mount, name);
+        assert_eq!(chunk_mode(&mount, e), Some(MODE4), "{name}");
+        assert_eq!(chunked(&out, &mount, e), body);
+    }
 }
 
 #[test]

@@ -9,13 +9,14 @@
 
 #![cfg(feature = "gta6")]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use or_io::container::rpf::{
-    Gta6Entry, Gta6Mount, GtaViKeys, RpfArchive, RpfVersion, GTA6_EXE_ENV, GTA6_SNAPSHOT_ENV,
+    read_rpf9_body, Gta6Entry, Gta6Mount, GtaViKeys, RpfArchive, RpfVersion, GTA6_EXE_ENV,
+    GTA6_SNAPSHOT_ENV, RPF9_SLOT,
 };
 use or_test_support::skip_install;
 
@@ -57,8 +58,18 @@ struct Tally {
     nested_listed: usize,
     nested_opened: usize,
     bodies: usize,
+    /// Clear bodies the content reader opened at their place, of those tried: by row shape.
+    headerless: (usize, usize),
+    sized: (usize, usize),
+    /// Files listed by the kind their row names, and those whose row no table names.
+    kinds: BTreeMap<&'static str, usize>,
+    kindless: usize,
     failures: Vec<String>,
 }
+
+/// Rows of the whole build whose class byte no table names: two of `0x0E` and one of `0x60`,
+/// counted over every top-level and nested table (round 33).
+const KINDLESS_ROWS: usize = 3;
 
 /// Compare `archive` with the same table mounted by the GTA VI reader: one file per entry, the
 /// nested archives named as archives, and a sample of bodies equal.
@@ -98,6 +109,10 @@ fn compare(
         let Some(row) = rows.get(&binary.file_offset) else {
             continue;
         };
+        match archive.rpf9_kind(index) {
+            Some(kind) => *t.kinds.entry(kind.label).or_default() += 1,
+            None => t.kindless += 1,
+        }
         let begins = mount.entry_begins_archive(file, row).unwrap_or(false);
         if begins != node.name().ends_with(".rpf") {
             t.failures
@@ -107,9 +122,12 @@ fn compare(
             nested.push(index);
             continue;
         }
-        // The place a caller opens the body at is the row's own: its absolute offset and entry.
+        // The place a caller opens the body at is the row's own entry, and its body's start: the
+        // row's start, past the 16-byte zero slot where the row is a headerless resource's.
+        let headerless = row.stored.is_none();
+        let slot = if headerless { RPF9_SLOT } else { 0 };
         let placed = (archive.rpf9_place(index)).map(|p| (p.base, p.offset, p.entry));
-        let stated = (mount.absolute_start(row)).map(|at| (mount.base, at, row.index));
+        let stated = (mount.absolute_start(row)).map(|at| (mount.base, at + slot, row.index));
         if placed != stated {
             t.failures
                 .push(format!("{what}: entry {index} is placed off its row"));
@@ -118,6 +136,16 @@ fn compare(
             continue;
         }
         compared += 1;
+        // A clear body is opened by the reader that tells a body's kind from its bytes at its place.
+        if let (Some((_, at, _)), None) = (placed, row.cipher) {
+            let found = read_rpf9_body(&mut *file, at, u64::MAX).is_ok();
+            let count = match headerless {
+                true => &mut t.headerless,
+                false => &mut t.sized,
+            };
+            count.0 += usize::from(found);
+            count.1 += 1;
+        }
         let through_archive = archive.read_entry(index).map_err(|e| e.to_string());
         let through_reader =
             (mount.read_entry_decrypted(&mut *file, row, keys)).map_err(|e| e.to_string());
@@ -195,6 +223,14 @@ fn every_archive_of_the_build_opens_as_a_tree_and_reads_as_the_gta_vi_reader_doe
         t.bodies,
         t.failures.len()
     );
+    println!(
+        "opened by the content reader at their place: {} of {} headerless, {} of {} sized",
+        t.headerless.0, t.headerless.1, t.sized.0, t.sized.1
+    );
+    println!("files by kind ({} with none):", t.kindless);
+    for (kind, count) in &t.kinds {
+        println!("  {kind}: {count}");
+    }
     for failure in t.failures.iter().take(20) {
         eprintln!("  {failure}");
     }
@@ -212,4 +248,12 @@ fn every_archive_of_the_build_opens_as_a_tree_and_reads_as_the_gta_vi_reader_doe
         "nested archives open through open_nested"
     );
     assert!(t.bodies > 0, "bodies read through RpfArchive");
+    assert!(
+        t.kindless <= KINDLESS_ROWS,
+        "every sampled row has a kind but the build's {KINDLESS_ROWS} of a class no table names"
+    );
+    assert!(
+        t.kinds.get("archive").copied().unwrap_or(0) == t.nested_listed,
+        "every nested archive is of the archive kind"
+    );
 }

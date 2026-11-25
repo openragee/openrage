@@ -19,8 +19,10 @@
 //! A headerless resource (a 20-byte row) is replaced by its loose form, stored as the zero slot and
 //! its chunks under a row and a mode-2 chunk table authored from them. Its `0xd07a` and `0x354d`
 //! rows, which nothing in the body states, are carried; its dependency list is carried unless the
-//! caller names its keys. An added entry goes where its name32 (else its name64) keeps the entries
-//! ascending, as every measured table holds them, and gets neither of those two rows.
+//! caller names its keys, and a key the type-4 table lacks is added to it. An added entry goes where
+//! its name32 (else its name64) keeps the entries ascending, as every measured table holds them, and
+//! gets neither of those two rows. A body written into a table whose chunk tables take mode 4 takes
+//! mode 4 too, as no measured table mixes it with another.
 
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
@@ -34,7 +36,6 @@ use super::gta6_archive::{
     GROUP_NAME32, GROUP_NAME64,
 };
 use super::gta6_chunk_table::{author, Chunk, Table as ChunkTable};
-use super::gta6_dependencies::{self, GROUP_DEPENDENCIES};
 use super::gta6_form_h;
 use super::gta6_mount::{open_at, Gta6Mount};
 use super::gta6_write::Rpf9Builder;
@@ -52,6 +53,10 @@ use table::Table;
 mod build;
 pub use build::{build, Rpf9IndexKey};
 use build::{column, insert_entry, set_new_body};
+
+#[path = "gta6_container_deps.rs"]
+mod deps;
+use deps::{restate_in_mode4, set_dependencies, takes_mode4, MODE4};
 
 /// The inflated size of one chunk of a compressed body.
 const CHUNK: usize = 0x10000;
@@ -175,6 +180,7 @@ enum Op {
     Add {
         name: String,
         body: Rpf9NewBody,
+        dependencies: Option<Vec<u64>>,
     },
 }
 
@@ -228,11 +234,33 @@ impl Rpf9ArchiveWriter {
 
     /// Add an entry `name` holding `body` to the archive at `archive`, empty for the top level.
     pub fn add(&mut self, archive: &[u32], name: &str, body: Rpf9NewBody) -> &mut Self {
+        self.push_add(archive, name, body, None)
+    }
+
+    /// As [`add`](Self::add), the new entry's dependency list the keys `dependencies`.
+    pub fn add_with_dependencies(
+        &mut self,
+        archive: &[u32],
+        name: &str,
+        body: Rpf9NewBody,
+        dependencies: Vec<u64>,
+    ) -> &mut Self {
+        self.push_add(archive, name, body, Some(dependencies))
+    }
+
+    fn push_add(
+        &mut self,
+        archive: &[u32],
+        name: &str,
+        body: Rpf9NewBody,
+        dependencies: Option<Vec<u64>>,
+    ) -> &mut Self {
         self.edits.push((
             archive.to_vec(),
             Op::Add {
                 name: name.to_owned(),
                 body,
+                dependencies,
             },
         ));
         self
@@ -318,6 +346,7 @@ fn plan_archive<R: Read + Seek>(
     }
 
     let mut table = Table::from_toc(&archive.toc)?;
+    let mode4 = takes_mode4(&table);
     let mount = Gta6Mount { base, archive };
     let entries = table.index.len();
     let mut direct = Vec::new();
@@ -326,8 +355,15 @@ fn plan_archive<R: Read + Seek>(
     for &(path, op) in edits {
         // An add names the archive it goes into, every other edit an entry.
         let (&head, rest) = match (path.split_first(), op) {
-            (None, Op::Add { name, body }) => {
-                adds.push((name.as_str(), body));
+            (
+                None,
+                Op::Add {
+                    name,
+                    body,
+                    dependencies,
+                },
+            ) => {
+                adds.push((name.as_str(), body, dependencies.as_deref()));
                 continue;
             }
             (None, _) => return Err(bad("an edit names no entry")),
@@ -379,11 +415,19 @@ fn plan_archive<R: Read + Seek>(
         match op {
             Op::Remove => removed.push(e),
             Op::Rename(name) => rename(&mut table, e, name)?,
-            Op::Replace(body) => replace(&mut table, &mount, src, keys, e, body)?,
+            Op::Replace(body) => replace(&mut table, &mount, src, keys, e, body, mode4)?,
             Op::ReplaceResource {
                 loose,
                 dependencies,
-            } => replace_resource(&mut table, &mount, src, e, loose, dependencies.as_deref())?,
+            } => replace_resource(
+                &mut table,
+                &mount,
+                src,
+                e,
+                loose,
+                dependencies.as_deref(),
+                mode4,
+            )?,
             Op::Add { .. } => return Err(bad("an add names an archive, not an entry")),
         }
     }
@@ -396,9 +440,15 @@ fn plan_archive<R: Read + Seek>(
     for &e in removed.iter().rev() {
         table.remove(e);
     }
-    for (name, body) in adds {
+    for (name, body, dependencies) in adds {
         let e = insert_entry(&mut table, name)?;
         set_new_body(&mut table, e, body)?;
+        if mode4 {
+            restate_in_mode4(&mut table, e)?;
+        }
+        if let Some(keys) = dependencies {
+            set_dependencies(&mut table, e, keys)?;
+        }
     }
 
     // The table's length does not depend on the starts it states.
@@ -588,7 +638,8 @@ fn rename(table: &mut Table, e: usize, name: &str) -> Result<()> {
 }
 
 /// Replace entry `e`'s body: a chunk-record entry is stored as 64 KiB zlib chunks with an authored
-/// chunk table, any other 24-byte row raw. A new body equal to the old one changes nothing.
+/// chunk table, in mode 4 where the table's take it, any other 24-byte row raw. A new body equal to
+/// the old one changes nothing.
 fn replace<R: Read + Seek>(
     table: &mut Table,
     mount: &Gta6Mount,
@@ -596,6 +647,7 @@ fn replace<R: Read + Seek>(
     keys: &GtaViKeys,
     e: usize,
     body: &[u8],
+    mode4: bool,
 ) -> Result<()> {
     if table
         .col(GROUP_ENTRY_ROW_20, 20)
@@ -631,7 +683,8 @@ fn replace<R: Read + Seek>(
     }
     let stored_bytes = match chunked {
         Some(k) => {
-            let (bytes, u1, words) = stored_chunked(body)?;
+            let mode = if mode4 { MODE4 } else { ROW24_CHUNK_MODE };
+            let (bytes, u1, words) = stored_chunked_in(body, mode)?;
             table.set_chunks(e, k, u1, &words);
             bytes
         }
@@ -671,9 +724,9 @@ fn changed_clear(table: &mut Table, e: usize) {
     }
 }
 
-/// Replace headerless resource `e` with `loose`: its row and mode-2 chunk table authored from the
-/// chunks, its dependency list set from `dependencies` where given. The same stored body and row
-/// change nothing.
+/// Replace headerless resource `e` with `loose`: its row and chunk table (mode 2, or 4 where the
+/// table's take it) authored from the chunks, its dependency list set from `dependencies` where
+/// given. The same stored body and row change nothing.
 fn replace_resource<R: Read + Seek>(
     table: &mut Table,
     mount: &Gta6Mount,
@@ -681,6 +734,7 @@ fn replace_resource<R: Read + Seek>(
     e: usize,
     loose: &[u8],
     dependencies: Option<&[u64]>,
+    mode4: bool,
 ) -> Result<()> {
     let (c, r) = table
         .col(GROUP_ENTRY_ROW_20, 20)
@@ -694,7 +748,7 @@ fn replace_resource<R: Read + Seek>(
     let (start, extent) = table.extent(c, r);
     let (mut row, stored, chunks) = headerless(LE::read_u32(&old[16..]), loose)?;
     if let Some(keys) = dependencies {
-        set_dependencies(table, &mount.archive.toc, e, keys)?;
+        set_dependencies(table, e, keys)?;
     }
     row[12..16].copy_from_slice(&old[12..16]);
     let mut held = vec![0u8; stored.len()];
@@ -707,7 +761,7 @@ fn replace_resource<R: Read + Seek>(
     }
     let k = column(table, GROUP_CHUNK_RECORD, 8, "chunk-record")?;
     let (u1, words) = author(&ChunkTable {
-        mode: ROW20_CHUNK_MODE,
+        mode: if mode4 { MODE4 } else { ROW20_CHUNK_MODE },
         chunks,
     })?;
     table.set_chunks(e, k, u1, &words);
@@ -753,46 +807,6 @@ fn headerless(type_code: u32, loose: &[u8]) -> Result<([u8; 20], Vec<u8>, Vec<Ch
     Ok((row, stored, written.chunks))
 }
 
-/// Set entry `e`'s dependency list to `keys`, each a key the archive's type-4 table holds; no keys
-/// leaves it no row. A key no other list names stays in the table.
-fn set_dependencies(table: &mut Table, toc: &Rpf9Toc, e: usize, keys: &[u64]) -> Result<()> {
-    let deps = gta6_dependencies::read(toc)?
-        .ok_or_else(|| bad("the archive has no dependency lists to set an entry's in"))?;
-    let c = column(table, GROUP_DEPENDENCIES, 8, "dependency-list")?;
-    let mut set = keys.to_vec();
-    set.sort_unstable();
-    set.dedup();
-    if set.is_empty() {
-        table.set_cell(e, c, None, Vec::new());
-        return Ok(());
-    }
-    let mut indices = Vec::with_capacity(set.len() * usize::from(deps.width));
-    for key in &set {
-        let i = deps.keys.binary_search(key).map_err(|_| {
-            bad(format!(
-                "key {key:#018x} is not in the archive's dependency table, and growing that \
-                 table lays the signed metadata out anew, which this writer does not do"
-            ))
-        })?;
-        match deps.width {
-            1 => indices.push(i as u8),
-            2 => indices.extend_from_slice(&(i as u16).to_le_bytes()),
-            _ => indices.extend_from_slice(&(i as u32).to_le_bytes()),
-        }
-    }
-    // The offset word is kept, as a table rewritten in place keeps the slice where it was.
-    let mut cell = table
-        .cell(e, c)
-        .map(<[u8]>::to_vec)
-        .unwrap_or_else(|| vec![0; 8]);
-    LE::write_u32(
-        &mut cell[4..],
-        (u32::from(deps.width) << 29) | set.len() as u32,
-    );
-    table.set_cell(e, c, Some(cell), indices);
-    Ok(())
-}
-
 /// Whether laying `toc` out anew reproduces it byte for byte, as an edit adding a row needs.
 pub fn relays_identically(toc: &Rpf9Toc) -> Result<bool> {
     Ok(Table::from_toc(toc)?.faithful)
@@ -826,11 +840,13 @@ fn old_body<R: Read + Seek>(
 /// `body` stored as chunks under a mode-3 table: the stored bytes, the cell's `u1` and the
 /// descriptors; refused where the reader would not read it back.
 fn stored_chunked(body: &[u8]) -> Result<(Vec<u8>, u32, Vec<u64>)> {
+    stored_chunked_in(body, ROW24_CHUNK_MODE)
+}
+
+/// As [`stored_chunked`], under a table of `mode`.
+fn stored_chunked_in(body: &[u8], mode: u8) -> Result<(Vec<u8>, u32, Vec<u64>)> {
     let (bytes, chunks) = chunk_body(body)?;
-    let (u1, words) = author(&ChunkTable {
-        mode: ROW24_CHUNK_MODE,
-        chunks,
-    })?;
+    let (u1, words) = author(&ChunkTable { mode, chunks })?;
     check_reads_back(&bytes, body)?;
     Ok((bytes, u1, words))
 }

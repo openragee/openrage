@@ -148,7 +148,7 @@ fn object(v: &Bytes, from: usize, ev: &Event) -> Result<Option<Object>> {
 
 /// Data of its own for the buffer of the object the event `event` of the effect rule `effect`
 /// names, copied past the physical section's end; where it starts, or `None` with no buffer.
-pub(super) fn data_copied(
+pub(in super::super) fn data_copied(
     body: &mut Rpf9Sections,
     effect: usize,
     event: usize,
@@ -177,7 +177,7 @@ pub(super) fn data_copied(
 
 /// The object the event `ev` at `from` names laid out for its copy at `copy`, the copy's +0x60
 /// aimed at it; its buffer's data is at `data`.
-pub(super) fn object_copied(
+pub(in super::super) fn object_copied(
     t: &mut Tail,
     v: &Bytes,
     (from, ev): (usize, &Event),
@@ -209,9 +209,26 @@ pub(super) fn object_copied(
 pub(super) fn copy_holds(body: &Rpf9Sections, effect: usize, event: usize) -> Result<()> {
     let list = read_particle_effects(&body.virtual_section, None)?;
     let count = list.effects.get(effect).map_or(0, |r| r.events.len());
+    own_copy(
+        body,
+        &list,
+        (effect, event),
+        (effect, count.saturating_sub(1)),
+    )
+}
+
+/// Refused unless the event `copy` of `list`, a copy of the event `event` of the effect rule
+/// `effect`, holds an object of its own that reads by the same rules, its buffer's data its own
+/// and its source's; `copy` is an effect rule and an event's place in it.
+pub(in super::super) fn own_copy(
+    body: &Rpf9Sections,
+    list: &ParticleEffects,
+    (effect, event): (usize, usize),
+    copy: (usize, usize),
+) -> Result<()> {
     sections(&body.virtual_section, Some(&body.physical[..]), |v, p| {
-        let (from, ev) = event_at(&v, &list, effect, event)?;
-        let (to, copied) = event_at(&v, &list, effect, count.saturating_sub(1))?;
+        let (from, ev) = event_at(&v, list, effect, event)?;
+        let (to, copied) = event_at(&v, list, copy.0, copy.1)?;
         let (theirs, ours) = (object(&v, from, ev)?, object(&v, to, copied)?);
         let data = |o: Option<Object>| match o.and_then(|o| o.buffer) {
             Some((_, at, len)) => p.get(WHAT, at, len).map(Some),

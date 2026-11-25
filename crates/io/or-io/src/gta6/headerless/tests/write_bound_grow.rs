@@ -449,9 +449,9 @@ fn a_copied_child_is_the_composite_s_last_at_its_place_with_a_leaf_of_its_own() 
 
     let mut lone = read_bound(&two_triangles().0.virtual_section).expect("it reads");
     geometry_of(&mut lone).bvh = None;
-    assert!(
-        copy_bound_child(&mut lone, 0).is_err(),
-        "a geometry with no BVH is not copied"
+    assert_eq!(
+        copy_bound_child(&mut lone, 0).expect("a geometry with no BVH is copied"),
+        1
     );
 }
 
@@ -603,3 +603,6 @@ fn a_child_edit_is_refused_where_a_drawable_s_bound_is_not_laid_out_as_a_lone_bo
 
 #[path = "write_bound_runs.rs"]
 mod write_bound_runs;
+
+#[path = "write_bound_plain_copy.rs"]
+mod write_bound_plain_copy;

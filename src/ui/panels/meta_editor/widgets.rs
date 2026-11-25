@@ -171,6 +171,7 @@ fn draw_value(
         FieldType::Bool => draw_bool(ui, value, dirty),
         FieldType::U8 | FieldType::U16 | FieldType::U32 | FieldType::U64 => {
             draw_uint(ui, field, value, dirty);
+            super::text_names::draw(ui, ctx, value);
         }
         FieldType::S8 | FieldType::S16 | FieldType::S32 | FieldType::S64 => {
             draw_int(ui, field, value, dirty);

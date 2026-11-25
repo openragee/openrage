@@ -77,7 +77,7 @@ struct Out {
 
 /// A stage that writes the five targets: the colour of its texture by its constant, a normal
 /// along +Z packed as two 12-bit numbers over three bytes, and noughts.
-const PIXEL: &str = "
+pub(super) const PIXEL: &str = "
 @group(1) @binding(0) var<uniform> tint: vec4<f32>;
 @group(1) @binding(1) var diffuse: texture_2d<f32>;
 @group(1) @binding(2) var diffuse_sampler: sampler;
@@ -295,14 +295,15 @@ fn a_stage_s_bindings_are_read_with_their_group_and_a_light_of_no_length_points_
         .all(|(r, count)| r.group == 0 && count.is_none()));
     // A way of no length is the way up.
     let lit = |towards: Vec3| {
-        light_bytes(&super::Lighting {
+        let lighting = super::Lighting {
             view_proj: Mat4::IDENTITY,
             sky: Sky {
                 towards,
                 ..overhead()
             },
             camera: Vec3::ONE,
-        })
+        };
+        light_bytes(&lighting, false)
     };
     assert_eq!(lit(Vec3::ZERO), lit(Vec3::Z));
 }
@@ -316,6 +317,7 @@ fn overhead() -> Sky {
         ground: Vec3::ZERO,
         exposure: 1.0,
         tone: None,
+        scene: Scene::default(),
     }
 }
 
@@ -344,7 +346,7 @@ fn the_built_in_sky_has_a_sun_by_day_a_dim_moon_by_night_and_less_of_both_under_
 #[test]
 fn the_developer_s_aids_are_words_separated_by_commas() {
     let aids = Aids::parse(
-        "target=3, pixel=C:/a b/p.wgsl,plain-device,unknown,mesh=m.wgsl,record=r.bin,unguarded",
+        "target=3, pixel=C:/a b/p.wgsl,plain-device,unknown,mesh=m.wgsl,record=r.bin,unguarded,meter=frame",
     );
     assert_eq!(
         aids,
@@ -355,9 +357,11 @@ fn the_developer_s_aids_are_words_separated_by_commas() {
             record: Some("r.bin".into()),
             plain_device: true,
             unguarded: true,
+            whole_frame: true,
         }
     );
     assert_eq!(Aids::parse(""), Aids::default());
+    assert!(!Aids::parse("meter=model").whole_frame);
 }
 
 /// The pixel stage with `more` constant buffers beside its own, each read, declared as bound
@@ -423,4 +427,69 @@ fn a_stage_with_more_constant_buffers_than_a_default_device_gives_draws_once_the
     assert!(all_bound.is_err(), "the device took {more} more buffers");
     let (two_less, error) = refused(&device, || prepared(&|n| n >= 2));
     assert_eq!((two_less, error), (Ok(1), None));
+}
+
+#[test]
+fn every_entry_of_an_array_is_bound_and_its_last_is_blank_as_an_unfilled_one_is() {
+    let image = |side: u32| {
+        Some(Arc::new(Image {
+            width: side,
+            height: side,
+            rgba: vec![0; (side * side * 4) as usize],
+            srgb: false,
+        }))
+    };
+    // More images than the array has entries, and one entry among them that none fills.
+    let mut images: Vec<_> = (1..=300).map(image).collect();
+    images[7] = None;
+    let side = |entry, entries| image_at(&images, entry, entries).map(|image| image.width);
+    assert_eq!(side(0, Some(256)), Some(1));
+    assert_eq!(side(7, Some(256)), None);
+    assert_eq!(side(254, Some(256)), Some(255));
+    assert_eq!(
+        side(255, Some(256)),
+        None,
+        "the entry any past the array is"
+    );
+    // A texture bound alone is its image, and a short list leaves the rest blank.
+    assert_eq!(side(0, None), Some(1));
+    assert_eq!(image_at(&images[..2], 2, Some(256)).map(|i| i.width), None);
+}
+
+#[test]
+fn a_pass_whose_mesh_stage_nests_loops_is_refused_at_build_on_an_amd_card_under_direct3d_12() {
+    use crate::instance::{made_up, AMD};
+    use wgpu::Backend::{Dx12, Vulkan};
+    let mesh = |work: &str| {
+        format!(
+            "@vertex fn main(@builtin(vertex_index) at: u32) -> @builtin(position) vec4<f32> {{
+                var sum = 0u;
+                {work}
+                return vec4<f32>(f32(sum));
+            }}"
+        )
+    };
+    let nested =
+        mesh("for (var i = 0u; i < at; i++) { for (var j = 0u; j < i; j++) { sum += j; } }");
+    let pixel = "@fragment fn main() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }";
+    let stages = (Arc::new(wgsl(&nested)), Arc::new(wgsl(pixel)));
+    let amd = made_up(AMD, 0x1681, Dx12);
+    let refused = stages_drawn(&amd, &stages, &Aids::default()).err();
+    let why = refused.expect("the pass is refused");
+    assert!(why.contains("AMD") && why.contains("Vulkan"), "{why}");
+    // The same card under Vulkan builds it.
+    let vulkan = made_up(AMD, 0x1681, Vulkan);
+    assert!(stages_drawn(&vulkan, &stages, &Aids::default()).is_ok());
+    // A mesh stage a developer's aid puts in its place is the one the driver is handed.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("mesh.wgsl");
+    std::fs::write(&file, mesh("sum = at;")).unwrap();
+    let aided = Aids {
+        mesh: Some(file.to_string_lossy().into_owned()),
+        ..Aids::default()
+    };
+    assert!(stages_drawn(&amd, &stages, &aided).is_ok());
+    let plain = (Arc::new(wgsl(&mesh("sum = at;"))), Arc::clone(&stages.1));
+    std::fs::write(&file, &nested).unwrap();
+    assert!(stages_drawn(&amd, &plain, &aided).is_err());
 }

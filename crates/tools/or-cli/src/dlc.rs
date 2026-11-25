@@ -15,6 +15,7 @@ pub fn run(args: &[String]) -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("create") => cmd_create(&args[1..]),
         Some("inspect") => cmd_inspect(&args[1..]),
+        Some("create-gta6") => crate::gta6_dlc::run(&args[1..]),
         Some("-h") | Some("--help") | Some("help") => {
             print_usage();
             return ExitCode::SUCCESS;

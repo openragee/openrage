@@ -36,7 +36,9 @@ pub(super) fn defaults(edit: &mut GeometryEdit, g: &Geometry) -> Vec<u8> {
             filled.insert(c);
         }
     }
-    for c in (28..=32).filter(|c| declared(*c)) {
+    // Channel 33 is texcoord 5 only in its 4-byte form; its 8-byte form derives from the positions.
+    let texcoord = |c: u8| c < 33 || g.channels.iter().any(|k| k.index == 33 && k.code == 0x26);
+    for c in (28..=33).filter(|c| declared(*c) && texcoord(*c)) {
         if fill(&mut edit.uvs, c, [0.0; 2], n) {
             filled.insert(c);
         }
@@ -136,6 +138,21 @@ mod tests {
         assert_eq!(edit.uv_tangents, [(9, vec![TANGENT; 4])]);
         assert_eq!(edit.joints, [(20, vec![[0; 4]; 4])]);
         assert_eq!(edit.weights, [(16, vec![WHOLE; 4])]);
+    }
+
+    #[test]
+    fn texcoord_5_s_four_byte_form_is_filled_and_channel_33_s_eight_byte_form_is_not() {
+        let mut g = declared();
+        g.channels.push(channel(33, 0x26, 4));
+        let mut edit = four();
+        assert!(defaults(&mut edit, &g).contains(&33));
+        assert!(edit.uvs.contains(&(33, vec![[0.0; 2]; 4])));
+
+        // The 8-byte form's lanes are derived from the positions, so no value stands in for them.
+        g.channels.last_mut().expect("channel 33").code = 0x10;
+        let mut edit = four();
+        assert!(!defaults(&mut edit, &g).contains(&33));
+        assert!(edit.uvs.iter().all(|(c, _)| *c != 33));
     }
 
     #[test]

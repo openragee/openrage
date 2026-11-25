@@ -913,6 +913,9 @@ msgstr "프로젝트의 무기를 기록할 수 없습니다"
 msgid "The world stopped on an internal error and was started again ({times} times so far)"
 msgstr "월드가 내부 오류로 멈춰 다시 시작되었습니다(지금까지 {times}번)"
 
+msgid "The world leaves out {maps} maps it stopped on as they came in"
+msgstr "들어올 때 멈춤을 일으킨 맵 {maps}개를 제외합니다"
+
 msgid "The world stopped on an internal error {times} times and is not started again: it stands as it was last drawn. Build the index again to start afresh."
 msgstr "월드가 내부 오류로 {times}번 멈춰 다시 시작하지 않습니다. 마지막으로 그려진 상태로 남습니다. 처음부터 다시 시작하려면 인덱스를 다시 만드세요."
 
@@ -12676,8 +12679,8 @@ msgstr[1] "{name}이라는 이름의 프레임 필터, 트랙 {count}개:"
 msgid "Track {track}: weight {weight}, group {group}, word at 0x2C {word}."
 msgstr "트랙 {track}: 가중치 {weight}, 그룹 {group}, 0x2C의 워드 {word}."
 
-msgid "Bone hash_{bone}: kind {kind}, flags {flags}, values {values}."
-msgstr "본 hash_{bone}: 종류 {kind}, 플래그 {flags}, 값 {values}."
+msgid "Bone {bone}: kind {kind}, flags {flags}, values {values}."
+msgstr "본 {bone}: 종류 {kind}, 플래그 {flags}, 값 {values}."
 
 msgid "An animation record named {name}, with settings for {count} skeleton bone."
 msgid_plural "An animation record named {name}, with settings for {count} skeleton bones."
@@ -14225,9 +14228,6 @@ msgstr "Scaleform 무비"
 msgid "EDUP, high entropy"
 msgstr "EDUP, 높은 엔트로피"
 
-msgid "This body starts with EDUP and its bytes after that are of high entropy with no structure found, so it is not read and no view shows it."
-msgstr "이 본문은 EDUP으로 시작하며 그 이후 바이트는 구조를 찾을 수 없는 높은 엔트로피이므로, 읽지 않으며 어떤 보기도 이를 표시하지 않습니다."
-
 msgid "The reader of this {what} does not read it: {e}"
 msgstr "이 {what}의 리더가 이를 읽지 못합니다: {e}"
 
@@ -14243,8 +14243,8 @@ msgstr "종류는 {kind}이고 {at}의 워드는 {word}입니다. 하위 절반�
 msgid "It lies on the height map tile of the same entry number in the nested archive beside its own; with no archive table, the scan's order of the two archives' bodies is their entry order."
 msgstr "자신의 아카이브 옆에 있는 중첩 아카이브에서 같은 항목 번호의 높이 맵 타일 위에 놓입니다. 아카이브 테이블이 없으므로, 스캔에서 두 아카이브의 본문을 찾은 순서가 곧 항목 순서입니다."
 
-msgid "A GTA VI MoVE network at version 0x13 whose name hash is hash_{hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
-msgstr "이름 해시가 hash_{hash}인 버전 0x13의 GTA VI MoVE 네트워크: 항목 {a}개, {b}개, {d}개의 목록, 이어서 유형 {kind}, 인덱스 {index}, ID {id}의 루트 노드."
+msgid "A GTA VI MoVE network at version 0x13 whose name hash is {hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
+msgstr "이름 해시가 {hash}인 버전 0x13의 GTA VI MoVE 네트워크: 항목 {a}개, {b}개, {d}개의 목록, 이어서 유형 {kind}, 인덱스 {index}, ID {id}의 루트 노드."
 
 msgid "Its {nodes} nodes tile the body from the root to its end, with {tails} tails no offset names between them. A kind's name is GTA V's at the same place in GTA V's list, which is not confirmed."
 msgstr "노드 {nodes}개가 루트부터 끝까지 본문을 빈틈없이 채우며, 그 사이에 어떤 오프셋도 가리키지 않는 꼬리가 {tails}개 있습니다. 종류의 이름은 GTA V 목록의 같은 위치에 있는 GTA V의 이름이며, 확인되지 않았습니다."
@@ -14376,8 +14376,8 @@ msgstr "요소 {index}: {a}, {b}, {c}, {d}."
 msgid "The expression reader does not read this body: {e}"
 msgstr "표현식 리더가 이 본문을 읽지 못합니다: {e}"
 
-msgid "A GTA VI expression set of key hash_{key}, whose name is not known."
-msgstr "키가 hash_{key}인 GTA VI 표현식 세트이며, 이름은 알 수 없습니다."
+msgid "A GTA VI expression set of key {key}."
+msgstr "키가 {key}인 GTA VI 표현식 세트입니다."
 
 msgid "It reads {count} track: the facial controls, or bones, a clip carries."
 msgid_plural "It reads {count} tracks: the facial controls, or bones, a clip carries."
@@ -15268,10 +15268,10 @@ msgstr "GTA VI의 오브젝트 트리 리더가 이 본문을 읽지 못합니�
 msgid "A GTA VI table of {items} objects in {trees} trees, of {types} types. Each tree's root is keyed by the 32-bit name hash of a model's name, and an object points at later objects of its tree by their offsets. What the objects' fields hold and what the type tags name are not known."
 msgstr "유형 {types}개, 트리 {trees}개에 걸친 오브젝트 {items}개의 GTA VI 테이블입니다. 각 트리의 루트는 모델 이름의 32비트 이름 해시를 키로 하며, 오브젝트는 같은 트리의 이후 오브젝트를 오프셋으로 가리킵니다. 오브젝트의 필드가 무엇을 담고 있는지와 유형 태그가 무엇을 가리키는지는 알 수 없습니다."
 
-msgid "hash_{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
-msgid_plural "hash_{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
-msgstr[0] "hash_{key}: 유형 {tag}의 루트, 트리에 단독으로 있음. [{children}]을(를) 가리킵니다"
-msgstr[1] "hash_{key}: 유형 {tag}의 루트와 트리 안의 오브젝트 {count}개. [{children}]을(를) 가리킵니다"
+msgid "{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
+msgid_plural "{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
+msgstr[0] "{key}: 유형 {tag}의 루트, 트리에 단독으로 있음. [{children}]을(를) 가리킵니다"
+msgstr[1] "{key}: 유형 {tag}의 루트와 트리 안의 오브젝트 {count}개. [{children}]을(를) 가리킵니다"
 
 msgid "16 entries {entries}"
 msgstr "항목 16개 {entries}"
@@ -15466,11 +15466,11 @@ msgid_plural "{group}: {count} tracks"
 msgstr[0] "{group}: 트랙 {count}개"
 msgstr[1] "{group}: 트랙 {count}개"
 
-msgid "{group}: hash_{id} {word} ({at} of {total}), {detail}"
-msgstr "{group}: hash_{id} {word} ({at}/{total}), {detail}"
+msgid "{group}: {id} {word} ({at} of {total}), {detail}"
+msgstr "{group}: {id} {word} ({at}/{total}), {detail}"
 
-msgid "Expression set hash_{key}, tracks read: {reads}, tracks written: {writes}"
-msgstr "표현식 세트 hash_{key}, 읽는 트랙: {reads}, 쓰는 트랙: {writes}"
+msgid "Expression set {key}, tracks read: {reads}, tracks written: {writes}"
+msgstr "표현식 세트 {key}, 읽는 트랙: {reads}, 쓰는 트랙: {writes}"
 
 msgid "Keyframed values GTA V's records have no member for are listed at the end, raw: a velocity's angle, a colour's last three unnamed values and a domain's fifth and sixth. A colour's first two unnamed values are shown as its minimum and maximum, which is inferred; the preview draws the maximum, as GTA V does, where the colour's word at +0x19C counts two or more colours in use, which is inferred too."
 msgstr "GTA V의 레코드에 멤버가 없는 키프레임 값은 끝에 원시 값으로 나열됩니다: 속도의 각도, 색상의 이름 없는 마지막 세 값, 도메인의 다섯 번째와 여섯 번째 값. 색상의 이름 없는 처음 두 값은 최솟값과 최댓값으로 표시되며 이는 추정입니다. 미리보기는 색상의 +0x19C 워드가 사용 중인 색을 둘 이상 셀 때 GTA V처럼 최댓값을 그리며, 이것도 추정입니다."
@@ -16625,6 +16625,7 @@ msgid "{count} pair"
 msgid_plural "{count} pairs"
 msgstr[0] "쌍 {count}개"
 msgstr[1] "쌍 {count}개"
+
 msgid "Set the GTA VI folder in Settings ▸ Games to fly through its world"
 msgstr "설정 ▸ 게임에서 GTA VI 폴더를 지정하면 그 월드를 비행하며 둘러볼 수 있습니다"
 
@@ -16849,8 +16850,8 @@ msgstr "아직 불러오는 중: {what}"
 msgid "the ground and fog under the water"
 msgstr "물 아래의 지면과 안개"
 
-msgid "The level from above: the brighter, the more maps; click to look over a place"
-msgstr "위에서 본 레벨: 밝을수록 맵이 많습니다. 클릭하면 그 장소를 내려다봅니다"
+msgid "The level from above: the water, the land by its height, and the brighter, the more maps; click to look over a place"
+msgstr "위에서 본 레벨: 물, 높이로 나타낸 땅, 밝을수록 맵이 많습니다. 클릭하면 그곳을 봅니다"
 
 msgid "Click to look north over a place, from 250 m south of it"
 msgstr "클릭하면 그 장소의 남쪽 250m에서 북쪽을 바라봅니다"
@@ -16897,6 +16898,12 @@ msgstr[1] "맵 {count}개의 조명"
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "이 문서의 문자열 이름에는 GTA VI 키 스냅샷이 필요합니다"
 
+msgid "Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan."
+msgstr "dxcompiler.dll을 OpenRage 옆, PATH, Windows SDK 어디에서도 찾지 못해 Direct3D 12가 FXC로 셰이더를 컴파일하고 있습니다. FXC는 GTA VI 셰이더 프로그램 일부를 거부하고 다른 일부에는 몇 분이 걸리므로, 이를 필요로 하는 모델은 머티리얼 보기로 그려집니다. dxcompiler.dll과 dxil.dll을 openrage.exe 옆에 두거나 WGPU_BACKEND=vulkan으로 OpenRage를 시작하세요."
+
+msgid "It casts no shadow: one of its surfaces reads the view at an offset the light's view cannot be copied to"
+msgstr "그림자를 드리우지 않습니다: 서피스 중 하나가 광원의 뷰를 복사할 수 없는 오프셋에서 뷰를 읽습니다"
+
 msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
 msgstr "GTA VI 아카이브에서 연 문서만 그 아카이브의 사본에 저장됩니다"
 
@@ -16930,26 +16937,89 @@ msgstr "GTA VI 문서의 편집을 그 항목 위치에, 읽어 온 아카이브
 msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
 msgstr "GTA VI 키가 없습니다: 설정 ▸ 게임에서 GTA VI 설치 폴더를 지정하면 그 실행 파일로 키를 풀 수 있습니다."
 
-msgid "resource"
-msgstr "리소스"
-
-msgid "media"
-msgstr "미디어"
-
-msgid "other class"
-msgstr "기타 클래스"
-
 msgid "{file} is listed by a scan without its table: {why}"
 msgstr "{file}은(는) 테이블 없이 검사로 나열됩니다: {why}"
 
-msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
-msgstr "설정에서 GTA VI 폴더를 선택하거나 그 아카이브 하나를 열면 테이블에서 아카이브를 나열합니다."
-
-msgid "Find by name, or by hash as 0x hex"
-msgstr "이름 또는 0x 16진수 해시로 찾기"
-
-msgid "Only the archives expanded are searched."
-msgstr "펼친 아카이브만 검색합니다."
-
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file}은(는) 항목 위치에 편집을 넣고 테이블은 읽은 그대로인 새 아카이브입니다."
+
+msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
+msgstr "EDUP 본문: 0x04의 개수 워드는 {count}이며, 8바이트 헤더 뒤에 {length}바이트의 페이로드가 이어집니다."
+
+msgid "With a count of zero, the word at 0x08 states {stated} bytes, and that many follow it."
+msgstr "개수가 0이면 0x08의 워드가 {stated}바이트를 나타내며, 그만큼의 바이트가 뒤따릅니다."
+
+msgid "Its payload is not read: no record width divides it by its count, and its bytes are of high entropy with no cipher record, so what it holds is not known and no view shows it."
+msgstr "페이로드는 읽지 않습니다: 어떤 레코드 너비로도 개수로 나누어떨어지지 않고, 바이트의 엔트로피가 높으며 암호 레코드도 없어 내용을 알 수 없고 어떤 보기에도 표시되지 않습니다."
+
+msgid "Replace the lower levels of detail too"
+msgstr "더 낮은 세부 수준도 바꾸기"
+
+msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
+msgstr "끄면 메시가 지오메트리를 지정하지 않은 세부 수준은 모델에 있는 그대로 남습니다. 켜면 그러한 각 지오메트리가, 둘 다 같은 셰이더로 그리는 곳에서 해당 모델과 위치의 0단계 메시를 받습니다."
+
+msgid "In {place}"
+msgstr "{place}에 있음"
+
+msgid "Look north over the square of 512 m where most maps of this place lie"
+msgstr "이 장소의 맵 대부분이 있는 512 m 사각형을 북쪽으로 내려다봅니다"
+
+msgid "entry {entry} is not in this table"
+msgstr "항목 {entry}은(는) 이 테이블에 없습니다"
+
+msgid "Real size"
+msgstr "실제 크기"
+
+msgid "Enciphered"
+msgstr "암호화됨"
+
+msgid "24 bytes"
+msgstr "24바이트"
+
+msgid "20 bytes, a headerless resource's"
+msgstr "20바이트, 헤더 없는 리소스의 행"
+
+msgid "Row"
+msgstr "행"
+
+msgid "Name hash"
+msgstr "이름 해시"
+
+msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
+msgstr "{file}은(는) GTA VI 아카이브이며 제자리에 쓰지 않습니다. 다른 이름으로 저장…은 편집 내용을 새 파일에 쓰지만, 서명이 테이블을 덮기 때문에 게임은 그 파일을 거부합니다."
+
+msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
+msgstr "{file}은(는) GTA VI 아카이브이며 제자리에 쓰지 않습니다. 따로 열면 다른 이름으로 저장…이 편집 내용을 새 파일에 쓰지만, 서명이 테이블을 덮기 때문에 게임은 그 파일을 거부합니다."
+
+msgid "{file} is a new archive with the tree's edits, which the game refuses because only its maker can sign the table they changed."
+msgstr "{file}은(는) 트리의 편집 내용을 담은 새 아카이브이며, 바뀐 테이블에 서명할 수 있는 것은 제작자뿐이므로 게임은 이를 거부합니다."
+
+msgid "Save the edits to a new archive, which the game refuses because its signature covers the table"
+msgstr "편집 내용을 새 아카이브에 저장 (서명이 테이블을 덮기 때문에 게임은 이를 거부합니다)"
+
+msgid "the tree is no GTA VI archive opened on its own"
+msgstr "이 트리는 따로 연 GTA VI 아카이브가 아닙니다"
+
+msgid "an archive of the tree is no longer open"
+msgstr "트리의 아카이브 하나가 더 이상 열려 있지 않습니다"
+
+msgid "entry {index} states no start"
+msgstr "항목 {index}에 시작 위치가 없습니다"
+
+msgid "{name} has no body of its own"
+msgstr "{name}에는 자체 본문이 없습니다"
+
+msgid "{name} is an archive moved in from another, which the GTA VI writer does not add"
+msgstr "{name}은(는) 다른 아카이브에서 옮겨 온 아카이브이며, GTA VI 쓰기 기능은 이를 추가하지 않습니다"
+
+msgid "{name} holds no bytes"
+msgstr "{name}에는 바이트가 없습니다"
+
+msgid "list {list}: {entries}"
+msgstr "목록 {list}: {entries}"
+
+msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the scan is searched for them: a cell the scan holds no body of has no special link into this one. Try again once the search ends."
+msgstr "이웃 셀 {cells}의 본문이 열려 있지 않고 스캔에서 찾는 중이므로 다각형 {polygon}은(는) 변경되지 않습니다. 스캔에 본문이 없는 셀은 이 셀로 향하는 특수 링크가 없습니다. 검색이 끝나면 다시 시도하세요."
+
+msgid "Add to the facial controls it writes"
+msgstr "쓰는 얼굴 컨트롤에 추가"

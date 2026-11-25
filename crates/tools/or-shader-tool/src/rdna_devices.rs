@@ -18,6 +18,7 @@ use or_io::gta5::shaders::sgd5_pack::vertex_pixel_passes;
 use or_renderer::game_shaders::bindings::arrayed;
 use or_renderer::game_shaders::pipeline::{entry_of, fragment_targets, vertex_streams};
 use or_renderer::instance;
+use or_shader_front::dxil::ShaderKind;
 use or_shader_front::rdna::link::{self, Linked};
 use or_shader_front::rdna::{self, RdnaError};
 use or_shader_front::rdna_bind;
@@ -42,10 +43,20 @@ pub struct Gpu {
     pub updates_64_bit_textures: bool,
 }
 
+/// Whether a device is opened on the adapter `info`: its name and backend hold `only`, whatever
+/// its case, and it is a CPU's where the `software` adapter alone was asked for.
+fn wanted(info: &wgpu::AdapterInfo, only: Option<&str>, software: bool) -> bool {
+    let named = format!("{} ({:?})", info.name, info.backend).to_lowercase();
+    only.is_none_or(|only| named.contains(&only.to_lowercase()))
+        && !(software && info.device_type != wgpu::DeviceType::Cpu)
+}
+
 /// Every adapter of every backend OpenRage draws through, the software ones too, in wgpu's order,
 /// Direct3D 12 compiling as the app's does; `only` keeps those whose name and backend hold that
-/// text, whatever its case. No OpenGL adapter is opened: OpenRage does not support it.
+/// text, whatever its case. No OpenGL adapter is opened: OpenRage does not support it. With
+/// [`instance::SOFTWARE_ADAPTER`] set, no device is opened on an adapter that is not a CPU's.
 pub fn open_all(only: Option<&str>) -> Vec<Gpu> {
+    let software = instance::software_asked();
     let backends = instance::backends_from_env().unwrap_or(wgpu::Backends::empty());
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
     descriptor.backends = backends;
@@ -60,10 +71,10 @@ pub fn open_all(only: Option<&str>) -> Vec<Gpu> {
                 return None;
             }
             seen.push(info.clone());
-            let named = format!("{} ({:?})", info.name, info.backend).to_lowercase();
-            if only.is_some_and(|only| !named.contains(&only.to_lowercase())) {
+            if !wanted(&info, only, software) {
                 return None;
             }
+            let named = format!("{} ({:?})", info.name, info.backend);
             // An experimental feature is refused unless the device is opened unsafely for it.
             let features = adapter.features() - wgpu::Features::all_experimental_mask();
             let limits = adapter.limits();
@@ -281,6 +292,27 @@ fn stated_layout(
     (layout, layouts)
 }
 
+/// What a check does with a pipeline a device creates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Draw {
+    /// Nothing.
+    #[default]
+    No,
+    /// A draw of no vertex or a dispatch of no group: the device checks the pipeline against all
+    /// it is bound and drawn with, and runs none of it.
+    Empty,
+    /// [`RUN_VERTICES`] vertices drawn as points, or one group dispatched, so the program runs
+    /// on the stand-ins: on a software adapter alone ([`RUN_ON_SOFTWARE`]).
+    Run,
+}
+
+/// The vertices a program that is run is drawn with.
+const RUN_VERTICES: u32 = 3;
+
+/// What a unit is skipped for where it was to be run and the adapter is no CPU's: a program fed
+/// stand-ins need not end, and a draw that does not end resets a hardware driver.
+pub const RUN_ON_SOFTWARE: &str = "a program is run on a software adapter alone";
+
 /// A pipeline the check created, and what a draw with it takes.
 enum Pipeline {
     Render {
@@ -304,8 +336,9 @@ fn create(
     device: &wgpu::Device,
     stages: &Stages,
     cache: Option<&wgpu::PipelineCache>,
-    state: bool,
+    draw: Draw,
 ) -> Result<Made, String> {
+    let state = draw != Draw::No;
     let shader = |module: &naga::Module| {
         device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
@@ -364,7 +397,15 @@ fn create(
                         attributes: &streams.vertex,
                     }],
                 },
-                primitive: wgpu::PrimitiveState::default(),
+                // Points where the program is run: a stage fed noughts gives three corners at one
+                // place, a triangle of which covers no pixel, and a point at the middle covers one.
+                primitive: wgpu::PrimitiveState {
+                    topology: match draw {
+                        Draw::Run => wgpu::PrimitiveTopology::PointList,
+                        _ => wgpu::PrimitiveTopology::TriangleList,
+                    },
+                    ..Default::default()
+                },
                 depth_stencil: (writes_depth || no_colour).then(|| wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
                     depth_write_enabled: Some(writes_depth),
@@ -453,7 +494,9 @@ fn stand_in(
         wgpu::BindingType::Buffer { ty, .. } => {
             let usage = match ty {
                 BufferBindingType::Uniform => wgpu::BufferUsages::UNIFORM,
-                BufferBindingType::Storage { .. } => wgpu::BufferUsages::STORAGE,
+                BufferBindingType::Storage { .. } => {
+                    wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC
+                }
             };
             let buffer = || {
                 device.create_buffer(&wgpu::BufferDescriptor {
@@ -510,18 +553,21 @@ fn stand_in(
     })
 }
 
+/// The bind groups of a draw, by their numbers, and the stand-ins each holds.
+struct Bound {
+    groups: Vec<(u32, wgpu::BindGroup)>,
+    held: Vec<Vec<Held>>,
+}
+
 impl Made {
-    /// A draw of no vertices into targets of its own, or a dispatch of no group, with every
-    /// binding holding a stand-in: the device validates a pipeline against what it is bound and
-    /// drawn with only here.
-    // No vertex and no group, so the device runs none of the program: fed stand-ins, a
-    // program's loops need not end, and a draw that does not end has the driver reset the
-    // device under every process that draws on it.
-    fn draw(&self, gpu: &Gpu) -> Result<(), String> {
-        let device = &gpu.device;
+    /// A stand-in at every binding of the pipeline.
+    fn bound(&self, device: &wgpu::Device) -> Result<Bound, String> {
         let (groups, layouts) = (self.stated.as_ref())
             .ok_or("the check states no layout for a resource the pipeline binds")?;
-        let mut bound = Vec::new();
+        let mut bound = Bound {
+            groups: Vec::new(),
+            held: Vec::new(),
+        };
         for (group, layout) in layouts.iter().enumerate() {
             let (Some(layout), Some(entries)) = (layout, groups.get(&(group as u32))) else {
                 continue;
@@ -578,17 +624,31 @@ impl Made {
                 layout,
                 entries: &resources,
             });
-            bound.push((group as u32, bind_group));
+            bound.groups.push((group as u32, bind_group));
+            bound.held.push(held);
         }
+        Ok(bound)
+    }
+
+    /// A draw into targets of its own, or a dispatch, with every binding holding a stand-in: the
+    /// device validates a pipeline against what it is bound and drawn with only here.
+    // With `run` false no vertex is drawn and no group dispatched, so the device runs none of the
+    // program: fed stand-ins, a program's loops need not end, and a draw that does not end has a
+    // hardware driver reset the device under every process that draws on it. With `run` three
+    // vertices are drawn as points, or one group dispatched: [`tried`] asks that of a CPU alone.
+    fn draw(&self, gpu: &Gpu, bound: &Bound, run: bool) -> Result<(), String> {
+        let device = &gpu.device;
+        let bound = &bound.groups;
         let mut encoder = device.create_command_encoder(&Default::default());
         match &self.pipeline {
             Pipeline::Compute(pipeline) => {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.set_pipeline(pipeline);
-                for (group, bind_group) in &bound {
+                for (group, bind_group) in bound {
                     pass.set_bind_group(*group, bind_group, &[]);
                 }
-                pass.dispatch_workgroups(0, 0, 0);
+                let groups = u32::from(run);
+                pass.dispatch_workgroups(groups, groups, groups);
             }
             Pipeline::Render {
                 pipeline,
@@ -619,7 +679,7 @@ impl Made {
                 let depth = depth.then(|| target(wgpu::TextureFormat::Depth32Float));
                 let vertices = device.create_buffer(&wgpu::BufferDescriptor {
                     label: None,
-                    size: (*vertex_stride).max(4),
+                    size: (*vertex_stride * u64::from(RUN_VERTICES)).max(4),
                     usage: wgpu::BufferUsages::VERTEX,
                     mapped_at_creation: false,
                 });
@@ -641,11 +701,11 @@ impl Made {
                     multiview_mask: None,
                 });
                 pass.set_pipeline(pipeline);
-                for (group, bind_group) in &bound {
+                for (group, bind_group) in bound {
                     pass.set_bind_group(*group, bind_group, &[]);
                 }
                 pass.set_vertex_buffer(0, vertices.slice(..));
-                pass.draw(0..0, 0..1);
+                pass.draw(0..if run { RUN_VERTICES } else { 0 }, 0..1);
             }
         }
         gpu.queue.submit([encoder.finish()]);
@@ -686,13 +746,13 @@ fn scoped(device: &wgpu::Device, work: impl FnOnce() -> Result<(), String>) -> O
     }
 }
 
-/// What `gpu` makes of `stages`, and the milliseconds it took. With `draw`, a pipeline it creates
-/// is then drawn with ([`Made::draw`]), and a refusal of the draw is the unit's.
+/// What `gpu` makes of `stages`, and the milliseconds it took. With a `draw`, a pipeline it
+/// creates is then drawn with ([`Made::draw`]), and a refusal of the draw is the unit's.
 pub fn build(
     gpu: &Gpu,
     stages: &Stages,
     cache: Option<&wgpu::PipelineCache>,
-    draw: bool,
+    draw: Draw,
 ) -> (Outcome, f64) {
     let start = Instant::now();
     let device = &gpu.device;
@@ -701,8 +761,11 @@ pub fn build(
         made = Some(create(device, stages, cache, draw)?);
         Ok(())
     });
-    if let (Outcome::Created, true, Some(made)) = (&outcome, draw, &made) {
-        if let Outcome::Rejected(why) = scoped(device, || made.draw(gpu)) {
+    if let (Outcome::Created, true, Some(made)) = (&outcome, draw != Draw::No, &made) {
+        let drawn = scoped(device, || {
+            made.draw(gpu, &made.bound(device)?, draw == Draw::Run)
+        });
+        if let Outcome::Rejected(why) = drawn {
             outcome = Outcome::Rejected(format!("the draw: {why}"));
         }
     }
@@ -750,6 +813,53 @@ pub fn units(file: &Sgd5File) -> Vec<Unit> {
                 out.push(Unit::Pair { vertex, pixel });
             }
         }
+    }
+    out
+}
+
+/// Every unit of `file`, the container `body` holds, on a line: its number, its name as a report
+/// gives it, then a program's kind and name, or each effect and technique a pass of which draws
+/// with the pair.
+pub fn listing(file: &Sgd5File, body: &[u8]) -> String {
+    let index: HashMap<usize, usize> = (file.programs.iter().enumerate())
+        .map(|(i, program)| (program.at, i))
+        .collect();
+    let mut passes: HashMap<Unit, BTreeSet<String>> = HashMap::new();
+    for effect in &file.effects {
+        let mut names = Vec::new();
+        for technique in &effect.techniques {
+            names.extend((0..technique.passes).map(|_| technique.name.as_str()));
+        }
+        for (pass, vertex, pixel) in vertex_pixel_passes(file, effect) {
+            let (Some(&vertex), Some(&pixel)) = (index.get(&vertex.at), index.get(&pixel.at))
+            else {
+                continue;
+            };
+            let technique = names.get(pass).copied().unwrap_or_default();
+            (passes.entry(Unit::Pair { vertex, pixel }).or_default())
+                .insert(format!("{}/{technique}", effect.name));
+        }
+    }
+    let mut out = String::new();
+    for (number, unit) in units(file).iter().enumerate() {
+        let what = match unit {
+            Unit::Program(at) => {
+                let program = &file.programs[*at];
+                // The kind its first block states: every block of a program is of one kind.
+                let kind = (body.get(program.stream.clone()))
+                    .and_then(|stream| program.inflate(stream).ok())
+                    .and_then(|container| rdna::unwrap(&container).ok())
+                    .and_then(|blocks| blocks.first().map(|block| block.kind));
+                format!("{}\t{}", kind_name(kind), program.name)
+            }
+            Unit::Pair { .. } => {
+                let of: Vec<&str> = (passes.get(unit).into_iter().flatten())
+                    .map(String::as_str)
+                    .collect();
+                format!("pair\t{}", of.join(" "))
+            }
+        };
+        out.push_str(&format!("{number}\t{}\t{what}\n", unit.name(0)));
     }
     out
 }
@@ -1031,6 +1141,57 @@ pub fn alone(mut module: naga::Module, subgroups: bool) -> Result<Ready, String>
     Ok(ready)
 }
 
+/// The locations wgpu's Metal backend links between stages on iOS: 60 components, four a location.
+const IOS_LOCATIONS: u32 = 15;
+
+/// The note of a unit whose stages cross with more than [`IOS_LOCATIONS`].
+pub const PAST_IOS: &str =
+    "crosses its stages with more than 15 locations, the most wgpu's Metal backend links on iOS";
+
+/// The start of the note of a unit the renderer refuses to build on an AMD adapter under
+/// Direct3D 12 ([`instance::refused_by_driver`]), whatever adapter the check runs on.
+pub const AMD_REFUSED: &str = "on an AMD adapter under Direct3D 12 the renderer refuses it";
+
+/// An adapter's description that holds nothing but its vendor, its backend and its kind.
+fn described_as(vendor: u32, backend: wgpu::Backend, kind: wgpu::DeviceType) -> wgpu::AdapterInfo {
+    wgpu::AdapterInfo {
+        name: String::new(),
+        vendor,
+        device: 0,
+        device_type: kind,
+        device_pci_bus_id: String::new(),
+        driver: String::new(),
+        driver_info: String::new(),
+        backend,
+        subgroup_min_size: 4,
+        subgroup_max_size: 4,
+        transient_saves_memory: false,
+    }
+}
+
+/// A program's kind as a list names it: its stage, or `unread` where its container does not read.
+fn kind_name(kind: Option<ShaderKind>) -> String {
+    kind.map_or("unread".to_owned(), |kind| {
+        format!("{kind:?}").to_lowercase()
+    })
+}
+
+/// Why `stages` are not put to the adapter `info`: what the renderer refuses for its driver,
+/// unless the check is asked to `try_refused`.
+fn kept_from(stages: &Stages, info: &wgpu::AdapterInfo, try_refused: bool) -> Option<String> {
+    stages.refused_on(info).filter(|_| !try_refused)
+}
+
+impl Stages {
+    /// Why the renderer builds no pass of these stages on the adapter `info`, where it does not.
+    fn refused_on(&self, info: &wgpu::AdapterInfo) -> Option<String> {
+        match self {
+            Self::Render(vertex, _) => instance::refused_by_driver(info, vertex),
+            Self::Compute(_) => None,
+        }
+    }
+}
+
 impl Ready {
     fn settle(&mut self) {
         arrays_apart(&mut self.stages);
@@ -1038,6 +1199,13 @@ impl Ready {
         // The pass with no optional part, where there is one, is what a device has to take.
         let least = self.bare.as_ref().unwrap_or(&self.stages);
         self.notes.extend(least.asked());
+        const AMD: u32 = 0x1002;
+        let amd = described_as(AMD, wgpu::Backend::Dx12, wgpu::DeviceType::IntegratedGpu);
+        let refused = self.stages.refused_on(&amd);
+        (self.notes).extend(refused.map(|why| format!("{AMD_REFUSED}: {why}")));
+        if self.locations > IOS_LOCATIONS {
+            self.notes.push(PAST_IOS.to_owned());
+        }
     }
 }
 
@@ -1236,13 +1404,134 @@ pub const UNFED: &str =
 pub const NO_64_BIT_UPDATE: &str =
     "TEXTURE_INT64_ATOMIC (offered, but no R64Uint texture of the adapter is updated in a step)";
 
+/// The versions of Metal's shading language the text is written for, each with the first macOS
+/// and iOS that take it: what wgpu asks naga for on a Metal device of that system. The second
+/// is the oldest on which wgpu's Metal backend updates a texture in a step.
+pub const METAL_VERSIONS: [((u8, u8), &str); 2] =
+    [((3, 0), "macOS 13, iOS 16"), ((3, 1), "macOS 14, iOS 17")];
+
+/// What Metal binds a stage, as wgpu's Metal backend states it of a Mac: buffers, textures and
+/// samplers.
+const METAL_STAGE: [(&str, u32); 3] = [("buffers", 31), ("textures", 128), ("samplers", 16)];
+
+/// Where each resource of a stage of `module` goes in Metal's tables, numbered as wgpu's Metal
+/// backend numbers a pipeline layout: in the order of the groups and of the bindings in each, an
+/// array as one buffer of arguments, then a buffer of sizes. `None` where the renderer's layouts
+/// do not take the module, which is then written with made-up numbers.
+///
+/// # Errors
+/// Where the stage binds more than [`METAL_STAGE`], which the backend refuses the layout for.
+fn metal_resources(
+    module: &naga::Module,
+    stage: wgpu::ShaderStages,
+) -> Result<Option<naga::back::msl::EntryPointResources>, String> {
+    use naga::back::msl::{BindSamplerTarget, BindTarget};
+    let Some((groups, _)) = groups(&[(module, stage)]) else {
+        return Ok(None);
+    };
+    let mut resources = naga::back::msl::EntryPointResources::default();
+    let (mut bound, mut sized) = ([0u32; 3], stage == wgpu::ShaderStages::VERTEX);
+    let mut next = |kind: usize| {
+        bound[kind] += 1;
+        (bound[kind] - 1) as u8
+    };
+    for (group, entries) in &groups {
+        let mut entries: Vec<_> = entries.iter().map(|(entry, _)| entry).collect();
+        entries.sort_by_key(|entry| entry.binding);
+        for entry in entries {
+            let mut target = BindTarget::default();
+            match entry.ty {
+                _ if entry.count.is_some() => target.buffer = Some(next(0)),
+                wgpu::BindingType::Buffer { ty, .. } => {
+                    target.buffer = Some(next(0));
+                    if let wgpu::BufferBindingType::Storage { read_only } = ty {
+                        target.mutable = !read_only;
+                        sized = true;
+                    }
+                }
+                wgpu::BindingType::Sampler(_) => {
+                    target.sampler = Some(BindSamplerTarget::Resource(next(2)));
+                }
+                wgpu::BindingType::StorageTexture { access, .. } => {
+                    target.texture = Some(next(1));
+                    target.mutable = access != wgpu::StorageTextureAccess::ReadOnly;
+                }
+                _ => target.texture = Some(next(1)),
+            }
+            let at = naga::ResourceBinding {
+                group: *group,
+                binding: entry.binding,
+            };
+            resources.resources.insert(at, target);
+        }
+    }
+    // No vertex buffer is counted: the renderer's passes draw a lowered stage with none.
+    if sized {
+        resources.sizes_buffer = Some(next(0));
+    }
+    match (METAL_STAGE.iter().zip(bound)).find(|((_, most), bound)| bound > most) {
+        Some(((what, most), bound)) => {
+            let stage = match stage {
+                wgpu::ShaderStages::VERTEX => "vertex",
+                wgpu::ShaderStages::FRAGMENT => "pixel",
+                _ => "compute",
+            };
+            Err(format!(
+                "Metal binds {most} {what} a stage, and the {stage} stage binds {bound}"
+            ))
+        }
+        None => Ok(Some(resources)),
+    }
+}
+
+/// `module` as Metal's shading language of `version`, written with the checks a Metal device's
+/// writer is given and with its resources at `resources`.
+fn metal_source(
+    module: &naga::Module,
+    info: &naga::valid::ModuleInfo,
+    version: (u8, u8),
+    resources: Option<naga::back::msl::EntryPointResources>,
+) -> Result<String, String> {
+    use naga::back::msl;
+    use naga::proc::{BoundsCheckPolicies, BoundsCheckPolicy};
+    let entry = module.entry_points.first().map(|entry| entry.name.clone());
+    let options = msl::Options {
+        lang_version: version,
+        fake_missing_bindings: resources.is_none(),
+        per_entry_point_map: (entry.zip(resources).into_iter()).collect(),
+        bounds_check_policies: BoundsCheckPolicies {
+            index: BoundsCheckPolicy::Restrict,
+            buffer: BoundsCheckPolicy::Restrict,
+            image_load: BoundsCheckPolicy::Restrict,
+            binding_array: BoundsCheckPolicy::Unchecked,
+        },
+        zero_initialize_workgroup_memory: true,
+        force_loop_bounding: true,
+        ..Default::default()
+    };
+    let (text, written) =
+        msl::write_string(module, info, &options, &msl::PipelineOptions::default())
+            .map_err(|e| one_line(&e.to_string()))?;
+    // The writer gives the text and says apart which entry points it could not write.
+    match written.entry_point_names.into_iter().find_map(Result::err) {
+        Some(e) => Err(format!(
+            "an entry point is not written: {}",
+            one_line(&e.to_string())
+        )),
+        None => Ok(text),
+    }
+}
+
 /// Whether naga writes `stages` as Metal's shading language, validated for what its writer
-/// supports: all of Metal that a machine with no Metal device can check.
-// ponytail: the text is not compiled; only a Metal device's own compiler says whether it builds.
-fn metal_text(stages: &Stages) -> Outcome {
+/// supports and counted against what Metal binds a stage: all of Metal that a machine with no
+/// Metal device can check. A unit that updates a texture in a step is skipped by the version of
+/// [`METAL_VERSIONS`] that does; naga writes the same text for both. With `keep`, a folder and the unit's name, each stage's text is saved
+/// there under the version it was written for, for a Mac's own compiler.
+// ponytail: the text is not compiled here; only Metal's compiler says whether it builds.
+fn metal_text(stages: &Stages, keep: Option<(&Path, &str)>) -> Outcome {
     use naga::back::msl;
     use naga::valid::{ValidationFlags, Validator};
-    let write = |module: &naga::Module| -> Result<(), Outcome> {
+    let write = |module: &naga::Module, stage: wgpu::ShaderStages, tag: &str| {
         let info = Validator::new(ValidationFlags::all(), msl::supported_capabilities())
             .validate(module)
             .map_err(|refusal| {
@@ -1252,21 +1541,33 @@ fn metal_text(stages: &Stages) -> Outcome {
                     None => Outcome::Rejected(one_line(&said)),
                 }
             })?;
-        let options = msl::Options {
-            lang_version: (3, 1),
-            fake_missing_bindings: true,
-            ..Default::default()
-        };
-        msl::write_string(module, &info, &options, &msl::PipelineOptions::default())
-            .map(|_| ())
-            .map_err(|e| Outcome::Rejected(one_line(&e.to_string())))
+        let resources = metal_resources(module, stage).map_err(Outcome::Rejected)?;
+        let at = usize::from(needs(module).contains(wgpu::Features::TEXTURE_ATOMIC));
+        let (version, _) = METAL_VERSIONS[at];
+        let text = metal_source(module, &info, version, resources).map_err(Outcome::Rejected)?;
+        if let Some((dir, name)) = keep {
+            let dir = dir.join(format!("{}.{}", version.0, version.1));
+            let file = dir.join(format!("{name}.{tag}.metal"));
+            std::fs::create_dir_all(&dir)
+                .and_then(|()| std::fs::write(&file, text))
+                .map_err(|e| Outcome::Rejected(format!("{}: {e}", file.display())))?;
+        }
+        Ok(at)
     };
     let written = catch_unwind(AssertUnwindSafe(|| match stages {
-        Stages::Compute(module) | Stages::Render(module, None) => write(module),
-        Stages::Render(vertex, Some(pixel)) => write(vertex).and_then(|()| write(pixel)),
+        Stages::Compute(module) => write(module, wgpu::ShaderStages::COMPUTE, "compute"),
+        Stages::Render(module, None) => write(module, wgpu::ShaderStages::VERTEX, "vertex"),
+        Stages::Render(vertex, Some(pixel)) => {
+            let vertex = write(vertex, wgpu::ShaderStages::VERTEX, "vertex")?;
+            Ok(vertex.max(write(pixel, wgpu::ShaderStages::FRAGMENT, "pixel")?))
+        }
     }));
     match written {
-        Ok(Ok(())) => Outcome::Created,
+        Ok(Ok(0)) => Outcome::Created,
+        Ok(Ok(at)) => {
+            let ((major, minor), systems) = METAL_VERSIONS[at];
+            Outcome::Skipped(format!("Metal's language {major}.{minor} ({systems})"))
+        }
         Ok(Err(outcome)) => outcome,
         Err(_) => Outcome::Rejected("naga's MSL writer panicked".into()),
     }
@@ -1287,8 +1588,12 @@ fn tried(
     gpu: &Gpu,
     ready: &Ready,
     cache: Option<&wgpu::PipelineCache>,
-    draw: bool,
+    draw: Draw,
+    try_refused: bool,
 ) -> (Outcome, f64) {
+    if draw == Draw::Run && gpu.info.device_type != wgpu::DeviceType::Cpu {
+        return (Outcome::Skipped(RUN_ON_SOFTWARE.into()), 0.0);
+    }
     if ready.subgroups && !gpu.features.contains(wgpu::Features::SUBGROUP) {
         return (Outcome::Skipped("SUBGROUP".into()), 0.0);
     }
@@ -1303,9 +1608,15 @@ fn tried(
     }
     let lacks = ready.clips && !gpu.features.contains(wgpu::Features::CLIP_DISTANCES)
         || ready.locations > gpu.limits.max_inter_stage_shader_variables;
-    match &ready.bare {
-        Some(bare) if lacks => build(gpu, bare, cache, draw),
-        _ => build(gpu, &ready.stages, cache, draw),
+    let stages = match &ready.bare {
+        Some(bare) if lacks => bare,
+        _ => &ready.stages,
+    };
+    // What the renderer refuses for the adapter's driver is not put to the driver here either,
+    // unless the check is run to see what that driver does with it.
+    match kept_from(stages, &gpu.info, try_refused) {
+        Some(why) => (Outcome::Skipped(why), 0.0),
+        None => build(gpu, stages, cache, draw),
     }
 }
 
@@ -1323,7 +1634,7 @@ pub fn worker(
     range: Range<usize>,
     resume: Resume,
     only: Option<&str>,
-    ways: Ways,
+    ways: &Ways,
     out: &mut dyn Write,
 ) -> Result<(), String> {
     let mut say = |line: Line| -> Result<(), String> {
@@ -1385,7 +1696,7 @@ pub fn worker(
                     .is_some_and(|avoid| avoid.contains(&what.name(block)));
                 let (outcome, ms) = match avoided {
                     true => (Outcome::Skipped(AVOIDED.into()), 0.0),
-                    false => tried(gpu, &ready, None, ways.draw),
+                    false => tried(gpu, &ready, None, ways.draw, ways.try_refused),
                 };
                 say(Line::Device {
                     unit,
@@ -1404,7 +1715,9 @@ pub fn worker(
                     adapter: Some(adapter),
                 })?;
                 let start = Instant::now();
-                let outcome = metal_text(&ready.stages);
+                let name = what.name(block);
+                let keep = (ways.msl_dir.as_deref()).map(|dir| (dir, name.as_str()));
+                let outcome = metal_text(&ready.stages, keep);
                 let ms = start.elapsed().as_secs_f64() * 1000.0;
                 say(Line::Device {
                     unit,
@@ -1471,7 +1784,7 @@ pub fn cache_worker(
                 .collect()
         });
         for ready in ready.iter().flatten() {
-            if let (Outcome::Created, took) = tried(gpu, ready, Some(&cache), false) {
+            if let (Outcome::Created, took) = tried(gpu, ready, Some(&cache), Draw::No, false) {
                 built += 1;
                 ms += took;
             }
@@ -1489,12 +1802,18 @@ pub fn cache_worker(
 }
 
 /// What a check does with a unit beyond creating its pipeline.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Ways {
-    /// Draw with each pipeline a device creates.
-    pub draw: bool,
+    /// What is done with each pipeline a device creates.
+    pub draw: Draw,
     /// Write each unit as Metal's shading language too, counted as an adapter of its own.
     pub msl: bool,
+    /// Where each unit's Metal text is kept, a folder a language version.
+    pub msl_dir: Option<PathBuf>,
+    /// Put to an adapter what the renderer refuses for its driver too
+    /// ([`instance::refused_by_driver`]), which a check otherwise skips there: how a run finds
+    /// out whether that driver still ends the process on it.
+    pub try_refused: bool,
 }
 
 /// How a check runs.
@@ -1512,6 +1831,8 @@ pub struct Options {
     pub adapter: Option<String>,
     /// The techniques whose passes' pairs are checked, and nothing else; every unit where empty.
     pub techniques: Vec<String>,
+    /// The units checked and nothing else, by their numbers; every unit where `None`.
+    pub picked: Option<BTreeSet<usize>>,
     /// Where each adapter's pipeline cache is saved, where its backend has one.
     pub cache_dir: Option<PathBuf>,
     /// The stack a worker's steps run on, in mebibytes; [`stack_mib`]'s where `None`.
@@ -1531,6 +1852,7 @@ impl Default for Options {
             units: None,
             adapter: None,
             techniques: Vec::new(),
+            picked: None,
             cache_dir: None,
             stack_mib: None,
             avoid: None,
@@ -1562,11 +1884,19 @@ fn one_worker(
     if let Some(only) = &options.adapter {
         command.args(["--adapter", only]);
     }
-    if options.ways.draw {
-        command.arg("--draw");
+    match options.ways.draw {
+        Draw::No => {}
+        Draw::Empty => drop(command.arg("--draw")),
+        Draw::Run => drop(command.arg("--run")),
     }
     if options.ways.msl {
         command.arg("--msl");
+    }
+    if options.ways.try_refused {
+        command.arg("--try-refused");
+    }
+    if let Some(dir) = &options.ways.msl_dir {
+        command.arg("--msl-dir").arg(dir);
     }
     if let Some(mib) = options.stack_mib {
         command.env(STACK_ENV, mib.to_string());
@@ -1742,6 +2072,10 @@ pub fn run(
         let names: Vec<&str> = options.techniques.iter().map(String::as_str).collect();
         technique_units(&file, &units, &names)
     });
+    let only = match (only, &options.picked) {
+        (Some(only), Some(picked)) => Some(&only & picked),
+        (only, picked) => only.or_else(|| picked.clone()),
+    };
     Programs::write(&scratch, &file, body, &units, only.as_ref())?;
     if let Some(earlier) = &options.avoid {
         let same = |run: &&Run, adapter: &Adapter| {
@@ -1786,7 +2120,8 @@ pub fn run(
             adapter: adapter.clone(),
             stack_mib: options.stack_mib.unwrap_or_else(stack_mib),
             units: checked.clone(),
-            drawn: options.ways.draw && adapter.shader_compiler != "text",
+            drawn: options.ways.draw != Draw::No && adapter.shader_compiler != "text",
+            ran: options.ways.draw == Draw::Run && adapter.shader_compiler != "text",
             ..Default::default()
         })
         .collect();

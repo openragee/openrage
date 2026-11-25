@@ -1,21 +1,20 @@
 //! `gta6-project build|check|revert`: a GTA VI mod as a project of archive edits.
 //!
-//!   `gta6-project build <project.json> --install <dir> --out <new dir> [--keys <snapshot>]`
+//!   `gta6-project build <project.json> --install <dir> --out <new dir> [--keys <snapshot>] [--exe <game.exe>]`
 //!   `gta6-project check <project.json>...`   list every entry two edits touch
 //!   `gta6-project revert <out dir>`          delete a build's output folder
 //!
 //! A build writes copies of the archives it touches into a new folder with a manifest, and never
-//! writes the install.
+//! writes the install. `--exe` names the game executable whose keys the build reads with.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use or_io::container::rpf::{GtaViKeys, GTA6_SNAPSHOT_ENV, GTA6_SNAPSHOT_FILE_NAME};
 use or_project::gta6::{build, conflicts, revert, Gta6Project, GTA6_MANIFEST, STRUCTURAL};
 
 const USAGE: &str = "\
 usage:
-  openrage-cli gta6-project build <project.json> --install <dir> --out <new dir> [--keys <snapshot>]
+  openrage-cli gta6-project build <project.json> --install <dir> --out <new dir> [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli gta6-project check <project.json>...
   openrage-cli gta6-project revert <out dir>";
 
@@ -30,13 +29,14 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         return usage("give a verb");
     };
     let mut positionals = Vec::new();
-    let (mut install, mut out, mut keys) = (None, None, None);
+    let (mut install, mut out, mut keys, mut exe) = (None, None, None, None);
     let mut it = rest.iter();
     while let Some(arg) = it.next() {
         let slot = match arg.as_str() {
             "--install" => &mut install,
             "--out" => &mut out,
             "--keys" => &mut keys,
+            "--exe" => &mut exe,
             other if other.starts_with("--") => return usage(&format!("unknown option {other}")),
             other => {
                 positionals.push(PathBuf::from(other));
@@ -51,7 +51,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     let done = match verb.as_str() {
         "build" => match (positionals.as_slice(), install, out) {
             ([project], Some(install), Some(out)) => {
-                run_build(project, &install, &out, keys.as_deref())
+                run_build(project, &install, &out, keys.as_deref(), exe.as_deref())
             }
             _ => return usage("build takes one project, --install and --out"),
         },
@@ -82,9 +82,10 @@ fn run_build(
     install: &Path,
     out: &Path,
     keys: Option<&Path>,
+    exe: Option<&Path>,
 ) -> Result<String, String> {
     let project = Gta6Project::load(project).map_err(|e| e.to_string())?;
-    let keys = load_keys(keys)?;
+    let keys = crate::gta6_keys::load(keys, exe)?;
     let manifest = build(&project, install, out, &keys).map_err(|e| e.to_string())?;
     let mut report = String::new();
     for change in &manifest.changes {
@@ -114,19 +115,4 @@ fn check(paths: &[PathBuf]) -> Result<String, String> {
     }
     let lines: Vec<String> = found.iter().map(ToString::to_string).collect();
     Err(lines.join("\n"))
-}
-
-/// The key snapshot: the one `--keys` names, else the one a session supplies for the install.
-fn load_keys(explicit: Option<&Path>) -> Result<GtaViKeys, String> {
-    if let Some(path) = explicit {
-        return GtaViKeys::from_file(path).map_err(|e| e.to_string());
-    }
-    GtaViKeys::for_install(or_title::config::config_dir().as_deref())
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| {
-            format!(
-                "No GTA VI key snapshot: set {GTA6_SNAPSHOT_ENV}, pass --keys, or place \
-                 {GTA6_SNAPSHOT_FILE_NAME} beside the keys cache."
-            )
-        })
 }

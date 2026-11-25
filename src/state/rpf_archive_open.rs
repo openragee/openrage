@@ -26,19 +26,47 @@ pub fn open_archive_from_disk(
     })
 }
 
-/// Hands the archive reader the GTA VI keys and names the app holds, where it holds keys.
-fn give_gta6_keys() {
-    use or_io::container::rpf::Gta6Context;
-    if let Ok(keys) = super::rpf9_scan::rpf9_table::keys() {
-        Gta6Context::give(Gta6Context {
-            keys,
-            names: super::rpf9_scan::rpf9_table::resolver(),
-        });
+/// A GTA VI archive on disk as the tree every archive opens as, read entry by entry from its file; `None` for any other file, and with no key.
+pub(super) fn gta6_tree(
+    path: &Path,
+    crypto: &Arc<dyn RpfCryptoProvider>,
+) -> Option<super::DocPayload> {
+    use std::io::Read;
+    let mut magic = [0u8; 4];
+    (std::fs::File::open(path).ok()?)
+        .read_exact(&mut magic)
+        .ok()?;
+    if magic != or_io::container::rpf::RPF9_MAGIC.to_le_bytes() || !give_gta6_keys() {
+        return None;
     }
+    let archive = RpfArchive::open_with(path, Arc::clone(crypto)).ok()?;
+    let tree = super::rpf_session::RpfDocument::new(archive).ok()?;
+    Some(super::DocPayload::Rpf(tree))
 }
 
+/// Hands the archive reader the GTA VI keys and names the app holds; `false` when it holds no keys.
+// ⚠ Waits until the names are built, so it is reached only from a load's or a tree row's worker,
+// whose loading row shows meanwhile.
+fn give_gta6_keys() -> bool {
+    use or_io::container::rpf::Gta6Context;
+    let Ok(keys) = super::rpf9_scan::rpf9_table::keys() else {
+        return false;
+    };
+    Gta6Context::give(Gta6Context {
+        keys,
+        names: super::rpf9_scan::rpf9_table::resolver(),
+    });
+    true
+}
+
+#[path = "rpf9_tree_open.rs"]
+pub(super) mod tree_open;
+
+#[path = "rpf9_tree_verbs.rs"]
+pub(super) mod tree_verbs;
+
 impl super::AppState {
-    /// Opens an entry of a GTA VI archive by what its body is, read at its place in the file, since its name states no kind; `false` for any other entry.
+    /// Opens an entry of a GTA VI archive by what its body is, read by its table row on the load worker, since its name states no kind; `false` for any other entry.
     pub(super) fn open_gta6_archive_entry(
         &mut self,
         parent: super::DocumentId,
@@ -56,16 +84,17 @@ impl super::AppState {
             else {
                 return None;
             };
-            (rpf.session.archive(*archive_id)?.archive).rpf9_place(*entry_index)
+            let archive = &rpf.session.archive(*archive_id)?.archive;
+            let place = archive.rpf9_place(*entry_index)?;
+            let row_start = place.base + archive.binary_entry(*entry_index)?.file_offset;
+            Some((place, row_start))
         })();
-        let Some(place) = place else {
+        let Some((place, row_start)) = place else {
             return false;
         };
         let view = super::rpf9_scan::View::Bytes;
         let path = super::rpf9_scan::body_path(&place.file, place.offset, view);
-        if place.ciphered {
-            super::rpf9_scan::remember_ciphered(&path, place.base, place.entry);
-        }
+        tree_open::leave(&path, &place, row_start, super::rpf9_scan::rpf9_table::keys);
         self.load_file(path);
         true
     }

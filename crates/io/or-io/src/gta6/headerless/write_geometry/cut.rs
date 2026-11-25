@@ -3,16 +3,17 @@
 //! placed after it, and the model's three arrays and the drawable's per-geometry table laid out
 //! anew past the virtual section's end. The arrays they replace stay as unreferenced bytes.
 //!
-//! ⚠ The table's density words are not derivable from the vertices, so each piece carries the
-//! replaced geometry's. Its box elements are one axis-aligned box per piece: it encloses the piece,
+//! ⚠ Each piece's density words are its own, derived as a replaced geometry's are: its world area
+//! over its texcoord area, times the power of 4 the replaced geometry's stored word states. Its box
+//! elements are one axis-aligned box per piece: it encloses the piece,
 //! as every stored element encloses its parts, but it is not the box the game's tool writes.
 
 use std::collections::HashMap;
 
 use super::super::write_material::based;
 use super::{
-    extremes, floats, locate, place, put, put_box, read_box, rebox, sections, u32_at, u64_at,
-    union, write_geometry, Corners, GeometryAt, GeometryEdit, GeometryWriteError, GeometryWritten,
+    extremes, floats, locate, place, put, put_box, read_box, rebox, sections, u64_at, union,
+    write_geometry, Corners, GeometryAt, GeometryEdit, GeometryWriteError, GeometryWritten,
     HeaderlessError, Located, Written, MAX_VERTICES, VIRTUAL_TAG,
 };
 use crate::container::rpf::{grow_section, Rpf9Role, Rpf9Section, Rpf9Sections};
@@ -27,8 +28,9 @@ const OBJECTS: usize = 0x50 + 0x50 + 0x140 + 0x40 + 0x40 + 0x20;
 const VIEW: u64 = 0xFFFF_FFFF_FFFF_0214;
 /// A box element of the table's row 4: minimum, maximum and three axes, four floats each.
 const ELEMENT: usize = 0x50;
-/// The most palette entries a cut by vertices alone may keep.
-const PALETTE: u32 = 0xFF;
+/// The most palette entries a cut by vertices alone may keep: the model states its count in one
+/// byte at +0x30.
+const PALETTE: u16 = 0xFF;
 
 /// What a cut write changed: the first piece's write, and how many geometries the mesh became.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -73,11 +75,11 @@ pub fn write_geometry_cut(
     let mut out = sections.clone();
     let (_, walked, table) = held(&out, role, code, at)?;
     let geometry = walked.geometry(at)?;
-    let palette = u32_at(bytes_at(&out.virtual_section, geometry + 0x2C, 4)?, 0);
-    if palette > PALETTE {
+    if palette_of(&out.virtual_section, geometry)? > PALETTE {
         return Err(Refused(
             "a geometry whose palette passes 255 entries is cut by its bones as well, and no such \
-             cut was measured",
+             cut was measured: the model states its palette count in one byte at +0x30, and the \
+             largest palette the build holds has 209 entries",
         ));
     }
     let q = walked.first(at);
@@ -96,12 +98,18 @@ pub fn write_geometry_cut(
         ));
     }
 
-    // Each further piece written alone over the geometry, for the bytes it then holds.
-    let mut alone = Vec::with_capacity(k);
+    // Each further piece written alone over the geometry, for the bytes and density words it then
+    // holds.
+    let (mut alone, mut own_densities) = (Vec::with_capacity(k), Vec::with_capacity(k));
     for piece in &pieces[1..] {
         let mut scratch = out.clone();
         write_geometry(&mut scratch, role, code, at, piece)?;
         alone.push(written_alone(&scratch, role, code, at)?);
+        let (_, _, own) = held(&scratch, role, code, at)?;
+        let density = (own.densities.get(q).cloned()).ok_or(Refused(
+            "the per-geometry table names no row 0 words of the geometry",
+        ))?;
+        own_densities.push(density);
     }
     let mut written = write_geometry(&mut out, role, code, at, &pieces[0])?;
 
@@ -223,7 +231,8 @@ pub fn write_geometry_cut(
     for (i, (density, run)) in table.densities.iter().zip(&table.elements).enumerate() {
         match i == q {
             true => {
-                for piece in &pieces {
+                let own = std::iter::once(density).chain(&own_densities);
+                for (piece, density) in pieces.iter().zip(own) {
                     densities.extend_from_slice(density);
                     elements.push(element(extremes(&piece.positions)));
                 }
@@ -413,6 +422,12 @@ fn pointer(target: usize) -> [u8; 8] {
 /// A buffer's count of 4-byte words.
 fn words(data: &[u8]) -> [u8; 4] {
     ((data.len() / 4) as u32).to_le_bytes()
+}
+
+/// The palette count a geometry states: the u16 at +0x2C, whose next u16 is a separate word.
+fn palette_of(v: &[u8], geometry: usize) -> Written<u16> {
+    let b = bytes_at(v, geometry + 0x2C, 2)?;
+    Ok(u16::from_le_bytes([b[0], b[1]]))
 }
 
 fn bytes_at(section: &[u8], at: usize, len: usize) -> Written<&[u8]> {
@@ -625,3 +640,7 @@ fn table(v: &[u8], root: usize, models: &[Vec<usize>]) -> Written<Table> {
          rule, so no geometry is added to it",
     ))
 }
+
+#[cfg(test)]
+#[path = "cut_palette_tests.rs"]
+mod palette_tests;

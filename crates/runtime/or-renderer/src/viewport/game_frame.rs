@@ -675,6 +675,23 @@ impl ViewportRenderer {
                 .record_shadow_receive(encoder, &deferred.gbuffer, &self.depth_view);
             self.gpu_mark(encoder, "shadows");
         }
+        // Past the cascades the terrain alone shades, as the game's frame does.
+        if let (Some(terrain), true) = (&self.world.terrain, self.shadows) {
+            let fade = (cascades.as_ref()).map_or([0.0; 2], |c| c.fade());
+            let day = |name: &str, default: f32| {
+                (self.day.as_ref()).map_or(default, |day| day.keyframe.get_or(name, default))
+            };
+            terrain.record(
+                queue,
+                encoder,
+                &engine,
+                (&self.bind_group, &self.depth_view),
+                deferred.gbuffer.self_shadows(),
+                (fade, &day),
+                (self.width, self.height),
+            );
+            self.gpu_mark(encoder, "terrain shadow");
+        }
         // Water reads how far the opaque surfaces lie, where the pass that works that out has no occlusion to give
         let refracts = self.refracts || self.world.water.drawn();
         if self.world.water.drawn() {
@@ -763,6 +780,22 @@ impl ViewportRenderer {
             });
             scene.record_water_fog(&mut pass);
         }
+        // The distant lights and coronas are laid in before the water's copy is taken, so that the water mirrors them
+        let lights_first = refracts && deferred.refraction.is_some();
+        if lights_first {
+            let mut pass = over_the_frame(
+                encoder,
+                "viewport-distant-lights-pass",
+                &deferred.hdr,
+                wgpu::LoadOp::Load,
+                &self.depth_view,
+                Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+            );
+            deferred.passes.record_distant_lights(&mut pass);
+        }
         // Water is drawn over a copy of the frame as it stands, since it cannot read what it writes
         if let (true, Some(refraction)) = (refracts, &deferred.refraction) {
             encoder.copy_texture_to_texture(
@@ -791,7 +824,9 @@ impl ViewportRenderer {
             );
             scene.record_blended(&mut pass);
             self.world.draw_lit(&mut pass, &self.bind_group);
-            deferred.passes.record_distant_lights(&mut pass);
+            if !lights_first {
+                deferred.passes.record_distant_lights(&mut pass);
+            }
         }
         self.gpu_mark(encoder, "blended");
         // The fog the particles fill the air with is laid over what blends, testing the depth and leaving the stencil be

@@ -478,19 +478,29 @@ fn remove_bone_pair(set: &Expressions, track: usize) -> Result<Expressions, Anim
     Ok(out)
 }
 
+/// `set` with every track's id zero: what an edit of ids alone leaves as it was.
+fn without_ids(set: &Expressions) -> Expressions {
+    let mut set = set.clone();
+    for group in ExpressionGroup::ALL {
+        if let Some(tracks) = group.of_mut(&mut set) {
+            tracks.tracks.iter_mut().for_each(|(id, _)| *id = 0);
+        }
+    }
+    set
+}
+
 /// `set` written over the set `section` holds: ids in place, else the whole set laid out anew.
-// Ids are written in place where every group keeps its count of tracks. A stored set that does
-// not lay out again to its own bytes is refused a new layout: where its arrays go follows no rule
-// known.
+// Ids are written in place only where the set differs from the stored one in ids alone, so an
+// edit that keeps every group's count of tracks but changes a shape is laid out anew. A stored set
+// that does not lay out again to its own bytes is refused a new layout: where its arrays go
+// follows no rule known.
 pub fn write_edited_expressions(
     section: &mut Vec<u8>,
     physical_len: usize,
     set: &Expressions,
 ) -> Result<(), AnimError> {
     let stored = read_expressions(section)?;
-    let counts =
-        |s: &Expressions| ExpressionGroup::ALL.map(|g| g.of(s).map_or(0, |t| t.tracks.len()));
-    if counts(&stored) == counts(set) {
+    if without_ids(&stored) == without_ids(set) {
         return write_expression_ids(section, set);
     }
     if lay_out_expressions(&stored, physical_len)? != *section {
@@ -509,3 +519,7 @@ pub fn write_edited_expressions(
 #[cfg(test)]
 #[path = "expressions_layout_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "expressions_shape_tests.rs"]
+mod shape_tests;

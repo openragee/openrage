@@ -211,6 +211,18 @@ struct GroupRow {
     inferred: [u32; 8],
 }
 
+/// A place the world-state data names, as the index keeps it: the hashes of its name and its label, its kind, its run of the index's outline points and its area.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+pub struct PlaceRow {
+    pub name: u32,
+    pub label: u32,
+    pub kind: i32,
+    from: u32,
+    len: u32,
+    pub area: f32,
+}
+
 /// The index of one install.
 #[derive(Debug, Default)]
 pub struct WorldIndex {
@@ -226,6 +238,9 @@ pub struct WorldIndex {
     pub slod: Vec<u64>,
     /// Each group's word and hours at rest, by id.
     switches: Vec<GroupRow>,
+    /// The places the world-state data names with an outline, and the points of the outlines.
+    places: Vec<PlaceRow>,
+    outlines: Vec<[f32; 2]>,
     /// A word of the file of what a fresh game is taken to have that the index was built with; 0 for none.
     assumed: u64,
     pub report: Report,
@@ -239,6 +254,35 @@ fn by_word<T>(rows: &[T], word: u64, of: impl Fn(&T) -> u64) -> Option<&T> {
 }
 
 impl WorldIndex {
+    /// The places the world-state data names that hold `point`, smallest first.
+    pub fn places_at(&self, point: [f32; 2]) -> Vec<&PlaceRow> {
+        let mut found: Vec<&PlaceRow> = (self.places.iter())
+            .filter(|p| {
+                // ⚠ A kept file's run is not trusted: one past the points names no outline.
+                let (from, len) = (p.from as usize, p.len as usize);
+                let outline = self.outlines.get(from..from.saturating_add(len));
+                outline.is_some_and(|o| or_io::gta6::world_state::outline_holds(o, point))
+            })
+            .collect();
+        found.sort_by(|a, b| a.area.total_cmp(&b.area));
+        found
+    }
+
+    /// Lay `places` as the index keeps them.
+    fn lay_places(&mut self, places: Vec<or_io::gta6::world_state::Place>) {
+        for place in places {
+            self.places.push(PlaceRow {
+                name: place.name,
+                label: place.label,
+                kind: place.kind,
+                from: self.outlines.len() as u32,
+                len: place.outline.len() as u32,
+                area: place.area(),
+            });
+            self.outlines.extend(place.outline);
+        }
+    }
+
     pub fn archetype(&self, word: u64) -> Option<&ArchetypeRow> {
         by_word(&self.archetypes, word, |a| a.word)
     }
@@ -489,9 +533,10 @@ pub fn build(
         claims.extend(shard.slod);
     }
     index.slod = or_io::gta6::map::stream::grass::slod::solve(&claims);
-    let Some(selectors) = states::selectors(&mounted, &every, cancel) else {
+    let Some((selectors, places)) = states::selectors(&mounted, &every, cancel) else {
         return Ok(None);
     };
+    index.lay_places(places);
     let (assumed, word) = fresh.map_or_else(Default::default, states::assumed);
     index.switches = states::switches(&words, &selectors, &assumed);
     index.assumed = word;
@@ -519,6 +564,21 @@ pub fn build(
         ..counted(&index.maps)
     };
     Ok(Some(index.finish()))
+}
+
+impl super::Viewer {
+    /// The height map and the water of the install shown, as the overhead map shades them: each `None` until its worker has read it.
+    pub fn land_and_water(
+        &self,
+    ) -> (
+        Option<std::sync::Arc<or_io::gta6::water::height::WaterGround>>,
+        Option<std::sync::Arc<or_io::gta6::water::WaterData>>,
+    ) {
+        let Some(root) = self.root.as_deref() else {
+            return (None, None);
+        };
+        (super::water::ground(root), super::water::water(root))
+    }
 }
 
 /// The one dictionary body that holds a drawable under every name the archetypes of a dictionary

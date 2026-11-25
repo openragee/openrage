@@ -23,8 +23,10 @@ const PITCH: f32 = -25.0;
 /// A place to jump to.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Place {
-    /// The letters the names of most of its maps start with, `None` where the vocabulary names none.
+    /// The place the world-state data names at its middle, else the letters the names of most of its maps start with; `None` where the vocabulary names neither.
     pub head: Option<String>,
+    /// Whether the head is the name of a place the world-state data outlines.
+    pub from_place: bool,
     /// How many maps at rest lie in its cell.
     pub maps: usize,
     /// The middle of its maps, on the ground of the tallest box.
@@ -68,8 +70,12 @@ struct Cell {
     heads: HashMap<String, usize>,
 }
 
-/// The densest cells, densest first, `most` at most, a head's densest alone where its maps are named.
-pub fn places(maps: impl IntoIterator<Item = Counted>, most: usize) -> Vec<Place> {
+/// The densest cells, densest first, `most` at most, a head's densest alone: a cell is headed by the place `name_at` names at its middle, else by its maps' names.
+pub fn places(
+    maps: impl IntoIterator<Item = Counted>,
+    most: usize,
+    name_at: &dyn Fn(glam::Vec2) -> Option<String>,
+) -> Vec<Place> {
     let mut cells: HashMap<(i32, i32), Cell> = HashMap::new();
     for map in maps {
         if !map.middle.is_finite() {
@@ -91,12 +97,17 @@ pub fn places(maps: impl IntoIterator<Item = Counted>, most: usize) -> Vec<Place
     }
     let mut found: Vec<Place> = (cells.into_values())
         .map(|cell| {
-            let head = (cell.heads.into_iter())
-                .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
-                .map(|(head, _)| head);
             let middle = (cell.sum / cell.maps as f64).as_vec2();
+            let named = name_at(middle);
+            let from_place = named.is_some();
+            let head = named.or_else(|| {
+                (cell.heads.into_iter())
+                    .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+                    .map(|(head, _)| head)
+            });
             Place {
                 head,
+                from_place,
                 maps: cell.maps,
                 middle: middle.extend(cell.top.unwrap_or(0.0)),
             }
@@ -127,7 +138,10 @@ pub fn of_index(index: &WorldIndex) -> Vec<Place> {
             side: (high.x - low.x).max(high.y - low.y),
         }
     });
-    places(maps, MOST)
+    let vocabulary = crate::state::gta6_names::vocabulary();
+    places(maps, MOST, &|at| {
+        super::world_viewer_map::place_at(index, &vocabulary, at)
+    })
 }
 
 #[cfg(test)]
@@ -165,7 +179,7 @@ mod tests {
         // Two unnamed maps in a cell of their own, which a harvest that named few maps leaves unnamed.
         maps.push(map(None, 9000.0, 10.0, 25.0));
         maps.push(map(None, 9010.0, 10.0, 25.0));
-        let found = places(maps, MOST);
+        let found = places(maps, MOST, &|_| None);
         let heads: Vec<_> = found.iter().map(|p| p.head.as_deref()).collect();
         assert_eq!(
             heads,
@@ -187,7 +201,23 @@ mod tests {
             pose.position.y < found[0].middle.y && pose.position.z > 300.0,
             "{pose:?}"
         );
-        assert_eq!(places(Vec::new(), MOST), Vec::new());
+        assert_eq!(places(Vec::new(), MOST, &|_| None), Vec::new());
+    }
+
+    #[test]
+    fn a_cell_a_named_place_holds_is_headed_by_that_place() {
+        let maps = vec![
+            map(Some("tw"), 10.0, 10.0, 30.0),
+            map(Some("tw"), 20.0, 10.0, 30.0),
+            map(Some("tw"), 5000.0, 10.0, 30.0),
+        ];
+        let name_at = |at: glam::Vec2| (at.x < 1000.0).then(|| "Vice Beach".to_string());
+        let found = places(maps, MOST, &name_at);
+        let heads: Vec<_> = found
+            .iter()
+            .map(|p| (p.head.as_deref(), p.from_place))
+            .collect();
+        assert_eq!(heads, [(Some("Vice Beach"), true), (Some("tw"), false)]);
     }
 
     #[test]
@@ -198,7 +228,7 @@ mod tests {
             ..map(None, 15.0, 10.0, 900.0)
         });
         maps.push(map(None, 5000.0, 10.0, 30.0));
-        let found = places(maps, 1);
+        let found = places(maps, 1, &|_| None);
         assert_eq!(found.len(), 1);
         assert_eq!((found[0].head.clone(), found[0].maps), (None, 3));
         assert_eq!(

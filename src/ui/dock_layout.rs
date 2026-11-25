@@ -24,6 +24,15 @@ use crate::ui::panel_registry;
 /// change in a way an older file cannot describe.
 pub const LAYOUT_SCHEMA: u32 = 3;
 
+/// The revision of a workspace's default arrangement a saved one must be of: one saved before it changed starts over, and the other workspaces keep theirs.
+const REVISIONS: [(Workspace, u32); 1] = [(Workspace::World, 1)];
+
+fn revision(ws: Workspace) -> u32 {
+    (REVISIONS.iter())
+        .find(|(of, _)| *of == ws)
+        .map_or(0, |(_, n)| *n)
+}
+
 /// ⚠ **The bound on what a file can make this program allocate.** Every tab a
 /// saved layout names that no panel provides is interned for the process's
 /// lifetime, so a file is the input that decides how much is leaked. A
@@ -53,6 +62,9 @@ pub struct SavedLayouts {
     /// The arrangement of a workspace that is also a task screen, for a project that holds its content: a file written before it lacks it, and the workspace then starts from the row's layout.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub for_a_project: BTreeMap<Workspace, DockState<String>>,
+    /// The revision of each workspace's arrangement when it was written; a file written before it lacks it, which reads as 0.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub revisions: BTreeMap<Workspace, u32>,
 }
 
 impl SavedLayouts {
@@ -106,6 +118,7 @@ pub fn capture(docks: &WorkspaceDocks, active: Workspace) -> SavedLayouts {
         active,
         workspaces,
         for_a_project,
+        revisions: REVISIONS.into_iter().collect(),
     }
 }
 
@@ -220,6 +233,7 @@ pub fn restore(saved: &SavedLayouts) -> Restored {
         if crate::ui::task_screens::of_workspace_alone(*ws).is_some_and(|screen| {
             (screen.must_dock.iter()).any(|needed| !ids.iter().any(|id| id.as_str() == *needed))
         }) || names_a_panel_twice(&ids)
+            || saved.revisions.get(ws).copied().unwrap_or(0) < revision(*ws)
         {
             continue;
         }
@@ -356,6 +370,7 @@ mod tests {
             active: Workspace::default(),
             workspaces,
             for_a_project: BTreeMap::new(),
+            revisions: BTreeMap::new(),
         }
     }
 
@@ -432,6 +447,28 @@ mod tests {
         let current = capture(&docks, Workspace::Wardrobe);
         let again: Vec<Workspace> = restore(&current).usable.iter().map(|(ws, _)| *ws).collect();
         assert!(again.contains(&Workspace::Wardrobe));
+    }
+
+    /// A World saved before its arrangement changed, with the jobs under the view, starts over once; what this build writes of it is read back.
+    #[test]
+    fn a_world_saved_before_its_arrangement_changed_starts_over_and_the_other_workspaces_keep_theirs(
+    ) {
+        let mut docks = WorkspaceDocks::default();
+        docks.get_mut(Workspace::Model);
+        docks.get_mut(Workspace::World);
+        let current = capture(&docks, Workspace::World);
+        let kept = |saved: &SavedLayouts| -> Vec<Workspace> {
+            restore(saved).usable.iter().map(|(ws, _)| *ws).collect()
+        };
+        assert!(kept(&current).contains(&Workspace::World));
+        let mut old = current.clone();
+        old.revisions.clear();
+        let after = kept(&old);
+        assert!(!after.contains(&Workspace::World), "{after:?}");
+        assert!(after.contains(&Workspace::Model), "{after:?}");
+        let written = serde_json::to_string(&current).expect("a layout is written");
+        let read: SavedLayouts = serde_json::from_str(&written).expect("and read back");
+        assert!(kept(&read).contains(&Workspace::World));
     }
 
     #[test]

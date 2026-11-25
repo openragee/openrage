@@ -194,8 +194,8 @@ fn record_lines(name: &str, bones: &[or_io::gta6::headerless::BoneRecord]) -> St
     lines.extend(bones.iter().map(|b| {
         let values: Vec<String> = b.values.iter().map(f32::to_string).collect();
         tr!(
-            "Bone hash_{bone}: kind {kind}, flags {flags}, values {values}.",
-            bone = format!("{:08X}", b.bone),
+            "Bone {bone}: kind {kind}, flags {flags}, values {values}.",
+            bone = super::gta6_names::said32(b.bone),
             kind = b.kind,
             flags = format!("{:#010X}", b.flags),
             values = values.join(", "),

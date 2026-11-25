@@ -270,7 +270,9 @@ fn plain_document(root: u32, member: u32, tag: &[u8; 4]) -> Vec<u8> {
 }
 
 /// ⚠ Two titles' hash spaces are unrelated. The library installed here names two made-up hashes
-/// no other test reads, so the other tests of this process are as they were.
+/// no other test reads, so the other tests of this process are as they were: a body they read
+/// under a title's names is named by another index from then on, which spells every hash of
+/// theirs as the first does (`data_names::of_index` takes the same of two spellings in each).
 #[test]
 fn a_name_only_the_second_title_s_library_holds_names_a_gta6_body_and_no_other() {
     use crate::meta::schema::{Field, FieldHint, FieldType, StructDef};

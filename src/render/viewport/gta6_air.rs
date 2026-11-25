@@ -265,7 +265,7 @@ impl Air {
 
     /// The light the sky sends along `way` to a model, for each unit of the light of the body
     /// `towards`.
-    fn sky(&self, way: Vec3, towards: Vec3) -> Vec3 {
+    pub(super) fn sky(&self, way: Vec3, towards: Vec3) -> Vec3 {
         let from = Vec3::new(0.0, 0.0, self.bottom + STANDING);
         let cosine = way.dot(towards);
         let g = self.forward;
@@ -294,19 +294,24 @@ impl Air {
         (self.disc / 2.0).tan()
     }
 
-    /// What the whole sky gives a surface that faces up, for each unit of the light of the body
-    /// `towards`.
-    pub(super) fn sky_on_the_ground(&self, towards: Vec3) -> Vec3 {
+    /// The ways the sky is looked along to gather it, each with the angle its patch of the sky
+    /// fills: six rings of twelve over the upper half, from the top down.
+    pub(super) fn ways() -> impl Iterator<Item = (Vec3, f32)> {
         let (rings, around) = (6, 12);
-        let mut given = Vec3::ZERO;
-        for at in 0..rings * around {
+        (0..rings * around).map(move |at| {
             let tilt = ((at / around) as f32 + 0.5) / rings as f32 * (PI / 2.0);
             let turn = ((at % around) as f32 + 0.5) / around as f32 * 2.0 * PI;
             let way = Vec3::new(tilt.sin() * turn.cos(), tilt.sin() * turn.sin(), tilt.cos());
             let patch = tilt.sin() * (PI / 2.0 / rings as f32) * (2.0 * PI / around as f32);
-            given += self.sky(way, towards) * tilt.cos() * patch;
-        }
-        given
+            (way, patch)
+        })
+    }
+
+    /// What the whole sky gives a surface that faces up, for each unit of the light of the body
+    /// `towards`.
+    #[cfg(test)]
+    pub(super) fn sky_on_the_ground(&self, towards: Vec3) -> Vec3 {
+        (Self::ways().map(|(way, patch)| self.sky(way, towards) * way.z * patch)).sum()
     }
 
     /// How much of the light of the body `towards` comes through to a model: the mean over its

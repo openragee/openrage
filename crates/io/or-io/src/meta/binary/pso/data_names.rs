@@ -38,8 +38,13 @@ fn of_index(index: &'static HashIndex) -> &'static Names {
     if let Some((_, names)) = made.iter().find(|(made, _)| *made == key) {
         return names;
     }
+    // ⚠ Names that differ in case alone hash alike here, and the first added names the hash. An
+    // index holds its names in an order of its own, so they are added sorted: every index that
+    // holds the same spellings, and every run, takes the same one.
+    let mut held: Vec<&str> = index.names().collect();
+    held.sort_unstable();
     let mut names = Names::default();
-    for name in index.names() {
+    for name in held {
         names.add(name);
     }
     // At most one for each of the few indexes the process makes, each held to its end.
@@ -172,5 +177,20 @@ mod tests {
         }));
         assert_eq!(names.hashed(hash).raw, "a text no index names");
         assert_eq!(DataNames::of_tree().hashed(hash).raw, "");
+    }
+
+    #[test]
+    fn of_two_names_that_differ_in_case_alone_every_index_takes_the_same() {
+        // Each index holds the two in an order of its own: a map's order is its own.
+        let hash = crate::string_hash(b"zqname");
+        for _ in 0..16 {
+            let index = HashIndex::default().with_pairs([
+                (1, "zqName".to_string()),
+                (2, "zqname".to_string()),
+                (3, "ZQNAME".to_string()),
+            ]);
+            let names = of_index(Box::leak(Box::new(index)));
+            assert_eq!(names.by32[&hash], "ZQNAME");
+        }
     }
 }

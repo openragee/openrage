@@ -322,6 +322,11 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
                         Err(why) => println!("  {word}: not lowered: {why}"),
                         Ok(lowered) => {
                             let kind = native.program.kind;
+                            let (stores, branches) =
+                                or_shader_front::rdna_bind::shading::stores_and_branches(
+                                    &lowered.module,
+                                );
+                            println!("  {word}: {stores} stores, {branches} branches");
                             for resource in &lowered.resources {
                                 let at = rdna_bind::numbered(rdna_bind::place(resource), kind);
                                 let join = rdna_bind::join(at, &native.records, table);
@@ -333,6 +338,15 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
                                     resource.at,
                                     std::mem::discriminant(&join),
                                 );
+                                if let rdna_bind::Join::Named { record, named } = &join {
+                                    println!(
+                                        "      is {:?} 0x{:08X} register {}, {} bytes an element",
+                                        record.class,
+                                        named.name_hash,
+                                        record.register,
+                                        record.stride
+                                    );
+                                }
                                 // A pick by a number a buffer states: which buffer, and its member there.
                                 let index = resource.at.as_ref().and_then(|at| at.index.as_ref());
                                 if let Some(or_shader_front::rdna::Index {
@@ -399,6 +413,9 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
                         "  {word}: textures {:X?}, streams {:?}",
                         stage.textures, stage.streams
                     );
+                    let (stores, branches) =
+                        or_shader_front::rdna_bind::shading::stores_and_branches(&stage.module);
+                    println!("  {word}: {stores} stores, {branches} branches");
                     if let Some(folder) = &wgsl {
                         let text = or_shader_front::rdna_bind::shading::wgsl(&stage.module)?;
                         let file =
@@ -452,12 +469,12 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether a technique of this name draws a model as a view sees it from the model's own data:
-/// one that draws in the space of a texture bakes a material's decorations, whatever targets it
-/// writes, and one for vertices skinned beforehand reads them where a pass of the game's left
-/// them, which the editor does not run: a ped's head and a garment drew nothing by theirs.
+/// Whether a technique of this name draws a model as a view sees it: one that draws in the
+/// space of a texture bakes a material's decorations, whatever targets it writes.
+// A technique for vertices skinned beforehand is told by what its mesh stage reads, where the
+// stage is fed, and not by its name.
 fn draws_in_a_view(technique: &str) -> bool {
-    !technique.contains("uvspace") && !technique.contains("preskinned")
+    !technique.contains("uvspace")
 }
 
 /// The two programs of the first pass of each technique of `effect` that draws a model as a
@@ -856,7 +873,7 @@ mod tests {
         assert!(draws_in_a_view("deferred_drawmeshlets"));
         assert!(draws_in_a_view("deferredalphaclip_drawskinnedmeshlets"));
         assert!(!draws_in_a_view("deferreduvspace_drawmeshlets"));
-        assert!(!draws_in_a_view("deferredpacked_drawpreskinnedmeshlets"));
+        assert!(draws_in_a_view("deferredpacked_drawpreskinnedmeshlets"));
     }
 
     #[test]

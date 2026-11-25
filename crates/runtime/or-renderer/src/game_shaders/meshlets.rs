@@ -48,7 +48,8 @@ const STAGE_BINDINGS: u32 = 64;
 /// material's numbers head, the rest of which only the game fills; `plain-device` asks the
 /// device for no optional feature and no raised limit, as a device that has none; `unguarded`
 /// has the binder let through a stage whose loop counts to a number only the game fills, and
-/// no pass is then built but on a software adapter.
+/// no pass is then built but on a software adapter; `meter=frame` has a frame lit by an
+/// install's cycles metered whole, as the game meters one, and not by the model's surfaces alone.
 #[derive(Debug, Default, PartialEq)]
 struct Aids {
     target: f32,
@@ -57,6 +58,7 @@ struct Aids {
     record: Option<String>,
     plain_device: bool,
     unguarded: bool,
+    whole_frame: bool,
 }
 
 impl Aids {
@@ -68,6 +70,7 @@ impl Aids {
                 Some(("pixel", file)) => aids.pixel = Some(file.to_owned()),
                 Some(("mesh", file)) => aids.mesh = Some(file.to_owned()),
                 Some(("record", file)) => aids.record = Some(file.to_owned()),
+                Some(("meter", "frame")) => aids.whole_frame = true,
                 None if word == "plain-device" => aids.plain_device = true,
                 None if word == "unguarded" => aids.unguarded = true,
                 _ => {}
@@ -82,6 +85,11 @@ pub fn record_aid() -> Option<Vec<u32>> {
     let bytes = std::fs::read(aids().record.as_ref()?).ok()?;
     let (dwords, _) = bytes.as_chunks::<4>();
     Some(dwords.iter().map(|c| u32::from_le_bytes(*c)).collect())
+}
+
+/// Whether the developer's aid `meter=frame` is given.
+pub fn whole_frame_meter() -> bool {
+    aids().whole_frame
 }
 
 fn aids() -> &'static Aids {
@@ -172,6 +180,7 @@ type ViewWrite = (wgpu::Buffer, usize);
 
 struct Draw {
     pipeline: wgpu::RenderPipeline,
+    caster: wgpu::RenderPipeline,
     /// By group number.
     groups: Vec<(u32, wgpu::BindGroup)>,
     meshlets: u32,
@@ -193,6 +202,11 @@ pub struct MeshletScene {
     metered: wgpu::TextureView,
     metered_group: wgpu::BindGroup,
     light: wgpu::Buffer,
+    /// The tile the sun's shadow is cast into, the camera's matrix and the light's, which a
+    /// frame copies in turn to where the surfaces read the view, and whether this frame casts.
+    shadow_map: wgpu::TextureView,
+    matrices: wgpu::Buffer,
+    casts: std::sync::atomic::AtomicBool,
     /// The meshes of the model its programs do not draw, which the frame draws as a material.
     pub rest: Vec<usize>,
     /// The surfaces it was prepared from that the device has no pass for, each by its place
@@ -276,6 +290,15 @@ fn view_of(
         dimension: Some(dimension),
         ..Default::default()
     })
+}
+
+/// The image `images` fill entry `entry` of a binding with, an array of `entries` where it is
+/// one; `None` is the blank texel.
+// ⚠ A translated stage takes the last entry of an array for any entry past it, and no device
+// checks one: the last is blank, as an entry no image fills is.
+fn image_at(images: &[Option<Arc<Image>>], entry: usize, entries: Option<usize>) -> Option<&Image> {
+    let last = entries.is_some_and(|entries| entry + 1 >= entries);
+    (images.get(entry).and_then(Option::as_deref)).filter(|_| !last)
 }
 
 /// What one binding is bound to, by its place in the lists a group is made from.
@@ -429,7 +452,8 @@ fn bind(
                 // The entries no image fills share one white texel.
                 let mut blank = None;
                 for entry in 0..entries {
-                    let view = match images.get(entry).and_then(Option::as_deref) {
+                    let array = count.map(|_| entries);
+                    let view = match image_at(images, entry, array) {
                         Some(image) => {
                             view_of(device, queue, *dimension, *sample, Some(image), empty)
                         }
@@ -508,6 +532,8 @@ struct Built {
     layouts: Vec<Option<wgpu::BindGroupLayout>>,
     formats: Vec<Option<wgpu::TextureFormat>>,
     pipeline: wgpu::RenderPipeline,
+    /// The pass that draws the vertex stage alone, as the light sees it.
+    caster: wgpu::RenderPipeline,
     /// The stages it was built from, kept so that no other pair comes to lie where they do.
     _of: (Arc<naga::Module>, Arc<naga::Module>),
 }
@@ -650,31 +676,46 @@ fn build_checked(
     built
 }
 
+/// The mesh stage and the pixel stage a pass of `stages` is built from on the adapter `info`:
+/// each as it is, or the one a developer's aid of `aids` puts in its place. `Err` says why no
+/// pass of theirs is built there.
+fn stages_drawn(
+    info: &wgpu::AdapterInfo,
+    stages: &(Arc<naga::Module>, Arc<naga::Module>),
+    aids: &Aids,
+) -> Result<(naga::Module, naga::Module), String> {
+    // ⚠ A loop the guard would have refused may never end, and a hardware adapter that waits on one is lost.
+    if aids.unguarded && info.device_type != wgpu::DeviceType::Cpu {
+        return Err("an unguarded stage is drawn on a software adapter only".to_string());
+    }
+    let fragment = match &aids.pixel {
+        Some(file) => stage_of(file)?,
+        None => (*stages.1).clone(),
+    };
+    let vertex = match &aids.mesh {
+        Some(file) => stage_of(file)?,
+        None => (*stages.0).clone(),
+    };
+    if let Some(why) = crate::instance::refused_by_driver(info, &vertex) {
+        return Err(why);
+    }
+    Ok((vertex, fragment))
+}
+
 /// The pass of the two `stages` built for `device`.
 fn build(
     device: &wgpu::Device,
     stages: (Arc<naga::Module>, Arc<naga::Module>),
     compiled: Option<&wgpu::PipelineCache>,
 ) -> Result<Built, String> {
-    // ⚠ A loop the guard would have refused may never end, and a hardware adapter that waits on one is lost.
-    if aids().unguarded && device.adapter_info().device_type != wgpu::DeviceType::Cpu {
-        return Err("an unguarded stage is drawn on a software adapter only".to_string());
-    }
-    let fragment = match &aids().pixel {
-        Some(file) => stage_of(file)?,
-        None => (*stages.1).clone(),
-    };
+    // The two stages come linked: the vertex stage gives the locations the pixel stage takes.
+    let (vertex, fragment) = stages_drawn(&device.adapter_info(), &stages, aids())?;
     let mut targets = formats_of(&fragment)?;
     // The first target holds linear light, which eight bits band in the darks: it is kept
     // encoded, as a colour target is, and read back as the light the program wrote.
     if let Some(Some(colour)) = targets.first_mut() {
         colour.format = colour.format.add_srgb_suffix();
     }
-    // The two stages come linked: the vertex stage gives the locations the pixel stage takes.
-    let vertex = match &aids().mesh {
-        Some(file) => stage_of(file)?,
-        None => (*stages.0).clone(),
-    };
     let mut layouts = Vec::new();
     for group in 0..GROUPS {
         let (module, visibility) = match group % 2 {
@@ -696,11 +737,19 @@ fn build(
     };
     let vertex_entry = entry_of(&vertex, ShaderStage::Vertex).map_err(|e| e.to_string())?;
     let fragment_entry = entry_of(&fragment, ShaderStage::Fragment).map_err(|e| e.to_string())?;
+    let vertex_module = shader(&vertex);
+    let caster = sun_shadow::caster(
+        device,
+        &layout,
+        &vertex_module,
+        &vertex_entry.name,
+        compiled,
+    );
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("meshlet-pass"),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
-            module: &shader(&vertex),
+            module: &vertex_module,
             entry_point: Some(&vertex_entry.name),
             compilation_options: Default::default(),
             buffers: &[],
@@ -731,6 +780,7 @@ fn build(
         fragment,
         layouts,
         pipeline,
+        caster,
         _of: stages,
     })
 }
@@ -755,279 +805,6 @@ fn formats_of(fragment: &naga::Module) -> Result<Vec<Option<wgpu::ColorTargetSta
     targets.truncate(TARGETS);
     Ok(targets)
 }
-
-/// Lights what the targets hold onto the frame, with the depth the pass drew: the first target's
-/// colour as a surface of the second's normal and smoothness and the third's specular colour,
-/// under a sun and a sky, then a tone curve and the frame's encoding. Where the light states a
-/// tone, the directional light's arithmetic, the metering and the tone curve are GTA VI's: the
-/// surfaces are metered into a texel of their own first, and the frame is exposed by it.
-// The normal is an octahedral one in the world's space. The third target holds, of the specular
-// colour `f`, `sqrt(1 - sqrt(1 - f))`. The fourth target's ambient terms come of buffers the
-// editor leaves at nought, so they are not read.
-// The colour is linear light: a pixel program writes what it samples of a map that states sRGB,
-// scaled, with no transfer of its own.
-const RESOLVE: &str = "
-struct Light {
-    // The way towards the sun or the moon.
-    towards: vec4<f32>,
-    // What it gives a surface that faces it, and the exposure in w.
-    sun: vec4<f32>,
-    // What the sky gives from above, and the ground from below.
-    sky: vec4<f32>,
-    ground: vec4<f32>,
-    // Where the camera stands, and which target is shown raw: nought for the lit frame.
-    camera: vec4<f32>,
-    // From the clip space back to the world.
-    unproject: mat4x4<f32>,
-    // GTA VI's metering and tone: one where it runs, how far the directional light's roughness
-    // is taken towards one, and the shares of the darkest and the brightest pixels left out.
-    tone: vec4<f32>,
-    // Two curves from a luminance to stops: scale, offset, added to the luminance, bending.
-    curve: vec4<f32>,
-    curve_blend: vec4<f32>,
-    // The least and the most stops, the stops added, and how far to the second curve.
-    stops: vec4<f32>,
-    // The key luminance, whether the frame is metered by it, and the scale and the offset that
-    // take an exposure to how far from the bright filmic curve to the dark one it stands.
-    key: vec4<f32>,
-    // The bright filmic curve's seven numbers and the tangent of half the light's disc, then
-    // the dark curve's.
-    bright: vec4<f32>,
-    bright_end: vec4<f32>,
-    dark: vec4<f32>,
-    dark_end: vec4<f32>,
-}
-@group(0) @binding(0) var colour: texture_2d<f32>;
-@group(0) @binding(1) var normal: texture_2d<f32>;
-@group(0) @binding(2) var depth: texture_depth_2d;
-@group(0) @binding(3) var<uniform> light: Light;
-@group(0) @binding(4) var specular: texture_2d<f32>;
-@group(0) @binding(5) var ambient: texture_2d<f32>;
-// The stops the surfaces metered to.
-@group(1) @binding(0) var metered_stops: texture_2d<f32>;
-
-struct Corner {
-    @builtin(position) at: vec4<f32>,
-    @location(0) clip: vec2<f32>,
-}
-
-@vertex fn at_corner(@builtin(vertex_index) i: u32) -> Corner {
-    let corner = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0;
-    return Corner(vec4<f32>(corner, 0.0, 1.0), corner);
-}
-
-struct Lit {
-    @location(0) colour: vec4<f32>,
-    @builtin(frag_depth) depth: f32,
-}
-
-const PI: f32 = 3.14159265;
-// What a colour weighs in its luminance.
-const LUMINANCE: vec3<f32> = vec3<f32>(0.2125, 0.7154, 0.0721);
-
-// What the sky and the ground give along a way: the one above, the other below.
-fn surroundings(way: vec3<f32>) -> vec3<f32> {
-    return mix(light.ground.rgb, light.sky.rgb, way.z * 0.5 + 0.5);
-}
-
-fn normal_of(packed_normal: vec4<f32>) -> vec3<f32> {
-    let bytes = vec3<u32>(round(packed_normal.yzw * 255.0));
-    let packed = bytes.x | (bytes.y << 8u) | (bytes.z << 16u);
-    let e = vec2<f32>(f32(packed & 0xFFFu), f32(packed >> 12u)) / 2047.5 - 1.0;
-    let n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
-    let fold = max(-n.z, 0.0);
-    return normalize(vec3<f32>(n.x + select(fold, -fold, n.x >= 0.0), n.y + select(fold, -fold, n.y >= 0.0), n.z));
-}
-
-// The light a surface at `texel` sends to the camera, in the light's own units, before any
-// exposure; `clip` is where the texel stands on the frame and `far` its depth.
-fn lit_at(texel: vec2<i32>, clip: vec2<f32>, far: f32) -> vec3<f32> {
-    let packed_normal = textureLoad(normal, texel, 0);
-    let n = normal_of(packed_normal);
-    let albedo = textureLoad(colour, texel, 0);
-    let terms = textureLoad(specular, texel, 0);
-    let world = light.unproject * vec4<f32>(clip.x, clip.y, far, 1.0);
-    let v = normalize(light.camera.xyz - world.xyz / world.w);
-    let l = light.towards.xyz;
-    let h = normalize(l + v);
-    let n_l = max(dot(n, l), 0.0);
-    let n_v = max(dot(n, v), 1e-4);
-    let n_h = max(dot(n, h), 0.0);
-    let v_h = max(dot(h, v), 0.0);
-    let kept = 1.0 - terms.rgb * terms.rgb;
-    let f0 = 1.0 - kept * kept;
-    let roughness = clamp(1.0 - packed_normal.x, 0.08, 1.0);
-    let game = light.tone.x > 0.0;
-    // The game takes the directional light's roughness part of the way to one.
-    let softened = roughness + select(0.0, light.tone.y, game) * (1.0 - roughness);
-    let a = max(softened * softened, 0.001);
-    let a2 = a * a;
-    // The microfacet terms: how many facets face halfway, how many of them are seen and lit,
-    // and how much a facet reflects at this angle.
-    let spread = n_h * n_h * (a2 - 1.0) + 1.0;
-    let facets = a2 / (PI * spread * spread);
-    let seen = 0.5 / max(n_l * sqrt(n_v * n_v * (1.0 - a2) + a2) + n_v * sqrt(n_l * n_l * (1.0 - a2) + a2), 1e-4);
-    let reflected = f0 + (1.0 - f0) * pow(1.0 - v_h, 5.0);
-    var gloss = facets * seen * reflected;
-    var matte = vec3<f32>(1.0 / PI);
-    if game {
-        // The gloss of a light that is a disc and no point, and what the facets reflect onto
-        // one another: a fit by the angle and the roughness.
-        let disc = light.bright_end.w;
-        let lobe = a2 * (v_h + 0.001);
-        gloss *= lobe / (lobe + 0.25 * disc * (disc + 3.0 * a));
-        let by_angle = (((4.51786 * n_l - 13.70343) * n_l + 15.88844) * n_l - 9.11368) * n_l + 3.09507;
-        let by_roughness = ((0.73343 * a - 2.61748) * a + 2.77203) * a - 0.20276;
-        let lost = -1.4594 * n_l * by_angle * a * by_roughness;
-        gloss *= 1.0 + f0 * (1.0 / (1.0 + lost) - 1.0);
-        // The matte part: brighter at grazing angles on a rough surface, dimmer on a smooth.
-        let from_light = pow(1.0 - n_l, 5.0);
-        let from_view = pow(1.0 - n_v, 5.0);
-        let l_h = clamp(dot(l, h), 0.0, 1.0);
-        let back = 2.0 * l_h * l_h * a;
-        let k = 0.5 * a - 1.0;
-        let shape = (1.0 + k * from_light) * (1.0 + k * from_view) + back * (from_light + from_view + from_light * from_view * (back - 1.0));
-        matte = vec3<f32>((1.0 - 0.3377483 * a) * shape / PI);
-    }
-    let direct = (albedo.rgb * (1.0 - reflected) * matte + gloss) * light.sun.rgb * n_l;
-    // From all around: the sky and the ground on the colour, and along the mirrored way on the
-    // gloss, less as the surface is rougher.
-    let grazing = f0 + (max(vec3<f32>(1.0 - roughness), f0) - f0) * pow(1.0 - n_v, 5.0);
-    let around = albedo.rgb * surroundings(n) + grazing * surroundings(reflect(-v, n)) * (1.0 - roughness);
-    return direct + around;
-}
-
-@fragment fn lit(corner: Corner) -> Lit {
-    let texel = vec2<i32>(corner.at.xy);
-    let far = textureLoad(depth, texel, 0);
-    if far <= 0.0 {
-        discard;
-    }
-    let shown = u32(light.camera.w);
-    if shown != 0u {
-        let packed_normal = textureLoad(normal, texel, 0);
-        let albedo = textureLoad(colour, texel, 0);
-        let terms = textureLoad(specular, texel, 0);
-        if shown == 1u { return Lit(vec4<f32>(albedo.rgb, 1.0), far); }
-        if shown == 2u { return Lit(vec4<f32>(packed_normal.rgb, 1.0), far); }
-        if shown == 3u { return Lit(vec4<f32>(normal_of(packed_normal) * 0.5 + 0.5, 1.0), far); }
-        if shown == 4u { return Lit(vec4<f32>(terms.rgb, 1.0), far); }
-        if shown == 5u { return Lit(vec4<f32>(textureLoad(ambient, texel, 0).rgb, 1.0), far); }
-        return Lit(vec4<f32>(albedo.a, packed_normal.a, terms.a, 1.0), far);
-    }
-    let seen = lit_at(texel, corner.clip, far);
-    if light.tone.x > 0.0 {
-        let exposure = exp2(textureLoad(metered_stops, vec2<i32>(0), 0).x) * light.sun.w;
-        return Lit(vec4<f32>(filmic(seen * exposure, exposure), 1.0), far);
-    }
-    return Lit(vec4<f32>(encoded(toned(seen * light.sun.w)), 1.0), far);
-}
-
-// A filmic curve fitted to the reference one: light past one rolls off and does not clip.
-fn toned(x: vec3<f32>) -> vec3<f32> {
-    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
-// The frame shows what is written to it as it is, and a program's colour is linear light.
-fn encoded(linear: vec3<f32>) -> vec3<f32> {
-    let low = linear * 12.92;
-    let high = 1.055 * pow(max(linear, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(high, low, linear <= vec3<f32>(0.0031308));
-}
-
-fn filmic_raw(x: vec3<f32>, abcd: vec4<f32>, efw: vec4<f32>) -> vec3<f32> {
-    return (x * (abcd.x * x + abcd.z * abcd.y) + abcd.w * efw.x) / (x * (abcd.x * x + abcd.y) + abcd.w * efw.y) - efw.x / efw.y;
-}
-
-// GTA VI's tone curve of an exposed colour: the filmic curve between the bright and the dark
-// one by the exposure, its white taken to one, then a power for the frame.
-fn filmic(x: vec3<f32>, exposure: f32) -> vec3<f32> {
-    let along = clamp(exposure * light.key.z + light.key.w, 0.0, 1.0);
-    let abcd = mix(light.bright, light.dark, along);
-    let efw = mix(light.bright_end, light.dark_end, along);
-    let white = filmic_raw(vec3<f32>(efw.z), abcd, efw).x;
-    let curved = clamp(filmic_raw(max(x, vec3<f32>(0.0)), abcd, efw) / white, vec3<f32>(0.0), vec3<f32>(1.0));
-    return pow(curved, vec3<f32>(0.4545));
-}
-
-// The surfaces the meter looks at: a lattice of this many a side over the frame.
-const LATTICE: i32 = 32;
-
-// What the lit surfaces meter to, as GTA VI meters a frame: each sample's luminance goes to one
-// of 256 bins laid evenly over the logarithm between the least and the greatest, the darkest
-// and the brightest shares are left out, the rest average, and the average gives the stops by
-// the curves or by the key. Nought where no surface is seen or no tone is stated.
-@fragment fn metered(corner: Corner) -> @location(0) vec4<f32> {
-    if light.tone.x <= 0.0 {
-        return vec4<f32>(0.0);
-    }
-    let size = vec2<i32>(textureDimensions(depth));
-    var luminances: array<f32, 1024>;
-    var count = 0;
-    var least = 1e30;
-    var most = 0.0;
-    for (var y = 0; y < LATTICE; y++) {
-        for (var x = 0; x < LATTICE; x++) {
-            let texel = (vec2<i32>(x, y) * 2 + 1) * size / (2 * LATTICE);
-            let far = textureLoad(depth, texel, 0);
-            if far <= 0.0 {
-                continue;
-            }
-            let at = (vec2<f32>(texel) + 0.5) / vec2<f32>(size) * 2.0 - 1.0;
-            let luminance = dot(lit_at(texel, vec2<f32>(at.x, -at.y), far), LUMINANCE);
-            if luminance != luminance {
-                continue;
-            }
-            let held = max(luminance, 1e-6);
-            luminances[count] = held;
-            count++;
-            least = min(least, held);
-            most = max(most, held);
-        }
-    }
-    if count == 0 {
-        return vec4<f32>(0.0);
-    }
-    let ratio = select(1.0, most / least, least >= 1e-8);
-    let span = max(log(ratio), 1e-8);
-    var bins: array<f32, 256>;
-    for (var i = 0; i < count; i++) {
-        let bin = clamp(255.0 * log(luminances[i] / least) / span, 0.0, 255.0);
-        bins[u32(bin)] += 1.0;
-    }
-    let lows = round(light.tone.z * f32(count));
-    let middle_ends = round(f32(count) - (round(light.tone.w * f32(count)) + lows)) + lows;
-    var before = 0.0;
-    var sum = 0.0;
-    var taken = 0.0;
-    for (var bin = 0; bin < 256; bin++) {
-        var left = bins[bin];
-        var reached = before;
-        if left > 0.0 && lows > reached {
-            left -= min(lows - reached, left);
-            reached = lows;
-        }
-        if left > 0.0 && middle_ends > reached {
-            let middle = min(middle_ends - reached, left);
-            sum += middle * clamp(least * pow(ratio, f32(bin) / 255.0), least, most);
-            taken += middle;
-        }
-        before += bins[bin];
-    }
-    let mean = select(0.0, sum / max(taken, 1.0), taken > 0.0);
-    var stops = log2(light.key.x / max(mean, 1e-6));
-    if light.key.y <= 0.0 {
-        let first = light.curve.y - 10.0 + light.curve.w * mean + light.curve.x * log(light.curve.z + mean);
-        let second = light.curve_blend.y - 10.0 + light.curve_blend.w * mean + light.curve_blend.x * log(light.curve_blend.z + mean);
-        stops = first + light.stops.w * (second - first);
-    }
-    if stops != stops {
-        stops = light.stops.y;
-    }
-    stops = clamp(clamp(stops, light.stops.x, light.stops.y) + light.stops.z, light.stops.x, light.stops.y);
-    return vec4<f32>(stops, 0.0, 0.0, 1.0);
-}
-";
 
 fn targets_of(
     device: &wgpu::Device,
@@ -1061,6 +838,7 @@ fn resolve_group(
     targets: &[Option<wgpu::TextureView>],
     depth: &wgpu::TextureView,
     light: &wgpu::Buffer,
+    shadow_map: &wgpu::TextureView,
 ) -> Result<wgpu::BindGroup, String> {
     let [Some(colour), Some(normal), Some(specular), Some(ambient)] = targets else {
         return Err(
@@ -1096,6 +874,10 @@ fn resolve_group(
                 binding: 5,
                 resource: view(ambient),
             },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: view(shadow_map),
+            },
         ],
     }))
 }
@@ -1114,6 +896,7 @@ pub struct Sky {
     /// GTA VI's metering and tone curve, where an install's cycle states them: the frame is
     /// then exposed by what its surfaces meter to, times `exposure`.
     pub tone: Option<Tone>,
+    pub scene: Scene,
 }
 
 fn smoothstep(from: f32, to: f32, x: f32) -> f32 {
@@ -1156,6 +939,7 @@ impl Sky {
             ground: sky * 0.3 + sun * 0.04,
             exposure: 1.0,
             tone: None,
+            scene: Scene::default(),
         }
     }
 }
@@ -1168,7 +952,7 @@ impl Default for Sky {
 }
 
 /// The bytes of what the resolve reads of a frame's light.
-const LIGHT_BYTES: usize = 288;
+const LIGHT_BYTES: usize = 912;
 /// The format of the texel the surfaces are metered into: the stops the frame is exposed by.
 const METERED: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -1182,7 +966,7 @@ pub struct Lighting {
     pub camera: Vec3,
 }
 
-fn light_bytes(lighting: &Lighting) -> [u8; LIGHT_BYTES] {
+fn light_bytes(lighting: &Lighting, casts: bool) -> [u8; LIGHT_BYTES] {
     let sky = &lighting.sky;
     let towards = sky.towards.try_normalize().unwrap_or(Vec3::Z);
     let mut words = [0f32; LIGHT_BYTES / 4];
@@ -1193,7 +977,12 @@ fn light_bytes(lighting: &Lighting) -> [u8; LIGHT_BYTES] {
     let camera = lighting.camera;
     words[16..20].copy_from_slice(&[camera.x, camera.y, camera.z, aids().target]);
     words[20..36].copy_from_slice(&lighting.view_proj.inverse().to_cols_array());
-    words[36..].copy_from_slice(&Tone::words(sky.tone.as_ref()));
+    words[36..72].copy_from_slice(&Tone::words(sky.tone.as_ref()));
+    let to_tile = sun_shadow::cast_of(sky).unwrap_or(Mat4::IDENTITY);
+    words[72..88].copy_from_slice(&to_tile.to_cols_array());
+    words[88..92].copy_from_slice(&sun_shadow::words(sky, casts));
+    words[92..212].copy_from_slice(&sky.scene.words());
+    words[212..228].copy_from_slice(&lighting.view_proj.to_cols_array());
     bytemuck::cast(words)
 }
 
@@ -1239,6 +1028,7 @@ impl MeshletScene {
             }
             let mut draw = Draw {
                 pipeline: built.pipeline.clone(),
+                caster: built.caster.clone(),
                 groups: Vec::new(),
                 meshlets: surface.meshlets,
                 views: Vec::new(),
@@ -1283,6 +1073,7 @@ impl MeshletScene {
                 texture(2, wgpu::TextureSampleType::Depth),
                 texture(4, unfiltered),
                 texture(5, unfiltered),
+                texture(6, wgpu::TextureSampleType::Depth),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -1381,7 +1172,21 @@ impl MeshletScene {
             multiview_mask: None,
             cache: None,
         });
-        let resolve_group = resolve_group(device, &resolve_layout, &targets, &depth, &light)?;
+        let shadow_map = sun_shadow::tile(device);
+        let matrices = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet-matrices"),
+            size: 128,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let resolve_group = resolve_group(
+            device,
+            &resolve_layout,
+            &targets,
+            &depth,
+            &light,
+            &shadow_map,
+        )?;
         Ok(Some(Self {
             draws,
             formats,
@@ -1394,6 +1199,9 @@ impl MeshletScene {
             metered,
             metered_group,
             light,
+            shadow_map,
+            matrices,
+            casts: Default::default(),
             rest: Vec::new(),
             refused,
         }))
@@ -1402,9 +1210,14 @@ impl MeshletScene {
     /// Make the targets anew for a frame of `size`.
     pub fn resize(&mut self, device: &wgpu::Device, size: (u32, u32)) {
         let (targets, depth) = targets_of(device, &self.formats, size);
-        if let Ok(group) =
-            resolve_group(device, &self.resolve_layout, &targets, &depth, &self.light)
-        {
+        if let Ok(group) = resolve_group(
+            device,
+            &self.resolve_layout,
+            &targets,
+            &depth,
+            &self.light,
+            &self.shadow_map,
+        ) {
             self.resolve_group = group;
             self.targets = targets;
             self.depth = depth;
@@ -1421,17 +1234,68 @@ impl MeshletScene {
         Some(self.targets.get(index)?.as_ref()?.texture())
     }
 
+    /// Whether the model casts no shadow whatever lights it, which a person is told.
+    // A buffer is copied to at a multiple of four bytes: a surface that reads the view elsewhere
+    // cannot be handed the light's, and a model is not cast by some of its surfaces alone.
+    pub fn casts_no_shadow(&self) -> bool {
+        (self.draws.iter().flat_map(|draw| &draw.views)).any(|(_, at)| at % 4 != 0)
+    }
+
     /// Write this frame's view and what the last draw lights by.
     pub fn update(&self, queue: &wgpu::Queue, lighting: &Lighting) {
         let matrix = lighting.view_proj.to_cols_array();
         for (buffer, at) in self.draws.iter().flat_map(|draw| &draw.views) {
             queue.write_buffer(buffer, *at as u64, bytemuck::cast_slice(&matrix));
         }
-        queue.write_buffer(&self.light, 0, &light_bytes(lighting));
+        let cast = sun_shadow::cast_of(&lighting.sky).filter(|_| !self.casts_no_shadow());
+        if let Some(to_tile) = cast {
+            let both = [matrix, to_tile.to_cols_array()];
+            queue.write_buffer(&self.matrices, 0, bytemuck::cast_slice(&both));
+        }
+        (self.casts).store(cast.is_some(), std::sync::atomic::Ordering::Relaxed);
+        queue.write_buffer(&self.light, 0, &light_bytes(lighting, cast.is_some()));
+    }
+
+    /// Draw the surfaces as the light sees them into the tile: the light's matrix is copied to
+    /// where each reads the view, and the camera's back once the tile is drawn.
+    fn record_shadow(&self, encoder: &mut wgpu::CommandEncoder) {
+        let views = || self.draws.iter().flat_map(|draw| &draw.views);
+        for (buffer, at) in views() {
+            encoder.copy_buffer_to_buffer(&self.matrices, 64, buffer, *at as u64, 64);
+        }
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("meshlet-shadow"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.shadow_map,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        for draw in &self.draws {
+            pass.set_pipeline(&draw.caster);
+            for (group, bound) in &draw.groups {
+                pass.set_bind_group(*group, bound, &[]);
+            }
+            pass.draw(0..VERTICES, 0..draw.meshlets);
+        }
+        drop(pass);
+        for (buffer, at) in views() {
+            encoder.copy_buffer_to_buffer(&self.matrices, 0, buffer, *at as u64, 64);
+        }
     }
 
     /// Draw the surfaces into the targets, in a pass of their own.
     pub fn record_targets(&self, encoder: &mut wgpu::CommandEncoder) {
+        if self.casts.load(std::sync::atomic::Ordering::Relaxed) {
+            self.record_shadow(encoder);
+        }
         let attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> = (self.targets.iter())
             .map(|target| {
                 target.as_ref().map(|view| wgpu::RenderPassColorAttachment {
@@ -1499,10 +1363,18 @@ impl MeshletScene {
     }
 }
 
+mod resolve;
+mod scene;
+mod sun_shadow;
 mod tone;
+use resolve::RESOLVE;
+pub use scene::{falls_on, nine_of, Clouds, Dome, Scene};
+pub use sun_shadow::to_tile;
 pub use tone::{metered, Curve, Filmic, Tone};
 
 #[cfg(test)]
 mod far_tests;
+#[cfg(test)]
+mod scene_tests;
 #[cfg(test)]
 mod tests;

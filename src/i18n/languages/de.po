@@ -12679,8 +12679,8 @@ msgstr[1] "Ein Frame-Filter namens {name} mit {count} Spuren:"
 msgid "Track {track}: weight {weight}, group {group}, word at 0x2C {word}."
 msgstr "Spur {track}: Gewicht {weight}, Gruppe {group}, Wort bei 0x2C {word}."
 
-msgid "Bone hash_{bone}: kind {kind}, flags {flags}, values {values}."
-msgstr "Knochen hash_{bone}: Art {kind}, Flags {flags}, Werte {values}."
+msgid "Bone {bone}: kind {kind}, flags {flags}, values {values}."
+msgstr "Knochen {bone}: Art {kind}, Flags {flags}, Werte {values}."
 
 msgid "An animation record named {name}, with settings for {count} skeleton bone."
 msgid_plural "An animation record named {name}, with settings for {count} skeleton bones."
@@ -14243,8 +14243,8 @@ msgstr "Seine Art ist {kind} und sein Wort bei {at} ist {word}: Seine untere Hä
 msgid "It lies on the height map tile of the same entry number in the nested archive beside its own; with no archive table, the scan's order of the two archives' bodies is their entry order."
 msgstr "Es liegt auf der Höhenkartenkachel mit derselben Eintragsnummer im verschachtelten Archiv neben seinem eigenen; ohne Archivtabelle ist die Reihenfolge, in der der Scan die Inhalte der beiden Archive findet, ihre Eintragsreihenfolge."
 
-msgid "A GTA VI MoVE network at version 0x13 whose name hash is hash_{hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
-msgstr "Ein GTA VI-MoVE-Netzwerk der Version 0x13, dessen Namenshash hash_{hash} ist: Listen mit {a}, {b} und {d} Einträgen, dann ein Wurzelknoten vom Typ {kind}, Index {index} und ID {id}."
+msgid "A GTA VI MoVE network at version 0x13 whose name hash is {hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
+msgstr "Ein GTA VI-MoVE-Netzwerk der Version 0x13, dessen Namenshash {hash} ist: Listen mit {a}, {b} und {d} Einträgen, dann ein Wurzelknoten vom Typ {kind}, Index {index} und ID {id}."
 
 msgid "Its {nodes} nodes tile the body from the root to its end, with {tails} tails no offset names between them. A kind's name is GTA V's at the same place in GTA V's list, which is not confirmed."
 msgstr "Seine {nodes} Knoten füllen den Inhalt von der Wurzel bis zu seinem Ende lückenlos aus, mit {tails} Resten dazwischen, die kein Offset nennt. Der Name einer Art ist der von GTA V an derselben Stelle in der Liste von GTA V, was nicht bestätigt ist."
@@ -14376,8 +14376,8 @@ msgstr "Element {index}: {a}, {b}, {c} und {d}."
 msgid "The expression reader does not read this body: {e}"
 msgstr "Der Expression-Reader liest diesen Inhalt nicht: {e}"
 
-msgid "A GTA VI expression set of key hash_{key}, whose name is not known."
-msgstr "Ein GTA VI-Expression-Set mit dem Schlüssel hash_{key}, dessen Name nicht bekannt ist."
+msgid "A GTA VI expression set of key {key}."
+msgstr "Ein GTA VI-Expression-Set mit dem Schlüssel {key}."
 
 msgid "It reads {count} track: the facial controls, or bones, a clip carries."
 msgid_plural "It reads {count} tracks: the facial controls, or bones, a clip carries."
@@ -15268,10 +15268,10 @@ msgstr "Der Objektbaum-Reader von GTA VI liest diesen Inhalt nicht: {e}"
 msgid "A GTA VI table of {items} objects in {trees} trees, of {types} types. Each tree's root is keyed by the 32-bit name hash of a model's name, and an object points at later objects of its tree by their offsets. What the objects' fields hold and what the type tags name are not known."
 msgstr "Eine GTA VI-Tabelle mit {items} Objekten in {trees} Bäumen, aus {types} Typen. Die Wurzel jedes Baums hat als Schlüssel den 32-Bit-Namenshash des Namens eines Modells, und ein Objekt verweist über deren Offsets auf spätere Objekte seines Baums. Was die Felder der Objekte enthalten und was die Typ-Tags nennen, ist nicht bekannt."
 
-msgid "hash_{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
-msgid_plural "hash_{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
-msgstr[0] "hash_{key}: eine Wurzel vom Typ {tag}, allein in ihrem Baum; sie verweist auf [{children}]"
-msgstr[1] "hash_{key}: eine Wurzel vom Typ {tag} und {count} Objekte in ihrem Baum; sie verweist auf [{children}]"
+msgid "{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
+msgid_plural "{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
+msgstr[0] "{key}: eine Wurzel vom Typ {tag}, allein in ihrem Baum; sie verweist auf [{children}]"
+msgstr[1] "{key}: eine Wurzel vom Typ {tag} und {count} Objekte in ihrem Baum; sie verweist auf [{children}]"
 
 msgid "16 entries {entries}"
 msgstr "16 Einträge {entries}"
@@ -15466,11 +15466,11 @@ msgid_plural "{group}: {count} tracks"
 msgstr[0] "{group}: {count} Spur"
 msgstr[1] "{group}: {count} Spuren"
 
-msgid "{group}: hash_{id} {word} ({at} of {total}), {detail}"
-msgstr "{group}: hash_{id} {word} ({at} von {total}), {detail}"
+msgid "{group}: {id} {word} ({at} of {total}), {detail}"
+msgstr "{group}: {id} {word} ({at} von {total}), {detail}"
 
-msgid "Expression set hash_{key}, tracks read: {reads}, tracks written: {writes}"
-msgstr "Expression-Set hash_{key}, gelesene Spuren: {reads}, geschriebene Spuren: {writes}"
+msgid "Expression set {key}, tracks read: {reads}, tracks written: {writes}"
+msgstr "Expression-Set {key}, gelesene Spuren: {reads}, geschriebene Spuren: {writes}"
 
 msgid "Keyframed values GTA V's records have no member for are listed at the end, raw: a velocity's angle, a colour's last three unnamed values and a domain's fifth and sixth. A colour's first two unnamed values are shown as its minimum and maximum, which is inferred; the preview draws the maximum, as GTA V does, where the colour's word at +0x19C counts two or more colours in use, which is inferred too."
 msgstr "Keyframe-Werte, für die GTA Vs Datensätze kein Feld haben, stehen roh am Ende: der Winkel einer Geschwindigkeit, die letzten drei unbenannten Werte einer Farbe und der fünfte und sechste eines Bereichs. Die ersten beiden unbenannten Werte einer Farbe werden als ihr Minimum und Maximum gezeigt, was erschlossen ist; die Vorschau zeichnet das Maximum wie GTA V, wo das Wort der Farbe bei +0x19C zwei oder mehr verwendete Farben zählt, was ebenfalls erschlossen ist."
@@ -16896,6 +16896,12 @@ msgstr[1] "die Lichter von {count} Maps"
 
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "Die Namen der Zeichenketten dieses Dokuments benötigen den GTA-VI-Schlüssel-Snapshot"
+
+msgid "Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan."
+msgstr "Direct3D 12 kompiliert Shader mit FXC, weil keine dxcompiler.dll neben OpenRage, im PATH oder in einem Windows SDK gefunden wurde. FXC lehnt einige Shader-Programme von GTA VI ab und braucht für andere Minuten, daher werden die Modelle, die sie benötigen, in „Material“ gezeichnet. Legen Sie dxcompiler.dll und dxil.dll neben openrage.exe oder starten Sie OpenRage mit WGPU_BACKEND=vulkan."
+
+msgid "It casts no shadow: one of its surfaces reads the view at an offset the light's view cannot be copied to"
+msgstr "Es wirft keinen Schatten: Eine seiner Flächen liest die Ansicht an einem Versatz, an den die Ansicht des Lichts nicht kopiert werden kann"
 
 msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
 msgstr "Nur ein aus einem GTA VI-Archiv geöffnetes Dokument wird in eine Kopie davon gespeichert"

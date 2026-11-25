@@ -43,15 +43,16 @@ pub(crate) fn test_gpu(what: &str) -> Option<(wgpu::Instance, wgpu::Device, wgpu
         backend_options: wgpu::BackendOptions::default(),
         display: None,
     }));
-    let adapter =
-        match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-        {
-            Ok(a) => a,
-            Err(e) => {
-                or_test_support::skip_device(what, format_args!("no wgpu adapter: {e}"));
-                return None;
-            }
-        };
+    let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        force_fallback_adapter: or_renderer::instance::software_asked(),
+        ..Default::default()
+    })) {
+        Ok(a) => a,
+        Err(e) => {
+            or_test_support::skip_device(what, format_args!("no wgpu adapter: {e}"));
+            return None;
+        }
+    };
     let mut required_limits = wgpu::Limits::default();
     required_limits.max_bind_groups = required_limits.max_bind_groups.max(5);
     match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {

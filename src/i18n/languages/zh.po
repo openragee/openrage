@@ -2152,8 +2152,8 @@ msgstr "等待零售版编辑确认"
 msgid "BC7 texture in a Legacy pack"
 msgstr "Legacy 包中的 BC7 纹理"
 
-msgid "BIK — Bink video, played in the preview"
-msgstr "BIK — Bink 视频，在预览中播放"
+msgid "BIK/BK2 — Bink video, played in the preview"
+msgstr "BIK/BK2 — Bink 视频，在预览中播放"
 
 msgid "Back"
 msgstr "返回"
@@ -12620,8 +12620,8 @@ msgstr "{folder} 看起来不是 {title} 的文件夹，因此未将其设为该
 msgid "{folder} is {title}, which OpenRage does not support yet, so it is shown as a plain folder: {why}."
 msgstr "{folder} 是 {title}，OpenRage 尚不支持，因此将其显示为普通文件夹：{why}。"
 
-msgid "{folder} is {title}. Its archives have no names OpenRage can read, so each opens as a scan of what it holds."
-msgstr "{folder} 是 {title}。其归档没有 OpenRage 能读取的名称，因此每个归档都以其所含内容的扫描结果打开。"
+msgid "{folder} is {title}. Its archives require the game's keys to open."
+msgstr "{folder} 是 {title}。打开其归档需要游戏密钥。"
 
 msgid "GTA VI Texture Pack"
 msgstr "GTA VI 纹理包"
@@ -14773,9 +14773,6 @@ msgstr "参考位置"
 
 msgid "XYZ over the geometry's reference positions as RGB; black where a vertex holds none"
 msgstr "将几何体参考位置的 XYZ 显示为 RGB；顶点没有参考位置处显示为黑色"
-
-msgid "{why}\n\nIt opens as a scan of what it holds, in a tab of its own."
-msgstr "{why}\n\n它会作为其所含内容的扫描结果，在其自己的标签页中打开。"
 
 msgid "A rule, an event or a behaviour was added, removed or renamed: a GTA VI particle list is written in place, so its rules stay as they are stored."
 msgstr "已添加、移除或重命名规则、事件或行为：GTA VI 粒子列表是就地写入的，因此其规则保持其存储时的样子。"

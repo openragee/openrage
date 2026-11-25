@@ -289,10 +289,7 @@ pub(super) fn draw_row(
             let resp = if let Some(err) = archive_open_error.filter(|_| scans) {
                 resp.on_hover_ui(|ui| {
                     ui.set_max_width(ui.spacing().tooltip_width);
-                    ui.label(tr!(
-                        "{why}\n\nIt opens as a scan of what it holds, in a tab of its own.",
-                        why = err
-                    ));
+                    ui.label(err);
                 })
             } else if let Some(err) = archive_open_error {
                 resp.on_hover_ui(|ui| {

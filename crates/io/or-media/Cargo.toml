@@ -25,6 +25,7 @@ thiserror.workspace = true
 ropus.workspace = true
 
 [dev-dependencies]
+or-io = { workspace = true, features = ["gta6"] }
 or-test-support.workspace = true
 # The hand-built movies FFmpeg is asked to decode go through a file.
 tempfile.workspace = true

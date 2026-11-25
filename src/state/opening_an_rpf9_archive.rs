@@ -222,8 +222,22 @@ pub(super) fn written(dir: &Path, bytes: &[u8]) -> PathBuf {
 
 /// Load `path` and wait for the load to end.
 fn load(state: &mut AppState, path: PathBuf) {
-    state.load_file(path);
-    settle(state);
+    let scan = if path.is_file() {
+        super::rpf9_scan::Rpf9ScanDocument::open(&path).expect("the explicit scan opens")
+    } else {
+        None
+    };
+    if let Some(scan) = scan {
+        state.insert_document(
+            path,
+            DocPayload::Rpf9(std::sync::Arc::new(scan)),
+            None,
+            None,
+        );
+    } else {
+        state.load_file(path);
+        settle(state);
+    }
 }
 
 /// Wait for the loads in flight to end.

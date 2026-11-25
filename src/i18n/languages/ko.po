@@ -2152,8 +2152,8 @@ msgstr "리테일 편집 확인 대기 중"
 msgid "BC7 texture in a Legacy pack"
 msgstr "Legacy 팩의 BC7 텍스처"
 
-msgid "BIK — Bink video, played in the preview"
-msgstr "BIK — Bink 비디오, 미리 보기에서 재생"
+msgid "BIK/BK2 — Bink video, played in the preview"
+msgstr "BIK/BK2 — Bink 비디오, 미리 보기에서 재생"
 
 msgid "Back"
 msgstr "뒤로"
@@ -12620,8 +12620,8 @@ msgstr "{folder}은(는) {title} 폴더로 보이지 않아 설정되지 않았�
 msgid "{folder} is {title}, which OpenRage does not support yet, so it is shown as a plain folder: {why}."
 msgstr "{folder}은(는) {title}이며 OpenRage가 아직 지원하지 않으므로 일반 폴더로 표시됩니다: {why}."
 
-msgid "{folder} is {title}. Its archives have no names OpenRage can read, so each opens as a scan of what it holds."
-msgstr "{folder}은(는) {title}입니다. 이 아카이브에는 OpenRage가 읽을 수 있는 이름이 없으므로, 각 아카이브는 담고 있는 내용의 스캔으로 열립니다."
+msgid "{folder} is {title}. Its archives require the game's keys to open."
+msgstr "{folder}은(는) {title}입니다. 아카이브를 열려면 게임 키가 필요합니다."
 
 msgid "GTA VI Texture Pack"
 msgstr "GTA VI 텍스처 팩"
@@ -14773,9 +14773,6 @@ msgstr "기준 위치"
 
 msgid "XYZ over the geometry's reference positions as RGB; black where a vertex holds none"
 msgstr "지오메트리의 기준 위치를 RGB로 나타낸 XYZ. 버텍스에 기준 위치가 없으면 검은색"
-
-msgid "{why}\n\nIt opens as a scan of what it holds, in a tab of its own."
-msgstr "{why}\n\n담고 있는 내용의 스캔으로 열리며, 별도의 탭에 표시됩니다."
 
 msgid "A rule, an event or a behaviour was added, removed or renamed: a GTA VI particle list is written in place, so its rules stay as they are stored."
 msgstr "규칙, 이벤트 또는 동작이 추가, 제거 또는 이름 변경되었습니다: GTA VI 파티클 목록은 제자리에 기록되므로 규칙은 저장된 그대로 유지됩니다."

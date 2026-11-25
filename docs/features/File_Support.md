@@ -27,7 +27,7 @@ separate Gen8 and Gen9 layouts, and OpenRage reads and writes both.
 
 ## Audio and video
 
-A `.bik` video plays in the app with its sound, and an `.awc` stream plays, on every platform.
+A `.bik` or `.bk2` video plays in the app with its sound, and an `.awc` stream plays, on every platform.
 OpenRage decodes every audio and video format a shipped install uses, Bink 1 and Bink 2 pictures,
 Bink sound and Legacy's XMA streams among them, in its own Rust, so no FFmpeg or other program
 needs installing. A Bink 2 movie's pictures equal the game's own, plane for plane, in-loop filter

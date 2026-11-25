@@ -209,6 +209,138 @@ fn grey_bink2_movie(frames: u32) -> Vec<u8> {
 }
 
 #[test]
+fn a_bk2_file_opens_in_the_video_preview() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let path = dir.path().join("grey.bk2");
+    std::fs::write(&path, grey_bink2_movie(12)).expect("the synthetic movie is written");
+    assert_eq!(DocumentKind::from_path(&path), Some(DocumentKind::Bik));
+    assert!(DocumentKind::Bik.info().extensions().contains(&"bk2"));
+    let mut state = AppState::default();
+    let doc = open(&mut state, path);
+    let mut preview = state.video_preview(doc).expect("BK2 has a video preview");
+    assert!(preview.wait_for_frame(Duration::from_secs(30)));
+    assert_eq!(preview.problem(), None);
+    assert_eq!(preview.duration, Some(12.0 / 30.0));
+}
+
+#[test]
+fn a_bk2_archive_with_a_bad_table_is_refused_without_a_scan() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let path = dir.path().join("movies.rpf");
+    let mut bytes = super::opening_an_rpf9_archive::rpf9_head(2, 0x1B0);
+    bytes.extend(grey_bink2_movie(12));
+    std::fs::write(&path, bytes).expect("the synthetic archive");
+    let result = super::document_io::parse_payload_from_path(
+        &path,
+        DocumentKind::Rpf,
+        Arc::new(or_io::container::NoOpCryptoProvider::new()),
+    );
+    assert!(result.is_err(), "a bad table cannot open as a scan");
+}
+
+#[test]
+fn the_arcade_bk2_opens_from_the_archive_table_in_the_preview() {
+    use or_io::container::rpf::{Gta6Context, GtaViKeys, NameResolver};
+    use or_io::gta6::names::Vocabulary;
+    let Some(build) = std::env::var_os("OPENRAGE_GTA6_BUILD").map(PathBuf::from) else {
+        skip_install(
+            "BK2 preview from the RPF9 table",
+            format_args!("set OPENRAGE_GTA6_BUILD and OPENRAGE_GTA6_KEYS"),
+        );
+        return;
+    };
+    let movie = "movies/arcadegames/bfyb_idle_screen_bink.bk2";
+    let keys = GtaViKeys::for_install(None)
+        .expect("keys load")
+        .expect("keys are supplied");
+    let mut names = Vocabulary::default();
+    names.add(movie, None);
+    Gta6Context::give(Gta6Context {
+        keys: Arc::new(keys),
+        names: Arc::new(NameResolver::from_vocabulary(names)),
+    });
+    let mut state = AppState {
+        audio: AudioOut::new(Box::new(NullSink::default())),
+        ..AppState::default()
+    };
+    let path = build.join("movies.rpf");
+    state.load_file(path.clone());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while state.load_receiver.is_some() && Instant::now() < deadline {
+        state.poll_load_result();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let parent = state.active_document.expect("the archive opened");
+    let Some(DocPayload::Rpf(rpf)) = state.document(parent).map(|d| &d.payload) else {
+        panic!("the archive must open from its table, never as a scan");
+    };
+    let node = rpf
+        .session
+        .all_nodes()
+        .into_iter()
+        .find(|&id| rpf.session.path_of(id).as_deref() == Some(movie))
+        .expect("the table names the requested movie");
+    state.open_rpf_entry(parent, node);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while state.load_receiver.is_some() && Instant::now() < deadline {
+        state.poll_load_result();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let doc = state.active_document.expect("the movie opened");
+    let document = state.document(doc).expect("the movie document");
+    assert_eq!(document.path.as_deref(), Some(path.join(movie).as_path()));
+    assert_eq!(document.kind, DocumentKind::Bik);
+    assert!(document.rpf_entry_binding.is_some());
+    let DocPayload::Bik(bik) = document.payload.clone() else {
+        panic!("the video payload");
+    };
+    let mut preview = state.video_preview(doc).expect("the BK2 preview");
+    assert!(
+        preview.wait_for_frame(Duration::from_secs(30)),
+        "{:?}",
+        preview.problem()
+    );
+    assert_eq!(preview.problem(), None);
+    let first = preview.frame().expect("the first frame").to_vec();
+    let middle = preview.duration.expect("the duration") / 2.0;
+    preview.seek(&bik.bytes, middle);
+    assert!(
+        preview.wait_for_frame(Duration::from_secs(30)),
+        "{:?}",
+        preview.problem()
+    );
+    let before_play = preview.position;
+    preview.play(&bik.bytes);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while preview.position <= before_play && Instant::now() < deadline {
+        preview.tick(0.1);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(preview.position > before_play, "playback advances");
+    preview.pause();
+    assert!(!preview.playing);
+    let duration = preview.duration.expect("the duration");
+    preview.seek(&bik.bytes, duration);
+    assert!(
+        preview.wait_for_frame(Duration::from_secs(30)),
+        "{:?}",
+        preview.problem()
+    );
+    assert_eq!(preview.problem(), None);
+    assert!(
+        preview.position < duration,
+        "the last frame is within the movie"
+    );
+    preview.seek(&bik.bytes, 0.0);
+    assert!(
+        preview.wait_for_frame(Duration::from_secs(30)),
+        "{:?}",
+        preview.problem()
+    );
+    assert_eq!(preview.frame(), Some(first.as_slice()));
+}
+
+#[test]
 fn a_bink2_header_opens_with_its_stated_fields_and_says_why_a_head_alone_cannot_play() {
     let dir = tempfile::tempdir().expect("a scratch directory");
     let path = dir.path().join("movie.bik");

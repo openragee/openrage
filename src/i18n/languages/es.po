@@ -2152,8 +2152,8 @@ msgstr "Esperando la confirmación de edición de la versión comercial"
 msgid "BC7 texture in a Legacy pack"
 msgstr "Textura BC7 en un pack Legacy"
 
-msgid "BIK — Bink video, played in the preview"
-msgstr "BIK — video Bink, reproducido en la vista previa"
+msgid "BIK/BK2 — Bink video, played in the preview"
+msgstr "BIK/BK2 — video Bink, reproducido en la vista previa"
 
 msgid "Back"
 msgstr "Atrás"
@@ -12620,8 +12620,8 @@ msgstr "{folder} no parece una carpeta de {title}, así que no se ha establecido
 msgid "{folder} is {title}, which OpenRage does not support yet, so it is shown as a plain folder: {why}."
 msgstr "{folder} es {title}, que OpenRage aún no admite, así que se muestra como una carpeta sin más: {why}."
 
-msgid "{folder} is {title}. Its archives have no names OpenRage can read, so each opens as a scan of what it holds."
-msgstr "{folder} es {title}. Sus archivos comprimidos no tienen nombres que OpenRage pueda leer, así que cada uno se abre como un análisis de lo que contiene."
+msgid "{folder} is {title}. Its archives require the game's keys to open."
+msgstr "{folder} es {title}. Sus archivos requieren las claves del juego para abrirse."
 
 msgid "GTA VI Texture Pack"
 msgstr "Pack de texturas de GTA VI"
@@ -14773,9 +14773,6 @@ msgstr "Posición de referencia"
 
 msgid "XYZ over the geometry's reference positions as RGB; black where a vertex holds none"
 msgstr "XYZ sobre las posiciones de referencia de la geometría como RGB; negro donde un vértice no tiene ninguna"
-
-msgid "{why}\n\nIt opens as a scan of what it holds, in a tab of its own."
-msgstr "{why}\n\nSe abre como un análisis de lo que contiene, en una pestaña propia."
 
 msgid "A rule, an event or a behaviour was added, removed or renamed: a GTA VI particle list is written in place, so its rules stay as they are stored."
 msgstr "Se agregó, quitó o renombró una regla, un evento o un comportamiento: una lista de partículas de GTA VI se escribe en su sitio, así que sus reglas quedan tal como están almacenadas."

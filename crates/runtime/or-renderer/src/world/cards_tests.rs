@@ -525,3 +525,115 @@ fn a_card_covers_the_share_of_its_crown_its_model_covers_where_the_leaves_are_fi
         "the card covers {share} of the square, its leaves 0.7"
     );
 }
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_species_is_baked_with_the_words_of_its_reflection_in_the_layer_beside_its_colours() {
+    let test = "a_species_is_baked_with_the_words";
+    let Some((device, queue)) = gpu(test) else {
+        return;
+    };
+    let mut renderer =
+        ViewportRenderer::new(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, SIZE, SIZE);
+    // A cube no metal and a quarter rough, its reflectance at normal incidence the dielectric's
+    let grey = crate::game_shaders::stand_in::constant_view(&device, &queue, [0.5, 0.5, 0.5, 1.0]);
+    let material_a =
+        crate::game_shaders::stand_in::constant_view(&device, &queue, [0.0, 0.25, 0.0, 1.0]);
+    let mut maps = [None; crate::world::WORLD_MAPS];
+    maps[crate::world::slot::colour(0)] = Some(&grey);
+    maps[crate::world::slot::material_a(0)] = Some(&material_a);
+    let mut constants = crate::world::WorldConstants::default();
+    constants.flags |= crate::world::WorldConstants::MODEL_VERTEX;
+    let surface = crate::world::WorldSurface {
+        family: crate::world::WorldFamily::Standard,
+        bucket: WorldBucket::Opaque,
+        maps,
+        constants,
+    };
+    let (vertices, indices, count) = model_cube(&device, 1.0, [1.0; 4]);
+    let mesh = CardMesh {
+        vertices: &vertices,
+        indices: &indices,
+        base_vertex: 0,
+        first_index: 0,
+        index_count: count,
+        material: renderer.world_surface(&device, &surface),
+    };
+    // Slot 5 is the second of the second pair of layers
+    assert!(renderer.bake_card_slot(&device, &queue, 5, [0.0; 3], 3f32.sqrt(), &[mesh]));
+    let atlas = renderer.world.cards.bake.texture();
+    let layer = |at: u32| {
+        let side = bake::SIDE;
+        let out = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: bake::FORMAT,
+            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: atlas,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: 0, y: 0, z: at },
+                aspect: wgpu::TextureAspect::All,
+            },
+            out.as_image_copy(),
+            wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        read_back(&device, &queue, &out, bake::FORMAT, side).bytes
+    };
+    assert_eq!(bake::layer_of(5), 2);
+    // The middle texel of the slot's first frame, where the cube stands
+    let cell = bake::SIDE / 2 / CARD_FRAMES;
+    let texel = |bytes: &[u8]| {
+        let (x, y) = (bake::SIDE / 2 + cell / 2, cell / 2);
+        let at = ((y * bake::SIDE + x) * 4) as usize;
+        let linear = |byte: u8| {
+            let c = f32::from(byte) / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        [0, 1, 2, 3].map(|k| {
+            if k < 3 {
+                linear(bytes[at + k])
+            } else {
+                f32::from(bytes[at + k]) / 255.0
+            }
+        })
+    };
+    let colours = texel(&layer(2));
+    let words = texel(&layer(3));
+    assert!(
+        (colours[0] - 0.5).abs() < 0.02 && colours[3] > 0.99,
+        "{colours:?}"
+    );
+    // Smoothness one less the roughness, the dielectric's 0.04, no foliage's flag
+    assert!((words[0] - 0.75).abs() < 0.02, "{words:?}");
+    assert!((words[1] - 0.04).abs() < 0.005, "{words:?}");
+    assert!(
+        (words[2] - 1.0).abs() < 0.02 && words[3] > 0.99,
+        "{words:?}"
+    );
+    // A layer of no slot holds nothing
+    assert!(layer(0).iter().all(|b| *b == 0));
+}

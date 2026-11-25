@@ -25,16 +25,21 @@ const BAKED_SIDE: u32 = SIDE / 2 * SUPERSAMPLE;
 const BAKED_LEVELS: u32 = SUPERSAMPLE.ilog2() + 1;
 /// The levels of the atlas: the least has frames four texels a side.
 pub(super) const LEVELS: u32 = 4;
-/// The atlas holds linear colour stored as sRGB, with its coverage in alpha.
+/// The atlas holds linear colour stored as sRGB, with its coverage in alpha; the layer of words beside it the surface's smoothness, its reflectance at normal incidence and the backlit pass's flag, with the same coverage.
 pub(super) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// The bytes of one frame's view, laid out as the viewport's camera uniform.
 const VIEW_BYTES: u64 = (CAMERA_FLOATS * size_of::<f32>()) as u64;
 const FRAMES: u32 = CARD_FRAMES * CARD_FRAMES;
 
-/// How many species the atlas holds at most on `device`: four a layer.
+/// How many species the atlas holds at most on `device`: four a pair of layers, the colours and the words beside them.
 pub(super) fn slots(device: &wgpu::Device) -> u32 {
-    device.limits().max_texture_array_layers.saturating_mul(4)
+    (device.limits().max_texture_array_layers / 2).saturating_mul(4)
+}
+
+/// The layer of the atlas the colours of `slot` lie in; its words lie in the next.
+pub(super) fn layer_of(slot: u32) -> u32 {
+    slot / 4 * 2
 }
 
 fn atlas_texture(device: &wgpu::Device, layers: u32) -> wgpu::Texture {
@@ -150,7 +155,8 @@ impl Bake {
             label: Some("viewport-cards-bake-light-bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                // The world's vertex stage reads it too: the seconds the wind moves by
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -225,6 +231,8 @@ impl Bake {
             blend: None,
             write_mask: wgpu::ColorWrites::ALL,
         })];
+        // A bake writes the colours and the words at once
+        let both = [target[0].clone(), target[0].clone()];
         // The world's own vertices and instances, as its pipelines read them
         let vertices = [
             wgpu::VertexBufferLayout {
@@ -271,7 +279,7 @@ impl Bake {
                     module: &bake,
                     entry_point: Some(fragment),
                     compilation_options: Default::default(),
-                    targets: &target,
+                    targets: &both,
                 }),
                 multiview_mask: None,
                 cache: None,
@@ -298,7 +306,7 @@ impl Bake {
             multiview_mask: None,
             cache: None,
         });
-        let texture = atlas_texture(device, 1);
+        let texture = atlas_texture(device, 2);
         Self {
             opaque: baker("viewport-cards-bake-pipeline", "fs_bake"),
             cutout: baker("viewport-cards-bake-cutout-pipeline", "fs_bake_cutout"),
@@ -320,13 +328,20 @@ impl Bake {
         &self.view
     }
 
+    /// The atlas itself, for a test to read.
+    #[cfg(test)]
+    pub(super) fn texture(&self) -> &wgpu::Texture {
+        &self.texture
+    }
+
     /// Make the atlas hold at least `layers`, keeping what it holds: twice as many as before where that is more, and never more than the device makes.
     fn grow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, layers: u32) {
         let have = self.texture.depth_or_array_layers();
         if layers <= have {
             return;
         }
-        let most = device.limits().max_texture_array_layers;
+        // Layers come in pairs, the colours and the words beside them
+        let most = device.limits().max_texture_array_layers & !1;
         let texture = atlas_texture(device, layers.max(have.saturating_mul(2)).min(most));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("viewport-cards-atlas-grow"),
@@ -356,13 +371,13 @@ impl Bake {
         (centre, radius): (Vec3, f32),
         meshes: &[CardMesh<'_>],
     ) -> bool {
-        let layer = slot / 4;
+        let layer = layer_of(slot);
         if !(radius > 0.0 && radius.is_finite())
-            || layer >= device.limits().max_texture_array_layers
+            || layer + 1 >= device.limits().max_texture_array_layers
         {
             return false;
         }
-        self.grow(device, queue, layer + 1);
+        self.grow(device, queue, layer + 2);
         let mut views = vec![0u8; (self.stride * u64::from(FRAMES)) as usize];
         for frame in 0..FRAMES {
             let d = frame_direction(frame % CARD_FRAMES, frame / CARD_FRAMES);
@@ -383,18 +398,21 @@ impl Bake {
             label: Some("viewport-cards-bake"),
         });
         {
-            let target = level_of(&baked, 0, 0);
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("viewport-cards-bake-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target,
+            let targets = [level_of(&baked, 0, 0), level_of(&baked, 1, 0)];
+            let attachments = targets.each_ref().map(|view| {
+                Some(wgpu::RenderPassColorAttachment {
+                    view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: wgpu::StoreOp::Store,
                     },
-                })],
+                })
+            });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("viewport-cards-bake-pass"),
+                color_attachments: &attachments,
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &depth,
                     depth_ops: Some(wgpu::Operations {
@@ -430,30 +448,41 @@ impl Bake {
             }
         }
         // The bake halved down to the atlas's size, each texel the share of its own that is covered
-        for level in 1..BAKED_LEVELS {
-            self.halve(device, &mut encoder, (&baked, 0), level);
-        }
         let side = SIDE / 2;
-        encoder.copy_texture_to_texture(
-            whole_level(&baked, BAKED_LEVELS - 1),
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: (slot & 1) * side,
-                    y: ((slot >> 1) & 1) * side,
-                    z: layer,
+        for words in 0..2 {
+            for level in 1..BAKED_LEVELS {
+                self.halve(device, &mut encoder, (&baked, words), level);
+            }
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &baked,
+                    mip_level: BAKED_LEVELS - 1,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: words,
+                    },
+                    aspect: wgpu::TextureAspect::All,
                 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: side,
-                height: side,
-                depth_or_array_layers: 1,
-            },
-        );
-        for level in 1..LEVELS {
-            self.halve(device, &mut encoder, (&self.texture, layer), level);
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: (slot & 1) * side,
+                        y: ((slot >> 1) & 1) * side,
+                        z: layer + words,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: side,
+                    height: side,
+                    depth_or_array_layers: 1,
+                },
+            );
+            for level in 1..LEVELS {
+                self.halve(device, &mut encoder, (&self.texture, layer + words), level);
+            }
         }
         queue.submit([encoder.finish()]);
         true
@@ -499,7 +528,7 @@ impl Bake {
     }
 }
 
-/// The picture one species is baked into, its levels down to the atlas's size, and its depth.
+/// The pictures one species is baked into, its colours and its words, their levels down to the atlas's size, and their depth.
 fn baked_texture(device: &wgpu::Device) -> (wgpu::Texture, wgpu::TextureView) {
     let size = wgpu::Extent3d {
         width: BAKED_SIDE,
@@ -508,7 +537,10 @@ fn baked_texture(device: &wgpu::Device) -> (wgpu::Texture, wgpu::TextureView) {
     };
     let colour = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("viewport-cards-baked"),
-        size,
+        size: wgpu::Extent3d {
+            depth_or_array_layers: 2,
+            ..size
+        },
         mip_level_count: BAKED_LEVELS,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,

@@ -34,7 +34,6 @@ struct Species {
 const NO_SLOT: u32 = 0xffffffffu;
 // A grid of 8 by 8 frames a species, and 2 by 2 species a layer.
 const GRID: f32 = 8.0;
-const FRESNEL: f32 = 0.98;
 
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
@@ -232,8 +231,13 @@ fn dither(pixel: vec2<f32>) -> f32 {
     return (bayer[at] + 1.0) / 17.0;
 }
 
-// One frame's texel where the ray along `ray` through the pixel meets the frame's plane, its coverage weighted by `weight`.
-fn frame_texel(in: VsOut, ray: vec3<f32>, frame: u32, weight: f32) -> vec4<f32> {
+// One frame's texel where the ray along `ray` through the pixel meets the frame's plane, its coverage weighted by `weight`, and its words.
+struct Texel {
+    colour: vec4<f32>,
+    words: vec3<f32>,
+};
+
+fn frame_texel(in: VsOut, ray: vec3<f32>, frame: u32, weight: f32) -> Texel {
     let cell = vec2<u32>(frame & 7u, frame >> 3u);
     let local_d = frame_direction(cell);
     let north = cross(in.up, in.east);
@@ -253,19 +257,35 @@ fn frame_texel(in: VsOut, ray: vec3<f32>, frame: u32, weight: f32) -> vec4<f32> 
     let quadrant = vec2<f32>(f32(in.slot & 1u), f32((in.slot >> 1u) & 1u));
     let at = (quadrant + (vec2<f32>(cell) + clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0))) / GRID) * 0.5;
     // The atlas holds the share of each texel the model covers, at every level: a far card is as airy as its crown.
-    let texel = textureSample(atlas, atlas_smp, at, in.slot >> 2u);
-    return vec4<f32>(texel.rgb, texel.a * weight * select(0.0, 1.0, inside));
+    // Each slot's colours lie in an even layer, its words in the odd one after it.
+    let layer = (in.slot >> 2u) * 2u;
+    let texel = textureSample(atlas, atlas_smp, at, layer);
+    let words = textureSample(atlas, atlas_smp, at, layer + 1u);
+    var out: Texel;
+    out.colour = vec4<f32>(texel.rgb, texel.a * weight * select(0.0, 1.0, inside));
+    out.words = words.rgb;
+    return out;
 }
 
-// The three frames blended by their weights: the linear colour, and the coverage.
+// The three frames blended by their weights: the linear colour and the coverage, and the words.
+struct Blend {
+    colour: vec4<f32>,
+    words: vec3<f32>,
+};
+
 // ⚠ Every frame is sampled before anything is discarded.
-fn blended(in: VsOut, ray: vec3<f32>) -> vec4<f32> {
+fn blended(in: VsOut, ray: vec3<f32>) -> Blend {
     let a = frame_texel(in, ray, in.frames.x, in.weights.x);
     let b = frame_texel(in, ray, in.frames.y, in.weights.y);
     let c = frame_texel(in, ray, in.frames.z, in.weights.z);
-    let coverage = a.a + b.a + c.a;
-    let colour = (a.rgb * a.a + b.rgb * b.a + c.rgb * c.a) / max(coverage, 1e-4);
-    return vec4<f32>(colour, coverage);
+    let wa = a.colour.a;
+    let wb = b.colour.a;
+    let wc = c.colour.a;
+    let coverage = wa + wb + wc;
+    var out: Blend;
+    out.colour = vec4<f32>((a.colour.rgb * wa + b.colour.rgb * wb + c.colour.rgb * wc) / max(coverage, 1e-4), coverage);
+    out.words = (a.words * wa + b.words * wb + c.words * wc) / max(coverage, 1e-4);
+    return out;
 }
 
 // A pixel is kept as often as the share the model covers there, by the list's fade; each card's dither is moved by its own place, so that cards one behind another cover as two crowns would.
@@ -283,7 +303,7 @@ fn normal_of(in: VsOut) -> vec3<f32> {
 
 @fragment
 fn fs_forward(in: VsOut) -> @location(0) vec4<f32> {
-    let s = blended(in, in.world_pos - camera.camera_pos_ws.xyz);
+    let s = blended(in, in.world_pos - camera.camera_pos_ws.xyz).colour;
     if (dropped(in, s.a)) {
         discard;
     }
@@ -294,7 +314,7 @@ fn fs_forward(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(s.rgb * (key + head + 0.15), 1.0);
 }
 
-// The four targets of the game's G-buffer, in the words its lighting passes read, as the world's cutout writes them with no shine.
+// The four targets of the game's G-buffer, in the words its lighting passes read, as the world's cutout writes them.
 struct GBufferOut {
     @location(0) albedo: vec4<f32>,
     @location(1) normal: vec4<f32>,
@@ -302,25 +322,66 @@ struct GBufferOut {
     @location(3) ambient: vec4<f32>,
 };
 
+const PI: f32 = 3.14159265;
+const SPECULAR_EXPONENT_MAX: f32 = 512.0;
+
+// The world's: the Blinn-Phong exponent whose lobe is as wide as the rough lobe of this smoothness.
+fn exponent_of(smoothness: f32) -> f32 {
+    let alpha = max(0.001, (1.0 - smoothness) * (1.0 - smoothness));
+    return clamp(2.0 / (alpha * alpha) - 2.0, 1.0, 8196.0);
+}
+
+// The world's: Lazarov's fit of the split sum, what a GGX lobe takes of the reflectance at normal incidence and at grazing.
+fn split_sum(rough: f32, n_dot_v: f32) -> vec2<f32> {
+    let r = rough * vec4<f32>(-1.0, -0.0275, -0.572, 0.022) + vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+    let a004 = min(r.x * r.x, exp2(-9.28 * n_dot_v)) * r.x + r.y;
+    return max(vec2<f32>(-1.04, 1.04) * a004 + r.zw, vec2<f32>(0.0));
+}
+
+// The world's share of the light about it a grey surface of reflectance `f0` reflects to the eye.
+fn reflected(f0: f32, smoothness: f32, n_dot_v: f32) -> f32 {
+    let f90 = clamp(16.5 * 3.0 * f0, 0.0, 1.0);
+    let ab = split_sum(1.0 - smoothness, n_dot_v);
+    let once = f0 * ab.x + f90 * ab.y;
+    return once * (1.0 + f0 * (1.0 / max(ab.x + ab.y, 1e-4) - 1.0));
+}
+
+// The specular target as the world's G-buffer writes it for a surface of the baked smoothness and reflectance, seen along the card's normal: the intensity and the fresnel word chosen so that the lighting's reflection is the share `reflected` gives.
+fn specular_words(words: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>) -> vec4<f32> {
+    let smoothness = clamp(words.x, 0.0, 1.0);
+    let f0 = clamp(words.y, 0.0, 1.0);
+    let e = exponent_of(smoothness);
+    let stored = select(500.0 + (e - 1500.0) / 558.0, e / 3.0, e <= 1500.0);
+    let n_dot_v = clamp(dot(n, normalize(camera.camera_pos_ws.xyz - world_pos)), 0.0, 1.0);
+    let share = clamp(reflected(f0, smoothness, max(n_dot_v, 1e-4)) / mix(1.0 / PI, 1.0, clamp(e / 563.0, 0.0, 1.0)), 0.0, 1.0);
+    let grazing = pow(1.0 - n_dot_v, 5.0);
+    let intensity = clamp(f0 + (share - f0) / max(grazing, 1e-6), f0, 1.0);
+    return vec4<f32>(sqrt(intensity), sqrt(stored / SPECULAR_EXPONENT_MAX), 1.0 - f0 / max(intensity, 1e-6), 1.0);
+}
+
+// ponytail: no forward lobe of the sun through the leaves, which the world adds as a leaf's own light: the card program binds no light; bind it if crowns against a low sun show the lack.
 @fragment
 fn fs_gbuffer(in: VsOut) -> GBufferOut {
-    let s = blended(in, in.world_pos - camera.camera_pos_ws.xyz);
+    let b = blended(in, in.world_pos - camera.camera_pos_ws.xyz);
+    let s = b.colour;
     if (dropped(in, s.a)) {
         discard;
     }
+    let n = normal_of(in);
     var out: GBufferOut;
     // The lighting pass squares the colour it reads here, so the target holds the square root of the linear colour.
     out.albedo = vec4<f32>(sqrt(max(s.rgb, vec3<f32>(0.0))), 1.0);
-    out.normal = vec4<f32>(normal_of(in) * 0.5 + 0.5, 0.0);
-    out.specular = vec4<f32>(0.0, 0.0, FRESNEL, 1.0);
-    out.ambient = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+    out.normal = vec4<f32>(n * 0.5 + 0.5, 0.0);
+    out.specular = specular_words(b.words, n, in.world_pos);
+    // Outdoors, no light of its own, and the backlit pass's flag of the leaves most of the pixel is
+    out.ambient = vec4<f32>(1.0, 0.0, 0.0, select(0.5, 1.0, b.words.z > 0.75));
     return out;
 }
 
 // A card casts the shadow of what its frames cover, seen along the light.
 @fragment
 fn fs_cast(in: VsOut) {
-    let s = blended(in, light_travel());
+    let s = blended(in, light_travel()).colour;
     if (dropped(in, s.a)) {
         discard;
     }
@@ -333,20 +394,33 @@ pub(super) fn bake_shader() -> String {
 }
 
 const BAKE_ENTRIES: &str = r#"
-// The albedo the world's G-buffer takes of the surface, its palette, its second map and its metal worked as the near model's are, and no light: a card is lit where it stands.
+// The albedo the world's G-buffer takes of the surface, its palette, its second map and its metal worked as the near model's are, and no light: a card is lit where it stands. Beside it the words its reflection is worked from: its smoothness, its reflectance at normal incidence, and the backlit pass's flag as the world's G-buffer writes it.
+struct Baked {
+    @location(0) colour: vec4<f32>,
+    @location(1) words: vec4<f32>,
+};
+
+fn baked(s: Surface) -> Baked {
+    var out: Baked;
+    out.colour = vec4<f32>(diffuse_of(s), 1.0);
+    let flag = select(1.0, select(0.5, 1.0, s.translucency > 0.5), (m.flags & FOLIAGE) != 0u);
+    out.words = vec4<f32>(s.smoothness, max3(s.f0), flag, 1.0);
+    return out;
+}
+
 @fragment
-fn fs_bake(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
-    return vec4<f32>(diffuse_of(surface_of(in, front_facing)), 1.0);
+fn fs_bake(in: VsOut, @builtin(front_facing) front_facing: bool) -> Baked {
+    return baked(surface_of(in, front_facing));
 }
 
 // ⚠ Cut by the colour map's first level, as the world cuts: a frame 32 texels wide samples a level that has averaged the leaves away.
 @fragment
-fn fs_bake_cutout(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+fn fs_bake_cutout(in: VsOut, @builtin(front_facing) front_facing: bool) -> Baked {
     let s = surface_of(in, front_facing);
     if (dropped(in, cut_coverage(in), CUTOUT_ALPHA)) {
         discard;
     }
-    return vec4<f32>(diffuse_of(s), 1.0);
+    return baked(s);
 }
 "#;
 

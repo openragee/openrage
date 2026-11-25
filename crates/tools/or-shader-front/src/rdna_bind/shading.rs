@@ -52,11 +52,16 @@ impl Source {
     }
 }
 
+/// The buffer of bytes the game binds a geometry's meshlet list to before it draws the geometry,
+/// by the hash of its name.
+// ⚠ Told by its name and not as the one buffer of bytes a program binds: a ped's skinned program
+// binds its shape data as buffers of bytes beside it, and with the list left at nought every
+// triangle is three times the first vertex, which draws nothing.
+pub const MESHLET_LIST: u32 = 0xE0BF_99E7;
+
 /// What fills each of `records`, the bindings of one program of a shading pass, in their order;
 /// `mesh` where it is the pass's mesh program, `table` its own variable table and `effect` the
 /// first table of the effect that runs it.
-// A mesh program's meshlet list is told by its shape: the one buffer of bytes the program binds
-// that its effect's own table names. With two such buffers neither is taken for it.
 pub fn sources(
     records: &[Record],
     mesh: bool,
@@ -64,12 +69,6 @@ pub fn sources(
     effect: &Sgd5Table,
 ) -> Vec<Source> {
     let own = |hash: u32| effect.resources.iter().find(|r| r.name_hash == hash);
-    let raw_own = |record: &Record| {
-        record.class == Class::Srv
-            && record.stride == RAW
-            && named(table, record).is_some_and(|n| own(n.name_hash).is_some())
-    };
-    let one_raw = mesh && records.iter().filter(|r| raw_own(r)).count() == 1;
     let view = string_hash_str("gViewProj");
     (records.iter())
         .map(|record| {
@@ -93,7 +92,9 @@ pub fn sources(
                 Class::Cbv if own(hash).is_some_and(|r| r.slot >= MATERIAL_REGISTERS) => {
                     Source::Material
                 }
-                Class::Srv if one_raw && raw_own(record) => Source::Meshlets,
+                Class::Srv if mesh && record.stride == RAW && hash == MESHLET_LIST => {
+                    Source::Meshlets
+                }
                 _ => Source::Game(hash),
             }
         })
@@ -967,7 +968,7 @@ mod tests {
 
     const VIEW: u32 = 0xA000_0001;
     const MATERIAL: u32 = 0xA000_0002;
-    const LIST: u32 = 0xA000_0003;
+    const LIST: u32 = MESHLET_LIST;
     const FILLED: u32 = 0xA000_0004;
     const STREAMS: u32 = 0xA000_0005;
     const OTHER: u32 = 0xA000_0006;
@@ -1442,7 +1443,8 @@ struct Words { words: array<u32> }
     }
 
     #[test]
-    fn two_own_buffers_of_bytes_name_no_meshlet_list_and_a_low_register_no_material() {
+    fn the_meshlet_list_is_told_by_its_name_among_buffers_of_bytes_and_a_low_register_is_no_material(
+    ) {
         let effect = Sgd5Table {
             resources: vec![
                 resource(0x30, 4, MATERIAL),
@@ -1456,13 +1458,19 @@ struct Words { words: array<u32> }
             record(Class::Srv, 14, 1),
             record(Class::Cbv, 4, 0),
         ];
+        // A ped's skinned program binds its shape data so, beside the list.
         assert_eq!(
             sources(&records, true, &program(), &effect),
             [
-                Source::Game(LIST),
+                Source::Meshlets,
                 Source::Game(OTHER),
                 Source::Game(MATERIAL)
             ]
+        );
+        // The one buffer of bytes a program binds is no list by that alone.
+        assert_eq!(
+            sources(&records[1..], true, &program(), &effect),
+            [Source::Game(OTHER), Source::Game(MATERIAL)]
         );
     }
 

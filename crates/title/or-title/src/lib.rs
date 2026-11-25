@@ -16,6 +16,7 @@ pub mod gta6_day_frame;
 pub mod gta6_day_sun;
 pub mod gta6_day_vars;
 pub mod gta6_day_weather;
+pub mod gta6_day_wind;
 pub mod gta6_exposure;
 pub mod gta6_mount;
 pub mod gta6_sky;

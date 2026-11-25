@@ -96,6 +96,11 @@ impl Keyframe {
     pub fn set(&mut self, name: &str, value: f32) {
         self.0.insert(name.to_string(), value);
     }
+
+    /// Each variable stated, by name.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, f32)> {
+        self.0.iter().map(|(name, value)| (name.as_str(), *value))
+    }
 }
 
 /// The day's table and every weather cycle read from an install.

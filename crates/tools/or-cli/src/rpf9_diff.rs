@@ -18,7 +18,6 @@ use std::process::ExitCode;
 use or_io::container::rpf::{
     Gta6Class, Gta6Entry, Gta6EntryExtra, Gta6Mount, GtaViKeys, NameResolver,
 };
-use or_io::gta6::names::{vocabulary_file, Vocabulary};
 use or_io::meta::{MetaDocument, MetaInstance, SchemaLibrary, Value};
 use serde::Serialize;
 
@@ -173,11 +172,7 @@ fn usage(msg: &str) -> ExitCode {
 
 /// Bundled names supplemented by `dir` or `OPENRAGE_GTA6_NAMES`, and the local vocabulary.
 fn load_resolver(dir: Option<&Path>) -> NameResolver {
-    let mut resolver = NameResolver::load_with_defaults(dir);
-    if let Some(config) = or_title::config::config_dir() {
-        resolver.merge_vocabulary(&Vocabulary::load(&vocabulary_file(&config)));
-    }
-    resolver
+    crate::gta6_name_sources::load(dir)
 }
 
 fn diff_files(
@@ -200,8 +195,8 @@ pub(crate) fn diff_archives<A: Read + Seek, B: Read + Seek>(
 ) -> Result<Vec<Change>, String> {
     let mut ma = Gta6Mount::open_root(a, keys).map_err(|e| format!("the first archive: {e}"))?;
     let mut mb = Gta6Mount::open_root(b, keys).map_err(|e| format!("the second archive: {e}"))?;
-    ma.archive.resolve_names(resolver);
-    mb.archive.resolve_names(resolver);
+    crate::gta6_name_sources::resolve(&mut ma.archive, resolver);
+    crate::gta6_name_sources::resolve(&mut mb.archive, resolver);
     let mut ctx = Ctx {
         a,
         b,

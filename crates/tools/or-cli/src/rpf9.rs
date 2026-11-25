@@ -29,7 +29,6 @@ use std::process::ExitCode;
 use or_io::container::rpf::{
     decode_masked, is_masked, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver,
 };
-use or_io::gta6::names::{vocabulary_file, Vocabulary};
 use or_io::meta::binary::pso::string_names;
 
 #[path = "rpf9_find.rs"]
@@ -146,13 +145,7 @@ fn keys_with_exe(path: &Path, exe: &Path) -> Result<GtaViKeys, String> {
 
 /// Bundled names supplemented by `dir` or `OPENRAGE_GTA6_NAMES`, and the local vocabulary.
 fn load_resolver(dir: Option<&Path>) -> NameResolver {
-    let mut resolver = NameResolver::load_with_defaults(dir);
-    // Also fold in the vocabulary the app harvested into the config dir, so names already found in the
-    // user's own archives resolve here, not only those under the names folder or the env var.
-    if let Some(config) = or_title::config::config_dir() {
-        resolver.merge_vocabulary(&Vocabulary::load(&vocabulary_file(&config)));
-    }
-    resolver
+    crate::gta6_name_sources::load(dir)
 }
 
 // --- mounting and the inner path --------------------------------------------
@@ -167,7 +160,7 @@ fn mount_path(
     resolver: &NameResolver,
 ) -> Result<Gta6Mount, String> {
     let mut mount = Gta6Mount::open_root(file, keys).map_err(|e| e.to_string())?;
-    mount.archive.resolve_names(resolver);
+    crate::gta6_name_sources::resolve(&mut mount.archive, resolver);
     for component in inner {
         let entry = find_entry(&mount, component)
             .ok_or_else(|| format!("no entry {component:?} in the archive"))?;
@@ -180,7 +173,7 @@ fn mount_path(
         mount = mount
             .open_nested(file, &entry, keys)
             .map_err(|e| e.to_string())?;
-        mount.archive.resolve_names(resolver);
+        crate::gta6_name_sources::resolve(&mut mount.archive, resolver);
     }
     Ok(mount)
 }
@@ -329,7 +322,7 @@ fn do_list(
             let mut child = mount
                 .open_nested(&mut file, entry, keys)
                 .map_err(|e| e.to_string())?;
-            child.archive.resolve_names(resolver);
+            crate::gta6_name_sources::resolve(&mut child.archive, resolver);
             let child_strings = if show.strings {
                 mount_strings(&child, &mut file, keys)
             } else {
@@ -920,7 +913,7 @@ fn do_census(
         let mut per = CensusCounts::default();
         match Gta6Mount::open_root(&mut file, keys) {
             Ok(mut mount) => {
-                mount.archive.resolve_names(resolver);
+                crate::gta6_name_sources::resolve(&mut mount.archive, resolver);
                 census_mount(
                     &mut file, &mount, top_only, decode, keys, resolver, 0, &mut per,
                 );
@@ -1046,7 +1039,7 @@ fn census_mount(
                 }
                 match mount.open_nested(file, entry, keys) {
                     Ok(mut child) => {
-                        child.archive.resolve_names(resolver);
+                        crate::gta6_name_sources::resolve(&mut child.archive, resolver);
                         census_mount(
                             file,
                             &child,

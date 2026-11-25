@@ -7,12 +7,26 @@ pub fn open_archive_from_disk(
     path: &Path,
     crypto: Arc<dyn RpfCryptoProvider>,
 ) -> Result<Arc<RpfArchive>, String> {
+    use std::io::Read;
+    let mut magic = [0; 4];
+    if std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .is_ok()
+        && magic == *b"9FPR"
+    {
+        give_gta6_keys();
+    }
     let open = || RpfArchive::open_with(path, Arc::clone(&crypto));
     let opened = match open() {
         // A GTA VI archive is read with the keys this app holds for the game folder that is set.
         Err(or_io::IoError::Rpf9TocEncrypted) if give_gta6_keys() => open(),
         other => other,
     };
+    if let (Ok(archive), Some(config)) = (&opened, super::prefs::config_root()) {
+        if let Err(error) = archive.cache_rpf9_names(&config.join("gta6_names")) {
+            tracing::warn!(%error, "could not update the local GTA VI names cache");
+        }
+    }
     opened.map(Arc::new).map_err(|e| match e {
         or_io::IoError::Rpf9TocEncrypted => super::gta_vi::rpf9_refusal_at(path)
             .unwrap_or_else(|| format!("open '{}': {e}", path.display())),

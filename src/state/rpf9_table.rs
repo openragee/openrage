@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use or_io::container::rpf::{open_at, Gta6Class, GtaViKeys, NameResolver, RPF9_MAGIC};
-use or_io::gta6::names::{vocabulary_file, Vocabulary};
 
 use crate::state::jobs::file_name;
 use crate::state::DocPayload;
@@ -110,6 +109,9 @@ pub(crate) fn mount<R: Read + Seek>(
 ) -> Result<TableNode, String> {
     let mut archive = open_at(src, base, keys).map_err(|e| e.to_string())?;
     archive.resolve_names(resolver);
+    if let Err(error) = resolver.cache_local_entries(&archive.entries) {
+        tracing::warn!(%error, "could not update the local GTA VI names cache");
+    }
     let extras = archive.entry_extras();
     let rows = (archive.entries.iter().enumerate())
         .map(|(at, e)| {
@@ -199,10 +201,8 @@ pub(crate) fn keys() -> Result<Arc<GtaViKeys>, String> {
 pub(crate) fn resolver() -> Arc<NameResolver> {
     static RESOLVER: OnceLock<Arc<NameResolver>> = OnceLock::new();
     let load = || {
-        let mut resolver = NameResolver::load_with_defaults(None);
-        if let Some(config) = or_title::config::config_dir() {
-            resolver.merge_vocabulary(&Vocabulary::load(&vocabulary_file(&config)));
-        }
+        let local = crate::state::prefs::config_root().map(|root| root.join("gta6_names"));
+        let resolver = NameResolver::load_with_sources(None, local.as_deref());
         Arc::new(resolver)
     };
     Arc::clone(RESOLVER.get_or_init(load))

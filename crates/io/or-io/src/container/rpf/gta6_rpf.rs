@@ -63,10 +63,7 @@ impl Gta6Context {
             .get_or_init(|| {
                 let keys = GtaViKeys::for_install(None).map_err(|e| e.to_string())?;
                 Ok(keys.map(|keys| {
-                    let names = std::env::var_os(GTA6_NAMES_ENV)
-                        .map(PathBuf::from)
-                        .filter(|dir| dir.is_dir())
-                        .map_or_else(NameResolver::new, |dir| NameResolver::load(&dir));
+                    let names = NameResolver::load_with_defaults(None);
                     Arc::new(Gta6Context {
                         keys: Arc::new(keys),
                         names: Arc::new(names),
@@ -375,6 +372,17 @@ pub struct Rpf9Place {
 }
 
 impl RpfArchive {
+    /// Persists names confirmed by this RPF9's table; other archive versions add nothing.
+    pub fn cache_rpf9_names(&self, directory: &Path) -> io::Result<usize> {
+        match self.rpf9.as_deref() {
+            Some(state) => state
+                .context
+                .names
+                .cache_entries(&state.mount.archive.entries, directory),
+            None => Ok(0),
+        }
+    }
+
     /// Where file `entry_index` of an RPF9 read from disk sits; `None` for a folder, a nested archive, bytes held in memory or any other generation.
     pub fn rpf9_place(&self, entry_index: u32) -> Option<Rpf9Place> {
         let (_, leaf, entry) = self.rpf9_leaf(entry_index).ok()?;

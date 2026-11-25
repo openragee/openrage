@@ -161,6 +161,15 @@ pub struct Vocabulary {
 }
 
 impl Vocabulary {
+    /// Shared words indexed by GTA VI's 64-bit and 32-bit name hashes.
+    pub fn bundled() -> Self {
+        let mut words = Self::default();
+        for word in crate::names::bundled_words() {
+            words.add(word, None);
+        }
+        words
+    }
+
     /// Holds `name`, lower-cased, where it is 1 to [`MAX_NAME`] printable bytes with no space;
     /// whether it is new. A name held as plain takes the `kind` a later body spells it with.
     pub fn add(&mut self, name: &str, kind: Option<[u8; 2]>) -> bool {

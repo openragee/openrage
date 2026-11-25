@@ -75,29 +75,14 @@ pub(crate) fn vocabulary() -> Arc<Vocabulary> {
     Arc::clone(&served.vocabulary)
 }
 
-/// Where the recovered-names corpus lies: a folder whose `vocabulary.txt` holds one name a line.
-const CORPUS: &str = "OPENRAGE_GTA6_NAMES";
-
-/// The recovered-names corpus the folder [`CORPUS`] names, read once: names the game's files state that no harvest of this install gave.
+/// Shared candidates and external names, read once independently of a harvest.
 fn corpus() -> &'static Vocabulary {
     static READ: std::sync::OnceLock<Vocabulary> = std::sync::OnceLock::new();
     READ.get_or_init(|| {
-        let Some(folder) = std::env::var_os(CORPUS) else {
-            return Vocabulary::default();
-        };
-        let file = Path::new(&folder).join("vocabulary.txt");
-        let kept = Vocabulary::load(&file);
-        if !kept.is_empty() {
-            return kept;
-        }
-        let mut read = Vocabulary::default();
-        for line in std::fs::read_to_string(&file).unwrap_or_default().lines() {
-            let line = line.trim();
-            if !line.is_empty() && !line.starts_with("//") {
-                read.add(line, None);
-            }
-        }
-        read
+        let local = super::prefs::config_root().map(|root| root.join("gta6_names"));
+        or_io::container::rpf::NameResolver::load_with_sources(None, local.as_deref())
+            .vocabulary()
+            .clone()
     })
 }
 

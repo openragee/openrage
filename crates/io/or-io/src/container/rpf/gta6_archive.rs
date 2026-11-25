@@ -20,7 +20,7 @@
 //! and, as a shortcut, the per-build name tables; nested archive mounting lives in
 //! [`super::gta6_mount`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use byteorder::{ByteOrder, LE};
@@ -511,11 +511,13 @@ fn read_cipher(row: &[u8]) -> Gta6Cipher {
     }
 }
 
-/// A map from an entry's name64 to its path, from bundled or externally supplied names.
+/// Resolves shared word candidates and user-only name tables; build paths and file extensions stay local.
 #[derive(Debug, Default, Clone)]
 pub struct NameResolver {
     vocabulary: Vocabulary,
     shortcut: HashMap<u64, String>,
+    cached: HashSet<u64>,
+    cache_directory: Option<PathBuf>,
 }
 
 impl NameResolver {
@@ -529,6 +531,8 @@ impl NameResolver {
         Self {
             vocabulary,
             shortcut: HashMap::new(),
+            cached: HashSet::new(),
+            cache_directory: None,
         }
     }
 
@@ -552,25 +556,39 @@ impl NameResolver {
         resolver
     }
 
-    /// Bundled names supplemented by `dir`, or `OPENRAGE_GTA6_NAMES` when no directory is given.
+    /// Shared words supplemented by `dir`, or the folder [`super::GTA6_NAMES_ENV`] names.
     pub fn load_with_defaults(dir: Option<&Path>) -> Self {
-        let mut bundled = Self::new();
-        bundled.add_hash_name_tsv(include_str!(
-            "../../../../../../assets/gta6_names/resolved-names.tsv"
-        ));
-        let Some(dir) = dir
+        Self::load_with_sources(dir, None)
+    }
+
+    /// Loads external names, then the local cache and vocabulary, then the shared word candidates.
+    pub fn load_with_sources(dir: Option<&Path>, local: Option<&Path>) -> Self {
+        let external = dir
             .map(Path::to_path_buf)
-            .or_else(|| std::env::var_os("OPENRAGE_GTA6_NAMES").map(PathBuf::from))
-        else {
-            return bundled;
-        };
-        let mut resolver = Self::load(&dir);
-        for (hash, name) in bundled.shortcut {
-            if resolver.lookup(hash).is_none() {
-                resolver.insert(hash, name);
+            .or_else(|| std::env::var_os(super::GTA6_NAMES_ENV).map(Into::into));
+        let mut names = external.as_deref().map(Self::load).unwrap_or_default();
+        if let Some(local) = local {
+            names.cache_directory = Some(local.to_path_buf());
+            match cache::read_cache(local) {
+                Ok(cached) => {
+                    for (hash, name) in cached {
+                        names.cached.insert(hash);
+                        if names.lookup(hash).is_none() {
+                            names.insert(hash, name);
+                        }
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "could not read the local GTA VI names cache"),
             }
+            names.merge_vocabulary(&read_vocabulary(&local.join("vocabulary.txt")));
         }
-        resolver
+        names.merge_vocabulary(&Vocabulary::bundled());
+        names
+    }
+
+    /// The vocabulary including verified cache names, for metadata and texture hash lookups.
+    pub fn vocabulary(&self) -> &Vocabulary {
+        &self.vocabulary
     }
 
     /// Fold `other` into this resolver's vocabulary, so names a caller harvested elsewhere (its own
@@ -586,7 +604,12 @@ impl NameResolver {
 
     /// How many names the resolver holds across both sources.
     pub fn len(&self) -> usize {
-        self.vocabulary.len() + self.shortcut.len()
+        self.vocabulary.len()
+            + self
+                .shortcut
+                .keys()
+                .filter(|hash| self.vocabulary.name64(**hash).is_none())
+                .count()
     }
 
     /// The path whose name64 is `hash`: the shortcut first, then the vocabulary.
@@ -613,7 +636,11 @@ impl NameResolver {
 
     /// Record a `hash -> name` shortcut, keeping the first name seen for a hash.
     pub fn insert(&mut self, hash: u64, name: impl Into<String>) {
-        self.shortcut.entry(hash).or_insert_with(|| name.into());
+        let name = name.into();
+        if crate::gta6::hash::name_hash64(name.as_bytes()) == hash {
+            self.vocabulary.add(&name, None);
+        }
+        self.shortcut.entry(hash).or_insert(name);
     }
 
     /// Add the entries of a `hash<TAB>name` table, as `resolved-names.tsv` holds them: the first
@@ -687,3 +714,6 @@ fn parse_hash(field: &str) -> Option<u64> {
 #[cfg(test)]
 #[path = "gta6_archive_tests.rs"]
 mod tests;
+
+#[path = "gta6_name_cache.rs"]
+mod cache;

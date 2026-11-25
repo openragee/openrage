@@ -8,6 +8,7 @@ use or_io::container::rpf::{
     GROUP_NAME64,
 };
 use or_io::gta6::hash::name_hash64;
+use or_io::gta6::names::Vocabulary;
 use or_io::gta6::script::compiled::{
     check_copy, HEADER_LEN, OPCODE_MULTIPLIER, OPERAND_KEY, OPERAND_MULTIPLIER,
 };

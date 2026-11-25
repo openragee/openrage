@@ -216,10 +216,13 @@ The line under the map says where the camera is in words: the smallest map at re
 name is known, how high it is over the ground the level's height map gives, and which of the eight
 points of the compass it looks to.
 
-Names come from the vocabulary the app serves: the names **Harvest names** found in this install's
-archives, and the recovered-names corpus in the folder `OPENRAGE_GTA6_NAMES` names (its
-`vocabulary.txt`), read once on a worker. A place, a map, an interior, a room or a script-managed
-group the vocabulary does not name is shown by its hash.
+Names come from the vocabulary the app serves: shared bundled word candidates, the names
+**Harvest names** found, and verified names in the local `gta6_names/resolved-names.tsv` cache.
+The folder `OPENRAGE_GTA6_NAMES` names can supplement these with `vocabulary.txt` and name
+tables; external names take priority over local names, which take priority over bundled candidates.
+This vocabulary is read once on a worker. Bundled files contain plain words shared across titles;
+complete recovered paths and game file extensions stay in the user's files. A place, a map, an
+interior, a room or a script-managed group the vocabulary does not name is shown by its hash.
 
 ## Time, weather and what streams
 

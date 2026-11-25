@@ -45,6 +45,7 @@ mod gta6_mission;
 mod gta6_model;
 mod gta6_motion_detail;
 mod gta6_name_pool;
+mod gta6_name_sources;
 mod gta6_names;
 mod gta6_names_mine;
 mod gta6_navmesh;

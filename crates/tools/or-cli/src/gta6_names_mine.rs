@@ -7,7 +7,7 @@ use std::collections::hash_map::RandomState;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::File;
 use std::hash::BuildHasher;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -32,8 +32,6 @@ usage: openrage-cli hashes mine <install-folder | archive.rpf> --out <file> [--n
   Name the file resolved-names.tsv in the folder --names or OPENRAGE_GTA6_NAMES reads, and the
   explorer and the metadata reader take its names. No archive is written.";
 
-/// The folder of recovered-name tables `rpf9` reads when `--names` is not given.
-const NAMES_ENV: &str = "OPENRAGE_GTA6_NAMES";
 const MIN_CANDIDATE: usize = 3;
 const MAX_CANDIDATE: usize = 160;
 /// The longest structure or member name tried.
@@ -663,30 +661,71 @@ fn first_exe(install: &Path) -> Option<PathBuf> {
     exes.into_iter().next()
 }
 
-/// The names folder `dir` or [`NAMES_ENV`] gives, with the vocabulary kept in the configuration folder.
+/// The names folder `dir` or `OPENRAGE_GTA6_NAMES` gives, with the vocabulary kept in the configuration folder.
 fn load_resolver(dir: Option<&Path>) -> NameResolver {
-    let dir = dir
-        .map(Path::to_path_buf)
-        .or_else(|| std::env::var_os(NAMES_ENV).map(PathBuf::from));
-    let mut resolver = dir.as_deref().map(NameResolver::load).unwrap_or_default();
-    if let Some(config) = or_title::config::config_dir() {
-        resolver.merge_vocabulary(&Vocabulary::load(&vocabulary_file(&config)));
-    }
-    resolver
+    crate::gta6_name_sources::load(dir)
 }
 
 /// Writes the rows `kept` held before and then the rows found to `out`; how many were found.
 fn write_rows(out: &Path, kept: &str, miner: &Miner) -> std::io::Result<usize> {
-    let mut text = kept.to_string();
+    let directory = out
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(directory)?;
+    let name = out.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the names output needs a file name",
+        )
+    })?;
+    let beside = |suffix: &str| {
+        let mut adjacent = std::ffi::OsString::from(".");
+        adjacent.push(name);
+        adjacent.push(suffix);
+        directory.join(adjacent)
+    };
+    // A mining snapshot can be stale; cache output must share the cache writer's lock.
+    let lock_path = if name == std::ffi::OsStr::new("resolved-names.tsv") {
+        directory.join(".resolved-names.lock")
+    } else {
+        beside(".lock")
+    };
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    lock.lock()?;
+    let mut text = match std::fs::read_to_string(out) {
+        Ok(latest) => latest,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => kept.to_string(),
+        Err(error) => return Err(error),
+    };
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
+    let mut present: HashSet<String> = text.lines().map(str::to_owned).collect();
     let rows = miner.rows();
-    text.push_str(&rows);
-    if let Some(folder) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(folder)?;
+    for row in rows.lines() {
+        if present.insert(row.to_string()) {
+            text.push_str(row);
+            text.push('\n');
+        }
     }
-    std::fs::write(out, text)?;
+    let temporary = beside(".tmp");
+    let result = (|| {
+        let mut file = File::create(&temporary)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temporary, out)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result?;
     Ok(rows.lines().count())
 }
 
@@ -858,6 +897,17 @@ fn mine(options: &Options) -> Result<Vec<String>, String> {
     miner.rules(seeds32, options.range);
     let found = write_rows(&options.out, &kept, &miner)
         .map_err(|e| format!("{}: {e}", options.out.display()))?;
+    if let Some(config) = or_title::config::config_dir() {
+        if let Err(error) = NameResolver::cache_names(
+            &config.join("gta6_names"),
+            miner
+                .found64
+                .iter()
+                .map(|(&hash, name)| (hash, name.as_str())),
+        ) {
+            tracing::warn!(%error, "could not update the local GTA VI names cache");
+        }
+    }
     let mut lines = miner.lines(refused);
     if exe.is_none() {
         lines.push(format!(
@@ -1188,5 +1238,21 @@ mod tests {
             ["_lod"],
             "an ending seen once is no suffix"
         );
+    }
+    #[test]
+    fn writing_mined_names_preserves_matches_added_after_the_snapshot() {
+        let dir = tempfile::tempdir().expect("scratch");
+        let out = dir.path().join("resolved-names.tsv");
+        let first = "initial/path";
+        let later = "concurrent/path";
+        let snapshot = format!("0x{:016x}\t{first}\n", name_hash64(first.as_bytes()));
+        let latest = format!(
+            "{snapshot}0x{:016x}\t{later}\n",
+            name_hash64(later.as_bytes())
+        );
+        std::fs::write(&out, &latest).expect("concurrent cache update");
+        let miner = Miner::new();
+        write_rows(&out, &snapshot, &miner).expect("merge mining output");
+        assert_eq!(std::fs::read_to_string(out).expect("read"), latest);
     }
 }

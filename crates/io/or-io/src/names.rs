@@ -5,6 +5,28 @@ use std::collections::HashMap;
 
 use crate::hash::{literal_string_hash, string_hash};
 
+/// The shared hash candidates: words only, with no build-specific paths, hashes or file extensions.
+pub fn bundled_words() -> impl Iterator<Item = &'static str> {
+    [
+        include_str!("../data/hash_words_common.txt"),
+        include_str!("../data/hash_words_vehicles.txt"),
+        include_str!("../data/hash_words_peds.txt"),
+        include_str!("../data/hash_words_textures.txt"),
+    ]
+    .into_iter()
+    .flat_map(str::lines)
+    .filter(|word| !word.is_empty())
+}
+
+fn bundled_index() -> &'static NameIndex {
+    static WORDS: std::sync::OnceLock<NameIndex> = std::sync::OnceLock::new();
+    WORDS.get_or_init(|| {
+        let mut index = NameIndex::default();
+        index.extend(bundled_words());
+        index
+    })
+}
+
 /// Which of the two hash functions a number was produced by.
 ///
 /// ⚠ Not interchangeable. Measured over the audio name tables of a retail
@@ -65,6 +87,7 @@ pub struct Collision {
 #[derive(Debug, Clone, Default)]
 pub struct NameIndex {
     title: String,
+    bundled: bool,
     by_hash: HashMap<(HashFlavour, u32), String>,
     names: usize,
     collisions: Vec<Collision>,
@@ -74,9 +97,18 @@ impl NameIndex {
     pub fn new(title: impl Into<String>) -> Self {
         Self {
             title: title.into(),
+            bundled: false,
             by_hash: HashMap::new(),
             names: 0,
             collisions: Vec::new(),
+        }
+    }
+
+    /// An index whose title-specific names take precedence over the shared word candidates.
+    pub fn with_bundled(title: impl Into<String>) -> Self {
+        Self {
+            bundled: true,
+            ..Self::new(title)
         }
     }
 
@@ -126,7 +158,14 @@ impl NameIndex {
     }
 
     pub fn resolve_with(&self, flavour: HashFlavour, hash: u32) -> Option<&str> {
-        self.by_hash.get(&(flavour, hash)).map(String::as_str)
+        self.by_hash
+            .get(&(flavour, hash))
+            .map(String::as_str)
+            .or_else(|| {
+                self.bundled
+                    .then(|| bundled_index().resolve_with(flavour, hash))
+                    .flatten()
+            })
     }
 
     /// Resolve without being told the function, trying the case-folding one

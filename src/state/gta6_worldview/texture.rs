@@ -93,6 +93,9 @@ fn block_format(format: DxgiFormat) -> Option<TextureFormat> {
         DxgiFormat::Bc3UnormSrgb => TextureFormat::Bc3RgbaUnormSrgb,
         DxgiFormat::Bc4Unorm => TextureFormat::Bc4RUnorm,
         DxgiFormat::Bc5Unorm => TextureFormat::Bc5RgUnorm,
+        // ⚠ Halves past one, as the interior effect's cube of a room's light holds: decoded to eight bits they clip at one.
+        DxgiFormat::Bc6hUf16 => TextureFormat::Bc6hRgbUfloat,
+        DxgiFormat::Bc6hSf16 => TextureFormat::Bc6hRgbFloat,
         DxgiFormat::Bc7Unorm => TextureFormat::Bc7RgbaUnorm,
         DxgiFormat::Bc7UnormSrgb => TextureFormat::Bc7RgbaUnormSrgb,
         _ => return None,
@@ -170,12 +173,46 @@ pub(super) fn read_texture(
     let entry = pack.entries.get(place)?;
     let level = level_for(entry.width, entry.height, pixels);
     let (_, texture) = pack.texture_from(place, level).ok()?;
-    // ponytail: a cube, an array or a volume is read whole for its first face or slice.
-    let texture = match texture.faces {
-        1 => texture,
-        _ => texture.face(0)?,
-    };
-    cpu_texture(&texture)
+    of_faces(&texture)
+}
+
+/// `texture` as a device takes it: a cube's six faces stacked down one image in the order a pack
+/// stores them, as the interior effect samples them; an array or a volume its first slice.
+// ponytail: an array or a volume is read whole for its first slice.
+fn of_faces(texture: &Texture) -> Option<CpuTexture> {
+    match texture.faces {
+        1 => return cpu_texture(texture),
+        6 => {}
+        _ => return cpu_texture(&texture.face(0)?),
+    }
+    let faces: Vec<CpuTexture> = (0..6)
+        .map(|face| cpu_texture(&texture.face(face)?))
+        .collect::<Option<_>>()?;
+    let first = &faces[0];
+    // ⚠ A block-compressed level under a block a side is stored as a whole block: six of them do not stack into one level.
+    let (block, _) = first.format.block_dimensions();
+    let levels: Vec<Vec<u8>> = (0..first.levels.len())
+        .take_while(|&k| {
+            let side = first.width >> k;
+            side > 0
+                && side.is_multiple_of(block)
+                && faces
+                    .iter()
+                    .all(|f| f.levels.get(k).map(Vec::len) == Some(first.levels[k].len()))
+        })
+        .map(|k| {
+            faces
+                .iter()
+                .flat_map(|f| f.levels[k].iter().copied())
+                .collect()
+        })
+        .collect();
+    (!levels.is_empty()).then(|| CpuTexture {
+        width: first.width,
+        height: first.height * 6,
+        format: first.format,
+        levels,
+    })
 }
 
 /// The texture of the key `key` from the dictionary body of the texture archive that holds it,
@@ -203,10 +240,7 @@ fn dictionary_texture((archive, bodies): &DictionaryPlaces, key: u64) -> Option<
             }
             _ => None,
         })?;
-    match texture.faces {
-        1 => cpu_texture(texture),
-        _ => cpu_texture(&texture.face(0)?),
-    }
+    of_faces(texture)
 }
 
 #[cfg(test)]

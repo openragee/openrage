@@ -58,6 +58,7 @@ fn block_format(format: wgpu::TextureFormat) -> Option<GrcTextureFormat> {
         F::Bc3RgbaUnorm | F::Bc3RgbaUnormSrgb => GrcTextureFormat::DXT5,
         F::Bc4RUnorm => GrcTextureFormat::DXT5A,
         F::Bc5RgUnorm => GrcTextureFormat::DXN,
+        F::Bc6hRgbUfloat | F::Bc6hRgbFloat => GrcTextureFormat::BC6,
         F::Bc7RgbaUnorm | F::Bc7RgbaUnormSrgb => GrcTextureFormat::BC7,
         _ => return None,
     })
@@ -512,11 +513,12 @@ mod tests {
             F::Bc5RgUnorm,
             F::Bc7RgbaUnorm,
             F::Bc7RgbaUnormSrgb,
+            F::Bc6hRgbUfloat,
         ] {
             assert!(block_format(format).is_some(), "{format:?}");
         }
         assert!(block_format(F::Rgba8Unorm).is_none());
-        assert!(block_format(F::Bc6hRgbUfloat).is_none());
+        assert!(block_format(F::Etc2Rgb8Unorm).is_none());
     }
 
     fn quad(size: f32, turns: f32) -> (Vec<MeshVertex>, Vec<u32>) {

@@ -502,11 +502,13 @@ would meet. The rows are listed in the order of the plan's stages
 nothing of this phase, R70g needs R70b only for the bounds at a position, and R70c, the GTA V map
 drawn with its models, is what most screen rows wait for. A row takes the default beside its
 question in [the rulings asked](World_Editor_Plan.md#rulings-asked-of-the-owner), except a part
-whose ruling says "It waits". Parts of R70b, R70e, R70g and R70h are built, with no screen and on
-installs and packs made by hand, and no row is closed: each row's Where it stands says what is built
-and what is left. R70 has no letter left: a finding that fits no row opens the next number.
+whose ruling says "It waits". Parts of R70a, R70b, R70d, R70e, R70g, R70h, R70q, R70r, R70w and
+R70y are built, with no screen, on installs and packs made by hand and on the staged corpus. No row
+is closed, no install suite has run and nothing was loaded in a game: each row's Where it stands
+says what is built and what is left. R70 has no letter left: a finding that fits no row opens the
+next number.
 
-- [ ] [R70 The GTA V world editor](#r70-the-gta-v-world-editor) — the plan of 2026-11-25, in the parts below, begun in lanes the same day; parts of R70b, R70e, R70g and R70h are built and no row is closed, and the Map screen of wave P44 and the World screen of GTA VI are what it starts from
+- [ ] [R70 The GTA V world editor](#r70-the-gta-v-world-editor) — the plan of 2026-11-25, in the parts below, begun in lanes the same day; parts of R70a, R70b, R70d, R70e, R70g, R70h, R70q, R70r, R70w and R70y are built and no row is closed, and the Map screen of wave P44 and the World screen of GTA VI are what it starts from
   - [ ] [R70a What the game loads](#r70a-what-the-game-loads)
   - [ ] [R70b The GTA V world index](#r70b-the-gta-v-world-index)
   - [ ] [R70g Collision as a query](#r70g-collision-as-a-query)
@@ -9543,10 +9545,10 @@ an open part of [R69](#r69-one-window-of-tabs-and-a-rail) that edit the same she
 together.
 
 A part's Done when is its check; its brief says what to read and what to build. A part that writes a
-kind of file adds it to the recipe and the sheet of R70a. Lanes began on 2026-11-25: parts of R70b,
-R70e, R70g and R70h are built, with no part closed and no install suite run, and R70q, R70r and R70w
-are begun as local branches. R70 has no letter left: a finding that fits no part opens the next
-number.
+kind of file adds it to the recipe and the sheet of R70a. Lanes began on 2026-11-25: parts of R70a,
+R70b, R70d, R70e, R70g, R70h, R70q, R70r, R70w and R70y are built, with no part closed, no install
+suite run and nothing loaded in a game. R70 has no letter left: a finding that fits no part opens
+the next number.
 
 ### R70a What the game loads
 
@@ -9932,8 +9934,9 @@ polygons inside its box, leaves the ground and says what it moved
 ([brief](World_Editor_Plan.md#editing-collision-r70l)).
 
 **Where it stands.** Not built. A bound is built, rebuilt and validated in `or-io`
-([R41c](#r41c-bounds-and-physics-construction)) and opens in the app; no screen edits a polygon, and
-a changed bound has no source form until R70w.
+([R41c](#r41c-bounds-and-physics-construction)) and opens in the app, and a changed bound is held as
+a source ([R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources)); no screen edits a
+polygon.
 
 **Depends on.** [R70f](#r70f-layers-of-what-the-game-hides),
 [R70i](#r70i-selecting-and-moving-in-the-world), [R70k](#r70k-removing-what-the-game-placed) and
@@ -10048,7 +10051,8 @@ floors stay in the navmesh. No navmesh is authored
 ([R33a](#r33a-path-nodes-ynd)), and a link names its far node by region and index
 (`crates/io/or-io/src/gta5/path_region.rs`). A scenario region is typed
 ([R33d](#r33d-scenario-points)), a region made from nothing waits on
-[R62](#r62-the-rbm-layout-synthesiser), and a changed `.ynd` has no source form until R70w.
+[R62](#r62-the-rbm-layout-synthesiser), and a changed `.ynd` is held as a source, whose form awaits
+the owner's word ([R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources)).
 
 **Depends on.** [R70f](#r70f-layers-of-what-the-game-hides),
 [R70i](#r70i-selecting-and-moving-in-the-world) and

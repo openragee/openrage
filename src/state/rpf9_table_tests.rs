@@ -310,7 +310,7 @@ fn without_a_key_the_open_falls_back_to_the_scan_and_says_so() {
 }
 
 #[test]
-fn an_archive_whose_table_does_not_open_is_refused_without_a_scan() {
+fn the_open_of_an_archive_no_held_key_opens_is_a_scan_and_a_toast_says_why() {
     let (_dir, path) = sample();
     let mut state = AppState::default();
     state.load_file(path.clone());
@@ -321,17 +321,18 @@ fn an_archive_whose_table_does_not_open_is_refused_without_a_scan() {
         std::thread::sleep(Duration::from_millis(5));
     }
     let opened = (state.documents.iter()).find(|d| d.path.as_deref() == Some(path.as_path()));
-    assert!(opened.is_none(), "the refused archive must not open");
-    assert!(state.show_error_dialog);
-    assert!(!state.error_dialog_message.is_empty());
-    assert!(!state
-        .documents
-        .iter()
-        .any(|d| matches!(d.payload, DocPayload::Rpf9(_))));
+    assert!(
+        matches!(opened.map(|d| &d.payload), Some(DocPayload::Rpf9(_))),
+        "the archive opens as its scan"
+    );
+    // Whatever snapshot this machine holds is not the synthetic key, so the table stays closed.
     state.poll_jobs();
-    assert!(!state.toasts.iter().any(|t| {
-        t.toast_type == ToastType::Info && t.message.contains("scan without its table")
-    }));
+    let said = (state.toasts.iter()).any(|t| {
+        t.toast_type == ToastType::Info
+            && t.message.contains("top.rpf")
+            && t.message.contains("scan without its table")
+    });
+    assert!(said, "no toast said the scan lists the archive");
 }
 
 fn row(name: Option<&str>, name64: u64, name32: Option<u32>, kind: TableKind) -> TableRow {

@@ -206,12 +206,8 @@ pub(super) fn parse_payload_from_path(
         let data = std::fs::read(path).map_err(|e| format!("Read error: {e}"))?;
         return Ok((text_payload(path, data), None));
     }
-    // Archives opened from Files are read from their tables; a refused table stays an error.
-    if kind == DocumentKind::Rpf {
-        let archive = super::rpf_archive_open::open_archive_owned_from_disk(path, crypto)?;
-        return RpfDocument::new(archive).map(|rpf| (DocPayload::Rpf(rpf), None));
-    }
-    if kind == DocumentKind::Rpf9 {
+    // ⚠ Before the whole read: a GTA VI archive can be tens of gigabytes, and is scanned instead, as is the tab of one read again.
+    if matches!(kind, DocumentKind::Rpf | DocumentKind::Rpf9) {
         // Its table, where a key opens it, lists it in the archive explorer; else a toast says the scan does.
         super::rpf9_scan::rpf9_table::offer(path);
         if let Some(scan) = super::rpf9_scan::Rpf9ScanDocument::open(path)? {

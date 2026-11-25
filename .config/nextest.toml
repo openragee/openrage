@@ -5,10 +5,8 @@
 # slow-tier:begin (written by `just slow-tier` from a `just test`: 2373 of 7727 tests in 407 modules, leaving 1699 s of 27915 s)
 default-filter = '''
 not (
-  binary_id(=or-media::bk2_from_rpf9)
-  | (binary_id(=openrage::bin/openrage) & (
-      test(/^state::previewing_a_video::the_arcade_bk2_opens_from_the_archive_table_in_the_preview/)
-      | test(/^app::gpu::tests::/)
+  (binary_id(=openrage::bin/openrage) & (
+      test(/^app::gpu::tests::/)
       | test(/^platform::tests::/)
       | test(/^render::game_scene::tests::/)
       | test(/^render::meshes::as_recorded::/)

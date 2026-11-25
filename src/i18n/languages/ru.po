@@ -12673,8 +12673,8 @@ msgstr "{folder} не похожа на папку {title}, поэтому не 
 msgid "{folder} is {title}, which OpenRage does not support yet, so it is shown as a plain folder: {why}."
 msgstr "{folder} — это {title}; эту игру OpenRage пока не поддерживает, поэтому папка показана как обычная: {why}."
 
-msgid "{folder} is {title}. Its archives require the game's keys to open."
-msgstr "{folder} — это {title}. Для открытия архивов нужны ключи игры."
+msgid "{folder} is {title}. Its archives have no names OpenRage can read, so each opens as a scan of what it holds."
+msgstr "{folder} — это {title}. У её архивов нет имён, которые OpenRage мог бы прочитать, поэтому каждый открывается как сканирование того, что в нём лежит."
 
 msgid "GTA VI Texture Pack"
 msgstr "Пак текстур GTA VI"
@@ -14877,6 +14877,9 @@ msgstr "Опорная позиция"
 
 msgid "XYZ over the geometry's reference positions as RGB; black where a vertex holds none"
 msgstr "XYZ опорных позиций геометрии как RGB; чёрный там, где у вершины их нет"
+
+msgid "{why}\n\nIt opens as a scan of what it holds, in a tab of its own."
+msgstr "{why}\n\nОн открывается как сканирование того, что в нём лежит, на отдельной вкладке."
 
 msgid "A rule, an event or a behaviour was added, removed or renamed: a GTA VI particle list is written in place, so its rules stay as they are stored."
 msgstr "Правило, событие или поведение добавлено, удалено или переименовано: список частиц GTA VI записывается на месте, поэтому его правила остаются такими, как хранятся."
@@ -17096,6 +17099,3 @@ msgstr "Поиск идёт только по развёрнутым архив�
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} — новый архив с правкой на месте его записи и с таблицей в том виде, в каком она прочитана."
-
-msgid "Preparing video… {percent}%"
-msgstr "Подготовка видео… {percent}%"

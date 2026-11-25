@@ -98,6 +98,8 @@ pub fn open_sea(water: &WaterData) -> Option<OpenSea> {
     Some(OpenSea {
         bounds,
         height: border.corners.iter().sum::<f32>() / 4.0,
+        // Every quad, until the mesh says how far about the camera it drew them.
+        drawn: [0.0, 0.0, f32::MAX],
     })
 }
 

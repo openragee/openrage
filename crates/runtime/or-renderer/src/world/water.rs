@@ -42,6 +42,8 @@ pub struct OpenSea {
     pub bounds: [f32; 4],
     /// The height the sea stands at past them.
     pub height: f32,
+    /// Where the quads are drawn about, and how far from it in metres: past that the sea runs on inside the bounds too.
+    pub drawn: [f32; 3],
 }
 
 /// The medium of the water by place: two grids of texels over the world, each row from the north edge, each west to east; off the grid the water is its `WaterLook`.
@@ -76,6 +78,8 @@ struct WaterUniform {
     bounds: [f32; 4],
     /// The height of the sea past the quads, and in `y` one where it is drawn.
     sea: [f32; 4],
+    /// Where the quads are drawn about and how far from it.
+    drawn: [f32; 4],
     fog: [[f32; 4]; 5],
     fog_colour: [[f32; 4]; 4],
     /// Each wave's number a metre along x and y, its height and its phase.
@@ -523,6 +527,7 @@ impl WaterPass {
             near: self.near.as_ref().map_or([0.0; 4], |m| m.grid),
             bounds: sea.map_or([0.0; 4], |s| s.bounds),
             sea: sea.map_or([0.0; 4], |s| [s.height, 1.0, 0.0, 0.0]),
+            drawn: sea.map_or([0.0; 4], |s| [s.drawn[0], s.drawn[1], s.drawn[2], 0.0]),
             fog,
             fog_colour,
             waves: self.waves,

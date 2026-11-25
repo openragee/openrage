@@ -16625,6 +16625,7 @@ msgid "{count} pair"
 msgid_plural "{count} pairs"
 msgstr[0] "{count} paire"
 msgstr[1] "{count} paires"
+
 msgid "Set the GTA VI folder in Settings ▸ Games to fly through its world"
 msgstr "Définissez le dossier de GTA VI dans Paramètres ▸ Jeux pour survoler son monde"
 
@@ -16962,6 +16963,7 @@ msgstr "À {place}"
 
 msgid "Look north over the square of 512 m where most maps of this place lie"
 msgstr "Regarder vers le nord le carré de 512 m où se trouvent la plupart des cartes de ce lieu"
+
 msgid "entry {entry} is not in this table"
 msgstr "l'entrée {entry} n'est pas dans cette table"
 

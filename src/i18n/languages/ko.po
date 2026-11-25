@@ -16625,6 +16625,7 @@ msgid "{count} pair"
 msgid_plural "{count} pairs"
 msgstr[0] "쌍 {count}개"
 msgstr[1] "쌍 {count}개"
+
 msgid "Set the GTA VI folder in Settings ▸ Games to fly through its world"
 msgstr "설정 ▸ 게임에서 GTA VI 폴더를 지정하면 그 월드를 비행하며 둘러볼 수 있습니다"
 
@@ -16962,6 +16963,7 @@ msgstr "{place}에 있음"
 
 msgid "Look north over the square of 512 m where most maps of this place lie"
 msgstr "이 장소의 맵 대부분이 있는 512 m 사각형을 북쪽으로 내려다봅니다"
+
 msgid "entry {entry} is not in this table"
 msgstr "항목 {entry}은(는) 이 테이블에 없습니다"
 

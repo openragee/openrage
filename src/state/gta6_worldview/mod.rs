@@ -31,6 +31,7 @@ mod model;
 mod occluders;
 mod pool;
 pub(crate) mod sky;
+mod sky_night;
 pub(crate) mod stream;
 mod texture;
 pub(crate) mod water;
@@ -285,6 +286,7 @@ impl Viewer {
     fn take(&mut self, index: WorldIndex, places: Option<Places>) {
         let places = places.map(Arc::new);
         if let Some(places) = places.clone() {
+            sky_night::read(Arc::clone(&places));
             let held = Arc::clone(&self.held);
             let weigh = |read: &Option<CpuTexture>| read.as_ref().map_or(0, CpuTexture::bytes);
             self.textures = Some(Pool::bounded(
@@ -588,9 +590,9 @@ impl Viewer {
             ))
         });
         let scale = sky::scale_of(moment.as_ref());
-        let day = (tables.as_ref()).zip(moment).map(|(tables, moment)| {
-            sky::day_of_moment(tables, moment, (hour, days), weather, eye.z)
-        });
+        let day = (tables.as_ref())
+            .zip(moment)
+            .map(|(tables, moment)| sky::day_of_moment(tables, moment, (hour, days), weather, eye));
         if let (Some(tables), Some(world)) = (&tables, &self.world) {
             world.set_fade(stream::fade_of(&tables.visual_settings));
         }

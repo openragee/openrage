@@ -35,6 +35,25 @@ fn resource(bytes: &[u8], name: &str) -> Rpf9Sections {
     Rpf9Sections::of(&find, &body).expect("a resource")
 }
 
+/// Every byte of `copy` outside the stored extent of the entry `name` of `before` is as in `before`.
+fn only_the_body_differs(before: &[u8], copy: &[u8], name: &str) {
+    let (mount, start) = start_of(before, name);
+    let entry = (mount.archive.entries.iter())
+        .find(|e| e.name64 == name_hash64(name.as_bytes()))
+        .expect("the entry");
+    let (start, end) = (
+        start as usize,
+        (start + entry.stored.expect("stored")) as usize,
+    );
+    assert_eq!(
+        copy.len(),
+        before.len(),
+        "the copy keeps the archive's size"
+    );
+    assert_eq!(copy[..start], before[..start], "every byte before the body");
+    assert_eq!(copy[end..], before[end..], "every byte after the body");
+}
+
 /// `meta` with its root's u32 set to `value`, as the form does.
 fn edited(mut meta: MetaDocument, value: u64) -> DocPayload {
     let parsed = meta.parsed.as_mut().expect("it parsed");
@@ -90,9 +109,9 @@ fn an_edited_pso_body_saved_into_a_copy_reopens_with_the_edit() {
         said(
             &state,
             ToastType::Success,
-            &["copy.rpf", "with the edit in its entry's place"]
+            &["copy.rpf", "in its entry's place"]
         ),
-        "the result says the game refuses the copy: {:?}",
+        "{:?}",
         state.toasts.iter().map(|t| &t.message).collect::<Vec<_>>()
     );
     let copy = std::fs::read(&out).expect("the copy");
@@ -127,11 +146,17 @@ fn an_edited_headerless_body_saved_into_a_copy_reopens_with_the_edit() {
     assert!(state.save_into_archive_copy_with(out.clone(), synthetic_keys));
     finished(&mut state);
     let toasts: Vec<&str> = state.toasts.iter().map(|t| t.message.as_str()).collect();
+    // A headerless resource's loose form is stored under a new row, so the copy is rebuilt.
+    let named = format!("{:#X} is a headerless resource", start + RPF9_SLOT);
     assert!(
         said(
             &state,
             ToastType::Success,
-            &["with the edit in its entry's place"]
+            &[
+                "with the edit in its entry's place",
+                "kept it from being patched in place",
+                &named
+            ]
         ),
         "{toasts:?}"
     );
@@ -141,6 +166,48 @@ fn an_edited_headerless_body_saved_into_a_copy_reopens_with_the_edit() {
         or_io::meta::binary::rbm::gta6::open(&sections.virtual_section, &sections.physical)
             .expect("the resource opens");
     assert_eq!(instance.fields[0].1, Value::UInt(79));
+}
+
+#[test]
+fn a_body_of_its_entrys_size_saves_as_a_patched_copy_and_one_of_another_size_is_rebuilt() {
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let source = source(dir.path());
+    let before = std::fs::read(&source).expect("the source");
+    let (_, start) = start_of(&before, PSO);
+    let keys = synthetic_keys().expect("the synthetic snapshot parses");
+    // The root's u32, 77, sits 24 bytes into the PSIN frame's content.
+    let mut same_size = table_form_pso();
+    assert_eq!(same_size[32], 77);
+    same_size[32] = 78;
+
+    let out = dir.path().join("patched.rpf");
+    let saved = write_copy(&source, start, same_size.clone(), &out, &keys).expect("written");
+    assert_eq!(saved, Saved::Patched);
+    let copy = std::fs::read(&out).expect("the copy");
+    only_the_body_differs(&before, &copy, PSO);
+    let (mount, _) = start_of(&copy, PSO);
+    let entry = (mount.archive.entries.iter())
+        .find(|e| e.name64 == name_hash64(PSO.as_bytes()))
+        .expect("the entry");
+    let body = (mount.read_entry(Cursor::new(&copy), entry)).expect("the body reads");
+    assert_eq!(body, same_size);
+
+    let mut longer = table_form_pso();
+    longer.extend([0u8; 16]);
+    let out = dir.path().join("rebuilt.rpf");
+    let saved = write_copy(&source, start, longer, &out, &keys).expect("written");
+    let Saved::Rebuilt { tables, kept, .. } = saved else {
+        panic!("a body of another size changes its row");
+    };
+    assert!(tables);
+    let size = table_form_pso().len();
+    let why = format!(
+        "{start:#X} is {} bytes, not the {size} its row states",
+        size + 16
+    );
+    assert_eq!(kept, vec![why]);
+    assert_eq!(std::fs::read(&source).expect("the source"), before);
 }
 
 #[test]

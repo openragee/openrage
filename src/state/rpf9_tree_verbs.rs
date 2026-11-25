@@ -1,6 +1,7 @@
 //! A GTA VI archive opened as the tree takes the tree's own verbs: a row extracts in the loose form
-//! OpenRage reopens, and the tree's edits save through the GTA VI writer to a new file, which the game
-//! refuses because only its maker can sign the table.
+//! OpenRage reopens, and the tree's edits save to a new file, as a patched copy whose table is
+//! byte-identical when every edit is a body that fits its entry's chunks, else through the GTA VI
+//! writer as a rebuilt archive, which the game refuses because only its maker can sign the table.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::File;
@@ -10,8 +11,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use or_io::container::rpf::gta6_container_write::Rpf9NewBody;
 use or_io::container::rpf::{
-    read_rpf9_body, write_rpf9_resource, BodyForm, Gta6Class, Gta6Mount, GtaViKeys,
-    Rpf9ArchiveWriter, Rpf9Sections, RpfEntry, RpfVersion, RPF9_MAGIC, RPF9_SLOT,
+    plan_patch, read_rpf9_body, write_patched_copy, write_rpf9_resource, BodyForm, BodyPatch,
+    Gta6Class, Gta6Mount, GtaViKeys, Rpf9ArchiveWriter, Rpf9Sections, RpfEntry, RpfVersion,
+    RPF9_MAGIC, RPF9_SLOT,
 };
 use or_io::container::RpfArchive;
 
@@ -24,9 +26,130 @@ use crate::state::{AppState, DocPayload};
 /// Where a save finds the keys the archive's tables open with.
 type Keys = fn() -> Result<Arc<GtaViKeys>, String>;
 
-/// How a save of a tree ended: its document, the edit it was at, the new file, and whether a table
-/// and whether a body changed in it, or why it was refused.
-type Ended = (DocumentId, u64, PathBuf, Result<(bool, bool), String>);
+/// How a save of a tree ended: its document, the edit it was at, the new file, and how it was
+/// written, or why it was refused.
+type Ended = (DocumentId, u64, PathBuf, Result<Saved, String>);
+
+/// How a copy of a GTA VI archive was written.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Saved {
+    /// Each changed body went in chunk by chunk, and every byte of the table is as it was read.
+    Patched,
+    /// The archive was laid out again: whether a table and whether a body changed, and why each
+    /// row named kept it from being patched in place.
+    Rebuilt {
+        tables: bool,
+        bodies: bool,
+        kept: Vec<String>,
+    },
+}
+
+/// A body written in place of the row `name`, found in the archive at `at`.
+pub(crate) struct Replaced {
+    pub(crate) name: String,
+    pub(crate) at: Found,
+    pub(crate) body: Vec<u8>,
+}
+
+/// What a patched copy at `file` is, said in full.
+pub(crate) fn patched_said(file: &str) -> String {
+    tr!(
+        "{file} is a patched copy: each changed body is written in its entry's place, chunk by chunk, and its table is byte-identical, so the table's signature still matches and no check read in the game's code rejects it; the game has not been run with it.",
+        file = file
+    )
+}
+
+/// `said`, followed by the rows that kept a copy from being patched in place and why.
+pub(crate) fn with_kept(said: String, kept: &[String]) -> String {
+    if kept.is_empty() {
+        return said;
+    }
+    let rows = kept.join("; ");
+    format!(
+        "{said} {}",
+        tr!(
+            "These rows kept it from being patched in place: {rows}.",
+            rows = rows
+        )
+    )
+}
+
+/// Refuse `out` unless it is a new file, never the archive at `archive` it is read from.
+fn new_file(out: &Path, archive: &Path) -> Result<(), String> {
+    if crate::state::reload_open_file::same_file(out, archive) {
+        return Err(tr!(
+            "the copy is a new file, and the archive it is read from is never written"
+        )
+        .to_string());
+    }
+    if out.exists() {
+        let file = out.display().to_string();
+        return Err(tr!(
+            "{file} exists, and a copy is written only to a new file",
+            file = file
+        ));
+    }
+    Ok(())
+}
+
+/// Write the archive at `source` with `replaced` in it into the new file `out`: as a patched copy
+/// when each body fits its entry's chunks and `kept` names no other edit, else by `rebuild`, saying
+/// why each row named was not patched in place.
+pub(crate) fn save_choosing(
+    source: &Path,
+    out: &Path,
+    keys: &GtaViKeys,
+    replaced: &[Replaced],
+    mut kept: Vec<String>,
+    rebuild: impl FnOnce() -> Result<(bool, bool), String>,
+) -> Result<Saved, String> {
+    new_file(out, source)?;
+    let mut file = File::open(source).map_err(|e| format!("{}: {e}", source.display()))?;
+    let mut patches = Vec::new();
+    for row in replaced {
+        let entry = match (row.at.headerless, row.at.chain.last()) {
+            (false, Some(&entry)) => entry,
+            _ => {
+                kept.push(tr!(
+                    "{name} is a headerless resource, whose loose form is stored under a new row",
+                    name = row.name
+                ));
+                continue;
+            }
+        };
+        let size = row.body.len() as u64;
+        if row.at.real != Some(size) {
+            let real = (row.at.real).map_or_else(|| "?".to_owned(), |real| real.to_string());
+            kept.push(tr!(
+                "{name} is {size} bytes, not the {real} its row states",
+                name = row.name,
+                size = size,
+                real = real
+            ));
+            continue;
+        }
+        let patch = BodyPatch {
+            base: row.at.base,
+            entry,
+            body: row.body.clone(),
+        };
+        match plan_patch(&mut file, keys, &patch) {
+            Ok(_) => patches.push(patch),
+            Err(why) => kept.push(format!("{}: {why}", row.name)),
+        }
+    }
+    drop(file);
+    if kept.is_empty() && !patches.is_empty() {
+        write_patched_copy(source, out, keys, &patches).map_err(|e| e.to_string())?;
+        return Ok(Saved::Patched);
+    }
+    let (tables, bodies) = rebuild()?;
+    Ok(Saved::Rebuilt {
+        tables,
+        bodies,
+        kept,
+    })
+}
 
 // ponytail: one list for the process, emptied by the next frame's poll.
 static ENDED: Mutex<Vec<Ended>> = Mutex::new(Vec::new());
@@ -74,7 +197,7 @@ fn named(archive: &RpfArchive) -> String {
 pub(in crate::state) fn refused_tree(session: &RpfEditSession) -> Option<String> {
     let file = named(top_rpf9(session)?);
     Some(tr!(
-        "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, which the game refuses because its signature covers the table.",
+        "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, a patched copy with its table byte-identical where every edit is a body of its entry's size that fits its chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table.",
         file = file
     ))
 }
@@ -85,15 +208,17 @@ pub(in crate::state) fn refuse_in_place(archive: &RpfArchive) -> Result<(), Stri
         return Ok(());
     }
     Err(tr!(
-        "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, which the game refuses because its signature covers the table.",
+        "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, a patched copy with its table byte-identical where every edit is a body of its entry's size that fits its chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table.",
         file = named(archive)
     ))
 }
 
-/// One change a tree holds to a GTA VI archive, by the absolute offset its entry's body starts at.
+/// One change a tree holds to a GTA VI archive, by the absolute offset its entry's body starts at,
+/// and the name of its row.
 enum Edit {
     Replace {
         at: u64,
+        name: String,
         body: Arc<Vec<u8>>,
     },
     Rename {
@@ -102,6 +227,7 @@ enum Edit {
     },
     Remove {
         at: u64,
+        name: String,
     },
     /// An entry `name` added to the archive whose header is at `archive`.
     Add {
@@ -179,6 +305,7 @@ fn archive_edits(
                 if let Some(body) = override_bytes {
                     edits.push(Edit::Replace {
                         at,
+                        name: name.clone(),
                         body: Arc::clone(body),
                     });
                 }
@@ -236,7 +363,10 @@ fn archive_edits(
             Some(place) => place.offset,
             None => start_of(index)?,
         };
-        edits.push(Edit::Remove { at });
+        let name = archive
+            .entry_path(index)
+            .unwrap_or_else(|| index.to_string());
+        edits.push(Edit::Remove { at, name });
     }
     Ok(())
 }
@@ -252,15 +382,27 @@ fn new_body(bytes: Vec<u8>) -> Rpf9NewBody {
     }
 }
 
-/// Where each body offset of `wanted` is in the archive `src`: the entry indices from the top-level
-/// table to the entry whose body starts there (a headerless resource's past its slot), and whether
-/// that entry's row is a headerless resource's.
+/// Where a body is in an archive.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Found {
+    /// The entry indices from the top-level table to the entry.
+    pub(crate) chain: Vec<u32>,
+    /// Whether the entry's row is a headerless resource's.
+    pub(crate) headerless: bool,
+    /// The absolute offset of the header of the archive whose table holds the entry.
+    pub(crate) base: u64,
+    /// The inflated size the entry's row states, where it states one.
+    pub(crate) real: Option<u64>,
+}
+
+/// Where each body offset of `wanted` is in the archive `src`, by the entry whose body starts
+/// there (a headerless resource's past its slot).
 pub(crate) fn chains<R: Read + Seek>(
     src: &mut R,
     wanted: &BTreeSet<u64>,
     keys: &GtaViKeys,
-) -> Result<HashMap<u64, (Vec<u32>, bool)>, String> {
-    let mut found: HashMap<u64, (Vec<u32>, bool)> = HashMap::new();
+) -> Result<HashMap<u64, Found>, String> {
+    let mut found: HashMap<u64, Found> = HashMap::new();
     let root = Gta6Mount::open_root(&mut *src, keys).map_err(|e| e.to_string())?;
     let mut stack = vec![(root, Vec::new())];
     while let Some((mount, above)) = stack.pop() {
@@ -286,7 +428,13 @@ pub(crate) fn chains<R: Read + Seek>(
                 Some(&[at]) => {
                     let mut chain = above.clone();
                     chain.push(entries[at].index);
-                    found.insert(offset, (chain, headerless(at)));
+                    let row = Found {
+                        chain,
+                        headerless: headerless(at),
+                        base: mount.base,
+                        real: entries[at].real,
+                    };
+                    found.insert(offset, row);
                 }
                 Some([_, _, ..]) => {
                     return Err(tr!(
@@ -330,12 +478,7 @@ pub(crate) fn write_plan(
     out: &Path,
     keys: &GtaViKeys,
 ) -> Result<(bool, bool), String> {
-    if crate::state::reload_open_file::same_file(out, archive) {
-        return Err(tr!(
-            "the copy is a new file, and the archive it is read from is never written"
-        )
-        .to_string());
-    }
+    new_file(out, archive)?;
     let mut file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
     let plan = writer.plan(&mut file, keys).map_err(|e| e.to_string())?;
     // `create_new` refuses any file that exists, so the cleanup below only removes one made here.
@@ -357,17 +500,19 @@ pub(crate) fn write_plan(
     Ok((plan.tables_changed > 0, plan.bodies_changed > 0))
 }
 
-/// Write the archive at `source` with `edits` made into the new file `out`; whether a table and
-/// whether a body changed.
+/// Write the archive at `source` with `edits` made into the new file `out`, as a patched copy where
+/// every edit is a body that fits its entry's chunks, else rebuilt.
 fn write_tree(
     source: &Path,
     edits: &[Edit],
     out: &Path,
     keys: &GtaViKeys,
-) -> Result<(bool, bool), String> {
+) -> Result<Saved, String> {
     let wanted: BTreeSet<u64> = (edits.iter())
         .filter_map(|edit| match edit {
-            Edit::Replace { at, .. } | Edit::Rename { at, .. } | Edit::Remove { at } => Some(*at),
+            Edit::Replace { at, .. } | Edit::Rename { at, .. } | Edit::Remove { at, .. } => {
+                Some(*at)
+            }
             // The top archive's header is at 0, and its chain is empty.
             Edit::Add { archive, .. } => Some(*archive).filter(|&at| at != 0),
         })
@@ -377,25 +522,44 @@ fn write_tree(
     drop(file);
     let chain = |at: &u64| found.get(at).cloned().unwrap_or_default();
     let mut writer = Rpf9ArchiveWriter::new();
+    let (mut replaced, mut kept) = (Vec::new(), Vec::new());
     for edit in edits {
         match edit {
-            Edit::Replace { at, body } => match chain(at) {
-                (path, true) => writer.replace_resource(&path, (**body).clone(), None),
-                (path, false) => writer.replace(&path, (**body).clone()),
-            },
-            Edit::Rename { at, name } => writer.rename(&chain(at).0, name),
-            Edit::Remove { at } => writer.remove(&chain(at).0),
+            Edit::Replace { at, name, body } => {
+                let at = chain(at);
+                if at.headerless {
+                    writer.replace_resource(&at.chain, (**body).clone(), None);
+                } else {
+                    writer.replace(&at.chain, (**body).clone());
+                }
+                replaced.push(Replaced {
+                    name: name.clone(),
+                    at,
+                    body: (**body).clone(),
+                });
+            }
+            Edit::Rename { at, name } => {
+                kept.push(tr!("{name} is renamed", name = name));
+                writer.rename(&chain(at).chain, name);
+            }
+            Edit::Remove { at, name } => {
+                kept.push(tr!("{name} is removed", name = name));
+                writer.remove(&chain(at).chain);
+            }
             Edit::Add {
                 archive,
                 name,
                 body,
             } => {
+                kept.push(tr!("{name} is added", name = name));
                 let bytes = body.read(BodyForm::Decoded)?;
-                writer.add(&chain(archive).0, name, new_body(bytes))
+                writer.add(&chain(archive).chain, name, new_body(bytes));
             }
-        };
+        }
     }
-    write_plan(&writer, source, out, keys)
+    save_choosing(source, out, keys, &replaced, kept, || {
+        write_plan(&writer, source, out, keys)
+    })
 }
 
 impl AppState {
@@ -465,8 +629,8 @@ impl AppState {
         let done = std::mem::take(&mut *ended());
         for (doc_id, at, out, said) in done {
             let file = crate::state::jobs::file_name(&out);
-            let (tables, bodies) = match said {
-                Ok(changed) => changed,
+            let saved = match said {
+                Ok(saved) => saved,
                 Err(why) => {
                     self.show_error_toast(tr!(
                         "Cannot save into a copy of the archive: {reason}",
@@ -480,7 +644,16 @@ impl AppState {
                 doc.saved_as_of(at);
             }
             self.file_replaced(&out);
-            self.show_toast(match (tables, bodies) {
+            let Saved::Rebuilt {
+                tables,
+                bodies,
+                kept,
+            } = saved
+            else {
+                self.show_toast(patched_said(&file));
+                continue;
+            };
+            let said = match (tables, bodies) {
                 (true, _) => tr!(
                     "{file} is a new archive with the tree's edits, which the game refuses because only its maker can sign the table they changed.",
                     file = file
@@ -493,7 +666,8 @@ impl AppState {
                     "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds.",
                     file = file
                 ),
-            });
+            };
+            self.show_toast(with_kept(said, &kept));
         }
     }
 }

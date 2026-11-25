@@ -111,9 +111,10 @@ pub struct Rpf9Kind {
 }
 
 /// The GTA V extension of each kind label that names the same format.
-const EXTENSIONS: [(&str, &str); 11] = [
+const EXTENSIONS: [(&str, &str); 12] = [
     ("archive", "rpf"),
     ("drawable", "ydr"),
+    ("drawable dictionary", "ydd"),
     ("fragment", "yft"),
     ("texture dictionary", "ytd"),
     ("bound", "ybn"),

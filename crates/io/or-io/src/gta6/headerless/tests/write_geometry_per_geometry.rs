@@ -168,6 +168,76 @@ fn an_unchanged_edit_leaves_the_table_and_a_drawable_without_one_writes_as_befor
     assert!(!w.table_rederived && w.bounds_rewritten);
 }
 
+const H: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
+/// [`tabled`] with the geometry's run one element: [`TRIANGLE_AT`]'s box on axes turned 45 degrees
+/// about z, axis 1's `w` 0.5; where the element lies.
+fn turned_box(s: &mut Rpf9Sections, table: usize) -> usize {
+    let v = &mut s.virtual_section;
+    let row3 = target(v, table + 0x30);
+    v[row3 + 2..row3 + 4].copy_from_slice(&1u16.to_le_bytes());
+    for o in [0x48, 0x4A] {
+        v[table + o..table + o + 2].copy_from_slice(&1u16.to_le_bytes());
+    }
+    let row4 = target(v, table + 0x40);
+    let lanes = [
+        0.0, -H, 0.0, 0.0, H, H, 0.0, 0.0, H, H, 0.0, 0.0, -H, H, 0.0, 0.5, 0.0, 0.0, 1.0, 0.0,
+    ];
+    for (k, x) in lanes.iter().enumerate() {
+        v[row4 + 4 * k..row4 + 4 * k + 4].copy_from_slice(&f32::to_le_bytes(*x));
+    }
+    row4
+}
+
+/// [`TRIANGLE_AT`] with its second vertex moved to x = 2, over the same triangle.
+fn moved(s: &Rpf9Sections) -> GeometryEdit {
+    let g = geometry_in(s);
+    let mut positions = g.positions.as_ref().expect("positions").clone();
+    positions[1] = [2.0, 0.0, 0.0];
+    GeometryEdit {
+        positions,
+        triangles: g.triangles.clone(),
+        ..GeometryEdit::default()
+    }
+}
+
+#[test]
+fn moved_vertices_re_extend_the_element_on_its_own_axes_and_take_the_density_the_rule_gives() {
+    let (mut sections, table) = tabled();
+    let row4 = turned_box(&mut sections, table);
+    let before = sections.virtual_section.clone();
+    let edit = moved(&sections);
+    let mut written = sections.clone();
+    let w = write_geometry(&mut written, Rpf9Role::Drawable, None, AT, &edit).expect("written");
+    assert!(w.table_rederived);
+    let v = &written.virtual_section;
+    let lanes: Vec<f32> = (0..8).map(|k| f32_in(v, row4 + 4 * k)).collect();
+    assert_eq!(lanes, [0.0, -2.0 * H, 0.0, 0.0, 2.0 * H, H, 0.0, 0.0]);
+    assert_eq!(
+        v[row4 + 0x20..row4 + 0x50],
+        before[row4 + 0x20..row4 + 0x50]
+    );
+    assert_eq!(u16_in(v, table + 0x48), 1);
+    // Twice the world area over the same texcoords: ratio 8, at the stored power 16.
+    assert_eq!(f32_in(v, target(v, table)), 128.0);
+}
+
+#[test]
+fn a_density_at_no_power_of_4_times_its_ratio_is_refused_by_name() {
+    let (mut sections, table) = tabled();
+    turned_box(&mut sections, table);
+    let row0 = target(&sections.virtual_section, table);
+    // Twice the ratio of 4 as read.
+    sections.virtual_section[row0..row0 + 4].copy_from_slice(&8f32.to_le_bytes());
+    let edit = moved(&sections);
+    let mut written = sections.clone();
+    let refused = write_geometry(&mut written, Rpf9Role::Drawable, None, AT, &edit)
+        .expect_err("refused")
+        .to_string();
+    assert!(refused.contains("no power of 4"), "{refused}");
+    assert_eq!(written, sections);
+}
+
 #[test]
 fn each_piece_of_a_cut_takes_the_density_of_its_own_triangles() {
     // A ribbon past one geometry's vertices, its texcoords the positions; the second piece's at half

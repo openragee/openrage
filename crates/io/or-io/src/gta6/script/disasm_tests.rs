@@ -174,12 +174,12 @@ fn every_named_opcode_fills_its_instruction_length() {
             );
         }
     }
-    assert_eq!(named, 521);
+    assert_eq!(named, 525);
     assert_eq!(op(TABLE), None, "nothing is named past the table");
 }
 
-/// The opcodes named from their handlers in the second reading, each with operands and what they print.
-const SECOND_READING: [(u16, &str, &[u8], &str); 29] = [
+/// The opcodes named from their handlers in the second and third readings, each with operands and what they print.
+const SECOND_READING: [(u16, &str, &[u8], &str); 33] = [
     (0x34, "string_constant", &[8, 0, 0, 0], "data 0x8"),
     (0x62, "load_builtin_global", &[3], "global 3"),
     (0x69, "store_i32_slots", &[0, 2], "+0x8 slots 2"),
@@ -218,10 +218,14 @@ const SECOND_READING: [(u16, &str, &[u8], &str); 29] = [
         &[1, 0, 0, 0, 0x2C, 1],
         "type 0x1 method 300",
     ),
+    (0x191, "builtin_function_ref", &[1, 2], "type 2 method 1"),
+    (0x1CC, "load_u32", &[], "+0x8"),
     (0x1CD, "replication_barrier", &[0, 0, 1, 0], "+0x8 bytes 1"),
     (0x1CE, "replication_barrier", &[0, 0, 4, 0], "+0x0 bytes 4"),
     (0x1CF, "replication_barrier", &[4, 0, 4, 0], "+0xC bytes 4"),
     (0x1D0, "replication_barrier", &[8, 0, 4, 0], "+0x8 bytes 4"),
+    (0x1D3, "array_replication_barrier", &[], ""),
+    (0x1D4, "array_replication_barrier", &[2], "slots 2"),
     (0x1D7, "element_address", &[0x10], "bytes 16"),
     (0x1D8, "stack_address", &[1], "slots 1"),
 ];

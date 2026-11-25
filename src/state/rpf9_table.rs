@@ -14,17 +14,23 @@ use crate::state::DocPayload;
 
 /// Whether the table of the archive at `path` opens with `keys`, else the sentence that says a scan lists it.
 pub(crate) fn table_opens(path: &Path, keys: Result<&GtaViKeys, String>) -> Result<(), String> {
-    let scanned = |why: String| {
-        tr!(
-            "{file} is listed by a scan without its table: {why}",
-            file = file_name(path),
-            why = why
-        )
-    };
-    let keys = keys.map_err(scanned)?;
-    let mut file = File::open(path).map_err(|e| scanned(e.to_string()))?;
-    open_at(&mut file, 0, keys).map_err(|e| scanned(e.to_string()))?;
+    // A table cut short is said so before any key is asked for.
+    if let Some(short) = crate::state::gta_vi::rpf9_cut_short_at(path) {
+        return Err(scanned(path, short));
+    }
+    let keys = keys.map_err(|why| scanned(path, why))?;
+    let mut file = File::open(path).map_err(|e| scanned(path, e.to_string()))?;
+    open_at(&mut file, 0, keys).map_err(|e| scanned(path, e.to_string()))?;
     Ok(())
+}
+
+/// The sentence that says a scan lists the archive at `path` without its table, and `why`.
+fn scanned(path: &Path, why: String) -> String {
+    tr!(
+        "{file} is listed by a scan without its table: {why}",
+        file = file_name(path),
+        why = why
+    )
 }
 
 /// Where the keys are loaded from: the executable that unmasks them and the snapshot the
@@ -54,8 +60,8 @@ pub(crate) fn keys() -> Result<Arc<GtaViKeys>, String> {
     keys
 }
 
-/// The names of the [`GTA6_NAMES_ENV`] folder and of the config dir's harvest, then the local
-/// resolved names and the bundled words, built once a run.
+/// The names of the [`GTA6_NAMES_ENV`] folder, of the config dir's harvest and local resolved names, of the
+/// default hash index and of the bundled words, built once a run.
 ///
 /// ⚠ The first call reads millions of names and every other caller waits on it, so it runs only on
 /// a worker; [`warm_names`] starts it there as soon as a GTA VI folder or key is met.
@@ -64,16 +70,22 @@ pub(crate) fn resolver() -> Arc<NameResolver> {
     let load = || {
         let dir = std::env::var_os(GTA6_NAMES_ENV).map(PathBuf::from);
         let config = crate::state::prefs::config_root();
-        let mut names = names_cache::load(dir.as_deref(), config.as_deref());
-        // A hash keeps the first name given it, so the folder's and the harvest's names stand.
-        let local = config.map(|root| root.join("gta6_names").join("resolved-names.tsv"));
-        if let Some(text) = local.and_then(|file| std::fs::read_to_string(file).ok()) {
-            names.add_hash_name_tsv(&text);
-        }
-        names.merge_vocabulary(&or_io::gta6::names::Vocabulary::bundled());
-        Arc::new(names)
+        Arc::new(names_from(dir.as_deref(), config.as_deref()))
     };
     Arc::clone(RESOLVER.get_or_init(load))
+}
+
+/// The names of `dir` and `config`'s harvest, then each name the default hash index holds with no game data, under its GTA VI path hash, then the bundled words.
+fn names_from(dir: Option<&Path>, config: Option<&Path>) -> NameResolver {
+    // Installs the schema snapshot, which the default index reads once and keeps.
+    crate::state::meta_schema();
+    let mut names = names_cache::load(dir, config);
+    // `insert` keeps the first name a hash is given, so the user's own names win.
+    for name in or_io::meta::binary::hash_index::default_hash_index().names() {
+        names.insert(or_io::gta6::hash::name_hash64(name.as_bytes()), name);
+    }
+    names.merge_vocabulary(&or_io::gta6::names::Vocabulary::bundled());
+    names
 }
 
 /// Builds [`resolver`] on a worker once a run where keys are held, before an archive asks for it.
@@ -111,8 +123,14 @@ pub(in crate::state) fn offer(path: &Path) {
     }
     let keys = keys();
     if let Err(why) = table_opens(path, keys.as_deref().map_err(Clone::clone)) {
-        offers().insert(path.to_path_buf(), why);
+        // What `offer_unopened` kept of the tree's own open says more, and stays.
+        offers().entry(path.to_path_buf()).or_insert(why);
     }
+}
+
+/// On the load's worker, keep `why` the RPF9 archive at `path` did not open as a tree with the keys held, for the toast its scan's tab says.
+pub(in crate::state) fn offer_unopened(path: &Path, why: String) {
+    offers().insert(path.to_path_buf(), scanned(path, why));
 }
 
 impl crate::state::AppState {
@@ -153,3 +171,35 @@ mod gta6_archive_save;
 #[cfg(test)]
 #[path = "rpf9_table_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod default_names {
+    use super::*;
+    use or_io::gta6::hash::name_hash64;
+
+    #[test]
+    fn with_no_names_folder_a_row_is_named_by_a_name_the_default_index_holds() {
+        let index = or_io::meta::binary::hash_index::default_hash_index();
+        let name = index
+            .names()
+            .next()
+            .expect("the default index holds a name");
+        let hash = name_hash64(name.as_bytes());
+        let named = names_from(None, None);
+        assert!(
+            named
+                .lookup(hash)
+                .is_some_and(|n| n.eq_ignore_ascii_case(name)),
+            "{name:?} names no row: {:?}",
+            named.lookup(hash)
+        );
+
+        // A name the user's folder gives the same hash wins over the index's.
+        let dir = tempfile::tempdir().expect("scratch");
+        let mine = format!("mine/{name}");
+        let table = format!("0x{hash:016x}\t{mine}\n");
+        std::fs::write(dir.path().join("resolved-names.tsv"), table).expect("write");
+        let named = names_from(Some(dir.path()), None);
+        assert_eq!(named.lookup(hash), Some(mine.as_str()));
+    }
+}

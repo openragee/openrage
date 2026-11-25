@@ -172,7 +172,8 @@ pub fn install_names_library(library: SchemaLibrary) -> &'static SchemaLibrary {
     NAMES.get_or_init(|| library)
 }
 
-pub(crate) fn names_library() -> Option<&'static SchemaLibrary> {
+/// The library installed for the second title's bodies, which its data XML is read through.
+pub fn names_library() -> Option<&'static SchemaLibrary> {
     NAMES.get()
 }
 

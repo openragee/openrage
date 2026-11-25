@@ -1,5 +1,6 @@
 //! Save into a copy of the archive: a GTA VI document's edits, as its loose save writes them, put
-//! in place of the entry it was read from in a new archive file, which the game refuses as unsigned.
+//! in place of the entry it was read from in a new archive file, as a patched copy whose table is
+//! byte-identical where the body fits its entry's chunks, else rebuilt, which the game refuses.
 
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -10,11 +11,13 @@ use or_io::container::rpf::{BodyForm, GtaViKeys, Rpf9ArchiveWriter};
 
 use crate::state::extract_job::ExtractItem;
 use crate::state::gta6_resource_save::EditedSave;
+use crate::state::rpf_archive_open::tree_verbs::{
+    patched_said, save_choosing, with_kept, Replaced, Saved,
+};
 use crate::state::{AppState, DocPayload, Document};
 
-/// How a save into a copy ended: the new file and whether a table changed, or why it was refused.
-/// The copy written, and whether a table and whether a body changed in it.
-type Ended = Result<(PathBuf, bool, bool), String>;
+/// How a save into a copy ended: the copy written and how, or why it was refused.
+type Ended = Result<(PathBuf, Saved), String>;
 
 // ponytail: one list for the process, emptied by the next frame's poll.
 static ENDED: Mutex<Vec<Ended>> = Mutex::new(Vec::new());
@@ -83,7 +86,7 @@ impl AppState {
                         let body = item.read(BodyForm::Decoded)?;
                         write_copy(&archive, offset, body, &out, &keys)
                     });
-                    ended().push(said.map(|(tables, bodies)| (out, tables, bodies)));
+                    ended().push(said.map(|saved| (out, saved)));
                 });
                 return true;
             }
@@ -105,24 +108,41 @@ impl AppState {
         self.poll_tree_saves();
         let done = std::mem::take(&mut *ended());
         for said in done {
-            match said {
-                Ok((out, true, _)) => self.show_toast(tr!(
+            let (out, saved) = match said {
+                Ok(written) => written,
+                Err(why) => {
+                    self.show_error_toast(tr!(
+                        "Cannot save into a copy of the archive: {reason}",
+                        reason = why
+                    ));
+                    continue;
+                }
+            };
+            let file = crate::state::jobs::file_name(&out);
+            let Saved::Rebuilt {
+                tables,
+                bodies,
+                kept,
+            } = saved
+            else {
+                self.show_toast(patched_said(&file));
+                continue;
+            };
+            let said = match (tables, bodies) {
+                (true, _) => tr!(
                     "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale.",
-                    file = crate::state::jobs::file_name(&out)
-                )),
-                Ok((out, false, true)) => self.show_toast(tr!(
+                    file = file
+                ),
+                (false, true) => tr!(
                     "{file} is a new archive with the edit in its entry's place and its table as it was read.",
-                    file = crate::state::jobs::file_name(&out)
-                )),
-                Ok((out, false, false)) => self.show_toast(tr!(
+                    file = file
+                ),
+                (false, false) => tr!(
                     "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds.",
-                    file = crate::state::jobs::file_name(&out)
-                )),
-                Err(why) => self.show_error_toast(tr!(
-                    "Cannot save into a copy of the archive: {reason}",
-                    reason = why
-                )),
-            }
+                    file = file
+                ),
+            };
+            self.show_toast(with_kept(said, &kept));
         }
     }
 }
@@ -167,20 +187,43 @@ fn archive_item(doc: &Document) -> Result<ExtractItem, String> {
 }
 
 /// Write `body` in place of the entry whose body is at `offset` of the archive at `archive`, into
-/// the new file `out`; whether a table and whether a body changed. A headerless resource's entry takes `body` as its
-/// loose form, any other its bytes, and the writer refuses what it would not read back.
+/// the new file `out`, as a patched copy where it fits the entry's chunks, else rebuilt. A
+/// headerless resource's entry takes `body` as its loose form, any other its bytes, and the writer
+/// refuses what it would not read back.
 fn write_copy(
     archive: &Path,
     offset: u64,
     body: Vec<u8>,
     out: &Path,
     keys: &GtaViKeys,
-) -> Result<(bool, bool), String> {
+) -> Result<Saved, String> {
     let mut file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
     let wanted = BTreeSet::from([offset]);
     let mut found = crate::state::rpf_archive_open::tree_verbs::chains(&mut file, &wanted, keys)?;
-    let (path, headerless) = found.remove(&offset).unwrap_or_default();
-    write_entry(archive, &path, headerless, body, out, keys)
+    drop(file);
+    let row = Replaced {
+        name: format!("{offset:#X}"),
+        at: found.remove(&offset).unwrap_or_default(),
+        body,
+    };
+    save_choosing(
+        archive,
+        out,
+        keys,
+        std::slice::from_ref(&row),
+        Vec::new(),
+        || {
+            let at = &row.at;
+            write_entry(
+                archive,
+                &at.chain,
+                at.headerless,
+                row.body.clone(),
+                out,
+                keys,
+            )
+        },
+    )
 }
 
 /// Write `body` in place of the entry at the index chain `path` of the archive at `archive`, a

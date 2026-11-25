@@ -3,7 +3,7 @@
 //! row offers, and the Properties window.
 
 use super::*;
-use crate::state::files_view::{name_hash, row_facts, RowFacts};
+use crate::state::files_view::{row_facts, RowFacts};
 use crate::ui::commands::{self, Action, Command, Target};
 
 /// Add to or Remove from favourites, whichever `at` takes.
@@ -136,11 +136,12 @@ pub(crate) fn draw_properties(ui: &mut egui::Ui, state: &mut AppState) {
                 (Some(root), None) => format!("{}\\{}", root.display(), inner.replace('/', "\\")),
                 (None, None) => format!("/{inner}"),
             };
-            Some((node.name.clone(), facts, path))
+            let hash = crate::state::rpf9_scan::rpf9_tree_actions::copied_hash(&rpf.session, node);
+            Some((node.name.clone(), facts, path, hash))
         }
         _ => None,
     });
-    let Some((name, facts, path)) = shown else {
+    let Some((name, facts, path, hash)) = shown else {
         state.panels.get::<FilesViewUi>().properties = None;
         return;
     };
@@ -158,7 +159,7 @@ pub(crate) fn draw_properties(ui: &mut egui::Ui, state: &mut AppState) {
         .num_columns(2)
         .spacing([16.0, 4.0])
         .show(ui, |ui| {
-            for (label, value) in property_rows(&name, &facts, &path) {
+            for (label, value) in property_rows(&name, &facts, &path, hash.clone()) {
                 ui.label(egui::RichText::new(label).color(theme::TEXT_SECONDARY));
                 // ⚠ Wrapped: a path is wider than the column Details stands in.
                 ui.add(egui::Label::new(value).selectable(true).wrap());
@@ -171,11 +172,12 @@ pub(crate) fn draw_properties(ui: &mut egui::Ui, state: &mut AppState) {
     }
 }
 
-/// What the Properties window lists, in order.
+/// What the Properties window lists, in order; `hash` is the one Copy hash gives.
 pub(super) fn property_rows(
     name: &str,
     facts: &RowFacts,
     path: &str,
+    hash: String,
 ) -> Vec<(&'static str, String)> {
     let bytes = |n: Option<u64>| match n {
         Some(n) => tr!("{size} ({n} bytes)", n = n, size = or_job::human_bytes(n)),
@@ -194,7 +196,7 @@ pub(super) fn property_rows(
             tr!("Version"),
             facts.version.map_or("—".to_string(), |v| v.to_string()),
         ),
-        (tr!("Hash"), format!("0x{:08X}", name_hash(name))),
+        (tr!("Hash"), hash),
         (tr!("Path"), path.to_string()),
     ]
 }

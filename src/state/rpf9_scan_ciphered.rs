@@ -11,7 +11,7 @@ fn decrypted_payload(path: &Path, bytes: Vec<u8>) -> DocPayload {
         return DocPayload::Meta(MetaDocument::from_bytes(bytes));
     }
     if super::super::document_io::is_text(&bytes) {
-        return super::super::document_io::text_payload(path, bytes);
+        return super::gta6_data_xml::payload(path, bytes);
     }
     if let Some(listing) = gta6_script_view::script_payload(&bytes) {
         return listing;
@@ -51,7 +51,7 @@ pub(super) fn take_ciphered(path: &Path) -> Option<CipheredRequest> {
 /// `base` in the file at `archive`, loading the GTA VI key snapshot for the decipher. A test helper:
 /// the open path takes the stored bytes once through [`ciphered_payload`] instead.
 #[path = "gta6_script_view.rs"]
-mod gta6_script_view;
+pub(super) mod gta6_script_view;
 
 #[cfg(test)]
 pub(crate) fn decipher_entry(

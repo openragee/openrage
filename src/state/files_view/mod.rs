@@ -35,6 +35,14 @@ pub struct RowFacts {
     pub version: Option<u32>,
 }
 
+/// What a row is, in words: a GTA VI row's kind as its table states it, else [`type_in_words`].
+pub fn kind_in_words(session: &RpfEditSession, node: &RpfSessionNode) -> String {
+    match super::explorer::gta6_kind(session, node) {
+        Some(kind) => kind.label.to_owned(),
+        None => type_in_words(node),
+    }
+}
+
 /// What a row is, in words.
 pub fn type_in_words(node: &RpfSessionNode) -> String {
     if matches!(node.backing, RpfNodeBacking::Archive { .. }) {
@@ -118,7 +126,7 @@ fn forget_disk_facts(folder: &Path) {
 pub fn row_facts(session: &RpfEditSession, id: RpfNodeId) -> Option<RowFacts> {
     let node = session.node(id)?;
     let mut facts = RowFacts {
-        kind: type_in_words(node),
+        kind: kind_in_words(session, node),
         ..Default::default()
     };
     match &node.backing {
@@ -132,7 +140,10 @@ pub fn row_facts(session: &RpfEditSession, id: RpfNodeId) -> Option<RowFacts> {
                 RpfEntry::Binary(b) => {
                     facts.size = Some(u64::from(b.uncompressed_size));
                     facts.stored = Some(u64::from(b.read_size()));
-                    facts.compression = Some(if b.is_compressed() {
+                    // An RPF9 row states a stored size always, so one equal to its real size is stored.
+                    let rpf9 = archive.version == or_io::container::rpf::RpfVersion::Rpf9;
+                    let stored = rpf9 && b.read_size() == b.uncompressed_size;
+                    facts.compression = Some(if b.is_compressed() && !stored {
                         tr!("Deflate")
                     } else {
                         tr!("None")

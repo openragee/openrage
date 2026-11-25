@@ -164,7 +164,7 @@ fn every_compiled_script_prints_as_a_listing() {
         t.programs
     );
     assert!(
-        share >= 99.9,
-        "the table names every instruction of 689 of the build's programs, here {share:.2}%"
+        t.unnamed.is_empty() && t.named == t.instructions,
+        "the table names every instruction of the build's programs, here {share:.4}%"
     );
 }

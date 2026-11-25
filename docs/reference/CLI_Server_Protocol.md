@@ -2,7 +2,9 @@
 
 The wire contract of `openrage-cli serve`, a long-lived process that mounts a
 GTA V install once and answers requests over stdin and stdout, for programs
-that embed it.
+that embed it. A GTA VI archive is read and written through `openrage-cli rpf9`
+and the MCP server's `rpf9-` tools instead
+([GTA VI archives](MCP_Server.md#gta-vi-archives)).
 
 It is the external plugin surface ([the decision](../direction/Project_Context.md#a-plugin-is-wasm-in-the-app-and-a-subprocess-outside-it-2026-09-21),
 [R43](../direction/Roadmap.md#r43-the-external-surface-and-open-with)).

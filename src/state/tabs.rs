@@ -205,6 +205,9 @@ impl AppState {
         if self.active_workspace == Workspace::Browse {
             return;
         }
+        if self.preview_gta6_row(doc, node) {
+            return;
+        }
         let kind = match self.document(doc).map(|d| &d.payload) {
             Some(DocPayload::Rpf(rpf)) => rpf
                 .session

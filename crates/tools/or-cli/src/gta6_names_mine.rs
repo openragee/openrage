@@ -3,11 +3,12 @@
 //! already resolved; a candidate is kept only where its hash equals an unresolved one, and the
 //! matches go to the user's file as `0xHASH<TAB>name`, the rows `NameResolver` and `ParserNames` read.
 
+use std::cell::Cell;
 use std::collections::hash_map::RandomState;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::File;
 use std::hash::BuildHasher;
-use std::io::{Read, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -15,6 +16,7 @@ use or_io::container::rpf::{Gta6Entry, Gta6Mount, GtaViKeys, NameResolver, GTA6_
 use or_job::Cancel;
 
 use super::census_cap::{Cap, CapUnit};
+use super::gta6_hashes::{read_row, row_size};
 use or_io::gta6::hash::{name_hash32, name_hash64};
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
 use or_io::meta::binary::layout::ContainerLayout;
@@ -28,9 +30,11 @@ use or_io::{literal_string_hash, string_hash};
 
 const USAGE: &str = "\
 usage: openrage-cli hashes mine <install-folder | archive.rpf> --out <file> [--names <dir>] [--keys <snapshot>] [--exe <exe>] [--range <count>] [--max-bodies <n>|unlimited]
-  Writes the names it finds to <file> as 0xHASH<TAB>name rows; rows already in <file> are kept.
-  Name the file resolved-names.tsv in the folder --names or OPENRAGE_GTA6_NAMES reads, and the
-  explorer and the metadata reader take its names. No archive is written.";
+  Writes the names it finds to <file> as 0xHASH<TAB>name rows, after each archive as it goes;
+  rows already in <file> are kept. Name the file resolved-names.tsv in the folder --names or
+  OPENRAGE_GTA6_NAMES reads, and the explorer and the metadata reader take its names. No archive
+  is written.
+  --max-bodies <n>   read at most <n> bodies in each of its two walks (default 200000)";
 
 const MIN_CANDIDATE: usize = 3;
 const MAX_CANDIDATE: usize = 160;
@@ -43,6 +47,9 @@ const BODY_PREFIX: usize = 16 << 20;
 const MAX_DEPTH: usize = 8;
 /// The directory-and-stem joins tried in one table at most.
 const JOIN_CAP: usize = 2_000_000;
+/// The last components one table's bodies give that are held for its joins at most.
+// ponytail: a table past this joins only the ones met first; the report counts the rest dropped.
+const BASENAME_CAP: usize = 1 << 18;
 const EXE_WINDOW: u64 = 16 << 20;
 /// The bytes one executable window carries into the next, so a string across the edge is whole once.
 const EXE_OVERLAP: usize = 256;
@@ -93,15 +100,24 @@ struct Miner {
     found_member: BTreeMap<u32, String>,
     /// Every name found, in the order found.
     order: Vec<String>,
+    /// The rows found and not yet written out, as `NameResolver::add_hash_name_tsv` reads them.
+    pending: String,
+    /// The 32-bit hashes a row was made for, so a hash both a class and a member is written once.
+    written32: HashSet<u32>,
+    /// The rows made in all.
+    rows: usize,
     by: BTreeMap<(Space, Source), usize>,
     source: Source,
     tried32: u64,
     seen: HashSet<u64>,
     state: RandomState,
     tables: usize,
+    /// The bodies the first walk read for their schemas, and those the second read for strings.
+    schema_bodies: u64,
     bodies: usize,
     skipped: usize,
     joins_skipped: usize,
+    basenames_dropped: usize,
     schemas_unread: usize,
 }
 
@@ -146,18 +162,19 @@ impl Miner {
 
     /// Mines the bodies of one table, then joins the directories its names hold with the last
     /// component of each string they state.
-    fn mine_table(
+    fn mine_table<B: AsRef<[u8]>>(
         &mut self,
         named: &[String],
-        bodies: impl IntoIterator<Item = Vec<u8>>,
+        bodies: impl IntoIterator<Item = B>,
         keys: Option<&GtaViKeys>,
     ) {
         self.tables += 1;
         let mark = self.order.len();
         let mut basenames = BTreeSet::new();
+        // Each body is dropped before the next is read.
         for body in bodies {
             self.bodies += 1;
-            self.body(&body, keys, &mut basenames);
+            self.body(body.as_ref(), keys, &mut basenames);
         }
         let found = self.order[mark..].to_vec();
         let dirs: BTreeSet<String> = (named.iter().chain(&found))
@@ -234,7 +251,12 @@ impl Miner {
                 last && piece.len() >= MIN_CANDIDATE,
                 basenames.as_deref_mut(),
             ) {
-                held.insert(piece.to_ascii_lowercase());
+                let piece = piece.to_ascii_lowercase();
+                if held.len() < BASENAME_CAP {
+                    held.insert(piece);
+                } else if !held.contains(&piece) {
+                    self.basenames_dropped += 1;
+                }
             }
         });
     }
@@ -304,7 +326,7 @@ impl Miner {
             return;
         }
         self.found64.insert(word, form.to_string());
-        self.record(Space::Entry, self.source, form);
+        self.record(Space::Entry, self.source, word, form);
     }
 
     /// A structure name is hashed as written; a member name as written or case-folded, both occur.
@@ -313,19 +335,32 @@ impl Miner {
         let literal = literal_string_hash(name.as_bytes());
         if self.class.contains(&literal) && !self.found_class.contains_key(&literal) {
             self.found_class.insert(literal, name.to_string());
-            self.record(Space::Class, source, name);
+            self.record(Space::Class, source, u64::from(literal), name);
         }
         for hash in [literal, string_hash(name.as_bytes())] {
             if self.member.contains(&hash) && !self.found_member.contains_key(&hash) {
                 self.found_member.insert(hash, name.to_string());
-                self.record(Space::Member, source, name);
+                self.record(Space::Member, source, u64::from(hash), name);
             }
         }
     }
 
-    fn record(&mut self, space: Space, source: Source, name: &str) {
+    /// Counts `name`, found for `hash` in `space`, and makes its row.
+    fn record(&mut self, space: Space, source: Source, hash: u64, name: &str) {
         *self.by.entry((space, source)).or_default() += 1;
         self.order.push(name.to_string());
+        let row = match space {
+            Space::Entry => format!("0x{hash:016X}\t{name}\n"),
+            _ if !self.written32.insert(hash as u32) => return,
+            _ => format!("0x{hash:08X}\t{name}\n"),
+        };
+        self.pending.push_str(&row);
+        self.rows += 1;
+    }
+
+    /// The rows made since the last call.
+    fn take_rows(&mut self) -> String {
+        std::mem::take(&mut self.pending)
     }
 
     /// The rules over the names resolved, `extra` and those found, then over what each round found.
@@ -358,20 +393,6 @@ impl Miner {
         self.source = Source::Install;
     }
 
-    /// The rows found, entry names first, as `NameResolver::add_hash_name_tsv` reads them.
-    fn rows(&self) -> String {
-        let mut text = String::new();
-        for (hash, name) in &self.found64 {
-            text.push_str(&format!("0x{hash:016X}\t{name}\n"));
-        }
-        let members =
-            (self.found_member.iter()).filter(|(h, _)| !self.found_class.contains_key(*h));
-        for (hash, name) in self.found_class.iter().chain(members) {
-            text.push_str(&format!("0x{hash:08X}\t{name}\n"));
-        }
-        text
-    }
-
     /// The report: what was read, and per space how many unresolved hashes were named and how.
     fn lines(&self, refused: usize) -> Vec<String> {
         let by = |space, source| self.by.get(&(space, source)).copied().unwrap_or(0);
@@ -389,8 +410,9 @@ impl Miner {
         };
         let mut lines = vec![
             format!(
-                "  tables        {} read, {refused} refused; {} bodies read, {} not read",
-                self.tables, self.bodies, self.skipped
+                "  tables        {} read, {refused} refused; {} bodies read for their schemas, {} \
+                 for their strings, {} not read",
+                self.tables, self.schema_bodies, self.bodies, self.skipped
             ),
             format!(
                 "  entry names   {} of {} unresolved 64-bit names: {}",
@@ -418,6 +440,12 @@ impl Miner {
             lines.push(format!(
                 "  joins         {} not tried past {JOIN_CAP} in a table",
                 self.joins_skipped
+            ));
+        }
+        if self.basenames_dropped > 0 {
+            lines.push(format!(
+                "  basenames     {} not held for joins past {BASENAME_CAP} in a table",
+                self.basenames_dropped
             ));
         }
         if self.schemas_unread > 0 {
@@ -606,25 +634,61 @@ fn walk_archive(path: &Path, keys: &GtaViKeys, refused: &mut usize, visit: &mut 
     }
 }
 
-/// The inflated body of `entry`, deciphered where it is enciphered; `None` where it cannot be read.
-fn read_body(
+/// How many bodies read are held at once, and the most that ever were.
+#[derive(Default)]
+struct Holding {
+    now: Cell<usize>,
+    peak: Cell<usize>,
+}
+
+/// A body read, counted by its [`Holding`] until it is dropped.
+struct Held<'a> {
+    bytes: Vec<u8>,
+    holding: &'a Holding,
+}
+
+impl<'a> Held<'a> {
+    fn new(bytes: Vec<u8>, holding: &'a Holding) -> Self {
+        let now = holding.now.get() + 1;
+        holding.now.set(now);
+        holding.peak.set(holding.peak.get().max(now));
+        Self { bytes, holding }
+    }
+}
+
+impl AsRef<[u8]> for Held<'_> {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        self.holding.now.set(self.holding.now.get() - 1);
+    }
+}
+
+/// The size `entry`'s row states, the larger of its stored and inflated sizes where it states both.
+fn stated_size(mount: &Gta6Mount, entry: &Gta6Entry) -> Option<u64> {
+    row_size(mount, entry).max(entry.stored)
+}
+
+/// The inflated body of `entry`, read by its table row and deciphered where it is enciphered;
+/// `None` where it cannot be read.
+fn read_body<'a>(
     file: &mut File,
     mount: &Gta6Mount,
     entry: &Gta6Entry,
     keys: &GtaViKeys,
-) -> Option<Vec<u8>> {
-    if entry
-        .real
-        .max(entry.stored)
-        .is_some_and(|len| len > MAX_BODY)
+    holding: &'a Holding,
+) -> Option<Held<'a>> {
+    if stated_size(mount, entry).is_some_and(|len| len > MAX_BODY)
+        || (entry.cipher.is_some() && !keys.has_content_keys())
     {
         return None;
     }
-    match entry.cipher {
-        Some(_) if !keys.has_content_keys() => None,
-        Some(_) => mount.read_entry_decrypted(&mut *file, entry, keys).ok(),
-        None => mount.read_entry(&mut *file, entry).ok(),
-    }
+    let bytes = read_row(file, mount, entry, keys, MAX_BODY).ok()?;
+    Some(Held::new(bytes, holding))
 }
 
 /// `install` where it is an archive, else every `*.rpf` in it and in each folder of its `pack`.
@@ -666,8 +730,8 @@ fn load_resolver(dir: Option<&Path>) -> NameResolver {
     crate::gta6_name_sources::load(dir)
 }
 
-/// Writes the rows `kept` held before and then the rows found to `out`; how many were found.
-fn write_rows(out: &Path, kept: &str, miner: &Miner) -> std::io::Result<usize> {
+/// Joins `rows` to what `out` holds now, or to `kept` where it is gone, under the lock its other writers take.
+fn write_rows(out: &Path, kept: &str, rows: &str) -> std::io::Result<()> {
     let directory = out
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -707,7 +771,6 @@ fn write_rows(out: &Path, kept: &str, miner: &Miner) -> std::io::Result<usize> {
         text.push('\n');
     }
     let mut present: HashSet<String> = text.lines().map(str::to_owned).collect();
-    let rows = miner.rows();
     for row in rows.lines() {
         if present.insert(row.to_string()) {
             text.push_str(row);
@@ -725,8 +788,27 @@ fn write_rows(out: &Path, kept: &str, miner: &Miner) -> std::io::Result<usize> {
     if result.is_err() {
         let _ = std::fs::remove_file(&temporary);
     }
-    result?;
-    Ok(rows.lines().count())
+    result
+}
+
+/// The file `out`, written anew with the rows `kept` held before, which the rows found follow.
+fn open_rows(out: &Path, kept: &str) -> std::io::Result<BufWriter<File>> {
+    if let Some(folder) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(folder)?;
+    }
+    let mut file = BufWriter::new(File::create(out)?);
+    file.write_all(kept.as_bytes())?;
+    if !kept.is_empty() && !kept.ends_with('\n') {
+        file.write_all(b"\n")?;
+    }
+    file.flush()?;
+    Ok(file)
+}
+
+/// Writes the rows `miner` made since the last write to `out`, and flushes it.
+fn flush_rows(miner: &mut Miner, out: &mut dyn Write) -> std::io::Result<()> {
+    out.write_all(miner.take_rows().as_bytes())?;
+    out.flush()
 }
 
 struct Options {
@@ -785,58 +867,74 @@ fn parse(args: &[String]) -> Result<Options, String> {
     })
 }
 
-/// How far the walk reads: the bodies it may mine, and the flag Ctrl-C sets.
+/// How far the walk reads: the bodies each walk may read, the flag Ctrl-C sets, and the count of
+/// bodies held at once.
 struct Bounds<'a> {
     bodies: Cap,
     cancel: &'a Cancel,
+    holding: Holding,
+}
+
+impl<'a> Bounds<'a> {
+    fn new(bodies: Cap, cancel: &'a Cancel) -> Self {
+        Self {
+            bodies,
+            cancel,
+            holding: Holding::default(),
+        }
+    }
 }
 
 /// Walks every table of `archives` for its unnamed entries and its schemas' hashes, then again for
-/// its bodies' strings, so each string is tried against every unresolved hash as it is read; how
-/// many tables were refused.
+/// its bodies' strings, so each string is tried against every unresolved hash as it is read; each
+/// walk reads one body at a time and at most as many as `bounds` allows, and the rows found are
+/// written to `out` after each archive. How many tables were refused.
 fn mine_archives(
     miner: &mut Miner,
     archives: &[PathBuf],
     keys: &GtaViKeys,
     resolver: &NameResolver,
     bounds: &Bounds<'_>,
-) -> usize {
-    let mut refused = 0;
-    for path in archives {
+    out: &mut dyn Write,
+) -> std::io::Result<usize> {
+    let (mut refused, total) = (0, archives.len());
+    for (i, path) in archives.iter().enumerate() {
+        eprintln!("  schemas [{}/{total}] {}", i + 1, path.display());
         walk_archive(path, keys, &mut refused, &mut |file, mount, leaves| {
             let entries = &mount.archive.entries;
             miner.add_table(entries, resolver);
             for &at in leaves {
                 let entry = &entries[at];
-                if bounds.cancel.is_set()
-                    || entry
-                        .real
-                        .max(entry.stored)
-                        .is_some_and(|n| n > SCHEMA_BODY)
-                {
+                if bounds.cancel.is_set() || bounds.bodies.reached(miner.schema_bodies) {
+                    break;
+                }
+                if stated_size(mount, entry).is_some_and(|n| n > SCHEMA_BODY) {
                     continue;
                 }
-                let body = read_body(&mut *file, mount, entry, keys);
-                if let Some(body) =
-                    body.filter(|b| detect_binary_format(b) == Some(BinaryFormat::Pso))
-                {
-                    miner.schema_targets(&body);
+                let Some(body) = read_body(&mut *file, mount, entry, keys, &bounds.holding) else {
+                    continue;
+                };
+                miner.schema_bodies += 1;
+                if detect_binary_format(&body.bytes) == Some(BinaryFormat::Pso) {
+                    miner.schema_targets(&body.bytes);
                 }
             }
         });
     }
-    for path in archives {
+    for (i, path) in archives.iter().enumerate() {
+        eprintln!("  strings [{}/{total}] {}", i + 1, path.display());
         walk_archive(path, keys, &mut 0, &mut |file, mount, leaves| {
             let entries = &mount.archive.entries;
             let named: Vec<String> = (entries.iter())
                 .filter_map(|e| resolver.lookup(e.name64).map(str::to_owned))
                 .collect();
             let (mut skipped, mut taken) = (0, miner.bodies as u64);
+            let holding = &bounds.holding;
             let bodies = leaves.iter().filter_map(|&at| {
                 if bounds.cancel.is_set() || bounds.bodies.reached(taken) {
                     return None;
                 }
-                let body = read_body(&mut *file, mount, &entries[at], keys);
+                let body = read_body(&mut *file, mount, &entries[at], keys, holding);
                 skipped += usize::from(body.is_none());
                 taken += u64::from(body.is_some());
                 body
@@ -844,9 +942,15 @@ fn mine_archives(
             miner.mine_table(&named, bodies, Some(keys));
             miner.skipped += skipped;
         });
-        eprintln!("  {}: {} bodies read so far", path.display(), miner.bodies);
+        flush_rows(miner, out)?;
+        eprintln!(
+            "  strings [{}/{total}] {} bodies read so far, {} rows found",
+            i + 1,
+            miner.bodies,
+            miner.rows
+        );
     }
-    refused
+    Ok(refused)
 }
 
 fn mine(options: &Options) -> Result<Vec<String>, String> {
@@ -878,11 +982,14 @@ fn mine(options: &Options) -> Result<Vec<String>, String> {
         }
     }
     let cancel = super::jobs::on_interrupt();
-    let bounds = Bounds {
-        bodies: options.bodies,
-        cancel: &cancel,
-    };
-    let refused = mine_archives(&mut miner, &archives, &keys, &resolver, &bounds);
+    let bounds = Bounds::new(options.bodies, &cancel);
+    let unwritten = |e: std::io::Error| format!("{}: {e}", options.out.display());
+    // The rows are written beside the output as they are found, so a run that stops keeps them
+    // there and leaves the output whole; they are joined to it under its lock at the end.
+    let mining = options.out.with_extension("mining");
+    let mut out = open_rows(&mining, "").map_err(unwritten)?;
+    let refused = mine_archives(&mut miner, &archives, &keys, &resolver, &bounds, &mut out)
+        .map_err(unwritten)?;
     if let Some(config) = or_title::config::config_dir() {
         miner.mine_vocabulary(&Vocabulary::load(&vocabulary_file(&config)));
     }
@@ -894,9 +1001,14 @@ fn mine(options: &Options) -> Result<Vec<String>, String> {
             .mine_exe(exe)
             .map_err(|e| format!("{}: {e}", exe.display()))?;
     }
+    flush_rows(&mut miner, &mut out).map_err(unwritten)?;
     miner.rules(seeds32, options.range);
-    let found = write_rows(&options.out, &kept, &miner)
-        .map_err(|e| format!("{}: {e}", options.out.display()))?;
+    flush_rows(&mut miner, &mut out).map_err(unwritten)?;
+    drop(out);
+    let found = miner.rows;
+    let rows = std::fs::read_to_string(&mining).map_err(unwritten)?;
+    write_rows(&options.out, &kept, &rows).map_err(unwritten)?;
+    let _ = std::fs::remove_file(&mining);
     if let Some(config) = or_title::config::config_dir() {
         if let Err(error) = NameResolver::cache_names(
             &config.join("gta6_names"),
@@ -914,7 +1026,10 @@ fn mine(options: &Options) -> Result<Vec<String>, String> {
             "  executable    none read: pass --exe or set {GTA6_EXE_ENV}"
         ));
     }
-    lines.extend(options.bodies.note(miner.bodies as u64, BODIES_FLAG));
+    let schemas = options.bodies.note(miner.schema_bodies, BODIES_FLAG);
+    lines.extend(schemas.map(|note| format!("  schema walk   {note}")));
+    let strings = options.bodies.note(miner.bodies as u64, BODIES_FLAG);
+    lines.extend(strings.map(|note| format!("  string walk   {note}")));
     lines.push(format!(
         "  written       {}: {found} rows found, after the rows it held; no archive is written",
         options.out.display()
@@ -1072,11 +1187,25 @@ mod tests {
         resolver.insert(name_hash64(b"zq/props/crate_01"), "zq/props/crate_01");
 
         let mut miner = Miner::new();
-        let bounds = Bounds {
-            bodies: Cap::new(DEFAULT_BODIES, CapUnit::Count("bodies")),
-            cancel: &Cancel::new(),
-        };
-        let refused = mine_archives(&mut miner, &archives(dir.path()), &keys, &resolver, &bounds);
+        let cancel = Cancel::new();
+        let bounds = Bounds::new(Cap::new(DEFAULT_BODIES, CapUnit::Count("bodies")), &cancel);
+        let mut written = Vec::new();
+        let refused = mine_archives(
+            &mut miner,
+            &archives(dir.path()),
+            &keys,
+            &resolver,
+            &bounds,
+            &mut written,
+        )
+        .expect("the rows are written");
+        // A name the walk found is written before the rules run.
+        let row = format!(
+            "0x{:016X}\tzq/data/levels.xml\n",
+            name_hash64(b"zq/data/levels.xml")
+        );
+        let written = String::from_utf8(written).expect("the rows are text");
+        assert!(written.contains(&row), "{written}");
         miner.rules(Vec::new(), DEFAULT_RANGE);
 
         assert_eq!(
@@ -1106,36 +1235,102 @@ mod tests {
         assert_eq!(miner.found64.len(), 1);
     }
 
+    /// Over a table of many bodies, each walk holds one body at a time, reads every body when
+    /// unbounded, stops at the ceiling, and reads none once cancelled.
     #[test]
-    fn the_body_ceiling_and_a_cancel_stop_the_reads() {
+    fn each_walk_holds_one_body_at_a_time_and_stops_at_the_ceiling() {
+        const BODIES: usize = 12;
         let keys = fixture::keys();
-        let parent = fixture::archive(&[
-            ("zq/a", Body::Zlib(fixture::pso("a"))),
-            ("zq/b", Body::Zlib(fixture::pso("b"))),
-        ]);
+        let paths: Vec<String> = (0..BODIES)
+            .map(|i| format!("zq/many/body_{i:02}"))
+            .collect();
+        let entries: Vec<(&str, Body)> = (paths.iter())
+            .map(|path| (path.as_str(), Body::Zlib(fixture::pso(path))))
+            .collect();
         let dir = tempfile::tempdir().expect("a scratch folder");
+        let parent = fixture::archive(&entries);
         std::fs::write(dir.path().join("parent.rpf"), &parent).expect("the archive is written");
         let read = |bodies: Cap, cancel: &Cancel| {
             let mut miner = Miner::new();
-            let bounds = Bounds { bodies, cancel };
+            let bounds = Bounds::new(bodies, cancel);
             mine_archives(
                 &mut miner,
                 &archives(dir.path()),
                 &keys,
                 &NameResolver::new(),
                 &bounds,
-            );
-            miner.bodies
+                &mut std::io::sink(),
+            )
+            .expect("the rows are written");
+            (miner.schema_bodies, miner.bodies, bounds.holding.peak.get())
         };
         let unlimited = Cap::new(DEFAULT_BODIES, CapUnit::Count("bodies")).lifted();
-        assert_eq!(read(unlimited, &Cancel::new()), 2);
+        assert_eq!(read(unlimited, &Cancel::new()), (BODIES as u64, BODIES, 1));
+        let five = Cap::at(5, CapUnit::Count("bodies"));
         assert_eq!(
-            read(Cap::at(1, CapUnit::Count("bodies")), &Cancel::new()),
-            1
+            read(five, &Cancel::new()),
+            (5, 5, 1),
+            "the ceiling bounds both walks"
         );
         let cancelled = Cancel::new();
         cancelled.set();
-        assert_eq!(read(unlimited, &cancelled), 0);
+        assert_eq!(read(unlimited, &cancelled), (0, 0, 0));
+    }
+
+    /// The smallest archive of the build mined under a ceiling of four bodies: each walk reads at
+    /// most four, one at a time. Install-gated.
+    #[test]
+    fn the_miner_runs_on_the_build_within_its_ceiling() {
+        const CEILING: u64 = 4;
+        let present = |var: &str| {
+            std::env::var_os(var)
+                .map(PathBuf::from)
+                .filter(|p| p.exists())
+        };
+        let snapshot = present(or_io::container::rpf::GTA6_SNAPSHOT_ENV);
+        let (Some(snapshot), Some(build)) = (snapshot, present("OPENRAGE_GTA6_BUILD")) else {
+            or_test_support::skip_install(
+                "hashes mine over a GTA VI build",
+                format_args!(
+                    "set {} and OPENRAGE_GTA6_BUILD",
+                    or_io::container::rpf::GTA6_SNAPSHOT_ENV
+                ),
+            );
+            return;
+        };
+        let keys = GtaViKeys::from_file(&snapshot).expect("the key snapshot parses");
+        let size = |p: &PathBuf| std::fs::metadata(p).map_or(u64::MAX, |m| m.len());
+        let smallest = archives(&build).into_iter().min_by_key(size);
+        let smallest = smallest.expect("the build holds an archive");
+
+        let mut miner = Miner::new();
+        let cancel = Cancel::new();
+        let bounds = Bounds::new(Cap::at(CEILING, CapUnit::Count("bodies")), &cancel);
+        let refused = mine_archives(
+            &mut miner,
+            &[smallest],
+            &keys,
+            &NameResolver::new(),
+            &bounds,
+            &mut std::io::sink(),
+        )
+        .expect("the rows are written");
+        assert!(miner.tables > 0, "{refused} tables refused");
+        assert!(miner.schema_bodies <= CEILING && miner.bodies as u64 <= CEILING);
+        assert!(bounds.holding.peak.get() <= 1, "one body held at a time");
+    }
+
+    #[test]
+    fn a_table_holds_no_more_basenames_than_its_cap_and_counts_those_dropped() {
+        let mut held: BTreeSet<String> = (0..BASENAME_CAP).map(|i| format!("zq{i}")).collect();
+        let mut miner = Miner::new();
+        miner.consider(b"\0zq/a/fresh_one\0zq/b/fresh_two\0zq7\0", Some(&mut held));
+        assert_eq!(held.len(), BASENAME_CAP);
+        assert!(!held.contains("fresh_one"));
+        assert_eq!(
+            miner.basenames_dropped, 2,
+            "one already held is not dropped"
+        );
     }
 
     #[test]
@@ -1176,12 +1371,17 @@ mod tests {
     fn the_rows_read_back_through_the_resolver_and_the_parser_names() {
         let mut miner = mined(vec![BODY.to_vec()]);
         let member = string_hash(b"zqIntensity");
-        miner.found_member.insert(member, "zqIntensity".to_string());
+        miner.member.insert(member);
+        miner.consider(b"\0zqIntensity\0", None);
         let dir = tempfile::tempdir().expect("a scratch folder");
         let out = dir.path().join("resolved-names.tsv");
         let kept = "0x0000000000000001\tzq/kept/before";
-        assert_eq!(write_rows(&out, kept, &miner).expect("written"), 4);
+        let mut file = open_rows(&out, kept).expect("the file opens");
+        flush_rows(&mut miner, &mut file).expect("written");
+        drop(file);
+        assert_eq!(miner.rows, 4, "three entry names and a member");
         let text = std::fs::read_to_string(&out).expect("read back");
+        assert_eq!(text.lines().count(), 5, "{text}");
         assert!(
             text.starts_with("0x0000000000000001\tzq/kept/before\n"),
             "{text}"
@@ -1251,8 +1451,7 @@ mod tests {
             name_hash64(later.as_bytes())
         );
         std::fs::write(&out, &latest).expect("concurrent cache update");
-        let miner = Miner::new();
-        write_rows(&out, &snapshot, &miner).expect("merge mining output");
+        write_rows(&out, &snapshot, "").expect("merge mining output");
         assert_eq!(std::fs::read_to_string(out).expect("read"), latest);
     }
 }

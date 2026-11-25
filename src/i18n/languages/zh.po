@@ -13,6 +13,9 @@ msgstr "（无着色器组）"
 msgid "(no skeleton)"
 msgstr "（无骨架）"
 
+msgid "A GTA VI body is of neither GTA V edition, so it does not convert"
+msgstr "GTA VI 主体不属于任何 GTA V 版本，因此不会转换"
+
 msgid "A map for the game: add .ymap and .ytyp files, and OpenRage shows what they place, lets you move, turn and scale each thing with a manipulator, checks the pack and makes a FiveM resource."
 msgstr "游戏地图：添加 .ymap 和 .ytyp 文件，OpenRage 会显示它们放置的内容，可用操纵器移动、旋转和缩放每个对象，检查该包并生成 FiveM 资源。"
 
@@ -379,6 +382,9 @@ msgstr "聚焦"
 msgid "Fog"
 msgstr "雾"
 
+msgid "GTA VI's library holds no structure {name}, so the whole document is untyped and kept as text."
+msgstr "GTA VI 的库中没有结构 {name}，因此整个文档无类型，并以文本保留。"
+
 msgid "Give the project maps: an empty pack in a folder of its own, shipped by every build, and the Map screen to fill it. Add map files… puts files into a pack that is there"
 msgstr "为项目添加地图：在单独的文件夹中创建一个空包，每次构建都会包含它，并提供“地图”界面来填充。“添加地图文件…”会将文件放入已有的包中"
 
@@ -444,6 +450,9 @@ msgstr "反转筛选"
 
 msgid "It places an interior"
 msgstr "它放置了一个室内空间"
+
+msgid "Its header and table of contents take {needed} bytes, and the file holds only {found}: it may have been copied in part."
+msgstr "其文件头和目录占 {needed} 字节，而文件只有 {found}：它可能只复制了一部分。"
 
 msgid "Keep the entity on the ground while it moves"
 msgstr "移动时使实体保持在地面上"
@@ -679,6 +688,9 @@ msgstr "播放速率"
 msgid "Playback speed multiplier"
 msgstr "播放速度倍率"
 
+msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the archive's table is searched for them: a cell the table holds no navigation row of has no special link into this one. Try again once the search ends."
+msgstr "在相邻单元格 {cells} 的主体未打开、且正在归档的表中查找它们时，多边形 {polygon} 不会被更改：表中没有导航行的单元格不会有指向此单元格的特殊链接。搜索结束后请重试。"
+
 msgid "Portal {at}: room {from} to room {to}, {corners} corners, flags {flags}"
 msgstr "门户 {at}：房间 {from} 至房间 {to}，{corners} 个角点，标志 {flags}"
 
@@ -768,6 +780,9 @@ msgstr "房间和门户读取自文件。在“数据”界面中更改它们"
 
 msgid "Rotation"
 msgstr "旋转"
+
+msgid "Save the edits to a new archive: a patched copy where every edit fits its entry's chunks, else a rebuilt archive, which the game refuses"
+msgstr "将编辑保存到新归档：若每项编辑都能放入其条目的块，则为修补副本，否则为重建的归档，游戏会拒绝它"
 
 msgid "Scale"
 msgstr "缩放"
@@ -925,8 +940,17 @@ msgstr "这些地图链接自另一个项目，只有该项目可以编辑：打
 msgid "These particles are linked from another project, which alone edits them: open that project to change them"
 msgstr "这些粒子链接自另一个项目，只有该项目可以编辑：打开该项目才能更改"
 
+msgid "These rows kept it from being patched in place: {rows}."
+msgstr "以下行使其无法原地修补：{rows}。"
+
 msgid "These weapons are linked from another project, which alone edits them: open that project to change them"
 msgstr "这些武器链接自另一个项目，只有该项目可以编辑：打开该项目才能更改"
+
+msgid "This GTA VI archive (RPF9) has a table of contents that does not open with the GTA VI keys OpenRage holds, so its entries cannot be listed by name."
+msgstr "此 GTA VI 归档 (RPF9) 的目录无法用 OpenRage 持有的 GTA VI 密钥打开，因此无法按名称列出其条目。"
+
+msgid "This GTA VI archive (RPF9) is cut short, so its table of contents cannot be read."
+msgstr "此 GTA VI 归档 (RPF9) 被截断，因此无法读取其目录。"
 
 msgid "This YPT has no embedded model dictionary"
 msgstr "此 YPT 没有嵌入模型字典"
@@ -11430,6 +11454,11 @@ msgid_plural "{count} effects"
 msgstr[0] "{count} 个效果"
 msgstr[1] "{count} 个效果"
 
+msgid "{count} element GTA VI's library does not hold is untyped and kept as text."
+msgid_plural "{count} elements GTA VI's library does not hold are untyped and kept as text."
+msgstr[0] "{count} 个 GTA VI 的库中没有的元素无类型，并以文本保留。"
+msgstr[1] "{count} 个 GTA VI 的库中没有的元素无类型，并以文本保留。"
+
 msgid "{count} entity"
 msgid_plural "{count} entities"
 msgstr[0] "{count} 个实体"
@@ -11715,6 +11744,18 @@ msgstr "{files} 已就绪，可供选择器使用"
 
 msgid "{file} changed since: take back the changes made after this one first"
 msgstr "{file} 在此之后已被更改：先撤回此项之后所做的更改"
+
+msgid "{file} exists, and a copy is written only to a new file"
+msgstr "{file} 已存在，副本只会写入新文件"
+
+msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, a patched copy with its table byte-identical where every edit is a body of its entry's size that fits its chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{file} 是 GTA VI 归档，从不原地写入：“另存为…”会把它的编辑写入新文件：若每项编辑都是与其条目大小相同且能放入其块的主体，则为表逐字节相同的修补副本，否则为重建的归档，游戏会拒绝它，因为只有其制作者能签名该表。"
+
+msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, a patched copy with its table byte-identical where every edit is a body of its entry's size that fits its chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{file} 是 GTA VI 归档，从不原地写入：请单独打开它，“另存为…”会把它的编辑写入新文件：若每项编辑都是与其条目大小相同且能放入其块的主体，则为表逐字节相同的修补副本，否则为重建的归档，游戏会拒绝它，因为只有其制作者能签名该表。"
+
+msgid "{file} is a patched copy: each changed body is written in its entry's place, chunk by chunk, and its table is byte-identical, so the table's signature still matches and no check read in the game's code rejects it; the game has not been run with it."
+msgstr "{file} 是修补副本：每个更改的主体都逐块写在其条目的位置，其表逐字节相同，因此表的签名仍然匹配，游戏代码中读到的任何检查都不会拒绝它；尚未用它运行过游戏。"
 
 msgid "{file}\nClick: draw the garment with this texture"
 msgstr "{file}\n单击：用此纹理绘制该服装"
@@ -12061,8 +12102,14 @@ msgstr "{name} 包含 {kind} 内容。"
 msgid "{name} is a folder, and the Files content holds files"
 msgstr "{name} 是文件夹，而“文件”内容只包含文件"
 
+msgid "{name} is a headerless resource, whose loose form is stored under a new row"
+msgstr "{name} 是无文件头资源，其松散形式存储在新行下"
+
 msgid "{name} is a name Windows keeps for itself: choose another"
 msgstr "{name} 是 Windows 保留的名称：选择其他名称"
+
+msgid "{name} is added"
+msgstr "{name} 已添加"
 
 msgid "{name} is already in this dictionary; replace it from an image instead"
 msgstr "{name} 已在此字典中；改为用图片替换它"
@@ -12097,8 +12144,17 @@ msgstr "{name} 不在此字典中"
 msgid "{name} is now {format} with {mips} mip level(s)"
 msgstr "{name} 现在是 {format}，含 {mips} 级 mip"
 
+msgid "{name} is removed"
+msgstr "{name} 已移除"
+
+msgid "{name} is renamed"
+msgstr "{name} 已重命名"
+
 msgid "{name} is selected: Compare with selected on another {kind} compares the two"
 msgstr "已选择 {name}：在另一个 {kind} 上使用“与所选内容比较”即可比较二者"
+
+msgid "{name} is {size} bytes, not the {real} its row states"
+msgstr "{name} 为 {size} 字节，而不是其行所述的 {real}"
 
 msgid "{name} leaves the pack"
 msgstr "{name} 将移出该包"
@@ -16985,17 +17041,8 @@ msgstr "行"
 msgid "Name hash"
 msgstr "名称哈希"
 
-msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
-msgstr "{file} 是 GTA VI 归档，从不原地写入：“另存为…”会把它的编辑写入新文件，游戏会拒绝该文件，因为其签名覆盖了表。"
-
-msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
-msgstr "{file} 是 GTA VI 归档，从不原地写入：单独打开它，“另存为…”会把它的编辑写入新文件，游戏会拒绝该文件，因为其签名覆盖了表。"
-
 msgid "{file} is a new archive with the tree's edits, which the game refuses because only its maker can sign the table they changed."
 msgstr "{file} 是包含树中编辑的新归档，游戏会拒绝它，因为只有其制作者能签署这些编辑改动的表。"
-
-msgid "Save the edits to a new archive, which the game refuses because its signature covers the table"
-msgstr "将编辑保存到新归档，游戏会拒绝它，因为其签名覆盖了表"
 
 msgid "the tree is no GTA VI archive opened on its own"
 msgstr "此树不是单独打开的 GTA VI 归档"
@@ -17017,9 +17064,6 @@ msgstr "{name} 不含任何字节"
 
 msgid "list {list}: {entries}"
 msgstr "列表 {list}：{entries}"
-
-msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the scan is searched for them: a cell the scan holds no body of has no special link into this one. Try again once the search ends."
-msgstr "在相邻单元格 {cells} 的主体未打开、且正在扫描中查找它们时，多边形 {polygon} 不会被更改：扫描中没有主体的单元格不会有指向此单元格的特殊链接。搜索结束后请重试。"
 
 msgid "Add to the facial controls it writes"
 msgstr "添加到它写入的面部控制中"

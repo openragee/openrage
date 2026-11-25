@@ -395,6 +395,11 @@ use ciphered::{ciphered_payload, take_ciphered};
 mod payload;
 use payload::body_payload;
 
+#[path = "gta6_data_xml.rs"]
+pub(crate) mod gta6_data_xml;
+#[path = "rpf9_tree_actions.rs"]
+pub(crate) mod rpf9_tree_actions;
+
 /// The path a body at `offset` of `archive` opens under in `view`.
 pub fn body_path(archive: &Path, offset: u64, view: View) -> PathBuf {
     archive.join(format!("{offset:#X}.{}", view.ext()))
@@ -509,6 +514,11 @@ fn origins() -> MutexGuard<'static, BTreeMap<PathBuf, (Rpf9ScanFind, bool)>> {
 /// The find the body at `path` was read from once it has opened, and whether it is a file of its own.
 pub(crate) fn scan_origin(path: &Path) -> Option<(Rpf9ScanFind, bool)> {
     origins().get(path).copied()
+}
+
+/// Whether the document at `path` is a body read from a GTA VI archive.
+pub(crate) fn from_gta_vi(path: Option<&Path>) -> bool {
+    path.is_some_and(|p| scan_origin(p).is_some())
 }
 
 /// Whether the body at `path` opened as the lines OpenRage writes of what its reader reads.

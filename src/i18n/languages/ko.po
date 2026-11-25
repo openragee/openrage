@@ -13,6 +13,9 @@ msgstr "(셰이더 그룹 없음)"
 msgid "(no skeleton)"
 msgstr "(스켈레톤 없음)"
 
+msgid "A GTA VI body is of neither GTA V edition, so it does not convert"
+msgstr "GTA VI 본문은 어느 GTA V 에디션에도 속하지 않으므로 변환되지 않습니다"
+
 msgid "A map for the game: add .ymap and .ytyp files, and OpenRage shows what they place, lets you move, turn and scale each thing with a manipulator, checks the pack and makes a FiveM resource."
 msgstr "게임용 맵: .ymap 및 .ytyp 파일을 추가하면 OpenRage가 배치되는 항목을 보여 주고, 매니퓰레이터로 각 항목을 이동, 회전, 배율 조정할 수 있게 하며, 팩을 검사하고 FiveM 리소스를 만듭니다."
 
@@ -379,6 +382,9 @@ msgstr "포커스"
 msgid "Fog"
 msgstr "안개"
 
+msgid "GTA VI's library holds no structure {name}, so the whole document is untyped and kept as text."
+msgstr "GTA VI 라이브러리에는 구조 {name}이(가) 없으므로 문서 전체가 형식 없이 텍스트로 보존됩니다."
+
 msgid "Give the project maps: an empty pack in a folder of its own, shipped by every build, and the Map screen to fill it. Add map files… puts files into a pack that is there"
 msgstr "프로젝트에 맵을 추가합니다. 별도의 폴더에 만든 빈 팩으로, 모든 빌드에 포함되며 맵 화면에서 채울 수 있습니다. 맵 파일 추가…는 이미 있는 팩에 파일을 넣습니다"
 
@@ -444,6 +450,9 @@ msgstr "필터 반전"
 
 msgid "It places an interior"
 msgstr "인테리어를 배치합니다"
+
+msgid "Its header and table of contents take {needed} bytes, and the file holds only {found}: it may have been copied in part."
+msgstr "헤더와 목차가 {needed}바이트를 차지하지만 파일에는 {found}만 있습니다. 일부만 복사되었을 수 있습니다."
 
 msgid "Keep the entity on the ground while it moves"
 msgstr "이동하는 동안 엔티티를 지면에 유지"
@@ -679,6 +688,9 @@ msgstr "재생 속도"
 msgid "Playback speed multiplier"
 msgstr "재생 속도 배율"
 
+msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the archive's table is searched for them: a cell the table holds no navigation row of has no special link into this one. Try again once the search ends."
+msgstr "이웃 셀 {cells}의 본문이 열려 있지 않고 아카이브의 테이블에서 찾는 중이므로 다각형 {polygon}은(는) 변경되지 않습니다. 테이블에 내비게이션 행이 없는 셀은 이 셀로 향하는 특수 링크가 없습니다. 검색이 끝나면 다시 시도하세요."
+
 msgid "Portal {at}: room {from} to room {to}, {corners} corners, flags {flags}"
 msgstr "포털 {at}: 룸 {from}에서 룸 {to}, 모서리 {corners}개, 플래그 {flags}"
 
@@ -768,6 +780,9 @@ msgstr "룸과 포털은 파일에서 읽습니다. 데이터 화면에서 변�
 
 msgid "Rotation"
 msgstr "회전"
+
+msgid "Save the edits to a new archive: a patched copy where every edit fits its entry's chunks, else a rebuilt archive, which the game refuses"
+msgstr "편집 내용을 새 아카이브에 저장 (모든 편집이 항목의 청크에 들어가면 패치된 사본, 그렇지 않으면 재구성된 아카이브가 되며 게임은 이를 거부합니다)"
 
 msgid "Scale"
 msgstr "배율"
@@ -925,8 +940,17 @@ msgstr "이 맵은 다른 프로젝트에서 연결된 것으로, 해당 프로�
 msgid "These particles are linked from another project, which alone edits them: open that project to change them"
 msgstr "이 파티클은 다른 프로젝트에서 연결된 것으로, 해당 프로젝트에서만 편집할 수 있습니다. 변경하려면 그 프로젝트를 여십시오"
 
+msgid "These rows kept it from being patched in place: {rows}."
+msgstr "다음 행 때문에 제자리에서 패치하지 못했습니다: {rows}."
+
 msgid "These weapons are linked from another project, which alone edits them: open that project to change them"
 msgstr "이 무기는 다른 프로젝트에서 연결된 것으로, 해당 프로젝트에서만 편집할 수 있습니다. 변경하려면 그 프로젝트를 여십시오"
+
+msgid "This GTA VI archive (RPF9) has a table of contents that does not open with the GTA VI keys OpenRage holds, so its entries cannot be listed by name."
+msgstr "이 GTA VI 아카이브(RPF9)의 목차는 OpenRage가 가진 GTA VI 키로 열리지 않으므로 항목을 이름으로 나열할 수 없습니다."
+
+msgid "This GTA VI archive (RPF9) is cut short, so its table of contents cannot be read."
+msgstr "이 GTA VI 아카이브(RPF9)는 잘려 있으므로 목차를 읽을 수 없습니다."
 
 msgid "This YPT has no embedded model dictionary"
 msgstr "이 YPT에는 포함된 모델 딕셔너리가 없습니다"
@@ -11430,6 +11454,11 @@ msgid_plural "{count} effects"
 msgstr[0] "이펙트 {count}개"
 msgstr[1] "이펙트 {count}개"
 
+msgid "{count} element GTA VI's library does not hold is untyped and kept as text."
+msgid_plural "{count} elements GTA VI's library does not hold are untyped and kept as text."
+msgstr[0] "GTA VI 라이브러리에 없는 요소 {count}개는 형식 없이 텍스트로 보존됩니다."
+msgstr[1] "GTA VI 라이브러리에 없는 요소 {count}개는 형식 없이 텍스트로 보존됩니다."
+
 msgid "{count} entity"
 msgid_plural "{count} entities"
 msgstr[0] "엔티티 {count}개"
@@ -11715,6 +11744,18 @@ msgstr "{files} 선택기용으로 준비됨"
 
 msgid "{file} changed since: take back the changes made after this one first"
 msgstr "{file}은(는) 이후 변경되었습니다: 먼저 이 변경 이후에 한 변경을 되돌리십시오"
+
+msgid "{file} exists, and a copy is written only to a new file"
+msgstr "{file}이(가) 이미 있으며, 사본은 새 파일에만 씁니다"
+
+msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, a patched copy with its table byte-identical where every edit is a body of its entry's size that fits its chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{file}은(는) GTA VI 아카이브이며 제자리에 쓰지 않습니다. 다른 이름으로 저장…은 편집 내용을 새 파일에 씁니다. 모든 편집이 항목 크기와 같고 그 청크에 들어가는 본문이면 테이블이 바이트 단위로 같은 패치된 사본이 되고, 그렇지 않으면 재구성된 아카이브가 되며, 테이블에는 만든 사람만 서명할 수 있으므로 게임은 그것을 거부합니다."
+
+msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, a patched copy with its table byte-identical where every edit is a body of its entry's size that fits its chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{file}은(는) GTA VI 아카이브이며 제자리에 쓰지 않습니다. 따로 열면 다른 이름으로 저장…은 편집 내용을 새 파일에 씁니다. 모든 편집이 항목 크기와 같고 그 청크에 들어가는 본문이면 테이블이 바이트 단위로 같은 패치된 사본이 되고, 그렇지 않으면 재구성된 아카이브가 되며, 테이블에는 만든 사람만 서명할 수 있으므로 게임은 그것을 거부합니다."
+
+msgid "{file} is a patched copy: each changed body is written in its entry's place, chunk by chunk, and its table is byte-identical, so the table's signature still matches and no check read in the game's code rejects it; the game has not been run with it."
+msgstr "{file}은(는) 패치된 사본입니다. 변경된 각 본문은 청크 단위로 항목의 자리에 쓰이고 테이블은 바이트 단위로 같으므로, 테이블의 서명은 여전히 일치하며 게임 코드에서 읽은 어떤 검사도 이를 거부하지 않습니다. 다만 이것으로 게임을 실행해 본 적은 없습니다."
 
 msgid "{file}\nClick: draw the garment with this texture"
 msgstr "{file}\n클릭: 이 텍스처로 의상 그리기"
@@ -12061,8 +12102,14 @@ msgstr "{name}에는 {kind} 콘텐츠가 있습니다."
 msgid "{name} is a folder, and the Files content holds files"
 msgstr "{name}은(는) 폴더이며, 파일 콘텐츠에는 파일만 넣을 수 있습니다"
 
+msgid "{name} is a headerless resource, whose loose form is stored under a new row"
+msgstr "{name}은(는) 헤더 없는 리소스이며, 그 느슨한 형식은 새 행에 저장됩니다"
+
 msgid "{name} is a name Windows keeps for itself: choose another"
 msgstr "{name}은(는) Windows가 자체적으로 예약한 이름입니다: 다른 이름을 선택하십시오"
+
+msgid "{name} is added"
+msgstr "{name}이(가) 추가되었습니다"
 
 msgid "{name} is already in this dictionary; replace it from an image instead"
 msgstr "{name}은(는) 이 딕셔너리에 이미 있습니다. 대신 이미지에서 교체하십시오"
@@ -12097,8 +12144,17 @@ msgstr "{name}은(는) 이 딕셔너리에 없습니다"
 msgid "{name} is now {format} with {mips} mip level(s)"
 msgstr "{name}은(는) 이제 {format} 형식이며 밉 수준이 {mips}개입니다"
 
+msgid "{name} is removed"
+msgstr "{name}이(가) 제거되었습니다"
+
+msgid "{name} is renamed"
+msgstr "{name}의 이름이 바뀌었습니다"
+
 msgid "{name} is selected: Compare with selected on another {kind} compares the two"
 msgstr "{name}이(가) 선택되었습니다: 다른 {kind}에서 “선택 항목과 비교”를 사용하면 둘을 비교합니다"
+
+msgid "{name} is {size} bytes, not the {real} its row states"
+msgstr "{name}은(는) {size}바이트이며, 그 행이 말하는 {real}이(가) 아닙니다"
 
 msgid "{name} leaves the pack"
 msgstr "{name} 팩에서 제외"
@@ -16985,17 +17041,8 @@ msgstr "행"
 msgid "Name hash"
 msgstr "이름 해시"
 
-msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
-msgstr "{file}은(는) GTA VI 아카이브이며 제자리에 쓰지 않습니다. 다른 이름으로 저장…은 편집 내용을 새 파일에 쓰지만, 서명이 테이블을 덮기 때문에 게임은 그 파일을 거부합니다."
-
-msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
-msgstr "{file}은(는) GTA VI 아카이브이며 제자리에 쓰지 않습니다. 따로 열면 다른 이름으로 저장…이 편집 내용을 새 파일에 쓰지만, 서명이 테이블을 덮기 때문에 게임은 그 파일을 거부합니다."
-
 msgid "{file} is a new archive with the tree's edits, which the game refuses because only its maker can sign the table they changed."
 msgstr "{file}은(는) 트리의 편집 내용을 담은 새 아카이브이며, 바뀐 테이블에 서명할 수 있는 것은 제작자뿐이므로 게임은 이를 거부합니다."
-
-msgid "Save the edits to a new archive, which the game refuses because its signature covers the table"
-msgstr "편집 내용을 새 아카이브에 저장 (서명이 테이블을 덮기 때문에 게임은 이를 거부합니다)"
 
 msgid "the tree is no GTA VI archive opened on its own"
 msgstr "이 트리는 따로 연 GTA VI 아카이브가 아닙니다"
@@ -17017,9 +17064,6 @@ msgstr "{name}에는 바이트가 없습니다"
 
 msgid "list {list}: {entries}"
 msgstr "목록 {list}: {entries}"
-
-msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the scan is searched for them: a cell the scan holds no body of has no special link into this one. Try again once the search ends."
-msgstr "이웃 셀 {cells}의 본문이 열려 있지 않고 스캔에서 찾는 중이므로 다각형 {polygon}은(는) 변경되지 않습니다. 스캔에 본문이 없는 셀은 이 셀로 향하는 특수 링크가 없습니다. 검색이 끝나면 다시 시도하세요."
 
 msgid "Add to the facial controls it writes"
 msgstr "쓰는 얼굴 컨트롤에 추가"

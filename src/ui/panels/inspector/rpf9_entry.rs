@@ -64,6 +64,7 @@ mod tests {
             ciphered: true,
             row_bytes: Some(20),
             hash: Some(0x0123_4567_89AB_CDEF),
+            name64: 0x0123_4567_89AB_CDEF,
         });
         for want in [
             "drawable",
@@ -86,6 +87,7 @@ mod tests {
             ciphered: false,
             row_bytes: Some(24),
             hash: None,
+            name64: 1,
         });
         assert!(
             shown.contains("24 bytes") && shown.contains("\"no\""),

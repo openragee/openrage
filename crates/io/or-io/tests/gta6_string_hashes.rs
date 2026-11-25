@@ -1,7 +1,8 @@
 //! The strings a build's PSO documents register hash, by their category's hasher, to values the same
 //! documents carry: each registered string is hashed by `category_hash`, by the crate's other 32-bit
 //! hasher and by the 64-bit name hash, and counted where the hash is a word outside the string
-//! sections. The walk reads only the archives that hold registered runs, and the counts are the build's.
+//! sections. The walk reads only the compressed resources of the archives that hold registered runs,
+//! and the counts are the build's.
 //!
 //! Install-gated and game-derived; it prints counts only, and skips without:
 //!   `OPENRAGE_GTA6_KEYS`   the key snapshot with the string section (never committed)
@@ -25,7 +26,11 @@ const CONTENT_CIPHER_TYPE: u16 = 17;
 /// of their file name, and whether their nested archives are walked too: a sorted whole-build walk
 /// reads the largest archives first and never gets here.
 const ARCHIVES: [(u32, bool); 2] = [(0xBC35_2010, true), (0x61CA_8E15, false)];
-/// The class byte of a top-level compressed resource, where a PSO document sits.
+/// The class byte of a nested archive's row; no archive sits inside a nested one.
+const NESTED_CLASS: u8 = 0x00;
+/// The class byte of a compressed resource's row, which every document holding a registered run has.
+// ⚠ Reading every row of the nested archives, and listing the words of every PSO document whether
+// it registers a string or not, held this test at its 900 s cap.
 const RESOURCE_CLASS: u8 = 0x0B;
 const MAX_DEPTH: usize = 8;
 const MAX_ENTRY: u64 = 4 << 20;
@@ -131,6 +136,9 @@ fn check_doc(doc: &[u8], keys: &GtaViKeys, t: &mut Tally) {
         t.unread += 1;
         return;
     };
+    if strings.is_empty() {
+        return;
+    }
     let (narrow, wide) = carried_words(doc);
     let mut categories = BTreeSet::new();
     for s in &strings {
@@ -163,6 +171,7 @@ fn walk(
     for entry in &mount.archive.entries {
         let clear = entry.cipher.is_none();
         if clear
+            && entry.class == Some(NESTED_CLASS)
             && entry.start.is_some()
             && mount
                 .entry_begins_archive(&mut *file, entry)
@@ -175,7 +184,7 @@ fn walk(
             }
             continue;
         }
-        if depth == 0 && entry.class != Some(RESOURCE_CLASS) {
+        if entry.class != Some(RESOURCE_CLASS) {
             continue;
         }
         let cipher = entry.cipher.as_ref();

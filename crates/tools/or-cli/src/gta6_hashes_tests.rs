@@ -224,20 +224,29 @@ fn install() -> tempfile::TempDir {
 }
 
 /// What a walk opens and names with, with no lifted listings.
-fn with<'a>(keys: &'a GtaViKeys, resolver: &'a NameResolver) -> Gta6<'a> {
+fn with<'a>(keys: &'a GtaViKeys, names: &'a [Source]) -> Gta6<'a> {
     Gta6 {
         keys,
-        resolver,
+        names,
         natives: None,
     }
 }
 
-/// A resolver that knows the first two entries' names and not the third's.
-fn resolver() -> NameResolver {
+/// A source of names labelled `label` that knows `names`.
+fn source(label: &'static str, names: &[&str]) -> Source {
     let mut vocabulary = Vocabulary::default();
-    vocabulary.add("alpha.bin", None);
-    vocabulary.add("beta.bin", None);
-    NameResolver::from_vocabulary(vocabulary)
+    for name in names {
+        vocabulary.add(name, None);
+    }
+    Source {
+        label,
+        resolver: NameResolver::from_vocabulary(vocabulary),
+    }
+}
+
+/// One source that knows the first two entries' names and not the third's.
+fn resolver() -> Vec<Source> {
+    vec![source("zq vocabulary", &["alpha.bin", "beta.bin"])]
 }
 
 #[test]
@@ -269,6 +278,7 @@ fn two_named_entries_and_one_unnamed_count_as_two_resolved_and_one_not() {
         .split_whitespace()
         .collect();
     assert_eq!(words[2..], ["3", "2", "1"], "{table}");
+    assert!(table.contains("zq vocabulary 2 (66.7%)"), "{table}");
 
     let out = dir.path().join("unresolved.tsv");
     assert_eq!(write_unresolved(&census, &out).expect("it writes"), 7);
@@ -277,13 +287,114 @@ fn two_named_entries_and_one_unnamed_count_as_two_resolved_and_one_not() {
     assert!(text.lines().any(|l| l == line), "{text}");
 }
 
+/// A hash two sources name is credited to the first, and the report gives each source's share,
+/// a source that named nothing included.
+#[test]
+fn each_source_is_credited_with_the_hashes_it_named_first() {
+    let dir = install();
+    let archives = archives_under(dir.path());
+    let names = [
+        source("zq first", &["alpha.bin"]),
+        source("zq second", &["alpha.bin", "beta.bin", "gamma.bin"]),
+        source("zq third", &["beta.bin"]),
+    ];
+    let options = Options::default();
+    let keys = keys();
+    let census = census_gta6(
+        dir.path(),
+        &archives,
+        &options,
+        &Cancel::new(),
+        &with(&keys, &names),
+    );
+    for space in [Space::Name64, Space::Name32] {
+        let by: Vec<(&str, usize)> = census.count(space).by.clone().into_iter().collect();
+        assert_eq!(by, [("zq first", 1), ("zq second", 2)], "{}", space.label());
+    }
+    let table = report(&census, Game::Gta6, &options);
+    let row = (table.lines()).find(|l| l.contains("entry name64") && l.contains("zq first"));
+    assert_eq!(
+        row.map(str::trim),
+        Some("entry name64       zq first 1 (33.3%), zq second 2 (66.7%), zq third 0 (0.0%)"),
+        "{table}"
+    );
+}
+
+/// A virtual section the resource writer takes: a zero head, a block-map pointer at 0x08.
+fn virtual_section() -> Vec<u8> {
+    let mut v: Vec<u8> = (0..0x200)
+        .map(|i| ((i * 13 + 2) % 251) as u8 | 0x80)
+        .collect();
+    v[..8].fill(0);
+    v[8..16].copy_from_slice(&0x5000_0040u64.to_le_bytes());
+    v[0x40..0x70].fill(0);
+    v
+}
+
+/// A clear headerless resource stands under a 20-byte row, its body past a 16-byte slot: the row
+/// reads past the slot as the resource it holds, and the census counts it read.
+#[test]
+fn a_clear_headerless_row_is_read_past_its_slot_and_counted() {
+    use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
+    use or_io::container::rpf::{write_rpf9_resource, Rpf9Form, Rpf9Sections};
+    use std::io::Cursor;
+
+    let loose = write_rpf9_resource(&Rpf9Sections {
+        form: Rpf9Form::BlockMapped,
+        virtual_section: virtual_section(),
+        physical: Vec::new(),
+    })
+    .expect("a loose resource");
+    let (_, want) = read_rpf9_body(Cursor::new(&loose), 0, u64::MAX).expect("the loose file reads");
+    let resource = Rpf9NewBody::Resource {
+        type_code: 0x02,
+        loose,
+    };
+    let key = Rpf9IndexKey {
+        key_id: KEY_ID,
+        iv: [0x33; 16],
+    };
+    let keys = keys();
+    let plan = build(&[("zq/a.ydr".to_owned(), resource)], &key, &keys).expect("it builds");
+    let mut bytes = Vec::new();
+    (plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut bytes)).expect("it is laid out");
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = dir.path().join("headerless.rpf");
+    std::fs::write(&path, bytes).expect("write the archive");
+
+    let mut file = File::open(&path).expect("the archive");
+    let mount = Gta6Mount::open_root(&mut file, &keys).expect("it mounts");
+    let entry = &mount.archive.entries[0];
+    assert!(
+        entry.stored.is_none() && entry.cipher.is_none(),
+        "a clear 20-byte row"
+    );
+    let read = read_row(&mut file, &mount, entry, &keys, DEFAULT_LIMIT);
+    assert_eq!(
+        read.expect("the row reads"),
+        want,
+        "the resource past the slot"
+    );
+
+    let archives = archives_under(dir.path());
+    let options = Options::default();
+    let census = census_gta6(
+        dir.path(),
+        &archives,
+        &options,
+        &Cancel::new(),
+        &with(&keys, &[]),
+    );
+    assert_eq!((census.bodies, census.unread), (1, 0));
+}
+
 #[test]
 fn a_census_with_no_names_resolves_nothing_and_a_cancelled_one_walks_nothing() {
     let dir = install();
     let archives = archives_under(dir.path());
     let options = Options::default();
-    let (keys, none) = (keys(), NameResolver::new());
-    let gta6 = with(&keys, &none);
+    let keys = keys();
+    let gta6 = with(&keys, &[]);
     let census = census_gta6(dir.path(), &archives, &options, &Cancel::new(), &gta6);
     assert_eq!(census.count(Space::Name64).resolved(), 0);
     assert_eq!(census.count(Space::Name64).unresolved().len(), 3);
@@ -473,8 +584,8 @@ fn a_native_whose_address_a_listing_names_is_resolved_and_a_hash_only_one_is_not
     );
 }
 
-#[test]
-fn the_census_runs_on_the_build_and_prints_its_table() {
+/// The key snapshot and the build the install-gated checks read; `None`, said as a skip, without.
+fn the_build(what: &str) -> Option<(GtaViKeys, PathBuf)> {
     let present = |var: &str| {
         std::env::var_os(var)
             .map(PathBuf::from)
@@ -485,15 +596,83 @@ fn the_census_runs_on_the_build_and_prints_its_table() {
         present("OPENRAGE_GTA6_BUILD"),
     ) else {
         or_test_support::skip_install(
-            "hashes census over a GTA VI build",
+            what,
             format_args!(
                 "set {} and OPENRAGE_GTA6_BUILD",
                 or_io::container::rpf::GTA6_SNAPSHOT_ENV
             ),
         );
-        return;
+        return None;
     };
     let keys = GtaViKeys::from_file(&snapshot).expect("the key snapshot parses");
+    Some((keys, build))
+}
+
+/// The clear 20-byte rows met first in the build, which a read at the row's start refused every
+/// one of, read past their slot. Install-gated.
+#[test]
+fn clear_headerless_rows_of_the_build_read_past_their_slot() {
+    /// The rows tried, and the deepest nesting walked to find them.
+    const TRIES: usize = 16;
+    const DEPTH: usize = 3;
+
+    /// Try the clear 20-byte rows of `mount` and of the tables it nests, depth first.
+    fn rows(
+        file: &mut File,
+        mount: &Gta6Mount,
+        keys: &GtaViKeys,
+        depth: usize,
+        tried: &mut Vec<bool>,
+    ) {
+        for entry in &mount.archive.entries {
+            if tried.len() >= TRIES {
+                return;
+            }
+            if mount
+                .entry_begins_archive(&mut *file, entry)
+                .unwrap_or(false)
+            {
+                if depth < DEPTH {
+                    if let Ok(child) = mount.open_nested(&mut *file, entry, keys) {
+                        rows(file, &child, keys, depth + 1, tried);
+                    }
+                }
+                continue;
+            }
+            let clear_slot = entry.cipher.is_none() && slot_extent(mount, entry).is_some();
+            if clear_slot && row_size(mount, entry).is_some_and(|s| s <= 1 << 20) {
+                tried.push(read_row(file, mount, entry, keys, DEFAULT_LIMIT).is_ok());
+            }
+        }
+    }
+
+    let what = "clear 20-byte rows of a GTA VI build";
+    let Some((keys, build)) = the_build(what) else {
+        return;
+    };
+    let mut tried = Vec::new();
+    for path in archives_under(&build) {
+        let mut file = File::open(&path).expect("the archive opens");
+        if let Ok(root) = Gta6Mount::open_root(&mut file, &keys) {
+            rows(&mut file, &root, &keys, 0, &mut tried);
+        }
+        if tried.len() >= TRIES {
+            break;
+        }
+    }
+    if tried.is_empty() {
+        or_test_support::skip_install(what, format_args!("no clear 20-byte row was met"));
+        return;
+    }
+    let read = tried.iter().filter(|ok| **ok).count();
+    assert!(read > 0, "{read} of {} rows read", tried.len());
+}
+
+#[test]
+fn the_census_runs_on_the_build_and_prints_its_table() {
+    let Some((keys, build)) = the_build("hashes census over a GTA VI build") else {
+        return;
+    };
     let archives = archives_under(&build);
     assert_eq!(game_of(&archives), Some(Game::Gta6));
     // Top-level tables and a handful of bodies keep the run short.
@@ -502,13 +681,12 @@ fn the_census_runs_on_the_build_and_prints_its_table() {
         bodies: Cap::at(16, CapUnit::Count("bodies")),
         ..Options::default()
     };
-    let none = NameResolver::new();
     let census = census_gta6(
         &build,
         &archives,
         &options,
         &Cancel::new(),
-        &with(&keys, &none),
+        &with(&keys, &[]),
     );
     let table = report(&census, Game::Gta6, &options);
     assert!(census.archives > 0, "{table}");

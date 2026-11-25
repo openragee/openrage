@@ -148,9 +148,13 @@ impl Gta6Mount {
             }
         }
         // The inflated size, where the row states it, caps the inflated output; a 20-byte row states
-        // none, so the detector's own measure of the body stands.
+        // none, so the detector's own measure of the body stands, read past the row's zero slot.
         let limit = entry.real.unwrap_or(u64::MAX);
-        read_rpf9_body(src, start, limit)
+        let at = match entry.stored {
+            None => start + super::rpf9_scan::RPF9_SLOT,
+            Some(_) => start,
+        };
+        read_rpf9_body(src, at, limit)
             .map(|(_, bytes)| bytes)
             .map_err(|source| IoError::Invalid {
                 what: "an RPF9 entry body".into(),
@@ -406,7 +410,10 @@ impl Gta6Mount {
 
 /// Walk `body` by its decoded chunk `table`: each chunk 16-aligned, a deflated one inflating from
 /// exactly its stored bytes to exactly its inflated size. Returns what [`walk_chunks`] returns.
-fn walk_table(body: &[u8], table: &[Chunk]) -> std::result::Result<(Vec<u8>, usize, u64), String> {
+pub(super) fn walk_table(
+    body: &[u8],
+    table: &[Chunk],
+) -> std::result::Result<(Vec<u8>, usize, u64), String> {
     let mut out = Vec::new();
     let mut pos = 0usize;
     for (i, chunk) in table.iter().enumerate() {

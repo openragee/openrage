@@ -65,7 +65,8 @@ A tool that fails answers `isError` true with the reason as its text.
 | `extract`, `extract-many` | copy files out of the mounted install to paths the caller names |
 | `wardrobe-add`, `wardrobe-set`, `wardrobe-fix`, `wardrobe-waive` | change the clothing pack of a project |
 | `rpf9-list`, `rpf9-find`, `rpf9-read`, `rpf9-census` | list a GTA VI archive, find entries across an install, read one entry deciphered, count an install |
-| `rpf9-copy`, `rpf9-replace`, `rpf9-remove`, `rpf9-rename`, `rpf9-defrag` | write a new GTA VI archive from one, which the game refuses |
+| `rpf9-patch`, `rpf9-fits` | write a patched copy of a GTA VI archive, its table byte-identical; say whether a replacement fits, writing nothing |
+| `rpf9-copy`, `rpf9-replace`, `rpf9-remove`, `rpf9-rename`, `rpf9-defrag` | write a new GTA VI archive from one: a copy, or a rebuilt archive, which the game refuses |
 | `cli` | run any `openrage-cli` command |
 | `shots` | draw the editor from a script and answer the pictures |
 
@@ -92,11 +93,21 @@ positional words. They are declared in `crates/tools/or-cli/src/mcp_gta6.rs`.
 - `rpf9-census` writes only counts, into the `out` folder it is given.
 - `rpf9-replace` with `resource` true replaces an entry with a 20-byte row,
   a paged resource, by the loose form `with` names.
+- `rpf9-patch` puts the body `with` names in place of `entry`, chunk by
+  chunk, and `rpf9-fits` says, for each chunk, whether it fits and by how many
+  bytes one does not; a body of another length than the row's is refused.
 
-⚠ The game refuses what a write tool writes. It checks a signature over the
-table when it mounts an archive, and only the game's maker can sign one, so a
-written archive is a structural result. Each write tool writes a new file at
-`out`, and the source is never changed.
+A write tool writes one of two kinds of archive, and its answer says which.
+A patched copy keeps every byte of the table, so the table's signature still
+matches and no check read in the game's code rejects it; the game has not
+been run with one. A rebuilt archive, one whose table `rpf9-replace`,
+`rpf9-remove`, `rpf9-rename` or `rpf9-defrag` laid out again, is refused by
+the game, which checks a signature over the table when it mounts an archive,
+and only the game's maker can sign one.
+
+⚠ A rebuilt archive is a structural result and never a mod the game loads:
+a change that fits its entry's chunks goes through `rpf9-patch` instead. Each
+write tool writes a new file at `out`, and the source is never changed.
 
 ### `cli`
 
@@ -131,8 +142,9 @@ does not continue the first.
 - `extract` and `extract-many` write the paths the caller names, and the
   `wardrobe-` tools change the pack of the project the caller names
   ([routes that change a pack](CLI_Server_Protocol.md#routes-that-change-a-pack)).
-- `rpf9-read` and `rpf9-census` write into the folder the caller names, and
-  each GTA VI write tool writes a new archive at `out`, never its source.
+- `rpf9-read` and `rpf9-census` write into the folder the caller names,
+  `rpf9-fits` writes nothing, and each other GTA VI write tool writes a new
+  archive at `out`, never its source.
 - `cli` writes what its command writes: an `rpf`, `project`, `texture` or
   `navmesh` command given a path writes there, an install's file included.
 - A click in a `shots` script reaches every command of the editor.

@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use super::types::*;
 
+/// How a library spells a name it holds only as the literal hash of `name`: `hash_XXXXXXXX`.
+pub fn hash_spelling(name: &str) -> String {
+    format!("hash_{:08X}", crate::literal_string_hash(name.as_bytes()))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedStruct<'a> {
     pub def: &'a StructDef,
@@ -49,15 +54,18 @@ impl SchemaLibrary {
         self.enums.get(name)
     }
 
+    /// The structure `name` spells as written, in its friendly form, or as the spelling's hash.
     pub fn resolve_any(&self, name: &str) -> Option<ResolvedStruct<'_>> {
         if let Some(r) = self.resolve(name) {
             return Some(r);
         }
         let alt = super::normalize::convert_datatype_to_friendly_name(name);
-        if alt == name {
-            return None;
+        if alt != name {
+            if let Some(r) = self.resolve(&alt) {
+                return Some(r);
+            }
         }
-        self.resolve(&alt)
+        self.resolve(&hash_spelling(name))
     }
 
     pub fn resolve(&self, name: &str) -> Option<ResolvedStruct<'_>> {

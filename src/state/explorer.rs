@@ -129,6 +129,10 @@ pub fn compare(a: &SortRow, b: &SortRow, order: SortOrder) -> Ordering {
 /// Case-insensitive, with runs of digits compared as numbers, so `lod2` sorts
 /// before `lod10` the way a person reads them.
 pub fn natural(a: &str, b: &str) -> Ordering {
+    // A hash's digits are hex of a fixed width, so two hash names sort as text, in hex order.
+    if is_hash_name(a) && is_hash_name(b) {
+        return a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase());
+    }
     let (mut a, mut b) = (a.as_bytes(), b.as_bytes());
     loop {
         match (a.first(), b.first()) {
@@ -154,6 +158,12 @@ pub fn natural(a: &str, b: &str) -> Ordering {
             }
         }
     }
+}
+
+/// Whether `name` is a GTA VI row's unnamed form: `hash_` and sixteen hex digits.
+fn is_hash_name(name: &str) -> bool {
+    (name.strip_prefix("hash_").and_then(|rest| rest.get(..16)))
+        .is_some_and(|hex| hex.bytes().all(|c| c.is_ascii_hexdigit()))
 }
 
 fn split_digits(s: &[u8]) -> (&[u8], &[u8]) {
@@ -732,6 +742,33 @@ mod tests {
         };
         let arrived: Vec<&str> = rows().into_iter().map(|r| r.name).collect();
         assert_eq!(names(rows(), order), arrived);
+    }
+
+    #[test]
+    fn hash_names_sort_in_hex_order() {
+        let mut names = [
+            "hash_00ccc00000000000",
+            "hash_0cc8000000000000",
+            "hash_00aab00000000000",
+            "hash_0bc4000000000000",
+            "hash_0c12000000000000",
+        ];
+        names.sort_by(|a, b| natural(a, b));
+        assert_eq!(
+            names,
+            [
+                "hash_00aab00000000000",
+                "hash_00ccc00000000000",
+                "hash_0bc4000000000000",
+                "hash_0c12000000000000",
+                "hash_0cc8000000000000",
+            ]
+        );
+        assert_eq!(
+            natural("hash_lod2", "hash_lod10"),
+            Ordering::Less,
+            "not a hash"
+        );
     }
 
     #[test]

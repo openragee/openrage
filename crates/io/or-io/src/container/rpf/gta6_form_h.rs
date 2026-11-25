@@ -12,7 +12,7 @@ use crate::error::{IoError, Result};
 pub const VERSIONS: [(u32, u8); 36] = [
     (0x02, 0xB1), // drawable
     (0x03, 0x62), // fragment
-    (0x04, 0xB1), // texture dictionary
+    (0x04, 0xB1), // drawable dictionary
     (0x05, 0x03), // texture dictionary, second type
     (0x06, 0x2F), // bound
     (0x0B, 0x03), // headerless metadata

@@ -6,11 +6,11 @@
 //! which order its blocks take are not known, so a pair is neither added nor removed there. The
 //! gate judges the data blocks alone: where the sections place them is not compared, since a
 //! pointer names a block and an offset in it, and a block of a hash table's type may differ
-//! inside, an equally valid slot layout. A changed table is refilled from the slot after its
+//! inside, an equally valid slot layout of the same pairs. A changed table is refilled from the slot after its
 //! first empty slot (a slot map) or the group after its first that is not full (a group map),
 //! so a stored pair whose probe chain is unchanged keeps its slot.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use super::schema::{PsoType, RbmClass, RbmClassEntry, RbmModel};
 use crate::meta::binary::layout::RbmLayout;
@@ -23,6 +23,11 @@ const SLOT_MAP: u8 = 0x73;
 const GROUP_MAP: u8 = 0x75;
 /// The name a class's array-info member takes, which names no member of a pair.
 const ARRAY_INFO: u32 = 0x100;
+/// A group's control byte for an empty place.
+const EMPTY_CONTROL: u8 = 0x80;
+
+/// How a table's block is cut: whether in groups of 16 control bytes then 16 pairs, and a pair's size.
+type TableCut = (bool, usize);
 
 /// Whether `instance` adds a pair to or takes one from a map of the tree `layout`'s body stores.
 pub(super) fn pairs_changed(layout: &RbmLayout, instance: &MetaInstance) -> Result<bool> {
@@ -41,7 +46,7 @@ pub(super) fn pairs_changed(layout: &RbmLayout, instance: &MetaInstance) -> Resu
 
 /// Whether the sections `again`, laid out anew from the unchanged tree of `model`'s body, hold
 /// its classes, enums and root and its data blocks: as many, each of its type and length, its bytes
-/// the same or in a table's.
+/// the same or, in a table's, the same pairs in any slots.
 fn only_tables_differ(model: &RbmModel, again: &(Vec<u8>, Vec<u8>)) -> bool {
     let Ok(laid) = super::gta6::read_model(&again.0, &again.1) else {
         return false;
@@ -57,15 +62,42 @@ fn only_tables_differ(model: &RbmModel, again: &(Vec<u8>, Vec<u8>)) -> bool {
         && old.iter().zip(new).all(|(a, b)| {
             a.data_type == b.data_type
                 && a.data.len() == b.data.len()
-                && (a.data == b.data || tables.contains(&a.data_type))
+                && (a.data == b.data
+                    || tables.get(&a.data_type).is_some_and(|&cut| {
+                        let held = held_pairs(&a.data, cut);
+                        held.is_some() && held == held_pairs(&b.data, cut)
+                    }))
         })
 }
 
-/// The types of the blocks a hash table is laid out in: a slot map's pair structure and a group
-/// map's group structure, found as the writer finds them where no stored table names one.
-fn table_types(model: &RbmModel) -> HashSet<u32> {
+/// The pairs a table's block `data` holds, sorted: each slot not all zero, or each place of a
+/// group whose control byte is not empty, with that byte; none where `data` is not whole units.
+fn held_pairs(data: &[u8], (grouped, pair): TableCut) -> Option<Vec<(u8, &[u8])>> {
+    let unit = if grouped { 16 + 16 * pair } else { pair };
+    if !data.len().is_multiple_of(unit) {
+        return None;
+    }
+    let mut held: Vec<(u8, &[u8])> = if grouped {
+        (data.chunks_exact(unit))
+            .flat_map(|g| g[..16].iter().copied().zip(g[16..].chunks_exact(pair)))
+            .filter(|&(control, _)| control != EMPTY_CONTROL)
+            .collect()
+    } else {
+        (data.chunks_exact(pair))
+            .filter(|slot| slot.iter().any(|&b| b != 0))
+            .map(|slot| (0, slot))
+            .collect()
+    };
+    held.sort_unstable();
+    Some(held)
+}
+
+/// The types of the blocks a hash table is laid out in, with how each is cut: a slot map's pair
+/// structure and a group map's group structure, found as the writer finds them where no stored
+/// table names one.
+fn table_types(model: &RbmModel) -> HashMap<u32, TableCut> {
     let types = |e: &RbmClassEntry| (e.data_type, e.union_ch);
-    let mut out = HashSet::new();
+    let mut out = HashMap::new();
     for owner in model.classes.values() {
         for map in &owner.entries {
             let grouped = match map.data_type {
@@ -85,19 +117,18 @@ fn table_types(model: &RbmModel) -> HashSet<u32> {
                 named == pair
             };
             for c in model.classes.values() {
-                let fits = match grouped {
-                    false => is_pair(c),
-                    true => {
-                        c.entries.len() == 4
-                            && c.entries[2].data_type == PsoType::Struct
-                            && (model.class_for(c.entries[2].referent_hash())).is_some_and(|p| {
-                                is_pair(p)
-                                    && u64::from(c.data_size) == 16 + 16 * u64::from(p.data_size)
-                            })
-                    }
+                let pair_size = match grouped {
+                    false => is_pair(c).then_some(c.data_size),
+                    true => (c.entries.len() == 4 && c.entries[2].data_type == PsoType::Struct)
+                        .then(|| model.class_for(c.entries[2].referent_hash()))
+                        .flatten()
+                        .filter(|&p| {
+                            is_pair(p) && u64::from(c.data_size) == 16 + 16 * u64::from(p.data_size)
+                        })
+                        .map(|p| p.data_size),
                 };
-                if fits {
-                    out.insert(c.name_hash);
+                if let Some(size) = pair_size.filter(|&s| s > 0) {
+                    out.insert(c.name_hash, (grouped, size as usize));
                 }
             }
         }
@@ -352,6 +383,52 @@ mod tests {
         let len = 8 * SLOTS as u32 - 8;
         shorter[record + 4..record + 8].copy_from_slice(&len.to_le_bytes());
         assert!(!only_tables_differ(&layout.model, &(shorter, p.clone())));
+    }
+
+    #[test]
+    fn the_gate_refuses_a_slot_map_with_one_pair_dropped_and_another_doubled() {
+        let (v, p) = canonical();
+        let (_, layout) = opened(&v, &p);
+        let model = read_model(&v, &p).expect("it reads");
+        let slots = start(table_block(&model));
+        let slot = |n: usize| slots + 8 * n;
+        assert!(only_tables_differ(&layout.model, &(v.clone(), p.clone())));
+        // The first pair also over the second: the length holds, the pairs do not.
+        let mut doubled = v.clone();
+        doubled.copy_within(slot(5)..slot(6), slot(19));
+        assert!(!only_tables_differ(&layout.model, &(doubled, p.clone())));
+        // The first pair moved to an empty slot: the same pairs in another order.
+        let mut moved = v.clone();
+        moved.copy_within(slot(5)..slot(6), slot(7));
+        moved[slot(5)..slot(6)].fill(0);
+        assert!(only_tables_differ(&layout.model, &(moved, p)));
+    }
+
+    #[test]
+    fn the_gate_refuses_a_group_map_with_one_pair_dropped_and_another_doubled() {
+        let s = group_map();
+        let (v, p) = (&s.virtual_section, &s.physical);
+        let (_, layout) = opened(v, p);
+        let model = read_model(v, p).expect("it reads");
+        let group = start(
+            (model.data_blocks.iter())
+                .find(|b| b.data_type == GROUP)
+                .expect("the table's block"),
+        );
+        let entry = |j: usize| group + 16 + 8 * j;
+        assert!(only_tables_differ(&layout.model, &(v.clone(), p.clone())));
+        // The first group's first pair, control byte and entry, also over its second.
+        let mut doubled = v.clone();
+        doubled[group + 1] = doubled[group];
+        doubled.copy_within(entry(0)..entry(1), entry(1));
+        assert!(!only_tables_differ(&layout.model, &(doubled, p.clone())));
+        // That pair moved to the group's empty eighth place.
+        let mut moved = v.clone();
+        moved[group + 7] = moved[group];
+        moved[group] = EMPTY_CONTROL;
+        moved.copy_within(entry(0)..entry(1), entry(7));
+        moved[entry(0)..entry(1)].fill(0);
+        assert!(only_tables_differ(&layout.model, &(moved, p.clone())));
     }
 
     #[test]

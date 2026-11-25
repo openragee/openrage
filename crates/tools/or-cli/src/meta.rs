@@ -50,6 +50,10 @@ fn cmd_info(args: &[String]) -> Result<ExitCode, String> {
     let opts = Options::parse(args)?;
     let path = opts.require_input()?;
     let bytes = read(path)?;
+    if opts.gta6 {
+        print_gta6_xml(&path.display().to_string(), &bytes)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     if !opts.json {
         print_info(&path.display().to_string(), &bytes, opts.error_mode())?;
         return Ok(ExitCode::SUCCESS);
@@ -278,7 +282,11 @@ fn cmd_to_xml(args: &[String]) -> Result<ExitCode, String> {
         }
     }
 
-    let xml = export_xml(&bytes, opts.error_mode())?;
+    let xml = if opts.gta6 {
+        or_io::meta::write_meta(&gta6_xml(&bytes)?.0).map_err(|e| e.to_string())?
+    } else {
+        export_xml(&bytes, opts.error_mode())?
+    };
     match opts.output.as_ref() {
         Some(out) => {
             fs::write(out, xml.as_bytes()).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -1011,6 +1019,8 @@ struct Options {
     anyway: bool,
     /// The container `from-xml` lays out, when no donor supplies one.
     target: Option<BinaryFormat>,
+    /// Read XML through GTA VI's library instead of the default.
+    gta6: bool,
 }
 
 fn parse_container(name: &str) -> Result<BinaryFormat, String> {
@@ -1034,6 +1044,7 @@ impl Options {
                 "--verbose" | "-v" => o.verbose = true,
                 "--strict" => o.strict = true,
                 "--anyway" => o.anyway = true,
+                "--gta6" => o.gta6 = true,
                 "--as" => {
                     i += 1;
                     o.target = Some(parse_container(
@@ -1124,6 +1135,34 @@ pub(crate) fn schema() -> &'static or_io::meta::SchemaLibrary {
 pub(crate) fn has_schema() -> bool {
     schema();
     or_io::meta::has_default_library()
+}
+
+/// A GTA VI data XML read through GTA VI's library, with the structure it names that the library
+/// lacks, which leaves the whole document untyped.
+fn gta6_xml(bytes: &[u8]) -> Result<(MetaInstance, Option<String>), String> {
+    schema();
+    let library = or_io::meta::names_library().ok_or_else(|| {
+        format!(
+            "no GTA VI schema snapshot was found; set {} to one",
+            or_title::schema::GTA6_SCHEMA_ENV
+        )
+    })?;
+    or_io::meta::instance::parser::parse_typed_or_tree(library, bytes).map_err(|e| e.to_string())
+}
+
+/// What `meta info --gta6` prints of a GTA VI data XML: its tree, and what of it is untyped.
+fn print_gta6_xml(name: &str, bytes: &[u8]) -> Result<(), String> {
+    let (instance, untyped) = gta6_xml(bytes)?;
+    let (typed, kept) = or_io::meta::instance::parser::member_counts(&instance);
+    let document = (instance, None, Diagnostics::lenient());
+    print_document(name, "XML, GTA VI's library", bytes.len(), &document);
+    match untyped {
+        Some(missing) => println!(
+            "  untyped      the whole document: GTA VI's library holds no structure {missing}"
+        ),
+        None => println!("  members      {typed} typed, {kept} untyped and kept as text"),
+    }
+    Ok(())
 }
 
 /// The user's configuration directory, where the keys cache lives.
@@ -1374,6 +1413,8 @@ fn print_usage() {
     eprintln!("Options:");
     eprintln!("  --strict     Treat anything the reader cannot decode as an error.");
     eprintln!("  --json       Machine-readable output.");
+    eprintln!("  --gta6       info and to-xml read a GTA VI data XML through GTA VI's snapshot;");
+    eprintln!("               what it holds no structure for is kept as text, named untyped.");
     eprintln!("  --verbose    In batch roundtrip, list passing files too.");
     eprintln!("  --anyway     Export even when the XML will not re-import. Off by default:");
     eprintln!("               a file that silently lost a field is worse than no file.");
@@ -1415,6 +1456,14 @@ mod tests {
                 .and_then(|n| n.to_str()),
             Some(or_io::meta::snapshot_discovery::SNAPSHOT_FORMAT)
         );
+    }
+
+    #[test]
+    fn gta6_asks_for_gta_vis_library() {
+        let opts = Options::parse(&["--gta6".into(), "a.xml".into()]).expect("parses");
+        assert!(opts.gta6);
+        assert_eq!(opts.input.as_deref(), Some(Path::new("a.xml")));
+        assert!(!Options::parse(&["a.xml".into()]).expect("parses").gta6);
     }
 
     /// The reader spells an unnamed root `hash_HHHHHHHH` and a named one with

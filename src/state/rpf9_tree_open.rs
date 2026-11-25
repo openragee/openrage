@@ -143,7 +143,7 @@ fn by_head(path: &Path, bytes: Vec<u8>) -> DocPayload {
         return DocPayload::Meta(MetaDocument::from_bytes(bytes));
     }
     if document_io::is_text(&bytes) {
-        return document_io::text_payload(path, bytes);
+        return crate::state::rpf9_scan::gta6_data_xml::payload(path, bytes);
     }
     let banner = document_io::no_reader(path);
     DocPayload::Hex(HexDocument { bytes, banner })

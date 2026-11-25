@@ -409,12 +409,13 @@ mod tests {
         let empty = dir.path().join("empty");
         std::fs::create_dir_all(&empty).expect("a folder");
         assert!(refused(&empty, DEVICE, &none).contains("no file"));
-        // A body too small to shrink under zlib is not stored in a form the reader reads back.
+        // A body too small to shrink under zlib is stored as it is, which its chunk table reads back.
         let tiny = dir.path().join("tiny");
         std::fs::create_dir_all(tiny.join("data")).expect("a folder");
         std::fs::write(tiny.join("data/x.meta"), b"abcde").expect("written");
-        let unstored = refused(&tiny, DEVICE, &types());
-        assert!(unstored.contains("data/x.meta"), "{unstored}");
+        let keys = fixture::keys();
+        let written = write_pack(&tiny, DEVICE, &types(), &key(), &keys, &mut Vec::new());
+        assert!(written.is_ok(), "{:?}", written.err());
 
         assert_eq!(
             file_type_arg(".META= X_FILE"),

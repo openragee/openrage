@@ -4,13 +4,13 @@
 //! written beside it as `<offset>.rsc`.
 
 use std::fs::File;
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{Cursor, Read, Seek};
 use std::path::Path;
 use std::process::ExitCode;
 
 use or_io::container::rpf::{
-    read_rpf9_body, write_rpf9_resource, Rpf9BodyKind, Rpf9Role, Rpf9Scan, Rpf9Sections,
-    Rpf9ZlibRun, RPF9_MAGIC,
+    navigation_cells, read_rpf9_body, write_rpf9_resource, Gta6Mount, GtaViKeys, Rpf9BodyKind,
+    Rpf9Role, Rpf9Sections,
 };
 use or_io::gta6::headerless::{
     cut_edges, delete_polygon, deletion, disable_polygon, disabling, links_into, polygon_cut,
@@ -30,7 +30,17 @@ pub(crate) fn run(verb: &str, args: &[String]) -> ExitCode {
             "the output is the input {path}: name another file"
         ));
     }
-    let edited = edit_body(verb, &path, offset, polygon, &neighbours, limit);
+    // With no key the table is not read, and every neighbouring cell may hold a body.
+    let keys = super::gta6_keys::load(None, None).ok();
+    let edited = edit_body(
+        verb,
+        &path,
+        offset,
+        polygon,
+        &neighbours,
+        limit,
+        keys.as_ref(),
+    );
     let (saved, lines, beside) = match edited {
         Ok(edited) => edited,
         Err(why) => {
@@ -145,6 +155,7 @@ fn edit_body(
     polygon: u64,
     neighbours: &[u64],
     limit: u64,
+    keys: Option<&GtaViKeys>,
 ) -> Result<Edited, String> {
     let file = File::open(path).map_err(|e| format!("open({path}): {e}"))?;
     let (mut sections, cell) = cell_at(&file, offset, limit)?;
@@ -161,7 +172,7 @@ fn edit_body(
         near.push(body);
         stored.push((at, s));
     }
-    let bodied = |missing: Vec<u32>| with_bodies(&file, missing, limit);
+    let bodied = |missing: Vec<u32>| Ok::<_, String>(with_bodies(&file, missing, keys));
     let (mut lines, made) = match verb {
         "disable" => disable(&mut sections, &cell, polygon, &near, &bodied)?,
         _ => delete(&mut sections, &cell, polygon, &near, &bodied)?,
@@ -201,42 +212,46 @@ type Said = (Vec<String>, Option<NavRebuild>);
 /// Which of the cells it is given the input holds a body of.
 type Bodied<'a> = &'a dyn Fn(Vec<u32>) -> Result<Vec<u32>, String>;
 
-/// The cells of `missing` the archive `file` holds a body of, by a read of each navigation body it
-/// holds, as no special link names a cell with no body; every one where `file` is no archive.
-fn with_bodies(file: &File, missing: Vec<u32>, limit: u64) -> Result<Vec<u32>, String> {
-    let mut head = [0u8; 4];
+/// The cells of `missing` the table of the archive `file` may hold a navigation row of, ciphered
+/// rows and nested archives among them, as no special link names a cell with no body; every one
+/// where no key opens a table or `file` is no archive. A byte scan sees no ciphered body, so none
+/// is made.
+fn with_bodies(file: &File, missing: Vec<u32>, keys: Option<&GtaViKeys>) -> Vec<u32> {
     let mut f = file;
-    let read = f
-        .seek(SeekFrom::Start(0))
-        .and_then(|_| f.read_exact(&mut head));
-    if missing.is_empty() || read.is_err() || u32::from_le_bytes(head) != RPF9_MAGIC {
-        return Ok(missing);
-    }
-    let mut held = Vec::new();
-    for find in Rpf9Scan::new(file, 0..u64::MAX).map_err(|e| e.to_string())? {
-        let find = find.map_err(|e| e.to_string())?;
-        let cell = matches!(find.kind, Rpf9BodyKind::Zlib(Rpf9ZlibRun { signature: Some(s), .. })
-            if s.role() == Some(Rpf9Role::NavMesh));
-        if !cell {
-            continue;
-        }
-        let at = find.offset;
-        let (_, body) = cell_at(file, at, limit).map_err(|e| {
-            format!(
-                "the navigation body at {at:#X} does not read, so whether it is one of the cells {} is not known: {e}",
-                listed(&missing)
-            )
-        })?;
-        held.push(body.cell);
-    }
-    Ok(missing.into_iter().filter(|c| held.contains(c)).collect())
+    let Some(keys) = keys.filter(|_| !missing.is_empty()) else {
+        return missing;
+    };
+    let Ok(mount) = Gta6Mount::open_root(&mut f, keys) else {
+        return missing;
+    };
+    held_of(&mut f, &mount, keys, missing)
 }
 
-/// That the archive holds no body of the cells `none`, where there are any.
+/// The cells of `missing` the table `mount` holds a navigation row of; every one where a row's
+/// cell does not read, as it may be any of them.
+fn held_of<R: Read + Seek>(
+    src: &mut R,
+    mount: &Gta6Mount,
+    keys: &GtaViKeys,
+    missing: Vec<u32>,
+) -> Vec<u32> {
+    match navigation_cells(src, mount, keys) {
+        Ok(cells) => missing.into_iter().filter(|c| cells.contains(c)).collect(),
+        Err(e) => {
+            tracing::warn!(
+                "whether the archive holds the neighbouring cells {} is not known: {e}",
+                listed(&missing)
+            );
+            missing
+        }
+    }
+}
+
+/// That the archive's table holds no navigation row of the cells `none`, where there are any.
 fn bodiless_line(none: &[u32]) -> Option<String> {
     (!none.is_empty()).then(|| {
         format!(
-            "the archive holds no body of the neighbouring cells {}, so no special link of theirs ends in this cell",
+            "the archive's table holds no navigation row of the neighbouring cells {}, so no special link of theirs ends in this cell",
             listed(none)
         )
     })
@@ -379,10 +394,21 @@ fn delete(
     Ok((lines, Some(made)))
 }
 
+// Shared with the `rpf9` tests, which use parts of it this file does not.
+#[cfg(test)]
+#[allow(dead_code, clippy::duplicate_mod)]
+#[path = "rpf9_fixture.rs"]
+mod fixture;
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use or_io::container::rpf::Rpf9Form;
+    use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
+    use or_io::container::rpf::gta6_content::KNOWN_FRAMINGS;
+    use or_io::container::rpf::{
+        navigation_cell, Gta6Cipher, Rpf9Form, NAVIGATION_MESH, RPF9_SLOT,
+    };
+    use or_io::gta6::hash::name_hash64;
     use or_io::gta6::headerless::NavEdge;
 
     /// The cell's grid place, which the built cell states at 0xC8.
@@ -495,7 +521,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("a scratch directory");
         let path = loose(dir.path(), CELL);
         let (saved, lines, beside) =
-            edit_body("disable", &path, 0, 0, &[], u64::MAX).expect("disabled");
+            edit_body("disable", &path, 0, 0, &[], u64::MAX, None).expect("disabled");
         assert!(beside.is_empty(), "no neighbour given");
         assert_eq!(lines[0], "polygon 0 disabled: 1 edges now lead nowhere");
         assert!(
@@ -517,7 +543,7 @@ mod tests {
             }
         );
         assert_eq!(cell.polygons[0].flags, 0x80, "the water bit as read");
-        let (_, again, _) = edit_body("disable", &path, 0, 0, &[], u64::MAX).expect("said");
+        let (_, again, _) = edit_body("disable", &path, 0, 0, &[], u64::MAX, None).expect("said");
         assert!(
             again[0].contains("polygon 0 disabled"),
             "the input is untouched"
@@ -528,7 +554,7 @@ mod tests {
     fn a_deletion_without_every_neighbouring_cell_is_refused_naming_them() {
         let dir = tempfile::tempdir().expect("a scratch directory");
         let path = loose(dir.path(), CELL);
-        let why = edit_body("delete", &path, 0, 0, &[], u64::MAX).expect_err("refused");
+        let why = edit_body("delete", &path, 0, 0, &[], u64::MAX, None).expect_err("refused");
         let cells = [CELL + 1, CELL - 1, CELL + 512, CELL - 512].map(|c| c.to_string());
         let corners = [CELL + 513, CELL - 511, CELL + 511, CELL - 513].map(|c| c.to_string());
         let named = format!("{}, {}", cells.join(", "), corners.join(", "));
@@ -552,7 +578,7 @@ mod tests {
         std::fs::write(&path, &bytes).expect("saved");
         let path = path.to_string_lossy().into_owned();
         let (_, lines, _) =
-            edit_body("disable", &path, main, 0, &[at], u64::MAX).expect("disabled");
+            edit_body("disable", &path, main, 0, &[at], u64::MAX, None).expect("disabled");
         let unread = (lines.iter())
             .find(|l| l.contains("not given with --neighbour"))
             .expect("the seven others are named");
@@ -565,9 +591,10 @@ mod tests {
         let dir = tempfile::tempdir().expect("a scratch directory");
         let path = loose(dir.path(), 0);
         // Its one polygon going would empty it: refused for that, not for a neighbour.
-        let why = edit_body("delete", &path, 0, 0, &[], u64::MAX).expect_err("refused");
+        let why = edit_body("delete", &path, 0, 0, &[], u64::MAX, None).expect_err("refused");
         assert!(why.contains("a cell of no polygon"), "{why}");
-        let (_, lines, _) = edit_body("disable", &path, 0, 0, &[], u64::MAX).expect("disabled");
+        let (_, lines, _) =
+            edit_body("disable", &path, 0, 0, &[], u64::MAX, None).expect("disabled");
         assert!(
             !lines.iter().any(|l| l.contains("--neighbour")),
             "{lines:?}"
@@ -578,9 +605,9 @@ mod tests {
     fn a_neighbour_not_across_a_border_a_side_record_and_an_output_that_is_the_input_are_refused() {
         let dir = tempfile::tempdir().expect("a scratch directory");
         let path = loose(dir.path(), CELL);
-        let why = edit_body("disable", &path, 0, 0, &[0], u64::MAX).expect_err("refused");
+        let why = edit_body("disable", &path, 0, 0, &[0], u64::MAX, None).expect_err("refused");
         assert!(why.contains("not across a border"), "{why}");
-        let why = edit_body("disable", &path, 0, 1, &[], u64::MAX).expect_err("refused");
+        let why = edit_body("disable", &path, 0, 1, &[], u64::MAX, None).expect_err("refused");
         assert!(why.contains("side record"), "{why}");
         let words = ["disable", path.as_str(), "0", "0", path.as_str()].map(String::from);
         assert_eq!(super::super::navmesh_edit::run(&words), ExitCode::from(2));
@@ -674,57 +701,76 @@ mod tests {
         v
     }
 
-    /// An RPF9 head of one entry, its table 0x1A0 bytes in all.
-    fn archive_head() -> Vec<u8> {
-        let mut bytes = vec![0x5Au8; 0x1A0];
-        bytes[..0x40].fill(0);
-        bytes[..4].copy_from_slice(&RPF9_MAGIC.to_le_bytes());
-        for (at, word) in [(0x04, 0x1A0u32), (0x08, 0x190), (0x0C, 0x40), (0x1C, 0x150)] {
-            bytes[at..at + 4].copy_from_slice(&word.to_le_bytes());
-        }
-        bytes[0x22..0x24].copy_from_slice(&1u16.to_le_bytes());
-        bytes[0x24..0x28].copy_from_slice(&1u32.to_le_bytes());
-        bytes[0x30..0x34].copy_from_slice(&0x10u32.to_le_bytes());
-        bytes[0x2C] = 1;
-        (bytes[0x19], bytes[0x1A], bytes[0x20]) = (0x7A, 4, 5);
-        (bytes[0x2D], bytes[0x2E]) = (0x0F, 0x09);
-        bytes
+    /// The fixture's archive key, which its synthetic snapshot holds.
+    const KEY: Rpf9IndexKey = Rpf9IndexKey {
+        key_id: 0xDEAD_BEEF,
+        iv: [0x33; 16],
+    };
+
+    /// An archive built in `dir` of `cells`, each a path and a cell's virtual section under a
+    /// navigation row; its path, and each cell's body offset in order.
+    fn table_of(dir: &Path, cells: &[(&str, Vec<u8>)]) -> (String, Vec<u64>) {
+        let keys = super::fixture::keys();
+        let entries: Vec<(String, Rpf9NewBody)> = (cells.iter())
+            .map(|(name, v)| {
+                let s = Rpf9Sections {
+                    form: Rpf9Form::BlockMapped,
+                    virtual_section: v.clone(),
+                    physical: Vec::new(),
+                };
+                let loose = write_rpf9_resource(&s).expect("written");
+                let body = Rpf9NewBody::Resource {
+                    type_code: NAVIGATION_MESH,
+                    loose,
+                };
+                ((*name).to_owned(), body)
+            })
+            .collect();
+        let plan = build(&entries, &KEY, &keys).expect("the archive builds");
+        let mut bytes = Vec::new();
+        (plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut bytes)).expect("laid out");
+        let mount = Gta6Mount::open_root(&mut Cursor::new(&bytes), &keys).expect("it opens");
+        let offsets = (cells.iter())
+            .map(|(name, _)| {
+                let hash = name_hash64(name.as_bytes());
+                let row = (mount.archive.entries.iter()).find(|e| e.name64 == hash);
+                mount.absolute_start(row.expect("listed")).expect("a start") + RPF9_SLOT
+            })
+            .collect();
+        let path = dir.join("cells.rpf");
+        std::fs::write(&path, &bytes).expect("saved");
+        (path.to_string_lossy().into_owned(), offsets)
     }
 
     #[test]
-    fn a_deletion_in_an_archive_takes_a_cell_it_holds_no_body_of_as_linking_nowhere() {
+    fn a_deletion_takes_a_cell_the_table_holds_no_navigation_row_of_as_linking_nowhere() {
         let dir = tempfile::tempdir().expect("a scratch directory");
-        let resource = |v: Vec<u8>| {
-            let s = Rpf9Sections {
-                form: Rpf9Form::BlockMapped,
-                virtual_section: v,
-                physical: Vec::new(),
-            };
-            write_rpf9_resource(&s).expect("written")
-        };
         let east_body = with_link(cell_section(CELL + 1), 1, CELL);
-        let mut bytes = archive_head();
-        let mut offsets = Vec::new();
-        // Each body follows a zero 16-byte slot at the start of a 4 KiB page.
-        for body in [resource(two_triangles(CELL)), resource(east_body)] {
-            bytes.resize(bytes.len().next_multiple_of(0x1000) + 16, 0);
-            offsets.push(bytes.len() as u64);
-            bytes.extend(body);
-        }
-        let path = dir.path().join("cells.rpf");
-        std::fs::write(&path, &bytes).expect("saved");
-        let path = path.to_string_lossy().into_owned();
-        let (main, east) = (offsets[0], offsets[1]);
+        let cells = [
+            ("nav/main.ynv", two_triangles(CELL)),
+            ("nav/east.ynv", east_body),
+        ];
+        let (path, at) = table_of(dir.path(), &cells);
+        let (main, east) = (at[0], at[1]);
+        let keys = super::fixture::keys();
+        let keys = Some(&keys);
 
-        // The archive holds a body of the cell east, so it is still wanted.
-        let why = edit_body("delete", &path, main, 0, &[], u64::MAX).expect_err("refused");
+        // With no key no table is read, so every neighbouring cell is still wanted.
+        let why = edit_body("delete", &path, main, 0, &[], u64::MAX, None).expect_err("refused");
+        let all: Vec<String> = Border::around(CELL).iter().map(u32::to_string).collect();
+        assert!(why.contains(&all.join(", ")), "{why}");
+        // The table holds a row of the cell east, so it alone is still wanted.
+        let why = edit_body("delete", &path, main, 0, &[], u64::MAX, keys).expect_err("refused");
         let wanted = format!("neighbouring cells {} are not given", CELL + 1);
         assert!(why.contains(&wanted), "{why}");
 
         let (saved, lines, beside) =
-            edit_body("delete", &path, main, 0, &[east], u64::MAX).expect("deleted");
+            edit_body("delete", &path, main, 0, &[east], u64::MAX, keys).expect("deleted");
         assert_eq!(lines[0], "polygon 0 deleted: 1 polygons remain");
-        for said in ["holds no body of the neighbouring cells", "renumbered"] {
+        for said in [
+            "holds no navigation row of the neighbouring cells",
+            "renumbered",
+        ] {
             assert!(lines.iter().any(|l| l.contains(said)), "{said}: {lines:?}");
         }
         let back = |bytes: &[u8]| {
@@ -738,5 +784,101 @@ mod tests {
         let m = back(&beside[0].1);
         let l = &m.special_links[0];
         assert_eq!((l.from_polygon, l.to_polygon, l.to_mesh), (0, 0, CELL));
+    }
+
+    #[test]
+    fn a_neighbour_in_a_ciphered_row_blocks_a_deletion_and_one_the_table_does_not_hold_does_not() {
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let cells = [
+            ("nav/main.ynv", two_triangles(CELL)),
+            ("nav/east.ynv", cell_section(CELL + 1)),
+        ];
+        let (path, at) = table_of(dir.path(), &cells);
+        let keys = super::fixture::keys();
+        let file = File::open(&path).expect("opened");
+        let mut mount = Gta6Mount::open_root(&mut &file, &keys).expect("it opens");
+        let (east, west) = (CELL + 1, CELL - 1);
+        assert_eq!(held_of(&mut &file, &mount, &keys, vec![east, west]), [east]);
+
+        // The fixture's snapshot holds no content key, so a ciphered row's cell does not read, and
+        // it may be any of them.
+        let hash = name_hash64(b"nav/east.ynv");
+        let row = (mount.archive.entries.iter_mut()).find(|e| e.name64 == hash);
+        row.expect("listed").cipher = Some(Gta6Cipher {
+            key_id: 0x0BAD_0001,
+            cipher_type: 17,
+            iv: [0; 16],
+            framing: KNOWN_FRAMINGS[0],
+        });
+        assert_eq!(
+            held_of(&mut &file, &mount, &keys, vec![east, west]),
+            [east, west]
+        );
+        let (mut sections, cell) = cell_at(&file, at[0], u64::MAX).expect("the cell reads");
+        let bodied = |m: Vec<u32>| Ok::<_, String>(held_of(&mut &file, &mount, &keys, m));
+        let why = delete(&mut sections, &cell, 0, &[], &bodied).expect_err("refused");
+        let refused = format!("{west}, {}", CELL + 512);
+        assert!(why.contains("are not given with --neighbour"), "{why}");
+        assert!(why.contains(&refused), "{why}");
+    }
+
+    /// Navigation rows of the build, ciphered or not, each read as the cell they state.
+    #[test]
+    fn the_build_s_navigation_rows_each_state_a_cell() {
+        const MOST: usize = 40;
+        let set = ["OPENRAGE_GTA6_KEYS", "OPENRAGE_GTA6_EXE"].map(std::env::var_os);
+        let build = std::env::var_os("OPENRAGE_GTA6_BUILD").map(std::path::PathBuf::from);
+        let build = build.filter(|p| p.is_dir() && set.iter().all(Option::is_some));
+        let keys = build
+            .as_ref()
+            .and_then(|_| crate::gta6_keys::load(None, None).ok());
+        let (Some(build), Some(keys)) = (build, keys) else {
+            or_test_support::skip_install(
+                "gta6 navigation rows",
+                "set OPENRAGE_GTA6_KEYS, OPENRAGE_GTA6_EXE and OPENRAGE_GTA6_BUILD",
+            );
+            return;
+        };
+        let listed = std::fs::read_dir(&build).expect("the build lists");
+        let mut archives: Vec<_> = (listed.flatten().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "rpf"))
+            .collect();
+        archives.sort();
+        let mut read = 0usize;
+        for disk in archives {
+            let mut file = File::open(&disk).expect("opened");
+            let Ok(root) = Gta6Mount::open_root(&mut file, &keys) else {
+                continue;
+            };
+            let mut stack = vec![(root, 0usize)];
+            while let Some((mount, depth)) = stack.pop() {
+                let extras = mount.archive.entry_extras();
+                for (i, entry) in mount.archive.entries.iter().enumerate() {
+                    if read == MOST {
+                        return;
+                    }
+                    if mount
+                        .entry_begins_archive(&mut file, entry)
+                        .unwrap_or(false)
+                    {
+                        if depth < 3 {
+                            if let Ok(child) = mount.open_nested(&mut file, entry, &keys) {
+                                stack.push((child, depth + 1));
+                            }
+                        }
+                        continue;
+                    }
+                    let row = extras.get(i).and_then(|x| x.nested);
+                    if row.is_some_and(|r| r.resource_type == NAVIGATION_MESH) {
+                        navigation_cell(&mut file, &mount, entry, &keys)
+                            .unwrap_or_else(|e| panic!("{}: {e}", disk.display()));
+                        read += 1;
+                    }
+                }
+            }
+        }
+        if read == 0 {
+            or_test_support::skip_install("gta6 navigation rows", "no navigation row was met");
+        }
     }
 }

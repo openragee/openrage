@@ -75,13 +75,15 @@ the editor lists none of these games as a title.
 
 The table of contents of an RPF9 archive is enciphered, and OpenRage ships no key: the keys are read
 from the user's own executable, and [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md) gives the steps.
-With them, `openrage-cli rpf9` lists an archive's entries from its table, nested archives included,
-extracts them, an enciphered one deciphered, and writes a new archive, and an archive the editor
-opens is a folder of the Files tree, as a GTA V one is: a nested archive is a folder in it, a
-double-click opens an entry, and the Inspector shows a selected entry's row. An entry is named where a harvested vocabulary or a folder of names holds the
-text of its hash, and by its hash otherwise. Without them, the editor and `openrage-cli rpf scan`
-find the bodies an archive stores in the clear, and an archive's own tab lists it that way, with
-or without keys. The install opens as a plain folder.
+With them, an archive the editor opens is a folder of the Files tree, as a GTA V one is: a nested
+archive is a folder in it, each row shows its entry's kind as the table states it, a double-click
+opens an entry, Extract writes one out, and the Inspector shows a selected entry's row. An entry is
+named where OpenRage holds a name that hashes to it, and by its hash otherwise.
+`openrage-cli rpf9` lists, finds, counts and extracts entries from the table, nested archives
+included, an enciphered one deciphered, and `rpf9 tree-install` merges an install's paths in the
+order the game mounts its archives. Without keys, the editor and `openrage-cli rpf scan` find the
+bodies an archive stores in the clear, and the archive opens as its scan's list, in a tab of its
+own, with a message saying why. The install opens as a plain folder.
 
 - **Read.** Texture packs (`.ttpf`) and dictionary textures, drawables, fragments, dictionaries of
   drawables and their skeletons, bounds, navigation cells, map placements and map types, clip
@@ -107,15 +109,21 @@ or without keys. The install opens as a plain folder.
   offers; with the viewport's Parts box unticked the carrier's own mesh is drawn. A part's material
   holds no colour map: the game computes a weapon's colour from data no model holds, so Material
   shades a part by its normal map alone.
-- **Written.** A texture pack saves with a texture replaced, and an edit to a scanned body saves as a
-  loose file. Which values of a model, a bound, a map or a metadata body can be edited is narrower than
-  for GTA V, and a refusal names what it cannot write. `openrage-cli rpf9 copy`, `replace`, `remove`,
-  `rename` and `defrag` write a new archive from an existing one, never over it; a plain replace of
-  an entry whose row describes a paged resource is refused by name, and `replace --resource` replaces
-  it by its loose form. The app's File ▸ Save into a copy of the archive… writes a document's edits
-  in place of its entry, in a new copy of the archive it was read from.
-- **Not done.** The game refuses every archive OpenRage writes with a changed table, because only its
-  maker can sign a table, and no file OpenRage saved has been tried in the game. A script is not
+- **Written.** Every write goes to a new file, never over what it read. A texture pack saves with a
+  texture replaced, and an edit to a body saves as a loose file. Which values of a model, a bound, a
+  map or a metadata body can be edited is narrower than for GTA V, and a refusal names what it cannot
+  write. A new archive is of one of two kinds, and each write says which. A patched copy puts each
+  changed body in its entry's place, chunk by chunk, and keeps the table byte-identical, so its
+  signature still matches and no check read in the game's code rejects it; the game has not been run
+  with one. `openrage-cli rpf9 patch` writes one, `rpf9 fits` says whether a replacement fits, and
+  the tree's Save as… and File ▸ Save into a copy of the archive… write one when every change fits.
+  A rebuilt archive lays a table out again, which the game refuses because only its maker can sign
+  one: `rpf9 replace`, `remove`, `rename`, `defrag`, `add` and `build`, `dlc create-gta6`, and the
+  app's saves when a change does not fit, whose message names the rows that kept it from being
+  patched. A plain replace of an entry whose row describes a paged resource is refused by name, and
+  `replace --resource` replaces it by its loose form.
+- **Not done.** The game refuses every rebuilt archive, and no file OpenRage saved, a patched copy
+  included, has been tried in the game. A script is not
   decompiled from its compiled body. A program the shader front end cannot translate or bind leaves
   its pass undrawn in Shaded, and no save file of the game has been opened: the save reader was
   written from a description of the layout.

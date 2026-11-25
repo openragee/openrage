@@ -118,9 +118,9 @@ pub(super) fn draw_meta(
     ui.heading("Meta Document");
     ui.separator();
 
-    let lib = crate::state::meta_schema();
+    let lib = meta.schema();
     let type_name = meta.type_name();
-    let resolved = lib.resolve(type_name);
+    let resolved = lib.resolve_any(type_name);
     let internals = shows_internals(state);
 
     grid(ui, "meta_doc_basic", |ui| {
@@ -153,5 +153,24 @@ pub(super) fn draw_meta(
     if meta.keeps_a_checksum() {
         ui.label(tr!("The CHKS checksum is kept as it was read and is not recomputed, so the game may refuse the saved file."));
     }
+    if meta.gta6_library {
+        draw_untyped(ui, meta);
+    }
     super::gta6_meta_ids::draw(ui, doc_id, meta);
+}
+
+/// What of a GTA VI data XML GTA VI's library does not type, which is kept as text.
+fn draw_untyped(ui: &mut egui::Ui, meta: &crate::state::MetaDocument) {
+    if let Some(name) = &meta.gta6_untyped {
+        ui.label(tr!("GTA VI's library holds no structure {name}, so the whole document is untyped and kept as text.", name = name));
+        return;
+    }
+    let untyped = meta.gta6_untyped_elements;
+    if untyped > 0 {
+        ui.label(tr_n!(
+            "{count} element GTA VI's library does not hold is untyped and kept as text.",
+            "{count} elements GTA VI's library does not hold are untyped and kept as text.",
+            untyped
+        ));
+    }
 }

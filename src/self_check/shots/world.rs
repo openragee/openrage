@@ -19,6 +19,8 @@ use crate::ui::panels::world_viewer::{self, Capture, Pose};
 const QUIET: Duration = Duration::from_millis(1500);
 /// How long `world settle` waits where its line gives no number of seconds.
 const SETTLE_DEADLINE: Duration = Duration::from_secs(180);
+/// How often a wait says what it still waits for.
+const TOLD_EVERY: Duration = Duration::from_secs(10);
 /// The longest deadline a line may give, in seconds.
 const MOST_SECONDS: f32 = 86_400.0;
 /// How long `world camera` waits for the install's index: a first build reads every archive of the level.
@@ -186,17 +188,37 @@ pub(super) struct Found {
 pub(super) struct Settle {
     last: Option<Found>,
     since: Duration,
+    /// When each of the four waits was last above nought, and when the exposure last adapted.
+    waited: [Option<Duration>; 5],
 }
 
 impl Settle {
     /// Whether the world has settled at `now`, a time on a clock that only runs forward, given what this frame found.
     pub(super) fn settled(&mut self, now: Duration, found: Found) -> bool {
+        for (waited, more) in self.waited.iter_mut().zip(found.waiting.map(|n| n > 0)) {
+            if more {
+                *waited = Some(now);
+            }
+        }
+        if found.adapting {
+            self.waited[4] = Some(now);
+        }
         let quiet = found.indexed && found.waiting == [0; 4] && !found.adapting && !found.water;
         if !quiet || self.last != Some(found) {
             (self.last, self.since) = (Some(found), now);
             return false;
         }
         now.saturating_sub(self.since) >= QUIET
+    }
+
+    /// When the maps, models, textures, maps' lights and exposure were last waited for, in seconds.
+    pub(super) fn last_waits(&self) -> String {
+        let names = ["maps", "models", "textures", "lights", "exposure"];
+        let at = |waited: &Option<Duration>| waited.map_or(0.0, |t| t.as_secs_f32());
+        (names.iter().zip(&self.waited))
+            .map(|(name, waited)| format!("{name} {:.1} s", at(waited)))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// What was still arriving when the wait gave up, for the line that fails the run.
@@ -352,7 +374,13 @@ impl Shell {
                 (day.playing, day.days) = (false, 0.0);
             }
             WorldStep::Clean(on) => state.panels.get::<Capture>().clean = *on,
-            WorldStep::Settle(deadline) => self.settle(state, *deadline)?,
+            // A wait that runs out fails the run at its end, as a comparison does, so that every camera after it is still judged.
+            WorldStep::Settle(deadline) => {
+                if let Err(why) = self.settle(state, *deadline) {
+                    println!("FAILED  {why}");
+                    self.failed.push(why);
+                }
+            }
             WorldStep::Dump(name) => dump(&out.join(name))?,
             // The groups follow the modes, as they do on the screen until a group is ticked.
             WorldStep::Modes(modes) => viewer().enabled.modes = *modes,
@@ -415,21 +443,43 @@ impl Shell {
     fn settle(&mut self, state: &mut AppState, deadline: Duration) -> Result<(), String> {
         let started = Instant::now();
         let mut rule = Settle::default();
+        let (mut told, mut frames) = (Duration::ZERO, 0u32);
         loop {
             self.idle(state, 1)?;
+            frames += 1;
             let now = started.elapsed();
             let mut found = found()?;
             // ⚠ The plain pass meters no frame, so its exposure never arrives: only a frame the game lights adapts.
             found.adapting &= self.bridge.world_drawn().lit_by_the_game;
             if rule.settled(now, found) {
-                println!("  settled after {:.1} s", now.as_secs_f32());
+                println!(
+                    "  settled after {:.1} s; last waited for: {}",
+                    now.as_secs_f32(),
+                    rule.last_waits()
+                );
                 return Ok(());
+            }
+            if now > told + TOLD_EVERY {
+                told = now;
+                let (drawn, (cost, _)) = (self.bridge.world_drawn(), self.bridge.world_cost());
+                let [maps, models, textures, lights] = found.waiting;
+                println!(
+                    "  at {:.0} s, {frames} frames since, waiting for {maps} maps, {models} models, {textures} textures, {lights} lights; {} models and {} textures on the device, {} unread; let go {:?}, read again {:?}",
+                    now.as_secs_f32(),
+                    drawn.models,
+                    drawn.textures,
+                    drawn.textures_unread,
+                    cost.evicted,
+                    cost.reread,
+                );
+                frames = 0;
             }
             if now > deadline {
                 return Err(format!(
-                    "the world had not settled after {:.1} s: {}",
+                    "the world had not settled after {:.1} s: {}; last waited for: {}",
                     deadline.as_secs_f32(),
-                    rule.still()
+                    rule.still(),
+                    rule.last_waits()
                 ));
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -597,6 +647,10 @@ mod tests {
             "never while something is waited for"
         );
         assert!(!rule.settled(QUIET * 3 + at(1), IDLE));
+        assert_eq!(
+            rule.last_waits(),
+            "maps 0.0 s, models 4.5 s, textures 0.0 s, lights 0.0 s, exposure 0.0 s"
+        );
         assert!(
             !rule.settled(QUIET * 4, IDLE),
             "the quiet time runs from the last change, not from the first frame"

@@ -167,6 +167,12 @@ pub(super) fn index(
 impl AppState {
     /// Open beside the active GTA VI drawable the scanned dictionary holding a key it misses, indexing the open scans' dictionaries first as a job; whether one opened.
     pub fn try_open_texture_dictionary(&mut self) -> bool {
+        if self
+            .active_document()
+            .is_some_and(super::Document::is_from_rpf9_table)
+        {
+            return self.try_open_table_texture_dictionary();
+        }
         if self.take_opened_dictionary() {
             return true;
         }

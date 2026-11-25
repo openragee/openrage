@@ -13,6 +13,10 @@ use super::rpf_node::RpfNodeBacking;
 use super::rpf_session::{RpfDocument, RpfEditSession};
 use crate::ui::panels::hierarchy::gta6_save;
 
+#[cfg(test)]
+#[path = "opening_an_rpf9_table.rs"]
+mod opening_an_rpf9_table;
+
 /// The message the four enumerating matches in this file end with.
 ///
 /// ⚠ [`DocumentKind`] has an open variant, so these matches are not
@@ -71,10 +75,10 @@ const NO_BLANK_TTPF: &str = tr_key!(
 const TTPF_FROM_DISK: &str =
     tr_key!("a GTA VI texture pack opens from its own file, which is read a texture at a time");
 const READ_ONLY_RPF9: &str = tr_key!(
-    "a GTA VI archive is scanned for the bodies stored in the clear and shown; OpenRage does not write one"
+    "a GTA VI archive is listed from its table and is read only; OpenRage does not write one"
 );
 const RPF9_FROM_DISK: &str =
-    tr_key!("a GTA VI archive opens from its own file, which is scanned a slice at a time");
+    tr_key!("a GTA VI archive opens from its own file using its encrypted table of contents");
 const READ_ONLY_GTA6_ANIM: &str = tr_key!(
     "a GTA VI animation resource opened from a scan is saved once edited, as a loose resource; any other is read and shown"
 );
@@ -167,6 +171,9 @@ pub(super) fn resource_image_for(
 
 /// The built-in description of a document's declared format at the target its RSC7 version names, and that target's root type.
 pub fn described_root(doc: &super::Document) -> Option<(Arc<or_io::desc::Pack>, String)> {
+    if doc.read_only == Some(document::rpf9::entry::READ_ONLY) {
+        return None;
+    }
     // ⚠ The format first: a kind with none (a folder, a game root) never has an image to ask for.
     let format = or_io::gta5::formats::format(doc.kind.extension())?;
     let Some(image) = doc.resource.as_ref() else {
@@ -199,6 +206,9 @@ pub(super) fn parse_payload_from_path(
     kind: DocumentKind,
     crypto: std::sync::Arc<dyn or_io::container::RpfCryptoProvider>,
 ) -> std::result::Result<(DocPayload, Option<Arc<document::ResourceImage>>), String> {
+    if document::rpf9::entry::is_entry(path) {
+        return document::rpf9::entry::read_path(path).map(|payload| (payload, None));
+    }
     if let Some((archive, offset)) = super::rpf9_scan::scanned_body(path) {
         return Ok((super::rpf9_scan::read_body(path, archive, offset)?, None));
     }
@@ -206,15 +216,13 @@ pub(super) fn parse_payload_from_path(
         let data = std::fs::read(path).map_err(|e| format!("Read error: {e}"))?;
         return Ok((text_payload(path, data), None));
     }
-    // ⚠ Before the whole read: a GTA VI archive can be tens of gigabytes, and is scanned instead, as is the tab of one read again.
+    // An archive can be tens of gigabytes; its table is read before any whole-file path.
     if matches!(kind, DocumentKind::Rpf | DocumentKind::Rpf9) {
-        // Where a key opens its table it is the tree every archive opens as, and no scan runs.
-        if let Some(tree) = super::rpf_archive_open::gta6_tree(path, &crypto) {
-            return Ok((tree, None));
-        }
-        // Else its scan lists it, and a toast says why.
-        if let Some(payload) = super::rpf9_scan::rpf9_table_document::archive_payload(path)? {
+        if let Some(payload) = super::document::rpf9::archive_payload(path)? {
             return Ok((payload, None));
+        }
+        if kind == DocumentKind::Rpf9 {
+            return Err(crate::i18n::tr(RPF9_FROM_DISK).to_string());
         }
     }
     // ⚠ Never read whole: a pack can be gigabytes, and a texture is read only when it is shown.
@@ -447,7 +455,9 @@ pub(super) fn serialize_payload(
         DocPayload::Meta(m) => m.to_bytes().map_err(|e| format!("meta serialize: {e}")),
         DocPayload::Hex(_) => Err(READ_ONLY_HEX.to_string()),
         DocPayload::Ttpf(ttpf) => ttpf.save(),
-        DocPayload::Rpf9(_) => Err(crate::i18n::tr(READ_ONLY_RPF9).to_string()),
+        DocPayload::Rpf9(_) | DocPayload::Rpf9Table(_) => {
+            Err(crate::i18n::tr(READ_ONLY_RPF9).to_string())
+        }
         // An edited resource no scan holds, as an audio stream's, saves as the loose resource it is.
         DocPayload::Gta6Anim(r) => match r.sections.as_deref().filter(|_| r.edited) {
             Some(sections) => {

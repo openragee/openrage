@@ -12,13 +12,7 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
     super::rows::focus_on_drop(ui, state, ids::FILES);
     history_input(ui, state);
 
-    // A GTA VI archive a key opens lists its table: its tab, and the tab of a body opened from it.
-    if let Some(table) = state.table_listing_the_active_tab() {
-        rpf9_table_list::draw(ui, state, table);
-        return;
-    }
-    // One no key opens has no tree: its tab, and the tab of a body opened from it, list what its
-    // scan found.
+    // Explicit scan documents and their bodies retain the scan list.
     if let Some(scan) = state.scan_listing_the_active_tab() {
         crate::ui::panels::inspector::draw_scan_list(ui, state, scan);
         return;
@@ -181,8 +175,19 @@ fn draw_trees(ui: &mut egui::Ui, state: &mut AppState) {
     let doc_ids: Vec<DocumentId> = state
         .documents
         .iter()
-        .filter(|d| d.rpf_entry_binding.is_none() && matches!(d.payload, DocPayload::Rpf(_)))
-        .map(|d| d.id)
+        .filter(|doc| {
+            doc.rpf_entry_binding.is_none()
+                && match &doc.payload {
+                    DocPayload::Rpf(_) => true,
+                    DocPayload::Rpf9Table(table) => {
+                        !state.documents.iter().any(|doc| {
+                            matches!(&doc.payload, DocPayload::Rpf(rpf) if rpf.session.rpf9_table(&table.path).is_some())
+                        })
+                    }
+                    _ => false,
+                }
+        })
+        .map(|doc| doc.id)
         .collect();
     if doc_ids.is_empty() {
         let scope = ui.scope(|ui| {
@@ -219,6 +224,3 @@ fn draw_trees(ui: &mut egui::Ui, state: &mut AppState) {
     });
     outcome.apply(state, ui.ctx());
 }
-
-#[path = "rpf9_table_list.rs"]
-mod rpf9_table_list;

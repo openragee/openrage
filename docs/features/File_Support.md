@@ -73,15 +73,118 @@ the editor lists none of these games as a title.
 
 ## GTA VI
 
-The table of contents of an RPF9 archive is enciphered, and OpenRage ships no key: the keys are read
-from the user's own executable, and [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md) gives the steps.
-With them, `openrage-cli rpf9` lists an archive's entries from its table, nested archives included,
-extracts them, an enciphered one deciphered, and writes a new archive, and View ▸ Panels ▸ Archives
-lists the entries of the archives of the GTA VI folder set in Settings, and of an archive File ▸ Open
-opened, and opens them. An entry is named where a harvested vocabulary or a folder of names holds the
-text of its hash, and by its hash otherwise. Without them, the editor and `openrage-cli rpf scan`
-find the bodies an archive stores in the clear, and an archive's own tab lists it that way, with
-or without keys. The install opens as a plain folder.
+An RPF9 archive opens from its encrypted table of contents. It needs the user's key snapshot,
+`gtavi_magic.dat` in the configuration folder or the file `OPENRAGE_GTA6_KEYS` names; a masked
+snapshot also needs the executable from Settings ▸ Games or `OPENRAGE_GTA6_EXE`.
+Missing keys or an invalid table produce an error, with no scan fallback. The Files and Archives
+panels share the same mounted document and its table; showing the Archives panel does not open
+the archive again. The Files panel loads a nested archive's table when it is expanded, on a
+worker and within its containing entry's bounds
+(`files_and_archives_share_the_mounted_table_without_reopening_the_file`).
+In an opened folder, RPF9 archives expand inside the same Files tree as other archives. Resolved
+paths form folders; unresolved hashes remain at the root of their owning archive. File icons use
+the table's type or the entry's leading header, independently of the displayed name. Opening a
+folder also checks entry headers at their table addresses: AWC containers show the audio icon and
+`.awc`, and PSIN metadata shows `.psin`. This reads only the leading bytes, with a bounded input
+budget for compressed or encrypted entries. Files adds a visual extension to recovered names and
+hashes (`.ytd`, `.ydr`, `.rpf`, `.awc`, `.psin`, or `.bin` when no extension is identified), while keeping
+the original name and table hash unchanged. Properties show the original entry index
+and 64-bit hash. Opening an entry keeps its Files selection and breadcrumb trail. The archive's
+contents are read-only, including tree edits. An entry whose table does not state
+its class offers **Open as archive**, which checks only its stated position and extent.
+
+The table view opens a file with **Open** or a double-click, and **Extract…** writes its decoded
+bytes into a chosen folder, keeping existing files. Both actions use the same bounded reader.
+The tree and its filter include the type indicated by the table; the selected entry's facts
+separate that hint from a type detected in its decoded contents. Texture dictionaries open in
+the texture preview, in memory and read-only, after their sections, every entry and every texture's
+pixels have been validated. A partly unreadable dictionary is an error, not a partial preview.
+Names stay as hashes where the vocabulary has no match; a detected type does not invent a filename.
+Text files open as text and unsupported decoded contents as read-only bytes; a resource extension
+never selects a GTA V reader. Reopening an entry follows its archive indices through the tables again.
+Neither type detection nor preview creates an extracted file or searches for content outside the entry.
+
+Recognised `.ydr`, `.ydd` and `.yft` entries open with the GTA VI model reader. Their shader
+texture bindings use 64-bit keys to find external `.ytd` entries in mounted RPF9 archives and
+the configured GTA VI install. A bounded worker reads the tables, indexes texture names from
+the dictionaries' virtual sections and opens matching dictionaries in memory
+(`src/state/rpf9_texture_resolver.rs`). This resolution uses table addresses throughout, with
+no content scan or extraction to disk. Textures that cannot be located or decoded remain
+unavailable; opening a model does not imply that every texture or material is supported.
+
+The table entry dispatcher also selects the existing specialised readers below. Complete headers
+select AWC, PSO, RBF, audio game data and Bink; headerless resources take their exact virtual and
+physical sizes from the table. A recognised body whose reader fails reports the error rather than
+silently changing to an octet view. These previews remain read-only and work in memory.
+
+| Extension | Contents | Table preview |
+|---|---|---|
+| `.awc` | Audio streams | Stream list and playback through the supported codec; the ADAT container may also have an `.adat` name |
+| `.ymt`, `.psin`, `.rbf` | Structured metadata in RBM, PSO or RBF envelopes | Metadata tree; the bytes select the envelope |
+| `.ynv` | Navigation cells | Cell facts and navigation geometry |
+| `.ycd` | Animation dictionaries | Clips, tracks and timeline; external sets and clips are not searched through scans |
+| `.ysc` | Validated compiled scripts | Read-only instruction listing; no decompiled source |
+| `.yed` | Expression tracks | Expression inspector; no table-backed animation selector integration |
+| `.ypt` | Particle effects | Effects and supported preview data; external particle models are not searched through scans |
+| `.rel` | Audio configuration and references | Items and known fields; bank-reference resolution from tables is not implemented |
+| `.bk2` | Bink movies | Video preview with the existing decoder |
+| `.gfx` | Scaleform interface movies | Existing Scaleform inspector |
+| `.mrf` | MoVE networks | Partial structural outline, not a full execution model |
+| `.dat` and unnamed bodies | Confirmed height maps, grids and object trees | Existing height view or structural facts when the leading structure identifies the body |
+
+An extension in the Files tree is not a promise of an implemented preview. A script opens as an
+instruction listing only when the existing compiled reader validates its header and code;
+other script bodies remain bytes. `.yld` and the other unconnected resource categories still open as bytes through this table path,
+even where another entry point has a reader. `.bin` means no extension was confirmed; EDUP bodies
+remain bytes. Textual `.xml`, `.txt` and `.list` entries keep the text view. Unknown field and file
+names remain hashes. The neighbouring-cell loader, audio bank links, animation searches and
+particle-model searches do not fall back to scans for table-backed documents.
+
+The install test `supported_media_metadata_and_navigation_open_from_real_tables_in_memory`
+uses `OPENRAGE_GTA6_BUILD` and the key settings above to check selected entries from audio,
+navigation, metadata, animation and movie archives, including decoding the audio streams. It runs
+with the `all` test profile and writes no game contents to disk. Its synthetic companions check
+malformed bodies, section bounds and read-only previews. Expression and RBF integration lack a
+real GTA VI sample in this install; their availability does not imply full corpus validation.
+
+A flat, headerless GTA VI `.ydr` opened manually is recognised from its root and internal name,
+then confirmed against a byte-identical entry in a mounted or configured RPF9 archive
+(`src/state/rpf9_loose.rs`). The matching table supplies the virtual and physical section sizes;
+the reader does not guess their boundary. Without that match, the file is refused with an
+explanation. Files with an RSC7 header continue through the GTA V reader.
+
+The reader supports sized raw entries on 24-byte rows. Chunked entries use mode 3 for 24-byte
+rows, mode 2 for 20-byte resource rows, or mode 4 on either shape. Each descriptor gives the exact
+stored and decoded sizes and selects stored bytes or zlib, including mixtures of both. A 20-byte
+row skips the header slot, checks the chunks against the stored extent, and derives the decoded
+size from the chunks. Compressed-resource rows without a chunk record describe a single raw
+DEFLATE stream. Both row shapes support content-ciphered entries when their key and framing are
+supported. Missing or inconsistent descriptors and unknown layouts are refused. Extraction writes
+progressively and publishes a file only after successful decoding, including nested archives too
+large for the in-memory byte view. Nested archives open as tables in the tree.
+Extraction does not reconstruct a loose resource header around headerless
+contents. These paths do not scan for content or recover from a failed decode. The
+[gta6_resource_reads](../../crates/io/or-io/tests/gta6_resource_reads.rs) suite checks exact chunk
+sizes, bounds, limits and decoding failures; app and CLI tests cover opening and extraction.
+The app's install test `every_entry_in_the_selected_archive_opens_and_extracts_from_tables` walks
+all tables in `OPENRAGE_GTA6_ARCHIVE`, opens files or nested tables and compares the extracted bytes. Run it
+with the `all` test profile and the key environment variables above; it never scans the archive.
+The app's `every_table_texture_dictionary_in_the_selected_archive_previews_in_memory` test
+checks all texture dictionaries in that selected archive without writing their contents to disk.
+The `selected_entries_across_five_archives_preview_and_reload_without_extracted_files` test uses
+`OPENRAGE_GTA6_PREVIEW_INSTALL` and the same keys to check preview pixels, reopening and other types
+in several archives. Both preview tests also use the `all` profile.
+
+`openrage-cli rpf9 list` also lists from the table, and `rpf9 extract` uses the same strict entry
+reader as the app (`--decrypt` enables ciphered entries). The explicit `openrage-cli rpf scan` command and
+the World index retain their scanners and their existing body readers. The install opens as a
+plain folder.
+
+The [GTA VI modding guide](../guides/GTA_VI_Modding.md) describes obtaining keys from the user’s executable.
+View ▸ Panels ▸ Archives uses the same table document for opening and extraction. Its
+**Replace with a file…** action writes a new archive for supported non-resource entries;
+headerless resources remain read-only there. Extraction writes their decoded bytes exactly,
+without inventing a loose resource envelope. The CLI can write a new archive and export PSO strings.
 
 - **Read.** Texture packs (`.ttpf`) and dictionary textures, drawables, fragments, dictionaries of
   drawables and their skeletons, bounds, navigation cells, map placements and map types, clip
@@ -91,7 +194,8 @@ or without keys. The install opens as a plain folder.
   Wireframe, Solid and Material and goes out to glTF. An enciphered entry opens deciphered: a PSO or
   RBF in the metadata editor, text as text and a resource in its kind's view. A PSO's enciphered
   strings name the hash values it holds. A deciphered script body reads as a compiled program, its
-  header, instructions and native calls, through `openrage-cli script compiled`.
+  header, instructions and native calls, through `openrage-cli script compiled`; a valid table
+  entry also opens as the same reader's instruction listing in the app, read-only.
 - **Textures.** A texture stored plainly or as zlib reads as it is. One stored through the pack's
   entropy coder decodes exactly as BC1; as BC3, BC4, BC5, BC6H or BC7 it decodes through tables
   that `openrage-cli ttpf calibrate`, or the app's job, fits on your machine from the packs of the
@@ -112,8 +216,9 @@ or without keys. The install opens as a plain folder.
   for GTA V, and a refusal names what it cannot write. `openrage-cli rpf9 copy`, `replace`, `remove`,
   `rename` and `defrag` write a new archive from an existing one, never over it; a plain replace of
   an entry whose row describes a paged resource is refused by name, and `replace --resource` replaces
-  it by its loose form. The app's File ▸ Save into a copy of the archive… writes a document's edits
-  in place of its entry, in a new copy of the archive it was read from.
+  it by its loose form. For an editable document opened through an explicit scan, the app's
+  File ▸ Save into a copy of the archive… writes its edits in place of its entry, in a new copy
+  of the archive it was read from. Table-backed previews remain read-only.
 - **Not done.** The game refuses every archive OpenRage writes with a changed table, because only its
   maker can sign a table, and no file OpenRage saved has been tried in the game. A script is not
   decompiled from its compiled body. A program the shader front end cannot translate or bind leaves

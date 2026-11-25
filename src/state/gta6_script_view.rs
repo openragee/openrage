@@ -13,11 +13,11 @@ pub(crate) fn script_payload(bytes: &[u8]) -> Option<DocPayload> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A compiled program's body: the header the reader checks, then one `return`.
-    fn program() -> Vec<u8> {
+    pub(crate) fn program() -> Vec<u8> {
         use or_io::gta6::script::compiled::{check_copy, HEADER_LEN, OPCODE_MULTIPLIER};
         let mut b = vec![0u8; HEADER_LEN];
         let hash: u32 = 0x1234_5678;

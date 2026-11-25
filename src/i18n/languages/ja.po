@@ -214,6 +214,9 @@ msgstr "ダメージと力"
 msgid "Declare another archetype in the type file shown, as a copy of the one selected (else the first plain one) under a name nobody holds yet; give it its real name and box in the selection. Undo takes it back"
 msgstr "表示中のタイプファイルに、選択中のアーキタイプ(なければ最初の通常のもの)のコピーを、まだ使われていない名前で宣言します。本来の名前とボックスは、選択したアーキタイプで設定してください。「元に戻す」で取り消せます"
 
+msgid "Detected type: {kind}"
+msgstr "検出された種類: {kind}"
+
 msgid "Did again: {what}"
 msgstr "やり直しました：{what}"
 
@@ -978,6 +981,12 @@ msgstr "エンティティを右へ回転"
 
 msgid "Turns"
 msgstr "回転"
+
+msgid "Two textures have the same name hash; this dictionary cannot be previewed."
+msgstr "2 つのテクスチャの名前ハッシュが同じため、この辞書をプレビューできません。"
+
+msgid "Type (table): {kind}"
+msgstr "種類（テーブル）: {kind}"
 
 msgid "Undid: {what}"
 msgstr "元に戻しました：{what}"
@@ -12552,8 +12561,6 @@ msgstr "📌 ピン留め"
 msgid "📌 Unpin"
 msgstr "📌 ピン留めを解除"
 
-msgid "This is a GTA VI archive (RPF9). Its table of contents and its names are encrypted and OpenRage has no key for them, so its entries cannot be listed by name."
-msgstr "これはGTA VIのアーカイブ (RPF9) です。目次と名前は暗号化されており、OpenRageにはそのキーがないため、エントリを名前で一覧表示することはできません。"
 
 msgid "Its header says: {count} entry, a table of contents ending at byte {toc_end}, {names} bytes of names, {width}-byte entry indices, and the per-archive value {per_archive}, whose role is not known."
 msgid_plural "Its header says: {count} entries, a table of contents ending at byte {toc_end}, {names} bytes of names, {width}-byte entry indices, and the per-archive value {per_archive}, whose role is not known."
@@ -12563,8 +12570,6 @@ msgstr[1] "ヘッダーの内容：エントリ {count} 個、バイト {toc_end
 msgid "The table's parts start at 0x40, {part_b} and {part_c}, and its index at {index}; its layout byte is {layout} and its index kind {kind}. Kind 1 indexes the entry rows alone; what the layout byte and the other kinds select is not known."
 msgstr "目次の各部は0x40、{part_b}、{part_c}から始まり、インデックスは{index}から始まります。レイアウトバイトは{layout}、インデックスの種類は{kind}です。種類1はエントリ行のみをインデックスします。レイアウトバイトやその他の種類が何を選択するかは不明です。"
 
-msgid "its archives are RPF9, whose tables of contents are encrypted with a key OpenRage does not have, so none of them can be listed"
-msgstr "アーカイブはRPF9で、その目次はOpenRageが持っていないキーで暗号化されているため、一覧表示できるものはありません"
 
 msgid "{folder} is {title}, which OpenRage does not support yet, so it was not opened as an install: {why}."
 msgstr "{folder}は{title}で、OpenRageはまだ対応していないため、インストールとしては開かれませんでした：{why}。"
@@ -12575,8 +12580,6 @@ msgstr "{folder} は {title} のフォルダーではないようなので、設
 msgid "{folder} is {title}, which OpenRage does not support yet, so it is shown as a plain folder: {why}."
 msgstr "{folder}は{title}で、OpenRageはまだ対応していないため、通常のフォルダーとして表示されます：{why}。"
 
-msgid "{folder} is {title}. Its archives have no names OpenRage can read, so each opens as a scan of what it holds."
-msgstr "{folder}は{title}です。そのアーカイブにはOpenRageが読み取れる名前がないため、各アーカイブは保持する内容のスキャンとして開きます。"
 
 msgid "GTA VI Texture Pack"
 msgstr "GTA VIテクスチャパック"
@@ -12705,11 +12708,7 @@ msgstr "このアーカイブの中に入れ子になったGTA VIのアーカイ
 msgid "This body starts with four zero bytes but has no 0DRP at 0x10, so what it is and which reader fits it are not known."
 msgstr "このボディは4つのゼロバイトで始まりますが、0x10に0DRPがないため、何であるか、どのリーダーが適合するかは不明です。"
 
-msgid "a GTA VI archive is scanned for the bodies stored in the clear and shown; OpenRage does not write one"
-msgstr "GTA VIのアーカイブをスキャンして、暗号化されずに保存されているボディを探して表示します。OpenRageはアーカイブへの書き込みは行いません"
 
-msgid "a GTA VI archive opens from its own file, which is scanned a slice at a time"
-msgstr "GTA VIのアーカイブは専用のファイルから開き、スライスごとにスキャンします"
 
 msgid "Archive scan"
 msgstr "アーカイブのスキャン"
@@ -12717,11 +12716,7 @@ msgstr "アーカイブのスキャン"
 msgid "GTA VI Archive"
 msgstr "GTA VIアーカイブ"
 
-msgid "RPF9 — a GTA VI archive, shown as what a scan without its table finds, read-only"
-msgstr "RPF9 — GTA VIのアーカイブ。目次なしのスキャンで見つかる内容として表示され、読み取り専用です"
 
-msgid "(read without names)"
-msgstr "(名前なしで読み取り)"
 
 msgid "Its first 64 bytes are zero, as a piece a download has not delivered reads, so whether it is an RPF9 archive and what its header states are not known; the bytes present are scanned."
 msgstr "先頭の64バイトはすべてゼロです。ダウンロードで届いていない部分はこのように読み取られるため、RPF9アーカイブかどうか、ヘッダーに何が書かれているかは不明です。存在するバイトをスキャンします。"
@@ -14774,8 +14769,6 @@ msgstr "バッチ処理の書き込み先として、出荷時のままのゲー
 msgid "{count} file(s)"
 msgstr "{count} 個のファイル"
 
-msgid "{why}\n\nIt opens as a scan of what it holds, in a tab of its own."
-msgstr "{why}\n\nその内容のスキャンとして、専用のタブで開きます。"
 
 msgid "A rule, an event or a behaviour was added, removed or renamed: a GTA VI particle list is written in place, so its rules stay as they are stored."
 msgstr "ルール、イベント、挙動のいずれかが追加、削除、または名前変更されました：GTA VIのパーティクルリストはその場で書き込まれるため、ルールは保存されているままになります。"
@@ -16894,6 +16887,73 @@ msgid_plural "the lights of {count} maps"
 msgstr[0] "マップ {count} 個のライト"
 msgstr[1] "マップ {count} 個のライト"
 
+msgid "The archive table could not be loaded."
+msgstr "アーカイブのテーブルを読み込めませんでした。"
+
+msgid "The archive changed on disk. Reopen it to read its table."
+msgstr "ディスク上のアーカイブが変更されました。テーブルを読むには開き直してください。"
+
+msgid "This entry does not describe a bounded nested archive."
+msgstr "このエントリは、有効な範囲を持つ入れ子のアーカイブを示していません。"
+
+msgid "This nested archive is encrypted and cannot be expanded."
+msgstr "この入れ子のアーカイブは暗号化されているため展開できません。"
+
+msgid "The archive nesting limit was reached."
+msgstr "アーカイブの入れ子の深さが上限に達しました。"
+
+msgid "Entries are listed from the archive table. Expand an archive to load its table."
+msgstr "エントリはアーカイブのテーブルから取得されます。アーカイブを展開するとテーブルが読み込まれます。"
+
+
+msgid "Loading archive table…"
+msgstr "アーカイブのテーブルを読み込み中…"
+
+msgid "Open as archive"
+msgstr "アーカイブとして開く"
+
+msgid "Offset: {offset}"
+msgstr "位置: {offset}"
+
+msgid "Stored size: {size}"
+msgstr "保存サイズ: {size}"
+
+msgid "a GTA VI archive is listed from its table and is read only; OpenRage does not write one"
+msgstr "GTA VIアーカイブはテーブルから一覧表示され、読み取り専用です。OpenRageはこのアーカイブを書き込みません"
+
+msgid "a GTA VI archive opens from its own file using its encrypted table of contents"
+msgstr "GTA VIアーカイブは、暗号化された目次を使って自身のファイルから開きます"
+
+msgid "RPF9 — a GTA VI archive listed from its table, read-only"
+msgstr "RPF9 — テーブルから一覧表示されるGTA VIアーカイブ、読み取り専用"
+
+msgid "This is a GTA VI archive (RPF9). Open it in its own tab to read its table with the GTA VI keys."
+msgstr "これはGTA VIアーカイブ（RPF9）です。専用のタブで開き、GTA VIのキーを使ってテーブルを読み込んでください。"
+
+msgid "its RPF9 archives open individually from their tables; mounting a whole install is not supported yet"
+msgstr "RPF9アーカイブはそれぞれのテーブルから個別に開きます。インストール全体のマウントにはまだ対応していません"
+
+msgid "{folder} is {title}. Each archive opens from its table using the GTA VI keys."
+msgstr "{folder}は{title}です。各アーカイブはGTA VIのキーを使ってテーブルから開きます。"
+
+msgid "Archive table"
+msgstr "アーカイブのテーブル"
+
+msgid "(archive by archive)"
+msgstr "（アーカイブごと）"
+
+msgid "Find"
+msgstr "検索"
+
+msgid "Encrypted"
+msgstr "暗号化済み"
+
+msgid "Files are read from their table entries. Unsupported layouts are reported as errors."
+msgstr "ファイルはテーブルのエントリに従って読み込まれます。未対応の構造はエラーとして報告されます。"
+
+msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
+msgstr "このファイルはRPF9テーブルから開かれ、読み取り専用です。別のコピーを保存するには抽出してください。"
+
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "この文書の文字列の名前には GTA VI のキースナップショットが必要です"
 
@@ -16945,9 +17005,6 @@ msgstr "メディア"
 msgid "other class"
 msgstr "その他のクラス"
 
-msgid "{file} is listed by a scan without its table: {why}"
-msgstr "{file} はテーブルなしでスキャンにより一覧表示されています: {why}"
-
 msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
 msgstr "設定でGTA VIフォルダーを選択するか、そのアーカイブを1つ開くと、テーブルからアーカイブを一覧表示します。"
 
@@ -16964,15 +17021,6 @@ msgid "Listed from its decrypted table: {count} entry, {named} of them named, un
 msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
 msgstr[0] "復号したテーブルから一覧表示：{count} 件のエントリ、うち {named} 件に名前あり、テーブルキー {key}。"
 msgstr[1] "復号したテーブルから一覧表示：{count} 件のエントリ、うち {named} 件に名前あり、テーブルキー {key}。"
-
-msgid "This entry's row states no start, so its body cannot be read."
-msgstr "このエントリの行には開始位置が記されていないため、本体を読めません。"
-
-msgid "Click to expand or collapse this nested archive, listed from its own table."
-msgstr "クリックすると、自身のテーブルから一覧表示されるこの入れ子のアーカイブを展開または折りたたみます。"
-
-msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
-msgstr "クリックでプレビュータブに開き、ダブルクリックで専用のタブに残します。暗号化された本体は先に復号されます。"
 
 msgid "Extract to a file…"
 msgstr "ファイルへ抽出…"
@@ -17009,15 +17057,6 @@ msgstr "書き出すファイルは新しいもので、読み込み元のアー
 
 msgid "entry {index} is not in its table"
 msgstr "エントリ {index} はそのテーブルにありません"
-
-msgid "the entry's row states no start, so its body is not known"
-msgstr "エントリの行に開始位置が記されていないため、本体が分かりません"
-
-msgid "a nested archive whose row states no stored size"
-msgstr "行に格納サイズが記されていない入れ子のアーカイブ"
-
-msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
-msgstr "アーカイブが {stored} バイトの入れ子のアーカイブの {copied} バイト目で終わっています"
 
 msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
 msgstr "EDUP 本体：0x04 のカウントワードは {count} で、8 バイトのヘッダーの後に {length} バイトのペイロードが続きます。"

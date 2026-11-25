@@ -263,7 +263,12 @@ impl RenderBridge {
                     .find(|archive| archive.is_file())
             })
         };
-        gta6_shaders::request(hashes, install);
+        let table_entry = state
+            .document(doc)
+            .is_some_and(crate::state::Document::is_from_rpf9_table);
+        if !table_entry {
+            gta6_shaders::request(hashes, install);
+        }
         if self.gta6_since.is_none_or(|(of, _, _)| of != doc) {
             self.gta6_since = Some((doc, std::time::Instant::now(), false));
             crate::render::gta6_meshlets::start_decoding(state);

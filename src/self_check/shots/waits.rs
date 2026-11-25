@@ -16,8 +16,8 @@ pub(crate) fn activate_game_and_wait(
     root: &Path,
     frame: impl FnMut(&mut AppState) -> Result<(), String>,
 ) -> Result<(), String> {
-    // ⚠ A title read by scan has nothing to mount: its folder is set, as Settings ▸ Games sets it.
-    if crate::state::gta_vi::read_by_scan(game) {
+    // A title opened archive by archive has its folder set, as Settings ▸ Games sets it.
+    if crate::state::gta_vi::opens_archives_individually(game) {
         state.prefs.game_paths.set(game, Some(root.to_path_buf()));
         return Ok(());
     }

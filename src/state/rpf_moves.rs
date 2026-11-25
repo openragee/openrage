@@ -86,6 +86,10 @@ impl AppState {
         let Some(DocPayload::Rpf(rpf)) = self.document(doc).map(|d| &d.payload) else {
             return Err(tr!("The archive is no longer open").into());
         };
+        self.require_writable_rpf_row(doc, folder)?;
+        for &row in rows {
+            self.require_writable_rpf_row(doc, row)?;
+        }
         let rows = super::clipboard::top_rows(&rpf.session, rows);
         if rows.is_empty() {
             return Err(tr!("Select a file or folder to {verb}", verb = verb));

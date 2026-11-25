@@ -20,24 +20,6 @@ pub fn open_archive_from_disk(
     })
 }
 
-/// A GTA VI archive on disk as the tree every archive opens as, read entry by entry from its file; `None` for any other file, and with no key.
-pub(super) fn gta6_tree(
-    path: &Path,
-    crypto: &Arc<dyn RpfCryptoProvider>,
-) -> Option<super::DocPayload> {
-    use std::io::Read;
-    let mut magic = [0u8; 4];
-    (std::fs::File::open(path).ok()?)
-        .read_exact(&mut magic)
-        .ok()?;
-    if magic != or_io::container::rpf::RPF9_MAGIC.to_le_bytes() || !give_gta6_keys() {
-        return None;
-    }
-    let archive = RpfArchive::open_with(path, Arc::clone(crypto)).ok()?;
-    let tree = super::rpf_session::RpfDocument::new(archive).ok()?;
-    Some(super::DocPayload::Rpf(tree))
-}
-
 /// Hands the archive reader the GTA VI keys and names the app holds; `false` when it holds no keys.
 fn give_gta6_keys() -> bool {
     use or_io::container::rpf::Gta6Context;
@@ -54,34 +36,37 @@ fn give_gta6_keys() -> bool {
 }
 
 impl super::AppState {
-    /// Opens an entry of a GTA VI archive by what its body is, read at its place in the file, since its name states no kind; `false` for any other entry.
+    /// Route a generic archive row through the same table/index address as Files.
     pub(super) fn open_gta6_archive_entry(
         &mut self,
         parent: super::DocumentId,
         entry: super::RpfNodeId,
     ) -> bool {
-        let place = (|| {
+        let address = (|| {
             let super::DocPayload::Rpf(rpf) = &self.document(parent)?.payload else {
                 return None;
             };
+            let node = rpf.session.node(entry)?;
             let super::RpfNodeBacking::ArchiveFile {
                 archive_id,
                 entry_index,
                 override_bytes: None,
-            } = &rpf.session.node(entry)?.backing
+            } = &node.backing
             else {
                 return None;
             };
-            (rpf.session.archive(*archive_id)?.archive).rpf9_place(*entry_index)
+            let address = rpf
+                .session
+                .archive(*archive_id)?
+                .archive
+                .rpf9_entry_address(*entry_index)?;
+            Some(super::document::rpf9::entry::indexed_path(
+                &address.file,
+                &address.indices,
+                &node.name,
+            ))
         })();
-        let Some(place) = place else {
-            return false;
-        };
-        let view = super::rpf9_scan::View::Bytes;
-        let path = super::rpf9_scan::body_path(&place.file, place.offset, view);
-        if place.ciphered {
-            super::rpf9_scan::remember_ciphered(&path, place.base, place.entry);
-        }
+        let Some(path) = address else { return false };
         self.load_file(path);
         true
     }

@@ -10,6 +10,7 @@ pub mod config;
 pub mod dlc;
 pub mod game;
 pub mod gta5;
+pub mod gta6_archives;
 pub mod gta6_cloud;
 pub mod gta6_day;
 pub mod gta6_exposure;

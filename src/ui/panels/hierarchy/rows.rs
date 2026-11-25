@@ -97,6 +97,10 @@ pub(super) fn leave_folder_shown(
     }
 }
 
+pub(super) fn is_rpf9(state: &AppState, doc: DocumentId, node: RpfNodeId) -> bool {
+    matches!(state.document(doc).map(|doc| &doc.payload), Some(DocPayload::Rpf(rpf)) if rpf.session.is_rpf9(node))
+}
+
 /// A row starts being dragged: it is selected as a right click selects it, and `panel` takes focus.
 pub(super) fn start_drag(
     ctx: &egui::Context,
@@ -105,6 +109,15 @@ pub(super) fn start_drag(
     node_id: RpfNodeId,
     panel: PanelId,
 ) {
+    if is_rpf9(state, doc_id, node_id)
+        || state
+            .selection
+            .selected_ids(doc_id)
+            .iter()
+            .any(|&id| is_rpf9(state, doc_id, id))
+    {
+        return;
+    }
     ctx.data_mut(|d| d.insert_temp(egui::Id::new(("rpf_drag", doc_id)), node_id));
     select_unless_selected(state, doc_id, node_id);
     // ⚠ A second click on a row already selected waits to open its name, and would open it mid-drag.
@@ -153,6 +166,9 @@ pub(super) fn maybe_drop_into_folder(
     folder_id: RpfNodeId,
     row: egui::Rect,
 ) {
+    if is_rpf9(state, doc_id, folder_id) {
+        return;
+    }
     let drag_key = egui::Id::new(("rpf_drag", doc_id));
     let released_here = ctx.input(|i| {
         i.pointer.any_released() && i.pointer.interact_pos().is_some_and(|p| row.contains(p))

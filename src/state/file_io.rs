@@ -1,6 +1,9 @@
 use super::jobs::{file_name, JobKind, Outcome, RunningJob, Then};
 use super::*;
 
+#[path = "rpf_entry_open.rs"]
+mod rpf_entry_open;
+
 #[path = "save_source.rs"]
 mod save_source;
 use save_source::write_the_file;
@@ -160,9 +163,32 @@ impl AppState {
                 return;
             }
         };
+        let queued = self
+            .tabs
+            .queued_rpf9
+            .iter()
+            .position(|(waiting, _)| waiting == &path)
+            .and_then(|at| self.tabs.queued_rpf9.remove(at))
+            .map(|(_, binding)| binding);
+        let context = queued
+            .and_then(|binding| {
+                let DocPayload::Rpf(rpf) = &self.document(binding.parent_doc_id)?.payload else {
+                    return None;
+                };
+                let RpfNodeBacking::Rpf9File { table, .. } =
+                    &rpf.session.node(binding.entry_id)?.backing
+                else {
+                    return None;
+                };
+                Some((Arc::clone(table), Some(binding)))
+            })
+            .or_else(|| self.rpf9_tree_context(&path));
+        let binding = context.as_ref().and_then(|(_, binding)| *binding);
         // ⚠ Every open from disk comes through here: a dialog, a recent file, a
         // drop, the command line, a project and a walk.
-        if let Some(open) = self.document_holding(&path, None) {
+        if let Some(open) = self.document_holding(&path, binding) {
+            self.auto_opened_texture_docs.remove(&open);
+            self.bind_rpf9_document(open, binding);
             self.set_active_document(open);
             self.try_start_next_load();
             return;
@@ -190,17 +216,52 @@ impl AppState {
         self.load_receiver = Some((path.clone(), rx));
 
         let provider = self.keys.provider();
+        self.tabs.arriving = binding;
         let path_clone = path.clone();
+        let texture_scope = self.rpf9_texture_scope(None);
+        let mounted_archive = self.mounted_rpf9_table(&path);
         thread::spawn(move || {
-            let result =
-                parse_payload_from_path(&path_clone, kind, provider).map(|(payload, resource)| {
-                    LoadResult::Success {
-                        path: path_clone.clone(),
-                        payload,
-                        binding: None,
-                        resource,
-                    }
-                });
+            if let Some(table) = mounted_archive {
+                let result = match table.current_or_reopen() {
+                    Ok(table) => LoadResult::Success {
+                        path: path_clone,
+                        payload: DocPayload::Rpf9Table(table),
+                        binding,
+                        resource: None,
+                    },
+                    Err(message) => LoadResult::Error {
+                        path: path_clone,
+                        message,
+                    },
+                };
+                let _ = tx.send(result);
+                return;
+            }
+            let manual = context.is_none()
+                && kind == DocumentKind::Ydr
+                && !document::rpf9::entry::is_entry(&path_clone)
+                && super::rpf9_scan::scanned_body(&path_clone).is_none();
+            if manual {
+                let result = super::rpf9_loose::load(&path_clone, texture_scope, provider);
+                let _ = tx.send(result.unwrap_or_else(|message| LoadResult::Error {
+                    path: path_clone,
+                    message,
+                }));
+                return;
+            }
+            let parsed = match context {
+                Some((table, _)) => {
+                    document::rpf9::entry::read_path_with_table(&path_clone, &table)
+                        .map(|payload| (payload, None))
+                }
+                None => parse_payload_from_path(&path_clone, kind, provider),
+            };
+            let result = parsed.map(|(payload, resource)| LoadResult::Success {
+                path: path_clone.clone(),
+                payload,
+                binding,
+                resource,
+            });
 
             let msg = match result {
                 Ok(ok) => ok,
@@ -211,90 +272,6 @@ impl AppState {
             };
             let _ = tx.send(msg);
         });
-    }
-
-    pub fn open_rpf_entry(&mut self, parent_doc_id: DocumentId, entry_id: RpfNodeId) {
-        let row = RpfEntryBinding {
-            parent_doc_id,
-            entry_id,
-        };
-        self.tabs.keep(row);
-        if let Some(existing) = self.entry_document(row) {
-            // A dictionary the app opened for itself is the user's once opened: it gets a tab and stays.
-            self.auto_opened_texture_docs.remove(&existing);
-            self.set_active_document(existing);
-            self.remember_recent(existing);
-            return;
-        }
-        // ⚠ Its load is on its way: a second one would parse on the UI thread while the first runs.
-        if self.tabs.arriving == Some(row) {
-            return;
-        }
-        if self.open_gta6_archive_entry(parent_doc_id, entry_id) {
-            return;
-        }
-
-        let (parent_path, child_path) = {
-            let Some(doc) = self.document(parent_doc_id) else {
-                self.show_error_toast(tr!("RPF parent document is gone"));
-                return;
-            };
-            let DocPayload::Rpf(rpf) = &doc.payload else {
-                self.show_error_toast(tr!("Active document is not an RPF"));
-                return;
-            };
-            let Some(node) = rpf.session.node(entry_id) else {
-                self.show_error_toast(tr!("RPF node {entry_id} not found", entry_id = entry_id));
-                return;
-            };
-            if node.is_dir() {
-                return;
-            }
-            // ⚠ A GTA VI pack can be gigabytes and is read a texture at a time: it opens from
-            // its file, never through its bytes.
-            if let Some(pack) = node
-                .backing
-                .fs_path()
-                .filter(|path| matches!(DocumentKind::from_path(path), Some(DocumentKind::Ttpf)))
-            {
-                let pack = pack.to_path_buf();
-                self.load_file(pack);
-                return;
-            }
-            let Some(child_path) = rpf.session.path_of(entry_id) else {
-                self.show_error_toast(tr!("Failed to resolve RPF path"));
-                return;
-            };
-            (doc.path.clone(), child_path)
-        };
-
-        let mut display_path = parent_path.unwrap_or_else(|| PathBuf::from(tr!("(unsaved RPF)")));
-        for part in child_path.split('/') {
-            display_path.push(part);
-        }
-        // A loose file in a folder's tree may already be open from disk.
-        if let Some(open) = self.document_holding(&display_path, Some(row)) {
-            self.set_active_document(open);
-            return;
-        }
-        let bytes = match self.document(parent_doc_id).map(|d| &d.payload) {
-            Some(DocPayload::Rpf(rpf)) => rpf.session.bytes_for(entry_id),
-            _ => None,
-        };
-        let Some(bytes) = bytes else {
-            self.show_error_toast(tr!(
-                "Missing bytes for '{child_path}'",
-                child_path = child_path
-            ));
-            return;
-        };
-        let bytes = (*bytes).clone();
-
-        let kind = DocumentKind::from_path(&PathBuf::from(&child_path))
-            .map(|kind| kind.refine_with_bytes(&bytes))
-            .unwrap_or(DocumentKind::Hex);
-
-        self.spawn_inline_load(display_path, kind, bytes, Some(row));
     }
 
     /// Opens `bytes`, read on the loader, as a document of `kind` under `path`; one already open there is shown.
@@ -359,8 +336,10 @@ impl AppState {
             self.set_error(tr!("Could not open the file"), message.clone());
             self.error_dialog_title = headline;
             // A body a scan found says what it is and why it does not open, which no plain sentence says.
-            self.error_dialog_plain = (super::rpf9_scan::scanned_body(path).is_none())
-                .then(|| super::load_error::plain_reason(&message).to_string());
+            self.error_dialog_plain = (super::rpf9_scan::scanned_body(path).is_none()
+                && !super::document::rpf9::entry::is_entry(path)
+                && super::gta_vi::rpf9_refusal_at(path).is_none())
+            .then(|| super::load_error::plain_reason(&message).to_string());
         }
     }
 
@@ -391,38 +370,44 @@ impl AppState {
             None => return,
         };
         self.load_receiver = None;
-
-        match result {
+        let (path, payload, binding, resource, source) = match result {
+            LoadResult::Rpf9Entry {
+                path,
+                payload,
+                source,
+            } => (path, payload, None, None, Some(source)),
             LoadResult::Success {
                 path,
                 payload,
                 binding,
                 resource,
-            } => {
-                let said = tr!("Opened {path}", path = file_name(&path));
-                let shown = if self.tabs.arrived(binding, &path) {
-                    tracing::debug!(path = %path.display(), "a preview replaced before it loaded");
-                    None
-                } else if let Some(open) = self.document_holding(&path, binding) {
-                    self.set_active_document(open);
-                    Some(open)
-                } else {
-                    let id = self.insert_document(path, payload, binding, resource);
-                    tracing::info!(id, "Document loaded");
-                    Some(id)
-                };
-                self.loading = LoadingState::Idle;
-                let then = shown.map_or(Then::Nothing, Then::Show);
-                self.jobs.record(JobKind::Load, Outcome::Done(then), said);
-            }
+            } => (path, payload, binding, resource, None),
             LoadResult::Error { path, message } => {
                 self.tabs.arrived(None, &path);
                 tracing::error!(path = %path.display(), error = %message, "Load failed");
                 let said = format!("{}: {message}", file_name(&path));
                 self.report_load_error(&path, message);
                 self.jobs.record(JobKind::Load, Outcome::Failed, said);
+                self.try_start_next_load();
+                return;
             }
-        }
+        };
+        let said = tr!("Opened {path}", path = file_name(&path));
+        let shown = if self.tabs.arrived(binding, &path) {
+            tracing::debug!(path = %path.display(), "a preview replaced before it loaded");
+            None
+        } else if let Some(open) = self.document_holding(&path, binding) {
+            self.auto_opened_texture_docs.remove(&open);
+            self.set_active_document(open);
+            Some(open)
+        } else {
+            let id = self.insert_document_with_source(path, payload, binding, resource, source);
+            tracing::info!(id, "Document loaded");
+            Some(id)
+        };
+        self.loading = LoadingState::Idle;
+        let then = shown.map_or(Then::Nothing, Then::Show);
+        self.jobs.record(JobKind::Load, Outcome::Done(then), said);
 
         self.try_start_next_load();
     }
@@ -450,6 +435,7 @@ impl AppState {
             return false;
         }
         self.pending_loads.clear();
+        self.tabs.queued_rpf9.clear();
         self.batch_loading = false;
         self.loading = LoadingState::Idle;
         true

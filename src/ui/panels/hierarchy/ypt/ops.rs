@@ -94,7 +94,11 @@ fn ypt_asset_mut<T: ParticleTarget>(
     state: &mut AppState,
     doc_id: DocumentId,
 ) -> Option<&mut PtxFxList<T>> {
-    T::list_mut(&mut state.document_mut(doc_id)?.payload)
+    let document = state.document_mut(doc_id)?;
+    if document.is_from_rpf9_table() {
+        return None;
+    }
+    T::list_mut(&mut document.payload)
 }
 
 /// A dictionary's codes and the rules they key.
@@ -416,6 +420,38 @@ fn next_unique_name<'a>(base: &str, existing: impl Iterator<Item = &'a str>) -> 
 mod tests {
     use super::*;
     use or_io::gta5::particle::PtxEventEmitter;
+
+    #[test]
+    fn a_table_particle_outline_refuses_copies_and_deletions_but_keeps_selection() {
+        use or_io::decl::Gen8;
+        let _serial = crate::ui::theme::serial();
+        let mut asset = PtxFxList::<Gen8>::default();
+        list::add_effect(&mut asset, "table_effect");
+        let mut state = AppState::new();
+        let path = "particles.rpf/.rpf9-table/0/hash_particles.ypt".into();
+        state.documents.push(crate::state::Document::new(
+            1,
+            Some(path),
+            DocPayload::Resource(or_io::Asset::Particles(asset)),
+        ));
+        let selected = ypt_effect_id(0);
+        let ops = vec![
+            YptDeferredOp::DuplicateEffect(0),
+            YptDeferredOp::SelectAndReveal(selected),
+        ];
+        apply_ypt_ops::<Gen8>(&mut state, 1, ops, &egui::Context::default());
+        delete_row(&mut state, 1, selected);
+        let document = state.document(1).unwrap();
+        let asset = Gen8::list(&document.payload).unwrap();
+        assert_eq!(
+            list::effect_rules(asset)
+                .map(|e| e.name.as_str())
+                .collect::<Vec<_>>(),
+            ["table_effect"]
+        );
+        assert_eq!(state.selection.selected(1), Some(selected));
+        assert!(!document.history.can_undo());
+    }
 
     #[test]
     fn the_outlines_adds_deletes_and_binds_undo_to_the_list_it_opened_as() {

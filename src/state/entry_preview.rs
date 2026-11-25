@@ -49,6 +49,8 @@ pub enum PreviewBody {
     },
     /// A texture or a model, which the pane draws as its picture, made off the UI thread.
     Picture,
+    /// Its contents are read on a worker only when explicitly opened.
+    Open,
     TooLarge,
     Unreadable,
 }
@@ -156,8 +158,12 @@ fn stored_in(backing: &RpfNodeBacking) -> String {
         RpfNodeBacking::DiskFile { fs_path, .. } | RpfNodeBacking::DiskFolder { fs_path, .. } => {
             format!("On disk: {}", fs_path.display())
         }
-        RpfNodeBacking::ArchiveFile { .. } => "Inside an archive".to_string(),
-        RpfNodeBacking::Archive { .. } => "An archive".to_string(),
+        RpfNodeBacking::ArchiveFile { .. } | RpfNodeBacking::Rpf9File { .. } => {
+            "Inside an archive".to_string()
+        }
+        RpfNodeBacking::Archive { .. } | RpfNodeBacking::Rpf9Archive { .. } => {
+            "An archive".to_string()
+        }
         _ => String::new(),
     }
 }
@@ -172,13 +178,15 @@ pub fn preview(session: &RpfEditSession, id: RpfNodeId) -> Option<EntryPreview> 
     let size = (!node.is_dir()).then(|| session.size_for(id)).flatten();
     let kind = super::files_view::type_in_words(node);
     let drawn = matches!(
-        super::files_view::pictures::picture_kind(&node.name),
+        super::files_view::pictures::picture_kind_for(node),
         Some(PictureKind::Texture | PictureKind::Model)
     );
     let body = if node.is_dir() {
         folder_body(session, id)
     } else if drawn && size.is_some_and(|s| s <= PICTURE_LIMIT) {
         PreviewBody::Picture
+    } else if session.is_rpf9(id) {
+        PreviewBody::Open
     } else if size.is_some_and(|s| s > READ_LIMIT) {
         PreviewBody::TooLarge
     } else {
@@ -188,7 +196,7 @@ pub fn preview(session: &RpfEditSession, id: RpfNodeId) -> Option<EntryPreview> 
         }
     };
     Some(EntryPreview {
-        name: node.name.clone(),
+        name: node.display_name().into_owned(),
         path,
         size,
         kind,

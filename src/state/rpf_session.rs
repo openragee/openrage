@@ -14,6 +14,9 @@ use super::rpf_node::{
     ArchiveSlot, ArchiveSource, RpfNodeBacking, RpfSessionNode, RpfSessionNodeKind,
 };
 
+#[path = "rpf_session_rpf9.rs"]
+mod rpf9;
+
 const BYTE_CACHE_CAPACITY: usize = 64;
 
 pub struct RpfEditSession {
@@ -175,6 +178,9 @@ impl RpfEditSession {
                     RpfEntry::Directory(_) => 0,
                 })
             }
+            RpfNodeBacking::Rpf9File { .. } | RpfNodeBacking::Rpf9Archive { .. } => {
+                self.rpf9_size_for(id)
+            }
             _ => None,
         }
     }
@@ -234,11 +240,13 @@ impl RpfEditSession {
                     }
                 }
             }
+            RpfNodeBacking::Rpf9File { .. } => self.rpf9_bytes_for(id),
             _ => None,
         }
     }
 
     pub fn set_bytes_for(&mut self, id: RpfNodeId, bytes: Vec<u8>) -> Result<(), String> {
+        self.ensure_not_rpf9(id)?;
         let node = self
             .nodes
             .get_mut(&id)
@@ -273,6 +281,18 @@ impl RpfEditSession {
         let mut cur = self.nodes.get(&id)?;
         while let Some(parent) = cur.parent {
             parts.push(cur.name.clone());
+            cur = self.nodes.get(&parent)?;
+        }
+        parts.reverse();
+        Some(parts.join("/"))
+    }
+
+    /// The visible path includes type extensions without changing the archive's entry names.
+    pub fn display_path_of(&self, id: RpfNodeId) -> Option<String> {
+        let mut parts = Vec::new();
+        let mut cur = self.nodes.get(&id)?;
+        while let Some(parent) = cur.parent {
+            parts.push(cur.display_name().into_owned());
             cur = self.nodes.get(&parent)?;
         }
         parts.reverse();
@@ -416,6 +436,7 @@ impl RpfEditSession {
     }
 
     pub fn rename_node(&mut self, node_id: RpfNodeId, new_name: &str) -> Result<(), String> {
+        self.ensure_not_rpf9(node_id)?;
         if node_id == self.root_id {
             return Err(tr!("Cannot rename RPF root").to_string());
         }
@@ -437,6 +458,7 @@ impl RpfEditSession {
     }
 
     pub fn move_node(&mut self, node_id: RpfNodeId, new_parent: RpfNodeId) -> Result<(), String> {
+        self.ensure_not_rpf9(node_id)?;
         if node_id == self.root_id {
             return Err(tr!("Cannot move RPF root").to_string());
         }
@@ -484,6 +506,7 @@ impl RpfEditSession {
     }
 
     pub fn delete_node(&mut self, node_id: RpfNodeId) -> Result<(), String> {
+        self.ensure_not_rpf9(node_id)?;
         if node_id == self.root_id {
             return Err(tr!("Cannot delete RPF root").to_string());
         }
@@ -727,6 +750,7 @@ impl RpfEditSession {
             *scanned = false;
             *open_error = None;
         }
+        self.unload_rpf9_table(node_id);
         while let Some(id) = stack.pop() {
             if let Some(child) = self.nodes.remove(&id) {
                 if let RpfNodeBacking::Archive {
@@ -758,6 +782,7 @@ impl RpfEditSession {
     }
 
     fn ensure_parent_dir(&self, parent_id: RpfNodeId) -> Result<(), String> {
+        self.ensure_not_rpf9(parent_id)?;
         let Some(parent) = self.nodes.get(&parent_id) else {
             return Err(tr!(
                 "Parent folder {parent_id} does not exist",

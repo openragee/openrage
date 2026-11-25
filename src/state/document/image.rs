@@ -27,6 +27,9 @@ impl Document {
 
     /// Ask for the image an edit of the payload took, which `AppState::seal_edits` builds from it.
     pub(in crate::state) fn ask_for_image(&self) {
+        if self.read_only == Some(super::rpf9::entry::READ_ONLY) {
+            return;
+        }
         self.rebuild.asked.store(true, Ordering::Relaxed);
     }
 
@@ -35,7 +38,11 @@ impl Document {
     /// ⚠ Once per payload epoch: a payload its writer refuses would otherwise be written every frame.
     pub(in crate::state) fn build_the_asked_image(&mut self) {
         let asked = self.rebuild.asked.swap(false, Ordering::Relaxed);
-        if !asked || self.resource.is_some() || self.rebuild.tried == Some(self.payload_epoch) {
+        if !asked
+            || self.read_only == Some(super::rpf9::entry::READ_ONLY)
+            || self.resource.is_some()
+            || self.rebuild.tried == Some(self.payload_epoch)
+        {
             return;
         }
         self.rebuild.tried = Some(self.payload_epoch);

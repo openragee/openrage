@@ -2,15 +2,10 @@
 //! file in a new copy of the archive, which the game refuses because only its maker signs a table.
 
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use or_io::container::rpf::gta6_kinds::entry_kinds;
-use or_io::container::rpf::{
-    open_at, read_rpf9_body, write_rpf9_resource, Gta6Entry, Gta6Mount, GtaViKeys, Rpf9Sections,
-    RPF9_SLOT,
-};
+use or_io::container::rpf::{Gta6Entry, Gta6Mount, GtaViKeys};
 
 use crate::state::rpf9_scan::rpf9_table::{keys, write_entry};
 use crate::state::AppState;
@@ -47,9 +42,13 @@ pub(super) struct Row {
 }
 
 /// Extract the row's body to `out` on a worker.
-pub(super) fn spawn_extract(row: Row, out: PathBuf) {
+pub(super) fn spawn_extract(
+    row: Row,
+    source: crate::state::rpf9::entry::EntrySource,
+    out: PathBuf,
+) {
     std::thread::spawn(move || {
-        let said = keys().and_then(|keys| extract(&row, &out, &keys));
+        let said = extract_source(&row, &source, &out);
         ended().push(match said {
             Ok(()) => Ok(tr!(
                 "Wrote {entry} to {file}.",
@@ -63,6 +62,22 @@ pub(super) fn spawn_extract(row: Row, out: PathBuf) {
             )),
         });
     });
+}
+
+fn extract_source(
+    row: &Row,
+    source: &crate::state::rpf9::entry::EntrySource,
+    out: &Path,
+) -> Result<(), String> {
+    never_the_archive(out, &row.disk)?;
+    let parent = out
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    source.extract(temporary.as_file_mut())?;
+    temporary.persist(out).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Write a new archive `out` with the row's body replaced by the file `with`, on a worker.
@@ -92,16 +107,6 @@ pub(super) fn spawn_replace(row: Row, with: PathBuf, out: PathBuf) {
             )),
         });
     });
-}
-
-/// Each entry's kind label of the table whose header is at `base` in `disk`.
-pub(super) fn kinds(disk: &Path, base: u64, keys: &GtaViKeys) -> Result<Vec<String>, String> {
-    let mut file = File::open(disk).map_err(|e| format!("{}: {e}", disk.display()))?;
-    let archive = open_at(&mut file, base, keys).map_err(|e| e.to_string())?;
-    Ok(entry_kinds(&archive)
-        .into_iter()
-        .map(|k| k.into_owned())
-        .collect())
 }
 
 /// Whether two paths name one file: as written, or once the system has resolved both.
@@ -146,68 +151,15 @@ fn mount_row(
     Ok((mount, entry, headerless))
 }
 
-/// Write the row's body to `out`: a nested archive as its row's extent, an enciphered body
-/// deciphered and inflated, a clear headerless resource in the loose form a replace takes back, and
-/// any other body inflated.
-fn extract(row: &Row, out: &Path, keys: &GtaViKeys) -> Result<(), String> {
-    never_the_archive(out, &row.disk)?;
-    let mut file = File::open(&row.disk).map_err(|e| format!("{}: {e}", row.disk.display()))?;
-    let (mount, entry, headerless) = mount_row(&mut file, row, keys)?;
-    let start = mount.absolute_start(&entry).ok_or_else(|| {
-        tr!("the entry's row states no start, so its body is not known").to_string()
-    })?;
-    let written =
-        |bytes: &[u8]| std::fs::write(out, bytes).map_err(|e| format!("{}: {e}", out.display()));
-    if entry.cipher.is_some() {
-        let body = mount.read_entry_decrypted(&mut file, &entry, keys);
-        return written(&body.map_err(|e| e.to_string())?);
-    }
-    if mount
-        .entry_begins_archive(&mut file, &entry)
-        .map_err(|e| e.to_string())?
-    {
-        let stored = entry
-            .stored
-            .ok_or_else(|| tr!("a nested archive whose row states no stored size").to_string())?;
-        file.seek(SeekFrom::Start(start))
-            .map_err(|e| e.to_string())?;
-        let mut sink = File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
-        let copied = std::io::copy(&mut (&mut file).take(stored), &mut sink)
-            .map_err(|e| format!("{}: {e}", out.display()))?;
-        if copied != stored {
-            drop(sink);
-            let _ = std::fs::remove_file(out);
-            return Err(tr!(
-                "the archive ends {copied} bytes into the {stored}-byte nested archive",
-                copied = copied,
-                stored = stored
-            )
-            .to_string());
-        }
-        return Ok(());
-    }
-    if headerless {
-        let read = read_rpf9_body(&mut file, start + RPF9_SLOT, u64::MAX);
-        if let Some(loose) = (read.ok())
-            .and_then(|(find, body)| Rpf9Sections::of(&find, &body))
-            .and_then(|sections| write_rpf9_resource(&sections).ok())
-        {
-            return written(&loose);
-        }
-    }
-    let body = mount
-        .read_entry(&mut file, &entry)
-        .map_err(|e| e.to_string())?;
-    written(&body)
-}
-
-/// Write a new archive `out` with the row's body replaced by the file `with` (a headerless
-/// resource's by its loose form); whether a table and whether a body changed. `out` must not exist.
+/// Replace a supported entry in a new archive; headerless resources remain read-only.
 fn replace(row: &Row, with: &Path, out: &Path, keys: &GtaViKeys) -> Result<(bool, bool), String> {
-    let body = std::fs::read(with).map_err(|e| format!("{}: {e}", with.display()))?;
     let mut file = File::open(&row.disk).map_err(|e| format!("{}: {e}", row.disk.display()))?;
     let (_, _, headerless) = mount_row(&mut file, row, keys)?;
+    if headerless {
+        return Err(crate::i18n::tr(crate::state::rpf9::entry::READ_ONLY).to_string());
+    }
     drop(file);
+    let body = std::fs::read(with).map_err(|e| format!("{}: {e}", with.display()))?;
     let path: Vec<u32> = row.node.iter().copied().chain([row.entry]).collect();
     write_entry(&row.disk, &path, headerless, body, out, keys)
 }

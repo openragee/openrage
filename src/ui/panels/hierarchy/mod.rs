@@ -475,6 +475,9 @@ pub(crate) fn new_document_items(ui: &mut egui::Ui, out: &mut Option<DocumentKin
 }
 
 fn draw_doc_body(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId) {
+    if crate::ui::panels::inspector::draw_archive_table_document(ui, state, doc_id) {
+        return;
+    }
     let outline = state
         .document(doc_id)
         .and_then(|doc| capabilities::for_payload(&doc.payload))
@@ -495,6 +498,13 @@ fn doc_has_outline_children(state: &AppState, doc_id: DocumentId) -> bool {
     let Some(doc) = state.document(doc_id) else {
         return false;
     };
+    if let DocPayload::Rpf9Table(table) = &doc.payload {
+        return table
+            .tree()
+            .nodes
+            .get(&0)
+            .is_some_and(|node| !node.mount.archive.entries.is_empty());
+    }
     if let Some(has) = capabilities::for_payload(&doc.payload).and_then(|r| r.has_outline_children)
     {
         return has(&doc.payload);

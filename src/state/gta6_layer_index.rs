@@ -370,6 +370,9 @@ fn build(root: &Path, kept: Option<&Kept>) -> Index {
 /// index is read; `start` has a worker read one not asked for before.
 pub(crate) fn worn(state: &crate::state::AppState, start: bool) -> Option<(Arc<Index>, Material)> {
     let doc = state.active_document()?;
+    if doc.is_from_rpf9_table() {
+        return None;
+    }
     let crate::state::DocPayload::Gta6Drawable(resource) = &doc.payload else {
         return None;
     };
@@ -429,6 +432,29 @@ pub(crate) fn under(root: &Path) -> Option<Arc<Index>> {
 mod tests {
     use super::*;
     use or_io::meta::instance::HashedString;
+
+    #[test]
+    fn a_table_drawable_never_starts_a_scanned_material_index() {
+        let dir = tempfile::tempdir().expect("scratch directory");
+        crate::state::prefs::keep_prefs_in(dir.path());
+        let mut state = crate::state::AppState::from_prefs(crate::state::Prefs::default());
+        let path = dir.path().join("data.rpf/.rpf9-table/0/hash_model.ydr");
+        let drawable = crate::state::opening_a_ttpf::drawable_keyed(1);
+        let payload = crate::state::DocPayload::Gta6Drawable(Arc::new(
+            or_io::gta6::headerless::Resource::Drawable(drawable),
+        ));
+        state
+            .documents
+            .push(crate::state::Document::new(1, Some(path), payload));
+        state.active_document = Some(1);
+        assert_eq!(
+            crate::state::gta6_texture_index::root_of(&state, state.active_document().unwrap()),
+            Some(dir.path().to_path_buf()),
+            "the nonexistent virtual file still resolves its existing install folder",
+        );
+        assert!(worn(&state, true).is_none());
+        assert!(!BUILT.lock().expect("unlocked").contains_key(dir.path()));
+    }
 
     fn hash(hash: u32) -> Value {
         Value::Hash(HashedString::from_hash(hash))

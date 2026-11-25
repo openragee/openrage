@@ -73,7 +73,7 @@ fn is_gta6(ui: &egui::Ui, root: &Path) -> bool {
         return known;
     }
     let game = or_title::Game::detect_from_root(root);
-    let known = root.is_dir() && crate::state::gta_vi::read_by_scan(game);
+    let known = root.is_dir() && crate::state::gta_vi::opens_archives_individually(game);
     ui.data_mut(|d| d.insert_temp(id, known));
     known
 }

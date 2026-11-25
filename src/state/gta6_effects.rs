@@ -217,6 +217,12 @@ impl AppState {
     /// Start reading the effects of the GTA VI install folder's `shaders.rpf` once for each folder
     /// set, unless the app already knows effects.
     fn start_install_effects(&self) {
+        if self
+            .active_document()
+            .is_some_and(super::Document::is_from_rpf9_table)
+        {
+            return;
+        }
         let Some(root) = self.prefs.game_paths.get(or_title::Game::GtaVI) else {
             return;
         };
@@ -267,5 +273,34 @@ impl AppState {
             self.jobs.record(JobKind::EffectsRead, outcome, said);
         }
         super::gta6_shaders::poll(&mut self.jobs);
+    }
+}
+
+#[cfg(test)]
+mod table_tests {
+    use super::*;
+
+    #[test]
+    fn a_table_document_does_not_start_the_install_effects_read() {
+        let dir = tempfile::tempdir().expect("scratch directory");
+        crate::state::prefs::keep_prefs_in(dir.path());
+        let mut prefs = crate::state::Prefs::default();
+        prefs
+            .game_paths
+            .set(or_title::Game::GtaVI, Some(dir.path().to_path_buf()));
+        let mut state = AppState::from_prefs(prefs);
+        let path = dir.path().join("data.rpf/.rpf9-table/0/hash_model.ydr");
+        let drawable = crate::state::opening_a_ttpf::drawable_keyed(1);
+        let payload = DocPayload::Gta6Drawable(Arc::new(
+            or_io::gta6::headerless::Resource::Drawable(drawable),
+        ));
+        state
+            .documents
+            .push(crate::state::Document::new(1, Some(path), payload));
+        state.active_document = Some(1);
+        state.start_install_effects();
+        assert!(install_read()
+            .as_ref()
+            .is_none_or(|(root, _)| root != dir.path()));
     }
 }

@@ -132,10 +132,9 @@ pub const KNOWN_FRAMINGS: [[u64; 5]; 5] = [
     [0, 0x400, 0, 0, 4],
 ];
 
-/// Why a framing tuple is refused for a body of `len` bytes, or `None` when it is accepted: an unknown
-/// tuple, `F4 != 4`, or a tail over an unaligned body. A head or tail window longer than the body is
-/// not refused: [`enciphered_ranges`] clips it to the body, which is how the install's small bodies
-/// under the `0x1000` tuples read. The extent is never guessed from an unrecognised framing.
+/// Refuse unknown framing or an unaligned tail; known windows are clipped to the body.
+// Small bodies under the 0x1000 tuples need clipping, not rejection, when a window is longer
+// than the body; an unrecognised framing never supplies an extent.
 pub fn framing_reject_reason(framing: &[u64; 5], len: u64) -> Option<String> {
     if framing[4] != 4 {
         return Some(format!("its framing word F4 is {}, not 4", framing[4]));
@@ -376,7 +375,7 @@ mod tests {
         );
         assert!(
             framing_reject_reason(&[0x1000, 0x1000, 0, 0x1000, 4], 0x100).is_none(),
-            "a tail larger than the body is accepted and clipped"
+            "the known tail covers a shorter body in full"
         );
     }
 

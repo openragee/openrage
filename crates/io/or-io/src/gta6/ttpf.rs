@@ -374,6 +374,7 @@ impl Format {
             | D::Bc6hSf16
             | D::Bc7Unorm
             | D::Bc7UnormSrgb
+            | D::R10G10B10A2Unorm
             | D::R8G8B8A8Unorm
             | D::R8G8B8A8UnormSrgb
             | D::B8G8R8A8Unorm

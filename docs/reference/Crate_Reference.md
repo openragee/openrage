@@ -886,7 +886,8 @@ harder in an immediate-mode UI (`the_shell_is_flat_rather_than_deep`).
 | `mod_manager.rs` | the active install's mods, the load order saved for it, the winner of two mods writing one path, and moving a mod between `mods` and `mods_` once the edit gate permits and the user answers |
 | `install_lifecycle.rs`, `game_discovery.rs` | choosing a game and finding installs |
 | `explorer.rs`, `navigation.rs` | archive-tree sorting, favourites, back and forward, and the walk that opens the archives on a path before revealing, opening or extracting what it names |
-| `gta_vi.rs`, `rpf9_scan.rs`, `rpf9_list.rs`, `rpf9_kept.rs`, `gta6_install_scan.rs` | a GTA VI archive opened as what a scan finds, a slice at a time on a worker; which rows of the list show and which an extraction takes; a whole scan kept in the configuration folder; every archive of a folder scanned as one job |
+| `rpf9_table_document.rs`, `rpf9_table.rs`, `document/rpf9_entry.rs` | the shared RPF9 table document, its Files and Archives views, and bounded opening and extraction by table indices; nested tables open on demand and a failed table never starts a scan |
+| `gta_vi.rs`, `rpf9_scan.rs`, `rpf9_list.rs`, `rpf9_kept.rs`, `gta6_install_scan.rs` | explicit GTA VI scans, a slice at a time on a worker; which rows of the scan list show and which an extraction takes; a whole scan kept in the configuration folder; every archive of a folder scanned as one job |
 | `ttpf_document.rs`, `ttpf_reshape.rs`, `gta6_bcpack_calibration.rs`, `gta6_texture_index.rs`, `gta6_dictionary_index.rs` | a texture pack as a document, a texture reshaped, the coder's tables fitted as a job, and the packs and dictionaries indexed by texture key so a drawable's key opens what holds it |
 | `gta6_names.rs`, `gta6_install_harvest.rs`, `gta6_texture_naming.rs`, `gta6_texture_names_file.rs` | the harvested vocabulary served to every view, the harvest of an install as a job, the naming rules run on a worker, and a file of names the user picks |
 | `gta6_resource.rs`, `gta6_resource_save.rs`, `gta6_edit.rs` and the other GTA VI edit modules beside them | a scanned body's facts, its edits as steps of undo, and its save as a loose resource through the `edited_sections` cell |
@@ -1417,9 +1418,10 @@ declared.
 RDR2 is declared, discovered and unsupported until a second container exists;
 [R56](../direction/Roadmap.md#r56-rdr2-the-second-container) is its plan.
 GTA VI is declared with a target of its own (`Gta6` in
-`crates/title/or-title/src/game/profiles.rs`): its install opens as a plain folder and an archive as a
-scan, since the archive's table is encrypted
-([GTA_VI_Xbox_Build.md](../features/GTA_VI_Xbox_Build.md)).
+`crates/title/or-title/src/game/profiles.rs`): its install opens as a plain folder and an archive
+from its encrypted table with the user's keys. Files and Archives share the mounted table;
+missing keys or an invalid table produce an error. Explicit scans and the World index remain
+separate paths ([File_Support.md](../features/File_Support.md#gta-vi)).
 
 ## The container seam
 

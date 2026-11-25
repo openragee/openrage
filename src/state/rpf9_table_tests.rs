@@ -1,17 +1,18 @@
 //! Hermetic checks of the table-backed listing, on archives laid out here and enciphered under a
 //! synthetic white-box key, so no game byte is involved.
 
-use std::fs::File;
 use std::time::{Duration, Instant};
 
 use or_io::container::rpf::{
     Rpf9Builder, Rpf9Toc, GROUP_CHUNK_RECORD, GROUP_CONTENT_HASH, GROUP_ENTRY_ROW, GROUP_NAME32,
-    GROUP_NAME64,
+    GROUP_NAME64, RPF9_MAGIC,
 };
 use or_io::gta6::hash::{name_hash32, name_hash64};
 
 use super::*;
-use crate::state::{AppState, ToastType};
+use crate::state::document::rpf9::Rpf9TableDocument;
+use crate::state::AppState;
+use crate::ui::panels::gta6_archive_tree::Gta6ArchiveExplorer;
 
 const REGISTRY_ID: u64 = 0xDEAD_BEEF_0200_0000;
 const KEY_ID: u32 = 0xDEAD_BEEF;
@@ -244,73 +245,106 @@ fn names() -> NameResolver {
 #[test]
 fn an_archive_opened_with_a_key_lists_its_entries_from_the_table() {
     let (_dir, path) = sample();
-    let keys = synthetic_keys();
-    let node = listing(&path, Ok(&keys), &names()).expect("the table lists the archive");
+    let doc = Arc::new(
+        Rpf9TableDocument::open_using_names(&path, || Ok(synthetic_keys()), names())
+            .expect("the table opens")
+            .expect("the fixture is RPF9"),
+    );
+    let node = doc.tree().listing().expect("the table lists the archive");
     assert_eq!(node.key_id, KEY_ID);
     assert_eq!(node.rows.len(), 3);
 
     let alpha = &node.rows[0];
     assert_eq!(alpha.name.as_deref(), Some(ALPHA));
-    assert_eq!(alpha.size, Some(22));
+    assert_eq!(alpha.size, Some(b"alpha body, stored raw".len() as u32));
     assert_eq!(alpha.kind, TableKind::Media);
     assert!(!alpha.is_archive);
 
     let unnamed = &node.rows[1];
-    assert_eq!(unnamed.name, None);
     let hash = name_hash64(UNNAMED.as_bytes());
-    assert_eq!(unnamed.display_name(), format!("hash_{hash:016x}"));
+    assert_eq!(unnamed.display_name(), format!("hash_{hash:016x}.ymt"));
     assert_eq!(unnamed.name32, Some(name_hash32(UNNAMED.as_bytes())));
     assert_eq!(unnamed.kind, TableKind::Resource);
+    assert_eq!(doc.tree().nodes[&0].mount.archive.entries[1].name, None);
 
     let inner = &node.rows[2];
-    assert!(
-        inner.is_archive,
-        "a body that opens with 9FPR is an archive"
-    );
+    assert!(inner.is_archive, "the table's class identifies an archive");
     assert_eq!(inner.kind, TableKind::Archive);
     assert!(
         node.children.is_empty(),
         "a nested archive waits to be expanded"
     );
+    assert!(doc.expand_table(0, alpha.index).is_err());
 
-    // Expanding mounts the nested table from its row's start, relative to which its entries stand.
-    let base = inner.absolute_start.expect("the row states a start");
-    let mut file = File::open(&path).expect("the archive opens");
-    let child = mount(&mut file, base, &keys, &names()).expect("the nested table mounts");
+    let mut explorer = Gta6ArchiveExplorer::default();
+    explorer.show_table(Arc::clone(&doc));
+    let base = doc
+        .expand_table(0, inner.index)
+        .expect("the nested table mounts");
+    {
+        let tree = doc.tree();
+        let parent = &tree.nodes[&0].mount;
+        assert_eq!(
+            Some(base),
+            parent.absolute_start(&parent.archive.entries[inner.index as usize])
+        );
+    }
+    {
+        let tree = doc.tree();
+        let parent = &tree.nodes[&0];
+        let child = &tree.nodes[&base];
+        assert!(
+            child.extent.start >= parent.extent.start + parent.mount.archive.toc.bytes.len() as u64
+        );
+        assert!(child.extent.end <= parent.extent.end);
+    }
+    doc.toggle(0, inner.index);
+    assert!(doc.job().is_none(), "the mounted child is reused");
+    assert!(!explorer.poll());
+    assert!(Arc::ptr_eq(explorer.table.as_ref().unwrap(), &doc));
+    let shown = explorer
+        .root
+        .as_ref()
+        .expect("the explorer shares the table");
+    assert!(shown.open.contains(&inner.index));
+    let child = &shown.children[&inner.index];
     assert_eq!(child.rows.len(), 1);
     assert_eq!(child.rows[0].name.as_deref(), Some(DEEP));
-    assert_eq!(child.rows[0].size, Some(7));
-    let start = child.rows[0].absolute_start.expect("a start");
+    assert_eq!(child.rows[0].size, Some(b"<deep/>".len() as u32));
+    let start = {
+        let tree = doc.tree();
+        let mount = &tree.nodes[&base].mount;
+        mount
+            .absolute_start(&mount.archive.entries[child.rows[0].index as usize])
+            .expect("a start")
+    };
     assert!(
         start > base,
         "a nested entry's start is past its archive's header"
     );
+    assert!(doc.tree().listing().unwrap().open.contains(&inner.index));
 }
 
 #[test]
-fn without_a_key_the_open_falls_back_to_the_scan_and_says_so() {
+fn without_a_key_the_table_listing_reports_the_failure() {
     let (_dir, path) = sample();
-    let why = listing(
+    let why = Rpf9TableDocument::open_using_names(
         &path,
-        Err("no GTA VI key snapshot was found".into()),
-        &names(),
+        || Err("no GTA VI key snapshot was found".into()),
+        names(),
     )
     .expect_err("no key, no table");
-    assert!(
-        why.contains("top.rpf") && why.contains("scan without its table"),
-        "{why}"
-    );
+    assert!(why.contains("no GTA VI key snapshot"), "{why}");
 
-    // A key that is not the archive's leaves its table closed too: noise is refused, never listed.
-    // Here the bootstrap IV (bytes 48..64) differs in the bit that makes the first descriptor type 1.
+    // A different bootstrap IV cannot decipher the table's metadata descriptors.
     let mut other = snapshot();
     other[48] ^= 0x01;
     let other = GtaViKeys::parse(&other).expect("the altered snapshot parses");
-    assert!(listing(&path, Ok(&other), &names()).is_err());
+    assert!(Rpf9TableDocument::open_using_names(&path, || Ok(other), names()).is_err());
 }
 
 #[test]
-fn the_open_of_an_archive_no_held_key_opens_is_a_scan_and_a_toast_says_why() {
+fn the_open_of_an_archive_no_held_key_opens_stays_an_error() {
     let (_dir, path) = sample();
     let mut state = AppState::default();
     state.load_file(path.clone());
@@ -322,17 +356,12 @@ fn the_open_of_an_archive_no_held_key_opens_is_a_scan_and_a_toast_says_why() {
     }
     let opened = (state.documents.iter()).find(|d| d.path.as_deref() == Some(path.as_path()));
     assert!(
-        matches!(opened.map(|d| &d.payload), Some(DocPayload::Rpf9(_))),
-        "the archive opens as its scan"
+        opened.is_none(),
+        "an unreadable table must not open as a scan"
     );
-    // Whatever snapshot this machine holds is not the synthetic key, so the table stays closed.
     state.poll_jobs();
-    let said = (state.toasts.iter()).any(|t| {
-        t.toast_type == ToastType::Info
-            && t.message.contains("top.rpf")
-            && t.message.contains("scan without its table")
-    });
-    assert!(said, "no toast said the scan lists the archive");
+    assert!(state.show_error_dialog);
+    assert!(!state.error_dialog_message.is_empty());
 }
 
 fn row(name: Option<&str>, name64: u64, name32: Option<u32>, kind: TableKind) -> TableRow {
@@ -342,7 +371,6 @@ fn row(name: Option<&str>, name64: u64, name32: Option<u32>, kind: TableKind) ->
         name32,
         name: name.map(str::to_owned),
         size: None,
-        absolute_start: None,
         is_archive: kind == TableKind::Archive,
         cipher: false,
         kind,

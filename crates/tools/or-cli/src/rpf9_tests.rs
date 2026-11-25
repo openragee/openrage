@@ -14,6 +14,149 @@ use or_io::gta6::hash::{name_hash32, name_hash64};
 #[path = "rpf9_fixture.rs"]
 mod fixture;
 
+fn table_fixture(class: u8) -> (tempfile::TempDir, PathBuf, GtaViKeys) {
+    use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
+    let keys = GtaViKeys::parse(&or_test_support::rpf9::keys()).unwrap();
+    let toc = Rpf9Toc {
+        bytes: or_test_support::rpf9::table(&[(1, 0x1000, 16, class)]),
+        key_id: 0,
+        registry_id: 0,
+        entry_count: 0,
+        groups: Vec::new(),
+    };
+    let mut bytes = Rpf9Builder::serialize(&toc, &keys).unwrap();
+    bytes.resize(0x1010, 0xa5);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("table.rpf");
+    std::fs::write(&path, bytes).unwrap();
+    (dir, path, keys)
+}
+
+#[test]
+fn extraction_reads_an_arbitrary_raw_entry_without_a_body_detector() {
+    let (dir, path, keys) = table_fixture(0xff);
+    let dest = dir.path().join("out");
+    let count = do_extract(
+        &path,
+        &dest,
+        &[],
+        &Pick {
+            entry: Some("0"),
+            filter: None,
+            decrypt: false,
+            strings: false,
+        },
+        &keys,
+        &NameResolver::new(),
+    )
+    .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(
+        std::fs::read(dest.join("hash_0000000000000001")).unwrap(),
+        vec![0xa5; 16]
+    );
+}
+
+#[test]
+fn an_explicit_nested_archive_is_extracted_without_reading_it_into_memory() {
+    let (dir, path, keys) = table_fixture(0);
+    let dest = dir.path().join("out");
+    assert_eq!(
+        do_extract(
+            &path,
+            &dest,
+            &[],
+            &Pick {
+                entry: Some("0"),
+                filter: None,
+                decrypt: false,
+                strings: false
+            },
+            &keys,
+            &NameResolver::new()
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        std::fs::read(dest.join("hash_0000000000000001")).unwrap(),
+        vec![0xa5; 16]
+    );
+}
+
+#[test]
+fn extraction_refuses_an_unsupported_table_layout_without_writing() {
+    let (dir, path, keys) = table_fixture(11);
+    let dest = dir.path().join("out");
+    assert!(do_extract(
+        &path,
+        &dest,
+        &[],
+        &Pick {
+            entry: Some("0"),
+            filter: None,
+            decrypt: false,
+            strings: false
+        },
+        &keys,
+        &NameResolver::new()
+    )
+    .is_err());
+    assert_eq!(std::fs::read_dir(dest).unwrap().count(), 0);
+}
+
+#[test]
+fn extraction_from_a_nested_table_stays_inside_its_parent_entry() {
+    use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
+    let keys = GtaViKeys::parse(&or_test_support::rpf9::keys()).unwrap();
+    let table = |rows: &[(u64, u64, u64, u8)]| {
+        Rpf9Builder::serialize(
+            &Rpf9Toc {
+                bytes: or_test_support::rpf9::table(rows),
+                key_id: 0,
+                registry_id: 0,
+                entry_count: 0,
+                groups: Vec::new(),
+            },
+            &keys,
+        )
+        .unwrap()
+    };
+    for size in [64, 0x400, 0x1000] {
+        let mut bytes = table(&[(1, 0x1000, size, 0)]);
+        bytes.resize(0x1000, 0);
+        bytes.extend(table(&[(2, 0x800, 16, 255)]));
+        bytes.resize(0x2000, 0xa5);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested.rpf");
+        let dest = dir.path().join("out");
+        std::fs::write(&path, bytes).unwrap();
+        let result = do_extract(
+            &path,
+            &dest,
+            &["0".into()],
+            &Pick {
+                entry: Some("0"),
+                filter: None,
+                decrypt: false,
+                strings: false,
+            },
+            &keys,
+            &NameResolver::new(),
+        );
+        if size == 0x1000 {
+            assert_eq!(result.unwrap(), 1);
+            assert_eq!(
+                std::fs::read(dest.join("hash_0000000000000002")).unwrap(),
+                vec![0xa5; 16]
+            );
+        } else {
+            assert!(result.is_err());
+            assert!(!dest.join("hash_0000000000000002").exists());
+        }
+    }
+}
+
 /// A hand-built entry: index, name64, optional recovered name, optional cipher.
 fn entry(index: u32, name64: u64, name: Option<&str>, cipher: bool) -> Gta6Entry {
     Gta6Entry {
@@ -224,24 +367,18 @@ fn extract_writes_a_nested_archive_as_its_row_states_it() {
 }
 
 #[test]
-fn a_nested_row_with_no_stored_size_is_refused_and_leaves_no_file() {
+fn a_nested_row_with_no_stored_size_or_outside_the_parent_is_refused() {
     let keys = fixture::keys();
     let (parent, _) = nested_sample();
-    let (dir, path) = write_temp(&parent, "parent.rpf");
+    let (_dir, path) = write_temp(&parent, "parent.rpf");
     let mut file = File::open(&path).expect("open the parent");
-    let mount = Gta6Mount::open_root(&mut file, &keys).expect("mount the parent");
-    let out = dir.path().join("child.rpf");
-
-    let mut unsized_row = mount.archive.entries[0].clone();
-    unsized_row.stored = None;
-    assert!(write_nested(&mount, &mut file, &unsized_row, &out).is_err());
-    assert!(!out.exists());
-
-    // A row stating more than the file holds is a short copy, refused with no partial file.
-    let mut past_end = mount.archive.entries[0].clone();
-    past_end.stored = Some(parent.len() as u64);
-    assert!(write_nested(&mount, &mut file, &past_end, &out).is_err());
-    assert!(!out.exists());
+    let mut mount = Gta6Mount::open_root(&mut file, &keys).expect("mount the parent");
+    for stored in [None, Some(parent.len() as u64)] {
+        mount.archive.entries[0].stored = stored;
+        assert!(mount
+            .read_entry_plan(0, parent.len() as u64, u64::MAX)
+            .is_err());
+    }
 }
 
 #[test]
@@ -450,6 +587,13 @@ fn extract_decrypt_writes_a_deciphered_body() {
             if entry.cipher.is_none() || entry.stored.is_none_or(|s| s == 0 || s > SAMPLE_CAP) {
                 continue;
             }
+            let extent = 0..file.metadata().expect("archive length").len();
+            if mount
+                .read_entry_plan(entry.index, extent.end, SAMPLE_CAP)
+                .is_err()
+            {
+                continue;
+            }
             if let Ok(body) = mount.read_entry_decrypted(&mut file, entry, &keys) {
                 if !body.is_empty() {
                     found = Some((path.clone(), entry.index, body));
@@ -496,6 +640,123 @@ fn extract_decrypt_writes_a_deciphered_body() {
         "head {:02x?} is not a recognised inflated kind",
         &on_disk[..on_disk.len().min(4)]
     );
+}
+
+#[test]
+fn extraction_reads_a_twenty_byte_nested_entry_and_refuses_a_missing_chunk_table() {
+    use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
+    let keys = GtaViKeys::parse(&or_test_support::rpf9::keys()).unwrap();
+    let encode = |bytes| {
+        Rpf9Builder::serialize(
+            &Rpf9Toc {
+                bytes,
+                key_id: 0,
+                registry_id: 0,
+                entry_count: 0,
+                groups: Vec::new(),
+            },
+            &keys,
+        )
+        .unwrap()
+    };
+    for missing in [false, true] {
+        let mut bytes = encode(or_test_support::rpf9::table(&[(1, 0x1000, 0x1020, 0)]));
+        bytes.resize(0x1000, 0x78);
+        let mut table = or_test_support::rpf9::resource_table(&[(16, 16, false)]);
+        if missing {
+            let metadata_start = 64 + 4 * 8;
+            let index_start = metadata_start + 0x150 + 3 * 24;
+            table[index_start + 1] = 0xff;
+        }
+        bytes.extend(encode(table));
+        bytes.resize(0x2010, 0x78);
+        bytes.extend(b"table only bytes");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resource.rpf");
+        let dest = dir.path().join("out");
+        std::fs::write(&path, bytes).unwrap();
+        let result = do_extract(
+            &path,
+            &dest,
+            &["0".into()],
+            &Pick {
+                entry: Some("0"),
+                filter: None,
+                decrypt: false,
+                strings: false,
+            },
+            &keys,
+            &NameResolver::new(),
+        );
+        if missing {
+            assert!(result.is_err());
+            assert_eq!(std::fs::read_dir(&dest).unwrap().count(), 0);
+        } else {
+            assert_eq!(result.unwrap(), 1);
+            assert_eq!(
+                std::fs::read(dest.join("hash_0000000000000001")).unwrap(),
+                b"table only bytes"
+            );
+        }
+    }
+}
+
+#[test]
+fn chunked_media_extracts_and_invalid_descriptors_write_nothing() {
+    use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
+    let keys = GtaViKeys::parse(&or_test_support::rpf9::keys()).unwrap();
+    for invalid in [false, true] {
+        let mut table =
+            or_test_support::rpf9::chunked_table(255, &[(16, 16, false), (16, 16, false)]);
+        if invalid {
+            let metadata_start = 64 + 4 * 8;
+            let index_start = metadata_start + 0x150 + 3 * 24;
+            let data = (index_start + 2usize).next_multiple_of(8);
+            table[data + 24 + 6] = 0;
+        }
+        let mut bytes = Rpf9Builder::serialize(
+            &Rpf9Toc {
+                bytes: table,
+                key_id: 0,
+                registry_id: 0,
+                entry_count: 0,
+                groups: Vec::new(),
+            },
+            &keys,
+        )
+        .unwrap();
+        bytes.resize(0x1000, 0x78);
+        let expected = b"first raw chunk second raw chunk";
+        assert_eq!(expected.len(), 32);
+        bytes.extend(expected);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("media.rpf");
+        let dest = dir.path().join("out");
+        std::fs::write(&path, bytes).unwrap();
+        let result = do_extract(
+            &path,
+            &dest,
+            &[],
+            &Pick {
+                entry: Some("0"),
+                filter: None,
+                decrypt: false,
+                strings: false,
+            },
+            &keys,
+            &NameResolver::new(),
+        );
+        if invalid {
+            assert!(result.is_err());
+            assert_eq!(std::fs::read_dir(dest).unwrap().count(), 0);
+        } else {
+            assert_eq!(result.unwrap(), 1);
+            assert_eq!(
+                std::fs::read(dest.join("hash_0000000000000001")).unwrap(),
+                expected
+            );
+        }
+    }
 }
 
 // --- install-gated: a nested archive extracted from its row opens on its own -----------------------
@@ -574,4 +835,48 @@ fn a_nested_archive_extracted_from_its_row_opens_as_the_mount_does() {
     let mut alone = File::open(&written[0]).expect("open the written archive");
     let opened = Gta6Mount::open_root(&mut alone, &keys).expect("it opens as an archive");
     assert_eq!(opened.archive.entries.len(), mounted);
+}
+
+#[test]
+fn bulk_extraction_skips_a_bad_entry_and_keeps_existing_output_intact() {
+    let keys = fixture::keys();
+    let mut bytes = fixture::archive(&[
+        ("bad.bin", Body::Zlib(vec![0x5a; 256])),
+        (
+            "good.bin",
+            Body::Raw(b"keep reading after the bad entry".to_vec()),
+        ),
+    ]);
+    let mount = Gta6Mount::open_root(&mut std::io::Cursor::new(&bytes), &keys).unwrap();
+    let start = mount.archive.entries[0].start.unwrap() as usize;
+    bytes[start..start + 4].fill(0xff);
+    let (dir, path) = write_temp(&bytes, "mixed.rpf");
+    let dest = dir.path().join("out");
+    std::fs::create_dir(&dest).unwrap();
+    std::fs::write(dest.join("bad.bin"), b"previous export").unwrap();
+    let pick = Pick {
+        entry: None,
+        filter: None,
+        decrypt: false,
+        strings: false,
+    };
+    let count = do_extract(
+        &path,
+        &dest,
+        &[],
+        &pick,
+        &keys,
+        &resolver_of(&["bad.bin", "good.bin"]),
+    )
+    .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(
+        std::fs::read(dest.join("good.bin")).unwrap(),
+        b"keep reading after the bad entry"
+    );
+    assert_eq!(
+        std::fs::read(dest.join("bad.bin")).unwrap(),
+        b"previous export"
+    );
+    assert_eq!(std::fs::read_dir(&dest).unwrap().count(), 2);
 }

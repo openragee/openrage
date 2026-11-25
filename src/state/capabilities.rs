@@ -486,7 +486,7 @@ static BUILTIN: &[FormatCapabilities] = &[
         texture_at: Some(at::ttpf),
         ..FormatCapabilities::none(DocumentKind::Ttpf)
     },
-    // Read-only: the bodies a scan finds are listed, each opens read-only in the view its kind has, and a save refuses.
+    // Both table listings and explicit scans refuse archive saves.
     FormatCapabilities {
         inspector: Some(inspector::rpf9),
         ..FormatCapabilities::none(DocumentKind::Rpf9)

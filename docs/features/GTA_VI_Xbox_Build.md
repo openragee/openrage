@@ -4,22 +4,36 @@ What OpenRage reads, edits and saves of a GTA VI Xbox build, what it refuses and
 
 GTA VI is a title of its own (`crates/title/or-title/src/game/profiles.rs`) with no declared format: nothing of it is a `#[record]` declaration, because there is no source to name a field by. Its readers are ordinary code in `crates/io/or-io/src/gta6/`, behind `or-io`'s `gta6` feature, and a name there says the role a field was measured to play. The archive is `crates/io/or-io/src/container/rpf/rpf9.rs` and the files beside it. The layouts themselves are in the gitignored docs/extra/ tier and are not repeated here.
 
-## An archive is scanned, never listed
+## Archive tables and explicit scans
 
-An RPF9 archive's header is in the clear; its table of contents and its names are encrypted with a key OpenRage does not have. So the archive is refused as an archive, and read another way: `crates/io/or-io/src/container/rpf/rpf9_scan.rs` passes over the file and finds the bodies stored in the clear by their own bytes.
+Opening an RPF9 archive reads its encrypted table with the user's keys. Files and Archives share
+one table document, including nested tables and the entry identities used by previews and
+extraction. A missing key or an invalid table is an error, with no scan fallback.
+[File support](File_Support.md#gta-vi) owns the table-backed previews and their read-only limits;
+[the modding guide](../guides/GTA_VI_Modding.md) explains key setup.
 
-- **A find has an offset and no name or path.** Every command and every view addresses a body by its offset in its archive. A body's end is stated only where its bytes state it or where the measured rule has no exception.
+The explicit scan commands and the World index also use
+`crates/io/or-io/src/container/rpf/rpf9_scan.rs` to find bodies stored in the clear by their own
+bytes. A scan has different identities and limits from a table:
+
+- **A find has an offset and no table path.** A scan addresses a body by its offset in its archive. A body's end is stated only where its bytes state it or where the measured rule has no exception.
 - **A find has a kind and a family.** The kind is what the bytes are (a nested archive, a run of zlib chunks, a stored resource, a movie, an audio container, an effect container, and a few more); the family is the word a person filters by: models, dictionaries, collision, navigation, animations, metadata, text, audio, movies, shaders, archives, other and unknown.
 - **A headerless resource has a role.** A resource with no header is placed in a family of layouts by the shape of its first words (`Rpf9Role`): a drawable, a fragment, a bound, a dictionary, a navigation cell, a particle effects list and the others the enum lists. A resource no layout places opens as its bytes, under the reason.
 - **A whole scan is kept.** A scan that read an archive to its end is kept in the configuration folder (`src/state/rpf9_kept.rs`), and the archive is listed from it while its size and modification time stand.
 
-The app opens a GTA VI folder as a plain folder, and an archive as the list of what a scan finds, a slice at a time on a worker (`src/state/rpf9_scan.rs`). Above the folder's Files view, a scan of every archive tallies the bodies by kind across the folder (`src/state/gta6_install_scan.rs`), and a click opens one.
+The app opens a GTA VI folder as a plain folder, whose archives expand from their tables.
+Above the folder's Files view, the explicit scan command tallies bodies by kind across the
+folder (`src/state/gta6_install_scan.rs`), and a click opens a scanned body. A scan's document
+holds its own list, built a slice at a time on a worker (`src/state/rpf9_scan.rs`); it is never a
+replacement for a table that failed to open.
 
 ⚠ A scan is not the table. A body stored encrypted, or one whose bytes fit no detector, is not found, and nothing a scan finds can be written back into its archive: every save writes a file of its own.
 
 ## What is read
 
-Each row is a family of bodies, the module that reads it, and where the app shows it. "Edits" names what a save writes; a blank cell is read only.
+Each row is a family of bodies, the module that reads it, and where the app shows it. "Edits"
+names what a supported loose document or explicit scan's save writes; a blank cell is read only.
+A table-backed preview remains read-only even when this reader has an editor through another path.
 
 | Bodies | Read by | Shown as | Edits |
 |---|---|---|---|

@@ -1,18 +1,14 @@
 //! A GTA VI archive listed from its decrypted table: each entry's name, hash, size and kind, a nested
 //! archive mounted when it is expanded, and the filter the archive explorer applies to what is
-//! mounted. An archive opened from disk is listed here first, and by the scan only when no key opens
-//! its table.
+//! mounted. An unreadable table remains an error.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use or_io::container::rpf::{open_at, Gta6Class, GtaViKeys, NameResolver, RPF9_MAGIC};
+use or_io::container::rpf::{Gta6Class, GtaViKeys, NameResolver};
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
 
-use crate::state::jobs::file_name;
 use crate::state::DocPayload;
 
 /// A build folder to list archives from in place of the configured install, for a developer's session.
@@ -20,7 +16,7 @@ pub(crate) const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
 /// A folder of recovered names, folded into the names the app harvested.
 const NAMES_ENV: &str = "OPENRAGE_GTA6_NAMES";
 
-/// What an entry is, by the table's own facts: its body's header, or its row's class byte.
+/// An entry's family from its table class and resource descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum TableKind {
     Archive,
@@ -39,9 +35,8 @@ impl TableKind {
         TableKind::Unknown,
     ];
 
-    /// A body that opens with an RPF9 header is an archive; else the 24-byte row's class says, and an
-    /// entry with only a 20-byte row is a resource, whose row is a resource's descriptor.
-    fn of(is_archive: bool, class: Option<Gta6Class>, nested_row: bool) -> Self {
+    /// The table's family, including a 20-byte resource descriptor.
+    pub(crate) fn of(is_archive: bool, class: Option<Gta6Class>, nested_row: bool) -> Self {
         match (is_archive, class) {
             (true, _) | (false, Some(Gta6Class::NestedArchive)) => Self::Archive,
             (false, Some(Gta6Class::CompressedResource)) => Self::Resource,
@@ -71,9 +66,7 @@ pub(crate) struct TableRow {
     pub name32: Option<u32>,
     pub name: Option<String>,
     pub size: Option<u32>,
-    /// The entry's absolute byte offset in the file, where its row states a start.
-    pub absolute_start: Option<u64>,
-    /// Whether the body at [`Self::absolute_start`] opens with the clear `9FPR` header.
+    /// Whether the table identifies a nested archive.
     pub is_archive: bool,
     /// Whether the body is enciphered; it then opens through the ciphered door.
     pub cipher: bool,
@@ -99,78 +92,6 @@ pub(crate) struct TableNode {
     pub children: BTreeMap<u32, TableNode>,
     /// Which entries are expanded; the child is in [`Self::children`].
     pub open: BTreeSet<u32>,
-}
-
-/// Mount the archive whose header is at absolute `base` in `src`: decipher its table, name its
-/// entries from `resolver` and read each entry's leading magic, so an archive row can be told from a
-/// leaf. Only the header, the table and four bytes per entry are read.
-pub(crate) fn mount<R: Read + Seek>(
-    src: &mut R,
-    base: u64,
-    keys: &GtaViKeys,
-    resolver: &NameResolver,
-) -> Result<TableNode, String> {
-    let mut archive = open_at(src, base, keys).map_err(|e| e.to_string())?;
-    archive.resolve_names(resolver);
-    let extras = archive.entry_extras();
-    let rows = (archive.entries.iter().enumerate())
-        .map(|(at, e)| {
-            let absolute_start = e.start.map(|s| base + s);
-            let is_archive =
-                absolute_start.is_some_and(|off| magic_at(&mut *src, off) == Some(RPF9_MAGIC));
-            let nested_row = extras.get(at).is_some_and(|x| x.nested.is_some());
-            TableRow {
-                index: e.index,
-                name64: e.name64,
-                name32: e.name32,
-                name: e.name.clone(),
-                size: e.size(),
-                absolute_start,
-                is_archive,
-                cipher: e.cipher.is_some(),
-                kind: TableKind::of(is_archive, e.kind(), nested_row),
-            }
-        })
-        .collect();
-    Ok(TableNode {
-        key_id: archive.toc.key_id,
-        rows,
-        ..TableNode::default()
-    })
-}
-
-/// The 4-byte magic at `offset` in `src`, or `None` when it cannot be read.
-fn magic_at<R: Read + Seek>(src: &mut R, offset: u64) -> Option<u32> {
-    src.seek(SeekFrom::Start(offset)).ok()?;
-    let mut head = [0u8; 4];
-    src.read_exact(&mut head).ok()?;
-    Some(u32::from_le_bytes(head))
-}
-
-/// The archive at `path` listed from its table with `keys`, or, where no key is held or the table does
-/// not open, the one sentence that says it is listed by a scan instead.
-pub(crate) fn listing(
-    path: &Path,
-    keys: Result<&GtaViKeys, String>,
-    resolver: &NameResolver,
-) -> Result<TableNode, String> {
-    let scanned = |why: String| {
-        tr!(
-            "{file} is listed by a scan without its table: {why}",
-            file = file_name(path),
-            why = why
-        )
-    };
-    let keys = keys.map_err(scanned)?;
-    let mut file = File::open(path).map_err(|e| scanned(e.to_string()))?;
-    mount(&mut file, 0, keys, resolver).map_err(scanned)
-}
-
-/// The archive at `path` mounted from absolute `base`, with the keys and names the app holds.
-pub(crate) fn mount_file(path: &Path, base: u64) -> Result<TableNode, String> {
-    let keys = keys()?;
-    let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    mount(&mut file, base, &keys, &resolver())
 }
 
 /// Where the keys are loaded from: the executable that unmasks them and the snapshot the
@@ -274,66 +195,46 @@ impl TableFilter {
     }
 }
 
-/// What the open of each archive found of its table, by its path, until the app that opened it takes it.
-// ponytail: one map for the process; an open whose document never arrives leaves its entry behind.
-static OFFERS: Mutex<BTreeMap<PathBuf, Result<TableNode, String>>> = Mutex::new(BTreeMap::new());
-
-fn offers() -> MutexGuard<'static, BTreeMap<PathBuf, Result<TableNode, String>>> {
-    OFFERS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// On the load's worker, list the archive at `path` from its table for the explorer, or say why the
-/// scan lists it; nothing for a file that does not open with an RPF9 header.
-pub(in crate::state) fn offer(path: &Path) {
-    let mut head = [0u8; 4];
-    let rpf9 = File::open(path)
-        .and_then(|mut f| f.read_exact(&mut head))
-        .is_ok()
-        && u32::from_le_bytes(head) == RPF9_MAGIC;
-    if !rpf9 {
-        return;
-    }
-    // The resolver reads every harvested name, so a load with no key never builds it.
-    let listing = match keys() {
-        Ok(keys) => listing(path, Ok(&keys), &resolver()),
-        Err(why) => listing(path, Err(why), &NameResolver::new()),
-    };
-    offers().insert(path.to_path_buf(), listing);
-}
-
 impl crate::state::AppState {
-    /// Show each archive opened from disk in the archive explorer from its table, or say in a toast
-    /// that its scan lists it; an offer waits until its archive's tab is open in this app.
+    /// Share the already mounted tables with the archive explorer.
     pub(in crate::state) fn poll_table_opens(&mut self) {
-        let opened: Vec<PathBuf> = {
-            let offers = offers();
-            if offers.is_empty() {
-                return;
-            }
-            (offers.keys())
-                .filter(|path| {
-                    self.documents.iter().any(|d| {
-                        d.path.as_deref() == Some(path.as_path())
-                            && matches!(&d.payload, DocPayload::Rpf9(scan) if scan.start == 0)
-                    })
-                })
-                .cloned()
-                .collect()
-        };
-        for path in opened {
-            match offers().remove(&path) {
-                Some(Ok(node)) => {
-                    use crate::ui::panels::gta6_archive_tree as tree;
-                    self.panels
-                        .get::<tree::Gta6ArchiveExplorer>()
-                        .show_opened(path, node);
-                    let ws = crate::state::DocumentKind::Rpf9.info().workspace;
-                    self.workspace_docks.reveal(ws, tree::ID);
+        let mut paths = std::collections::BTreeSet::new();
+        for doc in &self.documents {
+            match &doc.payload {
+                DocPayload::Rpf9Table(table) => {
+                    paths.insert(table.path.clone());
                 }
-                Some(Err(why)) => self.show_info_toast(why),
-                None => {}
+                DocPayload::Rpf(rpf) => {
+                    for node in rpf.session.nodes.values() {
+                        if let crate::state::RpfNodeBacking::Rpf9Archive {
+                            table,
+                            owner: None,
+                            ..
+                        } = &node.backing
+                        {
+                            paths.insert(table.path.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let tables: Vec<_> = paths
+            .into_iter()
+            .filter_map(|path| self.mounted_rpf9_table(&path))
+            .collect();
+        let explorer = self
+            .panels
+            .get::<crate::ui::panels::gta6_archive_tree::Gta6ArchiveExplorer>();
+        for table in tables {
+            if !explorer.opened.contains(&table.path)
+                || (explorer.selected.as_deref() == Some(table.path.as_path())
+                    && explorer
+                        .table
+                        .as_ref()
+                        .is_none_or(|old| !Arc::ptr_eq(old, &table)))
+            {
+                explorer.show_table(table);
             }
         }
     }

@@ -415,7 +415,8 @@ fn draw_player(
             "Let the mover tracks move the model's root; off, the animation plays in place."
         ));
         let waiting = super::timeline::waiting_sets(resource, &external_sets(state, Some(doc_id), resource));
-        if !waiting.is_empty()
+        if !state.document(doc_id).is_some_and(crate::state::Document::is_from_rpf9_table)
+            && !waiting.is_empty()
             && ui
                 .button(tr!("Find the sets it names in the scan"))
                 .on_hover_text(tr!(

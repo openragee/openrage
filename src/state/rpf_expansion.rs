@@ -18,6 +18,7 @@ impl AppState {
         doc_id: DocumentId,
         node_id: RpfNodeId,
     ) -> Result<(), String> {
+        self.require_writable_rpf_row(doc_id, node_id)?;
         let Some(ExpansionRequest::Archive { source, crypto, .. }) =
             self.build_expansion_request(doc_id, node_id)
         else {
@@ -25,8 +26,8 @@ impl AppState {
         };
         match super::expander::open_archive(source, crypto) {
             Ok(resolved) => {
-                self.apply_archive_open(doc_id, node_id, resolved);
-                Ok(())
+                self.apply_archive_tree(doc_id, node_id, resolved)?;
+                self.require_writable_rpf_row(doc_id, node_id)
             }
             Err(error) => {
                 self.mark_archive_open_failed(doc_id, node_id, error.clone());
@@ -57,7 +58,10 @@ impl AppState {
             RpfNodeBacking::Archive { source, .. } => {
                 let crypto = Arc::clone(&rpf.session.crypto);
                 let source = match source {
-                    ArchiveSource::Disk(Some(p)) => WorkerArchiveSource::Disk(p.clone()),
+                    ArchiveSource::Disk(Some(p)) => self
+                        .mounted_rpf9_table(p)
+                        .map(|table| WorkerArchiveSource::Rpf9 { table, owner: None })
+                        .unwrap_or_else(|| WorkerArchiveSource::Disk(p.clone())),
                     ArchiveSource::Disk(None) => return None,
                     ArchiveSource::Nested {
                         opened: Some(archive),
@@ -79,6 +83,15 @@ impl AppState {
                     crypto,
                 })
             }
+            RpfNodeBacking::Rpf9Archive { table, owner, .. } => Some(ExpansionRequest::Archive {
+                doc_id,
+                node_id,
+                source: WorkerArchiveSource::Rpf9 {
+                    table: Arc::clone(table),
+                    owner: *owner,
+                },
+                crypto: Arc::clone(&rpf.session.crypto),
+            }),
             _ => None,
         }
     }
@@ -108,13 +121,9 @@ impl AppState {
                 } => {
                     match result {
                         Ok(resolved) => {
-                            self.apply_archive_open(doc_id, node_id, resolved);
-                        }
-                        // A GTA VI archive is refused by design and opens as a scan: the status
-                        // bar counts no warning for it.
-                        Err(error) if super::gta_vi::is_rpf9_refusal(&error) => {
-                            tracing::debug!(doc_id, node_id, "A GTA VI archive lists no entry");
-                            self.mark_archive_open_failed(doc_id, node_id, error);
+                            if let Err(error) = self.apply_archive_tree(doc_id, node_id, resolved) {
+                                self.mark_archive_open_failed(doc_id, node_id, error);
+                            }
                         }
                         Err(error) => {
                             tracing::warn!(doc_id, node_id, error = %error, "Archive open failed");
@@ -180,6 +189,46 @@ impl AppState {
             }
         }
         rpf.session.mark_scanned(node_id);
+    }
+
+    fn apply_archive_tree(
+        &mut self,
+        doc_id: DocumentId,
+        node_id: RpfNodeId,
+        resolved: ResolvedArchiveTree,
+    ) -> Result<(), String> {
+        match resolved {
+            ResolvedArchiveTree::Archive(resolved) => {
+                self.apply_archive_open(doc_id, node_id, resolved)
+            }
+            ResolvedArchiveTree::Rpf9 { table, owner, base } => {
+                let table = if owner.is_none() {
+                    self.share_rpf9_table(table)
+                } else {
+                    table
+                };
+                let Some(doc) = self.document_mut(doc_id) else {
+                    return Ok(());
+                };
+                let DocPayload::Rpf(rpf) = &mut doc.payload else {
+                    return Ok(());
+                };
+                if !rpf.session.needs_expansion(node_id) {
+                    return Ok(());
+                }
+                rpf.session
+                    .populate_rpf9_children(node_id, Arc::clone(&table), base)?;
+                if let Some(node) = rpf.session.node_mut(node_id) {
+                    node.backing = RpfNodeBacking::Rpf9Archive {
+                        table,
+                        owner,
+                        opened_base: Some(base),
+                        open_error: None,
+                    };
+                }
+            }
+        }
+        Ok(())
     }
 
     fn apply_archive_open(
@@ -272,16 +321,17 @@ impl AppState {
         let Some(node) = rpf.session.node_mut(node_id) else {
             return;
         };
-        if let RpfNodeBacking::Archive {
-            scanned,
-            open_error,
-            recovered_hint,
-            ..
-        } = &mut node.backing
-        {
-            let _ = scanned;
-            *open_error = Some(error);
-            *recovered_hint = None;
+        match &mut node.backing {
+            RpfNodeBacking::Archive {
+                open_error,
+                recovered_hint,
+                ..
+            } => {
+                *open_error = Some(error);
+                *recovered_hint = None;
+            }
+            RpfNodeBacking::Rpf9Archive { open_error, .. } => *open_error = Some(error),
+            _ => {}
         }
     }
 

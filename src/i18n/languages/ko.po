@@ -214,6 +214,9 @@ msgstr "대미지 및 힘"
 msgid "Declare another archetype in the type file shown, as a copy of the one selected (else the first plain one) under a name nobody holds yet; give it its real name and box in the selection. Undo takes it back"
 msgstr "표시된 타입 파일에 아키타입을 하나 더 선언합니다. 선택한 아키타입(없으면 처음 나오는 일반 아키타입)의 복사본이며, 아직 아무도 쓰지 않는 이름이 붙습니다. 실제 이름과 박스는 선택 항목에서 지정합니다. 실행 취소로 되돌릴 수 있습니다"
 
+msgid "Detected type: {kind}"
+msgstr "감지된 유형: {kind}"
+
 msgid "Did again: {what}"
 msgstr "다시 실행됨: {what}"
 
@@ -978,6 +981,12 @@ msgstr "오른쪽으로 회전"
 
 msgid "Turns"
 msgstr "회전"
+
+msgid "Two textures have the same name hash; this dictionary cannot be previewed."
+msgstr "두 텍스처의 이름 해시가 같아서 이 사전을 미리 볼 수 없습니다."
+
+msgid "Type (table): {kind}"
+msgstr "유형(테이블): {kind}"
 
 msgid "Undid: {what}"
 msgstr "실행 취소됨: {what}"
@@ -12600,8 +12609,6 @@ msgid_plural "{count} bodies of {archive}"
 msgstr[0] "{archive}의 본문 {count}개"
 msgstr[1] "{archive}의 본문 {count}개"
 
-msgid "This is a GTA VI archive (RPF9). Its table of contents and its names are encrypted and OpenRage has no key for them, so its entries cannot be listed by name."
-msgstr "GTA VI 아카이브(RPF9)입니다. 목차와 이름이 암호화되어 있고 OpenRage에는 이를 위한 키가 없으므로, 항목을 이름으로 나열할 수 없습니다."
 
 msgid "Its header says: {count} entry, a table of contents ending at byte {toc_end}, {names} bytes of names, {width}-byte entry indices, and the per-archive value {per_archive}, whose role is not known."
 msgid_plural "Its header says: {count} entries, a table of contents ending at byte {toc_end}, {names} bytes of names, {width}-byte entry indices, and the per-archive value {per_archive}, whose role is not known."
@@ -12611,8 +12618,6 @@ msgstr[1] "헤더 내용: 항목 {count}개, {toc_end} 바이트 위치에서 �
 msgid "The table's parts start at 0x40, {part_b} and {part_c}, and its index at {index}; its layout byte is {layout} and its index kind {kind}. Kind 1 indexes the entry rows alone; what the layout byte and the other kinds select is not known."
 msgstr "테이블의 각 부분은 0x40, {part_b}, {part_c}에서 시작하고 인덱스는 {index}에서 시작합니다. 레이아웃 바이트는 {layout}이고 인덱스 종류는 {kind}입니다. 종류 1은 항목 행만 인덱싱하며, 레이아웃 바이트와 다른 종류가 무엇을 선택하는지는 알 수 없습니다."
 
-msgid "its archives are RPF9, whose tables of contents are encrypted with a key OpenRage does not have, so none of them can be listed"
-msgstr "이 아카이브는 RPF9이며 목차가 OpenRage에 없는 키로 암호화되어 있으므로, 어떤 것도 나열할 수 없습니다"
 
 msgid "{folder} is {title}, which OpenRage does not support yet, so it was not opened as an install: {why}."
 msgstr "{folder}은(는) {title}이며 OpenRage가 아직 지원하지 않으므로 게임 설치로 열지 않았습니다: {why}."
@@ -12623,8 +12628,6 @@ msgstr "{folder}은(는) {title} 폴더로 보이지 않아 설정되지 않았�
 msgid "{folder} is {title}, which OpenRage does not support yet, so it is shown as a plain folder: {why}."
 msgstr "{folder}은(는) {title}이며 OpenRage가 아직 지원하지 않으므로 일반 폴더로 표시됩니다: {why}."
 
-msgid "{folder} is {title}. Its archives have no names OpenRage can read, so each opens as a scan of what it holds."
-msgstr "{folder}은(는) {title}입니다. 이 아카이브에는 OpenRage가 읽을 수 있는 이름이 없으므로, 각 아카이브는 담고 있는 내용의 스캔으로 열립니다."
 
 msgid "GTA VI Texture Pack"
 msgstr "GTA VI 텍스처 팩"
@@ -12753,11 +12756,7 @@ msgstr "이 아카이브 안에 중첩된 GTA VI 아카이브입니다. 헤더�
 msgid "This body starts with four zero bytes but has no 0DRP at 0x10, so what it is and which reader fits it are not known."
 msgstr "이 본문은 0 바이트 4개로 시작하지만 0x10에 0DRP가 없으므로, 무엇인지와 어떤 리더가 맞는지 알 수 없습니다."
 
-msgid "a GTA VI archive is scanned for the bodies stored in the clear and shown; OpenRage does not write one"
-msgstr "GTA VI 아카이브는 평문으로 저장된 본문을 찾기 위해 스캔되어 표시됩니다. OpenRage는 이를 기록하지 않습니다"
 
-msgid "a GTA VI archive opens from its own file, which is scanned a slice at a time"
-msgstr "GTA VI 아카이브는 자체 파일에서 열리며, 한 번에 슬라이스 하나씩 스캔합니다"
 
 msgid "Archive scan"
 msgstr "아카이브 스캔"
@@ -12765,11 +12764,7 @@ msgstr "아카이브 스캔"
 msgid "GTA VI Archive"
 msgstr "GTA VI 아카이브"
 
-msgid "RPF9 — a GTA VI archive, shown as what a scan without its table finds, read-only"
-msgstr "RPF9 — GTA VI 아카이브로, 테이블 없이 스캔하여 찾은 내용으로 표시되며 읽기 전용입니다"
 
-msgid "(read without names)"
-msgstr "(이름 없이 읽음)"
 
 msgid "Its first 64 bytes are zero, as a piece a download has not delivered reads, so whether it is an RPF9 archive and what its header states are not known; the bytes present are scanned."
 msgstr "처음 64바이트가 모두 0입니다. 다운로드가 전달하지 못한 조각이 그렇게 읽히므로, RPF9 아카이브인지와 헤더에 무엇이 지정되어 있는지 알 수 없습니다. 존재하는 바이트를 스캔합니다."
@@ -14774,8 +14769,6 @@ msgstr "기준 위치"
 msgid "XYZ over the geometry's reference positions as RGB; black where a vertex holds none"
 msgstr "지오메트리의 기준 위치를 RGB로 나타낸 XYZ. 버텍스에 기준 위치가 없으면 검은색"
 
-msgid "{why}\n\nIt opens as a scan of what it holds, in a tab of its own."
-msgstr "{why}\n\n담고 있는 내용의 스캔으로 열리며, 별도의 탭에 표시됩니다."
 
 msgid "A rule, an event or a behaviour was added, removed or renamed: a GTA VI particle list is written in place, so its rules stay as they are stored."
 msgstr "규칙, 이벤트 또는 동작이 추가, 제거 또는 이름 변경되었습니다: GTA VI 파티클 목록은 제자리에 기록되므로 규칙은 저장된 그대로 유지됩니다."
@@ -16894,6 +16887,73 @@ msgid_plural "the lights of {count} maps"
 msgstr[0] "맵 {count}개의 조명"
 msgstr[1] "맵 {count}개의 조명"
 
+msgid "The archive table could not be loaded."
+msgstr "아카이브 테이블을 불러오지 못했습니다."
+
+msgid "The archive changed on disk. Reopen it to read its table."
+msgstr "디스크의 아카이브가 변경되었습니다. 테이블을 읽으려면 다시 여세요."
+
+msgid "This entry does not describe a bounded nested archive."
+msgstr "이 항목은 유효한 범위를 가진 중첩 아카이브를 나타내지 않습니다."
+
+msgid "This nested archive is encrypted and cannot be expanded."
+msgstr "이 중첩 아카이브는 암호화되어 펼칠 수 없습니다."
+
+msgid "The archive nesting limit was reached."
+msgstr "아카이브 중첩 한도에 도달했습니다."
+
+msgid "Entries are listed from the archive table. Expand an archive to load its table."
+msgstr "항목은 아카이브 테이블에서 가져옵니다. 아카이브를 펼치면 해당 테이블을 불러옵니다."
+
+
+msgid "Loading archive table…"
+msgstr "아카이브 테이블을 불러오는 중…"
+
+msgid "Open as archive"
+msgstr "아카이브로 열기"
+
+msgid "Offset: {offset}"
+msgstr "위치: {offset}"
+
+msgid "Stored size: {size}"
+msgstr "저장 크기: {size}"
+
+msgid "a GTA VI archive is listed from its table and is read only; OpenRage does not write one"
+msgstr "GTA VI 아카이브는 테이블에서 목록을 읽으며 읽기 전용입니다. OpenRage는 이 아카이브를 쓰지 않습니다"
+
+msgid "a GTA VI archive opens from its own file using its encrypted table of contents"
+msgstr "GTA VI 아카이브는 암호화된 목차를 사용하여 자체 파일에서 엽니다"
+
+msgid "RPF9 — a GTA VI archive listed from its table, read-only"
+msgstr "RPF9 — 테이블에서 목록을 읽는 GTA VI 아카이브, 읽기 전용"
+
+msgid "This is a GTA VI archive (RPF9). Open it in its own tab to read its table with the GTA VI keys."
+msgstr "GTA VI 아카이브(RPF9)입니다. 별도 탭에서 열어 GTA VI 키로 테이블을 읽으세요."
+
+msgid "its RPF9 archives open individually from their tables; mounting a whole install is not supported yet"
+msgstr "RPF9 아카이브는 각 테이블에서 개별적으로 엽니다. 전체 설치를 마운트하는 기능은 아직 지원하지 않습니다"
+
+msgid "{folder} is {title}. Each archive opens from its table using the GTA VI keys."
+msgstr "{folder}은(는) {title}입니다. 각 아카이브는 GTA VI 키를 사용하여 테이블에서 엽니다."
+
+msgid "Archive table"
+msgstr "아카이브 테이블"
+
+msgid "(archive by archive)"
+msgstr "(아카이브별)"
+
+msgid "Find"
+msgstr "찾기"
+
+msgid "Encrypted"
+msgstr "암호화됨"
+
+msgid "Files are read from their table entries. Unsupported layouts are reported as errors."
+msgstr "파일은 테이블 항목에 따라 읽습니다. 지원하지 않는 구조는 오류로 표시됩니다."
+
+msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
+msgstr "이 파일은 RPF9 테이블에서 열렸으며 읽기 전용입니다. 별도 사본을 저장하려면 추출하세요."
+
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "이 문서의 문자열 이름에는 GTA VI 키 스냅샷이 필요합니다"
 
@@ -16945,9 +17005,6 @@ msgstr "미디어"
 msgid "other class"
 msgstr "기타 클래스"
 
-msgid "{file} is listed by a scan without its table: {why}"
-msgstr "{file}은(는) 테이블 없이 검사로 나열됩니다: {why}"
-
 msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
 msgstr "설정에서 GTA VI 폴더를 선택하거나 그 아카이브 하나를 열면 테이블에서 아카이브를 나열합니다."
 
@@ -16964,15 +17021,6 @@ msgid "Listed from its decrypted table: {count} entry, {named} of them named, un
 msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
 msgstr[0] "복호화한 테이블에서 나열됨: 항목 {count}개, 그중 {named}개에 이름이 있음, 테이블 키 {key}."
 msgstr[1] "복호화한 테이블에서 나열됨: 항목 {count}개, 그중 {named}개에 이름이 있음, 테이블 키 {key}."
-
-msgid "This entry's row states no start, so its body cannot be read."
-msgstr "이 항목의 행에 시작 위치가 없어 본문을 읽을 수 없습니다."
-
-msgid "Click to expand or collapse this nested archive, listed from its own table."
-msgstr "클릭하면 자체 테이블에서 나열되는 이 중첩된 아카이브를 펼치거나 접습니다."
-
-msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
-msgstr "클릭하면 미리 보기 탭에서 열고, 두 번 클릭하면 별도의 탭에 유지합니다. 암호화된 본문은 먼저 복호화됩니다."
 
 msgid "Extract to a file…"
 msgstr "파일로 추출…"
@@ -17009,15 +17057,6 @@ msgstr "쓰는 파일은 새 파일이며, 읽어 오는 아카이브에는 절�
 
 msgid "entry {index} is not in its table"
 msgstr "항목 {index}이(가) 해당 테이블에 없습니다"
-
-msgid "the entry's row states no start, so its body is not known"
-msgstr "항목의 행에 시작 위치가 없어 본문을 알 수 없습니다"
-
-msgid "a nested archive whose row states no stored size"
-msgstr "행에 저장 크기가 없는 중첩된 아카이브"
-
-msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
-msgstr "아카이브가 {stored}바이트 중첩 아카이브의 {copied}바이트 지점에서 끝납니다"
 
 msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
 msgstr "EDUP 본문: 0x04의 개수 워드는 {count}이며, 8바이트 헤더 뒤에 {length}바이트의 페이로드가 이어집니다."

@@ -21,6 +21,10 @@
 //! *middle* because, with the same-stem dictionary opened last, it passed under
 //! a resolver with no stem rule.
 
+#[path = "texture_resolution_lookup.rs"]
+mod lookup;
+use lookup::{fetch, holds};
+
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -293,7 +297,7 @@ pub fn resolve<'a>(
         .collect();
     for (index, candidate) in candidates.iter().enumerate() {
         let doc = state.document(candidate.document)?;
-        let Some(texture) = fetch(&doc.payload, name) else {
+        let Some(texture) = fetch(doc, name) else {
             continue;
         };
         let origin = origins.remove(index);
@@ -447,11 +451,11 @@ fn rank_candidates(state: &AppState, from: Option<MeshSource>, name: &str) -> Ve
             // ⚠ A dictionary the app opened for one model serves that model alone: left in the
             // ranking, the first model opened would supply the textures of every later one that
             // states a name it holds, and the later one's own dictionary would never open.
-            // The exceptions are what every vehicle shares, which serves each vehicle alike, and a
-            // GTA VI pack, whose 64-bit key names one texture.
+            // The exceptions are what every vehicle shares, which serves each vehicle alike, and GTA VI
+            // dictionaries and packs, whose 64-bit key names one texture.
             if rule > ResolutionRule::DetailVariant
                 && state.auto_opened_texture_docs.contains(&doc.id)
-                && !matches!(doc.payload, DocPayload::Ttpf(_))
+                && !super::ttpf_document::is_gta6(Some(doc))
                 && !(active.is_some_and(|a| a.kind == DocumentKind::Yft)
                     && is_shared_vehicle_dictionary(doc))
             {
@@ -467,35 +471,6 @@ fn rank_candidates(state: &AppState, from: Option<MeshSource>, name: &str) -> Ve
         .collect();
     out.sort_by_key(Candidate::sort_key);
     out
-}
-
-fn holds(asker: Option<&Document>, doc: &Document, name: &str) -> bool {
-    // ⚠ A scanned GTA VI dictionary reads as a Legacy one, and serves only a GTA VI asker.
-    let gta6 = super::ttpf_document::is_gta6;
-    if gta6(Some(doc)) && (!gta6(asker) || super::ttpf_document::refused(doc, name).is_some()) {
-        return false;
-    }
-    match &doc.payload {
-        DocPayload::Resource(or_io::Asset::TextureDict(dict)) => dict.get(name).is_some(),
-        DocPayload::Resource(or_io::Asset::TextureDictGen9(dict)) => {
-            textures::find_in_dictionary_g9(Some(dict), name).is_some_and(textures::decodes_g9)
-        }
-        payload => super::ttpf_document::holds(asker, payload, name),
-    }
-}
-
-fn fetch<'a>(payload: &'a DocPayload, name: &str) -> Option<textures::Texture<'a>> {
-    match payload {
-        DocPayload::Resource(or_io::Asset::TextureDict(dict)) => dict
-            .get(name)
-            .map(|t| textures::Texture::Owned(Cow::Borrowed(t))),
-        DocPayload::Resource(or_io::Asset::TextureDictGen9(dict)) => {
-            textures::find_in_dictionary_g9(Some(dict), name)
-                .filter(|t| textures::decodes_g9(t))
-                .map(|t| textures::Texture::Enhanced(Cow::Borrowed(t)))
-        }
-        _ => super::ttpf_document::fetch(payload, name),
-    }
 }
 
 fn document_label(doc: &Document) -> String {
@@ -1117,6 +1092,96 @@ mod tests {
             .documents
             .push(Document::new(id, Some(PathBuf::from(path)), payload));
         id
+    }
+
+    fn gta6_document(id: DocumentId, path: &str, payload: DocPayload) -> Document {
+        let mut doc = Document::new(id, Some(PathBuf::from(path)), payload);
+        doc.read_only = Some(crate::state::document::rpf9::entry::READ_ONLY);
+        doc
+    }
+
+    #[test]
+    fn a_gta6_dictionary_resolves_a_shader_key_before_its_name_is_learned() {
+        let name = "table_texture_not_learned";
+        let dict = gta6_document(1, "textures.rpf/defaults.ytd", dictionary(name));
+        let model = gta6_document(
+            2,
+            "data.rpf/model.ydr",
+            DocPayload::Resource(or_io::Asset::Drawable(Default::default())),
+        );
+        let key = or_io::gta6::hash::name_hash64(name.as_bytes());
+        for wanted in [format!("hash_{key:016X}"), name.to_ascii_uppercase()] {
+            assert!(holds(Some(&model), &dict, &wanted));
+            assert_eq!(
+                fetch(&dict, &wanted).expect("the key resolves").name(),
+                name
+            );
+        }
+        let missing = format!("hash_{:016X}", key ^ 1);
+        assert!(!holds(Some(&model), &dict, &missing));
+        assert!(fetch(&dict, &missing).is_none());
+    }
+
+    #[test]
+    fn gta6_and_gta5_dictionaries_do_not_supply_each_others_models() {
+        let gta5_dict = Document::new(1, None, dictionary("shared_name"));
+        let gta6_dict = gta6_document(2, "texture.ytd", dictionary("shared_name"));
+        let gta5_model = Document::new(
+            3,
+            None,
+            DocPayload::Resource(or_io::Asset::Drawable(Default::default())),
+        );
+        let gta6_model = gta6_document(
+            4,
+            "model.ydr",
+            DocPayload::Resource(or_io::Asset::Drawable(Default::default())),
+        );
+        assert!(holds(Some(&gta5_model), &gta5_dict, "shared_name"));
+        assert!(holds(Some(&gta6_model), &gta6_dict, "shared_name"));
+        assert!(!holds(Some(&gta5_model), &gta6_dict, "shared_name"));
+        assert!(!holds(Some(&gta6_model), &gta5_dict, "shared_name"));
+    }
+
+    #[test]
+    fn a_gta6_texture_does_not_match_a_32_bit_name_collision() {
+        let stored = "rpf9_texture_41144";
+        let other = "rpf9_texture_45400";
+        assert_eq!(
+            or_io::hash::string_hash_str(stored),
+            or_io::hash::string_hash_str(other)
+        );
+        assert_ne!(
+            or_io::gta6::hash::name_hash64(stored.as_bytes()),
+            or_io::gta6::hash::name_hash64(other.as_bytes())
+        );
+        let dict = gta6_document(1, "textures.ytd", dictionary(stored));
+        assert!(fetch(&dict, other).is_none());
+        assert_eq!(fetch(&dict, stored).expect("the exact key").name(), stored);
+    }
+
+    #[test]
+    fn an_automatically_opened_gta6_dictionary_serves_another_gta6_model() {
+        let mut state = AppState::new();
+        state.documents.push(gta6_document(
+            1,
+            "textures.rpf/defaults.ytd",
+            dictionary("external_default"),
+        ));
+        state.documents.push(gta6_document(
+            2,
+            "data.rpf/model.ydr",
+            DocPayload::Resource(or_io::Asset::Drawable(Default::default())),
+        ));
+        state.auto_opened_texture_docs.insert(1);
+        state.active_document = Some(2);
+        let key = or_io::gta6::hash::name_hash64(b"external_default");
+        let name = format!("hash_{key:016X}");
+        let outcome = probe(&state, None, None, &name);
+        let resolved = resolve(&state, None, None, &name).expect("the dictionary answers");
+        assert_eq!(outcome.found, Some(resolved.origin.clone()));
+        assert_eq!(resolved.origin.document, 1);
+        assert_eq!(resolved.origin.rule, ResolutionRule::AnyOpen);
+        assert_eq!(resolved.texture.name(), "external_default");
     }
 
     #[test]

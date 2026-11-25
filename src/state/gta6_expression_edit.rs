@@ -65,6 +65,9 @@ impl AppState {
         track: usize,
         id: u32,
     ) -> bool {
+        if self.document(doc).is_some_and(Document::is_from_rpf9_table) {
+            return false;
+        }
         let Some(DocPayload::Gta6Expressions(set)) = self.document(doc).map(|d| &d.payload) else {
             return false;
         };
@@ -131,6 +134,9 @@ impl AppState {
         label: String,
         change: impl FnOnce(&Expressions) -> Result<Expressions, AnimError>,
     ) -> bool {
+        if self.document(doc).is_some_and(Document::is_from_rpf9_table) {
+            return false;
+        }
         let Some(DocPayload::Gta6Expressions(set)) = self.document(doc).map(|d| &d.payload) else {
             return false;
         };
@@ -195,6 +201,24 @@ mod tests {
             }
             _ => panic!("an expression set"),
         }
+    }
+
+    #[test]
+    fn a_table_expression_set_refuses_id_and_track_edits() {
+        let _serial = crate::ui::theme::serial();
+        let mut state = AppState::new();
+        let path = "expressions.rpf/.rpf9-table/0/hash_expression.yed".into();
+        state.documents.push(Document::new(
+            1,
+            Some(path),
+            DocPayload::Gta6Expressions(Arc::new(set())),
+        ));
+        let original = ids(&state, 1);
+        assert!(!state.edit_gta6_expression_id(1, ExpressionGroup::Inputs, 0, 0xB1));
+        assert!(!state.add_gta6_expression_track(1, ExpressionGroup::Inputs, 0, 0xB2));
+        assert!(!state.remove_gta6_expression_track(1, ExpressionGroup::Inputs, 0));
+        assert_eq!(ids(&state, 1), original);
+        assert!(!state.document(1).unwrap().history.can_undo());
     }
 
     #[test]

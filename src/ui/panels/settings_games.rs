@@ -71,8 +71,8 @@ fn draw_game_row(ui: &mut egui::Ui, state: &mut AppState, game: Game) {
                 ui.colored_label(theme::SUCCESS, tr!("(active)"));
             }
             if !supported {
-                let (colour, note) = if crate::state::gta_vi::read_by_scan(game) {
-                    (theme::TEXT_SECONDARY, tr!("(read without names)"))
+                let (colour, note) = if crate::state::gta_vi::opens_archives_individually(game) {
+                    (theme::TEXT_SECONDARY, tr!("(archive by archive)"))
                 } else {
                     (theme::WARNING, tr!("(not readable yet)"))
                 };
@@ -124,7 +124,7 @@ fn draw_game_row(ui: &mut egui::Ui, state: &mut AppState, game: Game) {
                 }
             }
             if let (Some(dir), false) = (&path, supported) {
-                let label = if crate::state::gta_vi::read_by_scan(game) {
+                let label = if crate::state::gta_vi::opens_archives_individually(game) {
                     tr!("Open")
                 } else {
                     tr!("Open as a folder")

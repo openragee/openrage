@@ -11,6 +11,9 @@ pub(super) fn draw_scanned(ui: &mut egui::Ui, state: &mut AppState, doc_id: Docu
     let Some(lines) = crate::state::gta6_particles::scanned_lines(path) else {
         return;
     };
+    let table_entry = state
+        .document(doc_id)
+        .is_some_and(crate::state::Document::is_from_rpf9_table);
     let names_drawables = crate::state::gta6_particle_models::names_drawables(path);
     ui.separator();
     egui::CollapsingHeader::new(tr!("What the GTA VI list holds beyond this GTA V form"))
@@ -29,7 +32,7 @@ pub(super) fn draw_scanned(ui: &mut egui::Ui, state: &mut AppState, doc_id: Docu
                 });
         });
     let find = tr!("Find the drawables its model rules and mesh domains name in the open scans");
-    if names_drawables && ui.button(find).clicked() {
+    if !table_entry && names_drawables && ui.button(find).clicked() {
         if let Err(why) = state.find_gta6_particle_models(doc_id) {
             state.show_error_toast(why);
         }

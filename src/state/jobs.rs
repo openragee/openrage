@@ -38,6 +38,8 @@ pub enum JobKind {
     ProjectReopen,
     /// A GTA VI archive scanned for the bodies stored in the clear, a slice at a time.
     ArchiveScan,
+    /// A nested archive's table read when its row is expanded.
+    ArchiveTable,
     /// A GTA VI effect container read for the names of drawables' shaders.
     EffectsRead,
     /// The texture naming rules run over the names GTA VI drawables state.
@@ -82,6 +84,7 @@ impl JobKind {
             Self::ProjectImport => tr!("Project import"),
             Self::ProjectReopen => tr!("Import a pack"),
             Self::ArchiveScan => tr!("Archive scan"),
+            Self::ArchiveTable => tr!("Archive table"),
             Self::EffectsRead => tr!("GTA VI effects"),
             Self::TextureNames => tr!("GTA VI texture names"),
             Self::NeighbourCells => tr!("GTA VI neighbouring cells"),
@@ -194,6 +197,13 @@ impl AppState {
             _ => None,
         })
     }
+
+    fn archive_tables(&self) -> impl Iterator<Item = &super::document::rpf9::Rpf9TableDocument> {
+        self.documents.iter().filter_map(|doc| match &doc.payload {
+            super::DocPayload::Rpf9Table(table) => Some(&**table),
+            _ => None,
+        })
+    }
 }
 
 /// A path's last component, for a sentence that names a file.
@@ -230,10 +240,12 @@ impl AppState {
         .into_iter()
         .flatten()
         .chain(self.archive_scans().filter_map(|scan| scan.job()))
+        .chain(self.archive_tables().filter_map(|table| table.job()))
         .chain(self.archive_scans().filter_map(|scan| scan.effects_job()))
         .chain(super::gta6_effects::install_job())
         .chain(super::gta6_shaders::job())
         .chain(self.texture_naming_jobs())
+        .chain(self.rpf9_textures.job())
         .chain(self.neighbour_search_job())
         .chain(self.set_finding_jobs())
         .chain(self.map_search_jobs())
@@ -327,6 +339,10 @@ impl AppState {
                 running.iter().for_each(|scan| scan.stop());
                 !running.is_empty()
             }
+            JobKind::ArchiveTable => {
+                self.archive_tables().for_each(|table| table.stop());
+                true
+            }
             // ⚠ Its end is said once its worker sees the stop, by `poll_effects_reads`.
             JobKind::EffectsRead => {
                 self.archive_scans().for_each(|scan| scan.stop_effects());
@@ -337,6 +353,7 @@ impl AppState {
             // ⚠ Its end is said once its worker sees the stop, by `poll_texture_naming`.
             JobKind::TextureNames => {
                 self.stop_texture_naming();
+                self.rpf9_textures.stop();
                 false
             }
             // ⚠ Its end is said once its worker sees the stop, by `poll_neighbour_search`.
@@ -456,6 +473,7 @@ impl AppState {
 
     /// The per-frame tick of the jobs whose panels may not be drawn.
     pub fn poll_jobs(&mut self) {
+        self.archive_tables().for_each(|table| table.tree().poll());
         self.poll_defrag();
         self.poll_overlay_copy();
         self.poll_overlay_refresh();
@@ -470,6 +488,7 @@ impl AppState {
         self.poll_workbench();
         self.poll_effects_reads();
         self.poll_texture_naming();
+        self.poll_table_texture_dictionary();
         self.poll_neighbour_search();
         self.poll_set_finding();
         self.poll_map_search();

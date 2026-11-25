@@ -5,9 +5,9 @@
 //! (bits 16..24) and the mode (bits 24..32); `u0` is a byte offset from the cell to the entry's
 //! descriptors, which sit in a heap after the column group. Mode 3 (24-byte rows) packs two
 //! complemented 16-bit sizes, a running stored offset and a flag; mode 2 (20-byte rows) packs two
-//! 24-bit sizes in 16-byte units, the stored padding and a flag; mode 4 (inside nested archives)
-//! packs a 28-bit exact inflated size, a 24-bit stored size in 16-byte units, the stored padding and
-//! a flag. Chunks lie 16-aligned in the body.
+//! 24-bit sizes in 16-byte units, the stored padding and a flag. Mode 4 packs a 28-bit exact inflated
+//! size, a 24-bit stored size in 16-byte units, the padding and a flag on either row shape. Chunks
+//! lie 16-aligned in the body.
 
 use byteorder::{ByteOrder, LE};
 
@@ -35,7 +35,7 @@ pub struct Chunk {
     pub zlib: bool,
 }
 
-/// A decoded chunk table: its mode (3 on a 24-byte row, 2 or 4 on a nested entry's row) and its chunks.
+/// A decoded chunk table: its mode (2, 3 or 4) and its chunks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Table {
     pub mode: u8,
@@ -260,15 +260,20 @@ pub fn cell_offset(archive: &Gta6Archive, index: usize) -> Option<usize> {
     bytes.get(cell..cell + 8).map(|_| cell)
 }
 
-/// Entry `index`'s decoded chunk table, `None` when it has no `0xe0c1` row.
-pub fn entry_chunks(archive: &Gta6Archive, index: usize) -> Result<Option<Vec<Chunk>>> {
+/// Entry `index`'s decoded chunk table and mode, absent when it has no `0xe0c1` row.
+pub fn entry_table(archive: &Gta6Archive, index: usize) -> Result<Option<Table>> {
     let Some(at) = cell_offset(archive, index) else {
         return Ok(None);
     };
     let heap = &archive.toc.bytes[at..];
     let mut cell = [0u8; 8];
     cell.copy_from_slice(&heap[..8]);
-    decode(cell, heap).map(|t| Some(t.chunks))
+    decode(cell, heap).map(Some)
+}
+
+/// Entry `index`'s chunk descriptors, absent when it has no `0xe0c1` row.
+pub fn entry_chunks(archive: &Gta6Archive, index: usize) -> Result<Option<Vec<Chunk>>> {
+    entry_table(archive, index).map(|table| table.map(|table| table.chunks))
 }
 
 /// A two-entry archive whose entry 0 has its cell at 0x60, the head of `cell_and_heap`; entry 1 has none.

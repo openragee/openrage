@@ -142,7 +142,7 @@ fn draw_game_row(
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| match found {
                     Some(dir) => {
-                        let browsed = crate::state::gta_vi::read_by_scan(game);
+                        let browsed = crate::state::gta_vi::opens_archives_individually(game);
                         let mut open = ui.button(if profile.is_supported() || browsed {
                             tr!("Open")
                         } else {

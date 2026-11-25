@@ -22,7 +22,7 @@ pub(super) const REPLACE_TEXTURE_FROM_IMAGE: Spec = Spec {
         focused: texture_target,
         enabled: |state, target| match target {
             Target::Texture { doc, name } => state.bound_texture_pack(*doc, name).map(|_| ()),
-            Target::Document(doc) => own_texture(state, *doc).map(|_| ()),
+            Target::Document(doc) => editable_texture(state, *doc).map(|_| ()),
             _ => Err(crate::i18n::tr(NO_TEXTURE)),
         },
         label: None,
@@ -37,7 +37,7 @@ pub(super) const REPLACE_TEXTURE_FROM_IMAGE: Spec = Spec {
             }
             Target::Document(doc) => {
                 use crate::ui::panels::texture_preview::replace_from_image;
-                if let Ok((name, source)) = own_texture(state, *doc) {
+                if let Ok((name, source)) = editable_texture(state, *doc) {
                     replace_from_image(state, *doc, source, &name, None);
                 }
             }
@@ -146,6 +146,21 @@ fn own_texture(
 ) -> Result<(String, textures::TextureSource), &'static str> {
     crate::ui::panels::texture_preview::selected_texture(state, doc)
         .ok_or(tr!("Select a texture first"))
+}
+
+fn editable_texture(
+    state: &AppState,
+    doc: DocumentId,
+) -> Result<(String, textures::TextureSource), &'static str> {
+    let document = state
+        .document(doc)
+        .ok_or(tr!("That document is no longer open"))?;
+    if !crate::state::gta6_edit::is_scanned_dictionary(document) {
+        if let Some(why) = document.read_only {
+            return Err(crate::i18n::tr(why));
+        }
+    }
+    own_texture(state, doc)
 }
 
 /// The texture selected in the active document, where that is a GTA VI model.

@@ -5,6 +5,7 @@ mod kind_name;
 mod location;
 mod material_baseline;
 mod payload;
+pub(crate) use crate::state::rpf9_scan::rpf9_table_document as rpf9;
 mod text;
 
 pub use kind::{DocumentKind, TEXT_DOCUMENT_EXTENSIONS};
@@ -92,6 +93,7 @@ pub struct Document {
     pub kind: DocumentKind,
     pub payload: DocPayload,
     pub rpf_entry_binding: Option<RpfEntryBinding>,
+    pub rpf9_source: Option<rpf9::entry::EntrySource>,
     pub dirty: bool,
     /// The workspace this document was in front of last, which its tab brings back.
     pub seen_in: Option<crate::ui::dock::Workspace>,
@@ -120,6 +122,10 @@ impl Document {
             .unwrap_or(tr!("Untitled"))
             .to_string();
 
+        let read_only = path
+            .as_deref()
+            .filter(|path| rpf9::entry::is_entry(path))
+            .map(|_| rpf9::entry::READ_ONLY);
         Self {
             id,
             path,
@@ -127,9 +133,10 @@ impl Document {
             kind,
             payload,
             rpf_entry_binding: None,
+            rpf9_source: None,
             dirty: false,
             seen_in: None,
-            read_only: None,
+            read_only,
             resource: None,
             patched: false,
             unread: false,
@@ -140,6 +147,10 @@ impl Document {
             rebuild: Default::default(),
             history: Default::default(),
         }
+    }
+
+    pub fn is_from_rpf9_table(&self) -> bool {
+        self.rpf9_source.is_some() || self.read_only == Some(rpf9::entry::READ_ONLY)
     }
 
     pub fn edit_epoch(&self) -> u64 {

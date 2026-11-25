@@ -11,6 +11,7 @@
 //! bytes up front instead would put a whole archive in memory before writing
 //! the first file.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
@@ -18,7 +19,7 @@ use std::sync::Arc;
 
 use or_io::container::rpf::{BodyForm, RpfArchive};
 use or_io::container::RpfEntryKind;
-use or_job::{Cancel, Progress, Report, Snapshot, Step};
+use or_job::{Cancel, Progress, Report, Snapshot};
 use or_title::vfs::ArchiveDevice;
 
 use super::document::{DocumentId, RpfNodeId};
@@ -29,6 +30,9 @@ use super::prefs::ExportFixes;
 use super::rpf_node::RpfNodeBacking;
 use super::rpf_session::RpfEditSession;
 use super::{AppState, DocPayload, GateOutcome, PendingRetailEdit, PendingRetailEditPrompt};
+
+mod run;
+pub use run::run_extraction;
 
 /// Which extensions an extraction is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +71,8 @@ enum ExtractSource {
         entry_index: u32,
         kind: RpfEntryKind,
     },
+    Rpf9Table(Arc<super::document::rpf9::entry::EntrySource>),
+    Failed(String),
     Disk(PathBuf),
     Bytes(Arc<Vec<u8>>),
     /// A body a scan of the GTA VI archive at `archive` found at `offset`.
@@ -134,6 +140,14 @@ impl ExtractItem {
         Self { rel_path, source }
     }
 
+    /// An RPF9 table entry decoded progressively on the worker.
+    pub(super) fn rpf9(source: super::document::rpf9::entry::EntrySource) -> Self {
+        Self {
+            rel_path: source.name.clone(),
+            source: ExtractSource::Rpf9Table(Arc::new(source)),
+        }
+    }
+
     /// `bytes`, written as `rel_path`.
     pub(super) fn bytes(rel_path: String, bytes: Vec<u8>) -> Self {
         let source = ExtractSource::Bytes(Arc::new(bytes));
@@ -169,6 +183,8 @@ impl ExtractItem {
                 edit,
             } => super::gta6_edit::written(archive, *offset, &**edit),
             ExtractSource::Written(write) => write(),
+            ExtractSource::Rpf9Table(source) => source.bytes(),
+            ExtractSource::Failed(error) => Err(error.clone()),
             ExtractSource::Archive {
                 device,
                 entry_index,
@@ -185,6 +201,9 @@ impl ExtractItem {
             ExtractSource::Archive { device, .. } => {
                 archive_file(device.archive()).map(Path::to_path_buf)
             }
+            ExtractSource::Rpf9Table(source) => {
+                super::document::rpf9::entry::archive_path(&source.path).map(Path::to_path_buf)
+            }
             _ => None,
         }
     }
@@ -192,7 +211,8 @@ impl ExtractItem {
     /// What an export writes: OpenRage's canonical form when `fixes` and the form is decoded, else the bytes as they are.
     pub(super) fn export_bytes(&self, form: BodyForm, fixes: bool) -> Result<Vec<u8>, String> {
         let bytes = self.read(form)?;
-        if !fixes || form != BodyForm::Decoded {
+        if !fixes || form != BodyForm::Decoded || matches!(self.source, ExtractSource::Rpf9Table(_))
+        {
             return Ok(bytes);
         }
         let Some((canonical, repairs)) = canonical_form_repairing(&self.rel_path, &bytes) else {
@@ -215,7 +235,10 @@ fn canonicalising_alters(items: &[ExtractItem], form: BodyForm) -> bool {
     form == BodyForm::Decoded
         && items
             .iter()
-            .filter(|item| has_canonical_form(&item.rel_path))
+            .filter(|item| {
+                !matches!(item.source, ExtractSource::Rpf9Table(_))
+                    && has_canonical_form(&item.rel_path)
+            })
             .any(|item| {
                 item.read(form).is_ok_and(|bytes| {
                     canonical_form(&item.rel_path, &bytes).is_some_and(|c| c != bytes)
@@ -234,9 +257,10 @@ pub fn plan(session: &RpfEditSession, node_id: RpfNodeId, filter: &TypeFilter) -
     // A single file lands at its own name rather than under a directory the
     // user did not name.
     if !node.is_dir() {
+        let name = node.display_name();
         return match source_for(session, node_id) {
-            Some(source) if filter.admits(&node.name) => vec![ExtractItem {
-                rel_path: sanitise(&node.name),
+            Some(source) if filter.admits(&name) => vec![ExtractItem {
+                rel_path: sanitise(&name),
                 source,
             }],
             _ => out,
@@ -263,7 +287,7 @@ pub fn plan_selection(
     filter: &TypeFilter,
 ) -> (Vec<ExtractItem>, usize) {
     if let [only] = nodes {
-        return (plan(session, *only, filter), 0);
+        return unique_paths(plan(session, *only, filter));
     }
     plan_named_rows(session, nodes, filter)
 }
@@ -294,19 +318,27 @@ pub fn plan_named_rows(
         if inside_another(id) {
             continue;
         }
-        let name = sanitise(&node.name);
+        let name = if node.is_dir() {
+            Cow::Borrowed(node.name.as_str())
+        } else {
+            node.display_name()
+        };
         if node.is_dir() {
-            collect(session, id, &name, filter, &mut planned);
-        } else if filter.admits(&node.name) {
+            collect(session, id, &sanitise(&name), filter, &mut planned);
+        } else if filter.admits(&name) {
             if let Some(source) = source_for(session, id) {
                 planned.push(ExtractItem {
-                    rel_path: name,
+                    rel_path: sanitise(&name),
                     source,
                 });
             }
         }
     }
 
+    unique_paths(planned)
+}
+
+fn unique_paths(mut planned: Vec<ExtractItem>) -> (Vec<ExtractItem>, usize) {
     let mut claimed = std::collections::HashSet::new();
     let before = planned.len();
     planned.retain(|item| claimed.insert(item.rel_path.to_ascii_lowercase()));
@@ -325,17 +357,22 @@ fn collect(
         let Some(child) = session.node(child_id) else {
             continue;
         };
-        let name = sanitise(&child.name);
-        let path = if prefix.is_empty() {
-            name
+        let name = if child.is_dir() {
+            Cow::Borrowed(child.name.as_str())
         } else {
-            format!("{prefix}/{name}")
+            child.display_name()
+        };
+        let safe_name = sanitise(&name);
+        let path = if prefix.is_empty() {
+            safe_name
+        } else {
+            format!("{prefix}/{safe_name}")
         };
         if child.is_dir() {
             collect(session, child_id, &path, filter, out);
             continue;
         }
-        if !filter.admits(&child.name) {
+        if !filter.admits(&name) {
             continue;
         }
         if let Some(source) = source_for(session, child_id) {
@@ -373,6 +410,10 @@ pub(super) fn sanitise(name: &str) -> String {
 fn source_for(session: &RpfEditSession, node_id: RpfNodeId) -> Option<ExtractSource> {
     let node = session.node(node_id)?;
     match &node.backing {
+        RpfNodeBacking::Rpf9File { table, base, index } => Some(match table.entry(*base, *index) {
+            Ok(source) => ExtractSource::Rpf9Table(Arc::new(source)),
+            Err(error) => ExtractSource::Failed(error),
+        }),
         RpfNodeBacking::InMemoryFile { bytes } => Some(ExtractSource::Bytes(Arc::clone(bytes))),
         RpfNodeBacking::DiskFile {
             fs_path,
@@ -452,7 +493,9 @@ pub fn extension_census(session: &RpfEditSession, node_id: RpfNodeId) -> Vec<(St
             stack.extend(session.children_of(id));
             continue;
         }
-        *counts.entry(extension_of(&node.name)).or_default() += 1;
+        *counts
+            .entry(extension_of(&node.display_name()))
+            .or_default() += 1;
     }
     let mut out: Vec<(String, usize)> = counts.into_iter().collect();
     out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -481,74 +524,6 @@ pub(super) fn kept_copy(target: &Path) -> PathBuf {
         .map(|n| target.with_file_name(format!("{stem} ({n}){ext}")))
         .find(|candidate| std::fs::symlink_metadata(candidate).is_err())
         .unwrap_or_else(|| target.to_path_buf())
-}
-
-/// Write every item under `dest`, counting what fails and stopping when asked.
-///
-/// ⚠ Runs on a worker and touches no app state, which is why it is a free
-/// function taking everything it needs.
-pub fn run_extraction(
-    items: Vec<ExtractItem>,
-    dest: PathBuf,
-    form: BodyForm,
-    fixes: bool,
-    on_clash: OnClash,
-    cancel: Cancel,
-    progress: Progress,
-) -> Report {
-    // ⚠ A save of several files, such as a cell and the neighbours whose links it renumbered,
-    // writes none of them unless every one is made: a part written names records the rest lack.
-    let (items, fixes) = match on_clash {
-        OnClash::Save if items.len() > 1 => {
-            let made: Result<Vec<ExtractItem>, String> = (items.into_iter())
-                .map(|i| match i.export_bytes(form, fixes) {
-                    Ok(bytes) => Ok(ExtractItem::bytes(i.rel_path, bytes)),
-                    Err(e) => Err(format!("{}: {e}", i.rel_path)),
-                })
-                .collect();
-            match made {
-                Ok(made) => (made, false),
-                Err(e) => return or_job::run([e], &cancel, &progress, Step::Failed),
-            }
-        }
-        _ => (items, fixes),
-    };
-    or_job::run(items, &cancel, &progress, |item| {
-        progress.now_on(item.rel_path.clone());
-        let mut target = dest.join(&item.rel_path);
-        if std::fs::symlink_metadata(&target).is_ok() {
-            match on_clash {
-                OnClash::Replace | OnClash::Save => {}
-                OnClash::Skip => return Step::Skipped,
-                OnClash::KeepBoth => target = kept_copy(&target),
-            }
-        }
-        if let Some(parent) = target.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                return Step::Failed(format!("{}: {e}", parent.display()));
-            }
-        }
-        // A scanned body its list gave an end is copied as a range, never held whole.
-        if let (ExtractSource::Scanned { archive, offset }, false) =
-            (&item.source, on_clash == OnClash::Save)
-        {
-            let copy = super::gta6_first_entry::copied;
-            if let Some(step) = copy(archive, *offset, &target, &item.rel_path, &cancel) {
-                return step;
-            }
-        }
-        let write = |bytes: &[u8]| match on_clash {
-            OnClash::Save => super::document_io::atomic_write_with_backup(&target, bytes),
-            _ => std::fs::write(&target, bytes),
-        };
-        match item.export_bytes(form, fixes) {
-            Ok(bytes) => match write(&bytes) {
-                Ok(()) => Step::Done(bytes.len() as u64),
-                Err(e) => Step::Failed(format!("{}: {e}", item.rel_path)),
-            },
-            Err(e) => Step::Failed(format!("{}: {e}", item.rel_path)),
-        }
-    })
 }
 
 /// The one extraction the editor has in flight, if any.
@@ -924,11 +899,14 @@ impl AppState {
             .iter()
             .filter_map(|item| match &item.source {
                 ExtractSource::Archive { device, .. } => archive_file(device.archive()),
+                ExtractSource::Rpf9Table(source) => {
+                    super::document::rpf9::entry::archive_path(&source.path)
+                }
                 ExtractSource::Disk(path) => Some(path.as_path()),
                 ExtractSource::Scanned { archive, .. } => Some(archive.as_path()),
                 ExtractSource::Edited { archive, .. } => Some(archive.as_path()),
                 ExtractSource::Bytes(_) | ExtractSource::Sections(_) => None,
-                ExtractSource::Written(_) => None,
+                ExtractSource::Written(_) | ExtractSource::Failed(_) => None,
             })
             .collect::<std::collections::HashSet<&Path>>()
             .into_iter()
@@ -1350,6 +1328,170 @@ mod tests {
         let mut paths: Vec<&str> = items.iter().map(|i| i.rel_path.as_str()).collect();
         paths.sort_unstable();
         paths
+    }
+
+    fn rpf9_export_session(
+        names: &[(Option<&str>, u8)],
+    ) -> (tempfile::TempDir, RpfEditSession, RpfNodeId) {
+        use or_io::container::rpf::{GtaViKeys, Rpf9Builder, Rpf9Toc, GROUP_NAME64};
+        use or_io::gta6::hash::name_hash64;
+
+        let key_bytes = or_test_support::rpf9::keys();
+        let keys = GtaViKeys::parse(&key_bytes).unwrap();
+        let paths: Vec<_> = names
+            .iter()
+            .enumerate()
+            .map(|(index, (name, _))| {
+                let fallback = format!("rpf9-export-{index}");
+                let hash = name_hash64(name.unwrap_or(&fallback).as_bytes());
+                let raw = name
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("hash_{hash:016x}"));
+                (format!("nested/{raw}"), hash)
+            })
+            .collect();
+        let files: Vec<_> = paths
+            .iter()
+            .map(|(path, _)| (path.as_str(), b"".as_slice()))
+            .collect();
+        let mut session = session_with(&files);
+        let folder = id_of(&session, "nested");
+        let dir = tempfile::tempdir().unwrap();
+        for (index, ((name, class), (node_path, hash))) in names.iter().zip(&paths).enumerate() {
+            let mut bytes = Rpf9Builder::serialize(
+                &Rpf9Toc {
+                    bytes: or_test_support::rpf9::chunked_table(*class, &[(16, 16, false)]),
+                    key_id: 0,
+                    registry_id: 0,
+                    entry_count: 0,
+                    groups: Vec::new(),
+                },
+                &keys,
+            )
+            .unwrap();
+            let mut toc = Rpf9Toc::decrypt(&bytes, &keys).unwrap();
+            let column = toc
+                .groups
+                .iter()
+                .find(|group| group.name_hash == GROUP_NAME64)
+                .unwrap()
+                .data
+                .clone();
+            toc.bytes[column].copy_from_slice(&hash.to_le_bytes());
+            bytes = Rpf9Builder::serialize(&toc, &keys).unwrap();
+            bytes.resize(0x1010, 0);
+            let path = dir.path().join(format!("synthetic-{index}.rpf"));
+            std::fs::write(&path, bytes).unwrap();
+            let table = Arc::new(
+                super::super::document::rpf9::Rpf9TableDocument::open_using(&path, || {
+                    Ok(GtaViKeys::parse(&key_bytes).unwrap())
+                })
+                .unwrap()
+                .unwrap(),
+            );
+            {
+                let mut tree = table.tree();
+                let entry = &mut tree.nodes.get_mut(&0).unwrap().mount.archive.entries[0];
+                entry.name = name.map(str::to_owned);
+            }
+            if index == 0 {
+                session.node_mut(folder).unwrap().backing = RpfNodeBacking::Rpf9Archive {
+                    table: Arc::clone(&table),
+                    owner: None,
+                    opened_base: Some(0),
+                    open_error: None,
+                };
+            }
+            let id = id_of(&session, node_path);
+            session.node_mut(id).unwrap().backing = RpfNodeBacking::Rpf9File {
+                table,
+                base: 0,
+                index: 0,
+            };
+        }
+        (dir, session, folder)
+    }
+
+    #[test]
+    fn rpf9_export_names_and_type_filters_use_confirmed_extensions() {
+        let (dir, mut session, folder) = rpf9_export_session(&[
+            (None, 5),
+            (Some("models/prop"), 2),
+            (Some("maps/city"), 73),
+            (Some("ready.YTD"), 5),
+        ]);
+        let hash = format!(
+            "hash_{:016x}",
+            or_io::gta6::hash::name_hash64(b"rpf9-export-0")
+        );
+        let file = id_of(&session, &format!("nested/{hash}"));
+        let identity = session.node(file).unwrap().rpf9_entry().unwrap();
+        let texture = format!("{hash}.ytd");
+        for filter in [TypeFilter::All, TypeFilter::Only(vec!["ytd".into()])] {
+            let (items, collided) = plan_selection(&session, &[file], &filter);
+            assert_eq!(collided, 0);
+            assert_eq!(planned_paths(&items), [texture.as_str()]);
+            assert!(matches!(items[0].source, ExtractSource::Rpf9Table(_)));
+        }
+        let (items, collided) = plan_selection(&session, &[folder], &TypeFilter::All);
+        assert_eq!(collided, 0);
+        assert_eq!(
+            planned_paths(&items),
+            [
+                texture.as_str(),
+                "maps/city.ymap",
+                "models/prop.ydr",
+                "ready.YTD"
+            ]
+        );
+        let ytd = TypeFilter::Only(vec!["ytd".into()]);
+        let (items, collided) = plan_named_rows(&session, &[folder, file], &ytd);
+        assert_eq!(collided, 0, "a selected descendant is exported once");
+        let nested_texture = format!("nested/{texture}");
+        assert_eq!(
+            planned_paths(&items),
+            [nested_texture.as_str(), "nested/ready.YTD"]
+        );
+        assert_eq!(
+            extension_census(&session, folder),
+            [("ytd".into(), 2), ("ydr".into(), 1), ("ymap".into(), 1)]
+        );
+        assert_eq!(session.node(file).unwrap().name, hash);
+        assert_eq!(session.node(file).unwrap().rpf9_entry(), Some(identity));
+        assert_eq!(session.node(folder).unwrap().name, "nested");
+        for hostile in ["../../escaped", "..", "C:\\outside\\evil", "/etc/passwd"] {
+            session.node_mut(file).unwrap().name = hostile.into();
+            let items = plan(&session, file, &TypeFilter::All);
+            let relative = Path::new(&items[0].rel_path);
+            assert_eq!(relative.extension().unwrap(), "ytd");
+            assert_eq!(relative.components().count(), 1);
+            assert!(relative
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_))));
+        }
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            4,
+            "planning writes no extracted files"
+        );
+    }
+
+    #[test]
+    fn rpf9_export_collisions_are_counted_for_one_folder_and_several_rows() {
+        let (_dir, session, folder) =
+            rpf9_export_session(&[(Some("texture"), 5), (Some("TEXTURE.ytd"), 5)]);
+        let first = id_of(&session, "nested/texture");
+        let second = id_of(&session, "nested/TEXTURE.ytd");
+        for nodes in [vec![folder], vec![first, second]] {
+            let (items, collided) = plan_selection(&session, &nodes, &TypeFilter::All);
+            assert_eq!(collided, 1);
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].rel_path.to_ascii_lowercase(), "texture.ytd");
+        }
+        let (items, collided) = plan_named_rows(&session, &[folder], &TypeFilter::All);
+        assert_eq!(collided, 1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].rel_path.to_ascii_lowercase(), "nested/texture.ytd");
     }
 
     #[test]

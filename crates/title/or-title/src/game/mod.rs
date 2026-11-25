@@ -153,7 +153,7 @@ mod tests {
         );
         assert!(
             !Game::GtaVI.profile().is_supported(),
-            "RPF9 tables are ciphertext with no key source"
+            "RPF9 archives open individually; the install is browsed as a plain folder"
         );
     }
 

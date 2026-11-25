@@ -522,6 +522,29 @@ pub(crate) fn refused(doc: &Document, name: &str) -> Option<String> {
 /// The engine's image type of a volume texture.
 pub(super) const VOLUME_IMAGE: u8 = 3;
 
+/// A completely readable table dictionary projected into the texture preview without changing its source bytes.
+pub(super) fn table_textures(dict: Dictionary) -> Result<DocPayload, String> {
+    let mut dictionary = PgDictionary::<GrcTexture>::default();
+    for (_, entry) in dict.entries {
+        let Entry::Texture(t) = entry.map_err(|error| error.to_string())? else {
+            return Err(tr!("That file is not a texture dictionary").to_string());
+        };
+        let mut texture = grc(t.name, t.texture.map_err(|error| error.to_string())?)?;
+        texture.image_type = match t.dimension {
+            2 => 1,
+            3 => VOLUME_IMAGE,
+            _ => 0,
+        };
+        if dictionary.insert(texture).is_some() {
+            return Err(tr!(
+                "Two textures have the same name hash; this dictionary cannot be previewed."
+            )
+            .to_string());
+        }
+    }
+    Ok(DocPayload::Resource(or_io::Asset::TextureDict(dictionary)))
+}
+
 /// A scanned dictionary of textures, read from `path`, as a Legacy texture dictionary: each
 /// texture that reads, and each that does not as its name with no pixels, its reason kept for
 /// [`refused`]. `None` where an entry is no texture or none reads, which opens as the facts its
@@ -670,10 +693,11 @@ pub(super) fn holds(asker: Option<&Document>, payload: &DocPayload, name: &str) 
     }
 }
 
-/// Whether `doc` is a GTA VI document: a pack, a scanned body or a GTA VI animation.
-pub(super) fn is_gta6(doc: Option<&Document>) -> bool {
+/// Whether `doc` is a GTA VI document: a pack, a table entry, a scanned body or a GTA VI animation.
+pub(crate) fn is_gta6(doc: Option<&Document>) -> bool {
     doc.is_some_and(|doc| {
         doc.read_only == Some(super::rpf9_scan::READ_ONLY_BODY)
+            || doc.read_only == Some(super::document::rpf9::entry::READ_ONLY)
             || matches!(
                 doc.payload,
                 DocPayload::Ttpf(_) | DocPayload::Gta6Drawable(_) | DocPayload::Gta6Anim(_)

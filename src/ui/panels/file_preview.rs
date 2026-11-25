@@ -36,7 +36,7 @@ fn key_of(state: &AppState, doc: DocumentId, node: RpfNodeId) -> Option<PreviewK
         doc,
         node,
         rpf.session.size_for(node),
-        row.name.clone(),
+        row.display_name().into_owned(),
         row.children.len(),
     ))
 }
@@ -121,7 +121,8 @@ pub fn draw_for(
 
 /// The facts the pane lists over the body: the row's columns that apply, and where it is.
 fn facts_of(preview: &EntryPreview, facts: Option<&RowFacts>) -> Vec<(&'static str, String)> {
-    let mut out = vec![(tr!("Type"), preview.kind.clone())];
+    let kind = facts.map_or(&preview.kind, |facts| &facts.kind);
+    let mut out = vec![(tr!("Type"), kind.clone())];
     if let Some(size) = preview.size {
         out.push((
             tr!("Size"),
@@ -142,6 +143,10 @@ fn facts_of(preview: &EntryPreview, facts: Option<&RowFacts>) -> Vec<(&'static s
         if let Some(encryption) = facts.encryption {
             out.push((tr!("Encryption"), encryption.to_string()));
         }
+        if let Some((index, hash)) = facts.rpf9_entry {
+            out.push((tr!("Entry"), index.to_string()));
+            out.push((tr!("Hash"), format!("0x{hash:016X}")));
+        }
         match (facts.edition, facts.version) {
             (Some(edition), Some(version)) => out.push((
                 tr!("Edition"),
@@ -152,6 +157,7 @@ fn facts_of(preview: &EntryPreview, facts: Option<&RowFacts>) -> Vec<(&'static s
                 ),
             )),
             (None, Some(version)) => out.push((tr!("Version"), version.to_string())),
+            (Some(edition), None) => out.push((tr!("Edition"), edition.to_string())),
             _ => {}
         }
     }
@@ -263,6 +269,13 @@ fn draw_body(
                         count = head.len()
                     ),
                 );
+            }
+        }
+        PreviewBody::Open => {
+            if ui.button(tr!("Open")).clicked() {
+                if let Some((doc, node)) = target {
+                    state.open_rpf_entry(doc, node);
+                }
             }
         }
         PreviewBody::TooLarge => dim(

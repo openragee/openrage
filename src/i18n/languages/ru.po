@@ -214,6 +214,9 @@ msgstr "Урон и сила"
 msgid "Declare another archetype in the type file shown, as a copy of the one selected (else the first plain one) under a name nobody holds yet; give it its real name and box in the selection. Undo takes it back"
 msgstr "Объявить ещё один архетип в показанном файле типов как копию выбранного (иначе первого простого) под именем, которого пока нет ни у кого; настоящее имя и бокс ему можно задать в выделении. Команда «Отменить» вернёт прежнее состояние"
 
+msgid "Detected type: {kind}"
+msgstr "Обнаруженный тип: {kind}"
+
 msgid "Did again: {what}"
 msgstr "Повторено: {what}"
 
@@ -978,6 +981,12 @@ msgstr "Повёрнуто вправо"
 
 msgid "Turns"
 msgstr "Повороты"
+
+msgid "Two textures have the same name hash; this dictionary cannot be previewed."
+msgstr "У двух текстур совпадает хеш имени; предпросмотр этого словаря недоступен."
+
+msgid "Type (table): {kind}"
+msgstr "Тип (таблица): {kind}"
 
 msgid "Undid: {what}"
 msgstr "Отменено: {what}"
@@ -12652,8 +12661,6 @@ msgstr[0] "{count} тело из {archive}"
 msgstr[1] "{count} тела из {archive}"
 msgstr[2] "{count} тел из {archive}"
 
-msgid "This is a GTA VI archive (RPF9). Its table of contents and its names are encrypted and OpenRage has no key for them, so its entries cannot be listed by name."
-msgstr "Это архив GTA VI (RPF9). Его оглавление и имена зашифрованы, а ключа к ним у OpenRage нет, поэтому записи архива нельзя перечислить по именам."
 
 msgid "Its header says: {count} entry, a table of contents ending at byte {toc_end}, {names} bytes of names, {width}-byte entry indices, and the per-archive value {per_archive}, whose role is not known."
 msgid_plural "Its header says: {count} entries, a table of contents ending at byte {toc_end}, {names} bytes of names, {width}-byte entry indices, and the per-archive value {per_archive}, whose role is not known."
@@ -12664,8 +12671,6 @@ msgstr[2] "Заголовок сообщает: {count} записей, огла
 msgid "The table's parts start at 0x40, {part_b} and {part_c}, and its index at {index}; its layout byte is {layout} and its index kind {kind}. Kind 1 indexes the entry rows alone; what the layout byte and the other kinds select is not known."
 msgstr "Части таблицы начинаются с 0x40, {part_b} и {part_c}, а её индекс — с {index}; байт раскладки равен {layout}, а вид индекса — {kind}. Вид 1 индексирует только строки записей; что выбирают байт раскладки и другие виды, неизвестно."
 
-msgid "its archives are RPF9, whose tables of contents are encrypted with a key OpenRage does not have, so none of them can be listed"
-msgstr "его архивы — RPF9, оглавления которых зашифрованы ключом, которого у OpenRage нет, поэтому ни один из них нельзя перечислить"
 
 msgid "{folder} is {title}, which OpenRage does not support yet, so it was not opened as an install: {why}."
 msgstr "{folder} — это {title}; эту игру OpenRage пока не поддерживает, поэтому папка не открыта как установка: {why}."
@@ -12676,8 +12681,6 @@ msgstr "{folder} не похожа на папку {title}, поэтому не 
 msgid "{folder} is {title}, which OpenRage does not support yet, so it is shown as a plain folder: {why}."
 msgstr "{folder} — это {title}; эту игру OpenRage пока не поддерживает, поэтому папка показана как обычная: {why}."
 
-msgid "{folder} is {title}. Its archives have no names OpenRage can read, so each opens as a scan of what it holds."
-msgstr "{folder} — это {title}. У её архивов нет имён, которые OpenRage мог бы прочитать, поэтому каждый открывается как сканирование того, что в нём лежит."
 
 msgid "GTA VI Texture Pack"
 msgstr "Пак текстур GTA VI"
@@ -12808,11 +12811,7 @@ msgstr "Архив GTA VI, вложенный в этот. Его заголов
 msgid "This body starts with four zero bytes but has no 0DRP at 0x10, so what it is and which reader fits it are not known."
 msgstr "Это тело начинается с четырёх нулевых байт, но 0DRP по смещению 0x10 в нём нет, поэтому что это и какое средство чтения ему подходит, неизвестно."
 
-msgid "a GTA VI archive is scanned for the bodies stored in the clear and shown; OpenRage does not write one"
-msgstr "архив GTA VI сканируется на тела, хранящиеся открытым текстом, и они показываются; OpenRage такие архивы не пишет"
 
-msgid "a GTA VI archive opens from its own file, which is scanned a slice at a time"
-msgstr "архив GTA VI открывается из собственного файла, который сканируется по одному срезу"
 
 msgid "Archive scan"
 msgstr "Сканирование архива"
@@ -12820,11 +12819,7 @@ msgstr "Сканирование архива"
 msgid "GTA VI Archive"
 msgstr "Архив GTA VI"
 
-msgid "RPF9 — a GTA VI archive, shown as what a scan without its table finds, read-only"
-msgstr "RPF9 — архив GTA VI, показан таким, каким его находит сканирование без таблицы, только для чтения"
 
-msgid "(read without names)"
-msgstr "(прочитано без имён)"
 
 msgid "Its first 64 bytes are zero, as a piece a download has not delivered reads, so whether it is an RPF9 archive and what its header states are not known; the bytes present are scanned."
 msgstr "Его первые 64 байта нулевые — так читается часть, которую загрузка не доставила, поэтому неизвестно, архив ли это RPF9 и что сообщает его заголовок; имеющиеся байты сканируются."
@@ -14878,8 +14873,6 @@ msgstr "Опорная позиция"
 msgid "XYZ over the geometry's reference positions as RGB; black where a vertex holds none"
 msgstr "XYZ опорных позиций геометрии как RGB; чёрный там, где у вершины их нет"
 
-msgid "{why}\n\nIt opens as a scan of what it holds, in a tab of its own."
-msgstr "{why}\n\nОн открывается как сканирование того, что в нём лежит, на отдельной вкладке."
 
 msgid "A rule, an event or a behaviour was added, removed or renamed: a GTA VI particle list is written in place, so its rules stay as they are stored."
 msgstr "Правило, событие или поведение добавлено, удалено или переименовано: список частиц GTA VI записывается на месте, поэтому его правила остаются такими, как хранятся."
@@ -17040,6 +17033,73 @@ msgstr[0] "огни {count} карты"
 msgstr[1] "огни {count} карт"
 msgstr[2] "огни {count} карт"
 
+msgid "The archive table could not be loaded."
+msgstr "Не удалось загрузить таблицу архива."
+
+msgid "The archive changed on disk. Reopen it to read its table."
+msgstr "Архив на диске изменился. Откройте его заново, чтобы прочитать таблицу."
+
+msgid "This entry does not describe a bounded nested archive."
+msgstr "Эта запись не описывает вложенный архив с корректными границами."
+
+msgid "This nested archive is encrypted and cannot be expanded."
+msgstr "Этот вложенный архив зашифрован, и его нельзя развернуть."
+
+msgid "The archive nesting limit was reached."
+msgstr "Достигнут предел вложенности архивов."
+
+msgid "Entries are listed from the archive table. Expand an archive to load its table."
+msgstr "Записи получены из таблицы архива. Разверните архив, чтобы загрузить его таблицу."
+
+
+msgid "Loading archive table…"
+msgstr "Загрузка таблицы архива…"
+
+msgid "Open as archive"
+msgstr "Открыть как архив"
+
+msgid "Offset: {offset}"
+msgstr "Смещение: {offset}"
+
+msgid "Stored size: {size}"
+msgstr "Размер на диске: {size}"
+
+msgid "a GTA VI archive is listed from its table and is read only; OpenRage does not write one"
+msgstr "архив GTA VI отображается по своей таблице и доступен только для чтения; OpenRage не записывает такие архивы"
+
+msgid "a GTA VI archive opens from its own file using its encrypted table of contents"
+msgstr "архив GTA VI открывается из собственного файла по зашифрованному оглавлению"
+
+msgid "RPF9 — a GTA VI archive listed from its table, read-only"
+msgstr "RPF9 — архив GTA VI, отображаемый по своей таблице, только для чтения"
+
+msgid "This is a GTA VI archive (RPF9). Open it in its own tab to read its table with the GTA VI keys."
+msgstr "Это архив GTA VI (RPF9). Откройте его в отдельной вкладке, чтобы прочитать таблицу с помощью ключей GTA VI."
+
+msgid "its RPF9 archives open individually from their tables; mounting a whole install is not supported yet"
+msgstr "архивы RPF9 открываются по отдельности из своих таблиц; подключение всей установки пока не поддерживается"
+
+msgid "{folder} is {title}. Each archive opens from its table using the GTA VI keys."
+msgstr "{folder} — это {title}. Каждый архив открывается по своей таблице с помощью ключей GTA VI."
+
+msgid "Archive table"
+msgstr "Таблица архива"
+
+msgid "(archive by archive)"
+msgstr "(по одному архиву)"
+
+msgid "Find"
+msgstr "Поиск"
+
+msgid "Encrypted"
+msgstr "Зашифровано"
+
+msgid "Files are read from their table entries. Unsupported layouts are reported as errors."
+msgstr "Файлы читаются по их записям в таблице. Неподдерживаемые структуры вызывают ошибку."
+
+msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
+msgstr "Этот файл открыт из таблицы RPF9 и доступен только для чтения. Извлеките его, чтобы сохранить отдельную копию."
+
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "Для имён строк этого документа нужен снимок ключей GTA VI"
 
@@ -17091,9 +17151,6 @@ msgstr "медиа"
 msgid "other class"
 msgstr "другой класс"
 
-msgid "{file} is listed by a scan without its table: {why}"
-msgstr "{file} перечислен сканированием без его таблицы: {why}"
-
 msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
 msgstr "Выберите папку GTA VI в параметрах или откройте один из её архивов, чтобы перечислить её архивы по их таблицам."
 
@@ -17111,15 +17168,6 @@ msgid_plural "Listed from its decrypted table: {count} entries, {named} of them 
 msgstr[0] "Перечислено по расшифрованной таблице: {count} запись, из них с именем {named}, под ключом таблицы {key}."
 msgstr[1] "Перечислено по расшифрованной таблице: {count} записи, из них с именем {named}, под ключом таблицы {key}."
 msgstr[2] "Перечислено по расшифрованной таблице: {count} записей, из них с именем {named}, под ключом таблицы {key}."
-
-msgid "This entry's row states no start, so its body cannot be read."
-msgstr "Строка этой записи не указывает начала, поэтому её тело нельзя прочитать."
-
-msgid "Click to expand or collapse this nested archive, listed from its own table."
-msgstr "Нажмите, чтобы развернуть или свернуть этот вложенный архив, перечисленный по его собственной таблице."
-
-msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
-msgstr "Нажмите, чтобы открыть его во вкладке предпросмотра, и дважды нажмите, чтобы оставить его в отдельной вкладке; зашифрованное тело сначала расшифровывается."
 
 msgid "Extract to a file…"
 msgstr "Извлечь в файл…"
@@ -17156,15 +17204,6 @@ msgstr "записываемый файл — новый, а архив, из к
 
 msgid "entry {index} is not in its table"
 msgstr "записи {index} нет в её таблице"
-
-msgid "the entry's row states no start, so its body is not known"
-msgstr "строка записи не указывает начала, поэтому её тело неизвестно"
-
-msgid "a nested archive whose row states no stored size"
-msgstr "вложенный архив, строка которого не указывает хранимого размера"
-
-msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
-msgstr "архив заканчивается через {copied} байт внутри вложенного архива размером {stored} байт"
 
 msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
 msgstr "Тело EDUP: его слово счётчика по 0x04 равно {count}, и за его 8-байтовым заголовком следуют {length} байт полезных данных."

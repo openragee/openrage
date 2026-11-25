@@ -786,7 +786,11 @@ fn parse_groups(
     let external_count = u64::from(LE::read_u16(&bytes[0x22..]));
     let entries = u64::from(LE::read_u32(&bytes[0x24..]));
     let index_width = u64::from(bytes[0x2C]);
-    if !(1..=2).contains(&index_width) || external_count > group_count || group_count > 64 {
+    if !(1..=2).contains(&index_width)
+        || external_count > group_count
+        || group_count > 64
+        || (group_count == 0 && entries != 0)
+    {
         return Err(toc_bad("the group layout is unsupported"));
     }
     let groups_start = round16(metadata_start + metadata_size);
@@ -794,9 +798,13 @@ fn parse_groups(
         groups_start + 24 * group_count + (group_count - external_count) * entries * index_width,
     );
     let external_start = round8(split + external_count * entries * index_width);
+    if main_start > split || external_start > toc_end || toc_end > bytes.len() as u64 {
+        return Err(toc_bad("the entry index runs past its table region"));
+    }
 
     let mut groups = Vec::with_capacity(group_count as usize);
     let mut seen_external = 0u64;
+    let mut seen_main = 0u64;
     for i in 0..group_count {
         let at = (groups_start + 24 * i) as usize;
         if bytes.len() < at + 24 {
@@ -820,7 +828,36 @@ fn parse_groups(
         {
             return Err(toc_bad(format!("group {i} breaks the measured layout")));
         }
+        let (index_base, stride, slot) = if external_flag == 1 {
+            if seen_external >= external_count {
+                return Err(toc_bad("too many external groups"));
+            }
+            (split, external_count * index_width, seen_external)
+        } else {
+            if seen_main >= group_count - external_count {
+                return Err(toc_bad("too many main groups"));
+            }
+            (
+                groups_start + 24 * group_count,
+                (group_count - external_count) * index_width,
+                seen_main,
+            )
+        };
+        for entry in 0..entries {
+            let at = (index_base + entry * stride + slot * index_width) as usize;
+            let (row, absent) = if index_width == 1 {
+                (u64::from(bytes[at]), u64::from(u8::MAX))
+            } else {
+                (u64::from(LE::read_u16(&bytes[at..])), u64::from(u16::MAX))
+            };
+            if row != absent && row >= count {
+                return Err(toc_bad(format!(
+                    "entry {entry} names missing row {row} of group {i}"
+                )));
+            }
+        }
         seen_external += external_flag as u64;
+        seen_main += u64::from(external_flag == 0);
         let start = (region_start + offset) as usize;
         groups.push(Rpf9Group {
             name_hash,

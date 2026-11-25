@@ -136,6 +136,12 @@ impl AppState {
     /// Look for the sets the GTA VI animation `doc` names and no open body or earlier search holds,
     /// among the animation bodies the open scan of its archive found.
     pub(crate) fn find_gta6_sets(&mut self, doc: DocumentId) -> Result<(), String> {
+        if self
+            .document(doc)
+            .is_some_and(super::Document::is_from_rpf9_table)
+        {
+            return Ok(());
+        }
         let Some(d) = self.document(doc) else {
             return Ok(());
         };

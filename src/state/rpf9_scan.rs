@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use or_io::container::rpf::{
-    extract_rpf9_body, open_at, read_rpf9_body, starts_stored_rpf9_resource, BodyForm, Gta6Mount,
-    GtaViKeys, Rpf9BodyKind, Rpf9Header, Rpf9Resource, Rpf9Scan, Rpf9ScanCarry, Rpf9ScanError,
-    Rpf9ScanFind, Rpf9ZlibRun, RPF9_HEADER_SIZE, RPF9_MAGIC,
+    extract_rpf9_body, read_rpf9_body, starts_stored_rpf9_resource, BodyForm, Rpf9BodyKind,
+    Rpf9Header, Rpf9Resource, Rpf9Scan, Rpf9ScanCarry, Rpf9ScanError, Rpf9ScanFind, Rpf9ZlibRun,
+    RPF9_HEADER_SIZE, RPF9_MAGIC,
 };
 use or_job::{Cancel, Progress};
 
@@ -387,13 +387,6 @@ pub(crate) mod rpf9_table_document;
 #[path = "rpf9_table.rs"]
 pub(crate) mod rpf9_table;
 
-#[path = "rpf9_scan_ciphered.rs"]
-mod ciphered;
-#[cfg(test)]
-pub(crate) use ciphered::decipher_entry;
-pub(crate) use ciphered::remember_ciphered;
-use ciphered::{ciphered_payload, take_ciphered};
-
 #[path = "rpf9_scan_payload.rs"]
 mod payload;
 use payload::body_payload;
@@ -447,15 +440,9 @@ fn is_missing(head: &[u8]) -> bool {
 
 /// The body a path [`body_path`] made names, read and given to the view its kind has, or kept as its bytes where no reader reads it.
 pub(super) fn read_body(path: &Path, archive: &Path, offset: u64) -> Result<DocPayload, String> {
-    // A body opened anew holds none of the edits a closed document of it kept, through either door.
+    // A body opened anew holds none of the edits a closed document of it kept.
     super::gta6_gltf_import::forget(path);
     super::gta6_embedded_edit::forget(path);
-    // A content-ciphered entry the archive explorer opened left a decrypt request here, keyed by
-    // this synthetic path; the decipher runs on this worker, not the UI thread. The clear reader
-    // below reads only bytes stored in the clear.
-    if let Some(req) = take_ciphered(path) {
-        return ciphered_payload(path, archive, req);
-    }
     let file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
     let (find, bytes) = match read_rpf9_body(&file, offset, BODY_LIMIT) {
         Err(Rpf9ScanError::ExtentNotKnown { .. }) if offset > 0 => {
@@ -762,11 +749,11 @@ impl super::AppState {
             archive = file_name(&scan.path)
         );
         let archive = scan.path.clone();
-        self.start_scanned_extraction(label, dest, archive, items, OnClash::KeepBoth)
+        self.start_archive_extraction(label, dest, archive, items, OnClash::KeepBoth)
     }
 
     /// Write `items` read out of `archive` into `dest` as the one extraction, on a worker.
-    pub(super) fn start_scanned_extraction(
+    pub(super) fn start_archive_extraction(
         &mut self,
         label: String,
         dest: PathBuf,

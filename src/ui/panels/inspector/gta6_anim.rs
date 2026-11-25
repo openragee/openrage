@@ -29,6 +29,9 @@ pub(super) fn draw_gta6_anim(ui: &mut egui::Ui, state: &mut AppState, doc_id: Do
         return;
     };
     let resource = std::sync::Arc::clone(resource);
+    let table_entry = state
+        .document(doc_id)
+        .is_some_and(crate::state::Document::is_from_rpf9_table);
     ui.heading(tr!("GTA VI Animations"));
     ui.separator();
     ui.label(tr!("What GTA VI's animation reader reads from this body. A bone track's DOF names its bone by the 32-bit hash of the bone's name, which a scanned drawable's or fragment's skeleton states, so an animation plays on the model you pick."));
@@ -115,7 +118,8 @@ pub(super) fn draw_gta6_anim(ui: &mut egui::Ui, state: &mut AppState, doc_id: Do
             .id_salt(("gta6_anim_warps", doc_id))
             .show(ui, |ui| draw_warp_points(ui, doc_id, &resource));
     }
-    if !resource.motions.is_empty()
+    if !table_entry
+        && !resource.motions.is_empty()
         && ui
             .button(tr!("Find the clips its motions name in the open scans"))
             .clicked()
@@ -137,7 +141,9 @@ pub(super) fn draw_gta6_anim(ui: &mut egui::Ui, state: &mut AppState, doc_id: Do
     for (m, motion) in resource.motions.iter().enumerate() {
         let shown = egui::CollapsingHeader::new(&motion.name)
             .id_salt(("gta6_anim_motion", doc_id, m))
-            .show(ui, |ui| draw_motion(ui, (doc_id, m), motion, &clip_named));
+            .show(ui, |ui| {
+                draw_motion(ui, (doc_id, m), motion, &clip_named, !table_entry)
+            });
         open = open.or(shown.body_returned.flatten());
     }
     if let Some(at) = open {
@@ -420,6 +426,7 @@ fn draw_motion(
     id: (DocumentId, usize),
     motion: &Motion,
     clip_named: &dyn Fn(u64) -> Option<String>,
+    open_scanned: bool,
 ) -> Option<ClipAt> {
     grid(ui, &format!("gta6_anim_motion_{id:?}"), |ui| {
         row(ui, tr!("Key"), &format!("{:#010X}", motion.key));
@@ -440,7 +447,7 @@ fn draw_motion(
         } else if let Some(at) = found_clip(clip) {
             ui.horizontal(|ui| {
                 ui.monospace(format!("{key} {} ({})", at.clip, at.dictionary));
-                if ui.small_button(tr!("Open")).clicked() {
+                if open_scanned && ui.small_button(tr!("Open")).clicked() {
                     open = Some(at.clone());
                 }
             });

@@ -15,7 +15,9 @@ An archive's table of contents is enciphered, and the keys that decipher it are 
 
 The snapshot holds three kinds of key: the table key, the content key that deciphers an enciphered entry, and the string key that deciphers a metadata document's strings. A step below that needs one says so when it is missing.
 
-Without a snapshot the tables stay closed, and OpenRage still finds the bodies an archive stores in the clear by scanning it, which the next section uses.
+Without a snapshot the tables stay closed and opening an archive reports the missing keys.
+The explicit scan command can still find bodies stored in the clear; it is never a fallback
+for a failed table open.
 
 ## Find files
 
@@ -23,20 +25,22 @@ An entry is named by a hash in the table. OpenRage shows a name where it knows t
 
 - **Names.** The Harvest GTA VI names command and the Harvest names button above a GTA VI folder's Files view read every archive of the folder once, as a job, for the names their bodies spell. The names are kept in your configuration folder, and from then on the app and the CLI show the entries they name. A folder of name tables of your own is read from `OPENRAGE_GTA6_NAMES` or from `--names <folder>`.
 - **In the app, by scanning.** Open the install folder. Above its Files view, Scan every archive tallies each archive's bodies by kind, and its find field finds a body by archive, offset or kind, or goes to an offset. This needs no key, and it finds only the bodies stored in the clear.
-- **In the app, by the table.** View ▸ Panels ▸ Archives lists the archives of the GTA VI folder set in Settings, or of the folder `OPENRAGE_GTA6_BUILD` names in its place, and each archive File ▸ Open opened. A click on one deciphers its table and lists every entry with its name or hash, its kind and its size, an enciphered one marked `[cipher]`; a nested archive expands in place. Its search keeps the entries whose name holds the text, whose hash it gives as `0x` hex, or whose kind is toggled on, among the archives expanded.
+- **In the app, by the table.** Opening an archive lists it in Files, and an archive in an opened folder expands there. View ▸ Panels ▸ Archives shares these mounted tables and also lists archives from the GTA VI folder set in Settings or `OPENRAGE_GTA6_BUILD`. Each entry has its name or hash, detected extension, kind and size; an enciphered one is marked `[cipher]`. A nested archive expands from its own table. The Archives search keeps entries whose name holds the text, whose hash it gives as `0x` hex, or whose kind is toggled on, among the archives expanded.
 - **In the CLI.** `openrage-cli rpf9 list <archive> [inner/path]` prints an archive's entries, with `--nested` one level of nested archives too, `--groups` the table's columns and `--json` one JSON document. The inner path walks into nested archives, and a component or an `--entry` names an entry by its name, by its hash as `0x…` or `hash_…`, or by its number. `openrage-cli rpf9 census <folder> --out <folder>` counts the entries, nested archives and enciphered entries of an install's archives, and writes the counts per archive, never an entry's name, as a Markdown table into the folder `--out` names.
 
 ## Open and extract
 
-- **In the app.** In the Archives panel, a double-click on an entry opens it. A body stored in the clear opens in the view its kind has. An enciphered body is deciphered on a worker with the content key: a PSO or RBF opens in the metadata editor, text as text, a resource in the view a clear one of its kind shows, and anything else as its bytes. A double-click on a nested archive opens it in a tab of its own, read by scanning.
+- **In the app.** In Files or Archives, a double-click on a file opens its supported preview in memory, read-only. An enciphered body is deciphered on a worker with the content key; unsupported contents open as bytes, and a failed supported reader reports its error. Nested archives expand from their tables. Extract writes the decoded bytes with the displayed extension, without adding a resource envelope to a headerless body. Both actions use the same bounded table reader.
 - **A metadata document's strings.** A PSO document's enciphered strings are deciphered with the string key and name the hash values the document holds; without it the document opens and says that the names need the key snapshot.
 - **In the CLI, from the table.** `openrage-cli rpf9 extract <archive> <folder> [inner/path]` writes each entry's body, inflated, under its name or its hash, or only the one `--entry` names or those whose name holds `--filter <text>`. An enciphered entry is written only with `--decrypt`, deciphered first; a nested archive is written as the bytes its row states, an archive that opens on its own. `openrage-cli rpf9 find <folder>` finds entries across every archive of an install, nested ones included, by `--name`, `--hash` or `--kind`.
 - **In the CLI, by scanning.** `openrage-cli rpf extract` writes the bodies a scan finds, or those of one family with `--kind`, and with `--as converted` writes textures as PNG, models as glTF, metadata as XML and audio as Ogg Opus; `openrage-cli rpf scan-body` writes one body, as it is stored with `--stored`, a metadata body's XML with `--xml` or a text table as GTA V's text table with `--gxt2`.
-- **Scripts.** `openrage-cli script compiled <body>` reads a deciphered script body, which `rpf9 extract --decrypt` writes, as a compiled program: its header, its instructions and its native calls, and with `--natives` each call's native by its address in the executable, never by a name.
+- **Scripts.** A valid compiled script opened from Files or Archives shows a read-only instruction listing in memory, without decompilation. `openrage-cli script compiled <body>` reads a deciphered script body, which `rpf9 extract --decrypt` writes, as a compiled program: its header, its instructions and its native calls, and with `--natives` each call's native by its address in the executable, never by a name.
 
 ## Edit and save a file of your own
 
-A body opened from an archive is read-only there: OpenRage never writes into the archive it read from, and a save over it is refused.
+Table-backed previews are read-only; use Extract for a copy of their decoded bytes. The editing
+paths below apply to supported loose documents and bodies opened through an explicit scan.
+OpenRage never writes into the archive it read from, and a save over it is refused.
 
 - **Save As** writes the body, with the edits its view takes, as a file of its own. A name ending in `.xml` writes a metadata body's XML and one ending in `.gxt2` a text table as GTA V's text table; a resource saves as a loose resource, which OpenRage opens again on its own. A view holding edits that no writer takes refuses Save As rather than drop them.
 - **Checksums.** A GTA VI `zppp` PSO's `CHKS` is computed again on save. A frame whose rule OpenRage does not reproduce keeps the checksum it was read with, and the save of an edited one warns that the game may refuse the file for it.
@@ -46,7 +50,10 @@ Which values of a model, a bound, a map or a metadata body can be edited is in [
 
 ## Save into a copy of an archive
 
-The CLI writes a new archive from an existing one, and so does the app: File ▸ Save into a copy of the archive… writes the edits of a document opened from an archive in place of its entry, in a new copy of that archive.
+The CLI writes a new archive from an existing one. In the app, an editable document opened
+through an explicit scan offers File ▸ Save into a copy of the archive…: its edits take its entry's
+place in a new copy. Table-backed previews do not offer this save. In Archives, **Replace with a
+file…** writes a new copy for a supported non-resource entry; it is disabled for headerless resources.
 
 - `openrage-cli rpf9 copy <archive> --out <new>` deciphers each table, enciphers it again and copies every body.
 - `rpf9 replace` sets an entry's body from the file `--with` names, `rpf9 remove` drops an entry and `rpf9 rename` gives one the path `--name` names; each takes the inner path and the `--entry` selector `rpf9 list` takes, and an entry of a nested archive is written in the nested archive first, then in its parent's row.

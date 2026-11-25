@@ -1,7 +1,6 @@
 //! The `0xe0c1` chunk table over a whole build: every entry that carries a row, top-level and nested,
-//! decodes, authors back byte-identical (the cell's `u1` and its descriptor slice in the heap), and
-//! sums to the sizes its entry row states; every flagged (type 17) entry with a row reads through the
-//! table walk to exactly its table's sizes.
+//! decodes and sums to its row sizes; modes 2, 3 and 4 author back byte-identical. Flagged entries
+//! read through the bounded table reader to exactly their declared sizes.
 //!
 //! Install-gated and game-derived, so it needs the key snapshot and the build and skips cleanly
 //! without them (a clean `just test-no-pack` passes):
@@ -15,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use byteorder::{ByteOrder, LE};
 use or_io::container::rpf::gta6_chunk_table::{author, cell_offset, decode, Chunk};
-use or_io::container::rpf::{Gta6Mount, GtaViKeys, GTA6_SNAPSHOT_ENV};
+use or_io::container::rpf::{open_at_bounded, Gta6Class, Gta6Mount, GtaViKeys, GTA6_SNAPSHOT_ENV};
 use or_test_support::skip_install;
 
 const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
@@ -70,7 +69,7 @@ fn ceil16(x: u32) -> u64 {
     (u64::from(x) + 15) & !15
 }
 
-/// Check one entry's row: decode, author back byte-identical, and sum to its entry row's sizes.
+/// Decode a row, round-trip writable modes, and compare its sizes with the entry.
 fn check_row(mount: &Gta6Mount, index: usize, at: usize, t: &mut Tally) -> Option<Vec<Chunk>> {
     let bytes = &mount.archive.toc.bytes;
     let cell: [u8; 8] = bytes[at..at + 8].try_into().ok()?;
@@ -138,7 +137,14 @@ fn check_row(mount: &Gta6Mount, index: usize, at: usize, t: &mut Tally) -> Optio
     Some(chunks)
 }
 
-fn walk(file: &mut File, mount: &Gta6Mount, keys: &GtaViKeys, depth: usize, t: &mut Tally) {
+fn walk(
+    file: &mut File,
+    mount: &Gta6Mount,
+    extent: std::ops::Range<u64>,
+    keys: &GtaViKeys,
+    depth: usize,
+    t: &mut Tally,
+) {
     for entry in &mount.archive.entries {
         let index = entry.index as usize;
         if let Some(at) = cell_offset(&mount.archive, index) {
@@ -162,36 +168,54 @@ fn walk(file: &mut File, mount: &Gta6Mount, keys: &GtaViKeys, depth: usize, t: &
             }
             if let (Some(chunks), true) = (chunks, flagged) {
                 t.flagged_walked += 1;
+                let inflated: u64 = chunks.iter().map(|c| u64::from(c.inflated)).sum();
+                let stored: u64 = chunks.iter().map(|c| ceil16(c.stored)).sum();
                 match mount.read_entry_decrypted_report(&mut *file, entry, keys) {
-                    Ok(body) => {
+                    Ok(report)
+                        if report.chunk_count == chunks.len()
+                            && report.data.len() as u64 == inflated
+                            && report.stored_consumed == stored => {}
+                    Ok(_) => t
+                        .failures
+                        .push(format!("entry {index}: the mount left its table's sizes")),
+                    Err(e) => t.failures.push(format!("entry {index}: mount read: {e}")),
+                }
+                let result = mount
+                    .read_entry_plan(entry.index, extent.end, u64::MAX)
+                    .and_then(|read| read.extract(file, keys, &mut std::io::sink()));
+                match result {
+                    Ok(bytes) => {
                         let inflated: u64 = chunks.iter().map(|c| u64::from(c.inflated)).sum();
-                        let stored: u64 = chunks.iter().map(|c| ceil16(c.stored)).sum();
-                        if body.chunk_count != chunks.len()
-                            || body.data.len() as u64 != inflated
-                            || body.stored_consumed != stored
-                        {
+                        if bytes != inflated {
                             t.failures
-                                .push(format!("entry {index}: the walk left its table's sizes"));
+                                .push(format!("entry {index}: decoded size differs"));
                         }
                     }
                     Err(e) => t.failures.push(format!("entry {index}: read: {e}")),
                 }
             }
         }
-        if depth < MAX_DEPTH
-            && mount
-                .entry_begins_archive(&mut *file, entry)
-                .unwrap_or(false)
-        {
-            if let Ok(child) = mount.open_nested(&mut *file, entry, keys) {
-                walk(file, &child, keys, depth + 1, t);
-            }
+        if entry.kind() == Some(Gta6Class::NestedArchive) {
+            assert!(depth < MAX_DEPTH, "nested table depth exceeded");
+            let start = extent
+                .start
+                .checked_add(entry.start.expect("nested start"))
+                .unwrap();
+            let end = start
+                .checked_add(entry.stored.expect("nested size"))
+                .unwrap();
+            assert!(end <= extent.end);
+            let child = Gta6Mount {
+                base: start,
+                archive: open_at_bounded(file, start..end, keys).expect("nested table"),
+            };
+            walk(file, &child, start..end, keys, depth + 1, t);
         }
     }
 }
 
 #[test]
-fn every_chunk_row_authors_back_byte_identical_and_drives_the_walk() {
+fn every_chunk_row_decodes_and_supported_modes_author_back() {
     let what = "GTA VI 0xe0c1 chunk tables over a build";
     let (Some(snapshot), Some(build)) = (env_path(GTA6_SNAPSHOT_ENV), env_path(BUILD_ENV)) else {
         skip_install(
@@ -216,7 +240,8 @@ fn every_chunk_row_authors_back_byte_identical_and_drives_the_walk() {
         let mut file = File::open(path).expect("open the archive");
         let mount = Gta6Mount::open_root(&mut file, &keys)
             .unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
-        walk(&mut file, &mount, &keys, 0, &mut t);
+        let end = file.metadata().unwrap().len();
+        walk(&mut file, &mount, 0..end, &keys, 0, &mut t);
     }
     println!(
         "chunk rows {} (mode 3 {}, mode 2 {}, mode 4 {}), flagged walked {}, clear read {}, failures {}",
@@ -233,7 +258,7 @@ fn every_chunk_row_authors_back_byte_identical_and_drives_the_walk() {
     }
     assert!(
         t.failures.is_empty(),
-        "every chunk row must round-trip and read"
+        "every chunk row must decode, preserve writable modes and read"
     );
     assert!(
         t.mode3 >= 928,

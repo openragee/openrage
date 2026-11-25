@@ -214,6 +214,9 @@ msgstr "Schaden und Kraft"
 msgid "Declare another archetype in the type file shown, as a copy of the one selected (else the first plain one) under a name nobody holds yet; give it its real name and box in the selection. Undo takes it back"
 msgstr "Deklariert einen weiteren Archetyp in der angezeigten Typdatei, als Kopie des ausgewählten (sonst des ersten einfachen) unter einem Namen, den noch niemand trägt; den echten Namen und die Box in der Auswahl festlegen. „Rückgängig“ nimmt es zurück"
 
+msgid "Detected type: {kind}"
+msgstr "Erkannter Typ: {kind}"
+
 msgid "Did again: {what}"
 msgstr "Wiederholt: {what}"
 
@@ -978,6 +981,12 @@ msgstr "Nach rechts gedreht"
 
 msgid "Turns"
 msgstr "Drehungen"
+
+msgid "Two textures have the same name hash; this dictionary cannot be previewed."
+msgstr "Zwei Texturen haben denselben Namens-Hash; für dieses Wörterbuch kann keine Vorschau angezeigt werden."
+
+msgid "Type (table): {kind}"
+msgstr "Typ (Tabelle): {kind}"
 
 msgid "Undid: {what}"
 msgstr "Rückgängig gemacht: {what}"
@@ -12600,8 +12609,6 @@ msgid_plural "{count} bodies of {archive}"
 msgstr[0] "{count} Inhalt von {archive}"
 msgstr[1] "{count} Inhalte von {archive}"
 
-msgid "This is a GTA VI archive (RPF9). Its table of contents and its names are encrypted and OpenRage has no key for them, so its entries cannot be listed by name."
-msgstr "Dies ist ein GTA VI-Archiv (RPF9). Sein Inhaltsverzeichnis und seine Namen sind verschlüsselt, und OpenRage hat keinen Schlüssel dafür, daher lassen sich seine Einträge nicht nach Namen auflisten."
 
 msgid "Its header says: {count} entry, a table of contents ending at byte {toc_end}, {names} bytes of names, {width}-byte entry indices, and the per-archive value {per_archive}, whose role is not known."
 msgid_plural "Its header says: {count} entries, a table of contents ending at byte {toc_end}, {names} bytes of names, {width}-byte entry indices, and the per-archive value {per_archive}, whose role is not known."
@@ -12611,8 +12618,6 @@ msgstr[1] "Sein Header nennt: {count} Einträge, ein Inhaltsverzeichnis, das bei
 msgid "The table's parts start at 0x40, {part_b} and {part_c}, and its index at {index}; its layout byte is {layout} and its index kind {kind}. Kind 1 indexes the entry rows alone; what the layout byte and the other kinds select is not known."
 msgstr "Die Teile der Tabelle beginnen bei 0x40, {part_b} und {part_c}, ihr Index bei {index}; ihr Layout-Byte ist {layout} und ihre Indexart {kind}. Art 1 indiziert nur die Eintragszeilen; was das Layout-Byte und die anderen Arten auswählen, ist nicht bekannt."
 
-msgid "its archives are RPF9, whose tables of contents are encrypted with a key OpenRage does not have, so none of them can be listed"
-msgstr "seine Archive sind RPF9, deren Inhaltsverzeichnisse mit einem Schlüssel verschlüsselt sind, den OpenRage nicht hat, daher lässt sich keines davon auflisten"
 
 msgid "{folder} is {title}, which OpenRage does not support yet, so it was not opened as an install: {why}."
 msgstr "{folder} ist {title}, was OpenRage noch nicht unterstützt, daher wurde es nicht als Installation geöffnet: {why}."
@@ -12623,8 +12628,6 @@ msgstr "{folder} sieht nicht wie ein {title}-Ordner aus und wurde daher nicht al
 msgid "{folder} is {title}, which OpenRage does not support yet, so it is shown as a plain folder: {why}."
 msgstr "{folder} ist {title}, was OpenRage noch nicht unterstützt, daher wird es als einfacher Ordner angezeigt: {why}."
 
-msgid "{folder} is {title}. Its archives have no names OpenRage can read, so each opens as a scan of what it holds."
-msgstr "{folder} ist {title}. Seine Archive haben keine Namen, die OpenRage lesen kann, daher öffnet sich jedes als Scan dessen, was es enthält."
 
 msgid "GTA VI Texture Pack"
 msgstr "GTA VI-Texturpack"
@@ -12753,11 +12756,7 @@ msgstr "Ein in diesem verschachteltes GTA VI-Archiv. Sein Header gibt seine Tabe
 msgid "This body starts with four zero bytes but has no 0DRP at 0x10, so what it is and which reader fits it are not known."
 msgstr "Dieser Inhalt beginnt mit vier Nullbytes, hat aber bei 0x10 kein 0DRP, daher ist nicht bekannt, was er ist und welcher Reader zu ihm passt."
 
-msgid "a GTA VI archive is scanned for the bodies stored in the clear and shown; OpenRage does not write one"
-msgstr "ein GTA VI-Archiv wird nach den unverschlüsselt gespeicherten Inhalten gescannt und angezeigt; OpenRage schreibt keines"
 
-msgid "a GTA VI archive opens from its own file, which is scanned a slice at a time"
-msgstr "ein GTA VI-Archiv wird aus seiner eigenen Datei geöffnet, die abschnittsweise gescannt wird"
 
 msgid "Archive scan"
 msgstr "Archiv-Scan"
@@ -12765,11 +12764,7 @@ msgstr "Archiv-Scan"
 msgid "GTA VI Archive"
 msgstr "GTA VI-Archiv"
 
-msgid "RPF9 — a GTA VI archive, shown as what a scan without its table finds, read-only"
-msgstr "RPF9 – ein GTA VI-Archiv, angezeigt als das, was ein Scan ohne seine Tabelle findet, schreibgeschützt"
 
-msgid "(read without names)"
-msgstr "(ohne Namen gelesen)"
 
 msgid "Its first 64 bytes are zero, as a piece a download has not delivered reads, so whether it is an RPF9 archive and what its header states are not known; the bytes present are scanned."
 msgstr "Seine ersten 64 Bytes sind null, wie bei einem Stück, das ein Download nicht geliefert hat, daher ist nicht bekannt, ob es ein RPF9-Archiv ist und was sein Header angibt; die vorhandenen Bytes werden gescannt."
@@ -14774,8 +14769,6 @@ msgstr "Referenzposition"
 msgid "XYZ over the geometry's reference positions as RGB; black where a vertex holds none"
 msgstr "XYZ über die Referenzpositionen der Geometrie als RGB; schwarz, wo ein Vertex keine enthält"
 
-msgid "{why}\n\nIt opens as a scan of what it holds, in a tab of its own."
-msgstr "{why}\n\nEs öffnet sich als Scan dessen, was es enthält, in einem eigenen Tab."
 
 msgid "A rule, an event or a behaviour was added, removed or renamed: a GTA VI particle list is written in place, so its rules stay as they are stored."
 msgstr "Eine Regel, ein Ereignis oder ein Verhalten wurde hinzugefügt, entfernt oder umbenannt: Eine GTA VI-Partikelliste wird an Ort und Stelle geschrieben, daher bleiben ihre Regeln, wie sie gespeichert sind."
@@ -16894,6 +16887,73 @@ msgid_plural "the lights of {count} maps"
 msgstr[0] "die Lichter von {count} Map"
 msgstr[1] "die Lichter von {count} Maps"
 
+msgid "The archive table could not be loaded."
+msgstr "Die Archivtabelle konnte nicht geladen werden."
+
+msgid "The archive changed on disk. Reopen it to read its table."
+msgstr "Das Archiv wurde auf dem Datenträger geändert. Öffnen Sie es erneut, um seine Tabelle zu lesen."
+
+msgid "This entry does not describe a bounded nested archive."
+msgstr "Dieser Eintrag beschreibt kein eingebettetes Archiv mit gültigen Grenzen."
+
+msgid "This nested archive is encrypted and cannot be expanded."
+msgstr "Dieses eingebettete Archiv ist verschlüsselt und kann nicht aufgeklappt werden."
+
+msgid "The archive nesting limit was reached."
+msgstr "Die maximale Verschachtelungstiefe wurde erreicht."
+
+msgid "Entries are listed from the archive table. Expand an archive to load its table."
+msgstr "Die Einträge stammen aus der Archivtabelle. Klappen Sie ein Archiv auf, um seine Tabelle zu laden."
+
+
+msgid "Loading archive table…"
+msgstr "Archivtabelle wird geladen…"
+
+msgid "Open as archive"
+msgstr "Als Archiv öffnen"
+
+msgid "Offset: {offset}"
+msgstr "Position: {offset}"
+
+msgid "Stored size: {size}"
+msgstr "Gespeicherte Größe: {size}"
+
+msgid "a GTA VI archive is listed from its table and is read only; OpenRage does not write one"
+msgstr "ein GTA-VI-Archiv wird aus seiner Tabelle aufgelistet und ist schreibgeschützt; OpenRage schreibt keine solchen Archive"
+
+msgid "a GTA VI archive opens from its own file using its encrypted table of contents"
+msgstr "ein GTA-VI-Archiv wird aus seiner eigenen Datei anhand seines verschlüsselten Inhaltsverzeichnisses geöffnet"
+
+msgid "RPF9 — a GTA VI archive listed from its table, read-only"
+msgstr "RPF9 — ein GTA-VI-Archiv, anhand seiner Tabelle aufgelistet, schreibgeschützt"
+
+msgid "This is a GTA VI archive (RPF9). Open it in its own tab to read its table with the GTA VI keys."
+msgstr "Dies ist ein GTA-VI-Archiv (RPF9). Öffnen Sie es in einem eigenen Tab, um seine Tabelle mit den GTA-VI-Schlüsseln zu lesen."
+
+msgid "its RPF9 archives open individually from their tables; mounting a whole install is not supported yet"
+msgstr "seine RPF9-Archive werden einzeln anhand ihrer Tabellen geöffnet; das Einbinden einer ganzen Installation wird noch nicht unterstützt"
+
+msgid "{folder} is {title}. Each archive opens from its table using the GTA VI keys."
+msgstr "{folder} ist {title}. Jedes Archiv wird anhand seiner Tabelle mit den GTA-VI-Schlüsseln geöffnet."
+
+msgid "Archive table"
+msgstr "Archivtabelle"
+
+msgid "(archive by archive)"
+msgstr "(Archiv für Archiv)"
+
+msgid "Find"
+msgstr "Suchen"
+
+msgid "Encrypted"
+msgstr "Verschlüsselt"
+
+msgid "Files are read from their table entries. Unsupported layouts are reported as errors."
+msgstr "Dateien werden anhand ihrer Tabelleneinträge gelesen. Nicht unterstützte Strukturen werden als Fehler gemeldet."
+
+msgid "This file was opened from an RPF9 table and is read-only. Extract it to save a separate copy."
+msgstr "Diese Datei wurde aus einer RPF9-Tabelle geöffnet und ist schreibgeschützt. Extrahieren Sie sie, um eine separate Kopie zu speichern."
+
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "Die Namen der Zeichenketten dieses Dokuments benötigen den GTA-VI-Schlüssel-Snapshot"
 
@@ -16945,9 +17005,6 @@ msgstr "Medien"
 msgid "other class"
 msgstr "andere Klasse"
 
-msgid "{file} is listed by a scan without its table: {why}"
-msgstr "{file} wird von einem Scan ohne seine Tabelle aufgelistet: {why}"
-
 msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
 msgstr "Den GTA VI-Ordner in den Einstellungen wählen oder eines seiner Archive öffnen, um seine Archive aus ihren Tabellen aufzulisten."
 
@@ -16964,15 +17021,6 @@ msgid "Listed from its decrypted table: {count} entry, {named} of them named, un
 msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
 msgstr[0] "Aus seiner entschlüsselten Tabelle aufgelistet: {count} Eintrag, davon {named} benannt, unter dem Tabellenschlüssel {key}."
 msgstr[1] "Aus seiner entschlüsselten Tabelle aufgelistet: {count} Einträge, davon {named} benannt, unter dem Tabellenschlüssel {key}."
-
-msgid "This entry's row states no start, so its body cannot be read."
-msgstr "Die Zeile dieses Eintrags nennt keinen Anfang, daher kann sein Inhalt nicht gelesen werden."
-
-msgid "Click to expand or collapse this nested archive, listed from its own table."
-msgstr "Klicken, um dieses verschachtelte Archiv auf- oder zuzuklappen; es wird aus seiner eigenen Tabelle aufgelistet."
-
-msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
-msgstr "Klicken, um es im Vorschau-Tab zu öffnen, und doppelklicken, um es in einem eigenen Tab zu behalten; ein verschlüsselter Inhalt wird zuerst entschlüsselt."
 
 msgid "Extract to a file…"
 msgstr "In eine Datei extrahieren…"
@@ -17009,15 +17057,6 @@ msgstr "die geschriebene Datei ist eine neue, und das Archiv, aus dem gelesen wi
 
 msgid "entry {index} is not in its table"
 msgstr "Eintrag {index} ist nicht in seiner Tabelle"
-
-msgid "the entry's row states no start, so its body is not known"
-msgstr "die Zeile des Eintrags nennt keinen Anfang, daher ist sein Inhalt nicht bekannt"
-
-msgid "a nested archive whose row states no stored size"
-msgstr "ein verschachteltes Archiv, dessen Zeile keine gespeicherte Größe nennt"
-
-msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
-msgstr "das Archiv endet {copied} Bytes in das {stored} Byte große verschachtelte Archiv hinein"
 
 msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
 msgstr "Ein EDUP-Inhalt: Sein Zählwort bei 0x04 ist {count}, und {length} Nutzdatenbytes folgen seinem 8-Byte-Kopf."

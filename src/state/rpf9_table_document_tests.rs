@@ -10,7 +10,7 @@ use or_io::container::rpf::{
 use or_io::gta6::hash::{name_hash32, name_hash64};
 
 use super::*;
-use crate::state::DocumentKind;
+use crate::state::{DocumentId, DocumentKind};
 
 const REGISTRY_ID: u64 = 0xDEAD_BEEF_0200_0000;
 const KEY_ID: u32 = 0xDEAD_BEEF;
@@ -243,10 +243,18 @@ fn names() -> NameResolver {
 /// The sample archive's table document, listed with the synthetic key.
 pub(crate) fn sample_document() -> (tempfile::TempDir, Rpf9TableDocument) {
     let (dir, path) = sample();
-    let header = header_of(&path).expect("the sample opens with an RPF9 header");
     let keys = synthetic_keys();
-    let doc = Rpf9TableDocument::open_with(&path, header, Ok(&keys), &names());
-    let Ok(doc) = doc else {
+    let doc = Rpf9TableDocument::open_with_context(
+        &path,
+        || {
+            Ok(TableContext {
+                keys: Arc::new(keys),
+                resolver: Arc::new(names()),
+            })
+        },
+        true,
+    );
+    let Ok(Some(doc)) = doc else {
         panic!("the synthetic key lists the sample's table");
     };
     (dir, doc)
@@ -266,13 +274,19 @@ pub(crate) fn state_showing(doc: Rpf9TableDocument) -> (AppState, DocumentId) {
 
 #[test]
 fn an_archive_a_key_opens_is_its_table_and_no_scan_is_made() {
-    let (_dir, doc) = sample_document();
-    let path = doc.path.clone();
-    let Ok(Some(DocPayload::Rpf9Table(table))) = payload_of(&path, Some(Ok(doc))) else {
+    let (_dir, path) = sample();
+    let Ok(Some(DocPayload::Rpf9Table(table))) = archive_payload_with(&path, || {
+        Ok(TableContext {
+            keys: Arc::new(synthetic_keys()),
+            resolver: Arc::new(names()),
+        })
+    }) else {
         panic!("the table is the payload, and no scan document is made");
     };
-    let tree = table.tree();
-    let root = tree.root.as_ref().expect("the root is mounted at the open");
+    let root = table
+        .tree()
+        .listing()
+        .expect("the root is mounted at the open");
     let shown: Vec<String> = root.rows.iter().map(TableRow::display_name).collect();
     assert_eq!(shown.len(), 3);
     assert_eq!(shown[0], ALPHA);
@@ -283,46 +297,37 @@ fn an_archive_a_key_opens_is_its_table_and_no_scan_is_made() {
         root.children.is_empty(),
         "a nested archive waits to be expanded"
     );
-    drop(tree);
     assert!(table.held_bytes() > 0);
 }
 
 #[test]
-fn without_a_key_the_archive_opens_as_its_scan_and_says_so() {
-    let (_dir, path) = sample();
-    let header = header_of(&path).expect("an RPF9 head");
-    let no_key = Err("no GTA VI key snapshot was found".to_string());
-    let table = Rpf9TableDocument::open_with(&path, header, no_key, &names());
-    let Err(why) = &table else {
-        panic!("no key, no table");
-    };
-    assert!(
-        why.contains("top.rpf") && why.contains("scan without its table"),
-        "{why}"
-    );
-    assert!(
-        matches!(
-            payload_of(&path, Some(table)),
-            Ok(Some(DocPayload::Rpf9(_)))
-        ),
-        "the scan lists the archive no key opens"
-    );
-
+fn without_a_key_the_archive_reports_the_table_error_without_scanning() {
+    let (dir, path) = sample();
+    let result = archive_payload_with(&path, || Err("missing synthetic keys".to_string()));
+    assert!(matches!(result, Err(error) if error == "missing synthetic keys"));
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     let other = path.with_file_name("other.rpf");
     std::fs::write(&other, b"RPF7, and no GTA VI archive").expect("written");
-    assert!(header_of(&other).is_none());
-    assert!(
-        matches!(payload_of(&other, None), Ok(None)),
-        "a file that is no GTA VI archive is neither"
-    );
+    assert!(matches!(
+        archive_payload_with(&other, || panic!("non-RPF9 does not load keys")),
+        Ok(None)
+    ));
 }
 
 #[test]
-fn the_files_list_of_an_archive_and_of_a_body_of_it_is_its_table() {
+fn an_archive_and_its_indexed_body_reuse_the_mounted_table() {
     let (_dir, doc) = sample_document();
     let archive = doc.path.clone();
+    let body_path = doc.entry(0, 0).unwrap().path;
     let (mut state, id) = state_showing(doc);
-    assert_eq!(state.table_listing_the_active_tab(), Some(id));
+    let DocPayload::Rpf9Table(expected) = &state.document(id).unwrap().payload else {
+        panic!("the archive is its table")
+    };
+    let expected = Arc::clone(expected);
+    assert!(Arc::ptr_eq(
+        &state.mounted_rpf9_table(&archive).unwrap(),
+        &expected
+    ));
     assert_eq!(
         state.scan_listing_the_active_tab(),
         None,
@@ -330,30 +335,76 @@ fn the_files_list_of_an_archive_and_of_a_body_of_it_is_its_table() {
     );
 
     let body = state.new_empty_document(DocumentKind::Text);
-    state.document_mut(body).expect("the body").path = Some(body_path(&archive, 0x40, View::Bytes));
+    state.document_mut(body).expect("the body").path = Some(body_path.clone());
     state.active_document = Some(body);
-    assert_eq!(state.table_listing_the_active_tab(), Some(id));
+    let (context, binding) = state
+        .rpf9_tree_context(&body_path)
+        .expect("the indexed body has its table");
+    assert!(Arc::ptr_eq(&context, &expected));
+    assert!(
+        binding.is_none(),
+        "a standalone archive has no Files node binding"
+    );
+    assert!(Arc::ptr_eq(
+        &state.mounted_rpf9_table(&archive).unwrap(),
+        &expected
+    ));
+    assert_eq!(
+        state.scan_listing_the_active_tab(),
+        None,
+        "the body keeps its table route"
+    );
 }
 
 #[test]
-fn a_row_opens_its_body_by_the_path_a_scan_names_or_says_it_has_no_start() {
+fn a_row_opens_by_table_index_and_refuses_an_invalid_index() {
     let (_dir, doc) = sample_document();
     let archive = doc.path.clone();
-    let row = doc.tree().root.as_ref().expect("the root").rows[0].clone();
-    let start = row.absolute_start.expect("the row states a start");
-    let mut state = AppState::default();
-    state.open_table_entry(&archive, 0, &row, true);
-    let loading = (state.load_receiver.as_ref().map(|(path, _)| path.clone()))
-        .or_else(|| state.pending_loads.back().cloned());
-    assert_eq!(loading, Some(body_path(&archive, start, View::Bytes)));
-
-    let unplaced = TableRow {
-        absolute_start: None,
-        ..row
-    };
-    state.open_table_entry(&archive, 0, &unplaced, true);
-    assert!(
-        (state.toasts.iter()).any(|t| t.message.contains("states no start")),
-        "no toast said the row has no start"
+    let row = doc.tree().listing().unwrap().rows[0].clone();
+    let path = doc.entry(0, row.index).unwrap().path;
+    let (mut state, _id) = state_showing(doc);
+    let table = state.mounted_rpf9_table(&archive).unwrap();
+    state.open_rpf9_entry(&table, 0, row.index);
+    let loading = state.load_receiver.as_ref().map(|(path, _)| path.clone());
+    assert_eq!(loading, Some(path.clone()));
+    let opened =
+        crate::state::opening_a_ydd::finish_load(&mut state).expect("the indexed entry opens");
+    let document = state.document(opened).unwrap();
+    assert_eq!(document.path.as_ref(), Some(&path));
+    assert!(document.is_from_rpf9_table());
+    assert_eq!(
+        state.scan_listing_the_active_tab(),
+        None,
+        "the open never starts a scan"
     );
+    assert_eq!(state.documents.len(), 2);
+
+    state.open_rpf9_entry(&table, 0, u32::MAX);
+    assert!(state.show_error_dialog);
+    assert!(
+        state.load_receiver.is_none(),
+        "an invalid index starts no read"
+    );
+    assert_eq!(state.documents.len(), 2);
+}
+
+#[test]
+fn files_and_archives_share_the_mounted_table_without_reopening_the_file() {
+    let (_dir, table) = sample_document();
+    let path = table.path.clone();
+    let (mut state, id) = state_showing(table);
+    let DocPayload::Rpf9Table(expected) = &state.document(id).unwrap().payload else {
+        panic!("table")
+    };
+    let expected = Arc::clone(expected);
+    std::fs::remove_file(&path).unwrap();
+    state.poll_table_opens();
+    let explorer = state
+        .panels
+        .get::<crate::ui::panels::gta6_archive_tree::Gta6ArchiveExplorer>();
+    assert!(Arc::ptr_eq(explorer.table.as_ref().unwrap(), &expected));
+    assert!(!explorer.poll());
+    assert!(explorer.error.is_none());
+    assert_eq!(explorer.root.as_ref().unwrap().rows.len(), 3);
+    assert_eq!(expected.tree().listing().unwrap().rows.len(), 3);
 }

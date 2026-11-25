@@ -115,3 +115,22 @@ fn a_set_another_body_stores_is_found_among_the_animation_bodies_of_the_scan() {
     );
     assert!(state.find_gta6_sets(elsewhere).is_err());
 }
+
+#[test]
+fn a_table_animation_never_starts_an_external_set_scan() {
+    let _serial = crate::ui::theme::serial();
+    let mut state = AppState::new();
+    let path = "animations.rpf/.rpf9-table/0/hash_external.ycd".into();
+    state.documents.push(super::super::Document::new(
+        1,
+        Some(path),
+        DocPayload::Gta6Anim(Arc::new(naming(&[or_io::gta6::hash::name_hash32(
+            b"table_missing_set",
+        )]))),
+    ));
+    assert!(state.document(1).unwrap().is_from_rpf9_table());
+    state
+        .find_gta6_sets(1)
+        .expect("table previews never request a scan");
+    assert!(state.set_finding.is_empty());
+}

@@ -1,0 +1,420 @@
+use super::*;
+use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
+use or_test_support::rpf9;
+
+pub(super) fn keys() -> GtaViKeys {
+    GtaViKeys::parse(&rpf9::keys()).expect("synthetic keys")
+}
+
+fn encrypted(rows: &[(u64, u64, u64, u8)]) -> Vec<u8> {
+    Rpf9Builder::serialize(
+        &Rpf9Toc {
+            bytes: rpf9::table(rows),
+            key_id: 0,
+            registry_id: 0,
+            entry_count: 0,
+            groups: Vec::new(),
+        },
+        &keys(),
+    )
+    .expect("synthetic encrypted table")
+}
+
+pub(super) fn fixture(child_size: u64, valid_child: bool) -> (tempfile::TempDir, PathBuf) {
+    let name = or_io::gta6::hash::name_hash64(b"child");
+    let mut bytes = encrypted(&[(name, 0x1000, child_size, 0), (0, 0x800, 16, 0xff)]);
+    bytes.resize(0x1000, 0x78);
+    if valid_child {
+        bytes.extend(encrypted(&[(0, 0x800, 16, 0xff)]));
+    }
+    bytes.resize(0x2000, 0x78);
+    let dir = tempfile::tempdir().expect("scratch directory");
+    let path = dir.path().join("table.rpf");
+    std::fs::write(&path, bytes).expect("archive fixture");
+    (dir, path)
+}
+
+pub(super) fn wait(doc: &Rpf9TableDocument) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let mut tree = doc.tree();
+        tree.poll();
+        if tree.pending().is_none() {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "child table never completed"
+        );
+        drop(tree);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn table_open_requires_keys_and_never_uses_the_clear_bodies() {
+    let (_dir, path) = fixture(0x1000, true);
+    let result = Rpf9TableDocument::open_using(&path, || Err("missing test keys".into()));
+    assert!(matches!(result, Err(error) if error == "missing test keys"));
+    let doc = Rpf9TableDocument::open_using(&path, || Ok(keys()))
+        .unwrap()
+        .unwrap();
+    let tree = doc.tree();
+    assert_eq!(tree.nodes.len(), 1, "children stay unopened");
+    assert_eq!(tree.nodes[&0].mount.archive.entries.len(), 2);
+    assert_eq!(tree.nodes[&0].mount.archive.entries[1].name, None);
+    assert_eq!(
+        tree.nodes[&0].mount.archive.entries[1].display_name(),
+        "hash_0000000000000000"
+    );
+}
+
+#[test]
+fn expanding_mounts_only_the_selected_child_and_caches_its_table() {
+    let (_dir, path) = fixture(0x1000, true);
+    let doc = Rpf9TableDocument::open_using(&path, || Ok(keys()))
+        .unwrap()
+        .unwrap();
+    doc.toggle(0, 0);
+    wait(&doc);
+    assert_eq!(doc.tree().nodes.len(), 2);
+    assert_eq!(doc.tree().nodes[&0x1000].mount.archive.entries.len(), 1);
+    assert!(doc.tree().expanded.contains(&(0, 0)));
+    doc.toggle(0, 0);
+    assert!(!doc.tree().expanded.contains(&(0, 0)));
+    doc.toggle(0, 0);
+    assert!(doc.tree().pending().is_none());
+    assert!(doc.tree().expanded.contains(&(0, 0)));
+}
+
+#[test]
+fn an_invalid_child_stays_an_error_in_the_parent_tree() {
+    for (size, valid) in [(0x1000, false), (0x2000, true)] {
+        let (_dir, path) = fixture(size, valid);
+        let doc = Rpf9TableDocument::open_using(&path, || Ok(keys()))
+            .unwrap()
+            .unwrap();
+        doc.toggle(0, 0);
+        wait(&doc);
+        let tree = doc.tree();
+        assert_eq!(tree.nodes.len(), 1);
+        assert!(tree.errors.contains_key(&(0, 0)));
+        assert!(tree.expanded.is_empty());
+    }
+}
+
+#[test]
+fn a_changed_archive_is_not_read_through_a_stale_table() {
+    let (_dir, path) = fixture(0x1000, true);
+    let doc = Rpf9TableDocument::open_using(&path, || Ok(keys()))
+        .unwrap()
+        .unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(0x3000)
+        .unwrap();
+    doc.toggle(0, 0);
+    wait(&doc);
+    assert!(doc.tree().errors[&(0, 0)].contains("changed on disk"));
+}
+
+#[test]
+fn another_archive_generation_does_not_ask_for_gta_vi_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("other.rpf");
+    std::fs::write(&path, b"7FPR").unwrap();
+    let result = Rpf9TableDocument::open_using(&path, || panic!("not an RPF9"));
+    assert!(matches!(result, Ok(None)));
+}
+
+#[test]
+fn the_tree_arrow_loads_and_collapses_the_child_table() {
+    use crate::state::nothing_draws_over_what_it_belongs_to::{painted, Panel};
+    use crate::state::{AppState, DocPayload, Prefs};
+    let _serial = crate::ui::theme::serial();
+    let (_dir, path) = fixture(0x1000, true);
+    let doc = Arc::new(
+        Rpf9TableDocument::open_using(&path, || Ok(keys()))
+            .unwrap()
+            .unwrap(),
+    );
+    let mut state = AppState::from_prefs(Prefs::default());
+    state.insert_document(path, DocPayload::Rpf9Table(doc.clone()), None, None);
+    let mut panel = Panel::new(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(560.0, 900.0),
+    ));
+    let state = std::cell::RefCell::new(state);
+    let draw = |ui: &mut egui::Ui| {
+        assert!(crate::ui::panels::inspector::draw_archive_table(
+            ui,
+            &mut state.borrow_mut()
+        ));
+    };
+    panel.frame(Vec::new(), draw);
+    let before = panel.frame(Vec::new(), draw);
+    let at = painted(&before)
+        .into_iter()
+        .find(|p| p.text == "▸")
+        .expect("expand arrow")
+        .rect
+        .center();
+    assert_eq!(doc.tree().nodes.len(), 1, "drawing must not mount children");
+    let click = |panel: &mut Panel| {
+        panel.frame(vec![egui::Event::PointerMoved(at)], draw);
+        for pressed in [true, false] {
+            panel.frame(
+                vec![egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                draw,
+            );
+        }
+    };
+    click(&mut panel);
+    wait(&doc);
+    assert!(
+        doc.tree().expanded.contains(&(0, 0)),
+        "the arrow must expand its row"
+    );
+    assert_eq!(doc.tree().nodes.len(), 2);
+    let expanded = panel.frame(Vec::new(), draw);
+    assert!(painted(&expanded).iter().any(|p| p.text == "▾"));
+    click(&mut panel);
+    assert!(
+        doc.tree().expanded.is_empty(),
+        "the second click must collapse its row"
+    );
+}
+
+#[test]
+fn a_child_table_is_a_job_that_can_be_cancelled() {
+    use crate::state::{jobs::JobKind, AppState, DocPayload, Prefs};
+    let (_dir, path) = fixture(0x1000, true);
+    let doc = Arc::new(
+        Rpf9TableDocument::open_using(&path, || Ok(keys()))
+            .unwrap()
+            .unwrap(),
+    );
+    let mut state = AppState::from_prefs(Prefs::default());
+    state.insert_document(path, DocPayload::Rpf9Table(doc.clone()), None, None);
+    assert!(doc.job().is_none());
+    doc.toggle(0, 0);
+    assert!(state
+        .running_jobs()
+        .iter()
+        .any(|job| job.kind == JobKind::ArchiveTable));
+    state.cancel_job(JobKind::ArchiveTable);
+    assert!(doc.job().is_none());
+    state.poll_jobs();
+    assert_eq!(
+        doc.tree().nodes.len(),
+        1,
+        "a cancelled result must not mount the child"
+    );
+}
+
+#[test]
+fn confirmed_media_extensions_survive_opening_without_changing_the_entry_address() {
+    for (name, extension) in [
+        ("force_empty_rpf.txt", "txt"),
+        ("data/tessellation.dat", "dat"),
+        ("data/imposterextents.dat", "dat"),
+        ("shaders/sga_spsdb/presets.spsdb", "spsdb"),
+        ("shaders/v2/fxdb/sga_xbsx_final_init.fxdb", "fxdb"),
+        (
+            "shaders/v2/sga_xbsx_final_aco.d3d12pipelinecache",
+            "d3d12pipelinecache",
+        ),
+        ("shaders/preload.list", "list"),
+        ("config/audioconfig.dat26.rel.nametable", "nametable"),
+    ] {
+        let hash = or_io::gta6::hash::name_hash64(name.as_bytes());
+        let body = if extension == "dat" {
+            b"\0synthetic body\n"
+        } else {
+            b"synthetic bytes\n"
+        };
+        let bytes = encrypted(&[(hash, 0x1000, body.len() as u64, 255)]);
+        let mut toc = Rpf9Toc::decrypt(&bytes, &keys()).unwrap();
+        let name32 = toc
+            .groups
+            .iter()
+            .find(|group| group.name_hash == or_io::container::rpf::GROUP_NAME32)
+            .unwrap()
+            .data
+            .clone();
+        toc.bytes[name32]
+            .copy_from_slice(&or_io::gta6::hash::name_hash32(name.as_bytes()).to_le_bytes());
+        let mut bytes = Rpf9Builder::serialize(&toc, &keys()).unwrap();
+        bytes.resize(0x1000, 0);
+        bytes.extend(body);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("table.rpf");
+        std::fs::write(&path, bytes).unwrap();
+        let table = Arc::new(
+            Rpf9TableDocument::open_using(&path, || Ok(keys()))
+                .unwrap()
+                .unwrap(),
+        );
+        let source = table.entry(0, 0).unwrap();
+        let original_name = source.name.clone();
+        let original_path = source.path.clone();
+        let expected = (Gta6EntryType::File(extension), false);
+        assert_eq!(table.tree().entry_type(0, 0), expected);
+        let displayed = crate::state::files_view::rpf9_display_name(&source.name, expected.0);
+        assert!(
+            displayed == format!("hash_{hash:016x}.{extension}")
+                || displayed == name.rsplit('/').next().unwrap(),
+            "unexpected display name: {displayed}"
+        );
+        assert_eq!(source.name, displayed);
+        assert_eq!(source.path.extension().unwrap(), extension);
+        let payload = source.payload().unwrap();
+        if extension == "dat" {
+            assert!(matches!(payload, crate::state::DocPayload::Hex(_)));
+        }
+        assert_eq!(table.tree().entry_type(0, 0), expected);
+        assert_eq!(table.entry(0, 0).unwrap().name, original_name);
+        assert_eq!(table.entry(0, 0).unwrap().path, original_path);
+        assert!(!original_path.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+}
+
+#[test]
+fn a_metadata_catalog_does_not_probe_headers_or_change_the_ui_child_types() {
+    let (_dir, path) = fixture(0x1000, true);
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[0x800..0x804].copy_from_slice(b"ADAT");
+    bytes[0x1800..0x1804].copy_from_slice(b"ADAT");
+    std::fs::write(&path, bytes).unwrap();
+    let ui = Rpf9TableDocument::open_using(&path, || Ok(keys()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(ui.tree().entry_type(0, 1), (Gta6EntryType::Awc, true));
+    let metadata = Rpf9TableDocument::open_with_headers(&path, || Ok(keys()), false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        metadata.tree().entry_type(0, 1),
+        (Gta6EntryType::Unknown, false)
+    );
+    let detached = ui.detached_metadata().unwrap();
+    assert_eq!(
+        detached.tree().entry_type(0, 1),
+        (Gta6EntryType::Unknown, false)
+    );
+    for catalog in [&metadata, &detached] {
+        assert_eq!(catalog.expand_table(0, 0).unwrap(), 0x1000);
+        assert_eq!(
+            catalog.tree().entry_type(0x1000, 0),
+            (Gta6EntryType::Unknown, false)
+        );
+    }
+    assert_eq!(
+        ui.tree().nodes.len(),
+        1,
+        "metadata children stay outside the UI tree"
+    );
+    ui.expand_table(0, 0).unwrap();
+    assert_eq!(ui.tree().entry_type(0x1000, 0), (Gta6EntryType::Awc, true));
+    assert_eq!(
+        detached.tree().entry_type(0x1000, 0),
+        (Gta6EntryType::Unknown, false)
+    );
+}
+
+#[test]
+fn metadata_file_roots_share_one_context_without_reusing_a_mounted_archives_keys() {
+    let (_first_dir, first_path) = fixture(0x1000, true);
+    let (_second_dir, second_path) = fixture(0x1000, true);
+    let mounted = Rpf9TableDocument::open_using(&first_path, || Ok(keys()))
+        .unwrap()
+        .unwrap();
+    let calls = std::cell::Cell::new(0);
+    let mut files = MetadataOpener::default();
+    let first = files
+        .open_using(&first_path, || {
+            calls.set(calls.get() + 1);
+            Ok(TableContext {
+                keys: Arc::new(keys()),
+                resolver: Arc::new(NameResolver::default()),
+            })
+        })
+        .unwrap()
+        .unwrap();
+    let second = files
+        .open_using(&second_path, || {
+            panic!("the catalog must reuse its configured context")
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(calls.get(), 1);
+    assert!(Arc::ptr_eq(&first.keys, &second.keys));
+    assert!(Arc::ptr_eq(&first.resolver, &second.resolver));
+    assert!(!Arc::ptr_eq(&first.keys, &mounted.keys));
+    let detached = mounted.detached_metadata().unwrap();
+    assert!(Arc::ptr_eq(&detached.keys, &mounted.keys));
+    assert!(Arc::ptr_eq(&detached.resolver, &mounted.resolver));
+    first.expand_table(0, 0).unwrap();
+    assert_eq!(second.tree().nodes.len(), 1);
+    assert_eq!(mounted.tree().nodes.len(), 1);
+    assert!(!first.read_headers && !second.read_headers && !detached.read_headers);
+    assert!(mounted.read_headers);
+}
+
+#[test]
+fn a_catalog_caches_configuration_errors_and_a_new_catalog_retries_them() {
+    let (_dir, path) = fixture(0x1000, true);
+    let mut files = MetadataOpener::default();
+    let missing = files.open_using(&path, || Err("missing test keys".to_string()));
+    assert!(matches!(missing, Err(error) if error == "missing test keys"));
+    let repeated = files.open_using(&path, || {
+        panic!("a failed configuration is loaded once per catalog")
+    });
+    assert!(matches!(repeated, Err(error) if error == "missing test keys"));
+    let mut retry = MetadataOpener::default();
+    assert!(retry
+        .open_using(&path, || Ok(TableContext {
+            keys: Arc::new(keys()),
+            resolver: Arc::new(NameResolver::default()),
+        }))
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn metadata_context_loading_waits_for_rpf9_magic_and_survives_a_bad_table() {
+    let (dir, path) = fixture(0x1000, true);
+    let other = dir.path().join("other.rpf");
+    std::fs::write(&other, b"7FPR").unwrap();
+    let mut files = MetadataOpener::default();
+    assert!(files
+        .open_using(&other, || panic!(
+            "another archive version needs no GTA VI configuration"
+        ))
+        .unwrap()
+        .is_none());
+    assert!(files.context.is_none());
+    std::fs::write(&other, RPF9_MAGIC.to_le_bytes()).unwrap();
+    let broken = files.open_using(&other, || {
+        Ok(TableContext {
+            keys: Arc::new(keys()),
+            resolver: Arc::new(NameResolver::default()),
+        })
+    });
+    assert!(broken.is_err());
+    assert!(files.context.as_ref().is_some_and(Result::is_ok));
+    assert!(files
+        .open_using(&path, || panic!(
+            "the table error does not invalidate its configured keys"
+        ))
+        .unwrap()
+        .is_some());
+}

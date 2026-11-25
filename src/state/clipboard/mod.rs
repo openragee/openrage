@@ -59,6 +59,11 @@ impl AppState {
         let Some(DocPayload::Rpf(rpf)) = self.document(doc).map(|d| &d.payload) else {
             return Err(tr!("The archive is no longer open").into());
         };
+        if cut {
+            for &row in rows {
+                self.require_writable_rpf_row(doc, row)?;
+            }
+        }
         let session = &rpf.session;
         let rows = top_rows(session, rows);
         let named = match rows.as_slice() {
@@ -89,6 +94,7 @@ impl AppState {
 
     /// Paste into the row `folder` of `doc` the files Explorer copied last, else what Copy or Cut held.
     pub fn paste_rows(&mut self, doc: DocumentId, folder: RpfNodeId) -> Result<(), String> {
+        self.require_writable_rpf_row(doc, folder)?;
         let elsewhere = clipboard::files_from_elsewhere();
         let held = self.held_rows();
         let files = match (&held, elsewhere.is_empty()) {

@@ -1,5 +1,4 @@
-//! The one step from a body a scan of a GTA VI archive found to the payload its view opens, taken
-//! by the clear read and by the deciphered read of a content-ciphered entry alike.
+//! The payload and view of a clear body found through an explicit GTA VI archive scan.
 
 use super::super::{
     document_io, gta6_dialogue, gta6_effect_facts, gta6_entry_skeletons, gta6_face, gta6_head,

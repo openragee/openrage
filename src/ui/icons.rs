@@ -234,14 +234,27 @@ pub fn rpf_node_icon(
     open: bool,
 ) -> IconBadge {
     let icon = match &node.backing {
+        RpfNodeBacking::Rpf9Archive {
+            open_error: Some(_),
+            ..
+        } => IconBadge::new(
+            ph::ARCHIVE,
+            theme::STATE_ERROR.get(),
+            tr!("RPF archive (failed to open)"),
+        )
+        .with_badge(BadgeKind::Error),
+        RpfNodeBacking::Rpf9Archive { .. } => {
+            IconBadge::new(ph::ARCHIVE, theme::KIND_RPF, tr!("RPF archive"))
+        }
+        RpfNodeBacking::Rpf9Dir { .. } => folder_icon(open),
+        RpfNodeBacking::Rpf9File { .. } => file_icon_for_node(node),
         RpfNodeBacking::Root => folder_icon(open),
         RpfNodeBacking::DiskFolder { .. } => folder_icon(open),
         RpfNodeBacking::InMemoryDir => folder_icon(open).with_badge(BadgeKind::New),
-        // A GTA VI archive's refusal is no failure: it opens as a scan.
         RpfNodeBacking::Archive {
-            open_error: Some(error),
+            open_error: Some(_),
             ..
-        } if !crate::state::gta_vi::is_rpf9_refusal(error) => IconBadge::new(
+        } => IconBadge::new(
             ph::ARCHIVE,
             theme::STATE_ERROR.get(),
             tr!("RPF archive (failed to open)"),
@@ -296,6 +309,9 @@ pub fn rpf_node_icon(
 }
 
 fn file_icon_for_node(node: &RpfSessionNode) -> IconBadge {
+    if let Some(kind) = node.rpf9_type() {
+        return rpf9_icon(kind);
+    }
     let ext = std::path::Path::new(&node.name)
         .extension()
         .and_then(|s| s.to_str())
@@ -323,6 +339,40 @@ fn file_icon_for_node(node: &RpfSessionNode) -> IconBadge {
         ),
         _ => IconBadge::new(ph::FILE, theme::TEXT_SECONDARY.get(), tr!("Binary file")),
     }
+}
+
+fn rpf9_icon(kind: or_io::container::rpf::Gta6EntryType) -> IconBadge {
+    use or_io::container::rpf::{Gta6EntryType, Rpf9Role};
+    use or_io::gta6::other_bodies::OtherBody;
+    let document = match kind {
+        Gta6EntryType::Archive => Some(DocumentKind::Rpf9),
+        Gta6EntryType::TextureDictionary => Some(DocumentKind::Ytd),
+        Gta6EntryType::Awc => Some(DocumentKind::Awc),
+        Gta6EntryType::File(extension) => crate::state::files_view::rpf9_file_kind(extension),
+        Gta6EntryType::Resource(Rpf9Role::Drawable) => Some(DocumentKind::Ydr),
+        Gta6EntryType::Resource(Rpf9Role::DrawableWithBound) => Some(DocumentKind::Yft),
+        Gta6EntryType::Resource(Rpf9Role::Bound) => Some(DocumentKind::Ybn),
+        Gta6EntryType::Resource(Rpf9Role::NavMesh) => Some(DocumentKind::Ynv),
+        Gta6EntryType::Resource(Rpf9Role::Cloth) => Some(DocumentKind::Yld),
+        Gta6EntryType::Resource(Rpf9Role::ParticleEffects) => Some(DocumentKind::Ypt),
+        Gta6EntryType::Body(OtherBody::Gfx) => Some(DocumentKind::Gfx),
+        Gta6EntryType::Body(OtherBody::HeightMap) => Some(DocumentKind::HeightMap),
+        Gta6EntryType::Body(OtherBody::MoveNetwork) => Some(DocumentKind::MoveNetwork),
+        Gta6EntryType::Rbf | Gta6EntryType::Pso => Some(DocumentKind::Meta),
+        _ => None,
+    };
+    let mut icon = document
+        .map(|kind| doc_kind_icon(kind, false))
+        .unwrap_or_else(|| {
+            let glyph = if matches!(kind, Gta6EntryType::Unknown) {
+                ph::FILE
+            } else {
+                ph::FILE_CODE
+            };
+            IconBadge::new(glyph, theme::TEXT_SECONDARY.get(), tr!("Binary file"))
+        });
+    icon.type_tooltip = crate::state::files_view::rpf9_type_name(kind);
+    icon
 }
 
 pub fn icon_label(

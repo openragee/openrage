@@ -23,13 +23,13 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use or_io::container::rpf::gta6_kinds::entry_kinds;
 use or_io::container::rpf::{
-    decode_masked, is_masked, Gta6Archive, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver,
+    decode_masked, is_masked, open_at_bounded, Gta6Archive, Gta6Entry, Gta6Mount, GtaViKeys,
+    NameResolver, RPF9_HEADER_SIZE,
 };
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
 use or_io::meta::binary::pso::string_names;
@@ -179,24 +179,51 @@ fn mount_path(
     inner: &[String],
     keys: &GtaViKeys,
     resolver: &NameResolver,
-) -> Result<Gta6Mount, String> {
-    let mut mount = Gta6Mount::open_root(file, keys).map_err(|e| e.to_string())?;
+) -> Result<(Gta6Mount, std::ops::Range<u64>), String> {
+    if inner.len() > 32 {
+        return Err("the archive nesting limit was reached".into());
+    }
+    let mut extent = 0..file.metadata().map_err(|e| e.to_string())?.len();
+    let mut mount = Gta6Mount {
+        base: 0,
+        archive: open_at_bounded(file, extent.clone(), keys).map_err(|e| e.to_string())?,
+    };
     mount.archive.resolve_names(resolver);
     for component in inner {
         let entry = find_entry(&mount, component)
             .ok_or_else(|| format!("no entry {component:?} in the archive"))?;
-        if !mount
-            .entry_begins_archive(file, &entry)
-            .map_err(|e| e.to_string())?
-        {
-            return Err(format!("{component:?} is an entry, not a nested archive"));
+        let invalid = || format!("{component:?} does not describe a bounded, clear nested archive");
+        if entry.cipher.is_some() {
+            return Err(invalid());
         }
-        mount = mount
-            .open_nested(file, &entry, keys)
-            .map_err(|e| e.to_string())?;
+        let relative = entry
+            .start
+            .filter(|start| *start >= mount.archive.toc.bytes.len() as u64)
+            .ok_or_else(invalid)?;
+        let stored = entry
+            .stored
+            .or_else(|| {
+                mount
+                    .archive
+                    .entry_extra(entry.index as usize)?
+                    .nested
+                    .map(|row| row.stored_size())
+            })
+            .filter(|size| *size >= RPF9_HEADER_SIZE as u64)
+            .ok_or_else(invalid)?;
+        let start = extent.start.checked_add(relative).ok_or_else(invalid)?;
+        let end = start
+            .checked_add(stored)
+            .filter(|end| *end <= extent.end)
+            .ok_or_else(invalid)?;
+        extent = start..end;
+        mount = Gta6Mount {
+            base: start,
+            archive: open_at_bounded(file, extent.clone(), keys).map_err(|e| e.to_string())?,
+        };
         mount.archive.resolve_names(resolver);
     }
-    Ok(mount)
+    Ok((mount, extent))
 }
 
 /// The entry of `mount` a path component or selector names: by recovered name, by `0x…`/`hash_…`
@@ -299,7 +326,7 @@ fn do_list(
     show: &Show,
 ) -> Result<(), String> {
     let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mount = mount_path(&mut file, inner, keys, resolver)?;
+    let (mount, _) = mount_path(&mut file, inner, keys, resolver)?;
     let strings = if show.strings {
         mount_strings(&mount, &mut file, keys)
     } else {
@@ -590,7 +617,7 @@ fn do_extract(
     resolver: &NameResolver,
 ) -> Result<usize, String> {
     let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mount = mount_path(&mut file, inner, keys, resolver)?;
+    let (mount, extent) = mount_path(&mut file, inner, keys, resolver)?;
 
     let chosen: Vec<Gta6Entry> = select_entries(&mount.archive.entries, pick.entry, pick.filter);
     if chosen.is_empty() {
@@ -611,42 +638,42 @@ fn do_extract(
         // A content-ciphered body is written only with `--decrypt`, deciphered and inflated; without
         // the flag it is skipped, as the clear reader would write ciphertext. A clear entry reads the
         // same either way.
-        if entry.cipher.is_some() {
-            if !pick.decrypt {
-                eprintln!(
-                    "  skipped {} (enciphered body; pass --decrypt to decipher it)",
-                    entry.display_name()
-                );
-                continue;
-            }
-        } else if mount
-            .entry_begins_archive(&mut file, entry)
-            .unwrap_or(false)
-        {
-            match write_nested(&mount, &mut file, entry, &out) {
-                Ok(()) => written += 1,
-                Err(e) => eprintln!("  skipped {} ({e})", entry.display_name()),
-            }
+        if entry.cipher.is_some() && !pick.decrypt {
+            eprintln!(
+                "  skipped {} (enciphered body; pass --decrypt to decipher it)",
+                entry.display_name()
+            );
             continue;
         }
-        let read = if entry.cipher.is_some() {
-            mount.read_entry_decrypted(&mut file, entry, keys)
-        } else {
-            mount.read_entry(&mut file, entry)
-        };
-        let bytes = match read {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                eprintln!("  skipped {} ({e})", entry.display_name());
+        let read = match mount.read_entry_plan(entry.index, extent.end, u64::MAX) {
+            Ok(read) => read,
+            Err(error) => {
+                if pick.entry.is_some() {
+                    return Err(format!("{}: {error}", entry.display_name()));
+                }
+                eprintln!("  skipped {} ({error})", entry.display_name());
                 continue;
             }
         };
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
         }
-        std::fs::write(&out, &bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+        let mut temp = tempfile::NamedTempFile::new_in(dest).map_err(|e| e.to_string())?;
+        let decoded = match read.extract(&mut file, keys, temp.as_file_mut()) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                if pick.entry.is_some() {
+                    return Err(format!("{}: {error}", entry.display_name()));
+                }
+                eprintln!("  skipped {} ({error})", entry.display_name());
+                continue;
+            }
+        };
+        temp.persist(&out)
+            .map_err(|e| format!("{}: {e}", out.display()))?;
         written += 1;
-        if pick.strings {
+        if pick.strings && decoded <= STRINGS_CAP {
+            let bytes = std::fs::read(&out).map_err(|e| format!("{}: {e}", out.display()))?;
             match body_strings(&bytes, keys) {
                 Ok(Some(strings)) => {
                     let side = strings_file(&out);
@@ -666,36 +693,6 @@ fn strings_file(body: &Path) -> PathBuf {
     let mut name = body.as_os_str().to_owned();
     name.push(".strings.txt");
     PathBuf::from(name)
-}
-
-/// Write the nested archive `entry` holds to `out` as its row states it, `[start, start + stored)`:
-/// its entries' starts are relative to its own header, so the file opens as an archive on its own.
-fn write_nested(
-    mount: &Gta6Mount,
-    file: &mut File,
-    entry: &Gta6Entry,
-    out: &Path,
-) -> Result<(), String> {
-    let (Some(start), Some(stored)) = (mount.absolute_start(entry), entry.stored) else {
-        return Err("a nested archive whose row states no stored size".to_string());
-    };
-    if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
-    file.seek(SeekFrom::Start(start))
-        .map_err(|e| e.to_string())?;
-    let mut sink = File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
-    let copied = std::io::copy(&mut file.by_ref().take(stored), &mut sink)
-        .map_err(|e| format!("{}: {e}", out.display()))?;
-    if copied != stored {
-        drop(sink);
-        // A short copy is not the nested archive; leave no partial file behind.
-        let _ = std::fs::remove_file(out);
-        return Err(format!(
-            "the archive ends {copied} bytes into the {stored}-byte nested archive"
-        ));
-    }
-    Ok(())
 }
 
 /// The entries to extract: the one `--entry` names, those whose name holds `--filter`, or, with

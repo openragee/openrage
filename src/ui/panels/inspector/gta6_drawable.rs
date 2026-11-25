@@ -45,7 +45,12 @@ pub(super) fn draw_gta6_cell(
     for line in polygon.map(|p| polygon_lines(&cell, p)).unwrap_or_default() {
         ui.label(line);
     }
-    physics_edit::draw_cell(ui, state, doc_id, polygon);
+    let table_entry = state
+        .document(doc_id)
+        .is_some_and(crate::state::Document::is_from_rpf9_table);
+    if !table_entry {
+        physics_edit::draw_cell(ui, state, doc_id, polygon);
+    }
     // Built again only when a neighbouring cell opens or closes.
     let near = neighbours(&path, &cell);
     let key: Vec<usize> = (near.iter())
@@ -61,11 +66,12 @@ pub(super) fn draw_gta6_cell(
             lines
         }
     };
-    for line in joins.iter() {
+    for line in joins.iter().filter(|_| !table_entry) {
         ui.add(egui::Label::new(line.as_str()).extend());
     }
     // A deletion also asks for the cells at the corners, which no join line names.
-    if linked_cells(&path, &cell).iter().any(|(_, n)| n.is_none())
+    if !table_entry
+        && linked_cells(&path, &cell).iter().any(|(_, n)| n.is_none())
         && ui
             .button(tr!("Find the neighbouring cells in the scan"))
             .clicked()

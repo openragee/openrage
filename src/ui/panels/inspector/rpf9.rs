@@ -12,7 +12,11 @@ use crate::state::rpf9_scan::{
 /// found, laying out only the rows in view: a large archive holds hundreds of thousands.
 pub(super) fn draw_rpf9(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId) {
     if let Some(DocPayload::Rpf9Table(table)) = state.document(doc_id).map(|d| &d.payload) {
-        draw_table_facts(ui, table);
+        let table = table.clone();
+        if let Some(action) = super::rpf9_table::draw_facts(ui, &table) {
+            action.run(state, &table);
+        }
+        draw_table_facts(ui, &table);
         return;
     }
     let Some(DocPayload::Rpf9(scan)) = state.document(doc_id).map(|d| &d.payload) else {
@@ -149,16 +153,20 @@ fn draw_table_facts(
     ui: &mut egui::Ui,
     table: &crate::state::rpf9_scan::rpf9_table_document::Rpf9TableDocument,
 ) {
-    ui.heading(tr!("GTA VI Archive"));
-    ui.separator();
-    if let Some(root) = &table.tree().root {
-        let named = root.rows.iter().filter(|row| row.name.is_some()).count();
+    if let Some(root) = table.tree().nodes.get(&0) {
+        let named = root
+            .mount
+            .archive
+            .entries
+            .iter()
+            .filter(|row| row.name.is_some())
+            .count();
         ui.label(tr_n!(
             "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}.",
             "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}.",
-            root.rows.len(),
+            root.mount.archive.entries.len(),
             named = named,
-            key = format!("{:#010X}", root.key_id),
+            key = format!("{:#010X}", root.mount.archive.toc.key_id),
         ));
     }
     ui.label(crate::state::gta_vi::rpf9_facts(&table.header));
@@ -674,7 +682,9 @@ mod tests {
 
     #[test]
     fn an_archive_listed_from_its_table_says_so_in_its_tab() {
-        use crate::state::rpf9_scan::rpf9_table_document::tests::{sample_document, state_showing};
+        use crate::state::rpf9_scan::rpf9_table_document::ui_tests::{
+            sample_document, state_showing,
+        };
         let _serial = crate::ui::theme::serial();
         let (_dir, doc) = sample_document();
         let (mut state, id) = state_showing(doc);

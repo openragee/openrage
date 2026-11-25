@@ -131,42 +131,25 @@ pub(super) fn draw_listing(
         let busy = state.expander.is_in_flight(doc, listing.folder);
         // An archive that did not open is not an empty folder: it says why it did not.
         let refused = match state.document(doc).map(|d| &d.payload) {
-            Some(DocPayload::Rpf(rpf)) => match rpf.session.node(listing.folder) {
-                Some(RpfSessionNode {
-                    backing:
-                        RpfNodeBacking::Archive {
-                            open_error: Some(error),
-                            source,
-                            ..
-                        },
-                    ..
-                }) => Some((error.clone(), source.clone())),
-                _ => None,
-            },
-            _ => None,
-        };
-        // A GTA VI archive opens as what a scan finds in it instead, in a tab of its own.
-        let scanned = match &refused {
-            Some((error, crate::state::ArchiveSource::Disk(Some(path))))
-                if crate::state::gta_vi::is_rpf9_refusal(error) =>
-            {
-                Some(path.clone())
+            Some(DocPayload::Rpf(rpf)) => {
+                rpf.session
+                    .node(listing.folder)
+                    .and_then(|node| match &node.backing {
+                        RpfNodeBacking::Archive { open_error, .. }
+                        | RpfNodeBacking::Rpf9Archive { open_error, .. } => open_error.clone(),
+                        _ => None,
+                    })
             }
             _ => None,
         };
         let message = if busy {
             tr!("Reading this folder…")
-        } else if let Some((error, _)) = refused.as_ref() {
+        } else if let Some(error) = refused.as_ref() {
             error
         } else {
             tr!("This folder is empty")
         };
         empty_centered(ui, message);
-        // ⚠ Left by a step Back, which records nothing: a recorded step would make Back lead in
-        // here again, and so to the scan's tab for ever. Forward is the way in.
-        if let Some(path) = scanned.filter(|_| state.navigate_back()) {
-            state.load_file(path);
-        }
     } else {
         match view {
             ViewMode::Details => details(ui, state, listing, &mut asked),
@@ -217,7 +200,7 @@ fn row_of(state: &AppState, doc: DocumentId, id: RpfNodeId) -> Option<Row> {
     let node = rpf.session.node(id)?.clone();
     let facts = row_facts(&rpf.session, id)?;
     Some(Row {
-        supported: node.is_dir() || rpf_path_supported(&node.name),
+        supported: node.is_dir() || node.rpf9_type().is_some() || rpf_path_supported(&node.name),
         in_flight: state.expander.is_in_flight(doc, id),
         unsaved: rpf.session.archive_unsaved(id),
         node,
@@ -262,6 +245,10 @@ fn interact(
 fn rename_editor(ui: &mut egui::Ui, state: &mut AppState, doc: DocumentId, row: &Row) -> bool {
     let id = row.node.id;
     if !super::ui_state(state).is_renaming_in_centre(doc, id) {
+        return false;
+    }
+    if super::rows::is_rpf9(state, doc, id) {
+        super::ui_state(state).renaming = None;
         return false;
     }
     let Some(mut rename) = super::ui_state(state).renaming.take() else {
@@ -392,14 +379,18 @@ fn details_table(
                         );
                         let colour = name_colour(&row);
                         ui.add(
-                            egui::Label::new(icons::icon_label(&icon, &row.node.name, colour))
-                                .selectable(false)
-                                .truncate(),
+                            egui::Label::new(icons::icon_label(
+                                &icon,
+                                row.node.display_name(),
+                                colour,
+                            ))
+                            .selectable(false)
+                            .truncate(),
                         );
                     }
                 });
                 crate::ui::accessible_name::named_with(name_cell, || {
-                    tr!("Name: {name}", name = row.node.name)
+                    tr!("Name: {name}", name = row.node.display_name())
                 });
                 for ((title, _, _), cell) in COLUMNS[1..].iter().zip(detail_cells(&row.facts)) {
                     let (_, response) = table_row.col(|ui| {
@@ -448,14 +439,18 @@ fn hover(ui: &mut egui::Ui, row: &Row) {
 }
 
 fn hover_of(row: &Row) -> String {
-    match row.facts.size {
+    let text = match row.facts.size {
         Some(size) if !row.node.is_dir() => format!(
             "{}\n{} · {}",
-            row.node.name,
+            row.node.display_name(),
             row.facts.kind,
             or_job::human_bytes(size)
         ),
-        _ => format!("{}\n{}", row.node.name, row.facts.kind),
+        _ => format!("{}\n{}", row.node.display_name(), row.facts.kind),
+    };
+    match row.facts.rpf9_entry {
+        Some((index, hash)) => format!("{text}\n#{index} · {hash:016X}"),
+        None => text,
     }
 }
 
@@ -628,7 +623,7 @@ fn tile(
         .inner;
     if !edited {
         let galley = ui.painter().layout_job(tile_name(
-            &row.node.name,
+            &row.node.display_name(),
             name_rect.width(),
             name_colour(&row),
         ));

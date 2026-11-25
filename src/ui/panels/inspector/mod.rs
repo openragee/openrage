@@ -44,6 +44,7 @@ mod move_network;
 mod rel;
 mod rpf;
 mod rpf9;
+mod rpf9_table;
 pub(crate) use rpf9::row_kind_label as rpf9_row_kind_label;
 mod structure;
 mod summary;
@@ -163,6 +164,43 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
 /// The Files panel's list of what the scan of the GTA VI archive `doc` found.
 pub fn draw_scan_list(ui: &mut egui::Ui, state: &mut AppState, doc: DocumentId) {
     draw_scan_rows(ui, state, doc);
+}
+
+#[cfg(test)]
+pub fn draw_archive_table(ui: &mut egui::Ui, state: &mut AppState) -> bool {
+    let document = state
+        .active_document()
+        .and_then(|active| {
+            let archive = active
+                .path
+                .as_deref()
+                .and_then(crate::state::rpf9::entry::archive_path);
+            match archive {
+                Some(archive) => state
+                    .documents
+                    .iter()
+                    .find(|doc| doc.path.as_deref() == Some(archive)),
+                None => Some(active),
+            }
+        })
+        .map(|doc| doc.id);
+    document.is_some_and(|id| draw_archive_table_document(ui, state, id))
+}
+
+/// Draw the table-backed archive tree of document `doc_id`.
+pub fn draw_archive_table_document(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    doc_id: DocumentId,
+) -> bool {
+    let Some(DocPayload::Rpf9Table(table)) = state.document(doc_id).map(|doc| &doc.payload) else {
+        return false;
+    };
+    let table = table.clone();
+    if let Some(action) = rpf9_table::draw_tree(ui, &table) {
+        action.run(state, &table);
+    }
+    true
 }
 
 /// The active document's body without the inspector's header: the Document
@@ -313,7 +351,10 @@ pub(crate) mod rows {
         doc_id: crate::state::DocumentId,
         selection: Option<u64>,
     ) {
-        draw_ypt(ui, state, doc_id, selection);
+        let table_entry = state
+            .document(doc_id)
+            .is_some_and(crate::state::Document::is_from_rpf9_table);
+        ui.add_enabled_ui(!table_entry, |ui| draw_ypt(ui, state, doc_id, selection));
         if let Some(sel) = selection {
             // ⚠ The live sliders drive the preview, which plays the active document's effect.
             if ypt_tag_of(sel) == YPT_EFFECT && state.active_document == Some(doc_id) {

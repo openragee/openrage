@@ -55,15 +55,14 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# Publish streamed archive exports only after decoding succeeds.
+tempfile.workspace = true
 # The shared keys cache lives under the user's config directory.
 # `script download-natives` fetches the natives lists, only when asked; the
 # same client and features `or-shader-tool` already builds.
 ureq = { version = "3.1", default-features = false, features = ["rustls", "platform-verifier"] }
 
 [dev-dependencies]
-# The command tests write real files, because most of what these commands do
-# is decide what goes on disk.
-tempfile.workspace = true
 # Finds the shared corpus the behaviour baseline samples.
 or-test-support.workspace = true
 # The editor's calls that make the small particle list the command tests build a pack from.

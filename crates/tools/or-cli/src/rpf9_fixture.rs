@@ -87,7 +87,7 @@ pub(super) fn keys() -> GtaViKeys {
 }
 
 /// An entry's body: raw bytes (class `0xFF`), bytes stored as one zlib stream at its best level,
-/// whose `78 DA` head the body reader finds (class `0xFF`), a whole nested archive (class `0x00`), or
+/// described by a chunk table (class `0xFF`), a whole nested archive (class `0x00`), or
 /// chunks, each `(inflated bytes, deflated?)`, 16-aligned under a mode-3 `0xe0c1` table (class `0xFF`).
 pub(super) enum Body {
     Raw(Vec<u8>),
@@ -144,8 +144,13 @@ pub(super) fn archive(entries: &[(&str, Body)]) -> Vec<u8> {
             }
             Body::Zlib(b) => {
                 let mut s = deflate(b);
+                let chunk = Chunk {
+                    inflated: b.len() as u32,
+                    stored: s.len() as u32,
+                    zlib: true,
+                };
                 s.resize(round16(s.len()), 0);
-                (0xFF, s, b.len() as u64, None)
+                (0xFF, s, b.len() as u64, Some(vec![chunk]))
             }
             Body::Nested(b) => (0x00, b.clone(), b.len() as u64, None),
             Body::Chunked(pieces) => {

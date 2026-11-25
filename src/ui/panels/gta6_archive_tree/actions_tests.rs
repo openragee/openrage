@@ -1,10 +1,10 @@
 //! Hermetic checks of the row actions, on an archive built here and enciphered under a synthetic
 //! white-box key, so no game byte is involved.
 
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 
 use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
-use or_io::container::rpf::Rpf9Form;
+use or_io::container::rpf::{write_rpf9_resource, Rpf9Form, Rpf9Sections};
 use or_io::gta6::hash::name_hash64;
 
 use super::*;
@@ -77,16 +77,20 @@ fn keys() -> GtaViKeys {
 }
 
 /// A loose resource of a block-mapped virtual section of 0x200 bytes and no physical one.
-fn loose() -> Vec<u8> {
+fn virtual_section() -> Vec<u8> {
     let mut v: Vec<u8> = (0..0x200)
         .map(|i| ((i * 13 + 2) % 251) as u8 | 0x80)
         .collect();
     v[..8].fill(0);
     v[8..16].copy_from_slice(&0x5000_0040u64.to_le_bytes());
     v[0x40..0x70].fill(0);
+    v
+}
+
+fn loose() -> Vec<u8> {
     write_rpf9_resource(&Rpf9Sections {
         form: Rpf9Form::BlockMapped,
-        virtual_section: v,
+        virtual_section: virtual_section(),
         physical: Vec::new(),
     })
     .expect("a loose resource")
@@ -137,35 +141,27 @@ fn row(disk: &Path, name: &str) -> Row {
 }
 
 #[test]
-fn each_row_of_a_table_is_labelled_by_its_class_or_its_type_code() {
-    let dir = tempfile::tempdir().expect("a scratch directory");
+fn a_row_exports_the_exact_decoded_table_bytes_without_an_envelope() {
+    let dir = tempfile::tempdir().expect("scratch");
     let disk = source(dir.path());
-    let kinds = kinds(&disk, 0, &keys()).expect("the table opens");
-    let mut by_row = [
-        (row(&disk, MEDIA).entry, "media"),
-        (row(&disk, RESOURCE).entry, "drawable"),
-    ];
-    by_row.sort();
-    let want: Vec<&str> = by_row.iter().map(|(_, k)| *k).collect();
-    assert_eq!(kinds, want);
-}
-
-#[test]
-fn a_row_extracts_its_body_and_a_headerless_one_its_loose_form() {
-    let dir = tempfile::tempdir().expect("a scratch directory");
-    let disk = source(dir.path());
-    let keys = keys();
-
-    let out = dir.path().join("notes.txt");
-    extract(&row(&disk, MEDIA), &out, &keys).expect("the body is extracted");
-    assert_eq!(std::fs::read(&out).expect("written"), media());
-
-    let out = dir.path().join("a.ydr");
-    extract(&row(&disk, RESOURCE), &out, &keys).expect("the resource is extracted");
-    assert_eq!(std::fs::read(&out).expect("written"), loose());
-
-    let over = extract(&row(&disk, MEDIA), &disk, &keys).expect_err("over the archive");
-    assert!(over.contains("never written"), "{over}");
+    let table = crate::state::rpf9::Rpf9TableDocument::open_using(&disk, || Ok(keys()))
+        .unwrap()
+        .unwrap();
+    // The fixture is one zlib stream; its writer fills the block map before compression.
+    let loose = loose();
+    let mut resource = Vec::new();
+    flate2::read::ZlibDecoder::new(loose.as_slice())
+        .read_to_end(&mut resource)
+        .expect("the authored resource stream inflates independently of the table reader");
+    assert_eq!(resource.len(), virtual_section().len());
+    for (name, expected) in [(MEDIA, media()), (RESOURCE, resource)] {
+        let row = row(&disk, name);
+        let source = table.entry(0, row.entry).unwrap();
+        let out = dir.path().join(name.rsplit('/').next().unwrap());
+        extract_source(&row, &source, &out).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), expected);
+        assert!(extract_source(&row, &source, &disk).is_err());
+    }
 }
 
 #[test]
@@ -196,14 +192,15 @@ fn a_row_replaced_with_a_file_is_written_into_a_new_archive_that_reads_it_back()
         "the source is kept"
     );
 
-    // The resource's own loose form, extracted then put back, changes nothing.
     let resource = dir.path().join("a.ydr");
-    extract(&row(&disk, RESOURCE), &resource, &keys).expect("the resource is extracted");
+    std::fs::write(&resource, loose()).unwrap();
     let same = dir.path().join("same.rpf");
+    let refusal = replace(&row(&disk, RESOURCE), &resource, &same, &keys).unwrap_err();
     assert_eq!(
-        replace(&row(&disk, RESOURCE), &resource, &same, &keys),
-        Ok((false, false))
+        refusal,
+        crate::i18n::tr(crate::state::rpf9::entry::READ_ONLY)
     );
+    assert!(!same.exists());
 
     // A copy is only ever a new file: neither the source nor one that exists is written.
     let over = replace(&row(&disk, MEDIA), &with, &disk, &keys).expect_err("over the source");

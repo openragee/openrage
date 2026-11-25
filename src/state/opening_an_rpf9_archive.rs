@@ -79,7 +79,7 @@ fn member() -> [u8; 16] {
 }
 
 /// A PSO document in GTA VI's table form whose root holds one u32.
-fn table_form_pso() -> Vec<u8> {
+pub(super) fn table_form_pso() -> Vec<u8> {
     let mut psin = Vec::new();
     psin.extend(le32(ROOT));
     psin.extend(le32(4));
@@ -135,7 +135,7 @@ pub(super) fn headerless_rbm(block: u64) -> Vec<u8> {
 }
 
 /// A `KB2n` movie of one 64x48 frame and no sound track.
-fn kb2n() -> Vec<u8> {
+pub(super) fn kb2n() -> Vec<u8> {
     let start = 44 + 4;
     let body = b"picture".to_vec();
     let total = (start + body.len()) as u32;
@@ -220,10 +220,22 @@ pub(super) fn written(dir: &Path, bytes: &[u8]) -> PathBuf {
     path
 }
 
-/// Load `path` and wait for the load to end.
+/// Explicitly start the scanner whose behaviour these tests exercise.
 fn load(state: &mut AppState, path: PathBuf) {
-    state.load_file(path);
-    settle(state);
+    if super::rpf9_scan::scanned_body(&path).is_some() {
+        state.load_file(path);
+        settle(state);
+        return;
+    }
+    let scan = super::rpf9_scan::Rpf9ScanDocument::open(&path)
+        .expect("read")
+        .expect("scan archive");
+    state.insert_document(
+        path,
+        DocPayload::Rpf9(std::sync::Arc::new(scan)),
+        None,
+        None,
+    );
 }
 
 /// Wait for the loads in flight to end.
@@ -371,7 +383,7 @@ fn an_rpf9_archive_opens_as_the_bodies_a_scan_finds_with_its_header_facts() {
     let text = painted(&output);
     let header = or_io::container::rpf::Rpf9Header::parse(&bytes).expect("the head");
     for words in [
-        "cannot be listed by name".to_string(),
+        "read its table".to_string(),
         "a scan without the table".to_string(),
         format!("{} entry", header.entry_count),
         format!("{:#X}", header.toc_end),

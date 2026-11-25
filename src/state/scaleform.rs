@@ -20,6 +20,12 @@ impl AppState {
 
     /// Replace the movie with the one an SWF file's bytes hold; a refused SWF changes nothing.
     pub fn gfx_import_swf(&mut self, doc: DocumentId, swf: &[u8]) -> Result<(), String> {
+        if self
+            .document(doc)
+            .is_some_and(super::Document::is_from_rpf9_table)
+        {
+            return Err(crate::i18n::tr(super::document::rpf9::entry::READ_ONLY).to_string());
+        }
         let imported = GfxMovie::open(swf).map_err(|e| e.to_string())?;
         let Some(document) = self.document_mut(doc) else {
             return Err("not a .gfx document".to_string());
@@ -74,6 +80,26 @@ mod tests {
         let doc = state.active_document.expect("the .gfx opened");
         assert_eq!(state.document(doc).map(|d| d.kind), Some(DocumentKind::Gfx));
         doc
+    }
+
+    #[test]
+    fn a_table_movie_refuses_replacement_and_still_exports() {
+        let _serial = crate::ui::theme::serial();
+        let mut state = AppState::new();
+        let path = "scaleform.rpf/.rpf9-table/0/hash_movie.gfx".into();
+        state.documents.push(crate::state::Document::new(
+            1,
+            Some(path),
+            DocPayload::Gfx(GfxMovie::open(&movie(0xFF)).unwrap()),
+        ));
+        let before = state.gfx_swf(1).unwrap();
+        let mut replacement = movie(0x10);
+        replacement[..3].copy_from_slice(b"FWS");
+        assert!(state.gfx_import_swf(1, &replacement).is_err());
+        assert_eq!(state.gfx_swf(1).unwrap(), before);
+        let document = state.document(1).unwrap();
+        assert!(!document.dirty);
+        assert!(!document.history.can_undo());
     }
 
     #[test]

@@ -264,13 +264,13 @@ impl Report {
 }
 
 /// A file under the stream folder.
-struct Streamed {
+pub(crate) struct Streamed {
     /// Inside the resource, with `/`.
-    path: String,
-    at: PathBuf,
+    pub(crate) path: String,
+    pub(crate) at: PathBuf,
     /// The file's name in lower case, which is what a server keys a streamed file by.
-    name: String,
-    extension: String,
+    pub(crate) name: String,
+    pub(crate) extension: String,
     /// The hash of the name without its extension, as an archetype names a model or a dictionary.
     stem: u32,
 }
@@ -651,7 +651,7 @@ impl Report {
 }
 
 /// A name as a person reads it: its text where the file keeps one that hashes to it, else the hash as a source's XML spells an unknown name.
-fn shown(name: &HashedString) -> String {
+pub(crate) fn shown(name: &HashedString) -> String {
     if !name.raw.is_empty() && or_io::string_hash(name.raw.as_bytes()) == name.hash {
         name.raw.clone()
     } else {
@@ -661,12 +661,13 @@ fn shown(name: &HashedString) -> String {
 
 /// Every file under the stream folder of `folder`, in path order, and each folder under it that could not be read with the reason; a
 /// hidden entry and a link are left out, so the walk ends.
-fn stream_files(folder: &Path) -> (Vec<Streamed>, Vec<(String, std::io::Error)>) {
+pub(crate) fn stream_files(folder: &Path) -> (Vec<Streamed>, Vec<(String, std::io::Error)>) {
     let mut found = Vec::new();
     let mut unread = Vec::new();
     let root = folder.join(STREAM_DIR);
-    // A resource with no stream folder streams nothing, which is no finding.
-    let mut stack = Vec::from_iter(root.is_dir().then_some(root));
+    // A resource with no stream folder streams nothing, which is no finding; neither does one whose stream folder is a link.
+    let is_folder = std::fs::symlink_metadata(&root).is_ok_and(|found| found.is_dir());
+    let mut stack = Vec::from_iter(is_folder.then_some(root));
     while let Some(dir) = stack.pop() {
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
@@ -731,7 +732,7 @@ fn head(path: &Path) -> std::io::Result<Vec<u8>> {
 }
 
 /// A path a manifest states, as the path inside the resource it names; none when it is absolute or climbs out.
-fn inside(stated: &str) -> Option<PathBuf> {
+pub(crate) fn inside(stated: &str) -> Option<PathBuf> {
     let stated = stated.replace('\\', "/");
     // A drive letter is a path of its own on Windows and an ordinary name anywhere else.
     if stated.as_bytes().get(1) == Some(&b':') {

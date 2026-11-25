@@ -10187,28 +10187,30 @@ install's file when the index is rebuilt; `openrage-cli project check-server` an
 folder the server does not look in
 ([brief](World_Editor_Plan.md#other-resources-of-the-server-r70r)).
 
-**Where it stands.** The check of one resource folder is built, and nothing else of the row.
-`crates/domain/or-project/src/resource.rs` reads any resource folder as a server will, with no
-project, and `openrage-cli project check-resource` prints what its rules find, as data with
-`--json`, and exits 1 when a finding is an error. The manifest is read and never run
-(`crates/domain/or-project/src/resource/manifest.rs`), the lines it cannot read are kept as notes,
-and no manifest costs the reader its stack (`brackets_opened_to_any_depth_cost_no_stack`). The
-rules are the rows of `RULES`, each firing on a folder built by hand to break it and on no other
-(`each_rule_fires_on_the_folder_built_to_break_it_and_on_no_other`), and a sound folder reports
-nothing. A streamed file is opened through the reader a build reloads its own files through; a
-file an asset escrow locks is counted and never opened
-(`a_locked_file_is_counted_named_and_not_opened`); and a path that leaves the resource is reported
-and not followed. With `--game` the install is asked about a name the resource lacks, held on a
-catalogue built by hand; the install suite has not run.
+**Where it stands.** The check of one resource folder and the scan of a server's resources are
+built, both headless
+([each in full, with what is open](../reference/Crate_Reference.md#domain-crates)).
+`crates/domain/or-project/src/resource.rs` reads any resource folder as a server will: the manifest is read and never run, each row of `RULES` fires on a folder built by hand to
+break it and on no other (`each_rule_fires_on_the_folder_built_to_break_it_and_on_no_other`), a file
+an asset escrow locks is counted and never opened, and a path that leaves the resource is reported
+and not followed. `openrage-cli project check-resource` prints the findings and exits 1 on an
+error. What `--game` asks of an install ran on a catalogue built by hand and on no install.
 
-Open in what is built ([in full](../reference/Crate_Reference.md#domain-crates)): no file is
-weighed without `--limits`, since the size at which a server warns was read from no server, and
-neither were the types a server streams; nothing judges the game line; and a name is found whatever
-its case where the machine that checks ignores case. Left: the scan of a server and
-`openrage-cli project check-server`, the finding for two resources that ship one file, the
-three-way merge, the server as a layer of the mount, the finding for a base that is no longer the
-install's, and the warning for a build folder outside a category. Adoption reads a resource folder
-(`crates/domain/or-project/src/adopt.rs`), and nothing here says the game loads a file.
+`crates/domain/or-project/src/server.rs` reads a server's resources folder through its category
+folders, each file once
+(`a_scan_opens_each_file_once_and_a_second_scan_gives_the_same_findings_in_the_same_order`), with
+the resource check's manifest reader. Its rules find two resources that stream one name, a warning
+where the bytes differ, two that declare one archetype and two folders of one resource name, and
+say which starts last where a configuration's `ensure`, `start` and `exec` lines tell
+(`server::config`). `concerning` and `placement` say what a build would write again and whether a
+server looks where it is written; no build calls them. `openrage-cli project check-server` and
+`check-build` print both and exit 1 on a warning.
+
+Open: which of two copies a server loads is never said, and what a category and the configuration
+commands are was read from no server. Left: the three-way merge, the server as a layer of the
+mount, the Problems panel's rule raised by the edit that imports a file, the two questions called by
+a build, and the finding for a base that is no longer the install's. Nothing here says the game
+loads a file.
 
 **Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn),
 [R70h](#r70h-one-vocabulary-of-world-edits) and

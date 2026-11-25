@@ -24,7 +24,7 @@ use crate::model::{self, MapSet, Maps};
 use crate::rules::{check, Finding, Known};
 
 /// The kind of name the game resolves once that an archetype's is.
-pub const ARCHETYPE_NAME: &str = "archetype name";
+pub const ARCHETYPE_NAME: &str = or_project::server::ARCHETYPE_CLAIM;
 /// The kind of name the game resolves once that a map file's is.
 pub const MAP_FILE: &str = "map file";
 

@@ -54,6 +54,8 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("check-sharing") => crate::project_checks::check_sharing(rest),
         Some("check-original") => crate::project_checks::check_original(rest),
         Some("check-resource") => crate::project_resource::check_resource(rest),
+        Some("check-server") => crate::project_server::check_server(rest),
+        Some("check-build") => crate::project_server::check_build(rest),
         Some("plan") => plan_of(rest),
         Some("build") => build_of(rest),
         Some("verify") => verify_of(rest),
@@ -109,6 +111,10 @@ const USAGE: &str = "Usage:\n  \
          [--keys <file>] [--source <source folder>] [--json]\n  \
          openrage-cli project check-resource <resource folder> [--game <install root>] [--keys <file>]\n                                      \
          [--limits file_memory=<bytes>] [--json]\n  \
+         openrage-cli project check-server <resources folder> [--cfg <server.cfg>] [--game <install root>]\n                                    \
+         [--keys <file>] [--json]\n  \
+         openrage-cli project check-build  <project.openrage-proj> --server <resources folder>\n                                    \
+         [--build <id>] [--out <folder>] [--json]\n  \
          openrage-cli project plan   <project.openrage-proj> [--build <id>] [--out <folder>]\n  \
          openrage-cli project build  <project.openrage-proj> [--build <id>] [--out <folder>]\n                              \
          [--shader-defs <json>] [--reproducible]\n  \
@@ -187,6 +193,32 @@ const USAGE: &str = "Usage:\n  \
          is never run. It writes nothing and exits 1 when a finding is an error; --json prints the\n\
          same findings as data. It cannot see whether the game loads a file, whether a server starts\n\
          the resource, or what another resource of the server ships.\n\
+         check-server reads the resources of a server together: every resource under the folder, through\n\
+         the category folders in brackets, each file once. A folder with no manifest that is no category\n\
+         is no resource and is not read, and a folder that is itself one resource, or that holds none, is\n\
+         refused. It keeps of a streamed file its name, its size and the digest of\n\
+         its bytes, and of a type file and a map the names they state; a file locked by a server's asset\n\
+         escrow is counted and digested, and handed to no reader. It lists, each with a code, a severity\n\
+         and a sentence: two folders of one resource name; resources that stream a file of one name, a warning where the copies differ and a\n\
+         note where they are the same bytes; resources that declare an archetype of one name; what was not\n\
+         read of a resource; and, with --game, a resource that streams a file of the name of a file of the\n\
+         game, said as an override and a note. With --cfg the configuration is read for its ensure, start\n\
+         and exec lines and nothing else, the files it includes each once, one named @resource/path inside\n\
+         that resource, and a finding about two\n\
+         resources says which of them starts last; a resource's place is the first line that starts it or\n\
+         a category it is in. Without --cfg, or when an included file was not read, it says the order is\n\
+         not known. A path of the configuration that leaves the folder the configuration is in is reported\n\
+         and not followed, and a line that is none of the three is a note. It writes nothing and exits 1\n\
+         when a finding is a warning or an error; --json prints the same findings as data. It cannot see\n\
+         which copy of a file a server loads, or whether a server starts a resource.\n\
+         check-build asks of a build of the project what the resources of a server already hold of it,\n\
+         before anything is written: another resource that streams a file the build writes under stream/,\n\
+         or declares an archetype a content of the build declares. A resource of the build's own name is\n\
+         the build's earlier copy and is not another resource, and a pack or a package is asked nothing.\n\
+         Where the folder the build is written into (--out, else the project's build folder) is inside\n\
+         the server's, it also warns of a folder above the resource that is no category in brackets,\n\
+         where a server does not look, and names another folder of the resource's name.\n\
+         It builds nothing, writes nothing and exits 1 when it finds one; --json prints the same as data.\n\
          plan prints what a build will write, the budgets, what changed since the last\n\
          build and why it cannot be built, without writing. A build that declares\n\
          split and is over a ceiling divides at content boundaries into several\n\

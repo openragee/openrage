@@ -263,7 +263,8 @@ pack and reads `wardrobe.json` after each request.
 changes projects and writes builds, and every route of this protocol reads but the four that change a pack. Its
 verbs are `create`, `adopt`, `import`, `add-content`, `add-build`, `set-build`,
 `set-file-type`, `remove-build`, `link`, `unlink`, `links`, `template`,
-`apply-template`, `check-sharing`, `check-original`, `check-resource`, `plan`, `build`, `verify`,
+`apply-template`, `check-sharing`, `check-original`, `check-resource`, `check-server`,
+`check-build`, `plan`, `build`, `verify`,
 `acceptance`, `clean`, `redirects`, `history`, `rollback`, `remove` and `recook`; each
 exits 0, 1 for a refusal or a check that failed and 2 for a usage error.
 `acceptance` takes the folder a build wrote and prints the lines of the acceptance
@@ -277,6 +278,25 @@ sentence for each finding), and exits 1 when a finding is an error. `--game <ins
 the install about a name the folder lacks, and `--limits file_memory=<bytes>` states the ceiling
 for the streaming memory of one file; another figure is a usage error, since nothing would be
 weighed against it. It cannot see whether the game loads a file.
+
+`check-server` takes the resources folder of a server and no project: it reads every resource
+under it through the category folders in brackets, each file once, and lists what two resources
+hold under one name, as text or, with `--json`, as data (a code, a severity, the resources, the
+names, the resource that starts last where one is known, and a sentence). Two copies of a file
+with different bytes, an archetype two resources declare and two folders of one resource name are
+warnings; the same bytes twice, a file locked by an asset escrow and a line of the configuration it
+does not read are notes. A folder that is itself one resource, or under which no folder has a
+manifest, is refused with exit 1 and nothing is listed.
+`--cfg <file>` reads the server's configuration for its `ensure`, `start` and `exec` lines, so a
+finding says which resource starts last; without it the order is said to be not known. An `exec`
+of `@resource/path` is read inside the folder of that resource.
+`--game <install root>` adds, as a note, each file a resource streams under the name of a file of
+the game. It exits 1 when a finding is a warning or an error. `check-build` takes a project and
+`--server <resources folder>`, builds nothing, and lists what another resource of that folder
+already streams or declares of what the build writes, exiting 1 when it lists anything. Where the
+folder the build is written into (`--out <folder>`, else the project's build folder) is inside
+that folder, it also warns of a folder above the resource that is no category in brackets and
+names another folder of the resource's name. Neither can see which copy of a file a server loads.
 
 A command that works on one build of a project names it with `--build <id>`.
 `--output <id>` is the older spelling of the same flag: it is still read, by

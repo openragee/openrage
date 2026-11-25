@@ -92,6 +92,7 @@ mod project;
 mod project_acceptance;
 mod project_checks;
 mod project_resource;
+mod project_server;
 mod project_steps;
 mod registry;
 mod retarget;
@@ -145,6 +146,7 @@ pub use gta6_shading::{
 pub use gta6_translate::{translate_gta6_program, Gta6Program, Gta6Refusal, DXIL_FRONT};
 pub use mesh::{export_scene, replace_mesh, Exported};
 pub use project_resource::check_resource_folder;
+pub use project_server::{check_build_against, check_server_folder, BuildCheck, BuildConcerns};
 pub use retarget::{retarget_file, Retargeted, CONVERTED as RETARGETED};
 pub use script::listing as script_listing;
 pub use script::provenance as script_provenance;

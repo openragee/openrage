@@ -22,6 +22,8 @@ zip = { version = "8", default-features = false }
 serde_json.workspace = true
 # The platform's configuration directory.
 dirs.workspace = true
+# The day's sun, moon and light directions.
+glam.workspace = true
 
 # Steam and the Rockstar launcher name an install in the registry.
 [target.'cfg(windows)'.dependencies]

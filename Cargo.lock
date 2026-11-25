@@ -3478,6 +3478,7 @@ name = "or-title"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "glam",
  "or-io",
  "or-media",
  "or-test-support",

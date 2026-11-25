@@ -433,6 +433,11 @@ impl Viewer {
         self.world.as_ref().is_some_and(World::unselected)
     }
 
+    /// Whether the last selection has a node fading in by time, which each selection after it takes a step further.
+    pub fn fading(&self) -> bool {
+        (self.world.as_ref()).is_some_and(|w| w.latest().fading)
+    }
+
     /// Whether the last selection was made for where the camera stands now: until it is, what it waits for is the last place's.
     pub fn caught_up(&self) -> bool {
         (self.world.as_ref()).is_none_or(|w| w.latest().eye == self.camera.position)

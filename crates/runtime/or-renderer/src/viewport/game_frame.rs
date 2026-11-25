@@ -314,6 +314,13 @@ impl ViewportRenderer {
         (self.deferred.as_ref()?.meter).last(self.day_revision)
     }
 
+    /// Forget the temporal history and start its camera offsets from their first.
+    pub fn restart_temporal(&self) {
+        if let Some(frame) = &self.deferred {
+            frame.post.restart();
+        }
+    }
+
     /// End the stage `label` for the GPU timer, where the device has one.
     pub(super) fn gpu_mark(&self, encoder: &mut wgpu::CommandEncoder, label: &'static str) {
         if let Some(timer) = &self.gpu_timer {

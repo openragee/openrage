@@ -221,6 +221,16 @@ impl RenderBridge {
         (self.world.cost, self.renderer.world_calls())
     }
 
+    /// How many times a model or texture came to the device or left it, or a far stand-in was left to bake.
+    pub fn world_changes(&self) -> u64 {
+        self.world.changes
+    }
+
+    /// Forget the lit frame's temporal history and start its camera offsets from their first.
+    pub fn restart_temporal(&self) {
+        self.renderer.restart_temporal();
+    }
+
     /// Have the next frame lay the world out again, as though the camera had moved.
     pub fn relay_world(&mut self) {
         self.world.laid_for = None;

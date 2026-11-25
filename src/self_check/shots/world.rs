@@ -15,10 +15,14 @@ use crate::state::AppState;
 use crate::ui::dock::Workspace;
 use crate::ui::panels::world_viewer::{self, Capture, Pose};
 
-/// How long nothing may arrive or change before the world counts as settled.
-const QUIET: Duration = Duration::from_millis(1500);
+/// How many frames in a row nothing may be waited for or change before the world counts as settled.
+const QUIET_FRAMES: u32 = 2;
 /// How long `world settle` waits where its line gives no number of seconds.
 const SETTLE_DEADLINE: Duration = Duration::from_secs(180);
+/// How long `world converge` waits where its line gives no number of seconds.
+const CONVERGE_DEADLINE: Duration = Duration::from_secs(120);
+/// The frames `world converge` draws of a still world once the exposure has arrived: a whole number of the temporal offsets' cycles.
+const CONVERGE_FRAMES: usize = 64;
 /// How often a wait says what it still waits for.
 const TOLD_EVERY: Duration = Duration::from_secs(10);
 /// The longest deadline a line may give, in seconds.
@@ -41,6 +45,8 @@ pub(super) enum WorldStep {
     Clean(bool),
     /// Frames drawn until nothing arrives any more, for this long at most.
     Settle(Duration),
+    /// The exposure taken again and the temporal history drawn afresh over a still world, for this long at most.
+    Converge(Duration),
     /// What the viewer wants and draws at its camera, written as JSON to this file beside the shots.
     Dump(String),
     /// The game modes that stream: bit 0 the base game, bit 1 story, bit 2 the shared minigames.
@@ -87,16 +93,8 @@ pub(super) fn parse(rest: &str) -> Result<WorldStep, String> {
             "off" => Ok(WorldStep::Clean(false)),
             other => Err(format!("no clean `{other}`; use on or off")),
         },
-        "settle" if args.is_empty() => Ok(WorldStep::Settle(SETTLE_DEADLINE)),
-        "settle" => {
-            let [seconds] = numbers::<1>(&args)?;
-            if seconds <= 0.0 || seconds > MOST_SECONDS {
-                return Err(format!(
-                    "a deadline is a number of seconds above 0, {MOST_SECONDS} at most"
-                ));
-            }
-            Ok(WorldStep::Settle(Duration::from_secs_f32(seconds)))
-        }
+        "settle" => deadline(&args, SETTLE_DEADLINE).map(WorldStep::Settle),
+        "converge" => deadline(&args, CONVERGE_DEADLINE).map(WorldStep::Converge),
         // ⚠ A name, not a path: a dump lands beside the shots, never in the tree.
         "dump" => file_stem(rest).map(WorldStep::Dump),
         "modes" if !args.is_empty() => (args.iter())
@@ -161,9 +159,23 @@ pub(super) fn parse(rest: &str) -> Result<WorldStep, String> {
                 "no weather `{rest}`; use clear, cloudy, rain, storm or fog"
             )),
         other => Err(format!(
-            "no world step `{other}`; use camera, hour, clean, settle, dump, modes, fly, perf, move, group or weather"
+            "no world step `{other}`; use camera, hour, clean, settle, converge, dump, modes, fly, perf, move, group or weather"
         )),
     }
+}
+
+/// The deadline a line gives in seconds, or `default` where it gives none.
+fn deadline(args: &[&str], default: Duration) -> Result<Duration, String> {
+    if args.is_empty() {
+        return Ok(default);
+    }
+    let [seconds] = numbers::<1>(args)?;
+    if seconds <= 0.0 || seconds > MOST_SECONDS {
+        return Err(format!(
+            "a deadline is a number of seconds above 0, {MOST_SECONDS} at most"
+        ));
+    }
+    Ok(Duration::from_secs_f32(seconds))
 }
 
 /// What one frame finds of the world viewer.
@@ -181,23 +193,40 @@ pub(super) struct Found {
     pub water: bool,
     /// The world's thread was told something, such as models that came, that its last selection does not stand on yet.
     pub selecting: bool,
+    /// A node of the last selection is still fading in a step a selection.
+    pub fading: bool,
+    /// The renderer's count of models and textures that came to the device or left it and far stand-ins left to bake: a change in it is something that came.
+    pub device: u64,
     /// The last selection was made for where the camera stands.
     pub caught_up: bool,
 }
 
-/// The rule `world settle` waits by: an index held, nothing waited for, the exposure arrived, no water being read, and nothing changed for [`QUIET`].
-// ⚠ Nothing waited for is not enough: for a frame or two after the camera jumps, the world's
-// thread has not yet asked for the maps of the new place.
+impl Found {
+    /// An index held, the selection made for where the camera stands and on all it was told, nothing fading in, nothing waited for and no water being read.
+    // ⚠ Nothing waited for is not enough: for a frame or two after the camera jumps, the world's
+    // thread has not yet asked for the maps of the new place.
+    fn at_rest(&self) -> bool {
+        self.indexed
+            && self.caught_up
+            && self.waiting == [0; 4]
+            && !self.water
+            && !self.selecting
+            && !self.fading
+    }
+}
+
+/// The rule `world settle` waits by: the world [at rest](Found::at_rest), the exposure arrived, and nothing changed for [`QUIET_FRAMES`] frames in a row.
 #[derive(Debug, Default)]
 pub(super) struct Settle {
     last: Option<Found>,
-    since: Duration,
+    /// The frames in a row the world has been still and unchanged.
+    quiet: u32,
     /// When each of the four waits was last above nought, and when the exposure last adapted.
     waited: [Option<Duration>; 5],
 }
 
 impl Settle {
-    /// Whether the world has settled at `now`, a time on a clock that only runs forward, given what this frame found.
+    /// Whether the world has settled, given what this frame found `now` into the wait.
     pub(super) fn settled(&mut self, now: Duration, found: Found) -> bool {
         for (waited, more) in self.waited.iter_mut().zip(found.waiting.map(|n| n > 0)) {
             if more {
@@ -207,18 +236,12 @@ impl Settle {
         if found.adapting {
             self.waited[4] = Some(now);
         }
-        // ⚠ A selection can take longer than the quiet time: models told ready and not yet selected were dumped as not drawn.
-        let quiet = found.indexed
-            && found.caught_up
-            && found.waiting == [0; 4]
-            && !found.adapting
-            && !found.water
-            && !found.selecting;
-        if !quiet || self.last != Some(found) {
-            (self.last, self.since) = (Some(found), now);
+        if !found.at_rest() || found.adapting || self.last != Some(found) {
+            (self.last, self.quiet) = (Some(found), 0);
             return false;
         }
-        now.saturating_sub(self.since) >= QUIET
+        self.quiet += 1;
+        self.quiet >= QUIET_FRAMES
     }
 
     /// When the maps, models, textures, maps' lights and exposure were last waited for, in seconds.
@@ -241,6 +264,9 @@ impl Settle {
             }
             Some(found) if found.waiting == [0; 4] && found.selecting => {
                 "the world's thread had not yet selected on what it was told".into()
+            }
+            Some(found) if found.waiting == [0; 4] && found.fading => {
+                "far nodes were still fading in".into()
             }
             Some(Found {
                 waiting: [0, 0, 0, 0],
@@ -284,6 +310,8 @@ fn found() -> Result<Found, String> {
         adapting: crate::state::gta6_world::worldview::sky::adapting(),
         water: viewer.water_reading(),
         selecting: viewer.selecting(),
+        fading: viewer.fading(),
+        device: 0,
         caught_up: viewer.caught_up(),
     })
 }
@@ -398,6 +426,12 @@ impl Shell {
                     self.failed.push(why);
                 }
             }
+            WorldStep::Converge(deadline) => {
+                if let Err(why) = self.converge(state, *deadline) {
+                    println!("FAILED  {why}");
+                    self.failed.push(why);
+                }
+            }
             WorldStep::Dump(name) => dump(&out.join(name))?,
             // The groups follow the modes, as they do on the screen until a group is ticked.
             WorldStep::Modes(modes) => viewer().enabled.modes = *modes,
@@ -456,6 +490,85 @@ impl Shell {
         Ok(())
     }
 
+    /// What this frame finds, with the exposure counted as adapting only where the game lights the frame, and what came to the device.
+    fn found_lit(&self) -> Result<Found, String> {
+        let mut found = found()?;
+        // ⚠ The plain pass meters no frame, so its exposure never arrives: only a frame the game lights adapts.
+        found.adapting &= self.bridge.world_drawn().lit_by_the_game;
+        found.device = self.bridge.world_changes();
+        Ok(found)
+    }
+
+    /// Draw a still world until its frame is one that any run draws alike: twice in a row with nothing
+    /// arriving, the exposure taken whole from this place and arrived, then [`CONVERGE_FRAMES`] frames
+    /// from a forgotten temporal history, its first camera offset and game time nought.
+    // ⚠ The second round's exposure is read from a frame the first round made alike in any run: the
+    // first round's is read from one still holding the history and the readings of before.
+    fn converge(&mut self, state: &mut AppState, deadline: Duration) -> Result<(), String> {
+        let started = Instant::now();
+        let late = |what: &str| {
+            format!(
+                "the frame had not converged after {:.1} s: {what}",
+                deadline.as_secs_f32()
+            )
+        };
+        let (mut tries, mut clean) = (0, 0);
+        'again: loop {
+            tries += 1;
+            // A cut has the exposure taken whole at its next reading, whatever it adapted from before.
+            viewer().cuts += 1;
+            loop {
+                self.idle(state, 1)?;
+                let found = self.found_lit()?;
+                if !found.at_rest() {
+                    self.settle(state, deadline.saturating_sub(started.elapsed()))?;
+                    clean = 0;
+                    continue 'again;
+                }
+                if !found.adapting {
+                    break;
+                }
+                if started.elapsed() > deadline {
+                    return Err(late("the exposure was still adapting"));
+                }
+            }
+            self.bridge.restart_temporal();
+            or_transport::clock::restart_game();
+            let first = self.found_lit()?;
+            for _ in 0..CONVERGE_FRAMES {
+                self.idle(state, 1)?;
+                let found = self.found_lit()?;
+                // ⚠ The exposure's own wobble about its target is left out: it holds a step too small to see.
+                let (now, was) = (
+                    Found {
+                        adapting: false,
+                        ..found
+                    },
+                    Found {
+                        adapting: false,
+                        ..first
+                    },
+                );
+                if !found.at_rest() || now != was {
+                    if started.elapsed() > deadline {
+                        return Err(late("what is streamed in was still changing"));
+                    }
+                    clean = 0;
+                    continue 'again;
+                }
+            }
+            clean += 1;
+            if clean < 2 {
+                continue;
+            }
+            println!(
+                "  converged after {:.1} s, {tries} rounds",
+                started.elapsed().as_secs_f32()
+            );
+            return Ok(());
+        }
+    }
+
     /// Draw frames until the world has settled, or fail at `deadline` by what was still arriving.
     fn settle(&mut self, state: &mut AppState, deadline: Duration) -> Result<(), String> {
         let started = Instant::now();
@@ -465,9 +578,7 @@ impl Shell {
             self.idle(state, 1)?;
             frames += 1;
             let now = started.elapsed();
-            let mut found = found()?;
-            // ⚠ The plain pass meters no frame, so its exposure never arrives: only a frame the game lights adapts.
-            found.adapting &= self.bridge.world_drawn().lit_by_the_game;
+            let found = self.found_lit()?;
             if rule.settled(now, found) {
                 println!(
                     "  settled after {:.1} s; last waited for: {}",
@@ -505,245 +616,5 @@ impl Shell {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const IDLE: Found = Found {
-        indexed: true,
-        waiting: [0; 4],
-        standing: [40, 40, 900, 700],
-        adapting: false,
-        water: false,
-        selecting: false,
-        caught_up: true,
-    };
-
-    fn at(millis: u64) -> Duration {
-        Duration::from_millis(millis)
-    }
-
-    #[test]
-    fn the_steps_of_the_world_are_read() {
-        assert_eq!(
-            parse("camera -120.5 340 62.25 135 -20 60"),
-            Ok(WorldStep::Camera(Pose {
-                position: glam::Vec3::new(-120.5, 340.0, 62.25),
-                yaw: 135.0,
-                pitch: -20.0,
-                fov: Some(60.0),
-            }))
-        );
-        assert_eq!(parse("hour 17.5"), Ok(WorldStep::Hour(17.5)));
-        assert_eq!(parse("hour 0"), Ok(WorldStep::Hour(0.0)));
-        assert_eq!(parse("clean on"), Ok(WorldStep::Clean(true)));
-        assert_eq!(parse("clean off"), Ok(WorldStep::Clean(false)));
-        assert_eq!(parse("settle"), Ok(WorldStep::Settle(SETTLE_DEADLINE)));
-        assert_eq!(parse("settle 2.5"), Ok(WorldStep::Settle(at(2500))));
-        assert_eq!(
-            parse("dump truth-01.json"),
-            Ok(WorldStep::Dump("truth-01.json".into()))
-        );
-        assert_eq!(parse("modes base story"), Ok(WorldStep::Modes(3)));
-        assert_eq!(parse("modes minigames"), Ok(WorldStep::Modes(4)));
-        assert_eq!(
-            parse("fly 30 0 -1.5 2"),
-            Ok(WorldStep::Fly(glam::Vec3::new(30.0, 0.0, -1.5), at(2000)))
-        );
-        assert_eq!(
-            parse("perf cost-01.json 30"),
-            Ok(WorldStep::Perf("cost-01.json".into(), 30))
-        );
-        assert_eq!(
-            parse("move 1 walk.json 50 0 10 0 -5 60"),
-            Ok(WorldStep::Move(
-                Pose {
-                    position: glam::Vec3::new(50.0, 0.0, 10.0),
-                    yaw: 0.0,
-                    pitch: -5.0,
-                    fov: Some(60.0),
-                },
-                at(1000),
-                "walk.json".into()
-            ))
-        );
-        assert_eq!(
-            parse("group 0D93912D on"),
-            Ok(WorldStep::Group(0x0D93_912D, true))
-        );
-        assert_eq!(parse("group 0x1 off"), Ok(WorldStep::Group(1, false)));
-        assert_eq!(
-            parse("weather cloudy"),
-            Ok(WorldStep::Weather(WeatherState::Cloudy))
-        );
-    }
-
-    #[test]
-    fn a_census_is_written_by_kind_and_level_and_names_as_sorted_hexadecimal() {
-        let mut counts = [[0; 7]; 4];
-        (counts[0][0], counts[2][5], counts[3][2]) = (12, 3, 1);
-        let written = by_level(&counts);
-        assert_eq!(written.len(), 3, "a count of none is left out: {written:?}");
-        assert_eq!(written["entity HD"], 12);
-        assert_eq!(written["grass list ORPHANHD"], 3);
-        assert_eq!(written["far grass list SLOD1"], 1);
-        assert_eq!(
-            hex(&[0xABC, 0x1, 0xFFFF_FFFF]),
-            ["00000001", "00000ABC", "FFFFFFFF"]
-        );
-    }
-
-    #[test]
-    fn a_wrong_world_step_is_refused() {
-        for bad in [
-            "",
-            "fly",
-            "camera",
-            "camera 1 2 3",
-            "camera 1 2 3 0 95",
-            "hour",
-            "hour 24",
-            "hour -1",
-            "hour noon",
-            "clean",
-            "clean yes",
-            "settle 0",
-            "settle -3",
-            "settle soon",
-            "settle 1 2",
-            "settle 1e30",
-            "dump",
-            "dump ../out.json",
-            "dump C:/out.json",
-            "dump two words",
-            "modes",
-            "modes base online",
-            "weather",
-            "weather sunny",
-            "group",
-            "group 0D93912D",
-            "group zz on",
-            "group 1 maybe",
-            "fly 1 2 3",
-            "fly 1 2 3 0",
-            "fly 1 2 3 soon",
-            "perf",
-            "perf a.json",
-            "perf a.json 0",
-            "perf ../a.json 3",
-            "move",
-            "move 1 a.json",
-            "move 0 a.json 1 2 3 0 0",
-            "move 1 ../a.json 1 2 3 0 0",
-        ] {
-            assert!(parse(bad).is_err(), "`world {bad}` should be refused");
-        }
-    }
-
-    #[test]
-    fn the_world_settles_once_nothing_is_waited_for_and_nothing_has_changed_for_the_quiet_time() {
-        let mut rule = Settle::default();
-        assert!(!rule.settled(at(0), IDLE), "one frame is no quiet time");
-        assert!(!rule.settled(QUIET - at(1), IDLE));
-        assert!(rule.settled(QUIET, IDLE));
-    }
-
-    #[test]
-    fn a_selection_made_for_the_last_place_of_the_camera_never_settles() {
-        // Nothing is waited for yet: the world's thread has not chosen for the new place.
-        let behind = Found {
-            caught_up: false,
-            ..IDLE
-        };
-        let mut rule = Settle::default();
-        assert!(!rule.settled(at(0), behind));
-        assert!(!rule.settled(QUIET * 10, behind));
-        assert!(!rule.settled(QUIET * 10 + at(1), IDLE));
-        assert!(rule.settled(QUIET * 11 + at(1), IDLE));
-    }
-
-    #[test]
-    fn something_waited_for_or_changed_starts_the_quiet_time_again() {
-        let waiting = Found {
-            waiting: [0, 3, 0, 0],
-            ..IDLE
-        };
-        let grown = Found {
-            standing: [40, 40, 900, 701],
-            ..IDLE
-        };
-        let mut rule = Settle::default();
-        assert!(!rule.settled(at(0), IDLE));
-        // A model asked for after a quiet stretch: the camera jumped and the selection caught up.
-        assert!(!rule.settled(QUIET - at(1), waiting));
-        assert!(
-            !rule.settled(QUIET * 3, waiting),
-            "never while something is waited for"
-        );
-        assert!(!rule.settled(QUIET * 3 + at(1), IDLE));
-        assert_eq!(
-            rule.last_waits(),
-            "maps 0.0 s, models 4.5 s, textures 0.0 s, lights 0.0 s, exposure 0.0 s"
-        );
-        assert!(
-            !rule.settled(QUIET * 4, IDLE),
-            "the quiet time runs from the last change, not from the first frame"
-        );
-        // Nothing is waited for, yet what stands streamed in moved: a parent gave way to its children.
-        assert!(!rule.settled(QUIET * 4 + at(1), grown));
-        assert!(!rule.settled(QUIET * 5, grown));
-        assert!(rule.settled(QUIET * 5 + at(1), grown));
-    }
-
-    #[test]
-    fn a_world_with_no_index_never_settles_and_the_wait_says_what_was_still_arriving() {
-        let unindexed = Found {
-            indexed: false,
-            ..Found::default()
-        };
-        let mut rule = Settle::default();
-        assert_eq!(rule.still(), "no frame was drawn");
-        assert!(!rule.settled(at(0), unindexed));
-        assert!(
-            !rule.settled(QUIET * 10, unindexed),
-            "no index is nothing to shoot"
-        );
-        assert_eq!(rule.still(), "no index of the install is held");
-        let waiting = Found {
-            waiting: [2, 0, 7, 0],
-            ..IDLE
-        };
-        assert!(!rule.settled(QUIET * 11, waiting));
-        assert_eq!(
-            rule.still(),
-            "2 maps, 0 models, 7 textures and 0 maps' lights were still waited for"
-        );
-        let water = Found {
-            water: true,
-            ..IDLE
-        };
-        assert!(!rule.settled(QUIET * 12, water));
-        assert!(
-            !rule.settled(QUIET * 20, water),
-            "never while the water is read"
-        );
-        assert_eq!(
-            rule.still(),
-            "the water's ground or fog was still being read"
-        );
-        let selecting = Found {
-            selecting: true,
-            ..IDLE
-        };
-        assert!(!rule.settled(QUIET * 21, selecting));
-        assert!(
-            !rule.settled(QUIET * 30, selecting),
-            "never while the world's thread has not selected on what it was told"
-        );
-        assert_eq!(
-            rule.still(),
-            "the world's thread had not yet selected on what it was told"
-        );
-        assert!(!rule.settled(QUIET * 31, IDLE));
-        assert_eq!(rule.still(), "what is streamed in was still changing");
-    }
-}
+#[path = "world_tests.rs"]
+mod tests;

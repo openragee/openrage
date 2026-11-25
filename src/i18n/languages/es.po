@@ -16950,3 +16950,6 @@ msgstr "Solo se buscan los archivos comprimidos expandidos."
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} es un archivo comprimido nuevo con la edición en el lugar de su entrada y su tabla tal como se leyó."
+
+msgid "Preparing video… {percent}%"
+msgstr "Preparando vídeo… {percent}%"

@@ -301,6 +301,13 @@ fn the_arcade_bk2_opens_from_the_archive_table_in_the_preview() {
         preview.problem()
     );
     assert_eq!(preview.problem(), None);
+    assert_eq!(preview.speed(), 1.0);
+    assert!(
+        preview.wait_for_buffer(Duration::from_secs(60)),
+        "{:?}",
+        preview.problem()
+    );
+    assert_eq!(preview.buffer_progress(), None);
     let first = preview.frame().expect("the first frame").to_vec();
     let middle = preview.duration.expect("the duration") / 2.0;
     preview.seek(&bik.bytes, middle);
@@ -309,6 +316,7 @@ fn the_arcade_bk2_opens_from_the_archive_table_in_the_preview() {
         "{:?}",
         preview.problem()
     );
+    preview.set_speed(2.0);
     let before_play = preview.position;
     preview.play(&bik.bytes);
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -338,6 +346,31 @@ fn the_arcade_bk2_opens_from_the_archive_table_in_the_preview() {
         preview.problem()
     );
     assert_eq!(preview.frame(), Some(first.as_slice()));
+    preview.set_speed(0.5);
+    preview.play(&bik.bytes);
+    preview.tick(0.2);
+    assert!((preview.position - 0.1).abs() < 1e-9);
+    assert_eq!(preview.buffer_progress(), None);
+    preview.pause();
+    for speed in [0.25, 0.5, 1.0, 2.0, 4.0] {
+        preview.seek(&bik.bytes, 0.0);
+        preview.set_speed(speed);
+        preview.play(&bik.bytes);
+        let ticks = (duration * 120.0 / speed).ceil() as usize + 2;
+        for _ in 0..ticks {
+            preview.tick(1.0 / 120.0);
+            assert_eq!(
+                preview.buffer_progress(),
+                None,
+                "the complete cache never stalls"
+            );
+        }
+        assert!(!preview.playing, "the cached movie ends at speed {speed}");
+        assert_eq!(preview.problem(), None);
+        let header = bik.header.as_ref().expect("the movie header");
+        let last = f64::from(header.frames - 1) / header.fps().expect("a frame rate");
+        assert_eq!(preview.position, last);
+    }
 }
 
 #[test]

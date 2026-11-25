@@ -16950,3 +16950,6 @@ msgstr "只搜索已展开的归档。"
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} 是一个新归档，其条目位置已写入修改，其表与读取时相同。"
+
+msgid "Preparing video… {percent}%"
+msgstr "正在准备视频… {percent}%"

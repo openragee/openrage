@@ -33,6 +33,11 @@ Bink sound and Legacy's XMA streams among them, in its own Rust, so no FFmpeg or
 needs installing. A Bink 2 movie's pictures equal the game's own, plane for plane, in-loop filter
 included, on every shipped movie of both editions.
 
+The video preview starts at normal speed and offers slower and faster playback. Sound follows the
+chosen speed, including its pitch. Short clips are prepared in full and kept in memory for replay
+and seeking; longer movies decode ahead into a bounded reserve. A progress indicator shows video
+preparation, and a depleted reserve pauses picture and sound together until it is ready again.
+
 ## The mods overlay
 
 A shipped archive can be copied into the install's `mods` overlay from its menu, or from the prompt

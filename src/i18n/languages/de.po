@@ -16950,3 +16950,6 @@ msgstr "Nur die aufgeklappten Archive werden durchsucht."
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} ist ein neues Archiv mit der Änderung an der Stelle seines Eintrags und seiner Tabelle, wie sie gelesen wurde."
+
+msgid "Preparing video… {percent}%"
+msgstr "Video wird vorbereitet… {percent}%"

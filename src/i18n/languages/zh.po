@@ -14225,9 +14225,6 @@ msgstr "Scaleform 影片"
 msgid "EDUP, high entropy"
 msgstr "EDUP，高熵"
 
-msgid "This body starts with EDUP and its bytes after that are of high entropy with no structure found, so it is not read and no view shows it."
-msgstr "此数据体以 EDUP 开头，其后的字节熵很高，未发现任何结构，因此不读取它，也没有视图显示它。"
-
 msgid "The reader of this {what} does not read it: {e}"
 msgstr "此 {what} 的读取器无法读取它：{e}"
 
@@ -16953,3 +16950,77 @@ msgstr "只搜索已展开的归档。"
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} 是一个新归档，其条目位置已写入修改，其表与读取时相同。"
+
+msgid "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}."
+msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
+msgstr[0] "根据其解密后的表列出：{count} 个条目，其中 {named} 个有名称，表密钥为 {key}。"
+msgstr[1] "根据其解密后的表列出：{count} 个条目，其中 {named} 个有名称，表密钥为 {key}。"
+
+msgid "This entry's row states no start, so its body cannot be read."
+msgstr "此条目的行未注明起始位置，因此无法读取其正文。"
+
+msgid "Click to expand or collapse this nested archive, listed from its own table."
+msgstr "点击以展开或折叠此嵌套归档，它根据自身的表列出。"
+
+msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
+msgstr "点击在预览标签页中打开，双击则保留在独立的标签页中；加密的正文会先解密。"
+
+msgid "Extract to a file…"
+msgstr "提取到文件…"
+
+msgid "Replace with a file…"
+msgstr "用文件替换…"
+
+msgid "Writes a new copy of the archive with this entry replaced, which the game refuses: only its maker can sign the table."
+msgstr "写出一份替换了此条目的归档新副本，游戏会拒绝它：只有其制作者能签署该表。"
+
+msgid "Replace with a file"
+msgstr "用文件替换"
+
+msgid "Save the new archive"
+msgstr "保存新归档"
+
+msgid "Wrote {entry} to {file}."
+msgstr "已将 {entry} 写入 {file}。"
+
+msgid "Cannot extract {entry}: {reason}"
+msgstr "无法提取 {entry}：{reason}"
+
+msgid "{file} is a new archive with {entry} replaced, which the game refuses because only its maker can sign the table this changed."
+msgstr "{file} 是替换了 {entry} 的新归档，游戏会拒绝它，因为只有其制作者能签署此改动所涉及的表。"
+
+msgid "{file} is a new archive the same as the one it was read from: the file holds the bytes {entry} holds."
+msgstr "{file} 是与其读取来源相同的新归档：该文件所含的字节与 {entry} 相同。"
+
+msgid "Cannot replace {entry}: {reason}"
+msgstr "无法替换 {entry}：{reason}"
+
+msgid "the file written is a new one, and the archive it is read from is never written"
+msgstr "写出的文件是一个新文件，读取来源的归档永远不会被写入"
+
+msgid "entry {index} is not in its table"
+msgstr "条目 {index} 不在其表中"
+
+msgid "the entry's row states no start, so its body is not known"
+msgstr "该条目的行未注明起始位置，因此其正文未知"
+
+msgid "a nested archive whose row states no stored size"
+msgstr "一个其行未注明存储大小的嵌套归档"
+
+msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
+msgstr "归档在 {stored} 字节的嵌套归档中第 {copied} 字节处结束"
+
+msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
+msgstr "一个 EDUP 正文：其 0x04 处的计数字为 {count}，其 8 字节头之后跟随 {length} 字节的负载。"
+
+msgid "With a count of zero, the word at 0x08 states {stated} bytes, and that many follow it."
+msgstr "计数为零时，0x08 处的字注明 {stated} 字节，其后正好跟随这么多字节。"
+
+msgid "Its payload is not read: no record width divides it by its count, and its bytes are of high entropy with no cipher record, so what it holds is not known and no view shows it."
+msgstr "其负载未被读取：没有任何记录宽度能按其计数整除它，且其字节熵很高又没有加密记录，因此其内容未知，也没有视图显示它。"
+
+msgid "Replace the lower levels of detail too"
+msgstr "同时替换较低的细节级别"
+
+msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
+msgstr "关闭时，网格未指定任何几何体的细节级别保持模型中的原样。开启时，每个这样的几何体在其模型和位置上采用 0 级网格，前提是两者使用同一着色器绘制。"

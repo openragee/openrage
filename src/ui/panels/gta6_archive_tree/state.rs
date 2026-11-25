@@ -2,6 +2,7 @@
 //! and for the one shown a lazily-mounted tree of its table's entries. The listing itself is
 //! [`crate::state::rpf9_scan::rpf9_table`]'s; this keeps which archive is shown, what is expanded and the filter.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -9,6 +10,21 @@ use crate::state::rpf9_scan::rpf9_table::{self, TableFilter, TableNode};
 use crate::ui::panel_state::PanelState;
 
 type Slot = Arc<Mutex<Option<Result<TableNode, String>>>>;
+type KindsSlot = Arc<Mutex<Option<Vec<String>>>>;
+
+/// Read the kind label of each entry of the table at `base` in `disk` on a worker; a table that
+/// does not open leaves its rows their coarse kind, and the mount says why.
+fn spawn_kinds(disk: PathBuf, base: u64) -> KindsSlot {
+    let slot = KindsSlot::default();
+    let fill = Arc::clone(&slot);
+    std::thread::spawn(move || {
+        let kinds = rpf9_table::keys()
+            .and_then(|keys| super::actions::kinds(&disk, base, &keys))
+            .unwrap_or_default();
+        *fill.lock().unwrap_or_else(|p| p.into_inner()) = Some(kinds);
+    });
+    slot
+}
 
 /// A table mount running on a worker: the entry path its node goes under (`None`: the root), and the
 /// slot the worker fills.
@@ -47,6 +63,10 @@ pub struct Gta6ArchiveExplorer {
     pub filter: TableFilter,
     /// The open or expand still mounting; a later one replaces it.
     pending: Option<Pending>,
+    /// Each mounted table's kind labels by entry index, keyed by the node's entry path.
+    pub kinds: BTreeMap<Vec<u32>, Vec<String>>,
+    /// The kind labels still being read, by the node's entry path.
+    labelling: Vec<(Vec<u32>, KindsSlot)>,
 }
 
 impl PanelState for Gta6ArchiveExplorer {
@@ -82,10 +102,12 @@ impl Gta6ArchiveExplorer {
         if !self.opened.contains(&path) {
             self.opened.push(path.clone());
         }
-        self.selected = Some(path);
+        self.selected = Some(path.clone());
         self.root = Some(node);
         self.error = None;
         self.pending = None;
+        self.kinds.clear();
+        self.labelling = vec![(Vec::new(), spawn_kinds(path, 0))];
     }
 
     /// Open the archive at `path`: its top-level table is mounted on a worker, and [`Self::poll`]
@@ -95,12 +117,23 @@ impl Gta6ArchiveExplorer {
         self.root = None;
         self.error = None;
         self.pending = Some(spawn(None, path.to_path_buf(), 0));
+        self.kinds.clear();
+        self.labelling = vec![(Vec::new(), spawn_kinds(path.to_path_buf(), 0))];
     }
 
-    /// Take a finished mount into the tree; true while one is still running.
+    /// Take a finished mount and finished kind labels into the tree; true while one still runs.
     pub fn poll(&mut self) -> bool {
+        for (at, slot) in std::mem::take(&mut self.labelling) {
+            let taken = slot.lock().unwrap_or_else(|e| e.into_inner()).take();
+            match taken {
+                Some(kinds) => {
+                    self.kinds.insert(at, kinds);
+                }
+                None => self.labelling.push((at, slot)),
+            }
+        }
         let done = match &self.pending {
-            None => return false,
+            None => return !self.labelling.is_empty(),
             Some(p) => p.slot.lock().unwrap_or_else(|e| e.into_inner()).take(),
         };
         let Some(done) = done else {
@@ -121,7 +154,7 @@ impl Gta6ArchiveExplorer {
             }
             (_, Err(e)) => self.error = Some(e),
         }
-        false
+        !self.labelling.is_empty()
     }
 
     /// Expand or collapse the nested archive at entry `path_indices` within the open tree, mounting
@@ -158,6 +191,8 @@ impl Gta6ArchiveExplorer {
             .node_at(parent_path)
             .is_some_and(|p| p.children.contains_key(&entry_index));
         if !mounted {
+            let kinds = spawn_kinds(disk.clone(), base);
+            self.labelling.push((path_indices.to_vec(), kinds));
             self.pending = Some(spawn(Some(path_indices.to_vec()), disk, base));
             return;
         }
@@ -268,6 +303,59 @@ mod tests {
             "gta6 archive explorer ciphered open",
             format_args!("no small flagged root entry decrypted in the build"),
         );
+    }
+
+    /// Every table of a real build, nested ones included, labels as many rows height map and span
+    /// grid as the census measured of their class bytes. Install-gated.
+    #[test]
+    fn the_build_labels_its_height_maps_and_span_grids_as_measured() {
+        use or_io::container::rpf::gta6_kinds::entry_kinds;
+        use or_io::container::rpf::{Gta6Mount, GtaViKeys};
+
+        let keys_set =
+            std::env::var_os("OPENRAGE_GTA6_KEYS").is_some_and(|p| Path::new(&p).exists());
+        let root = rpf9_table::install_root(None).filter(|_| keys_set);
+        let keys = root.as_ref().and_then(|_| {
+            GtaViKeys::for_install(or_title::config::config_dir().as_deref())
+                .ok()
+                .flatten()
+        });
+        let (Some(root), Some(keys)) = (root, keys) else {
+            or_test_support::skip_install(
+                "gta6 explorer kind labels",
+                format_args!("set OPENRAGE_GTA6_KEYS and {BUILD_ENV}"),
+            );
+            return;
+        };
+        let (mut height_maps, mut span_grids) = (0usize, 0usize);
+        for disk in rpf9_table::archives_in(&root) {
+            let Ok(mut file) = std::fs::File::open(&disk) else {
+                continue;
+            };
+            let Ok(top) = Gta6Mount::open_root(&mut file, &keys) else {
+                continue;
+            };
+            let mut stack = vec![(top, 0usize)];
+            while let Some((mount, depth)) = stack.pop() {
+                let kinds = entry_kinds(&mount.archive);
+                for (entry, kind) in mount.archive.entries.iter().zip(kinds) {
+                    match &*kind {
+                        "height map" => height_maps += 1,
+                        "span grid" => span_grids += 1,
+                        _ => {}
+                    }
+                    let nested = mount
+                        .entry_begins_archive(&mut file, entry)
+                        .unwrap_or(false);
+                    if nested && depth < 8 {
+                        if let Ok(child) = mount.open_nested(&mut file, entry, &keys) {
+                            stack.push((child, depth + 1));
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!((height_maps, span_grids), (1_476, 1_476));
     }
 
     #[test]

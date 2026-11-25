@@ -12,7 +12,9 @@
 //! `rpf9 list` does, and the selector names the entry the same way: a recovered name, a
 //! `0x…`/`hash_…` hash or a decimal index. `replace --resource` takes a headerless resource's loose
 //! form, the file a resource save writes; `add --type` adds a loose resource of that type code,
-//! and `add` without it stores the file chunked, or as a nested archive where it is one. `build`
+//! and `add` without it stores the file chunked, or as a nested archive where it is one. With
+//! `--dependencies`, `add` and `replace --resource` set the entry's dependency list to those keys,
+//! adding a key the archive's key table lacks to it. `build`
 //! takes its table's key from an archive of the same build. The writer is structural: the game
 //! verifies a signature over a table when it mounts an archive, and only the game's maker can sign
 //! one, so every write that changes a table says the game refuses the result.
@@ -35,14 +37,14 @@ const RPF9_MAGIC: [u8; 4] = *b"9FPR";
 
 const USAGE: &str = "\
 usage:
-  openrage-cli rpf9 copy <archive.rpf> --out <new.rpf> [--keys <snapshot>]
-  openrage-cli rpf9 replace <archive.rpf> [inner/path] --entry <selector> --with <file> [--resource] --out <new.rpf> [--names <dir>] [--keys <snapshot>]
-  openrage-cli rpf9 remove <archive.rpf> [inner/path] --entry <selector> --out <new.rpf> [--names <dir>] [--keys <snapshot>]
-  openrage-cli rpf9 rename <archive.rpf> [inner/path] --entry <selector> --name <path> --out <new.rpf> [--names <dir>] [--keys <snapshot>]
-  openrage-cli rpf9 defrag <archive.rpf> --out <new.rpf> [--keys <snapshot>]
-  openrage-cli rpf9 add <archive.rpf> [inner/path] --name <path> --with <file> [--type <code>] --out <new.rpf> [--names <dir>] [--keys <snapshot>]
-  openrage-cli rpf9 build <folder> --key-from <archive.rpf> --out <new.rpf> [--keys <snapshot>]
-  every verb also takes --exe <game_scarlett_master.exe>, the executable whose keys it reads with";
+  openrage-cli rpf9 copy <archive.rpf> --out <new.rpf> [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 replace <archive.rpf> [inner/path] --entry <selector> --with <file> [--resource [--dependencies <0xKEY,...>]] --out <new.rpf> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 remove <archive.rpf> [inner/path] --entry <selector> --out <new.rpf> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 rename <archive.rpf> [inner/path] --entry <selector> --name <path> --out <new.rpf> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 defrag <archive.rpf> --out <new.rpf> [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 add <archive.rpf> [inner/path] --name <path> --with <file> [--type <code>] [--dependencies <0xKEY,...>] --out <new.rpf> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 build <folder> --key-from <archive.rpf> --out <new.rpf> [--keys <snapshot>] [--exe <game.exe>]
+  --exe names the game executable whose keys a verb reads with";
 
 /// What a write that changed a table says of the archive it wrote.
 const STALE: &str = "Its table signature is stale: the game verifies a signature over the table \
@@ -65,6 +67,7 @@ struct Options {
     with: Option<PathBuf>,
     name: Option<String>,
     type_code: Option<String>,
+    dependencies: Option<String>,
     resource: bool,
     key_from: Option<PathBuf>,
     names_dir: Option<PathBuf>,
@@ -94,14 +97,15 @@ pub(crate) fn run(verb: &str, args: &[String]) -> ExitCode {
                 options.resource = true;
                 continue;
             }
-            "--entry" | "--name" | "--type" => {
+            "--entry" | "--name" | "--type" | "--dependencies" => {
                 let Some(value) = it.next() else {
                     return usage(&format!("{arg} needs a value"));
                 };
                 let field = match arg.as_str() {
                     "--entry" => &mut options.entry,
                     "--name" => &mut options.name,
-                    _ => &mut options.type_code,
+                    "--type" => &mut options.type_code,
+                    _ => &mut options.dependencies,
                 };
                 *field = Some(value.clone());
                 continue;
@@ -160,6 +164,16 @@ fn write(
     if same_file(archive, out) {
         return Err("--out must name a new file; the source archive is never written".into());
     }
+    let dependencies = options
+        .dependencies
+        .as_deref()
+        .map(parse_keys)
+        .transpose()?;
+    if dependencies.is_some() && !(verb == "add" || (verb == "replace" && options.resource)) {
+        return Err(
+            "--dependencies sets the list of an entry add or replace --resource writes".into(),
+        );
+    }
     let keys = crate::gta6_keys::load(options.keys_path.as_deref(), options.exe_path.as_deref())?;
     let mut file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
 
@@ -189,7 +203,10 @@ fn write(
                 None if bytes.starts_with(&RPF9_MAGIC) => Rpf9NewBody::Archive(bytes),
                 None => Rpf9NewBody::Chunked(bytes),
             };
-            writer.add(&path, name, body);
+            match dependencies {
+                Some(keys) => writer.add_with_dependencies(&path, name, body, keys),
+                None => writer.add(&path, name, body),
+            };
         }
         _ => {
             let selector = options
@@ -200,7 +217,7 @@ fn write(
             let path = entry_path(&mut file, inner, selector, &keys, &resolver)?;
             match verb {
                 "replace" if options.resource => {
-                    writer.replace_resource(&path, read_with(options)?, None);
+                    writer.replace_resource(&path, read_with(options)?, dependencies);
                 }
                 "replace" => {
                     writer.replace(&path, read_with(options)?);
@@ -329,6 +346,18 @@ fn parse_code(code: &str) -> Result<u32, String> {
     .map_err(|_| format!("--type {code:?} is not a type code"))
 }
 
+/// Dependency keys, `0x`-prefixed hexadecimal and comma-separated; none for an empty list.
+fn parse_keys(text: &str) -> Result<Vec<u64>, String> {
+    (text.split(',').map(str::trim).filter(|k| !k.is_empty()))
+        .map(|key| {
+            key.strip_prefix("0x")
+                .or_else(|| key.strip_prefix("0X"))
+                .and_then(|hex| u64::from_str_radix(hex, 16).ok())
+                .ok_or_else(|| format!("--dependencies: {key:?} is not a 0x-prefixed hex key"))
+        })
+        .collect()
+}
+
 /// Whether `a` and `b` are the same existing file.
 pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
     matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y)
@@ -427,6 +456,26 @@ mod tests {
         assert_eq!(parse_code("0X2"), Ok(2));
         assert_eq!(parse_code("67"), Ok(67));
         assert!(parse_code("drawable").is_err());
+    }
+
+    #[test]
+    fn dependency_keys_read_as_comma_separated_hexadecimal() {
+        assert_eq!(parse_keys("0x01, 0X0aB"), Ok(vec![1, 0xAB]));
+        assert_eq!(parse_keys(""), Ok(Vec::new()));
+        assert!(parse_keys("0x1,171").is_err());
+        assert!(parse_keys("0xzz").is_err());
+    }
+
+    #[test]
+    fn dependencies_are_refused_on_a_verb_that_writes_no_list() {
+        let options = Options {
+            out: Some(std::env::temp_dir().join("openrage-rpf9-no-list.rpf")),
+            entry: Some("0".into()),
+            dependencies: Some("0x1".into()),
+            ..Options::default()
+        };
+        let refused = write("remove", Path::new("missing.rpf"), &[], &options);
+        assert!(refused.unwrap_err().contains("--dependencies"));
     }
 
     #[test]

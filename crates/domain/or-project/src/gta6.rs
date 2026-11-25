@@ -10,7 +10,8 @@ use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 
 use or_io::container::rpf::gta6_chunk_table::cell_offset;
-use or_io::container::rpf::{Gta6Entry, Gta6Mount, GtaViKeys, Rpf9ArchiveWriter};
+use or_io::container::rpf::gta6_container_write::Rpf9NewBody;
+use or_io::container::rpf::{Gta6Entry, Gta6Mount, GtaViKeys, Rpf9ArchiveWriter, RPF9_MAGIC};
 use or_io::gta6::hash::name_hash64;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -42,7 +43,7 @@ pub struct Gta6Edit {
     /// The nested archives the entry is inside, outermost first, each named as `entry` is.
     #[serde(default)]
     pub within: Vec<String>,
-    /// The entry: its path, or its name64 hash as `0x` and 16 hex digits.
+    /// The entry: its path, or its name64 hash as `0x` and 16 hex digits; an added entry's path.
     pub entry: String,
     #[serde(flatten)]
     pub op: Gta6Op,
@@ -59,6 +60,12 @@ pub enum Gta6Op {
     Rename {
         name: String,
     },
+    /// A new entry of `with`'s bytes: a loose resource of `type`, else chunked or a nested archive.
+    Add {
+        with: PathBuf,
+        #[serde(default, rename = "type")]
+        type_code: Option<u32>,
+    },
 }
 
 impl Gta6Op {
@@ -67,6 +74,7 @@ impl Gta6Op {
             Self::Replace { .. } => "replace",
             Self::Remove => "remove",
             Self::Rename { .. } => "rename",
+            Self::Add { .. } => "add",
         }
     }
 }
@@ -151,6 +159,8 @@ pub struct Gta6Change {
     pub within: Vec<String>,
     pub entry: String,
     pub op: String,
+    /// Empty for an added entry.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub old: String,
     /// `None` for a removed entry.
     pub new: Option<String>,
@@ -176,7 +186,7 @@ impl Gta6Project {
             serde_json::from_value(value).map_err(|e| refused(e.to_string()))?;
         let folder = path.parent().unwrap_or(Path::new(""));
         for edit in &mut project.edits {
-            if let Gta6Op::Replace { with } = &mut edit.op {
+            if let Gta6Op::Replace { with } | Gta6Op::Add { with, .. } = &mut edit.op {
                 if with.is_relative() {
                     *with = folder.join(&*with);
                 }
@@ -342,6 +352,38 @@ fn write_all(
         let root = Gta6Mount::open_root(&mut src, keys).map_err(|e| failed(e.to_string()))?;
         let mut writer = Rpf9ArchiveWriter::new();
         for edit in edits {
+            if let Gta6Op::Add { with, type_code } = &edit.op {
+                let (_, path) = within(&mut src, &root, &edit.within, keys).map_err(failed)?;
+                let name = &edit.entry;
+                if selector_hash(name) != name_hash64(name.as_bytes()) {
+                    return Err(failed(format!(
+                        "{name:?}: an added entry is named by its path, not a hash"
+                    )));
+                }
+                let bytes = std::fs::read(with).map_err(io_at(with))?;
+                let new = digest(&bytes);
+                let body = match type_code {
+                    Some(code) => Rpf9NewBody::Resource {
+                        type_code: *code,
+                        loose: bytes,
+                    },
+                    None if bytes.starts_with(&RPF9_MAGIC.to_le_bytes()) => {
+                        Rpf9NewBody::Archive(bytes)
+                    }
+                    None => Rpf9NewBody::Chunked(bytes),
+                };
+                writer.add(&path, name, body);
+                manifest.changes.push(Gta6Change {
+                    archive: archive.to_path_buf(),
+                    within: edit.within.clone(),
+                    entry: hash_text(name_hash64(name.as_bytes())),
+                    op: edit.op.word().to_owned(),
+                    old: String::new(),
+                    new: Some(new),
+                    renamed_to: None,
+                });
+                continue;
+            }
             let (mount, entry, path) = locate(&mut src, &root, edit, keys).map_err(failed)?;
             let old = digest(&content(&mount, &mut src, &entry, keys).map_err(failed)?);
             let (new, renamed_to) = match &edit.op {
@@ -369,6 +411,8 @@ fn write_all(
                         Some(hash_text(name_hash64(name.as_bytes()))),
                     )
                 }
+                // Written above, as it names no entry to locate.
+                Gta6Op::Add { .. } => continue,
             };
             manifest.changes.push(Gta6Change {
                 archive: archive.to_path_buf(),
@@ -420,9 +464,22 @@ fn locate(
     edit: &Gta6Edit,
     keys: &GtaViKeys,
 ) -> Result<(Gta6Mount, Gta6Entry, Vec<u32>), String> {
+    let (mount, mut path) = within(src, root, &edit.within, keys)?;
+    let entry = find(&mount, &edit.entry)?;
+    path.push(entry.index);
+    Ok((mount, entry, path))
+}
+
+/// The nested archive the names `nesting` walk to from `root`, and its entry indices from there.
+fn within(
+    src: &mut File,
+    root: &Gta6Mount,
+    nesting: &[String],
+    keys: &GtaViKeys,
+) -> Result<(Gta6Mount, Vec<u32>), String> {
     let mut mount = root.clone();
-    let mut path = Vec::with_capacity(edit.within.len() + 1);
-    for name in &edit.within {
+    let mut path = Vec::with_capacity(nesting.len() + 1);
+    for name in nesting {
         let entry = find(&mount, name)?;
         if !mount
             .entry_begins_archive(src, &entry)
@@ -435,9 +492,7 @@ fn locate(
             .open_nested(src, &entry, keys)
             .map_err(|e| e.to_string())?;
     }
-    let entry = find(&mount, &edit.entry)?;
-    path.push(entry.index);
-    Ok((mount, entry, path))
+    Ok((mount, path))
 }
 
 fn find(mount: &Gta6Mount, selector: &str) -> Result<Gta6Entry, String> {

@@ -4,7 +4,9 @@
 //! index cipher ([`super::rpf9_toc`]) and the content cipher ([`super::gta6_content`]): the block
 //! primitive is the index cipher's transform shape (input substitution, thirteen T-box rounds, output
 //! substitution) but keyed from a second, independent set of shared tables, and the mode is CBC
-//! decryption seeded by a fixed 16-byte IV held in the executable, restarted for each run.
+//! decryption seeded by a fixed 16-byte IV held in the executable, restarted for each run. A save
+//! enciphers a run with the stage-by-stage inverse the index cipher's writer derives
+//! ([`super::gta6_write`]).
 //!
 //! ⚠ The transform, the CBC framing, the whole-block extent and the table/blob shapes are the
 //! algorithm, committable per the owner's "truth from the executable" ruling. The key words, the
@@ -12,6 +14,9 @@
 //! never in the tree.
 
 use byteorder::{BigEndian, ByteOrder};
+
+use super::gta6_write::{invert_byte_table, Rpf9CipherCore};
+use crate::error::Result;
 
 /// Round-key words in a string key blob; the first four key the input, the rest the thirteen rounds.
 pub const WORDS: usize = 60;
@@ -119,11 +124,66 @@ impl StringCipher {
             prev = cipher;
         }
     }
+
+    /// Encipher `data` in place, the exact inverse of [`Self::cbc_decrypt`].
+    // A table of another shape than the white-box one is refused, since it has no inverse here.
+    // ponytail: the inverse tables are derived per call (16 small maps, four 32x32 solves); cache them
+    // on the cipher if a caller ever enciphers runs in bulk.
+    pub fn cbc_encrypt(&self, data: &mut [u8]) -> Result<()> {
+        let core = Rpf9CipherCore::from_tables(&self.input, &self.round)?;
+        let mut output_inv = [[0u8; MAP_LEN]; MAPS];
+        for (inv, map) in output_inv.iter_mut().zip(self.output.iter()) {
+            *inv = invert_byte_table(map, "a string cipher output map")?;
+        }
+        let mut prev = self.iv;
+        let whole = data.len() & !0xF;
+        for chunk in data[..whole].chunks_mut(16) {
+            let mut block: [u8; 16] = chunk.try_into().expect("chunks_mut(16) yields 16 bytes");
+            for (b, p) in block.iter_mut().zip(prev.iter()) {
+                *b ^= p;
+            }
+            let cipher = core.block_encrypt(&block, &self.words, &output_inv);
+            chunk.copy_from_slice(&cipher);
+            prev = cipher;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use crate::container::rpf::GtaViKeys;
+
+    /// A key snapshot whose string section is [`clean`], for tests of a save that enciphers.
+    pub(crate) fn clean_keys() -> GtaViKeys {
+        let c = clean();
+        let mut out = b"ORGTAVIK".to_vec();
+        out.extend(1u32.to_le_bytes()); // version
+        out.extend(0x4342u32.to_le_bytes()); // CBC mode tag
+        out.extend([0u8; 32 + 16]); // exe sha256, bootstrap iv
+        for tag in [None, Some(0x5243u32)] {
+            if let Some(tag) = tag {
+                out.extend(tag.to_le_bytes()); // content mode tag
+            }
+            out.extend(4096u32.to_le_bytes());
+            out.extend((0..4096).map(|i| i as u8));
+            out.extend(16384u32.to_le_bytes());
+            out.extend((0..16384).map(|i| i as u8));
+            out.extend(0u32.to_le_bytes()); // no keys
+        }
+        out.extend(0x5453u32.to_le_bytes()); // string mode tag
+        out.extend(4096u32.to_le_bytes());
+        out.extend(c.input.iter().flatten());
+        out.extend(16384u32.to_le_bytes());
+        out.extend(c.round.iter().flatten().flat_map(|w| w.to_le_bytes()));
+        out.extend(c.iv);
+        out.extend(4340u32.to_le_bytes());
+        out.extend([0x50, 0x4f, 0x86, 0x5e]); // string blob magic
+        out.extend(c.words.iter().flat_map(|w| w.to_le_bytes()));
+        out.extend(c.output.iter().flatten());
+        GtaViKeys::parse(&out).expect("the clean synthetic snapshot parses")
+    }
 
     /// Distinct, deterministic synthetic tables and a key — not the real material, which is never in
     /// the tree. The transform's correctness against the game is proven by the install-gated string
@@ -191,6 +251,71 @@ mod tests {
         }
         assert_eq!(&data[..16], &want0);
         assert_eq!(&data[16..], &want1);
+    }
+
+    /// A dense invertible 8x8 GF(2) map, so the derived inverses do real work.
+    fn mix8(b: u8) -> u8 {
+        let (mut y, mut acc) = (0u8, 0u8);
+        for i in (0..8).rev() {
+            acc ^= (b >> i) & 1;
+            y |= acc << i;
+        }
+        y
+    }
+
+    /// Synthetic tables of the invertible shape: permutation maps and round tables `const ^ (mix8(S(x))
+    /// << byte)`, the four tables of a lane in four distinct bytes. Never the real material.
+    fn clean() -> StringCipher {
+        const LANES: [[usize; 4]; 4] =
+            [[0, 13, 10, 7], [1, 14, 4, 11], [5, 2, 8, 15], [9, 6, 12, 3]];
+        let mut c = synthetic();
+        for lane in LANES {
+            for (slot, &k) in lane.iter().enumerate() {
+                let constant = 0x0A0B_0C0Du32.wrapping_mul(k as u32 + 1);
+                for (x, word) in c.round[k].iter_mut().enumerate() {
+                    let s = (x as u8).rotate_left(3) ^ (k as u8).wrapping_mul(0x5B);
+                    *word = constant ^ (u32::from(mix8(s)) << (slot * 8));
+                }
+            }
+        }
+        c
+    }
+
+    fn sample(len: usize) -> Vec<u8> {
+        (0..len as u32)
+            .map(|i| (i.wrapping_mul(2_246_822_519) >> 13) as u8)
+            .collect()
+    }
+
+    #[test]
+    fn encrypt_and_decrypt_invert_each_other() {
+        let c = clean();
+        let plain = sample(16 * 5 + 7);
+        let mut data = plain.clone();
+        c.cbc_encrypt(&mut data).expect("clean tables invert");
+        assert_ne!(data[..80], plain[..80], "the blocks are enciphered");
+        assert_eq!(data[80..], plain[80..], "the partial tail stays clear");
+        c.cbc_decrypt(&mut data);
+        assert_eq!(data, plain, "decrypt(encrypt(x)) == x");
+
+        let cipher = sample(16 * 4);
+        let mut data = cipher.clone();
+        c.cbc_decrypt(&mut data);
+        c.cbc_encrypt(&mut data).expect("clean tables invert");
+        assert_eq!(data, cipher, "encrypt(decrypt(x)) == x");
+    }
+
+    #[test]
+    fn tables_of_another_shape_are_refused() {
+        // `synthetic`'s four round tables of a lane share one difference space, so a lane is singular.
+        let mut data = [0u8; 32];
+        assert!(synthetic().cbc_encrypt(&mut data).is_err());
+        let mut c = clean();
+        c.output[3][1] = c.output[3][0];
+        assert!(
+            c.cbc_encrypt(&mut data).is_err(),
+            "an output map that is no permutation"
+        );
     }
 
     #[test]

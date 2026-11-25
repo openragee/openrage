@@ -86,15 +86,15 @@ fn located(
     })
 }
 
-/// The palette count the reader takes: the model's byte, or geometry 0's +0x2C where that word
-/// passes 0xFF and keeps the byte as its low 8 bits.
+/// The palette count the reader takes: the model's byte, or geometry 0's u16 at +0x2C where it
+/// passes 0xFF and keeps the byte as its low 8 bits; the u16 at +0x2E is another word.
 fn count_of(v: &[u8], model: usize, geometries: &[usize]) -> Written<usize> {
     let byte = *(v.get(model + 0x30)).ok_or(Refused("its model lies past the virtual section"))?;
     let whole = (geometries.first())
-        .and_then(|g| v.get(g + 0x2C..g + 0x30))
-        .map(|b| u32_at(b, 0));
+        .and_then(|g| v.get(g + 0x2C..g + 0x2E))
+        .map(|b| u16::from_le_bytes([b[0], b[1]]));
     Ok(whole
-        .filter(|&n| n > 0xFF && n & 0xFF == u32::from(byte))
+        .filter(|&n| n > 0xFF && n & 0xFF == u16::from(byte))
         .map_or(usize::from(byte), |n| n as usize))
 }
 
@@ -249,11 +249,13 @@ pub fn write_palette(
                 let v = &mut out.virtual_section;
                 put(v, start, &bytes)?;
                 put(v, at + 0x28, &(VIRTUAL_TAG + start as u64).to_le_bytes())?;
-                // The model's byte keeps the count's low 8 bits; a geometry's +0x2C states it whole.
+                // The model's byte keeps the count's low 8 bits; a geometry's u16 at +0x2C states it whole.
                 put(v, at + 0x30, &[list.len() as u8])?;
-                let (old, new) = (held.len() as u32, list.len() as u32);
+                let new = u16::try_from(list.len())
+                    .map_err(|_| Refused("a palette passes 65,535 entries"))?;
+                let old = held.len() as u16;
                 for g in &geometries {
-                    if v.get(g + 0x2C..g + 0x30).map(|b| u32_at(b, 0)) == Some(old) {
+                    if v.get(g + 0x2C..g + 0x2E) == Some(&old.to_le_bytes()[..]) {
                         put(v, g + 0x2C, &new.to_le_bytes())?;
                     }
                 }

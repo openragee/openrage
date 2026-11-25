@@ -2,13 +2,15 @@ use byteorder::{ByteOrder, LE};
 
 use super::*;
 use crate::gta6::script::compiled::{
-    check_copy, length, HEADER_LEN, OPCODE_MULTIPLIER, OPERAND_KEY, OPERAND_KEY_HIGH,
-    OPERAND_MULTIPLIER,
+    check_copy, length, HEADER_LEN, MAX_OPERANDS, NATIVE, OPCODE_MULTIPLIER, OPERAND_KEY,
+    OPERAND_KEY_HIGH, OPERAND_MULTIPLIER,
 };
 
 const HASH: u32 = 0x0BAD_F00D;
 /// What a body pointer adds to the body offset it names.
 const POINTER_BASE: u64 = 0x5000_0000;
+/// The opcodes the interpreter's table holds.
+const TABLE: u16 = 530;
 
 fn inverse16(m: u16) -> u16 {
     (1..=u16::MAX).find(|x| x.wrapping_mul(m) == 1).unwrap_or(0)
@@ -42,17 +44,33 @@ fn body(code: &[u8]) -> Vec<u8> {
     b
 }
 
-/// Two functions: an enter, a native call, a branch and a jump to the return, an unnamed opcode.
+/// An instruction at `offset` holding `plain` as its decoded operands.
+fn at(offset: usize, opcode: u16, plain: &[u8]) -> Instruction {
+    let mut operands = [0u8; MAX_OPERANDS];
+    operands[..plain.len()].copy_from_slice(plain);
+    Instruction {
+        offset,
+        opcode,
+        len: length(opcode).unwrap_or(2),
+        operands,
+    }
+}
+
+/// Two functions: frame entries, locals by index, a field load, a branch, a native, a call, an unnamed opcode.
 fn two_functions() -> Vec<u8> {
-    let parts: [(u16, &[u8]); 8] = [
-        (0x83, &[0x10]),
+    let parts: [(u16, &[u8]); 12] = [
+        (0x83, &[0x21]),
+        (0x0C, &[3]),
+        (0x0F, &[]),
+        (0x3C, &[0x10]),
+        (0xAD, &29i32.to_le_bytes()),
         (NATIVE, &[0x50, 0xF0, 0x4B, 0x04, 2, 1]),
-        (0xA0, &[11]),
-        (0x14, &[0x34, 0x12]),
-        (0x9C, &4i32.to_le_bytes()),
-        (0x90, &[]),
-        (0x18E, &[1, 4, 0, 0]),
+        (0x85, &[0, 0, 0, 0, 0]),
+        (0x7E, &[1, 2, 3, 4, 5]),
+        (0x9D, &[1]),
         (0x91, &[]),
+        (0x18E, &[1, 4, 0, 2]),
+        (0x90, &[]),
     ];
     let mut code = Vec::new();
     for (op, plain) in parts {
@@ -78,78 +96,135 @@ fn a_hand_built_body_lists_its_functions_and_operands() {
     let b = body(&two_functions());
     let program = Compiled::open(&b).expect("the header reads");
     let out = listing(&program).expect("the code decodes");
-    assert_eq!((out.functions, out.instructions, out.named), (2, 8, 7));
+    assert_eq!((out.functions, out.instructions, out.named), (2, 12, 11));
     assert!(out.text.contains("function 0x000000:"), "{}", out.text);
-    assert!(out.text.contains("function 0x00001A:"), "{}", out.text);
-    assert_eq!(
-        line(&out.text, "000000"),
-        ["000000", "083", "enter", "0x10"]
-    );
-    assert_eq!(
-        line(&out.text, "000003"),
-        [
-            "000003",
-            "08B",
-            "native",
-            "0x044BF050",
-            "args",
-            "2",
-            "results",
-            "1"
-        ]
-    );
-    assert_eq!(
-        line(&out.text, "00000B"),
-        ["00000B", "0A0", "branch", "->", "0x000018"]
-    );
-    assert_eq!(
-        line(&out.text, "00000E"),
-        ["00000E", "014", "op_014", "0x1234"]
-    );
-    assert_eq!(
-        line(&out.text, "000012"),
-        ["000012", "09C", "jump", "->", "0x000018"]
-    );
-    assert_eq!(line(&out.text, "000018"), ["000018", "090", "return"]);
-    assert_eq!(
-        line(&out.text, "00001A"),
-        ["00001A", "18E", "enter", "0x00000401"]
-    );
+    assert!(out.text.contains("function 0x00002C:"), "{}", out.text);
+    let want: [(&str, &str); 12] = [
+        ("000000", "083 enter args 2 locals 5"),
+        ("000003", "00C load_local local3"),
+        ("000006", "00F load_local local2"),
+        ("000008", "03C load_i32 +0x18"),
+        ("00000B", "0AD jgt_i32 if a > b -> 0x00002A"),
+        ("000011", "08B native 0x044BF050 args 2 results 1"),
+        ("000019", "085 call import 0 -> func 0x000000"),
+        ("000020", "07E op_07E 01 02 03 04 05"),
+        ("000027", "09D jump -> 0x00002A"),
+        ("00002A", "091 return_value"),
+        ("00002C", "18E enter args 1 locals 8 align 4"),
+        ("000032", "090 return"),
+    ];
+    for (offset, rest) in want {
+        let mut expected = vec![offset];
+        expected.extend(rest.split_whitespace());
+        assert_eq!(line(&out.text, offset), expected, "{}", out.text);
+    }
     assert!(out
         .text
-        .starts_with("; program 0x0BADF00D: 8 instructions in 2 functions"));
+        .starts_with("; program 0x0BADF00D: 12 instructions in 2 functions"));
+}
+
+#[test]
+fn each_operand_layout_prints_its_fields() {
+    let cases: [(u16, &[u8], &str); 16] = [
+        (0x02, &[], "arg0"),
+        (0x2B, &[], "-1"),
+        (0x2D, &[0x7F], "0x7F"),
+        (0x2E, &[0x78, 0x56, 0x34, 0x12], "0x12345678"),
+        (0x40, &[0, 16], "+0x8 bytes 16"),
+        (0x42, &[4], "+0x1C"),
+        (0x5E, &[2, 0x40], "import 2 +0x40"),
+        (0x84, &[0x10, 2], "args 1 locals 4 align 4"),
+        (0x88, &[2, 0x34, 0x12, 1], "args 2 method 4660 01"),
+        (0x8A, &[5, 3], "type 3 method 5"),
+        (0x93, &[7], "type 0x7"),
+        (0x9E, &[3, 0, 0, 0, 0x20, 0, 0, 0], "cases 3 table 0x20"),
+        (0x9F, &[4, 0, 0, 0], "if a == 0 -> 0x000006"),
+        (0x170, &[2, 1], "slots 2 slots 1"),
+        (0x1AE, &[0, 0, 1, 0, 0], "import 0 +0x100"),
+        (
+            0x1F9,
+            &[1, 0, 0, 0, 0, 0, 0, 0, 0x40, 0, 0, 0],
+            "01 00 00 00 00 00 00 00 -> func 0x000040",
+        ),
+    ];
+    for (opcode, plain, want) in cases {
+        let row = op(opcode).expect("a named opcode");
+        let width: u8 = row.fields.iter().map(|f| f.width).sum();
+        assert_eq!(usize::from(width), plain.len(), "opcode {opcode:#X}");
+        assert_eq!(operands(&at(0, opcode, plain)), want, "opcode {opcode:#X}");
+    }
+}
+
+#[test]
+fn every_named_opcode_fills_its_instruction_length() {
+    let mut named = 0;
+    for opcode in 0..TABLE {
+        let Some(row) = op(opcode) else { continue };
+        named += 1;
+        let width: u8 = row.fields.iter().map(|f| f.width).sum();
+        assert_eq!(Some(2 + width), length(opcode), "opcode {opcode:#X}");
+        if row.implied.is_some() {
+            assert!(
+                row.fields.is_empty(),
+                "opcode {opcode:#X} carries its operand"
+            );
+        }
+    }
+    assert_eq!(named, 492);
+    assert_eq!(op(TABLE), None, "nothing is named past the table");
+}
+
+#[test]
+fn a_family_member_carries_its_distance_from_the_base() {
+    assert_eq!(op(0x04).and_then(|o| o.implied), Some((Kind::Arg, 2)));
+    assert_eq!(op(0x13).and_then(|o| o.implied), Some((Kind::Local, 6)));
+    assert_eq!(op(0x1E).and_then(|o| o.implied), Some((Kind::Local, 6)));
+    assert_eq!(op(0x2A).and_then(|o| o.implied), Some((Kind::Imm, 9)));
+    assert_eq!(operands(&at(0, 0x1B, &[])), "local3");
 }
 
 #[test]
 fn a_backward_displacement_counts_from_past_the_opcode_word() {
-    let at = |opcode, len, operands: &[u8]| {
-        let mut o = [0u8; crate::gta6::script::compiled::MAX_OPERANDS];
-        o[..operands.len()].copy_from_slice(operands);
-        Instruction {
-            offset: 0x40,
-            opcode,
-            len,
-            operands: o,
-        }
-    };
-    assert_eq!(target(&at(0x9D, 3, &[(-6i8) as u8])), Some(0x3C));
-    assert_eq!(target(&at(0xA5, 6, &(-0x43i32).to_le_bytes())), None);
-    assert_eq!(target(&at(0xA5, 6, &(-0x30i32).to_le_bytes())), Some(0x12));
-    assert_eq!(target(&at(0x14, 4, &[1, 0])), None, "no jump, no target");
+    assert_eq!(target(&at(0x40, 0x9D, &[(-6i8) as u8])), Some(0x3C));
+    assert_eq!(target(&at(0x40, 0xA5, &(-0x43i32).to_le_bytes())), None);
+    assert_eq!(
+        target(&at(0x40, 0xA5, &(-0x30i32).to_le_bytes())),
+        Some(0x12)
+    );
+    assert_eq!(target(&at(0x40, 0x14, &[1, 0])), None, "no jump, no target");
 }
 
 #[test]
 fn every_jump_and_branch_has_a_displacement_width() {
-    for op in 0..=u16::MAX {
-        let Some(len) = length(op) else { break };
-        if matches!(mnemonic(op), Some("jump" | "branch")) {
-            assert!(len == 3 || len == 6, "opcode {op:#X} is {len} bytes long");
+    let mut branches = 0;
+    for opcode in 0..TABLE {
+        let Some(row) = op(opcode) else { continue };
+        let disp: Vec<_> = (row.fields.iter())
+            .filter(|f| f.kind == Kind::Disp)
+            .collect();
+        if disp.is_empty() {
+            assert_eq!(condition(row.mnemonic), None, "opcode {opcode:#X}");
+            continue;
         }
+        branches += 1;
+        assert!(disp.len() == 1 && matches!(disp[0].width, 1 | 4));
+        assert!(matches!(length(opcode), Some(3 | 6)), "opcode {opcode:#X}");
+        assert_eq!(
+            condition(row.mnemonic).is_none(),
+            row.mnemonic == "jump",
+            "opcode {opcode:#X} {}",
+            row.mnemonic
+        );
     }
+    assert_eq!(branches, 40, "two jumps and 38 conditional branches");
+}
+
+#[test]
+fn an_unnamed_opcode_prints_its_bytes() {
+    assert_eq!(mnemonic(0x7E), None);
     assert_eq!(
-        mnemonic(0xA8),
-        None,
-        "an opcode the comparison did not settle prints as op_"
+        operands(&at(0, 0x7E, &[0xAB, 1, 2, 3, 4])),
+        "AB 01 02 03 04"
     );
 }
 

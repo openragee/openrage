@@ -130,6 +130,7 @@ pub use write_fragment_child::{
     fragment_child_local_in, fragment_child_place, place_fragment_child, regroup_fragment_child,
     write_fragment_level,
 };
+pub use write_geometry::{bind_positions, rebox_bind_pose};
 pub use write_geometry::{
     write_geometry, GeometryAt, GeometryEdit, GeometryWriteError, GeometryWritten,
 };

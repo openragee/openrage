@@ -243,6 +243,36 @@ fn a_cut_is_refused_by_name_without_the_per_geometry_table_or_past_255_palette_e
 }
 
 #[test]
+fn a_palette_is_the_u16_at_0x2c_so_a_non_zero_word_after_it_still_cuts() {
+    let edit = ribbon(LIMIT as u32);
+    let (mut sections, _) = tabled();
+    let v = &mut sections.virtual_section;
+    let model = target(v, target(v, target(v, 0x50)));
+    let geometry = target(v, target(v, model + 0x08));
+    v[geometry + 0x2C..geometry + 0x2E].copy_from_slice(&10u16.to_le_bytes());
+    v[geometry + 0x2E..geometry + 0x30].copy_from_slice(&0x8001u16.to_le_bytes());
+    assert!(
+        u32_at(v, geometry + 0x2C) > 0xFF,
+        "the dword passes the ceiling"
+    );
+    let mut written = sections.clone();
+    let cut = write_geometry_cut(&mut written, Rpf9Role::Drawable, None, AT, &edit).expect("cut");
+    assert_eq!(cut.pieces, 2);
+
+    let v = &mut sections.virtual_section;
+    v[geometry + 0x2C..geometry + 0x2E].copy_from_slice(&256u16.to_le_bytes());
+    let mut again = sections.clone();
+    let refused = write_geometry_cut(&mut again, Rpf9Role::Drawable, None, AT, &edit)
+        .expect_err("refused")
+        .to_string();
+    assert!(
+        refused.contains("one byte at +0x30") && refused.contains("209"),
+        "{refused}"
+    );
+    assert_eq!(again, sections);
+}
+
+#[test]
 fn channel_33_s_four_byte_form_is_texcoord_5_and_takes_a_new_vertex_count() {
     let lanes = |uv: [f32; 2]| -> [u8; 4] {
         let q = |x: f32| ((x * 8192.0).round() as i16).to_le_bytes();

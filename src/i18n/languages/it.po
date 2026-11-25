@@ -14225,9 +14225,6 @@ msgstr "filmato Scaleform"
 msgid "EDUP, high entropy"
 msgstr "EDUP, entropia elevata"
 
-msgid "This body starts with EDUP and its bytes after that are of high entropy with no structure found, so it is not read and no view shows it."
-msgstr "Questo corpo inizia con EDUP e i suoi byte successivi hanno un'entropia elevata senza struttura trovata, quindi non viene letto e nessuna vista lo mostra."
-
 msgid "The reader of this {what} does not read it: {e}"
 msgstr "Il lettore di questo corpo ({what}) non lo legge: {e}"
 
@@ -16953,3 +16950,77 @@ msgstr "Vengono cercati solo gli archivi espansi."
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} è un nuovo archivio con la modifica al posto della sua voce e la sua tabella così come è stata letta."
+
+msgid "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}."
+msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
+msgstr[0] "Elencato dalla sua tabella decifrata: {count} voce, di cui {named} con nome, sotto la chiave di tabella {key}."
+msgstr[1] "Elencato dalla sua tabella decifrata: {count} voci, di cui {named} con nome, sotto la chiave di tabella {key}."
+
+msgid "This entry's row states no start, so its body cannot be read."
+msgstr "La riga di questa voce non indica alcun inizio, quindi il suo corpo non può essere letto."
+
+msgid "Click to expand or collapse this nested archive, listed from its own table."
+msgstr "Fai clic per espandere o comprimere questo archivio annidato, elencato dalla sua tabella."
+
+msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
+msgstr "Fai clic per aprirlo nella scheda di anteprima e doppio clic per tenerlo in una scheda propria; un corpo cifrato viene prima decifrato."
+
+msgid "Extract to a file…"
+msgstr "Estrai in un file…"
+
+msgid "Replace with a file…"
+msgstr "Sostituisci con un file…"
+
+msgid "Writes a new copy of the archive with this entry replaced, which the game refuses: only its maker can sign the table."
+msgstr "Scrive una nuova copia dell’archivio con questa voce sostituita, che il gioco rifiuta: solo il suo autore può firmare la tabella."
+
+msgid "Replace with a file"
+msgstr "Sostituisci con un file"
+
+msgid "Save the new archive"
+msgstr "Salva il nuovo archivio"
+
+msgid "Wrote {entry} to {file}."
+msgstr "{entry} scritto in {file}."
+
+msgid "Cannot extract {entry}: {reason}"
+msgstr "Impossibile estrarre {entry}: {reason}"
+
+msgid "{file} is a new archive with {entry} replaced, which the game refuses because only its maker can sign the table this changed."
+msgstr "{file} è un nuovo archivio con {entry} sostituito, che il gioco rifiuta perché solo il suo autore può firmare la tabella che questo ha cambiato."
+
+msgid "{file} is a new archive the same as the one it was read from: the file holds the bytes {entry} holds."
+msgstr "{file} è un nuovo archivio uguale a quello da cui è stato letto: il file contiene i byte che contiene {entry}."
+
+msgid "Cannot replace {entry}: {reason}"
+msgstr "Impossibile sostituire {entry}: {reason}"
+
+msgid "the file written is a new one, and the archive it is read from is never written"
+msgstr "il file scritto è nuovo, e l’archivio da cui si legge non viene mai scritto"
+
+msgid "entry {index} is not in its table"
+msgstr "la voce {index} non è nella sua tabella"
+
+msgid "the entry's row states no start, so its body is not known"
+msgstr "la riga della voce non indica alcun inizio, quindi il suo corpo non è noto"
+
+msgid "a nested archive whose row states no stored size"
+msgstr "un archivio annidato la cui riga non indica alcuna dimensione memorizzata"
+
+msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
+msgstr "l’archivio finisce a {copied} byte dentro l’archivio annidato di {stored} byte"
+
+msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
+msgstr "Un corpo EDUP: la sua parola di conteggio a 0x04 è {count}, e {length} byte di carico seguono la sua intestazione di 8 byte."
+
+msgid "With a count of zero, the word at 0x08 states {stated} bytes, and that many follow it."
+msgstr "Con un conteggio pari a zero, la parola a 0x08 indica {stated} byte, e altrettanti la seguono."
+
+msgid "Its payload is not read: no record width divides it by its count, and its bytes are of high entropy with no cipher record, so what it holds is not known and no view shows it."
+msgstr "Il suo carico non viene letto: nessuna larghezza di record lo divide per il suo conteggio, e i suoi byte hanno entropia alta senza record di cifratura, quindi ciò che contiene non è noto e nessuna vista lo mostra."
+
+msgid "Replace the lower levels of detail too"
+msgstr "Sostituisci anche i livelli di dettaglio inferiori"
+
+msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
+msgstr "Disattivato, un livello di dettaglio di cui la mesh non nomina alcuna geometria resta come lo contiene il modello. Attivato, ciascuna di queste geometrie prende la mesh del livello 0 nel suo modello e posto, dove entrambe si disegnano con uno stesso shader."

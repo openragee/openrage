@@ -1,227 +1,18 @@
-//! Hermetic checks of `rpf9-diff` on archives laid out by hand here and enciphered under a synthetic
-//! white-box key, so no game byte is involved.
+//! Hermetic checks of `rpf9-diff` on archives laid out by hand and enciphered under a synthetic
+//! white-box key, so no game byte is involved; the last test is install-gated.
 
 use std::io::Cursor;
 
 use super::*;
-use or_io::container::rpf::{
-    Rpf9Builder, Rpf9Toc, GROUP_CHUNK_RECORD, GROUP_CONTENT_HASH, GROUP_ENTRY_ROW, GROUP_NAME32,
-    GROUP_NAME64, RPF9_MAGIC,
-};
-use or_io::gta6::hash::{name_hash32, name_hash64};
+use fixture::{archive, keys, Body};
+use or_io::container::rpf::{Rpf9ArchiveWriter, GTA6_SNAPSHOT_ENV};
+use or_io::gta6::hash::name_hash64;
 
-const REGISTRY_ID: u64 = 0xDEAD_BEEF_0200_0000;
-const KEY_ID: u32 = 0xDEAD_BEEF;
-const BOOTSTRAP_REGISTRY_ID: u64 = 0x1000_0001_0200_0000;
-/// The round tables feeding each output lane of the cipher.
-const LANES: [[usize; 4]; 4] = [[0, 13, 10, 7], [1, 14, 4, 11], [5, 2, 8, 15], [9, 6, 12, 3]];
-const WORDS: usize = 60;
-const MAPS: usize = 16;
-const MAP_LEN: usize = 256;
-const BLOB_LEN: usize = 4 + WORDS * 4 + MAPS * MAP_LEN;
-const NAMES_HEAP: usize = 0x40;
-const GAP: usize = 0x20;
-const HASH_BASE: u64 = 0x1111_0000;
+#[allow(dead_code, clippy::duplicate_mod)]
+#[path = "rpf9_fixture.rs"]
+mod fixture;
 
-fn push_perm(out: &mut Vec<u8>, k: usize) {
-    for x in 0..256usize {
-        out.push(((x + k * 7 + 1) % 256) as u8);
-    }
-}
-
-fn mix8(b: u8) -> u8 {
-    let (mut y, mut acc) = (0u8, 0u8);
-    for i in (0..8).rev() {
-        acc ^= (b >> i) & 1;
-        y |= acc << i;
-    }
-    y
-}
-
-/// A synthetic white-box snapshot holding the bootstrap key and one archive key.
-fn snapshot() -> Vec<u8> {
-    let mut slot_of = [0usize; 16];
-    for lane in LANES.iter() {
-        for (slot, &k) in lane.iter().enumerate() {
-            slot_of[k] = slot;
-        }
-    }
-    let mut out = Vec::new();
-    out.extend_from_slice(b"ORGTAVIK");
-    out.extend_from_slice(&1u32.to_le_bytes());
-    out.extend_from_slice(&0x4342u32.to_le_bytes());
-    out.extend_from_slice(&[0u8; 32]);
-    out.extend_from_slice(&[0x11u8; 16]);
-    out.extend_from_slice(&((MAPS * MAP_LEN) as u32).to_le_bytes());
-    for k in 0..MAPS {
-        push_perm(&mut out, k);
-    }
-    out.extend_from_slice(&((MAPS * MAP_LEN * 4) as u32).to_le_bytes());
-    for (k, &slot) in slot_of.iter().enumerate() {
-        let constant = 0x0A0B_0C0Du32.wrapping_mul(k as u32 + 1);
-        for x in 0..256u32 {
-            let s = (x as u8).rotate_left(3) ^ (k as u8).wrapping_mul(0x5B);
-            out.extend_from_slice(&(constant ^ (u32::from(mix8(s)) << (slot * 8))).to_le_bytes());
-        }
-    }
-    out.extend_from_slice(&2u32.to_le_bytes());
-    for &id in &[BOOTSTRAP_REGISTRY_ID, REGISTRY_ID] {
-        out.extend_from_slice(&id.to_le_bytes());
-        out.extend_from_slice(&(BLOB_LEN as u32).to_le_bytes());
-        out.extend_from_slice(&[0x8e, 0x9b, 0x3b, 0x4e]);
-        for w in 0..WORDS as u32 {
-            out.extend_from_slice(&(w.wrapping_mul(2_654_435_761) ^ id as u32).to_le_bytes());
-        }
-        for k in 0..MAPS {
-            push_perm(&mut out, k + 3);
-        }
-    }
-    out
-}
-
-fn keys() -> GtaViKeys {
-    GtaViKeys::parse(&snapshot()).expect("the synthetic snapshot parses")
-}
-
-fn round8(x: usize) -> usize {
-    (x + 7) & !7
-}
-
-fn round16(x: usize) -> usize {
-    (x + 15) & !15
-}
-
-fn put16(t: &mut [u8], at: usize, v: u16) {
-    t[at..at + 2].copy_from_slice(&v.to_le_bytes());
-}
-
-fn put32(t: &mut [u8], at: usize, v: u32) {
-    t[at..at + 4].copy_from_slice(&v.to_le_bytes());
-}
-
-fn put64(t: &mut [u8], at: usize, v: u64) {
-    t[at..at + 8].copy_from_slice(&v.to_le_bytes());
-}
-
-enum Body {
-    Raw(&'static [u8]),
-    Nested(Vec<u8>),
-}
-
-/// An archive laid out by hand: a header, four metadata descriptors, the columns row24, name64,
-/// name32 and an empty `0xe0c1` in the main region and `0xb6f5` external, bodies `GAP` apart, and a
-/// names heap. A raw body is stored as media (class `0xFF`), a nested one as class `0x00`.
-fn archive(entries: &[(&str, Body)]) -> Vec<u8> {
-    let n = entries.len();
-    let stored: Vec<(u64, Vec<u8>, u64)> = entries
-        .iter()
-        .map(|(_, body)| match body {
-            Body::Raw(b) => {
-                let mut s = b.to_vec();
-                s.resize(round16(b.len()), 0);
-                (0xFF, s, b.len() as u64)
-            }
-            Body::Nested(b) => (0x00, b.clone(), b.len() as u64),
-        })
-        .collect();
-    let groups_start = 0x1B0;
-    let main_index = groups_start + 5 * 24;
-    let main_start = round8(main_index + 4 * n);
-    let (name64, name32, e0c1) = (24 * n, 32 * n, round8(36 * n));
-    let split = round16(main_start + e0c1);
-    let ext_start = round8(split + n);
-    let toc_end = round16(ext_start + 8 * n);
-
-    let mut t = vec![0u8; toc_end];
-    put32(&mut t, 0x00, RPF9_MAGIC);
-    put32(&mut t, 0x04, toc_end as u32);
-    put32(&mut t, 0x08, split as u32);
-    put32(&mut t, 0x0C, NAMES_HEAP as u32);
-    for (i, b) in t[0x10..0x18].iter_mut().enumerate() {
-        *b = i as u8 + 1;
-    }
-    t[0x19] = 0x7A;
-    t[0x1A] = 4;
-    put32(&mut t, 0x1C, 0x150);
-    put16(&mut t, 0x20, 5);
-    put16(&mut t, 0x22, 1);
-    put32(&mut t, 0x24, n as u32);
-    put32(&mut t, 0x28, 0xC0FF_EE11);
-    t[0x2C] = 1;
-    t[0x2D] = 0x0F;
-    t[0x2E] = 0x09;
-    put32(&mut t, 0x30, 0x10);
-    for (i, (kind, off)) in [(1u16, 0u32), (5, 0x20), (6, 0x40), (9, 0x140)]
-        .iter()
-        .enumerate()
-    {
-        put16(&mut t, 0x40 + 8 * i, *kind);
-        put32(&mut t, 0x44 + 8 * i, *off);
-    }
-    put32(&mut t, 0x60, KEY_ID);
-    put16(&mut t, 0x64, 16);
-    t[0x66..0x76].fill(0x33);
-    for (i, b) in t[0x80..0x1B0].iter_mut().enumerate() {
-        *b = (i * 7 + 1) as u8;
-    }
-    let directory = [
-        (GROUP_ENTRY_ROW, n, 0, 24, 0),
-        (GROUP_NAME64, n, name64, 8, 0),
-        (GROUP_NAME32, n, name32, 4, 0),
-        (GROUP_CHUNK_RECORD, 0, e0c1, 8, 0),
-        (GROUP_CONTENT_HASH, n, 0, 8, 1),
-    ];
-    for (i, &(hash, count, offset, width, external)) in directory.iter().enumerate() {
-        let at = groups_start + 24 * i;
-        put64(&mut t, at, hash);
-        put32(&mut t, at + 8, count as u32);
-        put32(&mut t, at + 12, offset as u32);
-        put32(&mut t, at + 16, width | (external << 16));
-    }
-
-    let mut at = round16(toc_end + GAP);
-    let mut starts = Vec::new();
-    for (i, ((name, _), (class, s, real))) in entries.iter().zip(&stored).enumerate() {
-        let row = main_start + 24 * i;
-        put64(&mut t, row, (class << 40) | (at as u64 / 16));
-        put64(&mut t, row + 8, s.len() as u64 / 16);
-        put64(&mut t, row + 16, *real);
-        put64(
-            &mut t,
-            main_start + name64 + 8 * i,
-            name_hash64(name.as_bytes()),
-        );
-        put32(
-            &mut t,
-            main_start + name32 + 4 * i,
-            name_hash32(name.as_bytes()),
-        );
-        put64(&mut t, ext_start + 8 * i, HASH_BASE + i as u64);
-        t[main_index + 4 * i..main_index + 4 * i + 3].fill(i as u8);
-        t[main_index + 4 * i + 3] = 0xFF;
-        t[split + i] = i as u8;
-        starts.push(at);
-        at += s.len() + GAP;
-    }
-
-    let toc = Rpf9Toc {
-        bytes: t,
-        key_id: KEY_ID,
-        registry_id: REGISTRY_ID,
-        entry_count: n as u32,
-        groups: Vec::new(),
-    };
-    let head = Rpf9Builder::serialize(&toc, &keys()).expect("the synthetic table enciphers");
-    let mut file = vec![0u8; at + NAMES_HEAP];
-    file[..head.len()].copy_from_slice(&head);
-    for (&start, (_, s, _)) in starts.iter().zip(&stored) {
-        file[start..start + s.len()].copy_from_slice(s);
-    }
-    file[at..].fill(0x5A);
-    file
-}
-
-const NAMES: [&str; 9] = [
+const NAMES: [&str; 11] = [
     "keep.bin",
     "gone.bin",
     "new.txt",
@@ -231,6 +22,8 @@ const NAMES: [&str; 9] = [
     "child.rpf",
     "inner.bin",
     "level.bin",
+    "grand.rpf",
+    "leaf.txt",
 ];
 
 fn resolver() -> NameResolver {
@@ -241,23 +34,51 @@ fn resolver() -> NameResolver {
     resolver
 }
 
-fn diff(a: &[u8], b: &[u8]) -> Vec<Change> {
+fn raw(b: &[u8]) -> Body {
+    Body::Raw(b.to_vec())
+}
+
+fn diff_with(a: &[u8], b: &[u8], keys: &GtaViKeys, resolver: &NameResolver) -> Vec<Change> {
     let (mut ca, mut cb) = (Cursor::new(a), Cursor::new(b));
-    diff_archives(&mut ca, &mut cb, &keys(), &resolver()).expect("the archives compare")
+    diff_archives(&mut ca, &mut cb, keys, resolver).expect("the archives compare")
+}
+
+fn diff(a: &[u8], b: &[u8]) -> Vec<Change> {
+    diff_with(a, b, &keys(), &resolver())
+}
+
+fn lines(added: &[&str], removed: &[&str]) -> Option<Summary> {
+    Some(Summary::Lines {
+        added: added.iter().map(|s| s.to_string()).collect(),
+        removed: removed.iter().map(|s| s.to_string()).collect(),
+    })
+}
+
+/// Each change as `(kind, path, summary)`, a rename's path as `from -> to`.
+fn outline(changes: &[Change]) -> Vec<(&'static str, String, Option<Summary>)> {
+    changes
+        .iter()
+        .map(|c| match c {
+            Change::Added { path, .. } => ("added", path.clone(), None),
+            Change::Removed { path, .. } => ("removed", path.clone(), None),
+            Change::Renamed { from, to, .. } => ("renamed", format!("{from} -> {to}"), None),
+            Change::Changed { path, summary, .. } => ("changed", path.clone(), summary.clone()),
+        })
+        .collect()
 }
 
 /// A and B differ by one entry of each kind; B lists its entries in another order.
 fn pair() -> (Vec<u8>, Vec<u8>) {
     let a = archive(&[
-        ("keep.bin", Body::Raw(b"kept as it was")),
-        ("gone.bin", Body::Raw(b"gone")),
-        ("old.txt", Body::Raw(b"renamed body")),
-        ("edit.txt", Body::Raw(b"line one\nline two\n")),
+        ("keep.bin", raw(b"kept as it was")),
+        ("gone.bin", raw(b"gone")),
+        ("old.txt", raw(b"renamed body")),
+        ("edit.txt", raw(b"line one\nline two\n")),
         (
             "child.rpf",
             Body::Nested(archive(&[
-                ("inner.bin", Body::Raw(b"x")),
-                ("level.bin", Body::Raw(b"same inside")),
+                ("inner.bin", raw(b"x")),
+                ("level.bin", raw(b"same inside")),
             ])),
         ),
     ]);
@@ -265,14 +86,14 @@ fn pair() -> (Vec<u8>, Vec<u8>) {
         (
             "child.rpf",
             Body::Nested(archive(&[
-                ("inner.bin", Body::Raw(b"y")),
-                ("level.bin", Body::Raw(b"same inside")),
+                ("inner.bin", raw(b"y")),
+                ("level.bin", raw(b"same inside")),
             ])),
         ),
-        ("new.txt", Body::Raw(b"fresh")),
-        ("edit.txt", Body::Raw(b"line one\nline 2\n")),
-        ("moved.txt", Body::Raw(b"renamed body")),
-        ("keep.bin", Body::Raw(b"kept as it was")),
+        ("new.txt", raw(b"fresh")),
+        ("edit.txt", raw(b"line one\nline 2\n")),
+        ("moved.txt", raw(b"renamed body")),
+        ("keep.bin", raw(b"kept as it was")),
     ]);
     (a, b)
 }
@@ -336,8 +157,8 @@ fn each_change_kind_is_found_by_name_not_position() {
 #[test]
 fn a_same_sized_body_with_other_bytes_is_no_rename() {
     // "gone" and "fresh" are both stored in 16 bytes; only the bytes tell them apart.
-    let a = archive(&[("gone.bin", Body::Raw(b"gone"))]);
-    let b = archive(&[("new.txt", Body::Raw(b"fresh"))]);
+    let a = archive(&[("gone.bin", raw(b"gone"))]);
+    let b = archive(&[("new.txt", raw(b"fresh"))]);
     let changes = diff(&a, &b);
     assert_eq!(changes.len(), 2);
     assert!(matches!(&changes[0], Change::Removed { path, .. } if path == "gone.bin"));
@@ -434,5 +255,286 @@ fn a_body_is_summarised_by_its_head() {
         summarize(&[0, 1], &[0, 2]),
         None,
         "an unknown head is not read"
+    );
+}
+
+/// 81 printable bytes, more than the head [`head_kind`] reads, so a stored form that opens with them
+/// reads as text.
+const LONG: &[u8] =
+    b"a first chunk of plain text that runs well past the sixty-four byte head checked\n";
+
+#[test]
+fn a_body_stored_compressed_or_chunked_is_only_stored_apart_from_its_raw_form() {
+    let full = [LONG, &b"tail"[..]].concat();
+    let a = archive(&[
+        ("edit.txt", Body::Raw(full.clone())),
+        ("old.txt", raw(b"one body\nin two lines\n")),
+        ("keep.bin", Body::Zlib(full)),
+    ]);
+    // A stored chunk of text, then a deflated tail that grows: the stored bytes open with the text
+    // and the row's real size fits within them, but only the chunk table says where the body is.
+    let b = archive(&[
+        (
+            "edit.txt",
+            Body::Chunked(vec![(LONG.to_vec(), false), (b"tail".to_vec(), true)]),
+        ),
+        ("old.txt", Body::Zlib(b"one body\nin two lines\n".to_vec())),
+        (
+            "keep.bin",
+            Body::Chunked(vec![(LONG.to_vec(), true), (b"tail".to_vec(), true)]),
+        ),
+    ]);
+    let changes = diff(&a, &b);
+    assert_eq!(
+        outline(&changes),
+        vec![
+            ("changed", "edit.txt".to_string(), Some(Summary::Stored)),
+            ("changed", "old.txt".to_string(), Some(Summary::Stored)),
+            ("changed", "keep.bin".to_string(), Some(Summary::Stored)),
+        ]
+    );
+    for change in &changes {
+        let Change::Changed { before, after, .. } = change else {
+            unreachable!("every change is a change");
+        };
+        assert_eq!(before.real, after.real, "{change:?}");
+    }
+    let text = render("a", "b", &changes);
+    assert!(
+        text.contains("  ~ edit.txt  stored 96, real 85 -> stored 112, real 85\n"),
+        "{text}"
+    );
+    assert!(text.contains("      stored apart only"), "{text}");
+    assert!(diff(&b, &b).is_empty(), "a chunked archive against itself");
+}
+
+#[test]
+fn a_compressed_body_under_a_new_name_is_a_rename_and_an_edited_one_is_not() {
+    let a = archive(&[
+        ("old.txt", Body::Zlib(b"renamed body\n".to_vec())),
+        ("gone.bin", Body::Zlib(b"one\n".to_vec())),
+        (
+            "edit.txt",
+            Body::Chunked(vec![
+                (b"line one\n".to_vec(), true),
+                (b"line two\n".to_vec(), false),
+            ]),
+        ),
+    ]);
+    let b = archive(&[
+        ("moved.txt", raw(b"renamed body\n")),
+        ("new.txt", Body::Zlib(b"two\n".to_vec())),
+        (
+            "edit.txt",
+            Body::Chunked(vec![
+                (b"line one\n".to_vec(), true),
+                (b"line 2\n".to_vec(), false),
+            ]),
+        ),
+    ]);
+    assert_eq!(
+        outline(&diff(&a, &b)),
+        vec![
+            (
+                "changed",
+                "edit.txt".to_string(),
+                lines(&["line 2"], &["line two"])
+            ),
+            ("renamed", "old.txt -> moved.txt".to_string(), None),
+            ("removed", "gone.bin".to_string(), None),
+            ("added", "new.txt".to_string(), None),
+        ]
+    );
+}
+
+#[test]
+fn a_nested_archive_changed_two_levels_down_is_followed_to_its_leaves() {
+    let side = |leaf: &[u8], keep: Body| {
+        archive(&[(
+            "child.rpf",
+            Body::Nested(archive(&[
+                (
+                    "grand.rpf",
+                    Body::Nested(archive(&[("leaf.txt", raw(leaf)), ("keep.bin", keep)])),
+                ),
+                ("level.bin", raw(b"same inside")),
+            ])),
+        )])
+    };
+    let a = side(b"before\nkept line\n", raw(b"kept as it was"));
+    let b = side(
+        b"after\nkept line\n",
+        Body::Zlib(b"kept as it was".to_vec()),
+    );
+    let changes = diff(&a, &b);
+    assert_eq!(
+        outline(&changes),
+        vec![
+            (
+                "changed",
+                "child.rpf".to_string(),
+                Some(Summary::Nested { changes: 3 })
+            ),
+            (
+                "changed",
+                "child.rpf/grand.rpf".to_string(),
+                Some(Summary::Nested { changes: 2 })
+            ),
+            (
+                "changed",
+                "child.rpf/grand.rpf/leaf.txt".to_string(),
+                lines(&["after"], &["before"])
+            ),
+            (
+                "changed",
+                "child.rpf/grand.rpf/keep.bin".to_string(),
+                Some(Summary::Stored)
+            ),
+        ]
+    );
+    let text = render("a", "b", &changes);
+    for line in [
+        "      nested archive: 3 change(s) inside",
+        "      nested archive: 2 change(s) inside",
+        "  ~ child.rpf/grand.rpf/leaf.txt",
+        "        + after",
+        "        - before",
+    ] {
+        assert!(text.contains(line), "{line:?} missing from\n{text}");
+    }
+}
+
+// --- install-gated: a build archive against the container writer's copies ------------------------
+
+/// The build root holding `*.rpf`.
+const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
+/// A nested archive larger than this is not read whole, so the test stays in memory.
+const NESTED_CAP: u64 = 16 << 20;
+/// A leaf larger than this is not tried as the replaced entry.
+const LEAF_CAP: u64 = 1 << 20;
+/// Leaves tried per nested archive before it is passed over.
+const TRIES: usize = 20;
+
+fn env_path(var: &str) -> Option<PathBuf> {
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|p| p.exists())
+}
+
+/// The archive the writer writes from `src` after `edit`, in memory.
+fn written(
+    src: &[u8],
+    keys: &GtaViKeys,
+    edit: impl FnOnce(&mut Rpf9ArchiveWriter),
+) -> Option<Vec<u8>> {
+    let mut writer = Rpf9ArchiveWriter::new();
+    edit(&mut writer);
+    let mut cursor = Cursor::new(src);
+    let plan = writer.plan(&mut cursor, keys).ok()?;
+    let mut out = Vec::new();
+    plan.write_to(&mut cursor, &mut out).ok()?;
+    Some(out)
+}
+
+/// A small clear nested archive of the build read whole, one of its leaves as the diff names it, and
+/// the archive with that leaf's body replaced by its own body with the last byte flipped.
+fn small_archive_and_one_replaced(
+    build: &Path,
+    keys: &GtaViKeys,
+    resolver: &NameResolver,
+) -> Option<(Vec<u8>, String, Vec<u8>)> {
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(build)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("rpf"))
+        .collect();
+    paths.sort();
+    for path in paths {
+        let Ok(mut file) = File::open(&path) else {
+            continue;
+        };
+        let Ok(top) = Gta6Mount::open_root(&mut file, keys) else {
+            continue;
+        };
+        for entry in &top.archive.entries {
+            let (Some(Gta6Class::NestedArchive), None, Some(start), Some(stored)) = (
+                entry.kind(),
+                entry.cipher,
+                top.absolute_start(entry),
+                entry.stored,
+            ) else {
+                continue;
+            };
+            if stored > NESTED_CAP {
+                continue;
+            }
+            let mut bytes = vec![0u8; stored as usize];
+            if read_exact_at(&mut file, start, &mut bytes).is_err() {
+                continue;
+            }
+            let mut src = Cursor::new(&bytes[..]);
+            let Ok(mut mount) = Gta6Mount::open_root(&mut src, keys) else {
+                continue;
+            };
+            mount.archive.resolve_names(resolver);
+            let leaves = mount.archive.entries.iter().filter(|e| {
+                e.cipher.is_none()
+                    && e.kind().is_some_and(|k| k != Gta6Class::NestedArchive)
+                    && e.real.is_some_and(|r| r > 0 && r <= LEAF_CAP)
+            });
+            for leaf in leaves.take(TRIES) {
+                let Ok(mut body) = mount.read_entry(&mut src, leaf) else {
+                    continue;
+                };
+                let Some(last) = body.last_mut() else {
+                    continue;
+                };
+                *last ^= 0x01;
+                let edited = written(&bytes, keys, |w| {
+                    w.replace(&[leaf.index], body);
+                });
+                if let Some(edited) = edited {
+                    return Some((bytes.clone(), leaf.display_name(), edited));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The writer's copy of a build archive differs in no entry, and the archive with one entry replaced
+/// differs in exactly that entry. Install-gated: it needs the key snapshot and the build.
+#[test]
+fn a_build_archive_against_the_writers_copy_differs_only_where_an_entry_was_replaced() {
+    let what = "rpf9-diff against the container writer over a build";
+    let (Some(snapshot), Some(build)) = (env_path(GTA6_SNAPSHOT_ENV), env_path(BUILD_ENV)) else {
+        or_test_support::skip_install(
+            what,
+            format_args!("set {GTA6_SNAPSHOT_ENV} and {BUILD_ENV}"),
+        );
+        return;
+    };
+    let keys = GtaViKeys::from_file(&snapshot).expect("the key snapshot parses");
+    let resolver = NameResolver::new();
+    let Some((archive, path, edited)) = small_archive_and_one_replaced(&build, &keys, &resolver)
+    else {
+        or_test_support::skip_install(
+            what,
+            format_args!("no small nested archive in the build takes a replaced leaf"),
+        );
+        return;
+    };
+
+    let copy = written(&archive, &keys, |_| {}).expect("the writer copies the archive");
+    let none = diff_with(&archive, &copy, &keys, &resolver);
+    assert!(none.is_empty(), "the copy differs: {none:?}");
+
+    let changes = diff_with(&archive, &edited, &keys, &resolver);
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert!(
+        matches!(&changes[0], Change::Changed { path: p, .. } if *p == path),
+        "{changes:?} names {path}"
     );
 }

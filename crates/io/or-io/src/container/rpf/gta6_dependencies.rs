@@ -5,6 +5,10 @@
 //! the keys strictly ascending. A `0x97c2` cell is `{u32 u0, u32 u1}`: `u0` a byte offset from the
 //! cell to the row's `n` ascending indices into that table, `u1 = width << 29 | n`. The column is
 //! deduplicated like every other, and its rows' index runs lie packed, in row order, in one heap.
+//!
+//! In every measured table the type-4 payload opens the metadata's index-keyed tail and the next
+//! payload starts where its keys end; where that is the last one, a type-9 count byte and its bytes,
+//! it is padded to 8 and the metadata to 16.
 
 use byteorder::{ByteOrder, LE};
 
@@ -15,6 +19,8 @@ use crate::error::{IoError, Result};
 pub const GROUP_DEPENDENCIES: u64 = 0x97C2_7D97_4803_FFEC;
 /// The metadata descriptor kind that holds the dependency key table.
 const TABLE_KIND: u16 = 4;
+/// The descriptor kind whose payload is a count byte and that many bytes.
+const COUNTED_KIND: u16 = 9;
 /// `u1` bits 0..29, the row's index count.
 const COUNT_MASK: u32 = 0x1FFF_FFFF;
 /// The table payload's `{u32 count, u8 width, 3 zero bytes}` head.
@@ -105,6 +111,96 @@ fn round16(x: usize) -> usize {
 /// The most keys an index of `width` bytes can reach.
 fn capacity(width: u8) -> u64 {
     1u64 << (8 * u32::from(width))
+}
+
+/// The index width a table of `count` keys takes: 1 up to 256 keys, else 2.
+pub fn width_for(count: usize) -> Result<u8> {
+    if count > MAX_AUTHORED_KEYS {
+        return Err(bad(format!(
+            "{count} keys need a width-4 index, which no stored table uses"
+        )));
+    }
+    Ok(if count as u64 <= capacity(1) { 1 } else { 2 })
+}
+
+/// The type-4 keys and index width of a plaintext table's metadata, `None` without a type-4 table.
+pub fn table_keys(bytes: &[u8]) -> Result<Option<(Vec<u64>, u8)>> {
+    table_range(bytes)?
+        .map(|range| decode_table(bytes, range))
+        .transpose()
+}
+
+/// `prefix`, a plaintext table up to its metadata's end, with its type-4 table holding `keys`.
+// The payloads after the table move by its growth, the metadata is padded to 16 again, and the
+// header restates the metadata's and the index-keyed tail's lengths.
+pub fn grow_table(prefix: &[u8], keys: &[u64]) -> Result<Vec<u8>> {
+    let n = u16_at(prefix, 0x1A)? as usize;
+    let m = u32_at(prefix, 0x1C)? as usize;
+    let keyed = u32_at(prefix, 0x30)? as usize;
+    let metadata_start = 0x40 + round16(8 * n);
+    if prefix.len() < metadata_start + m {
+        return Err(bad("the metadata runs past the table".into()));
+    }
+    let (at, _) =
+        table_range(prefix)?.ok_or_else(|| bad("the metadata holds no type-4 table".into()))?;
+    let (old, _) = decode_table(prefix, (at, metadata_start + m))?;
+    let grows = keys.windows(2).all(|w| w[0] < w[1])
+        && keys.len() >= old.len()
+        && old.iter().all(|k| keys.binary_search(k).is_ok());
+    if !grows {
+        return Err(bad(
+            "a grown key table holds every key it held, strictly ascending".into(),
+        ));
+    }
+    let width = width_for(keys.len())?;
+    let table_at = at - metadata_start;
+    // A table before the tail would move the tail's start, where the bootstrap cipher ends on 16.
+    let tail = m
+        .checked_sub(keyed)
+        .filter(|&tail| tail <= table_at)
+        .ok_or_else(|| bad("the type-4 table lies outside the index-keyed tail".into()))?;
+    let grow = 8 * (keys.len() - old.len());
+    let old_end = table_at + TABLE_HEAD + 8 * old.len();
+
+    let mut descriptors = prefix[0x40..metadata_start].to_vec();
+    let mut last = (0usize, 0u16);
+    for d in descriptors[..8 * n].as_chunks_mut::<8>().0 {
+        let offset = LE::read_u32(&d[4..]) as usize;
+        if offset >= last.0 {
+            last = (offset, LE::read_u16(d));
+        }
+        if offset > table_at {
+            LE::write_u32(&mut d[4..], (offset + grow) as u32);
+        }
+    }
+    // Only the last payload's padding is known: past its bytes, the metadata pads to 16 again.
+    let used = match last.1 {
+        TABLE_KIND => old_end,
+        COUNTED_KIND => prefix.get(metadata_start + last.0).map_or(m, |&count| {
+            last.0 + (1 + usize::from(count)).next_multiple_of(8)
+        }),
+        _ => m,
+    };
+    let end = match prefix.get(metadata_start + used.max(old_end)..metadata_start + m) {
+        Some(padding) if padding.iter().all(|&b| b == 0) => used.max(old_end),
+        _ => m,
+    };
+
+    let mut metadata = prefix[metadata_start..at].to_vec();
+    metadata.extend_from_slice(&(keys.len() as u32).to_le_bytes());
+    metadata.extend_from_slice(&[width, 0, 0, 0]);
+    for key in keys {
+        metadata.extend_from_slice(&key.to_le_bytes());
+    }
+    metadata.extend_from_slice(&prefix[metadata_start + old_end..metadata_start + end]);
+    metadata.resize(round16(metadata.len()), 0);
+
+    let mut out = prefix[..0x40].to_vec();
+    LE::write_u32(&mut out[0x1C..], metadata.len() as u32);
+    LE::write_u32(&mut out[0x30..], (metadata.len() - tail) as u32);
+    out.extend_from_slice(&descriptors);
+    out.extend_from_slice(&metadata);
+    Ok(out)
 }
 
 /// Decode the type-4 table and every `0x97c2` row of `toc`; `None` when it has neither.
@@ -290,17 +386,7 @@ pub fn author(lists: &[Vec<u64>]) -> Result<Authored> {
     let mut keys: Vec<u64> = sets.iter().flatten().copied().collect();
     keys.sort_unstable();
     keys.dedup();
-    if keys.len() > MAX_AUTHORED_KEYS {
-        return Err(bad(format!(
-            "{} keys need a width-4 index, which no stored table uses",
-            keys.len()
-        )));
-    }
-    let width: u8 = if keys.len() as u64 <= capacity(1) {
-        1
-    } else {
-        2
-    };
+    let width = width_for(keys.len())?;
 
     let mut table = Vec::with_capacity(TABLE_HEAD + 8 * keys.len());
     table.extend_from_slice(&(keys.len() as u32).to_le_bytes());

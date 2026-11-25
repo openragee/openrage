@@ -20,6 +20,8 @@ pub mod gta6_form_h;
 #[cfg(feature = "gta6")]
 pub mod gta6_keygate;
 #[cfg(feature = "gta6")]
+pub mod gta6_kinds;
+#[cfg(feature = "gta6")]
 pub mod gta6_mount;
 #[cfg(feature = "gta6")]
 pub mod gta6_rpf;

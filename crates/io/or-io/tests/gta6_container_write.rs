@@ -3,7 +3,8 @@
 //! own body is byte-identical at the top level and inside a nested archive, and removing an entry
 //! lays the table out anew with every other entry and column read back unchanged. Every table of
 //! the build, nested ones at every depth, lays out anew byte for byte with its heaps, and a
-//! headerless resource replaced by its own loose form reads back as the same resource.
+//! headerless resource replaced by its own loose form reads back as the same resource. A dependency
+//! key a nested table lacks grows its type-4 table, every other list reading back unchanged.
 //!
 //! Structure only: an edited table's signature is stale and the game refuses such an archive.
 //!
@@ -19,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use or_io::container::rpf::gta6_chunk_table::entry_chunks;
 use or_io::container::rpf::gta6_container_write::relays_identically;
+use or_io::container::rpf::gta6_dependencies::{self, Dependencies};
 use or_io::container::rpf::rpf9_scan::{extract_rpf9_body, read_rpf9_body};
 use or_io::container::rpf::rpf9_write::Rpf9Sections;
 use or_io::container::rpf::{
@@ -39,6 +41,8 @@ const NESTED_CAP: u64 = 64 << 20;
 /// Nested archives read per top-level archive, and headerless entries replaced per nested archive.
 const NESTED_READS: usize = 8;
 const RESOURCE_TRIES: usize = 4;
+/// Nested tables whose type-4 table is grown, across the build.
+const GROWN_TABLES: usize = 12;
 /// The 16-byte zero slot a headerless body begins with.
 const SLOT: u64 = 16;
 
@@ -470,4 +474,141 @@ fn a_headerless_entry_replaced_by_its_own_loose_form_reads_back() {
         failures.is_empty(),
         "every replaced resource must read back"
     );
+}
+
+/// Each entry's dependency keys, `None` where it has no list.
+fn lists(deps: &Dependencies, entries: usize) -> Vec<Option<Vec<u64>>> {
+    (0..entries)
+        .map(|e| deps.entry(e).map(<[u64]>::to_vec))
+        .collect()
+}
+
+/// Replace the first clear headerless entry with a dependency list of the nested archive `bytes` by
+/// its own loose form, its list given a key past every key the table holds; whether one was tried.
+fn grow_dependencies(
+    bytes: &[u8],
+    keys: &GtaViKeys,
+    what: &str,
+    failures: &mut Vec<String>,
+) -> bool {
+    let Ok(mount) = Gta6Mount::open_root(&mut Cursor::new(bytes), keys) else {
+        return false;
+    };
+    let Ok(Some(deps)) = gta6_dependencies::read(&mount.archive.toc) else {
+        return false;
+    };
+    let Some(fresh) = deps.keys.last().and_then(|k| k.checked_add(1)) else {
+        return false;
+    };
+    let entries = mount.archive.entries.len();
+    let extras = mount.archive.entry_extras();
+    for (entry, extra) in mount.archive.entries.iter().zip(&extras) {
+        let e = entry.index as usize;
+        let (Some(row), None, Some(start), Some(list)) =
+            (extra.nested, entry.cipher, entry.start, deps.entry(e))
+        else {
+            continue;
+        };
+        if row.stored_size() > CAP {
+            continue;
+        }
+        let (Some(before), Ok((_, loose))) = (
+            sections_at(bytes, start + SLOT),
+            extract_rpf9_body(Cursor::new(bytes), start + SLOT, CAP),
+        ) else {
+            continue;
+        };
+        let fail = |why: String| format!("{what}, entry {e}: {why}");
+        let wanted: Vec<u64> = list.iter().copied().chain([fresh]).collect();
+        let mut src = Cursor::new(bytes);
+        let plan = Rpf9ArchiveWriter::new()
+            .replace_resource(&[entry.index], loose, Some(wanted.clone()))
+            .plan(&mut src, keys);
+        let mut out = Vec::new();
+        let written = plan.and_then(|plan| plan.write_to(&mut src, &mut out));
+        let after = written.and_then(|_| Gta6Mount::open_root(&mut Cursor::new(&out[..]), keys));
+        let after = match after {
+            Ok(after) => after,
+            Err(err) => {
+                failures.push(fail(format!("refused or unreadable: {err}")));
+                return true;
+            }
+        };
+        let grown = match gta6_dependencies::read(&after.archive.toc) {
+            Ok(Some(grown)) => grown,
+            Ok(None) => {
+                failures.push(fail("the written table has no lists".into()));
+                return true;
+            }
+            Err(err) => {
+                failures.push(fail(format!("the grown lists do not decode: {err}")));
+                return true;
+            }
+        };
+        let mut expected = lists(&deps, entries);
+        expected[e] = Some(wanted);
+        let width = gta6_dependencies::width_for(grown.keys.len()).ok();
+        let read_back = after.archive.entries[e]
+            .start
+            .and_then(|s| sections_at(&out, s + SLOT));
+        if grown.keys.len() != deps.keys.len() + 1 || Some(grown.width) != width {
+            failures.push(fail("the key table did not grow by one key".into()));
+        } else if lists(&grown, entries) != expected {
+            failures.push(fail("a list reads back other than it was set".into()));
+        } else if read_back.as_ref() != Some(&before) {
+            failures.push(fail("the resource does not read back".into()));
+        } else if !relays_identically(&after.archive.toc).unwrap_or(false) {
+            failures.push(fail(
+                "the grown table does not lay out anew as it is".into(),
+            ));
+        }
+        return true;
+    }
+    false
+}
+
+#[test]
+fn a_dependency_key_a_nested_table_lacks_grows_its_key_table() {
+    let what = "GTA VI dependency table growth over a build";
+    let (Some(snapshot), Some(build)) = (env_path(GTA6_SNAPSHOT_ENV), env_path(BUILD_ENV)) else {
+        skip_install(
+            what,
+            format_args!("set {GTA6_SNAPSHOT_ENV} and {BUILD_ENV}"),
+        );
+        return;
+    };
+    let keys = GtaViKeys::from_file(&snapshot).expect("the key snapshot parses");
+    let (mut grown, mut failures) = (0usize, Vec::new());
+    'archives: for (i, path) in build_archives(&build).iter().enumerate() {
+        let mut file = File::open(path).expect("open the archive");
+        let mount = Gta6Mount::open_root(&mut file, &keys).expect("the archive opens");
+        for entry in &mount.archive.entries {
+            if grown >= GROWN_TABLES {
+                break 'archives;
+            }
+            let (Some(Gta6Class::NestedArchive), Some(start), Some(stored)) =
+                (entry.kind(), mount.absolute_start(entry), entry.stored)
+            else {
+                continue;
+            };
+            if stored > NESTED_CAP {
+                continue;
+            }
+            let mut bytes = vec![0u8; stored as usize];
+            if file.seek(SeekFrom::Start(start)).is_err() || file.read_exact(&mut bytes).is_err() {
+                continue;
+            }
+            let what = format!("archive {i}, nested entry {}", entry.index);
+            grown += usize::from(grow_dependencies(&bytes, &keys, &what, &mut failures));
+        }
+    }
+    println!(
+        "dependency tables grown {grown}, failures {}",
+        failures.len()
+    );
+    for failure in failures.iter().take(20) {
+        eprintln!("  {failure}");
+    }
+    assert!(grown > 0, "the build's nested tables hold dependency lists");
+    assert!(failures.is_empty(), "every grown table must read back");
 }

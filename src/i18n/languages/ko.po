@@ -14225,9 +14225,6 @@ msgstr "Scaleform 무비"
 msgid "EDUP, high entropy"
 msgstr "EDUP, 높은 엔트로피"
 
-msgid "This body starts with EDUP and its bytes after that are of high entropy with no structure found, so it is not read and no view shows it."
-msgstr "이 본문은 EDUP으로 시작하며 그 이후 바이트는 구조를 찾을 수 없는 높은 엔트로피이므로, 읽지 않으며 어떤 보기도 이를 표시하지 않습니다."
-
 msgid "The reader of this {what} does not read it: {e}"
 msgstr "이 {what}의 리더가 이를 읽지 못합니다: {e}"
 
@@ -16953,3 +16950,77 @@ msgstr "펼친 아카이브만 검색합니다."
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file}은(는) 항목 위치에 편집을 넣고 테이블은 읽은 그대로인 새 아카이브입니다."
+
+msgid "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}."
+msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
+msgstr[0] "복호화한 테이블에서 나열됨: 항목 {count}개, 그중 {named}개에 이름이 있음, 테이블 키 {key}."
+msgstr[1] "복호화한 테이블에서 나열됨: 항목 {count}개, 그중 {named}개에 이름이 있음, 테이블 키 {key}."
+
+msgid "This entry's row states no start, so its body cannot be read."
+msgstr "이 항목의 행에 시작 위치가 없어 본문을 읽을 수 없습니다."
+
+msgid "Click to expand or collapse this nested archive, listed from its own table."
+msgstr "클릭하면 자체 테이블에서 나열되는 이 중첩된 아카이브를 펼치거나 접습니다."
+
+msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
+msgstr "클릭하면 미리 보기 탭에서 열고, 두 번 클릭하면 별도의 탭에 유지합니다. 암호화된 본문은 먼저 복호화됩니다."
+
+msgid "Extract to a file…"
+msgstr "파일로 추출…"
+
+msgid "Replace with a file…"
+msgstr "파일로 바꾸기…"
+
+msgid "Writes a new copy of the archive with this entry replaced, which the game refuses: only its maker can sign the table."
+msgstr "이 항목을 바꾼 아카이브의 새 사본을 쓰며, 게임은 이를 거부합니다: 테이블에 서명할 수 있는 것은 제작자뿐입니다."
+
+msgid "Replace with a file"
+msgstr "파일로 바꾸기"
+
+msgid "Save the new archive"
+msgstr "새 아카이브 저장"
+
+msgid "Wrote {entry} to {file}."
+msgstr "{entry}을(를) {file}에 썼습니다."
+
+msgid "Cannot extract {entry}: {reason}"
+msgstr "{entry}을(를) 추출할 수 없습니다: {reason}"
+
+msgid "{file} is a new archive with {entry} replaced, which the game refuses because only its maker can sign the table this changed."
+msgstr "{file}은(는) {entry}을(를) 바꾼 새 아카이브이며, 이로 인해 바뀐 테이블에 서명할 수 있는 것은 제작자뿐이므로 게임은 이를 거부합니다."
+
+msgid "{file} is a new archive the same as the one it was read from: the file holds the bytes {entry} holds."
+msgstr "{file}은(는) 읽어 온 아카이브와 같은 새 아카이브입니다: 파일에는 {entry}와(과) 같은 바이트가 들어 있습니다."
+
+msgid "Cannot replace {entry}: {reason}"
+msgstr "{entry}을(를) 바꿀 수 없습니다: {reason}"
+
+msgid "the file written is a new one, and the archive it is read from is never written"
+msgstr "쓰는 파일은 새 파일이며, 읽어 오는 아카이브에는 절대 쓰지 않습니다"
+
+msgid "entry {index} is not in its table"
+msgstr "항목 {index}이(가) 해당 테이블에 없습니다"
+
+msgid "the entry's row states no start, so its body is not known"
+msgstr "항목의 행에 시작 위치가 없어 본문을 알 수 없습니다"
+
+msgid "a nested archive whose row states no stored size"
+msgstr "행에 저장 크기가 없는 중첩된 아카이브"
+
+msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
+msgstr "아카이브가 {stored}바이트 중첩 아카이브의 {copied}바이트 지점에서 끝납니다"
+
+msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
+msgstr "EDUP 본문: 0x04의 개수 워드는 {count}이며, 8바이트 헤더 뒤에 {length}바이트의 페이로드가 이어집니다."
+
+msgid "With a count of zero, the word at 0x08 states {stated} bytes, and that many follow it."
+msgstr "개수가 0이면 0x08의 워드가 {stated}바이트를 나타내며, 그만큼의 바이트가 뒤따릅니다."
+
+msgid "Its payload is not read: no record width divides it by its count, and its bytes are of high entropy with no cipher record, so what it holds is not known and no view shows it."
+msgstr "페이로드는 읽지 않습니다: 어떤 레코드 너비로도 개수로 나누어떨어지지 않고, 바이트의 엔트로피가 높으며 암호 레코드도 없어 내용을 알 수 없고 어떤 보기에도 표시되지 않습니다."
+
+msgid "Replace the lower levels of detail too"
+msgstr "더 낮은 세부 수준도 바꾸기"
+
+msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
+msgstr "끄면 메시가 지오메트리를 지정하지 않은 세부 수준은 모델에 있는 그대로 남습니다. 켜면 그러한 각 지오메트리가, 둘 다 같은 셰이더로 그리는 곳에서 해당 모델과 위치의 0단계 메시를 받습니다."

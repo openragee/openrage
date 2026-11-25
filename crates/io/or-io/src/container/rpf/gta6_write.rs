@@ -119,7 +119,7 @@ fn invert32(cols: &[u32; 32]) -> Option<[u32; 32]> {
 }
 
 /// The inverse of a byte table, refused when the table is not a permutation of `0..=255`.
-fn invert_byte_table(table: &[u8; 256], what: &str) -> Result<[u8; 256]> {
+pub(super) fn invert_byte_table(table: &[u8; 256], what: &str) -> Result<[u8; 256]> {
     let mut inv = [0u8; 256];
     let mut seen = [false; 256];
     for (x, &y) in table.iter().enumerate() {
@@ -137,7 +137,14 @@ impl Rpf9CipherCore {
     /// panicking, when a table is not the clean affine-permutation shape the inverse needs.
     pub fn new(keys: &GtaViKeys) -> Result<Self> {
         let (input_tables, round_tables, _) = keys.shared_tables();
+        Self::from_tables(input_tables, round_tables)
+    }
 
+    /// [`Self::new`] over any white-box table pair of this shape, such as the string cipher's.
+    pub(super) fn from_tables(
+        input_tables: &[[u8; 256]; 16],
+        round_tables: &[[u32; 256]; 16],
+    ) -> Result<Self> {
         let mut input_inv = Box::new([[0u8; 256]; 16]);
         for (i, table) in input_tables.iter().enumerate() {
             input_inv[i] = invert_byte_table(table, "an input byte table")?;
@@ -217,7 +224,7 @@ impl Rpf9CipherCore {
 
     /// Recover the 16-byte plaintext input of one `block`: the exact inverse of
     /// [`rpf9_toc`](super::rpf9_toc)'s `block`, so `block(block_encrypt(x)) == x`.
-    fn block_encrypt(
+    pub(super) fn block_encrypt(
         &self,
         out: &[u8; 16],
         words: &[u32; 60],

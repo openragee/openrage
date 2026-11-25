@@ -1,41 +1,61 @@
 //! The strings a build's PSO documents register hash, by their category's hasher, to values the same
-//! documents carry: each registered string is hashed by `category_hash` and by the crate's other
-//! hashers, and the share of strings whose hash is a 32-bit or 64-bit word outside the string sections
-//! is printed per category. The category's own hasher must fit at least as well as any other and name
-//! nearly every string, and some strings must name a 64-bit word.
+//! documents carry: each registered string is hashed by `category_hash`, by the crate's other 32-bit
+//! hasher and by the 64-bit name hash, and counted where the hash is a word outside the string
+//! sections. The walk reads only the archives that hold registered runs, and the counts are the build's.
 //!
 //! Install-gated and game-derived; it prints counts only, and skips without:
 //!   `OPENRAGE_GTA6_KEYS`   the key snapshot with the string section (never committed)
-//!   `OPENRAGE_GTA6_BUILD`  the build root holding `*.rpf` and `pack/*/*.rpf`
+//!   `OPENRAGE_GTA6_BUILD`  the build root
 
 #![cfg(all(feature = "gta6", feature = "meta"))]
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use or_io::container::rpf::{Gta6Mount, GtaViKeys, GTA6_SNAPSHOT_ENV};
-use or_io::gta6::hash::name_hash64;
+use or_io::gta6::hash::{name_hash32, name_hash64};
 use or_io::meta::binary::pso::string_names::{category_hash, registered_strings};
 use or_io::{literal_string_hash, string_hash};
 use or_test_support::skip_install;
 
 const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
 const CONTENT_CIPHER_TYPE: u16 = 17;
-/// The categories the game registers, each walked for until it has [`MEASURED`] strings.
-const REGISTERED: [u32; 2] = [0x01, 0x1E];
-/// Strings enough to tell a category's hashers apart.
-const MEASURED: usize = 20;
-/// The strings after which the walk stops, whether or not every category was met: walking the
-/// whole build for a category it may not hold runs past the slow tier's limit.
-const STRING_LIMIT: usize = 600;
-/// How long the walk reads before it stops and judges what it met, inside the slow tier's limit.
-const WALK_TIME: std::time::Duration = std::time::Duration::from_secs(600);
+/// The archives that hold every registered run outside the two largest nested trees, by the name hash
+/// of their file name, and whether their nested archives are walked too: a sorted whole-build walk
+/// reads the largest archives first and never gets here.
+const ARCHIVES: [(u32, bool); 2] = [(0xBC35_2010, true), (0x61CA_8E15, false)];
+/// The class byte of a top-level compressed resource, where a PSO document sits.
+const RESOURCE_CLASS: u8 = 0x0B;
 const MAX_DEPTH: usize = 8;
 const MAX_ENTRY: u64 = 4 << 20;
 const STRING_SECTIONS: [&[u8; 4]; 4] = [b"LSNS", b"STNS", b"STDN", b"STFN"];
-/// A category's own hasher names at least this share of its strings.
-const FIT: f64 = 0.9;
+
+/// What the build's registered strings give, per category, over [`ARCHIVES`].
+const MEASURED: [(u32, Fit); 2] = [
+    (
+        0x01,
+        Fit {
+            documents: 17,
+            strings: 33_072,
+            own: 33_072,
+            folded: 33_072,
+            literal: 438,
+            wide: 60,
+        },
+    ),
+    (
+        0x1E,
+        Fit {
+            documents: 4,
+            strings: 729,
+            own: 729,
+            folded: 654,
+            literal: 729,
+            wide: 0,
+        },
+    ),
+];
 
 fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var)
@@ -43,28 +63,18 @@ fn env_path(var: &str) -> Option<PathBuf> {
         .filter(|p| p.exists())
 }
 
-fn build_archives(root: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut rpfs_in = |dir: &Path| {
-        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("rpf") {
-                out.push(path);
-            }
-        }
-    };
-    rpfs_in(root);
-    for pack in std::fs::read_dir(root.join("pack"))
+/// The archive under `root` or one of `root/pack/*` whose file name hashes to `name`.
+fn archive_named(root: &Path, name: u32) -> Option<PathBuf> {
+    let dirs = std::fs::read_dir(root.join("pack"))
         .into_iter()
         .flatten()
-        .flatten()
-    {
-        if pack.path().is_dir() {
-            rpfs_in(&pack.path());
-        }
-    }
-    out.sort();
-    out
+        .flatten();
+    let dirs = std::iter::once(root.to_path_buf()).chain(dirs.map(|d| d.path()));
+    dirs.flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten())
+        .map(|entry| entry.path())
+        .find(|path| {
+            (path.file_name()).is_some_and(|n| name_hash32(n.to_string_lossy().as_bytes()) == name)
+        })
 }
 
 /// The words of a document's sections other than its string sections: every 4-aligned u32, read
@@ -97,8 +107,9 @@ fn carried_words(doc: &[u8]) -> (HashSet<u32>, HashSet<u64>) {
     (narrow, wide)
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 struct Fit {
+    documents: usize,
     strings: usize,
     own: usize,
     folded: usize,
@@ -108,10 +119,8 @@ struct Fit {
 
 #[derive(Default)]
 struct Tally {
-    documents: usize,
-    strings: usize,
+    unread: usize,
     by_category: BTreeMap<u32, Fit>,
-    until: Option<std::time::Instant>,
 }
 
 fn check_doc(doc: &[u8], keys: &GtaViKeys, t: &mut Tally) {
@@ -119,15 +128,14 @@ fn check_doc(doc: &[u8], keys: &GtaViKeys, t: &mut Tally) {
         return;
     }
     let Ok(strings) = registered_strings(doc, Some(keys)) else {
+        t.unread += 1;
         return;
     };
-    if strings.is_empty() {
-        return;
-    }
     let (narrow, wide) = carried_words(doc);
-    t.documents += 1;
+    let mut categories = BTreeSet::new();
     for s in &strings {
         let text = s.text.as_bytes();
+        categories.insert(s.category);
         let fit = t.by_category.entry(s.category).or_default();
         fit.strings += 1;
         let carried = |hash: Option<u32>| usize::from(hash.is_some_and(|h| narrow.contains(&h)));
@@ -136,17 +144,23 @@ fn check_doc(doc: &[u8], keys: &GtaViKeys, t: &mut Tally) {
         fit.literal += carried(Some(literal_string_hash(text)));
         fit.wide += usize::from(wide.contains(&name_hash64(text)));
     }
-    t.strings += strings.len();
+    for category in categories {
+        t.by_category.entry(category).or_default().documents += 1;
+    }
 }
 
-fn walk(file: &mut File, mount: &Gta6Mount, keys: &GtaViKeys, depth: usize, t: &mut Tally) {
+fn walk(
+    file: &mut File,
+    mount: &Gta6Mount,
+    keys: &GtaViKeys,
+    depth: usize,
+    nested: bool,
+    t: &mut Tally,
+) {
     if depth > MAX_DEPTH {
         return;
     }
     for entry in &mount.archive.entries {
-        if t.done() {
-            return;
-        }
         let clear = entry.cipher.is_none();
         if clear
             && entry.start.is_some()
@@ -154,9 +168,14 @@ fn walk(file: &mut File, mount: &Gta6Mount, keys: &GtaViKeys, depth: usize, t: &
                 .entry_begins_archive(&mut *file, entry)
                 .unwrap_or(false)
         {
-            if let Ok(child) = mount.open_nested(&mut *file, entry, keys) {
-                walk(file, &child, keys, depth + 1, t);
+            if nested {
+                if let Ok(child) = mount.open_nested(&mut *file, entry, keys) {
+                    walk(file, &child, keys, depth + 1, nested, t);
+                }
             }
+            continue;
+        }
+        if depth == 0 && entry.class != Some(RESOURCE_CLASS) {
             continue;
         }
         let cipher = entry.cipher.as_ref();
@@ -166,20 +185,6 @@ fn walk(file: &mut File, mount: &Gta6Mount, keys: &GtaViKeys, depth: usize, t: &
                 check_doc(&doc, keys, t);
             }
         }
-    }
-}
-
-impl Tally {
-    fn done(&self) -> bool {
-        self.strings >= STRING_LIMIT
-            || self
-                .until
-                .is_some_and(|until| std::time::Instant::now() >= until)
-            || REGISTERED.iter().all(|c| {
-                self.by_category
-                    .get(c)
-                    .is_some_and(|f| f.strings >= MEASURED)
-            })
     }
 }
 
@@ -205,76 +210,38 @@ fn registered_strings_hash_by_their_category_to_values_their_documents_carry() {
         );
         return;
     }
-    let mut t = Tally {
-        until: Some(std::time::Instant::now() + WALK_TIME),
-        ..Tally::default()
-    };
-    for path in build_archives(&build) {
-        if t.done() {
-            break;
-        }
-        let mut file = File::open(&path).expect("open the archive");
+    let mut t = Tally::default();
+    for (archive, nested) in ARCHIVES {
+        let path = archive_named(&build, archive)
+            .unwrap_or_else(|| panic!("the build holds no archive of name hash {archive:#010X}"));
+        let mut file = File::open(&path).unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
         let mount = Gta6Mount::open_root(&mut file, &keys)
             .unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
-        walk(&mut file, &mount, &keys, 0, &mut t);
+        walk(&mut file, &mount, &keys, 0, nested, &mut t);
     }
 
-    println!(
-        "{} registered strings in {} documents",
-        t.strings, t.documents
-    );
     for (category, f) in &t.by_category {
         println!(
-            "category {category:#x}: {} strings; own hasher {:.3}, atStringHash {:.3}, literal {:.3}, \
-             64-bit {:.3}",
+            "category {category:#x}: {} strings in {} documents; own hasher {:.4}, atStringHash {:.4}, \
+             literal {:.4}, 64-bit {:.4}",
             f.strings,
+            f.documents,
             share(f.own, f.strings),
             share(f.folded, f.strings),
             share(f.literal, f.strings),
             share(f.wide, f.strings),
         );
     }
-    if t.strings < 100 {
-        skip_install(
-            what,
-            format_args!(
-                "the walk met only {} registered strings in {} documents before it stopped",
-                t.strings, t.documents
-            ),
-        );
-        return;
-    }
-    for (category, f) in t.by_category.iter().filter(|(_, f)| f.strings >= MEASURED) {
-        // Category 1's own hasher is atStringHash, so only the literal hash is another.
-        let others_fit = if *category == 0x01 {
-            f.own >= f.literal
-        } else {
-            f.own >= f.folded && f.own >= f.literal
+    assert_eq!(t.unread, 0, "a PSO document's string sections did not read");
+    for (category, f) in &t.by_category {
+        let other = match category {
+            0x01 => f.literal,
+            _ => f.folded,
         };
         assert!(
-            others_fit,
-            "category {category:#x}: another hasher fits better than its own: {f:?}"
-        );
-        assert!(
-            share(f.own, f.strings) >= FIT,
-            "category {category:#x}: its hasher names too few strings: {f:?}"
+            f.own == f.strings && other < f.strings,
+            "category {category:#x}: its own hasher must name every string and the other fewer: {f:?}"
         );
     }
-    let wide: usize = t.by_category.values().map(|f| f.wide).sum();
-    assert!(
-        wide > 0,
-        "no registered string named a 64-bit word its document carries"
-    );
-    for category in REGISTERED {
-        let met = t.by_category.get(&category).map_or(0, |f| f.strings);
-        if met < MEASURED {
-            skip_install(
-                what,
-                format_args!(
-                    "category {category:#x} was met {met} times in {} strings, so its hasher is unmeasured",
-                    t.strings
-                ),
-            );
-        }
-    }
+    assert_eq!(t.by_category, BTreeMap::from(MEASURED));
 }

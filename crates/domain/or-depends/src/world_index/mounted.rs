@@ -50,7 +50,9 @@ impl WorldSource for MountedWorld<'_> {
                 container: root.container.clone(),
                 // ⚠ The mount's stamp and never the file's as it is now: an archive written since
                 // the mount was made would be kept as what the mount read of the one before it.
-                stamp: root.stamp.map(|stamp| Stamp {
+                // And none where a level of DLC keeps folders out of the walk: the file is the same
+                // at every level, so its stamp would keep what one level walked for another.
+                stamp: (root.stamp.filter(|_| root.left_out.is_empty())).map(|stamp| Stamp {
                     size: stamp.size,
                     modified: stamp.modified,
                 }),

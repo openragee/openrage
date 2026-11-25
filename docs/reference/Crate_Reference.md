@@ -318,7 +318,12 @@ its box about the model's origin
 (`a_point_answers_the_bounds_something_carries_whose_box_holds_it`). An archive
 is told from the one before it by its size and its time alone, so on a file
 system that keeps times to the second one written twice within a second at one
-size reads as unchanged, until `world index --fresh` reads it all again. With
+size reads as unchanged, until `world index --fresh` reads it all again. A
+root a level of DLC keeps folders out of (`MountRoot::left_out`) is given no
+stamp, because its file is the same at every level: it is read at every build,
+and what one level walked is never kept for another
+(`a_root_a_level_keeps_folders_out_of_is_read_at_every_build_and_never_kept_for_another_level`).
+With
 no `--kept` the index is kept under the configuration directory, a file an
 install.
 

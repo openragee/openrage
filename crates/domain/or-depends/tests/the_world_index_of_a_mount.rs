@@ -1609,6 +1609,41 @@ fn an_archive_written_after_its_mount_was_made_is_not_kept_as_what_that_mount_re
     );
 }
 
+/// ⚠ A level of DLC keeps the walk of a root out of the folders of the packs it leaves out, and the
+/// file that holds the root is the same file at every level: kept by its stamp, what one level
+/// walked of it would answer for a mount at another.
+#[test]
+fn a_root_a_level_keeps_folders_out_of_is_read_at_every_build_and_never_kept_for_another_level() {
+    let (scratch, root) = install();
+    let file = kept_file(&scratch);
+    let (whole, ..) = read_again(&root, &file);
+    assert!(whole.map(hash("m_south")).is_some());
+
+    // The same install as a level leaves it: `levels/` of `x64b.rpf` is out of the walk.
+    let mut game = mount(&root);
+    let cut = (game.roots.iter_mut())
+        .find(|root| root.container == "x64b.rpf")
+        .expect("x64b");
+    cut.left_out.push("levels/".to_string());
+    for _ in 0..2 {
+        let (at_level, report) = refresh(&MountedWorld::new(&game, &root), &file);
+        assert_eq!(report.read, ["x64b.rpf"], "nothing says the archive stands");
+        assert!(
+            at_level.map(hash("m_south")).is_none(),
+            "what the whole mount walked answered at the level"
+        );
+        assert!(
+            at_level.map(hash("m_north")).is_some(),
+            "a folder the level keeps was left out with the one it does not"
+        );
+    }
+
+    // The whole mount again, over the file the level left.
+    let (again, _, read) = read_again(&root, &file);
+    assert_eq!(read, 1, "what the level walked was kept as the archive");
+    assert_eq!(answers(&again), answers(&whole));
+}
+
 /// ⚠ The install suite cannot run where there is no install, so what it checks is run here, on the
 /// install built by hand, where each of its checks has been seen to fail.
 #[test]

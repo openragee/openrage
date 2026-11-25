@@ -117,6 +117,8 @@ a function at a time: `["script", "list", ARCHIVE]` names the programs of an
 archive, `["script", FILE, "--functions", "--json"]` the functions of one, and
 `["script", "decompile", FILE, "--function", NAME]` writes one of them, or the
 whole program to a file with `-o`. No tool of its own is offered for a script.
+⚠ An answer keeps only its last part, so the function list of a large program comes
+back cut and is no longer JSON: write it to a file with `-o` and read that.
 
 ### `shots`
 

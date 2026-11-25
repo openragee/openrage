@@ -1,8 +1,8 @@
 # GTA VI script decompiler
 
 OpenRage reads a compiled GTA VI script and writes it as C#-like source: classes, methods,
-`await`, lambdas, `foreach` and structured statements where the code proves them, and the lower
-form where it does not. The command line, the MCP server and the app all read through
+`await`, `foreach` and structured statements where the code proves them, and the lower form
+where it does not. The command line, the MCP server and the app all read through
 `crates/io/or-io/src/gta6/script/`, and nothing of a program is ever run.
 
 ## What is read
@@ -17,10 +17,11 @@ Two front ends give the passes the same form.
 | Lifted listing | the text another decompiler writes from the bytecode, one statement an instruction | `listing.rs` |
 
 Of a compiled program the reader takes the container (functions, types with their fields and
-method records, imports, the functions the engine calls by name, strings) and every instruction
-of its code. A file that is not a program, a truncated one and one whose code does not decode
-are refused with an error, and a function the lifter cannot settle is written as a comment that
-says why, with the rest of the program around it.
+method records, imports, the functions the engine calls by name) and every instruction of its
+code. A string constant prints in the code that uses it; `--strings` lists none yet. A file that
+is not a program and one whose code does not decode are refused with an error, and a function the
+lifter cannot settle is written as a comment that says why, with the rest of the program around
+it.
 
 A second, older reader of the same bytes prints a plain instruction listing
 (`openrage-cli script compiled`, `compiled.rs` with its own `disasm.rs`). It knows the
@@ -63,7 +64,7 @@ was.
 - **Names**: `names`, `hash-text`, `native-params`, `role-names`.
 - **Classes**: `fields`, `classes`, `receivers`, `constructors`, `operators`.
 - **Compiler expansions**: `await`, `lambdas`, `delegates`, `foreach`, `compound`,
-  `initialisers`.
+  `initialisers`. A lambda is found and still written by its function's name, never as `=>`.
 
 These names are accepted and rebuild nothing yet: `properties`, `iterators`, `wait`,
 `local-functions`, `events`, `using`, `lock`, `try`, `for`, `concat`, `ref-out`, `nullable`,
@@ -87,19 +88,20 @@ is written as a comment saying so. Output is the same bytes from run to run.
 
 ## Names
 
-OpenRage ships no natives list and no names. The first lines of every output say which lists
-named things.
+OpenRage ships no natives list and no names. The first lines of a decompiled source say which
+lists named things; `disasm` and the facts of a program consult no list.
 
 | List | Form | Names |
 |---|---|---|
-| Natives list (`--natives-db`, else `OPENRAGE_NATIVES`, else what `script download-natives` fetched) | JSON, or `0xHASH NAME` text | a native by its 64-bit hash, with its parameters |
+| Natives list (`--natives-db`, else `OPENRAGE_NATIVES`, else what `script download-natives` fetched) | JSON, or `0xHASH NAME` text | a native by its 64-bit hash, with its parameters; for a compiled program only together with a handler table, and silently not otherwise |
 | Names list (`--names`) | one `0xHASH name` a line, or a tab-separated table under a row of column names | types, programs, modules, methods, fields, and the text of hash constants |
 | Handler table (`--names`) | a table whose first columns are `hash` and `rva` | the hash of the native at each handler address, which is how a natives list reaches a compiled program |
 
 A row whose hash is the hash of its name proves itself and names whatever that hash function
-names; any other row is the user's own label. Without `--names`, every file of the
-`gta6_script_names` folder of the configuration directory that reads as a list is read; the app
-reads the same folder, taking a file whose name starts with `natives` as a natives list.
+names; any other row is the user's own label. Without `--names`, the command line reads every
+file of the `gta6_script_names` folder of the configuration directory that reads as a names list.
+The app reads the same folder by another rule: a file whose name starts with `natives` is a
+natives list there, and every other file a names list.
 
 ## What cannot be recovered
 
@@ -115,13 +117,14 @@ reads the same folder, taking a file whose name starts with `natives` as a nativ
 ## How it is checked
 
 - `exec_tests.rs` runs a function's blocks on made-up inputs before the passes and after each of
-  them and compares every call, every write through a pointer and what is returned. It runs over
-  hand-written functions by default and over a folder of the user's listings when
-  `OPENRAGE_LIFTED_LISTINGS` names one (slow tier). ⚠ It does not check the printer, and a
-  statement in a block no input reaches is compared by nothing.
-- `exec_corpus_tests.rs` lifts every compiled program of the folder `OPENRAGE_GTA6_SCRIPTS` names
-  and holds each function to what its listing does.
-- `reparse.rs` reads printed source back to the tree it was printed from.
+  them and compares every call, every write through a pointer and what is returned, over
+  hand-written functions. ⚠ It does not check the printer, and a statement in a block no input
+  reaches is compared by nothing.
+- `exec_corpus_tests.rs` (slow tier) runs that check over every function of the folder of
+  listings `OPENRAGE_LIFTED_LISTINGS` names, and lifts every compiled program of the folder
+  `OPENRAGE_GTA6_SCRIPTS` names and holds each function to what its listing does.
+- `reparse.rs` reads printed source back to the tree it was printed from, over hand-written
+  functions; its run over a folder of listings does not yet finish in bounded memory.
 - `crates/io/or-io/tests/gta6_script_refuses_hostile_input.rs` holds the readers to an error,
   in bounded time and memory, on truncated and corrupted programs.
 
@@ -149,9 +152,10 @@ time through the `cli` tool.
 ## In the app
 
 A compiled script opens read-only as a **GTA VI Script** document, from an archive entry of the
-Files tree or from a deciphered file, decompiled on the load worker. The text editor shows the
+Files tree, decompiled on the load worker, or from a deciphered file. It is decompiled alone,
+with no project. The text editor shows the
 source with highlighting, **Go to definition** and **Find references** follow the name under the
 caret within the script, the outline lists its classes and functions, and the inspector states
 the program's facts, the lists that named things, the level, and the instructions of the function
-picked. **Open names folder** opens the folder the lists are read from. A program the decompiler
-refuses still opens as the older instruction listing where that reader takes it.
+picked. **Open names folder** opens the folder the lists are read from. A body the
+container reader refuses opens as the older instruction listing where that reader takes it.

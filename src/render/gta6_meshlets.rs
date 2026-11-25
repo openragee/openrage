@@ -318,12 +318,18 @@ fn feeds(
             Filled::Texture(number) => {
                 Feed::Textures(vec![heap.get(*number as usize + 1).cloned().flatten()])
             }
-            Filled::Zero(Some(_)) => {
-                zeroed += 1;
-                continue;
+            // ⚠ A buffer read by address states its element size and its format before its
+            // first element, whatever fills it: a stage divides by what the format states, and
+            // with both at nought a vehicle's skinned stage left every vertex at the origin.
+            Filled::Zero(game) => {
+                zeroed += usize::from(game.is_some());
+                match header {
+                    Some(_) => Feed::Bytes(headed(*header, &[])),
+                    None => continue,
+                }
             }
             Filled::HeapBuffers => Feed::Bytes(bytes_of(&empty_table())),
-            Filled::Zero(None) | Filled::Sampler => continue,
+            Filled::Sampler => continue,
         };
         out.insert((*group, *binding), filled);
     }
@@ -665,6 +671,51 @@ mod tests {
             "each kind misses one stream: the one that reads more"
         );
         assert!(pass_of(&passes[..0], &geometry(&[0])).is_none(), "no pass");
+    }
+
+    #[test]
+    fn a_buffer_read_by_address_states_its_header_where_its_contents_are_left_at_nought() {
+        let fed = |binding: u32, feed: Filled, header: Option<u32>| Fed {
+            group: 0,
+            binding,
+            feed,
+            header,
+        };
+        let stage = Stage {
+            feeds: vec![
+                fed(0, Filled::Zero(Some(7)), Some(48)),
+                fed(1, Filled::Zero(Some(8)), None),
+                fed(2, Filled::Zero(None), Some(4)),
+            ],
+            ..pass(&[]).mesh.clone()
+        };
+        let geometry = Geometry {
+            shader: 0,
+            vertex_count: 0,
+            channels: Vec::new(),
+            triangles: Vec::new(),
+            positions: Ok(Vec::new()),
+            vertices: Default::default(),
+            vertex_data: Vec::new(),
+            index_data: Vec::new(),
+        };
+        let shader = Shader {
+            name_hash: 1,
+            texture_keys: Vec::new(),
+            parameters: Vec::new(),
+        };
+        let mut out = BTreeMap::new();
+        let zeroed = feeds(&stage, &geometry, &shader, &[], &[], None, &mut out);
+        assert_eq!(zeroed, 2, "the two only the game fills");
+        let bytes = |binding: u32| match out.get(&(0, binding)) {
+            Some(Feed::Bytes(bytes)) => Some(bytes.clone()),
+            _ => None,
+        };
+        // Read by address: the element size and the format, and nothing after them.
+        assert_eq!(bytes(0), Some(bytes_of(&[48, DWORDS, 0, 0])));
+        assert_eq!(bytes(2), Some(bytes_of(&[4, DWORDS, 0, 0])));
+        // A table's record has no header: nothing is bound, which reads as noughts.
+        assert_eq!(bytes(1), None);
     }
 
     #[test]

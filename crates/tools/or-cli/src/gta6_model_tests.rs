@@ -304,6 +304,8 @@ fn geometry(shader: u16) -> Result<Geometry, or_io::gta6::headerless::Headerless
         triangles: vec![[0, 1, 2]],
         positions: Ok(TRIANGLE.to_vec()),
         vertices: Vertices::default(),
+        vertex_data: Vec::new(),
+        index_data: Vec::new(),
     })
 }
 

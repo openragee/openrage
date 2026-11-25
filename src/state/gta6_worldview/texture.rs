@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use or_io::codec::texture::{decode_level, DxgiFormat, TextureSource};
 use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9ZlibRun};
@@ -51,8 +52,36 @@ impl Places {
     }
 }
 
-/// A pack a worker opened, with the place of each key in it; `None` for one that did not open.
+/// A pack opened, with the place of each key in it; `None` for one that did not open.
 pub(super) type OpenPack = Option<(TexturePack, HashMap<u64, usize>)>;
+
+/// The packs the readers opened, by their place among the install's, shared by every reader.
+// ⚠ A pack's table is opened once for all the readers: one copy a reader held a pack's table as many times as there were readers.
+pub(super) type OpenPacks = Mutex<HashMap<u32, Arc<OpenPack>>>;
+
+/// The pack at `at` among `places`, opened by the first reader that needs it.
+fn pack_at(open: &OpenPacks, places: &Places, at: u32) -> Arc<OpenPack> {
+    let held = open
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(&at)
+        .cloned();
+    if let Some(pack) = held {
+        return pack;
+    }
+    // Opened outside the lock, so that the other readers read on meanwhile; two that open it at once keep the first.
+    let opened = (places.packs.get(at as usize))
+        .and_then(|path| TexturePack::open(path).ok())
+        .map(|pack| {
+            let entries = (pack.entries.iter().enumerate())
+                .filter(|(_, e)| e.on_disk)
+                .map(|(place, e)| (e.key, place))
+                .collect();
+            (pack, entries)
+        });
+    let mut open = open.lock().unwrap_or_else(|p| p.into_inner());
+    Arc::clone(open.entry(at).or_insert_with(|| Arc::new(opened)))
+}
 
 /// The format a device samples the blocks of `format` as they are stored; `None` for one it decodes.
 fn block_format(format: DxgiFormat) -> Option<TextureFormat> {
@@ -127,7 +156,7 @@ pub(super) fn cpu_texture(texture: &Texture) -> Option<CpuTexture> {
 /// not decode, from the largest level under it whose rows do; a key no pack holds, from the texture archive's dictionary that holds it. `None` where none holds it or
 /// none of it reads.
 pub(super) fn read_texture(
-    open: &mut HashMap<u32, OpenPack>,
+    open: &OpenPacks,
     places: &Places,
     key: u64,
     pixels: u32,
@@ -135,15 +164,8 @@ pub(super) fn read_texture(
     let Some(&at) = places.keys.get(&key) else {
         return dictionary_texture(&places.dictionaries, key);
     };
-    let pack = open.entry(at).or_insert_with(|| {
-        let pack = TexturePack::open(places.packs.get(at as usize)?).ok()?;
-        let entries = (pack.entries.iter().enumerate())
-            .filter(|(_, e)| e.on_disk)
-            .map(|(place, e)| (e.key, place))
-            .collect();
-        Some((pack, entries))
-    });
-    let (pack, entries) = pack.as_ref()?;
+    let pack = pack_at(open, places, at);
+    let (pack, entries) = pack.as_ref().as_ref()?;
     let place = *entries.get(&key)?;
     let entry = pack.entries.get(place)?;
     let level = level_for(entry.width, entry.height, pixels);

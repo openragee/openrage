@@ -107,7 +107,7 @@ fn a_key_no_pack_holds_reads_to_nothing() {
         formats: HashMap::new(),
         dictionaries: (PathBuf::new(), HashMap::new()),
     };
-    assert!(read_texture(&mut HashMap::new(), &places, 0xC0105, 256).is_none());
+    assert!(read_texture(&OpenPacks::default(), &places, 0xC0105, 256).is_none());
     assert!(!places.is_colour(0xC0105));
     let colour = Places {
         formats: HashMap::from([(1, 72 << 3), (2, 71 << 3)]),
@@ -142,9 +142,9 @@ fn a_key_no_pack_holds_reads_from_the_texture_archive_s_dictionary_that_holds_it
         formats,
         dictionaries,
     };
-    let read = read_texture(&mut HashMap::new(), &places, key, 256).expect("read");
+    let read = read_texture(&OpenPacks::default(), &places, key, 256).expect("read");
     assert!(read.width > 0 && !read.levels.is_empty());
-    assert!(read_texture(&mut HashMap::new(), &places, key ^ 1, 256).is_none());
+    assert!(read_texture(&OpenPacks::default(), &places, key ^ 1, 256).is_none());
 }
 
 #[test]

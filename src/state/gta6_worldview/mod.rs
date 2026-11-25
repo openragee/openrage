@@ -46,7 +46,7 @@ pub use texture::CpuTexture;
 use index::{Enabled, ModelRef, WorldIndex};
 use pool::{soonest, Pool};
 use stream::{Selected, Streaming, World};
-use texture::{OpenPack, Places};
+use texture::{OpenPacks, Places};
 
 /// How high over the middle of the maps the camera starts, in metres.
 const START_HEIGHT: f32 = 150.0;
@@ -56,6 +56,11 @@ const NOON: f32 = 12.0;
 /// reader waits, or what it reads piles up faster than a frame puts it on the device.
 // ponytail: about ten frames of what a frame takes at most; the device's own budgets if a reader idles while there is room.
 const READ_AHEAD: u64 = 512 << 20;
+
+/// How many readers the models get, and as many the textures: half the machine's threads, from 2 to 12.
+fn readers() -> usize {
+    (std::thread::available_parallelism().map_or(4, usize::from) / 2).clamp(2, 12)
+}
 
 /// Wait while what was read and not taken (`held`) is past [`READ_AHEAD`].
 fn wait_for_room(held: &AtomicU64) {
@@ -300,13 +305,15 @@ impl Viewer {
             sky_night::read(Arc::clone(&places));
             let held = Arc::clone(&self.held);
             let weigh = |read: &Option<CpuTexture>| read.as_ref().map_or(0, CpuTexture::bytes);
+            let open = OpenPacks::default();
+            // ⚠ A texture read decodes its blocks on the CPU and costs as much as a model's: four readers alone held a street scene's settle to its textures.
             self.textures = Some(Pool::bounded(
-                4,
+                readers(),
                 (TEXTURES_WAITING, weigh),
-                HashMap::<u32, OpenPack>::new,
-                move |open, (key, pixels)| {
+                || (),
+                move |(), (key, pixels)| {
                     wait_for_room(&held);
-                    let read = texture::read_texture(open, &places, key, pixels);
+                    let read = texture::read_texture(&open, &places, key, pixels);
                     let bytes = read.as_ref().map_or(0, CpuTexture::bytes);
                     held.fetch_add(bytes, Ordering::Relaxed);
                     read
@@ -320,11 +327,10 @@ impl Viewer {
         let index = Arc::new(index);
         self.lights = Some(lights::Lights::new(Arc::clone(&index)));
         let shared = Arc::clone(&index);
-        let workers = std::thread::available_parallelism().map_or(4, usize::from) / 2;
         let held = Arc::clone(&self.held);
         let weigh = |read: &Option<CpuModel>| read.as_ref().map_or(0, CpuModel::bytes);
         self.models = Some(Pool::bounded(
-            workers.clamp(2, 12),
+            readers(),
             (MODELS_WAITING, weigh),
             HashMap::<u32, File>::new,
             move |files, model| {

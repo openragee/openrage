@@ -525,6 +525,118 @@ list makes. The palette, Go to File and the name index exist
 [R24b](../direction/Roadmap.md#r24b-go-to-file),
 [R23](../direction/Roadmap.md#r23-names-and-hashes)).
 
+`world_forest::WorldForest` is what the streamed world needs of a mounted GTA V
+install, with no screen: the input the rules of
+`crates/domain/or-world/src/streaming.rs` take, and what they select of it. A
+map's two boxes are `map_box` of its row, and what asks for it is `request_of`:
+nothing, the gate of a manifest group of its name, or a script alone. The gate
+is in `WorldIndex::state_groups`, which the index fills from each manifest's
+groups and keeps on disk, beside each archetype's `assetName`, drawable
+dictionary and texture dictionary; the kept file takes a new version for them
+(`an_instance_names_the_files_its_archetype_states_and_a_kept_index_names_them_too`).
+`stream` asks the index's tree for the maps near the view's column, takes those
+whose box the rules want and whose request holds at the hour and the weather
+given, and their parents with them, and reads each from the archive that lists
+it (`a_map_the_view_leaves_is_dropped_and_a_night_group_s_map_is_wanted_at_night_alone`).
+A map is one node an entity, in the file's order, so the index a file names a
+parent by is that parent's node: in the map's own entities, or in the parent
+map's where bit 3 of the entity's flags is set
+(`a_parent_in_the_parent_map_swaps_with_its_children_as_one_in_their_own_file_does`).
+`stream_some` reads at most the number of maps it is given, the nearest first
+(`of_the_maps_a_view_wants_the_nearest_is_read_first`), and a child read before
+its parent stands alone until the parent is read
+(`a_child_whose_parent_map_is_not_read_yet_stands_alone_until_it_is`). ⚠ The
+read is lenient, and a node's place is its entity's, so a map or an interior
+one of whose entities did not read is refused whole: read past the gap, every
+index after it would name the entity before the one it means
+(`a_map_one_of_whose_entities_did_not_read_is_refused_for_no_link_into_it_holds`).
+A file that gives nothing is listed with why and asked for once in the forest's
+life (`a_file_that_gives_the_forest_nothing_is_said_with_why_and_opened_once`).
+A map the
+view left leaves the forest and stays held under a budget of bytes; the one
+wanted longest ago is dropped first, never one in the forest, and is read again
+when wanted
+(`the_budget_drops_the_map_wanted_longest_ago_and_it_is_read_again_when_wanted`).
+⚠ The tree is of streaming extents and asks by a circle, while the rules grow a
+box along each axis: it is asked the circle about the grown box's corner, and a
+map whose streaming extents do not hold its entities' is asked at every view
+(`a_map_streams_by_its_entities_extents_where_its_streaming_ones_do_not_hold_them`).
+⚠ An interior's entities are no part of the map that places it: they are read
+from the type file that declares the interior while the view is within the
+instance's distance and band, placed through the instance, and stand under it
+as an instance stands under a list, so each draws by its own place and distance
+(`an_interior_within_its_distance_brings_its_entities_placed_through_its_instance`);
+an entity that names a parent inside the interior keeps it, and each instance
+of one interior brings its own copy
+(`two_instances_of_one_interior_each_bring_its_entities_and_a_link_inside_it_holds`).
+`select` returns each instance with its archetype, its matrix, its level, its
+fade and its `Model`: the files that draw it by name, or a box with its reason
+where no type file declares its archetype, which waits for no model and is asked
+of no one
+(`an_entity_of_an_archetype_no_type_file_declares_is_returned_as_a_box_with_its_reason`).
+`Selected::files` is what a selection needs, and `model_of` the same for an
+archetype a selection waits for or that the view's velocity brings into range
+(`a_model_the_view_s_velocity_brings_into_range_is_named_ahead_of_it`). An
+entity that states no distance takes its archetype's, and its radius is half
+the diagonal of the archetype's box under its scale
+(`an_entity_that_states_no_distance_takes_its_archetype_s_and_a_scale_below_one_keeps_its_radius`).
+An entity that states no level stands as an
+orphan and one that names a parent in a map the mount lacks stands alone, each
+counted by `misfits`. ⚠ A parent that states more children than name it never
+gives way, because the rules wait for as many as it states
+(`a_parent_that_states_more_children_than_name_it_draws_whole_beside_them`), and
+one whose children lie in several maps draws whole beside those the forest has
+until every one of those maps streams
+(`a_parent_whose_children_lie_in_two_maps_gives_way_once_both_are_in_the_forest`).
+Grass and prop lists, a time archetype's hours and an interior's entity sets are
+not read. `openrage-cli world select <install> <x,y,z>` says one view with every
+model taken as loaded: the maps wanted and why, the count of instances at each
+level, each that stands as a box with its reason, and each file needed with
+where the mount holds it or that it lacks it; `--distance` lists only what
+stands within it, `--hour` and `--weather` set what the groups let in, and
+`--json` lists what the lines list (`the_json_of_a_view_lists_what_its_lines_list`).
+A map or an interior that gave nothing is a line with why, and so is what did
+not fit the rules
+(`a_view_says_what_gave_nothing_what_an_interior_brought_and_why_a_parent_is_wanted`).
+It takes no request by name, so a map only a script asks for is never in its
+answer.
+The install suite
+(`the_forest_of_a_real_install_selects_what_its_index_holds_and_no_child_whole_beside_a_parent_that_holds_the_children_it_states`,
+slow tier) selects at the centres of 24 maps spread over an install's index,
+half of them maps that place an interior, and counts each child drawn whole
+beside its whole parent by what the parent states against what the forest holds
+of it. On 2026-11-25 on Legacy 141,552 instances were selected, none a box, with
+160 interiors brought in, and one child stood whole beside a parent that states
+fewer children than name it, none beside one that states more; on Enhanced 130,667 instances, none a box, 150
+interiors and no child beside its parent. ⚠ The suite asked at first that no
+child stand so, and the parent it found is not of the kind the hand-built test
+stood for: it states fewer children than name it, where
+[R32](../direction/Roadmap.md#r32-world-data-ymap-ytyp-and-interiors) records
+nine entities that state more. The rules have a parent give way when as many
+children as it states are found, so one that states another count either way
+never does
+(`a_parent_that_states_more_children_than_name_it_draws_whole_beside_them`,
+which holds both ways), and the suite fails on a child beside a parent that
+holds the children it states. Knowing a parent's true count needs every map
+that names its map as parent, which a view does not hold; the index could keep
+it for each parent. The maps and type files those tests write are in
+`crates/domain/or-depends/tests/forest_fixture/mod.rs`.
+
+Where a GTA V tree does not fit the rules, nothing was changed in them: an
+interior has no place in them, so its entities are brought in on the GTA V side;
+and what the rules take from a GTA VI archetype's flags and from whole metres is
+not assumed of GTA V, where every node is of the plain category and keeps the
+distance its file states. Left of
+[R70c](../direction/Roadmap.md#r70c-the-gta-v-world-streamed-and-drawn): every
+screen part of the row (the seam, a viewer for each tab, the feed of models,
+textures and materials, the room, the tab, the bar, the camera, the presets and
+the frame cap); grass and prop lists; a time archetype's hours; an interior's
+entity sets; whether an archetype's asset is a drawable or a fragment, which
+the index does not keep; and a request by name for `world select`. World is
+still a workspace shown while a GTA VI folder is set, with one viewer
+(`src/state/gta6_worldview/mod.rs`), and the Map screen draws boxes, a scanned
+GTA VI map body too.
+
 ⚠ A declared `drawableDictionary` outranks a loose file of the same stem, and
 `assetName` is then an entry inside that `.ydd`. Read as a filename, 76,898
 archetypes disagree; with the precedence right, 158,665 of 158,665 comparable

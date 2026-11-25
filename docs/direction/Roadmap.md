@@ -9627,14 +9627,17 @@ archive's stamp (`the_world_index_of_a_mount`), behind `openrage-cli world index
 as story or multiplayer
 (`a_mount_stops_at_a_level_of_dlc_and_takes_the_map_as_story_or_multiplayer`), set by
 `openrage-cli dlc-list` and by `world ground` ([R70g](#r70g-collision-as-a-query)), which keeps
-the index of a level in a file of its own. The older cutoff by a pack's name hash, which `--dlc` is, keeps the
-folders of the packs past it from the walk as a level does
+the index of a level in a file of its own. The cutoff by a pack's name hash (`--dlc`) keeps the
+folders of packs past it from the walk as a level does
 (`a_pack_past_a_name_hash_is_left_out_of_the_walk_as_one_past_a_level_is`), and an archive one of
-whose files did not open is kept with no stamp, so the next build reads it again
-(`a_file_that_did_not_open_is_read_again_by_the_next_build_though_its_archive_stands`). Left:
+whose files did not open is kept with no stamp and read again
+(`a_file_that_did_not_open_is_read_again_by_the_next_build_though_its_archive_stands`). The index
+keeps each group's gate and each archetype's files for
+[R70c](#r70c-the-gta-v-world-streamed-and-drawn)
+(`an_instance_names_the_files_its_archetype_states_and_a_kept_index_names_them_too`). Left:
 the mode in the index's key; a level and a mode for `world index` and `world at`, and from a
 screen; an archive a level leaves folders out of, which has no stamp and is read at every build;
-the group that requests a map; the cost on an install.
+the cost on an install.
 
 **Done when.** Over a mounted install the index names every map and type file the mount lists, and a
 position inside a known map's extents answers that map, in an install suite of the slow tier, named
@@ -9654,9 +9657,12 @@ GTA V feed from R70b, with the content a project links as a layer; then the room
 as a bar under the tabs, the World tab's primary command, the shared camera and the viewer's presets
 and frame cap ([brief](World_Editor_Plan.md#the-gta-v-world-streamed-and-drawn-r70c)).
 
-**Where it stands.** Not built. A GTA VI install alone feeds the world renderer. World is a
-workspace shown while a GTA VI folder is set, with one viewer (`src/state/gta6_worldview/mod.rs`);
-the Map screen draws boxes, a scanned GTA VI map body too.
+**Where it stands.** The data half is headless
+([in full](../reference/Crate_Reference.md#domain-crates)):
+`crates/domain/or-depends/src/world_forest.rs` streams an install's maps and selects their entities
+by the shared rules, behind `openrage-cli world select`, on both installs
+(`the_forest_of_a_real_install_selects_what_its_index_holds_and_no_child_whole_beside_a_parent_that_holds_the_children_it_states`,
+2026-11-25). Nothing draws it.
 
 **Depends on.** [R70b](#r70b-the-gta-v-world-index); its room, tab and bar edit what
 [R69f](#r69f-a-rail-of-rooms-and-one-primary-action-a-tab) builds.

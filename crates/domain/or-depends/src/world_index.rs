@@ -10,7 +10,7 @@
 
 mod kept;
 mod mounted;
-mod tree;
+pub(crate) mod tree;
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ use glam::Vec3;
 use or_io::meta::binary::parse_meta_binary_full;
 use or_io::meta::{Diagnostics, ErrorMode, MetaInstance};
 use or_title::vfs::{EntryFacts, Vfs};
-use or_world::{MapData, MapTypes};
+use or_world::{MapData, MapTypes, StateGroups};
 
 use crate::catalogue::{map_of_bound_stem, Kind};
 use crate::contents::ModelContents;
@@ -94,6 +94,9 @@ struct ArchetypeRow {
     name: u32,
     span: Option<Span>,
     lod_dist: f32,
+    asset_name: u32,
+    drawable_dictionary: u32,
+    texture_dictionary: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -103,12 +106,23 @@ struct TypeFileRow {
     archetypes: Option<Vec<ArchetypeRow>>,
 }
 
+/// What switches one map group of a manifest, as the group states it.
+#[derive(Debug, Clone, PartialEq)]
+struct GroupGate {
+    name: u32,
+    flags: u32,
+    /// One bit an hour of the day, bit 0 for midnight.
+    hours: u32,
+    weather_types: Vec<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct ManifestRow {
     logical: String,
     read: bool,
     groups: Vec<NamedBounds>,
     interiors: Vec<NamedBounds>,
+    gates: Vec<GroupGate>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -157,6 +171,8 @@ pub struct TypeFile {
     pub name: String,
     pub hash: u32,
     pub logical: String,
+    /// The root archive that lists it, by its place in mount order, which is where [`WorldSource::open`] reads it from.
+    pub archive: usize,
     /// Whether the file read as a type file.
     pub read: bool,
     /// How many archetypes it declares.
@@ -173,6 +189,12 @@ pub struct Archetype {
     pub span: Option<Span>,
     /// Metres.
     pub lod_dist: f32,
+    /// `assetName`: the drawable or the fragment that draws it, or its entry in [`Self::drawable_dictionary`]; zero where it states none.
+    pub asset_name: u32,
+    /// Zero where it states none.
+    pub drawable_dictionary: u32,
+    /// Zero where it states none.
+    pub texture_dictionary: u32,
 }
 
 /// One `.ybn` the mount would load.
@@ -258,6 +280,7 @@ pub struct WorldIndex {
     /// The bounds whose stem names each map, by the map's hash.
     stem_bounds: HashMap<u32, Vec<u32>>,
     tables: InstallTables,
+    state_groups: StateGroups,
     carriers: HashMap<u32, Vec<Carrier>>,
     /// By a map's hash, the places in `bounds` of what it carries whose file states no box.
     boxless: HashMap<u32, Vec<u32>>,
@@ -315,22 +338,30 @@ fn archetype_rows(bytes: &[u8]) -> Option<Vec<ArchetypeRow>> {
             name: archetype.name(),
             span: archetype.bounds().map(|bounds| (bounds.min, bounds.max)),
             lod_dist: archetype.lod_dist(),
+            asset_name: archetype.asset_name(),
+            drawable_dictionary: archetype.drawable_dictionary(),
+            texture_dictionary: archetype.texture_dictionary(),
         });
     Some(rows.collect())
 }
 
 fn manifest_row(logical: String, bytes: Option<&[u8]>) -> ManifestRow {
     let root = bytes.and_then(parse);
-    let stated = (root.as_ref())
-        .and_then(or_world::Manifest::new)
-        .map(stated_bounds);
-    let read = stated.is_some();
-    let (groups, interiors) = stated.unwrap_or_default();
+    let manifest = root.as_ref().and_then(or_world::Manifest::new);
+    let (groups, interiors) = manifest.map(stated_bounds).unwrap_or_default();
+    let gates = manifest.into_iter().flat_map(|m| m.state_groups());
+    let gates = gates.map(|group| GroupGate {
+        name: group.name(),
+        flags: group.flags(),
+        hours: group.hours_on_off(),
+        weather_types: group.weather_types(),
+    });
     ManifestRow {
         logical,
-        read,
+        read: manifest.is_some(),
         groups,
         interiors,
+        gates: gates.collect(),
     }
 }
 
@@ -493,6 +524,7 @@ impl WorldIndex {
             bound_by_hash: HashMap::new(),
             stem_bounds: HashMap::new(),
             tables: InstallTables::new(),
+            state_groups: StateGroups::new(),
             carriers: HashMap::new(),
             boxless: HashMap::new(),
             map_tree: BoxTree::default(),
@@ -533,6 +565,9 @@ impl WorldIndex {
                         type_file: hash,
                         span: archetype.span,
                         lod_dist: archetype.lod_dist,
+                        asset_name: archetype.asset_name,
+                        drawable_dictionary: archetype.drawable_dictionary,
+                        texture_dictionary: archetype.texture_dictionary,
                     };
                     if index.archetypes.insert(archetype.name, declared).is_some() {
                         index.redefined += 1;
@@ -543,12 +578,23 @@ impl WorldIndex {
                     name,
                     hash,
                     logical: row.logical.clone(),
+                    archive: a,
                     read: row.archetypes.is_some(),
                     archetypes: row.archetypes.as_ref().map_or(0, Vec::len),
                 });
             }
             for row in &rows.manifests {
                 (index.tables).add_bounds(row.groups.clone(), row.interiors.clone());
+                for gate in &row.gates {
+                    let bounds = row.groups.iter().find(|(name, _)| *name == gate.name);
+                    index.state_groups.add_group(
+                        gate.name,
+                        (gate.flags, gate.hours),
+                        gate.weather_types.clone(),
+                        bounds.map(|(_, bounds)| bounds.clone()).unwrap_or_default(),
+                        &row.logical,
+                    );
+                }
             }
             for (r, row) in rows.bounds.iter().enumerate() {
                 let (leaf, name) = leaf_and_stem(&row.logical);
@@ -569,6 +615,9 @@ impl WorldIndex {
                     span: row.span,
                 });
             }
+        }
+        for map in &index.maps {
+            index.state_groups.add_map_flags(map.hash, map.flags);
         }
         index.archives = archives;
         index.carry();
@@ -665,6 +714,11 @@ impl WorldIndex {
         self.map_by_hash.get(&name).map(|at| &self.maps[*at])
     }
 
+    /// The place in [`Self::maps`] of the map whose stem hashes to `name`.
+    pub(crate) fn place_of_map(&self, name: u32) -> Option<u32> {
+        self.map_by_hash.get(&name).map(|at| *at as u32)
+    }
+
     /// The map `map` names as its parent, where the mount holds it.
     pub fn parent_of(&self, map: &Map) -> Option<&Map> {
         (map.parent != 0).then(|| self.map(map.parent)).flatten()
@@ -736,6 +790,13 @@ impl WorldIndex {
         &self.tables
     }
 
+    /// What switches each map group of the manifests, and which maps wait to be asked for.
+    // ⚠ The last manifest in mount order to state a group keeps it here, and the first keeps its
+    // bounds in [`Self::tables`]: each as the module that reads it has it.
+    pub fn state_groups(&self) -> &StateGroups {
+        &self.state_groups
+    }
+
     /// The bounds of the map whose stem hashes to `map`: a manifest group's, else its stem's, then its interiors'.
     pub fn bounds_of_map(&self, map: u32) -> Vec<Carried<'_>> {
         let Some(map) = self.map(map) else {
@@ -772,7 +833,12 @@ impl WorldIndex {
 
     /// The maps whose streaming extents hold `x` and `y` at any height, in the mount's order.
     pub fn maps_in_column(&self, x: f32, y: f32) -> Vec<&Map> {
-        let found = self.map_tree.in_column(x, y, 0.0);
+        self.maps_near_column(x, y, 0.0)
+    }
+
+    /// The maps whose streaming extents come within `radius` metres of the upright line through `x` and `y`, in the mount's order.
+    pub fn maps_near_column(&self, x: f32, y: f32, radius: f32) -> Vec<&Map> {
+        let found = self.map_tree.in_column(x, y, radius);
         found.iter().map(|&at| &self.maps[at as usize]).collect()
     }
 

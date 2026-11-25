@@ -16,6 +16,10 @@ mod depends;
 mod describe;
 mod dlc;
 mod fixups;
+/// The maps with levels of detail and interiors that `world select`'s tests share with `or-depends`' own.
+#[cfg(test)]
+#[path = "../../../domain/or-depends/tests/forest_fixture/mod.rs"]
+mod forest_fixture;
 mod formats;
 mod gfx;
 mod gta6_anim;
@@ -136,6 +140,7 @@ mod world_fixture;
 mod world_ground;
 mod world_index;
 mod world_new;
+mod world_select;
 
 pub use depends::DependencyIndex;
 pub use dlc::{create_dlc_pack, dlc_pack_of_folder, dlc_refusals};

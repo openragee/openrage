@@ -1,16 +1,19 @@
 //! The world index of a real install, held to everything its mount lists, the ground under the
-//! vehicle nodes of its own path regions, and its own models found by name with each placement
-//! held to the map file it names.
+//! vehicle nodes of its own path regions, its own models found by name with each placement
+//! held to the map file it names, and what the level-of-detail forest selects at places of its
+//! own maps.
 //!
 //! ⚠ Needs an install: without one each test records a skip and has checked nothing. Each reads
 //! every map, type file and bound of the install once, which is why it is in the slow tier.
 
+mod forest_fixture;
 mod world_fixture;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use or_depends::{MountedWorld, WorldIndex};
+use or_depends::world_forest::{request_of, Request};
+use or_depends::{MountedWorld, WorldForest, WorldIndex};
 use or_io::container::rpf::crypto::RpfCryptoProvider;
 use or_title::vfs::{build_mounted_game, DlcCutoff};
 use or_title::GtaInstall;
@@ -148,5 +151,71 @@ fn a_real_installs_own_models_are_found_by_name_and_each_placement_stands_in_the
     assert!(
         share >= INSIDE,
         "{share:.3} of the placements read lie inside their map's streaming extents: {held:?}"
+    );
+}
+
+const FOREST: &str = "the_forest_of_a_real_install_selects_what_its_index_holds_and_no_child_whole_beside_a_parent_that_holds_the_children_it_states";
+
+/// How many places are asked: the centres of that many maps, spread evenly over the index.
+const PLACES: usize = 24;
+
+/// The bytes of maps the forest may hold let go of, so a place reads again part of what the last one did.
+const FOREST_BUDGET: u64 = 64 << 20;
+
+/// ⚠ Needs an install. A view stands at the centre of the entities' extents of maps spread over the
+/// index, half of them maps that place an interior, at noon in clear weather with every model
+/// taken as loaded.
+///
+/// ⚠ A parent gives way once as many children as it states are in the forest, so one that states
+/// another count than name it draws whole beside them. An install ships such parents, and each
+/// child beside one is counted; a child whole beside a parent that holds the children it states
+/// is what the rules do not give, and is the failure.
+#[test]
+fn the_forest_of_a_real_install_selects_what_its_index_holds_and_no_child_whole_beside_a_parent_that_holds_the_children_it_states(
+) {
+    let Some((root, crypto)) = install(FOREST) else {
+        return;
+    };
+    let install = GtaInstall { root: root.clone() };
+    let game = build_mounted_game(&install, crypto, DlcCutoff::All).expect("the install mounts");
+    let source = MountedWorld::new(&game, &root);
+    let (index, _) = WorldIndex::build(&source, None);
+    let mut forest = WorldForest::new(&index, &source, FOREST_BUDGET);
+
+    // Maps that stream wherever their box is wanted, so the view at their centre wants them.
+    let index = &index;
+    let always = |with_interior: bool| {
+        let maps = index.maps().iter().filter(move |map| {
+            map.read
+                && map.entities.is_some()
+                && map.interiors.is_empty() != with_interior
+                && request_of(index, map) == Request::Always
+        });
+        maps.collect::<Vec<_>>()
+    };
+    let mut places = Vec::new();
+    for with_interior in [false, true] {
+        let maps = always(with_interior);
+        let step = (maps.len() / (PLACES / 2)).max(1);
+        places.extend(maps.into_iter().step_by(step).take(PLACES / 2));
+    }
+    assert!(places.len() > PLACES / 2, "{} place(s)", places.len());
+
+    let held = forest_fixture::selected_at_the_centres(index, &mut forest, &places);
+    let (unleveled, lost) = forest.misfits();
+    eprintln!(
+        "\n=== {held:?}; at the last place {unleveled} entit(ies) state no level and {lost} name \
+         a parent in a map the mount lacks ==="
+    );
+    assert!(held.instances > 0, "nothing was selected at any place");
+    assert_eq!(
+        held.unaccounted,
+        Vec::<String>::new(),
+        "a child draws whole beside a whole parent that holds the children it states: {held:?}"
+    );
+    assert_eq!(
+        held.beside,
+        held.states_more + held.states_fewer,
+        "{held:?}"
     );
 }

@@ -253,6 +253,11 @@ impl<'a> Interior<'a> {
         field::array_at(self.inst, keys::ENTITIES).len()
     }
 
+    /// Whether every entity read, so a place in [`Self::entities`] is the place a room or a `parentIndex` names.
+    pub fn entities_are_whole(&self) -> bool {
+        field::structs_fill(self.inst, keys::ENTITIES)
+    }
+
     pub fn time_cycle_modifier_count(&self) -> usize {
         field::array_at(self.inst, keys::TIME_CYCLE_MODIFIERS).len()
     }

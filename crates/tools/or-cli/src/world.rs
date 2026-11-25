@@ -39,6 +39,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "at" => super::world_index::cmd_at(rest),
         "ground" => super::world_ground::cmd_ground(rest),
         "find" => super::world_find::cmd_find(rest),
+        "select" => super::world_select::cmd_select(rest),
         "-h" | "--help" | "help" => {
             print_usage();
             ExitCode::SUCCESS
@@ -1293,6 +1294,17 @@ fn print_usage() {
     eprintln!("                           --copy <lua|json|csharp> prints the place, or the");
     eprintln!("                           model's placements, as a script takes them. --level");
     eprintln!("                           and --mode mount as `dlc-list` does.");
+    eprintln!(
+        "  select <install> <x,y,z> [--distance <m>]   (or --game <dir> and a place as pasted)"
+    );
+    eprintln!("                           What the streamed world takes for a view at a place:");
+    eprintln!("                           the maps wanted, the instances selected by level of");
+    eprintln!("                           detail with every model taken as loaded, those that");
+    eprintln!("                           stand as a box and why, and the files needed.");
+    eprintln!("                           --distance lists only what stands within it. --hour");
+    eprintln!("                           <0-23> (12) and --weather <name> (EXTRASUNNY) set");
+    eprintln!("                           what a manifest's groups let in. --level and --mode");
+    eprintln!("                           mount as `dlc-list` does.");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --types <dir>   Where to find `.ytyp` for archetype bounds. Defaults to");

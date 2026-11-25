@@ -9,16 +9,16 @@ use flate2::{Compression, Decompress, FlushDecompress, Status};
 use glam::Vec3;
 
 use super::{
-    ArchetypeRow, Archive, ArchiveRows, BoundRow, KeptState, ManifestRow, MapFacts, MapRow, Report,
-    Span, Stamp, TypeFileRow, WorldIndex, WorldSource,
+    ArchetypeRow, Archive, ArchiveRows, BoundRow, GroupGate, KeptState, ManifestRow, MapFacts,
+    MapRow, Report, Span, Stamp, TypeFileRow, WorldIndex, WorldSource,
 };
 use crate::tables::NamedBounds;
 
 const MAGIC: [u8; 4] = *b"ORWI";
 /// The version of the bytes this file writes: a change to them takes another.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 /// The version of what a build reads of each file: a change to what a row holds of the same file takes another.
-pub const RULES: u32 = 1;
+pub const RULES: u32 = 2;
 /// The most a kept index inflates to, in bytes.
 const MOST_BYTES: usize = 1 << 28;
 
@@ -285,6 +285,9 @@ fn put_archive(out: &mut Vec<u8>, rows: &ArchiveRows) {
                 put_u32(out, archetype.name);
                 put_span(out, archetype.span);
                 out.extend(archetype.lod_dist.to_le_bytes());
+                put_u32(out, archetype.asset_name);
+                put_u32(out, archetype.drawable_dictionary);
+                put_u32(out, archetype.texture_dictionary);
             }
         }
     }
@@ -295,6 +298,16 @@ fn put_archive(out: &mut Vec<u8>, rows: &ArchiveRows) {
         out.push(u8::from(manifest.read));
         put_named(out, &manifest.groups);
         put_named(out, &manifest.interiors);
+        put_len(out, manifest.gates.len());
+        for gate in &manifest.gates {
+            put_u32(out, gate.name);
+            put_u32(out, gate.flags);
+            put_u32(out, gate.hours);
+            put_len(out, gate.weather_types.len());
+            for weather in &gate.weather_types {
+                put_u32(out, *weather);
+            }
+        }
     }
 
     put_len(out, rows.bounds.len());
@@ -410,6 +423,9 @@ impl<'a> Reader<'a> {
                         name: r.u32()?,
                         span: r.span()?,
                         lod_dist: r.f32()?,
+                        asset_name: r.u32()?,
+                        drawable_dictionary: r.u32()?,
+                        texture_dictionary: r.u32()?,
                     })
                 })?),
                 false => None,
@@ -425,6 +441,14 @@ impl<'a> Reader<'a> {
                 read: r.flag()?,
                 groups: r.named()?,
                 interiors: r.named()?,
+                gates: r.list(|r| {
+                    Ok(GroupGate {
+                        name: r.u32()?,
+                        flags: r.u32()?,
+                        hours: r.u32()?,
+                        weather_types: r.list(Self::u32)?,
+                    })
+                })?,
             })
         })?;
         let bounds = self.list(|r| {

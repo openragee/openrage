@@ -112,9 +112,12 @@ fn the_frame_is_lit_by_the_square_of_the_mask_s_first_channel() {
 #[test]
 fn a_tile_s_word_has_a_pixel_s_share_rebuilt_from_the_pixels_about_it_that_lie_as_deep() {
     let dim = lit(1.0);
-    // A column of the mask at nought and the rest at one. Of a pixel of the column and the
-    // twelve about it, eight hold one; of the pixel beside the column, eleven.
-    let column = roots(|x, _| f32::from(u8::from(x != 8)));
+    // A column of the mask at nought and the rest at a root of eight tenths, which its square
+    // is not. Of a pixel of the column and the twelve about it, eight hold that square; of the
+    // pixel beside the column, eleven.
+    let root = 0.8f32;
+    let column = roots(|x, _| if x == 8 { 0.0 } else { root });
+    let mean = |held: f32| held * root * root / 13.0;
     let uniform = |share: f32| roots(move |_, _| share.sqrt());
     // The sheet's rows at nought and the floor's at one: the sheet ends between the rows 6 and 7.
     let rows = roots(|_, y| f32::from(u8::from(y > 6)));
@@ -124,8 +127,8 @@ fn a_tile_s_word_has_a_pixel_s_share_rebuilt_from_the_pixels_about_it_that_lie_a
         (flat, column.clone(), 0),
         (flat, column.clone(), sun_mask::REBUILD),
         (flat, column.clone(), !sun_mask::REBUILD),
-        (flat, uniform(8.0 / 13.0), 0),
-        (flat, uniform(11.0 / 13.0), 0),
+        (flat, uniform(mean(8.0)), 0),
+        (flat, uniform(mean(11.0)), 0),
         (deepening(), rows.clone(), sun_mask::REBUILD),
         (deepening(), uniform(1.0), 0),
         (deepening(), uniform(11.0 / 13.0), 0),

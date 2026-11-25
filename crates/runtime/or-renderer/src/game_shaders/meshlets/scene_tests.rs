@@ -591,4 +591,20 @@ fn a_surface_s_gloss_takes_the_probe_s_light_from_about_the_mirrored_way_as_the_
         let seen = f32::from(green(&mirrors, frame));
         assert!((seen - shown).abs() <= 3.0, "{seen} against {shown}");
     }
+    // The dull floor reflects nothing head on. Its green is the cone's light by the share its
+    // facets reflect at this angle, and its red that and its matte light: the even light that
+    // falls on it, less that share, by the matte share the table holds for it.
+    let [grazing, _, matte] = env_fit::fit_at(n.dot(v), 0.5);
+    let shown = |light: f32| tone.filmic(1.0).toned(light).powf(0.4545) * 255.0;
+    let fallen = 0.886_227 * even / std::f32::consts::PI;
+    let [red, green, ..] = seen_at(&dulls[1], OPEN).map(f32::from);
+    let gloss = cone(0.0) * grazing;
+    assert!(
+        (green - shown(gloss)).abs() <= 3.0,
+        "{green} against {}",
+        shown(gloss)
+    );
+    let weighed = shown(fallen * (1.0 - grazing) * matte + gloss);
+    assert!((red - weighed).abs() <= 3.0, "{red} against {weighed}");
+    assert!(shown(fallen + gloss) > weighed + 6.0, "the weighing shows");
 }

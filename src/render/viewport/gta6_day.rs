@@ -306,9 +306,11 @@ fn tone_of(frame: &Keyframe, settings: &VisualSettings, disc: f32) -> Tone {
 /// The clouds over a model in a weather whose cycle says they cover `cover` of the sky, and
 /// what `frame` states of the directional light under them.
 // The open share is a stand-in. The game marches the light's way through its field of clouds
-// for every place, and a model alone has no field: the clouds are taken to hide the share of
-// the ground the cycle says they cover, as deeply as it says a cloud's shadow shows, and the
-// model stands in the mean of that.
+// for every place, a map of four kinds of cloud laid by maps of the weather and broken by two
+// volumes of noise, and takes what comes through, less as the cycle says a cloud's shadow
+// shows, into the mask of the directional light. A model alone has no field: the clouds are
+// taken to hide the share of the ground the cycle says they cover, to nought where they do,
+// and the model stands in the mean of what the game would take.
 fn clouds_of(cover: f32, frame: &Keyframe) -> Clouds {
     let shows = frame.get_or("local_atmosphere_cloud_shadow_alpha", 1.0);
     Clouds {
@@ -360,19 +362,24 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
             * frame.get_or(&format!("light_dir_{word}_mult"), 1.0);
         let through = air.light_through(towards)
             * frame.get_or("sky_transmittance_correction_factor", 1.0 / PI);
+        // The game's lighting program multiplies three things: the light's colour by its
+        // strength, the body's lux by that strength again, and what comes through the air.
+        let scalar = lux(word) * strength;
         (
             towards,
-            rgb(&frame, "light_dir_col") * lux(word) * strength * through,
+            rgb(&frame, "light_dir_col") * strength * scalar * through,
         )
     });
     let (towards, colour) = light.unwrap_or((sun, Vec3::ZERO));
     let towards = Vec3::new(towards.x, towards.y, towards.z.max(LIGHT_FLOOR)).normalize();
 
-    // The sky along each way it is gathered by, under both bodies, by the rows that multiply
-    // it; and what a matte surface that faces up sends back of the whole of it.
-    let tint = rgb(&frame, "sky_scattering_sky_col")
-        * rgb(&frame, "ambient_sky_color_mult")
-        * frame.get_or("ambient_sky_intensity", 1.0);
+    // The sky along each way it is gathered by, under both bodies, by its own tint and by the
+    // one row the game's pass that gathers the sky for a place multiplies it by; and what a
+    // matte surface that faces up sends back of the whole of it.
+    // The cycle's ambient_sky_* rows and its ambient_bounce_intensity light nothing: the game
+    // writes them among that pass's constants, where none of its programs reads them.
+    let sky_tint = rgb(&frame, "sky_scattering_sky_col");
+    let tint = sky_tint * frame.get_or("indirect_light_sky_global_multiplier", 1.0);
     let (of_sun, of_moon) = (lux("sun"), lux("moon"));
     let bare: Vec<(Vec3, Vec3, f32)> = Air::ways()
         .map(|(way, patch)| {
@@ -383,7 +390,7 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
     // How bright the sky itself is along each way, as a camera sees it: by the sky's own tint,
     // and not by the rows that multiply what it lights.
     let mut dome = [0.0; 72];
-    let shown = rgb(&frame, "sky_scattering_sky_col") * Vec3::new(0.2125, 0.7154, 0.0721);
+    let shown = sky_tint * Vec3::new(0.2125, 0.7154, 0.0721);
     for (held, (_, light, _)) in dome.iter_mut().zip(&bare) {
         *held = light.dot(shown);
     }
@@ -396,9 +403,7 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
         .map(|(way, light, patch)| *light * way.z * *patch))
     .sum();
     let around = given / PI;
-    let ground = (around + colour * clouds.open * towards.z / PI)
-        * GROUND
-        * frame.get_or("ambient_bounce_intensity", 1.0);
+    let ground = (around + colour * clouds.open * towards.z / PI) * GROUND;
     Some(Sky {
         towards,
         sun: colour,

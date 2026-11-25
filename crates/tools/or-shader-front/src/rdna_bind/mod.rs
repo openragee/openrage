@@ -611,6 +611,7 @@ fn bind_alone(
     Err(Unbound::Alone)
 }
 
+pub mod budget;
 pub mod picks;
 pub mod plain;
 pub mod shading;

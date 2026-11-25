@@ -202,6 +202,11 @@ pub struct MeshletScene {
     metered: wgpu::TextureView,
     metered_group: wgpu::BindGroup,
     light: wgpu::Buffer,
+    /// The screen's mask of the directional light, which the frame is lit through, and the pass
+    /// that fills it from the shadow's tile.
+    mask: SunMask,
+    mask_layout: wgpu::BindGroupLayout,
+    mask_writer: wgpu::RenderPipeline,
     /// The tile the sun's shadow is cast into, the camera's matrix and the light's, which a
     /// frame copies in turn to where the surfaces read the view, and whether this frame casts.
     shadow_map: wgpu::TextureView,
@@ -838,7 +843,7 @@ fn resolve_group(
     targets: &[Option<wgpu::TextureView>],
     depth: &wgpu::TextureView,
     light: &wgpu::Buffer,
-    shadow_map: &wgpu::TextureView,
+    mask: &SunMask,
 ) -> Result<wgpu::BindGroup, String> {
     let [Some(colour), Some(normal), Some(specular), Some(ambient)] = targets else {
         return Err(
@@ -875,8 +880,12 @@ fn resolve_group(
                 resource: view(ambient),
             },
             wgpu::BindGroupEntry {
-                binding: 6,
-                resource: view(shadow_map),
+                binding: 7,
+                resource: view(&mask.roots),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: view(&mask.tiles),
             },
         ],
     }))
@@ -952,7 +961,7 @@ impl Default for Sky {
 }
 
 /// The bytes of what the resolve reads of a frame's light.
-const LIGHT_BYTES: usize = 912;
+const LIGHT_BYTES: usize = 912 + 16 * env_fit::SIDE * env_fit::SIDE;
 /// The format of the texel the surfaces are metered into: the stops the frame is exposed by.
 const METERED: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -983,6 +992,10 @@ fn light_bytes(lighting: &Lighting, casts: bool) -> [u8; LIGHT_BYTES] {
     words[88..92].copy_from_slice(&sun_shadow::words(sky, casts));
     words[92..212].copy_from_slice(&sky.scene.words());
     words[212..228].copy_from_slice(&lighting.view_proj.to_cols_array());
+    let (fits, _) = words[228..].as_chunks_mut::<4>();
+    for (held, fit) in fits.iter_mut().zip(env_fit::table()) {
+        held[..3].copy_from_slice(fit);
+    }
     bytemuck::cast(words)
 }
 
@@ -1073,7 +1086,8 @@ impl MeshletScene {
                 texture(2, wgpu::TextureSampleType::Depth),
                 texture(4, unfiltered),
                 texture(5, unfiltered),
-                texture(6, wgpu::TextureSampleType::Depth),
+                texture(7, unfiltered),
+                texture(8, wgpu::TextureSampleType::Uint),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -1179,14 +1193,18 @@ impl MeshletScene {
             usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let resolve_group = resolve_group(
+        let mask_layout = sun_mask::layout(device);
+        let mask_writer = sun_mask::writer(device, &mask_layout, &resolve_shader);
+        let mask = SunMask::new(
             device,
-            &resolve_layout,
-            &targets,
-            &depth,
+            &mask_layout,
+            size,
+            (targets.as_slice(), &depth),
             &light,
             &shadow_map,
         )?;
+        let resolve_group =
+            resolve_group(device, &resolve_layout, &targets, &depth, &light, &mask)?;
         Ok(Some(Self {
             draws,
             formats,
@@ -1199,6 +1217,9 @@ impl MeshletScene {
             metered,
             metered_group,
             light,
+            mask,
+            mask_layout,
+            mask_writer,
             shadow_map,
             matrices,
             casts: Default::default(),
@@ -1210,17 +1231,22 @@ impl MeshletScene {
     /// Make the targets anew for a frame of `size`.
     pub fn resize(&mut self, device: &wgpu::Device, size: (u32, u32)) {
         let (targets, depth) = targets_of(device, &self.formats, size);
-        if let Ok(group) = resolve_group(
+        let Ok(mask) = SunMask::new(
             device,
-            &self.resolve_layout,
-            &targets,
-            &depth,
+            &self.mask_layout,
+            size,
+            (targets.as_slice(), &depth),
             &self.light,
             &self.shadow_map,
-        ) {
+        ) else {
+            return;
+        };
+        let lit_by = &self.resolve_layout;
+        if let Ok(group) = resolve_group(device, lit_by, &targets, &depth, &self.light, &mask) {
             self.resolve_group = group;
             self.targets = targets;
             self.depth = depth;
+            self.mask = mask;
         }
     }
 
@@ -1332,6 +1358,7 @@ impl MeshletScene {
             pass.draw(0..VERTICES, 0..draw.meshlets);
         }
         drop(pass);
+        self.mask.record(encoder, &self.mask_writer);
         // What the surfaces meter to, before the frame is lit by it.
         let mut meter = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("meshlet-meter"),
@@ -1363,17 +1390,22 @@ impl MeshletScene {
     }
 }
 
+mod env_fit;
 mod resolve;
 mod scene;
+mod sun_mask;
 mod sun_shadow;
 mod tone;
 use resolve::RESOLVE;
 pub use scene::{falls_on, nine_of, Clouds, Dome, Scene};
+use sun_mask::SunMask;
 pub use sun_shadow::to_tile;
 pub use tone::{metered, Curve, Filmic, Tone};
 
 #[cfg(test)]
 mod far_tests;
+#[cfg(test)]
+mod mask_tests;
 #[cfg(test)]
 mod scene_tests;
 #[cfg(test)]

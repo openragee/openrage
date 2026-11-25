@@ -44,9 +44,10 @@ pub(super) const RESOLVE: &str = r#"struct Light {
     // itself by, and the penumbra a unit of the tile's depth opens, as a share of that search.
     to_shadow: mat4x4<f32>,
     shadow: vec4<f32>,
-    // The clouds over the model: the share of the directional light they let through, how far
-    // its roughness is taken towards one under them, how far a light they hide is taken towards
-    // what the surroundings give along its way, and that light's strength.
+    // The clouds over the model: the share of the directional light they let through, which
+    // the mask's writer takes into the mask, how far the light's roughness is taken towards one
+    // under them, how far a light they hide is taken towards what the surroundings give along
+    // its way, and that light's strength.
     clouds: vec4<f32>,
     // The ground laid under the model: what it sends back of each colour and one where one is
     // laid, then the middle of its square, how high it lies and half its side.
@@ -60,6 +61,11 @@ pub(super) const RESOLVE: &str = r#"struct Light {
     dome: array<vec4<f32>, 18>,
     // From the world to the clip space.
     project: mat4x4<f32>,
+    // What a surface reflects of a light that comes evenly from all around, by the cosine of
+    // the angle it is seen at, across, and its roughness, down, sixteen places a side: the
+    // share its facets reflect by the part of their reflectance that grows towards grazing,
+    // the share they reflect whole, and the share its matte part sends back.
+    fit: array<vec4<f32>, 256>,
 }
 @group(0) @binding(0) var colour: texture_2d<f32>;
 @group(0) @binding(1) var normal: texture_2d<f32>;
@@ -67,8 +73,15 @@ pub(super) const RESOLVE: &str = r#"struct Light {
 @group(0) @binding(3) var<uniform> light: Light;
 @group(0) @binding(4) var specular: texture_2d<f32>;
 @group(0) @binding(5) var ambient: texture_2d<f32>;
-// The model's surfaces as the light sees them: the nearest is nought.
+// The model's surfaces as the light sees them: the nearest is nought. The mask's first writer
+// reads it, and the lighting does not.
 @group(0) @binding(6) var shadow_map: texture_depth_2d;
+// The screen's mask of the directional light: in its first channel, the root of the share of
+// that light that reaches what each pixel shows.
+@group(0) @binding(7) var sun_mask: texture_2d<f32>;
+// A word a tile of sixteen pixels a side: bit 14 asks for the share of each of the tile's
+// pixels to be rebuilt from the pixels about it.
+@group(0) @binding(8) var sun_tiles: texture_2d<u32>;
 // The stops the surfaces metered to.
 @group(1) @binding(0) var metered_stops: texture_2d<f32>;
 
@@ -105,6 +118,34 @@ fn falls_on(n: vec3<f32>) -> vec3<f32> {
         + (0.743125 * n.z * n.z - 0.247708) * light.around[6].rgb
         + 0.429043 * (n.x * n.x - n.y * n.y) * light.around[8].rgb;
     return max(fallen, vec3<f32>(0.0));
+}
+
+// What a surface seen at the cosine `n_v` with the roughness `roughness` reflects of an even
+// light: the table, read between its four nearest places.
+fn fit_at(n_v: f32, roughness: f32) -> vec3<f32> {
+    let at = clamp(vec2<f32>(n_v, roughness), vec2<f32>(0.0), vec2<f32>(1.0)) * 15.0;
+    let low = min(vec2<u32>(at), vec2<u32>(14u));
+    let part = at - vec2<f32>(low);
+    let row = low.y * 16u + low.x;
+    let upper = mix(light.fit[row].xyz, light.fit[row + 1u].xyz, part.x);
+    let lower = mix(light.fit[row + 16u].xyz, light.fit[row + 17u].xyz, part.x);
+    return mix(upper, lower, part.y);
+}
+
+// The light that comes to a surface of `roughness` along `way` for its gloss, of what the
+// probe's nine numbers hold: the mean over a cone about the way, each way of it weighed by its
+// cosine to the cone's axis, as GTA VI takes a reflection it does not trace of a probe. The
+// cone opens with the roughness and is never narrower than the angle whose cosine is 0.8; the
+// probe's first four numbers are all it takes.
+// The editor's own: that the probe is the one the matte light is taken of. The game traces the
+// reflection, and where it does not, reads a volume of such probes about the camera.
+fn mirrored(way: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let r4 = roughness * roughness * roughness * roughness;
+    let k = min(0.8, inverseSqrt(1.0 + 9.0 * r4 * r4));
+    let even = 0.886227 * (1.0 - k * k) * light.around[0].rgb;
+    let leaning = 1.023328 * (1.0 - k * k * k)
+        * (light.around[1].rgb * way.y + light.around[2].rgb * way.z + light.around[3].rgb * way.x);
+    return max(even + leaning, vec3<f32>(0.0)) / (PI * (1.0 - k * k));
 }
 
 fn normal_of(packed_normal: vec4<f32>) -> vec3<f32> {
@@ -200,6 +241,62 @@ fn sunlit(world: vec3<f32>, n_l: f32, pixel: vec2<f32>) -> f32 {
     return squared + clamp(3.0 * p, 0.0, 1.0) * (squared * (3.0 - 2.0 * share) - squared);
 }
 
+// The pixels a side of a tile of the mask, and the bit of a tile's word that asks for the
+// rebuild.
+const TILE: i32 = 16;
+const REBUILD: u32 = 0x4000u;
+
+// How far from the camera's plane the frame shows something at `texel`: the model's surface,
+// else the ground laid under it; nought where it shows neither.
+fn seen_depth(texel: vec2<i32>) -> f32 {
+    let size = vec2<f32>(textureDimensions(depth));
+    let at = (vec2<f32>(texel) + 0.5) / size * 2.0 - 1.0;
+    let clip = vec2<f32>(at.x, -at.y);
+    var far = textureLoad(depth, texel, 0);
+    if far <= 0.0 {
+        let ground = ground_at(clip);
+        if light.laid.w <= 0.0 || !ground.met {
+            return 0.0;
+        }
+        far = ground.far;
+    }
+    let world = light.unproject * vec4<f32>(clip, far, 1.0);
+    return abs(1.0 / world.w);
+}
+
+// The share of the sun's or the moon's light that reaches what the frame shows at `texel`, as
+// GTA VI's lighting program takes it of the screen's mask: the square of the first channel;
+// and where the texel's tile asks for it, the mean of that square and of the squares at the
+// twelve places about the texel that lie as deep as it, to within 0.00275 of its depth.
+// The editor's own: a place outside the frame is left out, as one that lies at no depth is.
+fn sun_share(texel: vec2<i32>) -> f32 {
+    let own = textureLoad(sun_mask, texel, 0).r;
+    var share = own * own;
+    if (textureLoad(sun_tiles, texel / TILE, 0).r & REBUILD) == 0u {
+        return share;
+    }
+    var about = array<vec2<i32>, 12>(
+        vec2<i32>(-1, -1), vec2<i32>(1, -1), vec2<i32>(-1, 1), vec2<i32>(1, 1),
+        vec2<i32>(-2, 0), vec2<i32>(2, 0), vec2<i32>(0, -2), vec2<i32>(0, 2),
+        vec2<i32>(-4, 0), vec2<i32>(4, 0), vec2<i32>(0, -4), vec2<i32>(0, 4),
+    );
+    let deep = seen_depth(texel);
+    let most = vec2<i32>(textureDimensions(sun_mask)) - 1;
+    var held = 1.0;
+    for (var i = 0; i < 12; i++) {
+        let at = texel + about[i];
+        if any(at < vec2<i32>(0)) || any(at > most) {
+            continue;
+        }
+        if abs(seen_depth(at) - deep) < 0.00275 * deep {
+            let root = textureLoad(sun_mask, at, 0).r;
+            share += root * root;
+            held += 1.0;
+        }
+    }
+    return share / held;
+}
+
 // A place on a surface: where it is in the world, the way it faces, its colour, what it
 // reflects head on and how rough it is.
 struct Surface {
@@ -280,18 +377,29 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
     var direct = vec3<f32>(0.0);
     if n_l > 0.0 {
         // A light the clouds hide goes towards what the surroundings give along its way, then
-        // the model's own shadow and the clouds' dim it.
+        // the mask dims it: by the model's own shadow and by the clouds', which the mask holds
+        // as one share, as the game's does.
         var from_light = light.sun.rgb;
         let hazed = select(surroundings(l) * PI, falls_on(l), probed) * light.clouds.w / max(open, 0.001);
         from_light += light.clouds.z * (1.0 - open) * (hazed - from_light);
-        from_light *= sunlit(surface.at, n_l, pixel) * open;
+        from_light *= sun_share(vec2<i32>(pixel));
         direct = (albedo * (1.0 - reflected) * matte + gloss) * from_light * n_l;
     }
     // From all around: the sky and the ground on the colour, and along the mirrored way on the
     // gloss, less as the surface is rougher.
     let grazing = f0 + (max(vec3<f32>(1.0 - roughness), f0) - f0) * pow(1.0 - n_v, 5.0);
     let matte_around = select(surroundings(n), falls_on(n) / PI, probed);
-    let around = albedo * matte_around + grazing * surroundings(reflect(-v, n)) * (1.0 - roughness);
+    var around = albedo * matte_around + grazing * surroundings(reflect(-v, n)) * (1.0 - roughness);
+    if game && probed {
+        // As the game's lighting program weighs the two lights it is handed from all around:
+        // the gloss by what the surface reflects of an even light, and by what its facets
+        // reflect onto one another; the matte by what is left, and by its own share.
+        let fit = fit_at(n_v, roughness);
+        let reflects = f0 * fit.y + (1.0 - f0) * fit.x;
+        let again = 1.0 + f0 * (1.0 / max(fit.y, 1e-3) - 1.0);
+        around = albedo * matte_around * (1.0 - reflects) * fit.z
+            + mirrored(reflect(-v, n), roughness) * reflects * again;
+    }
     return direct + around;
 }
 
@@ -337,6 +445,35 @@ fn ground_at(clip: vec2<f32>) -> Met {
     let seen = light.project * vec4<f32>(at, 1.0);
     let surface = Surface(at, vec3<f32>(0.0, 0.0, 1.0), light.laid.rgb, vec3<f32>(0.04), 1.0);
     return Met(surface, clamp(seen.z / seen.w, 0.0, 1.0), seen.w > 0.0);
+}
+
+// The root of the share of the directional light that reaches what the pixel shows, the
+// model's surface or the ground laid under it: what the shadow map leaves of it, times what the
+// clouds let through, as GTA VI's cascade resolve multiplies its clouds' shadow into the share
+// before it takes the root. One where the pixel shows neither, and nought on what faces away
+// from the light.
+@fragment fn masked(corner: Corner) -> @location(0) vec4<f32> {
+    let texel = vec2<i32>(corner.at.xy);
+    let far = textureLoad(depth, texel, 0);
+    var at: vec3<f32>;
+    var n: vec3<f32>;
+    if far <= 0.0 {
+        let ground = ground_at(corner.clip);
+        if light.laid.w <= 0.0 || !ground.met {
+            return vec4<f32>(1.0);
+        }
+        at = ground.surface.at;
+        n = ground.surface.n;
+    } else {
+        let world = light.unproject * vec4<f32>(corner.clip.x, corner.clip.y, far, 1.0);
+        at = world.xyz / world.w;
+        n = normal_of(textureLoad(normal, texel, 0));
+    }
+    let n_l = max(dot(n, light.towards.xyz), 0.0);
+    if n_l <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(sqrt(sunlit(at, n_l, vec2<f32>(texel)) * light.clouds.x));
 }
 
 // What the frame shows of the light `seen`: exposed, toned and encoded.

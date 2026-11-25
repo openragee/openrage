@@ -1,3 +1,4 @@
+use super::metal::metal_resources;
 use super::*;
 
 /// Every adapter of the machine, or a recorded skip: a CI machine may have none.
@@ -513,18 +514,143 @@ fn many_buffers(buffers: usize, stage: &str, result: &str) -> Ready {
     alone(wgsl(&source), false).unwrap()
 }
 
+/// A stage that binds `buffers` constant buffers declared as a lowered program declares them,
+/// rows of four dwords, and reads a row of each: `stage` and `result` are its attribute and its
+/// result's, and with `input` it takes an input of a vertex.
+fn lowered_buffers(buffers: usize, stage: &str, result: &str, input: bool) -> Ready {
+    let mut source = String::new();
+    for at in 0..buffers {
+        source.push_str(&format!(
+            "@group(0) @binding({at}) var<uniform> b{at}: array<vec4<u32>, 2>;\n"
+        ));
+    }
+    let input = match input {
+        true => "@location(0) at: vec4<f32>",
+        false => "",
+    };
+    source.push_str(&format!(
+        "{stage} fn main({input}) -> {result} vec4<f32> {{\n    var sum = 0u;\n"
+    ));
+    for at in 0..buffers {
+        source.push_str(&format!("    sum += b{at}[1].x;\n"));
+    }
+    source.push_str("    return vec4<f32>(f32(sum));\n}");
+    alone(wgsl(&source), false).unwrap()
+}
+
 #[test]
-fn a_vertex_stage_is_counted_with_its_buffer_of_sizes_and_no_vertex_buffer() {
-    let vertex = |buffers| many_buffers(buffers, "@vertex", "@builtin(position)");
-    // Thirty buffers and the buffer of sizes are the thirty-one Metal binds a stage.
+fn a_vertex_stage_is_held_to_the_sixteen_buffers_wgpu_s_metal_backend_gives_a_pipeline_s() {
+    let vertex = |buffers, input| lowered_buffers(buffers, "@vertex", "@builtin(position)", input);
+    let refused = |layout: u32, vertex_buffers: u32| {
+        Outcome::Rejected(format!(
+            "wgpu's Metal backend gives the vertex stage of a pipeline 16 buffers, its vertex buffers among them, and the vertex stage binds {layout} and is drawn with {vertex_buffers}"
+        ))
+    };
+    // Fifteen buffers and the buffer of sizes are the sixteen; a pipeline with no vertex
+    // buffer is held to them too.
     assert_eq!(
-        metal_resources(&stage_of(&vertex(30)), wgpu::ShaderStages::VERTEX).map(|_| ()),
-        Ok(())
+        metal_text(&vertex(15, false).stages, None),
+        Outcome::Created
     );
+    assert_eq!(metal_text(&vertex(16, false).stages, None), refused(17, 0));
+    // A vertex buffer is one of the sixteen.
+    assert_eq!(metal::vertex_buffers(&stage_of(&vertex(1, true))), 1);
+    assert_eq!(metal::vertex_buffers(&stage_of(&vertex(1, false))), 0);
+    assert_eq!(metal_text(&vertex(14, true).stages, None), Outcome::Created);
+    assert_eq!(metal_text(&vertex(15, true).stages, None), refused(16, 1));
+    // The layout's own count comes first, as the backend lays a pipeline out before it
+    // creates it.
     assert_eq!(
-        metal_resources(&stage_of(&vertex(31)), wgpu::ShaderStages::VERTEX).map(|_| ()),
-        Err("Metal binds 31 buffers a stage, and the vertex stage binds 32".to_owned())
+        metal_text(&vertex(31, false).stages, None),
+        Outcome::Rejected("Metal binds 31 buffers a stage, and the vertex stage binds 32".into())
     );
+}
+
+#[test]
+fn a_pixel_stage_is_held_to_metal_s_thirty_one_buffers_and_binds_no_buffer_of_sizes_unasked() {
+    let pixel = |buffers| lowered_buffers(buffers, "@fragment", "@location(0)", false);
+    assert_eq!(metal_text(&pixel(31).stages, None), Outcome::Created);
+    assert_eq!(
+        metal_text(&pixel(32).stages, None),
+        Outcome::Rejected("Metal binds 31 buffers a stage, and the pixel stage binds 32".into())
+    );
+}
+
+#[test]
+fn metal_s_buffers_are_counted_alike_by_the_layout_and_by_the_binder_s_budget() {
+    use or_shader_front::rdna_bind::budget::Bound;
+    // An array of buffers of dwords is one buffer of arguments, and asks for the buffer of
+    // sizes as a buffer of dwords alone does.
+    let arrayed = wgsl(
+        "struct Cells { first: vec4<u32> }
+@group(0) @binding(0) var<uniform> a: vec4<u32>;
+@group(2) @binding(0) var<storage, read> tables: binding_array<Cells, 4>;
+@fragment fn main() -> @location(0) vec4<f32> { return vec4<f32>(f32(tables[a.x].first.x)); }",
+    );
+    let (resources, buffers) = metal_resources(&arrayed, wgpu::ShaderStages::FRAGMENT)
+        .unwrap()
+        .expect("the renderer's layouts take an array of buffers");
+    assert_eq!((buffers, resources.sizes_buffer), (3, Some(2)));
+    assert_eq!(Bound::of(&arrayed).together(), 3);
+    for (ready, stage) in [
+        (
+            lowered_buffers(7, "@vertex", "@builtin(position)", false),
+            wgpu::ShaderStages::VERTEX,
+        ),
+        (
+            alone(wgsl(COUNTER), false).unwrap(),
+            wgpu::ShaderStages::COMPUTE,
+        ),
+    ] {
+        let module = stage_of(&ready);
+        let (_, buffers) = metal_resources(&module, stage).unwrap().unwrap();
+        assert_eq!(buffers, Bound::of(&module).together());
+    }
+}
+
+#[test]
+fn a_unit_past_metal_s_buffers_is_noted_with_its_count_and_written_once_its_buffers_are_merged() {
+    let ready = lowered_buffers(20, "@vertex", "@builtin(position)", false);
+    assert!(matches!(
+        metal_text(&ready.stages, None),
+        Outcome::Rejected(_)
+    ));
+    assert_eq!(
+        past_notes(&ready.stages),
+        ["past Metal's buffers, vertex stage: 21 buffers (20 constant buffers, 0 buffers of dwords, 0 bound arrays, the buffer of sizes)"]
+    );
+    let (stages, notes) = fitted(&ready.stages);
+    assert_eq!(
+        notes,
+        ["fitted, vertex stage: 6 constant buffers merged into 1"]
+    );
+    assert_eq!(metal_text(&stages, None), Outcome::Created);
+    assert!(past_notes(&stages).is_empty());
+    // A unit within them is left as it is, and nothing is noted.
+    let within = lowered_buffers(15, "@vertex", "@builtin(position)", false);
+    assert!(past_notes(&within.stages).is_empty());
+    let (stages, notes) = fitted(&within.stages);
+    assert!(notes.is_empty());
+    assert_eq!(
+        format!("{:?}", stage_of(&within)),
+        format!(
+            "{:?}",
+            match &stages {
+                Stages::Render(vertex, _) => vertex,
+                Stages::Compute(module) => module,
+            }
+        )
+    );
+    // Buffers that are no rows of dwords are not merged, and the unit says it is still past.
+    let unmerged = many_buffers(20, "@vertex", "@builtin(position)");
+    let (stages, notes) = fitted(&unmerged.stages);
+    assert_eq!(
+        notes,
+        ["fitted, vertex stage: still past Metal's buffers, with 20 constant buffers of 16 to 16 bytes, 0 buffers of dwords, 0 bound arrays"]
+    );
+    assert!(matches!(metal_text(&stages, None), Outcome::Rejected(_)));
+    assert_eq!(metal_fitted_adapter().shader_compiler, "text");
+    assert_ne!(metal_fitted_adapter().name, metal_text_adapter().name);
 }
 
 /// The first stage of `ready`.
@@ -558,4 +684,22 @@ fn a_unit_that_crosses_its_stages_with_more_locations_than_ios_links_is_noted() 
     };
     assert!(wide(16).notes.iter().any(|note| note == PAST_IOS));
     assert!(!wide(15).notes.iter().any(|note| note == PAST_IOS));
+}
+
+#[test]
+fn what_the_binder_did_to_a_fed_stage_is_noted_by_what_became_of_its_noughts() {
+    use or_shader_front::rdna_bind::budget::Fitted;
+    let done = Fitted {
+        own: vec![(0, 1), (0, 2)],
+        shared: vec![((0, 5), (0, 4))],
+        merged: Vec::new(),
+    };
+    assert_eq!(
+        metal::fed_notes("vertex", &done),
+        [
+            "as fed, vertex stage: 2 constant buffers left at nought are its own noughts",
+            "as fed, vertex stage: 1 buffers left at nought read another's buffer"
+        ]
+    );
+    assert!(metal::fed_notes("pixel", &Fitted::default()).is_empty());
 }

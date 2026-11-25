@@ -713,7 +713,7 @@ compiled by DXC, since FXC refuses valid ones (a gradient inside a loop, a barri
 branch) and has no 64-bit integers: `instance::dx12_compiler` takes the
 `dxcompiler.dll` beside the program, else the first on `PATH`, else the newest
 Windows SDK's, and falls back to FXC with a warning that says so where there is
-none; the app then says it in a notice when it starts (`instance::fell_back_to_fxc`),
+none; the app then says it once a run in a notice whose Details button brings the Log forward (`instance::fell_back_to_fxc`),
 since a package for Windows ships neither `dxcompiler.dll` nor `dxil.dll`
 (whether the SDK's licence lets them be shipped is the owner's to rule on).
 `WGPU_DX12_COMPILER` overrides the choice,

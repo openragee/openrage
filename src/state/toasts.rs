@@ -33,6 +33,8 @@ pub enum ToastAction {
     RenamePack,
     /// Save this document, which an edit made from another document's tab changed.
     SavePack(super::DocumentId),
+    /// Bring the Log forward, which holds the whole of a notice too long for a toast.
+    ShowLog,
 }
 
 impl ToastAction {
@@ -46,6 +48,7 @@ impl ToastAction {
             Self::ShowBuild => tr!("Show build"),
             Self::RenamePack => tr!("Rename pack…"),
             Self::SavePack(_) => tr!("Save the pack"),
+            Self::ShowLog => tr!("Details"),
         }
     }
 }

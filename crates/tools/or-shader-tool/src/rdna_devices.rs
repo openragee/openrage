@@ -13,7 +13,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use naga::ShaderStage;
-use or_io::gta5::shaders::sgd5::Sgd5File;
+use or_io::gta5::shaders::sgd5::{Sgd5File, Sgd5Table};
 use or_io::gta5::shaders::sgd5_pack::vertex_pixel_passes;
 use or_renderer::game_shaders::bindings::arrayed;
 use or_renderer::game_shaders::pipeline::{entry_of, fragment_targets, vertex_streams};
@@ -26,8 +26,12 @@ use sha1::{Digest, Sha1};
 
 use crate::device_check::{matching_vertex_shader, one_line};
 use crate::rdna_report::{
-    missing_feature, Adapter, Cache, Container, Line, Outcome, Report, Run, VERSION,
+    missing_feature, reason, Adapter, Cache, Container, Line, Outcome, Report, Run, VERSION,
 };
+
+mod metal;
+use metal::{fitted, metal_text, past_notes};
+pub use metal::{metal_fitted_adapter, metal_text_adapter, METAL_VERSIONS};
 
 /// The mark of a line a worker means its parent to read: a driver may write to the same stream.
 const MARK: &str = "@@";
@@ -317,6 +321,7 @@ pub const RUN_ON_SOFTWARE: &str = "a program is run on a software adapter alone"
 enum Pipeline {
     Render {
         pipeline: wgpu::RenderPipeline,
+        /// The bytes of a vertex of its one vertex buffer; nought where it has none.
         vertex_stride: u64,
         colours: Vec<Option<wgpu::TextureFormat>>,
         depth: bool,
@@ -384,6 +389,11 @@ fn create(
             let mut modules = vec![(vertex, wgpu::ShaderStages::VERTEX)];
             modules.extend((fragment.iter()).map(|pixel| (pixel, wgpu::ShaderStages::FRAGMENT)));
             let stated = stated(&modules);
+            let vertex_buffer = [wgpu::VertexBufferLayout {
+                array_stride: streams.vertex_stride,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &streams.vertex,
+            }];
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: None,
                 layout: stated.as_ref().map(|((layout, _), _)| layout),
@@ -391,11 +401,10 @@ fn create(
                     module: &shader(vertex),
                     entry_point: Some(&entry.name),
                     compilation_options: Default::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: streams.vertex_stride,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &streams.vertex,
-                    }],
+                    // None where the stage takes no input of a vertex, as the renderer draws a
+                    // mesh program lowered to a vertex stage: Metal counts a vertex buffer
+                    // against the stage's buffers.
+                    buffers: &vertex_buffer[..metal::vertex_buffers(vertex) as usize],
                 },
                 // Points where the program is run: a stage fed noughts gives three corners at one
                 // place, a triangle of which covers no pixel, and a point at the middle covers one.
@@ -429,7 +438,10 @@ fn create(
             Ok(Made {
                 pipeline: Pipeline::Render {
                     pipeline,
-                    vertex_stride: streams.vertex_stride,
+                    vertex_stride: match streams.vertex.is_empty() {
+                        true => 0,
+                        false => streams.vertex_stride,
+                    },
                     colours,
                     depth: writes_depth || no_colour,
                 },
@@ -704,7 +716,9 @@ impl Made {
                 for (group, bind_group) in bound {
                     pass.set_bind_group(*group, bind_group, &[]);
                 }
-                pass.set_vertex_buffer(0, vertices.slice(..));
+                if *vertex_stride > 0 {
+                    pass.set_vertex_buffer(0, vertices.slice(..));
+                }
                 pass.draw(0..if run { RUN_VERTICES } else { 0 }, 0..1);
             }
         }
@@ -1196,6 +1210,11 @@ impl Ready {
     fn settle(&mut self) {
         arrays_apart(&mut self.stages);
         self.bare.as_mut().map(arrays_apart);
+        self.noted();
+    }
+
+    /// Notes what the unit asks of any device.
+    fn noted(&mut self) {
         // The pass with no optional part, where there is one, is what a device has to take.
         let least = self.bare.as_ref().unwrap_or(&self.stages);
         self.notes.extend(least.asked());
@@ -1220,6 +1239,69 @@ struct Plan {
     programs: Vec<Option<(u64, usize)>>,
 }
 
+/// What the binder reads of a pair beyond its programs' code.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct Tables {
+    /// Each program's own table of variables, by the program's index.
+    programs: BTreeMap<usize, Sgd5Table>,
+    /// The first table of each effect a pair is fed as.
+    effects: Vec<Sgd5Table>,
+    /// By a pair's place among the units, the place in `effects` of the first effect that
+    /// draws with it.
+    effect_of: BTreeMap<usize, usize>,
+}
+
+/// The tables of the pairs of `units` a pass of `file`'s effects draws with: of the techniques
+/// `names` where any is named, and of the units of `only` where it is given.
+fn tables_of(
+    file: &Sgd5File,
+    units: &[Unit],
+    names: &[&str],
+    only: Option<&BTreeSet<usize>>,
+) -> Tables {
+    let index: HashMap<usize, usize> = (file.programs.iter().enumerate())
+        .map(|(i, program)| (program.at, i))
+        .collect();
+    let place: HashMap<Unit, usize> = units.iter().enumerate().map(|(i, u)| (*u, i)).collect();
+    let mut tables = Tables::default();
+    for effect in &file.effects {
+        // A technique's passes follow those of the techniques before it.
+        let mut wanted = BTreeSet::new();
+        let mut first = 0;
+        for technique in &effect.techniques {
+            let passes = first..first + usize::from(technique.passes);
+            first = passes.end;
+            if names.is_empty() || names.contains(&technique.name.as_str()) {
+                wanted.extend(passes);
+            }
+        }
+        let mut kept = None;
+        for (pass, vertex, pixel) in vertex_pixel_passes(file, effect) {
+            let (Some(&vertex), Some(&pixel)) = (index.get(&vertex.at), index.get(&pixel.at))
+            else {
+                continue;
+            };
+            let Some(&at) = place.get(&Unit::Pair { vertex, pixel }) else {
+                continue;
+            };
+            let asked = only.is_none_or(|only| only.contains(&at));
+            if !wanted.contains(&pass) || !asked || tables.effect_of.contains_key(&at) {
+                continue;
+            }
+            let effect_at = *kept.get_or_insert_with(|| {
+                tables.effects.push(effect.parameters.clone());
+                tables.effects.len() - 1
+            });
+            tables.effect_of.insert(at, effect_at);
+            for program in [vertex, pixel] {
+                let table = || file.programs[program].variables.clone();
+                tables.programs.entry(program).or_insert_with(table);
+            }
+        }
+    }
+    tables
+}
+
 /// A container's programs inflated into one file in a folder, with the units beside it: reading
 /// the container itself takes a worker seconds and a gigabyte, and a worker is started often.
 pub struct Programs {
@@ -1227,6 +1309,8 @@ pub struct Programs {
     blob: Mutex<std::fs::File>,
     /// Per adapter, in the order they open, the units not to build on it ([`Options::avoid`]).
     avoid: Vec<BTreeSet<String>>,
+    /// What the binder reads of the pairs, where the run feeds them as it does ([`Ways::fed`]).
+    tables: Option<Tables>,
 }
 
 /// What a unit is skipped for on an adapter it ended the process on before.
@@ -1267,6 +1351,12 @@ impl Programs {
         std::fs::write(dir.join("plan.json"), text).map_err(said)
     }
 
+    /// Writes into `dir` what the binder reads of the pairs.
+    fn write_tables(dir: &Path, tables: &Tables) -> Result<(), String> {
+        let text = serde_json::to_string(tables).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("tables.json"), text).map_err(|e| format!("{}: {e}", dir.display()))
+    }
+
     /// Writes into `dir` the units each adapter is not to build.
     fn write_avoided(dir: &Path, avoid: &[BTreeSet<String>]) -> Result<(), String> {
         let text = serde_json::to_string(avoid).map_err(|e| e.to_string())?;
@@ -1279,10 +1369,13 @@ impl Programs {
         let avoid = (std::fs::read_to_string(dir.join("avoid.json")).ok())
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
+        let tables = (std::fs::read_to_string(dir.join("tables.json")).ok())
+            .and_then(|text| serde_json::from_str(&text).ok());
         Ok(Self {
             plan: serde_json::from_str(&text).map_err(|e| e.to_string())?,
             blob: Mutex::new(std::fs::File::open(dir.join("programs.bin")).map_err(said)?),
             avoid,
+            tables,
         })
     }
 
@@ -1392,6 +1485,107 @@ pub fn translated(programs: &Programs, unit: Unit, block: usize) -> Result<Ready
     }
 }
 
+/// What a pair the binder hands the renderer no pass of is stopped for, before the binder's words.
+pub const UNFED_PAIR: &str = "the binder hands the renderer no pass";
+
+/// The pair of the programs `vertex` and `pixel`, the unit at `place`, as the binder hands it to
+/// the renderer: each stage fed by its own table and that of the first effect that draws with
+/// the pair, then the two linked. With `metal`, each stage's buffers are brought within what
+/// wgpu's Metal backend takes, by the bindings the editor leaves at nought first and by merges
+/// after; without, as for a device with default limits. Also what a report notes of what was
+/// done to each stage's buffers.
+fn fed_pair(
+    programs: &Programs,
+    place: usize,
+    (vertex, pixel): (usize, usize),
+    metal: bool,
+) -> Result<(Ready, Vec<String>), String> {
+    use rdna_bind::shading;
+    let tables = (programs.tables.as_ref()).ok_or("the run kept no tables for the binder")?;
+    let table = |index: usize| {
+        (tables.programs.get(&index)).ok_or("the run kept no table of a program of the pair")
+    };
+    let effect = (tables.effect_of.get(&place))
+        .and_then(|at| tables.effects.get(*at))
+        .ok_or("the run kept no effect of the pair")?;
+    let native = |index, stage: &str| {
+        rdna_bind::native(&programs.container(index)?)
+            .map_err(|e| format!("pair, {stage}: {}", e.name()))
+    };
+    let (first, second) = (native(vertex, "vertex")?, native(pixel, "pixel")?);
+    let mut notes = Vec::new();
+    let mut fed = |native: &rdna_bind::Native,
+                   lowered: rdna::Lowered,
+                   table: &Sgd5Table,
+                   stage: wgpu::ShaderStages,
+                   word: &str| {
+        let unfed = |why: shading::Unfed| {
+            let why = reason(&why.to_string());
+            format!("{UNFED_PAIR}: {word} program: {why}")
+        };
+        if !metal {
+            let (fed, done) =
+                shading::feed_noting(native, lowered, table, effect).map_err(unfed)?;
+            notes.extend(metal::fed_notes(word, &done));
+            return Ok::<_, String>(fed);
+        }
+        // The renderer draws a mesh program lowered to a vertex stage with no vertex buffer.
+        let budget = metal::metal_budget(stage, 0);
+        let (fed, done) =
+            shading::feed_within(native, lowered, table, effect, &budget).map_err(unfed)?;
+        notes.extend(metal::fit_notes(word, &done, &budget, &fed.module));
+        Ok(fed)
+    };
+    let fragment = rdna_bind::lower(&second, &BTreeSet::new())
+        .map_err(|e| format!("pair, pixel: {}", e.name()))?;
+    let (half_slots, mut subgroups) = (fragment.half_slots.clone(), fragment.subgroups);
+    let pixel = fed(
+        &second,
+        fragment,
+        table(pixel)?,
+        wgpu::ShaderStages::FRAGMENT,
+        "pixel",
+    )?;
+    // The mesh stage exports as halves what the pixel stage reads as halves.
+    let slots = shading::parameter_slots(&first.outputs);
+    let halves: BTreeSet<u8> = (half_slots.iter())
+        .filter_map(|slot| shading::parameter_of(&slots, *slot))
+        .collect();
+    let geometry =
+        rdna_bind::lower(&first, &halves).map_err(|e| format!("pair, vertex: {}", e.name()))?;
+    subgroups |= geometry.subgroups;
+    let mesh = fed(
+        &first,
+        geometry,
+        table(vertex)?,
+        wgpu::ShaderStages::VERTEX,
+        "vertex",
+    )?;
+    let (mut vertex, mut pixel) = (
+        Arc::unwrap_or_clone(mesh.module),
+        Arc::unwrap_or_clone(pixel.module),
+    );
+    let linked = link::link(&mut vertex, &mut pixel, &link::Options::default())
+        .map_err(|why| format!("the stages do not join: {why}"))?;
+    for module in [&vertex, &pixel] {
+        rdna::check(module)
+            .map_err(|why| format!("naga refuses a joined module: {}", one_line(&why)))?;
+    }
+    let stages = Stages::Render(vertex, Some(pixel));
+    // The binder has placed each stage's arrays in their own groups already.
+    let mut ready = Ready {
+        needs: stages.needs(),
+        stages,
+        bare: None,
+        locations: linked.locations,
+        clips: false,
+        subgroups,
+        notes: Vec::new(),
+    };
+    ready.noted();
+    Ok((ready, notes))
+}
+
 /// The component type a signature gives a register of 16-bit floats.
 const FLOAT16: u32 = 6;
 
@@ -1403,185 +1597,6 @@ pub const UNFED: &str =
 /// of 64-bit texels cannot be updated in a step.
 pub const NO_64_BIT_UPDATE: &str =
     "TEXTURE_INT64_ATOMIC (offered, but no R64Uint texture of the adapter is updated in a step)";
-
-/// The versions of Metal's shading language the text is written for, each with the first macOS
-/// and iOS that take it: what wgpu asks naga for on a Metal device of that system. The second
-/// is the oldest on which wgpu's Metal backend updates a texture in a step.
-pub const METAL_VERSIONS: [((u8, u8), &str); 2] =
-    [((3, 0), "macOS 13, iOS 16"), ((3, 1), "macOS 14, iOS 17")];
-
-/// What Metal binds a stage, as wgpu's Metal backend states it of a Mac: buffers, textures and
-/// samplers.
-const METAL_STAGE: [(&str, u32); 3] = [("buffers", 31), ("textures", 128), ("samplers", 16)];
-
-/// Where each resource of a stage of `module` goes in Metal's tables, numbered as wgpu's Metal
-/// backend numbers a pipeline layout: in the order of the groups and of the bindings in each, an
-/// array as one buffer of arguments, then a buffer of sizes. `None` where the renderer's layouts
-/// do not take the module, which is then written with made-up numbers.
-///
-/// # Errors
-/// Where the stage binds more than [`METAL_STAGE`], which the backend refuses the layout for.
-fn metal_resources(
-    module: &naga::Module,
-    stage: wgpu::ShaderStages,
-) -> Result<Option<naga::back::msl::EntryPointResources>, String> {
-    use naga::back::msl::{BindSamplerTarget, BindTarget};
-    let Some((groups, _)) = groups(&[(module, stage)]) else {
-        return Ok(None);
-    };
-    let mut resources = naga::back::msl::EntryPointResources::default();
-    let (mut bound, mut sized) = ([0u32; 3], stage == wgpu::ShaderStages::VERTEX);
-    let mut next = |kind: usize| {
-        bound[kind] += 1;
-        (bound[kind] - 1) as u8
-    };
-    for (group, entries) in &groups {
-        let mut entries: Vec<_> = entries.iter().map(|(entry, _)| entry).collect();
-        entries.sort_by_key(|entry| entry.binding);
-        for entry in entries {
-            let mut target = BindTarget::default();
-            match entry.ty {
-                _ if entry.count.is_some() => target.buffer = Some(next(0)),
-                wgpu::BindingType::Buffer { ty, .. } => {
-                    target.buffer = Some(next(0));
-                    if let wgpu::BufferBindingType::Storage { read_only } = ty {
-                        target.mutable = !read_only;
-                        sized = true;
-                    }
-                }
-                wgpu::BindingType::Sampler(_) => {
-                    target.sampler = Some(BindSamplerTarget::Resource(next(2)));
-                }
-                wgpu::BindingType::StorageTexture { access, .. } => {
-                    target.texture = Some(next(1));
-                    target.mutable = access != wgpu::StorageTextureAccess::ReadOnly;
-                }
-                _ => target.texture = Some(next(1)),
-            }
-            let at = naga::ResourceBinding {
-                group: *group,
-                binding: entry.binding,
-            };
-            resources.resources.insert(at, target);
-        }
-    }
-    // No vertex buffer is counted: the renderer's passes draw a lowered stage with none.
-    if sized {
-        resources.sizes_buffer = Some(next(0));
-    }
-    match (METAL_STAGE.iter().zip(bound)).find(|((_, most), bound)| bound > most) {
-        Some(((what, most), bound)) => {
-            let stage = match stage {
-                wgpu::ShaderStages::VERTEX => "vertex",
-                wgpu::ShaderStages::FRAGMENT => "pixel",
-                _ => "compute",
-            };
-            Err(format!(
-                "Metal binds {most} {what} a stage, and the {stage} stage binds {bound}"
-            ))
-        }
-        None => Ok(Some(resources)),
-    }
-}
-
-/// `module` as Metal's shading language of `version`, written with the checks a Metal device's
-/// writer is given and with its resources at `resources`.
-fn metal_source(
-    module: &naga::Module,
-    info: &naga::valid::ModuleInfo,
-    version: (u8, u8),
-    resources: Option<naga::back::msl::EntryPointResources>,
-) -> Result<String, String> {
-    use naga::back::msl;
-    use naga::proc::{BoundsCheckPolicies, BoundsCheckPolicy};
-    let entry = module.entry_points.first().map(|entry| entry.name.clone());
-    let options = msl::Options {
-        lang_version: version,
-        fake_missing_bindings: resources.is_none(),
-        per_entry_point_map: (entry.zip(resources).into_iter()).collect(),
-        bounds_check_policies: BoundsCheckPolicies {
-            index: BoundsCheckPolicy::Restrict,
-            buffer: BoundsCheckPolicy::Restrict,
-            image_load: BoundsCheckPolicy::Restrict,
-            binding_array: BoundsCheckPolicy::Unchecked,
-        },
-        zero_initialize_workgroup_memory: true,
-        force_loop_bounding: true,
-        ..Default::default()
-    };
-    let (text, written) =
-        msl::write_string(module, info, &options, &msl::PipelineOptions::default())
-            .map_err(|e| one_line(&e.to_string()))?;
-    // The writer gives the text and says apart which entry points it could not write.
-    match written.entry_point_names.into_iter().find_map(Result::err) {
-        Some(e) => Err(format!(
-            "an entry point is not written: {}",
-            one_line(&e.to_string())
-        )),
-        None => Ok(text),
-    }
-}
-
-/// Whether naga writes `stages` as Metal's shading language, validated for what its writer
-/// supports and counted against what Metal binds a stage: all of Metal that a machine with no
-/// Metal device can check. A unit that updates a texture in a step is skipped by the version of
-/// [`METAL_VERSIONS`] that does; naga writes the same text for both. With `keep`, a folder and the unit's name, each stage's text is saved
-/// there under the version it was written for, for a Mac's own compiler.
-// ponytail: the text is not compiled here; only Metal's compiler says whether it builds.
-fn metal_text(stages: &Stages, keep: Option<(&Path, &str)>) -> Outcome {
-    use naga::back::msl;
-    use naga::valid::{ValidationFlags, Validator};
-    let write = |module: &naga::Module, stage: wgpu::ShaderStages, tag: &str| {
-        let info = Validator::new(ValidationFlags::all(), msl::supported_capabilities())
-            .validate(module)
-            .map_err(|refusal| {
-                let said = format!("{:?}", refusal.into_inner());
-                match missing_feature(&said) {
-                    Some(capability) => Outcome::Skipped(capability),
-                    None => Outcome::Rejected(one_line(&said)),
-                }
-            })?;
-        let resources = metal_resources(module, stage).map_err(Outcome::Rejected)?;
-        let at = usize::from(needs(module).contains(wgpu::Features::TEXTURE_ATOMIC));
-        let (version, _) = METAL_VERSIONS[at];
-        let text = metal_source(module, &info, version, resources).map_err(Outcome::Rejected)?;
-        if let Some((dir, name)) = keep {
-            let dir = dir.join(format!("{}.{}", version.0, version.1));
-            let file = dir.join(format!("{name}.{tag}.metal"));
-            std::fs::create_dir_all(&dir)
-                .and_then(|()| std::fs::write(&file, text))
-                .map_err(|e| Outcome::Rejected(format!("{}: {e}", file.display())))?;
-        }
-        Ok(at)
-    };
-    let written = catch_unwind(AssertUnwindSafe(|| match stages {
-        Stages::Compute(module) => write(module, wgpu::ShaderStages::COMPUTE, "compute"),
-        Stages::Render(module, None) => write(module, wgpu::ShaderStages::VERTEX, "vertex"),
-        Stages::Render(vertex, Some(pixel)) => {
-            let vertex = write(vertex, wgpu::ShaderStages::VERTEX, "vertex")?;
-            Ok(vertex.max(write(pixel, wgpu::ShaderStages::FRAGMENT, "pixel")?))
-        }
-    }));
-    match written {
-        Ok(Ok(0)) => Outcome::Created,
-        Ok(Ok(at)) => {
-            let ((major, minor), systems) = METAL_VERSIONS[at];
-            Outcome::Skipped(format!("Metal's language {major}.{minor} ({systems})"))
-        }
-        Ok(Err(outcome)) => outcome,
-        Err(_) => Outcome::Rejected("naga's MSL writer panicked".into()),
-    }
-}
-
-/// The adapter a run of [`Ways::msl`] is counted under.
-pub fn metal_text_adapter() -> Adapter {
-    Adapter {
-        name: "naga's MSL writer, no device".into(),
-        backend: "Metal".into(),
-        shader_compiler: "text".into(),
-        ..Default::default()
-    }
-}
 
 /// `ready` on `gpu`, or the feature it needs that `gpu` lacks.
 fn tried(
@@ -1671,14 +1686,29 @@ pub fn worker(
                 block,
                 adapter: None,
             })?;
-            let ready = match translated(programs, what, block) {
+            let fed = match (ways.fed, what) {
+                (true, Unit::Pair { vertex, pixel }) => Some((vertex, pixel)),
+                _ => None,
+            };
+            let translated = match fed {
+                Some(pair) => fed_pair(programs, unit, pair, false).map(|(mut ready, notes)| {
+                    ready.notes.extend(notes);
+                    ready
+                }),
+                None => translated(programs, what, block),
+            };
+            let ready = match translated {
                 Ok(ready) => ready,
                 Err(why) => {
                     say(Line::Front { unit, block, why })?;
                     continue;
                 }
             };
-            for what in &ready.notes {
+            let past = match ways.msl {
+                true => past_notes(&ready.stages),
+                false => Vec::new(),
+            };
+            for what in ready.notes.iter().chain(&past) {
                 let what = what.clone();
                 say(Line::Note { unit, block, what })?;
             }
@@ -1707,6 +1737,7 @@ pub fn worker(
                 })?;
             }
             // The text is one more adapter, after the devices.
+            let mut written = None;
             if ways.msl && passed <= gpus.len() {
                 let adapter = gpus.len();
                 say(Line::Begin {
@@ -1718,6 +1749,46 @@ pub fn worker(
                 let name = what.name(block);
                 let keep = (ways.msl_dir.as_deref()).map(|dir| (dir, name.as_str()));
                 let outcome = metal_text(&ready.stages, keep);
+                written = Some(outcome.clone());
+                let ms = start.elapsed().as_secs_f64() * 1000.0;
+                say(Line::Device {
+                    unit,
+                    block,
+                    adapter,
+                    outcome,
+                    ms,
+                })?;
+            }
+            // The text of the unit with its buffers fitted is one more again.
+            if ways.fit && passed <= gpus.len() + 1 {
+                let adapter = gpus.len() + 1;
+                say(Line::Begin {
+                    unit,
+                    block,
+                    adapter: Some(adapter),
+                })?;
+                let start = Instant::now();
+                let name = what.name(block);
+                let dir = ways.msl_dir.as_deref().map(|dir| dir.join("fitted"));
+                let keep = dir.as_deref().map(|dir| (dir, name.as_str()));
+                let fit = match fed {
+                    Some(pair) => fed_pair(programs, unit, pair, true)
+                        .map(|(ready, notes)| (ready.stages, notes)),
+                    None => Ok(fitted(&ready.stages)),
+                };
+                let outcome = match fit {
+                    // A unit nothing was done to is the text just written, where no file is kept.
+                    Ok((_, notes)) if notes.is_empty() && fed.is_none() && keep.is_none() => {
+                        written.unwrap_or_else(|| metal_text(&ready.stages, None))
+                    }
+                    Ok((stages, notes)) => {
+                        for what in notes {
+                            say(Line::Note { unit, block, what })?;
+                        }
+                        metal_text(&stages, keep)
+                    }
+                    Err(why) => Outcome::Rejected(why),
+                };
                 let ms = start.elapsed().as_secs_f64() * 1000.0;
                 say(Line::Device {
                     unit,
@@ -1810,6 +1881,12 @@ pub struct Ways {
     pub msl: bool,
     /// Where each unit's Metal text is kept, a folder a language version.
     pub msl_dir: Option<PathBuf>,
+    /// Write each unit as Metal's shading language once more with its buffers brought within
+    /// what wgpu's Metal backend takes, counted as another adapter of its own.
+    pub fit: bool,
+    /// Check each pair as the binder hands it to the renderer, fed by its tables, where the
+    /// binder hands it one: a pair it refuses reaches no device, by the binder's words.
+    pub fed: bool,
     /// Put to an adapter what the renderer refuses for its driver too
     /// ([`instance::refused_by_driver`]), which a check otherwise skips there: how a run finds
     /// out whether that driver still ends the process on it.
@@ -1891,6 +1968,12 @@ fn one_worker(
     }
     if options.ways.msl {
         command.arg("--msl");
+    }
+    if options.ways.fit {
+        command.arg("--fit");
+    }
+    if options.ways.fed {
+        command.arg("--fed");
     }
     if options.ways.try_refused {
         command.arg("--try-refused");
@@ -2061,6 +2144,9 @@ pub fn run(
     if options.ways.msl {
         adapters.push((metal_text_adapter(), None));
     }
+    if options.ways.fit {
+        adapters.push((metal_fitted_adapter(), None));
+    }
     if adapters.is_empty() {
         let unsupported = instance::UNSUPPORTED;
         return Err(format!("no adapter a device opens on. {unsupported}"));
@@ -2077,6 +2163,11 @@ pub fn run(
         (only, picked) => only.or_else(|| picked.clone()),
     };
     Programs::write(&scratch, &file, body, &units, only.as_ref())?;
+    if options.ways.fed {
+        let names: Vec<&str> = options.techniques.iter().map(String::as_str).collect();
+        let tables = tables_of(&file, &units, &names, only.as_ref());
+        Programs::write_tables(&scratch, &tables)?;
+    }
     if let Some(earlier) = &options.avoid {
         let same = |run: &&Run, adapter: &Adapter| {
             let (a, b) = (&run.adapter, adapter);

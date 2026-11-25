@@ -853,6 +853,10 @@ impl AppState {
                 self.workbench.wardrobe.rename_asked = true;
             }
             ToastAction::SavePack(pack) => self.save_pack(pack),
+            ToastAction::ShowLog => {
+                let panel = crate::ui::panels::registry::ids::LOG;
+                self.workspace_docks.reveal(self.active_workspace, panel);
+            }
         }
     }
 }

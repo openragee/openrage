@@ -255,7 +255,7 @@ mod tests {
         let stages: Vec<&str> = (module.entry_points.iter())
             .map(|entry| entry.name.as_str())
             .collect();
-        assert_eq!(stages, ["at_corner", "lit", "metered"]);
+        assert_eq!(stages, ["at_corner", "masked", "lit", "metered"]);
         // The light's block is as long as the bytes a frame writes of it.
         let light = (module.types.iter())
             .find(|(_, ty)| ty.name.as_deref() == Some("Light"))

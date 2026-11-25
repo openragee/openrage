@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -308,11 +309,32 @@ pub(crate) fn configured_egui_context(
     egui_ctx
 }
 
-/// The notice that Direct3D 12 compiles with FXC, which says `message`.
-// ⚠ It is made before the device is asked for and the first frame drawn: a toast that times out
-// would be gone, or nearly, when a person first sees the window.
-fn fxc_notice(message: &str) -> crate::state::toasts::Toast {
-    crate::state::toasts::Toast::warning(message).lasting()
+/// Whether this run has said that Direct3D 12 compiles with FXC: a lost device is asked for
+/// again every two seconds until one opens, and each asking finds the same compiler.
+static FXC_NOTICED: AtomicBool = AtomicBool::new(false);
+
+/// What the toast of FXC says: short enough to show whole in a toast's rows, in every language.
+fn fxc_in_short() -> &'static str {
+    tr!("Direct3D 12 is compiling shaders with FXC, which refuses some GTA VI shader programs, so the models that need them are drawn in Material. The Log says how to change that.")
+}
+
+/// What the Log says of FXC: why, what it costs, and the two ways out.
+fn fxc_in_full() -> &'static str {
+    tr!("Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan.")
+}
+
+/// Says that Direct3D 12 compiles with FXC, once for each `noticed`: the whole of it to the Log,
+/// and a toast with a button that brings the Log forward.
+// ⚠ It is said before the device is asked for and the first frame drawn: a toast that times out
+// would be gone, or nearly, when a person first sees the window. So it stays until it is clicked.
+fn notice_fxc(toasts: &mut crate::state::toasts::Toasts, noticed: &AtomicBool) {
+    use crate::state::toasts::{Toast, ToastAction};
+    if noticed.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    tracing::warn!("{}", fxc_in_full());
+    let short = Toast::warning(fxc_in_short()).with_action(ToastAction::ShowLog);
+    toasts.push(short.lasting());
 }
 
 impl App {
@@ -349,7 +371,7 @@ impl App {
         })?;
         tracing::info!("Using GPU: {}", adapter.get_info().name);
         if or_renderer::instance::fell_back_to_fxc(adapter.get_info().backend) {
-            self.app_state.toasts.push(fxc_notice(tr!("Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan.")));
+            notice_fxc(&mut self.app_state.toasts, &FXC_NOTICED);
         }
 
         let adapter_features = adapter.features();
@@ -482,11 +504,94 @@ mod tests {
     }
 
     #[test]
-    fn the_notice_of_fxc_stays_up_until_it_is_clicked_away() {
-        let notice = fxc_notice("FXC");
-        assert_eq!(notice.toast_type, crate::state::ToastType::Warning);
-        // A start-up takes seconds before its first frame, and the notice is four sentences.
-        assert!(notice.duration >= std::time::Duration::from_secs(60 * 60));
+    fn the_notice_of_fxc_is_given_once_a_run_and_stays_until_it_is_clicked_away() {
+        use crate::state::toasts::{ToastAction, Toasts};
+        let _english = crate::i18n::pin("en");
+        let (mut toasts, noticed) = (Toasts::default(), AtomicBool::new(false));
+        // A lost device is asked for again and again, and each asking finds FXC.
+        for _ in 0..3 {
+            notice_fxc(&mut toasts, &noticed);
+        }
+        let shown: Vec<_> = toasts.iter().collect();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].toast_type, crate::state::ToastType::Warning);
+        // A start-up takes seconds before its first frame.
+        assert!(shown[0].duration >= std::time::Duration::from_secs(60 * 60));
+        // The two ways out are in the Log, which the toast's button brings forward.
+        assert_eq!(shown[0].action, Some(ToastAction::ShowLog));
+        let full = fxc_in_full();
+        assert!(full.contains("dxil.dll") && full.contains("WGPU_BACKEND=vulkan"));
+        let mut state = crate::state::AppState::from_prefs(crate::state::Prefs::default());
+        state.run_toast_action(ToastAction::ShowLog);
+        let log = crate::ui::panels::registry::ids::LOG;
+        let on_screen = state.active_workspace;
+        assert!(state.workspace_docks.is_revealing(on_screen, log));
+    }
+
+    /// Whether the one toast of `toasts` draws its message cut short, in a frame of `ctx`,
+    /// and the rows it draws it in; `None` where no frame draws it.
+    fn cut_in_a_toast(
+        ctx: &egui::Context,
+        toasts: &mut crate::state::toasts::Toasts,
+    ) -> Option<(bool, usize)> {
+        fn texts(shape: &egui::Shape, out: &mut Vec<Arc<egui::Galley>>) {
+            match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                egui::Shape::Text(text) => out.push(text.galley.clone()),
+                _ => {}
+            }
+        }
+        let message = toasts.iter().next()?.message.clone();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 720.0));
+        let mut drawn = Vec::new();
+        // A toast's first frame only sizes it.
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            };
+            let output = ctx.run_ui(input, |ui| {
+                super::super::modals::draw_toasts(ui.ctx(), toasts, &[]);
+            });
+            drawn.clear();
+            for clipped in &output.shapes {
+                texts(&clipped.shape, &mut drawn);
+            }
+        }
+        (drawn.iter())
+            .find(|galley| galley.job.text == message)
+            .map(|galley| (galley.elided, galley.rows.len()))
+    }
+
+    #[test]
+    fn the_notice_of_fxc_shows_whole_in_a_toast_in_every_language() {
+        use crate::state::toasts::{Toast, ToastAction, Toasts};
+        let _serial = theme::serial();
+        let mut rows = Vec::new();
+        for language in crate::i18n::languages() {
+            let _pinned = crate::i18n::pin(&language.code);
+            // The fonts are ordered for the language, as a window's are.
+            let ctx = configured_egui_context(None, &AppearancePrefs::default());
+            // The notice as the app gives it.
+            let mut toasts = Toasts::default();
+            notice_fxc(&mut toasts, &AtomicBool::new(false));
+            let drawn = cut_in_a_toast(&ctx, &mut toasts);
+            let Some((false, took)) = drawn else {
+                panic!("{}: {drawn:?}: {}", language.code, fxc_in_short());
+            };
+            rows.push((language.code.as_str(), took));
+        }
+        // The measure can fail: the whole text, which the toast held before, is cut.
+        let _english = crate::i18n::pin("en");
+        let ctx = configured_egui_context(None, &AppearancePrefs::default());
+        let mut toasts = Toasts::default();
+        let whole = Toast::warning(fxc_in_full()).with_action(ToastAction::ShowLog);
+        toasts.push(whole.lasting());
+        let whole = cut_in_a_toast(&ctx, &mut toasts);
+        assert!(
+            matches!(whole, Some((true, _))),
+            "{whole:?}; the notice took {rows:?}"
+        );
     }
 
     #[test]

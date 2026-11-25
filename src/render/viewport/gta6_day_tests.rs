@@ -167,27 +167,30 @@ fn the_cycle_states_the_light_by_its_lux_its_tint_its_multipliers_and_the_air() 
         <ambient_bounce_intensity> 2 2 2 2 2 2 2 2 2 2 2 2 2</ambient_bounce_intensity>";
     let ambient = "<ambient_sky_intensity> 1 1 1 1 1 1 0.5 0.5 1 1 1 1 1</ambient_sky_intensity>
         <ambient_sky_color_mult_r> 1 1 1 1 1 1 0.5 0.5 1 1 1 1 1</ambient_sky_color_mult_r>
-        <sky_scattering_sky_col_b> 1 1 1 1 1 1 0.5 0.5 1 1 1 1 1</sky_scattering_sky_col_b>";
+        <sky_scattering_sky_col_r> 1 1 1 1 1 1 0.5 0.5 1 1 1 1 1</sky_scattering_sky_col_r>
+        <indirect_light_sky_global_multiplier> 1 1 1 1 1 1 0.5 0.5 1 1 1 1 1</indirect_light_sky_global_multiplier>";
     let data = data("Rain", &format!("{rows}{ambient}"));
     let at = |hours: f32| sky(&data, hours, WeatherState::Rain).expect("lit by the cycle");
     let air = Air::of(&Keyframe::default());
     let noon_hours = SOLAR_NOON * 24.0;
 
     let noon = at(noon_hours);
-    // A thousand lux, half of it, twice, by the tint, through the air, with the air's own
-    // share of a matte surface's light.
+    // A thousand lux, half of it, by the tint, through the air, with the air's own share of
+    // a matte surface's light; and the cycle's multiplier of two twice, once on the tint and
+    // once on the lux.
     let through = air.light_through(sun_towards(noon_hours)) / PI;
-    let sun = Vec3::new(1.0, 0.5, 1.0) * 1000.0 * 0.5 * 2.0 * through;
+    let sun = Vec3::new(1.0, 0.5, 1.0) * 1000.0 * 0.5 * 2.0 * 2.0 * through;
     assert!(close(noon.sun, sun), "{:?} against {sun:?}", noon.sun);
     assert!(
-        sun.x > sun.z && sun.x > 200.0,
+        sun.x > sun.z && sun.x > 400.0,
         "the air takes the blue: {sun:?}"
     );
     assert!(close(noon.towards, sun_towards(noon_hours)));
     assert_eq!(noon.exposure, 1.0);
 
-    // The sky is the air's under the sun's lux, by the rows that multiply it: without them it
-    // is twice, four times and twice what it is with them.
+    // The sky is the air's under the sun's lux, by its own tint and the one row that
+    // multiplies what the sky lights: without them it is twice what it is with them, and its
+    // red four times. The rows named for the ambient light and its bounce change nothing.
     let bare = sky(&self::data("Rain", rows), noon_hours, WeatherState::Rain).expect("lit");
     let of_the_air = air.sky_on_the_ground(sun_towards(noon_hours)) * 500.0 / PI;
     assert!(
@@ -196,7 +199,7 @@ fn the_cycle_states_the_light_by_its_lux_its_tint_its_multipliers_and_the_air() 
         bare.sky
     );
     assert!(
-        close(noon.sky * Vec3::new(4.0, 2.0, 4.0), bare.sky),
+        close(noon.sky * Vec3::new(4.0, 2.0, 2.0), bare.sky),
         "{:?}",
         noon.sky
     );
@@ -205,7 +208,7 @@ fn the_cycle_states_the_light_by_its_lux_its_tint_its_multipliers_and_the_air() 
     // the light comes through, onto the model and onto the ground that lights it from below.
     assert_eq!(noon.scene.clouds, clouds_of(0.25, &Keyframe::default()));
     assert_eq!(noon.scene.clouds.open, 0.75);
-    let ground = (noon.sky + noon.sun * 0.75 * noon.towards.z / PI) * GROUND * 2.0;
+    let ground = (noon.sky + noon.sun * 0.75 * noon.towards.z / PI) * GROUND;
     assert!(close(noon.ground, ground), "{:?}", noon.ground);
     // The light from all around is a probe's nine numbers of that sky and that ground: what
     // falls on a surface that faces up is the sky's, and on one that faces down the ground's,
@@ -261,9 +264,10 @@ fn the_cycle_states_the_light_by_its_lux_its_tint_its_multipliers_and_the_air() 
     assert_eq!(clouds_of(0.0, &stated).open, 1.0);
 
     let night = at(noon_hours + 12.0);
-    // Two lux of moon, three times, halved by the moon's own multiplier.
+    // Two lux of moon, three times, halved by the moon's own multiplier, and that strength of
+    // one and a half again.
     let through = air.light_through(moon_towards(noon_hours + 12.0)) / PI;
-    let moon = Vec3::new(1.0, 0.5, 1.0) * 2.0 * 3.0 * 0.5 * through;
+    let moon = Vec3::new(1.0, 0.5, 1.0) * 2.0 * 1.5 * 1.5 * through;
     assert!(close(night.sun, moon), "{:?} against {moon:?}", night.sun);
     assert!(close(night.towards, moon_towards(noon_hours + 12.0)));
     assert!(night.sky.y < noon.sky.y * 0.02, "{:?}", night.sky);
@@ -333,7 +337,8 @@ fn a_weather_is_drawn_with_the_cycle_its_type_names_under_that_type_s_modifiers(
         r#"<modifier name="M_air"><light_dir_mult>4.000000 0.000000</light_dir_mult></modifier>"#,
     );
     let modified = lit(&data).expect("the type's cycle lights");
-    assert!(close(modified.sun, plain.sun * 4.0), "{:?}", modified.sun);
+    // A multiplier of four is in the light twice.
+    assert!(close(modified.sun, plain.sun * 16.0), "{:?}", modified.sun);
 }
 
 #[test]

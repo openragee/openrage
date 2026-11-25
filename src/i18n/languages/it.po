@@ -16957,6 +16957,9 @@ msgstr "I nomi delle stringhe di questo documento richiedono lo snapshot di chia
 msgid "Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan."
 msgstr "Direct3D 12 compila gli shader con FXC, perché non è stato trovato alcun dxcompiler.dll accanto a OpenRage, nel PATH o in un Windows SDK. FXC rifiuta alcuni programmi shader di GTA VI e impiega minuti per altri, quindi i modelli che ne hanno bisogno vengono disegnati in Materiale. Metti dxcompiler.dll e dxil.dll accanto a openrage.exe, oppure avvia OpenRage con WGPU_BACKEND=vulkan."
 
+msgid "Direct3D 12 is compiling shaders with FXC, which refuses some GTA VI shader programs, so the models that need them are drawn in Material. The Log says how to change that."
+msgstr "Direct3D 12 compila gli shader con FXC, che rifiuta alcuni programmi shader di GTA VI, quindi i modelli che ne hanno bisogno vengono disegnati in Materiale. Il Registro dice come rimediare."
+
 msgid "It casts no shadow: one of its surfaces reads the view at an offset the light's view cannot be copied to"
 msgstr "Non proietta ombra: una delle sue superfici legge la vista a un offset in cui la vista della luce non può essere copiata"
 

@@ -106,6 +106,96 @@ fn a_written_table_reads_back_to_itself_and_writes_again_byte_identical() {
     assert_eq!(back.find(0x0000_0181).map(|e| &e.item), Some(&forms()));
 }
 
+/// `table()` without its variant entry, which is the last key of its group.
+fn plain_table() -> TextTable {
+    let mut t = table();
+    t.entries.retain(|e| matches!(e.item, TextItem::Text(_)));
+    t
+}
+
+/// `t`, a table of plain texts, with its blocks numbered as the game numbers them (entries, map,
+/// groups, characters) and a byte no rule reads set after the block map.
+fn as_the_game_lays_it(t: &TextTable) -> Vec<u8> {
+    let (chars, places) = t.pack(usize::MAX).expect("packed");
+    let records = t.record_blocks();
+    let size = |kind| records.iter().find(|k| k.0 == kind).expect("a block").1;
+    let mut kinds = vec![(ENTRY, size(ENTRY)), (MAP, 16), (GROUP, size(GROUP))];
+    kinds.extend(chars.iter().map(|c| (CHARS, c.len())));
+    let data = t.data_blocks(&kinds, &chars, &places).expect("blocks");
+    let mut section = lay_out(&kinds, &data, false).expect("laid out");
+    let bm = (u64::from_le_bytes(section[0x08..0x10].try_into().unwrap()) - VBASE) as usize;
+    section[bm + 16] = 0xAB;
+    section
+}
+
+#[test]
+fn a_table_written_over_its_own_section_is_byte_identical_where_one_page_is_not() {
+    let t = plain_table();
+    let game = as_the_game_lays_it(&t);
+    let (back, _) = read(&game).expect("it reads");
+    assert_eq!(back, t);
+    assert_ne!(back.to_section().expect("one page"), game);
+    assert_eq!(back.to_section_over(&game).expect("over"), game);
+
+    let variants = table().to_section().expect("written");
+    let back = read(&variants).expect("it reads").0;
+    assert_eq!(back.to_section_over(&variants).expect("over"), variants);
+}
+
+#[test]
+fn an_edit_that_keeps_the_texts_lengths_keeps_the_section_and_changes_only_their_bytes() {
+    let t = plain_table();
+    let game = as_the_game_lays_it(&t);
+    let mut edited = t.clone();
+    let at = (edited.entries.iter())
+        .position(|e| e.item == text("~INPUT_JUMP~ to jump"))
+        .expect("the text");
+    edited.entries[at].item = text("~INPUT_JUMP~ to hop!");
+    let out = edited.to_section_over(&game).expect("written");
+    assert_eq!(out.len(), game.len());
+    let changed = out.iter().zip(&game).filter(|(a, b)| a != b).count();
+    let differ = "jump".bytes().zip("hop!".bytes()).filter(|(a, b)| a != b);
+    assert_eq!(changed, differ.count());
+    assert_eq!(read(&out).expect("it reads").0, edited);
+
+    // One text a byte shorter and another a byte longer fill the block as before.
+    let mut traded = t.clone();
+    for (from, to) in [
+        ("Ligne 2 — 東京 éé", "Ligne 2 — 東京 éx"),
+        ("Ligne 3 — 東京 ééé", "Ligne 3 — 東京 éééy"),
+    ] {
+        let e = (traded.entries.iter_mut())
+            .find(|e| e.item == text(from))
+            .expect("the text");
+        e.item = text(to);
+    }
+    let out = traded.to_section_over(&game).expect("written");
+    assert_eq!(out.len(), game.len());
+    assert_eq!(read(&out).expect("it reads").0, traded);
+}
+
+#[test]
+fn an_edit_that_changes_a_block_s_size_is_refused_over_the_section() {
+    let t = plain_table();
+    let game = as_the_game_lays_it(&t);
+    let mut longer = t.clone();
+    longer.entries[0].item = text("Ligne 0 — 東京, longer");
+    let err = longer.to_section_over(&game).expect_err("refused");
+    assert!(err.to_string().contains("character blocks"), "{err}");
+
+    let mut added = t.clone();
+    insert(&mut added, 0x0000_0201, text(""));
+    let err = added.to_section_over(&game).expect_err("refused");
+    assert!(
+        err.to_string().contains("as many as the section holds"),
+        "{err}"
+    );
+    assert!(matches!(
+        t.to_section_over(&game[..0x40]),
+        Err(TextTableError::NotText(_))
+    ));
+}
+
 #[test]
 fn texts_past_one_character_block_go_to_the_first_block_with_room() {
     let mut t = TextTable {

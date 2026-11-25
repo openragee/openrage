@@ -78,6 +78,8 @@ codegen-backend = "llvm"
 codegen-backend = "llvm"
 [profile.dev.package.miniz_oxide]
 codegen-backend = "llvm"
+[profile.dev.package.zopfli]
+codegen-backend = "llvm"
 [profile.dev.package.sha1]
 codegen-backend = "llvm"
 [profile.dev.package.texture2ddecoder]

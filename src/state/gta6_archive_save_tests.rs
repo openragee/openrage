@@ -182,7 +182,7 @@ fn a_body_of_its_entrys_size_saves_as_a_patched_copy_and_one_of_another_size_is_
     same_size[32] = 78;
 
     let out = dir.path().join("patched.rpf");
-    let saved = write_copy(&source, start, same_size.clone(), &out, &keys).expect("written");
+    let saved = write_copy(&source, start, None, same_size.clone(), &out, &keys).expect("written");
     assert_eq!(saved, Saved::Patched);
     let copy = std::fs::read(&out).expect("the copy");
     only_the_body_differs(&before, &copy, PSO);
@@ -196,18 +196,29 @@ fn a_body_of_its_entrys_size_saves_as_a_patched_copy_and_one_of_another_size_is_
     let mut longer = table_form_pso();
     longer.extend([0u8; 16]);
     let out = dir.path().join("rebuilt.rpf");
-    let saved = write_copy(&source, start, longer, &out, &keys).expect("written");
+    let saved = write_copy(&source, start, None, longer, &out, &keys).expect("written");
     let Saved::Rebuilt { tables, kept, .. } = saved else {
         panic!("a body of another size changes its row");
     };
     assert!(tables);
     let size = table_form_pso().len();
     let why = format!(
-        "{start:#X} is {} bytes, not the {size} its row states",
+        "{start:#X} is {} bytes, not the {size} its row states, 16 bytes over",
         size + 16
     );
     assert_eq!(kept, vec![why]);
     assert_eq!(std::fs::read(&source).expect("the source"), before);
+    // Each save wrote its one copy and nothing beside it.
+    let mut listed: Vec<String> = (std::fs::read_dir(dir.path()).expect("the folder lists"))
+        .map(|e| {
+            e.expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    listed.sort();
+    assert_eq!(listed, ["patched.rpf", "rebuilt.rpf", "source.rpf"]);
 }
 
 #[test]
@@ -219,16 +230,16 @@ fn the_archive_read_is_never_written_and_what_names_no_entry_is_refused() {
     let (_, start) = start_of(&before, PSO);
     let keys = synthetic_keys().expect("the synthetic snapshot parses");
 
-    let over =
-        write_copy(&source, start, table_form_pso(), &source, &keys).expect_err("over the source");
+    let over = write_copy(&source, start, None, table_form_pso(), &source, &keys)
+        .expect_err("over the source");
     assert!(over.contains("never written"), "{over}");
     let existing = dir.path().join("existing.rpf");
     std::fs::write(&existing, b"kept").expect("written");
-    assert!(write_copy(&source, start, table_form_pso(), &existing, &keys).is_err());
+    assert!(write_copy(&source, start, None, table_form_pso(), &existing, &keys).is_err());
     assert_eq!(std::fs::read(&existing).expect("kept"), b"kept");
     let none = dir.path().join("none.rpf");
-    let why =
-        write_copy(&source, start + 4, table_form_pso(), &none, &keys).expect_err("no entry there");
+    let why = write_copy(&source, start + 4, None, table_form_pso(), &none, &keys)
+        .expect_err("no entry there");
     assert!(why.contains("no entry"), "{why}");
     assert!(!none.exists(), "a refused save leaves no file");
 

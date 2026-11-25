@@ -1,5 +1,6 @@
-//! Above a GTA VI folder's Files view: Scan every archive, then each archive's bodies tallied by
-//! kind, and the bodies of the kinds toggled on across every archive, a click opening one.
+//! Above a GTA VI folder's Files view while no key opens its archives' tables, the fallback: why,
+//! Scan every archive, then each archive's bodies tallied by kind, and the bodies of the kinds
+//! toggled on across every archive, a click opening one. With the keys held it draws nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -7,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::state::gta6_install_scan::{self as install, Hit, InstallFind, InstallFound, MOST_HITS};
+use crate::state::rpf9_scan::rpf9_table::gta6_keys_held::{gta6_keys, Gta6Keys};
 use crate::state::rpf9_scan::{Ended, RowKind};
 use crate::ui::panels::inspector::rpf9_row_kind_label as kind_label;
 
@@ -21,13 +23,35 @@ pub(super) fn draw(ui: &mut egui::Ui, state: &mut AppState, doc: DocumentId) {
     if !is_gta6(ui, &root) {
         return;
     }
-    let found = install::found_under(&root);
+    fallback(ui, state, &root, &gta6_keys());
+}
+
+/// The scan and the harvest over the folder at `root`, drawn only while `keys` says none is held:
+/// with keys every table opens in the tree and the names come from the resolver.
+fn fallback(ui: &mut egui::Ui, state: &mut AppState, root: &Path, keys: &Gta6Keys) {
+    let why = match keys {
+        Gta6Keys::Missing(why) => why,
+        Gta6Keys::Asking => {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(200));
+            return;
+        }
+        Gta6Keys::Held { .. } => return,
+    };
+    let found = install::found_under(root);
     let mut open = None;
     egui::Panel::top(ui.id().with("gta6_install_bar"))
         .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 4)))
         .show_inside(ui, |ui| {
-            names_row(ui, state, &root);
-            open = bar(ui, &root, found.as_deref());
+            ui.colored_label(
+                theme::WARNING,
+                tr!(
+                    "No key opens the tables of these archives, so they are read by a scan: {why}",
+                    why = why
+                ),
+            );
+            names_row(ui, state, root);
+            open = bar(ui, root, found.as_deref());
         });
     if let Some((archive, hit, preview)) = open {
         state.open_install_hit(&archive, hit, preview);
@@ -299,4 +323,52 @@ fn find_by_kind(
             }
         });
     open
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The text of every widget the bar draws over the folder at `root` for `keys`.
+    fn drawn(root: &Path, keys: &Gta6Keys) -> Vec<String> {
+        let mut state = AppState::new();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 900.0),
+            )),
+            ..Default::default()
+        };
+        let output = ctx.run_ui(input, |ui| fallback(ui, &mut state, root, keys));
+        let Some(update) = output.platform_output.accesskit_update else {
+            return Vec::new();
+        };
+        (update.nodes.iter())
+            .flat_map(|(_, node)| [node.label(), node.value()])
+            .flatten()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn with_keys_the_folder_view_offers_no_scan_and_no_harvest_and_without_says_why() {
+        let folder = tempfile::tempdir().expect("a scratch folder");
+        let offers = |text: &[String], what: &str| text.iter().any(|t| t.contains(what));
+        for keys in [
+            Gta6Keys::Held { names: Some(3) },
+            Gta6Keys::Held { names: None },
+            Gta6Keys::Asking,
+        ] {
+            let text = drawn(folder.path(), &keys);
+            assert!(!offers(&text, "Scan every archive"), "{keys:?}: {text:?}");
+            assert!(!offers(&text, "Harvest names"), "{keys:?}: {text:?}");
+        }
+
+        let why = "zq no snapshot was found";
+        let text = drawn(folder.path(), &Gta6Keys::Missing(why.to_string()));
+        assert!(offers(&text, "Scan every archive"), "{text:?}");
+        assert!(offers(&text, why), "the reason is said: {text:?}");
+    }
 }

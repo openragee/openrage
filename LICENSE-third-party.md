@@ -128,6 +128,17 @@ crate, which is offered under Apache-2.0 and is Copyright 2026 Mata Network. Its
 licence is reproduced at the end of this file. It is pure Rust with no
 dependencies, and it asks for no NOTICE file: the package carries none.
 
+## Linked: the optimal-parse DEFLATE encoder
+
+`or-io`'s `gta6` feature re-deflates a chunk of a GTA VI patched copy that the
+tree's deflater cannot fit under its stored size with the
+[zopfli](https://crates.io/crates/zopfli) crate, version 0.8, the zopfli-rs
+contributors' Rust translation of Google's Zopfli, offered under Apache-2.0
+with the appendix line Copyright 2011 Google Inc. Its terms are the Apache-2.0
+text reproduced at the end of this file for rusty_mp3, word for word but for
+that line. It is pure Rust, and the package carries no NOTICE file. Only
+`crates/io/or-io/src/container/rpf/gta6_patch.rs` calls it.
+
 ## Linked: the Opus codec
 
 `or-media` decodes and encodes GTA VI's Opus `.awc` streams with the

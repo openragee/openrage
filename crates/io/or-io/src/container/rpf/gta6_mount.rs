@@ -408,8 +408,8 @@ impl Gta6Mount {
     }
 }
 
-/// Walk `body` by its decoded chunk `table`: each chunk 16-aligned, a deflated one inflating from
-/// exactly its stored bytes to exactly its inflated size. Returns what [`walk_chunks`] returns.
+/// Walk `body` by its decoded chunk `table`: each chunk 16-aligned, a deflated one inflating within
+/// its stored bytes to exactly its inflated size. Returns what [`walk_chunks`] returns.
 pub(super) fn walk_table(
     body: &[u8],
     table: &[Chunk],
@@ -422,15 +422,15 @@ pub(super) fn walk_table(
             .get(pos..pos + stored)
             .ok_or_else(|| format!("chunk {i} runs past its stored body"))?;
         if chunk.zlib {
-            // Deflate with or without the zlib header; either must end exactly at the stored size.
+            // Deflate with or without the zlib header. The game's read stops at the stream's end, so
+            // stored bytes after it are ignored; `bytes` ends at the stored size, so a stream that
+            // runs past it does not finish and is refused.
             let cap = u64::from(chunk.inflated);
             match inflate_one(bytes, false, cap).or_else(|| inflate_one(bytes, true, cap)) {
-                Some((consumed, data)) if consumed == stored && data.len() == inflated => {
-                    out.extend_from_slice(&data)
-                }
+                Some((_, data)) if data.len() == inflated => out.extend_from_slice(&data),
                 _ => {
                     return Err(format!(
-                        "chunk {i} does not inflate from {stored} bytes to the {inflated} its \
+                        "chunk {i} does not inflate within {stored} bytes to the {inflated} its \
                          table states"
                     ))
                 }
@@ -1051,6 +1051,52 @@ mod tests {
         wrong[0].inflated += 1;
         assert!(walk_table(&body, &wrong).is_err());
         assert!(walk_table(&body[..body.len() - 16], &table).is_err());
+    }
+
+    #[test]
+    fn a_table_walk_ignores_stored_bytes_after_a_chunks_stream() {
+        let a: Vec<u8> = (0..3000u32).map(|x| (x ^ (x >> 4)) as u8).collect();
+        let c: Vec<u8> = (0..500u32).map(|x| (x * 5) as u8).collect();
+        let (za, zc) = (zlib_stream(&a), zlib_stream(&c));
+        let chunk = |inflated: usize, stored: usize| Chunk {
+            inflated: inflated as u32,
+            stored: stored as u32,
+            zlib: true,
+        };
+        for slack in [1usize, 4, 100] {
+            // The first chunk's stream ends `slack` bytes before its stored size; the bytes after it
+            // are not zeros, so they are plainly not read.
+            let mut body = za.clone();
+            body.resize(za.len() + slack, 0xA5);
+            pad16(&mut body);
+            body.extend_from_slice(&zc);
+            pad16(&mut body);
+            let table = vec![chunk(a.len(), za.len() + slack), chunk(c.len(), zc.len())];
+            let (out, chunks, consumed) =
+                walk_table(&body, &table).unwrap_or_else(|e| panic!("{slack} bytes of slack: {e}"));
+            assert_eq!(
+                out,
+                [a.clone(), c.clone()].concat(),
+                "{slack} bytes of slack"
+            );
+            assert_eq!(chunks, 2);
+            assert_eq!(
+                consumed,
+                body.len() as u64,
+                "the walk steps by the stored size"
+            );
+        }
+
+        let mut body = za.clone();
+        pad16(&mut body);
+        // A stream that runs past its stored size is refused, by chunk.
+        let past = walk_table(&body, &[chunk(a.len(), za.len() - 1)]).unwrap_err();
+        assert!(past.contains("chunk 0"), "{past}");
+        // A stream that inflates to another length than the table states is refused.
+        for inflated in [a.len() - 1, a.len() + 1] {
+            let wrong = walk_table(&body, &[chunk(inflated, za.len())]).unwrap_err();
+            assert!(wrong.contains("chunk 0"), "{wrong}");
+        }
     }
 
     #[test]

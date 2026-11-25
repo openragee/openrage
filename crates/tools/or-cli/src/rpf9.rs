@@ -70,7 +70,7 @@ usage:
   openrage-cli rpf9 list <archive.rpf> [inner/path] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>] [--groups] [--nested] [--strings] [--json]
   openrage-cli rpf9 extract <archive.rpf> <dest-dir> [inner/path] [--entry <selector>] [--filter <substr>] [--kind <archive|resource|media|0xNN|kind label>] [--dry-run] [--decrypt] [--strings] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli rpf9 tree-install <build-root> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
-      (mount order: the archives at the build root, then those under pack/, each by path; a path two archives name is listed once, from the later)
+      (mount order: the archives at the build root by path, then the folders under pack/ by the type and order their setups state, a folder of no setup last, though where the game mounts one was not read; how the game breaks a tie of order was not read, so packs that tie mount by path; a path two archives name is listed once, from the later)
   openrage-cli rpf9 pack <archive.rpf> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli rpf9 find <install-dir> [--name <substr>] [--hash <hex>] [--kind <archive|resource|media|0xNN|kind label>] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli rpf9 census <build-root> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>] [--out <dir>] [--top-only]

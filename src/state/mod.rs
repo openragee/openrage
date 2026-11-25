@@ -23,6 +23,8 @@ mod a_gta_vi_archive_s_scan_is_kept;
 #[cfg(test)]
 mod a_gta_vi_dictionary_entry_shows_and_edits_its_own_bones;
 #[cfg(test)]
+mod a_gta_vi_dictionary_of_one_opens_on_its_drawable;
+#[cfg(test)]
 mod a_gta_vi_drawable_is_browsed_as_a_gta_v_one;
 #[cfg(test)]
 mod a_member_taken_out_comes_back_and_a_source_folder_is_found_by_a_folder;

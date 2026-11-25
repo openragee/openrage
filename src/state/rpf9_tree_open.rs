@@ -12,8 +12,8 @@ use or_io::container::rpf::{
 };
 use or_io::gta6::other_bodies::OtherBody;
 
-use crate::state::document::{HexDocument, MetaDocument};
-use crate::state::{document_io, DocPayload};
+use crate::state::document::{DocumentId, HexDocument, MetaDocument, RpfNodeId};
+use crate::state::{document_io, AppState, DocPayload, RpfEntryBinding};
 
 /// Where the worker finds the keys the archive's tables open with.
 pub(in crate::state) type Keys = fn() -> Result<Arc<GtaViKeys>, String>;
@@ -50,6 +50,47 @@ pub(in crate::state) fn leave(path: &Path, place: &Rpf9Place, row_start: u64, ke
         };
         rows().insert(path.to_path_buf(), row);
     }
+}
+
+/// A row the tree opened, by the path its body opens under: the path its document shows, as a
+/// GTA V entry's does, and the row.
+// ponytail: one map for the whole app, which no close empties, as the rows above.
+static NAMED: Mutex<BTreeMap<PathBuf, (PathBuf, RpfEntryBinding)>> = Mutex::new(BTreeMap::new());
+
+fn named() -> MutexGuard<'static, BTreeMap<PathBuf, (PathBuf, RpfEntryBinding)>> {
+    NAMED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Name the body `path` of the tree row `node` of `parent` as a GTA V entry's document is named: the archive's path joined with the row's path in the tree, its hash name where it has no name.
+pub(in crate::state) fn name(state: &AppState, path: &Path, parent: DocumentId, node: RpfNodeId) {
+    let Some(doc) = state.document(parent) else {
+        return;
+    };
+    let DocPayload::Rpf(rpf) = &doc.payload else {
+        return;
+    };
+    let Some(inner) = rpf.session.path_of(node) else {
+        return;
+    };
+    let shown = crate::state::tabs::entry_display_path(doc.path.clone(), &inner);
+    let row = RpfEntryBinding {
+        parent_doc_id: parent,
+        entry_id: node,
+    };
+    named().insert(path.to_path_buf(), (shown, row));
+}
+
+/// The path the body at `path` shows once the tree opened it; `None` for any other path.
+pub(in crate::state) fn shown(path: &Path) -> Option<PathBuf> {
+    named().get(path).map(|(shown, _)| shown.clone())
+}
+
+/// The tree row the body at `path` was opened from, while the tree holding it is open.
+pub(in crate::state) fn row_of(state: &AppState, path: &Path) -> Option<RpfEntryBinding> {
+    let row = named().get(path).map(|(_, row)| *row)?;
+    state.document(row.parent_doc_id).is_some().then_some(row)
 }
 
 /// What a row's read gives the views.
@@ -148,6 +189,10 @@ fn by_head(path: &Path, bytes: Vec<u8>) -> DocPayload {
     let banner = document_io::no_reader(path);
     DocPayload::Hex(HexDocument { bytes, banner })
 }
+
+#[cfg(test)]
+#[path = "rpf9_tree_open_names_tests.rs"]
+mod names_tests;
 
 #[cfg(test)]
 mod tests {

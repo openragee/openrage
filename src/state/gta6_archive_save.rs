@@ -12,14 +12,19 @@ use or_io::container::rpf::{BodyForm, GtaViKeys, Rpf9ArchiveWriter};
 use crate::state::extract_job::ExtractItem;
 use crate::state::gta6_resource_save::EditedSave;
 use crate::state::rpf_archive_open::tree_verbs::{
-    patched_said, save_choosing, with_kept, Replaced, Saved,
+    patched_said, plan_save, with_kept, write_planned, Replaced, Saved,
 };
 use crate::state::{AppState, DocPayload, Document};
 
-/// How a save into a copy ended: the copy written and how, or why it was refused.
-type Ended = Result<(PathBuf, Saved), String>;
+/// How a save into a copy of a document's archive ended: the document, and the copy written and
+/// how, or why it was refused.
+type Ended = (
+    crate::state::document::DocumentId,
+    Result<(PathBuf, Saved), String>,
+);
 
-// ponytail: one list for the process, emptied by the next frame's poll.
+// ponytail: one list for the process; a poll takes the saves of the documents its app holds, so a
+// save of a document closed before it ended stays in the list unsaid.
 static ENDED: Mutex<Vec<Ended>> = Mutex::new(Vec::new());
 
 fn ended() -> MutexGuard<'static, Vec<Ended>> {
@@ -77,6 +82,10 @@ impl AppState {
             return false;
         };
         let origin = doc.path.as_deref().and_then(archive_origin);
+        // The row's name as the tree shows it, where the document was opened from a tree's row.
+        let name = (doc.path.as_deref())
+            .and_then(crate::state::rpf_archive_open::tree_open::shown)
+            .and_then(|shown| Some(shown.file_name()?.to_string_lossy().into_owned()));
         let item = archive_item(doc);
         let refused = match (origin, item) {
             (Some((archive, offset)), Ok(item)) => {
@@ -84,9 +93,9 @@ impl AppState {
                 std::thread::spawn(move || {
                     let said = keys().and_then(|keys| {
                         let body = item.read(BodyForm::Decoded)?;
-                        write_copy(&archive, offset, body, &out, &keys)
+                        write_copy(&archive, offset, name, body, &out, &keys)
                     });
-                    ended().push(said.map(|saved| (out, saved)));
+                    ended().push((id, said.map(|saved| (out, saved))));
                 });
                 return true;
             }
@@ -106,8 +115,15 @@ impl AppState {
     /// Say how each save into a copy of an archive ended.
     pub(in crate::state) fn poll_archive_saves(&mut self) {
         self.poll_tree_saves();
-        let done = std::mem::take(&mut *ended());
-        for said in done {
+        let done: Vec<Ended> = {
+            let mut list = ended();
+            let (mine, rest) = std::mem::take(&mut *list)
+                .into_iter()
+                .partition(|(id, _)| self.document(*id).is_some());
+            *list = rest;
+            mine
+        };
+        for (_, said) in done {
             let (out, saved) = match said {
                 Ok(written) => written,
                 Err(why) => {
@@ -187,12 +203,13 @@ fn archive_item(doc: &Document) -> Result<ExtractItem, String> {
 }
 
 /// Write `body` in place of the entry whose body is at `offset` of the archive at `archive`, into
-/// the new file `out`, as a patched copy where it fits the entry's chunks, else rebuilt. A
-/// headerless resource's entry takes `body` as its loose form, any other its bytes, and the writer
-/// refuses what it would not read back.
+/// the new file `out`, as a patched copy where it fits the entry's chunks, else rebuilt, planned
+/// before anything is written; the row is named `name`, else by its offset. A headerless resource's entry takes `body` as its loose form, any
+/// other its bytes, and the writer refuses what it would not read back.
 fn write_copy(
     archive: &Path,
     offset: u64,
+    name: Option<String>,
     body: Vec<u8>,
     out: &Path,
     keys: &GtaViKeys,
@@ -201,49 +218,20 @@ fn write_copy(
     let wanted = BTreeSet::from([offset]);
     let mut found = crate::state::rpf_archive_open::tree_verbs::chains(&mut file, &wanted, keys)?;
     drop(file);
+    let at = found.remove(&offset).unwrap_or_default();
+    let mut writer = Rpf9ArchiveWriter::new();
+    if at.headerless {
+        writer.replace_resource(&at.chain, body.clone(), None);
+    } else {
+        writer.replace(&at.chain, body.clone());
+    }
     let row = Replaced {
-        name: format!("{offset:#X}"),
-        at: found.remove(&offset).unwrap_or_default(),
+        name: name.unwrap_or_else(|| format!("{offset:#X}")),
+        at,
         body,
     };
-    save_choosing(
-        archive,
-        out,
-        keys,
-        std::slice::from_ref(&row),
-        Vec::new(),
-        || {
-            let at = &row.at;
-            write_entry(
-                archive,
-                &at.chain,
-                at.headerless,
-                row.body.clone(),
-                out,
-                keys,
-            )
-        },
-    )
-}
-
-/// Write `body` in place of the entry at the index chain `path` of the archive at `archive`, a
-/// headerless resource's as its loose form, into the new file `out`; whether a table and whether a
-/// body changed.
-pub(crate) fn write_entry(
-    archive: &Path,
-    path: &[u32],
-    headerless: bool,
-    body: Vec<u8>,
-    out: &Path,
-    keys: &GtaViKeys,
-) -> Result<(bool, bool), String> {
-    let mut writer = Rpf9ArchiveWriter::new();
-    if headerless {
-        writer.replace_resource(path, body, None);
-    } else {
-        writer.replace(path, body);
-    }
-    crate::state::rpf_archive_open::tree_verbs::write_plan(&writer, archive, out, keys)
+    let planned = plan_save(archive, keys, &[row], Vec::new(), writer)?;
+    write_planned(archive, out, keys, &planned)
 }
 
 #[cfg(test)]

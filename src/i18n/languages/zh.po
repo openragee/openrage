@@ -781,9 +781,6 @@ msgstr "房间和门户读取自文件。在“数据”界面中更改它们"
 msgid "Rotation"
 msgstr "旋转"
 
-msgid "Save the edits to a new archive: a patched copy where every edit fits its entry's chunks, else a rebuilt archive, which the game refuses"
-msgstr "将编辑保存到新归档：若每项编辑都能放入其条目的块，则为修补副本，否则为重建的归档，游戏会拒绝它"
-
 msgid "Scale"
 msgstr "缩放"
 
@@ -12824,9 +12821,6 @@ msgstr "GTA VI 归档"
 msgid "RPF9 — a GTA VI archive, shown as what a scan without its table finds, read-only"
 msgstr "RPF9 — GTA VI 归档，显示为不借助其表进行扫描所发现的内容，只读"
 
-msgid "(read without names)"
-msgstr "（未读取名称）"
-
 msgid "Its first 64 bytes are zero, as a piece a download has not delivered reads, so whether it is an RPF9 archive and what its header states are not known; the bytes present are scanned."
 msgstr "其前 64 个字节均为零，如同下载尚未送达的部分读取所得，因此不知道它是否为 RPF9 归档，也不知道其头部声明了什么；已存在的字节会被扫描。"
 
@@ -17070,3 +17064,42 @@ msgstr "列表 {list}：{entries}"
 
 msgid "Add to the facial controls it writes"
 msgstr "添加到它写入的面部控制中"
+
+msgid "{count} byte over"
+msgid_plural "{count} bytes over"
+msgstr[0] "多出 {count} 字节"
+msgstr[1] "多出 {count} 字节"
+
+msgid "{count} byte short"
+msgid_plural "{count} bytes short"
+msgstr[0] "少了 {count} 字节"
+msgstr[1] "少了 {count} 字节"
+
+msgid "The edits to {file} save as a patched copy: each changed body is written in its entry's place, chunk by chunk, and the table stays byte-identical, so its signature still matches and no check read in the game's code rejects it; the game has not been run with it."
+msgstr "对 {file} 的编辑保存为修补副本：每个更改的主体都逐块写在其条目的位置，表保持逐字节相同，因此其签名仍然匹配，游戏代码中读到的任何检查都不会拒绝它；尚未用它运行过游戏。"
+
+msgid "The edits to {file} save as a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "对 {file} 的编辑保存为重建的归档，游戏会拒绝它，因为只有其制作者能签名该表。"
+
+msgid "These rows keep it from being patched in place: {rows}."
+msgstr "以下行导致其无法原地修补：{rows}。"
+
+msgid "No key opens the tables of these archives, so they are read by a scan: {why}"
+msgstr "没有密钥能打开这些归档的表，因此通过扫描读取它们：{why}"
+
+msgid "(keys found, {count} name held)"
+msgid_plural "(keys found, {count} names held)"
+msgstr[0] "（已找到密钥，持有 {count} 个名称）"
+msgstr[1] "（已找到密钥，持有 {count} 个名称）"
+
+msgid "(keys found, reading the names…)"
+msgstr "（已找到密钥，正在读取名称…）"
+
+msgid "(looking for the keys…)"
+msgstr "（正在查找密钥…）"
+
+msgid "(no keys: its archives are read by a scan)"
+msgstr "（无密钥：其归档通过扫描读取）"
+
+msgid "{folder} is {title}. Its archives open from their tables as folders of the tree."
+msgstr "{folder} 是 {title}。其归档从各自的表打开，作为树中的文件夹。"

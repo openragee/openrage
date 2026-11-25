@@ -6,13 +6,15 @@ use std::borrow::Cow;
 use super::gta6_archive::Gta6Archive;
 
 /// The kinds a 24-byte row's class byte names.
-pub const CLASSES: [(u8, &str); 9] = [
+pub const CLASSES: [(u8, &str); 10] = [
     (0x00, "archive"),
     (0x0B, "resource"),
     (0x40, "MoVE network"),
     (0x42, "GFX"),
     (0x5D, "PSO"),
     (0x5E, "PSO"),
+    // Its body is an offset table of object trees, `OtherBody::ObjectTrees`.
+    (0x60, "object trees"),
     (0x68, "span grid"),
     (0x69, "height map"),
     (0xFF, "media"),
@@ -113,6 +115,7 @@ mod tests {
         assert_eq!(kind_label(Some(0x42), None), "GFX");
         assert_eq!(kind_label(Some(0x5D), None), "PSO");
         assert_eq!(kind_label(Some(0x5E), None), "PSO");
+        assert_eq!(kind_label(Some(0x60), None), "object trees");
         assert_eq!(kind_label(Some(0x68), None), "span grid");
         assert_eq!(kind_label(Some(0x69), None), "height map");
         assert_eq!(kind_label(Some(0xFF), None), "media");

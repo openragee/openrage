@@ -216,6 +216,8 @@ type Bodied<'a> = &'a dyn Fn(Vec<u32>) -> Result<Vec<u32>, String>;
 /// rows and nested archives among them, as no special link names a cell with no body; every one
 /// where no key opens a table or `file` is no archive. A byte scan sees no ciphered body, so none
 /// is made.
+// A body only in a sized class-0x0B row would go uncounted: on the build every such row beside a
+// navigation row is metadata, which an install-gated test below holds.
 fn with_bodies(file: &File, missing: Vec<u32>, keys: Option<&GtaViKeys>) -> Vec<u32> {
     let mut f = file;
     let Some(keys) = keys.filter(|_| !missing.is_empty()) else {
@@ -880,5 +882,88 @@ mod tests {
         if read == 0 {
             or_test_support::skip_install("gta6 navigation rows", "no navigation row was met");
         }
+    }
+
+    /// The invariant [`with_bodies`] and the app's look rest on: in every file of the build that
+    /// holds a navigation row, each sized row of the generic resource class (0x0B) is metadata, so
+    /// no navigation body sits outside a navigation row. Measured on build 1.0.2.1: one such file,
+    /// 22 class-0x0B rows in its 29 tables, every one clear and a PSO.
+    #[test]
+    fn the_build_s_navigation_rows_each_state_a_cell_and_no_sized_row_beside_them_holds_a_body() {
+        const GENERIC_RESOURCE: u8 = 0x0B;
+        let set = ["OPENRAGE_GTA6_KEYS", "OPENRAGE_GTA6_EXE"].map(std::env::var_os);
+        let build = std::env::var_os("OPENRAGE_GTA6_BUILD").map(std::path::PathBuf::from);
+        let build = build.filter(|p| p.is_dir() && set.iter().all(Option::is_some));
+        let keys = build
+            .as_ref()
+            .and_then(|_| crate::gta6_keys::load(None, None).ok());
+        let (Some(build), Some(keys)) = (build, keys) else {
+            or_test_support::skip_install(
+                "gta6 sized rows beside navigation rows",
+                "set OPENRAGE_GTA6_KEYS, OPENRAGE_GTA6_EXE and OPENRAGE_GTA6_BUILD",
+            );
+            return;
+        };
+        let listed = std::fs::read_dir(&build).expect("the build lists");
+        let mut archives: Vec<_> = (listed.flatten().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "rpf"))
+            .collect();
+        archives.sort();
+        let (mut files, mut sized, mut metadata) = (0usize, 0usize, 0usize);
+        for disk in archives {
+            let mut file = File::open(&disk).expect("opened");
+            let Ok(root) = Gta6Mount::open_root(&mut file, &keys) else {
+                continue;
+            };
+            let (mut navigation, mut generic, mut mounts) = (0usize, Vec::new(), Vec::new());
+            let mut stack = vec![(root, 0usize)];
+            while let Some((mount, depth)) = stack.pop() {
+                let extras = mount.archive.entry_extras();
+                let held = mounts.len();
+                for (i, entry) in mount.archive.entries.iter().enumerate() {
+                    if mount
+                        .entry_begins_archive(&mut file, entry)
+                        .unwrap_or(false)
+                    {
+                        if depth < 16 {
+                            if let Ok(child) = mount.open_nested(&mut file, entry, &keys) {
+                                stack.push((child, depth + 1));
+                            }
+                        }
+                        continue;
+                    }
+                    let row = extras.get(i).and_then(|x| x.nested);
+                    if row.is_some_and(|r| r.resource_type == NAVIGATION_MESH) {
+                        navigation += 1;
+                    } else if entry.class == Some(GENERIC_RESOURCE) {
+                        generic.push((held, i));
+                    }
+                }
+                mounts.push(mount);
+            }
+            if navigation == 0 {
+                continue;
+            }
+            files += 1;
+            for &(at, i) in &generic {
+                sized += 1;
+                let mount: &Gta6Mount = &mounts[at];
+                let entry = &mount.archive.entries[i];
+                let body = (mount.read_entry_decrypted(&mut file, entry, &keys))
+                    .unwrap_or_else(|e| panic!("{}: {e}", disk.display()));
+                let head = body.get(..4).unwrap_or_default();
+                metadata += usize::from(head == b"PSIN");
+            }
+        }
+        // With the keys and the build given, finding no navigation row is a failure, not a skip.
+        assert_eq!(
+            (files, sized),
+            (1, 22),
+            "files with navigation rows, class-0x0B rows"
+        );
+        assert_eq!(
+            metadata, sized,
+            "a class-0x0B row beside navigation rows is no PSO metadata"
+        );
     }
 }

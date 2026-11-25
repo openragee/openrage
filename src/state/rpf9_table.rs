@@ -79,7 +79,7 @@ pub(crate) fn resolver() -> Arc<NameResolver> {
 fn names_from(dir: Option<&Path>, config: Option<&Path>) -> NameResolver {
     // Installs the schema snapshot, which the default index reads once and keeps.
     crate::state::meta_schema();
-    let mut names = names_cache::load(dir, config);
+    let mut names = NameResolver::load_cached(dir, config);
     // `insert` keeps the first name a hash is given, so the user's own names win.
     for name in or_io::meta::binary::hash_index::default_hash_index().names() {
         names.insert(or_io::gta6::hash::name_hash64(name.as_bytes()), name);
@@ -158,6 +158,9 @@ impl crate::state::AppState {
         }
     }
 }
+
+#[path = "gta6_keys_held.rs"]
+pub(crate) mod gta6_keys_held;
 
 #[path = "gta6_keys_flow.rs"]
 pub(crate) mod gta6_keys_flow;

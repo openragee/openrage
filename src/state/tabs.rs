@@ -69,6 +69,15 @@ fn scan_holder(path: &Path) -> Option<String> {
     Some(path.parent()?.file_name()?.to_string_lossy().into_owned())
 }
 
+/// The path an archive entry's document shows: the archive's path joined with the entry's `/`-separated path inside it.
+pub(super) fn entry_display_path(parent_path: Option<PathBuf>, child_path: &str) -> PathBuf {
+    let mut display_path = parent_path.unwrap_or_else(|| PathBuf::from(tr!("(unsaved RPF)")));
+    for part in child_path.split('/') {
+        display_path.push(part);
+    }
+    display_path
+}
+
 impl AppState {
     /// Whether `doc` has a tab: every document but a dictionary the app opened from an archive for itself.
     pub fn has_tab(&self, doc: &Document) -> bool {
@@ -86,7 +95,9 @@ impl AppState {
 
     /// A tab's name: its file's, followed for a file opened from inside an archive by that archive's.
     pub fn tab_title(&self, doc: &Document) -> String {
-        let holder = match doc.rpf_entry_binding {
+        let tree_row = (doc.path.as_deref())
+            .and_then(|path| super::rpf_archive_open::tree_open::row_of(self, path));
+        let holder = match doc.rpf_entry_binding.or(tree_row) {
             Some(row) => self.holder_name(row),
             None => doc.path.as_deref().and_then(scan_holder),
         };

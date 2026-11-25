@@ -198,7 +198,7 @@ pub fn ydd_selected_entry_hash(payload: &DocPayload, selection_id: u64) -> Optio
     codes.contains(&hash).then_some(hash)
 }
 
-/// The hash of a drawable dictionary's first entry, at either target.
+/// The hash of a drawable dictionary's first entry, at either target, or the code of a GTA VI dictionary's one drawable.
 pub fn ydd_first_entry_hash(payload: &DocPayload) -> Option<u32> {
     let held: Vec<bool> = match payload {
         DocPayload::Resource(or_io::Asset::DrawableDict(dict)) => {
@@ -206,6 +206,12 @@ pub fn ydd_first_entry_hash(payload: &DocPayload) -> Option<u32> {
         }
         DocPayload::Resource(or_io::Asset::DrawableDictGen9(dict)) => {
             dict.entries.iter().map(Option::is_some).collect()
+        }
+        // A GTA VI dictionary of several drawables waits for one to be chosen from its list.
+        DocPayload::Gta6Drawable(resource) => {
+            let mut drawables = crate::state::gta6_resource::dictionary_drawables(resource);
+            let (code, _) = drawables.next()?;
+            return drawables.next().is_none().then_some(code);
         }
         _ => return None,
     };

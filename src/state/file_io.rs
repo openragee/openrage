@@ -268,10 +268,7 @@ impl AppState {
             (doc.path.clone(), child_path)
         };
 
-        let mut display_path = parent_path.unwrap_or_else(|| PathBuf::from(tr!("(unsaved RPF)")));
-        for part in child_path.split('/') {
-            display_path.push(part);
-        }
+        let display_path = super::tabs::entry_display_path(parent_path, &child_path);
         // A loose file in a folder's tree may already be open from disk.
         if let Some(open) = self.document_holding(&display_path, Some(row)) {
             self.set_active_document(open);

@@ -166,13 +166,40 @@ pub(crate) fn read_by_scan(game: Game) -> bool {
 /// What opening the folder at `root` says when it holds a title that is not opened as an install,
 /// and whether that is a warning: a title read by scan is browsed as it is meant to be.
 pub(super) fn plain_folder_note(root: &Path) -> Option<(String, bool)> {
+    folder_note(
+        root,
+        crate::state::rpf9_scan::rpf9_table::gta6_keys_held::gta6_keys,
+    )
+}
+
+/// [`plain_folder_note`] with GTA VI's keys as `keys` says they stand.
+fn folder_note(
+    root: &Path,
+    keys: impl FnOnce() -> crate::state::rpf9_scan::rpf9_table::gta6_keys_held::Gta6Keys,
+) -> Option<(String, bool)> {
     let title = Some(Game::detect_from_root(root)).filter(|t| !t.profile().is_supported())?;
     if read_by_scan(title) {
-        let note = tr!(
-            "{folder} is {title}. Its archives have no names OpenRage can read, so each opens as a scan of what it holds.",
-            folder = root.display(),
-            title = title.label(),
-        );
+        use crate::state::rpf9_scan::rpf9_table::gta6_keys_held::Gta6Keys;
+        let note = match keys() {
+            Gta6Keys::Asking => return None,
+            Gta6Keys::Held { .. } => tr!(
+                "{folder} is {title}. Its archives open from their tables as folders of the tree.",
+                folder = root.display(),
+                title = title.label(),
+            ),
+            Gta6Keys::Missing(why) => {
+                let scan = tr!(
+                    "{folder} is {title}. Its archives have no names OpenRage can read, so each opens as a scan of what it holds.",
+                    folder = root.display(),
+                    title = title.label(),
+                );
+                let why = tr!(
+                    "No key opens the tables of these archives, so they are read by a scan: {why}",
+                    why = why
+                );
+                format!("{scan} {why}")
+            }
+        };
         return Some((note, false));
     }
     let note = tr!(
@@ -426,14 +453,25 @@ mod tests {
             Some(Game::GtaVI)
         );
 
-        // Opened as a folder, it is browsed and says how its archives open, with no warning.
+        // Opened as a folder, it is browsed with no warning, and says how its archives open as the
+        // keys stand.
         state.open_folder(dir.clone());
-        assert!(says(
-            &state,
-            ToastType::Info,
-            &["GTA VI", "opens as a scan"]
-        ));
         assert!(!says(&state, ToastType::Warning, &["GTA VI"]));
+        use crate::state::rpf9_scan::rpf9_table::gta6_keys_held::Gta6Keys;
+        let note = |keys: Gta6Keys| folder_note(&dir, move || keys);
+        let scan = note(Gta6Keys::Missing("zq why".into())).expect("a note");
+        assert!(!scan.1 && scan.0.contains("opens as a scan") && scan.0.contains("zq why"));
+        let held = note(Gta6Keys::Held { names: Some(2) }).expect("a note");
+        assert!(
+            !held.1 && held.0.contains("folders of the tree"),
+            "{}",
+            held.0
+        );
+        assert_eq!(
+            note(Gta6Keys::Asking),
+            None,
+            "a neutral toast while the keys are asked"
+        );
 
         // A game's folder is on screen with no project open, and is not offered as one.
         let on_screen = state.active_document().map(|d| (d.kind, d.path.clone()));

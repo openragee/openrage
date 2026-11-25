@@ -11,6 +11,9 @@ use or_io::container::rpf::gta6_kinds::entry_kinds;
 use or_io::container::rpf::{
     Gta6Archive, Gta6Class, Gta6Entry, Gta6EntryExtra, Gta6Mount, GtaViKeys, NameResolver,
 };
+use or_title::dlc::SetupData;
+use or_title::gta6_mount::table::Table;
+use or_title::gta6_mount::{read_documents_by_table, Document, Registry};
 
 use super::{
     build_archives, counts, load_keys, load_resolver, take_common, usage, Common, CENSUS_MAX_DEPTH,
@@ -121,12 +124,80 @@ fn keys_and_names(common: &Common) -> Result<(GtaViKeys, NameResolver), ExitCode
 
 // --- tree-install -----------------------------------------------------------
 
+/// The longest entry read for a pack's setup, which is a few lines of XML.
+// ponytail: a size bound, so a pack of many gigabytes is not inflated whole to find its setup.
+const SETUP_LIMIT: u64 = 64 << 10;
+
+/// The packs the setups in the archives of `archives` under `pack/` state, each read through the
+/// archive's table; an archive whose table or documents do not read gives no pack.
+pub(super) fn pack_registry(root: &Path, archives: &[PathBuf], keys: &GtaViKeys) -> Registry {
+    let packs = archives.iter().filter(|path| path.parent() != Some(root));
+    Registry::of(
+        packs
+            .filter_map(|path| Some((path.clone(), setups_of(path, keys)?)))
+            .collect(),
+    )
+}
+
+fn setups_of(path: &Path, keys: &GtaViKeys) -> Option<Vec<Document>> {
+    let read = Table::open(path, keys).and_then(|table| {
+        let small = (table.entries().iter())
+            .filter(|entry| entry.stated <= SETUP_LIMIT)
+            .copied()
+            .collect();
+        read_documents_by_table(path, &Table::of_entries(small), &|| false)
+    });
+    match read {
+        Ok(found) => Some(
+            (found.into_iter())
+                .map(|found| found.document)
+                .filter(|document| matches!(document, Document::Setup(_)))
+                .collect(),
+        ),
+        Err(e) => {
+            eprintln!("  {}: no setup read: {e}", path.display());
+            None
+        }
+    }
+}
+
+/// Whether two setups adjacent in mount order state the same type and order, so that neither
+/// states which mounts first.
+fn tie(a: &SetupData, b: &SetupData) -> bool {
+    let both_level = a.is_level_pack && b.is_level_pack;
+    a.content_type == b.content_type
+        && a.order == b.order
+        && (!both_level || a.minor_order == b.minor_order)
+}
+
 /// `archives` in the order the game mounts them: those at `root` first (the base content, mounted at
-/// start-up), then those under `pack/` (the content packages, registered after), each group by path.
-pub(super) fn mount_order(root: &Path, mut archives: Vec<PathBuf>) -> Vec<PathBuf> {
-    // ponytail: every setup the build ships states order 1, so the packs tie and keep their path
-    // order; sort by the setups' order (or_title::gta6_mount::Registry) once two packs differ.
-    archives.sort_by(|a, b| (a.parent() != Some(root), a).cmp(&(b.parent() != Some(root), b)));
+/// start-up), each by path; then the folders under `pack/` in the order of the setup each holds, as
+/// `registry` orders them, a folder of no setup after every other; packs whose setups tie, and the
+/// archives of one folder, by path.
+pub(super) fn mount_order(
+    root: &Path,
+    mut archives: Vec<PathBuf>,
+    registry: &Registry,
+) -> Vec<PathBuf> {
+    // ponytail: the registry breaks a tie of order by the setups' name hash, GTA V's rule; how GTA VI
+    // breaks one was not read in its code, and every setup the build ships states order 1, so a tie
+    // keeps the path order.
+    let mut places = Vec::with_capacity(registry.packs.len());
+    for (at, pack) in registry.packs.iter().enumerate() {
+        let tied = at > 0 && tie(&registry.packs[at - 1].setup, &pack.setup);
+        let place = places.last().map_or(0, |last| last + usize::from(!tied));
+        places.push(place);
+    }
+    let place = |archive: &Path| {
+        (registry.packs.iter())
+            .position(|pack| pack.archive.parent() == archive.parent())
+            .map_or(usize::MAX, |at| places[at])
+    };
+    archives.sort_by_cached_key(|archive| {
+        let in_pack = archive.parent() != Some(root);
+        let at = if in_pack { place(archive) } else { 0 };
+        (in_pack, at, archive.clone())
+    });
     archives
 }
 
@@ -137,7 +208,9 @@ pub(super) fn do_tree_install(
     keys: &GtaViKeys,
     resolver: &NameResolver,
 ) -> Result<Tree, String> {
-    let archives = mount_order(root, build_archives(root));
+    let found = build_archives(root);
+    let registry = pack_registry(root, &found, keys);
+    let archives = mount_order(root, found, &registry);
     if archives.is_empty() {
         return Err(format!("no .rpf under {}", root.display()));
     }

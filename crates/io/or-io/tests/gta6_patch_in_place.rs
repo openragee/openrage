@@ -1,8 +1,9 @@
 //! The in-place patch writer over a real GTA VI build: over a bounded sample of each row shape, a
 //! row's own body plans no change and writes a byte-identical copy, and the body with one byte flipped
 //! in its first stored chunk (else its first chunk) is written to a copy and read back, or refused by
-//! name; the tally per shape is printed. Each archive is cut to the prefix its sampled rows need, so
-//! no archive is copied whole.
+//! name; the tally per shape is printed, with the fits only the optimal parse made, how far each
+//! encoder's stream runs past a ceiling it misses, and the slowest plan. Each archive is cut to the
+//! prefix its sampled rows need, so no archive is copied whole.
 //!
 //! Install-gated and game-derived, so it skips cleanly without its env vars:
 //!   `OPENRAGE_GTA6_KEYS`   the `gtavi_magic.dat` key snapshot (never committed)
@@ -14,6 +15,7 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use or_io::container::rpf::gta6_chunk_table::{cell_offset, decode};
 use or_io::container::rpf::{
@@ -144,11 +146,17 @@ struct Tally {
     unread: usize,
     disagree: usize,
     fit: usize,
+    /// Fits whose stream the optimal parse made, no level of the tree's deflater fitting.
+    fit_optimal: usize,
     /// Own-body copies written, each byte-identical to the source.
     identical: usize,
     refused: BTreeMap<String, usize>,
     /// For a chunk that does not fit: how far its best stream runs past its ceiling (negative: short).
     over: Vec<i64>,
+    /// The same for the optimal parse's stream.
+    over_optimal: Vec<i64>,
+    /// The longest one edited body took to plan.
+    slowest: Duration,
 }
 
 fn refusal_name(r: &PatchRefusal) -> String {
@@ -258,17 +266,30 @@ fn a_one_byte_edit_patches_in_place_or_is_refused_by_name_per_row_shape() {
                 body: altered.clone(),
                 ..same
             };
-            match plan_patch(&mut src, &keys, &patch) {
+            let began = Instant::now();
+            let planned = plan_patch(&mut src, &keys, &patch);
+            tally.slowest = tally.slowest.max(began.elapsed());
+            match planned {
                 Err(r) => {
                     if let PatchRefusal::ChunkDoesNotFit {
-                        deflated, ceiling, ..
+                        deflated,
+                        optimal,
+                        ceiling,
+                        ..
                     } = r
                     {
-                        tally.over.push(deflated as i64 - i64::from(ceiling));
+                        let past =
+                            |n: usize| i64::try_from(n).unwrap_or(i64::MAX) - i64::from(ceiling);
+                        tally.over.push(past(deflated));
+                        // `usize::MAX` is a chunk past the cap, on which the optimal parse is not tried.
+                        if optimal != usize::MAX {
+                            tally.over_optimal.push(past(optimal));
+                        }
                     }
                     *tally.refused.entry(refusal_name(&r)).or_default() += 1;
                 }
-                Ok(_) => {
+                Ok(plan) => {
+                    tally.fit_optimal += usize::from(plan.chunks.iter().any(|k| k.optimal));
                     let report = write_patched_copy(&prefix, &copy, &keys, &[patch])
                         .unwrap_or_else(|e| panic!("{}: a planned patch writes: {e}", c.shape));
                     assert_eq!(report.chunks_changed, 1, "{}", c.shape);
@@ -299,12 +320,26 @@ fn a_one_byte_edit_patches_in_place_or_is_refused_by_name_per_row_shape() {
     let mut sampled = 0;
     for (shape, t) in &tallies {
         sampled += t.sampled;
-        let mut over = t.over.clone();
-        over.sort_unstable();
+        let sorted = |v: &[i64]| {
+            let mut v = v.to_vec();
+            v.sort_unstable();
+            v
+        };
         eprintln!(
-            "{shape}: {} sampled, {} fit, {} own-body copies identical, {} unread, {} where reader \
-             and table disagree, refused {:?}, past the ceiling by {:?}",
-            t.sampled, t.fit, t.identical, t.unread, t.disagree, t.refused, over
+            "{shape}: {} sampled, {} fit ({} only by the optimal parse), {} own-body copies \
+             identical, {} unread, {} where reader and table disagree, refused {:?}, past the \
+             ceiling by {:?} with the tree's deflater and {:?} with the optimal parse; slowest \
+             plan {} ms",
+            t.sampled,
+            t.fit,
+            t.fit_optimal,
+            t.identical,
+            t.unread,
+            t.disagree,
+            t.refused,
+            sorted(&t.over),
+            sorted(&t.over_optimal),
+            t.slowest.as_millis()
         );
     }
     for (shape, t) in &tallies {

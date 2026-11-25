@@ -308,11 +308,25 @@ fn what_cannot_go_in_place_is_refused_by_name_and_writes_nothing() {
     ));
     let mut noisy = body();
     noisy[..0x10000].copy_from_slice(&noise(0x10000, 7));
-    assert!(matches!(
-        plan(noisy.clone(), 0),
-        Err(PatchRefusal::ChunkDoesNotFit { entry: 0, chunk: 0, deflated, ceiling })
-            if deflated > ceiling as usize
-    ));
+    let refused = plan(noisy.clone(), 0).expect_err("noise fits no deflated chunk");
+    let PatchRefusal::ChunkDoesNotFit {
+        entry: 0,
+        chunk: 0,
+        deflated,
+        optimal,
+        ceiling,
+    } = &refused
+    else {
+        panic!("{refused}");
+    };
+    let ceiling = *ceiling as usize;
+    assert!(*deflated > ceiling && *optimal > ceiling, "{refused}");
+    let said = refused.to_string();
+    assert!(
+        said.contains(&format!("{deflated} bytes by the tree's deflater"))
+            && said.contains(&format!("to {optimal} by an optimal parse")),
+        "{said}"
+    );
     assert!(matches!(plan(body(), 5), Err(PatchRefusal::NoRow { .. })));
 
     let patch = |body: Vec<u8>| BodyPatch {
@@ -414,13 +428,114 @@ fn empty_blocks_fill_every_length_but_one_to_four_and_eight() {
         }
     }
 
-    let shortest = deflate_to(&content, true, 0).expect_err("nothing fits no bytes");
-    for len in [shortest, shortest + 5, shortest + 9, shortest + 100] {
-        let (stream, own) = deflate_to(&content, true, len).expect("fills");
+    let (shortest, optimal) = deflate_to(&content, true, 0).expect_err("nothing fits no bytes");
+    let least = shortest.min(optimal);
+    for len in [least, least + 5, least + 9, least + 100] {
+        let (stream, own, _) = deflate_to(&content, true, len).expect("fills");
         assert_eq!(stream.len(), len);
         assert!(own <= len);
     }
-    assert_eq!(deflate_to(&content, true, shortest - 1), Err(shortest));
+    assert_eq!(
+        deflate_to(&content, true, least - 1),
+        Err((shortest, optimal))
+    );
+}
+
+/// Words of a small vocabulary in a random order: text whose matches an optimal parse chooses
+/// better than the tree's deflater at its best level.
+fn words(n: usize, seed: u32) -> Vec<u8> {
+    let vocabulary: Vec<Vec<u8>> = xorshift(64, seed)
+        .map(|x| letters(3 + (x % 7) as usize, x))
+        .collect();
+    let mut out = Vec::with_capacity(n + 16);
+    for x in xorshift(n, seed ^ 0x5A5A) {
+        if out.len() >= n {
+            break;
+        }
+        out.extend_from_slice(&vocabulary[(x >> 26) as usize]);
+        out.push(b' ');
+    }
+    out.truncate(n);
+    out
+}
+
+#[test]
+fn both_encoders_streams_inflate_to_the_same_bytes() {
+    let contents = [
+        words(0x3000, 31),
+        letters(5000, 32),
+        noise(3000, 33),
+        vec![0u8; 0x12000],
+    ];
+    for content in &contents {
+        for zlib in [true, false] {
+            let tree = deflate(content, 9, zlib).expect("the tree's deflater");
+            let optimal = optimal_deflate(content, zlib).expect("the optimal parse");
+            for stream in [&tree, &optimal] {
+                let chunk = Chunk {
+                    inflated: content.len() as u32,
+                    stored: stream.len() as u32,
+                    zlib: true,
+                };
+                assert_eq!(
+                    chunk_content(stream, &chunk),
+                    Some((zlib, content.clone())),
+                    "{} bytes, zlib {zlib}, {} stored",
+                    content.len(),
+                    stream.len()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_chunk_only_the_optimal_parse_fits_is_patched_and_reads_back() {
+    let new = words(0x4000, 21);
+    let (shortest, ceiling) = deflate_to(&new, true, 0).expect_err("nothing fits no bytes");
+    assert!(
+        shortest > ceiling,
+        "the tree's deflater makes {shortest} bytes and the optimal parse {ceiling}: the case needs \
+         content the optimal parse deflates shorter"
+    );
+    // The old content deflates short enough to be led by empty blocks to the ceiling.
+    let mut old = new.clone();
+    old[100..2100].fill(b'a');
+    let (stored, _, _) =
+        deflate_to(&old, true, ceiling).expect("the old content fills the ceiling");
+    let mut held = stored;
+    pad16(&mut held);
+    let mut archive = tabled(vec![Chunk {
+        inflated: new.len() as u32,
+        stored: ceiling as u32,
+        zlib: true,
+    }]);
+    let entry = row(0, held.len(), new.len(), None);
+    archive.entries = vec![entry.clone()];
+    let mount = Gta6Mount { base: 0, archive };
+    let file = [vec![0u8; 0x40], held].concat();
+    let read = |bytes: &[u8]| mount.read_entry(Cursor::new(bytes), &entry).expect("reads");
+    assert_eq!(read(&file), old);
+
+    let patch = BodyPatch {
+        base: 0,
+        entry: 0,
+        body: new.clone(),
+    };
+    let plan = plan_in(&mount, &mut Cursor::new(&file[..]), &keys(), &patch)
+        .expect("the optimal parse fits");
+    let chunk = plan.chunks[0];
+    assert!(chunk.changed && chunk.optimal, "{chunk:?}");
+    assert_eq!(
+        (chunk.new_stored, chunk.ceiling),
+        (ceiling as u32, ceiling as u32)
+    );
+    let mut copy = file.clone();
+    for (at, bytes) in &plan.writes {
+        copy[*at as usize..][..bytes.len()].copy_from_slice(bytes);
+    }
+    assert_eq!(copy.len(), file.len());
+    assert_eq!(read(&copy), new);
 }
 
 fn pad16(v: &mut Vec<u8>) {
@@ -595,4 +710,143 @@ fn a_row_with_no_chunk_table_is_one_stream_or_one_stored_body() {
     two.extend_from_slice(&deflate(&second, 9, true).unwrap());
     let (_, plan) = plan_over(&two, 5000, [first, second].concat());
     assert!(matches!(plan, Err(PatchRefusal::NoChunkTable { entry: 1 })));
+}
+
+/// A one-entry archive whose row holds `chunks`' stored bytes, each laid at a 16-aligned offset.
+fn laid(chunks: &[(Vec<u8>, Chunk)]) -> (Gta6Mount, Gta6Entry, Vec<u8>) {
+    let mut held = Vec::new();
+    for (bytes, _) in chunks {
+        held.extend_from_slice(bytes);
+        pad16(&mut held);
+    }
+    let mut archive = tabled(chunks.iter().map(|(_, c)| *c).collect());
+    let real = chunks.iter().map(|(_, c)| c.inflated as usize).sum();
+    let entry = row(0, held.len(), real, None);
+    archive.entries = vec![entry.clone()];
+    let file = [vec![0u8; 0x40], held].concat();
+    (Gta6Mount { base: 0, archive }, entry, file)
+}
+
+#[test]
+fn a_chunk_with_filler_after_its_stream_plans_unchanged_and_beside_an_edit_of_another() {
+    let (a, b) = (letters(0x2000, 41), letters(0x1800, 42));
+    let mut za = deflate(&a, 9, true).unwrap();
+    let stored_a = za.len() + 4;
+    za.extend_from_slice(&[0xA5; 4]);
+    let zb = deflate(&b, 9, true).unwrap();
+    let chunk = |inflated: usize, stored: usize| Chunk {
+        inflated: inflated as u32,
+        stored: stored as u32,
+        zlib: true,
+    };
+    let (mount, entry, file) = laid(&[
+        (za, chunk(a.len(), stored_a)),
+        (zb.clone(), chunk(b.len(), zb.len())),
+    ]);
+    let old = [a.clone(), b.clone()].concat();
+    let plan = |body: Vec<u8>| {
+        let patch = BodyPatch {
+            base: 0,
+            entry: 0,
+            body,
+        };
+        plan_in(&mount, &mut Cursor::new(&file[..]), &keys(), &patch)
+    };
+    let unchanged = plan(old.clone()).expect("an unchanged body plans");
+    assert!(unchanged.writes.is_empty());
+    let mut new = old.clone();
+    new[a.len() + 10..a.len() + 1000].fill(b'a');
+    let edited = plan(new.clone()).expect("an edit of the other chunk plans");
+    let changed: Vec<bool> = edited.chunks.iter().map(|c| c.changed).collect();
+    assert_eq!(changed, [false, true]);
+    let mut copy = file.clone();
+    for (at, bytes) in &edited.writes {
+        copy[*at as usize..][..bytes.len()].copy_from_slice(bytes);
+    }
+    assert_eq!(mount.read_entry(Cursor::new(&copy), &entry).unwrap(), new);
+}
+
+#[test]
+fn a_stream_three_bytes_short_of_its_ceiling_is_followed_by_zeros_and_patches_again() {
+    let new = letters(0x3000, 51);
+    let shortest = (0..=9)
+        .filter_map(|level| deflate(&new, level, true))
+        .map(|s| s.len())
+        .min()
+        .unwrap();
+    let ceiling = shortest + 3;
+    let mut old = new.clone();
+    old[100..3000].fill(b'a');
+    let (stored, _, _) = deflate_to(&old, true, ceiling).expect("the old content fills it");
+    let chunk = Chunk {
+        inflated: new.len() as u32,
+        stored: ceiling as u32,
+        zlib: true,
+    };
+    let (mount, entry, file) = laid(&[(stored, chunk)]);
+    let patch = |body: &[u8]| BodyPatch {
+        base: 0,
+        entry: 0,
+        body: body.to_vec(),
+    };
+    let plan = plan_in(&mount, &mut Cursor::new(&file[..]), &keys(), &patch(&new))
+        .expect("a stream 3 bytes short fits");
+    let c = plan.chunks[0];
+    assert!(c.changed && !c.optimal, "{c:?}");
+    assert_eq!(
+        (c.new_stored as usize, c.ceiling as usize),
+        (shortest, ceiling)
+    );
+    let (at, bytes) = &plan.writes[0];
+    assert_eq!(bytes[shortest..], [0, 0, 0]);
+    let mut copy = file.clone();
+    copy[*at as usize..][..bytes.len()].copy_from_slice(bytes);
+    assert_eq!(mount.read_entry(Cursor::new(&copy), &entry).unwrap(), new);
+    // The patched copy plans again: its zeros after the stream are read past.
+    let again = plan_in(&mount, &mut Cursor::new(&copy[..]), &keys(), &patch(&old))
+        .expect("a patched copy patches again");
+    assert!(again.chunks[0].changed);
+}
+
+#[test]
+fn a_chunk_past_the_optimal_cap_is_refused_without_the_optimal_parse() {
+    let content = noise(OPTIMAL_CAP + 1, 61);
+    let started = std::time::Instant::now();
+    let refused = deflate_to(&content, true, 1000).expect_err("noise fits no 1000 bytes");
+    assert_eq!(refused.1, usize::MAX, "the optimal parse is not tried");
+    assert!(refused.0 > content.len());
+    assert!(started.elapsed() < std::time::Duration::from_secs(20));
+    let said = PatchRefusal::ChunkDoesNotFit {
+        entry: 0,
+        chunk: 0,
+        deflated: refused.0,
+        optimal: refused.1,
+        ceiling: 1000,
+    }
+    .to_string();
+    assert!(said.contains("not tried"), "{said}");
+}
+
+#[test]
+fn a_file_cut_short_inside_a_row_protects_no_names_blob_over_that_row() {
+    // The archive is given a 64-byte names blob after its last row.
+    let mut file = built(vec![("docs/a.txt", Rpf9NewBody::Chunked(body()))]);
+    file[0x0C..0x10].copy_from_slice(&0x40u32.to_le_bytes());
+    file.extend_from_slice(&[0u8; 0x40]);
+    let mount = Gta6Mount::open_root(&mut Cursor::new(&file[..]), &keys()).expect("opens");
+    let e = (mount.archive.entries.iter())
+        .find(|e| e.real == Some(body().len() as u64))
+        .expect("the row");
+    let (start, stored) = (mount.absolute_start(e).unwrap(), e.stored.unwrap());
+    let whole = protected_spans(&mut Cursor::new(&file[..]), &keys(), 0).expect("spans");
+    assert!(whole.iter().any(|&(a, _)| a >= start + stored), "{whole:?}");
+    let cut = &file[..(start + stored - 8) as usize];
+    let spans = protected_spans(&mut Cursor::new(cut), &keys(), 0).expect("spans");
+    assert!(
+        spans
+            .iter()
+            .all(|&(a, b)| b <= start || a >= start + stored),
+        "{spans:?} over the row at {start:#x}..{:#x}",
+        start + stored
+    );
 }

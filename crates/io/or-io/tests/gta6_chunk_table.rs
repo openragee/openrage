@@ -11,6 +11,7 @@
 #![cfg(feature = "gta6")]
 
 use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use byteorder::{ByteOrder, LE};
@@ -61,6 +62,45 @@ struct Tally {
     failures: Vec<String>,
     flagged_walked: usize,
     clear_read: usize,
+    deflated: usize,
+    /// Deflated chunks whose stream ends before their stored size, and the most bytes left after one.
+    slack_chunks: usize,
+    most_slack: usize,
+}
+
+/// Where the zlib (or, failing that, raw DEFLATE) stream at the head of `bytes` ends.
+fn stream_end(bytes: &[u8]) -> Option<usize> {
+    use flate2::{Decompress, FlushDecompress, Status};
+    let mut sink = vec![0u8; 1 << 16];
+    for zlib in [true, false] {
+        let mut d = Decompress::new(zlib);
+        loop {
+            let (at, out) = (d.total_in() as usize, d.total_out());
+            match d.decompress(&bytes[at..], &mut sink, FlushDecompress::Finish) {
+                Ok(Status::StreamEnd) => return Some(d.total_in() as usize),
+                Ok(_) if d.total_in() as usize != at || d.total_out() != out => {}
+                _ => break,
+            }
+        }
+    }
+    None
+}
+
+/// Count the deflated chunks of the deciphered `body` whose stream ends short of the stored size.
+fn count_slack(body: &[u8], chunks: &[Chunk], t: &mut Tally) {
+    let mut pos = 0usize;
+    for c in chunks {
+        let stored = c.stored as usize;
+        if c.zlib {
+            t.deflated += 1;
+            let end = body.get(pos..pos + stored).and_then(stream_end);
+            if let Some(end) = end.filter(|&end| end < stored) {
+                t.slack_chunks += 1;
+                t.most_slack = t.most_slack.max(stored - end);
+            }
+        }
+        pos += ceil16(c.stored) as usize;
+    }
 }
 
 /// A clear body larger than this is not read back: the check is the read, not the volume.
@@ -148,6 +188,19 @@ fn walk(file: &mut File, mount: &Gta6Mount, keys: &GtaViKeys, depth: usize, t: &
             let clear_sized = entry.cipher.is_none()
                 && entry.stored.is_some()
                 && entry.real.is_some_and(|real| real <= CLEAR_READ_CAP);
+            if let (Some(chunks), true) = (&chunks, clear_sized) {
+                let start = mount.absolute_start(entry).unwrap_or(0);
+                let len = entry.stored.unwrap_or(0) as usize;
+                let mut body = vec![0u8; len];
+                if file.seek(SeekFrom::Start(start)).is_ok() && file.read_exact(&mut body).is_ok() {
+                    count_slack(&body, chunks, t);
+                }
+            }
+            if let (Some(chunks), true) = (&chunks, flagged) {
+                if let Ok(body) = mount.read_entry_deciphered_stored(&mut *file, entry, keys) {
+                    count_slack(&body, chunks, t);
+                }
+            }
             if chunks.is_some() && clear_sized {
                 t.clear_read += 1;
                 match mount.read_entry(&mut *file, entry) {
@@ -227,6 +280,11 @@ fn every_chunk_row_authors_back_byte_identical_and_drives_the_walk() {
         t.flagged_walked,
         t.clear_read,
         t.failures.len()
+    );
+    // The game's read stops at a chunk's stream end, so a stored size past it is not an error.
+    println!(
+        "deflated chunks {}, ending before their stored size {} (most bytes after the stream {})",
+        t.deflated, t.slack_chunks, t.most_slack
     );
     for failure in t.failures.iter().take(20) {
         eprintln!("  {failure}");

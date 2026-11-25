@@ -17,9 +17,8 @@
 //! `data.rpf common.rpf` lists the `common.rpf` held inside `data.rpf`, recursively. A component is
 //! matched against an entry by its recovered name, its `0x…`/`hash_…` hash or its decimal index.
 //!
-//! The key snapshot and the recovered-names corpus are game-derived and read at runtime; neither is
-//! committed. Without a snapshot the archive cannot be deciphered and the command says so; without
-//! the names corpus every entry shows as its hash.
+//! Names are bundled and supplemented by an external names folder and the local vocabulary. The
+//! key snapshot is read at runtime; without it the archive cannot be deciphered.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -35,10 +34,6 @@ use or_io::meta::binary::pso::string_names;
 
 #[path = "rpf9_find.rs"]
 mod find;
-
-/// The environment variable that names a folder of recovered-names tables (`vocabulary.txt`,
-/// `resolved-names.tsv`, `toc-entries-resolved.tsv`), used when `--names` is not given.
-const NAMES_ENV: &str = "OPENRAGE_GTA6_NAMES";
 
 pub(crate) fn run(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
@@ -149,17 +144,9 @@ fn keys_with_exe(path: &Path, exe: &Path) -> Result<GtaViKeys, String> {
     GtaViKeys::parse(&plain).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Load the recovered-names corpus from `dir` (or the folder [`NAMES_ENV`] names): the `vocabulary.txt`
-/// hashed at load, plus the per-build tables as a shortcut. An empty resolver is returned when the
-/// folder is absent, so a missing corpus never blocks — entries show as their hash.
+/// Bundled names supplemented by `dir` or `OPENRAGE_GTA6_NAMES`, and the local vocabulary.
 fn load_resolver(dir: Option<&Path>) -> NameResolver {
-    let mut resolver = match dir
-        .map(Path::to_path_buf)
-        .or_else(|| std::env::var_os(NAMES_ENV).map(PathBuf::from))
-    {
-        Some(dir) => NameResolver::load(&dir),
-        None => NameResolver::new(),
-    };
+    let mut resolver = NameResolver::load_with_defaults(dir);
     // Also fold in the vocabulary the app harvested into the config dir, so names already found in the
     // user's own archives resolve here, not only those under the names folder or the env var.
     if let Some(config) = or_title::config::config_dir() {

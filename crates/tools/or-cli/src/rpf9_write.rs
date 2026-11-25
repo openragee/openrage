@@ -28,8 +28,6 @@ use or_io::container::rpf::{
 };
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
 
-/// The folder of recovered-names tables used when `--names` is not given.
-const NAMES_ENV: &str = "OPENRAGE_GTA6_NAMES";
 /// The bytes `9FPR` an RPF9 archive begins with.
 const RPF9_MAGIC: [u8; 4] = *b"9FPR";
 
@@ -389,14 +387,9 @@ fn find_entry(mount: &Gta6Mount, selector: &str) -> Option<Gta6Entry> {
     mount.archive.entries.iter().find(matches).cloned()
 }
 
-/// The recovered-names corpus from `dir` (or [`NAMES_ENV`]) and the config dir's vocabulary; empty
-/// when neither is present, so entries are then named by hash or index.
+/// Bundled names supplemented by `dir` or `OPENRAGE_GTA6_NAMES`, and the local vocabulary.
 fn load_resolver(dir: Option<&Path>) -> NameResolver {
-    let mut resolver = dir
-        .map(Path::to_path_buf)
-        .or_else(|| std::env::var_os(NAMES_ENV).map(PathBuf::from))
-        .map(|dir| NameResolver::load(&dir))
-        .unwrap_or_default();
+    let mut resolver = NameResolver::load_with_defaults(dir);
     if let Some(config) = or_title::config::config_dir() {
         resolver.merge_vocabulary(&Vocabulary::load(&vocabulary_file(&config)));
     }

@@ -17,8 +17,6 @@ use crate::state::DocPayload;
 
 /// A build folder to list archives from in place of the configured install, for a developer's session.
 pub(crate) const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
-/// A folder of recovered names, folded into the names the app harvested.
-const NAMES_ENV: &str = "OPENRAGE_GTA6_NAMES";
 
 /// What an entry is, by the table's own facts: its body's header, or its row's class byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -197,15 +195,11 @@ pub(crate) fn keys() -> Result<Arc<GtaViKeys>, String> {
     keys
 }
 
-/// The recovered-names folder [`NAMES_ENV`] names, folded together with the vocabulary the app
-/// harvested into the config dir, loaded once.
+/// Bundled names supplemented by `OPENRAGE_GTA6_NAMES` and the local vocabulary, loaded once.
 pub(crate) fn resolver() -> Arc<NameResolver> {
     static RESOLVER: OnceLock<Arc<NameResolver>> = OnceLock::new();
     let load = || {
-        let mut resolver = match std::env::var_os(NAMES_ENV).map(PathBuf::from) {
-            Some(dir) => NameResolver::load(&dir),
-            None => NameResolver::new(),
-        };
+        let mut resolver = NameResolver::load_with_defaults(None);
         if let Some(config) = or_title::config::config_dir() {
             resolver.merge_vocabulary(&Vocabulary::load(&vocabulary_file(&config)));
         }

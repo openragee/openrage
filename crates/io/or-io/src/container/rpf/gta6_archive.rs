@@ -21,7 +21,7 @@
 //! [`super::gta6_mount`].
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use byteorder::{ByteOrder, LE};
 
@@ -511,13 +511,7 @@ fn read_cipher(row: &[u8]) -> Gta6Cipher {
     }
 }
 
-/// A map from an entry's name64 to its path.
-///
-/// Names are game-derived and never committed; a session supplies them at run time. The primary
-/// source is the recovered-names [`Vocabulary`], which hashes each name with `name_hash64` as it
-/// loads, so it resolves any build and reaches the nested tables. The per-build name tables
-/// (`toc-entries-resolved.tsv`, `resolved-names.tsv`) stay an optional shortcut. With neither, the
-/// resolver names nothing and every entry shows as its hash.
+/// A map from an entry's name64 to its path, from bundled or externally supplied names.
 #[derive(Debug, Default, Clone)]
 pub struct NameResolver {
     vocabulary: Vocabulary,
@@ -554,6 +548,27 @@ impl NameResolver {
         }
         if let Ok(text) = std::fs::read_to_string(dir.join("resolved-names.tsv")) {
             resolver.add_hash_name_tsv(&text);
+        }
+        resolver
+    }
+
+    /// Bundled names supplemented by `dir`, or `OPENRAGE_GTA6_NAMES` when no directory is given.
+    pub fn load_with_defaults(dir: Option<&Path>) -> Self {
+        let mut bundled = Self::new();
+        bundled.add_hash_name_tsv(include_str!(
+            "../../../../../../assets/gta6_names/resolved-names.tsv"
+        ));
+        let Some(dir) = dir
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::var_os("OPENRAGE_GTA6_NAMES").map(PathBuf::from))
+        else {
+            return bundled;
+        };
+        let mut resolver = Self::load(&dir);
+        for (hash, name) in bundled.shortcut {
+            if resolver.lookup(hash).is_none() {
+                resolver.insert(hash, name);
+            }
         }
         resolver
     }

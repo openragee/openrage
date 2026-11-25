@@ -22,8 +22,6 @@ use or_io::gta6::names::{vocabulary_file, Vocabulary};
 use or_io::meta::{MetaDocument, MetaInstance, SchemaLibrary, Value};
 use serde::Serialize;
 
-/// The folder of recovered-names tables used when `--names` is not given.
-const NAMES_ENV: &str = "OPENRAGE_GTA6_NAMES";
 /// A body past this many bytes, stored or inflated, is not read for a summary.
 const SUMMARY_CAP: u64 = 16 << 20;
 /// Real nesting is shallow; a table nested deeper than this is reported rather than followed.
@@ -173,13 +171,9 @@ fn usage(msg: &str) -> ExitCode {
     ExitCode::from(2)
 }
 
-/// The recovered-names corpus from `dir` (or [`NAMES_ENV`]) and the config dir's vocabulary.
+/// Bundled names supplemented by `dir` or `OPENRAGE_GTA6_NAMES`, and the local vocabulary.
 fn load_resolver(dir: Option<&Path>) -> NameResolver {
-    let mut resolver = dir
-        .map(Path::to_path_buf)
-        .or_else(|| std::env::var_os(NAMES_ENV).map(PathBuf::from))
-        .map(|dir| NameResolver::load(&dir))
-        .unwrap_or_default();
+    let mut resolver = NameResolver::load_with_defaults(dir);
     if let Some(config) = or_title::config::config_dir() {
         resolver.merge_vocabulary(&Vocabulary::load(&vocabulary_file(&config)));
     }

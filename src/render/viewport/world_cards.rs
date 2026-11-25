@@ -71,10 +71,10 @@ impl WorldGpu {
         self.cards.shown.clear();
     }
 
-    /// The meshes of the least detailed level of `model` whose every map is on the device or
-    /// known never to come, each with the material the world draws it with, and the maps of its
-    /// least detailed level that have not arrived put in `absent` with whether each is read
-    /// whole; what blends or lies on a surface is left out of a stand-in. A colour map no file
+    /// The meshes of the least detailed level of `model` that has something to bake, once its every
+    /// map is on the device or known never to come, each with the material the world draws it
+    /// with, and the maps of that level that have not arrived put in `absent` with whether each is
+    /// read whole; what blends or lies on a surface is left out of a stand-in. A colour map no file
     /// holds is `stand_in` where its species' records state a colour, and its key put in `stood`.
     // ponytail: every map a material names is waited for, normal maps too, which a bake reads
     // nothing of; wait for those of colour and coverage alone if the bakes are seen to lag.
@@ -89,7 +89,7 @@ impl WorldGpu {
         let Some(Slot::Ready { lods, .. }) = self.models.get(model) else {
             return None;
         };
-        for (tried, lod) in lods.iter().rev().enumerate() {
+        for lod in lods.iter().rev() {
             let mut ready = Vec::with_capacity(lod.meshes.len());
             let mut waits = false;
             for mesh in &lod.meshes {
@@ -111,9 +111,7 @@ impl WorldGpu {
                         // Not arrived yet: the level waits for it.
                         (None, (ABSENT, None)) => {
                             waits = true;
-                            if tried == 0 {
-                                absent.push((key, material.whole[at]));
-                            }
+                            absent.push((key, material.whole[at]));
                             None
                         }
                         (None, (_, None)) if material.colours[at] => {
@@ -130,7 +128,11 @@ impl WorldGpu {
                     None => waits = true,
                 }
             }
-            if waits || ready.is_empty() {
+            // ⚠ A level that waits is waited for, never passed over for a more detailed one already here: what a bake draws would hang on what arrived first.
+            if waits {
+                return None;
+            }
+            if ready.is_empty() {
                 continue;
             }
             let meshes = (ready.into_iter())

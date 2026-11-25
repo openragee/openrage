@@ -1002,7 +1002,15 @@ pub(crate) fn check_file(
     }
     // ⚠ A file an asset escrow locks is its author's as it came: equal to what the plan copies is all a build can say of it.
     if copied.is_some() && locked {
-        found.locked.push(file.path.clone());
+        // ⚠ Only the server of its keyholder opens it, so a pack or a package would install a file the game cannot read.
+        if plan.kind == OutputKind::FivemResource {
+            found.locked.push(file.path.clone());
+        } else {
+            found.problems.push(format!(
+                "`{}` is locked by a server's asset escrow, which only a FiveM server of its keyholder opens: the game cannot read it from a pack or a package",
+                file.path
+            ));
+        }
         return;
     }
     // ⚠ A file with no layout per target (a metadata file) has none to compare with the target's.

@@ -191,6 +191,9 @@ fn a_dry_run_prints_the_report_as_text_and_the_same_report_as_json_and_writes_no
             finding["message"].as_str().unwrap(),
         );
     }
+    for note in document["notes"].as_array().unwrap() {
+        claim("note: ".to_string(), note.as_str().unwrap());
+    }
     assert!(
         matched.iter().all(|m| *m),
         "a line of the text is in no entry of the JSON:\n{said}"
@@ -524,4 +527,305 @@ fn a_model_no_reader_opens_is_kept_whole_and_the_build_stops_at_it_as_the_adopti
         ExitCode::FAILURE
     );
     assert!(!into.join("build").join("harbour").exists());
+}
+
+/// What `project adopt --dry-run` prints of the mapping `files` in a zip, and, once it is adopted and built, the folder of the
+/// project, the files of the built resource and the manifest the build wrote.
+fn adopted_and_built(
+    files: &[(&str, Vec<u8>)],
+) -> (String, tempfile::TempDir, Vec<String>, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = dir.path().join("harbour.zip");
+    std::fs::write(&archive, zip_of(files)).unwrap();
+    let into = dir.path().join("harbour");
+    let (ok, report) = printed(&[text(&archive), "--into", text(&into), "--dry-run"]);
+    assert!(ok, "{report}");
+    assert_eq!(
+        adopt(&[text(&archive), "--into", text(&into)]),
+        ExitCode::SUCCESS
+    );
+    let project = into.join("harbour.openrage-proj");
+    assert_eq!(
+        run(&["project", "plan", text(&project)]),
+        ExitCode::SUCCESS,
+        "{report}"
+    );
+    assert_eq!(
+        run(&["project", "build", text(&project)]),
+        ExitCode::SUCCESS,
+        "{report}"
+    );
+    let built = into.join("build").join("harbour");
+    let manifest = std::fs::read_to_string(built.join("fxmanifest.lua")).unwrap();
+    (report, dir, names_under(&built), manifest)
+}
+
+/// Every file under `dir` by its path with `/`, sorted.
+fn names_under(dir: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut folders = vec![dir.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                folders.push(path);
+            } else {
+                let inside = path.strip_prefix(dir).unwrap().to_string_lossy();
+                found.push(inside.replace('\\', "/"));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+fn one_map() -> Vec<u8> {
+    map_file(
+        "harbour",
+        &[Entity::at(CRATE, [10.0, 20.0, 0.5], 1)],
+        ([8.0, 18.0, -1.0], [16.0, 22.0, 2.0]),
+    )
+}
+
+fn crate_types(name: &str) -> Vec<u8> {
+    types_file(name, &[Archetype::new(CRATE, [-1.0; 3], [1.0; 3])])
+}
+
+const HEAD: &str = "fx_version 'cerulean'\ngame 'gta5'\nthis_is_a_map 'yes'\n";
+
+/// ⚠ A build lists every file it ships outside the stream folder under `files`, which a server sends to every client, and writes no
+/// script line: a script of the server is kept beside the project, where no build ships it.
+#[test]
+fn a_script_of_the_server_is_kept_beside_the_project_and_no_build_publishes_it() {
+    let manifest = format!(
+        "{HEAD}server_script 'server/sv_doors.lua'\nserver_scripts {{ 'server/more/*.lua' }}\n\
+         shared_script 'config.lua'\nclient_script 'client.lua'\n"
+    );
+    let (report, dir, built, written) = adopted_and_built(&[
+        ("harbour/fxmanifest.lua", manifest.into_bytes()),
+        ("harbour/stream/harbour.ymap", one_map()),
+        (
+            "harbour/server/sv_doors.lua",
+            b"local KEY = 'secret'".to_vec(),
+        ),
+        (
+            "harbour/server/more/sv_hooks.lua",
+            b"local HOOK = 'secret'".to_vec(),
+        ),
+        ("harbour/config.lua", b"Config = {}".to_vec()),
+        ("harbour/client.lua", b"print('c')".to_vec()),
+    ]);
+    for script in ["server/sv_doors.lua", "server/more/sv_hooks.lua"] {
+        assert!(
+            report.contains(&format!(
+                "kept beside {script}: a `server_script` line names it"
+            )),
+            "{report}"
+        );
+        assert!(!written.contains(script), "{written}");
+        assert!(!built.iter().any(|path| path == script), "{built:?}");
+        assert!(
+            dir.path().join("harbour").join(script).is_file(),
+            "it is in the folder of the project"
+        );
+    }
+    assert!(
+        written.contains("files {\n  'client.lua',\n  'config.lua',\n}"),
+        "{written}"
+    );
+    let project =
+        std::fs::read_to_string(dir.path().join("harbour/harbour.openrage-proj")).unwrap();
+    assert!(
+        project.contains("server/sv_doors.lua") && project.contains("no build ships it"),
+        "the project file records what was not placed: {project}"
+    );
+}
+
+/// ⚠ The report says of a line what the plan of the adopted project does, so the built manifest is what it is compared with.
+#[test]
+fn what_the_report_says_a_build_carries_of_a_manifest_is_what_the_built_manifest_states() {
+    // A pack of props holds no map file, and its build declares it no map.
+    let (report, _dir, _, written) = adopted_and_built(&[
+        ("harbour/fxmanifest.lua", HEAD.as_bytes().to_vec()),
+        (
+            "harbour/stream/harbour_types.ytyp",
+            crate_types("harbour_types"),
+        ),
+        (
+            "harbour/stream/harbour_crate.ydd",
+            drawable_dictionary(CRATE, 6, 0.0),
+        ),
+    ]);
+    assert!(
+        report.contains("manifest line 3 this_is_a_map 'yes': not carried: no map file of the resource becomes a source"),
+        "{report}"
+    );
+    assert!(!written.contains("this_is_a_map"), "{written}");
+
+    // A request for type files by a pattern is carried by each type file it names.
+    let by_pattern = format!("{HEAD}data_file 'DLC_ITYP_REQUEST' 'stream/**/*.ytyp'\n");
+    let (report, _dir, _, written) = adopted_and_built(&[
+        ("harbour/fxmanifest.lua", by_pattern.into_bytes()),
+        ("harbour/stream/harbour.ymap", one_map()),
+        (
+            "harbour/stream/harbour_types.ytyp",
+            crate_types("harbour_types"),
+        ),
+    ]);
+    assert!(
+        report.contains(
+            "data_file 'DLC_ITYP_REQUEST' 'stream/**/*.ytyp': carried: it names 1 file(s)"
+        ),
+        "{report}"
+    );
+    assert!(report.contains("this_is_a_map 'yes': carried"), "{report}");
+    assert!(
+        written.contains("this_is_a_map 'yes'")
+            && written.contains("data_file 'DLC_ITYP_REQUEST' 'stream/harbour_types.ytyp'"),
+        "{written}"
+    );
+
+    // A type file of the name of a map file is kept whole, and the pattern that names it states its type through the Files content.
+    let by_pattern = format!("{HEAD}data_file 'DLC_ITYP_REQUEST' 'stream/*.ytyp'\n");
+    let (report, _dir, built, written) = adopted_and_built(&[
+        ("harbour/fxmanifest.lua", by_pattern.into_bytes()),
+        ("harbour/stream/harbour.ymap", one_map()),
+        ("harbour/stream/harbour.ytyp", crate_types("harbour")),
+    ]);
+    assert!(
+        report.contains("kept whole stream/harbour.ytyp"),
+        "{report}"
+    );
+    assert!(
+        built.iter().any(|path| path == "stream/harbour.ytyp"),
+        "{built:?}"
+    );
+    assert!(
+        written.contains("data_file 'DLC_ITYP_REQUEST' 'stream/harbour.ytyp'"),
+        "{written}"
+    );
+
+    // A word whose text holds a backslash is not carried, since what Lua reads of it is not what was read here.
+    let escaped = format!("{HEAD}author 'O\\'Neil'\ndescription 'Line one\\nLine two'\n");
+    let (report, _dir, _, written) = adopted_and_built(&[
+        ("harbour/fxmanifest.lua", escaped.into_bytes()),
+        ("harbour/stream/harbour.ymap", one_map()),
+    ]);
+    assert!(
+        report
+            .contains("description 'Line one\\nLine two': not carried: its text holds a backslash"),
+        "{report}"
+    );
+    assert!(
+        written.contains("author 'O\\'Neil'") && !written.contains("description"),
+        "{written}"
+    );
+}
+
+/// ⚠ A build cooks into `stream`, and on a disk that does not tell case apart `Stream` is that folder.
+#[test]
+fn a_stream_folder_spelled_with_a_capital_is_adopted_into_a_project_that_builds() {
+    let manifest = format!("{HEAD}data_file 'HANDLING_FILE' 'Stream/notes.txt'\n");
+    let (report, dir, built, written) = adopted_and_built(&[
+        ("harbour/fxmanifest.lua", manifest.into_bytes()),
+        ("harbour/Stream/harbour.ymap", one_map()),
+        ("harbour/Stream/notes.txt", b"kept".to_vec()),
+        ("harbour/Stream/sealed.ydr", locked()),
+    ]);
+    assert!(report.contains("kept whole Stream/notes.txt"), "{report}");
+    assert_eq!(
+        built,
+        [
+            "fxmanifest.lua",
+            "stream/harbour.ymap",
+            "stream/notes.txt",
+            "stream/sealed.ydr"
+        ]
+    );
+    assert!(
+        written.contains("data_file 'HANDLING_FILE' 'stream/notes.txt'"),
+        "{written}"
+    );
+    let kept = names_in(&dir.path().join("harbour/stream"));
+    assert_eq!(kept, ["notes.txt", "sealed.ydr"]);
+}
+
+/// ⚠ A source cooks into the stream folder by its name alone, so a second file of that name standing there would ship at its path.
+#[test]
+fn a_second_model_of_a_name_where_the_first_cooks_to_is_left_out_and_the_project_plans() {
+    let (first, second) = (
+        drawable_dictionary(CRATE, 6, 0.0),
+        drawable_dictionary(CRATE, 12, 1.0),
+    );
+    assert_ne!(first, second);
+    let (report, dir, built, _) = adopted_and_built(&[
+        ("harbour/fxmanifest.lua", HEAD.as_bytes().to_vec()),
+        ("harbour/stream/harbour.ymap", one_map()),
+        (
+            "harbour/stream/harbour_types.ytyp",
+            crate_types("harbour_types"),
+        ),
+        ("harbour/stream/a/harbour_crate.ydd", first),
+        ("harbour/stream/harbour_crate.ydd", second),
+    ]);
+    assert!(
+        report.contains(
+            "left out stream/harbour_crate.ydd: `stream/a/harbour_crate.ydd` becomes a source"
+        ),
+        "{report}"
+    );
+    assert_eq!(
+        built.iter().filter(|path| path.ends_with(".ydd")).count(),
+        1,
+        "{built:?}"
+    );
+    assert!(!dir.path().join("harbour/stream/harbour_crate.ydd").exists());
+}
+
+/// ⚠ An asset escrow writes `.fxap` beside the files it locks: a name that begins with a dot, and still a file of the resource.
+#[test]
+fn the_file_an_asset_escrow_writes_beside_what_it_locks_ships_with_the_locked_files() {
+    let files = [
+        (
+            "harbour/.fxap",
+            b"what the escrow wrote of the resource".to_vec(),
+        ),
+        ("harbour/.git/config", b"[core]".to_vec()),
+        ("harbour/fxmanifest.lua", HEAD.as_bytes().to_vec()),
+        ("harbour/notes.txt", b"kept".to_vec()),
+        ("harbour/stream/harbour.ymap", one_map()),
+        ("harbour/stream/sealed.ydr", locked()),
+    ];
+    let (report, _dir, built, written) = adopted_and_built(&files);
+    assert!(
+        report.contains(
+            "kept whole .fxap: the file an asset escrow writes beside the files it locks"
+        ),
+        "{report}"
+    );
+    assert!(report.contains("outside harbour/.git: hidden"), "{report}");
+    assert!(!report.contains("holds no `.fxap`"), "{report}");
+    assert_eq!(
+        built,
+        [
+            ".fxap",
+            "fxmanifest.lua",
+            "notes.txt",
+            "stream/harbour.ymap",
+            "stream/sealed.ydr"
+        ]
+    );
+    assert!(
+        written.contains("files {\n  'notes.txt',\n}"),
+        "a server reads it and sends it to no client: {written}"
+    );
+
+    // Without it the report says the locked files have nothing beside them.
+    let (report, ..) = adopted_and_built(&files[2..]);
+    assert!(
+        report.contains(
+            "note: 1 file(s) of harbour are locked by an asset escrow and it holds no `.fxap`"
+        ),
+        "{report}"
+    );
 }

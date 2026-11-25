@@ -388,12 +388,12 @@ fn print_usage() {
     eprintln!("  depends    What an asset needs and where a model is placed: of,");
     eprintln!("             placements, census, rules");
     eprintln!(
-        "  project    Projects: create, import game files, plan, build and verify a resource, a DLC or a package"
+        "  project    Projects: create, adopt a folder or a mapping in a zip, import game files, plan, build and verify a resource, a DLC or a package, and check a resource, a server and a build against it"
     );
     eprintln!("  wardrobe   Clothing packs: validate, plan, build, diff, import, fix and optimise textures");
     eprintln!("  addonped   Addon peds: validate and verify");
     eprintln!("  particles  Particles: list, validate and verify");
-    eprintln!("  maps       Maps: list, validate, verify, changes of a map from its base, apply operations, delete entities, keep a manifest of the game and list doors");
+    eprintln!("  maps       Maps: list, validate, verify, changes of a map from its base, apply operations, delete entities, keep a manifest of the game, list doors, and list and edit roads");
     eprintln!("  weapons    Weapons: validate and verify");
     eprintln!("  photo      A WebP picture of each model in a folder or the game, with no window");
     eprintln!(

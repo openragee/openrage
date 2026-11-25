@@ -11,10 +11,13 @@
 //! ships as it came. A model or a texture is judged by its name until the adoption, where the reader of its format is asked; one it
 //! refuses is kept whole with the reason, and the report an adoption returns says so.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use or_project::place::{extension_of, is_archive_name, Place, Refusal, Wanted};
+use or_project::place::{
+    extension_of, is_archive_name, Place, Refusal, Wanted, ESCROW_ENTITLEMENT,
+};
 use or_project::resource::manifest::{self, Manifest};
 use or_project::resource::{ESCROW_MARKER, STREAM_DIR};
 use or_project::{Container, Module, Output, Project, PROJECT_EXTENSION};
@@ -52,9 +55,11 @@ pub enum Becomes {
     Kept,
     /// Locked by a server's asset escrow: kept whole, counted and never opened.
     Locked,
+    /// Kept in the folder of the project and no file of it, with the reason: a build does not ship it.
+    KeptBeside,
     /// Not adopted, with the reason: a map file or a type file that does not read.
     Refused,
-    /// Not adopted: an archive inside the place, which is listed and not opened.
+    /// Not adopted, with the reason: an archive inside the place, which is listed and not opened, or a file a build would write over.
     LeftOut,
 }
 
@@ -67,6 +72,7 @@ impl Becomes {
             Self::Manifest => "manifest",
             Self::Kept => "kept whole",
             Self::Locked => "locked",
+            Self::KeptBeside => "kept beside",
             Self::Refused => "refused",
             Self::LeftOut => "left out",
         }
@@ -204,7 +210,10 @@ impl Report {
             lines.push(format!(
                 "{what}: {} file(s): {sources} become source(s), {} kept whole, {} locked by an asset escrow and not opened, {} refused, {} left out",
                 root.files.len(),
-                root.count("kept whole") + root.count("manifest") + root.count("map manifest"),
+                root.count("kept whole")
+                    + root.count("manifest")
+                    + root.count("map manifest")
+                    + root.count("kept beside"),
                 root.locked,
                 root.count("refused"),
                 root.count("left out"),
@@ -303,6 +312,96 @@ fn inside<'a>(path: &'a str, root: &str) -> Option<&'a str> {
 fn is_streamed(path: &str) -> bool {
     path.split_once('/')
         .is_some_and(|(first, _)| first.eq_ignore_ascii_case(STREAM_DIR))
+}
+
+/// Where an adoption places the file at `path` of a root, and where a build ships it from: its path, with the stream folder spelled
+/// as a build spells it.
+///
+/// ⚠ A maps content cooks into `stream`, and on a disk that does not tell case apart `Stream` is that folder: a file kept under
+/// another spelling would be one the build finds in its folder and not in its plan.
+fn placed(path: &str) -> String {
+    match path.split_once('/') {
+        Some((first, rest)) if first.eq_ignore_ascii_case(STREAM_DIR) => {
+            format!("{STREAM_DIR}/{rest}")
+        }
+        _ => path.to_string(),
+    }
+}
+
+/// Whether `text` is what `pattern` names, where an item of the pattern that `any` takes stands for any run of items.
+///
+/// ⚠ A pattern is somebody else's input: this goes back only to the last such item, so its cost is the two lengths multiplied,
+/// where trying every run for every one of them is exponential in their number.
+fn fits<P, T>(
+    pattern: &[P],
+    text: &[T],
+    any: impl Fn(&P) -> bool,
+    same: impl Fn(&P, &T) -> bool,
+) -> bool {
+    let (mut p, mut t) = (0, 0);
+    let mut last: Option<(usize, usize)> = None;
+    while t < text.len() {
+        if p < pattern.len() && any(&pattern[p]) {
+            last = Some((p, t));
+            p += 1;
+        } else if p < pattern.len() && same(&pattern[p], &text[t]) {
+            p += 1;
+            t += 1;
+        } else if let Some((at, taken)) = last {
+            last = Some((at, taken + 1));
+            p = at + 1;
+            t = taken + 1;
+        } else {
+            return false;
+        }
+    }
+    pattern[p..].iter().all(any)
+}
+
+/// Whether the names of a path are ones the names of a pattern name: `*` in a name is any run of characters, a name that is `**`
+/// is any run of folders, and case is not told apart.
+fn names_are(pattern: &[&str], path: &[&str]) -> bool {
+    let name_is = |pattern: &&str, name: &&str| {
+        fits(
+            pattern.as_bytes(),
+            name.as_bytes(),
+            |p| *p == b'*',
+            |p, n| p.eq_ignore_ascii_case(n),
+        )
+    };
+    fits(pattern, path, |name| *name == "**", name_is)
+}
+
+/// How many paths of one manifest that name files by a pattern are searched for; one past it is said to name no one file.
+///
+/// ⚠ A pattern is tried on every file of its root, so a manifest of nothing but patterns would cost its lines times the files.
+const PATTERNS_AT_MOST: usize = 256;
+
+/// The files of a root that a path a manifest states names: the one file of a plain path, and every file a pattern names; none
+/// when the path leaves the resource, or is a pattern past the `patterns` still searched for.
+fn named<'a>(
+    stated: &str,
+    files: &'a [FileLine],
+    by_path: &Held<'a>,
+    patterns: &Cell<usize>,
+) -> Option<Vec<&'a FileLine>> {
+    if let Some(inside) = stated_path(stated) {
+        let held = by_path.get(&inside.to_ascii_lowercase()).copied();
+        return Some(held.into_iter().collect());
+    }
+    patterns.set(patterns.get().checked_sub(1)?);
+    let stated = stated.replace('\\', "/");
+    let stated = stated.strip_prefix("./").unwrap_or(&stated);
+    let pattern: Vec<&str> = stated.split('/').collect();
+    let plain = |name: &&str| or_project::paths::is_component(&name.replace('*', "x"));
+    if !manifest::is_glob(stated) || !pattern.iter().all(plain) {
+        return None;
+    }
+    let matches = |file: &&FileLine| {
+        let path: Vec<&str> = file.path.split('/').collect();
+        names_are(&pattern, &path)
+    };
+    Some(files.iter().filter(matches).collect())
 }
 
 /// The folder that holds the first folder named `stream` on the way to `path`, none when there is none.
@@ -411,6 +510,17 @@ pub fn analyse(place: &mut Place) -> Report {
                 root.shown()
             ));
         }
+        let entitled = root
+            .files
+            .iter()
+            .any(|file| file.path == ESCROW_ENTITLEMENT);
+        if root.locked > 0 && !entitled {
+            report.notes.push(format!(
+                "{} file(s) of {} are locked by an asset escrow and it holds no `{ESCROW_ENTITLEMENT}`, the file an escrow writes beside what it locks, so a server may not open them",
+                root.locked,
+                root.shown()
+            ));
+        }
         let kept_types = (root.files.iter()).any(|file| {
             file.becomes == Becomes::Kept
                 && is_streamed(&file.path)
@@ -516,6 +626,8 @@ fn read_root(
                 Ok(text) => stated = Some(Manifest::read(&String::from_utf8_lossy(&text))),
                 Err(why) => line.why = format!("its lines are not read: {why}"),
             }
+        } else if rel == ESCROW_ENTITLEMENT {
+            line.why = "the file an asset escrow writes beside the files it locks: kept whole, and a build ships it at its root and lists it nowhere".into();
         } else if is_archive_name(&rel) {
             line.becomes = Becomes::LeftOut;
             line.why =
@@ -541,7 +653,11 @@ fn read_root(
         }
         root.files.push(line);
     }
+    written_over(&mut root.files);
     if let Some(stated) = &stated {
+        if root.has_maps() {
+            scripts_of_the_server(stated, &mut root.files);
+        }
         root.lines = lines_of(stated, &root);
         root.unread = stated.unread.clone();
     }
@@ -551,6 +667,62 @@ fn read_root(
         root.findings = rules::check(&model, &read.facts, None);
     }
     root
+}
+
+/// Leave out each file kept whole at the path a source of the root cooks to.
+///
+/// ⚠ A source cooks into the stream folder by its name alone, whatever folder its file came from, so a second file of that name
+/// that stands directly in the stream folder would ship at the same path, and a plan of both is refused.
+fn written_over(files: &mut [FileLine]) {
+    let cooked: HashMap<String, String> = (files.iter())
+        .filter(|file| matches!(file.becomes, Becomes::Source { .. }))
+        .map(|file| {
+            let at = format!("{STREAM_DIR}/{}", leaf_of(&file.path));
+            (at.to_lowercase(), file.path.clone())
+        })
+        .collect();
+    for file in files {
+        if !matches!(file.becomes, Becomes::Kept | Becomes::Locked) {
+            continue;
+        }
+        if let Some(source) = cooked.get(&placed(&file.path).to_lowercase()) {
+            file.becomes = Becomes::LeftOut;
+            file.why = format!(
+                "`{source}` becomes a source, which a build cooks to this file's path, and two files do not ship at one path, so this one is left out"
+            );
+        }
+    }
+}
+
+/// The keys of a manifest that name the scripts only a server runs.
+const SERVER_SCRIPTS: [&str; 2] = ["server_script", "server_scripts"];
+
+/// Keep beside the project each file a line of `stated` names as a script of the server.
+///
+/// ⚠ A build writes its own manifest, which lists every file it ships outside the stream folder under `files`, and a server sends
+/// those to every client: a script of the server shipped that way would be published, and no line would run it.
+fn scripts_of_the_server(stated: &Manifest, files: &mut [FileLine]) {
+    let mut scripts: BTreeSet<String> = BTreeSet::new();
+    {
+        let by_path = by_path(files);
+        let patterns = Cell::new(PATTERNS_AT_MOST);
+        let lines = (stated.directives.iter())
+            .filter(|directive| SERVER_SCRIPTS.contains(&directive.key.as_str()));
+        for line in lines {
+            for value in &line.values {
+                for file in named(value, files, &by_path, &patterns).unwrap_or_default() {
+                    scripts.insert(file.path.clone());
+                }
+            }
+        }
+    }
+    for file in files {
+        let kept = file.becomes == Becomes::Kept && !is_streamed(&file.path);
+        if kept && scripts.contains(&file.path) {
+            file.becomes = Becomes::KeptBeside;
+            file.why = "a `server_script` line names it, and a build writes no script line and lists every file it ships outside the stream folder under `files`, which a server sends to every client: it is kept beside the project and no build ships it".into();
+        }
+    }
 }
 
 /// The bytes of the file at `at`, when it is small enough to be looked into in memory.
@@ -656,27 +828,52 @@ fn stated_path(stated: &str) -> Option<String> {
     plain.then(|| stated.to_string())
 }
 
+/// The files of a root by their path in lower case.
+type Held<'a> = HashMap<String, &'a FileLine>;
+
 /// The files of a root by their path in lower case, which is how a manifest finds the one it names.
 ///
 /// ⚠ A manifest states a line for each of thousands of files, so the file a line names is looked up and never searched for.
-fn by_path(files: &[FileLine]) -> HashMap<String, &FileLine> {
+fn by_path(files: &[FileLine]) -> Held<'_> {
     (files.iter())
         .map(|file| (file.path.to_ascii_lowercase(), file))
         .collect()
 }
 
+/// What a line of a manifest is judged against: the files of its root.
+struct OfRoot<'a> {
+    files: &'a [FileLine],
+    by_path: Held<'a>,
+    /// Whether a map file becomes a source, which is when the maps content declares the resource a map.
+    cooks_a_map: bool,
+    /// How many more paths that name files by a pattern are searched for.
+    patterns: Cell<usize>,
+}
+
+impl<'a> OfRoot<'a> {
+    fn of(files: &'a [FileLine]) -> Self {
+        Self {
+            files,
+            by_path: by_path(files),
+            cooks_a_map: (files.iter()).any(|file| {
+                matches!(file.becomes, Becomes::Source { .. }) && extension_of(&file.path) == "ymap"
+            }),
+            patterns: Cell::new(PATTERNS_AT_MOST),
+        }
+    }
+}
+
 /// Each statement of `stated` with whether a build of the adopted project carries it.
 fn lines_of(stated: &Manifest, root: &Root) -> Vec<ManifestLine> {
     let has_maps = root.has_maps();
-    let by_path = by_path(&root.files);
-    let file = |path: &str| by_path.get(&path.to_ascii_lowercase()).copied();
+    let of_root = OfRoot::of(&root.files);
     (stated.directives.iter())
         .map(|directive| {
             let values: Vec<&str> = directive.values.iter().map(String::as_str).collect();
             let (carried, how) = if !has_maps {
                 (true, "the resource makes no maps content, so its manifest is kept as it is and ships with every line".to_string())
             } else {
-                carried(&directive.key, &values, &file)
+                carried(&directive.key, &values, &of_root)
             };
             ManifestLine {
                 line: directive.line,
@@ -692,47 +889,80 @@ fn lines_of(stated: &Manifest, root: &Root) -> Vec<ManifestLine> {
 /// The words a build states about itself in its manifest, which an adoption takes from the mapping's.
 const WORDS: [&str; 3] = ["author", "description", "version"];
 
+/// Whether a build states the type `file_type` for the file `held` of a root that makes a maps content, and who states it or why nothing does.
+fn typed(file_type: &str, held: &FileLine) -> (bool, String) {
+    let inside = &held.path;
+    match &held.becomes {
+        Becomes::Source { .. } if file_type == TYPE_FILE && extension_of(inside) == "ytyp" => {
+            (true, "the maps content registers the type file it cooks".into())
+        }
+        Becomes::Source { .. } | Becomes::MapManifest => (
+            false,
+            format!("`{inside}` becomes a source, and the maps content states no {file_type} line for what it cooks"),
+        ),
+        Becomes::Kept | Becomes::Locked => {
+            let mut files = Module::files("files");
+            match files.set_file_type(&placed(inside), Some(file_type)) {
+                Ok(()) => (true, "the Files content states the type of the file".into()),
+                Err(why) => (false, why),
+            }
+        }
+        Becomes::Manifest | Becomes::KeptBeside | Becomes::Refused | Becomes::LeftOut => {
+            (false, format!("`{inside}` is not adopted as a file of the project"))
+        }
+    }
+}
+
 /// Whether a build carries the statement `key values` of a resource that makes a maps content, and who states it or why nothing does.
-fn carried<'a>(
-    key: &str,
-    values: &[&str],
-    file: &dyn Fn(&str) -> Option<&'a FileLine>,
-) -> (bool, String) {
+fn carried(key: &str, values: &[&str], root: &OfRoot<'_>) -> (bool, String) {
     match (key, values) {
         ("fx_version" | "resource_manifest_version" | "game" | "games", _) => {
             (true, "a build writes its own line of this kind".into())
         }
-        (manifest::MAP_KEY, _) => (true, "the maps content states it".into()),
+        // ⚠ The maps content declares the resource a map only with a map file it cooks: a pack of props states no such line.
+        (manifest::MAP_KEY, _) if root.cooks_a_map => (true, "the maps content states it".into()),
+        (manifest::MAP_KEY, _) => (
+            false,
+            "no map file of the resource becomes a source, and the maps content states the line only with a map file it cooks".into(),
+        ),
+        // ⚠ The reader keeps a backslash as it is written, and Lua reads one as an escape: what the text means is not known here.
+        (word, [text]) if WORDS.contains(&word) && text.contains('\\') => (
+            false,
+            format!("its text holds a backslash, which Lua may read as an escape and which is read here as it is written, so a build would state other text: state `{word}` in the build by hand"),
+        ),
         (word, [_]) if WORDS.contains(&word) => (true, "the build states it".into()),
         ("file" | "files", _) => (
             true,
             "a build lists every file it ships outside the stream folder".into(),
         ),
         ("data_file", [file_type, path]) => {
-            let Some(inside) = stated_path(path) else {
-                return (false, format!("`{path}` is no one file inside the resource, and a type is stated for one file"));
+            let Some(named) = named(path, root.files, &root.by_path, &root.patterns) else {
+                let why = match root.patterns.get() {
+                    0 if manifest::is_glob(path) => format!("more than {PATTERNS_AT_MOST} paths of the manifest name files by a pattern, and the files of one past that are not searched for"),
+                    _ => format!("`{path}` is no one file inside the resource, and a type is stated for one file"),
+                };
+                return (false, why);
             };
-            match file(&inside) {
-                None => (false, format!("the resource holds no `{inside}`")),
-                Some(held) => match &held.becomes {
-                    Becomes::Source { .. } if *file_type == TYPE_FILE && extension_of(&held.path) == "ytyp" => {
-                        (true, "the maps content registers the type file it cooks".into())
-                    }
-                    Becomes::Source { .. } | Becomes::MapManifest => (
-                        false,
-                        format!("`{inside}` becomes a source, and the maps content states no {file_type} line for what it cooks"),
-                    ),
-                    Becomes::Kept | Becomes::Locked => {
-                        let mut files = Module::files("files");
-                        match files.set_file_type(&held.path, Some(file_type)) {
-                            Ok(()) => (true, "the Files content states the type of the file".into()),
-                            Err(why) => (false, why),
+            match (named.as_slice(), stated_path(path)) {
+                ([], Some(inside)) => (false, format!("the resource holds no `{inside}`")),
+                ([], None) => (false, format!("`{path}` names no file of the resource")),
+                ([held], Some(_)) => typed(file_type, held),
+                // A pattern is carried once every file it names is stated, by whoever ships that file.
+                (several, _) => {
+                    let said: Vec<(bool, String)> =
+                        several.iter().map(|held| typed(file_type, held)).collect();
+                    match said.iter().filter(|(carried, _)| !carried).count() {
+                        0 => {
+                            let how: BTreeSet<&str> = said.iter().map(|(_, how)| how.as_str()).collect();
+                            let how: Vec<&str> = how.into_iter().collect();
+                            (true, format!("it names {} file(s), each stated for itself: {}", said.len(), how.join("; ")))
+                        }
+                        unstated => {
+                            let first = said.iter().find(|(carried, _)| !carried).map_or("", |(_, why)| why);
+                            (false, format!("of the {} file(s) it names, {unstated} are not stated; the first: {first}", said.len()))
                         }
                     }
-                    Becomes::Manifest | Becomes::Refused | Becomes::LeftOut => {
-                        (false, format!("`{inside}` is not adopted"))
-                    }
-                },
+                }
             }
         }
         _ => (
@@ -850,9 +1080,8 @@ pub fn check(place: &Place, report: &Report, request: &Request<'_>) -> Result<()
 }
 
 /// Make a project of one root of `report`, which is what [`analyse`] said of `place`, in the folder the request names.
-///
-/// ⚠ Nothing is written unless the place stages whole, and a failure after that removes everything this call made.
 pub fn adopt(place: &mut Place, report: &Report, request: &Request<'_>) -> Result<Adopted, Error> {
+    // ⚠ Nothing is written unless the place stages whole, and a failure after that removes everything this call made.
     check(place, report, request)?;
     let root = chosen(report, request.root)?;
     let into = request.into;
@@ -929,10 +1158,14 @@ fn fill(
     let mut manifest_kept = false;
     for file in &mut root.files {
         let at = staged.path(&file.path);
-        let to = into.join(file.path.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let to = into.join(placed(&file.path).replace('/', std::path::MAIN_SEPARATOR_STR));
         let made = match &file.becomes {
             Becomes::Refused | Becomes::LeftOut => continue,
             Becomes::Kept | Becomes::Locked => None,
+            Becomes::KeptBeside => {
+                place_at(&at, &to)?;
+                continue;
+            }
             // ⚠ A build writes the manifest of a maps content, so the mapping's own is kept beside the project and is no document of it.
             Becomes::Manifest if has_maps => {
                 place_at(&at, &to)?;
@@ -985,22 +1218,19 @@ fn fill(
     if !kept.is_empty() || modules.is_empty() {
         let mut files = Module::files("files");
         let by_path = by_path(&root.files);
-        for line in root
-            .lines
-            .iter()
-            .filter(|line| line.carried && line.key == "data_file")
-        {
+        // The lines the report said are carried, which are no more patterns than it searched for.
+        let patterns = Cell::new(PATTERNS_AT_MOST);
+        let carried = (root.lines.iter()).filter(|line| line.carried && line.key == "data_file");
+        for line in carried {
             let [file_type, path] = line.values.as_slice() else {
                 continue;
             };
-            let held = stated_path(path)
-                .and_then(|inside| by_path.get(&inside.to_ascii_lowercase()).copied());
-            if let Some(held) =
-                held.filter(|held| matches!(held.becomes, Becomes::Kept | Becomes::Locked))
-            {
-                files
-                    .set_file_type(&held.path, Some(file_type))
-                    .map_err(Error::Write)?;
+            for held in named(path, &root.files, &by_path, &patterns).unwrap_or_default() {
+                if matches!(held.becomes, Becomes::Kept | Becomes::Locked) {
+                    files
+                        .set_file_type(&placed(&held.path), Some(file_type))
+                        .map_err(Error::Write)?;
+                }
             }
         }
         modules.push(files);
@@ -1036,7 +1266,7 @@ fn fill(
 /// What the project file records of the adoption of `root`: the files and the lines of the manifest that did not come along.
 fn record_of(root: &Root, manifest_kept: bool) -> Option<Value> {
     let mut unplaced: Vec<Value> = (root.files.iter())
-        .filter(|file| !file.becomes.is_adopted())
+        .filter(|file| !file.becomes.is_adopted() || file.becomes == Becomes::KeptBeside)
         .map(|file| json!({ "path": file.path, "why": file.why }))
         .collect();
     if let (Some(manifest), false) = (&root.manifest, manifest_kept) {
@@ -1101,16 +1331,30 @@ mod tests {
             line("data/handling.meta", Becomes::Kept),
             line("stream/old.zip", Becomes::LeftOut),
         ];
-        let file = |path: &str| {
-            files
-                .iter()
-                .find(|file| file.path.eq_ignore_ascii_case(path))
-        };
-        let said = |key: &str, values: &[&str]| carried(key, values, &file);
+        let with_a_map = [
+            files[0].clone(),
+            line(
+                "stream/sub/harbour.ymap",
+                Becomes::Source {
+                    kind: "metadata".into(),
+                },
+            ),
+            line("Stream/kept.ytyp", Becomes::Kept),
+        ];
+        let of_root = OfRoot::of(&files);
+        let said = |key: &str, values: &[&str]| carried(key, values, &of_root);
 
         assert!(said("fx_version", &["cerulean"]).0);
-        assert!(said(manifest::MAP_KEY, &["yes"]).0);
+        let (is_map, why) = said(manifest::MAP_KEY, &["yes"]);
+        assert!(
+            !is_map && why.contains("no map file of the resource becomes a source"),
+            "a pack of props is declared no map by its build: {why}"
+        );
+        let mapped = OfRoot::of(&with_a_map);
+        assert!(carried(manifest::MAP_KEY, &["yes"], &mapped).0);
         assert!(said("author", &["Ann"]).0);
+        let (escaped, why) = said("description", &["Line one\\nLine two"]);
+        assert!(!escaped && why.contains("backslash"), "{why}");
         assert!(!said("author", &["Ann", "Ben"]).0, "a word is one text");
         assert!(said("data_file", &[TYPE_FILE, "stream/props.ytyp"]).0);
         assert!(!said("data_file", &["HANDLING_FILE", "stream/props.ytyp"]).0);
@@ -1119,7 +1363,58 @@ mod tests {
             !said("data_file", &["handling", "data/handling.meta"]).0,
             "a type is capitals"
         );
-        assert!(!said("data_file", &["HANDLING_FILE", "data/*.meta"]).0);
+        // A pattern is carried when every file it names is stated, each by whoever ships it.
+        let (pattern, how) = said("data_file", &["HANDLING_FILE", "data/*.meta"]);
+        assert!(
+            pattern && how.contains("1 file(s)") && how.contains("the Files content"),
+            "{how}"
+        );
+        for types in ["stream/*.ytyp", "stream/**/*.ytyp", "**/*.YTYP"] {
+            let (carried, how) = said("data_file", &[TYPE_FILE, types]);
+            assert!(
+                carried && how.contains("the maps content registers"),
+                "{types}: {how}"
+            );
+        }
+        let (both, how) = carried("data_file", &[TYPE_FILE, "stream/*.ytyp"], &mapped);
+        assert!(
+            both && how.contains("2 file(s)")
+                && how.contains("the maps content registers")
+                && how.contains("the Files content"),
+            "a type file kept whole and one cooked are both named: {how}"
+        );
+        assert!(
+            !said("data_file", &[TYPE_FILE, "stream/*.ymap"]).0,
+            "it names no file"
+        );
+        let (left, how) = said("data_file", &["X_FILE", "stream/*"]);
+        assert!(
+            !left && how.contains("of the 2 file(s) it names, 2 are not stated"),
+            "{how}"
+        );
+        assert!(!said("data_file", &["HANDLING_FILE", "../*/handling.meta"]).0);
+
+        // ⚠ A pattern of many `*` on a name it does not fit ends: nothing is tried for every run of every one of them.
+        let stars = "*a".repeat(40);
+        let name = "a".repeat(80);
+        assert!(names_are(&[stars.as_str()], &[name.as_str()]));
+        assert!(!names_are(&[&format!("{stars}b")], &[name.as_str()]));
+        let folders = vec!["**"; 40];
+        let deep = vec!["x"; 80];
+        assert!(names_are(&folders, &deep));
+        assert!(!names_are(&[&folders[..], &["y"]].concat(), &deep));
+        assert!(names_are(
+            &["stream", "**", "*.ytyp"],
+            &["stream", "a.ytyp"]
+        ));
+        assert!(names_are(&["*"], &["a.lua"]) && !names_are(&["*"], &["a", "b.lua"]));
+        // Past the patterns a manifest is searched for, one is said to name no one file.
+        for _ in 0..PATTERNS_AT_MOST {
+            said("data_file", &["HANDLING_FILE", "data/*.meta"]);
+        }
+        let (past, why) = said("data_file", &["HANDLING_FILE", "data/*.meta"]);
+        assert!(!past && why.contains("not searched for"), "{why}");
+        assert!(said("data_file", &["HANDLING_FILE", "data/handling.meta"]).0);
         assert!(!said("data_file", &["HANDLING_FILE", "../other/handling.meta"]).0);
         assert!(!said("data_file", &["HANDLING_FILE", "data/gone.meta"]).0);
         assert!(!said("data_file", &["X_FILE", "stream/old.zip"]).0);

@@ -442,3 +442,105 @@ fn a_build_is_asked_what_a_server_already_holds_of_it_before_anything_is_written
         "{plain}"
     );
 }
+
+/// ⚠ A resource adopted where it stands ships its type file as a file, which claims nothing: the build is still asked about the
+/// archetypes that file states, and its build folder inside the resource is no place a server looks.
+#[test]
+fn a_resource_adopted_where_it_stands_is_asked_about_its_type_file_and_is_placed_nowhere() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("server/resources");
+    resource(
+        &root,
+        "[maps]/harbour",
+        &[
+            ("harbour.ymap", &harbour_map("harbour")),
+            ("harbour_types.ytyp", &crate_types("harbour_types")),
+        ],
+    );
+    resource(
+        &root,
+        "[maps]/other",
+        &[("other_types.ytyp", &crate_types("other_types"))],
+    );
+    let folder = root.join("[maps]/harbour");
+    assert_eq!(project(&["adopt", text(&folder)]), ExitCode::SUCCESS);
+    let file = folder.join("harbour.openrage-proj");
+
+    let args = ["check-build", text(&file), "--server", text(&root)];
+    let found = or_cli::check_build_against(&file, None, None, &root).expect("the project plans");
+    let stated: Vec<(&str, &[String])> = (found.builds[0].findings.iter())
+        .map(|f| (f.code, f.resources.as_slice()))
+        .collect();
+    assert_eq!(
+        stated,
+        [(
+            "build-archetype-declared-elsewhere",
+            &["[maps]/other".to_string()][..]
+        )],
+        "the archetype of the type file it copies, and nothing about where it builds"
+    );
+    assert_eq!(project(&args), ExitCode::from(1));
+
+    std::fs::remove_dir_all(root.join("[maps]/other")).unwrap();
+    resource(&root, "yard", &[("yard.ydr", b"a model")]);
+    let (ok, plain) = printed(&args);
+    assert!(ok, "{plain}");
+    assert!(
+        plain.contains(
+            "no other resource streams a file it writes or declares an archetype it declares"
+        ),
+        "{plain}"
+    );
+
+    // A type file that does not read is named, and the all-clear is not said of it.
+    put(&folder.join("stream/harbour_types.ytyp"), b"no type file");
+    let (ok, plain) = printed(&args);
+    assert!(ok, "what was not asked is said, and is no finding: {plain}");
+    assert!(
+        plain.contains("the archetypes of `stream/harbour_types.ytyp` are not known"),
+        "{plain}"
+    );
+    assert!(
+        !plain.contains("or declares an archetype it declares"),
+        "{plain}"
+    );
+    let (_, json) = printed(&[&args[..], &["--json"][..]].concat());
+    let documents: serde_json::Value = serde_json::from_str(&json).expect("the JSON parses");
+    assert_eq!(
+        documents[0]["type_files_unread"][0]["path"],
+        "stream/harbour_types.ytyp"
+    );
+}
+
+/// ⚠ A plan that cannot be built claims less than the build would declare, so the check says the plan's problems and fails.
+#[test]
+fn a_build_whose_plan_has_a_problem_is_not_told_that_nothing_concerns_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = a_project_with_maps(&dir.path().join("project"));
+    let root = dir.path().join("server/resources");
+    resource(&root, "yard", &[("yard.ydr", b"a model")]);
+    let args = ["check-build", text(&file), "--server", text(&root)];
+    assert_eq!(project(&args), ExitCode::SUCCESS);
+
+    let xml = dir
+        .path()
+        .join("project/maps/harbour_types.metadata.src/metadata.xml");
+    let sound = std::fs::read_to_string(&xml).expect("the source holds its XML");
+    std::fs::write(&xml, sound.replacen("</", "<", 1)).unwrap();
+    assert_eq!(project(&["plan", text(&file)]), ExitCode::FAILURE);
+
+    let found = or_cli::check_build_against(&file, None, None, &root).expect("the project loads");
+    assert!(!found.builds[0].problems.is_empty());
+    assert!(found.builds[0].fails());
+    let (ok, plain) = printed(&args);
+    assert!(!ok, "{plain}");
+    assert!(plain.contains("  problem: "), "{plain}");
+    assert!(
+        plain.contains("the plan cannot be built as it stands")
+            && !plain.contains("no other resource"),
+        "{plain}"
+    );
+    let (_, json) = printed(&[&args[..], &["--json"][..]].concat());
+    let documents: serde_json::Value = serde_json::from_str(&json).expect("the JSON parses");
+    assert!(!documents[0]["problems"].as_array().unwrap().is_empty());
+}

@@ -14,7 +14,7 @@ use super::{is_category, Declared, Resource, Scan, Streamed};
 use crate::container::OutputKind;
 use crate::content::rule::{Rule, Severity};
 use crate::paths::{is_under, relative_inside, resolved};
-use crate::plan::Plan;
+use crate::plan::{Origin, Plan};
 use crate::resource::{word, STREAM_DIR};
 
 /// The kind of claim an archetype's name is: a content that declares archetypes states it, and [`concerning`] reads it.
@@ -22,6 +22,13 @@ pub const ARCHETYPE_CLAIM: &str = "archetype name";
 
 /// How many names a finding about several lists before it counts the rest.
 const NAMED: usize = 8;
+
+/// Whether a streamed file of `name` is kept by the resource that ships it and found by no name: a manifest of maps.
+///
+/// ⚠ Every build that keeps one writes it under one fixed name, so two resources that each hold theirs are no clash.
+fn is_per_resource(name: &str) -> bool {
+    name.ends_with(".ymf")
+}
 
 const fn rule(code: &'static str, severity: Severity, summary: &'static str) -> Rule {
     Rule::new(code, severity, false, summary)
@@ -178,22 +185,29 @@ struct Order<'a> {
     config: Option<&'a Config>,
     /// For each resource of the scan, the index of the first line that starts it or a category it is in.
     places: Vec<Option<usize>>,
+    /// For each resource of the scan, the index of a later line that starts it again.
+    again: Vec<Option<usize>>,
 }
 
 impl<'a> Order<'a> {
     fn of(scan: &Scan, config: Option<&'a Config>) -> Self {
         let starts = config.map_or(&[][..], |c| c.starts.as_slice());
-        let place = |resource: &Resource| {
+        let lines = |resource: &Resource| {
             let categories = resource.path.split('/').rev().skip(1);
-            starts.iter().position(|start| {
-                start.resource == resource.name
-                    || (is_category(&start.resource)
-                        && categories.clone().any(|part| part == start.resource))
-            })
+            let mut lines = (starts.iter().enumerate())
+                .filter(move |(_, start)| {
+                    start.resource == resource.name
+                        || (is_category(&start.resource)
+                            && categories.clone().any(|part| part == start.resource))
+                })
+                .map(|(index, _)| index);
+            (lines.next(), lines.next())
         };
+        let (places, again) = scan.resources.iter().map(lines).unzip();
         Self {
             config,
-            places: scan.resources.iter().map(place).collect(),
+            places,
+            again,
         }
     }
 
@@ -221,6 +235,21 @@ impl<'a> Order<'a> {
         if started.len() == 1 {
             let only = path(&started[0].1);
             return (None, format!("the configuration starts only `{only}`"));
+        }
+        // ⚠ A line that starts a resource a second time may start it again, after the others, so the first line says no order.
+        let twice =
+            (started.iter()).find_map(|&(first, index)| Some((first, self.again[index]?, index)));
+        if let Some((first, later, index)) = twice {
+            let (first, later) = (&config.starts[first], &config.starts[later]);
+            let said = format!(
+                "`{}` is started on line {} of `{}` and again on line {} of `{}`, and a line that starts a resource again may start it after the others, so which of them starts last is not known",
+                path(&index),
+                first.line,
+                first.file,
+                later.line,
+                later.file
+            );
+            return (None, said);
         }
         let at = &config.starts[last];
         let together: Vec<&str> = (started.iter())
@@ -355,7 +384,7 @@ enum Copies {
 fn files_twice(scan: &Scan, order: &Order<'_>, found: &mut Vec<Finding>) {
     let mut by_name: BTreeMap<&str, Vec<(usize, &Streamed)>> = BTreeMap::new();
     for (index, resource) in scan.resources.iter().enumerate() {
-        for file in &resource.streamed {
+        for file in (resource.streamed.iter()).filter(|file| !is_per_resource(&file.name)) {
             by_name.entry(&file.name).or_default().push((index, file));
         }
     }
@@ -458,7 +487,7 @@ fn overrides(scan: &Scan, game: &dyn GameFiles, found: &mut Vec<Finding>) {
     for resource in &scan.resources {
         let names: BTreeSet<&str> = (resource.streamed.iter())
             .map(|file| file.name.as_str())
-            .filter(|name| game.holds_file(name))
+            .filter(|name| !is_per_resource(name) && game.holds_file(name))
             .collect();
         let names: Vec<String> = names.into_iter().map(str::to_string).collect();
         let message = match names.as_slice() {
@@ -528,8 +557,61 @@ fn of_configuration(config: &Config, found: &mut Vec<Finding>) {
     }
 }
 
-/// What of `scan` concerns the build of `plan`: each other resource that streams a file the build writes under its stream folder, or declares an archetype it claims.
-pub fn concerning(plan: &Plan, scan: &Scan) -> Vec<Finding> {
+/// The archetypes a build declares: those its contents claim, and those of each type file it ships under its stream folder.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Declares {
+    /// The text of each name by the hash the game keys it by.
+    names: BTreeMap<u32, String>,
+    /// The type files the build ships whose archetypes are not known, each by its path in the resource with why.
+    pub unread: Vec<(String, String)>,
+}
+
+impl Declares {
+    /// What `plan` declares; `cook` gives the bytes a source folder cooks to, which a content may ship a type file as.
+    pub fn of(plan: &Plan, cook: &dyn Fn(&Path) -> Result<Vec<u8>, String>) -> Self {
+        // ⚠ Only a content of maps claims its archetypes: a type file another content ships as a file states them in its bytes alone.
+        let mut declares = Self::default();
+        // A pack and a package are asked nothing, so nothing of theirs is read.
+        if plan.kind != OutputKind::FivemResource {
+            return declares;
+        }
+        for claim in (plan.claims.iter()).filter(|claim| claim.kind == ARCHETYPE_CLAIM) {
+            let hash = HashedString::from_xml_text(&claim.name).hash;
+            declares.names.insert(hash, claim.name.clone());
+        }
+        let type_files = (plan.files.iter())
+            .filter(|file| is_under(&file.path, STREAM_DIR))
+            .filter(|file| file.path.to_ascii_lowercase().ends_with(".ytyp"));
+        for file in type_files {
+            let bytes = match &file.origin {
+                Origin::Copy { from, .. } | Origin::Retarget { from, .. } => {
+                    std::fs::read(from).map_err(|e| format!("it cannot be read: {e}"))
+                }
+                Origin::Generated(bytes) => Ok(bytes.clone()),
+                Origin::Document(text) => Ok(text.clone().into_bytes()),
+                Origin::Cook { source, .. } => {
+                    cook(source).map_err(|why| format!("its source does not cook: {why}"))
+                }
+            };
+            let mut read = Resource::default();
+            let stated = bytes.and_then(|bytes| {
+                (read.names_of(&file.path, "ytyp", &bytes)).map_err(|why| format!("it {why}"))
+            });
+            match stated {
+                Ok(()) => {
+                    for archetype in read.archetypes {
+                        (declares.names.entry(archetype.hash)).or_insert(archetype.name);
+                    }
+                }
+                Err(why) => declares.unread.push((file.path.clone(), why)),
+            }
+        }
+        declares
+    }
+}
+
+/// What of `scan` concerns the build of `plan`: each other resource that streams a file the build writes under its stream folder, or declares an archetype it declares.
+pub fn concerning(plan: &Plan, scan: &Scan, declares: &Declares) -> Vec<Finding> {
     // ⚠ A pack and a package are found by no server under a name, so their plans are asked nothing.
     if plan.kind != OutputKind::FivemResource {
         return Vec::new();
@@ -538,13 +620,10 @@ pub fn concerning(plan: &Plan, scan: &Scan) -> Vec<Finding> {
         .filter(|file| is_under(&file.path, STREAM_DIR))
         .filter_map(|file| file.path.rsplit('/').next())
         .map(str::to_lowercase)
+        .filter(|name| !is_per_resource(name))
         .collect();
-    let claims: BTreeMap<u32, &str> = (plan.claims.iter())
-        .filter(|claim| claim.kind == ARCHETYPE_CLAIM)
-        .map(|claim| {
-            let hash = HashedString::from_xml_text(&claim.name).hash;
-            (hash, claim.name.as_str())
-        })
+    let claims: BTreeMap<u32, &str> = (declares.names.iter())
+        .map(|(hash, name)| (*hash, name.as_str()))
         .collect();
     let mut found = Vec::new();
     for resource in &scan.resources {
@@ -614,6 +693,14 @@ pub fn placement(plan: &Plan, at: &Path, scan: &Scan) -> Vec<Finding> {
     let Some(inside) = relative_inside(&resolved(at), &resolved(&scan.folder)) else {
         return Vec::new();
     };
+    // ⚠ A folder inside a resource is one no server walks into: a project adopted where its resource stands builds there, and
+    // that build is placed nowhere until it is copied out.
+    let within = |resource: &Resource| {
+        (inside.strip_prefix(resource.path.as_str())).is_some_and(|rest| rest.starts_with('/'))
+    };
+    if scan.resources.iter().any(within) {
+        return Vec::new();
+    }
     let mut found = Vec::new();
     let parts: Vec<&str> = inside.split('/').collect();
     let above = parts.split_last().map_or(&[][..], |(_, above)| above);

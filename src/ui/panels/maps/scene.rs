@@ -308,7 +308,9 @@ fn view(
                 state.place_selected_entity(moved, label);
             }
         }
-        if ui.input(|i| i.key_pressed(egui::Key::F)) {
+        // ⚠ Through the command, as the model viewport reads it: a key the settings give Frame selection frames here too.
+        let asked = ui.input(|i| crate::ui::panels::viewport::framing_requested(i, &state.prefs));
+        if asked == Some(Action::FrameSelection) {
             inputs.frame_selection = true;
         }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {

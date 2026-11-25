@@ -189,10 +189,9 @@ pub struct Stated {
 }
 
 /// What the document `rules` states of its nodes and links, for a rule to judge.
-///
-/// ⚠ Nothing a compile refuses is refused here: a link to a node its region does not hold and a node of more links than its word
-/// counts are read as they are stated, since those are what a rule reports.
 pub fn stated(rules: &[u8]) -> Result<Stated, Problem> {
+    // ⚠ Nothing a compile refuses is refused here: a link to a node its region does not hold and a node of more links than its
+    // word counts are read as they are stated, since those are what a rule reports.
     let read = || -> Result<Stated, Fault> {
         let doc = root(rules)?;
         let at = &mut Trail::default();
@@ -626,9 +625,8 @@ impl Inputs {
     }
 
     /// The document that makes the inputs cook to `region`, with the region it cooks to; nothing is written.
-    ///
-    /// ⚠ Refused unless the region it cooks to states that document again: what a document cannot state of `region` would be lost.
     pub fn rules_of(&self, region: &CPathRegion) -> Result<(Vec<u8>, CPathRegion), Vec<Problem>> {
+        // ⚠ Refused unless the region it cooks to states that document again: what a document cannot state of `region` would be lost.
         let text = exported(region).map_err(|why| vec![problem(why, RULES)])?;
         let candidate = Self {
             rules: text.clone().into_bytes(),

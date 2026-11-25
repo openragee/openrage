@@ -421,13 +421,18 @@ impl Taken {
     }
 }
 
+/// The file an asset escrow writes at the root of a resource it locks files of.
+// ⚠ Its name begins with a dot and it is still a file of the resource: left out, the locked files would ship with nothing beside them.
+pub const ESCROW_ENTITLEMENT: &str = ".fxap";
+
 /// Why a name that begins with a dot is left out, with everything under it.
 const HIDDEN: &str = "hidden: a name that begins with a dot is not read, and nothing under it is";
 
-/// The path up to the first of `names` that begins with a dot, none when none does.
-fn hidden_part(names: &[&str]) -> Option<String> {
+/// The path up to the first of `names` that begins with a dot, none when none does; `file` says the last of them names a file.
+fn hidden_part(names: &[&str], file: bool) -> Option<String> {
     let at = names.iter().position(|name| name.starts_with('.'))?;
-    Some(names[..=at].join("/"))
+    let entitlement = file && at + 1 == names.len() && names[at] == ESCROW_ENTITLEMENT;
+    (!entitlement).then(|| names[..=at].join("/"))
 }
 
 type Zip = ZipArchive<BufReader<File>>;
@@ -540,7 +545,7 @@ impl Place {
             let folder = entry.is_dir();
             taken.take(&name, &names, !folder)?;
             // ⚠ A hidden entry is left out only here, after every refusal above: an archive is refused for an entry wherever it is.
-            let hidden_at = hidden_part(&names);
+            let hidden_at = hidden_part(&names, !folder);
             if folder {
                 hidden.extend(hidden_at);
                 continue;
@@ -632,7 +637,8 @@ impl Place {
                     });
                 }
                 let name = entry.file_name().to_string_lossy().into_owned();
-                let hidden = name.starts_with('.');
+                let entitlement = name == ESCROW_ENTITLEMENT && entry.path().is_file();
+                let hidden = name.starts_with('.') && !entitlement;
                 let path = if inside.is_empty() {
                     name
                 } else {
@@ -808,10 +814,9 @@ impl Place {
     }
 
     /// Unpack or copy the files `wanted` into a new hidden folder inside `project`, which goes again when what is returned is dropped.
-    ///
-    /// ⚠ A file is made new and never written over, and the bytes written are counted: the first past what an entry states ends the
-    /// unpack and removes the folder with everything in it.
     pub fn stage(&mut self, project: &Path, wanted: &[Wanted<'_>]) -> Result<Staged, Refusal> {
+        // ⚠ A file is made new and never written over, and the bytes written are counted: the first past what an entry states
+        // ends the unpack and removes the folder with everything in it.
         self.fits(project, wanted)?;
         let folder = project.join(format!("{STAGING_PREFIX}{}", staging_id()));
         std::fs::create_dir(&folder).map_err(|e| io_refusal(&folder, &e))?;

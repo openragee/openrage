@@ -722,6 +722,43 @@ fn a_hidden_name_is_left_out_once_and_nothing_under_it_is_listed() {
     assert_eq!(refusal.code(), "climbs", "{refusal}");
 }
 
+/// ⚠ The file an asset escrow writes at the root of a resource is a file of it though its name begins with a dot.
+#[test]
+fn the_file_an_asset_escrow_writes_is_listed_though_its_name_begins_with_a_dot() {
+    let files: &[(&str, &[u8])] = &[
+        ("harbour/.fxap", b"what the escrow wrote"),
+        ("harbour/.fxap.bak", b"a copy somebody kept"),
+        ("harbour/.git/.fxap", b"under a hidden folder"),
+        ("harbour/stream/a.ymap", b"a map"),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("mapping");
+    for (name, bytes) in files {
+        put(&folder, name, bytes);
+    }
+    // A folder of that name is no file an escrow wrote.
+    std::fs::create_dir_all(folder.join("other/.fxap")).unwrap();
+    let archive = dir.path().join("mapping.zip");
+    std::fs::write(&archive, zip_of(files)).unwrap();
+    for at in [&folder, &archive] {
+        let place = Place::open(at, &Limits::default()).unwrap();
+        let listed: Vec<&str> = place.files().iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(
+            listed,
+            ["harbour/.fxap", "harbour/stream/a.ymap"],
+            "{}",
+            at.display()
+        );
+        let left: Vec<&str> = place.left().iter().map(|l| l.path.as_str()).collect();
+        assert!(
+            left.starts_with(&["harbour/.fxap.bak", "harbour/.git"]),
+            "{left:?}"
+        );
+    }
+    let place = Place::open(&folder, &Limits::default()).unwrap();
+    assert!(place.left().iter().any(|l| l.path == "other/.fxap"));
+}
+
 #[test]
 fn a_file_that_is_no_archive_is_refused_as_a_place() {
     let (_dir, path) = on_disk("notes.zip", b"this is not a zip archive at all");

@@ -192,3 +192,35 @@ fn verification_notices_a_package_that_is_not_the_plan() {
     std::fs::write(built.folder.join("mypack.oiv"), b"not a zip").unwrap();
     assert!(!verify(&plans[0], &built.folder).problems.is_empty());
 }
+
+/// ⚠ Only a FiveM server of its keyholder opens a file an asset escrow locks, so a package that installs one is stopped by name.
+#[test]
+fn a_file_an_asset_escrow_locks_stops_a_package_which_the_game_could_not_read_it_from() {
+    let dir = tempfile::tempdir().unwrap();
+    let locked = [
+        or_project::resource::ESCROW_MARKER.as_slice(),
+        b"what only its keyholder opens",
+    ]
+    .concat();
+    let files = vec![
+        ("readme.txt", b"read me".to_vec()),
+        ("x64e.rpf/levels/gta5/sealed.ydr", locked),
+    ];
+    let project = declare(
+        &dir.path().join("pack"),
+        &files,
+        Value::Null,
+        output("mypack"),
+    );
+    let plans = planned(&project);
+    assert!(plans[0].is_buildable(), "{:?}", plans[0].problems);
+
+    let (built, stopped) = build_all(&plans, &dir.path().join("out"));
+    assert!(built.is_empty(), "the package is not swapped in");
+    let why = format!("{stopped:?}");
+    assert!(
+        why.contains("x64e.rpf/levels/gta5/sealed.ydr")
+            && why.contains("locked by a server's asset escrow"),
+        "{why}"
+    );
+}

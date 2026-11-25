@@ -19,8 +19,8 @@ use or_project::content::rule::Severity;
 use or_project::resource::ESCROW_MARKER;
 use or_project::server::config::{Config, NotRead};
 use or_project::server::{
-    concerning, findings, placement, rule_of, scan, scan_with, Disk, Files, Finding, GameFiles,
-    Report, Scan, ARCHETYPE_CLAIM,
+    concerning, findings, placement, rule_of, scan, scan_with, Declares, Disk, Files, Finding,
+    GameFiles, Report, Scan, ARCHETYPE_CLAIM,
 };
 use or_project::{
     plan_with, Claim, Container, Contribution, Module, ModuleKind, Origin, Output, OutputKind,
@@ -211,9 +211,18 @@ fn a_configuration_says_which_of_two_starts_last_and_without_one_the_order_is_no
     );
     let a_last = clash("start b; ensure a\n");
     assert_eq!(a_last.starts_last.as_deref(), Some("a"));
-    // By the first line that starts a resource: a second line for `b` moves nothing.
-    let still_a = clash("ensure b\nensure a\nensure b\n");
-    assert_eq!(still_a.starts_last.as_deref(), Some("a"));
+    // ⚠ A second line for `b` may start it again after `a`, so no resource is said to start last.
+    let again = clash("ensure b\nensure a\nensure b\n");
+    assert_eq!(again.starts_last, None);
+    assert!(
+        again.message.contains(
+            "`b` is started on line 1 of `server.cfg` and again on line 3 of `server.cfg`"
+        ) && again
+            .message
+            .contains("which of them starts last is not known"),
+        "{}",
+        again.message
+    );
 
     // An included file runs where its line stands.
     write(&dir.path().join("cfg/maps.cfg"), b"ensure a\n");
@@ -601,8 +610,34 @@ fn a_file_of_the_name_of_a_game_file_is_an_override_and_no_fault() {
     );
 }
 
+/// What a source folder cooks to where the test has none to cook.
+fn no_cook(source: &Path) -> Result<Vec<u8>, String> {
+    Err(format!("{} is cooked by no test", source.display()))
+}
+
+/// What of `scan` concerns the build of `plan`, by the claims of its contents and the type files it ships as files.
+fn concerns(plan: &Plan, scan: &Scan) -> Vec<Finding> {
+    concerning(plan, scan, &Declares::of(plan, &no_cook))
+}
+
 /// A build of a resource called `resource` that writes `files` and whose one content makes `claims`.
 fn plan_of(kind: OutputKind, resource: &str, files: &[&str], claims: &[(&str, &str)]) -> Plan {
+    let files: Vec<PlannedFile> = (files.iter())
+        .map(|path| PlannedFile {
+            path: (*path).to_string(),
+            origin: Origin::Generated(b"made by the build".to_vec()),
+        })
+        .collect();
+    plan_that_ships(kind, resource, files, claims)
+}
+
+/// A build of a resource called `resource` that ships `files` and whose one content makes `claims`.
+fn plan_that_ships(
+    kind: OutputKind,
+    resource: &str,
+    files: Vec<PlannedFile>,
+    claims: &[(&str, &str)],
+) -> Plan {
     let container = Container {
         modules: vec![Module {
             id: "maps".to_string(),
@@ -612,12 +647,7 @@ fn plan_of(kind: OutputKind, resource: &str, files: &[&str], claims: &[(&str, &s
         outputs: vec![Output::of(kind, "build", resource, &["maps"])],
     };
     let mut contribution = Contribution::of("maps");
-    contribution.files = (files.iter())
-        .map(|path| PlannedFile {
-            path: (*path).to_string(),
-            origin: Origin::Generated(b"made by the build".to_vec()),
-        })
-        .collect();
+    contribution.files = files;
     contribution.claims = (claims.iter())
         .map(|(kind, name)| Claim {
             kind: (*kind).to_string(),
@@ -694,7 +724,7 @@ fn a_build_is_told_only_what_concerns_the_files_and_the_archetypes_it_writes() {
         "a plan carries the claims of what it takes"
     );
 
-    let found = concerning(&plan, &read);
+    let found = concerns(&plan, &read);
     let [file, archetype] = &found[..] else {
         panic!("one finding for the map and one for the archetype: {found:#?}");
     };
@@ -708,7 +738,7 @@ fn a_build_is_told_only_what_concerns_the_files_and_the_archetypes_it_writes() {
 
     // Under another name the earlier copy is another resource.
     let renamed = plan_of(OutputKind::FivemResource, "mine_v2", &files, &claims);
-    let renamed = concerning(&renamed, &read);
+    let renamed = concerns(&renamed, &read);
     let stated: Vec<(&str, &str)> = (renamed.iter())
         .map(|f| (f.code, f.resources[0].as_str()))
         .collect();
@@ -730,14 +760,130 @@ fn a_build_is_told_only_what_concerns_the_files_and_the_archetypes_it_writes() {
         &["stream/apart.ydr"],
         &[],
     );
-    assert_eq!(concerning(&apart, &read), []);
+    assert_eq!(concerns(&apart, &read), []);
     let pack = plan_of(
         OutputKind::SingleplayerDlc,
         "pack",
         &["stream/harbour.ymap"],
         &[],
     );
-    assert_eq!(concerning(&pack, &read), []);
+    assert_eq!(concerns(&pack, &read), []);
+}
+
+#[test]
+fn two_resources_that_each_keep_a_manifest_of_their_maps_do_not_clash_over_its_one_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("resources");
+    resource(
+        &root,
+        "[maps]/harbour",
+        &[
+            ("stream/harbour.ymap", &map_file("harbour")),
+            ("stream/_manifest.ymf", b"the maps of the harbour"),
+        ],
+    );
+    resource(
+        &root,
+        "[maps]/docks",
+        &[
+            ("stream/docks.ymap", &map_file("docks")),
+            ("stream/_manifest.ymf", b"the maps of the docks"),
+        ],
+    );
+    let read = scan(&root);
+    // Every pack of the game holds a manifest of that name too.
+    let game = Holds(&["_manifest.ymf"]);
+    let report = Report::of(&read, None, Some(&game));
+    assert_eq!(report.findings, [], "a manifest is found by no name");
+    assert!(!report.fails());
+
+    let files = ["stream/yard.ymap", "stream/_manifest.ymf"];
+    let plan = plan_of(OutputKind::FivemResource, "yard", &files, &[]);
+    assert_eq!(concerns(&plan, &read), []);
+    // A file of another kind under one name is still a clash.
+    resource(&root, "a", &[("stream/shared.ydr", b"one")]);
+    resource(&root, "b", &[("stream/shared.ydr", b"two")]);
+    let found = findings(&scan(&root), None, None);
+    assert_eq!(of_code(&found, "file-in-two-resources").len(), 1);
+}
+
+#[test]
+fn a_type_file_a_build_ships_as_a_file_is_asked_about_by_the_archetypes_it_states() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("resources");
+    let theirs = types_file("theirs", &["yard_crate", "their_lamp", "their_bench"]);
+    resource(&root, "[maps]/theirs", &[("stream/theirs.ytyp", &theirs)]);
+    let read = scan(&root);
+
+    let copied = dir.path().join("project/stream/mine.ytyp");
+    write(&copied, &types_file("mine", &["yard_crate", "mine_only"]));
+    let source = dir.path().join("project/benches.metadata.src");
+    let ships = |path: &str, origin: Origin| PlannedFile {
+        path: path.to_string(),
+        origin,
+    };
+    let files = vec![
+        ships(
+            "stream/mine.ytyp",
+            Origin::Copy {
+                from: copied.clone(),
+                bytes: std::fs::metadata(&copied).unwrap().len(),
+            },
+        ),
+        ships(
+            "stream/lamps.ytyp",
+            Origin::Generated(types_file("lamps", &["their_lamp"])),
+        ),
+        ships(
+            "stream/benches.ytyp",
+            Origin::Cook {
+                source: source.clone(),
+                kind: "metadata".into(),
+                name: "benches".into(),
+                bytes: 1,
+                game: Vec::new(),
+            },
+        ),
+        // Outside the stream folder a type file is no file a server streams.
+        ships(
+            "data/other.ytyp",
+            Origin::Generated(types_file("other", &["their_bench"])),
+        ),
+    ];
+    let plan = plan_that_ships(OutputKind::FivemResource, "mine", files, &[]);
+    assert_eq!(plan.claims, [], "a content of files claims no archetype");
+
+    let cooks = |asked: &Path| {
+        assert_eq!(asked, source);
+        Ok(types_file("benches", &["their_bench"]))
+    };
+    let declares = Declares::of(&plan, &cooks);
+    assert_eq!(declares.unread, []);
+    let found = concerning(&plan, &read, &declares);
+    let [archetypes] = &found[..] else {
+        panic!("one finding for the archetypes: {found:#?}");
+    };
+    assert_eq!(archetypes.code, "build-archetype-declared-elsewhere");
+    assert_eq!(archetypes.resources, ["[maps]/theirs"]);
+    let mut named = ["their_bench", "their_lamp", "yard_crate"].map(literal);
+    named.sort();
+    assert_eq!(archetypes.names, named);
+
+    // ⚠ A type file that was not read is named, so the check does not read as having asked about it.
+    std::fs::write(&copied, REFUSED).unwrap();
+    let declares = Declares::of(&plan, &no_cook);
+    let unread: Vec<&str> = (declares.unread.iter())
+        .map(|(path, _)| path.as_str())
+        .collect();
+    assert_eq!(unread, ["stream/benches.ytyp", "stream/mine.ytyp"]);
+    assert!(
+        declares.unread[0].1.contains("its source does not cook"),
+        "{:?}",
+        declares.unread
+    );
+    let found = concerning(&plan, &read, &declares);
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].names, [literal("their_lamp")]);
 }
 
 /// Every file under `dir`, links left out.
@@ -983,7 +1129,21 @@ fn a_link_is_followed_by_neither_the_scan_nor_the_configuration() {
     assert_eq!(paths(&read), ["real", "stream_linked"]);
     assert_eq!(read.ignored, ["manifest_linked"]);
     assert_eq!(read.resources[1].streamed, []);
-    assert_eq!(findings(&read, None, None), []);
+    // ⚠ A server follows a link, so a linked resource or category is said to be unknown and the scan is not whole.
+    let unlisted: Vec<&str> = read.unlisted.iter().map(|u| u.path.as_str()).collect();
+    assert_eq!(unlisted, ["[more]", "linked"]);
+    assert!(!read.is_whole());
+    let found = findings(&read, None, None);
+    assert_eq!(of_code(&found, "folder-unread").len(), 2, "{found:#?}");
+    assert_eq!(found.len(), 2, "{found:#?}");
+    assert!(
+        found[1].message.contains(
+            "`linked` cannot be listed, so the resources in it are not known: it is a link, which is not followed"
+        ),
+        "{}",
+        found[1].message
+    );
+    assert!(Report::of(&read, None, None).fails());
     let config = Config::read(&server.join("server.cfg"), &disk).expect("reads");
     assert_eq!(config.starts, []);
     assert_eq!(config.includes_unread.len(), 2);
@@ -1473,6 +1633,9 @@ fn a_build_written_where_a_server_does_not_look_is_warned_of_and_another_folder_
     assert_eq!(stated("[maps]/../[maps]/./harbour"), []);
     assert_eq!(stated("[maps]/../plain/./harbour"), stated("plain/harbour"));
 
+    // ⚠ A project adopted where its resource stands builds inside that resource, where no server looks for a resource.
+    assert_eq!(stated("[maps]/harbour/build/harbour"), []);
+    assert_eq!(stated("yard/build/harbour"), []);
     // A build written outside the server's folder is placed nowhere in it, and a pack is no resource.
     assert_eq!(
         placement(&plan, &dir.path().join("project/build/harbour"), &read),

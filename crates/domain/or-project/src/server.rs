@@ -25,8 +25,8 @@ pub mod config;
 mod findings;
 
 pub use findings::{
-    concerning, findings, placement, rule_of, Finding, GameFiles, Report, Summary, ARCHETYPE_CLAIM,
-    RULES,
+    concerning, findings, placement, rule_of, Declares, Finding, GameFiles, Report, Summary,
+    ARCHETYPE_CLAIM, RULES,
 };
 
 /// The most bytes of a manifest or a configuration that are read: a text file past it is said not to read.
@@ -109,7 +109,7 @@ impl Resource {
     }
 }
 
-/// A folder that could not be listed, so what it holds is not known.
+/// A folder that was not listed, so what it holds is not known.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Unlisted {
     /// Under the server's folder with `/`; empty for the folder itself.
@@ -125,7 +125,7 @@ pub struct Scan {
     pub resources: Vec<Resource>,
     /// The folders that are neither a category in brackets nor a resource with a manifest, which were not walked, in path order.
     pub ignored: Vec<String>,
-    /// The category folders that could not be listed.
+    /// The folders whose resources are not known: a category that could not be listed, and a link to a folder, which is not followed.
     pub unlisted: Vec<Unlisted>,
 }
 
@@ -171,14 +171,25 @@ pub fn scan_with(folder: &Path, files: &dyn Files) -> Scan {
             let Ok(kind) = entry.file_type() else {
                 continue;
             };
-            // A hidden entry and a link are left out, so the walk ends; a file beside the resources is none of them.
-            if name.starts_with('.') || !kind.is_dir() {
+            if name.starts_with('.') {
                 continue;
             }
             let at = entry.path();
             let Some(path) = relative_inside(&at, folder) else {
                 continue;
             };
+            // ⚠ A link is not followed, so the walk ends, and a server follows one: what a linked folder holds is said to be unknown.
+            if kind.is_symlink() && at.is_dir() {
+                scan.unlisted.push(Unlisted {
+                    path,
+                    why: "it is a link, which is not followed".to_string(),
+                });
+                continue;
+            }
+            // A file beside the resources is none of them.
+            if !kind.is_dir() {
+                continue;
+            }
             let manifest = NAMES.into_iter().find(|name| is_plain_file(&at.join(name)));
             match manifest {
                 _ if is_category(&name) => categories.push(at),
@@ -294,7 +305,12 @@ fn read_resource(path: &str, at: &Path, manifest: &str, files: &dyn Files) -> Re
 
 impl Resource {
     /// Keep the names the type file or the map at `path` states, or say why it does not open.
-    fn names_of(&mut self, path: &str, extension: &str, bytes: &[u8]) -> Result<(), String> {
+    pub(crate) fn names_of(
+        &mut self,
+        path: &str,
+        extension: &str,
+        bytes: &[u8],
+    ) -> Result<(), String> {
         // ⚠ The readers of metadata also take the text a source is kept as, which no game streams.
         if or_io::meta::detect_binary_format(bytes).is_none() {
             return Err("is not metadata in a binary form".to_string());

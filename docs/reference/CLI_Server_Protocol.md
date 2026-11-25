@@ -275,7 +275,8 @@ sheet about its files, with what a person saw of each in a running game
 makes a new project of a mapping that comes in as a zip or as a folder, which it reads and never
 changes: `--dry-run` prints what the mapping holds and writes nothing (each resource or loose
 stream folder, what each file becomes, whether a build carries each line of the manifest, and what
-the map rules say of the set), `--json` prints the same report as data, `--root` names the
+the map rules say of the set; a script a `server_script` line names is kept beside the project,
+which no build ships), `--json` prints the same report as data, `--root` names the
 resource to adopt where there are several, and `--limits <limit>=<n>` states a bound of the place
 (`entries`, `bytes`, `ratio`, `ratio_floor`, `path`). A dry run that names `--into` or `--root`
 also says what would stop that adoption (a folder that holds something, a root the mapping does
@@ -298,15 +299,21 @@ hold under one name, as text or, with `--json`, as data (a code, a severity, the
 names, the resource that starts last where one is known, and a sentence). Two copies of a file
 with different bytes, an archetype two resources declare and two folders of one resource name are
 warnings; the same bytes twice, a file locked by an asset escrow and a line of the configuration it
-does not read are notes. A folder that is itself one resource, or under which no folder has a
+does not read are notes. A resource or a category that is a link is not followed, and is a
+warning that the folder was not read. A manifest of maps (`_manifest.ymf`) under one name in two
+resources is no finding. A folder that is itself one resource, or under which no folder has a
 manifest, is refused with exit 1 and nothing is listed.
 `--cfg <file>` reads the server's configuration for its `ensure`, `start` and `exec` lines, so a
-finding says which resource starts last; without it the order is said to be not known. An `exec`
+finding says which resource starts last; without it, and where a later line starts one of the
+resources again, the order is said to be not known. An `exec`
 of `@resource/path` is read inside the folder of that resource.
 `--game <install root>` adds, as a note, each file a resource streams under the name of a file of
 the game. It exits 1 when a finding is a warning or an error. `check-build` takes a project and
 `--server <resources folder>`, builds nothing, and lists what another resource of that folder
-already streams or declares of what the build writes, exiting 1 when it lists anything. Where the
+already streams or declares of what the build writes, by the archetypes its contents claim and
+those of every type file it ships, exiting 1 when it lists anything or when the plan cannot be
+built, whose problems it prints (`problems` with `--json`). A type file of the build that could not
+be read is named in place of the all-clear (`type_files_unread`), and is no finding. Where the
 folder the build is written into (`--out <folder>`, else the project's build folder) is inside
 that folder, it also warns of a folder above the resource that is no category in brackets and
 names another folder of the resource's name. Neither can see which copy of a file a server loads.

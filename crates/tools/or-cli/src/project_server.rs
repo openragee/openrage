@@ -9,7 +9,9 @@ use std::process::ExitCode;
 
 use or_project::resource::manifest;
 use or_project::server::config::Config;
-use or_project::server::{concerning, placement, scan, Disk, Finding, GameFiles, Report, Scan};
+use or_project::server::{
+    concerning, placement, scan, Declares, Disk, Finding, GameFiles, Report, Scan,
+};
 use or_title::vfs::EntryFacts;
 use serde_json::json;
 
@@ -134,6 +136,27 @@ pub struct BuildConcerns {
     /// The resource it writes.
     pub resource: String,
     pub findings: Vec<Finding>,
+    /// Why the plan cannot be built, which is why the findings are not all there are.
+    pub problems: Vec<String>,
+    /// The type files it ships whose archetypes are not known, each with why: no resource was asked about them.
+    pub type_files_unread: Vec<(String, String)>,
+}
+
+impl BuildConcerns {
+    /// Whether the check answers with a failing exit code: a finding, or a plan that says what it cannot build.
+    pub fn fails(&self) -> bool {
+        !self.findings.is_empty() || !self.problems.is_empty()
+    }
+}
+
+/// The bytes the metadata source folder `source` cooks to.
+fn cooked(source: &Path) -> Result<Vec<u8>, String> {
+    let said = |found: Vec<or_source::Problem>| {
+        let said: Vec<String> = found.iter().map(ToString::to_string).collect();
+        said.join("; ")
+    };
+    let opened = or_source::asset::Source::open(source).map_err(|p| p.to_string())?;
+    Ok(or_source::metadata::compile(&opened).map_err(said)?.bytes)
 }
 
 /// What a check of the builds of a project against a server's resources found.
@@ -177,20 +200,21 @@ fn concerns(
     let root = root_of(&positional[0], flags);
     let read = scanned(server).map_err(Run)?;
     let asked = |plan: &or_project::Plan| {
-        let mut findings = concerning(plan, &read);
+        let declares = Declares::of(plan, &cooked);
+        let mut findings = concerning(plan, &read, &declares);
         findings.extend(placement(plan, &root.join(&plan.resource), &read));
-        findings
+        BuildConcerns {
+            build: plan.output.clone(),
+            resource: plan.resource.clone(),
+            findings,
+            problems: plan.problems.clone(),
+            type_files_unread: declares.unread,
+        }
     };
     Ok(BuildCheck {
         resources: read.resources.len(),
         whole: read.is_whole(),
-        builds: (plans.iter())
-            .map(|plan| BuildConcerns {
-                build: plan.output.clone(),
-                resource: plan.resource.clone(),
-                findings: asked(plan),
-            })
-            .collect(),
+        builds: plans.iter().map(asked).collect(),
     })
 }
 
@@ -204,7 +228,7 @@ pub fn check_build(args: &[String]) -> Result<ExitCode, Failure> {
         ));
     };
     let check = concerns(&positional, &flags, Path::new(server))?;
-    let failed = check.builds.iter().any(|b| !b.findings.is_empty());
+    let failed = check.builds.iter().any(BuildConcerns::fails);
     if bare[0] {
         let documents = (check.builds.iter())
             .map(|b| {
@@ -214,6 +238,10 @@ pub fn check_build(args: &[String]) -> Result<ExitCode, Failure> {
                     "server": server,
                     "resources": check.resources,
                     "whole": check.whole,
+                    "problems": b.problems,
+                    "type_files_unread": (b.type_files_unread.iter())
+                        .map(|(path, why)| json!({ "path": path, "why": why }))
+                        .collect::<Vec<_>>(),
                     "findings": b.findings,
                 })
             })
@@ -229,9 +257,26 @@ pub fn check_build(args: &[String]) -> Result<ExitCode, Failure> {
         for finding in &b.findings {
             println!("{}", finding.line());
         }
-        if b.findings.is_empty() {
+        for problem in &b.problems {
+            println!("  problem: {problem}");
+        }
+        for (path, why) in &b.type_files_unread {
+            println!(
+                "  the archetypes of `{path}` are not known, so no resource was asked whether it declares them: {why}"
+            );
+        }
+        // ⚠ The all-clear is said only of a plan read whole: what a plan with a problem writes is not all known.
+        if !b.problems.is_empty() {
+            println!(
+                "  the plan cannot be built as it stands, so what it writes and declares is not all known: `project plan` says the same"
+            );
+        } else if b.findings.is_empty() && b.type_files_unread.is_empty() {
             println!(
                 "  no other resource streams a file it writes or declares an archetype it declares, and it is written where a server looks or outside the server's folder"
+            );
+        } else if b.findings.is_empty() {
+            println!(
+                "  no other resource streams a file it writes or declares an archetype of the type files that were read, and it is written where a server looks or outside the server's folder"
             );
         }
     }

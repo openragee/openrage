@@ -338,6 +338,7 @@ not (
   | binary_id(=or-io::ycd_encode)
   | binary_id(=or-maps::deleting_an_entity_of_the_install_keeps_every_link)
   | binary_id(=or-maps::the_rules_fire_on_a_map_built_to_break_them)
+  | binary_id(=or-maps::what_the_rules_say_of_the_install)
   | binary_id(=or-media::bink_audio_matches_ffmpeg)
   | binary_id(=or-particle::a_particle_list_edit_saves_and_reopens)
   | (binary_id(=or-particles) & (

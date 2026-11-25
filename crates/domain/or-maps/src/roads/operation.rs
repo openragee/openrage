@@ -309,6 +309,8 @@ impl Operations {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Applied {
     /// The operation that puts every source back byte for byte.
+    // ⚠ It names nodes by their index and states no digest of the documents it applies to: applied after another edit of the
+    // set it is not refused, and rewires the nodes that took those numbers.
     pub inverse: Operation,
     /// The document of each source it changed, as it was and as the operation left it, in the order of the sources' names.
     pub edited: Vec<Edited>,
@@ -597,6 +599,30 @@ fn named_elsewhere(regions: &Regions<'_>, node: Address) -> Result<Vec<String>, 
         }
     }
     Ok(found)
+}
+
+/// Refuse to take `node` out while it links to a region the set does not hold.
+///
+/// ⚠ A link back from that region would name a node that is gone, and could not be taken out, since its file is not at hand.
+fn every_far_end_is_held(regions: &Regions<'_>, node: Address) -> Result<(), String> {
+    let held = regions.held(node.region)?;
+    let mut absent: BTreeSet<u16> = BTreeSet::new();
+    let mut first: Option<String> = None;
+    for link in links_of(held, usize::from(node.index))? {
+        let other = link.other_node.region;
+        if regions.get(other).is_none() {
+            absent.insert(other);
+            first.get_or_insert_with(|| format!("{other}:{}", link.other_node.index));
+        }
+    }
+    let Some(first) = first else {
+        return Ok(());
+    };
+    let listed: Vec<String> = absent.iter().map(ToString::to_string).collect();
+    Err(format!(
+        "it links to {first}, of a region the set does not hold: the link back to it could not be taken out and would name a node that is gone, so add region(s) {} to the set first",
+        listed.join(", ")
+    ))
 }
 
 /// Refuse to renumber the nodes of `region` at or past `from` while one of them links to a region the set does not hold.
@@ -1101,7 +1127,8 @@ fn remove_node(regions: &mut Regions<'_>, node: Address) -> Result<Changed, Stri
             named.join(", ")
         ));
     }
-    every_neighbour_is_held(regions, node.region, index)?;
+    every_far_end_is_held(regions, node)?;
+    every_neighbour_is_held(regions, node.region, index + 1)?;
     let car = usize::try_from(held.num_nodes_car_nodes)
         .map_err(|_| "the region states a count of vehicle nodes below zero".to_string())?;
     let ped = index >= car;
@@ -1691,5 +1718,38 @@ mod tests {
             one_way: true,
         };
         assert_eq!(work.proven(&left, &half), None);
+    }
+
+    #[test]
+    fn a_node_that_links_out_of_the_set_is_refused_for_its_link_back_and_a_later_one_for_its_number(
+    ) {
+        let scratch = tempfile::tempdir().unwrap();
+        let folder = scratch.path().join("roads");
+        let seven = [
+            built::node([0, 0, 0], &[(7, 1, 1)]),
+            built::node([10, 0, 0], &[(7, 0, 2), (7, 2, 3)]),
+            built::node([20, 0, 0], &[(7, 1, 4), (216, 0, 5)]),
+        ];
+        built::extract(&folder, "nodes7", &built::region(7, 3, &seven, &[]));
+        let refused = |index| {
+            let node = Address::new(7, index);
+            let why = apply(&folder, &Operation::RemoveNode { node }).unwrap_err();
+            why.to_string()
+        };
+        // Nothing follows the last node, so nothing is renumbered: what is in the way is the link back to the node itself.
+        let last = refused(2);
+        assert!(
+            last.contains("it links to 216:0, of a region the set does not hold")
+                && last.contains("would name a node that is gone")
+                && last.contains("add region(s) 216"),
+            "{last}"
+        );
+        assert!(!last.contains("renumbers"), "{last}");
+        let earlier = refused(0);
+        assert!(
+            earlier.contains("it renumbers the nodes of region 7 from 7:1")
+                && earlier.contains("node 7:2 links to 216:0"),
+            "{earlier}"
+        );
     }
 }

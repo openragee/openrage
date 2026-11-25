@@ -53,8 +53,9 @@ pub const MODEL: &str = "model.glb";
 pub const DIR: &str = "drawables";
 /// The only compile mode this build has code for.
 pub(crate) const EDIT: &str = "edit";
-/// What a protected asset opens with where an RSC7 resource opens with `RSC7`.
-const PROTECTED: &[u8] = b"FXAP";
+/// What a protected asset, a file an asset escrow locks, opens with where an RSC7 resource opens with `RSC7`.
+// ⚠ `or_project::resource::ESCROW_MARKER` is the same bytes for the crates above this one, and or-wardrobe holds the two equal.
+pub const PROTECTED: &[u8] = b"FXAP";
 
 /// What an extraction records about where its file came from, and what it carries.
 pub struct Extraction<'a> {

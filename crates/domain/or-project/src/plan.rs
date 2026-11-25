@@ -574,6 +574,8 @@ fn manifest_of<'a>(
             .iter()
             .map(|(_, f)| f.path.as_str())
             .filter(|path| !is_under(path, "stream"))
+            // ⚠ A server reads the entitlement of an asset escrow itself: listed, it would be sent to every client.
+            .filter(|path| *path != crate::place::ESCROW_ENTITLEMENT)
             .collect();
         listed.sort_unstable();
         let text = merge::manifest(&listed, &stated, entries, &mut plan.problems);

@@ -506,7 +506,8 @@ whose ruling says "It waits". Parts of R70a, R70b, R70d, R70e, R70g, R70h, R70i,
 R70n, R70p, R70q, R70r, R70v, R70w and R70y are built, on installs and packs made by hand and on
 the staged corpus, with no screen but the Build tab's line of R70a, the Map screen's Undo of R70h
 and the presets of keys in Settings of R70v. No row
-is closed, no install suite has run and nothing was loaded in a game: each row's Where it stands
+is closed, the one install suite that has run is that of R70m's data part and nothing was loaded in
+a game: each row's Where it stands
 says what is built and what is left. R70 has no letter left: a finding that fits no row opens the
 next number.
 
@@ -9549,7 +9550,7 @@ together.
 A part's Done when is its check; its brief says what to read and what to build. A part that writes a
 kind of file adds it to the recipe and the sheet of R70a. Lanes began on 2026-11-25: parts of R70a,
 R70b, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70m, R70n, R70p, R70q, R70r, R70v, R70w and R70y
-are built, with no part closed, no install suite run and nothing loaded in a game. R70 has no letter left: a finding that fits no part opens
+are built, with no part closed, one install suite run (R70m's data part) and nothing loaded in a game. R70 has no letter left: a finding that fits no part opens
 the next number.
 
 ### R70a What the game loads
@@ -10007,10 +10008,13 @@ moved or copied; and the health rules the brief names. The builder waits for rul
 room, a portal and an entity set, a new interior, a copy and a second instance
 ([brief](World_Editor_Plan.md#interiors-r70m)). The audio is [R70x](#r70x-the-audio-of-an-interior).
 
-**Where it stands.** The data part is built and its install suite has run on no install:
+**Where it stands.** The data part is built, and its install suite passes on both installs:
 `crates/io/or-io/src/meta/typed/interior.rs` types the four records, and a save refuses a broken
-interior ([in full, with what is left](../reference/Crate_Reference.md#io-crates)). Nothing after
-the data part is built.
+interior ([in full, with what is left](../reference/Crate_Reference.md#io-crates)).
+`every_interior_of_an_install_reads_typed_states_the_members_typed_and_saves_to_its_fixed_point`
+reads 541 interiors in 2,763 type files of the Legacy install, and saves 424 of those type files to
+their fixed point with 0 problems; of the Enhanced install, 556 interiors in 2,876 type files and
+439 saved, with 0 problems (at `8853987c8` with this change). Nothing after the data part is built.
 
 **Depends on.** Nothing for the data part; [R70f](#r70f-layers-of-what-the-game-hides) and
 [R70i](#r70i-selecting-and-moving-in-the-world) for the rest; ruling 2 for the builder.
@@ -10106,7 +10110,14 @@ graph and rules over a set of regions, in `crates/domain/or-maps/src/roads/`, be
 that a node another region names is disabled cannot be built: the file states no state that
 disables a node, so the request is refused, such a node is neither taken out nor disabled, and
 that Done-when clause awaits the owner. A link's lanes are not named either: its word is set
-whole. Left: scenario points, the navmesh rules, every screen and the install suite.
+whole. A changed `.ynd` is held as a source whose form awaits the owner's word
+([R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources)), and the list of operations
+follows that form: a node's address written `region:index`, the flag words stated whole and one
+document a region. Left: scenario points, the navmesh rules, every screen and the install suite; a
+line of the acceptance sheet and a step of its recipe for an edited path region, without which a
+build that ships one says nothing of acceptance; the digest of the documents an operation applies
+to, as a map operation's `expects`, before anything holds an inverse across edits; and a rule and a
+refusal for a node placed outside the cell of its region, which no rule compares today.
 
 **Depends on.** [R70f](#r70f-layers-of-what-the-game-hides),
 [R70i](#r70i-selecting-and-moving-in-the-world) and
@@ -10207,7 +10218,9 @@ the resource check's manifest reader. Its rules find two resources that stream o
 where the bytes differ, two that declare one archetype and two folders of one resource name, and
 say which starts last where a configuration's `ensure`, `start` and `exec` lines tell
 (`server::config`). `concerning` and `placement` say what a build would write again and whether a
-server looks where it is written; no build calls them. `openrage-cli project check-server` and
+server looks where it is written; no build calls them. A build is asked about the archetypes its
+contents claim and those of every type file it ships, a manifest of maps is no clash between two
+resources, and a resource or a category that is a link is said not to have been read. `openrage-cli project check-server` and
 `check-build` print both and exit 1 on a warning.
 
 Open: which of two copies a server loads is never said, and what a category and the configuration

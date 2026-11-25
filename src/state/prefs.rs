@@ -638,6 +638,12 @@ pub struct Prefs {
     pub viewport: ViewportPrefs,
     #[serde(default)]
     pub shortcut_bindings: ShortcutBindings,
+    /// The preset of keys under `shortcut_bindings`, by its id; empty, or an id no preset has, is OpenRage's own.
+    #[serde(default)]
+    pub shortcut_preset: String,
+    /// ⚠ Not kept: what the keyboard in use types, learnt from the presses of this run.
+    #[serde(skip)]
+    pub keys_seen: crate::ui::shortcuts::KeysSeen,
     /// The dock arrangement per workspace, as the user last left it.
     ///
     /// ⚠ **Versioned separately from `schema` above**, because this one is a
@@ -765,6 +771,8 @@ impl Default for Prefs {
             texture_search_paths: Vec::new(),
             viewport: ViewportPrefs::default(),
             shortcut_bindings: ShortcutBindings::default(),
+            shortcut_preset: String::new(),
+            keys_seen: Default::default(),
             dock_layouts: crate::ui::dock_layout::SavedLayouts::default(),
             appearance: AppearancePrefs::default(),
             explorer: crate::state::explorer::ExplorerPrefs::default(),

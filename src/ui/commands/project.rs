@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use egui::Key;
 
-use super::table::{a_project, none_if, Action, Spec, BASE};
+use super::table::{a_project, none_if, Action, Place, Spec, BASE};
 use crate::platform::file_dialogs;
 use crate::state::workbench::Kept;
 use crate::state::{AppState, PROJECT_EXTENSION};
@@ -603,7 +603,7 @@ pub(super) const QUICK_LOOK: Spec = Spec {
         ),
         false => an_asset(state),
     },
-    panel_key: true,
+    place: Place::Lists,
     run: |state, _| match looks_at_garments(state) {
         true => state.workbench.wardrobe.quick_look = !state.workbench.wardrobe.quick_look,
         false => state.workbench.quick_look = !state.workbench.quick_look,

@@ -17204,3 +17204,33 @@ msgstr "Заменить и более низкие уровни детализ�
 
 msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
 msgstr "Выключено: уровень детализации, для которого меш не называет геометрии, остаётся таким, как его хранит модель. Включено: каждая такая геометрия получает меш уровня 0 в своей модели и месте, где обе рисуются одним шейдером."
+
+msgid "A key you chose, which no preset changes"
+msgstr "Клавиша, которую вы выбрали сами; ни один пресет её не меняет"
+
+msgid "A set of keys for the commands it names: every other command keeps its key, and so does one whose key you chose. OpenRage is the set the app starts with."
+msgstr "Набор клавиш для команд, которые он называет: любая другая команда сохраняет свою клавишу, как и та, клавишу которой вы выбрали сами. OpenRage — набор, с которым приложение запускается."
+
+msgid "CodeWalker"
+msgstr "CodeWalker"
+
+msgid "OpenRage"
+msgstr "OpenRage"
+
+msgid "Preset"
+msgstr "Пресет"
+
+msgid "{count} command it names keeps the key you chose."
+msgid_plural "{count} commands it names keep the keys you chose."
+msgstr[0] "{count} названная им команда сохраняет выбранную вами клавишу."
+msgstr[1] "{count} названные им команды сохраняют выбранные вами клавиши."
+msgstr[2] "{count} названных им команд сохраняют выбранные вами клавиши."
+
+msgid "{key} (US keyboard)"
+msgstr "{key} (клавиатура США)"
+
+msgid "{preset} changes the keys of {count} command."
+msgid_plural "{preset} changes the keys of {count} commands."
+msgstr[0] "{preset} меняет клавиши {count} команды."
+msgstr[1] "{preset} меняет клавиши {count} команд."
+msgstr[2] "{preset} меняет клавиши {count} команд."

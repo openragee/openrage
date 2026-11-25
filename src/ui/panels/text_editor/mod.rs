@@ -679,7 +679,9 @@ fn find_keys(ui: &egui::Ui, prefs: &crate::state::Prefs) -> FindKeys {
     let pressed: Vec<Action> = ui.input(|i| {
         i.events
             .iter()
-            .filter_map(|event| shortcuts::action_for_event(event, prefs))
+            .filter_map(|event| {
+                shortcuts::action_for_event(crate::ui::commands::Place::TextEditor, event, prefs)
+            })
             .collect()
     });
     FindKeys {

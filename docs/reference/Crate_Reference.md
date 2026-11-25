@@ -1213,9 +1213,75 @@ the format-agnostic timeline both previews use.
   put-back, which then discards what that code wrote, so a draw that dispatches
   into other modules, as the Files and Outline panels' do, uses `get`
   (`a_taken_slot_reads_as_default_and_the_put_back_wins`).
+- **Keys by where they sit, by place and by preset**
+  ([R70i](../direction/Roadmap.md#r70i-selecting-and-moving-in-the-world),
+  [R70v](../direction/Roadmap.md#r70v-the-keys-settings-and-guide-of-a-mapper)). The binding by
+  where a key sits is built, and no tool is on it. A row of the command table says whether its keys
+  name a position (`by_position` in `src/ui/commands/table.rs`): such a binding answers the key at
+  that place whatever it types, and Shift is part of it, so a digit and Shift with it are two
+  bindings (`the_fourth_key_of_the_digit_row_answers_by_its_place_on_a_french_keyboard`,
+  `a_digit_with_shift_and_the_digit_alone_are_two_commands_by_position`, on presses built by hand,
+  never on a French keyboard in a window), and a panel that reads its own keys reads the place from
+  the press egui hands it (`a_panel_reads_a_key_bound_by_position_from_the_place_its_press_states`).
+  A hint and Settings name such a key by what it types once a press has shown it, and before that by
+  its place on a US keyboard, said as such
+  (`a_key_bound_by_position_is_named_by_what_it_types_once_a_press_has_shown_it`,
+  `a_hint_reads_a_key_bound_by_position_as_the_keyboard_in_use_types_it`,
+  `src/ui/shortcuts/position.rs`), and Settings takes the place of the key pressed for such a
+  command (`a_key_captured_for_a_command_bound_by_position_is_the_place_pressed`). No row of the
+  table says so yet and no default changed: the tools, their keys and the Map scene's own keys as
+  rows of the table come with the screen, and until a row says so no check draws a hint or a row of
+  Settings for such a command. ⚠ Two limits stand. egui names a digit of the numeric keypad as the
+  digit row's, so the two are one place, and the keypad is only kept from renaming the row
+  (`the_numeric_keypad_does_not_rename_a_key_of_the_digit_row`). A conflict is judged on a US
+  keyboard, where Shift and the key at a place meet the character that key then types
+  (`a_shifted_key_by_position_meets_the_character_a_us_keyboard_types_there`); a keyboard whose key
+  at a bound place types another binding's character makes two bindings meet that the check does not
+  see. The rest is not built. The Map screen's manipulator, snaps and typed fields work over boxes
+  ([built](../direction/Workbench_UX_Design.md#what-the-map-screen-builds)), and no command targets
+  a placed thing (`src/ui/commands/target.rs`). Presets of keys and the place of a binding are
+  built, ahead of the row they were planned in, because the tools of
+  [R70i](../direction/Roadmap.md#r70i-selecting-and-moving-in-the-world) need both. Settings ▸
+  Keyboard shortcuts offers a preset (`src/ui/shortcuts/presets.rs`): OpenRage's own, which changes
+  no command, and CodeWalker's, which holds only what a command of today's table can take, Ctrl+N
+  for New project…; the keys of its tools and of its camera wait for the commands R70i and
+  [R70c](../direction/Roadmap.md#r70c-the-gta-v-world-streamed-and-drawn) add. A preset changes the
+  commands it names and no other, a key the person chose stays over it and after it, the choice is
+  kept in the preferences, and the page says how many commands it changes and how many keep a key of
+  the person's
+  (`a_preset_changes_the_commands_it_names_and_no_other_and_openrages_own_puts_them_back`,
+  `a_key_the_person_chose_stays_under_a_preset_and_after_it`,
+  `a_preset_is_picked_from_a_named_control_and_says_how_many_commands_it_changes`). A conflict is
+  one key for two commands read in one place: a row of the command table names its place (`Place` in
+  `src/ui/commands/table.rs`), two panels share a key, and a command the key dispatcher reads shares
+  with none (`two_commands_share_a_key_only_when_the_table_reads_them_in_two_places`,
+  `no_two_commands_of_the_table_read_in_one_place_share_a_key`,
+  `no_preset_binds_one_key_to_two_commands_of_one_place`, and on the page
+  `the_page_gives_a_panels_key_to_another_panels_command_and_refuses_it_to_the_dispatchers`). A key
+  that two panels share is refused to a command of the dispatcher with each of the two named, and
+  Overwrite unbinds both and says so
+  (`the_page_names_every_command_a_key_is_taken_from_and_overwrite_unbinds_each`). Restore all
+  defaults is offered under a preset and returns to OpenRage's own
+  (`restore_all_defaults_is_offered_under_a_preset_and_returns_to_openrages_own`), and a command set
+  by hand to the key its preset gives is the preset's again
+  (`a_key_set_to_what_the_preset_gives_is_no_key_of_the_persons_own`). Seen on `just shots` screens,
+  not in a window. That presets exist is the default of the plan's ruling on the keys, which the
+  entry of 2026-10-03 left to the owner
+  ([Project_Context.md](../direction/Project_Context.md#the-ux-reviews-plan-is-the-apps-next-work-2026-10-03)).
+  Left: the page of a mapper's settings, the hover of a panel's title, the map rules' sentences in
+  the catalogs, the tour, the chapter of the guide and the template. A library crate's sentences are
+  English, and `Template::Maps` opens on the Map screen.
 - Every command is a row of `COMMANDS` in `src/ui/commands/table.rs` (the checks that enable one are `src/ui/commands/predicates.rs`): its id,
   label, category, default bindings, an enabled-when that says why not, and
-  what it runs. A command that acts on something (`On`) takes a `Target`: what
+  what it runs. A row also says where its keys are read (`Place`: the key
+  dispatcher, or the panel that reads them itself under the pointer or with
+  focus) and whether they name where a key sits and not the character typed
+  (`by_position`). `src/ui/shortcuts.rs` holds a press against the bindings: a
+  key the person chose first, then the chosen preset's
+  (`src/ui/shortcuts/presets.rs`), then the table's; two commands share a key
+  only when both are read by panels, in two places (`taken_by`), and
+  `src/ui/shortcuts/position.rs` names a key bound by where it sits by what it
+  types once a press has shown it. A command that acts on something (`On`) takes a `Target`: what
   a context menu was opened on, else the focused panel's selection
   (`src/ui/commands/target.rs`). The menu bar, the context menus, the command
   palette, Settings ▸ Keyboard shortcuts and the key dispatcher read it, and

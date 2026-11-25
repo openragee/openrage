@@ -136,7 +136,7 @@ A person on a trackpad never holds a button to fly: Shift+F turns flying on, one
 
 ### The keys (R70c, R70e, R70i)
 
-Each key is read by the world's panel, under the pointer or with the focus, as the `panel_key` rows of the command table are today. None is taken from a command that has it.
+Each key is read by the world's panel, under the pointer or with the focus, as the rows of the command table that name a panel as their place are today (`Place` in `src/ui/commands/table.rs`). None is taken from a command that has it.
 
 | Key | Does | The binding today | Row |
 |---|---|---|---|
@@ -155,9 +155,9 @@ Stand on the ground, Remove entity and Add an entity are the commands the Map sc
 
 ### What the matcher has to change (R70i, R70v)
 
-- **A binding by where the key sits (R70i).** The matcher today reads a press by the character it types and falls back to the key's position only when that character has no name (`key_of` in `src/ui/shortcuts.rs`). ⚠ On an AZERTY keyboard the fourth key of the digit row types an apostrophe, which reads as the Quote key and never as 4, so a tool bound to the character would be dead there without Shift. R70i adds a binding that names the position, and the five tools use it.
-- **Shift with a digit (R70i).** The matcher today ignores Shift for a digit (`shift_picks_the_character`), so Shift with a digit cannot set what the digit goes to. A binding by position honours Shift. Until then a bookmark is saved from the box, and Alt with a digit goes to it.
-- **A place for a binding (R70v).** A conflict is today one key for two commands of the whole table (`set_binding`). Every key above is unbound elsewhere, so nothing collides before R70v, which adds the place a binding belongs to; the preset for a person who knows CodeWalker's keys needs it.
+- **A binding by where the key sits (R70i).** A binding by character reads a press by the character it types and falls back to the key's position only when that character has no name (`key_of` in `src/ui/shortcuts.rs`). ⚠ On an AZERTY keyboard the fourth key of the digit row types an apostrophe, which reads as the Quote key and never as 4, so a tool bound to the character would be dead there without Shift. Today a row of the command table can say that its keys name a position (`by_position` in `src/ui/commands/table.rs`), and such a binding answers the key at that place whatever it types. No row says so yet: the five tools will. A hint and Settings name such a key by what it types once a press has shown it, and before that by its place on a US keyboard, said as such.
+- **Shift with a digit (R70i).** A binding by character ignores Shift for a digit (`shift_picks_the_character`), so Shift with a digit cannot set what the digit goes to. Today a binding by position reads Shift, so a digit and Shift with it are two bindings. Until a bookmark's key is bound that way, a bookmark is saved from the box, and Alt with a digit goes to it.
+- **A place for a binding (R70v).** Today a conflict is one key for two commands read in one place (`taken_by` in `src/ui/shortcuts.rs`): a row of the table names its place, two panels share a key, and a command the key dispatcher reads shares with none. Settings offers presets of keys over that rule (`src/ui/shortcuts/presets.rs`); the one for a person who knows CodeWalker's keys holds only what a command of today's table can take, and gains the tools' keys with the tools.
 - **Keys read outside the table (R70i).** The Map scene reads F, Escape, the arrows and the brackets itself today. R70i makes them rows of the table, so the page of keyboard shortcuts lists them.
 
 A field being typed in keeps its keys today (`the_focused_field_keeps`), so a digit typed into Details never changes the tool.

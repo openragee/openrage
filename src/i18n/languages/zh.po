@@ -17056,3 +17056,31 @@ msgstr "同时替换较低的细节级别"
 
 msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
 msgstr "关闭时，网格未指定任何几何体的细节级别保持模型中的原样。开启时，每个这样的几何体在其模型和位置上采用 0 级网格，前提是两者使用同一着色器绘制。"
+
+msgid "A key you chose, which no preset changes"
+msgstr "你选择的按键，任何预设都不会更改它"
+
+msgid "A set of keys for the commands it names: every other command keeps its key, and so does one whose key you chose. OpenRage is the set the app starts with."
+msgstr "为其列出的命令提供的一组按键：其他命令保留各自的按键，你自己选过按键的命令也是如此。OpenRage 是应用启动时使用的那一组。"
+
+msgid "CodeWalker"
+msgstr "CodeWalker"
+
+msgid "OpenRage"
+msgstr "OpenRage"
+
+msgid "Preset"
+msgstr "预设"
+
+msgid "{count} command it names keeps the key you chose."
+msgid_plural "{count} commands it names keep the keys you chose."
+msgstr[0] "其中 {count} 个命令保留你选择的按键。"
+msgstr[1] "其中 {count} 个命令保留你选择的按键。"
+
+msgid "{key} (US keyboard)"
+msgstr "{key}（美式键盘）"
+
+msgid "{preset} changes the keys of {count} command."
+msgid_plural "{preset} changes the keys of {count} commands."
+msgstr[0] "{preset} 更改了 {count} 个命令的按键。"
+msgstr[1] "{preset} 更改了 {count} 个命令的按键。"

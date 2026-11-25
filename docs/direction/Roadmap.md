@@ -9879,9 +9879,8 @@ a key sits; the line that offers a project, the first edit's toast and Edit in t
 tool's hints; an object's right-click menu and double click; and the safe fix of `guid-twice`
 ([brief](World_Editor_Plan.md#selecting-and-moving-in-the-world-r70i)).
 
-**Where it stands.** Not built. The Map screen's manipulator, snaps and typed fields work over boxes
-([built](Workbench_UX_Design.md#what-the-map-screen-builds)), and no command targets a placed thing
-(`src/ui/commands/target.rs`).
+**Where it stands.** The binding by where a key sits is built, with no tool on it
+([in full](../reference/Crate_Reference.md#panels-docks-and-panel-state)); the rest is not.
 
 **Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn), [R70g](#r70g-collision-as-a-query)
 and [R70h](#r70h-one-vocabulary-of-world-edits); it draws in [R69g](#r69g-one-details-panel)'s
@@ -10320,11 +10319,17 @@ term as its hover; the sentences of the map rules wrapped into the catalogs; a t
 chapter of the guide; and a Map template that opens on the world
 ([brief](World_Editor_Plan.md#the-keys-settings-and-guide-of-a-mapper-r70v)).
 
-**Where it stands.** Not built. A key is changed and kept in the preferences, where a conflict is
-one key for two commands of the whole table and the matcher reads a press by its character first.
-Keymap presets were left open on 2026-10-03
-([Project_Context.md](Project_Context.md#the-ux-reviews-plan-is-the-apps-next-work-2026-10-03)), a
-library crate's sentences are English, and `Template::Maps` opens on the Map screen.
+**Where it stands.** Presets of keys and the place of a binding are built, ahead of this row,
+since the tools of [R70i](#r70i-selecting-and-moving-in-the-world) need both
+([in full](../reference/Crate_Reference.md#panels-docks-and-panel-state)). Settings ▸ Keyboard
+shortcuts offers OpenRage's own preset and CodeWalker's, which holds one binding, Ctrl+N for New
+project…, until its tools and camera have commands; a key the person chose stays over a preset. A
+conflict is one key for two commands read in one place
+(`no_two_commands_of_the_table_read_in_one_place_share_a_key`). Presets are the plan's
+default, which the entry of 2026-10-03 left to the owner
+([Project_Context.md](Project_Context.md#the-ux-reviews-plan-is-the-apps-next-work-2026-10-03)).
+Left: a mapper's settings page, a panel title's hover, the map rules' catalog sentences,
+the tour, the guide's chapter and the template.
 
 **Depends on.** [R70i](#r70i-selecting-and-moving-in-the-world).
 

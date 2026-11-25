@@ -17056,3 +17056,31 @@ msgstr "下位の詳細レベルも置き換える"
 
 msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
 msgstr "オフの場合、メッシュがジオメトリを指定していない詳細レベルはモデルのまま残ります。オンの場合、そのような各ジオメトリは、両者が同じシェーダーで描画される場所で、そのモデルと位置にレベル 0 のメッシュを使います。"
+
+msgid "A key you chose, which no preset changes"
+msgstr "自分で選んだキーです。プリセットでは変わりません"
+
+msgid "A set of keys for the commands it names: every other command keeps its key, and so does one whose key you chose. OpenRage is the set the app starts with."
+msgstr "プリセットは、それが挙げるコマンドのキーをまとめたものです。ほかのコマンドはキーをそのまま保ち、自分でキーを選んだコマンドも同じです。OpenRage はアプリの初期のセットです。"
+
+msgid "CodeWalker"
+msgstr "CodeWalker"
+
+msgid "OpenRage"
+msgstr "OpenRage"
+
+msgid "Preset"
+msgstr "プリセット"
+
+msgid "{count} command it names keeps the key you chose."
+msgid_plural "{count} commands it names keep the keys you chose."
+msgstr[0] "そのうち {count} 個のコマンドは、自分で選んだキーを保ちます。"
+msgstr[1] "そのうち {count} 個のコマンドは、自分で選んだキーを保ちます。"
+
+msgid "{key} (US keyboard)"
+msgstr "{key} (US キーボード)"
+
+msgid "{preset} changes the keys of {count} command."
+msgid_plural "{preset} changes the keys of {count} commands."
+msgstr[0] "{preset} は {count} 個のコマンドのキーを変更します。"
+msgstr[1] "{preset} は {count} 個のコマンドのキーを変更します。"

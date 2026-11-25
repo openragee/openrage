@@ -281,6 +281,44 @@ fn click_named(shell: &mut Shell, name: &str) {
 }
 
 #[test]
+fn the_assets_table_reads_the_quick_look_key_as_its_own_under_the_pointer() {
+    use crate::ui::commands::Action;
+    use crate::ui::shortcuts;
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().unwrap();
+    let mut shell = a_project_shell(dir.path(), ThemeChoice::Dark);
+    shell.state.active_workspace = Workspace::Project;
+    shell.settled();
+    // The click selects the script and leaves the pointer over the table.
+    click_named(&mut shell, "client.lua");
+    assert!(!shell.state.workbench.quick_look);
+    let press = |shell: &mut Shell, key| {
+        shell.draw(vec![super::frames_of_the_shell::key(key)]);
+        shell.settled();
+    };
+    press(&mut shell, egui::Key::Space);
+    assert!(
+        shell.state.workbench.quick_look,
+        "Space over the Assets table does not look at the selected asset"
+    );
+
+    // F frames the selection in the viewport, and the table reads it as Quick look once that command is given it too.
+    let none = shortcuts::ShortcutMods::none();
+    let shared = shortcuts::set_binding(
+        &mut shell.state.prefs,
+        Action::QuickLook,
+        none,
+        egui::Key::F,
+    );
+    assert!(shared.is_ok(), "{shared:?}");
+    press(&mut shell, egui::Key::F);
+    assert!(
+        !shell.state.workbench.quick_look,
+        "the table left a key it shares with the viewport to the viewport"
+    );
+}
+
+#[test]
 fn a_filter_that_matches_nothing_says_so_and_clear_brings_the_assets_back() {
     let _serial = crate::ui::theme::serial();
     let dir = tempfile::tempdir().unwrap();

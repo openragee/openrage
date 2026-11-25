@@ -7,6 +7,8 @@ mod clipboard;
 mod compare;
 mod files;
 mod front_door;
+#[cfg(test)]
+mod keys_by_position_and_place;
 mod maps;
 mod mesh;
 mod particles;
@@ -25,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 pub use clipboard::NOTHING_TO_PASTE;
-pub use table::{spec, Action, Spec, COMMANDS};
+pub use table::{spec, Action, Place, Spec, COMMANDS};
 pub use target::{focused_document, Hits, Target};
 
 use crate::state::toasts::ToastAction;

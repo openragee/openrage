@@ -17056,3 +17056,31 @@ msgstr "Remplacer aussi les niveaux de détail inférieurs"
 
 msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
 msgstr "Désactivé, un niveau de détail dont le maillage ne nomme aucune géométrie reste tel que le modèle le contient. Activé, chacune de ces géométries prend le maillage du niveau 0 à son modèle et à sa place, là où les deux se dessinent avec un même shader."
+
+msgid "A key you chose, which no preset changes"
+msgstr "Une touche que vous avez choisie, qu'aucun préréglage ne change"
+
+msgid "A set of keys for the commands it names: every other command keeps its key, and so does one whose key you chose. OpenRage is the set the app starts with."
+msgstr "Un jeu de touches pour les commandes qu'il nomme : toute autre commande garde sa touche, de même qu'une commande dont vous avez choisi la touche. OpenRage est le jeu avec lequel l'application démarre."
+
+msgid "CodeWalker"
+msgstr "CodeWalker"
+
+msgid "OpenRage"
+msgstr "OpenRage"
+
+msgid "Preset"
+msgstr "Préréglage"
+
+msgid "{count} command it names keeps the key you chose."
+msgid_plural "{count} commands it names keep the keys you chose."
+msgstr[0] "{count} commande qu'il nomme garde la touche que vous avez choisie."
+msgstr[1] "{count} commandes qu'il nomme gardent les touches que vous avez choisies."
+
+msgid "{key} (US keyboard)"
+msgstr "{key} (clavier américain)"
+
+msgid "{preset} changes the keys of {count} command."
+msgid_plural "{preset} changes the keys of {count} commands."
+msgstr[0] "{preset} change les touches de {count} commande."
+msgstr[1] "{preset} change les touches de {count} commandes."

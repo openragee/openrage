@@ -109,6 +109,8 @@ mod the_power_features_on_screen;
 #[cfg(test)]
 mod the_power_windows_in_plain_words_on_screen;
 #[cfg(test)]
+mod the_presets_and_places_of_keys_on_screen;
+#[cfg(test)]
 mod the_project_panels_on_screen;
 #[cfg(test)]
 mod the_project_polish_on_screen;

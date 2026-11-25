@@ -90,6 +90,6 @@ A project is a folder: the project file, your sources, your clothing pack and yo
 
 - `Ctrl+B` builds.
 - `Ctrl+1` to `Ctrl+9` go to the tab in that place of the tab row: the screens of the project first, then the files.
-- Help ▸ Keyboard shortcuts… lists the rest and lets you change them.
+- Help ▸ Keyboard shortcuts… lists the rest and lets you change them, one at a time or by a preset of keys. A preset changes only the commands it names, and a key you chose yourself stays.
 
 The app is in English only for now.

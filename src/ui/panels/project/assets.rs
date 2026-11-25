@@ -393,9 +393,9 @@ fn keys(
             i.key_pressed(egui::Key::ArrowDown),
             i.key_pressed(egui::Key::ArrowUp),
             i.key_pressed(egui::Key::Enter),
-            i.events
-                .iter()
-                .find_map(|event| shortcuts::action_for_event(event, &state.prefs)),
+            i.events.iter().find_map(|event| {
+                shortcuts::action_for_event(crate::ui::commands::Place::Lists, event, &state.prefs)
+            }),
         )
     });
     let at = state.workbench.selected.as_ref().and_then(|key| {

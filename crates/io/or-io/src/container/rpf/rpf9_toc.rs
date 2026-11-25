@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use byteorder::{BigEndian, ByteOrder, LE};
 
+use super::gta6_extract;
 use super::gta6_keygate;
 use super::gta6_strings::StringCipher;
 use super::rpf9::Rpf9Header;
@@ -323,34 +324,44 @@ impl GtaViKeys {
         Ok(keys)
     }
 
-    /// The snapshot the user supplies — [`GTA6_SNAPSHOT_ENV`], else [`GTA6_SNAPSHOT_FILE_NAME`]
-    /// beside the keys cache in `config_dir` — else the masked one `bundled-keys` embeds, which
-    /// opens only with the executable [`GTA6_EXE_ENV`] names. `None` means the TOC cannot be read
-    /// and the archive is left encrypted.
+    /// [`Self::for_install_with`] keyed by the executable [`GTA6_EXE_ENV`] names.
     pub fn for_install(config_dir: Option<&Path>) -> Result<Option<Self>> {
-        let path = std::env::var_os(GTA6_SNAPSHOT_ENV)
-            .map(PathBuf::from)
+        Self::for_install_with(config_dir, None)
+    }
+
+    /// The user's snapshot, else the keys of `exe` or of the executable [`GTA6_EXE_ENV`] names.
+    pub fn for_install_with(config_dir: Option<&Path>, exe: Option<&Path>) -> Result<Option<Self>> {
+        let named = std::env::var_os(GTA6_SNAPSHOT_ENV).map(PathBuf::from);
+        let env_exe = std::env::var_os(GTA6_EXE_ENV).map(PathBuf::from);
+        Self::for_install_from(named.as_deref(), config_dir, exe.or(env_exe.as_deref()))
+    }
+
+    /// [`Self::for_install_with`] with the snapshot [`GTA6_SNAPSHOT_ENV`] names passed in.
+    pub(crate) fn for_install_from(
+        named: Option<&Path>,
+        config_dir: Option<&Path>,
+        exe: Option<&Path>,
+    ) -> Result<Option<Self>> {
+        let user = named
+            .map(Path::to_path_buf)
             .or_else(|| config_dir.map(|dir| dir.join(GTA6_SNAPSHOT_FILE_NAME)))
             .filter(|p| p.is_file());
-        match path {
-            Some(path) => Self::from_file(path).map(Some),
-            None => Self::bundled(),
+        if let Some(path) = user {
+            let bytes = std::fs::read(&path).map_err(|source| IoError::FileReadFailed {
+                path: path.clone(),
+                source,
+            })?;
+            let plain = unmask_with(&bytes, exe.map(Path::as_os_str))?;
+            let mut keys = Self::parse(plain.as_deref().unwrap_or(&bytes))?;
+            keys.snapshot_file = Some(path);
+            return Ok(Some(keys));
         }
-    }
-
-    /// The bundled masked snapshot, unmasked with the executable [`GTA6_EXE_ENV`] names.
-    #[cfg(feature = "bundled-keys")]
-    fn bundled() -> Result<Option<Self>> {
-        let Some(exe) = std::env::var_os(GTA6_EXE_ENV) else {
+        let Some(exe) = exe else {
             return Ok(None);
         };
-        let plain = unmask_with(gta6_keygate::BUNDLED_SNAPSHOT, Some(exe.as_os_str()))?;
-        plain.as_deref().map(Self::parse).transpose()
-    }
-
-    #[cfg(not(feature = "bundled-keys"))]
-    fn bundled() -> Result<Option<Self>> {
-        Ok(None)
+        let (plain, source) = gta6_extract::snapshot_for_exe(config_dir, exe)?;
+        tracing::debug!(?source, exe = %exe.display(), "GTA VI keys from the executable");
+        Self::parse(&plain).map(Some)
     }
 
     /// The SHA-256 of the executable this snapshot was taken from.

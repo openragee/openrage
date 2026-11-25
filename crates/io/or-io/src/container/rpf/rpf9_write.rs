@@ -125,6 +125,61 @@ pub fn write_rpf9_resource_capped(
     }
 }
 
+/// A block-mapped loose file, with the chunks and padded section lengths a row is authored from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rpf9WrittenChunks {
+    /// What [`write_rpf9_resource_capped`] writes: the chunks, each 16-aligned.
+    pub bytes: Vec<u8>,
+    /// Each chunk's inflated and stored sizes, in the order written; every one deflated.
+    pub chunks: Vec<super::gta6_chunk_table::Chunk>,
+    pub virtual_len: u32,
+    pub physical_len: u32,
+}
+
+/// [`write_rpf9_resource_capped`] of a block-mapped resource, with its chunks and section lengths.
+pub fn write_rpf9_resource_chunks(
+    virtual_section: &[u8],
+    physical: &[u8],
+    cap: u64,
+) -> Result<Rpf9WrittenChunks, Rpf9WriteError> {
+    let sections = Rpf9Sections {
+        form: Rpf9Form::BlockMapped,
+        virtual_section: virtual_section.to_vec(),
+        physical: physical.to_vec(),
+    };
+    let bytes = write_rpf9_resource_capped(&sections, cap)?;
+    let lost = |why: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, why.to_owned());
+    let (virtual_len, physical_len) = (
+        virtual_section.len().next_multiple_of(RPF9_SLOT as usize) as u32,
+        physical.len().next_multiple_of(RPF9_SLOT as usize) as u32,
+    );
+    let mut chunks = Vec::new();
+    let mut at = 0usize;
+    for inflated in super::gta6_form_h::chunk_sizes(virtual_len, physical_len, cap) {
+        // A stream's stored length is where inflating it ends.
+        let rest = bytes
+            .get(at..)
+            .ok_or_else(|| lost("a chunk starts past the written bytes"))?;
+        let mut z = flate2::bufread::ZlibDecoder::new(rest);
+        if std::io::copy(&mut z, &mut std::io::sink())? != u64::from(inflated) {
+            return Err(lost("a written stream does not inflate to its block's piece").into());
+        }
+        let stored = z.total_in() as u32;
+        chunks.push(super::gta6_chunk_table::Chunk {
+            inflated,
+            stored,
+            zlib: true,
+        });
+        at = (at + stored as usize).next_multiple_of(RPF9_SLOT as usize);
+    }
+    Ok(Rpf9WrittenChunks {
+        bytes,
+        chunks,
+        virtual_len,
+        physical_len,
+    })
+}
+
 fn stored_rsc8(v: Vec<u8>, p: &[u8], config: u8) -> Result<Vec<u8>, Rpf9WriteError> {
     if !p.is_empty() {
         return Err(Rpf9WriteError::PhysicalInRsc8 {

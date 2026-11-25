@@ -16896,3 +16896,60 @@ msgstr[1] "as luzes de {count} mapas"
 
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "Os nomes das strings deste documento precisam do snapshot de chaves do GTA VI"
+
+msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
+msgstr "Só um documento aberto de um arquivo do GTA VI é salvo numa cópia dele"
+
+msgid "Cannot save into a copy of the archive: {reason}"
+msgstr "Não é possível salvar numa cópia do arquivo: {reason}"
+
+msgid "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale."
+msgstr "{file} é um arquivo novo com a edição no lugar da sua entrada, que o jogo recusa porque a assinatura da sua tabela está desatualizada."
+
+msgid "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds."
+msgstr "{file} é um arquivo novo igual ao de onde foi lido: a edição grava os bytes que a entrada contém."
+
+msgid "nothing this view holds is edited, or OpenRage writes none of its edits to a GTA VI body"
+msgstr "nada do que esta visualização contém foi editado, ou o OpenRage não grava nenhuma das suas edições num conteúdo do GTA VI"
+
+msgid "the copy is a new file, and the archive it is read from is never written"
+msgstr "a cópia é um arquivo novo, e o arquivo de onde ela é lida nunca é gravado"
+
+msgid "more than one entry holds the body at {offset}, so which one to replace is not known"
+msgstr "mais de uma entrada contém o conteúdo em {offset}, então não se sabe qual substituir"
+
+msgid "no entry of the archive holds the body at {offset}"
+msgstr "nenhuma entrada do arquivo contém o conteúdo em {offset}"
+
+msgid "Save into a copy of the archive…"
+msgstr "Salvar numa cópia do arquivo…"
+
+msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"
+msgstr "Gravar as edições do documento do GTA VI no lugar da sua entrada, numa cópia nova do arquivo de onde ele foi lido. O jogo recusa essa cópia, porque a assinatura da sua tabela está desatualizada"
+
+msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
+msgstr "Sem chaves do GTA VI: defina a pasta de instalação do GTA VI em Configurações ▸ Jogos para que o executável dela possa desbloqueá-las."
+
+msgid "resource"
+msgstr "recurso"
+
+msgid "media"
+msgstr "mídia"
+
+msgid "other class"
+msgstr "outra classe"
+
+msgid "{file} is listed by a scan without its table: {why}"
+msgstr "{file} é listado por uma varredura sem a sua tabela: {why}"
+
+msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
+msgstr "Escolha a pasta do GTA VI nas Configurações, ou abra um dos arquivos dela, para listar os arquivos a partir das tabelas deles."
+
+msgid "Find by name, or by hash as 0x hex"
+msgstr "Procurar por nome, ou por hash em hexadecimal 0x"
+
+msgid "Only the archives expanded are searched."
+msgstr "Só os arquivos expandidos são pesquisados."
+
+msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
+msgstr "{file} é um arquivo novo com a edição no lugar da sua entrada e a sua tabela como foi lida."

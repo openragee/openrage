@@ -1071,7 +1071,7 @@ pub fn load_prefs_from(path: &Path) -> Prefs {
 }
 
 /// The preferences in the file, and whether that is what the file holds: false when it is there and does not parse.
-fn read_prefs(path: &Path) -> (Prefs, bool) {
+pub(super) fn read_prefs(path: &Path) -> (Prefs, bool) {
     match std::fs::read(path) {
         Ok(bytes) => match serde_json::from_slice::<Prefs>(without_bom(&bytes)) {
             Ok(mut prefs) => {

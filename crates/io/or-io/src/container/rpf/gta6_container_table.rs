@@ -1,4 +1,9 @@
 //! The decrypted RPF9 table the container writer edits: columns of rows and an entry-major index.
+//!
+//! Some columns' cells point, from the cell, at a slice of a heap after their region's columns. Each
+//! region (the main one before the split, the external one after it) holds its columns, then from a
+//! 16-byte boundary one heap per such column in column order, each at its element's alignment and
+//! packed in row order; the region then ends at the next 16-byte boundary.
 
 use byteorder::{ByteOrder, LE};
 
@@ -6,12 +11,76 @@ use super::super::gta6_archive::{
     GROUP_CHUNK_RECORD, GROUP_CIPHER, GROUP_CONTENT_HASH, GROUP_ENTRY_ROW, GROUP_ENTRY_ROW_20,
     GROUP_NAME32, GROUP_NAME64,
 };
+use super::super::gta6_dependencies::GROUP_DEPENDENCIES;
 use super::super::rpf9_toc::Rpf9Toc;
 use super::{bad, round16, round8, Rpf9Piece, START_MASK};
 use crate::error::Result;
 
-/// A cell of one column, with the chunk descriptors a `0xe0c1` cell owns and the new body a row
-/// takes, if any.
+/// Cell-relative columns of the nested tables, carried as read: four f32 per resource row.
+pub(super) const HEAP_D07A: u64 = 0xD07A_10F0_4686_160D;
+/// External cell-relative columns whose cell's second word counts the slice's u32 values.
+const HEAP_14DC: u64 = 0x14DC_DA11_3546_FB3E;
+const HEAP_2455: u64 = 0x2455_5172_AC4A_2929;
+const HEAP_2B55: u64 = 0x2B55_1F38_BCA3_8F34;
+const HEAP_F87F: u64 = 0xF87F_70B4_5142_A585;
+/// An external cell-relative column whose cell's second word counts the slice's u64 values.
+const HEAP_14BB: u64 = 0x14BB_5EE5_D9F2_9CA6;
+/// An external cell-relative column of variable-length records, each running to the next.
+const HEAP_5A9C: u64 = 0x5A9C_2ED4_8D5E_0959;
+/// An external 12-byte column: a word, the offset to the slice, then its count of u32 values.
+const HEAP_EA2E: u64 = 0xEA2E_6490_2A50_E4B8;
+
+/// How a cell-relative column's cells reach their slices.
+#[derive(Clone, Copy)]
+struct Heap {
+    /// Where in the cell the u32 offset from the cell's start to its slice sits.
+    field: usize,
+    /// The slice's length from its cell; `None` where a slice runs to the next one.
+    len: Option<fn(&[u8]) -> usize>,
+    /// The boundary the heap starts on.
+    align: usize,
+}
+
+fn word(cell: &[u8], at: usize) -> usize {
+    LE::read_u32(&cell[at..]) as usize
+}
+
+fn chunk_descriptors(cell: &[u8]) -> usize {
+    8 * (word(cell, 4) & 0xFFFF)
+}
+
+fn dependency_indices(cell: &[u8]) -> usize {
+    (word(cell, 4) & 0x1FFF_FFFF).saturating_mul(word(cell, 4) >> 29)
+}
+
+fn u32_count(cell: &[u8]) -> usize {
+    word(cell, 4).saturating_mul(4)
+}
+
+fn u64_count(cell: &[u8]) -> usize {
+    word(cell, 4).saturating_mul(8)
+}
+
+fn u32_count_at_8(cell: &[u8]) -> usize {
+    word(cell, 8).saturating_mul(4)
+}
+
+/// The heap a column of `hash` and `width` keeps its slices in, `None` for a column of plain cells.
+fn heap(hash: u64, width: usize) -> Option<Heap> {
+    type Len = Option<fn(&[u8]) -> usize>;
+    let (field, len, align): (usize, Len, usize) = match (hash, width) {
+        (GROUP_CHUNK_RECORD, 8) => (0, Some(chunk_descriptors), 8),
+        (GROUP_DEPENDENCIES, 8) => (0, Some(dependency_indices), 1),
+        (HEAP_D07A | HEAP_14DC | HEAP_2455 | HEAP_2B55 | HEAP_F87F, 8) => (0, Some(u32_count), 4),
+        (HEAP_14BB, 8) => (0, Some(u64_count), 8),
+        (HEAP_5A9C, 8) => (0, None, 4),
+        (HEAP_EA2E, 12) => (4, Some(u32_count_at_8), 4),
+        _ => return None,
+    };
+    Some(Heap { field, len, align })
+}
+
+/// A cell of one column, with the heap slice it points at and the new body a row takes, if any.
 pub(super) struct Row {
     pub(super) cell: Vec<u8>,
     pub(super) slice: Vec<u8>,
@@ -59,6 +128,49 @@ fn absent(width: usize) -> u16 {
     }
 }
 
+/// Read each cell-relative column's slices, the main region's in `[0, split)` and the external
+/// region's in the rest of `b`; a slice of no stated length runs to the next slice of its region.
+fn read_slices(columns: &mut [Column], b: &[u8], split: usize) -> Result<()> {
+    let start = |col: &Column, r: usize, h: Heap| {
+        (col.data_start + r * col.width).saturating_add(word(&col.rows[r].cell, h.field))
+    };
+    for external in [false, true] {
+        let end = if external { b.len() } else { split };
+        let heaps: Vec<(usize, Heap)> = (columns.iter().enumerate())
+            .filter(|(_, col)| col.external == external)
+            .filter_map(|(c, col)| heap(col.hash, col.width).map(|h| (c, h)))
+            .collect();
+        for (k, &(c, h)) in heaps.iter().enumerate() {
+            let next = heaps[k + 1..]
+                .iter()
+                .find(|(d, _)| !columns[*d].rows.is_empty())
+                .map_or(end, |&(d, hd)| start(&columns[d], 0, hd));
+            let col = &columns[c];
+            let mut slices = Vec::with_capacity(col.rows.len());
+            for r in 0..col.rows.len() {
+                let from = start(col, r, h);
+                let to = match h.len {
+                    Some(len) => from.saturating_add(len(&col.rows[r].cell)),
+                    None if r + 1 < col.rows.len() => start(col, r + 1, h),
+                    None => next,
+                };
+                let slice = b.get(from..to).filter(|_| to <= end).ok_or_else(|| {
+                    bad(format!(
+                        "a cell of column {:#018x} points outside its region",
+                        col.hash
+                    ))
+                })?;
+                slices.push((slice.to_vec(), from));
+            }
+            for (row, (slice, at)) in columns[c].rows.iter_mut().zip(slices) {
+                row.slice = slice;
+                row.slice_at = at;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Table {
     pub(super) fn from_toc(toc: &Rpf9Toc) -> Result<Self> {
         let b = &toc.bytes;
@@ -80,21 +192,10 @@ impl Table {
             let mut rows = Vec::with_capacity(g.count as usize);
             for r in 0..g.count as usize {
                 let at = g.data.start + r * w;
-                let cell = b[at..at + w].to_vec();
-                let (slice, slice_at) = if g.name_hash == GROUP_CHUNK_RECORD && w == 8 {
-                    let from = at + LE::read_u32(&cell) as usize;
-                    let len = 8 * usize::from(LE::read_u16(&cell[4..]));
-                    let slice = b.get(from..from + len).ok_or_else(|| {
-                        bad("a chunk record points outside the table of contents")
-                    })?;
-                    (slice.to_vec(), from)
-                } else {
-                    (Vec::new(), 0)
-                };
                 rows.push(Row {
-                    cell,
-                    slice,
-                    slice_at,
+                    cell: b[at..at + w].to_vec(),
+                    slice: Vec::new(),
+                    slice_at: 0,
                     body: None,
                 });
             }
@@ -106,6 +207,7 @@ impl Table {
                 rows,
             });
         }
+        read_slices(&mut columns, b, split)?;
         let mut table = Self {
             bytes: b.clone(),
             groups_start,
@@ -188,7 +290,8 @@ impl Table {
         });
         let in_place = match (cell, current) {
             (None, _) => {
-                self.index[e][c] = absent(self.width);
+                // Past every row at any width, where a width-1 sentinel names a row past 255.
+                self.index[e][c] = u16::MAX;
                 false
             }
             (Some(cell), Some(r)) if !shared => {
@@ -378,7 +481,7 @@ impl Table {
             let unknown: Vec<String> = self
                 .columns
                 .iter()
-                .filter(|c| !known.contains(&c.hash))
+                .filter(|c| !known.contains(&c.hash) && heap(c.hash, c.width).is_none())
                 .map(|c| format!("{:#018x}", c.hash))
                 .collect();
             return Err(bad(format!(
@@ -420,8 +523,8 @@ impl Table {
         out
     }
 
-    /// The table laid out from its columns: directory, main index, main columns 8-aligned, the chunk
-    /// descriptors 16-aligned after them, then at the 16-aligned split the external index and columns.
+    /// The table laid out from its columns: directory and main index, the main region, then at the
+    /// 16-aligned split the external index and the external region.
     pub(super) fn layout(&self) -> Vec<u8> {
         let entries = self.index.len();
         let width = if entries <= 0xFF { 1 } else { 2 };
@@ -432,18 +535,7 @@ impl Table {
             0,
         );
         let mut offsets = vec![0usize; self.columns.len()];
-        let main_start = self.place(&mut out, &mut offsets, false);
-        out.resize(round16(out.len() as u64) as usize, 0);
-        for (c, col) in self.columns.iter().enumerate() {
-            if col.hash == GROUP_CHUNK_RECORD && !col.external {
-                for (r, row) in col.rows.iter().enumerate() {
-                    let cell = main_start + offsets[c] + r * col.width;
-                    let u0 = (out.len() - cell) as u32;
-                    LE::write_u32(&mut out[cell..], u0);
-                    out.extend_from_slice(&row.slice);
-                }
-            }
-        }
+        self.place(&mut out, &mut offsets, false);
         let split = round16(out.len() as u64) as usize;
         let external = self.columns.len() - main;
         out.resize(round8(split + external * entries * width), 0);
@@ -484,19 +576,33 @@ impl Table {
         out
     }
 
-    /// Append the main (or external) columns' rows to `out`, each column 8-aligned from the region's
-    /// start, recording each one's offset; the region's start.
-    pub(super) fn place(&self, out: &mut Vec<u8>, offsets: &mut [usize], external: bool) -> usize {
+    /// Append the main (or external) region to `out`: its columns' rows, each column 8-aligned from
+    /// the region's start (each one's offset recorded), then from a 16-byte boundary the heaps.
+    pub(super) fn place(&self, out: &mut Vec<u8>, offsets: &mut [usize], external: bool) {
         let start = out.len();
+        let mut cells = vec![0usize; self.columns.len()];
         for (c, col) in self.columns.iter().enumerate() {
             if col.external == external {
                 out.resize(start + round8(out.len() - start), 0);
                 offsets[c] = out.len() - start;
+                cells[c] = out.len();
                 for row in &col.rows {
                     out.extend_from_slice(&row.cell);
                 }
             }
         }
-        start
+        out.resize(round16(out.len() as u64) as usize, 0);
+        for (c, col) in self.columns.iter().enumerate() {
+            let Some(h) = heap(col.hash, col.width).filter(|_| col.external == external) else {
+                continue;
+            };
+            out.resize(out.len().next_multiple_of(h.align), 0);
+            for (r, row) in col.rows.iter().enumerate() {
+                let cell = cells[c] + r * col.width;
+                let u0 = (out.len() - cell) as u32;
+                LE::write_u32(&mut out[cell + h.field..], u0);
+                out.extend_from_slice(&row.slice);
+            }
+        }
     }
 }

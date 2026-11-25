@@ -119,10 +119,11 @@ impl Gta6Import {
             if cancel.is_set() {
                 return Err(String::new());
             }
-            sections = or_cli::replace_gta6_mesh_with(&sections, role, *code, earlier, *filled)?.0;
+            sections =
+                or_cli::replace_gta6_model(&sections, role, earlier, &how(*code, *filled))?.0;
         }
         let (written, mut lines) =
-            or_cli::replace_gta6_mesh_with(&sections, role, self.code, &scene, fill)?;
+            or_cli::replace_gta6_model(&sections, role, &scene, &how(self.code, fill))?;
         let dropped = scene.dropped.iter();
         lines.extend(dropped.map(|held| tr!("not carried: {held}", held = held)));
         let checks = tr!("This checks the body's bytes. It does not test that GTA VI loads them.");
@@ -167,6 +168,15 @@ fn resource_of(s: &Rpf9Sections, role: Rpf9Role) -> Result<Resource, String> {
         _ => return Err(only_a_drawable()),
     };
     read.map_err(|e| e.to_string())
+}
+
+/// How the app replaces drawable `code`'s meshes: the lower levels a glTF names none of are left.
+fn how(code: Option<u32>, fill: bool) -> or_cli::ModelReplace {
+    or_cli::ModelReplace {
+        entry: code,
+        fill_missing: fill,
+        lods: or_cli::ModelLods::Left,
+    }
 }
 
 fn only_a_drawable() -> String {
@@ -298,7 +308,7 @@ pub(super) fn edited_save(document: &Document) -> Option<Result<EditedSave, Stri
                 let role = role.ok_or_else(|| tr!("The body's role is not known.").to_string())?;
                 for (code, scene, fill) in &held {
                     *sections =
-                        or_cli::replace_gta6_mesh_with(sections, role, *code, scene, *fill)?.0;
+                        or_cli::replace_gta6_model(sections, role, scene, &how(*code, *fill))?.0;
                 }
                 Ok(())
             });

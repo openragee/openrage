@@ -16896,3 +16896,60 @@ msgstr[1] "マップ {count} 個のライト"
 
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "この文書の文字列の名前には GTA VI のキースナップショットが必要です"
+
+msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
+msgstr "GTA VIアーカイブから開いたドキュメントだけが、そのアーカイブのコピーに保存されます"
+
+msgid "Cannot save into a copy of the archive: {reason}"
+msgstr "アーカイブのコピーに保存できません: {reason}"
+
+msgid "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale."
+msgstr "{file} はエントリの位置に編集を書き込んだ新しいアーカイブです。テーブルの署名が古いため、ゲームはこれを拒否します。"
+
+msgid "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds."
+msgstr "{file} は読み込み元と同じ新しいアーカイブです。編集はエントリが保持するバイトを書き込みます。"
+
+msgid "nothing this view holds is edited, or OpenRage writes none of its edits to a GTA VI body"
+msgstr "このビューには編集がないか、OpenRageはその編集をGTA VIの本体に書き込みません"
+
+msgid "the copy is a new file, and the archive it is read from is never written"
+msgstr "コピーは新しいファイルであり、読み込み元のアーカイブは決して書き込まれません"
+
+msgid "more than one entry holds the body at {offset}, so which one to replace is not known"
+msgstr "{offset} の本体を保持するエントリが複数あるため、どれを置き換えるか分かりません"
+
+msgid "no entry of the archive holds the body at {offset}"
+msgstr "{offset} の本体を保持するエントリがアーカイブにありません"
+
+msgid "Save into a copy of the archive…"
+msgstr "アーカイブのコピーに保存…"
+
+msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"
+msgstr "GTA VIドキュメントの編集を、読み込み元アーカイブの新しいコピーのエントリの位置に書き込みます。テーブルの署名が古いため、ゲームはそのコピーを拒否します"
+
+msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
+msgstr "GTA VIのキーがありません: 設定 ▸ ゲーム でGTA VIのインストールフォルダーを設定すると、その実行ファイルでキーを解除できます。"
+
+msgid "resource"
+msgstr "リソース"
+
+msgid "media"
+msgstr "メディア"
+
+msgid "other class"
+msgstr "その他のクラス"
+
+msgid "{file} is listed by a scan without its table: {why}"
+msgstr "{file} はテーブルなしでスキャンにより一覧表示されています: {why}"
+
+msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
+msgstr "設定でGTA VIフォルダーを選択するか、そのアーカイブを1つ開くと、テーブルからアーカイブを一覧表示します。"
+
+msgid "Find by name, or by hash as 0x hex"
+msgstr "名前、または0x 16進数のハッシュで検索"
+
+msgid "Only the archives expanded are searched."
+msgstr "展開したアーカイブだけが検索されます。"
+
+msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
+msgstr "{file} はエントリの位置に編集を書き込み、テーブルは読み込んだときのままの新しいアーカイブです。"

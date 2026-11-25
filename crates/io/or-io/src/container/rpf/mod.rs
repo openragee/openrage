@@ -12,7 +12,11 @@ pub mod gta6_container_write;
 #[cfg(feature = "gta6")]
 pub mod gta6_content;
 #[cfg(feature = "gta6")]
+pub mod gta6_dependencies;
+#[cfg(feature = "gta6")]
 pub mod gta6_extract;
+#[cfg(feature = "gta6")]
+pub mod gta6_form_h;
 #[cfg(feature = "gta6")]
 pub mod gta6_keygate;
 #[cfg(feature = "gta6")]

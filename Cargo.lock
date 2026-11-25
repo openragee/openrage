@@ -3143,6 +3143,7 @@ name = "or-cli"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "flate2",
  "glam",
  "naga",
  "or-addonped",
@@ -3356,6 +3357,7 @@ dependencies = [
 name = "or-project"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "getrandom 0.3.4",
  "or-io",
  "or-job",

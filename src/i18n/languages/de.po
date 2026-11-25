@@ -16896,3 +16896,60 @@ msgstr[1] "die Lichter von {count} Maps"
 
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "Die Namen der Zeichenketten dieses Dokuments benötigen den GTA-VI-Schlüssel-Snapshot"
+
+msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
+msgstr "Nur ein aus einem GTA VI-Archiv geöffnetes Dokument wird in eine Kopie davon gespeichert"
+
+msgid "Cannot save into a copy of the archive: {reason}"
+msgstr "In eine Kopie des Archivs kann nicht gespeichert werden: {reason}"
+
+msgid "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale."
+msgstr "{file} ist ein neues Archiv mit der Änderung an der Stelle seines Eintrags, das das Spiel ablehnt, weil die Signatur seiner Tabelle veraltet ist."
+
+msgid "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds."
+msgstr "{file} ist ein neues Archiv, gleich dem, aus dem es gelesen wurde: Die Änderung schreibt die Bytes, die der Eintrag enthält."
+
+msgid "nothing this view holds is edited, or OpenRage writes none of its edits to a GTA VI body"
+msgstr "nichts in dieser Ansicht ist geändert, oder OpenRage schreibt keine ihrer Änderungen in einen GTA VI-Inhalt"
+
+msgid "the copy is a new file, and the archive it is read from is never written"
+msgstr "die Kopie ist eine neue Datei, und das Archiv, aus dem sie gelesen wird, wird nie geschrieben"
+
+msgid "more than one entry holds the body at {offset}, so which one to replace is not known"
+msgstr "mehr als ein Eintrag enthält den Inhalt bei {offset}, daher ist nicht bekannt, welcher ersetzt werden soll"
+
+msgid "no entry of the archive holds the body at {offset}"
+msgstr "kein Eintrag des Archivs enthält den Inhalt bei {offset}"
+
+msgid "Save into a copy of the archive…"
+msgstr "In eine Kopie des Archivs speichern…"
+
+msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"
+msgstr "Die Änderungen des GTA VI-Dokuments an der Stelle seines Eintrags in eine neue Kopie des Archivs schreiben, aus dem es gelesen wurde. Das Spiel lehnt diese Kopie ab, weil die Signatur ihrer Tabelle veraltet ist"
+
+msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
+msgstr "Keine GTA VI-Schlüssel: Den GTA VI-Installationsordner unter Einstellungen ▸ Spiele festlegen, damit seine ausführbare Datei sie entsperren kann."
+
+msgid "resource"
+msgstr "Ressource"
+
+msgid "media"
+msgstr "Medien"
+
+msgid "other class"
+msgstr "andere Klasse"
+
+msgid "{file} is listed by a scan without its table: {why}"
+msgstr "{file} wird von einem Scan ohne seine Tabelle aufgelistet: {why}"
+
+msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
+msgstr "Den GTA VI-Ordner in den Einstellungen wählen oder eines seiner Archive öffnen, um seine Archive aus ihren Tabellen aufzulisten."
+
+msgid "Find by name, or by hash as 0x hex"
+msgstr "Nach Name suchen, oder nach Hash als 0x-Hex"
+
+msgid "Only the archives expanded are searched."
+msgstr "Nur die aufgeklappten Archive werden durchsucht."
+
+msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
+msgstr "{file} ist ein neues Archiv mit der Änderung an der Stelle seines Eintrags und seiner Tabelle, wie sie gelesen wurde."

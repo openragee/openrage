@@ -381,6 +381,9 @@ mod view;
 use view::not_a_start;
 pub use view::{view_of, View};
 
+#[path = "rpf9_table.rs"]
+pub(crate) mod rpf9_table;
+
 #[path = "rpf9_scan_ciphered.rs"]
 mod ciphered;
 #[cfg(test)]

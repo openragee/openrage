@@ -8,13 +8,19 @@
 //! result reopens, lists and reads back.
 //!
 //! Rows are addressed through the entry-major index, never by position. A table whose rows keep their
-//! count is rewritten in place; one that gains or loses a row or an entry is laid out anew, which is
-//! allowed only where laying out the unedited table reproduces it byte for byte (a nested table
-//! carrying per-resource heaps this does not place is refused for such an edit). Preserved as read:
-//! the header (its `+0x28` and `+0x2D` among it), the metadata with its type-6 signature and type-9
-//! descriptors, the names heap (opaque; a renamed entry gets no heap text), and an unchanged entry's
-//! `0xb6f5` content hash. A changed entry's `0xb6f5` is written as zero, its algorithm being unknown,
-//! and a replaced entry is stored clear, so its content-cipher row is dropped.
+//! count is rewritten in place; one that gains or loses a row or an entry is laid out anew, with the
+//! heaps its cell-relative columns point into, which is allowed only where laying out the unedited
+//! table reproduces it byte for byte. Preserved as read: the header (its `+0x28` and `+0x2D` among
+//! it), the metadata with its type-6 signature and type-9 descriptors, the names heap (opaque; a
+//! renamed or added entry gets no heap text), and an unchanged entry's `0xb6f5` content hash. A
+//! changed entry's `0xb6f5` is written as zero, its algorithm being unknown, and a replaced entry is
+//! stored clear, so its content-cipher row is dropped.
+//!
+//! A headerless resource (a 20-byte row) is replaced by its loose form, stored as the zero slot and
+//! its chunks under a row and a mode-2 chunk table authored from them. Its `0xd07a` and `0x354d`
+//! rows, which nothing in the body states, are carried; its dependency list is carried unless the
+//! caller names its keys. An added entry goes where its name32 (else its name64) keeps the entries
+//! ascending, as every measured table holds them, and gets neither of those two rows.
 
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
@@ -28,10 +34,13 @@ use super::gta6_archive::{
     GROUP_NAME32, GROUP_NAME64,
 };
 use super::gta6_chunk_table::{author, Chunk, Table as ChunkTable};
+use super::gta6_dependencies::{self, GROUP_DEPENDENCIES};
+use super::gta6_form_h;
 use super::gta6_mount::{open_at, Gta6Mount};
 use super::gta6_write::Rpf9Builder;
-use super::rpf9_scan::read_rpf9_body;
+use super::rpf9_scan::{read_rpf9_body, RPF9_SLOT, STREAM_CAP};
 use super::rpf9_toc::{GtaViKeys, Rpf9Toc};
+use super::rpf9_write::{write_rpf9_resource_chunks, Rpf9Sections};
 use crate::error::{IoError, Result};
 use crate::gta6::hash::{name_hash32, name_hash64};
 
@@ -39,12 +48,19 @@ use crate::gta6::hash::{name_hash32, name_hash64};
 mod table;
 use table::Table;
 
+#[path = "gta6_container_build.rs"]
+mod build;
+pub use build::{build, Rpf9IndexKey};
+use build::{column, insert_entry, set_new_body};
+
 /// The inflated size of one chunk of a compressed body.
 const CHUNK: usize = 0x10000;
 /// A 24-byte row's start field, in 16-byte units, below its class byte at bit 40.
 const START_MASK: u64 = (1 << 40) - 1;
 /// The chunk-table mode of a 24-byte row.
 const ROW24_CHUNK_MODE: u8 = 3;
+/// The chunk-table mode of a 20-byte row.
+const ROW20_CHUNK_MODE: u8 = 2;
 
 fn bad(why: impl Into<String>) -> IoError {
     IoError::Invalid {
@@ -150,8 +166,27 @@ impl Rpf9Plan {
 
 enum Op {
     Replace(Vec<u8>),
+    ReplaceResource {
+        loose: Vec<u8>,
+        dependencies: Option<Vec<u64>>,
+    },
     Remove,
     Rename(String),
+    Add {
+        name: String,
+        body: Rpf9NewBody,
+    },
+}
+
+/// The body of an entry the writer adds, and the row it is stored under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Rpf9NewBody {
+    /// Bytes stored as 64 KiB zlib chunks under a 24-byte row of class `0xFF` and a chunk table.
+    Chunked(Vec<u8>),
+    /// A loose resource, as `write_rpf9_resource` writes one, of `type_code`, under a 20-byte row.
+    Resource { type_code: u32, loose: Vec<u8> },
+    /// An RPF9 archive, stored as it is under a 24-byte row of class `0x00`.
+    Archive(Vec<u8>),
 }
 
 /// Writes RPF9 archives; a table it changes has a stale signature, and the game refuses that archive.
@@ -171,6 +206,35 @@ impl Rpf9ArchiveWriter {
     /// Replace the body of the entry at `path` (entry indices, top level first) with `body`.
     pub fn replace(&mut self, path: &[u32], body: Vec<u8>) -> &mut Self {
         self.edits.push((path.to_vec(), Op::Replace(body)));
+        self
+    }
+
+    /// Replace the headerless resource at `path` by its loose form; `None` keys carry its list.
+    pub fn replace_resource(
+        &mut self,
+        path: &[u32],
+        loose: Vec<u8>,
+        dependencies: Option<Vec<u64>>,
+    ) -> &mut Self {
+        self.edits.push((
+            path.to_vec(),
+            Op::ReplaceResource {
+                loose,
+                dependencies,
+            },
+        ));
+        self
+    }
+
+    /// Add an entry `name` holding `body` to the archive at `archive`, empty for the top level.
+    pub fn add(&mut self, archive: &[u32], name: &str, body: Rpf9NewBody) -> &mut Self {
+        self.edits.push((
+            archive.to_vec(),
+            Op::Add {
+                name: name.to_owned(),
+                body,
+            },
+        ));
         self
     }
 
@@ -257,18 +321,25 @@ fn plan_archive<R: Read + Seek>(
     let mount = Gta6Mount { base, archive };
     let entries = table.index.len();
     let mut direct = Vec::new();
+    let mut adds = Vec::new();
     let mut nested: BTreeMap<usize, Vec<(&[u32], &Op)>> = BTreeMap::new();
     for &(path, op) in edits {
-        let (&head, rest) = path
-            .split_first()
-            .ok_or_else(|| bad("an edit names no entry"))?;
+        // An add names the archive it goes into, every other edit an entry.
+        let (&head, rest) = match (path.split_first(), op) {
+            (None, Op::Add { name, body }) => {
+                adds.push((name.as_str(), body));
+                continue;
+            }
+            (None, _) => return Err(bad("an edit names no entry")),
+            (Some(split), _) => split,
+        };
         let head = head as usize;
         if head >= entries {
             return Err(bad(format!(
                 "the archive has {entries} entries, so it has no entry {head}"
             )));
         }
-        if rest.is_empty() {
+        if rest.is_empty() && !matches!(op, Op::Add { .. }) {
             direct.push((head, op));
         } else {
             nested.entry(head).or_default().push((rest, op));
@@ -309,16 +380,25 @@ fn plan_archive<R: Read + Seek>(
             Op::Remove => removed.push(e),
             Op::Rename(name) => rename(&mut table, e, name)?,
             Op::Replace(body) => replace(&mut table, &mount, src, keys, e, body)?,
+            Op::ReplaceResource {
+                loose,
+                dependencies,
+            } => replace_resource(&mut table, &mount, src, e, loose, dependencies.as_deref())?,
+            Op::Add { .. } => return Err(bad("an add names an archive, not an entry")),
         }
     }
     removed.sort_unstable();
     removed.dedup();
-    if removed.len() >= entries {
+    if removed.len() >= entries && adds.is_empty() {
         return Err(bad("an archive must keep at least one entry"));
     }
     // Last first, so each index still names the entry it named in the table read.
     for &e in removed.iter().rev() {
         table.remove(e);
+    }
+    for (name, body) in adds {
+        let e = insert_entry(&mut table, name)?;
+        set_new_body(&mut table, e, body)?;
     }
 
     // The table's length does not depend on the starts it states.
@@ -330,7 +410,8 @@ fn plan_archive<R: Read + Seek>(
             Some(fresh) => Place {
                 c,
                 r,
-                at,
+                // An added row states no start, as no body starts at 0; it goes after the rest.
+                at: if at == 0 { u64::MAX } else { at },
                 len: fresh.len,
                 keep: fresh
                     .old
@@ -360,7 +441,11 @@ fn plan_archive<R: Read + Seek>(
         places.push(place);
     }
     changed.bodies += places.iter().filter(|p| !p.copy).count();
-    let first = places.iter().map(|p| p.at).min();
+    let first = places
+        .iter()
+        .map(|p| p.at)
+        .filter(|&at| at != u64::MAX)
+        .min();
     // A table that outgrew the space before the first body takes the archive packed.
     let pack = defrag || first.is_some_and(|f| toc_len > f);
     let names_new = if pack {
@@ -517,8 +602,7 @@ fn replace<R: Read + Seek>(
         .is_some_and(|c| table.row_of(e, c).is_some())
     {
         return Err(bad(format!(
-            "entry {e} is a resource with a 20-byte row, whose page descriptors this writer \
-             cannot author"
+            "entry {e} is a headerless resource with a 20-byte row: replace it with its loose form"
         )));
     }
     let entry = &mount.archive.entries[e];
@@ -547,27 +631,17 @@ fn replace<R: Read + Seek>(
     }
     let stored_bytes = match chunked {
         Some(k) => {
-            let (bytes, chunks) = chunk_body(body)?;
-            let (u1, words) = author(&ChunkTable {
-                mode: ROW24_CHUNK_MODE,
-                chunks,
-            })?;
+            let (bytes, u1, words) = stored_chunked(body)?;
             table.set_chunks(e, k, u1, &words);
             bytes
         }
         None => {
             let mut bytes = body.to_vec();
             bytes.resize(round16(bytes.len() as u64) as usize, 0);
+            check_reads_back(&bytes, body)?;
             bytes
         }
     };
-    // A clear body is read by what it holds, so one the reader does not recognise could not be read.
-    let read_back = read_rpf9_body(Cursor::new(&stored_bytes[..]), 0, body.len() as u64);
-    if read_back.ok().map(|(_, bytes)| bytes).as_deref() != Some(body) {
-        return Err(bad(format!(
-            "entry {e}'s new body would be stored in a form OpenRage's reader does not read back"
-        )));
-    }
     let len = stored_bytes.len() as u64;
     let mut cell = table
         .cell(e, c)
@@ -583,13 +657,145 @@ fn replace<R: Read + Seek>(
         len,
         (start, stored),
     );
+    changed_clear(table, e);
+    Ok(())
+}
+
+/// Mark entry `e`'s body changed and stored clear: its content hash zero, its cipher row dropped.
+fn changed_clear(table: &mut Table, e: usize) {
     table.zero_hash(e);
     if let Some(k) = table.col(GROUP_CIPHER, 64) {
         if table.row_of(e, k).is_some() {
             table.set_cell(e, k, None, Vec::new());
         }
     }
+}
+
+/// Replace headerless resource `e` with `loose`: its row and mode-2 chunk table authored from the
+/// chunks, its dependency list set from `dependencies` where given. The same stored body and row
+/// change nothing.
+fn replace_resource<R: Read + Seek>(
+    table: &mut Table,
+    mount: &Gta6Mount,
+    src: &mut R,
+    e: usize,
+    loose: &[u8],
+    dependencies: Option<&[u64]>,
+) -> Result<()> {
+    let (c, r) = table
+        .col(GROUP_ENTRY_ROW_20, 20)
+        .and_then(|c| table.row_of(e, c).map(|r| (c, r)))
+        .ok_or_else(|| {
+            bad(format!(
+                "entry {e} has no 20-byte row, so it is no headerless resource"
+            ))
+        })?;
+    let old = table.columns[c].rows[r].cell.clone();
+    let (start, extent) = table.extent(c, r);
+    let (mut row, stored, chunks) = headerless(LE::read_u32(&old[16..]), loose)?;
+    if let Some(keys) = dependencies {
+        set_dependencies(table, &mount.archive.toc, e, keys)?;
+    }
+    row[12..16].copy_from_slice(&old[12..16]);
+    let mut held = vec![0u8; stored.len()];
+    let unchanged = row[..] == old[..]
+        && src.seek(SeekFrom::Start(mount.base + start)).is_ok()
+        && src.read_exact(&mut held).is_ok()
+        && held == stored;
+    if unchanged {
+        return Ok(());
+    }
+    let k = column(table, GROUP_CHUNK_RECORD, 8, "chunk-record")?;
+    let (u1, words) = author(&ChunkTable {
+        mode: ROW20_CHUNK_MODE,
+        chunks,
+    })?;
+    table.set_chunks(e, k, u1, &words);
+    let len = stored.len() as u64;
+    table.set_body(
+        e,
+        c,
+        row.to_vec(),
+        vec![Rpf9Piece::Bytes(stored)],
+        len,
+        (start, extent),
+    );
+    changed_clear(table, e);
     Ok(())
+}
+
+/// `loose`, a loose resource, stored under a 20-byte row of `type_code`: the row (its start left
+/// zero), the body (the zero slot, then the chunks) and the chunks its table states.
+fn headerless(type_code: u32, loose: &[u8]) -> Result<([u8; 20], Vec<u8>, Vec<Chunk>)> {
+    let sections_at = |bytes: &[u8], at: u64| {
+        let (find, read) = read_rpf9_body(Cursor::new(bytes), at, u64::MAX).ok()?;
+        Rpf9Sections::of(&find, &read)
+    };
+    let sections = sections_at(loose, 0)
+        .ok_or_else(|| bad("the loose file does not read as a resource from its start"))?;
+    let written =
+        write_rpf9_resource_chunks(&sections.virtual_section, &sections.physical, STREAM_CAP)
+            .map_err(|e| bad(format!("the loose resource cannot be stored: {e}")))?;
+    let row = gta6_form_h::row(
+        type_code,
+        written.virtual_len,
+        written.physical_len,
+        &written.chunks,
+    )?;
+    let stored = gta6_form_h::stored_body(&[&written.bytes]);
+    // Read past its slot, the stored body is the resource its loose form reads as.
+    let back = sections_at(&stored, RPF9_SLOT);
+    if back.is_none() || back != sections_at(&written.bytes, 0) {
+        return Err(bad(
+            "the resource would be stored in a form OpenRage's reader does not read back",
+        ));
+    }
+    Ok((row, stored, written.chunks))
+}
+
+/// Set entry `e`'s dependency list to `keys`, each a key the archive's type-4 table holds; no keys
+/// leaves it no row. A key no other list names stays in the table.
+fn set_dependencies(table: &mut Table, toc: &Rpf9Toc, e: usize, keys: &[u64]) -> Result<()> {
+    let deps = gta6_dependencies::read(toc)?
+        .ok_or_else(|| bad("the archive has no dependency lists to set an entry's in"))?;
+    let c = column(table, GROUP_DEPENDENCIES, 8, "dependency-list")?;
+    let mut set = keys.to_vec();
+    set.sort_unstable();
+    set.dedup();
+    if set.is_empty() {
+        table.set_cell(e, c, None, Vec::new());
+        return Ok(());
+    }
+    let mut indices = Vec::with_capacity(set.len() * usize::from(deps.width));
+    for key in &set {
+        let i = deps.keys.binary_search(key).map_err(|_| {
+            bad(format!(
+                "key {key:#018x} is not in the archive's dependency table, and growing that \
+                 table lays the signed metadata out anew, which this writer does not do"
+            ))
+        })?;
+        match deps.width {
+            1 => indices.push(i as u8),
+            2 => indices.extend_from_slice(&(i as u16).to_le_bytes()),
+            _ => indices.extend_from_slice(&(i as u32).to_le_bytes()),
+        }
+    }
+    // The offset word is kept, as a table rewritten in place keeps the slice where it was.
+    let mut cell = table
+        .cell(e, c)
+        .map(<[u8]>::to_vec)
+        .unwrap_or_else(|| vec![0; 8]);
+    LE::write_u32(
+        &mut cell[4..],
+        (u32::from(deps.width) << 29) | set.len() as u32,
+    );
+    table.set_cell(e, c, Some(cell), indices);
+    Ok(())
+}
+
+/// Whether laying `toc` out anew reproduces it byte for byte, as an edit adding a row needs.
+pub fn relays_identically(toc: &Rpf9Toc) -> Result<bool> {
+    Ok(Table::from_toc(toc)?.faithful)
 }
 
 /// The entry's current body, inflated (and deciphered) as the readers return it; `None` when it
@@ -615,6 +821,29 @@ fn old_body<R: Read + Seek>(
         return mount.inflate_deciphered_stored(&body, entry).ok();
     }
     Some(body)
+}
+
+/// `body` stored as chunks under a mode-3 table: the stored bytes, the cell's `u1` and the
+/// descriptors; refused where the reader would not read it back.
+fn stored_chunked(body: &[u8]) -> Result<(Vec<u8>, u32, Vec<u64>)> {
+    let (bytes, chunks) = chunk_body(body)?;
+    let (u1, words) = author(&ChunkTable {
+        mode: ROW24_CHUNK_MODE,
+        chunks,
+    })?;
+    check_reads_back(&bytes, body)?;
+    Ok((bytes, u1, words))
+}
+
+/// A clear body is read by what it holds, so one the reader does not recognise could not be read.
+fn check_reads_back(stored: &[u8], body: &[u8]) -> Result<()> {
+    let read = read_rpf9_body(Cursor::new(stored), 0, body.len() as u64);
+    if read.ok().map(|(_, bytes)| bytes).as_deref() != Some(body) {
+        return Err(bad(
+            "the new body would be stored in a form OpenRage's reader does not read back",
+        ));
+    }
+    Ok(())
 }
 
 /// `body` as 64 KiB chunks, each zlib unless that would not shrink it, each 16-aligned; and the

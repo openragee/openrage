@@ -17042,3 +17042,60 @@ msgstr[2] "огни {count} карт"
 
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "Для имён строк этого документа нужен снимок ключей GTA VI"
+
+msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
+msgstr "В копию архива сохраняется только документ, открытый из архива GTA VI"
+
+msgid "Cannot save into a copy of the archive: {reason}"
+msgstr "Не удаётся сохранить в копию архива: {reason}"
+
+msgid "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale."
+msgstr "{file} — новый архив с правкой на месте его записи; игра отвергает его, потому что подпись его таблицы устарела."
+
+msgid "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds."
+msgstr "{file} — новый архив, такой же, как тот, из которого он прочитан: правка записывает байты, которые содержит запись."
+
+msgid "nothing this view holds is edited, or OpenRage writes none of its edits to a GTA VI body"
+msgstr "в этом представлении ничего не изменено, или OpenRage не записывает ни одной из его правок в содержимое GTA VI"
+
+msgid "the copy is a new file, and the archive it is read from is never written"
+msgstr "копия — новый файл, а архив, из которого она читается, никогда не записывается"
+
+msgid "more than one entry holds the body at {offset}, so which one to replace is not known"
+msgstr "содержимое по адресу {offset} есть больше чем в одной записи, поэтому неизвестно, какую заменить"
+
+msgid "no entry of the archive holds the body at {offset}"
+msgstr "ни одна запись архива не содержит содержимое по адресу {offset}"
+
+msgid "Save into a copy of the archive…"
+msgstr "Сохранить в копию архива…"
+
+msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"
+msgstr "Записать правки документа GTA VI на место его записи в новую копию архива, из которого он прочитан. Игра отвергает эту копию, потому что подпись её таблицы устарела"
+
+msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
+msgstr "Нет ключей GTA VI: укажите папку установки GTA VI в разделе Параметры ▸ Игры, чтобы её исполняемый файл мог их открыть."
+
+msgid "resource"
+msgstr "ресурс"
+
+msgid "media"
+msgstr "медиа"
+
+msgid "other class"
+msgstr "другой класс"
+
+msgid "{file} is listed by a scan without its table: {why}"
+msgstr "{file} перечислен сканированием без его таблицы: {why}"
+
+msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
+msgstr "Выберите папку GTA VI в параметрах или откройте один из её архивов, чтобы перечислить её архивы по их таблицам."
+
+msgid "Find by name, or by hash as 0x hex"
+msgstr "Искать по имени или по хешу в виде 0x hex"
+
+msgid "Only the archives expanded are searched."
+msgstr "Поиск идёт только по развёрнутым архивам."
+
+msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
+msgstr "{file} — новый архив с правкой на месте его записи и с таблицей в том виде, в каком она прочитана."

@@ -57,6 +57,7 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("plan") => plan_of(rest),
         Some("build") => build_of(rest),
         Some("verify") => verify_of(rest),
+        Some("acceptance") => crate::project_acceptance::acceptance(rest),
         Some("history") => crate::project_steps::history_of(rest),
         Some("rollback") => crate::project_steps::rollback_of(rest),
         Some("remove") => crate::project_steps::remove_of(rest),
@@ -112,6 +113,7 @@ const USAGE: &str = "Usage:\n  \
          openrage-cli project build  <project.openrage-proj> [--build <id>] [--out <folder>]\n                              \
          [--shader-defs <json>] [--reproducible]\n  \
          openrage-cli project verify <project.openrage-proj> [--build <id>] [--out <folder>]\n  \
+         openrage-cli project acceptance <built folder>\n  \
          openrage-cli project clean  <project.openrage-proj> [--build <id>] [--out <folder>]\n  \
          openrage-cli project redirects <project.openrage-proj> [--build <id>] [--out <folder>]\n                                 \
          [--file <path>]\n  \
@@ -204,6 +206,11 @@ const USAGE: &str = "Usage:\n  \
          moves; with none, they are dropped and named. With --reproducible it then builds\n\
          again into a scratch folder and says whether every byte is the same.\n\
          verify reads a built resource back against the plan the project has now.\n\
+         acceptance reads the folder a build wrote (a resource, or the folder of a dlc.rpf or an\n\
+         .oiv) and prints the lines of the acceptance sheet about the kinds of file in it: what to\n\
+         do in the game, what to look for, and for Legacy and for Enhanced the newest result a\n\
+         person wrote into the sheet, or that the line is not checked in game. It writes nothing,\n\
+         and exits 0 whatever the sheet holds.\n\
          clean removes the resources OpenRage built under build/ (or <out>), found by their\n\
          hidden marker, or with --build only the resources of that build: its name, and\n\
          <name>_1, <name>_2 and so on when it splits and no build is named so.\n\

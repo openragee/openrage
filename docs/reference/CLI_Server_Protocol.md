@@ -264,8 +264,11 @@ changes projects and writes builds, and every route of this protocol reads but t
 verbs are `create`, `adopt`, `import`, `add-content`, `add-build`, `set-build`,
 `set-file-type`, `remove-build`, `link`, `unlink`, `links`, `template`,
 `apply-template`, `check-sharing`, `check-original`, `check-resource`, `plan`, `build`, `verify`,
-`clean`, `redirects`, `history`, `rollback`, `remove` and `recook`; each
+`acceptance`, `clean`, `redirects`, `history`, `rollback`, `remove` and `recook`; each
 exits 0, 1 for a refusal or a check that failed and 2 for a usage error.
+`acceptance` takes the folder a build wrote and prints the lines of the acceptance
+sheet about its files, with what a person saw of each in a running game
+([In_Game_Acceptance.md](../guides/In_Game_Acceptance.md)).
 
 `check-resource` takes no project and makes none: it reads any resource folder as a server
 will read it (its manifest, the files the manifest names and every file under `stream/`), lists

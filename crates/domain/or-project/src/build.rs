@@ -1028,7 +1028,7 @@ pub(crate) fn check_file(
 }
 
 /// Every file under `folder`, by its path inside it with `/`, in order.
-fn files_under(folder: &Path) -> Vec<String> {
+pub(crate) fn files_under(folder: &Path) -> Vec<String> {
     fn walk(base: &Path, dir: &Path, out: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;

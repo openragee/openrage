@@ -89,6 +89,7 @@ mod navmesh_edit;
 mod particles;
 mod photo;
 mod project;
+mod project_acceptance;
 mod project_checks;
 mod project_resource;
 mod project_steps;

@@ -16,9 +16,21 @@ pub struct Reload {
     pub entries: Option<usize>,
 }
 
+/// The extensions [`reload`] opens with a reader of its own; every other one it opens is a declared RSC7 format.
+const OWN: [&str; 5] = ["dds", "meta", "ymap", "ytyp", "ymt"];
+
+/// Whether a build opens a file of the extension `ext`, in lower case, again through a reader: the kinds of file a build knows.
+pub fn reads(ext: &str) -> bool {
+    OWN.contains(&ext) || or_io::gta5::formats::format(ext).is_some()
+}
+
 /// The reader that opened a file named `name`, or the reason it refused; `None` when no reader reads that name.
 pub fn reload(name: &str, bytes: &[u8]) -> Option<Result<Reload, String>> {
     let ext = name.rsplit_once('.')?.1.to_ascii_lowercase();
+    // ⚠ The table decides, so a reader added below for a kind the table lacks is never reached.
+    if !reads(&ext) {
+        return None;
+    }
     let read = |reader: String| Reload {
         reader,
         entries: None,
@@ -114,4 +126,28 @@ pub(crate) fn has_layout(name: &str) -> bool {
 pub fn layout(name: &str, bytes: &[u8]) -> Result<Generation, String> {
     let ext = name.rsplit_once('.').map_or("", |(_, ext)| ext);
     or_io::gta5::retarget::layout_of(&ext.to_ascii_lowercase(), bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_table_of_kinds_and_the_readers_are_one_set() {
+        // ⚠ Not `meta`: only a weapon document has a reader, so bytes that are none are no reader's.
+        for ext in OWN.iter().filter(|ext| **ext != "meta") {
+            assert!(
+                reload(&format!("a.{ext}"), b"no such file").is_some_and(|read| read.is_err()),
+                "a .{ext} that is no .{ext} is refused by its reader"
+            );
+        }
+        for format in or_io::gta5::formats::FORMATS {
+            assert!(reads(format.ext), "{} is a declared format", format.ext);
+            assert!(reload(&format!("a.{}", format.ext), b"no such file").is_some());
+        }
+        for ext in ["lua", "xml", "rpf", ""] {
+            assert!(!reads(ext), "nothing reads a .{ext}");
+            assert!(reload(&format!("a.{ext}"), b"no such file").is_none());
+        }
+    }
 }

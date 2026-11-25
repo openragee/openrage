@@ -8,8 +8,9 @@
 //!
 //! ⚠ **A build never says a pack loads in game.** It says that every file it wrote equals what
 //! the plan named and reloads through the readers that exist for it, which is all that can be
-//! measured without running GTA V.
+//! measured without running GTA V. [`acceptance`] is where a person writes down a run of the game.
 
+pub mod acceptance;
 pub mod adopt;
 pub mod build;
 pub mod built;

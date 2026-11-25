@@ -154,7 +154,7 @@ fn a_map_of_light_lists_is_wanted_though_it_places_nothing_and_a_held_map_is_not
 }
 
 #[test]
-fn an_interior_s_lamp_lights_while_its_room_is_seen_alone() {
+fn an_interior_s_lamp_lights_while_its_contents_draw_and_its_room_is_seen_alone() {
     let mut lights = Lights::new(Arc::new(WorldIndex::default()));
     let map = MapLights {
         inside: vec![(placed_at(1.0), [4, 2])],
@@ -170,8 +170,8 @@ fn an_interior_s_lamp_lights_while_its_room_is_seen_alone() {
     let mut drawn = |rooms: &RoomsSeen| lights.lights(&view, (12.0, 1.0, MOST), rooms).lights;
     assert_eq!(
         drawn(&RoomsSeen::new()),
-        1,
-        "an interior looked into by none"
+        0,
+        "an interior whose contents do not draw"
     );
     assert_eq!(
         drawn(&RoomsSeen::from([((7, 4), vec![true, true, false])])),
@@ -183,7 +183,8 @@ fn an_interior_s_lamp_lights_while_its_room_is_seen_alone() {
     );
     assert_eq!(
         drawn(&RoomsSeen::from([((8, 4), vec![true, true, false])])),
-        1
+        0,
+        "another interior's contents draw"
     );
 }
 

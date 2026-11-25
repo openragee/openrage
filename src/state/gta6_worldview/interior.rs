@@ -155,13 +155,12 @@ fn room_at(interior: &Interior, location: EntitySetLocation) -> u32 {
 pub(super) type RoomsSeen = HashMap<(u32, u32), Vec<bool>>;
 
 /// Whether a lamp of room `room` of the interior placed at `at` lights what a camera that sees
-/// `rooms` sees: one of a room the camera does not see lights none of it.
-// ⚠ GTA V's rule: an interior's lights are those of the rooms its portals show.
+/// `rooms` sees: one of a room the camera does not see lights none of it, and one of an interior
+/// whose contents do not draw lights nothing.
+// ⚠ GTA V's rule: an interior's lights are those of the rooms its portals show, and a lamp is
+// its entity's, there while the entity is.
 pub(super) fn lit(rooms: &RoomsSeen, at: (u32, u32), room: u32) -> bool {
-    (rooms.get(&at))
-        .and_then(|seen| seen.get(room as usize))
-        .copied()
-        .unwrap_or(true)
+    (rooms.get(&at)).is_some_and(|seen| seen.get(room as usize).copied().unwrap_or(true))
 }
 
 /// `interior` as `instance` places it: each entity it draws that the index has a model for.
@@ -341,7 +340,7 @@ impl Placed {
 
     /// Call `draw` with each child a camera of `view` sees at the hour `hour`, 0 to 23, how far from
     /// the camera it stands and how opaque it draws, the interior itself drawing `fade` opaque; what
-    /// it sees of the rooms, where the interior is in range and tells rooms apart.
+    /// it sees of the rooms, where the interior is in range.
     pub(super) fn each(
         &self,
         view: &View,
@@ -353,17 +352,22 @@ impl Placed {
         if !self.in_range(eye, view) {
             return None;
         }
-        // An interior of no room but the outside has nothing to see through.
-        let seen = (self.rooms.len() > 1).then(|| {
-            interior_rooms::seen(
+        // An interior of no room but the outside has nothing to see through: all of it is seen.
+        let seen = match self.rooms.len() > 1 {
+            true => interior_rooms::seen(
                 &self.rooms,
                 &self.portals,
                 self.middle,
                 self.own.transform_point3(eye),
-            )
-        });
+            ),
+            false => Seen {
+                rooms: vec![true; self.rooms.len()],
+                portals: vec![true; self.portals.len()],
+                outside: None,
+            },
+        };
         for child in &self.children {
-            if (child.hours >> hour) & 1 == 0 || !sees(seen.as_ref(), child.location) {
+            if (child.hours >> hour) & 1 == 0 || !sees(&seen, child.location) {
                 continue;
             }
             let r = &child.rows;
@@ -373,15 +377,12 @@ impl Placed {
                 draw(child, away, fade * own);
             }
         }
-        seen
+        Some(seen)
     }
 }
 
-/// Whether what is at `location` is seen; everything where no room is told apart.
-fn sees(seen: Option<&Seen>, location: EntitySetLocation) -> bool {
-    let Some(seen) = seen else {
-        return true;
-    };
+/// Whether what is at `location` is seen.
+fn sees(seen: &Seen, location: EntitySetLocation) -> bool {
     let (of, at) = match location {
         EntitySetLocation::Room(k) => (&seen.rooms, k),
         EntitySetLocation::Portal(k) => (&seen.portals, k),

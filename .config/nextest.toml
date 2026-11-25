@@ -509,6 +509,20 @@ filter = 'test(the_typed_world_family_names_only_what_the_install_states_and_the
 slow-timeout = { period = "60s", terminate-after = 45 }
 priority = 100
 
+# The install suites of a deletion and of a first edit make sources of an install's map files: the census plans an edit of every
+# one, and the deletion suite imports the whole tree of each map it samples. The census took eleven minutes on the Legacy install
+# beside building lanes, so both are held to forty-five, and start first.
+[[profile.all.overrides]]
+filter = 'test(deleting_an_entity_of_the_install_keeps_every_link) | test(the_map_files_of_the_install_a_first_edit_refuses_are_counted)'
+slow-timeout = { period = "60s", terminate-after = 45 }
+priority = 100
+
+# The install suite of the level-of-detail forest streams the maps about two dozen places of an install and selects from each.
+# It took sixteen minutes on the Legacy install beside building lanes, so it is held to forty-five.
+[[profile.all.overrides]]
+filter = 'test(the_forest_of_a_real_install_selects_what_its_index_holds_and_no_child_whole_beside_a_parent_that_holds_the_children_it_states)'
+slow-timeout = { period = "60s", terminate-after = 45 }
+
 # The install suite of GTA VI's texture packs reads every texture of every pack of an install.
 # It took fourteen and a half minutes beside two building lanes, so it is held to forty-five, and starts first.
 [[profile.all.overrides]]

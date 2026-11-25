@@ -3,7 +3,12 @@
 //! written, and the inverses put every file back.
 //!
 //! Point `OPENRAGE_GAME_ROOT` at an install root. Without one this skips, which is not a pass. `OPENRAGE_DELETE_STRIDE=N` takes every
-//! Nth map that holds entities; the default takes one in twenty-five.
+//! Nth map that holds entities; the default takes one in two hundred.
+//!
+//! ⚠ A sample costs what its tree holds, since the import, the plan, the deletion and its inverses each read every source of the
+//! pack, and a map in a large tree is the likelier to be sampled. On the Legacy install the largest tree sampled at one in
+//! twenty-five holds 233 map files and 75,237 entities, and a run at that stride, 370 samples in 122 trees, had not finished after
+//! 130 minutes of processor time on twelve threads.
 //!
 //! Each sample is deleted in a pack in a scratch folder: the map, every map above it, and every map under the topmost of those, so
 //! that no link into a file that loses an entity is outside the pack. The samples of one tree share its pack, imported once: each
@@ -36,7 +41,7 @@ fn deleting_an_entity_of_the_install_keeps_every_link() {
         .ok()
         .and_then(|s| s.parse().ok())
         .filter(|n| *n > 0)
-        .unwrap_or(25);
+        .unwrap_or(200);
     let game = common::mount(&root).expect("the install mounts");
 
     // The file each name of a map file resolves to, and what each map name holds.

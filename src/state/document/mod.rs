@@ -93,6 +93,7 @@ pub struct Document {
     pub kind: DocumentKind,
     pub payload: DocPayload,
     pub rpf_entry_binding: Option<RpfEntryBinding>,
+    pub rpf9_source: Option<rpf9::entry::EntrySource>,
     pub dirty: bool,
     /// The workspace this document was in front of last, which its tab brings back.
     pub seen_in: Option<crate::ui::dock::Workspace>,
@@ -132,6 +133,7 @@ impl Document {
             kind,
             payload,
             rpf_entry_binding: None,
+            rpf9_source: None,
             dirty: false,
             seen_in: None,
             read_only,
@@ -145,6 +147,10 @@ impl Document {
             rebuild: Default::default(),
             history: Default::default(),
         }
+    }
+
+    pub fn is_from_rpf9_table(&self) -> bool {
+        self.rpf9_source.is_some() || self.read_only == Some(rpf9::entry::READ_ONLY)
     }
 
     pub fn edit_epoch(&self) -> u64 {

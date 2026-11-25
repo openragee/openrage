@@ -54,6 +54,7 @@ struct Body<'a, R> {
     keys: &'a GtaViKeys,
     cipher: Option<Gta6Cipher>,
     len: u64,
+    read_limit: u64,
     loaded: u64,
     buffer: [u8; 65536],
     begin: usize,
@@ -62,7 +63,13 @@ struct Body<'a, R> {
 impl<R: Read> BufRead for Body<'_, R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         if self.begin == self.end && self.loaded < self.len {
-            let count = (self.len - self.loaded).min(self.buffer.len() as u64) as usize;
+            let count = self
+                .read_limit
+                .saturating_sub(self.loaded)
+                .min(self.buffer.len() as u64) as usize;
+            if count == 0 {
+                return Err(io::Error::other("RPF9 prefix input budget exhausted"));
+            }
             self.source.read_exact(&mut self.buffer[..count])?;
             if let Some(cipher) = self.cipher {
                 let end = self.loaded + count as u64;
@@ -201,25 +208,69 @@ fn compressed_header<R: Read + Seek>(
     source: &mut R,
     keys: &GtaViKeys,
 ) -> Result<[u8; 16]> {
+    let bytes = prefix(plan, source, keys, 16, 65536)?;
+    bytes.try_into().map_err(|_| bad("incomplete entry header"))
+}
+
+pub(super) fn prefix<R: Read + Seek>(
+    plan: &Gta6EntryRead,
+    source: &mut R,
+    keys: &GtaViKeys,
+    count: usize,
+    input_limit: u64,
+) -> Result<Vec<u8>> {
+    if count as u64 > plan.real {
+        return Err(bad("prefix exceeds the row's decoded size"));
+    }
+    if count == 0 {
+        return Ok(Vec::new());
+    }
     begin(plan, source, keys)?;
     let len = plan.extent.end - plan.extent.start;
-    let mut budget = source.take(65536);
+    let mut read_limit = input_limit.min(len);
+    if plan.cipher.is_some() {
+        read_limit &= !15;
+    }
+    if matches!(plan.decoding, Decoding::Raw) {
+        let wanted = if plan.cipher.is_some() {
+            (count as u64)
+                .checked_add(15)
+                .ok_or_else(|| bad("prefix size overflow"))?
+                & !15
+        } else {
+            count as u64
+        };
+        read_limit = read_limit.min(wanted);
+    }
     let mut body = Body {
-        source: &mut budget,
+        source,
         keys,
         cipher: plan.cipher,
         len,
+        read_limit,
         loaded: 0,
         buffer: [0; 65536],
         begin: 0,
         end: 0,
     };
-    let mut bytes = [0; 16];
-    let Decoding::Table(chunks) = &plan.decoding else {
-        flate2::bufread::DeflateDecoder::new(&mut body)
-            .read_exact(&mut bytes)
-            .map_err(|e| bad(e.to_string()))?;
-        return Ok(bytes);
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(count)
+        .map_err(|_| bad("prefix exceeds available memory"))?;
+    bytes.resize(count, 0);
+    let chunks = match &plan.decoding {
+        Decoding::Raw => {
+            body.read_exact(&mut bytes)
+                .map_err(|e| bad(e.to_string()))?;
+            return Ok(bytes);
+        }
+        Decoding::Deflate => {
+            flate2::bufread::DeflateDecoder::new(&mut body)
+                .read_exact(&mut bytes)
+                .map_err(|e| bad(e.to_string()))?;
+            return Ok(bytes);
+        }
+        Decoding::Table(chunks) => chunks,
     };
     let mut filled = 0;
     for chunk in chunks {
@@ -234,7 +285,7 @@ fn compressed_header<R: Read + Seek>(
             let used = inflate(&mut input, &mut output, u64::from(chunk.inflated), true)?;
             if used != u64::from(chunk.stored) {
                 return Err(bad(
-                    "compressed header chunk does not match its stored size",
+                    "compressed prefix chunk does not match its stored size",
                 ));
             }
         } else {
@@ -247,7 +298,7 @@ fn compressed_header<R: Read + Seek>(
         let padding = (16 - u64::from(chunk.stored) % 16) % 16;
         copy(&mut body, &mut io::sink(), padding)?;
     }
-    Err(bad("the chunks do not hold a complete header"))
+    Err(bad("the chunks do not hold a complete prefix"))
 }
 
 pub(super) fn extract<R: Read + Seek, W: Write + ?Sized>(
@@ -263,6 +314,7 @@ pub(super) fn extract<R: Read + Seek, W: Write + ?Sized>(
         keys,
         cipher: plan.cipher,
         len,
+        read_limit: len,
         loaded: 0,
         buffer: [0; 65536],
         begin: 0,

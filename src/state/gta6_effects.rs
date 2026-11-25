@@ -221,8 +221,7 @@ impl AppState {
     fn start_install_effects(&self) {
         if self
             .active_document()
-            .and_then(|doc| doc.path.as_deref())
-            .is_some_and(super::document::rpf9::entry::is_entry)
+            .is_some_and(super::Document::is_from_rpf9_table)
         {
             return;
         }

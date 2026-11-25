@@ -101,6 +101,20 @@ Text files open as text and other decoded contents as read-only bytes; a resourc
 selects a GTA V reader. Reopening an entry follows its archive indices through the tables again.
 Neither type detection nor preview creates an extracted file or searches for content outside the entry.
 
+Recognised `.ydr`, `.ydd` and `.yft` entries open with the GTA VI model reader. Their shader
+texture bindings use 64-bit keys to find external `.ytd` entries in mounted RPF9 archives and
+the configured GTA VI install. A bounded worker reads the tables, indexes texture names from
+the dictionaries' virtual sections and opens matching dictionaries in memory
+(`src/state/rpf9_texture_resolver.rs`). This resolution uses table addresses throughout, with
+no content scan or extraction to disk. Textures that cannot be located or decoded remain
+unavailable; opening a model does not imply that every texture or material is supported.
+
+A flat, headerless GTA VI `.ydr` opened manually is recognised from its root and internal name,
+then confirmed against a byte-identical entry in a mounted or configured RPF9 archive
+(`src/state/rpf9_loose.rs`). The matching table supplies the virtual and physical section sizes;
+the reader does not guess their boundary. Without that match, the file is refused with an
+explanation. Files with an RSC7 header continue through the GTA V reader.
+
 The reader supports sized raw entries on 24-byte rows. Chunked entries use mode 3 for 24-byte
 rows, mode 2 for 20-byte resource rows, or mode 4 on either shape. Each descriptor gives the exact
 stored and decoded sizes and selects stored bytes or zlib, including mixtures of both. A 20-byte

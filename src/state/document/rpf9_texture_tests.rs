@@ -590,3 +590,95 @@ fn a_dictionary_body_does_not_replace_its_specific_table_extension() {
     assert_eq!(table.entry(0x1000, 0).unwrap().name, original);
     assert!(!source.path.exists());
 }
+
+fn dictionary_with_invalid_physical_chunk(
+    sections: &Rpf9Sections,
+) -> (tempfile::TempDir, EntrySource) {
+    let virtual_len = u32::try_from(sections.virtual_section.len()).unwrap();
+    let physical_len = u32::try_from(sections.physical.len()).unwrap();
+    let mut toc = Rpf9Toc::decrypt(
+        &encrypted(or_test_support::rpf9::resource_table(&[
+            (virtual_len, virtual_len, false),
+            (physical_len, 16, true),
+        ])),
+        &keys(),
+    )
+    .unwrap();
+    let row = toc
+        .groups
+        .iter()
+        .find(|group| group.name_hash == GROUP_ENTRY_ROW_20)
+        .unwrap()
+        .data
+        .start;
+    for (offset, value) in [(0, virtual_len), (4, physical_len | 3), (16, 5)] {
+        toc.bytes[row + offset..row + offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    let mut bytes = Rpf9Builder::serialize(&toc, &keys()).unwrap();
+    bytes.resize(0x1010, 0);
+    bytes.extend(&sections.virtual_section);
+    bytes.extend([0xFF; 16]);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dictionary.rpf");
+    std::fs::write(&path, bytes).unwrap();
+    let table = Rpf9TableDocument::open_using(&path, || Ok(keys()))
+        .unwrap()
+        .unwrap();
+    let source = table.entry(0, 0).unwrap();
+    (dir, source)
+}
+
+#[test]
+fn texture_names_are_indexed_without_decoding_the_physical_chunk() {
+    let sections = sections();
+    let (dir, source) = dictionary_with_invalid_physical_chunk(&sections);
+    assert!(
+        source.bytes().is_err(),
+        "the full read must refuse the malformed physical chunk"
+    );
+    let mut keys = source
+        .texture_keys_limited(sections.virtual_section.len() as u64)
+        .unwrap();
+    keys.sort_unstable();
+    let mut expected: Vec<_> = ["table_paint", "table_array", "table_cube", "table_volume"]
+        .map(|name| or_io::gta6::hash::name_hash64(name.as_bytes()))
+        .into();
+    expected.sort_unstable();
+    assert_eq!(keys, expected);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    assert!(!source.path.exists());
+}
+
+#[test]
+fn texture_key_index_refuses_invalid_metadata_and_a_changed_archive() {
+    let sections = sections();
+    let (dir, source) = dictionary_with_invalid_physical_chunk(&sections);
+    let limit = sections.virtual_section.len() as u64;
+    assert!(source.texture_keys_limited(limit - 1).is_err());
+    let mut wrong = source.clone();
+    wrong.extra.nested.as_mut().unwrap().resource_type = 4;
+    assert!(wrong.texture_keys_limited(limit).is_err());
+    let mut wrong = source.clone();
+    wrong.extra.nested.as_mut().unwrap().flags += 16;
+    assert!(wrong.texture_keys_limited(limit).is_err());
+    let mut wrong = source.clone();
+    wrong.extra.nested.as_mut().unwrap().virtual_size |= 1;
+    assert!(wrong.texture_keys_limited(limit).is_err());
+    let path = dir.path().join("dictionary.rpf");
+    let mut changed = std::fs::read(&path).unwrap();
+    changed.extend([0; 16]);
+    std::fs::write(&path, changed).unwrap();
+    assert!(source.texture_keys_limited(limit).is_err());
+}
+
+#[test]
+fn texture_key_index_refuses_a_bad_dictionary_entry() {
+    let mut sections = sections();
+    let pointer = u64::from_le_bytes(sections.virtual_section[0x20..0x28].try_into().unwrap());
+    let codes = (pointer & 0x0FFF_FFFF) as usize;
+    sections.virtual_section[codes..codes + 4].fill(0);
+    let (_dir, source) = dictionary_with_invalid_physical_chunk(&sections);
+    assert!(source
+        .texture_keys_limited(sections.virtual_section.len() as u64)
+        .is_err());
+}

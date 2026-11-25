@@ -124,6 +124,7 @@ mod destructive_file_operations_ask;
 pub mod dlc_pack;
 mod document;
 mod document_io;
+mod document_opened;
 pub mod drivers;
 #[cfg(test)]
 mod dropped_files;
@@ -321,7 +322,13 @@ mod rpf9_counted_names;
 mod rpf9_files_tests;
 mod rpf9_kept;
 mod rpf9_list;
+mod rpf9_loose;
 pub mod rpf9_scan;
+mod rpf9_texture_index;
+mod rpf9_texture_resolver;
+mod rpf9_texture_roots;
+#[cfg(test)]
+mod rpf9_texture_tests;
 mod rpf_archive_open;
 mod rpf_expansion;
 mod rpf_moves;
@@ -536,6 +543,11 @@ pub enum LoadingState {
 
 #[allow(clippy::large_enum_variant)]
 pub enum LoadResult {
+    Rpf9Loose {
+        path: PathBuf,
+        payload: DocPayload,
+        source: document::rpf9::entry::EntrySource,
+    },
     Success {
         path: PathBuf,
         payload: DocPayload,
@@ -642,6 +654,7 @@ pub struct AppState {
     pub compare: compare::Comparisons,
     texture_naming: Vec<gta6_texture_naming::TextureNaming>,
     texture_packs: gta6_texture_index::PackIndex,
+    rpf9_textures: rpf9_texture_resolver::State,
     set_finding: Vec<gta6_set_finding::SetFinding>,
     clip_finding: Option<gta6_clip_finding::ClipFinding>,
     particle_model_finding: Option<gta6_particle_models::ModelFinding>,
@@ -805,6 +818,7 @@ impl AppState {
             compare: Default::default(),
             texture_naming: Vec::new(),
             texture_packs: Default::default(),
+            rpf9_textures: Default::default(),
             set_finding: Vec::new(),
             clip_finding: None,
             particle_model_finding: None,
@@ -1132,54 +1146,6 @@ impl AppState {
             self.drop_document(child_id);
         }
         self.forget_clothing(id);
-    }
-
-    fn insert_document(
-        &mut self,
-        path: PathBuf,
-        payload: DocPayload,
-        binding: Option<RpfEntryBinding>,
-        resource: Option<Arc<document::ResourceImage>>,
-    ) -> DocumentId {
-        let id = self.alloc_doc_id();
-        let mut doc = Document::new(id, Some(path.clone()), payload).with_resource(resource);
-        doc.rpf_entry_binding = binding;
-        if rpf9_scan::scanned_body(&path).is_some() {
-            doc.read_only = Some(rpf9_scan::READ_ONLY_BODY);
-        }
-        let kind = doc.kind;
-        self.name_index.absorb(&doc.payload);
-        if let Some((names, keys)) =
-            ttpf_document::texture_naming_work(&self.documents, &doc.payload)
-        {
-            (self.texture_naming).push(gta6_texture_naming::TextureNaming::start(names, keys));
-        }
-        if matches!(kind, DocumentKind::Ypt) {
-            self.file_watcher.watch(path.clone());
-        }
-        // A dictionary opens on its first entry: the viewport draws an entry only while it is selected.
-        let first_entry = crate::ui::panels::selection_ids::ydd_first_entry_hash(&doc.payload);
-        self.documents.push(doc);
-        gta6_head::trim(&self.documents);
-        self.remember_where_the_front_document_is_seen(id);
-        self.active_document = Some(id);
-        self.hide_start_page();
-        if let Some(hash) = first_entry {
-            let entry = crate::ui::panels::selection_ids::dict_entry_id(hash);
-            self.selection.select(id, entry);
-        }
-        if !self.active_workspace.handles_kind(kind) {
-            self.active_workspace = Workspace::for_kind(kind);
-        }
-        if let Some(binding) = binding {
-            if let Some(parent) = self.document_mut(binding.parent_doc_id) {
-                if let DocPayload::Rpf(rpf) = &mut parent.payload {
-                    rpf.entry_documents.insert(binding.entry_id, id);
-                }
-            }
-        }
-        self.remember_recent(id);
-        id
     }
 
     pub fn bump_sim_revision(&mut self) {

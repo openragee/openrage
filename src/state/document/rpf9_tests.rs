@@ -298,3 +298,135 @@ fn confirmed_media_extensions_survive_opening_without_changing_the_entry_address
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }
+
+#[test]
+fn a_metadata_catalog_does_not_probe_headers_or_change_the_ui_child_types() {
+    let (_dir, path) = fixture(0x1000, true);
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[0x800..0x804].copy_from_slice(b"ADAT");
+    bytes[0x1800..0x1804].copy_from_slice(b"ADAT");
+    std::fs::write(&path, bytes).unwrap();
+    let ui = Rpf9TableDocument::open_using(&path, || Ok(keys()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(ui.tree().entry_type(0, 1), (Gta6EntryType::Awc, true));
+    let metadata = Rpf9TableDocument::open_with_headers(&path, || Ok(keys()), false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        metadata.tree().entry_type(0, 1),
+        (Gta6EntryType::Unknown, false)
+    );
+    let detached = ui.detached_metadata().unwrap();
+    assert_eq!(
+        detached.tree().entry_type(0, 1),
+        (Gta6EntryType::Unknown, false)
+    );
+    for catalog in [&metadata, &detached] {
+        assert_eq!(catalog.expand_table(0, 0).unwrap(), 0x1000);
+        assert_eq!(
+            catalog.tree().entry_type(0x1000, 0),
+            (Gta6EntryType::Unknown, false)
+        );
+    }
+    assert_eq!(
+        ui.tree().nodes.len(),
+        1,
+        "metadata children stay outside the UI tree"
+    );
+    ui.expand_table(0, 0).unwrap();
+    assert_eq!(ui.tree().entry_type(0x1000, 0), (Gta6EntryType::Awc, true));
+    assert_eq!(
+        detached.tree().entry_type(0x1000, 0),
+        (Gta6EntryType::Unknown, false)
+    );
+}
+
+#[test]
+fn metadata_file_roots_share_one_context_without_reusing_a_mounted_archives_keys() {
+    let (_first_dir, first_path) = fixture(0x1000, true);
+    let (_second_dir, second_path) = fixture(0x1000, true);
+    let mounted = Rpf9TableDocument::open_using(&first_path, || Ok(keys()))
+        .unwrap()
+        .unwrap();
+    let calls = std::cell::Cell::new(0);
+    let mut files = MetadataOpener::default();
+    let first = files
+        .open_using(&first_path, || {
+            calls.set(calls.get() + 1);
+            Ok(TableContext {
+                keys: Arc::new(keys()),
+                resolver: Arc::new(NameResolver::default()),
+            })
+        })
+        .unwrap()
+        .unwrap();
+    let second = files
+        .open_using(&second_path, || {
+            panic!("the catalog must reuse its configured context")
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(calls.get(), 1);
+    assert!(Arc::ptr_eq(&first.keys, &second.keys));
+    assert!(Arc::ptr_eq(&first.resolver, &second.resolver));
+    assert!(!Arc::ptr_eq(&first.keys, &mounted.keys));
+    let detached = mounted.detached_metadata().unwrap();
+    assert!(Arc::ptr_eq(&detached.keys, &mounted.keys));
+    assert!(Arc::ptr_eq(&detached.resolver, &mounted.resolver));
+    first.expand_table(0, 0).unwrap();
+    assert_eq!(second.tree().nodes.len(), 1);
+    assert_eq!(mounted.tree().nodes.len(), 1);
+    assert!(!first.read_headers && !second.read_headers && !detached.read_headers);
+    assert!(mounted.read_headers);
+}
+
+#[test]
+fn a_catalog_caches_configuration_errors_and_a_new_catalog_retries_them() {
+    let (_dir, path) = fixture(0x1000, true);
+    let mut files = MetadataOpener::default();
+    let missing = files.open_using(&path, || Err("missing test keys".to_string()));
+    assert!(matches!(missing, Err(error) if error == "missing test keys"));
+    let repeated = files.open_using(&path, || {
+        panic!("a failed configuration is loaded once per catalog")
+    });
+    assert!(matches!(repeated, Err(error) if error == "missing test keys"));
+    let mut retry = MetadataOpener::default();
+    assert!(retry
+        .open_using(&path, || Ok(TableContext {
+            keys: Arc::new(keys()),
+            resolver: Arc::new(NameResolver::default()),
+        }))
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn metadata_context_loading_waits_for_rpf9_magic_and_survives_a_bad_table() {
+    let (dir, path) = fixture(0x1000, true);
+    let other = dir.path().join("other.rpf");
+    std::fs::write(&other, b"7FPR").unwrap();
+    let mut files = MetadataOpener::default();
+    assert!(files
+        .open_using(&other, || panic!(
+            "another archive version needs no GTA VI configuration"
+        ))
+        .unwrap()
+        .is_none());
+    assert!(files.context.is_none());
+    std::fs::write(&other, RPF9_MAGIC.to_le_bytes()).unwrap();
+    let broken = files.open_using(&other, || {
+        Ok(TableContext {
+            keys: Arc::new(keys()),
+            resolver: Arc::new(NameResolver::default()),
+        })
+    });
+    assert!(broken.is_err());
+    assert!(files.context.as_ref().is_some_and(Result::is_ok));
+    assert!(files
+        .open_using(&path, || panic!(
+            "the table error does not invalidate its configured keys"
+        ))
+        .unwrap()
+        .is_some());
+}

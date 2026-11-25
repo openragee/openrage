@@ -90,6 +90,13 @@ impl AppState {
     /// game's copy of the same dictionary, and a project exists to be read in
     /// preference to it.
     pub fn try_open_missing_textures(&mut self) -> bool {
+        if self
+            .active_document()
+            .is_some_and(super::Document::is_from_rpf9_table)
+        {
+            return self.try_open_table_texture_dictionary() || self.try_open_texture_pack();
+        }
+
         self.ensure_garment_dressed()
             || self.try_open_texture_from_project()
             || self.try_auto_open_texture_sibling()

@@ -65,9 +65,9 @@ fn read(archive: &Path) -> Result<TimecycleData, String> {
 /// them; `None` before, and where no install is found or it states none.
 pub(crate) fn timecycle(state: &AppState) -> Option<Arc<TimecycleData>> {
     let document = state.active_document().and_then(|d| d.path.clone());
-    if document
-        .as_deref()
-        .is_some_and(crate::state::document::rpf9::entry::is_entry)
+    if state
+        .active_document()
+        .is_some_and(crate::state::Document::is_from_rpf9_table)
     {
         return None;
     }

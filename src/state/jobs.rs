@@ -247,6 +247,7 @@ impl AppState {
         .chain(super::gta6_effects::install_job())
         .chain(super::gta6_shaders::job())
         .chain(self.texture_naming_jobs())
+        .chain(self.rpf9_textures.job())
         .chain(self.neighbour_search_job())
         .chain(self.set_finding_jobs())
         .chain(self.map_search_jobs())
@@ -354,6 +355,7 @@ impl AppState {
             // ⚠ Its end is said once its worker sees the stop, by `poll_texture_naming`.
             JobKind::TextureNames => {
                 self.stop_texture_naming();
+                self.rpf9_textures.stop();
                 false
             }
             // ⚠ Its end is said once its worker sees the stop, by `poll_neighbour_search`.
@@ -488,6 +490,7 @@ impl AppState {
         self.poll_workbench();
         self.poll_effects_reads();
         self.poll_texture_naming();
+        self.poll_table_texture_dictionary();
         self.poll_neighbour_search();
         self.poll_set_finding();
         self.poll_map_search();

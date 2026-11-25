@@ -203,7 +203,11 @@ impl PackIndex {
 
 /// The folder whose packs serve `doc`: the install or folder open around its file, else the folder its file, or its archive, is in.
 pub(super) fn root_of(state: &AppState, doc: &Document) -> Option<PathBuf> {
-    let file = doc.path.as_deref()?;
+    let file = doc
+        .rpf9_source
+        .as_ref()
+        .map(|s| s.path.as_path())
+        .or(doc.path.as_deref())?;
     let open = (state.documents.iter())
         .filter(|d| matches!(d.kind, DocumentKind::GameRoot | DocumentKind::Folder))
         .filter_map(|d| d.path.as_deref())
@@ -505,6 +509,9 @@ impl AppState {
     /// The folder that serves `doc`, once every pack under it is indexed whole and none holds
     /// texture `name`, which no open document resolves either: there is no texture to load for it.
     pub(crate) fn held_by_no_pack(&self, doc: DocumentId, name: &str) -> Option<PathBuf> {
+        if self.document(doc).is_some_and(Document::is_from_rpf9_table) {
+            return None;
+        }
         let packs = &self.texture_packs;
         // ⚠ Another drawable's folder may be the one indexed now: its packs say nothing of this one's keys.
         let root = (packs.asked.get(&doc)?.as_ref()).filter(|r| packs.root.as_ref() == Some(r))?;

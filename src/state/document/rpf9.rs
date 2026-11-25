@@ -32,11 +32,12 @@ impl Node {
         chain: Vec<u32>,
         keys: &GtaViKeys,
         resolver: &NameResolver,
+        read_headers: bool,
     ) -> Result<Self, String> {
         let mut archive = open_at_bounded(file, extent.clone(), keys).map_err(|e| e.to_string())?;
         archive.resolve_names(resolver);
         let mut headers = BTreeMap::new();
-        for entry in &archive.entries {
+        for entry in archive.entries.iter().filter(|_| read_headers) {
             let Some(extra) = archive.entry_extra(entry.index as usize) else {
                 continue;
             };
@@ -137,12 +138,55 @@ impl Tree {
     }
 }
 
+#[derive(Clone)]
+struct TableContext {
+    keys: Arc<GtaViKeys>,
+    resolver: Arc<NameResolver>,
+}
+
+impl TableContext {
+    fn configured() -> Result<Self, String> {
+        let keys = GtaViKeys::for_install(or_title::config::config_dir().as_deref())
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| tr!("Opening a GTA VI archive requires gtavi_magic.dat in the configuration folder or OPENRAGE_GTA6_KEYS.").to_string())?;
+        Ok(Self {
+            keys: Arc::new(keys),
+            resolver: Arc::new(load_resolver()),
+        })
+    }
+}
+
+/// The configured keys and names shared by file roots of one catalog, loaded only after an RPF9 header is recognized.
+#[derive(Default)]
+pub(crate) struct MetadataOpener {
+    context: Option<Result<TableContext, String>>,
+}
+
+impl MetadataOpener {
+    pub fn open(&mut self, path: &Path) -> Result<Option<Rpf9TableDocument>, String> {
+        self.open_using(path, TableContext::configured)
+    }
+
+    fn open_using(
+        &mut self,
+        path: &Path,
+        context: impl FnOnce() -> Result<TableContext, String>,
+    ) -> Result<Option<Rpf9TableDocument>, String> {
+        Rpf9TableDocument::open_with_context(
+            path,
+            || self.context.get_or_insert_with(context).clone(),
+            false,
+        )
+    }
+}
+
 pub struct Rpf9TableDocument {
     pub path: PathBuf,
     keys: Arc<GtaViKeys>,
     resolver: Arc<NameResolver>,
     metadata: Metadata,
     tree: Arc<Mutex<Tree>>,
+    read_headers: bool,
 }
 
 impl std::fmt::Debug for Rpf9TableDocument {
@@ -156,16 +200,39 @@ impl std::fmt::Debug for Rpf9TableDocument {
 impl Rpf9TableDocument {
     /// Recognise RPF9 by its magic, then open its table or return the error without recovery.
     pub fn open(path: &Path) -> Result<Option<Self>, String> {
-        Self::open_using(path, || {
-            GtaViKeys::for_install(or_title::config::config_dir().as_deref())
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| tr!("Opening a GTA VI archive requires gtavi_magic.dat in the configuration folder or OPENRAGE_GTA6_KEYS.").to_string())
-        })
+        Self::open_with_context(path, TableContext::configured, true)
     }
 
+    #[cfg(test)]
     pub(crate) fn open_using(
         path: &Path,
         keys: impl FnOnce() -> Result<GtaViKeys, String>,
+    ) -> Result<Option<Self>, String> {
+        Self::open_with_headers(path, keys, true)
+    }
+
+    #[cfg(test)]
+    fn open_with_headers(
+        path: &Path,
+        keys: impl FnOnce() -> Result<GtaViKeys, String>,
+        read_headers: bool,
+    ) -> Result<Option<Self>, String> {
+        Self::open_with_context(
+            path,
+            || {
+                Ok(TableContext {
+                    keys: Arc::new(keys()?),
+                    resolver: Arc::new(load_resolver()),
+                })
+            },
+            read_headers,
+        )
+    }
+
+    fn open_with_context(
+        path: &Path,
+        context: impl FnOnce() -> Result<TableContext, String>,
+        read_headers: bool,
     ) -> Result<Option<Self>, String> {
         let mut file = File::open(path).map_err(|e| e.to_string())?;
         let mut magic = [0; 4];
@@ -176,9 +243,8 @@ impl Rpf9TableDocument {
         if magic != RPF9_MAGIC.to_le_bytes() {
             return Ok(None);
         }
-        let keys = Arc::new(keys()?);
+        let TableContext { keys, resolver } = context()?;
         let metadata = file.metadata().map_err(|e| e.to_string())?;
-        let resolver = Arc::new(load_resolver());
         let node = Node::open(
             &mut file,
             0..metadata.len(),
@@ -186,6 +252,7 @@ impl Rpf9TableDocument {
             Vec::new(),
             &keys,
             &resolver,
+            read_headers,
         )?;
         let mut tree = Tree::default();
         tree.nodes.insert(0, node);
@@ -195,7 +262,37 @@ impl Rpf9TableDocument {
             resolver,
             metadata,
             tree: Arc::new(Mutex::new(tree)),
+            read_headers,
         }))
+    }
+
+    /// Clone the root table into an independent metadata catalog whose children never change the UI's tree.
+    pub(crate) fn detached_metadata(&self) -> Result<Self, String> {
+        self.check_current()?;
+        let root = {
+            let tree = self.tree();
+            let root = tree
+                .nodes
+                .get(&0)
+                .ok_or_else(|| tr!("The archive table could not be loaded.").to_string())?;
+            Node {
+                archive: root.archive.clone(),
+                extent: root.extent.clone(),
+                depth: root.depth,
+                chain: root.chain.clone(),
+                headers: BTreeMap::new(),
+            }
+        };
+        let mut tree = Tree::default();
+        tree.nodes.insert(0, root);
+        Ok(Self {
+            path: self.path.clone(),
+            keys: Arc::clone(&self.keys),
+            resolver: Arc::clone(&self.resolver),
+            metadata: self.metadata.clone(),
+            tree: Arc::new(Mutex::new(tree)),
+            read_headers: false,
+        })
     }
 
     pub fn tree(&self) -> MutexGuard<'_, Tree> {
@@ -300,6 +397,7 @@ impl Rpf9TableDocument {
                 chain,
                 &self.keys,
                 &self.resolver,
+                self.read_headers,
             )?;
             check(&file)?;
             Ok(node)
@@ -369,6 +467,7 @@ impl Rpf9TableDocument {
             Arc::clone(&self.resolver),
             self.metadata.clone(),
         );
+        let read_headers = self.read_headers;
         tree.pending = Some(Pending { entry: key, result });
         std::thread::spawn(move || {
             let loaded = (|| {
@@ -380,7 +479,15 @@ impl Rpf9TableDocument {
                             .to_string(),
                     );
                 }
-                Node::open(&mut file, extent, depth, chain, &keys, &resolver)
+                Node::open(
+                    &mut file,
+                    extent,
+                    depth,
+                    chain,
+                    &keys,
+                    &resolver,
+                    read_headers,
+                )
             })();
             let _ = tx.send(loaded);
         });

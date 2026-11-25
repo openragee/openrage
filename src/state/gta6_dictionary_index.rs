@@ -171,10 +171,9 @@ impl AppState {
     pub fn try_open_texture_dictionary(&mut self) -> bool {
         if self
             .active_document()
-            .and_then(|doc| doc.path.as_deref())
-            .is_some_and(super::document::rpf9::entry::is_entry)
+            .is_some_and(super::Document::is_from_rpf9_table)
         {
-            return false;
+            return self.try_open_table_texture_dictionary();
         }
         if self.take_opened_dictionary() {
             return true;

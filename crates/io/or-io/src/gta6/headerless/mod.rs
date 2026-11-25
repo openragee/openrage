@@ -16,6 +16,7 @@ mod instances;
 mod navmesh;
 mod octree;
 mod particles;
+mod raw_drawable;
 mod skeleton;
 mod small;
 mod streams;
@@ -94,6 +95,7 @@ pub use particles::{
     BehaviourFields, DiffuseMode, EvolvedKeyframe, LightingMode, ProjectionMode, ShaderSwitch,
     Shading, COLOUR_RGBA_KFPS,
 };
+pub use raw_drawable::{raw_drawable_hint, RawDrawableHint};
 pub use skeleton::{read_dictionary_skeletons, read_skeleton, read_skeleton_at, Bone, Skeleton};
 pub use skeleton::{read_skeleton_of, SkeletonOwner};
 pub use small::{

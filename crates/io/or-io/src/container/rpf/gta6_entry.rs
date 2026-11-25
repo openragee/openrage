@@ -151,6 +151,11 @@ impl Gta6EntryRead {
         })
     }
 
+    /// The complete stored body length, including chunk padding and excluding the resource slot.
+    pub fn stored_len(&self) -> u64 {
+        self.extent.end - self.extent.start
+    }
+
     /// The complete decoded length stated by the row or its chunk descriptors.
     pub fn decoded_len(&self) -> u64 {
         self.real
@@ -166,6 +171,17 @@ impl Gta6EntryRead {
             return Ok(None);
         }
         stream::header(self, source, keys).map(Some)
+    }
+
+    /// Decode a bounded prefix using table instructions, without validating the unread tail.
+    pub fn read_prefix<R: Read + Seek>(
+        &self,
+        source: &mut R,
+        keys: &GtaViKeys,
+        count: usize,
+        input_limit: u64,
+    ) -> Result<Vec<u8>> {
+        stream::prefix(self, source, keys, count, input_limit)
     }
 
     /// Read the entry into memory using only its table's decoding instructions.
@@ -310,6 +326,44 @@ mod tests {
         };
         stored.resize(stored.len().next_multiple_of(16), 0);
         (stored, chunk)
+    }
+
+    #[test]
+    fn prefix_reads_stop_before_pixels_and_reject_their_input_budget() {
+        let bytes = vec![0x63; 512];
+        let read = plan(&entry(512, 512, 255), None).unwrap();
+        let mut src = source(&bytes);
+        src.allowed.end = src.allowed.start + 32;
+        assert_eq!(
+            read.read_prefix(&mut src, &keys(), 32, 32).unwrap(),
+            bytes[..32]
+        );
+        assert_eq!(src.source.position(), src.allowed.end);
+        assert!(read
+            .read_prefix(&mut source(&bytes), &keys(), 33, 32)
+            .is_err());
+        assert!(read
+            .read_prefix(&mut source(&bytes), &keys(), 513, 1024)
+            .is_err());
+
+        let (mut stored, first) = zlib(&vec![0x41; 96]);
+        let prefix_budget = stored.len() as u64;
+        stored.extend([0xff; 16]);
+        let chunks = [
+            first,
+            Chunk {
+                stored: 16,
+                inflated: 64,
+                zlib: true,
+            },
+        ];
+        let read = plan(&entry(stored.len() as u64, 160, 255), Some(&chunks)).unwrap();
+        assert_eq!(
+            read.read_prefix(&mut source(&stored), &keys(), 96, prefix_budget)
+                .unwrap(),
+            vec![0x41; 96]
+        );
+        assert!(read.read(&mut source(&stored), &keys()).is_err());
     }
 
     #[test]
@@ -567,6 +621,16 @@ mod tests {
                 .unwrap(),
             Some(expected[..16].try_into().unwrap())
         );
+        let prefix = plan(&row, Some(&[chunk])).unwrap();
+        assert_eq!(
+            prefix
+                .read_prefix(&mut source(&body), &keys, 17, body.len() as u64)
+                .unwrap(),
+            expected[..17]
+        );
+        assert!(prefix
+            .read_prefix(&mut source(&body), &keys, expected.len(), 15)
+            .is_err());
         let header = *b"ADAT0123456789ab";
         let mut encrypted = header;
         for (i, byte) in encrypted.iter_mut().enumerate() {
@@ -584,6 +648,16 @@ mod tests {
                 Some(header)
             );
         }
+        let prefix = plan(&raw, None).unwrap();
+        assert_eq!(
+            prefix
+                .read_prefix(&mut source(&encrypted), &keys, 7, 16)
+                .unwrap(),
+            header[..7]
+        );
+        assert!(prefix
+            .read_prefix(&mut source(&encrypted), &keys, 7, 15)
+            .is_err());
         row.cipher.as_mut().unwrap().cipher_type = 19;
         assert!(plan(&row, Some(&[chunk])).is_err());
         row.cipher.as_mut().unwrap().cipher_type = 17;

@@ -370,11 +370,7 @@ fn build(root: &Path, kept: Option<&Kept>) -> Index {
 /// index is read; `start` has a worker read one not asked for before.
 pub(crate) fn worn(state: &crate::state::AppState, start: bool) -> Option<(Arc<Index>, Material)> {
     let doc = state.active_document()?;
-    if doc
-        .path
-        .as_deref()
-        .is_some_and(crate::state::document::rpf9::entry::is_entry)
-    {
+    if doc.is_from_rpf9_table() {
         return None;
     }
     let crate::state::DocPayload::Gta6Drawable(resource) = &doc.payload else {

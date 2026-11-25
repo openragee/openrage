@@ -265,8 +265,7 @@ impl RenderBridge {
         };
         let table_entry = state
             .document(doc)
-            .and_then(|doc| doc.path.as_deref())
-            .is_some_and(crate::state::rpf9::entry::is_entry);
+            .is_some_and(crate::state::Document::is_from_rpf9_table);
         if !table_entry {
             gta6_shaders::request(hashes, install);
         }

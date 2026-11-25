@@ -187,6 +187,7 @@ impl AppState {
         // ⚠ Every open from disk comes through here: a dialog, a recent file, a
         // drop, the command line, a project and a walk.
         if let Some(open) = self.document_holding(&path, binding) {
+            self.auto_opened_texture_docs.remove(&open);
             self.bind_rpf9_document(open, binding);
             self.set_active_document(open);
             self.try_start_next_load();
@@ -217,7 +218,20 @@ impl AppState {
         let provider = self.keys.provider();
         self.tabs.arriving = binding;
         let path_clone = path.clone();
+        let texture_scope = self.rpf9_texture_scope(None);
         thread::spawn(move || {
+            let manual = context.is_none()
+                && kind == DocumentKind::Ydr
+                && !document::rpf9::entry::is_entry(&path_clone)
+                && super::rpf9_scan::scanned_body(&path_clone).is_none();
+            if manual {
+                let result = super::rpf9_loose::load(&path_clone, texture_scope, provider);
+                let _ = tx.send(result.unwrap_or_else(|message| LoadResult::Error {
+                    path: path_clone,
+                    message,
+                }));
+                return;
+            }
             let parsed = match context {
                 Some((table, _)) => {
                     document::rpf9::entry::read_path_with_table(&path_clone, &table)
@@ -339,6 +353,22 @@ impl AppState {
             None => return,
         };
         self.load_receiver = None;
+        let (source, result) = match result {
+            LoadResult::Rpf9Loose {
+                path,
+                payload,
+                source,
+            } => (
+                Some(source),
+                LoadResult::Success {
+                    path,
+                    payload,
+                    binding: None,
+                    resource: None,
+                },
+            ),
+            other => (None, other),
+        };
 
         match result {
             LoadResult::Success {
@@ -352,10 +382,12 @@ impl AppState {
                     tracing::debug!(path = %path.display(), "a preview replaced before it loaded");
                     None
                 } else if let Some(open) = self.document_holding(&path, binding) {
+                    self.auto_opened_texture_docs.remove(&open);
                     self.set_active_document(open);
                     Some(open)
                 } else {
-                    let id = self.insert_document(path, payload, binding, resource);
+                    let id =
+                        self.insert_document_with_source(path, payload, binding, resource, source);
                     tracing::info!(id, "Document loaded");
                     Some(id)
                 };
@@ -363,6 +395,7 @@ impl AppState {
                 let then = shown.map_or(Then::Nothing, Then::Show);
                 self.jobs.record(JobKind::Load, Outcome::Done(then), said);
             }
+            LoadResult::Rpf9Loose { .. } => unreachable!(),
             LoadResult::Error { path, message } => {
                 self.tabs.arrived(None, &path);
                 tracing::error!(path = %path.display(), error = %message, "Load failed");

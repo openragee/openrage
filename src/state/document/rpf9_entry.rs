@@ -172,6 +172,7 @@ fn read_chain(doc: &Rpf9TableDocument, chain: &[u32]) -> Result<EntrySource, Str
             chain,
             &doc.keys,
             &doc.resolver,
+            doc.read_headers,
         )?;
         tree.nodes.insert(base, node);
     }
@@ -192,7 +193,21 @@ impl EntrySource {
         self.bytes_limited(LIMIT)
     }
 
-    fn bytes_limited(&self, limit: u64) -> Result<Vec<u8>, String> {
+    pub(crate) fn stored_len(&self) -> u64 {
+        self.read.stored_len()
+    }
+
+    pub(crate) fn decoded_len(&self) -> u64 {
+        self.read.decoded_len()
+    }
+
+    pub(crate) fn section_lengths(&self) -> Option<(u32, u32)> {
+        self.extra
+            .nested
+            .map(|row| (row.virtual_size & !15, row.flags & !15))
+    }
+
+    pub(crate) fn bytes_limited(&self, limit: u64) -> Result<Vec<u8>, String> {
         let mut file = checked_file(&self.archive, &self.metadata)?;
         let bytes = self
             .read
@@ -212,29 +227,105 @@ impl EntrySource {
         Ok(count)
     }
 
+    pub(crate) fn texture_keys_limited(&self, limit: u64) -> Result<Vec<u64>, String> {
+        use or_io::container::rpf::{Rpf9Role, Rpf9Signature};
+        use or_io::gta6::{hash::name_hash64, headerless};
+
+        let row = self
+            .extra
+            .nested
+            .filter(|row| row.resource_type == 5)
+            .ok_or_else(|| preview_error("the table entry is not a texture dictionary"))?;
+        if Gta6EntryType::hint(&self.entry, &self.extra) != Gta6EntryType::TextureDictionary
+            || row.virtual_size & 15 != 0
+            || row.flags & 15 != 3
+        {
+            return Err(preview_error(
+                "the texture dictionary has conflicting rows or unsupported section flags",
+            ));
+        }
+        let virtual_len = u64::from(row.virtual_size & !15);
+        let physical_len = u64::from(row.flags & !15);
+        if virtual_len + physical_len != self.decoded_len() {
+            return Err(preview_error(
+                "the texture dictionary's section sizes do not match its decoded bytes",
+            ));
+        }
+        if virtual_len > limit {
+            return Err(preview_error(
+                "the texture dictionary's virtual section exceeds its byte budget",
+            ));
+        }
+        let count = usize::try_from(virtual_len)
+            .map_err(|_| preview_error("the virtual section exceeds addressable memory"))?;
+        let mut file = checked_file(&self.archive, &self.metadata)?;
+        let bytes = self
+            .read
+            .read_prefix(&mut file, &self.keys, count, 64 << 20)
+            .map_err(preview_error)?;
+        checked_file(&self.archive, &self.metadata)?;
+        if Rpf9Signature::of(&bytes, virtual_len).and_then(Rpf9Signature::role)
+            != Some(Rpf9Role::Dictionary)
+        {
+            return Err(preview_error(
+                "the texture dictionary's root is not a dictionary",
+            ));
+        }
+        let dictionary = headerless::read_dictionary(&bytes, None).map_err(preview_error)?;
+        dictionary
+            .entries
+            .into_iter()
+            .map(|(_, entry)| match entry.map_err(preview_error)? {
+                headerless::Entry::Texture(texture) => Ok(name_hash64(texture.name.as_bytes())),
+                _ => Err(preview_error("a texture dictionary entry is not a texture")),
+            })
+            .collect()
+    }
+
     pub(crate) fn payload(&self) -> Result<DocPayload, String> {
         self.payload_limited(LIMIT)
     }
 
     pub(crate) fn payload_limited(&self, limit: u64) -> Result<DocPayload, String> {
+        self.payload_from_read_at(&self.path, self.bytes_limited(limit))
+    }
+
+    pub(crate) fn payload_from_bytes_at(
+        &self,
+        path: &Path,
+        bytes: Vec<u8>,
+    ) -> Result<DocPayload, String> {
+        self.payload_from_read_at(path, Ok(bytes))
+    }
+
+    fn payload_from_read_at(
+        &self,
+        path: &Path,
+        bytes: Result<Vec<u8>, String>,
+    ) -> Result<DocPayload, String> {
         let result = (|| {
-            let bytes = self.bytes_limited(limit)?;
+            let bytes = bytes?;
+            checked_file(&self.archive, &self.metadata)?;
+            if bytes.len() as u64 != self.decoded_len() {
+                return Err(preview_error(
+                    "the entry's decoded length does not match its bytes",
+                ));
+            }
             let content = Gta6EntryContent::detect(&self.entry, &self.extra, &bytes)
                 .map_err(|e| e.to_string())?;
             let payload = if let Some(textures) = content.textures {
                 crate::state::ttpf_document::table_textures(textures)?
-            } else if let Some(payload) =
-                table_preview(&self.path, &self.entry, &self.extra, &bytes)?
-            {
+            } else if let Some(payload) = table_preview(path, &self.entry, &self.extra, &bytes)? {
                 payload
-            } else if DocumentKind::from_path(&self.path) == Some(DocumentKind::Text) {
-                crate::state::document_io::text_payload(&self.path, bytes)
+            } else if DocumentKind::from_path(path) == Some(DocumentKind::Text) {
+                crate::state::document_io::text_payload(path, bytes)
             } else {
                 DocPayload::Hex(super::super::HexDocument {
                     bytes,
                     banner: crate::i18n::tr(READ_ONLY).to_string(),
                 })
             };
+            checked_file(&self.archive, &self.metadata)?;
             Ok((content.kind, payload))
         })();
         let mut tree = self.tree.lock().unwrap_or_else(|p| p.into_inner());

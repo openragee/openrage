@@ -53,6 +53,7 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("apply-template") => crate::project_checks::apply_template(rest),
         Some("check-sharing") => crate::project_checks::check_sharing(rest),
         Some("check-original") => crate::project_checks::check_original(rest),
+        Some("check-resource") => crate::project_resource::check_resource(rest),
         Some("plan") => plan_of(rest),
         Some("build") => build_of(rest),
         Some("verify") => verify_of(rest),
@@ -105,6 +106,8 @@ const USAGE: &str = "Usage:\n  \
          openrage-cli project check-sharing  <project.openrage-proj> [--json]\n  \
          openrage-cli project check-original <project.openrage-proj> --game <install root>\n                                      \
          [--keys <file>] [--source <source folder>] [--json]\n  \
+         openrage-cli project check-resource <resource folder> [--game <install root>] [--keys <file>]\n                                      \
+         [--limits file_memory=<bytes>] [--json]\n  \
          openrage-cli project plan   <project.openrage-proj> [--build <id>] [--out <folder>]\n  \
          openrage-cli project build  <project.openrage-proj> [--build <id>] [--out <folder>]\n                              \
          [--shader-defs <json>] [--reproducible]\n  \
@@ -165,6 +168,23 @@ const USAGE: &str = "Usage:\n  \
          do not fail it, since Git never sees them. check-original reads the install --game names and says, for each source taken\n\
          from the game (or the one --source names), whether the game's file it was taken from is\n\
          still that file; it exits 1 where the file changed or is gone.\n\
+         check-resource reads any resource folder as a server will read it, whoever made it and with\n\
+         no project: its manifest (fxmanifest.lua, or the older __resource.lua), the files the manifest\n\
+         lists and its data-file lines name, and every file under stream/. It lists what its rules find,\n\
+         each with a code, a severity, the file and a sentence: no manifest; no version line; a file\n\
+         named and not there; a path that leaves the resource, which is reported and not followed; one\n\
+         file name twice under stream/; a file of a type a server does not stream; a streamed file that\n\
+         does not open through OpenRage's reader of its type, with the reader's error, or that is a\n\
+         map, a type file or a .ymt kept as text, which no game streams; a file over the\n\
+         ceiling --limits file_memory=<bytes> states for the streaming memory of one file (no file is\n\
+         weighed without it); maps and no this_is_a_map line; and the names nothing holds: the model\n\
+         or the texture dictionary of an archetype, and an archetype a map places. With --game the\n\
+         install is asked about a name the resource lacks, and without it those are notes. A file\n\
+         locked by a server's asset escrow is counted, named and not opened, as a note. A line of the\n\
+         manifest that is not a key followed by text or a table of text is a note, and the manifest\n\
+         is never run. It writes nothing and exits 1 when a finding is an error; --json prints the\n\
+         same findings as data. It cannot see whether the game loads a file, whether a server starts\n\
+         the resource, or what another resource of the server ships.\n\
          plan prints what a build will write, the budgets, what changed since the last\n\
          build and why it cannot be built, without writing. A build that declares\n\
          split and is over a ceiling divides at content boundaries into several\n\

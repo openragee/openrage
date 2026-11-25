@@ -63,6 +63,7 @@ OpenRage does not start or change your server. To use a build:
 - Copy the resource folder from `build/` into the `resources` folder of your server.
 - Add `ensure` and the resource name to `server.cfg`, then restart the resource.
 - Try it in the game. Whether the clothes load is for a run on your server to tell you.
+- A resource from somewhere else can be checked before you copy it. `openrage-cli project check-resource` and the folder reads it as a server will: its manifest, the files the manifest names and everything under `stream`. It lists what is wrong, such as a file the manifest names that is not there, the same file name twice or a file that does not open, and exits 1 when something is an error. It cannot tell you whether the game loads a file.
 
 ## Look at a game file
 

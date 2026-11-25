@@ -263,9 +263,17 @@ pack and reads `wardrobe.json` after each request.
 changes projects and writes builds, and every route of this protocol reads but the four that change a pack. Its
 verbs are `create`, `adopt`, `import`, `add-content`, `add-build`, `set-build`,
 `set-file-type`, `remove-build`, `link`, `unlink`, `links`, `template`,
-`apply-template`, `check-sharing`, `check-original`, `plan`, `build`, `verify`,
+`apply-template`, `check-sharing`, `check-original`, `check-resource`, `plan`, `build`, `verify`,
 `clean`, `redirects`, `history`, `rollback`, `remove` and `recook`; each
 exits 0, 1 for a refusal or a check that failed and 2 for a usage error.
+
+`check-resource` takes no project and makes none: it reads any resource folder as a server
+will read it (its manifest, the files the manifest names and every file under `stream/`), lists
+what its rules find as text or, with `--json`, as data (a code, a severity, the file and a
+sentence for each finding), and exits 1 when a finding is an error. `--game <install root>` asks
+the install about a name the folder lacks, and `--limits file_memory=<bytes>` states the ceiling
+for the streaming memory of one file; another figure is a usage error, since nothing would be
+weighed against it. It cannot see whether the game loads a file.
 
 A command that works on one build of a project names it with `--build <id>`.
 `--output <id>` is the older spelling of the same flag: it is still read, by

@@ -571,3 +571,64 @@ fn every_staged_manifest_of_the_game_is_written_back_stating_what_it_states() {
         "no staged manifest states nothing, so the join of two type tables went unexercised"
     );
 }
+
+/// ⚠ Needs an install (`OPENRAGE_GAME_ROOT`): the one place the check of a resource folder asks a mounted game about a name.
+#[test]
+fn a_resource_checked_with_an_install_asks_the_game_about_what_it_places_and_does_not_declare() {
+    const WHAT: &str = "project check-resource --game over an install";
+    let Some(root) = or_test_support::game_roots().into_iter().next() else {
+        or_test_support::skip_install(WHAT, "set OPENRAGE_GAME_ROOT to a GTA V install");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("bench");
+    std::fs::create_dir_all(folder.join("stream")).unwrap();
+    std::fs::write(
+        folder.join("fxmanifest.lua"),
+        "fx_version 'cerulean'\ngame 'gta5'\nthis_is_a_map 'yes'\n",
+    )
+    .unwrap();
+    // A bench the game declares, and a name nothing declares.
+    let map = map_file(
+        "bench",
+        &[
+            Entity::at("prop_bench_01a", [10.0, 20.0, 0.5], 1),
+            Entity::at("openrage_nobody_declares_this", [14.0, 20.0, 0.5], 2),
+        ],
+        ([8.0, 18.0, -1.0], [16.0, 22.0, 2.0]),
+    );
+    std::fs::write(folder.join("stream/bench.ymap"), map).unwrap();
+
+    let alone = or_cli::check_resource_folder(&folder, None, None, Default::default())
+        .expect("a folder is read");
+    let [note] = alone.findings.as_slice() else {
+        panic!("one note was expected: {:#?}", alone.findings);
+    };
+    assert_eq!(note.code, "archetype-undeclared");
+    assert!(
+        note.message.starts_with("2 archetype(s)"),
+        "{}",
+        note.message
+    );
+
+    let asked = match or_cli::check_resource_folder(&folder, Some(&root), None, Default::default())
+    {
+        Ok(report) => report,
+        Err(why) => {
+            or_test_support::skip_install(
+                WHAT,
+                format_args!("{} does not mount: {why}", root.display()),
+            );
+            return;
+        }
+    };
+    let [warning] = asked.findings.as_slice() else {
+        panic!("one warning was expected: {:#?}", asked.findings);
+    };
+    assert_eq!(warning.code, "archetype-missing");
+    assert!(
+        warning.message.starts_with("1 archetype(s)"),
+        "the game declares the bench and not the other: {}",
+        warning.message
+    );
+}

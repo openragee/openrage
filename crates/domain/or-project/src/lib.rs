@@ -31,6 +31,7 @@ pub mod plan;
 pub mod project;
 mod readers;
 pub mod reference;
+pub mod resource;
 pub mod sizes;
 pub mod snapshot;
 pub mod split;

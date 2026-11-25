@@ -11,7 +11,7 @@ use or_io::container::rpf::{
 use or_io::gta6::hash::{name_hash32, name_hash64};
 
 use super::*;
-use crate::state::{AppState, ToastType};
+use crate::state::AppState;
 
 const REGISTRY_ID: u64 = 0xDEAD_BEEF_0200_0000;
 const KEY_ID: u32 = 0xDEAD_BEEF;
@@ -326,10 +326,8 @@ fn the_open_of_an_archive_no_held_key_opens_stays_an_error() {
         "an unreadable table must not open as a scan"
     );
     state.poll_jobs();
-    assert!(state
-        .toasts
-        .iter()
-        .any(|t| t.toast_type == ToastType::Error));
+    assert!(state.show_error_dialog);
+    assert!(!state.error_dialog_message.is_empty());
 }
 
 fn row(name: Option<&str>, name64: u64, name32: Option<u32>, kind: TableKind) -> TableRow {

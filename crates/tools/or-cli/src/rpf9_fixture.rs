@@ -1,6 +1,7 @@
 //! An RPF9 archive laid out by hand and its table enciphered under a synthetic white-box key, so the
 //! verbs' tests read, extract and search an archive with no game byte in it.
 
+use or_io::container::rpf::gta6_chunk_table::{author, Chunk, Table};
 use or_io::container::rpf::{
     GtaViKeys, Rpf9Builder, Rpf9Toc, GROUP_CHUNK_RECORD, GROUP_CONTENT_HASH, GROUP_ENTRY_ROW,
     GROUP_NAME32, GROUP_NAME64, RPF9_MAGIC,
@@ -86,7 +87,7 @@ pub(super) fn keys() -> GtaViKeys {
 }
 
 /// An entry's body: raw bytes (class `0xFF`), bytes stored as one zlib stream at its best level,
-/// whose `78 DA` head the body reader finds (class `0xFF`), or a whole nested archive (class `0x00`).
+/// described by a mode-3 chunk table (class `0xFF`), or a whole nested archive (class `0x00`).
 pub(super) enum Body {
     Raw(Vec<u8>),
     Zlib(Vec<u8>),
@@ -114,18 +115,18 @@ fn put64(t: &mut [u8], at: usize, v: u64) {
 }
 
 /// An archive laid out by hand: a header, four descriptors (an index key, then stand-ins for types
-/// 5, 6 and 9) in 0x150 bytes of metadata, the columns row24, name64, name32 and an empty `0xe0c1` in
+/// 5, 6 and 9) in 0x150 bytes of metadata, the columns row24, name64, name32 and `0xe0c1` chunk records in
 /// the main region and `0xb6f5` external, bodies `GAP` apart, and a names heap. Each entry is named
 /// by the hashes of its path.
 pub(super) fn archive(entries: &[(&str, Body)]) -> Vec<u8> {
     let n = entries.len();
-    let stored: Vec<(u64, Vec<u8>, u64)> = entries
+    let stored: Vec<(u64, Vec<u8>, u64, Option<Chunk>)> = entries
         .iter()
         .map(|(_, body)| match body {
             Body::Raw(b) => {
                 let mut s = b.clone();
                 s.resize(round16(s.len()), 0);
-                (0xFF, s, b.len() as u64)
+                (0xFF, s, b.len() as u64, None)
             }
             Body::Zlib(b) => {
                 use std::io::Write;
@@ -133,18 +134,24 @@ pub(super) fn archive(entries: &[(&str, Body)]) -> Vec<u8> {
                     flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
                 z.write_all(b).expect("zlib into memory");
                 let mut s = z.finish().expect("zlib into memory");
+                let chunk = Chunk {
+                    inflated: u32::try_from(b.len()).unwrap(),
+                    stored: u32::try_from(s.len()).unwrap(),
+                    zlib: true,
+                };
                 s.resize(round16(s.len()), 0);
-                (0xFF, s, b.len() as u64)
+                (0xFF, s, b.len() as u64, Some(chunk))
             }
-            Body::Nested(b) => (0x00, b.clone(), b.len() as u64),
+            Body::Nested(b) => (0x00, b.clone(), b.len() as u64, None),
         })
         .collect();
     let groups_start = 0x1B0;
     let main_index = groups_start + 5 * 24;
     let main_start = round8(main_index + 4 * n);
     let (name64, name32, e0c1) = (24 * n, 32 * n, round8(36 * n));
-    let heap = round16(main_start + e0c1);
-    let split = round16(heap);
+    let chunk_count = stored.iter().filter(|s| s.3.is_some()).count();
+    let heap = main_start + e0c1 + 8 * chunk_count;
+    let split = round16(heap + 8 * chunk_count);
     let ext_start = round8(split + n);
     let toc_end = round16(ext_start + 8 * n);
 
@@ -184,7 +191,7 @@ pub(super) fn archive(entries: &[(&str, Body)]) -> Vec<u8> {
         (GROUP_ENTRY_ROW, n, 0, 24, 0),
         (GROUP_NAME64, n, name64, 8, 0),
         (GROUP_NAME32, n, name32, 4, 0),
-        (GROUP_CHUNK_RECORD, 0, e0c1, 8, 0),
+        (GROUP_CHUNK_RECORD, chunk_count, e0c1, 8, 0),
         (GROUP_CONTENT_HASH, n, 0, 8, 1),
     ];
     for (i, &(hash, count, offset, width, external)) in directory.iter().enumerate() {
@@ -197,7 +204,8 @@ pub(super) fn archive(entries: &[(&str, Body)]) -> Vec<u8> {
 
     let mut at = round16(toc_end + GAP);
     let mut starts = Vec::new();
-    for (i, ((name, _), (class, s, real))) in entries.iter().zip(&stored).enumerate() {
+    let mut chunk_index = 0;
+    for (i, ((name, _), (class, s, real, chunk))) in entries.iter().zip(&stored).enumerate() {
         let row = main_start + 24 * i;
         put64(&mut t, row, (class << 40) | (at as u64 / 16));
         put64(&mut t, row + 8, s.len() as u64 / 16);
@@ -214,7 +222,24 @@ pub(super) fn archive(entries: &[(&str, Body)]) -> Vec<u8> {
         );
         put64(&mut t, ext_start + 8 * i, HASH_BASE + i as u64);
         t[main_index + 4 * i..main_index + 4 * i + 3].fill(i as u8);
-        t[main_index + 4 * i + 3] = 0xFF;
+        t[main_index + 4 * i + 3] = if let Some(chunk) = chunk {
+            let cell = main_start + e0c1 + 8 * chunk_index;
+            let descriptor = heap + 8 * chunk_index;
+            let (word, chunks) = author(&Table {
+                mode: 3,
+                chunks: vec![*chunk],
+            })
+            .unwrap();
+            assert_eq!(chunks.len(), 1);
+            put32(&mut t, cell, u32::try_from(descriptor - cell).unwrap());
+            put32(&mut t, cell + 4, word);
+            put64(&mut t, descriptor, chunks[0]);
+            let index = u8::try_from(chunk_index).unwrap();
+            chunk_index += 1;
+            index
+        } else {
+            0xFF
+        };
         t[split + i] = i as u8;
         starts.push(at);
         at += s.len() + GAP;
@@ -230,7 +255,7 @@ pub(super) fn archive(entries: &[(&str, Body)]) -> Vec<u8> {
     let head = Rpf9Builder::serialize(&toc, &keys()).expect("the synthetic table enciphers");
     let mut file = vec![0u8; at + NAMES_HEAP];
     file[..head.len()].copy_from_slice(&head);
-    for (start, (_, s, _)) in starts.iter().zip(&stored) {
+    for (start, (_, s, _, _)) in starts.iter().zip(&stored) {
         file[*start..*start + s.len()].copy_from_slice(s);
     }
     file[at..].fill(0x5A);

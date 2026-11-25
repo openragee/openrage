@@ -475,8 +475,9 @@ WGSL of one's own in place of the translated one, such as one
 value, `record=FILE` draws with the bytes of FILE as the record a material's
 texture numbers head, whose other bytes only the game fills, `plain-device`
 asks the device for no optional feature and no raised limit, and `unguarded` has the
-binder let through a stage whose loop counts up to a number only the game fills, after
-which no pass is built but on a software adapter. `Aids` in `crates/runtime/or-renderer/src/game_shaders/meshlets.rs` reads it.
+binder let through a stage whose loop counts up to a number only the game fills, or
+which picks a resource by one that the heap does not give, after which no pass is built
+but on a software adapter. `Aids` in `crates/runtime/or-renderer/src/game_shaders/meshlets.rs` reads it.
 
 ⚠ A translated program that never ends resets the display driver of a hardware
 adapter. `OPENRAGE_SOFTWARE_ADAPTER=1` draws a script, a self-check and the

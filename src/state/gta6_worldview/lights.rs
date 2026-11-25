@@ -18,6 +18,7 @@ use or_io::gta6::map::lights::{self as effects, LightOwner, Pose};
 use or_io::gta6::map::{self, MapBody};
 use or_io::meta::binary::rbm::schema::RbmModel;
 use or_renderer::game_shaders::distant_lights::SpriteLook;
+use or_renderer::world::light_math::{in_day_cap, light_in_day_reach, DAY_RANGE_CAP};
 
 use super::index::{Enabled, WorldIndex};
 use super::interior::{self, RoomsSeen};
@@ -225,8 +226,8 @@ pub struct Lights {
     inside: Vec<(Lamp, [u32; 3])>,
     /// The lamps last chosen to be drawn as volumes, with what they were chosen for; none once the lamps change.
     chosen: Option<Choice>,
-    /// The distant lights' sprites as last worked out, and the eye they were for; none once the lamps change.
-    sprites: Option<(Vec3, Arc<[or_renderer::DistantLight]>)>,
+    /// The distant lights' sprites as last worked out, and the eye and the day's cap they were for; none once the lamps change.
+    sprites: Option<(Vec3, bool, Arc<[or_renderer::DistantLight]>)>,
 }
 
 /// The lamps chosen to be drawn as volumes, and the eye, the way it looked, the hour, the most and the rooms seen they were chosen for.
@@ -237,6 +238,12 @@ struct Choice {
     most: usize,
     rooms: u32,
     chosen: Vec<Chosen>,
+}
+
+/// The day's phase at `hour` (0 to 24) as the lights' cap by day reads it, 0.25 at sunrise and 0.5 at noon.
+// ponytail: the clock stands in for the phase the sun's rise, noon and set make of it, which the day's own frame would give.
+fn day_phase(hour: f32) -> f64 {
+    f64::from(hour.rem_euclid(24.0)) / 24.0
 }
 
 /// How far the camera turns before the lamps are chosen again, in degrees: the cone they are chosen in is as much wider than the view.
@@ -429,8 +436,9 @@ impl Lights {
         if !fresh {
             self.chosen = Some(self.choose(view, hour, most, rooms));
         }
-        // ⚠ Worked out over every distant light of the maps loaded, which are many: only when the eye moves or the lamps change.
-        if self.sprites.as_ref().is_none_or(|(at, _)| *at != view.eye) {
+        let capped = in_day_cap(day_phase(hour));
+        // ⚠ Worked out over every distant light of the maps loaded, which are many: only when the eye moves, the day's cap comes or goes, or the lamps change.
+        if (self.sprites.as_ref()).is_none_or(|(at, was, _)| *at != view.eye || *was != capped) {
             // A distant list's lights point the way the level-of-detail lights of the map that names it as parent do.
             let ways: HashMap<u32, &[[f32; 3]]> = (self.loaded.values())
                 .filter(|m| m.parent != 0)
@@ -440,8 +448,11 @@ impl Lights {
                 let way = ways.get(name).copied();
                 (m.lod.distant.as_slice(), m.lod.category, way)
             });
-            let sprites = lights_distant::sprites(lists, view.eye, &self.distant_reach);
-            self.sprites = Some((view.eye, sprites.into()));
+            let mut sprites = lights_distant::sprites(lists, view.eye, &self.distant_reach);
+            if capped {
+                sprites.retain(|s| s.position.distance(view.eye) <= DAY_RANGE_CAP);
+            }
+            self.sprites = Some((view.eye, capped, sprites.into()));
         }
         let chosen = self
             .chosen
@@ -452,7 +463,7 @@ impl Lights {
         nearest_lamps(&mut out.lamps, view.eye);
         // The frame's units for a radiance are the stated ones times the exposure, which `scale` holds over pi.
         let exposure = scale * PI;
-        if let Some((_, sprites)) = &self.sprites {
+        if let Some((_, _, sprites)) = &self.sprites {
             out.sprites = Arc::clone(sprites);
         }
         out.sprite_look = SpriteLook {
@@ -474,7 +485,11 @@ impl Lights {
     fn choose(&self, view: &View, hour: f32, most: usize, rooms: &RoomsSeen) -> Choice {
         let (eye, forward) = (view.eye, view.forward);
         let wide = (view.tan_half * WIDEST.hypot(1.0)).atan() + TURN.to_radians();
+        let phase = day_phase(hour);
         let seen = |p: Vec3, radius: f32| {
+            if !light_in_day_reach(p, eye, phase) {
+                return false;
+            }
             let toward = p - eye;
             let d = toward.length();
             // Within a sphere about the axis of the cone that holds it, by the angle the sphere spans.

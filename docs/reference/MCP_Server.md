@@ -112,6 +112,12 @@ from `COMMANDS` in `crates/tools/or-cli/src/lib.rs`, so a new command is
 offered without a change to the server; `["help"]` says what each does and
 `[COMMAND, "--help"]` gives its usage.
 
+A compiled GTA VI script decompiles to more than an answer keeps, so it is read
+a function at a time: `["script", "list", ARCHIVE]` names the programs of an
+archive, `["script", FILE, "--functions", "--json"]` the functions of one, and
+`["script", "decompile", FILE, "--function", NAME]` writes one of them, or the
+whole program to a file with `-o`. No tool of its own is offered for a script.
+
 ### `shots`
 
 `steps` is a script of

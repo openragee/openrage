@@ -367,6 +367,7 @@ pub fn day_of_moment(
             tables.latitude(eye.y),
         )),
         maps: super::sky_night::maps(),
+        stars: None,
     };
     let post = post_of(&|name, default| visual.get_f32(name, default), &moment.own);
     Day {
@@ -458,6 +459,7 @@ fn post_of(
             gamma: visual("temporalaa.varianceGammaMin", 1.25),
         },
         sharpen: visual("sharpen.intensity", 0.15),
+        grade: or_renderer::game_shaders::grade::Grade::of(&get),
     }
 }
 

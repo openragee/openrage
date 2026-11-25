@@ -30,6 +30,8 @@ pub(super) struct Pipelines {
     pub(super) gbuffer: ByBucket,
     /// Over the frame the game's passes lit, whose depth is only read: the back faces, then the front faces.
     pub(super) lit: [ByBucket; 2],
+    /// A material's own light, added over the lit frame where its surface lies.
+    pub(super) glow: ByBucket,
     /// Into a tile of the map the sun's shadow is cast into.
     pub(super) cast: ByBucket,
 }
@@ -67,6 +69,16 @@ const PREMULTIPLIED_KEEPING_ALPHA: wgpu::BlendState = wgpu::BlendState {
     color: wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
         dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: OVER_KEEPING_ALPHA.alpha,
+};
+
+/// Added to what is there, keeping the alpha that was there.
+const ADDED_KEEPING_ALPHA: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
         operation: wgpu::BlendOperation::Add,
     },
     alpha: OVER_KEEPING_ALPHA.alpha,
@@ -262,6 +274,20 @@ impl Pipelines {
             lit_faces("viewport-world-lit-front-pipeline", wgpu::Face::Back),
         ];
 
+        // On the surface the G-buffer pass laid, which passes the depth test it wrote
+        let glowing = |label: &str, fragment: &str| {
+            let depth = frame(false, untouched(), level());
+            let added = [target(HDR_FORMAT, Some(ADDED_KEEPING_ALPHA), all)];
+            Some(build(label, &viewed, ("vs_main", fragment), &added, depth))
+        };
+        let glow = [
+            glowing("viewport-world-glow-pipeline", "fs_glow"),
+            glowing("viewport-world-glow-cutout-pipeline", "fs_glow_cutout"),
+            glowing("viewport-world-glow-emissive-pipeline", "fs_glow"),
+            None,
+            None,
+        ];
+
         // A tile of the map: the nearer the sun a surface the less its depth, and no colour is written
         let tile = || wgpu::DepthStencilState {
             format: MAP_FORMAT,
@@ -291,6 +317,7 @@ impl Pipelines {
             forward,
             gbuffer,
             lit,
+            glow,
             cast,
         }
     }

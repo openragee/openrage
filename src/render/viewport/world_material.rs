@@ -138,7 +138,12 @@ pub(super) fn constants_of(material: &CpuMaterial) -> WorldConstants {
         constants.interior_plane = interior.plane_of;
         constants.interior_glass = interior.glass;
         let [most, slant, glow] = interior.slant;
-        constants.interior_slant = [most, slant, glow, 0.0];
+        constants.interior_slant = [most, slant, glow, interior.veil.unwrap_or(0.0)];
+        constants.flags |= flag(interior.veil.is_some(), WorldConstants::VEIL)
+            | flag(
+                interior.veil.is_some() && interior.veil_bares,
+                WorldConstants::VEIL_BARES,
+            );
     }
     constants
 }
@@ -245,6 +250,8 @@ mod tests {
             plane_of: [1.0, 0.2, 2.0, 7.0],
             glass: [15.0, 12.5, 12.5, 0.02],
             slant: [0.04, 0.5, 1.0],
+            veil: Some(0.75),
+            veil_bares: true,
         };
         let material = CpuMaterial {
             family: Family::TwoLayer,
@@ -260,9 +267,20 @@ mod tests {
         let constants = constants_of(&material);
         let both = WorldConstants::INTERIOR | WorldConstants::ROOM_BY_VERTEX;
         assert_eq!(constants.flags & both, both);
+        let veiled = WorldConstants::VEIL | WorldConstants::VEIL_BARES;
+        assert_eq!(constants.flags & veiled, veiled);
         assert_eq!(constants.interior_room, interior.size);
         assert_eq!(constants.interior_glass, interior.glass);
-        assert_eq!(constants.interior_slant, [0.04, 0.5, 1.0, 0.0]);
+        assert_eq!(constants.interior_slant, [0.04, 0.5, 1.0, 0.75]);
+        // No veil, no veil's flags, whatever the curtain words say
+        let unveiled = CpuMaterial {
+            interior: Some(Interior {
+                veil: None,
+                ..interior
+            }),
+            ..material.clone()
+        };
+        assert_eq!(constants_of(&unveiled).flags & veiled, 0);
         // A two-layer material with no room leaves those slots to no map and sets neither flag
         let plain = CpuMaterial {
             interior: None,

@@ -321,6 +321,8 @@ struct DeferredFrame {
     meter: meter::Meter,
     /// GTA VI's passes after the frame is lit, which a day that states them is drawn through.
     post: post::Post,
+    /// GTA VI's colour grade over the lit frame.
+    grade: crate::game_shaders::grade::GradePass,
 }
 
 /// A pass over `colour` that reads the depth and the stencil of the frame and writes neither, as the lighting, the sky and what blends are drawn: `stencil` says what it does with the stencil where it marks it.

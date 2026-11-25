@@ -38,6 +38,8 @@ struct Water {
     bounds: vec4<f32>,
     // The height of the sea past the quads, and in `y` one where it is drawn.
     sea: vec4<f32>,
+    // Where the quads are drawn about, and in `z` how far from it: past that the sea runs on inside the bounds too.
+    drawn: vec4<f32>,
     fog: array<vec4<f32>, 5>,
     fog_colour: array<vec4<f32>, 4>,
     // Each wave's number a metre along x and y, its height and its phase.
@@ -301,7 +303,9 @@ fn shade(world: vec3<f32>, pixel: vec2<f32>, ground_depth: f32, view_depth: f32)
     if (deviation > 1e-3) {
         points = 3;
     }
-    let jitter = fract(52.9829189 * fract(dot(pixel, vec2<f32>(0.06711056, 0.00583715))));
+    // The place steps on by the golden ratio with the world's clock, a frame at a time, so that the history averages it rather than showing it as a fixed cross-hatch.
+    let step = floor(light.frame.w * 60.0) * 0.618034;
+    let jitter = fract(52.9829189 * fract(dot(pixel, vec2<f32>(0.06711056, 0.00583715))) + step);
     var fresnel = 0.0;
     var reflected = vec3<f32>(0.0);
     var weights = 0.0;
@@ -390,7 +394,9 @@ fn fs_sea(in: SeaVs) -> SeaOut {
     let above = eye.z - water.sea.x;
     let t = min(above / max(-d.z, 1e-6), 1e6);
     let hit = eye + d * t;
-    let inside = all(hit.xy >= water.bounds.xy) && all(hit.xy <= water.bounds.zw);
+    // ⚠ The bounds hold every quad of the level, but only those within reach are drawn: past the reach the bounds hold no water.
+    let inside = all(hit.xy >= water.bounds.xy) && all(hit.xy <= water.bounds.zw)
+        && distance(hit.xy, water.drawn.xy) < water.drawn.z;
     let clip = camera.view_proj * vec4<f32>(hit, 1.0);
     var out: SeaOut;
     // ⚠ Past the frame's far plane the sea still runs on: its depth is held at the far plane's, where only the sky is.

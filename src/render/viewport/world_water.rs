@@ -97,6 +97,10 @@ impl Water {
                 look.albedo =
                     std::array::from_fn(|c| (scattering[c] / extinction[c].max(1e-6)).min(1.0));
             }
+            // The mesh holds the quads within reach of where it was built; the sea runs on past them.
+            if let Some(sea) = &mut look.sea {
+                sea.drawn = [eye.x, eye.y, REACH];
+            }
             look
         });
         renderer.set_world_water(device, look.map(|look| (&vertices[..], &indices[..], look)));

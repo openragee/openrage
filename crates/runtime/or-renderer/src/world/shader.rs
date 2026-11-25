@@ -108,6 +108,9 @@ const VERTEX_OVER_TINT: u32 = 512u;
 const TINT_MASKED: u32 = 1024u;
 const INTERIOR: u32 = 2048u;
 const ROOM_BY_VERTEX: u32 = 4096u;
+const GLOWS: u32 = 8192u;
+const VEIL: u32 = 16384u;
+const VEIL_BARES: u32 = 32768u;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -126,8 +129,9 @@ struct VsIn {
     @location(11) cast_only: f32,
 };
 
+// ⚠ A surface's own light is drawn a second time over the lit frame, tested against the depth its first draw wrote: both draws must place it exactly alike.
 struct VsOut {
-    @builtin(position) clip_pos: vec4<f32>,
+    @builtin(position) @invariant clip_pos: vec4<f32>,
     @location(0) world_normal: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) colour: vec4<f32>,
@@ -701,7 +705,11 @@ fn surface_of(in: VsOut, front_facing: bool) -> Surface {
 // The interior effect's window: how much of the room the two layers' alphas let be seen, the glass's absorption by how far the view crosses it, the room through it over the layers as the glass's open share, and the room's light through the glass by its emissive map at this hour.
 fn behind_glass(s: ptr<function, Surface>, maps: Maps, in: VsOut, across: vec3<f32>, up: vec3<f32>, rooms: f32) {
     let room = room_behind(in, across, up, rooms);
-    let shows = clamp(1.0 - maps.c0.a, 0.0, 1.0) * pow(clamp(1.0 - 1.186 * (maps.c1.a - 0.15686), 0.0, 1.0), 3.0);
+    // A pane the first layer covers takes the veil's way where the material states one: its room shows whatever the curtain layer holds, where the effect's words allow it, and lets through only a share of its light.
+    let veiled = maps.c0.a > 0.05 && (m.flags & VEIL) != 0u;
+    let curtain = pow(clamp(1.0 - 1.186 * (maps.c1.a - 0.15686), 0.0, 1.0), 3.0);
+    let shows = clamp(1.0 - maps.c0.a, 0.0, 1.0) * select(curtain, 1.0, veiled && (m.flags & VEIL_BARES) != 0u);
+    let let_through = select(1.0, m.interior_slant.w * 0.1 * (1.0 - clamp(1.186 * (maps.c0.a - 0.15686), 0.0, 1.0)), veiled);
     let n = normalize(in.world_normal);
     let facing = max(abs(dot(n, normalize(camera.camera_pos_ws.xyz - in.world_pos))), 1e-4);
     let thin = m.interior_glass.w;
@@ -710,7 +718,7 @@ fn behind_glass(s: ptr<function, Surface>, maps: Maps, in: VsOut, across: vec3<f
     let layer = (*s).albedo;
     (*s).albedo = mix(layer, through * mix(layer, room.seen, shows), 1.0 - maps.c1.a);
     let own = clamp(1.2439 * (maps.c0.a - 0.19607), 0.0, 1.0);
-    (*s).emissive = emissive_strength() * maps.a3.rgb * through * room.light * mix(room.colour, layer, own) * shows;
+    (*s).emissive = emissive_strength() * maps.a3.rgb * through * room.light * mix(room.colour, layer, own) * shows * let_through;
 }
 
 // The colour the diffuse light multiplies: the albedo less what its metal turns to reflection.
@@ -844,6 +852,10 @@ fn gbuffer(in: VsOut, front_facing: bool, cut: f32) -> GBufferOut {
     if (dropped(in, select(s.coverage, cut_coverage(in), cut >= CUTOUT_ALPHA), cut)) {
         discard;
     }
+    // Its own light is added over the lit frame by `glow`, whole.
+    if ((m.flags & GLOWS) != 0u) {
+        s.emissive = vec3<f32>(0.0);
+    }
     // ponytail: the forward lobe is the surface's own light, so no shadow falls on it; a pass of the viewer's own over the trees' stencil, after the sun's shadow, if leaves in shade show it.
     if (s.translucency > 0.0) {
         let view_dir = normalize(camera.camera_pos_ws.xyz - in.world_pos);
@@ -866,6 +878,25 @@ fn fs_gbuffer_cutout(in: VsOut, @builtin(front_facing) front_facing: bool) -> GB
 @fragment
 fn fs_gbuffer_emissive(in: VsOut, @builtin(front_facing) front_facing: bool) -> GBufferOut {
     return gbuffer(in, front_facing, 0.0);
+}
+
+// The light a material of `GLOWS` gives, added over the frame the passes lit, as the game adds its emissive target: the G-buffer's word holds at most a few times the surface's colour, and a lit room behind dark glass gives far more.
+fn glow(in: VsOut, front_facing: bool, cut: f32) -> vec4<f32> {
+    let s = surface_of(in, front_facing);
+    if (dropped(in, select(s.coverage, cut_coverage(in), cut >= CUTOUT_ALPHA), cut)) {
+        discard;
+    }
+    return vec4<f32>(s.emissive, 0.0);
+}
+
+@fragment
+fn fs_glow(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    return glow(in, front_facing, 0.0);
+}
+
+@fragment
+fn fs_glow_cutout(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    return glow(in, front_facing, CUTOUT_ALPHA);
 }
 
 // A decal is blended onto what the G-buffer holds: each target it writes takes its coverage times its own opacity as the alpha it is blended by, and the pipeline keeps the alpha that was there.

@@ -70,6 +70,10 @@ pub struct Interior {
     pub glass: [f32; 4],
     /// The most the glass is thick seen aslant, how much of that slant it takes, and how much light the back plane gives.
     pub slant: [f32; 3],
+    /// Where the first layer covers a pane, the share of the room's light let through it, before a tenth of what the layer leaves; none where the effect does not take that way.
+    pub veil: Option<f32>,
+    /// With a veil, a pane the first layer covers shows its room whatever the curtain layer holds.
+    pub veil_bares: bool,
 }
 
 /// The constants a material's arithmetic reads: its own, or where it states none the default.
@@ -383,6 +387,10 @@ const GLASS_MOST: u32 = 0x5775_351A;
 const GLASS_SLANT: u32 = 0x4C84_4830;
 /// How much light the back plane gives.
 const PLANE_GLOW: u32 = 0xE71D_FB5F;
+/// The switch of the way a pane the first layer covers takes, the two words that, both one, keep the curtain layer hiding the room there, and the share of the room's light let through.
+const VEIL: u32 = 0xFCB8_B63C;
+const VEIL_KEEPS: [u32; 2] = [0x0B9B_B32C, 0x098D_B623];
+const VEIL_LIGHT: u32 = 0x4C9A_8B79;
 
 /// A shader's records and constants, by the hash its drawable states for each.
 struct Records<'a>(&'a Shader);
@@ -548,6 +556,7 @@ fn interior_of(r: &Records) -> Option<Interior> {
     }
     let [depth, width, height, up, across] = ROOM_SIZE.map(|hash| r.float(hash, 1.0));
     let [k_r, k_g, k_b] = r.floats(GLASS_ABSORPTION, [0.0; 3]);
+    let veil = (r.float(VEIL, 0.0) == 1.0).then(|| r.float(VEIL_LIGHT, 1.0));
     Some(Interior {
         room: r.key(ROOM_CUBE),
         light: r.key(ROOM_LIGHT),
@@ -567,6 +576,8 @@ fn interior_of(r: &Records) -> Option<Interior> {
             r.float(GLASS_SLANT, 0.0).abs(),
             r.float(PLANE_GLOW, 0.0),
         ],
+        veil,
+        veil_bares: VEIL_KEEPS.iter().any(|hash| r.float(*hash, 0.0) != 1.0),
     })
 }
 

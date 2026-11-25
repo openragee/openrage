@@ -633,7 +633,13 @@ impl Viewer {
         let scale = sky::scale_of(moment.as_ref());
         let day = (tables.as_ref())
             .zip(moment)
-            .map(|(tables, moment)| sky::day_of_moment(tables, moment, (hour, days), weather, eye));
+            .map(|(tables, moment)| sky::day_of_moment(tables, moment, (hour, days), weather, eye))
+            .map(|mut day| {
+                if let (Some(view), Some(root)) = (day.sky_view.as_mut(), self.root.as_deref()) {
+                    view.stars = sky_night::stars(root);
+                }
+                day
+            });
         self.day_took = started.elapsed();
         if let (Some(tables), Some(world)) = (&tables, &self.world) {
             world.set_fade(stream::fade_of(&tables.visual_settings));

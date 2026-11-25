@@ -328,6 +328,8 @@ pub struct Gta6Post {
     pub temporal: Temporal,
     /// How much of the difference from its four neighbours a pixel of the mapped frame is pushed by.
     pub sharpen: f32,
+    /// The moment's colour grade.
+    pub grade: super::grade::Grade,
 }
 
 /// GTA VI's per-pixel exposure: the stops its curve gives the luminance about a pixel, of which `amount` takes the place of the frame's.

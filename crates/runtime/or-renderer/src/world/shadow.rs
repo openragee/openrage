@@ -149,6 +149,12 @@ impl Cascades {
         }
     }
 
+    /// How whole the cascades' shadow is at a distance ahead: that distance times the first plus the second, whole at one and more, gone at nought.
+    pub(crate) fn fade(&self) -> [f32; 2] {
+        let over = (self.far * FADE).max(1e-3);
+        [-1.0 / over, self.far / over]
+    }
+
     /// The variables the receiving pass reads of the shadow for a viewer at `eye`: what one fit gives, with each cascade's own tile, the one depth of them all, and a fade to no shadow at the end of the reach.
     pub(crate) fn values(&self, eye: Vec3) -> BTreeMap<&'static str, Vec<f32>> {
         let tiles = self.fits.map(|fit| tile_of(&fit, eye));
@@ -173,9 +179,7 @@ impl Cascades {
                 }
             }
         }
-        // The shadow is whole where a distance ahead times the first of these plus the second is one or more, and gone where it is nought
-        let over = (self.far * FADE).max(1e-3);
-        for (at, word) in [(3, -1.0 / over), (7, self.far / over)] {
+        for (at, word) in [3, 7].into_iter().zip(self.fade()) {
             if let Some(place) = shared.get_mut(at) {
                 *place = word;
             }
@@ -290,6 +294,7 @@ impl Casting {
         // ⚠ The buffer is no larger than the device allows: what does not fit in it casts nothing.
         let instance = std::mem::size_of::<WorldInstance>() as u64;
         let most = (self.instances.as_ref()).map_or(0, |buffer| buffer.size() / instance) as usize;
+        let mut left = 0usize;
         for (cascade, view) in views.iter().enumerate() {
             let ranges = &mut self.ranges[cascade];
             ranges.clear();
@@ -300,11 +305,13 @@ impl Casting {
                         let sphere = frame.spheres.get(at as usize);
                         let near = |s: &[f32; 4]| reaches(view, Vec3::new(s[0], s[1], s[2]), s[3]);
                         let room = self.laid.len() < most;
-                        if let (true, Some(instance)) = (
-                            room && sphere.is_none_or(near),
-                            frame.instances.get(at as usize),
-                        ) {
-                            self.laid.push(*instance);
+                        if let (true, Some(instance)) =
+                            (sphere.is_none_or(near), frame.instances.get(at as usize))
+                        {
+                            match room {
+                                true => self.laid.push(*instance),
+                                false => left += 1,
+                            }
                         }
                     }
                 }
@@ -326,6 +333,12 @@ impl Casting {
                 of.is_some_and(|of| of.iter().any(|range| !range.is_empty()))
             };
             self.batches[cascade] = frame.batches.iter().filter(draws_any).cloned().collect();
+        }
+        if left > 0 {
+            tracing::warn!(
+                left,
+                "the sun's shadow casts no more instances than the device's largest buffer holds: the rest cast none this frame"
+            );
         }
         if let (Some(buffer), false) = (&self.instances, self.laid.is_empty()) {
             queue.write_buffer(buffer, 0, bytemuck::cast_slice(&self.laid));

@@ -675,6 +675,23 @@ impl ViewportRenderer {
                 .record_shadow_receive(encoder, &deferred.gbuffer, &self.depth_view);
             self.gpu_mark(encoder, "shadows");
         }
+        // Past the cascades the terrain alone shades, as the game's frame does.
+        if let (Some(terrain), true) = (&self.world.terrain, self.shadows) {
+            let fade = (cascades.as_ref()).map_or([0.0; 2], |c| c.fade());
+            let day = |name: &str, default: f32| {
+                (self.day.as_ref()).map_or(default, |day| day.keyframe.get_or(name, default))
+            };
+            terrain.record(
+                queue,
+                encoder,
+                &engine,
+                (&self.bind_group, &self.depth_view),
+                deferred.gbuffer.self_shadows(),
+                (fade, &day),
+                (self.width, self.height),
+            );
+            self.gpu_mark(encoder, "terrain shadow");
+        }
         // Water reads how far the opaque surfaces lie, where the pass that works that out has no occlusion to give
         let refracts = self.refracts || self.world.water.drawn();
         if self.world.water.drawn() {

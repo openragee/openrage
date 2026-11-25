@@ -574,7 +574,7 @@ fn meshes_that_are_ranges_of_one_pair_of_buffers_draw_their_own_range_and_go_out
     ignore = "needs a GPU adapter: acquisition can hang, not just fail"
 )]
 #[test]
-fn a_frame_of_more_instances_than_the_device_s_largest_buffer_holds_draws_what_fits_and_is_accepted(
+fn a_frame_of_more_instances_than_the_device_s_largest_buffer_holds_draws_every_one_and_is_accepted(
 ) {
     let test = "a_frame_of_more_instances_than_the_device_s_largest_buffer_holds";
     if gpu(test).is_none() {
@@ -596,7 +596,8 @@ fn a_frame_of_more_instances_than_the_device_s_largest_buffer_holds_draws_what_f
     let mut renderer =
         ViewportRenderer::new(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, SIZE, SIZE);
     let fit = most as usize / std::mem::size_of::<WorldInstance>();
-    let instances = vec![WorldInstance::of(Mat4::IDENTITY, WHITE); 2 * fit];
+    // Two buffers and a part of a third.
+    let instances = vec![WorldInstance::of(Mat4::IDENTITY, WHITE); 2 * fit + fit / 2];
     let square = square(&device, 1.0, plain(&device, &renderer, WorldBucket::Opaque));
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
     renderer.set_world(
@@ -619,7 +620,17 @@ fn a_frame_of_more_instances_than_the_device_s_largest_buffer_holds_draws_what_f
         pollster::block_on(validation.pop()).is_none(),
         "the device accepted every buffer and draw"
     );
-    assert_eq!(renderer.world_instances() as usize, fit);
+    assert_eq!(renderer.world_instances() as usize, instances.len());
+    let calls = renderer.world_calls();
+    assert_eq!(
+        calls.draws, 3,
+        "the one run is cut at the end of each buffer"
+    );
+    assert_eq!(
+        calls.triangles,
+        2 * instances.len() as u64,
+        "every instance draws"
+    );
 }
 
 #[cfg_attr(

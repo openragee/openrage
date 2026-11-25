@@ -16849,8 +16849,8 @@ msgstr "読み込み中：{what}"
 msgid "the ground and fog under the water"
 msgstr "水中の地面と霧"
 
-msgid "The level from above: the brighter, the more maps; click to look over a place"
-msgstr "上から見たレベル：明るいほどマップが多い。クリックすると場所を見渡します"
+msgid "The level from above: the water, the land by its height, and the brighter, the more maps; click to look over a place"
+msgstr "上から見たレベル：水、高さで示した陸地、明るいほど多くのマップ。クリックするとその場所を見ます"
 
 msgid "Click to look north over a place, from 250 m south of it"
 msgstr "クリックすると、その場所の 250 m 南から北向きに見渡します"
@@ -17033,3 +17033,9 @@ msgstr "下位の詳細レベルも置き換える"
 
 msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
 msgstr "オフの場合、メッシュがジオメトリを指定していない詳細レベルはモデルのまま残ります。オンの場合、そのような各ジオメトリは、両者が同じシェーダーで描画される場所で、そのモデルと位置にレベル 0 のメッシュを使います。"
+
+msgid "In {place}"
+msgstr "{place} にいます"
+
+msgid "Look north over the square of 512 m where most maps of this place lie"
+msgstr "この場所のマップの大半がある 512 m 四方を北向きに見下ろします"

@@ -120,8 +120,10 @@ pub fn draw_side(ui: &mut egui::Ui, state: &mut AppState, bridge: Option<&mut Re
         ui.separator();
         streams(ui, state, &mut viewer);
         ui.separator();
-        capture(ui, state, &mut viewer);
-        ui.separator();
+        // ⚠ Folded at first: at 720 points high an open Capture pushes the groups list below the fold.
+        egui::CollapsingHeader::new(tr!("Capture"))
+            .id_salt("world_viewer_capture")
+            .show(ui, |ui| capture(ui, state, &mut viewer));
         egui::CollapsingHeader::new(tr!("Streaming"))
             .id_salt("world_viewer_streaming")
             .default_open(true)
@@ -288,6 +290,10 @@ fn wide(ui: &mut egui::Ui, label: &str, slider: egui::Slider<'_>) -> egui::Respo
 /// The name a place is listed by, and what its entry says on hover.
 fn place_label(place: &Place) -> (String, &'static str) {
     let (name, hint) = match &place.head {
+        Some(head) if place.from_place => (
+            head.clone(),
+            tr!("Look north over the square of 512 m where most maps of this place lie"),
+        ),
         Some(head) => (
             head.clone(),
             tr!("Look north over the square of 512 m where most maps whose names start with these letters lie"),
@@ -365,7 +371,13 @@ fn camera(ui: &mut egui::Ui, state: &mut AppState, viewer: &mut Viewer) {
     // Inside, the interior and its room say where the camera is; outside, the map under it and the ground.
     match viewer.inside() {
         Some(inside) => said(ui, &where_inside(inside)),
-        None if viewer.index.is_some() => said(ui, &map::place_words(overview, viewer)),
+        None if viewer.index.is_some() => {
+            let words = map::place_words(overview, viewer);
+            if let Some(place) = overview.place.clone() {
+                said(ui, &tr!("In {place}", place = place));
+            }
+            said(ui, &words);
+        }
         None => {}
     }
     ui.horizontal_wrapped(|ui| {
@@ -409,23 +421,26 @@ fn camera(ui: &mut egui::Ui, state: &mut AppState, viewer: &mut Viewer) {
 fn streams(ui: &mut egui::Ui, state: &mut AppState, viewer: &mut Viewer) {
     use or_title::gta6_mount::Mode;
     ui.strong(tr!("What streams"));
-    for (mode, label, hint) in [
-        (
-            Mode::Story,
-            tr!("Story pack"),
-            tr!("Stream the maps the story pack adds"),
-        ),
-        (
-            Mode::Minigames,
-            tr!("Shared minigames"),
-            tr!("Stream the maps the shared minigames add"),
-        ),
-    ] {
-        let mut on = viewer.enabled.modes & mode.bit() != 0;
-        if ui.checkbox(&mut on, label).on_hover_text(hint).changed() {
-            viewer.enabled.modes ^= mode.bit();
+    // The two modes side by side where the panel is wide enough.
+    ui.horizontal_wrapped(|ui| {
+        for (mode, label, hint) in [
+            (
+                Mode::Story,
+                tr!("Story pack"),
+                tr!("Stream the maps the story pack adds"),
+            ),
+            (
+                Mode::Minigames,
+                tr!("Shared minigames"),
+                tr!("Stream the maps the shared minigames add"),
+            ),
+        ] {
+            let mut on = viewer.enabled.modes & mode.bit() != 0;
+            if ui.checkbox(&mut on, label).on_hover_text(hint).changed() {
+                viewer.enabled.modes ^= mode.bit();
+            }
         }
-    }
+    });
     let Some(index) = viewer.index.clone() else {
         return;
     };
@@ -514,7 +529,6 @@ fn streams(ui: &mut egui::Ui, state: &mut AppState, viewer: &mut Viewer) {
 
 /// The Capture section: a clean frame, the camera as a line a shots script reads, and a line to jump to.
 fn capture(ui: &mut egui::Ui, state: &mut AppState, viewer: &mut Viewer) {
-    ui.strong(tr!("Capture"));
     let held = state.panels.get::<Capture>();
     ui.checkbox(&mut held.clean, tr!("Clean frame")).on_hover_text(tr!(
         "Draw the world alone over the whole window, with no line and no panel over it; Escape brings them back"

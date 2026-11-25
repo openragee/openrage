@@ -15,8 +15,9 @@ use crate::ui::theme;
 const SIDE: usize = 256;
 /// A box wider than this, a far level of detail's, is not a building: it neither lights a cell nor names a place.
 const WIDEST_BOX: f32 = 400.0;
-/// The tallest the map is drawn, in points.
+/// The tallest the map is drawn, in points, and the most of the panel's height it takes.
 const MOST_HEIGHT: f32 = 280.0;
+const SHARE: f32 = 0.3;
 /// How far the camera moves before its place is put in words again, in metres.
 const MOVED: f32 = 16.0;
 
@@ -112,20 +113,118 @@ impl Grid {
         top.is_finite().then_some(top)
     }
 
-    /// The map as a mask the theme's text colour tints: a cell as opaque as the log of the maps it holds.
+    /// The maps as a mask the theme's text colour tints: a cell as opaque as the log of the maps it holds.
     fn image(&self) -> egui::ColorImage {
         let most = self.counts.iter().copied().max().unwrap_or(0).max(1) as f32;
-        let pixels = (self.counts.iter())
-            .map(|&n| {
-                let light = (1.0 + n as f32).ln() / (1.0 + most).ln();
-                egui::Color32::from_white_alpha((light * 230.0) as u8)
-            })
-            .collect();
-        egui::ColorImage {
-            size: [SIDE, SIDE],
-            source_size: egui::vec2(SIDE as f32, SIDE as f32),
-            pixels,
+        mask(
+            self.counts
+                .iter()
+                .map(|&n| (1.0 + n as f32).ln() / (1.0 + most).ln() * 0.9),
+        )
+    }
+
+    /// The middle of the cell at column `col`, row `row`.
+    fn middle(&self, col: usize, row: usize) -> Vec2 {
+        let across = |k: usize| (k as f32 + 0.5) / SIDE as f32;
+        self.to_level(Vec2::new(across(col), across(row)))
+    }
+
+    /// The land and the water of each cell: the ground under its middle, and whether water stands over it there, a quad's or, past every quad, the sea's at `sea`.
+    pub fn shade(&self, ground: impl Fn(Vec2) -> Option<f32>, quads: &[Water], sea: f32) -> Shade {
+        let mut shade = Shade {
+            ground: vec![f32::NAN; SIDE * SIDE],
+            wet: vec![false; SIDE * SIDE],
+        };
+        for row in 0..SIDE {
+            for col in 0..SIDE {
+                shade.ground[row * SIDE + col] = ground(self.middle(col, row)).unwrap_or(f32::NAN);
+            }
         }
+        let (mut low, mut high) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+        for quad in quads {
+            (low, high) = (low.min(quad.low), high.max(quad.high));
+            // The cells whose middles the quad may hold, north-west to south-east on the map.
+            let (from, to) = (
+                self.to_map(Vec2::new(quad.low.x, quad.high.y)),
+                self.to_map(Vec2::new(quad.high.x, quad.low.y)),
+            );
+            let cells = |a: f32, b: f32| {
+                let at = |t: f32| (t * SIDE as f32).clamp(0.0, SIDE as f32 - 1.0) as usize;
+                at(a)..=at(b)
+            };
+            for row in cells(from.y, to.y) {
+                for col in cells(from.x, to.x) {
+                    let middle = self.middle(col, row);
+                    let inside = (quad.low.cmple(middle) & middle.cmple(quad.high)).all();
+                    let at = row * SIDE + col;
+                    // ⚠ The ground NaN where the height map holds none: water is then taken as standing.
+                    if inside && !(shade.ground[at] >= quad.z) {
+                        shade.wet[at] = true;
+                    }
+                }
+            }
+        }
+        for row in 0..SIDE {
+            for col in 0..SIDE {
+                let middle = self.middle(col, row);
+                let past = !(low.cmple(middle) & middle.cmple(high)).all();
+                let at = row * SIDE + col;
+                shade.wet[at] |= past && shade.ground[at] < sea;
+            }
+        }
+        shade
+    }
+}
+
+/// A quad of water as the overhead map lays it: its corners and its surface's height.
+pub struct Water {
+    pub low: Vec2,
+    pub high: Vec2,
+    pub z: f32,
+}
+
+/// What the height map and the water make of each cell of a [`Grid`], row 0 the northernmost.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shade {
+    /// The ground under the cell's middle in metres, NaN where the height map holds none.
+    pub ground: Vec<f32>,
+    pub wet: Vec<bool>,
+}
+
+impl Shade {
+    /// The land as a mask: opaque as it stands high and as it faces the north-west, and clear under water.
+    fn land(&self) -> egui::ColorImage {
+        let highest = (self.ground.iter().copied())
+            .filter(|h| h.is_finite())
+            .fold(1.0_f32, f32::max);
+        let at = |k: usize| self.ground[k];
+        mask((0..SIDE * SIDE).map(|k| {
+            let h = at(k);
+            if self.wet[k] || !h.is_finite() {
+                return 0.0;
+            }
+            // The rise from the cell to the north-west, lit from there.
+            let behind = (k >= SIDE + 1 && k % SIDE > 0).then(|| at(k - SIDE - 1));
+            let rise = behind.filter(|b| b.is_finite()).map_or(0.0, |b| h - b);
+            0.2 + 0.35 * (h.max(0.0) / highest).sqrt() + (rise / 20.0).clamp(-0.12, 0.12)
+        }))
+    }
+
+    /// The water as a mask.
+    fn water(&self) -> egui::ColorImage {
+        mask(self.wet.iter().map(|&wet| if wet { 0.55 } else { 0.0 }))
+    }
+}
+
+/// A side-by-side square of cells as white of the opacity `each` gives, from 0 to 1, for a theme's colour to tint.
+fn mask(each: impl Iterator<Item = f32>) -> egui::ColorImage {
+    let pixels = each
+        .map(|a| egui::Color32::from_white_alpha((a.clamp(0.0, 1.0) * 255.0) as u8))
+        .collect();
+    egui::ColorImage {
+        size: [SIDE, SIDE],
+        source_size: egui::vec2(SIDE as f32, SIDE as f32),
+        pixels,
     }
 }
 
@@ -176,6 +275,41 @@ pub fn named_under(
     best.and_then(|(_, map)| name(map))
 }
 
+/// A name as words: `region_vice_beach_name` is `Vice Beach`.
+pub fn as_words(raw: &str) -> String {
+    let bare = raw.strip_suffix("_name").unwrap_or(raw);
+    let bare = (["region_", "location_"].iter())
+        .find_map(|head| bare.strip_prefix(head))
+        .unwrap_or(bare);
+    let word = |w: &str| {
+        let mut letters = w.chars();
+        (letters.next()).map_or_else(String::new, |first| {
+            first.to_uppercase().chain(letters).collect()
+        })
+    };
+    (bare.split('_'))
+        .filter(|w| !w.is_empty())
+        .map(word)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The smallest place of `index` holding `point` that the vocabulary names, by its label, else its own name, as words.
+pub fn place_at(
+    index: &WorldIndex,
+    vocabulary: &or_io::gta6::names::Vocabulary,
+    point: Vec2,
+) -> Option<String> {
+    (index.places_at(point.to_array()).into_iter()).find_map(|place| {
+        let label = (place.label != 0)
+            .then(|| vocabulary.name32(place.label))
+            .flatten();
+        label
+            .or_else(|| vocabulary.name32(place.name))
+            .map(as_words)
+    })
+}
+
 /// What the overhead map holds between frames, by the index it was laid from.
 #[derive(Default)]
 pub struct Overview {
@@ -183,9 +317,15 @@ pub struct Overview {
     maps: Vec<Laid>,
     grid: Option<Grid>,
     texture: Option<egui::TextureHandle>,
+    /// The land and the water, by the height map and the water they were shaded from.
+    shaded_with: (usize, usize),
+    land: Option<egui::TextureHandle>,
+    water: Option<egui::TextureHandle>,
     /// Where the map under the camera was last looked for, by the vocabulary it was named with, and its name.
     named_at: Option<(Vec2, usize)>,
     name: Option<String>,
+    /// The place the world-state data names there.
+    pub place: Option<String>,
 }
 
 impl crate::ui::panel_state::PanelState for Overview {
@@ -193,20 +333,53 @@ impl crate::ui::panel_state::PanelState for Overview {
 }
 
 impl Overview {
-    /// Lay the maps of `index` again where it is another index.
-    fn hold(&mut self, ctx: &egui::Context, index: &Arc<WorldIndex>) {
+    /// Lay the maps of `index` again where it is another index, and shade the land and the water again once the viewer has read them.
+    fn hold(&mut self, ctx: &egui::Context, index: &Arc<WorldIndex>, viewer: &Viewer) {
         let of = Arc::as_ptr(index) as usize;
-        if self.of == of {
-            return;
+        if self.of != of {
+            // A pass over every map at rest, once an index.
+            self.of = of;
+            self.maps = laid(index);
+            self.grid = Grid::of(&self.maps);
+            self.texture = (self.grid.as_ref()).map(|grid| {
+                ctx.load_texture("world-overview", grid.image(), egui::TextureOptions::LINEAR)
+            });
+            self.named_at = None;
+            self.shaded_with = (0, 0);
         }
-        // A pass over every map at rest, once an index.
-        self.of = of;
-        self.maps = laid(index);
-        self.grid = Grid::of(&self.maps);
-        self.texture = (self.grid.as_ref()).map(|grid| {
-            ctx.load_texture("world-overview", grid.image(), egui::TextureOptions::LINEAR)
-        });
-        self.named_at = None;
+        let (ground, water) = viewer.land_and_water();
+        let address = |a: Option<usize>| a.unwrap_or(0);
+        let with = (
+            address(ground.as_ref().map(|g| Arc::as_ptr(g) as usize)),
+            address(water.as_ref().map(|w| Arc::as_ptr(w) as usize)),
+        );
+        let Some(grid) = self.grid.as_ref().filter(|_| with != self.shaded_with) else {
+            return;
+        };
+        // ⚠ A pass over the grid's cells and every quad of water, once each is read.
+        self.shaded_with = with;
+        let quads: Vec<Water> = (water.iter().flat_map(|w| &w.quads))
+            .filter(|q| !q.invisible)
+            .map(|q| Water {
+                low: Vec2::new(q.min[0].into(), q.min[1].into()),
+                high: Vec2::new(q.max[0].into(), q.max[1].into()),
+                z: q.z,
+            })
+            .collect();
+        // The sea past the quads stands at the height the water's borders give it.
+        let sea = (water.as_ref().and_then(|w| w.border.as_ref()))
+            .map_or(0.0, |b| b.corners.iter().sum::<f32>() / 4.0);
+        let shade = grid.shade(
+            |at| ground.as_ref().and_then(|g| g.ground(at.x, at.y)),
+            &quads,
+            sea,
+        );
+        let options = egui::TextureOptions::LINEAR;
+        self.land = ground
+            .is_some()
+            .then(|| ctx.load_texture("world-land", shade.land(), options));
+        self.water = (ground.is_some() || !quads.is_empty())
+            .then(|| ctx.load_texture("world-water", shade.water(), options));
     }
 }
 
@@ -215,15 +388,16 @@ pub fn draw(ui: &mut egui::Ui, overview: &mut Overview, viewer: &mut Viewer) {
     let Some(index) = viewer.index.clone() else {
         return;
     };
-    overview.hold(ui.ctx(), &index);
+    overview.hold(ui.ctx(), &index, viewer);
     let (Some(grid), Some(texture)) = (&overview.grid, &overview.texture) else {
         return;
     };
-    let side = ui.available_width().min(MOST_HEIGHT);
+    // ⚠ At 720 points high a map as wide as the panel leaves the panel's last sections below the fold.
+    let side = (ui.available_width().min(MOST_HEIGHT)).min(ui.clip_rect().height() * SHARE);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
     let response = named(
         response,
-        tr!("The level from above: the brighter, the more maps; click to look over a place"),
+        tr!("The level from above: the water, the land by its height, and the brighter, the more maps; click to look over a place"),
     );
     let painter = ui.painter_at(rect);
     let whole = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
@@ -232,7 +406,15 @@ pub fn draw(ui: &mut egui::Ui, overview: &mut Overview, viewer: &mut Viewer) {
         egui::CornerRadius::same(theme::RADIUS_SMALL),
         theme::BG_L0,
     );
-    painter.image(texture.id(), rect, whole, theme::TEXT_PRIMARY.get());
+    for (layer, tint) in [
+        (overview.land.as_ref(), theme::TEXT_SECONDARY.get()),
+        (overview.water.as_ref(), theme::INFO.get()),
+        (Some(texture), theme::TEXT_PRIMARY.get()),
+    ] {
+        if let Some(layer) = layer {
+            painter.image(layer.id(), rect, whole, tint);
+        }
+    }
     let on_screen = |at: Vec2| rect.min + egui::vec2(at.x, at.y) * rect.size();
     let camera = &viewer.camera;
     let at = on_screen(grid.to_map(camera.position.truncate()));
@@ -253,6 +435,7 @@ pub fn draw(ui: &mut egui::Ui, overview: &mut Overview, viewer: &mut Viewer) {
             .unwrap_or(0.0);
         let place = Place {
             head: None,
+            from_place: false,
             maps: 0,
             middle: point.extend(ground),
         };
@@ -278,6 +461,7 @@ pub fn place_words(overview: &mut Overview, viewer: &Viewer) -> String {
         overview.name = named_under(&overview.maps, point, |hash| {
             vocabulary.name32(hash).map(str::to_string)
         });
+        overview.place = (viewer.index.as_deref()).and_then(|i| place_at(i, &vocabulary, point));
         overview.named_at = Some((point, named_with));
     }
     let direction = [
@@ -360,6 +544,62 @@ mod tests {
         assert_eq!(grid.top_near(Vec2::ZERO, 50.0), Some(90.0));
         assert_eq!(grid.top_near(Vec2::new(500.0, 500.0), 50.0), None);
         assert_eq!(Grid::of(&[]), None);
+    }
+
+    #[test]
+    fn a_place_s_label_is_said_as_words() {
+        assert_eq!(as_words("region_vice_beach_name"), "Vice Beach");
+        assert_eq!(as_words("region_key_lento"), "Key Lento");
+        assert_eq!(as_words("location_247_name"), "247");
+        assert_eq!(as_words("ambrosia"), "Ambrosia");
+    }
+
+    #[test]
+    fn a_cell_is_wet_under_a_quad_above_its_ground_and_past_every_quad_under_the_sea() {
+        let maps = [
+            map(0.0, 0.0, 20.0, 30.0, 1),
+            map(1000.0, 1000.0, 20.0, 10.0, 2),
+        ];
+        let grid = Grid::of(&maps).expect("maps with boxes");
+        // A hill west of x 500, a lake bed east of it, and the sea's floor past y 900.
+        let ground = |at: Vec2| {
+            Some(if at.y > 900.0 {
+                -20.0
+            } else if at.x < 500.0 {
+                40.0
+            } else {
+                2.0
+            })
+        };
+        let lake = Water {
+            low: Vec2::new(100.0, 100.0),
+            high: Vec2::new(800.0, 400.0),
+            z: 5.0,
+        };
+        let shade = grid.shade(ground, &[lake], 0.0);
+        let at = |point: Vec2| {
+            let on = grid.to_map(point) * SIDE as f32;
+            on.y as usize * SIDE + on.x as usize
+        };
+        assert!(
+            shade.wet[at(Vec2::new(700.0, 250.0))],
+            "the quad stands over the lake bed"
+        );
+        assert!(
+            !shade.wet[at(Vec2::new(200.0, 250.0))],
+            "the hill stands over the quad"
+        );
+        assert!(
+            !shade.wet[at(Vec2::new(700.0, 600.0))],
+            "ground above the sea past the quads"
+        );
+        assert!(
+            shade.wet[at(Vec2::new(200.0, 950.0))],
+            "the sea past every quad"
+        );
+        assert_eq!(shade.ground[at(Vec2::new(200.0, 250.0))], 40.0);
+        let none = grid.shade(|_| None, &[], 0.0);
+        assert!(none.wet.iter().all(|w| !w) && none.ground.iter().all(|h| h.is_nan()));
     }
 
     #[test]

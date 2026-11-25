@@ -16849,8 +16849,8 @@ msgstr "仍在加载：{what}"
 msgid "the ground and fog under the water"
 msgstr "水下的地面和雾"
 
-msgid "The level from above: the brighter, the more maps; click to look over a place"
-msgstr "从上方俯瞰关卡：越亮地图越多；点击以俯瞰某处"
+msgid "The level from above: the water, the land by its height, and the brighter, the more maps; click to look over a place"
+msgstr "从上方看关卡：水面、按高度显示的陆地，越亮表示地图越多；点击以查看某处"
 
 msgid "Click to look north over a place, from 250 m south of it"
 msgstr "点击以从某处以南 250 米处向北俯瞰"
@@ -17033,3 +17033,9 @@ msgstr "同时替换较低的细节级别"
 
 msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
 msgstr "关闭时，网格未指定任何几何体的细节级别保持模型中的原样。开启时，每个这样的几何体在其模型和位置上采用 0 级网格，前提是两者使用同一着色器绘制。"
+
+msgid "In {place}"
+msgstr "位于 {place}"
+
+msgid "Look north over the square of 512 m where most maps of this place lie"
+msgstr "向北俯瞰此地大多数地图所在的 512 米方格"

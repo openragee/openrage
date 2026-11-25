@@ -16992,8 +16992,8 @@ msgstr "Ещё загружается: {what}"
 msgid "the ground and fog under the water"
 msgstr "дно и туман под водой"
 
-msgid "The level from above: the brighter, the more maps; click to look over a place"
-msgstr "Уровень сверху: чем светлее, тем больше карт; щёлкните, чтобы осмотреть место"
+msgid "The level from above: the water, the land by its height, and the brighter, the more maps; click to look over a place"
+msgstr "Уровень сверху: вода, суша по её высоте, и чем светлее, тем больше карт; щёлкните, чтобы посмотреть на место"
 
 msgid "Click to look north over a place, from 250 m south of it"
 msgstr "Щёлкните, чтобы посмотреть на место с севера, с 250 м южнее"
@@ -17180,3 +17180,9 @@ msgstr "Заменить и более низкие уровни детализ�
 
 msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
 msgstr "Выключено: уровень детализации, для которого меш не называет геометрии, остаётся таким, как его хранит модель. Включено: каждая такая геометрия получает меш уровня 0 в своей модели и месте, где обе рисуются одним шейдером."
+
+msgid "In {place}"
+msgstr "В месте {place}"
+
+msgid "Look north over the square of 512 m where most maps of this place lie"
+msgstr "Смотреть на север над квадратом 512 м, где лежит большинство карт этого места"

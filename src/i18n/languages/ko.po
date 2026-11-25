@@ -16849,8 +16849,8 @@ msgstr "아직 불러오는 중: {what}"
 msgid "the ground and fog under the water"
 msgstr "물 아래의 지면과 안개"
 
-msgid "The level from above: the brighter, the more maps; click to look over a place"
-msgstr "위에서 본 레벨: 밝을수록 맵이 많습니다. 클릭하면 그 장소를 내려다봅니다"
+msgid "The level from above: the water, the land by its height, and the brighter, the more maps; click to look over a place"
+msgstr "위에서 본 레벨: 물, 높이로 나타낸 땅, 밝을수록 맵이 많습니다. 클릭하면 그곳을 봅니다"
 
 msgid "Click to look north over a place, from 250 m south of it"
 msgstr "클릭하면 그 장소의 남쪽 250m에서 북쪽을 바라봅니다"
@@ -17033,3 +17033,9 @@ msgstr "더 낮은 세부 수준도 바꾸기"
 
 msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
 msgstr "끄면 메시가 지오메트리를 지정하지 않은 세부 수준은 모델에 있는 그대로 남습니다. 켜면 그러한 각 지오메트리가, 둘 다 같은 셰이더로 그리는 곳에서 해당 모델과 위치의 0단계 메시를 받습니다."
+
+msgid "In {place}"
+msgstr "{place}에 있음"
+
+msgid "Look north over the square of 512 m where most maps of this place lie"
+msgstr "이 장소의 맵 대부분이 있는 512 m 사각형을 북쪽으로 내려다봅니다"

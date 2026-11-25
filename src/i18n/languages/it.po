@@ -16849,8 +16849,8 @@ msgstr "Ancora in caricamento: {what}"
 msgid "the ground and fog under the water"
 msgstr "il fondale e la nebbia sotto l'acqua"
 
-msgid "The level from above: the brighter, the more maps; click to look over a place"
-msgstr "Il livello dall'alto: più è chiaro, più mappe ci sono; fai clic per guardare un luogo"
+msgid "The level from above: the water, the land by its height, and the brighter, the more maps; click to look over a place"
+msgstr "Il livello dall'alto: l'acqua, la terra secondo la sua altezza e, più è chiaro, più mappe ci sono; fai clic per guardare un luogo"
 
 msgid "Click to look north over a place, from 250 m south of it"
 msgstr "Fai clic per guardare un luogo verso nord, da 250 m a sud"
@@ -17033,3 +17033,9 @@ msgstr "Sostituisci anche i livelli di dettaglio inferiori"
 
 msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
 msgstr "Disattivato, un livello di dettaglio di cui la mesh non nomina alcuna geometria resta come lo contiene il modello. Attivato, ciascuna di queste geometrie prende la mesh del livello 0 nel suo modello e posto, dove entrambe si disegnano con uno stesso shader."
+
+msgid "In {place}"
+msgstr "A {place}"
+
+msgid "Look north over the square of 512 m where most maps of this place lie"
+msgstr "Guarda a nord sul quadrato di 512 m dove si trova la maggior parte delle mappe di questo luogo"

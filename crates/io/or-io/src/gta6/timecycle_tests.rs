@@ -24,59 +24,9 @@ fn the_time_table_states_its_samples_their_easing_and_its_regions() {
         (table.samples[3].name.as_str(), table.samples[3].hour),
         ("s3", 3.0)
     );
-    assert_eq!(table.samples[1].easing, Easing::QuarticInOut);
-    assert_eq!(table.samples[0].easing, Easing::Linear);
+    assert_eq!(table.samples[1].interpolation_type, "EASE_QUARTIC_INOUT");
+    assert_eq!(table.samples[0].interpolation_type, "EASE_LINEAR_IN");
     assert_eq!(table.regions, ["URBAN"]);
-}
-
-#[test]
-fn a_sample_is_found_by_the_suns_angle_and_eased_by_the_first_of_the_two() {
-    let table = table();
-    // The sun on the eastern horizon is the fifth sample whole, and its top the seventh.
-    assert_eq!(table.locate(0.0), Some((4, 5, 0.0)));
-    let (first, second, along) = table.locate(1.57).expect("thirteen samples");
-    assert_eq!((first, second), (6, 7));
-    assert!(along.abs() < 1e-6);
-    // Half way from the second sample to the third, bent by the second sample's own easing.
-    let (first, second, along) = table
-        .locate((-0.45 + -0.22) / 2.0)
-        .expect("thirteen samples");
-    assert_eq!((first, second), (1, 2));
-    assert!(
-        (along - 0.5).abs() < 1e-4,
-        "the quartic passes through its middle: {along}"
-    );
-    let (_, _, early) = table.locate(-0.45 + 0.23 * 0.25).expect("thirteen samples");
-    assert!((early - 8.0 * 0.25f32.powi(4)).abs() < 1e-3, "{early}");
-    // The round closes: past the last row the way runs on to the first, and an angle under the first is a turn on.
-    assert_eq!(table.locate(3.12).map(|l| (l.0, l.1)), Some((8, 9)));
-    assert_eq!(table.locate(-3.2).map(|l| (l.0, l.1)), Some((7, 8)));
-    assert_eq!(DayTable::default().locate(0.0), None);
-}
-
-#[test]
-fn the_sun_rises_in_the_east_tops_in_the_south_and_is_under_the_floor_at_night() {
-    let noon = SOLAR_NOON * 24.0;
-    let at = |hours: f32| sun_towards(sun_round(hours), LATITUDE);
-    // The clock bends about the middle of sunrise and sunset, which is not noon, so the top is near noon only.
-    let top = at(noon);
-    assert!(top[0].abs() < 0.01 && top[1] < 0.0, "{top:?}");
-    assert!((top[2] - LATITUDE.cos()).abs() < 1e-4, "{top:?}");
-    assert!((sun_round(noon) - PI / 2.0).abs() < 0.01);
-    assert!((sun_angle(top) - PI / 2.0).abs() < 0.01);
-    // At the bend's ends the clock is the day's own, and the sun is on the horizon the search allows.
-    let turn = |a: f32, b: f32| ((a - b + PI).rem_euclid(TAU) - PI).abs();
-    for part in [SUNRISE, SUNSET] {
-        let unbent = PI / 2.0 + (part - SOLAR_NOON) * TAU;
-        assert!(turn(sun_round(part * 24.0), unbent) < 1e-4, "{part}");
-    }
-    let rise = at(SUNRISE * 24.0);
-    assert!(rise[0] > 0.99 && rise[2].abs() < 0.05, "{rise:?}");
-    let set = at(SUNSET * 24.0);
-    assert!(set[0] < -0.99 && set[2].abs() < 0.05, "{set:?}");
-    assert!(at(1.0)[2] < 0.0 && at(23.0)[2] < 0.0);
-    // It lingers near the horizon: an hour after its rise it has turned less than a twelfth of a half turn.
-    assert!(sun_round(SUNRISE * 24.0 + 1.0) - sun_round(SUNRISE * 24.0) < PI / 12.0);
 }
 
 #[test]

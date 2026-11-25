@@ -3479,6 +3479,7 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "glam",
+ "memmap2",
  "or-io",
  "or-media",
  "or-test-support",

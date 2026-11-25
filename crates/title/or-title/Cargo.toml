@@ -24,6 +24,8 @@ serde_json.workspace = true
 dirs.workspace = true
 # The day's sun, moon and light directions.
 glam.workspace = true
+# The executable the day's variable table is read from.
+memmap2.workspace = true
 
 # Steam and the Rockstar launcher name an install in the registry.
 [target.'cfg(windows)'.dependencies]

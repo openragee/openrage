@@ -25,6 +25,7 @@ fn settings() -> ExposureSettings {
         min_step: 0.2,
         max_step: 10.0,
         step_mult: 1.0,
+        bodies: LightTunables::image_defaults(),
     }
 }
 
@@ -150,15 +151,16 @@ fn adaptation_moves_at_a_held_rate_and_never_past_its_target() {
 fn the_sun_lights_until_its_threshold_and_then_the_moon_by_its_own() {
     let k = keyframe(&[("light_dir_sun_mult", 0.5), ("light_dir_moon_mult", 0.8)]);
     let moon = at_zenith(40.0);
-    let low_sun = bodies(&k, at_zenith(95.0), moon);
+    let image = LightTunables::image_defaults();
+    let low_sun = bodies(&k, at_zenith(95.0), moon, &image);
     assert!(low_sun.sun_leads);
     assert_eq!((low_sun.sun_fade, low_sun.fade), (1.0, 0.5));
     assert!(
-        (low_sun.towards[2] - LOWEST_LIGHT).abs() < 0.02,
+        (low_sun.towards[2] - crate::gta6_day_sun::MIN_LIGHT_Z).abs() < 0.02,
         "{:?}",
         low_sun.towards
     );
-    let under = bodies(&k, at_zenith(100.5), moon);
+    let under = bodies(&k, at_zenith(100.5), moon, &image);
     assert!(!under.sun_leads);
     assert_eq!(under.sun_fade, 0.0);
     assert!((under.moon_fade - 0.5).abs() < 1e-3, "{}", under.moon_fade);
@@ -166,35 +168,17 @@ fn the_sun_lights_until_its_threshold_and_then_the_moon_by_its_own() {
     assert_eq!(under.body, moon);
     // A stated threshold and a crossfade.
     let early = keyframe(&[("sun_fade_threshold", 80.0)]);
-    assert_eq!(bodies(&early, at_zenith(85.0), moon).sun_fade, 0.0);
+    assert_eq!(bodies(&early, at_zenith(85.0), moon, &image).sun_fade, 0.0);
     let set = |c: f32| {
         bodies(
             &keyframe(&[("sun_moon_crossfade", c)]),
             at_zenith(10.0),
             moon,
+            &image,
         )
     };
     assert_eq!((set(0.3).sun_fade, set(0.3).moon_fade), (0.3, 0.0));
     assert_eq!((set(-0.4).sun_fade, set(-0.4).moon_fade), (0.0, 0.4));
-}
-
-#[test]
-fn the_moon_goes_round_the_compass_once_a_day_well_above_the_horizon() {
-    let (roll, wobble) = (362f32.to_radians(), 0.8);
-    for step in 0..24 {
-        let moon = moon_towards(step as f32 / 24.0, roll, wobble);
-        let height = moon[2].asin().to_degrees();
-        assert!((36.0..41.0).contains(&height), "{step}: {height}");
-    }
-    assert!(
-        moon_towards(0.0, roll, wobble)[1] > 0.9 * 0.6,
-        "north at midnight"
-    );
-    assert!(moon_towards(0.25, roll, wobble)[0] < -0.7, "west at six");
-    assert!(
-        moon_towards(1.25, roll, wobble)[0] < -0.7,
-        "whatever the day"
-    );
 }
 
 #[test]
@@ -265,4 +249,29 @@ fn a_storm_shades_the_ground_from_its_sun_and_lights_it_by_what_its_clouds_scatt
         "{:?} {whole}",
         storm.sky
     );
+}
+
+#[test]
+fn the_light_hands_over_through_a_dark_point_at_the_settings_ramps() {
+    let stated = |name: &str, default: f32| match name {
+        "misc.SunFade.ThresholdLength" => 10.0,
+        "misc.MoonFade.ThresholdLength" => 5.0,
+        _ => default,
+    };
+    let tunables = ExposureSettings::of(&stated).bodies;
+    assert_eq!(
+        (tunables.sun_zenith_ramp, tunables.moon_zenith_ramp),
+        (10.0, 5.0)
+    );
+    let (k, moon) = (keyframe(&[]), at_zenith(50.0));
+    let dusk = bodies(&k, at_zenith(95.0), moon, &tunables);
+    assert!(dusk.sun_leads && (dusk.fade - 0.5).abs() < 1e-5, "{dusk:?}");
+    let dark = bodies(&k, at_zenith(100.0), moon, &tunables);
+    assert_eq!((dark.fade, dark.towards), (0.0, [0.0, 0.0, 1.0]));
+    let rising = bodies(&k, at_zenith(105.0), moon, &tunables);
+    assert!(
+        !rising.sun_leads && (rising.moon_fade - 0.5).abs() < 1e-5,
+        "{rising:?}"
+    );
+    assert_eq!(rising.body, moon);
 }

@@ -460,6 +460,12 @@ impl LightTunables {
     }
 }
 
+impl Default for LightTunables {
+    fn default() -> Self {
+        Self::image_defaults()
+    }
+}
+
 /// The three bodies' light weights, each in [0, 1], at most one of them non-zero.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Weights {

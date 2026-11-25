@@ -597,3 +597,21 @@ fn the_name_hash_folds_case_and_backslash_and_drops_quotes() {
     // A quote ends the name only after a leading quote.
     assert_ne!(name_hash("na\"me"), name_hash("na"));
 }
+
+#[test]
+fn a_value_is_held_as_the_nearest_half_and_read_back_whole() {
+    for bits in [
+        0x0000_u16, 0x0001, 0x03ff, 0x0400, 0x3c00, 0x3555, 0x7bff, 0x8001, 0xbc00, 0xc4b0,
+    ] {
+        assert_eq!(f32_to_half(half_to_f32(bits)), bits, "{bits:#06x}");
+    }
+    assert_eq!(
+        f32_to_half(1.0 + 1.0 / 2048.0),
+        0x3c00,
+        "a tie goes to the even half"
+    );
+    assert_eq!(f32_to_half(1.0 + 3.0 / 2048.0), 0x3c02);
+    assert_eq!(f32_to_half(1e6), 0x7c00);
+    assert_eq!(f32_to_half(1e-9), 0);
+    assert_eq!(stored_half_value(f32_to_half(14.75 / 2.0)), 14.75);
+}

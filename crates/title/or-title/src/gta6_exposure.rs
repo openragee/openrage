@@ -2,12 +2,15 @@
 //! curve of its visual settings over a metered luminance with the keyframe's clamps and its
 //! adaptation, and the light of a moment that comes of them.
 
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::PI;
+
+use glam::Vec3;
 
 use or_io::gta5::data::timecycle::Keyframe;
 use or_io::gta6::timecycle::{FrameLight, DOME_TRANSITION};
 
 use crate::gta6_cloud::CloudLayer;
+use crate::gta6_day_sun::{directional_light, Leader, LightTunables, LightVariables};
 use crate::gta6_sky::Atmosphere;
 
 /// The stops the build's curve takes off what its terms give.
@@ -16,16 +19,12 @@ const CURVE_OFFSET: f32 = 10.0;
 const LEAST_LUMINANCE: f32 = 1e-6;
 /// The grey the stand-in meter sees the world as.
 const GREY: f32 = 0.18;
-/// The least up part of the way towards the light.
-const LOWEST_LIGHT: f32 = 0.15;
 /// The lowest a body stands for the sky it lights, which keeps the dusk sky lit while its body is under the horizon.
 const LOWEST_SKY_LIGHT: f32 = 0.05;
 /// The up part of a way along the horizon, where the dome and the fog take their colours.
 const HORIZON: f32 = 0.02;
 /// The crossfade a keyframe states for the fades worked out from the zenith angles.
 const AUTOMATIC: f32 = -10.0;
-/// The zenith angle, in degrees, a threshold the keyframe leaves to the settings stands for.
-const DEFAULT_THRESHOLD: f32 = 100.0;
 
 /// The luminance of a colour.
 fn luminance(c: [f32; 3]) -> f32 {
@@ -76,12 +75,24 @@ pub struct ExposureSettings {
     pub max_step: f32,
     /// How fast adaptation closes on its target where a keyframe states no step multiplier of its own.
     pub step_mult: f32,
+    /// The zenith angles the sun and the moon fade over, and how the moon's phase dims it.
+    pub bodies: LightTunables,
 }
 
 impl ExposureSettings {
     /// The settings `get` reads from the visual settings by name, each with the executable's own value where there is none.
     pub fn of(get: &dyn Fn(&str, f32) -> f32) -> Self {
+        let image = LightTunables::image_defaults();
         Self {
+            // The executable looks these up by the hash of the settings' names.
+            bodies: LightTunables {
+                sun_zenith_start: get("misc.SunFade.Threshold", image.sun_zenith_start),
+                sun_zenith_ramp: get("misc.SunFade.ThresholdLength", image.sun_zenith_ramp),
+                moon_zenith_start: get("misc.MoonFade.Threshold", image.moon_zenith_start),
+                moon_zenith_ramp: get("misc.MoonFade.ThresholdLength", image.moon_zenith_ramp),
+                moon_phase: get("misc.Moon.Cycle", image.moon_phase),
+                moon_floor: get("misc.MoonDimMult", image.moon_floor),
+            },
             curve: Curve::of(get, "Exposure.curve."),
             blend: Curve::of(get, "Exposure.curve.blend."),
             min_step: get("Adaptation.min.step.size", 0.15),
@@ -168,16 +179,40 @@ pub fn adapt(
     }
 }
 
-/// The way towards the moon when `day` days have gone by (whole days and the part of one), its round turned by `roll` radians and pushed off its plane by `wobble`.
-pub fn moon_towards(day: f32, roll: f32, wobble: f32) -> [f32; 3] {
-    let angle = TAU * day.rem_euclid(1.0) - PI;
-    let (sin_a, cos_a) = angle.sin_cos();
-    let (sin_r, cos_r) = roll.sin_cos();
-    normalised([
-        sin_a,
-        -cos_r * cos_a - wobble * sin_r,
-        -sin_r * cos_a + wobble * cos_r,
-    ])
+/// The light variables of the moment `k`, by their names, each at `default` where `k` does not state it.
+pub fn light_variables(k: &Keyframe) -> LightVariables {
+    let get = |name: &str, default: f32| k.get_or(name, default);
+    let rgb = |stem: &str, default: f32| {
+        Vec3::new(
+            get(&format!("{stem}_r"), default),
+            get(&format!("{stem}_g"), default),
+            get(&format!("{stem}_b"), default),
+        )
+    };
+    let xyz = |stem: &str| {
+        Vec3::new(
+            get(&format!("{stem}_x"), 0.0),
+            get(&format!("{stem}_y"), -1.0),
+            get(&format!("{stem}_z"), 0.0),
+        )
+    };
+    LightVariables {
+        day_colour: rgb("light_dir_col", 1.0),
+        day_intensity: get("light_dir_mult", 1.0),
+        sun_multiplier: get("light_dir_sun_mult", 1.0),
+        moon_multiplier: get("light_dir_moon_mult", 1.0),
+        third_colour: rgb("galaxy_light_dir_col", 1.0),
+        third_intensity: get("galaxy_light_dir_mult", 1.0),
+        pull_amount: get("light_direction_override", 0.0),
+        disc_pull_scale: get("light_direction_override_overrides_sun", 1.0),
+        sun_pull: get("sun_direction_override", 0.0),
+        moon_pull: get("moon_direction_override", 0.0),
+        sun_target: xyz("sun_direction"),
+        moon_target: xyz("moon_direction"),
+        sun_zenith_threshold: get("sun_fade_threshold", -1.0),
+        moon_zenith_threshold: get("moon_fade_threshold", -1.0),
+        leader_override: get("sun_moon_crossfade", AUTOMATIC),
+    }
 }
 
 /// Which body lights a moment, and how.
@@ -188,56 +223,40 @@ pub struct Bodies {
     pub sun_leads: bool,
     /// The way towards the body that leads.
     pub body: [f32; 3],
-    /// The way the light comes from: the body's, held to 0.15 up at least.
+    /// The way the light comes from: the bodies' blended, held to 0.15 up at least; straight down where neither lights.
     pub towards: [f32; 3],
-    /// The leading body's fade times its own multiplier.
+    /// The light's weight times the leading body's own multiplier.
     pub fade: f32,
     /// The leading body's illuminance, and the sun's, in lux.
     pub illuminance: f32,
     pub sun_illuminance: f32,
 }
 
-/// Which of the sun towards `sun` and the moon towards `moon` lights the moment `k`, faded by the zenith angles its thresholds state or by its crossfade.
-pub fn bodies(k: &Keyframe, sun: [f32; 3], moon: [f32; 3]) -> Bodies {
+/// Which of the sun towards `sun` and the moon towards `moon` lights the moment `k`, by the build's weights of their zenith angles over the ramps `tunables` state, or by its crossfade.
+pub fn bodies(k: &Keyframe, sun: [f32; 3], moon: [f32; 3], tunables: &LightTunables) -> Bodies {
     let get = |name: &str, default: f32| k.get_or(name, default);
-    let zenith = |v: [f32; 3]| v[2].clamp(-1.0, 1.0).acos().to_degrees();
-    let threshold = |name: &str| match get(name, -1.0) {
-        t if t < 0.0 => DEFAULT_THRESHOLD,
-        t => t,
-    };
-    let crossfade = get("sun_moon_crossfade", AUTOMATIC);
-    let (sun_fade, moon_fade) = match crossfade == AUTOMATIC {
-        false => (crossfade.clamp(0.0, 1.0), (-crossfade).clamp(0.0, 1.0)),
-        true => {
-            let (sun_threshold, zs) = (threshold("sun_fade_threshold"), zenith(sun));
-            let sun_fade = (sun_threshold - zs).clamp(0.0, 1.0);
-            let moon_fade = match sun_fade > 0.0 {
-                true => 0.0,
-                false => {
-                    (zs - sun_threshold).clamp(0.0, 1.0)
-                        * (threshold("moon_fade_threshold") - zenith(moon)).clamp(0.0, 1.0)
-                }
-            };
-            (sun_fade, moon_fade)
-        }
-    };
-    let sun_leads = sun_fade > moon_fade;
-    let body = if sun_leads { sun } else { moon };
-    let multiplier = match sun_leads {
-        true => get("light_dir_sun_mult", 1.0),
-        false => get("light_dir_moon_mult", 1.0),
-    };
+    // The moon's phase is the clock's part of the day, which dims nothing while the settings state a phase of one half.
+    let state = directional_light(
+        Vec3::from(sun),
+        Vec3::from(moon),
+        Vec3::Z,
+        0.0,
+        &light_variables(k),
+        tunables,
+    );
+    let sun_leads = state.weights.leader() == Leader::Sun;
     let sun_illuminance = get("sky_scattering_sun_illuminance", 0.0)
         * get("sky_scattering_sun_intensity_multiplier", 1.0);
     let moon_illuminance = get("sky_scattering_moon_illuminance", 0.0)
         * get("sky_scattering_moon_intensity_multiplier", 1.0);
     Bodies {
-        sun_fade,
-        moon_fade,
+        sun_fade: state.weights.sun,
+        moon_fade: state.weights.moon,
         sun_leads,
-        body,
-        towards: normalised([body[0], body[1], body[2].max(LOWEST_LIGHT)]),
-        fade: sun_fade.max(moon_fade) * multiplier,
+        body: if sun_leads { sun } else { moon },
+        towards: state.direction.into(),
+        fade: state.intensity_weight,
+        // ⚠ The CPU gives the light no unit: the illuminance of its body is the frame's stand-in for what the GPU multiplies it by.
         illuminance: if sun_leads {
             sun_illuminance
         } else {
@@ -259,7 +278,7 @@ pub fn light(
     let get = |name: &str, default: f32| k.get_or(name, default);
     let rgb = |stem: &str| ["r", "g", "b"].map(|c| get(&format!("{stem}_{c}"), 1.0));
     let air = Atmosphere::of(k);
-    let lit = bodies(k, sun, moon);
+    let lit = bodies(k, sun, moon, &settings.bodies);
     let clear = air.transmittance(lit.body[2]);
     let sky_light = normalised([lit.body[0], lit.body[1], lit.body[2].max(LOWEST_SKY_LIGHT)]);
     let clear_sky = air.irradiance(sky_light, lit.illuminance);

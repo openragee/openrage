@@ -289,6 +289,31 @@ pub fn half_to_f32(bits: u16) -> f32 {
     f32::from_bits(sign | ((exponent + 112) << 23) | (mantissa << 13))
 }
 
+/// The IEEE half nearest `value`, ties to even; past the half's range it is infinite.
+pub fn f32_to_half(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exponent = ((bits >> 23) & 0xff) as i32;
+    let mantissa = bits & 0x7f_ffff;
+    if exponent == 0xff {
+        return sign | 0x7c00 | if mantissa != 0 { 0x200 } else { 0 };
+    }
+    let half_exponent = exponent - 112;
+    if half_exponent >= 0x1f {
+        return sign | 0x7c00;
+    }
+    // The bits the half keeps of the whole mantissa, and the shift that drops the rest.
+    let (kept, shift) = match half_exponent {
+        e if e <= 0 => (mantissa | 0x80_0000, (14 - e) as u32),
+        e => (((e as u32) << 23) | mantissa, 13),
+    };
+    if shift > 24 {
+        return sign;
+    }
+    let (rounded, rest, halfway) = (kept >> shift, kept & ((1 << shift) - 1), 1 << (shift - 1));
+    let up = rest > halfway || (rest == halfway && rounded & 1 == 1);
+    sign | (rounded + u32::from(up)) as u16
+}
 /// The variable value a stored cycle half holds: the half times 2.
 pub fn stored_half_value(bits: u16) -> f32 {
     2.0 * half_to_f32(bits)

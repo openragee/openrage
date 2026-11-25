@@ -1,5 +1,5 @@
 //! What GTA VI's day adds to its weather cycles, which GTA V's reader reads as they are: a time
-//! table whose samples are places of the sun, the sun's own round, the modifiers, and the
+//! table whose samples are places of the sun, the modifiers, and the
 //! variables a frame built for GTA V's day takes, worked out from GTA VI's.
 
 use std::collections::BTreeMap;
@@ -7,15 +7,6 @@ use std::f32::consts::{PI, TAU};
 
 use crate::gta5::data::timecycle::{attr, tokens, Keyframe, Token};
 
-/// When the sun is highest, as a part of the day: one o'clock by the summer clock and the
-/// minutes the first day of spring adds.
-const SOLAR_NOON: f32 = (13.0 * 60.0 + 27.0) / 1440.0;
-/// The parts of the day the clock is bent between: the first and last quarter hour the sun is on the horizon.
-const SUNRISE: f32 = 29.0 / 96.0;
-const SUNSET: f32 = 78.0 / 96.0;
-/// How the clock lingers near sunrise and sunset: the power the way through half a day or half
-/// a night is raised to.
-const HORIZON_LINGER: f32 = 1.25;
 /// The latitude at the middle of the map, in radians, for an install whose settings state no range.
 pub const LATITUDE: f32 = 25.8 * PI / 180.0;
 
@@ -23,7 +14,7 @@ pub const LATITUDE: f32 = 25.8 * PI / 180.0;
 /// the sun in the plane of east and up, nought where it rises, and the sample that holds there.
 // The half turn is written short, and the round is closed by as short a turn: neither is pi.
 #[allow(clippy::approx_constant)]
-const SAMPLE_ANGLES: [(f32, usize); 13] = [
+pub const SAMPLE_ANGLES: [(f32, usize); 13] = [
     (-3.14, 9),
     (-3.09, 10),
     (-2.77, 11),
@@ -63,33 +54,12 @@ pub const DOME_TRANSITION: f32 = 0.25;
 const FRAME_FOG_DENSITY: f32 = 10_000.0;
 const FRAME_FOG_FALLOFF: f32 = 1_000.0;
 
-/// How the way from one sample to the next is bent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Easing {
-    #[default]
-    Linear,
-    QuarticInOut,
-}
-
-impl Easing {
-    /// `along` (0 to 1) as this easing bends it.
-    pub fn apply(self, along: f32) -> f32 {
-        let t = along.clamp(0.0, 1.0);
-        match self {
-            Self::Linear => t,
-            // ponytail: the usual curve of that name; which of the game's easing kinds the name selects is not read.
-            Self::QuarticInOut if t < 0.5 => 8.0 * t.powi(4),
-            Self::QuarticInOut => 1.0 - 8.0 * (1.0 - t).powi(4),
-        }
-    }
-}
-
-/// One sample of the day: a place of the sun, named by an hour.
+/// One sample of the day: a place of the sun, named by an hour, and the name of the curve the way from it to the next is bent by.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sample {
     pub name: String,
     pub hour: f32,
-    pub easing: Easing,
+    pub interpolation_type: String,
 }
 
 /// GTA VI's time table.
@@ -110,12 +80,9 @@ impl DayTable {
                 "sample" => table.samples.push(Sample {
                     name: attr(attrs, "name").unwrap_or_default().to_string(),
                     hour: (attr(attrs, "hour").and_then(|v| v.trim().parse().ok())).unwrap_or(0.0),
-                    easing: match attr(attrs, "interpolation_type") {
-                        Some(kind) if kind.eq_ignore_ascii_case("EASE_QUARTIC_INOUT") => {
-                            Easing::QuarticInOut
-                        }
-                        _ => Easing::Linear,
-                    },
+                    interpolation_type: (attr(attrs, "interpolation_type"))
+                        .unwrap_or_default()
+                        .to_string(),
                 }),
                 "region" => (table.regions).extend(attr(attrs, "name").map(str::to_string)),
                 _ => {}
@@ -123,59 +90,6 @@ impl DayTable {
         }
         table
     }
-
-    /// The two samples the sun at `angle` lies between and how far along, eased; `None` unless the table has the samples the angles are of.
-    #[allow(clippy::approx_constant)]
-    pub fn locate(&self, angle: f32) -> Option<(usize, usize, f32)> {
-        if self.samples.len() < SAMPLE_ANGLES.len() {
-            return None;
-        }
-        // The round is closed a little short of a whole turn.
-        let angle = if angle < -3.14 { angle + 6.28 } else { angle };
-        let first = (SAMPLE_ANGLES.iter())
-            .rposition(|(at, _)| *at <= angle)
-            .unwrap_or(0);
-        let second = (first + 1) % SAMPLE_ANGLES.len();
-        let (from, to) = (SAMPLE_ANGLES[first].0, SAMPLE_ANGLES[second].0);
-        let to = if to < from { to + TAU } else { to };
-        let along = ((angle - from) / (to - from)).clamp(0.0, 1.0);
-        let (first, second) = (SAMPLE_ANGLES[first].1, SAMPLE_ANGLES[second].1);
-        Some((first, second, self.samples[first].easing.apply(along)))
-    }
-}
-
-/// The clock as the sun follows it: `day` is the part of the day gone by, and each half of the
-/// day and of the night is slowed near the horizon.
-fn sun_clock(day: f32) -> f32 {
-    let (rise, set) = (SUNRISE, SUNSET);
-    let (from, to) = match day {
-        day if day < rise => (set - 1.0, rise),
-        day if day > set => (set, rise + 1.0),
-        _ => (rise, set),
-    };
-    let half = (to - from) / 2.0;
-    match day - from < half {
-        true => from + half * ((day - from) / half).powf(HORIZON_LINGER),
-        false => to - half * ((to - day) / half).powf(HORIZON_LINGER),
-    }
-}
-
-/// How far the sun has gone on its own round at `hours` (0 to 24) of the first day of spring: nought as it rises, a quarter turn at its top, in `-PI..=PI`.
-pub fn sun_round(hours: f32) -> f32 {
-    let turn = (sun_clock(hours.rem_euclid(24.0) / 24.0) - SOLAR_NOON) * TAU;
-    let round = PI / 2.0 + turn;
-    (round + PI).rem_euclid(TAU) - PI
-}
-
-/// The way towards the sun `round` along its round at `latitude` (radians): x east, y north, z up.
-pub fn sun_towards(round: f32, latitude: f32) -> [f32; 3] {
-    let (up, east) = round.sin_cos();
-    [east, -up * latitude.sin(), up * latitude.cos()]
-}
-
-/// The angle a cycle's samples are found by: the sun's in the plane of east and up.
-pub fn sun_angle(towards: [f32; 3]) -> f32 {
-    towards[2].atan2(towards[0])
 }
 
 /// The lean of the sun's path a frame's own time table takes for a sun at `latitude`, in radians.

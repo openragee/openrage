@@ -91,9 +91,9 @@ fn the_latitude_is_the_settings_range_at_the_cameras_place_and_the_maps_middle_w
 #[test]
 fn a_moment_blends_the_two_samples_the_sun_stands_between_and_exposes_its_light() {
     let tables = tables();
-    // Solar noon by the clock: near the top of the round, the seventh sample almost whole.
+    // Solar noon by the summer clock, with no noon table to move it: the top of the round, the seventh sample almost whole.
     let noon = tables
-        .moment(13.45, "Rainy", 0.0)
+        .moment(13.0, "Rainy", 0.0)
         .expect("a cycle of that name");
     assert!(
         (noon.frame_hours - 13.0).abs() < 0.05,

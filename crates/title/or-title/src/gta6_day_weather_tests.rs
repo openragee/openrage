@@ -194,13 +194,13 @@ fn a_slot_joins_the_second_queue_on_either_modifier() {
 fn the_generator_multiplies_with_carry() {
     // x = 1: 1 * 0x5cdcfaa7 + 0; its low 15 bits 0x7aa7 = 31399, 31399 / 32768 = 0.958221435546875.
     assert_eq!(mwc_next(1), 0x5cdc_faa7);
-    assert_close(mwc_unit(mwc_next(1)), 0.958_221_435_546_875, 0.0);
+    assert_close(mwc_unit(mwc_next(1)), 31_399.0 / 32_768.0, 0.0);
     // x = 2^32: low 0, carry 1, so 1.
     assert_eq!(mwc_next(1 << 32), 1);
     // x = 2^64 - 1: 0xffffffff * 0x5cdcfaa7 = 0x5cdcfaa6_a3230559, + 0xffffffff = 0x5cdcfaa7_a3230558.
     assert_eq!(mwc_next(u64::MAX), 0x5cdc_faa7_a323_0558);
     // Low 15 bits 0x0558 = 1368, 1368 / 32768 = 0.041748046875.
-    assert_close(mwc_unit(mwc_next(u64::MAX)), 0.041_748_046_875, 0.0);
+    assert_close(mwc_unit(mwc_next(u64::MAX)), 1_368.0 / 32_768.0, 0.0);
     // Bit 15 is not taken: 0x8000 gives 0, 0x7fff gives 32767 / 32768.
     assert_close(mwc_unit(0x8000), 0.0, 0.0);
     assert_close(mwc_unit(0x7fff), 1.0 - MWC_UNIT_SCALE, 0.0);

@@ -816,7 +816,8 @@ mod tests {
             "these tables state no glow"
         );
         // A cycle that states the air's glow: its base colour times its intensity, in thousandths.
-        for (hour, intensity) in [(1.0, 1.0f32), (2.0, 0.1)] {
+        // Each value is one a half float holds whole, as the game keeps a cycle's samples.
+        for (hour, intensity) in [(1.0, 1.0f32), (2.0, 0.25)] {
             let cycle = format!(
                 r#"<timecycle_keyframe_data><cycle name="Sunny" regions="1"><region name="GLOBAL">
                 <sky_air_glow_base_color_b>{}</sky_air_glow_base_color_b>

@@ -7,19 +7,26 @@ use std::fs::File;
 use std::io;
 use std::path::Path;
 
+use glam::Vec3;
 use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9Content, Rpf9Scan};
 use or_io::gta5::data::timecycle::{Keyframe, TimeTable, Timecycle};
 use or_io::gta5::data::visual_settings::VisualSettings;
 use or_io::gta6::timecycle::{
     apply_modifier, blend_modifiers, frame_hours, frame_keyframe, high_level_vars, modifiers,
-    sun_angle, sun_roll, sun_round, sun_towards, DayTable, FrameLight, Modifier, FRAME_DIFFUSE,
-    LATITUDE,
+    sun_roll, DayTable, FrameLight, Modifier, FRAME_DIFFUSE, LATITUDE, SAMPLE_ANGLES,
 };
 use or_io::gta6::weather::{WeatherData, WeatherSet};
 
-use crate::gta6_exposure::{
-    adapt, bodies, light, moon_towards, target_stops, Bodies, ExposureSettings,
+use crate::gta6_day_frame::{
+    apply_mode2, eased_t, f32_to_half, name_hash, pick_samples, sample_curve_index,
+    stored_half_value, SampleKey,
 };
+use crate::gta6_day_sun::{
+    moon_cycle, moon_direction, sample_angle, sun_day, MoonTunables, SunTunables,
+    DEFAULT_DAY_OF_YEAR,
+};
+use crate::gta6_day_vars::{read_executable_day, ExecutableDay};
+use crate::gta6_exposure::{adapt, bodies, light, target_stops, Bodies, ExposureSettings};
 
 /// What a text of the day may inflate to; a longer one is passed over.
 const BODY_LIMIT: u64 = 16 << 20;
@@ -36,6 +43,39 @@ const ROOTS: [&str; 4] = [
 const VISUAL_SETTINGS_MARK: &str = "Tonemapping.";
 /// The high-level values of a cycle a moment carries among its own variables, for its cloud layer.
 const CLOUD_VARS: [&str; 2] = ["cloud_cover", "cloud_type"];
+/// The variables the light chain reads by name, which take the defaults of the executable's table where a moment states none.
+const LIGHT_VARIABLES: [&str; 27] = [
+    "light_dir_col_r",
+    "light_dir_col_g",
+    "light_dir_col_b",
+    "light_dir_mult",
+    "light_dir_sun_mult",
+    "light_dir_moon_mult",
+    "galaxy_light_dir_col_r",
+    "galaxy_light_dir_col_g",
+    "galaxy_light_dir_col_b",
+    "galaxy_light_dir_mult",
+    "light_direction_override",
+    "light_direction_override_overrides_sun",
+    "sun_direction_override",
+    "moon_direction_override",
+    "sun_direction_x",
+    "sun_direction_y",
+    "sun_direction_z",
+    "moon_direction_x",
+    "moon_direction_y",
+    "moon_direction_z",
+    "sun_fade_threshold",
+    "moon_fade_threshold",
+    "sun_moon_crossfade",
+    "sky_scattering_sun_illuminance",
+    "sky_scattering_sun_intensity_multiplier",
+    "sky_scattering_moon_illuminance",
+    "sky_scattering_moon_intensity_multiplier",
+];
+/// The east edge of the sun's observer box, in metres, where the visual settings state none.
+// ponytail: a calibration knob, the west edge mirrored; the executable's own value was not read.
+const EAST_X: f64 = 11_000.0;
 
 /// What a GTA VI install states of the look of its day.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -47,6 +87,8 @@ pub struct DayTables {
     pub weather: WeatherSet,
     pub modifiers: Vec<Modifier>,
     pub visual_settings: VisualSettings,
+    /// The variable table and the noon table of the install's executable.
+    pub executable: ExecutableDay,
 }
 
 /// One moment of GTA VI's day as a frame built for GTA V's day takes it.
@@ -104,6 +146,14 @@ impl DayTables {
                 let before = tables.timecycle.cycles.len();
                 tables.timecycle.add_cycles(text);
                 let vars = high_level_vars(text);
+                // The game holds a cycle's samples as half floats of half their value.
+                let samples = (tables.timecycle.cycles[before..].iter_mut())
+                    .flat_map(|cycle| cycle.regions.iter_mut())
+                    .flat_map(|region| region.vars.values_mut())
+                    .flatten();
+                for value in samples {
+                    *value = stored_half_value(f32_to_half(*value / 2.0));
+                }
                 for cycle in &tables.timecycle.cycles[before..] {
                     (tables.high_level).insert(cycle.name.to_ascii_lowercase(), vars.clone());
                 }
@@ -180,13 +230,109 @@ impl DayTables {
             .filter(|slot| !slots.contains(slot))
             .collect();
         slots.extend(more);
-        let none = BTreeMap::new();
+        let along = along.clamp(0.0, 1.0);
         for slot in slots {
-            let (x, y) = (in_slot(&a, slot), in_slot(&b, slot));
-            // ⚠ Inferred: a slot one weather leaves empty is the other's modifier whole.
-            let blend = blend_modifiers(x.unwrap_or(&none), y.unwrap_or(&none), along);
-            apply_modifier(own, &blend);
+            // A slot only the weather left fills is laid at what is left of the change; ⚠ one only the next fills, at how far it has come (inferred).
+            match (in_slot(&a, slot), in_slot(&b, slot)) {
+                (Some(x), None) => self.apply(own, x, 1.0 - along),
+                (None, Some(y)) => self.apply(own, y, along),
+                // ⚠ The strength where both weathers fill the slot is not read: their values are blended and laid whole.
+                (Some(x), Some(y)) => self.apply(own, &blend_modifiers(x, y, along), 1.0),
+                (None, None) => {}
+            }
         }
+    }
+
+    /// Lay the modifier `vars` over `own` at `strength`, each variable as its mode in the executable's table has it; by its name where no table is read.
+    fn apply(&self, own: &mut Keyframe, vars: &Vars, strength: f32) {
+        if strength <= 0.0 {
+            return;
+        }
+        let Some(table) = &self.executable.variables else {
+            apply_modifier(own, vars);
+            return;
+        };
+        for (name, &[first, second]) in vars {
+            // A variable the table does not name is one the game's loader finds no place for.
+            let Some(entry) = table.index_of(name_hash(name)).map(|i| table.entries[i]) else {
+                continue;
+            };
+            let current = own.get(name).unwrap_or(entry.default);
+            let value = match entry.mode {
+                // ⚠ Only mode 2 is read. Mode 3 holds the light's colours and strengths, which
+                // the viewer measured to move by the second value; mode 6 the level-of-detail
+                // scales, which a modifier leaves; the rest are taken as mode 2.
+                3 => current + (first - current) * second * strength,
+                6 => continue,
+                _ => apply_mode2(current, first, strength),
+            };
+            own.set(name, value);
+        }
+    }
+
+    /// Give each variable the light chain reads that `own` does not state the default the executable's table has for it.
+    fn with_defaults(&self, own: &mut Keyframe) {
+        let Some(table) = &self.executable.variables else {
+            return;
+        };
+        for name in LIGHT_VARIABLES {
+            if let (None, Some(i)) = (own.get(name), table.index_of(name_hash(name))) {
+                own.set(name, table.entries[i].default);
+            }
+        }
+    }
+
+    /// The observer's box and the daylight-saving days, by the names the executable hashes to find them in the visual settings, its own where they state none.
+    fn sun_tunables(&self) -> SunTunables {
+        let get = |name: &str, default: f64| {
+            f64::from(self.visual_settings.get_f32(name, default as f32))
+        };
+        let image = SunTunables::image_defaults(EAST_X);
+        SunTunables {
+            south_y: get("sky.latitude.YPosMin", image.south_y),
+            north_y: get("sky.latitude.YPosMax", image.north_y),
+            south_latitude: get("sky.latitude.rangeMin", image.south_latitude),
+            north_latitude: get("sky.latitude.rangeMax", image.north_latitude),
+            west_x: get("sky.longitude.XPosMin", image.west_x),
+            // ⚠ The executable's key for the east edge is not this name's hash, and its own value is not read.
+            east_x: get("sky.longitude.XPosMax", image.east_x),
+            west_longitude: get("sky.longitude.rangeMin", image.west_longitude),
+            east_longitude: get("sky.longitude.rangeMax", image.east_longitude),
+            daylight_start_day: get("sky.daylightsavingstime.start", 79.0) as i32,
+            daylight_end_day: get("sky.daylightsavingstime.end", 298.0) as i32,
+        }
+    }
+
+    /// The moon's orbit, by the names the executable hashes to find it in the visual settings, its own where they state none.
+    fn moon_tunables(&self) -> MoonTunables {
+        let get = |name: &str, default: f64| {
+            f64::from(self.visual_settings.get_f32(name, default as f32))
+        };
+        let image = MoonTunables::image_defaults();
+        MoonTunables {
+            rate: get("misc.Moon.Speed", image.rate),
+            orbit_angle: get("misc.Sun.Roll", image.orbit_angle),
+            orbit_angle_offset: get("misc.Moon.RollOffset", image.orbit_angle_offset),
+            height: get("misc.Moon.Wobble.Offset", image.height),
+            height_swing: get("misc.Moon.Wobble.Amplitude", image.height_swing),
+            height_swing_rate: get("misc.Moon.Wobble.Frequency", image.height_swing_rate),
+        }
+    }
+
+    /// The two samples the sun towards `sun` lies between and how far along, eased by the curve the first names; `None` unless the time table holds every sample the angles name.
+    fn between(&self, sun: Vec3) -> Option<(usize, usize, f32)> {
+        let keys = SAMPLE_ANGLES.map(|(angle, sample)| SampleKey {
+            angle,
+            sample: sample as i32,
+        });
+        if self.table.samples.len() < keys.len() {
+            return None;
+        }
+        let curves: Vec<usize> = (self.table.samples.iter())
+            .map(|s| sample_curve_index(name_hash(&s.interpolation_type)))
+            .collect();
+        let pick = pick_samples(sample_angle(sun), &keys).ok()?;
+        Some((pick.i0 as usize, pick.i1 as usize, eased_t(&pick, &curves)))
     }
 
     /// The moment at `hour` (0 to 24) in `weather` (a weather type's name, else a cycle's) for a camera `y` metres north on the map; `None` where no cycle is read for it or the time table is not GTA VI's.
@@ -241,13 +387,26 @@ impl DayTables {
         room: Option<(&Vars, f32)>,
     ) -> Option<Moment> {
         let latitude = self.latitude(y);
-        let round = sun_round(hour);
-        let sun = sun_towards(round, latitude);
-        let between = self.table.locate(sun_angle(sun))?;
+        // The sun from the clock for an observer at the camera's place north; ⚠ its place east is
+        // taken as nought, which moves the sun by under a minute of its day across the map.
+        let day = f64::from(hour.rem_euclid(24.0)) / 24.0;
+        let observer = Vec3::new(0.0, y, 0.0);
+        let noon = &self.executable.noon_minutes;
+        let ephemeris = sun_day(
+            day,
+            DEFAULT_DAY_OF_YEAR,
+            noon,
+            observer,
+            &self.sun_tunables(),
+        );
+        let round = sample_angle(ephemeris.direction);
+        let between = self.between(ephemeris.direction)?;
         let (a, b) = (self.cycle_of(from)?, self.cycle_of(to)?);
         let along = along.clamp(0.0, 1.0);
         let mut own = (self.timecycle).keyframe_between(between, a, b, along, 0.0)?;
         self.modify(&mut own, from, to, along);
+        self.with_defaults(&mut own);
+        let sun: [f32; 3] = ephemeris.direction.into();
         // The cloud layer's cover and kind are the cycles' high-level values, blended as the weathers are.
         for name in CLOUD_VARS {
             let of = |cycle: &str| {
@@ -259,7 +418,7 @@ impl DayTables {
         }
         if let Some((vars, strength)) = room {
             let mut full = own.clone();
-            apply_modifier(&mut full, vars);
+            self.apply(&mut full, vars, 1.0);
             // A variable the cycle leaves unstated is the modifier's whole, as a weather's is.
             for name in vars.keys() {
                 if let Some(b) = full.get(name) {
@@ -271,21 +430,12 @@ impl DayTables {
         let frame_hours = frame_hours(round);
         let visual = &self.visual_settings;
         let degrees = |name: &str| visual.get_f32(name, 0.0).to_radians();
-        let moon = {
-            // ⚠ Once round a day, the executable's own count at rest: the setting's name is not known.
-            let day = hour / 24.0;
-            let roll = visual.get_f32("misc.Sun.Roll", 122.0)
-                + visual.get_f32("misc.Moon.RollOffset", 240.0);
-            let wobble = visual.get_f32("misc.Moon.Wobble.Offset", 0.8)
-                + visual.get_f32("misc.Moon.Wobble.Amplitude", 0.1)
-                    * (std::f32::consts::TAU
-                        * day
-                        * visual.get_f32("misc.Moon.Wobble.Frequency", 0.0))
-                    .sin();
-            moon_towards(day, roll.to_radians(), wobble)
-        };
-        let (light, stops) = light(&own, sun, moon, &self.exposure_settings());
-        let lit = bodies(&own, sun, moon);
+        // The moon turns with the clock's own day, not the sun's bent one; the viewer counts no days.
+        let tunables = self.moon_tunables();
+        let moon: [f32; 3] = moon_direction(moon_cycle(0, day, tunables.rate), &tunables).into();
+        let settings = self.exposure_settings();
+        let (light, stops) = light(&own, sun, moon, &settings);
+        let lit = bodies(&own, sun, moon, &settings.bodies);
         let rain = |weather: &str| {
             self.data_of(weather)
                 .map_or(0.0, |d| d.rain.clamp(0.0, 1.0))
@@ -384,7 +534,9 @@ pub fn read_day(archive: &Path, stop: &dyn Fn() -> bool) -> io::Result<DayTables
             }
         }
     }
-    Ok(DayTables::of_texts(texts.iter().map(String::as_str)))
+    let mut tables = DayTables::of_texts(texts.iter().map(String::as_str));
+    tables.executable = read_executable_day(archive);
+    Ok(tables)
 }
 
 #[cfg(test)]

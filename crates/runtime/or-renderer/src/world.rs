@@ -21,6 +21,7 @@ mod material;
 mod pipelines;
 mod shader;
 pub(crate) mod shadow;
+mod shadow_terrain;
 pub mod water;
 mod water_shader;
 
@@ -32,6 +33,7 @@ use material::{uniform_bytes, STAND_INS};
 use pipelines::{ByBucket, Pipelines};
 pub use shadow::{shadow_reach, ShadowFocus, DISTANCE_MULTIPLIER, SHADOW_FAR};
 use shadow::{Cascades, CASCADES};
+pub use shadow_terrain::TerrainGrid;
 
 /// How and when a mesh of the world is drawn; declared in the order the buckets draw.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -233,11 +235,13 @@ pub(crate) struct World {
     light_group: wgpu::BindGroup,
     /// The view of each cascade of the sun's shadow, bound where a pass binds its camera.
     cascades: [(wgpu::Buffer, wgpu::BindGroup); CASCADES],
-    /// One buffer for every frame, made again only when a frame has more instances than it holds.
-    instances: Option<wgpu::Buffer>,
+    /// The frame's instances, `per` to a buffer, each buffer made again only when a frame has more instances for it than it holds.
+    instances: Vec<Option<wgpu::Buffer>>,
+    per: u32,
     count: u32,
-    /// The draws of this frame that draw something, in the order of their buckets.
+    /// The draws of this frame that draw something, in the order of their buckets, and the buffer of instances each draws from.
     draws: Vec<WorldDraw>,
+    parts: Vec<u32>,
     /// The runs of `draws` one call issues, for a pass that samples the maps and for the cast of the shadow.
     batches: Vec<Range<u32>>,
     cast_batches: Vec<Range<u32>>,
@@ -257,6 +261,8 @@ pub(crate) struct World {
     casting: RefCell<shadow::Casting>,
     /// How the cascades' split is stretched for what the camera rides.
     pub(crate) focus: ShadowFocus,
+    /// The terrain's shadow past the cascades, once its heights are given.
+    pub(crate) terrain: Option<shadow_terrain::TerrainShadow>,
     /// What a material's own light is multiplied by: the exposure the day's light is given at, 1 where the frame keeps its own day.
     exposure: f32,
     /// The lamps that light what blends, nearest first.
@@ -339,18 +345,19 @@ fn fill(
     }
 }
 
-/// The runs of `draws`, which are in the order of their buckets, that one call can issue: draws side by side of one bucket, the same two buffers and the same material. For the cast of the shadow (`cast`) only what casts is taken, and what casts whole needs no map, so any material joins.
-fn batches(draws: &[WorldDraw], cast: bool) -> Vec<Range<u32>> {
+/// The runs of `draws`, which are in the order of their buckets, that one call can issue: draws side by side of one bucket, the same two buffers, the same buffer of instances by `parts` and the same material. For the cast of the shadow (`cast`) only what casts is taken, and what casts whole needs no map, so any material joins.
+fn batches(draws: &[WorldDraw], parts: &[u32], cast: bool) -> Vec<Range<u32>> {
     let mut batches: Vec<Range<u32>> = Vec::new();
-    let mut before: Option<&WorldMesh> = None;
-    for (at, draw) in draws.iter().enumerate() {
+    let mut before: Option<(&WorldMesh, u32)> = None;
+    for (at, (draw, part)) in draws.iter().zip(parts).enumerate() {
         let (at, mesh) = (at as u32, &*draw.mesh);
         let bucket = mesh.material.bucket;
         if cast && !bucket.casts() {
             continue;
         }
-        let joins = before.is_some_and(|before| {
+        let joins = before.is_some_and(|(before, was)| {
             before.material.bucket == bucket
+                && was == *part
                 && before.vertices == mesh.vertices
                 && before.indices == mesh.indices
                 && ((cast && bucket != WorldBucket::Cutout) || before.material == mesh.material)
@@ -359,9 +366,32 @@ fn batches(draws: &[WorldDraw], cast: bool) -> Vec<Range<u32>> {
             Some(last) => last.end = at + 1,
             None => batches.push(at..at + 1),
         }
-        before = Some(mesh);
+        before = Some((mesh, *part));
     }
     batches
+}
+
+/// `draws` with each run of instances that crosses the end of a buffer of `per` cut into one draw a buffer, in the same order, and the buffer each draws from.
+fn split(draws: Vec<WorldDraw>, per: u32) -> (Vec<WorldDraw>, Vec<u32>) {
+    let per = per.max(1);
+    let (mut out, mut parts) = (
+        Vec::with_capacity(draws.len()),
+        Vec::with_capacity(draws.len()),
+    );
+    for draw in draws {
+        let mut start = draw.instances.start;
+        while start < draw.instances.end {
+            let part = start / per;
+            let end = draw.instances.end.min((part + 1).saturating_mul(per));
+            out.push(WorldDraw {
+                mesh: Arc::clone(&draw.mesh),
+                instances: start..end,
+            });
+            parts.push(part);
+            start = end;
+        }
+    }
+    (out, parts)
 }
 
 impl World {
@@ -474,6 +504,7 @@ impl World {
             set: 0,
             casting: RefCell::default(),
             focus: ShadowFocus::FREE,
+            terrain: None,
             exposure: 1.0,
             lamps: Vec::new(),
             alike: RefCell::default(),
@@ -484,9 +515,11 @@ impl World {
             light,
             light_group,
             cascades,
-            instances: None,
+            instances: Vec::new(),
+            per: 1,
             count: 0,
             draws: Vec::new(),
+            parts: Vec::new(),
             batches: Vec::new(),
             cast_batches: Vec::new(),
             indirect: None,
@@ -556,9 +589,10 @@ impl World {
         instances: &[WorldInstance],
         mut draws: Vec<WorldDraw>,
     ) {
-        // ⚠ The device makes no buffer larger than its limit: what one holds of the frame's instances is what draws.
+        // ⚠ The device makes no buffer larger than its limit: the frame's instances are laid in as many as hold them.
         let most = device.limits().max_buffer_size / std::mem::size_of::<WorldInstance>() as u64;
-        let instances = &instances[..instances.len().min(most as usize)];
+        self.per = most.clamp(1, u64::from(u32::MAX)) as u32;
+        let instances = &instances[..instances.len().min(u32::MAX as usize)];
         self.count = instances.len() as u32;
         // A run past the instances of this frame would read what an earlier frame left in the buffer
         for draw in &mut draws {
@@ -567,8 +601,9 @@ impl World {
         draws.retain(|draw| !draw.instances.is_empty() && draw.mesh.index_count > 0);
         // The sort keeps the order the caller gave the draws of a bucket
         draws.sort_by_key(|draw| draw.mesh.material.bucket);
-        self.batches = batches(&draws, false);
-        self.cast_batches = batches(&draws, true);
+        let (draws, parts) = split(draws, self.per);
+        self.batches = batches(&draws, &parts, false);
+        self.cast_batches = batches(&draws, &parts, true);
         let triangles = |draw: &WorldDraw| {
             u64::from(draw.mesh.index_count / 3)
                 * u64::from(draw.instances.end - draw.instances.start)
@@ -583,24 +618,28 @@ impl World {
             ..WorldCalls::default()
         };
         if !draws.is_empty() {
-            fill(
-                device,
-                queue,
-                &mut self.instances,
-                "viewport-world-instances",
-                wgpu::BufferUsages::VERTEX,
-                bytemuck::cast_slice(instances),
-            );
+            let laid: Vec<&[WorldInstance]> = instances.chunks(self.per as usize).collect();
+            self.instances.resize_with(laid.len(), || None);
+            for (slot, part) in self.instances.iter_mut().zip(laid) {
+                fill(
+                    device,
+                    queue,
+                    slot,
+                    "viewport-world-instances",
+                    wgpu::BufferUsages::VERTEX,
+                    bytemuck::cast_slice(part),
+                );
+            }
         }
         if self.multi && !draws.is_empty() {
             let mut arguments = Vec::with_capacity(draws.len() * ARGS as usize);
-            for draw in &draws {
+            for (draw, part) in draws.iter().zip(&parts) {
                 let call = wgpu::util::DrawIndexedIndirectArgs {
                     index_count: draw.mesh.index_count,
                     instance_count: draw.instances.end - draw.instances.start,
                     first_index: draw.mesh.first_index,
                     base_vertex: draw.mesh.base_vertex,
-                    first_instance: draw.instances.start,
+                    first_instance: draw.instances.start - part * self.per,
                 };
                 arguments.extend_from_slice(call.as_bytes());
             }
@@ -613,7 +652,7 @@ impl World {
                 &arguments,
             );
         }
-        self.draws = draws;
+        (self.draws, self.parts) = (draws, parts);
         // Each cascade casts what of these reaches its tile, once the frame's cascades are known
         self.given.clear();
         self.given.extend_from_slice(instances);
@@ -643,6 +682,7 @@ impl World {
     ) {
         let mut set: Option<(&wgpu::RenderPipeline, &WorldMesh)> = None;
         let mut stencil = MATERIAL_DEFAULT;
+        let mut bound = None;
         for batch in batches {
             let run = &self.draws[batch.start as usize..batch.end as usize];
             let Some(mesh) = run.first().map(|draw| &*draw.mesh) else {
@@ -651,6 +691,15 @@ impl World {
             let Some(pipeline) = &pipelines[mesh.material.bucket as usize] else {
                 continue;
             };
+            // A batch draws from one buffer of the frame's instances; the cast binds its own.
+            let part = self.parts.get(batch.start as usize).copied().unwrap_or(0);
+            if cast.is_none() && bound != Some(part) {
+                let Some(Some(instances)) = self.instances.get(part as usize) else {
+                    continue;
+                };
+                pass.set_vertex_buffer(1, instances.slice(..));
+                bound = Some(part);
+            }
             if !set.is_some_and(|(last, _)| std::ptr::eq(last, pipeline)) {
                 pass.set_pipeline(pipeline);
             }
@@ -686,7 +735,10 @@ impl World {
                         let mesh = &draw.mesh;
                         let instances = match cast {
                             Some((casting, cascade)) => casting.ranges[cascade][at].clone(),
-                            None => draw.instances.clone(),
+                            None => {
+                                let first = part * self.per;
+                                draw.instances.start - first..draw.instances.end - first
+                            }
                         };
                         pass.draw_indexed(
                             mesh.first_index..mesh.first_index + mesh.index_count,
@@ -707,12 +759,11 @@ impl World {
         pipelines: &ByBucket,
         stencils: bool,
     ) {
-        let Some(instances) = self.instances.as_ref().filter(|_| self.draws_anything()) else {
+        if !self.draws_anything() {
             return;
-        };
+        }
         pass.set_bind_group(0, camera, &[]);
         pass.set_bind_group(2, &self.light_group, &[]);
-        pass.set_vertex_buffer(1, instances.slice(..));
         self.record(pass, &self.batches, pipelines, None, stencils);
     }
 

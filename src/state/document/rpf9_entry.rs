@@ -10,6 +10,8 @@ use or_io::container::rpf::{Gta6EntryContent, Gta6EntryExtra, Gta6EntryRead};
 mod media_preview;
 #[path = "rpf9_resource_preview.rs"]
 mod resource_preview;
+#[path = "../gta6_script_view.rs"]
+mod script_view;
 
 const MARKER: &str = ".rpf9-table";
 const LIMIT: u64 = 1 << 30;
@@ -38,10 +40,13 @@ impl Rpf9TableDocument {
             .nodes
             .get(&base)
             .ok_or_else(|| tr!("The archive table could not be loaded.").to_string())?;
-        let read = Gta6EntryRead::from_table(&node.archive, node.extent.clone(), index, u64::MAX)
+        let read = node
+            .mount
+            .read_entry_plan(index, node.extent.end, u64::MAX)
             .map_err(|e| e.to_string())?;
-        let entry = &node.archive.entries[index as usize];
+        let entry = &node.mount.archive.entries[index as usize];
         let extra = node
+            .mount
             .archive
             .entry_extra(index as usize)
             .ok_or_else(|| tr!("The archive table could not be loaded.").to_string())?;
@@ -53,12 +58,11 @@ impl Rpf9TableDocument {
         let indices = node
             .chain
             .iter()
-            .chain(std::iter::once(&index))
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join("_");
+            .copied()
+            .chain([index])
+            .collect::<Vec<_>>();
         Ok(EntrySource {
-            path: self.path.join(MARKER).join(indices).join(&name),
+            path: indexed_path(&self.path, &indices, &name),
             name,
             archive: self.path.clone(),
             metadata: self.metadata.clone(),
@@ -70,6 +74,15 @@ impl Rpf9TableDocument {
             key: (base, index),
         })
     }
+}
+
+pub(crate) fn indexed_path(archive: &Path, indices: &[u32], name: &str) -> PathBuf {
+    let indices = indices
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join("_");
+    archive.join(MARKER).join(indices).join(name)
 }
 
 // A recovered name is descriptive data, never a destination path.
@@ -112,7 +125,7 @@ pub fn archive_path(path: &Path) -> Option<&Path> {
         .parent()
 }
 
-fn address(path: &Path) -> Result<(PathBuf, Vec<u32>), String> {
+pub(crate) fn address(path: &Path) -> Result<(PathBuf, Vec<u32>), String> {
     let invalid = || tr!("The archive table could not be loaded.").to_string();
     let indices = path.parent().ok_or_else(invalid)?;
     let marker = indices
@@ -180,6 +193,7 @@ fn read_chain(doc: &Rpf9TableDocument, chain: &[u32]) -> Result<EntrySource, Str
             doc.read_headers,
         )?;
         tree.nodes.insert(base, node);
+        tree.revision = tree.revision.wrapping_add(1);
     }
     doc.entry(base, chain[chain.len() - 1])
 }
@@ -322,10 +336,12 @@ impl EntrySource {
                 crate::state::ttpf_document::table_textures(textures)?
             } else if let Some(payload) = table_preview(path, &self.entry, &self.extra, &bytes)? {
                 payload
+            } else if let Some(payload) = script_view::script_payload(&bytes) {
+                payload
             } else if DocumentKind::from_path(path) == Some(DocumentKind::Text) {
                 crate::state::document_io::text_payload(path, bytes)
             } else {
-                DocPayload::Hex(super::super::HexDocument {
+                DocPayload::Hex(crate::state::document::HexDocument {
                     bytes,
                     banner: crate::i18n::tr(READ_ONLY).to_string(),
                 })
@@ -337,10 +353,12 @@ impl EntrySource {
         match &result {
             Ok((kind, _)) => {
                 tree.detected.insert(self.key, *kind);
+                tree.revision = tree.revision.wrapping_add(1);
                 tree.errors.remove(&self.key);
             }
             Err(error) => {
                 tree.detected.remove(&self.key);
+                tree.revision = tree.revision.wrapping_add(1);
                 tree.errors.insert(self.key, String::clone(error));
             }
         }
@@ -515,12 +533,7 @@ impl AppState {
             });
             return Some((table, binding));
         }
-        self.documents.iter().find_map(|doc| match &doc.payload {
-            DocPayload::Rpf9(super::super::Rpf9Document::Table(table)) if table.path == archive => {
-                Some((Arc::clone(table), None))
-            }
-            _ => None,
-        })
+        self.mounted_rpf9_table(&archive).map(|table| (table, None))
     }
     pub fn open_rpf9_entry(&mut self, table: &Rpf9TableDocument, base: u64, index: u32) {
         self.open_rpf9_row(table, base, index, None);
@@ -629,6 +642,10 @@ mod tests;
 #[cfg(test)]
 #[path = "rpf9_texture_tests.rs"]
 mod texture_tests;
+
+#[cfg(test)]
+#[path = "rpf9_ciphered_texture_tests.rs"]
+mod ciphered_texture_tests;
 
 #[cfg(test)]
 #[path = "rpf9_texture_read_only_tests.rs"]

@@ -132,7 +132,9 @@ pub const KNOWN_FRAMINGS: [[u64; 5]; 5] = [
     [0, 0x400, 0, 0, 4],
 ];
 
-/// Refuse unknown framing or an unaligned tail; known head and tail windows are clipped to the body.
+/// Refuse unknown framing or an unaligned tail; known windows are clipped to the body.
+// Small bodies under the 0x1000 tuples need clipping, not rejection, when a window is longer
+// than the body; an unrecognised framing never supplies an extent.
 pub fn framing_reject_reason(framing: &[u64; 5], len: u64) -> Option<String> {
     if framing[4] != 4 {
         return Some(format!("its framing word F4 is {}, not 4", framing[4]));

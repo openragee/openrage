@@ -285,12 +285,14 @@ pub(super) fn open_archive(
             (open_archive_from_disk(&path, crypto)?, Some(path))
         }
         WorkerArchiveSource::Rpf9 { table, owner } => {
+            let table = if owner.is_none() {
+                table.current_or_reopen()?
+            } else {
+                table
+            };
             let base = match owner {
                 Some((base, index)) => table.expand_table(base, index)?,
-                None => {
-                    table.check_current()?;
-                    0
-                }
+                None => 0,
             };
             return Ok(ResolvedArchiveTree::Rpf9 { table, owner, base });
         }

@@ -97,6 +97,7 @@ fn only_the_layers_the_level_loads_start_loaded() {
     let body = |layer| WorldState {
         layer,
         selectors: vec![door()],
+        places: Vec::new(),
     };
     let states = || vec![body(1), body(2), body(3)];
     // 1 the level loads, 2 something else loads when it asks, 3 no manifest names.

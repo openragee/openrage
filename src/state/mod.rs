@@ -543,7 +543,7 @@ pub enum LoadingState {
 
 #[allow(clippy::large_enum_variant)]
 pub enum LoadResult {
-    Rpf9Loose {
+    Rpf9Entry {
         path: PathBuf,
         payload: DocPayload,
         source: document::rpf9::entry::EntrySource,

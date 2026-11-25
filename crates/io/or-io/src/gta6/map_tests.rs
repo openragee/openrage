@@ -466,6 +466,15 @@ fn every_truncated_block_is_an_error_and_never_a_panic() {
 }
 
 #[test]
+fn a_map_s_name_word_is_read_from_its_root_alone_and_a_map_types_body_states_none() {
+    let model = map_model();
+    let word = map_data(&model).expect("the map reads").name_word;
+    assert_ne!(word, 0);
+    assert_eq!(name_word_of(&model), Some(word));
+    assert_eq!(name_word_of(&types_model()), None);
+}
+
+#[test]
 fn the_root_type_is_read_from_the_header_and_the_block_table_alone() {
     let mut v = vec![0u8; 0x100];
     put(&mut v, 0x20, &2u32.to_le_bytes());

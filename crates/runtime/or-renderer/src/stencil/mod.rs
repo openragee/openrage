@@ -168,9 +168,11 @@ mod tests {
             backend_options: wgpu::BackendOptions::default(),
             display: None,
         });
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-                .ok()?;
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            force_fallback_adapter: crate::instance::software_asked(),
+            ..Default::default()
+        }))
+        .ok()?;
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("water-stencil-test"),
             required_features: wgpu::Features::empty(),

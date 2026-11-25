@@ -214,3 +214,29 @@ fn a_loose_drawable_opens_when_compressed_storage_exceeds_its_decoded_length() {
     assert!(matches!(opened.payload, DocPayload::Gta6Drawable(_)));
     assert_eq!(opened.source.bytes().unwrap(), bytes);
 }
+
+#[test]
+fn rsc7_drawables_bypass_the_gta6_budget_without_reading_their_body() {
+    use std::io::{Seek, Write};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large.ydr");
+    let mut file = std::fs::File::create(&path).unwrap();
+    file.write_all(b"RSC7").unwrap();
+    file.set_len((1 << 30) + 1).unwrap();
+    drop(file);
+    let mut file = std::fs::File::open(&path).unwrap();
+    assert!(loose_bytes(&mut file).unwrap().is_none());
+    assert_eq!(file.stream_position().unwrap(), 4);
+}
+
+#[test]
+fn a_headerless_drawable_still_obeys_its_byte_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large.ydr");
+    std::fs::File::create(&path)
+        .unwrap()
+        .set_len((1 << 30) + 1)
+        .unwrap();
+    let mut file = std::fs::File::open(&path).unwrap();
+    assert!(loose_bytes(&mut file).is_err());
+}

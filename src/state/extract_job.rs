@@ -1391,7 +1391,7 @@ mod tests {
             );
             {
                 let mut tree = table.tree();
-                let entry = &mut tree.nodes.get_mut(&0).unwrap().archive.entries[0];
+                let entry = &mut tree.nodes.get_mut(&0).unwrap().mount.archive.entries[0];
                 entry.name = name.map(str::to_owned);
             }
             if index == 0 {

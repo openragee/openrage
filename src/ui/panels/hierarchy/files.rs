@@ -12,7 +12,7 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
     super::rows::focus_on_drop(ui, state, ids::FILES);
     history_input(ui, state);
 
-    // Explicit scan documents and their bodies retain the scan's list.
+    // Explicit scan documents and their bodies retain the scan list.
     if let Some(scan) = state.scan_listing_the_active_tab() {
         crate::ui::panels::inspector::draw_scan_list(ui, state, scan);
         return;
@@ -179,7 +179,7 @@ fn draw_trees(ui: &mut egui::Ui, state: &mut AppState) {
             doc.rpf_entry_binding.is_none()
                 && match &doc.payload {
                     DocPayload::Rpf(_) => true,
-                    DocPayload::Rpf9(crate::state::Rpf9Document::Table(table)) => {
+                    DocPayload::Rpf9Table(table) => {
                         !state.documents.iter().any(|doc| {
                             matches!(&doc.payload, DocPayload::Rpf(rpf) if rpf.session.rpf9_table(&table.path).is_some())
                         })

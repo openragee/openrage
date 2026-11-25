@@ -3,7 +3,8 @@
 //! and put back with `replace_resource`; a 24-byte-row body is put back with `replace`, unchanged
 //! and with one byte edited. The written archive is reopened and must read back the same resource
 //! bytes, and the same row wherever the save changed no table. A kind the writer refuses is
-//! reported by the writer's reason; the test fails only on a wrong result.
+//! reported by the writer's reason; the test fails on a wrong result, and on a refusal the writer
+//! no longer makes.
 //!
 //! The written copy is read through its plan, the bytes `Rpf9Plan::write_to` writes, since a
 //! top-level archive is too large to hold in memory. Structure only: an archive whose table a save
@@ -43,6 +44,8 @@ const PER_KIND: usize = 3;
 /// Stored bytes read, and inflated bytes kept, to name a 24-byte-row body by its head.
 const HEAD_STORED: usize = 4096;
 const HEAD: u64 = 512;
+/// What the writer no longer refuses: a mode-4 chunk table, a dependency key the table lacks.
+const CLOSED: [&str; 2] = ["unknown mode", "not in the archive's dependency table"];
 
 /// The headerless kinds and their type codes, as the measured table of rows lists them.
 const HEADERLESS: [(&str, &[u32]); 13] = [
@@ -530,8 +533,14 @@ fn every_kind_a_save_emits_reads_back_from_the_written_archive() {
     }
 
     let names = HEADERLESS.iter().map(|(k, _)| *k).chain(ROW24);
+    let mut closed = Vec::new();
     for kind in names {
         let t = st.kinds.remove(kind).unwrap_or_default();
+        closed.extend(
+            (t.refused.keys())
+                .filter(|why| CLOSED.iter().any(|c| why.contains(c)))
+                .map(|why| format!("{kind}: {why}")),
+        );
         let refused: Vec<String> = t
             .refused
             .iter()
@@ -558,5 +567,9 @@ fn every_kind_a_save_emits_reads_back_from_the_written_archive() {
         st.failures.is_empty(),
         "{} saves read back wrong",
         st.failures.len()
+    );
+    assert!(
+        closed.is_empty(),
+        "kinds refused for what the writer now writes: {closed:?}"
     );
 }

@@ -58,7 +58,10 @@ impl AppState {
             RpfNodeBacking::Archive { source, .. } => {
                 let crypto = Arc::clone(&rpf.session.crypto);
                 let source = match source {
-                    ArchiveSource::Disk(Some(p)) => WorkerArchiveSource::Disk(p.clone()),
+                    ArchiveSource::Disk(Some(p)) => self
+                        .mounted_rpf9_table(p)
+                        .map(|table| WorkerArchiveSource::Rpf9 { table, owner: None })
+                        .unwrap_or_else(|| WorkerArchiveSource::Disk(p.clone())),
                     ArchiveSource::Disk(None) => return None,
                     ArchiveSource::Nested {
                         opened: Some(archive),
@@ -199,6 +202,11 @@ impl AppState {
                 self.apply_archive_open(doc_id, node_id, resolved)
             }
             ResolvedArchiveTree::Rpf9 { table, owner, base } => {
+                let table = if owner.is_none() {
+                    self.share_rpf9_table(table)
+                } else {
+                    table
+                };
                 let Some(doc) = self.document_mut(doc_id) else {
                     return Ok(());
                 };

@@ -40,14 +40,14 @@ pub(super) fn draw_facts(ui: &mut egui::Ui, doc: &Rpf9TableDocument) -> Option<A
     ui.label(tr_n!(
         "{count} entry",
         "{count} entries",
-        root.archive.entries.len()
+        root.mount.archive.entries.len()
     ));
     let mut action = None;
     if let Some((base, index)) = tree.selected {
         if let Some(entry) = tree
             .nodes
             .get(&base)
-            .and_then(|node| node.archive.entries.get(index as usize))
+            .and_then(|node| node.mount.archive.entries.get(index as usize))
         {
             ui.separator();
             ui.strong(display_name(entry, tree.entry_type(base, index).0));
@@ -89,7 +89,7 @@ fn visible_rows(
     let Some(node) = tree.nodes.get(&base) else {
         return;
     };
-    for entry in &node.archive.entries {
+    for entry in &node.mount.archive.entries {
         let key = (base, entry.index);
         let archive = is_archive(entry) || tree.expanded.contains(&key);
         if archive
@@ -137,7 +137,7 @@ pub(super) fn draw_tree(ui: &mut egui::Ui, doc: &Rpf9TableDocument) -> Option<Ac
             for row in visible {
                 let (base, index, depth) = rows[row];
                 let key = (base, index);
-                let entry = &tree.nodes[&base].archive.entries[index as usize];
+                let entry = &tree.nodes[&base].mount.archive.entries[index as usize];
                 let open = tree.expanded.contains(&key);
                 let (kind, detected) = tree.entry_type(base, index);
                 ui.push_id(key, |ui| {

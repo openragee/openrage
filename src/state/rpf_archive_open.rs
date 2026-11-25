@@ -36,34 +36,37 @@ fn give_gta6_keys() -> bool {
 }
 
 impl super::AppState {
-    /// Opens an entry of a GTA VI archive by what its body is, read at its place in the file, since its name states no kind; `false` for any other entry.
+    /// Route a generic archive row through the same table/index address as Files.
     pub(super) fn open_gta6_archive_entry(
         &mut self,
         parent: super::DocumentId,
         entry: super::RpfNodeId,
     ) -> bool {
-        let place = (|| {
+        let address = (|| {
             let super::DocPayload::Rpf(rpf) = &self.document(parent)?.payload else {
                 return None;
             };
+            let node = rpf.session.node(entry)?;
             let super::RpfNodeBacking::ArchiveFile {
                 archive_id,
                 entry_index,
                 override_bytes: None,
-            } = &rpf.session.node(entry)?.backing
+            } = &node.backing
             else {
                 return None;
             };
-            (rpf.session.archive(*archive_id)?.archive).rpf9_place(*entry_index)
+            let address = rpf
+                .session
+                .archive(*archive_id)?
+                .archive
+                .rpf9_entry_address(*entry_index)?;
+            Some(super::document::rpf9::entry::indexed_path(
+                &address.file,
+                &address.indices,
+                &node.name,
+            ))
         })();
-        let Some(place) = place else {
-            return false;
-        };
-        let view = super::rpf9_scan::View::Bytes;
-        let path = super::rpf9_scan::body_path(&place.file, place.offset, view);
-        if place.ciphered {
-            super::rpf9_scan::remember_ciphered(&path, place.base, place.entry);
-        }
+        let Some(path) = address else { return false };
         self.load_file(path);
         true
     }

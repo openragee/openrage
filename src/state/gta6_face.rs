@@ -90,8 +90,8 @@ pub(crate) fn is_face(skeleton: &Skeleton) -> bool {
 /// An expression set's key and its tracks, as its body opens.
 pub(crate) fn facts(set: &Expressions) -> String {
     let mut lines = vec![tr!(
-        "A GTA VI expression set of key hash_{key}, whose name is not known.",
-        key = format!("{:08X}", set.key)
+        "A GTA VI expression set of key {key}.",
+        key = super::gta6_names::said32(set.key)
     )];
     lines.push(tr_n!(
         "It reads {count} track: the facial controls, or bones, a clip carries.",
@@ -150,7 +150,8 @@ fn tables(set: &Expressions) -> Vec<String> {
             lines.push(format!("{} ({})", group_label(group), tracks.tracks.len()));
             for (k, (id, word)) in tracks.tracks.iter().enumerate() {
                 let detail = track_detail(set, group, k);
-                lines.push(format!("  hash_{id:08X} {}: {detail}", track_label(*word)));
+                let id = super::gta6_names::said32(*id);
+                lines.push(format!("  {id} {}: {detail}", track_label(*word)));
             }
         }
         if reads && !set.control_slots.is_empty() {
@@ -319,7 +320,9 @@ pub(crate) fn model_skeleton(
         if bones.is_empty() {
             return why;
         }
-        let bones: Vec<String> = bones.iter().map(|h| format!("hash_{h:08X}")).collect();
+        let bones: Vec<String> = (bones.iter())
+            .map(|h| super::gta6_names::said32(*h))
+            .collect();
         tr!(
             "No open dictionary holds {entries}, the face skeleton this head's name names, and the head has no skeleton of its own, so no skeleton holds the bones its palette names: {bones}. Open that dictionary from a scan of its archive, then pick the head again.",
             entries = looked_for.join(", "),

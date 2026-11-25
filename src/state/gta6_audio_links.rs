@@ -2,8 +2,6 @@
 //! container each sound's bank stands for, and an audio configuration body's names from the name
 //! pool after it, looked for on a worker as a row of the job list with its progress and Cancel.
 
-use crate::state::Rpf9Document;
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -246,9 +244,7 @@ fn pool(
 fn scans_of(state: &AppState, archive: &Path) -> Vec<(DocumentId, Arc<Rpf9ScanDocument>)> {
     (state.documents.iter())
         .filter_map(|d| match &d.payload {
-            DocPayload::Rpf9(Rpf9Document::Scan(scan)) if scan.path == archive => {
-                Some((d.id, Arc::clone(scan)))
-            }
+            DocPayload::Rpf9(scan) if scan.path == archive => Some((d.id, Arc::clone(scan))),
             _ => None,
         })
         .collect()

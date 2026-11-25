@@ -35,7 +35,7 @@ fn bad(why: impl Into<String>) -> IoError {
 
 impl Gta6EntryRead {
     /// Validate an entry's layout and sizes before reading or allocating its body.
-    pub fn from_table(
+    pub(crate) fn from_table(
         archive: &Gta6Archive,
         extent: Range<u64>,
         index: u32,
@@ -48,14 +48,7 @@ impl Gta6EntryRead {
         let extra = archive
             .entry_extra(index as usize)
             .ok_or_else(|| bad("entry columns are unreadable"))?;
-        let table = if let Some(at) = gta6_chunk_table::cell_offset(archive, index as usize) {
-            let heap = &archive.toc.bytes[at..];
-            let mut cell = [0; 8];
-            cell.copy_from_slice(&heap[..8]);
-            Some(gta6_chunk_table::decode(cell, heap)?)
-        } else {
-            None
-        };
+        let table = gta6_chunk_table::entry_table(archive, index as usize)?;
         Self::plan(
             entry,
             extra,
@@ -192,6 +185,30 @@ impl Gta6EntryRead {
         Ok(bytes)
     }
 
+    pub(super) fn read_clear<R: Read + Seek>(&self, source: &mut R) -> Result<Vec<u8>> {
+        usize::try_from(self.real).map_err(|_| bad("decoded size exceeds addressable memory"))?;
+        let mut bytes = Vec::new();
+        stream::extract(self, source, None, &mut bytes)?;
+        Ok(bytes)
+    }
+
+    pub(super) fn read_deciphered(&self, stored: &[u8]) -> Result<Vec<u8>> {
+        if stored.len() as u64 != self.stored_len() {
+            return Err(bad("deciphered bytes do not match the table's stored size"));
+        }
+        let mut plan = self.clone();
+        plan.extent = 0..stored.len() as u64;
+        plan.cipher = None;
+        plan.read_clear(&mut std::io::Cursor::new(stored))
+    }
+
+    pub(super) fn chunk_count(&self) -> usize {
+        match &self.decoding {
+            Decoding::Table(chunks) => chunks.len(),
+            Decoding::Raw | Decoding::Deflate => usize::from(self.real != 0),
+        }
+    }
+
     /// Read into memory only when both stored and decoded sizes fit `limit`.
     pub fn read_limited<R: Read + Seek>(
         &self,
@@ -212,7 +229,7 @@ impl Gta6EntryRead {
         keys: &GtaViKeys,
         output: &mut W,
     ) -> Result<u64> {
-        stream::extract(self, source, keys, output)
+        stream::extract(self, source, Some(keys), output)
     }
 }
 
@@ -346,7 +363,7 @@ mod tests {
             .read_prefix(&mut source(&bytes), &keys(), 513, 1024)
             .is_err());
 
-        let (mut stored, first) = zlib(&vec![0x41; 96]);
+        let (mut stored, first) = zlib(&[0x41; 96]);
         let prefix_budget = stored.len() as u64;
         stored.extend([0xff; 16]);
         let chunks = [

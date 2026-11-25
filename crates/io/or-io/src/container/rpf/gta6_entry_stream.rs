@@ -51,7 +51,7 @@ fn enciphered_window(
 
 struct Body<'a, R> {
     source: &'a mut R,
-    keys: &'a GtaViKeys,
+    keys: Option<&'a GtaViKeys>,
     cipher: Option<Gta6Cipher>,
     len: u64,
     read_limit: u64,
@@ -76,6 +76,7 @@ impl<R: Read> BufRead for Body<'_, R> {
                 for (a, b) in enciphered_window(&cipher.framing, self.len, self.loaded..end) {
                     let counter = advance_counter_be(&cipher.iv, a / 16);
                     self.keys
+                        .ok_or_else(|| io::Error::other("encrypted entry requires content keys"))?
                         .content_decrypt(
                             cipher.key_id,
                             &counter,
@@ -160,9 +161,14 @@ fn inflate<R: BufRead, W: Write + ?Sized>(
         }
     }
 }
-fn begin<R: Read + Seek>(plan: &Gta6EntryRead, source: &mut R, keys: &GtaViKeys) -> Result<()> {
+fn begin<R: Read + Seek>(
+    plan: &Gta6EntryRead,
+    source: &mut R,
+    keys: Option<&GtaViKeys>,
+) -> Result<()> {
     if let Some(cipher) = plan.cipher {
-        keys.content_decrypt(cipher.key_id, &cipher.iv, &mut [])?;
+        keys.ok_or_else(|| bad("encrypted entry requires content keys"))?
+            .content_decrypt(cipher.key_id, &cipher.iv, &mut [])?;
     }
     if source
         .seek(SeekFrom::End(0))
@@ -185,7 +191,7 @@ pub(super) fn header<R: Read + Seek>(
     if !matches!(plan.decoding, Decoding::Raw) {
         return compressed_header(plan, source, keys);
     }
-    begin(plan, source, keys)?;
+    begin(plan, source, Some(keys))?;
     let mut bytes = [0; 16];
     source
         .read_exact(&mut bytes)
@@ -225,7 +231,7 @@ pub(super) fn prefix<R: Read + Seek>(
     if count == 0 {
         return Ok(Vec::new());
     }
-    begin(plan, source, keys)?;
+    begin(plan, source, Some(keys))?;
     let len = plan.extent.end - plan.extent.start;
     let mut read_limit = input_limit.min(len);
     if plan.cipher.is_some() {
@@ -244,7 +250,7 @@ pub(super) fn prefix<R: Read + Seek>(
     }
     let mut body = Body {
         source,
-        keys,
+        keys: Some(keys),
         cipher: plan.cipher,
         len,
         read_limit,
@@ -304,7 +310,7 @@ pub(super) fn prefix<R: Read + Seek>(
 pub(super) fn extract<R: Read + Seek, W: Write + ?Sized>(
     plan: &Gta6EntryRead,
     source: &mut R,
-    keys: &GtaViKeys,
+    keys: Option<&GtaViKeys>,
     output: &mut W,
 ) -> Result<u64> {
     begin(plan, source, keys)?;

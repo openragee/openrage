@@ -56,6 +56,7 @@ impl Shell {
         let frame = started.elapsed();
         let (cost, calls) = self.bridge.world_cost();
         let drawn = self.bridge.world_drawn();
+        let sets = self.bridge.world_sets();
         let stage = |name: &str| {
             (state.gpu_stages.iter())
                 .find(|(s, _)| *s == name)
@@ -70,6 +71,7 @@ impl Shell {
             "laid": cost.laid,
             "take_ms": ms(cost.taking),
             "lights_ms": ms(cost.lights),
+            "day_ms": ms(viewer.day_took),
             "occlude_ms": ms(cost.occlude),
             "cull_ms": ms(cost.cull),
             "layout_ms": ms(cost.layout),
@@ -100,6 +102,16 @@ impl Shell {
             "models_waiting": viewer.models_waiting,
             "textures_waiting": viewer.textures_waiting,
             "read_not_taken_bytes": viewer.held.load(std::sync::atomic::Ordering::Relaxed),
+            "sets": {
+                "models": sets.models,
+                "missing": sets.missing,
+                "textures": sets.textures,
+                "materials": sets.materials,
+                "free_materials": sets.free_materials,
+                "material_keys": sets.material_keys,
+                "palettes": sets.palettes,
+                "gone": [sets.gone.0, sets.gone.1],
+            },
         }))
     }
 
@@ -187,6 +199,7 @@ fn summary(frames: &[Value]) -> Value {
         "refresh_ms": of("refresh_ms", false),
         "take_ms": of("take_ms", false),
         "lights_ms": of("lights_ms", false),
+        "day_ms": of("day_ms", false),
         "record_ms": of("record_ms", false),
         "submit_ms": of("submit_ms", false),
         "layout_ms": of("layout_ms", true),

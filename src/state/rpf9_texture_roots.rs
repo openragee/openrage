@@ -2,7 +2,7 @@
 
 use super::document::rpf9::{entry, Rpf9TableDocument};
 use super::rpf9_texture_index::Root;
-use super::{AppState, DocPayload, DocumentId, DocumentKind, Rpf9Document, RpfNodeBacking};
+use super::{AppState, DocPayload, DocumentId, DocumentKind, RpfNodeBacking};
 use or_job::Cancel;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,7 +46,9 @@ impl Scope {
         }
         for folder in &self.folders {
             let path = folder.join("textures.rpf");
-            if path.is_file() && seen.insert(path.clone()) {
+            if std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_file())
+                && seen.insert(path.clone())
+            {
                 roots.push(match self.mounted.iter().find(|table| table.path == path) {
                     Some(table) => Root::Mounted(Arc::clone(table)),
                     None => Root::File(path),
@@ -62,14 +64,34 @@ impl Scope {
             if cancel.is_set() {
                 break;
             }
-            match or_title::gta6_archives::paths(folder, &|| cancel.is_set()) {
-                Ok(paths) => {
-                    for path in paths {
+            match or_title::gta6_archives::paths(
+                folder,
+                or_title::gta6_archives::Limits {
+                    folders: 10_000,
+                    archives: 8192,
+                },
+                or_io::ErrorMode::Strict,
+                &|| cancel.is_set(),
+            ) {
+                Ok(mut found) => {
+                    if found.truncated {
+                        tracing::warn!(path = %folder.display(), "RPF9 archive discovery reached its limit");
+                    }
+                    found.paths.sort_by_key(|path| {
+                        (
+                            !path
+                                .file_name()
+                                .is_some_and(|name| name.eq_ignore_ascii_case("textures.rpf")),
+                            path.clone(),
+                        )
+                    });
+                    for path in found.paths {
                         if seen.insert(path.clone()) {
                             roots.push(Root::File(path));
                         }
                     }
                 }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => break,
                 Err(error) => {
                     tracing::warn!(path = %folder.display(), %error, "RPF9 archive discovery failed")
                 }
@@ -109,9 +131,7 @@ impl AppState {
                 }
             }
             match &doc.payload {
-                DocPayload::Rpf9(Rpf9Document::Table(table)) => {
-                    scope.mounted.push(Arc::clone(table))
-                }
+                DocPayload::Rpf9Table(table) => scope.mounted.push(Arc::clone(table)),
                 DocPayload::Rpf(rpf) => {
                     for node in rpf.session.nodes.values() {
                         if let RpfNodeBacking::Rpf9Archive {
@@ -129,5 +149,35 @@ impl AppState {
         }
         scope.mounted.sort_by(|a, b| a.path.cmp(&b.path));
         scope
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn texture_priority_belongs_to_the_texture_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        for name in ["a.rpf", "textures.rpf", "nested/textures.rpf"] {
+            std::fs::write(dir.path().join(name), []).unwrap();
+        }
+        let scope = Scope {
+            folders: vec![dir.path().to_path_buf()],
+            ..Default::default()
+        };
+        let paths: Vec<_> = scope
+            .roots(&Cancel::new())
+            .into_iter()
+            .map(|root| match root {
+                Root::File(path) => path,
+                Root::Mounted(table) => table.path.clone(),
+            })
+            .collect();
+        assert_eq!(
+            paths,
+            ["textures.rpf", "nested/textures.rpf", "a.rpf"].map(|name| dir.path().join(name))
+        );
     }
 }

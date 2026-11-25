@@ -68,9 +68,14 @@ struct Water {
 
 // A depth of the frame at or past this is the sky, or no depth at all.
 const SKY: f32 = 50000.0;
-// The sun's glint, as GTA V's water has it (assumed: GTA VI's water program was not read): its strength and the power of its falloff.
-const GLINT: f32 = 1.0;
-const GLINT_FALLOFF: f32 = 1118.0;
+// The least spread of slopes the glint takes, a flat sea's: GTA V's falloff of 1118 as a spread (assumed: the build's own floor is a constant not traced).
+const GLINT_FLOOR: f32 = 2.0 / 1120.0;
+// How the build's water turns its spread of slopes into the roughness it is lit with: alpha = 0.75 sqrt(2 sigma^2).
+const ROUGHNESS_OF_SPREAD: f32 = 0.75;
+// The thick-medium blend of the scattering's phase: its step, the frame's 0.15, and the even phase it goes to, 4 times the three lobes' 1.75.
+const THICK_STEP: f32 = 0.15;
+const THICK_EVEN: f32 = 4.0 * 1.75;
+const PI: f32 = 3.14159265;
 // How many steps a reflected ray takes across the frame, how many halve the last, and how each step grows.
 const TRACE_STEPS: i32 = 32;
 const REFINE_STEPS: i32 = 5;
@@ -289,25 +294,24 @@ fn shade(world: vec3<f32>, pixel: vec2<f32>, ground_depth: f32, view_depth: f32)
     }
     let through = exp(-extinction * path);
     let fog = fog_of(-to_eye);
-    // What the water mirrors, over the slopes the frame cannot show: three normals tilted towards and away from the eye (Gauss and Hermite's points of a spread), the sky's map blurred by the spread across.
+    // What the water mirrors, over the slopes the frame cannot show: three normals tilted towards and away from the eye, each drawn from a third of the spread at a place that moves from pixel to pixel, the sky's map blurred by the spread across.
+    // ⚠ Fixed points of the spread (Gauss and Hermite's) give two thirds of their weight to the untilted normal: a far skyline then mirrors whole whatever the spread.
     let deviation = sqrt(spread_along);
     var points = 1;
     if (deviation > 1e-3) {
         points = 3;
     }
+    let jitter = fract(52.9829189 * fract(dot(pixel, vec2<f32>(0.06711056, 0.00583715))));
     var fresnel = 0.0;
     var reflected = vec3<f32>(0.0);
     var weights = 0.0;
     for (var k = 0; k < points; k++) {
         var tilt = 0.0;
-        var weight = 4.0;
-        if (k == 1) {
-            tilt = 1.7320508 * deviation;
-            weight = 1.0;
-        }
-        if (k == 2) {
-            tilt = -1.7320508 * deviation;
-            weight = 1.0;
+        let weight = 1.0;
+        if (points > 1) {
+            // The normal deviate at the share p of the spread, by the logistic's inverse.
+            let p = clamp((f32(k) + jitter) / f32(points), 0.01, 0.99);
+            tilt = deviation * log(p / (1.0 - p)) / 1.702;
         }
         let tilted = normalize(vec3<f32>(-(slope + e * tilt), 1.0));
         let cosine = saturate(dot(tilted, v));
@@ -326,16 +330,25 @@ fn shade(world: vec3<f32>, pixel: vec2<f32>, ground_depth: f32, view_depth: f32)
     }
     fresnel /= weights;
     reflected /= weights;
-    // The glint, spread as the slopes are: GTA V's falloff read as a roughness, the spread added to it, and its light kept whatever the spread.
+    // The glint as the build lights its water: GGX at the roughness its spread of slopes gives, Smith's visibility and the water's reflectance.
     let towards_sun = -light.sun_travel.xyz;
-    let rough = 2.0 / (GLINT_FALLOFF + 2.0) + spread_along + spread_across;
-    let falloff = 2.0 / rough - 2.0;
-    let glint = sunlit(world) * light.sun_colour.rgb * GLINT * pow(saturate(dot(n, normalize(towards_sun + v))), falloff) * (falloff + 2.0) / (GLINT_FALLOFF + 2.0);
-    // The light the water scatters to the eye: the sky's even light, and the sun's bent into the water and turned towards the eye by the phase.
+    let a = ROUGHNESS_OF_SPREAD * sqrt(spread_along + spread_across + GLINT_FLOOR);
+    let a2 = a * a;
+    let h = normalize(towards_sun + v);
+    let nh = saturate(dot(n, h));
+    let nl = saturate(dot(n, towards_sun));
+    let nv = max(dot(n, v), 1e-3);
+    let lobe_d = a2 / (PI * pow(nh * nh * (a2 - 1.0) + 1.0, 2.0));
+    let visible = 0.5 / max(nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2), 1e-5);
+    let glint_f = textureSampleLevel(fresnel_row, clamped, vec2<f32>(saturate(dot(h, v)), 0.5), 0.0).r;
+    let glint = sunlit(world) * light.sun_colour.rgb * (lobe_d * visible * glint_f * nl);
+    // The light the water scatters to the eye: the sky's even light, and the sun's bent into the water and turned towards the eye by the phase, which goes even as the medium thickens.
     let up = vec3<f32>(0.0, 0.0, 1.0);
     let sunk = refract(normalize(light.sun_travel.xyz), up, 1.0 / WATER_INDEX);
     let looking = refract(-v, up, 1.0 / WATER_INDEX);
-    let turned = phase_of(dot(sunk, -looking), water.phase.rgb);
+    let thick = THICK_STEP * max(max(extinction.r, extinction.g), extinction.b);
+    let lobes = phase_of(dot(sunk, -looking), water.phase.rgb);
+    let turned = lobes + thick * thick * (vec3<f32>(THICK_EVEN) - lobes);
     let scattered = (1.0 - through) * albedo * (water.light.rgb + water.sun.rgb * turned);
     let own = (1.0 - fresnel) * (bed * through + scattered) + glint;
     let colour = own * (1.0 - fog.a) + (1.0 - fresnel) * fog.rgb * fog.a + reflected;

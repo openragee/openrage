@@ -562,6 +562,7 @@ fn ranged(limit: u64, finds: &[(u64, u64)], bodies: &[u64], names: &[(&str, u64)
         textures: (bodies.iter())
             .map(|at| (*at, format!("zq_{at}"), vec![(*at, 1)]))
             .collect(),
+        maps: bodies.iter().map(|at| (*at, *at + 1000)).collect(),
         end: finds.last().map_or(0, |(_, end)| *end),
     }
 }
@@ -587,6 +588,8 @@ fn a_range_scanned_from_inside_a_body_gives_only_the_bodies_that_start_after_it(
     );
     joined.join(&first, &mut never).expect("joined");
     assert_eq!((joined.harvest.bodies, joined.read_to), (2, 130));
+    // Each body's map word is kept once, as its label is.
+    assert_eq!(joined.harvest.map_words, [1010, 1060]);
 
     // The second starts inside that body: it reads a later stream of it as a run at 104, and a
     // run at 120 that takes the body at 130 for one of its chunks and ends at 150. What stands

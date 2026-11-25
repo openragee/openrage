@@ -19,30 +19,20 @@ pub(super) fn load(
     scope: super::rpf9_texture_roots::Scope,
     provider: std::sync::Arc<dyn or_io::container::RpfCryptoProvider>,
 ) -> Result<super::LoadResult, String> {
-    use std::io::Read;
-    let file = std::fs::File::open(path).map_err(error)?;
-    let limit = 1 << 30;
-    if file.metadata().map_err(error)?.len() > limit {
-        return Err(error("the loose drawable exceeds its byte budget"));
-    }
-    let mut bytes = Vec::new();
-    file.take(limit + 1)
-        .read_to_end(&mut bytes)
-        .map_err(error)?;
-    if bytes.len() as u64 > limit {
-        return Err(error("the loose drawable exceeds its byte budget"));
-    }
-    if raw_drawable_hint(&bytes).map_err(error)?.is_some() {
-        let cancel = Cancel::new();
-        let tables = Tables::open(scope.roots(&cancel), &cancel, &or_job::Progress::new())
-            .ok_or_else(|| tr!("Cancelled").to_string())?;
-        let opened = open(path, &bytes, &tables, &cancel)?
-            .ok_or_else(|| error("the loose drawable lost its GTA VI signature"))?;
-        return Ok(super::LoadResult::Rpf9Loose {
-            path: path.to_path_buf(),
-            payload: opened.payload,
-            source: opened.source,
-        });
+    let mut file = std::fs::File::open(path).map_err(error)?;
+    if let Some(bytes) = loose_bytes(&mut file)? {
+        if raw_drawable_hint(&bytes).map_err(error)?.is_some() {
+            let cancel = Cancel::new();
+            let tables = Tables::open(scope.roots(&cancel), &cancel, &or_job::Progress::new())
+                .ok_or_else(|| tr!("Cancelled").to_string())?;
+            let opened = open(path, &bytes, &tables, &cancel)?
+                .ok_or_else(|| error("the loose drawable lost its GTA VI signature"))?;
+            return Ok(super::LoadResult::Rpf9Entry {
+                path: path.to_path_buf(),
+                payload: opened.payload,
+                source: opened.source,
+            });
+        }
     }
     let (payload, resource) =
         super::document_io::parse_payload_from_path(path, super::DocumentKind::Ydr, provider)?;
@@ -52,6 +42,29 @@ pub(super) fn load(
         resource,
         binding: None,
     })
+}
+
+fn loose_bytes(file: &mut std::fs::File) -> Result<Option<Vec<u8>>, String> {
+    use std::io::Read;
+    let mut bytes = Vec::with_capacity(4);
+    (&mut *file)
+        .take(4)
+        .read_to_end(&mut bytes)
+        .map_err(error)?;
+    if bytes == b"RSC7" {
+        return Ok(None);
+    }
+    let limit = 1 << 30;
+    if file.metadata().map_err(error)?.len() > limit {
+        return Err(error("the loose drawable exceeds its byte budget"));
+    }
+    file.take(limit + 1 - bytes.len() as u64)
+        .read_to_end(&mut bytes)
+        .map_err(error)?;
+    if bytes.len() as u64 > limit {
+        return Err(error("the loose drawable exceeds its byte budget"));
+    }
+    Ok(Some(bytes))
 }
 
 pub(super) fn open(

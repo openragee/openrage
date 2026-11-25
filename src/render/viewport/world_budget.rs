@@ -104,6 +104,49 @@ pub struct WorldCost {
     pub reread: (u64, u64),
 }
 
+/// How many entries each of the world's maps and sets holds, for a census of what grows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorldSets {
+    /// Models on the device, and those of them that did not read.
+    pub models: usize,
+    pub missing: usize,
+    /// Textures held or known missing.
+    pub textures: usize,
+    /// Material slots, those of them free, and the keys they are found by.
+    pub materials: usize,
+    pub free_materials: usize,
+    pub material_keys: usize,
+    pub palettes: usize,
+    /// The models and the textures remembered as let go.
+    pub gone: (usize, usize),
+}
+
+impl super::WorldGpu {
+    /// How many entries each map and set holds now.
+    pub(super) fn sets(&self) -> WorldSets {
+        let missing = (self.models.values())
+            .filter(|slot| matches!(slot, super::Slot::Missing))
+            .count();
+        WorldSets {
+            models: self.models.len(),
+            missing,
+            textures: self.textures.map.len(),
+            materials: self.materials.len(),
+            free_materials: self.free_materials.len(),
+            material_keys: self.material_of.len(),
+            palettes: self.palettes.len(),
+            gone: (self.gone.0.len(), self.gone.1.len()),
+        }
+    }
+}
+
+impl super::RenderBridge {
+    /// How many entries each of the world's maps and sets holds.
+    pub fn world_sets(&self) -> WorldSets {
+        self.world.sets()
+    }
+}
+
 /// The most keys a set of what was let go holds before it starts again: a key let go before that is not counted when it comes back.
 const GONE_KEPT: usize = 1 << 16;
 

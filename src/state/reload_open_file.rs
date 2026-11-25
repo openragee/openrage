@@ -1,11 +1,9 @@
 //! A file that changed under the tabs open on it: each is read again in place.
 
-use std::path::Path;
-use std::sync::Arc;
-
-use super::document::Rpf9Document;
 use super::document_io::parse_payload_from_path;
 use super::{AppState, DocPayload, DocumentId, DocumentKind};
+use std::path::Path;
+use std::sync::Arc;
 
 /// Whether two paths name one file: as written, or once the system has resolved both.
 pub(super) fn same_file(a: &Path, b: &Path) -> bool {
@@ -48,12 +46,12 @@ impl AppState {
             }
             let explicit_scan = matches!(
                 self.document(id).map(|doc| &doc.payload),
-                Some(DocPayload::Rpf9(Rpf9Document::Scan(_)))
+                Some(DocPayload::Rpf9(_))
             ) && super::rpf9_scan::scanned_body(path).is_none();
             let (payload, resource) = if explicit_scan {
                 let scan = super::rpf9_scan::Rpf9ScanDocument::open(path)?
                     .ok_or_else(|| tr!("Could not open the file").to_string())?;
-                (DocPayload::Rpf9(Rpf9Document::Scan(Arc::new(scan))), None)
+                (DocPayload::Rpf9(Arc::new(scan)), None)
             } else {
                 parse_payload_from_path(path, kind, self.keys.provider())?
             };

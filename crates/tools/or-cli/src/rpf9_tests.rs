@@ -375,10 +375,9 @@ fn a_nested_row_with_no_stored_size_or_outside_the_parent_is_refused() {
     let mut mount = Gta6Mount::open_root(&mut file, &keys).expect("mount the parent");
     for stored in [None, Some(parent.len() as u64)] {
         mount.archive.entries[0].stored = stored;
-        assert!(
-            Gta6EntryRead::from_table(&mount.archive, 0..parent.len() as u64, 0, u64::MAX,)
-                .is_err()
-        );
+        assert!(mount
+            .read_entry_plan(0, parent.len() as u64, u64::MAX)
+            .is_err());
     }
 }
 
@@ -589,7 +588,10 @@ fn extract_decrypt_writes_a_deciphered_body() {
                 continue;
             }
             let extent = 0..file.metadata().expect("archive length").len();
-            if Gta6EntryRead::from_table(&mount.archive, extent, entry.index, SAMPLE_CAP).is_err() {
+            if mount
+                .read_entry_plan(entry.index, extent.end, SAMPLE_CAP)
+                .is_err()
+            {
                 continue;
             }
             if let Ok(body) = mount.read_entry_decrypted(&mut file, entry, &keys) {
@@ -833,4 +835,48 @@ fn a_nested_archive_extracted_from_its_row_opens_as_the_mount_does() {
     let mut alone = File::open(&written[0]).expect("open the written archive");
     let opened = Gta6Mount::open_root(&mut alone, &keys).expect("it opens as an archive");
     assert_eq!(opened.archive.entries.len(), mounted);
+}
+
+#[test]
+fn bulk_extraction_skips_a_bad_entry_and_keeps_existing_output_intact() {
+    let keys = fixture::keys();
+    let mut bytes = fixture::archive(&[
+        ("bad.bin", Body::Zlib(vec![0x5a; 256])),
+        (
+            "good.bin",
+            Body::Raw(b"keep reading after the bad entry".to_vec()),
+        ),
+    ]);
+    let mount = Gta6Mount::open_root(&mut std::io::Cursor::new(&bytes), &keys).unwrap();
+    let start = mount.archive.entries[0].start.unwrap() as usize;
+    bytes[start..start + 4].fill(0xff);
+    let (dir, path) = write_temp(&bytes, "mixed.rpf");
+    let dest = dir.path().join("out");
+    std::fs::create_dir(&dest).unwrap();
+    std::fs::write(dest.join("bad.bin"), b"previous export").unwrap();
+    let pick = Pick {
+        entry: None,
+        filter: None,
+        decrypt: false,
+        strings: false,
+    };
+    let count = do_extract(
+        &path,
+        &dest,
+        &[],
+        &pick,
+        &keys,
+        &resolver_of(&["bad.bin", "good.bin"]),
+    )
+    .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(
+        std::fs::read(dest.join("good.bin")).unwrap(),
+        b"keep reading after the bad entry"
+    );
+    assert_eq!(
+        std::fs::read(dest.join("bad.bin")).unwrap(),
+        b"previous export"
+    );
+    assert_eq!(std::fs::read_dir(&dest).unwrap().count(), 2);
 }

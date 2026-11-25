@@ -147,7 +147,6 @@ fn offset(row: &Row) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use crate::state::Rpf9Document;
     use std::time::{Duration, Instant};
 
     use super::super::opening_an_rpf9_archive::{
@@ -198,9 +197,7 @@ mod tests {
         // A fresh state: no list of the parent was opened, so no names were kept for it.
         let mut state = AppState::new();
         let nested = scanned(&mut state, body_path(&path, NESTED, View::Archive));
-        let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
-            state.document(nested).map(|d| &d.payload)
-        else {
+        let Some(DocPayload::Rpf9(scan)) = state.document(nested).map(|d| &d.payload) else {
             panic!("not a GTA VI archive document");
         };
         assert_eq!(scan.start, NESTED);
@@ -232,9 +229,7 @@ mod tests {
         settle(&mut state);
         let nested = state.active_document.expect("an open document");
         assert_ne!(nested, parent);
-        let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
-            state.document(nested).map(|d| &d.payload)
-        else {
+        let Some(DocPayload::Rpf9(scan)) = state.document(nested).map(|d| &d.payload) else {
             panic!(
                 "not a GTA VI archive document: {}",
                 state.error_dialog_message

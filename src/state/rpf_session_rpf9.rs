@@ -47,7 +47,7 @@ impl RpfEditSession {
             _ => return None,
         };
         let tree = table.tree();
-        let archive = &tree.nodes.get(base)?.archive;
+        let archive = &tree.nodes.get(base)?.mount.archive;
         let entry = archive.entries.get(*index as usize)?;
         entry.real.or_else(|| {
             archive
@@ -125,6 +125,7 @@ impl RpfEditSession {
                 .nodes
                 .get(&base)
                 .ok_or_else(|| tr!("The archive table could not be loaded.").to_string())?
+                .mount
                 .archive;
             archive
                 .entries

@@ -420,6 +420,7 @@ impl RenderBridge {
                     zeroed: meshlets.zeroed,
                     rest: meshlets.rest.len(),
                     why: meshlets.why,
+                    unshadowed: scene.casts_no_shadow(),
                 };
                 scene.rest = meshlets.rest;
                 self.renderer.set_gta6_scene(Some(scene));

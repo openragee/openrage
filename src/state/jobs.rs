@@ -3,8 +3,6 @@
 //! ⚠ Each job stays in its own controller, which is the truth about whether it runs; the list
 //! reads them every frame, so it never shows a job its controller has dropped.
 
-use crate::state::Rpf9Document;
-
 use std::path::{Path, PathBuf};
 
 use super::{AppState, DocumentId};
@@ -195,14 +193,14 @@ impl AppState {
     /// The GTA VI archives open as what a scan finds in them.
     fn archive_scans(&self) -> impl Iterator<Item = &super::rpf9_scan::Rpf9ScanDocument> {
         self.documents.iter().filter_map(|doc| match &doc.payload {
-            super::DocPayload::Rpf9(Rpf9Document::Scan(scan)) => Some(&**scan),
+            super::DocPayload::Rpf9(scan) => Some(&**scan),
             _ => None,
         })
     }
 
     fn archive_tables(&self) -> impl Iterator<Item = &super::document::rpf9::Rpf9TableDocument> {
         self.documents.iter().filter_map(|doc| match &doc.payload {
-            super::DocPayload::Rpf9(Rpf9Document::Table(table)) => Some(&**table),
+            super::DocPayload::Rpf9Table(table) => Some(&**table),
             _ => None,
         })
     }

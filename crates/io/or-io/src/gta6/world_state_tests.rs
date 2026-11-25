@@ -513,3 +513,25 @@ fn every_changed_byte_is_read_or_refused_and_never_a_panic() {
         let _ = WorldState::read(m);
     });
 }
+
+#[test]
+fn a_place_holds_the_points_inside_its_outline_and_none_outside() {
+    // A square of 100 m with a notch cut from the middle of its east side.
+    let place = Place {
+        outline: vec![
+            [0.0, 0.0],
+            [100.0, 0.0],
+            [100.0, 40.0],
+            [50.0, 50.0],
+            [100.0, 60.0],
+            [100.0, 100.0],
+            [0.0, 100.0],
+        ],
+        ..Place::default()
+    };
+    assert!(place.holds([10.0, 10.0]));
+    assert!(place.holds([40.0, 50.0]));
+    assert!(!place.holds([80.0, 50.0]), "the notch");
+    assert!(!place.holds([150.0, 50.0]) && !place.holds([50.0, -1.0]));
+    assert_eq!(place.area(), 10_000.0 - 500.0, "less the notch's triangle");
+}

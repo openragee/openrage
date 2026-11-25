@@ -194,30 +194,18 @@ impl AppState {
 /// Every file under `root` named `.rpf`, in path order, and whether the walk stopped at a limit
 /// before it found them all.
 pub(super) fn archives_under(root: &Path) -> (Vec<PathBuf>, bool) {
-    let (mut folders, mut archives, mut read) = (vec![root.to_path_buf()], Vec::new(), 0);
-    let mut cut = false;
-    while let Some(folder) = folders.pop() {
-        read += 1;
-        let Ok(entries) = std::fs::read_dir(&folder) else {
-            continue;
-        };
-        for path in entries.flatten().map(|e| e.path()) {
-            let rpf = (path.extension()).is_some_and(|e| e.eq_ignore_ascii_case("rpf"));
-            if path.is_dir() {
-                match read + folders.len() < MOST_FOLDERS {
-                    true => folders.push(path),
-                    false => cut = true,
-                }
-            } else if rpf {
-                match archives.len() < MOST_ARCHIVES {
-                    true => archives.push(path),
-                    false => cut = true,
-                }
-            }
-        }
+    match or_title::gta6_archives::paths(
+        root,
+        or_title::gta6_archives::Limits {
+            folders: MOST_FOLDERS,
+            archives: MOST_ARCHIVES,
+        },
+        or_io::ErrorMode::Lenient,
+        &|| false,
+    ) {
+        Ok(found) => (found.paths, found.truncated),
+        Err(_) => (Vec::new(), true),
     }
-    archives.sort();
-    (archives, cut)
 }
 
 /// Scan each archive under `root` as its own tab scans it, reading the scan kept of one already
@@ -559,6 +547,14 @@ mod tests {
             FIND_BUDGET,
             "a change of the kinds examines every body again"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_archive_symlink_is_not_a_discovered_archive() {
+        let dir = tempfile::tempdir().expect("a folder");
+        std::os::unix::fs::symlink("missing", dir.path().join("linked.rpf")).unwrap();
+        assert_eq!(archives_under(dir.path()), (Vec::new(), false));
     }
 
     #[test]

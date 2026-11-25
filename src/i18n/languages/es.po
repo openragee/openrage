@@ -916,6 +916,9 @@ msgstr "Las armas del proyecto no se pueden escribir"
 msgid "The world stopped on an internal error and was started again ({times} times so far)"
 msgstr "El mundo se detuvo por un error interno y se volvió a iniciar ({times} veces hasta ahora)"
 
+msgid "The world leaves out {maps} maps it stopped on as they came in"
+msgstr "El mundo omite {maps} mapas en los que se detuvo al cargarlos"
+
 msgid "The world stopped on an internal error {times} times and is not started again: it stands as it was last drawn. Build the index again to start afresh."
 msgstr "El mundo se detuvo por un error interno {times} veces y no se vuelve a iniciar: queda como se dibujó por última vez. Vuelve a generar el índice para empezar de nuevo."
 
@@ -12679,8 +12682,8 @@ msgstr[1] "Un filtro de fotogramas llamado {name}, de {count} pistas:"
 msgid "Track {track}: weight {weight}, group {group}, word at 0x2C {word}."
 msgstr "Pista {track}: peso {weight}, grupo {group}, palabra en 0x2C {word}."
 
-msgid "Bone hash_{bone}: kind {kind}, flags {flags}, values {values}."
-msgstr "Hueso hash_{bone}: tipo {kind}, flags {flags}, valores {values}."
+msgid "Bone {bone}: kind {kind}, flags {flags}, values {values}."
+msgstr "Hueso {bone}: tipo {kind}, flags {flags}, valores {values}."
 
 msgid "An animation record named {name}, with settings for {count} skeleton bone."
 msgid_plural "An animation record named {name}, with settings for {count} skeleton bones."
@@ -14220,9 +14223,6 @@ msgstr "película Scaleform"
 msgid "EDUP, high entropy"
 msgstr "EDUP, entropía alta"
 
-msgid "This body starts with EDUP and its bytes after that are of high entropy with no structure found, so it is not read and no view shows it."
-msgstr "Este cuerpo empieza con EDUP y sus bytes posteriores son de entropía alta sin estructura encontrada, así que no se lee y ninguna vista lo muestra."
-
 msgid "The reader of this {what} does not read it: {e}"
 msgstr "El lector de este cuerpo ({what}) no lo lee: {e}"
 
@@ -14238,8 +14238,8 @@ msgstr "Su tipo es {kind} y su palabra en {at} es {word}: su mitad baja es el by
 msgid "It lies on the height map tile of the same entry number in the nested archive beside its own; with no archive table, the scan's order of the two archives' bodies is their entry order."
 msgstr "Se sitúa sobre la tesela del mapa de alturas con el mismo número de entrada en el archivo comprimido anidado junto al suyo; sin tabla de archivo comprimido, el orden en que el análisis encuentra los cuerpos de los dos archivos comprimidos es su orden de entrada."
 
-msgid "A GTA VI MoVE network at version 0x13 whose name hash is hash_{hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
-msgstr "Una red MoVE de GTA VI en la versión 0x13 cuyo hash de nombre es hash_{hash}: listas de {a}, {b} y {d} entradas, luego un nodo raíz de tipo {kind}, índice {index} e id {id}."
+msgid "A GTA VI MoVE network at version 0x13 whose name hash is {hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
+msgstr "Una red MoVE de GTA VI en la versión 0x13 cuyo hash de nombre es {hash}: listas de {a}, {b} y {d} entradas, luego un nodo raíz de tipo {kind}, índice {index} e id {id}."
 
 msgid "Its {nodes} nodes tile the body from the root to its end, with {tails} tails no offset names between them. A kind's name is GTA V's at the same place in GTA V's list, which is not confirmed."
 msgstr "Sus {nodes} nodos cubren el cuerpo, desde la raíz hasta su final, con {tails} colas entre ellos que ningún desplazamiento nombra. El nombre de un tipo es el de GTA V en el mismo lugar de la lista de GTA V, lo cual no está confirmado."
@@ -14371,8 +14371,8 @@ msgstr "Elemento {index}: {a}, {b}, {c} y {d}."
 msgid "The expression reader does not read this body: {e}"
 msgstr "El lector de conjuntos de expresiones no lee este cuerpo: {e}"
 
-msgid "A GTA VI expression set of key hash_{key}, whose name is not known."
-msgstr "Un conjunto de expresiones de GTA VI de clave hash_{key}, cuyo nombre se desconoce."
+msgid "A GTA VI expression set of key {key}."
+msgstr "Un conjunto de expresiones de GTA VI de clave {key}."
 
 msgid "It reads {count} track: the facial controls, or bones, a clip carries."
 msgid_plural "It reads {count} tracks: the facial controls, or bones, a clip carries."
@@ -15261,10 +15261,10 @@ msgstr "El lector de árboles de objetos de GTA VI no lee este cuerpo: {e}"
 msgid "A GTA VI table of {items} objects in {trees} trees, of {types} types. Each tree's root is keyed by the 32-bit name hash of a model's name, and an object points at later objects of its tree by their offsets. What the objects' fields hold and what the type tags name are not known."
 msgstr "Una tabla de GTA VI de {items} objetos en {trees} árboles, de {types} tipos. La raíz de cada árbol tiene como clave el hash de nombre de 32 bits del nombre de un modelo, y un objeto apunta a objetos posteriores de su árbol mediante sus desplazamientos. Se desconoce qué contienen los campos de los objetos y qué nombran las etiquetas de tipo."
 
-msgid "hash_{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
-msgid_plural "hash_{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
-msgstr[0] "hash_{key}: una raíz de tipo {tag}, sola en su árbol; apunta a [{children}]"
-msgstr[1] "hash_{key}: una raíz de tipo {tag} y {count} objetos en su árbol; apunta a [{children}]"
+msgid "{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
+msgid_plural "{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
+msgstr[0] "{key}: una raíz de tipo {tag}, sola en su árbol; apunta a [{children}]"
+msgstr[1] "{key}: una raíz de tipo {tag} y {count} objetos en su árbol; apunta a [{children}]"
 
 msgid "16 entries {entries}"
 msgstr "16 entradas {entries}"
@@ -15459,11 +15459,11 @@ msgid_plural "{group}: {count} tracks"
 msgstr[0] "{group}: {count} pista"
 msgstr[1] "{group}: {count} pistas"
 
-msgid "{group}: hash_{id} {word} ({at} of {total}), {detail}"
-msgstr "{group}: hash_{id} {word} ({at} de {total}), {detail}"
+msgid "{group}: {id} {word} ({at} of {total}), {detail}"
+msgstr "{group}: {id} {word} ({at} de {total}), {detail}"
 
-msgid "Expression set hash_{key}, tracks read: {reads}, tracks written: {writes}"
-msgstr "Conjunto de expresiones hash_{key}, pistas leídas: {reads}, pistas escritas: {writes}"
+msgid "Expression set {key}, tracks read: {reads}, tracks written: {writes}"
+msgstr "Conjunto de expresiones {key}, pistas leídas: {reads}, pistas escritas: {writes}"
 
 msgid "Keyframed values GTA V's records have no member for are listed at the end, raw: a velocity's angle, a colour's last three unnamed values and a domain's fifth and sixth. A colour's first two unnamed values are shown as its minimum and maximum, which is inferred; the preview draws the maximum, as GTA V does, where the colour's word at +0x19C counts two or more colours in use, which is inferred too."
 msgstr "Los valores con fotogramas clave para los que los registros de GTA V no tienen miembro se listan al final, en bruto: el ángulo de una velocidad, los tres últimos valores sin nombre de un color y el quinto y el sexto de un dominio. Los dos primeros valores sin nombre de un color se muestran como su mínimo y su máximo, lo que es deducido; la vista previa dibuja el máximo, como GTA V, donde la palabra del color en +0x19C cuenta dos o más colores en uso, lo que también es deducido."
@@ -16842,8 +16842,8 @@ msgstr "Aún cargando: {what}"
 msgid "the ground and fog under the water"
 msgstr "el suelo y la niebla bajo el agua"
 
-msgid "The level from above: the brighter, the more maps; click to look over a place"
-msgstr "El nivel desde arriba: cuanto más claro, más mapas; haz clic para mirar un lugar"
+msgid "The level from above: the water, the land by its height, and the brighter, the more maps; click to look over a place"
+msgstr "El nivel visto desde arriba: el agua, la tierra según su altura y, cuanto más claro, más mapas; haz clic para mirar un lugar"
 
 msgid "Click to look north over a place, from 250 m south of it"
 msgstr "Haz clic para mirar un lugar hacia el norte, desde 250 m al sur"
@@ -16889,9 +16889,6 @@ msgstr[1] "las luces de {count} mapas"
 
 msgid "The archive table could not be loaded."
 msgstr "No se pudo cargar la tabla del archivo."
-
-msgid "Opening a GTA VI archive requires gtavi_magic.dat in the configuration folder or OPENRAGE_GTA6_KEYS."
-msgstr "Para abrir un archivo de GTA VI se necesita gtavi_magic.dat en la carpeta de configuración o OPENRAGE_GTA6_KEYS."
 
 msgid "The archive changed on disk. Reopen it to read its table."
 msgstr "El archivo cambió en el disco. Vuelve a abrirlo para leer su tabla."
@@ -16960,6 +16957,12 @@ msgstr "Este archivo se abrió desde una tabla RPF9 y es de solo lectura. Extrá
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "Los nombres de las cadenas de este documento necesitan la instantánea de claves de GTA VI"
 
+msgid "Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan."
+msgstr "Direct3D 12 compila los shaders con FXC porque no se encontró ningún dxcompiler.dll junto a OpenRage, en PATH ni en un Windows SDK. FXC rechaza algunos programas de shader de GTA VI y tarda minutos con otros, así que los modelos que los necesitan se dibujan en Material. Coloque dxcompiler.dll y dxil.dll junto a openrage.exe, o inicie OpenRage con WGPU_BACKEND=vulkan."
+
+msgid "It casts no shadow: one of its surfaces reads the view at an offset the light's view cannot be copied to"
+msgstr "No proyecta sombra: una de sus superficies lee la vista en un desplazamiento al que no se puede copiar la vista de la luz"
+
 msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
 msgstr "Solo un documento abierto desde un archivo comprimido de GTA VI se guarda en una copia de él"
 
@@ -17013,3 +17016,65 @@ msgstr "Solo se buscan los archivos comprimidos expandidos."
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} es un archivo comprimido nuevo con la edición en el lugar de su entrada y su tabla tal como se leyó."
+
+msgid "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}."
+msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
+msgstr[0] "Listado desde su tabla descifrada: {count} entrada, {named} de ellas con nombre, bajo la clave de tabla {key}."
+msgstr[1] "Listado desde su tabla descifrada: {count} entradas, {named} de ellas con nombre, bajo la clave de tabla {key}."
+
+msgid "Extract to a file…"
+msgstr "Extraer a un archivo…"
+
+msgid "Replace with a file…"
+msgstr "Reemplazar con un archivo…"
+
+msgid "Writes a new copy of the archive with this entry replaced, which the game refuses: only its maker can sign the table."
+msgstr "Escribe una nueva copia del archivo con esta entrada reemplazada, que el juego rechaza: solo su creador puede firmar la tabla."
+
+msgid "Replace with a file"
+msgstr "Reemplazar con un archivo"
+
+msgid "Save the new archive"
+msgstr "Guardar el nuevo archivo"
+
+msgid "Wrote {entry} to {file}."
+msgstr "Se escribió {entry} en {file}."
+
+msgid "Cannot extract {entry}: {reason}"
+msgstr "No se puede extraer {entry}: {reason}"
+
+msgid "{file} is a new archive with {entry} replaced, which the game refuses because only its maker can sign the table this changed."
+msgstr "{file} es un archivo nuevo con {entry} reemplazado, que el juego rechaza porque solo su creador puede firmar la tabla que esto cambió."
+
+msgid "{file} is a new archive the same as the one it was read from: the file holds the bytes {entry} holds."
+msgstr "{file} es un archivo nuevo igual al que se leyó: el archivo contiene los bytes que contiene {entry}."
+
+msgid "Cannot replace {entry}: {reason}"
+msgstr "No se puede reemplazar {entry}: {reason}"
+
+msgid "the file written is a new one, and the archive it is read from is never written"
+msgstr "el archivo escrito es uno nuevo, y el archivo del que se lee nunca se escribe"
+
+msgid "entry {index} is not in its table"
+msgstr "la entrada {index} no está en su tabla"
+
+msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
+msgstr "Un cuerpo EDUP: su palabra de recuento en 0x04 es {count}, y {length} bytes de carga siguen a su cabecera de 8 bytes."
+
+msgid "With a count of zero, the word at 0x08 states {stated} bytes, and that many follow it."
+msgstr "Con un recuento de cero, la palabra en 0x08 indica {stated} bytes, y otros tantos la siguen."
+
+msgid "Its payload is not read: no record width divides it by its count, and its bytes are of high entropy with no cipher record, so what it holds is not known and no view shows it."
+msgstr "Su carga no se lee: ningún ancho de registro la divide por su recuento, y sus bytes tienen entropía alta sin registro de cifrado, así que no se sabe qué contiene y ninguna vista la muestra."
+
+msgid "Replace the lower levels of detail too"
+msgstr "Reemplazar también los niveles de detalle inferiores"
+
+msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
+msgstr "Desactivado, un nivel de detalle del que la malla no nombra ninguna geometría queda como lo tiene el modelo. Activado, cada geometría así toma la malla del nivel 0 en su modelo y lugar donde ambas se dibujan con un mismo shader."
+
+msgid "In {place}"
+msgstr "En {place}"
+
+msgid "Look north over the square of 512 m where most maps of this place lie"
+msgstr "Mirar al norte sobre el cuadrado de 512 m donde están la mayoría de los mapas de este lugar"

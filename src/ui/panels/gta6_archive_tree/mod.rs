@@ -2,17 +2,22 @@
 //! one side, and for the chosen one a tree of its table's entries — each entry's recovered name, hash,
 //! kind and size, kept by a search over names, hex hashes and kinds. An entry whose body is itself an
 //! RPF9 archive expands in place (the nested table is mounted on first expand); a leaf entry opens on
-//! a double-click through the app's existing scan-body views. The data is read through
-//! [`crate::state::rpf9_scan::rpf9_table`]; this only draws it.
+//! a double-click through its table address, and a row's menu extracts it, copies
+//! its name or hash, or replaces it in a new copy of the archive. The data is read through
+//! [`crate::state::rpf9_scan::rpf9_table`]; this draws it.
 
+mod actions;
 mod state;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub(crate) use state::Gta6ArchiveExplorer;
 
-use crate::state::rpf9_scan::rpf9_table::{install_root, TableFilter, TableKind, TableNode};
-use crate::state::rpf9_scan::{body_path, View};
+use crate::platform::file_dialogs;
+use crate::state::rpf9_scan::rpf9_table::{
+    install_root, TableFilter, TableKind, TableNode, TableRow,
+};
 use crate::state::AppState;
 use crate::ui::panel_registry::{Panel, PanelContext, PanelId, PanelRegistry};
 use crate::ui::theme;
@@ -51,20 +56,21 @@ pub fn register_into(registry: &mut PanelRegistry) {
 /// enciphered one.
 enum Action {
     Toggle(Vec<u32>),
-    Open(PathBuf),
-    /// Decrypt the enciphered leaf `entry` within the node at `node` (a chain of archive entry
-    /// indices) whose body is at absolute `body`, then open the plaintext.
-    OpenCiphered {
+    Open {
         node: Vec<u32>,
-        entry: u32,
-        body: u64,
+        row: TableRow,
     },
+    /// Ask where the row's body goes, then write it there.
+    Extract(actions::Row),
+    /// Ask for the file to put in the row's place and where the new archive goes, then write it.
+    Replace(actions::Row),
 }
 
 pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
     // Always paint the heading, so the panel draws something even with nothing to list (the
     // self-check fails a panel that paints nothing).
     ui.label(egui::RichText::new(tr!("Archives")).strong());
+    actions::poll(state);
 
     let configured = state.prefs.game_paths.get(or_title::Game::GtaVI).cloned();
     let root = install_root(configured.as_deref());
@@ -94,15 +100,27 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
         }
     });
     if let Some(path) = to_open {
-        state.panels.get::<Gta6ArchiveExplorer>().open(&path);
+        if let Some(table) = state.mounted_rpf9_table(&path) {
+            state.panels.get::<Gta6ArchiveExplorer>().show_table(table);
+        } else {
+            state.panels.get::<Gta6ArchiveExplorer>().open(&path);
+        }
     }
     ui.separator();
+
+    let pending = state.panels.get::<Gta6ArchiveExplorer>().poll();
+    if let Some(loaded) = state.panels.get::<Gta6ArchiveExplorer>().table.clone() {
+        let shared = state.share_rpf9_table(std::sync::Arc::clone(&loaded));
+        if !std::sync::Arc::ptr_eq(&loaded, &shared) {
+            state.panels.get::<Gta6ArchiveExplorer>().show_table(shared);
+        }
+    }
 
     // Draw the tree, collecting what to do once the explorer borrow is dropped.
     let mut actions: Vec<Action> = Vec::new();
     {
         let explorer = state.panels.get::<Gta6ArchiveExplorer>();
-        if explorer.poll() {
+        if pending {
             ui.spinner();
         }
         // Draw a failed-expand error above the tree without returning, so one bad nested mount does not
@@ -123,36 +141,87 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
             root.key_id
         ));
         ui.add_space(theme::SPACING_TIGHT);
-        let filter = &explorer.filter;
+        let tree = Tree {
+            filter: &explorer.filter,
+            kinds: &explorer.kinds,
+            disk: &disk,
+        };
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                draw_node(ui, root, filter, &mut Vec::new(), &disk, &mut actions);
+                draw_node(ui, root, &tree, &mut Vec::new(), &mut actions);
             });
     }
 
     for action in actions {
         match action {
             Action::Toggle(path) => state.panels.get::<Gta6ArchiveExplorer>().toggle(&path),
-            Action::Open(path) => state.load_file(path),
-            Action::OpenCiphered { node, entry, body } => {
-                // Resolve the node's base and disk cheaply here, then leave a decrypt request for the
-                // load worker: the decipher is slow and must not block the UI thread. Each `get` is
-                // its own short borrow, dropped before `load_file`.
-                let base = state.panels.get::<Gta6ArchiveExplorer>().node_base(&node);
-                let disk = state.panels.get::<Gta6ArchiveExplorer>().selected.clone();
-                match (base, disk) {
-                    (Ok(base), Some(disk)) => {
-                        let path = body_path(&disk, body, View::Bytes);
-                        crate::state::rpf9_scan::remember_ciphered(&path, base, entry);
-                        state.load_file(path);
+            Action::Open { node, row } => {
+                let explorer = state.panels.get::<Gta6ArchiveExplorer>();
+                let base = explorer.node_base(&node);
+                let table = explorer.table.clone();
+                match (base, table) {
+                    (Ok(base), Some(table)) => state.open_rpf9_entry(&table, base, row.index),
+                    (Err(error), _) => state.show_error_toast(error),
+                    _ => {}
+                }
+            }
+            Action::Extract(row) => {
+                if let Some(out) = file_dialogs::pick_export_path(&file_part(&row.name)) {
+                    let source = {
+                        let explorer = state.panels.get::<Gta6ArchiveExplorer>();
+                        explorer.node_base(&row.node).and_then(|base| {
+                            explorer
+                                .table
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    tr!("The archive table could not be loaded.").to_string()
+                                })?
+                                .entry(base, row.entry)
+                        })
+                    };
+                    match source {
+                        Ok(source) => actions::spawn_extract(row, source, out),
+                        Err(error) => state.show_error_toast(error),
                     }
-                    (Err(e), _) => state.show_error_toast(e),
-                    (Ok(_), None) => {}
+                }
+            }
+            Action::Replace(row) => {
+                let copy = format!("{}_edited.rpf", file_stem(&row.disk));
+                let Some(with) = file_dialogs::ask(tr!("Replace with a file"), |d| d.pick_file())
+                else {
+                    continue;
+                };
+                let out = file_dialogs::ask(tr!("Save the new archive"), |d| {
+                    d.set_file_name(copy).save_file()
+                });
+                if let Some(out) = out {
+                    actions::spawn_replace(row, with, out);
                 }
             }
         }
     }
+}
+
+/// The last component of an entry's name, the file name an extract offers.
+fn file_part(name: &str) -> String {
+    let last = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    last.chars()
+        .map(|c| {
+            if matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+fn file_stem(path: &Path) -> String {
+    path.file_stem().map_or_else(
+        || "archive".to_owned(),
+        |s| s.to_string_lossy().into_owned(),
+    )
 }
 
 /// An archive's chip: its path under the install root, or its file name when it is elsewhere.
@@ -188,20 +257,29 @@ fn draw_filter(ui: &mut egui::Ui, filter: &mut TableFilter) {
     ui.add_space(theme::SPACING_TIGHT);
 }
 
+/// What every row of a tree is drawn against: the filter, each mounted table's kind labels by its
+/// entry path, and the archive file on disk, against which an entry's absolute offset locates its
+/// body.
+struct Tree<'a> {
+    filter: &'a TableFilter,
+    kinds: &'a BTreeMap<Vec<u32>, Vec<String>>,
+    disk: &'a Path,
+}
+
 /// Draw `node`'s entries at the depth `path` gives, recursing into the nested archives it has open.
 /// Under a filter, a row shows when the filter keeps it or an expanded archive under it holds one it
-/// keeps. `path` is the chain of entry indices from the root to `node`; `disk` is the archive file on
-/// disk, against which an entry's absolute offset locates its body.
+/// keeps. `path` is the chain of entry indices from the root to `node`.
 fn draw_node(
     ui: &mut egui::Ui,
     node: &TableNode,
-    filter: &TableFilter,
+    tree: &Tree<'_>,
     path: &mut Vec<u32>,
-    disk: &Path,
     actions: &mut Vec<Action>,
 ) {
     let indent = path.len() as f32 * 14.0;
+    let filter = tree.filter;
     let filtering = !filter.is_empty();
+    let labels = tree.kinds.get(path.as_slice());
     for row in &node.rows {
         let child = (row.is_archive && node.open.contains(&row.index))
             .then(|| node.children.get(&row.index))
@@ -214,53 +292,128 @@ fn draw_node(
             .map(|s| format!("{s:>10}"))
             .unwrap_or_else(|| "         -".to_string());
         let name = row.display_name();
-        let kind = format!("{:<10}", row.kind.label());
+        // The row's own kind, once its table's labels are read; the coarse kind until then.
+        let label = labels.and_then(|l| l.get(row.index as usize));
+        let kind = format!("{:<22}", label.map_or(row.kind.label(), String::as_str));
         let cipher = if row.cipher { "  [cipher]" } else { "" };
 
         ui.horizontal(|ui| {
             ui.add_space(indent);
-            if row.is_archive {
-                let open = node.open.contains(&row.index);
-                let arrow = if open { "▾" } else { "▸" };
-                let label =
-                    egui::RichText::new(format!("{arrow} {size}  {kind}  {name}")).monospace();
-                let resp = ui.selectable_label(false, label);
-                if resp.clicked() {
-                    let mut child = path.clone();
-                    child.push(row.index);
-                    actions.push(Action::Toggle(child));
-                }
-                if resp.double_clicked() {
-                    if let Some(off) = row.absolute_start {
-                        actions.push(Action::Open(body_path(disk, off, View::Archive)));
-                    }
-                }
+            let text = if row.is_archive {
+                let arrow = if node.open.contains(&row.index) {
+                    "▾"
+                } else {
+                    "▸"
+                };
+                format!("{arrow} {size}  {kind}  {name}")
             } else {
-                let label =
-                    egui::RichText::new(format!("   {size}  {kind}  {name}{cipher}")).monospace();
-                let resp = ui.selectable_label(false, label);
-                // A double-click opens the body: a clear one through the scan-body views, an
-                // enciphered one by decrypting it first (the plaintext takes the same views).
-                if resp.double_clicked() {
-                    if let Some(off) = row.absolute_start {
-                        if row.cipher {
-                            actions.push(Action::OpenCiphered {
-                                node: path.clone(),
-                                entry: row.index,
-                                body: off,
-                            });
-                        } else {
-                            actions.push(Action::Open(body_path(disk, off, View::Bytes)));
-                        }
-                    }
-                }
+                format!("   {size}  {kind}  {name}{cipher}")
+            };
+            let resp = ui.selectable_label(false, egui::RichText::new(text).monospace());
+            if row.is_archive && resp.clicked() {
+                let mut child = path.clone();
+                child.push(row.index);
+                actions.push(Action::Toggle(child));
             }
+            if resp.double_clicked() {
+                actions.push(open_action(row, path));
+            }
+            resp.context_menu(|ui| row_menu(ui, row, path, tree.disk, actions));
         });
 
         if let Some(child) = child {
             path.push(row.index);
-            draw_node(ui, child, filter, path, disk, actions);
+            draw_node(ui, child, tree, path, actions);
             path.pop();
         }
+    }
+}
+
+/// Open the indexed leaf or expand the indexed child archive.
+fn open_action(row: &TableRow, node: &[u32]) -> Action {
+    if row.is_archive {
+        let mut indices = node.to_vec();
+        indices.push(row.index);
+        Action::Toggle(indices)
+    } else {
+        Action::Open {
+            node: node.to_vec(),
+            row: row.clone(),
+        }
+    }
+}
+
+/// A row's menu: open it, extract it, copy its name or hash, or replace it in a new archive.
+fn row_menu(
+    ui: &mut egui::Ui,
+    row: &TableRow,
+    node: &[u32],
+    disk: &Path,
+    actions: &mut Vec<Action>,
+) {
+    let target = || actions::Row {
+        disk: disk.to_path_buf(),
+        node: node.to_vec(),
+        entry: row.index,
+        name: row.display_name(),
+    };
+    if ui.button(tr!("Open")).clicked() {
+        actions.push(open_action(row, node));
+        ui.close();
+    }
+    if ui.button(tr!("Extract to a file…")).clicked() {
+        actions.push(Action::Extract(target()));
+        ui.close();
+    }
+    if ui.button(tr!("Copy name")).clicked() {
+        ui.ctx().copy_text(row.display_name());
+        ui.close();
+    }
+    if ui.button(tr!("Copy hash")).clicked() {
+        ui.ctx().copy_text(format!("0x{:016x}", row.name64));
+        ui.close();
+    }
+    ui.separator();
+    let replace = ui.add_enabled(row.kind != TableKind::Resource, egui::Button::new(tr!("Replace with a file…"))).on_disabled_hover_text(crate::i18n::tr(crate::state::rpf9::entry::READ_ONLY)).on_hover_text(tr!(
+        "Writes a new copy of the archive with this entry replaced, which the game refuses: only its maker can sign the table."
+    ));
+    if replace.clicked() {
+        actions.push(Action::Replace(target()));
+        ui.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_headerless_row_keeps_export_enabled_and_disables_replace() {
+        let _serial = crate::ui::theme::serial();
+        let row = TableRow {
+            index: 0,
+            name64: or_io::gta6::hash::name_hash64(b"preview"),
+            name32: None,
+            name: Some("preview.ydr".into()),
+            size: Some(16),
+            is_archive: false,
+            cipher: false,
+            kind: TableKind::Resource,
+        };
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            row_menu(ui, &row, &[], Path::new("archive.rpf"), &mut Vec::new())
+        });
+        let update = output.platform_output.accesskit_update.unwrap();
+        let disabled = |label| {
+            update
+                .nodes
+                .iter()
+                .find_map(|(_, node)| (node.label() == Some(label)).then(|| node.is_disabled()))
+                .unwrap()
+        };
+        assert!(disabled("Replace with a file…"));
+        assert!(!disabled("Extract to a file…"));
     }
 }

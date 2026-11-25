@@ -1,8 +1,6 @@
 //! A GTA VI archive opened as what a scan without its table finds: its header's facts and the
 //! bodies stored in the clear, found a slice at a time on a worker and never read whole.
 
-use crate::state::Rpf9Document;
-
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -10,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use or_io::container::rpf::{
-    extract_rpf9_body, open_at, read_rpf9_body, starts_stored_rpf9_resource, BodyForm, Gta6Mount,
-    GtaViKeys, Rpf9BodyKind, Rpf9Header, Rpf9Resource, Rpf9Scan, Rpf9ScanCarry, Rpf9ScanError,
-    Rpf9ScanFind, Rpf9ZlibRun, RPF9_HEADER_SIZE, RPF9_MAGIC,
+    extract_rpf9_body, read_rpf9_body, starts_stored_rpf9_resource, BodyForm, Rpf9BodyKind,
+    Rpf9Header, Rpf9Resource, Rpf9Scan, Rpf9ScanCarry, Rpf9ScanError, Rpf9ScanFind, Rpf9ZlibRun,
+    RPF9_HEADER_SIZE, RPF9_MAGIC,
 };
 use or_job::{Cancel, Progress};
 
@@ -383,15 +381,11 @@ mod view;
 use view::not_a_start;
 pub use view::{view_of, View};
 
+#[path = "rpf9_table_document.rs"]
+pub(crate) mod rpf9_table_document;
+
 #[path = "rpf9_table.rs"]
 pub(crate) mod rpf9_table;
-
-#[path = "rpf9_scan_ciphered.rs"]
-mod ciphered;
-#[cfg(test)]
-pub(crate) use ciphered::decipher_entry;
-pub(crate) use ciphered::remember_ciphered;
-use ciphered::{ciphered_payload, take_ciphered};
 
 #[path = "rpf9_scan_payload.rs"]
 mod payload;
@@ -446,15 +440,9 @@ fn is_missing(head: &[u8]) -> bool {
 
 /// The body a path [`body_path`] made names, read and given to the view its kind has, or kept as its bytes where no reader reads it.
 pub(super) fn read_body(path: &Path, archive: &Path, offset: u64) -> Result<DocPayload, String> {
-    // A body opened anew holds none of the edits a closed document of it kept, through either door.
+    // A body opened anew holds none of the edits a closed document of it kept.
     super::gta6_gltf_import::forget(path);
     super::gta6_embedded_edit::forget(path);
-    // A content-ciphered entry the archive explorer opened left a decrypt request here, keyed by
-    // this synthetic path; the decipher runs on this worker, not the UI thread. The clear reader
-    // below reads only bytes stored in the clear.
-    if let Some(req) = take_ciphered(path) {
-        return ciphered_payload(path, archive, req);
-    }
     let file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
     let (find, bytes) = match read_rpf9_body(&file, offset, BODY_LIMIT) {
         Err(Rpf9ScanError::ExtentNotKnown { .. }) if offset > 0 => {
@@ -485,7 +473,7 @@ fn nested(archive: &Path, mut file: &File, offset: u64) -> Result<DocPayload, St
         .map_err(at)?;
     let header = Rpf9Header::parse(&head).map_err(|e| e.to_string())?;
     let scan = Rpf9ScanDocument::open_nested(archive, offset, header)?;
-    Ok(DocPayload::Rpf9(Rpf9Document::Scan(Arc::new(scan))))
+    Ok(DocPayload::Rpf9(Arc::new(scan)))
 }
 
 /// What the scan found of each body opened from its list, by the path [`body_path`] made, read
@@ -592,13 +580,13 @@ impl super::AppState {
     /// path names it a body of.
     pub fn scan_listing_the_active_tab(&self) -> Option<super::DocumentId> {
         let active = self.active_document()?;
-        if matches!(active.payload, DocPayload::Rpf9(Rpf9Document::Scan(_))) {
+        if matches!(active.payload, DocPayload::Rpf9(_)) {
             return Some(active.id);
         }
         let archive = active.path.as_deref()?.parent()?;
         (self.documents.iter())
             .find(|d| {
-                matches!(&d.payload, DocPayload::Rpf9(Rpf9Document::Scan(scan)) if scan.start == 0)
+                matches!(&d.payload, DocPayload::Rpf9(scan) if scan.start == 0)
                     && d.path.as_deref() == Some(archive)
             })
             .map(|d| d.id)
@@ -628,9 +616,7 @@ impl super::AppState {
     /// Show the body at `offset` of the scan document `doc` in the preview tab, as a step of history
     /// to its row does; nothing for a document of any other kind.
     pub(super) fn show_scanned_row(&mut self, doc: super::DocumentId, offset: u64) {
-        let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
-            self.document(doc).map(|d| &d.payload)
-        else {
+        let Some(DocPayload::Rpf9(scan)) = self.document(doc).map(|d| &d.payload) else {
             return;
         };
         let row = {
@@ -644,9 +630,7 @@ impl super::AppState {
     }
 
     fn open_scanned(&mut self, doc: super::DocumentId, row: usize, preview: bool) {
-        let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
-            self.document(doc).map(|d| &d.payload)
-        else {
+        let Some(DocPayload::Rpf9(scan)) = self.document(doc).map(|d| &d.payload) else {
             return;
         };
         let scan = Arc::clone(scan);
@@ -724,9 +708,7 @@ impl super::AppState {
         rows: &[usize],
         dest: PathBuf,
     ) -> bool {
-        let Some(DocPayload::Rpf9(Rpf9Document::Scan(scan))) =
-            self.document(doc).map(|d| &d.payload)
-        else {
+        let Some(DocPayload::Rpf9(scan)) = self.document(doc).map(|d| &d.payload) else {
             return false;
         };
         let scan = Arc::clone(scan);

@@ -21,6 +21,10 @@ impl AppState {
         resource: Option<Arc<document::ResourceImage>>,
         source: Option<document::rpf9::entry::EntrySource>,
     ) -> DocumentId {
+        let payload = match payload {
+            DocPayload::Rpf9Table(table) => DocPayload::Rpf9Table(self.share_rpf9_table(table)),
+            other => other,
+        };
         let id = self.alloc_doc_id();
         let mut doc = Document::new(id, Some(path.clone()), payload).with_resource(resource);
         doc.rpf_entry_binding = binding;

@@ -14,9 +14,7 @@ use std::path::{Path, PathBuf};
 
 use byteorder::{ByteOrder, LE};
 use or_io::container::rpf::gta6_chunk_table::{author, cell_offset, decode, Chunk};
-use or_io::container::rpf::{
-    open_at_bounded, Gta6Class, Gta6EntryRead, Gta6Mount, GtaViKeys, GTA6_SNAPSHOT_ENV,
-};
+use or_io::container::rpf::{open_at_bounded, Gta6Class, Gta6Mount, GtaViKeys, GTA6_SNAPSHOT_ENV};
 use or_test_support::skip_install;
 
 const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
@@ -170,13 +168,21 @@ fn walk(
             }
             if let (Some(chunks), true) = (chunks, flagged) {
                 t.flagged_walked += 1;
-                let result = Gta6EntryRead::from_table(
-                    &mount.archive,
-                    extent.clone(),
-                    entry.index,
-                    u64::MAX,
-                )
-                .and_then(|read| read.extract(file, keys, &mut std::io::sink()));
+                let inflated: u64 = chunks.iter().map(|c| u64::from(c.inflated)).sum();
+                let stored: u64 = chunks.iter().map(|c| ceil16(c.stored)).sum();
+                match mount.read_entry_decrypted_report(&mut *file, entry, keys) {
+                    Ok(report)
+                        if report.chunk_count == chunks.len()
+                            && report.data.len() as u64 == inflated
+                            && report.stored_consumed == stored => {}
+                    Ok(_) => t
+                        .failures
+                        .push(format!("entry {index}: the mount left its table's sizes")),
+                    Err(e) => t.failures.push(format!("entry {index}: mount read: {e}")),
+                }
+                let result = mount
+                    .read_entry_plan(entry.index, extent.end, u64::MAX)
+                    .and_then(|read| read.extract(file, keys, &mut std::io::sink()));
                 match result {
                     Ok(bytes) => {
                         let inflated: u64 = chunks.iter().map(|c| u64::from(c.inflated)).sum();

@@ -107,7 +107,7 @@ fn table_texture_keys_keep_nested_addresses_and_candidates_without_output_files(
         "cataloging must not expand the UI tree"
     );
     one.expand_table(0, 0).unwrap();
-    let entry_hash = one.tree().nodes[&0x1000].archive.entries[0].name64;
+    let entry_hash = one.tree().nodes[&0x1000].mount.archive.entries[0].name64;
     assert_eq!(catalog.entries_named(entry_hash, "ytd").len(), 2);
     assert!(catalog.entries_named(entry_hash, "ydr").is_empty());
     let mut built = Index::new(catalog);
@@ -240,7 +240,15 @@ fn bad_child_tables_are_reported_without_searching_their_texture_bodies() {
 #[test]
 fn a_texture_signature_in_an_untyped_row_is_not_probed() {
     let (_dir, table) = fixture("table_external", false, false);
-    table.tree().nodes.get_mut(&0).unwrap().archive.entries[0].class = Some(255);
+    table
+        .tree()
+        .nodes
+        .get_mut(&0)
+        .unwrap()
+        .mount
+        .archive
+        .entries[0]
+        .class = Some(255);
     let catalog =
         Tables::open(vec![Root::Mounted(table)], &Cancel::new(), &Progress::new()).unwrap();
     assert!(catalog.dictionaries.is_empty());

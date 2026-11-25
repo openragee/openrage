@@ -80,6 +80,14 @@ const FLAG: u32 = 0x9645_61C1;
 /// Whether anyone owns a property: none does in a new game.
 const PROPERTY_OWNED: u32 = 0x0EB4_8027;
 const ANY_OWNER: u32 = lit(b"Any");
+/// A node's location name: the hash of its label and its kind.
+const LOCATION_NAME: u32 = 0xB9A1_0BAF;
+const LOCATION_LABEL: u32 = lit(b"LocName");
+const LOCATION_KIND: u32 = lit(b"Type");
+/// A node's shape: an outline on the ground.
+const SHAPE: u32 = 0xAB0B_13D9;
+const VERTS: u32 = lit(b"Verts");
+const NODE_NAME: u32 = lit(b"Name");
 const START_HOUR: u32 = lit(b"startHour");
 const START_MINUTE: u32 = lit(b"startMinute");
 const END_HOUR: u32 = lit(b"endHour");
@@ -104,6 +112,54 @@ pub struct WorldState {
     /// The hash of the name of the layer that holds the body.
     pub layer: u32,
     pub selectors: Vec<Selector>,
+    /// The places its nodes name with an outline: regions, islands and districts.
+    pub places: Vec<Place>,
+}
+
+/// A place a node names: the hash of its name and of its label (0 for none), its kind, and its outline on the ground.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Place {
+    pub name: u32,
+    pub label: u32,
+    pub kind: i32,
+    pub outline: Vec<[f32; 2]>,
+}
+
+impl Place {
+    /// Whether `point` lies inside the outline.
+    pub fn holds(&self, point: [f32; 2]) -> bool {
+        outline_holds(&self.outline, point)
+    }
+
+    /// The outline's area in square metres.
+    pub fn area(&self) -> f32 {
+        outline_area(&self.outline)
+    }
+}
+
+/// Whether `point` lies inside `outline`, by the edges a line to the east of it crosses.
+pub fn outline_holds(outline: &[[f32; 2]], [x, y]: [f32; 2]) -> bool {
+    let mut inside = false;
+    let n = outline.len();
+    for k in 0..n {
+        let ([ax, ay], [bx, by]) = (outline[k], outline[(k + 1) % n]);
+        if (ay > y) != (by > y) && x < ax + (y - ay) * (bx - ax) / (by - ay) {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+/// The area `outline` encloses, in square metres.
+pub fn outline_area(outline: &[[f32; 2]]) -> f32 {
+    let n = outline.len();
+    let twice: f32 = (0..n)
+        .map(|k| {
+            let ([ax, ay], [bx, by]) = (outline[k], outline[(k + 1) % n]);
+            ax * by - bx * ay
+        })
+        .sum();
+    twice.abs() / 2.0
 }
 
 /// A selector: the configurations it chooses among, its default, and the rules that pick one.
@@ -372,7 +428,7 @@ impl WorldState {
         let Some(Value::Array(nodes)) = tree.get(&name(NODES)) else {
             return Err(WorldStateError::Broken("its nodes are not an array"));
         };
-        let mut selectors = Vec::new();
+        let (mut selectors, mut places) = (Vec::new(), Vec::new());
         for node in nodes.iter().filter_map(object) {
             let components: Vec<&MetaInstance> = match node.get(&name(COMPONENTS)) {
                 Some(Value::Array(items)) => items.iter().filter_map(object).collect(),
@@ -382,6 +438,7 @@ impl WorldState {
                     ))
                 }
             };
+            places.extend(place_of(node, &components));
             let (rule_class, selector_class) = (name(RULE_COMPONENT), name(SELECTOR_COMPONENT));
             // A rule set names the key of its selector, in the same node; each requests on its own.
             let mut rule_sets: Vec<(u32, RuleSet)> = Vec::new();
@@ -418,8 +475,33 @@ impl WorldState {
         Ok(Self {
             layer: tree.get(&name(BODY_LAYER)).and_then(key32).unwrap_or(0),
             selectors,
+            places,
         })
     }
+}
+
+/// The place `node` names, where it has a location name and an outline of three points or more.
+fn place_of(node: &MetaInstance, components: &[&MetaInstance]) -> Option<Place> {
+    let location = (components.iter()).find(|c| c.type_name == name(LOCATION_NAME))?;
+    let shape = node.get(&name(SHAPE)).and_then(object)?;
+    let outline: Vec<[f32; 2]> = (array(shape, VERTS).iter())
+        .filter_map(|v| match v {
+            Value::Vec2([x, y]) | Value::Vec3([x, y, _]) | Value::Vec4([x, y, _, _]) => {
+                Some([*x, *y])
+            }
+            _ => None,
+        })
+        .filter(|[x, y]| x.is_finite() && y.is_finite())
+        .collect();
+    (outline.len() >= 3).then(|| Place {
+        name: node.get(&name(NODE_NAME)).and_then(key32).unwrap_or(0),
+        label: location
+            .get(&name(LOCATION_LABEL))
+            .and_then(key32)
+            .unwrap_or(0),
+        kind: number(location, LOCATION_KIND),
+        outline,
+    })
 }
 
 /// Each layer of the layer manifest `bytes`: the hash of its name, and whether the level loads it.

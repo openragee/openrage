@@ -370,7 +370,18 @@ mod tests {
         }
 
         fn patch(&self) {
+            let modified = std::fs::metadata(&self.base)
+                .expect("the original archive metadata")
+                .modified()
+                .expect("the original archive modification time");
             std::fs::write(&self.base, archive(PATCHED)).expect("the patched archive");
+            // Both tiny archives occupy the same aligned length; a patch must advance its stat.
+            std::fs::File::options()
+                .write(true)
+                .open(&self.base)
+                .expect("the patched archive")
+                .set_modified(modified + Duration::from_secs(2))
+                .expect("the patch modification time");
         }
 
         fn check(&mut self) {

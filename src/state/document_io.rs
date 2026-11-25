@@ -1,5 +1,3 @@
-use crate::state::Rpf9Document;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -220,9 +218,8 @@ pub(super) fn parse_payload_from_path(
     }
     // An archive can be tens of gigabytes; its table is read before any whole-file path.
     if matches!(kind, DocumentKind::Rpf | DocumentKind::Rpf9) {
-        if let Some(table) = super::document::rpf9::Rpf9TableDocument::open(path)? {
-            super::rpf9_scan::rpf9_table::offer(path);
-            return Ok((DocPayload::Rpf9(Rpf9Document::Table(Arc::new(table))), None));
+        if let Some(payload) = super::document::rpf9::archive_payload(path)? {
+            return Ok((payload, None));
         }
         if kind == DocumentKind::Rpf9 {
             return Err(crate::i18n::tr(RPF9_FROM_DISK).to_string());
@@ -458,7 +455,9 @@ pub(super) fn serialize_payload(
         DocPayload::Meta(m) => m.to_bytes().map_err(|e| format!("meta serialize: {e}")),
         DocPayload::Hex(_) => Err(READ_ONLY_HEX.to_string()),
         DocPayload::Ttpf(ttpf) => ttpf.save(),
-        DocPayload::Rpf9(_) => Err(crate::i18n::tr(READ_ONLY_RPF9).to_string()),
+        DocPayload::Rpf9(_) | DocPayload::Rpf9Table(_) => {
+            Err(crate::i18n::tr(READ_ONLY_RPF9).to_string())
+        }
         // An edited resource no scan holds, as an audio stream's, saves as the loose resource it is.
         DocPayload::Gta6Anim(r) => match r.sections.as_deref().filter(|_| r.edited) {
             Some(sections) => {

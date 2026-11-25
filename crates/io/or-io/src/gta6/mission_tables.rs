@@ -1,6 +1,7 @@
 //! The mission state tables of GTA VI's script archives. An inflated body there is a metadata
-//! document in the table form, and a state table is one of its blocks: an array of 32-byte pairs
-//! of a state's key and a run of elements in another block. A table is found by the body's own
+//! document in the table form, and a state table is one of its blocks: the pairs of a map of maps,
+//! each 32 bytes, a state's key and the head of the state's own map, whose pairs are a run of
+//! elements in another block. A table is found by the body's own
 //! block table and type table, never by a scan. Read only: what orders the states is not proven.
 
 use super::hash::name_hash32;
@@ -70,7 +71,9 @@ pub struct Body {
 pub struct StateRecord {
     /// [`state_key`] of the state's name.
     pub key: u32,
-    /// The word at +8, 1 in every record measured; what it states is not known.
+    /// The word at +8, the first of the 24-byte head of the state's own map: 1 in every record
+    /// measured, as in every sorted map of pairs of the build. That it marks the pairs sorted is
+    /// GTA V's reading of such a head, not proven here.
     pub word_08: u32,
     /// The index in [`Body::blocks`] of the block that holds the run and the bytes into it where
     /// the run starts; `None` for a state that owns nothing.

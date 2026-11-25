@@ -7,6 +7,19 @@ use or_test_support::rpf9;
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::ops::Range;
 
+fn reader_plan(
+    archive: &Gta6Archive,
+    extent: Range<u64>,
+    index: u32,
+    limit: u64,
+) -> or_io::Result<Gta6EntryRead> {
+    or_io::container::rpf::Gta6Mount {
+        base: extent.start,
+        archive: archive.clone(),
+    }
+    .read_entry_plan(index, extent.end, limit)
+}
+
 struct BodyOnly {
     source: Cursor<Vec<u8>>,
     allowed: Range<u64>,
@@ -84,7 +97,7 @@ fn twenty_byte_rows_read_mixed_chunks_at_exact_table_offsets() {
         source.read(&mut [0]).is_err(),
         "the guard rejects table/header reads"
     );
-    let read = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
+    let read = reader_plan(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
     let expected = [raw.as_slice(), expected.as_slice()].concat();
     assert_eq!(read.read(&mut source, &keys).unwrap(), expected);
     assert_eq!(source.reads, 1);
@@ -111,7 +124,7 @@ fn resource_rows_require_valid_mode_two_descriptors_before_body_reads() {
             _ => unreachable!(),
         }
         assert!(
-            Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).is_err(),
+            reader_plan(&archive, 0..source.allowed.end, 0, 100_000).is_err(),
             "case {case}"
         );
         assert_eq!(source.reads, 0);
@@ -129,7 +142,7 @@ fn resource_sizes_limits_and_parent_bounds_are_checked_before_reading() {
         (0..source.allowed.end, 31),
         (0..16, 100_000),
     ] {
-        assert!(Gta6EntryRead::from_table(&archive, parent, 0, limit).is_err());
+        assert!(reader_plan(&archive, parent, 0, limit).is_err());
     }
     let row = archive
         .toc
@@ -141,16 +154,16 @@ fn resource_sizes_limits_and_parent_bounds_are_checked_before_reading() {
         .start;
     for pages in [0u32, 1, 3, u32::MAX] {
         archive.toc.bytes[row + 8..row + 12].copy_from_slice(&pages.to_le_bytes());
-        assert!(Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).is_err());
+        assert!(reader_plan(&archive, 0..source.allowed.end, 0, 100_000).is_err());
     }
     archive.toc.bytes[row + 8..row + 12].copy_from_slice(&2u32.to_le_bytes());
     for start in [0, archive.toc.bytes.len() as u64 - 16, u64::MAX - 15] {
         archive.entries[0].start = Some(start);
-        assert!(Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).is_err());
+        assert!(reader_plan(&archive, 0..source.allowed.end, 0, 100_000).is_err());
     }
     assert_eq!(source.reads, 0);
     let (archive, source, _) = fixture(rpf9::resource_table(&[(80_000, 16, true)]), &[0; 16]);
-    assert!(Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 50_000).is_err());
+    assert!(reader_plan(&archive, 0..source.allowed.end, 0, 50_000).is_err());
 }
 
 #[test]
@@ -168,7 +181,7 @@ fn each_compressed_chunk_must_consume_and_produce_its_exact_sizes() {
             rpf9::resource_table(&[(decoded, stored as u32, true)]),
             &body,
         );
-        let read = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
+        let read = reader_plan(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
         assert!(
             read.read(&mut source, &keys).is_err(),
             "decoded {decoded}, stored {stored}"
@@ -186,7 +199,7 @@ fn invalid_compression_never_scans_for_a_later_valid_stream() {
         rpf9::resource_table(&[(32, 16, true), (32, packed.len() as u32, true)]),
         &body,
     );
-    let read = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
+    let read = reader_plan(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
     assert!(read.read(&mut source, &keys).is_err());
 }
 
@@ -202,8 +215,7 @@ fn a_resource_in_a_nested_archive_uses_the_parent_base_and_skips_the_header_slot
     source.source = Cursor::new(bytes);
     source.allowed.start += base as u64;
     source.allowed.end += base as u64;
-    let read =
-        Gta6EntryRead::from_table(&archive, base as u64..source.allowed.end, 0, 100_000).unwrap();
+    let read = reader_plan(&archive, base as u64..source.allowed.end, 0, 100_000).unwrap();
     assert_eq!(read.read(&mut source, &keys).unwrap(), b"table only bytes");
     source.source.get_mut().pop();
     source.reads = 0;
@@ -243,12 +255,12 @@ fn resource_content_keys_are_required_before_reading_and_decode_the_body() {
         iv: [0; 16],
         framing: [0, 0x400, 0, 0, 4],
     });
-    let read = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
+    let read = reader_plan(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
     assert!(read.read(&mut source, &keys).is_err());
     assert_eq!(source.reads, 0);
     assert_eq!(read.read(&mut source, &content_keys).unwrap(), expected);
     archive.entries[0].cipher.as_mut().unwrap().framing[4] = 5;
-    assert!(Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).is_err());
+    assert!(reader_plan(&archive, 0..source.allowed.end, 0, 100_000).is_err());
 }
 
 #[test]
@@ -268,7 +280,7 @@ fn media_and_resource_rows_follow_mixed_mode_three_chunks() {
         body.resize(body.len().next_multiple_of(16), 0x78);
         body.extend(raw);
         let (archive, mut source, keys) = fixture_at(table, &body, 0x1000);
-        let read = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
+        let read = reader_plan(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
         assert_eq!(
             read.read(&mut source, &keys).unwrap(),
             [expected.as_slice(), raw.as_slice()].concat()
@@ -307,7 +319,7 @@ fn malformed_mode_three_tables_never_fall_back_to_raw_or_counted_streams() {
             5 => archive.toc.bytes[at + 4..at + 6].fill(0),
             _ => unreachable!(),
         }
-        let result = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000)
+        let result = reader_plan(&archive, 0..source.allowed.end, 0, 100_000)
             .and_then(|read| read.read(&mut source, &keys));
         assert!(result.is_err(), "case {case}");
         assert_eq!(source.reads, 0);
@@ -333,7 +345,7 @@ fn mode_four_sizes_work_on_both_row_shapes() {
             at + u32::from_le_bytes(archive.toc.bytes[at..at + 4].try_into().unwrap()) as usize;
         archive.toc.bytes[at + 7] = 4;
         archive.toc.bytes[heap..heap + 8].copy_from_slice(&(16u64 | (1u64 << 28)).to_le_bytes());
-        let read = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
+        let read = reader_plan(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
         assert_eq!(read.read(&mut source, &keys).unwrap(), b"table only bytes");
     }
 }
@@ -352,7 +364,7 @@ fn a_resource_without_a_chunk_record_is_one_bounded_raw_deflate_stream() {
         0x1000,
     );
     archive.entries[0].real = Some(expected.len() as u64);
-    let read = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
+    let read = reader_plan(&archive, 0..source.allowed.end, 0, 100_000).unwrap();
     assert_eq!(read.read(&mut source, &keys).unwrap(), expected);
     source.source.get_mut()[0x1000..0x1010].fill(0);
     assert!(read.read(&mut source, &keys).is_err());
@@ -402,7 +414,7 @@ fn mode_four_streams_across_buffers_and_refuses_bad_flags_sizes_and_padding() {
             archive.entries[0].stored = Some(aligned as u64);
             archive.entries[0].real = Some(expected.len() as u64);
         }
-        let plan = Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 1 << 20).unwrap();
+        let plan = reader_plan(&archive, 0..source.allowed.end, 0, 1 << 20).unwrap();
         let mut decoded = Vec::new();
         assert_eq!(
             plan.extract(&mut source, &keys, &mut decoded).unwrap(),
@@ -431,13 +443,52 @@ fn mode_four_streams_across_buffers_and_refuses_bad_flags_sizes_and_padding() {
         ] {
             archive.toc.bytes[heap..heap + 8].copy_from_slice(&invalid.to_le_bytes());
             source.reads = 0;
-            assert!(
-                Gta6EntryRead::from_table(&archive, 0..source.allowed.end, 0, 1 << 20).is_err()
-            );
+            assert!(reader_plan(&archive, 0..source.allowed.end, 0, 1 << 20).is_err());
             assert_eq!(source.reads, 0);
         }
         source.source.get_mut()[source.allowed.start as usize..source.allowed.start as usize + 16]
             .fill(0);
         assert!(plan.extract(&mut source, &keys, &mut Vec::new()).is_err());
     }
+}
+
+#[test]
+fn mount_reports_clear_chunk_counts_and_exact_consumption() {
+    use or_io::container::rpf::Gta6Mount;
+    let (archive, mut source, keys) = fixture_at(
+        rpf9::chunked_table(255, &[(16, 16, false), (16, 16, false)]),
+        b"first raw chunk!second raw chunk",
+        0x1000,
+    );
+    let mount = Gta6Mount { base: 0, archive };
+    let report = mount
+        .read_entry_decrypted_report(&mut source, &mount.archive.entries[0], &keys)
+        .unwrap();
+    assert_eq!(report.data, b"first raw chunk!second raw chunk");
+    assert_eq!(report.chunk_count, 2);
+    assert_eq!(report.stored_consumed, 32);
+}
+
+#[test]
+fn a_mount_refuses_resource_bytes_without_chunk_instructions() {
+    use or_io::container::rpf::{gta6_archive::GROUP_CHUNK_RECORD, Gta6Mount};
+    let packed = zlib(&[0x55; 32]);
+    let mut body = packed.clone();
+    body.resize(body.len().next_multiple_of(16), 0);
+    let (mut archive, source, _) = fixture(
+        rpf9::resource_table(&[(32, packed.len() as u32, true)]),
+        &body,
+    );
+    archive
+        .toc
+        .groups
+        .retain(|g| g.name_hash != GROUP_CHUNK_RECORD);
+    let mount = Gta6Mount { base: 0, archive };
+    let error = mount
+        .inflate_deciphered_stored(&body, &mount.archive.entries[0])
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("20-byte resource row requires a chunk table"));
+    assert_eq!(source.reads, 0);
 }

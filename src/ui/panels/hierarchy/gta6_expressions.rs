@@ -46,9 +46,9 @@ fn picked(set: &Expressions, sel: u64) -> Option<String> {
         ));
     };
     Some(tr!(
-        "{group}: hash_{id} {word} ({at} of {total}), {detail}",
+        "{group}: {id} {word} ({at} of {total}), {detail}",
         group = label,
-        id = format!("{id:08X}"),
+        id = crate::state::gta6_names::said32(id),
         word = track_label(word),
         at = k + 1,
         total = tracks.len(),
@@ -66,8 +66,8 @@ fn whole(set: &Expressions) -> String {
             .sum()
     };
     tr!(
-        "Expression set hash_{key}, tracks read: {reads}, tracks written: {writes}",
-        key = format!("{:08X}", set.key),
+        "Expression set {key}, tracks read: {reads}, tracks written: {writes}",
+        key = crate::state::gta6_names::said32(set.key),
         reads = count(true),
         writes = count(false)
     )

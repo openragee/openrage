@@ -304,6 +304,17 @@ impl GtaViKeys {
         Ok(())
     }
 
+    /// Encipher a PSO string run in place, the exact inverse of [`Self::string_decrypt`].
+    pub fn string_encrypt(&self, data: &mut [u8]) -> Result<()> {
+        let cipher = self
+            .string
+            .as_ref()
+            .ok_or(IoError::RpfEncryptionUnsupported {
+                key_id: STRING_KEY_ID,
+            })?;
+        cipher.cbc_encrypt(data)
+    }
+
     /// Whether the snapshot carries the string-key section, so [`Self::string_decrypt`] can run.
     pub fn has_string_keys(&self) -> bool {
         self.string.is_some()

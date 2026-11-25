@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use or_io::container::rpf::{Rpf9BodyKind, Rpf9Content, Rpf9Scan, Rpf9ZlibRun};
 use or_io::gta6::world_state::{
-    layers_loaded, picks_with, words_of, Assumed, Request, Selector, WorldState, WorldStateError,
-    LAYER_MANIFEST,
+    layers_loaded, picks_with, words_of, Assumed, Place, Request, Selector, WorldState,
+    WorldStateError, LAYER_MANIFEST,
 };
 use or_io::hash::string_hash;
 use or_job::Cancel;
@@ -34,14 +34,14 @@ pub(super) struct Placed {
     pub selector: Selector,
 }
 
-/// Every selector of the game-shape archives the packs register, with its layer; `None` once `cancel` is set.
+/// Every selector of the game-shape archives the packs register, with its layer, and the places their nodes name; `None` once `cancel` is set.
 pub(super) fn selectors(
     mounted: &Mount,
     every: &[PathBuf],
     cancel: &Cancel,
-) -> Option<Vec<Placed>> {
+) -> Option<(Vec<Placed>, Vec<Place>)> {
     let listed = mounted.listed(every, every);
-    let mut found = Vec::new();
+    let (mut found, mut places) = (Vec::new(), Vec::new());
     for (mode, archive, entry, registered) in
         gta6_mount::game_shapes(&mounted.registry.packs, &listed)
     {
@@ -56,6 +56,7 @@ pub(super) fn selectors(
                 if layers.is_none() {
                     tracing::warn!(path = %path.display(), "a game-shape archive's scan found no layer manifest: every layer counts as loaded");
                 }
+                places.extend(states.iter().flat_map(|s| s.places.iter().cloned()));
                 found.extend(placed(states, layers.as_deref(), mode.bit(), name))
             }
             Ok(None) => return None,
@@ -64,7 +65,7 @@ pub(super) fn selectors(
             }
         }
     }
-    Some(found)
+    Some((found, places))
 }
 
 /// What a scan of a game-shape archive finds: its world-state bodies, and its layer manifest's layers when it finds one.

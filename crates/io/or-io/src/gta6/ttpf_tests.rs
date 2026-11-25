@@ -813,6 +813,57 @@ fn rgba8_and_bgra8_read_their_tail_slots_in_both_tile_sizes_and_a_lone_level_at_
 }
 
 #[test]
+fn r10g10b10a2_reads_tiled_channels_and_all_four_alpha_values() {
+    let channels = [
+        [0u32, 1023, 341, 0],
+        [1023, 0, 682, 1],
+        [341, 682, 1023, 2],
+        [682, 341, 0, 3],
+    ];
+    let (width, height) = (16usize, 8usize);
+    let linear: Vec<u8> = (0..width * height)
+        .flat_map(|i| {
+            let [r, g, b, a] = channels[(i % width + 3 * (i / width)) % channels.len()];
+            (r | g << 10 | b << 20 | a << 30).to_le_bytes()
+        })
+        .collect();
+    let code = u16::try_from(DxgiFormat::R10G10B10A2Unorm.to_raw() << 3).unwrap();
+    let specs: Vec<_> = [(1, TILES_4K_4), (0, TILES_64K_4)]
+        .into_iter()
+        .map(|(mode, pattern)| {
+            spec(
+                width as u32,
+                height as u32,
+                code,
+                mode,
+                1,
+                vec![Body::Stored(tile(&linear, width, height, 4, pattern))],
+            )
+        })
+        .collect();
+    let (_dir, pack) = pack_of(&specs);
+    for index in 0..specs.len() {
+        let texture = pack.texture(index).expect("R10G10B10A2 texture");
+        assert_eq!(texture.format.dxgi(), DxgiFormat::R10G10B10A2Unorm);
+        assert_eq!(texture.pixel_format(), GrcTextureFormat::A2B10G10R10);
+        assert_eq!(texture.pixels, linear);
+        let image = decode_level(&texture, 0).expect("packed UNORM channels decode");
+        for y in 0..height {
+            for x in 0..width {
+                let [r, g, b, a] = channels[(x + 3 * y) % channels.len()];
+                let expected = [r * 255 / 1023, g * 255 / 1023, b * 255 / 1023, a * 255 / 3]
+                    .map(|value| value as u8);
+                assert_eq!(
+                    image.get_pixel(x as u32, y as u32),
+                    expected,
+                    "tile mode {index}, ({x}, {y})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn a_signed_bc6h_texture_reads_as_the_floats_its_blocks_decode_to() {
     // A 4×4 texture of one block: mode 0 with endpoints of the sign bit set.
     let mut block = [0u8; 16];

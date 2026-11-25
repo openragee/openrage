@@ -3,8 +3,6 @@
 //! found, a marker where none holds it, and each instance list as its own box. The search runs on a
 //! worker as a row of the job list, a body at a time with its progress and Cancel.
 
-use crate::state::Rpf9Document;
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -393,7 +391,7 @@ impl AppState {
             })?;
         let (mut types, mut bodies, mut dictionary_bodies) = (Vec::new(), Vec::new(), Vec::new());
         let scans = (self.documents.iter()).filter_map(|d| match &d.payload {
-            DocPayload::Rpf9(Rpf9Document::Scan(scan)) if scan.path == archive => Some(scan),
+            DocPayload::Rpf9(scan) if scan.path == archive => Some(scan),
             _ => None,
         });
         for scan in scans {

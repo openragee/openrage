@@ -120,3 +120,77 @@ fn invalid_column_indices_are_not_silently_missing_entries() {
         );
     }
 }
+
+#[test]
+fn only_the_bounded_opener_applies_its_table_memory_budget() {
+    use or_io::container::rpf::{open_at, Gta6Entry, Rpf9Header};
+
+    struct HeaderOnly {
+        header: Cursor<Vec<u8>>,
+        end: u64,
+        body_attempted: bool,
+    }
+    impl Read for HeaderOnly {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.header.position() >= 64 {
+                self.body_attempted = true;
+                return Err(io::Error::other("only the synthetic header is stored"));
+            }
+            self.header.read(buf)
+        }
+    }
+    impl Seek for HeaderOnly {
+        fn seek(&mut self, at: SeekFrom) -> io::Result<u64> {
+            match at {
+                SeekFrom::End(0) => Ok(self.end),
+                at => self.header.seek(at),
+            }
+        }
+    }
+
+    let keys = GtaViKeys::parse(&rpf9::keys()).unwrap();
+    let template = encrypt(rpf9::table(&[(1, 0x1000, 16, 255)]), &keys);
+    let budget = 64usize << 20;
+    let last_toc = budget - std::mem::size_of::<Gta6Entry>().next_multiple_of(16);
+    for (bounded, toc_end, body_attempted) in [
+        (true, last_toc, true),
+        (true, budget, false),
+        (false, budget, true),
+    ] {
+        let mut header = template[..64].to_vec();
+        header[4..8].copy_from_slice(&(toc_end as u32).to_le_bytes());
+        header[8..12].copy_from_slice(&((toc_end - 16) as u32).to_le_bytes());
+        Rpf9Header::parse(&header).expect("the synthetic header reaches the budget check");
+        let end = toc_end as u64;
+        let mut source = HeaderOnly {
+            header: Cursor::new(header),
+            end,
+            body_attempted: false,
+        };
+        let result = if bounded {
+            open_at_bounded(&mut source, 0..end, &keys)
+        } else {
+            open_at(&mut source, 0, &keys)
+        };
+        assert!(result.is_err());
+        assert_eq!(
+            source.body_attempted, body_attempted,
+            "bounded={bounded}, toc_end={toc_end}"
+        );
+    }
+}
+
+#[test]
+fn a_nested_mount_refuses_a_table_larger_than_its_entry() {
+    use or_io::container::rpf::Gta6Mount;
+    let keys = GtaViKeys::parse(&rpf9::keys()).unwrap();
+    let child = encrypt(rpf9::table(&[(2, 0x1000, 16, 255)]), &keys);
+    let mut parent = encrypt(rpf9::table(&[(1, 0x1000, 64, 0)]), &keys);
+    parent.resize(0x1000, 0);
+    parent.extend(child);
+    let mut source = Cursor::new(parent);
+    let mount = Gta6Mount::open_root(&mut source, &keys).unwrap();
+    assert!(mount
+        .open_nested(&mut source, &mount.archive.entries[0], &keys)
+        .is_err());
+}

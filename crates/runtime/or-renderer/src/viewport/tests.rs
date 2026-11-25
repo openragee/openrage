@@ -80,7 +80,7 @@ fn pipelines_compile() {
     let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::default(),
         compatible_surface: None,
-        force_fallback_adapter: false,
+        force_fallback_adapter: crate::instance::software_asked(),
     })) {
         Ok(a) => a,
         Err(e) => {
@@ -124,15 +124,16 @@ fn bytes_test_device(what: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
         backend_options: wgpu::BackendOptions::default(),
         display: None,
     });
-    let adapter =
-        match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-        {
-            Ok(a) => a,
-            Err(e) => {
-                or_test_support::skip_device(what, format_args!("no wgpu adapter: {e}"));
-                return None;
-            }
-        };
+    let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        force_fallback_adapter: crate::instance::software_asked(),
+        ..Default::default()
+    })) {
+        Ok(a) => a,
+        Err(e) => {
+            or_test_support::skip_device(what, format_args!("no wgpu adapter: {e}"));
+            return None;
+        }
+    };
     match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("bytes-test"),
         // The stages of a frame are timed where the device can, as the app's is

@@ -18,6 +18,7 @@ use or_io::container::rpf::{
 use or_io::gta6::hash::name_hash32;
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
 use or_io::gta6::script::compiled::{Compiled, NATIVE};
+use or_io::gta6::script::native_addresses::NativeAddresses;
 use or_io::meta::binary::hash_index::spelled_hash;
 use or_io::meta::binary::pso::string_names::document_strings;
 use or_io::meta::binary::root_types;
@@ -31,6 +32,7 @@ const USAGE: &str = "\
 usage:
   openrage-cli hashes census <install> [--out <file>] [--top-only] [--every <n>] [--limit <bytes>]
                              [--max-bodies <n>|unlimited] [--names <dir>] [--keys <file>] [--exe <exe>]
+                             [--listings <dir>]
   openrage-cli hashes mine <install | archive.rpf> --out <file> [--names <dir>] [--keys <file>]
                            [--exe <exe>] [--range <count>] [--max-bodies <n>|unlimited]
 
@@ -45,12 +47,17 @@ install through its RPF7 archives, whose entry names are text, and its metadata 
   --names <dir>       GTA VI: a recovered-names folder (else OPENRAGE_GTA6_NAMES)
   --keys <file>       GTA VI: a key snapshot; GTA V: a keys cache
   --exe <exe>         GTA VI: the executable a masked key snapshot opens with
+  --listings <dir>    GTA VI: a folder of lifted script listings, whose declarations name natives
+                      by address (else OPENRAGE_LIFTED_LISTINGS); the table is cached in the
+                      configuration folder
 
 `hashes mine` writes names found for the unresolved hashes, from the install's strings, the
 executable's and rules over the names known, to <file>; `hashes mine --help` says more.";
 
 /// The environment variable naming a recovered-names folder, as `rpf9` reads it.
 const NAMES_ENV: &str = "OPENRAGE_GTA6_NAMES";
+/// The environment variable naming a folder of lifted listings, as the decompiler's tests read it.
+const LISTINGS_ENV: &str = "OPENRAGE_LIFTED_LISTINGS";
 /// The content cipher type the mount deciphers.
 const CONTENT_CIPHER: u16 = 17;
 /// A cyclic mount would recurse forever; real nesting is shallow.
@@ -147,6 +154,8 @@ struct Census {
     metadata: u64,
     metadata_refused: u64,
     scripts: u64,
+    /// How many natives the lifted listings declare by address, `None` where none were given.
+    native_table: Option<usize>,
     /// Whether a body was passed over because the ceiling was reached.
     stopped: bool,
     cancelled: bool,
@@ -224,6 +233,7 @@ fn census_command(args: &[String]) -> Result<(), String> {
         ..Options::default()
     };
     let (mut root, mut out, mut names, mut keys, mut exe) = (None, None, None, None, None);
+    let mut listings = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         if let Some(v) = arg.strip_prefix("--max-bodies=") {
@@ -241,6 +251,7 @@ fn census_command(args: &[String]) -> Result<(), String> {
             "--names" => names = Some(PathBuf::from(value("--names")?)),
             "--keys" => keys = Some(PathBuf::from(value("--keys")?)),
             "--exe" => exe = Some(PathBuf::from(value("--exe")?)),
+            "--listings" => listings = Some(PathBuf::from(value("--listings")?)),
             BODIES_FLAG => {
                 options.bodies = options.bodies.parse(BODIES_FLAG, &value(BODIES_FLAG)?)?
             }
@@ -259,7 +270,13 @@ fn census_command(args: &[String]) -> Result<(), String> {
         Game::Gta6 => {
             let keys = super::gta6_keys::load(keys.as_deref(), exe.as_deref())?;
             let resolver = load_resolver(names.as_deref());
-            census_gta6(&root, &archives, &options, &cancel, &keys, &resolver)
+            let natives = load_natives(listings.as_deref())?;
+            let gta6 = Gta6 {
+                keys: &keys,
+                resolver: &resolver,
+                natives: natives.as_ref(),
+            };
+            census_gta6(&root, &archives, &options, &cancel, &gta6)
         }
         Game::Gta5 => {
             let crypto = super::keys::resolve_crypto(&root, keys.as_deref());
@@ -282,17 +299,17 @@ fn census_command(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// The census of a GTA VI install's `archives`, opened with `keys` and named through `resolver`.
+/// The census of a GTA VI install's `archives`, opened and named with what `gta6` holds.
 fn census_gta6(
     root: &Path,
     archives: &[PathBuf],
     options: &Options,
     cancel: &Cancel,
-    keys: &GtaViKeys,
-    resolver: &NameResolver,
+    gta6: &Gta6,
 ) -> Census {
     let mut walk = Walk::new(options, cancel);
-    let gta6 = Gta6 { keys, resolver };
+    walk.census.native_table = gta6.natives.map(NativeAddresses::len);
+    let keys = gta6.keys;
     for (i, path) in archives.iter().enumerate() {
         if cancel.is_set() {
             walk.census.cancelled = true;
@@ -309,7 +326,7 @@ fn census_gta6(
         match mounted {
             Ok((mut file, mount)) => {
                 walk.census.archives += 1;
-                walk.gta6_mount(&gta6, &mut file, &mount, &label, 0);
+                walk.gta6_mount(gta6, &mut file, &mount, &label, 0);
             }
             Err(e) => {
                 eprintln!("  {label}: {e}");
@@ -324,6 +341,7 @@ fn census_gta6(
 struct Gta6<'a> {
     keys: &'a GtaViKeys,
     resolver: &'a NameResolver,
+    natives: Option<&'a NativeAddresses>,
 }
 
 struct Walk<'a> {
@@ -456,7 +474,10 @@ impl<'a> Walk<'a> {
             }
         };
         match read {
-            Ok(bytes) => tally_body(&bytes, place, Some(gta6.keys), &mut self.census),
+            Ok(bytes) => {
+                let census = &mut self.census;
+                tally_body(&bytes, place, Some(gta6.keys), gta6.natives, census)
+            }
             Err(_) => self.census.unread += 1,
         }
     }
@@ -518,7 +539,8 @@ impl<'a> Walk<'a> {
                         self.census.over_limit += 1
                     }
                     Ok(bytes) => {
-                        tally_body(&bytes, &format!("{label}/{path}"), None, &mut self.census)
+                        let place = format!("{label}/{path}");
+                        tally_body(&bytes, &place, None, None, &mut self.census)
                     }
                     Err(_) => self.census.unread += 1,
                 }
@@ -528,8 +550,15 @@ impl<'a> Walk<'a> {
 }
 
 /// Count the hashes a body holds: a metadata document's names and values, or a compiled script
-/// program's native calls; any other body holds none this counts.
-fn tally_body(bytes: &[u8], place: &str, keys: Option<&GtaViKeys>, census: &mut Census) {
+/// program's native calls, each resolved where `natives` names its address; any other body holds
+/// none this counts.
+fn tally_body(
+    bytes: &[u8],
+    place: &str,
+    keys: Option<&GtaViKeys>,
+    natives: Option<&NativeAddresses>,
+    census: &mut Census,
+) {
     if let Some(format) = or_io::meta::detect_binary_format(bytes) {
         match super::meta::read_instance(bytes, ErrorMode::Lenient) {
             Ok((instance, _, _)) => {
@@ -553,7 +582,8 @@ fn tally_body(bytes: &[u8], place: &str, keys: Option<&GtaViKeys>, census: &mut 
         if ins.opcode == NATIVE {
             let o = ins.operands;
             let rva = u32::from_le_bytes([o[0], o[1], o[2], o[3]]);
-            census.note(Space::Native, u64::from(rva), false, || {
+            let named = natives.is_some_and(|table| table.name_of(rva).is_some());
+            census.note(Space::Native, u64::from(rva), named, || {
                 format!("{place}+{:#x}", ins.offset)
             });
         }
@@ -688,9 +718,14 @@ fn report(census: &Census, game: Game, options: &Options) -> String {
             continue;
         }
         let count = census.count(space);
-        let note = match space {
-            Space::Native => "  (no names registry keys a native by its address)",
-            _ => "",
+        let note = match (space, census.native_table) {
+            (Space::Native, Some(declared)) => format!(
+                "  (named by address through the {declared} natives the lifted listings declare)"
+            ),
+            (Space::Native, None) => {
+                format!("  (no lifted listings: give --listings or {LISTINGS_ENV})")
+            }
+            _ => String::new(),
         };
         out.push_str(&format!(
             "  {:<18} {:>10} {:>10} {:>10}{note}\n",
@@ -776,6 +811,19 @@ fn relative_label(root: &Path, path: &Path) -> String {
     (path.strip_prefix(root).unwrap_or(path))
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+/// The natives the listings `--listings` (or [`LISTINGS_ENV`]) points at declare, cached in the configuration folder; `None` where neither names a folder.
+fn load_natives(dir: Option<&Path>) -> Result<Option<NativeAddresses>, String> {
+    let Some(folder) = dir
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::var_os(LISTINGS_ENV).map(PathBuf::from))
+    else {
+        return Ok(None);
+    };
+    let config = or_title::config::config_dir();
+    let table = NativeAddresses::load(&folder, config.as_deref()).map_err(|e| e.to_string())?;
+    Ok(Some(table))
 }
 
 /// The recovered names `--names` (or [`NAMES_ENV`]) points at, with the vocabulary the app keeps.

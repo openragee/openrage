@@ -624,7 +624,12 @@ fn a_gta_vi_drawable_s_texture_key_resolves_to_a_scanned_dictionary_s_texture_by
         .expect("a dictionary of textures");
     let dir = tempfile::tempdir().expect("a scratch directory");
     let mut state = AppState::new();
-    state.insert_document(dir.path().join("lamps.ytd"), textures, None, None);
+    let dictionary = state.insert_document(dir.path().join("lamps.ytd"), textures, None, None);
+    // Injecting the decoded payload also needs the provenance a scanned path sets on open.
+    state
+        .document_mut(dictionary)
+        .expect("the dictionary")
+        .read_only = Some(super::rpf9_scan::READ_ONLY_BODY);
     let key = name_hash64(b"lamp_glow");
     let (doc, meshes) = drawn(&mut state, dir.path(), drawable_keyed(key));
     assert_eq!(meshes[0].texture_name.as_deref(), Some("lamp_glow"));

@@ -15,10 +15,11 @@ use super::archive::{RpfArchive, RpfSource};
 use super::crypto::TocDecryptOutcome;
 use super::entry::{Compressor, RpfBinaryEntry, RpfDirectoryEntry, RpfEntry};
 use super::gta6_archive::{Gta6Class, Gta6Entry, NameResolver};
-use super::gta6_mount::{open_at, Gta6Mount};
+use super::gta6_mount::{open_at_bounded, Gta6Mount};
 use super::header::{RpfEncryption, RpfHeader};
 use super::layout::{Input, Toc};
 use super::reader::{read_at, BodyForm};
+use super::rpf9_scan::RPF9_SLOT;
 use super::rpf9_toc::GtaViKeys;
 use crate::error::{IoError, Result};
 
@@ -91,6 +92,8 @@ struct Leaf {
     real: u64,
     /// A nested archive, which opens as a folder.
     archive: bool,
+    /// Its row is the 20-byte one of a headerless resource, whose body follows a 16-byte zero slot.
+    slot: bool,
     ciphered: bool,
 }
 
@@ -107,14 +110,20 @@ pub(super) struct Rpf9State {
 pub(super) fn read(input: &Input) -> Result<(Toc, Rpf9State)> {
     let context = Gta6Context::current()?.ok_or(IoError::Rpf9TocEncrypted)?;
     let mut src = bytes_of(input.source)?;
-    let mut archive = open_at(&mut src, input.start, &context.keys)?;
+    let end = input
+        .start
+        .checked_add(input.size)
+        .ok_or_else(|| IoError::RpfBadHeader {
+            message: "RPF9 archive extent overflows".into(),
+        })?;
+    let mut archive = open_at_bounded(&mut src, input.start..end, &context.keys)?;
     archive.resolve_names(&context.names);
     let mount = Gta6Mount {
         base: input.start,
         archive,
     };
     let leaves: Vec<Leaf> = (mount.archive.entries.iter().enumerate())
-        .map(|(at, entry)| leaf(&mount, &mut src, at, entry))
+        .map(|(at, entry)| leaf(&mount, at, entry))
         .collect();
     let (entries, names, entry_of) = lay_out(&leaves);
     let header = RpfHeader {
@@ -141,7 +150,7 @@ pub(super) fn read(input: &Input) -> Result<(Toc, Rpf9State)> {
     Ok((toc, state))
 }
 
-fn leaf<R: Read + Seek>(mount: &Gta6Mount, src: &mut R, at: usize, entry: &Gta6Entry) -> Leaf {
+fn leaf(mount: &Gta6Mount, at: usize, entry: &Gta6Entry) -> Leaf {
     let row = mount.archive.entry_extra(at).and_then(|extra| extra.nested);
     let stored = (entry.stored)
         .or(row.map(|row| row.stored_size()))
@@ -151,8 +160,7 @@ fn leaf<R: Read + Seek>(mount: &Gta6Mount, src: &mut R, at: usize, entry: &Gta6E
         u64::from(row.virtual_size & !0xF) + u64::from(row.flags & !0xF)
     };
     let real = entry.real.or(row.map(sections)).unwrap_or(0);
-    let archive = entry.kind() == Some(Gta6Class::NestedArchive)
-        && mount.entry_begins_archive(src, entry).unwrap_or(false);
+    let archive = entry.kind() == Some(Gta6Class::NestedArchive);
     Leaf {
         segments: segments(entry, archive),
         offset: entry.start,
@@ -160,6 +168,7 @@ fn leaf<R: Read + Seek>(mount: &Gta6Mount, src: &mut R, at: usize, entry: &Gta6E
         real,
         archive,
         ciphered: entry.cipher.is_some(),
+        slot: entry.stored.is_none() && row.is_some(),
     }
 }
 
@@ -317,11 +326,24 @@ impl RpfArchive {
         match form {
             BodyForm::Decoded if !leaf.archive => {
                 let mut src = bytes_of(&self.source)?;
-                state.mount.read_entry_decrypted(&mut src, entry, keys)
+                let end = self
+                    .start_pos
+                    .checked_add(self.size)
+                    .ok_or_else(|| no_body(entry_index))?;
+                state
+                    .mount
+                    .read_entry_plan(entry.index, end, u64::MAX)?
+                    .read(&mut src, keys)
             }
             BodyForm::Decrypted if leaf.ciphered => {
                 let mut src = bytes_of(&self.source)?;
-                (state.mount).read_entry_deciphered_stored(&mut src, entry, keys)
+                let end = self
+                    .start_pos
+                    .checked_add(self.size)
+                    .ok_or_else(|| no_body(entry_index))?;
+                state
+                    .mount
+                    .read_entry_deciphered_stored_bounded(&mut src, entry, keys, end)
             }
             _ => self.rpf9_stored(entry_index, leaf),
         }
@@ -329,6 +351,18 @@ impl RpfArchive {
 
     fn rpf9_stored(&self, entry_index: u32, leaf: &Leaf) -> Result<Vec<u8>> {
         let offset = leaf.offset.ok_or_else(|| no_body(entry_index))?;
+        let table_len = self
+            .rpf9
+            .as_deref()
+            .ok_or_else(|| no_body(entry_index))?
+            .mount
+            .archive
+            .toc
+            .bytes
+            .len() as u64;
+        if offset < table_len {
+            return Err(no_body(entry_index));
+        }
         let len = usize::try_from(leaf.stored)
             .ok()
             .filter(|_| offset.saturating_add(leaf.stored) <= self.size)
@@ -344,15 +378,26 @@ impl RpfArchive {
 
     /// The RPF9 nested as file `entry_index` of this one, which reads through it.
     pub(super) fn rpf9_nested(self: &Arc<Self>, entry_index: u32) -> Result<RpfArchive> {
-        let (_, leaf, _) = self.rpf9_leaf(entry_index)?;
+        let (state, leaf, _) = self.rpf9_leaf(entry_index)?;
         let offset =
             (leaf.offset.filter(|_| leaf.archive)).ok_or_else(|| IoError::RpfBadEntry {
                 message: format!("entry {entry_index} is not a nested archive"),
             })?;
+        if offset < state.mount.archive.toc.bytes.len() as u64
+            || offset
+                .checked_add(leaf.stored)
+                .is_none_or(|end| end > self.size)
+        {
+            return Err(no_body(entry_index));
+        }
+        let start = self
+            .start_pos
+            .checked_add(offset)
+            .ok_or_else(|| no_body(entry_index))?;
         let name = (self.node_for_entry(entry_index)).map(|node| node.name().to_string());
         Self::parse(
             RpfSource::Nested(Arc::clone(self)),
-            self.start_pos + offset,
+            start,
             leaf.stored,
             name,
             Arc::clone(&self.keys),
@@ -374,7 +419,53 @@ pub struct Rpf9Place {
     pub ciphered: bool,
 }
 
+/// A leaf's original table indices from its outermost file through every containing archive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rpf9EntryAddress {
+    pub file: PathBuf,
+    pub indices: Vec<u32>,
+}
+
 impl RpfArchive {
+    /// Locate a leaf through already mounted parent tables, without reading any archive bytes.
+    pub fn rpf9_entry_address(&self, entry_index: u32) -> Option<Rpf9EntryAddress> {
+        let (_, leaf, entry) = self.rpf9_leaf(entry_index).ok()?;
+        if leaf.archive || leaf.offset.is_none() {
+            return None;
+        }
+        let mut indices = vec![entry.index];
+        let mut current = self;
+        loop {
+            match &current.source {
+                RpfSource::Memory(_) => return None,
+                RpfSource::File(file) => {
+                    indices.reverse();
+                    return Some(Rpf9EntryAddress {
+                        file: file.clone(),
+                        indices,
+                    });
+                }
+                RpfSource::Nested(parent) => {
+                    let state = parent.rpf9.as_deref()?;
+                    let offset = current.start_pos.checked_sub(parent.start_pos)?;
+                    if offset.checked_add(current.size)? > parent.size {
+                        return None;
+                    }
+                    let mut owners = state.leaves.iter().enumerate().filter(|(_, leaf)| {
+                        leaf.archive && leaf.offset == Some(offset) && leaf.stored == current.size
+                    });
+                    let (at, _) = owners.next()?;
+                    // Equal extents can be aliases; the parent pointer does not identify which was opened.
+                    if owners.next().is_some() {
+                        return None;
+                    }
+                    indices.push(state.mount.archive.entries.get(at)?.index);
+                    current = parent;
+                }
+            }
+        }
+    }
+
     /// Where file `entry_index` of an RPF9 read from disk sits; `None` for a folder, a nested archive, bytes held in memory or any other generation.
     pub fn rpf9_place(&self, entry_index: u32) -> Option<Rpf9Place> {
         let (_, leaf, entry) = self.rpf9_leaf(entry_index).ok()?;
@@ -382,7 +473,7 @@ impl RpfArchive {
         Some(Rpf9Place {
             file: file_of(&self.source)?.to_path_buf(),
             base: self.start_pos,
-            offset: self.start_pos + offset,
+            offset: self.start_pos + offset + if leaf.slot { RPF9_SLOT } else { 0 },
             entry: entry.index,
             ciphered: leaf.ciphered,
         })
@@ -466,6 +557,7 @@ mod tests {
                     real: e.real.unwrap_or(0),
                     archive,
                     ciphered: false,
+                    slot: false,
                 }
             })
             .collect()
@@ -507,6 +599,31 @@ mod tests {
     fn a_nested_archive_is_named_as_one_whether_or_not_its_name_resolved() {
         let found = paths(&[entry(0, Some("packs/base"), 0x00), entry(1, None, 0x00)]);
         assert_eq!(found, ["hash_000000000000ab01.rpf", "packs/base.rpf"]);
+    }
+
+    #[test]
+    fn a_nested_archive_is_listed_from_its_class_before_any_body_exists() {
+        let entry = entry(0, None, 0);
+        let mount = Gta6Mount {
+            base: 0,
+            archive: super::super::Gta6Archive {
+                toc: super::super::Rpf9Toc {
+                    bytes: Vec::new(),
+                    key_id: 0,
+                    registry_id: 0,
+                    entry_count: 1,
+                    groups: Vec::new(),
+                },
+                entries: vec![entry.clone()],
+            },
+        };
+        let listed = leaf(&mount, 0, &entry);
+        assert!(listed.archive);
+        assert!(listed.segments.last().unwrap().ends_with(".rpf"));
+        let keys = GtaViKeys::parse(&or_test_support::rpf9::keys()).unwrap();
+        assert!(mount
+            .open_nested(&mut Cursor::new(Vec::<u8>::new()), &entry, &keys)
+            .is_err());
     }
 
     #[test]
@@ -570,5 +687,341 @@ mod tests {
         };
         assert_eq!(file.uncompressed_size, u32::MAX);
         assert_eq!(file.consumed_size, 0, "a nested archive is kept as it is");
+    }
+}
+
+#[cfg(test)]
+mod entry_form_tests {
+    use super::super::{Gta6Archive, NoOpCryptoProvider, Rpf9Builder, Rpf9Toc, RpfVersion};
+    use super::*;
+    use std::io::Write;
+
+    fn fixture() -> (RpfArchive, Vec<u8>, Vec<u8>, Vec<u8>) {
+        let mut snapshot = or_test_support::rpf9::keys();
+        snapshot.extend(0x5243u32.to_le_bytes());
+        for size in [4096u32, 16384] {
+            snapshot.extend(size.to_le_bytes());
+            snapshot.extend(vec![0; size as usize]);
+        }
+        snapshot.extend(1u32.to_le_bytes());
+        snapshot.extend(0x0000_0001_0200_0000u64.to_le_bytes());
+        snapshot.extend((4u32 + 60 * 4 + 16 * 256).to_le_bytes());
+        snapshot.extend([0x5d, 0xce, 0x18, 0x27]);
+        snapshot.extend([0; 60 * 4]);
+        for lane in 0..16u8 {
+            snapshot.extend([0x80 + lane; 256]);
+        }
+        let keys = Arc::new(GtaViKeys::parse(&snapshot).unwrap());
+        let plain = b"a synthetic body with distinct stored and decoded forms".to_vec();
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&plain).unwrap();
+        let mut compressed = encoder.finish().unwrap();
+        let table = or_test_support::rpf9::chunked_table(
+            11,
+            &[(plain.len() as u32, compressed.len() as u32, true)],
+        );
+        compressed.resize(compressed.len().next_multiple_of(16), 0);
+        let mut stored = compressed.clone();
+        let iv = [0x22; 16];
+        keys.content_decrypt(1, &iv, &mut stored).unwrap();
+        let table = Rpf9Builder::serialize(
+            &Rpf9Toc {
+                bytes: table,
+                key_id: 0,
+                registry_id: 0,
+                entry_count: 0,
+                groups: Vec::new(),
+            },
+            &keys,
+        )
+        .unwrap();
+        let mut archive = Gta6Archive::open(&table, &keys).unwrap();
+        archive.entries[0].cipher = Some(super::super::Gta6Cipher {
+            key_id: 1,
+            cipher_type: 17,
+            iv,
+            framing: [0, 0x400, 0, 0, 4],
+        });
+        let base = 0x200;
+        let mut bytes = vec![0; base];
+        bytes.extend(table);
+        bytes.resize(base + 0x1000, 0);
+        bytes.extend(&stored);
+        let size = bytes.len() as u64 - base as u64;
+        let mount = Gta6Mount {
+            base: base as u64,
+            archive,
+        };
+        let leaves: Vec<_> = mount
+            .archive
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(at, entry)| leaf(&mount, at, entry))
+            .collect();
+        let (entries, names, entry_of) = lay_out(&leaves);
+        let (nodes, entry_to_node) = super::super::reader::build_tree(&entries, &names).unwrap();
+        let header = RpfHeader {
+            entry_count: entries.len() as u32,
+            name_heap_size: 0,
+            name_shift: 0,
+            xcompress: false,
+            encryption: RpfEncryption::None,
+        };
+        let archive = RpfArchive {
+            version: RpfVersion::Rpf9,
+            header,
+            entries,
+            nodes,
+            toc_outcome: TocDecryptOutcome::Nominal,
+            names,
+            name_heap: Vec::new(),
+            entry_to_node,
+            source: RpfSource::Memory(Arc::new(bytes)),
+            start_pos: base as u64,
+            size,
+            keys: Arc::new(NoOpCryptoProvider::new()),
+            paths: OnceLock::new(),
+            rpf9: Some(Arc::new(Rpf9State {
+                mount,
+                context: Arc::new(Gta6Context {
+                    keys,
+                    names: Arc::new(NameResolver::new()),
+                }),
+                entry_of,
+                leaves,
+            })),
+        };
+        // The same absolute offsets are used through a nested source, without changing process keys.
+        let mut nested = archive.clone();
+        nested.source = RpfSource::Nested(Arc::new(archive));
+        (nested, stored, compressed, plain)
+    }
+
+    #[test]
+    fn rpf9_body_forms_preserve_stored_deciphered_and_decoded_bytes() {
+        let (archive, stored, compressed, plain) = fixture();
+        assert_eq!(archive.read_form(1, BodyForm::AsStored).unwrap(), stored);
+        assert_eq!(
+            archive.read_form(1, BodyForm::Decrypted).unwrap(),
+            compressed
+        );
+        assert_eq!(archive.read_form(1, BodyForm::Decoded).unwrap(), plain);
+    }
+
+    #[test]
+    fn every_rpf9_body_form_stays_inside_its_nested_archive() {
+        let (mut archive, _, _, _) = fixture();
+        archive.size = 0x1000;
+        for form in BodyForm::ALL {
+            assert!(
+                archive.read_form(1, form).is_err(),
+                "{form:?} escaped its parent"
+            );
+        }
+    }
+
+    fn address_archive(
+        rows: Vec<Gta6Entry>,
+        source: RpfSource,
+        start: u64,
+        size: u64,
+        context: Arc<Gta6Context>,
+    ) -> RpfArchive {
+        let mount = Gta6Mount {
+            base: start,
+            archive: Gta6Archive {
+                toc: Rpf9Toc {
+                    bytes: Vec::new(),
+                    key_id: 0,
+                    registry_id: 0,
+                    entry_count: rows.len() as u32,
+                    groups: Vec::new(),
+                },
+                entries: rows,
+            },
+        };
+        let leaves: Vec<_> = mount
+            .archive
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(at, entry)| leaf(&mount, at, entry))
+            .collect();
+        let (entries, names, entry_of) = lay_out(&leaves);
+        let (nodes, entry_to_node) = super::super::reader::build_tree(&entries, &names).unwrap();
+        RpfArchive {
+            version: RpfVersion::Rpf9,
+            header: RpfHeader {
+                entry_count: entries.len() as u32,
+                name_heap_size: 0,
+                name_shift: 0,
+                xcompress: false,
+                encryption: RpfEncryption::None,
+            },
+            entries,
+            nodes,
+            toc_outcome: TocDecryptOutcome::Nominal,
+            names,
+            name_heap: Vec::new(),
+            entry_to_node,
+            source,
+            start_pos: start,
+            size,
+            keys: Arc::new(NoOpCryptoProvider::new()),
+            paths: OnceLock::new(),
+            rpf9: Some(Arc::new(Rpf9State {
+                mount,
+                context,
+                entry_of,
+                leaves,
+            })),
+        }
+    }
+
+    fn address_row(index: u32, start: u64, stored: u64, nested: bool, name: &str) -> Gta6Entry {
+        Gta6Entry {
+            index,
+            name64: u64::from(index + 1),
+            name32: None,
+            name: Some(name.into()),
+            start: Some(start),
+            stored: Some(stored),
+            real: Some(stored),
+            class: Some(if nested { 0 } else { 255 }),
+            cipher: None,
+        }
+    }
+
+    #[test]
+    fn entry_addresses_follow_parent_tables_and_include_the_leaf_index_without_io() {
+        let context = Arc::new(Gta6Context {
+            keys: Arc::new(GtaViKeys::parse(&or_test_support::rpf9::keys()).unwrap()),
+            names: Arc::new(NameResolver::new()),
+        });
+        let file = PathBuf::from("synthetic-address-file-that-is-never-opened.rpf");
+        let root = Arc::new(address_archive(
+            vec![
+                address_row(0, 0x100, 16, false, "other"),
+                address_row(1, 0x1000, 0x3000, true, "outer"),
+            ],
+            RpfSource::File(file.clone()),
+            0,
+            0x5000,
+            Arc::clone(&context),
+        ));
+        let middle = Arc::new(address_archive(
+            vec![
+                address_row(0, 0x100, 16, false, "folder/other"),
+                address_row(1, 0x200, 16, false, "another"),
+                address_row(2, 0x1000, 0x1000, true, "inner"),
+            ],
+            RpfSource::Nested(Arc::clone(&root)),
+            0x1000,
+            0x3000,
+            Arc::clone(&context),
+        ));
+        let leaf = address_archive(
+            vec![address_row(0, 0x100, 16, false, "folder/asset.ytd")],
+            RpfSource::Nested(middle),
+            0x2000,
+            0x1000,
+            context,
+        );
+        let tree_index = leaf.find("folder/asset.ytd").unwrap();
+        assert_ne!(
+            tree_index, 0,
+            "folders change the tree index, not the table index"
+        );
+        assert_eq!(
+            leaf.rpf9_entry_address(tree_index),
+            Some(Rpf9EntryAddress {
+                file: file.clone(),
+                indices: vec![1, 2, 0]
+            })
+        );
+        assert_eq!(leaf.rpf9_entry_address(0), None, "the root is a folder");
+        assert_eq!(
+            root.rpf9_entry_address(root.find("outer.rpf").unwrap()),
+            None
+        );
+        assert_eq!(
+            root.rpf9_entry_address(root.find("other").unwrap()),
+            Some(Rpf9EntryAddress {
+                file,
+                indices: vec![0]
+            })
+        );
+    }
+
+    #[test]
+    fn entry_addresses_refuse_memory_missing_and_ambiguous_parents() {
+        let context = Arc::new(Gta6Context {
+            keys: Arc::new(GtaViKeys::parse(&or_test_support::rpf9::keys()).unwrap()),
+            names: Arc::new(NameResolver::new()),
+        });
+        let rows = || vec![address_row(0, 0x100, 16, false, "asset")];
+        let memory = address_archive(
+            rows(),
+            RpfSource::Memory(Arc::new(Vec::new())),
+            0,
+            0x1000,
+            Arc::clone(&context),
+        );
+        assert_eq!(memory.rpf9_entry_address(1), None);
+        for count in [0, 2] {
+            let parents = (0..count)
+                .map(|i| address_row(i, 0x1000, 0x1000, true, &format!("alias{i}")))
+                .collect();
+            let parent = Arc::new(address_archive(
+                parents,
+                RpfSource::File(PathBuf::from("not-opened.rpf")),
+                0,
+                0x3000,
+                Arc::clone(&context),
+            ));
+            let child = address_archive(
+                rows(),
+                RpfSource::Nested(parent),
+                0x1000,
+                0x1000,
+                Arc::clone(&context),
+            );
+            assert_eq!(child.rpf9_entry_address(1), None, "{count} possible owners");
+        }
+    }
+
+    #[test]
+    fn a_nested_archive_cannot_reopen_its_parent_table_or_read_it_as_an_entry() {
+        let context = Arc::new(Gta6Context {
+            keys: Arc::new(GtaViKeys::parse(&or_test_support::rpf9::keys()).unwrap()),
+            names: Arc::new(NameResolver::new()),
+        });
+        let mut archive = address_archive(
+            vec![address_row(0, 0, 64, true, "self")],
+            RpfSource::Memory(Arc::new(Vec::new())),
+            0,
+            64,
+            context,
+        );
+        Arc::get_mut(archive.rpf9.as_mut().unwrap())
+            .unwrap()
+            .mount
+            .archive
+            .toc
+            .bytes
+            .resize(64, 0);
+        let archive = Arc::new(archive);
+        assert!(matches!(
+            archive.rpf9_nested(1),
+            Err(IoError::RpfBadEntry { .. })
+        ));
+        for form in BodyForm::ALL {
+            assert!(
+                matches!(archive.read_form(1, form), Err(IoError::RpfBadEntry { .. })),
+                "{form:?}"
+            );
+        }
     }
 }

@@ -1,5 +1,3 @@
-use crate::state::Rpf9Document;
-
 use egui_phosphor::regular as ph;
 
 use crate::state::particle_target::{on_particle_target, ParticleTarget};
@@ -195,9 +193,7 @@ pub fn draw_archive_table_document(
     state: &mut AppState,
     doc_id: DocumentId,
 ) -> bool {
-    let Some(DocPayload::Rpf9(Rpf9Document::Table(table))) =
-        state.document(doc_id).map(|doc| &doc.payload)
-    else {
+    let Some(DocPayload::Rpf9Table(table)) = state.document(doc_id).map(|doc| &doc.payload) else {
         return false;
     };
     let table = table.clone();

@@ -260,15 +260,20 @@ pub fn cell_offset(archive: &Gta6Archive, index: usize) -> Option<usize> {
     bytes.get(cell..cell + 8).map(|_| cell)
 }
 
-/// Entry `index`'s decoded chunk table, `None` when it has no `0xe0c1` row.
-pub fn entry_chunks(archive: &Gta6Archive, index: usize) -> Result<Option<Vec<Chunk>>> {
+/// Entry `index`'s decoded chunk table and mode, absent when it has no `0xe0c1` row.
+pub fn entry_table(archive: &Gta6Archive, index: usize) -> Result<Option<Table>> {
     let Some(at) = cell_offset(archive, index) else {
         return Ok(None);
     };
     let heap = &archive.toc.bytes[at..];
     let mut cell = [0u8; 8];
     cell.copy_from_slice(&heap[..8]);
-    decode(cell, heap).map(|t| Some(t.chunks))
+    decode(cell, heap).map(Some)
+}
+
+/// Entry `index`'s chunk descriptors, absent when it has no `0xe0c1` row.
+pub fn entry_chunks(archive: &Gta6Archive, index: usize) -> Result<Option<Vec<Chunk>>> {
+    entry_table(archive, index).map(|table| table.map(|table| table.chunks))
 }
 
 /// A two-entry archive whose entry 0 has its cell at 0x60, the head of `cell_and_heap`; entry 1 has none.

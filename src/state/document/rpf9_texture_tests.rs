@@ -234,7 +234,7 @@ fn a_queued_table_preview_confirms_the_type_in_the_open_parent_tree() {
     let mut state = AppState::from_prefs(Prefs::default());
     state.insert_document(
         table.path.clone(),
-        DocPayload::Rpf9(crate::state::Rpf9Document::Table(Arc::clone(&table))),
+        DocPayload::Rpf9Table(Arc::clone(&table)),
         None,
         None,
     );
@@ -363,6 +363,8 @@ mod install {
 
     #[test]
     fn selected_entries_across_five_archives_preview_and_reload_without_extracted_files() {
+        use crate::state::DocumentKind::{Gta6Drawable, Hex, Meta, Ytd};
+
         let Some(root) = std::env::var_os("OPENRAGE_GTA6_PREVIEW_INSTALL") else {
             or_test_support::skip_install(
                 "RPF9 table texture previews",
@@ -372,35 +374,38 @@ mod install {
         };
         let snapshot = std::env::var_os("OPENRAGE_GTA6_KEYS").expect("OPENRAGE_GTA6_KEYS");
         let mut textures = 0;
-        for (archive, chain, expected) in [
-            ("textures.rpf", &[0, 0][..], 7),
-            ("textures.rpf", &[1, 0][..], 12),
-            ("textures.rpf", &[18, 0][..], 2),
-            ("textures.rpf", &[2, 0][..], 1),
-            ("textures.rpf", &[3, 0][..], 16),
-            ("textures.rpf", &[20][..], 0),
-            ("textures.rpf", &[21][..], 0),
-            ("data.rpf", &[19, 8][..], 2),
-            ("levels.rpf", &[1460, 231][..], 1),
-            ("levels.rpf", &[637, 0][..], 1),
+        for (archive, chain, expected, kind) in [
+            ("textures.rpf", &[0, 0][..], 7, Ytd),
+            ("textures.rpf", &[1, 0][..], 12, Ytd),
+            ("textures.rpf", &[18, 0][..], 2, Ytd),
+            ("textures.rpf", &[2, 0][..], 1, Ytd),
+            ("textures.rpf", &[3, 0][..], 16, Ytd),
+            ("textures.rpf", &[20][..], 0, Hex),
+            ("textures.rpf", &[21][..], 0, Meta),
+            ("data.rpf", &[19, 8][..], 2, Ytd),
+            ("levels.rpf", &[1460, 231][..], 1, Ytd),
+            ("levels.rpf", &[637, 0][..], 1, Ytd),
             (
                 "pack/core_restofworld/core_restofworld.rpf",
                 &[4, 100][..],
                 1,
+                Ytd,
             ),
             (
                 "pack/shared_minigame000/shared_minigame000.rpf",
                 &[17, 1][..],
                 2,
+                Ytd,
             ),
-            ("levels.rpf", &[1815, 102][..], 0),
-            ("levels.rpf", &[270, 2345][..], 0),
-            ("levels.rpf", &[1087, 0][..], 0),
-            ("levels.rpf", &[1418, 1044][..], 0),
+            ("levels.rpf", &[1815, 102][..], 0, Gta6Drawable),
+            ("levels.rpf", &[270, 2345][..], 0, Gta6Drawable),
+            ("levels.rpf", &[1087, 0][..], 0, Meta),
+            ("levels.rpf", &[1418, 1044][..], 0, Gta6Drawable),
             (
                 "pack/shared_minigame000/shared_minigame000.rpf",
                 &[29, 7][..],
                 0,
+                Gta6Drawable,
             ),
         ] {
             let path = Path::new(&root).join(archive);
@@ -414,11 +419,11 @@ mod install {
                 .payload()
                 .unwrap_or_else(|error| panic!("{archive}:{chain:?}: {error}"));
             let bytes = source.bytes().unwrap();
+            assert_eq!(payload.kind(), kind, "{archive}:{chain:?}");
             if expected == 0 {
-                let DocPayload::Hex(hex) = payload else {
-                    panic!("{archive}:{chain:?} must remain a byte preview");
-                };
-                assert_eq!(hex.bytes, bytes);
+                if let DocPayload::Hex(hex) = &payload {
+                    assert_eq!(hex.bytes, bytes);
+                }
             } else {
                 assert_eq!(preview_count(&payload), expected, "{archive}:{chain:?}");
                 let document = Document::new(1, Some(source.path.clone()), payload);
@@ -446,7 +451,7 @@ mod install {
         totals: &mut [usize; 3],
         failures: &mut Vec<String>,
     ) {
-        let entries = table.tree().nodes[&base].archive.entries.clone();
+        let entries = table.tree().nodes[&base].mount.archive.entries.clone();
         for entry in entries {
             let (selection, texture_dictionary) = {
                 let tree = table.tree();
@@ -459,6 +464,7 @@ mod install {
                     .collect::<Vec<_>>()
                     .join("/");
                 let texture_dictionary = node
+                    .mount
                     .archive
                     .entry_extra(entry.index as usize)
                     .and_then(|extra| extra.nested)

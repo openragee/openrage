@@ -12,6 +12,7 @@ use or_interchange::{LodSlot, Mesh, Primitive, Scene};
 use or_io::container::rpf::{
     read_rpf9_body, write_rpf9_resource, Rpf9BodyKind, Rpf9Role, Rpf9Sections,
 };
+use or_io::gta6::headerless::rebox_bind_pose;
 use or_io::gta6::headerless::{
     read_dictionary, read_drawable, read_drawable_with_bound, read_skeleton_of, write_geometry_cut,
     write_palette, Drawable, Entry, Geometry, GeometryAt, GeometryEdit, Model, SkeletonOwner,
@@ -240,6 +241,9 @@ pub fn replace_gta6_mesh_with(
     // Each geometry cut into several, at its stated place, and the geometries it added.
     let mut cuts: Vec<(GeometryAt, usize)> = Vec::new();
     let (mut before, mut after, mut triangles) = (0, 0, 0);
+    // Whether a level-0 geometry of a model that hangs off bones moved, which the writer leaves to
+    // the drawable's bind pose.
+    let mut posed = false;
     let owner = match (role, entry) {
         (_, Some(code)) => SkeletonOwner::Entry(code),
         (Rpf9Role::DrawableWithBound, None) => SkeletonOwner::Fragment,
@@ -296,6 +300,11 @@ pub fn replace_gta6_mesh_with(
             let cut = write_geometry_cut(&mut out, role, entry, at, &edit)
                 .map_err(|e| format!("{named}: {e}"))?;
             let written = cut.written;
+            posed |= at.level == 0
+                && !written.root_reboxed
+                && g.positions
+                    .as_ref()
+                    .is_ok_and(|held| *held != edit.positions);
             before += g.vertex_count as usize;
             after += edit.positions.len();
             triangles += edit.triangles.len();
@@ -367,6 +376,26 @@ pub fn replace_gta6_mesh_with(
     }
     if taken.is_empty() {
         return Err("the mesh names no geometry of the drawable".into());
+    }
+    if posed {
+        lines.push(match read_skeleton_of(&out.virtual_section, owner) {
+            Ok(Some(skeleton)) => {
+                rebox_bind_pose(&mut out, role, entry, &skeleton)
+                    .map_err(|e| format!("the drawable's box and sphere: {e}"))?;
+                "the drawable's box and sphere derived again from its level-0 vertices posed at \
+                 bind"
+                    .to_string()
+            }
+            Ok(None) => "the drawable's box and sphere left as read: its models hang off bones \
+                         and it has no skeleton of its own to pose them at bind"
+                .to_string(),
+            Err(e) => {
+                return Err(format!(
+                    "the drawable's skeleton does not read, so its box and sphere are not \
+                     derived from the bind pose: {e}"
+                ))
+            }
+        });
     }
     lines.push(format!(
         "{} geometries replaced: {before} vertices in, {after} out, {triangles} triangles; each \
@@ -672,5 +701,180 @@ mod tests {
         let refused = cmd_scan_import(&args).expect_err("refused");
         assert!(refused.contains("is the input"), "{refused}");
         assert_eq!(fs::read(&archive).expect("read"), b"an archive");
+    }
+
+    const QUARTER: f32 = std::f32::consts::FRAC_1_SQRT_2;
+    /// An inverse bind's four columns, the identity.
+    const IDENTITY: [f32; 16] = [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    const SKELETON: usize = 0x4C0;
+
+    /// [`body`] with a skeleton of its own, a root and a child turned a quarter about z and
+    /// raised 5 m whose inverse bind is the identity, and its model hung off the child.
+    fn bone_attached() -> Rpf9Sections {
+        let mut s = body();
+        let v = &mut s.virtual_section;
+        let tag = 0x5000_0000;
+        let (records, inverses, names) = (0x540, 0x5E0, 0x660);
+        v.resize(0x680, 0);
+        pointer(v, 0x18, tag, SKELETON);
+        pointer(v, SKELETON + 0x28, tag, records);
+        pointer(v, SKELETON + 0x30, tag, inverses);
+        put(v, SKELETON + 0x6C, &[2, 0, 2, 0]);
+        let bones = [
+            ("root", -1i16, [0.0, 0.0, 0.0, 1.0], [0.0; 3]),
+            ("hung", 0, [0.0, 0.0, QUARTER, QUARTER], [0.0, 0.0, 5.0]),
+        ];
+        for (i, (name, parent, rotation, translation)) in bones.into_iter().enumerate() {
+            let at = records + 0x50 * i;
+            put(v, at, &le(&rotation));
+            put(v, at + 0x10, &le(&translation));
+            put(v, at + 0x20, &le(&[1.0; 3]));
+            let text = names + 0x10 * i;
+            put(v, text, name.as_bytes());
+            pointer(v, at + 0x30, tag, text);
+            put(v, at + 0x46, &parent.to_le_bytes());
+            put(v, at + 0x48, &(i as u16).to_le_bytes());
+            put(v, inverses + 0x40 * i, &le(&IDENTITY));
+        }
+        // A palette count makes the model no rigid one; its matrix index hangs it off bone 1.
+        let model = 0x1B0;
+        (v[model + 0x30], v[model + 0x33]) = (1, 1);
+        s
+    }
+
+    /// `p` posed on [`bone_attached`]'s bone 1: turned a quarter about z, then raised 5 m.
+    fn hung(p: [f32; 3]) -> [f32; 3] {
+        [-p[1], p[0], p[2] + 5.0]
+    }
+
+    #[test]
+    fn a_bone_attached_drawable_s_box_and_sphere_hold_every_vertex_posed_at_bind() {
+        let sections = bone_attached();
+        let mut scene = through_gltf(&sections);
+        let p = &mut scene.objects[0].meshes[0].primitives[0];
+        p.positions.push([1.0, 1.0, 0.0]);
+        p.normals.push([0.0, 0.0, 1.0]);
+        p.uvs[0].push([1.0, 1.0]);
+        p.indices.extend([1, 3, 2]);
+        let positions = p.positions.clone();
+        let (written, lines) =
+            replace_gta6_mesh(&sections, Rpf9Role::Drawable, None, &scene).expect("replaced");
+        assert!(
+            lines.iter().any(|l| l.contains("posed at bind")),
+            "{lines:?}"
+        );
+        let d = drawable_of(&written, Rpf9Role::Drawable, None).expect("it reads");
+        let v = &written.virtual_section;
+        let sphere: Vec<f32> = (0..4)
+            .map(|k| f32::from_le_bytes(v[0x20 + 4 * k..0x24 + 4 * k].try_into().expect("4")))
+            .collect();
+        let eps = 1e-4;
+        for q in positions.iter().map(|p| hung(*p)) {
+            let inside = (0..3).all(|a| d.box_min[a] - eps <= q[a] && q[a] <= d.box_max[a] + eps);
+            assert!(inside, "{q:?} outside {:?} {:?}", d.box_min, d.box_max);
+            let off: f32 = (0..3)
+                .map(|a| (q[a] - sphere[a]).powi(2))
+                .sum::<f32>()
+                .sqrt();
+            assert!(
+                off <= sphere[3] + eps,
+                "{q:?} outside the sphere {sphere:?}"
+            );
+        }
+        // The vertices as stored lie below the box: it is the bind pose's, not theirs.
+        assert!(d.box_min[2] > 4.0, "{:?}", d.box_min);
+
+        // A skeleton that does not read is refused by name, and nothing is written.
+        let mut broken = sections.clone();
+        put(
+            &mut broken.virtual_section,
+            SKELETON + 0x6E,
+            &3u16.to_le_bytes(),
+        );
+        let refused =
+            replace_gta6_mesh(&broken, Rpf9Role::Drawable, None, &scene).expect_err("refused");
+        assert!(refused.contains("skeleton does not read"), "{refused}");
+    }
+
+    #[test]
+    fn a_skinned_vertex_is_posed_through_world_times_inverse_bind_weighted_over_its_bones() {
+        use or_io::gta6::hash::name_hash32;
+        use or_io::gta6::headerless::{bind_positions, Bone, Channel, Palette, Skeleton, Vertices};
+        let bone = |name: &str, parent, rotation, translation, inverse: [[f32; 3]; 4]| Bone {
+            name: name.to_string(),
+            hash: name_hash32(name.as_bytes()),
+            parent,
+            rotation,
+            translation,
+            scale: [1.0; 3],
+            inverse_bind: inverse,
+        };
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]];
+        let mut shifted = identity;
+        shifted[3] = [-1.0, 0.0, 0.0];
+        // Bone 1 turns a quarter about z at 2 m along x; its inverse bind moves 1 m back.
+        let skeleton = Skeleton {
+            bones: vec![
+                bone("root", None, [0.0, 0.0, 0.0, 1.0], [0.0; 3], identity),
+                bone(
+                    "arm",
+                    Some(0),
+                    [0.0, 0.0, QUARTER, QUARTER],
+                    [2.0, 0.0, 0.0],
+                    shifted,
+                ),
+            ],
+        };
+        let channel = |index, code, size| Channel {
+            index,
+            offset: 0,
+            size,
+            code,
+        };
+        let g = Geometry {
+            vertex_data: Vec::new(),
+            index_data: Vec::new(),
+            shader: 0,
+            vertex_count: 2,
+            channels: vec![
+                channel(0, 6, 12),
+                channel(16, 0x1C, 4),
+                channel(20, 0x1E, 4),
+            ],
+            triangles: Vec::new(),
+            positions: Ok(vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            vertices: Vertices {
+                weights: vec![(16, vec![[0.25, 0.75, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])],
+                joints: vec![(20, vec![[0, 1, 0, 0], [0, 1, 0, 0]])],
+                ..Vertices::default()
+            },
+        };
+        let hashes = vec![name_hash32(b"root"), name_hash32(b"arm")];
+        let model = Model {
+            geometries: Vec::new(),
+            palette: Ok(Palette::Hashes(hashes)),
+            matrix_index: 0,
+        };
+        let posed = bind_positions(&g, &model, &skeleton).expect("posed");
+        // World times inverse bind takes (1, 0, 0) to (2, 0, 0) on bone 1, and (0, 1, 0) to
+        // (1, -1, 0); inverse bind times world would give (1, 1, 0) and (0, 0, 0). Vertex 0 is a
+        // quarter on bone 0, which leaves it at (1, 0, 0), and three quarters on bone 1.
+        let expected = [[0.25 + 0.75 * 2.0, 0.0, 0.0], [1.0, -1.0, 0.0]];
+        for (q, e) in posed.iter().zip(expected) {
+            assert!((0..3).all(|a| (q[a] - e[a]).abs() < 1e-5), "{posed:?}");
+        }
+
+        // A palette entry the skeleton does not hold leaves the bind pose unknown, said by name.
+        let model = Model {
+            palette: Ok(Palette::Hashes(vec![
+                name_hash32(b"root"),
+                name_hash32(b"leg"),
+            ])),
+            ..model
+        };
+        let refused = bind_positions(&g, &model, &skeleton).expect_err("refused");
+        assert!(refused.to_string().contains("does not hold"), "{refused}");
     }
 }

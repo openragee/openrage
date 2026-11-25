@@ -22,6 +22,7 @@ impl RpfEditSession {
                 Some((base, index)) => tree
                     .nodes
                     .get(base)?
+                    .mount
                     .archive
                     .entries
                     .get(*index as usize)

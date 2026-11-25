@@ -7,9 +7,11 @@
 use std::collections::{HashMap, HashSet};
 
 use super::hash::name_hash64;
+use super::names::Vocabulary;
 
-/// What follows a map's name in the name of a map that goes with it whole.
-const WHOLE: [&str; 3] = ["_occl", "_lod", "_slod"];
+/// What follows a map's name in the name of a map that goes with it whole: its occlusion and its
+/// levels of detail, and the states of a map an event swaps.
+const WHOLE: [&str; 6] = ["_occl", "_lod", "_slod", "_before", "_aftermath", "_end"];
 /// What stands between a map's name and `_instances`.
 const BASES: [&str; 2] = ["", "_placement"];
 /// The range of an instance map, after `_instances`.
@@ -86,6 +88,22 @@ pub fn name_maps<'a>(
     named
 }
 
+/// Holds in `vocabulary` the name the rules give each map of `words`, the words map bodies state
+/// of their names, that it names none of, from the maps it names; how many names were new.
+pub fn hold_map_names(vocabulary: &mut Vocabulary, words: &HashSet<u64>) -> usize {
+    let stems: Vec<String> = (words.iter())
+        .filter_map(|word| vocabulary.name64(*word).map(str::to_string))
+        .collect();
+    let wanted: HashSet<u64> = (words.iter().copied())
+        .filter(|word| vocabulary.name64(*word).is_none())
+        .collect();
+    let named = name_maps(stems.iter().map(String::as_str), &wanted);
+    named
+        .values()
+        .filter(|name| vocabulary.add(name, None))
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,6 +147,32 @@ mod tests {
         for (word, name) in &named {
             assert_eq!(*word, name_hash64(name.as_bytes()));
         }
+    }
+
+    #[test]
+    fn a_vocabulary_holds_the_names_the_rules_give_the_maps_a_harvest_saw() {
+        let mut vocabulary = Vocabulary::default();
+        vocabulary.add("zq_07", None);
+        vocabulary.add("zq_08_ec_fair", None);
+        let saw = [
+            "zq_07",
+            "zq_07_instances_0",
+            "zq_08_ec_fair",
+            // The states of a map an event swaps, and the levels of detail of one of them.
+            "zq_08_ec_fair_before",
+            "zq_08_ec_fair_aftermath",
+            "zq_08_ec_fair_aftermath_lod",
+            "zq_08_ec_fair_end",
+            // A map no rule reaches from a name held.
+            "zq_09_other",
+        ];
+        assert_eq!(hold_map_names(&mut vocabulary, &words(&saw)), 5);
+        let held = |v: &Vocabulary, name: &str| v.name64(name_hash64(name.as_bytes())).is_some();
+        assert!(saw[..7].iter().all(|name| held(&vocabulary, name)));
+        assert!(!held(&vocabulary, "zq_09_other"));
+        // A second harvest of the same maps adds none, and no name of a map no body states.
+        assert_eq!(hold_map_names(&mut vocabulary, &words(&saw)), 0);
+        assert!(!held(&vocabulary, "zq_07_occl") && !held(&vocabulary, "zq_07_instances_1"));
     }
 
     #[test]

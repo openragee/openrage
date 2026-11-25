@@ -80,7 +80,8 @@ impl Tables {
                 let Some(node) = tree.nodes.get(base) else {
                     continue;
                 };
-                node.archive
+                node.mount
+                    .archive
                     .entries
                     .iter()
                     .filter(|entry| {
@@ -170,15 +171,17 @@ impl Tables {
                         );
                         continue;
                     };
-                    if node.archive.entries.len() > limits.rows.saturating_sub(rows) {
+                    if node.mount.archive.entries.len() > limits.rows.saturating_sub(rows) {
                         catalog.truncated = true;
                         return Some(catalog);
                     }
-                    node.archive
+                    node.mount
+                        .archive
                         .entries
                         .iter()
                         .map(|entry| {
                             let size = node
+                                .mount
                                 .archive
                                 .entry_extra(entry.index as usize)
                                 .and_then(|extra| extra.nested)

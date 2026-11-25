@@ -5,7 +5,7 @@ mod kind_name;
 mod location;
 mod material_baseline;
 mod payload;
-pub(crate) mod rpf9;
+pub(crate) use crate::state::rpf9_scan::rpf9_table_document as rpf9;
 mod text;
 
 pub use kind::{DocumentKind, TEXT_DOCUMENT_EXTENSIONS};
@@ -13,7 +13,7 @@ pub use material_baseline::{
     drawable_mut, enhanced_drawable_mut, enhanced_drawables_of, BaselineValue, MaterialAddress,
     MaterialBaseline, Slot,
 };
-pub use payload::{DocPayload, FxcDocument, Rpf9Document};
+pub use payload::{DocPayload, FxcDocument};
 pub use text::{LineEnding, TextDocument, TextEncoding};
 
 use std::path::{Path, PathBuf};
@@ -229,8 +229,8 @@ impl Document {
                 .map(|e| std::mem::size_of_val(e) + e.value.len())
                 .sum(),
             DocPayload::Rpf(rpf) => rpf.session.held_bytes(),
-            DocPayload::Rpf9(Rpf9Document::Scan(scan)) => scan.held_bytes(),
-            DocPayload::Rpf9(Rpf9Document::Table(table)) => table.held_bytes(),
+            DocPayload::Rpf9(scan) => scan.held_bytes(),
+            DocPayload::Rpf9Table(table) => table.held_bytes(),
             DocPayload::Resource(asset) => asset.heap_bytes(),
             // Counted as the image it was decoded from: nothing walks these values' heap.
             DocPayload::Ypdb(_)

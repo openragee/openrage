@@ -174,6 +174,22 @@ fn write_copy(
     out: &Path,
     keys: &GtaViKeys,
 ) -> Result<(bool, bool), String> {
+    let mut file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
+    let (path, headerless) = entry_at(&mut file, offset, keys)?;
+    write_entry(archive, &path, headerless, body, out, keys)
+}
+
+/// Write `body` in place of the entry at the index chain `path` of the archive at `archive`, a
+/// headerless resource's as its loose form, into the new file `out`; whether a table and whether a
+/// body changed.
+pub(crate) fn write_entry(
+    archive: &Path,
+    path: &[u32],
+    headerless: bool,
+    body: Vec<u8>,
+    out: &Path,
+    keys: &GtaViKeys,
+) -> Result<(bool, bool), String> {
     if crate::state::reload_open_file::same_file(out, archive) {
         return Err(tr!(
             "the copy is a new file, and the archive it is read from is never written"
@@ -181,12 +197,11 @@ fn write_copy(
         .to_string());
     }
     let mut file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
-    let (path, headerless) = entry_at(&mut file, offset, keys)?;
     let mut writer = Rpf9ArchiveWriter::new();
     if headerless {
-        writer.replace_resource(&path, body, None);
+        writer.replace_resource(path, body, None);
     } else {
-        writer.replace(&path, body);
+        writer.replace(path, body);
     }
     let plan = writer.plan(&mut file, keys).map_err(|e| e.to_string())?;
     // `create_new` refuses any file that exists, so the cleanup below only removes one made here.

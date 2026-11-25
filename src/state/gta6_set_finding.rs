@@ -2,8 +2,6 @@
 //! animation bodies the scan of its archive found, on a worker as a row of the job list, a body at a
 //! time with its progress and Cancel.
 
-use crate::state::Rpf9Document;
-
 use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -165,7 +163,7 @@ impl AppState {
         }
         let offsets: Vec<u64> = (self.documents.iter())
             .filter_map(|d| match &d.payload {
-                DocPayload::Rpf9(Rpf9Document::Scan(scan)) if scan.path == archive => Some(scan),
+                DocPayload::Rpf9(scan) if scan.path == archive => Some(scan),
                 _ => None,
             })
             .flat_map(|scan| {

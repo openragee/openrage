@@ -4,22 +4,36 @@ What OpenRage reads, edits and saves of a GTA VI Xbox build, what it refuses and
 
 GTA VI is a title of its own (`crates/title/or-title/src/game/profiles.rs`) with no declared format: nothing of it is a `#[record]` declaration, because there is no source to name a field by. Its readers are ordinary code in `crates/io/or-io/src/gta6/`, behind `or-io`'s `gta6` feature, and a name there says the role a field was measured to play. The archive is `crates/io/or-io/src/container/rpf/rpf9.rs` and the files beside it. The layouts themselves are in the gitignored docs/extra/ tier and are not repeated here.
 
-## An archive is scanned, never listed
+## Archive tables and explicit scans
 
-An RPF9 archive's header is in the clear; its table of contents and its names are encrypted with a key OpenRage does not have. So the archive is refused as an archive, and read another way: `crates/io/or-io/src/container/rpf/rpf9_scan.rs` passes over the file and finds the bodies stored in the clear by their own bytes.
+Opening an RPF9 archive reads its encrypted table with the user's keys. Files and Archives share
+one table document, including nested tables and the entry identities used by previews and
+extraction. A missing key or an invalid table is an error, with no scan fallback.
+[File support](File_Support.md#gta-vi) owns the table-backed previews and their read-only limits;
+[the modding guide](../guides/GTA_VI_Modding.md) explains key setup.
 
-- **A find has an offset and no name or path.** Every command and every view addresses a body by its offset in its archive. A body's end is stated only where its bytes state it or where the measured rule has no exception.
+The explicit scan commands and the World index also use
+`crates/io/or-io/src/container/rpf/rpf9_scan.rs` to find bodies stored in the clear by their own
+bytes. A scan has different identities and limits from a table:
+
+- **A find has an offset and no table path.** A scan addresses a body by its offset in its archive. A body's end is stated only where its bytes state it or where the measured rule has no exception.
 - **A find has a kind and a family.** The kind is what the bytes are (a nested archive, a run of zlib chunks, a stored resource, a movie, an audio container, an effect container, and a few more); the family is the word a person filters by: models, dictionaries, collision, navigation, animations, metadata, text, audio, movies, shaders, archives, other and unknown.
 - **A headerless resource has a role.** A resource with no header is placed in a family of layouts by the shape of its first words (`Rpf9Role`): a drawable, a fragment, a bound, a dictionary, a navigation cell, a particle effects list and the others the enum lists. A resource no layout places opens as its bytes, under the reason.
 - **A whole scan is kept.** A scan that read an archive to its end is kept in the configuration folder (`src/state/rpf9_kept.rs`), and the archive is listed from it while its size and modification time stand.
 
-The app opens a GTA VI folder as a plain folder, and an archive as the list of what a scan finds, a slice at a time on a worker (`src/state/rpf9_scan.rs`). Above the folder's Files view, a scan of every archive tallies the bodies by kind across the folder (`src/state/gta6_install_scan.rs`), and a click opens one.
+The app opens a GTA VI folder as a plain folder, whose archives expand from their tables.
+Above the folder's Files view, the explicit scan command tallies bodies by kind across the
+folder (`src/state/gta6_install_scan.rs`), and a click opens a scanned body. A scan's document
+holds its own list, built a slice at a time on a worker (`src/state/rpf9_scan.rs`); it is never a
+replacement for a table that failed to open.
 
 ⚠ A scan is not the table. A body stored encrypted, or one whose bytes fit no detector, is not found, and nothing a scan finds can be written back into its archive: every save writes a file of its own.
 
 ## What is read
 
-Each row is a family of bodies, the module that reads it, and where the app shows it. "Edits" names what a save writes; a blank cell is read only.
+Each row is a family of bodies, the module that reads it, and where the app shows it. "Edits"
+names what a supported loose document or explicit scan's save writes; a blank cell is read only.
+A table-backed preview remains read-only even when this reader has an editor through another path.
 
 | Bodies | Read by | Shown as | Edits |
 |---|---|---|---|
@@ -119,16 +133,18 @@ The app translates the vertex and pixel programs a drawable's effects run, on a 
 
 The light of Shaded follows the install where its common archive is found: `src/state/gta6_timecycle.rs` reads the time table and the weather cycles among that archive's XML bodies with GTA V's reader, and `src/render/viewport/gta6_day.rs` puts the sun and the moon where the hour puts them, lets one of them light as their heights say, and takes the two samples of the weather's cycle that stand for the sun's angle. The cycle states the light's illuminance, its fade, its colour and what multiplies the sky's ambient; the Shaded line says when a model is lit this way. ⚠ Two things are still the editor's own: the exposure, which the game meters from each frame on the GPU, stands as one constant for sunlight and one for moonlight, and the colour of the sky and of the ground is the built-in sky's, since the game computes it from its atmosphere.
 
+The sun's shadow on a GTA VI model in Shaded is the model's own, cast into one tile fitted to it by the mesh stages its programs draw with (`or_renderer::game_shaders::meshlets`). ⚠ What that shadow is today: every surface those programs draw casts whole, so an alpha-tested surface (leaves, a fence, hair cards) casts the shadow of its whole geometry, holes included, because the pass that casts runs a surface's mesh stage and no pixel stage; a surface drawn as Material beside the others casts none; and a model one of whose surfaces reads the view at an offset the light's view cannot be copied to casts none at all, which the Shaded line then says. The filter's arithmetic is the game's as read, and the turn of its spiral, how far it searches, the bias, the nearest-texel taps and the outermost tap's weight of nought are the editor's.
+
 Shaded for a GTA VI drawable is therefore partial by construction, and this document states no share: `rpf scan-rdna` and `rpf scan-rdna-bind` count, for an effect container, how many programs decode, translate and bind, and what stopped the rest.
 
-What a translated program is on a device is checked by `or-shader-tool rdna-devices` (the `device-check` feature), which builds every program and every pass's pair of a container into a pipeline on each adapter of the machine, in worker processes a driver's crash ends one of. `--draw` then draws with each pipeline, a stand-in at every binding and no vertex, so the device checks the pipeline against all it is drawn with and runs none of it: fed stand-ins, a program's loops need not end. `--msl` has naga write each as Metal's language with no device, and `rdna-devices --help` says how another machine adds its adapters to the report. What a reader may rely on:
+What a translated program is on a device is checked by `or-shader-tool rdna-devices` (the `device-check` feature), which builds every program and every pass's pair of a container into a pipeline on each adapter of the machine, in worker processes a driver's crash ends one of. `--draw` then draws with each pipeline, a stand-in at every binding and no vertex, so the device checks the pipeline against all it is drawn with and runs none of it: fed stand-ins, a program's loops need not end. `--software`, or `OPENRAGE_SOFTWARE_ADAPTER=1`, opens the machine's software adapter (Direct3D 12's Microsoft Basic Render Driver on Windows) and no other, so nothing of the check reaches a hardware driver; `--run`, which implies it, draws three vertices as points or dispatches one group with each pipeline, so the program runs on stand-ins that hold noughts, and an adapter that is no CPU's is skipped by name. A step that says nothing for `--timeout` seconds is ended and counted as timed out, one that ends its process twice as crashed, and with `--chunk 1` each unit runs in a process of its own. `--pick FILE` checks the units whose numbers the file lists, and `--list` prints every unit with a program's kind and entry name or the effects and techniques whose passes draw with a pair. `--msl` has naga write each stage as Metal's language with no device, with the checks and the resource numbers wgpu's Metal backend gives it; it refuses a stage that binds more buffers, textures or samplers than Metal gives a stage (a vertex stage's buffer of sizes counted, and no vertex buffer, since a lowered stage is drawn with none), and `--msl-dir DIR` keeps each stage's text for a Mac's own compiler. `rdna-devices --help` says how another machine adds its adapters to the report. What a reader may rely on:
 
 - **Vulkan and Direct3D with DXC are the two backends the translated passes are built and drawn with.** Metal is written and validated as text only; no Metal device has built one.
-- **Direct3D needs DXC.** FXC refuses programs that are valid (a gradient inside a loop, a barrier in a branch) and has no 64-bit integers. `or_renderer::instance` gives every instance the `dxcompiler.dll` beside the program, else one on `PATH`, else a Windows SDK's, and warns when it falls back to FXC. ⚠ A release for Windows has to ship `dxcompiler.dll` and `dxil.dll` beside the program: neither is in the tree, and a machine with no Windows SDK otherwise compiles with FXC.
+- **Direct3D needs DXC.** FXC refuses programs that are valid (a gradient inside a loop, a barrier in a branch) and has no 64-bit integers. `or_renderer::instance` gives every instance the `dxcompiler.dll` beside the program, else one on `PATH`, else a Windows SDK's, and warns when it falls back to FXC; the app then says so in a notice when it starts, with what FXC loses and the two ways out. ⚠ A package for Windows ships neither `dxcompiler.dll` nor `dxil.dll`, so a machine with no Windows SDK compiles with FXC until a person puts the two files beside the program or starts it with `WGPU_BACKEND=vulkan`.
 - **A pass that updates a texture of 64-bit texels is not built on Direct3D**: wgpu offers the feature there and refuses the texture, which `instance::updates_64_bit_textures` asks the adapter about.
 - **OpenGL is not supported**: the shading passes index a table of textures at a computed place, which it cannot.
-- ⚠ **One integrated adapter's Direct3D driver ends the process on some large mesh passes.** The check passes over them by name on that adapter (`--skip-crashed`); the app has no such list, and reaches Direct3D on such a machine only when asked, since Vulkan is taken first.
-- A compute program is built and never run by the editor, and the check runs none either.
+- ⚠ **One integrated adapter's Direct3D driver ends the process on some large mesh passes.** They are the passes whose mesh stage holds a loop inside a loop. The app opens such a card under Vulkan where Vulkan lists it; under Direct3D the builder of a pass refuses such a stage (`or_renderer::instance::refused_by_driver`) and its surface draws as Material with the reason. The check counts such a unit as skipped on that adapter, and `--try-refused` puts it to the driver all the same, to see whether the driver still ends the worker.
+- A compute program is built and never run by the editor; the check runs one only with `--run`, a group on the software adapter.
 
 ## Saves and mission tables
 

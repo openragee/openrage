@@ -201,8 +201,64 @@ fn the_cycle_states_the_light_by_its_lux_its_tint_its_multipliers_and_the_air() 
         noon.sky
     );
     assert!(noon.sky.z > noon.sky.x, "blue: {:?}", noon.sky);
-    let ground = (noon.sky + noon.sun * noon.towards.z / PI) * GROUND * 2.0;
+    // The clouds cover a quarter of the sky and their shadow shows whole: three quarters of
+    // the light comes through, onto the model and onto the ground that lights it from below.
+    assert_eq!(noon.scene.clouds, clouds_of(0.25, &Keyframe::default()));
+    assert_eq!(noon.scene.clouds.open, 0.75);
+    let ground = (noon.sky + noon.sun * 0.75 * noon.towards.z / PI) * GROUND * 2.0;
     assert!(close(noon.ground, ground), "{:?}", noon.ground);
+    // The light from all around is a probe's nine numbers of that sky and that ground: what
+    // falls on a surface that faces up is the sky's, and on one that faces down the ground's,
+    // as far as nine numbers hold a sky that is brighter towards the sun.
+    use or_renderer::game_shaders::meshlets::falls_on;
+    let nine = noon.scene.around.expect("gathered");
+    let within = |a: Vec3, b: Vec3| (a - b).length() <= 0.12 * b.length();
+    let (up, down) = (falls_on(&nine, Vec3::Z), falls_on(&nine, -Vec3::Z));
+    assert!(within(up, noon.sky * PI), "{up:?} {:?}", noon.sky * PI);
+    assert!(
+        within(down, noon.ground * PI),
+        "{down:?} {:?}",
+        noon.ground * PI
+    );
+    // And the sky itself along each way, for a meter that takes the whole frame: brighter by
+    // day than by night, by the sky's own tint and not by the rows that multiply what the sky
+    // lights; and nothing asks for that meter unasked.
+    let (by_day, by_night) = (
+        noon.scene.dome.expect("gathered").0,
+        at(noon_hours + 12.0).scene.dome.expect("gathered").0,
+    );
+    assert!(by_day.iter().all(|way| *way > 0.0));
+    assert!(
+        by_day[0] > 50.0 * by_night[0],
+        "{} {}",
+        by_day[0],
+        by_night[0]
+    );
+    let untinted = bare.scene.dome.expect("gathered").0[0];
+    assert!(
+        untinted > by_day[0] && untinted < 1.2 * by_day[0],
+        "{untinted} {}",
+        by_day[0]
+    );
+    assert!(!noon.tone.expect("stated").whole_frame);
+    // A shadow that shows by half hides half as much, and the rows of the light under it are
+    // the cycle's.
+    let mut stated = Keyframe::default();
+    stated.set("local_atmosphere_cloud_shadow_alpha", 0.5);
+    stated.set("direct_light_roughness_mod_cloud_shadow", 0.3);
+    stated.set("direct_light_haze_blend_scale", 0.2);
+    stated.set("direct_light_haze_intensity", 4.0);
+    let under = clouds_of(0.8, &stated);
+    assert_eq!(
+        (
+            under.open,
+            under.roughness_mod,
+            under.haze_blend,
+            under.haze
+        ),
+        (0.6, 0.3, 0.2, 4.0)
+    );
+    assert_eq!(clouds_of(0.0, &stated).open, 1.0);
 
     let night = at(noon_hours + 12.0);
     // Two lux of moon, three times, halved by the moon's own multiplier.

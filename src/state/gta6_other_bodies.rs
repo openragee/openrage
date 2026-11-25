@@ -8,7 +8,7 @@ use or_io::gta6::move_network::{
     condition_name, kind_name, Binding, MachineEntry, MoveBody, MoveCondition, MoveOutline,
     MoveTransition, StopReason,
 };
-use or_io::gta6::other_bodies::{Gta6HeightGrid, Gta6HeightMap, OtherBody, SpanGrid};
+use or_io::gta6::other_bodies::{EdupHead, Gta6HeightGrid, Gta6HeightMap, OtherBody, SpanGrid};
 use or_io::mrf::{Operation, Operator};
 
 use super::document::DocPayload;
@@ -30,16 +30,26 @@ pub(crate) fn label(body: OtherBody) -> &'static str {
     }
 }
 
-/// The view the body opens in, or why none shows it.
+/// The view the body opens in; an `EDUP` body's payload is refused there, under its head.
 pub(super) fn view(body: OtherBody) -> Result<View, String> {
-    match body {
-        OtherBody::Edup => Err(not_read()),
-        body => Ok(View::Identified(body)),
-    }
+    Ok(View::Identified(body))
 }
 
-fn not_read() -> String {
-    tr!("This body starts with EDUP and its bytes after that are of high entropy with no structure found, so it is not read and no view shows it.").to_string()
+/// An `EDUP` body's head as read, then why its payload is not.
+fn edup_lines(head: &EdupHead) -> Vec<String> {
+    let mut lines = vec![tr!(
+        "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head.",
+        count = head.count,
+        length = head.payload_len,
+    )];
+    if let Some(stated) = head.stated_len {
+        lines.push(tr!(
+            "With a count of zero, the word at 0x08 states {stated} bytes, and that many follow it.",
+            stated = stated,
+        ));
+    }
+    lines.push(tr!("Its payload is not read: no record width divides it by its count, and its bytes are of high entropy with no cipher record, so what it holds is not known and no view shows it.").to_string());
+    lines
 }
 
 /// The extension of the path the body opens under.
@@ -51,7 +61,7 @@ pub(super) fn ext(body: OtherBody) -> &'static str {
     }
 }
 
-/// The body's payload: GTA V's height map and Scaleform views, or the lines of its facts.
+/// The body's payload: GTA V's height map and Scaleform views, the lines of its facts, or an `EDUP` head's lines as the refusal its bytes show under.
 pub(super) fn payload(path: &Path, body: OtherBody, bytes: &[u8]) -> Result<DocPayload, String> {
     let refused = |e: or_io::IoError| {
         tr!(
@@ -71,7 +81,10 @@ pub(super) fn payload(path: &Path, body: OtherBody, bytes: &[u8]) -> Result<DocP
                 .map(DocPayload::Gfx)
                 .map_err(refused)
         }
-        OtherBody::Edup => return Err(not_read()),
+        OtherBody::Edup => {
+            let head = EdupHead::open(bytes).map_err(refused)?;
+            return Err(edup_lines(&head).join("\n"));
+        }
         OtherBody::HeightGrid => {
             let grid = Gta6HeightGrid::open(bytes).map_err(refused)?;
             return grid
@@ -136,8 +149,8 @@ fn move_lines(outline: &MoveOutline) -> Vec<String> {
     };
     let mut lines = vec![
         tr!(
-            "A GTA VI MoVE network at version 0x13 whose name hash is hash_{hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}.",
-            hash = format!("{:08X}", head.name_hash),
+            "A GTA VI MoVE network at version 0x13 whose name hash is {hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}.",
+            hash = super::gta6_names::said32(head.name_hash),
             a = head.list_a.len(),
             b = head.list_b.len(),
             d = head.list_d.len(),
@@ -453,9 +466,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_edup_body_is_refused_by_name_and_the_others_open_in_a_view() {
-        let why = view(OtherBody::Edup).unwrap_err();
-        assert!(why.contains("EDUP"), "{why}");
+    fn an_edup_body_shows_its_head_over_its_refused_payload_and_the_others_open_in_a_view() {
+        assert_eq!(view(OtherBody::Edup), Ok(View::Identified(OtherBody::Edup)));
+        let path = Path::new("0x10.txt");
+        let mut zero = b"EDUP".to_vec();
+        zero.extend_from_slice(&0u32.to_le_bytes());
+        zero.extend_from_slice(&16u32.to_le_bytes());
+        zero.extend_from_slice(&[0x5A; 16]);
+        let Err(banner) = payload(path, OtherBody::Edup, &zero) else {
+            panic!("the payload is refused");
+        };
+        let lines: Vec<&str> = banner.lines().collect();
+        assert_eq!(lines.len(), 3, "{banner}");
+        assert!(lines[0].contains("is 0, and 20 payload bytes"), "{banner}");
+        assert!(lines[1].contains("states 16 bytes"), "{banner}");
+        assert!(lines[2].starts_with("Its payload is not read"), "{banner}");
+        let mut counted = b"EDUP".to_vec();
+        counted.extend_from_slice(&4u32.to_le_bytes());
+        counted.extend_from_slice(&[0; 228]);
+        let Err(banner) = payload(path, OtherBody::Edup, &counted) else {
+            panic!("the payload is refused");
+        };
+        assert_eq!(banner.lines().count(), 2, "{banner}");
+        assert!(banner.contains("is 4, and 228 payload bytes"), "{banner}");
+        // A head its reader refuses shows the reader's reason, not the head's lines.
+        zero.pop();
+        let Err(why) = payload(path, OtherBody::Edup, &zero) else {
+            panic!("the head is refused");
+        };
+        assert!(why.contains("states 16 bytes where 15 follow it"), "{why}");
+        assert!(!why.contains("Its payload is not read"), "{why}");
         assert_eq!(
             view(OtherBody::SpanGrid),
             Ok(View::Identified(OtherBody::SpanGrid))

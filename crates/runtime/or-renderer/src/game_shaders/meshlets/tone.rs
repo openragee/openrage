@@ -31,6 +31,9 @@ pub struct Tone {
     pub dark: Filmic,
     pub bright_at: f32,
     pub dark_at: f32,
+    /// Whether the meter takes the whole frame, as the game does: the model, the ground under
+    /// it and the sky where neither is. Otherwise it takes the model's lit surfaces alone.
+    pub whole_frame: bool,
 }
 
 /// A curve from a luminance to stops.
@@ -191,7 +194,12 @@ impl Tone {
                 tone.dark.0[2],
                 tone.dark.0[3],
             ],
-            [tone.dark.0[4], tone.dark.0[5], tone.dark.0[6], 0.0],
+            [
+                tone.dark.0[4],
+                tone.dark.0[5],
+                tone.dark.0[6],
+                f32::from(u8::from(tone.whole_frame)),
+            ],
         ];
         for (at, row) in rows.iter().enumerate() {
             words[at * 4..at * 4 + 4].copy_from_slice(row);
@@ -232,6 +240,7 @@ mod tests {
             dark: Filmic([0.22, 0.3, 0.1, 0.2, 0.0, 0.3, 11.2]),
             bright_at: 1.0,
             dark_at: 3.0,
+            whole_frame: false,
         }
     }
 
@@ -318,5 +327,12 @@ mod tests {
         let words = Tone::words(Some(&tone));
         assert_eq!(words[..4], [1.0, 0.0, 0.25, 0.25]);
         assert_eq!(words[16..20], [0.0, 0.0, 0.5, -0.5]);
+        // The last word says what the meter takes.
+        assert_eq!(words[35], 0.0);
+        let whole = Tone {
+            whole_frame: true,
+            ..tone
+        };
+        assert_eq!(Tone::words(Some(&whole))[35], 1.0);
     }
 }

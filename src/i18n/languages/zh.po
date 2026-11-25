@@ -916,6 +916,9 @@ msgstr "无法写入项目的武器"
 msgid "The world stopped on an internal error and was started again ({times} times so far)"
 msgstr "世界因内部错误停止并已重新启动（迄今 {times} 次）"
 
+msgid "The world leaves out {maps} maps it stopped on as they came in"
+msgstr "世界略去了载入时导致其停止的 {maps} 张地图"
+
 msgid "The world stopped on an internal error {times} times and is not started again: it stands as it was last drawn. Build the index again to start afresh."
 msgstr "世界因内部错误已停止 {times} 次，不再重新启动：它保持最后一次绘制时的样子。重新构建索引即可从头开始。"
 
@@ -12679,8 +12682,8 @@ msgstr[1] "名为 {name} 的帧筛选器，共 {count} 条轨道："
 msgid "Track {track}: weight {weight}, group {group}, word at 0x2C {word}."
 msgstr "轨道 {track}：权重 {weight}，组 {group}，0x2C 处的字 {word}。"
 
-msgid "Bone hash_{bone}: kind {kind}, flags {flags}, values {values}."
-msgstr "骨骼 hash_{bone}：类型 {kind}，标志 {flags}，值 {values}。"
+msgid "Bone {bone}: kind {kind}, flags {flags}, values {values}."
+msgstr "骨骼 {bone}：类型 {kind}，标志 {flags}，值 {values}。"
 
 msgid "An animation record named {name}, with settings for {count} skeleton bone."
 msgid_plural "An animation record named {name}, with settings for {count} skeleton bones."
@@ -14220,9 +14223,6 @@ msgstr "Scaleform 影片"
 msgid "EDUP, high entropy"
 msgstr "EDUP，高熵"
 
-msgid "This body starts with EDUP and its bytes after that are of high entropy with no structure found, so it is not read and no view shows it."
-msgstr "此数据体以 EDUP 开头，其后的字节熵很高，未发现任何结构，因此不读取它，也没有视图显示它。"
-
 msgid "The reader of this {what} does not read it: {e}"
 msgstr "此 {what} 的读取器无法读取它：{e}"
 
@@ -14238,8 +14238,8 @@ msgstr "其类型为 {kind}，{at} 处的字为 {word}：其低半部分是其�
 msgid "It lies on the height map tile of the same entry number in the nested archive beside its own; with no archive table, the scan's order of the two archives' bodies is their entry order."
 msgstr "它位于与其自身相邻的嵌套归档中条目编号相同的高度图图块上；没有归档表时，扫描得到的两个归档的数据体顺序就是其条目顺序。"
 
-msgid "A GTA VI MoVE network at version 0x13 whose name hash is hash_{hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
-msgstr "版本为 0x13、名称哈希为 hash_{hash} 的 GTA VI MoVE 网络：含 {a}、{b} 和 {d} 个条目的列表，然后是类型 {kind}、索引 {index}、ID {id} 的根节点。"
+msgid "A GTA VI MoVE network at version 0x13 whose name hash is {hash}: lists of {a}, {b} and {d} entries, then a root node of type {kind}, index {index} and id {id}."
+msgstr "版本为 0x13、名称哈希为 {hash} 的 GTA VI MoVE 网络：含 {a}、{b} 和 {d} 个条目的列表，然后是类型 {kind}、索引 {index}、ID {id} 的根节点。"
 
 msgid "Its {nodes} nodes tile the body from the root to its end, with {tails} tails no offset names between them. A kind's name is GTA V's at the same place in GTA V's list, which is not confirmed."
 msgstr "其 {nodes} 个节点从根节点到末尾铺满数据体，节点之间有 {tails} 段没有任何偏移量指明的尾部。类型的名称取自 GTA V 列表中相同位置的名称，这一点尚未确认。"
@@ -14371,8 +14371,8 @@ msgstr "元素 {index}：{a}、{b}、{c} 和 {d}。"
 msgid "The expression reader does not read this body: {e}"
 msgstr "表达式读取器无法读取此数据体：{e}"
 
-msgid "A GTA VI expression set of key hash_{key}, whose name is not known."
-msgstr "键为 hash_{key} 的 GTA VI 表达式集，其名称未知。"
+msgid "A GTA VI expression set of key {key}."
+msgstr "键为 {key} 的 GTA VI 表达式集。"
 
 msgid "It reads {count} track: the facial controls, or bones, a clip carries."
 msgid_plural "It reads {count} tracks: the facial controls, or bones, a clip carries."
@@ -15261,10 +15261,10 @@ msgstr "GTA VI 的对象树读取器无法读取此数据体：{e}"
 msgid "A GTA VI table of {items} objects in {trees} trees, of {types} types. Each tree's root is keyed by the 32-bit name hash of a model's name, and an object points at later objects of its tree by their offsets. What the objects' fields hold and what the type tags name are not known."
 msgstr "GTA VI 表，含 {items} 个对象，分属 {trees} 棵树，共 {types} 种类型。每棵树的根以模型名称的 32 位名称哈希为键，对象通过偏移量指向其树中靠后的对象。对象字段所含的内容以及类型标记所指明的名称未知。"
 
-msgid "hash_{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
-msgid_plural "hash_{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
-msgstr[0] "hash_{key}：类型为 {tag} 的根，单独位于其树中；它指向 [{children}]"
-msgstr[1] "hash_{key}：类型为 {tag} 的根，其树中共有 {count} 个对象；它指向 [{children}]"
+msgid "{key}: a root of type {tag}, alone in its tree; it points at [{children}]"
+msgid_plural "{key}: a root of type {tag} and {count} objects in its tree; it points at [{children}]"
+msgstr[0] "{key}：类型为 {tag} 的根，单独位于其树中；它指向 [{children}]"
+msgstr[1] "{key}：类型为 {tag} 的根，其树中共有 {count} 个对象；它指向 [{children}]"
 
 msgid "16 entries {entries}"
 msgstr "16 个条目 {entries}"
@@ -15459,11 +15459,11 @@ msgid_plural "{group}: {count} tracks"
 msgstr[0] "{group}：{count} 条轨道"
 msgstr[1] "{group}：{count} 条轨道"
 
-msgid "{group}: hash_{id} {word} ({at} of {total}), {detail}"
-msgstr "{group}：hash_{id} {word}（{at}/{total}），{detail}"
+msgid "{group}: {id} {word} ({at} of {total}), {detail}"
+msgstr "{group}：{id} {word}（{at}/{total}），{detail}"
 
-msgid "Expression set hash_{key}, tracks read: {reads}, tracks written: {writes}"
-msgstr "表达式集 hash_{key}，读取的轨道：{reads}，写入的轨道：{writes}"
+msgid "Expression set {key}, tracks read: {reads}, tracks written: {writes}"
+msgstr "表达式集 {key}，读取的轨道：{reads}，写入的轨道：{writes}"
 
 msgid "Keyframed values GTA V's records have no member for are listed at the end, raw: a velocity's angle, a colour's last three unnamed values and a domain's fifth and sixth. A colour's first two unnamed values are shown as its minimum and maximum, which is inferred; the preview draws the maximum, as GTA V does, where the colour's word at +0x19C counts two or more colours in use, which is inferred too."
 msgstr "GTA V 的记录中没有对应成员的关键帧值以原始形式列在末尾：速度的角度、颜色最后三个未命名的值，以及域的第五和第六个值。颜色前两个未命名的值显示为其最小值和最大值，这是推断的；当颜色在 +0x19C 处的字计数两种或更多正在使用的颜色时，预览像 GTA V 一样绘制最大值，这也是推断的。"
@@ -16842,8 +16842,8 @@ msgstr "仍在加载：{what}"
 msgid "the ground and fog under the water"
 msgstr "水下的地面和雾"
 
-msgid "The level from above: the brighter, the more maps; click to look over a place"
-msgstr "从上方俯瞰关卡：越亮地图越多；点击以俯瞰某处"
+msgid "The level from above: the water, the land by its height, and the brighter, the more maps; click to look over a place"
+msgstr "从上方看关卡：水面、按高度显示的陆地，越亮表示地图越多；点击以查看某处"
 
 msgid "Click to look north over a place, from 250 m south of it"
 msgstr "点击以从某处以南 250 米处向北俯瞰"
@@ -16889,9 +16889,6 @@ msgstr[1] "{count} 个地图的灯光"
 
 msgid "The archive table could not be loaded."
 msgstr "无法加载归档表。"
-
-msgid "Opening a GTA VI archive requires gtavi_magic.dat in the configuration folder or OPENRAGE_GTA6_KEYS."
-msgstr "打开 GTA VI 归档需要配置文件夹中的 gtavi_magic.dat，或设置 OPENRAGE_GTA6_KEYS。"
 
 msgid "The archive changed on disk. Reopen it to read its table."
 msgstr "磁盘上的归档已更改。请重新打开以读取其表。"
@@ -16960,6 +16957,12 @@ msgstr "此文件从 RPF9 表中打开，为只读。请提取文件以保存单
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "此文档字符串的名称需要 GTA VI 密钥快照"
 
+msgid "Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan."
+msgstr "Direct3D 12 正在使用 FXC 编译着色器，因为在 OpenRage 旁边、PATH 中或 Windows SDK 中都没有找到 dxcompiler.dll。FXC 会拒绝部分 GTA VI 着色器程序，另一些则要花几分钟，因此需要它们的模型会以“材质”绘制。请将 dxcompiler.dll 和 dxil.dll 放在 openrage.exe 旁边，或使用 WGPU_BACKEND=vulkan 启动 OpenRage。"
+
+msgid "It casts no shadow: one of its surfaces reads the view at an offset the light's view cannot be copied to"
+msgstr "它不投射阴影：它的一个表面在无法复制光源视图的偏移处读取视图"
+
 msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
 msgstr "只有从 GTA VI 归档打开的文档才会保存到该归档的副本中"
 
@@ -17013,3 +17016,65 @@ msgstr "只搜索已展开的归档。"
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} 是一个新归档，其条目位置已写入修改，其表与读取时相同。"
+
+msgid "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}."
+msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
+msgstr[0] "根据其解密后的表列出：{count} 个条目，其中 {named} 个有名称，表密钥为 {key}。"
+msgstr[1] "根据其解密后的表列出：{count} 个条目，其中 {named} 个有名称，表密钥为 {key}。"
+
+msgid "Extract to a file…"
+msgstr "提取到文件…"
+
+msgid "Replace with a file…"
+msgstr "用文件替换…"
+
+msgid "Writes a new copy of the archive with this entry replaced, which the game refuses: only its maker can sign the table."
+msgstr "写出一份替换了此条目的归档新副本，游戏会拒绝它：只有其制作者能签署该表。"
+
+msgid "Replace with a file"
+msgstr "用文件替换"
+
+msgid "Save the new archive"
+msgstr "保存新归档"
+
+msgid "Wrote {entry} to {file}."
+msgstr "已将 {entry} 写入 {file}。"
+
+msgid "Cannot extract {entry}: {reason}"
+msgstr "无法提取 {entry}：{reason}"
+
+msgid "{file} is a new archive with {entry} replaced, which the game refuses because only its maker can sign the table this changed."
+msgstr "{file} 是替换了 {entry} 的新归档，游戏会拒绝它，因为只有其制作者能签署此改动所涉及的表。"
+
+msgid "{file} is a new archive the same as the one it was read from: the file holds the bytes {entry} holds."
+msgstr "{file} 是与其读取来源相同的新归档：该文件所含的字节与 {entry} 相同。"
+
+msgid "Cannot replace {entry}: {reason}"
+msgstr "无法替换 {entry}：{reason}"
+
+msgid "the file written is a new one, and the archive it is read from is never written"
+msgstr "写出的文件是一个新文件，读取来源的归档永远不会被写入"
+
+msgid "entry {index} is not in its table"
+msgstr "条目 {index} 不在其表中"
+
+msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
+msgstr "一个 EDUP 正文：其 0x04 处的计数字为 {count}，其 8 字节头之后跟随 {length} 字节的负载。"
+
+msgid "With a count of zero, the word at 0x08 states {stated} bytes, and that many follow it."
+msgstr "计数为零时，0x08 处的字注明 {stated} 字节，其后正好跟随这么多字节。"
+
+msgid "Its payload is not read: no record width divides it by its count, and its bytes are of high entropy with no cipher record, so what it holds is not known and no view shows it."
+msgstr "其负载未被读取：没有任何记录宽度能按其计数整除它，且其字节熵很高又没有加密记录，因此其内容未知，也没有视图显示它。"
+
+msgid "Replace the lower levels of detail too"
+msgstr "同时替换较低的细节级别"
+
+msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
+msgstr "关闭时，网格未指定任何几何体的细节级别保持模型中的原样。开启时，每个这样的几何体在其模型和位置上采用 0 级网格，前提是两者使用同一着色器绘制。"
+
+msgid "In {place}"
+msgstr "位于 {place}"
+
+msgid "Look north over the square of 512 m where most maps of this place lie"
+msgstr "向北俯瞰此地大多数地图所在的 512 米方格"

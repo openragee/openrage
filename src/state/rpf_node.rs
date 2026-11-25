@@ -178,7 +178,13 @@ impl RpfSessionNode {
             _ => return None,
         };
         let tree = table.tree();
-        let entry = tree.nodes.get(&base)?.archive.entries.get(index as usize)?;
+        let entry = tree
+            .nodes
+            .get(&base)?
+            .mount
+            .archive
+            .entries
+            .get(index as usize)?;
         Some((index, entry.name64))
     }
 

@@ -222,6 +222,15 @@ fn install() -> tempfile::TempDir {
     dir
 }
 
+/// What a walk opens and names with, with no lifted listings.
+fn with<'a>(keys: &'a GtaViKeys, resolver: &'a NameResolver) -> Gta6<'a> {
+    Gta6 {
+        keys,
+        resolver,
+        natives: None,
+    }
+}
+
 /// A resolver that knows the first two entries' names and not the third's.
 fn resolver() -> NameResolver {
     let mut vocabulary = Vocabulary::default();
@@ -236,14 +245,9 @@ fn two_named_entries_and_one_unnamed_count_as_two_resolved_and_one_not() {
     let archives = archives_under(dir.path());
     assert_eq!(game_of(&archives), Some(Game::Gta6));
     let options = Options::default();
-    let census = census_gta6(
-        dir.path(),
-        &archives,
-        &options,
-        &Cancel::new(),
-        &keys(),
-        &resolver(),
-    );
+    let (keys, resolver) = (keys(), resolver());
+    let gta6 = with(&keys, &resolver);
+    let census = census_gta6(dir.path(), &archives, &options, &Cancel::new(), &gta6);
     assert_eq!((census.archives, census.refused), (1, 0));
     for space in [Space::Name64, Space::Name32] {
         let count = census.count(space);
@@ -277,21 +281,15 @@ fn a_census_with_no_names_resolves_nothing_and_a_cancelled_one_walks_nothing() {
     let dir = install();
     let archives = archives_under(dir.path());
     let options = Options::default();
-    let none = NameResolver::new();
-    let census = census_gta6(
-        dir.path(),
-        &archives,
-        &options,
-        &Cancel::new(),
-        &keys(),
-        &none,
-    );
+    let (keys, none) = (keys(), NameResolver::new());
+    let gta6 = with(&keys, &none);
+    let census = census_gta6(dir.path(), &archives, &options, &Cancel::new(), &gta6);
     assert_eq!(census.count(Space::Name64).resolved(), 0);
     assert_eq!(census.count(Space::Name64).unresolved().len(), 3);
 
     let cancel = Cancel::new();
     cancel.set();
-    let census = census_gta6(dir.path(), &archives, &options, &cancel, &keys(), &none);
+    let census = census_gta6(dir.path(), &archives, &options, &cancel, &gta6);
     assert!(census.cancelled);
     assert_eq!(census.archives, 0);
     assert!(report(&census, Game::Gta6, &options).contains("CANCELLED"));
@@ -406,17 +404,72 @@ fn a_programs_natives_count_once_each_and_none_is_named() {
     code.extend(encode(NATIVE, &[0x21, 0x43, 0x65, 0x00, 0, 0]));
     code.extend(encode(0x90, &[]));
     let mut census = Census::default();
-    tally_body(&program(&code), "prog", None, &mut census);
+    tally_body(&program(&code), "prog", None, None, &mut census);
     assert_eq!(census.scripts, 1);
     let natives = census.count(Space::Native);
     assert_eq!((natives.seen(), natives.resolved()), (2, 0));
     let places: Vec<&str> = natives.unresolved().values().map(String::as_str).collect();
     assert_eq!(places, ["prog+0x0", "prog+0x10"]);
+    let table = report(&census, Game::Gta6, &Options::default());
+    assert!(table.contains("no lifted listings"), "{table}");
 
     let mut census = Census::default();
-    tally_body(b"neither metadata nor a program", "x", None, &mut census);
+    tally_body(
+        b"neither metadata nor a program",
+        "x",
+        None,
+        None,
+        &mut census,
+    );
     assert_eq!((census.scripts, census.metadata), (0, 0));
     assert_eq!(census.count(Space::Native).seen(), 0);
+}
+
+/// A lifted listing declaring a named native at 0x123456 and a hash-only one at 0x654321.
+const LISTING: &str = "[VmProgram(0x00000001U)]
+public static class Program_00000001
+{
+    public static class Native
+    {
+        public static class PLAYER
+        {
+            public static void SET_THING(VmValue p0) => Vm.Native(0xAAUL, 0x123456U, 0, p0);
+            public static void _0x00000000000000BB(VmValue p0) => Vm.Native(0xBBUL, 0x654321U, 0, p0);
+        }
+    }
+}
+";
+
+#[test]
+fn a_native_whose_address_a_listing_names_is_resolved_and_a_hash_only_one_is_not() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("demo.ysc.cs"), LISTING).expect("write the listing");
+    // No configuration folder, so nothing is cached where the user's lives.
+    let table = NativeAddresses::load(dir.path(), None).expect("the listing reads");
+    assert_eq!(table.len(), 2);
+
+    let mut code = encode(NATIVE, &[0x56, 0x34, 0x12, 0x00, 2, 1]);
+    code.extend(encode(NATIVE, &[0x21, 0x43, 0x65, 0x00, 0, 0]));
+    code.extend(encode(NATIVE, &[0x01, 0x00, 0x00, 0x00, 0, 0]));
+    let mut census = Census {
+        native_table: Some(table.len()),
+        ..Census::default()
+    };
+    tally_body(&program(&code), "prog", None, Some(&table), &mut census);
+    let natives = census.count(Space::Native);
+    assert_eq!((natives.seen(), natives.resolved()), (3, 1));
+    let unresolved: Vec<u64> = natives.unresolved().keys().copied().collect();
+    assert_eq!(unresolved, [0x1, 0x65_4321], "hash-only and undeclared");
+
+    let table = report(&census, Game::Gta6, &Options::default());
+    let row = table.lines().find(|l| l.contains("script native"));
+    let row = row.expect("a script native row");
+    let words: Vec<&str> = row.split_whitespace().collect();
+    assert_eq!(words[2..5], ["3", "1", "2"], "{table}");
+    assert!(
+        row.contains("the 2 natives the lifted listings declare"),
+        "{row}"
+    );
 }
 
 #[test]
@@ -448,13 +501,13 @@ fn the_census_runs_on_the_build_and_prints_its_table() {
         bodies: Cap::at(16, CapUnit::Count("bodies")),
         ..Options::default()
     };
+    let none = NameResolver::new();
     let census = census_gta6(
         &build,
         &archives,
         &options,
         &Cancel::new(),
-        &keys,
-        &NameResolver::new(),
+        &with(&keys, &none),
     );
     let table = report(&census, Game::Gta6, &options);
     assert!(census.archives > 0, "{table}");

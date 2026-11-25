@@ -1,8 +1,6 @@
 //! An `SGD5` effect container a scan found, read on a worker as a row of the job list with its
 //! progress and Cancel; its effects then name GTA VI drawables' shaders and their parameters.
 
-use crate::state::Rpf9Document;
-
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -243,7 +241,7 @@ impl AppState {
         self.start_install_effects();
         let mut ended: Vec<EffectsEnded> = (self.documents.iter())
             .filter_map(|doc| match &doc.payload {
-                DocPayload::Rpf9(Rpf9Document::Scan(scan)) => scan.effects_ended(),
+                DocPayload::Rpf9(scan) => scan.effects_ended(),
                 _ => None,
             })
             .collect();

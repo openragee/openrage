@@ -6,8 +6,6 @@
 //! ⚠ An interior's lights stand in the world only through an entity that places the interior: they
 //! are drawn at each instance of it the map shown places, once a map types body read states them.
 
-use crate::state::Rpf9Document;
-
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
@@ -424,9 +422,7 @@ impl super::AppState {
                     .to_string()
             })?;
         let offsets = self.documents.iter().find_map(|d| match &d.payload {
-            super::DocPayload::Rpf9(Rpf9Document::Scan(scan))
-                if scan.path == archive && scan.start == 0 =>
-            {
+            super::DocPayload::Rpf9(scan) if scan.path == archive && scan.start == 0 => {
                 let found = scan.found();
                 let whole = found.ended == Some(super::rpf9_scan::Ended::Whole);
                 whole.then(|| {

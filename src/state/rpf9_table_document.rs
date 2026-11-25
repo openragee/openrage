@@ -7,17 +7,18 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 
+use crate::state::rpf9_scan::rpf9_table::{self, TableKind, TableNode, TableRow};
+use crate::state::{AppState, DocPayload};
 use or_io::container::rpf::{
-    open_at_bounded, Gta6Archive, Gta6Class, Gta6Entry, Gta6EntryRead, Gta6EntryType, GtaViKeys,
-    NameResolver, RPF9_HEADER_SIZE, RPF9_MAGIC,
+    open_at_bounded, Gta6Class, Gta6Entry, Gta6EntryType, Gta6Mount, GtaViKeys, NameResolver,
+    Rpf9Header, RPF9_HEADER_SIZE, RPF9_MAGIC,
 };
-use or_io::gta6::names::{vocabulary_file, Vocabulary};
 
-#[path = "rpf9_entry.rs"]
+#[path = "document/rpf9_entry.rs"]
 pub mod entry;
 
 pub struct Node {
-    pub archive: Gta6Archive,
+    pub mount: Gta6Mount,
     pub extent: Range<u64>,
     depth: usize,
     chain: Vec<u32>,
@@ -36,15 +37,20 @@ impl Node {
     ) -> Result<Self, String> {
         let mut archive = open_at_bounded(file, extent.clone(), keys).map_err(|e| e.to_string())?;
         archive.resolve_names(resolver);
+        let mount = Gta6Mount {
+            base: extent.start,
+            archive,
+        };
         let mut headers = BTreeMap::new();
-        for entry in archive.entries.iter().filter(|_| read_headers) {
-            let Some(extra) = archive.entry_extra(entry.index as usize) else {
+        for entry in mount.archive.entries.iter().filter(|_| read_headers) {
+            let Some(extra) = mount.archive.entry_extra(entry.index as usize) else {
                 continue;
             };
             if Gta6EntryType::hint(entry, &extra) != Gta6EntryType::Unknown {
                 continue;
             }
-            let header = Gta6EntryRead::from_table(&archive, extent.clone(), entry.index, u64::MAX)
+            let header = mount
+                .read_entry_plan(entry.index, extent.end, u64::MAX)
                 .and_then(|read| read.read_header(file, keys));
             if let Ok(Some(header)) = header {
                 if let Some(kind) = Gta6EntryType::from_header(&header) {
@@ -53,7 +59,7 @@ impl Node {
             }
         }
         Ok(Self {
-            archive,
+            mount,
             extent,
             depth,
             chain,
@@ -74,6 +80,7 @@ pub struct Tree {
     pub errors: BTreeMap<(u64, u32), String>,
     pub selected: Option<(u64, u32)>,
     pub filter: String,
+    pub(crate) revision: u64,
     pending: Option<Pending>,
     detected: BTreeMap<(u64, u32), Gta6EntryType>,
 }
@@ -84,8 +91,8 @@ impl Tree {
             .nodes
             .get(&base)
             .and_then(|node| {
-                let entry = node.archive.entries.get(index as usize)?;
-                let extra = node.archive.entry_extra(index as usize)?;
+                let entry = node.mount.archive.entries.get(index as usize)?;
+                let extra = node.mount.archive.entry_extra(index as usize)?;
                 Some(Gta6EntryType::hint(entry, &extra))
             })
             .unwrap_or(Gta6EntryType::Unknown);
@@ -126,6 +133,7 @@ impl Tree {
         };
         let entry = pending.entry;
         self.pending = None;
+        self.revision = self.revision.wrapping_add(1);
         match result {
             Ok(node) => {
                 self.nodes.insert(node.extent.start, node);
@@ -146,12 +154,9 @@ struct TableContext {
 
 impl TableContext {
     fn configured() -> Result<Self, String> {
-        let keys = GtaViKeys::for_install(or_title::config::config_dir().as_deref())
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| tr!("Opening a GTA VI archive requires gtavi_magic.dat in the configuration folder or OPENRAGE_GTA6_KEYS.").to_string())?;
         Ok(Self {
-            keys: Arc::new(keys),
-            resolver: Arc::new(load_resolver()),
+            keys: rpf9_table::keys()?,
+            resolver: rpf9_table::resolver(),
         })
     }
 }
@@ -182,9 +187,11 @@ impl MetadataOpener {
 
 pub struct Rpf9TableDocument {
     pub path: PathBuf,
+    pub header: Rpf9Header,
     keys: Arc<GtaViKeys>,
     resolver: Arc<NameResolver>,
     metadata: Metadata,
+    opened_at: std::time::Instant,
     tree: Arc<Mutex<Tree>>,
     read_headers: bool,
 }
@@ -212,6 +219,24 @@ impl Rpf9TableDocument {
     }
 
     #[cfg(test)]
+    pub(crate) fn open_using_names(
+        path: &Path,
+        keys: impl FnOnce() -> Result<GtaViKeys, String>,
+        resolver: NameResolver,
+    ) -> Result<Option<Self>, String> {
+        Self::open_with_context(
+            path,
+            || {
+                Ok(TableContext {
+                    keys: Arc::new(keys()?),
+                    resolver: Arc::new(resolver),
+                })
+            },
+            true,
+        )
+    }
+
+    #[cfg(test)]
     fn open_with_headers(
         path: &Path,
         keys: impl FnOnce() -> Result<GtaViKeys, String>,
@@ -222,7 +247,7 @@ impl Rpf9TableDocument {
             || {
                 Ok(TableContext {
                     keys: Arc::new(keys()?),
-                    resolver: Arc::new(load_resolver()),
+                    resolver: rpf9_table::resolver(),
                 })
             },
             read_headers,
@@ -244,6 +269,7 @@ impl Rpf9TableDocument {
             return Ok(None);
         }
         let TableContext { keys, resolver } = context()?;
+        let opened_at = std::time::Instant::now();
         let metadata = file.metadata().map_err(|e| e.to_string())?;
         let node = Node::open(
             &mut file,
@@ -254,16 +280,21 @@ impl Rpf9TableDocument {
             &resolver,
             read_headers,
         )?;
+        let header = Rpf9Header::parse(&node.mount.archive.toc.bytes).map_err(|e| e.to_string())?;
         let mut tree = Tree::default();
         tree.nodes.insert(0, node);
-        Ok(Some(Self {
+        let opened = Self {
             path: path.to_path_buf(),
+            header,
             keys,
             resolver,
             metadata,
+            opened_at,
             tree: Arc::new(Mutex::new(tree)),
             read_headers,
-        }))
+        };
+        opened.check_current()?;
+        Ok(Some(opened))
     }
 
     /// Clone the root table into an independent metadata catalog whose children never change the UI's tree.
@@ -276,7 +307,7 @@ impl Rpf9TableDocument {
                 .get(&0)
                 .ok_or_else(|| tr!("The archive table could not be loaded.").to_string())?;
             Node {
-                archive: root.archive.clone(),
+                mount: root.mount.clone(),
                 extent: root.extent.clone(),
                 depth: root.depth,
                 chain: root.chain.clone(),
@@ -287,9 +318,11 @@ impl Rpf9TableDocument {
         tree.nodes.insert(0, root);
         Ok(Self {
             path: self.path.clone(),
+            header: self.header,
             keys: Arc::clone(&self.keys),
             resolver: Arc::clone(&self.resolver),
             metadata: self.metadata.clone(),
+            opened_at: self.opened_at,
             tree: Arc::new(Mutex::new(tree)),
             read_headers: false,
         })
@@ -320,9 +353,10 @@ impl Rpf9TableDocument {
             .nodes
             .values()
             .map(|node| {
-                node.archive.toc.bytes.len()
-                    + std::mem::size_of_val(node.archive.entries.as_slice())
+                node.mount.archive.toc.bytes.len()
+                    + std::mem::size_of_val(node.mount.archive.entries.as_slice())
                     + node
+                        .mount
                         .archive
                         .entries
                         .iter()
@@ -331,6 +365,25 @@ impl Rpf9TableDocument {
                         .sum::<usize>()
             })
             .sum()
+    }
+
+    /// Reuse this snapshot or open its replacement without changing existing entry sources.
+    pub(crate) fn current_or_reopen(self: &Arc<Self>) -> Result<Arc<Self>, String> {
+        if self.check_current().is_ok() {
+            return Ok(Arc::clone(self));
+        }
+        Self::open_with_context(
+            &self.path,
+            || {
+                Ok(TableContext {
+                    keys: Arc::clone(&self.keys),
+                    resolver: Arc::clone(&self.resolver),
+                })
+            },
+            self.read_headers,
+        )?
+        .map(Arc::new)
+        .ok_or_else(|| tr!("The archive table could not be loaded.").to_string())
     }
 
     pub(crate) fn check_current(&self) -> Result<(), String> {
@@ -354,6 +407,7 @@ impl Rpf9TableDocument {
                 .get(&base)
                 .ok_or_else(|| tr!("The archive table could not be loaded.").to_string())?;
             if !parent
+                .mount
                 .archive
                 .entries
                 .get(index as usize)
@@ -415,6 +469,7 @@ impl Rpf9TableDocument {
                     );
                 }
                 tree.nodes.entry(extent.start).or_insert(node);
+                tree.revision = tree.revision.wrapping_add(1);
                 tree.errors.remove(&(base, index));
                 Ok(extent.start)
             }
@@ -429,6 +484,7 @@ impl Rpf9TableDocument {
     pub fn toggle(&self, base: u64, index: u32) {
         let mut tree = self.tree();
         let key = (base, index);
+        tree.revision = tree.revision.wrapping_add(1);
         if tree.expanded.remove(&key) {
             return;
         }
@@ -501,6 +557,7 @@ pub fn is_archive(entry: &Gta6Entry) -> bool {
 fn child_extent(parent: &Node, index: u32) -> Result<Range<u64>, String> {
     let invalid = || tr!("This entry does not describe a bounded nested archive.").to_string();
     let entry = parent
+        .mount
         .archive
         .entries
         .get(index as usize)
@@ -516,13 +573,14 @@ fn child_extent(parent: &Node, index: u32) -> Result<Range<u64>, String> {
         .stored
         .or_else(|| {
             parent
+                .mount
                 .archive
                 .entry_extra(index as usize)?
                 .nested
                 .map(|row| row.stored_size())
         })
         .ok_or_else(invalid)?;
-    if relative < parent.archive.toc.bytes.len() as u64 || size < RPF9_HEADER_SIZE as u64 {
+    if relative < parent.mount.archive.toc.bytes.len() as u64 || size < RPF9_HEADER_SIZE as u64 {
         return Err(invalid());
     }
     let start = parent
@@ -537,17 +595,152 @@ fn child_extent(parent: &Node, index: u32) -> Result<Range<u64>, String> {
     Ok(start..end)
 }
 
-fn load_resolver() -> NameResolver {
-    let mut resolver = std::env::var_os("OPENRAGE_GTA6_NAMES")
-        .map(PathBuf::from)
-        .map(|dir| NameResolver::load(&dir))
-        .unwrap_or_default();
-    if let Some(config) = or_title::config::config_dir() {
-        resolver.merge_vocabulary(&Vocabulary::load(&vocabulary_file(&config)));
+impl Tree {
+    pub(crate) fn listing(&self) -> Option<TableNode> {
+        self.listing_at(0)
     }
-    resolver
+
+    fn listing_at(&self, base: u64) -> Option<TableNode> {
+        let node = self.nodes.get(&base)?;
+        let archive = &node.mount.archive;
+        let mut shown = TableNode {
+            key_id: archive.toc.key_id,
+            ..TableNode::default()
+        };
+        for entry in &archive.entries {
+            let kind = self.entry_type(base, entry.index).0;
+            let is_archive = kind == Gta6EntryType::Archive;
+            let absolute_start = entry.start.and_then(|start| base.checked_add(start));
+            let nested = archive
+                .entry_extra(entry.index as usize)
+                .and_then(|extra| extra.nested);
+            shown.rows.push(TableRow {
+                index: entry.index,
+                name64: entry.name64,
+                name32: entry.name32,
+                name: Some(
+                    crate::state::files_view::rpf9_display_name(&entry.display_name(), kind)
+                        .into_owned(),
+                ),
+                size: entry.size().or_else(|| {
+                    nested
+                        .map(|row| row.stored_size())
+                        .and_then(|size| u32::try_from(size).ok())
+                }),
+                is_archive,
+                cipher: entry.cipher.is_some(),
+                kind: TableKind::of(is_archive, entry.kind(), nested.is_some()),
+            });
+            if is_archive {
+                if let Some(child) = absolute_start.and_then(|start| self.listing_at(start)) {
+                    shown.children.insert(entry.index, child);
+                }
+                if self.expanded.contains(&(base, entry.index)) {
+                    shown.open.insert(entry.index);
+                }
+            }
+        }
+        Some(shown)
+    }
+
+    pub(crate) fn kind_labels(&self) -> BTreeMap<Vec<u32>, Vec<String>> {
+        self.nodes
+            .values()
+            .map(|node| {
+                let labels = or_io::container::rpf::gta6_kinds::entry_kinds(&node.mount.archive)
+                    .into_iter()
+                    .map(|kind| kind.into_owned())
+                    .collect();
+                (node.chain.clone(), labels)
+            })
+            .collect()
+    }
+
+    pub(crate) fn base_of(&self, indices: &[u32]) -> Option<u64> {
+        self.nodes
+            .iter()
+            .find_map(|(&base, node)| (node.chain == indices).then_some(base))
+    }
+}
+
+impl Rpf9TableDocument {
+    pub(crate) fn toggle_path(&self, indices: &[u32]) {
+        let Some((&index, parent)) = indices.split_last() else {
+            return;
+        };
+        let base = self.tree().base_of(parent);
+        if let Some(base) = base {
+            self.toggle(base, index);
+        }
+    }
+}
+
+/// An RPF9 opens from its bounded table; a missing key or invalid table stays an error.
+pub(crate) fn archive_payload(path: &Path) -> Result<Option<DocPayload>, String> {
+    archive_payload_with(path, TableContext::configured)
+}
+
+fn archive_payload_with(
+    path: &Path,
+    context: impl FnOnce() -> Result<TableContext, String>,
+) -> Result<Option<DocPayload>, String> {
+    Rpf9TableDocument::open_with_context(path, context, true)
+        .map(|table| table.map(|table| DocPayload::Rpf9Table(Arc::new(table))))
+}
+
+impl AppState {
+    /// A racing open of the same file snapshot keeps the table already shown by the app.
+    pub(crate) fn share_rpf9_table(
+        &self,
+        incoming: Arc<Rpf9TableDocument>,
+    ) -> Arc<Rpf9TableDocument> {
+        let held = self
+            .mounted_rpf9_tables(&incoming.path)
+            .filter(|held| !Arc::ptr_eq(held, &incoming))
+            .max_by_key(|table| table.opened_at)
+            .filter(|held| {
+                (held.metadata.len() == incoming.metadata.len()
+                    && held.metadata.modified().ok() == incoming.metadata.modified().ok())
+                    || held.opened_at > incoming.opened_at
+            })
+            .cloned();
+        held.unwrap_or(incoming)
+    }
+
+    pub(crate) fn mounted_rpf9_table(&self, path: &Path) -> Option<Arc<Rpf9TableDocument>> {
+        self.mounted_rpf9_tables(path)
+            .max_by_key(|table| table.opened_at)
+            .cloned()
+    }
+
+    fn mounted_rpf9_tables<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> impl Iterator<Item = &'a Arc<Rpf9TableDocument>> + 'a {
+        let explorer = self
+            .panels
+            .peek::<crate::ui::panels::gta6_archive_tree::Gta6ArchiveExplorer>()
+            .and_then(|explorer| explorer.table.as_ref())
+            .filter(|table| table.path == path);
+        self.documents
+            .iter()
+            .filter_map(move |doc| match &doc.payload {
+                DocPayload::Rpf9Table(table) if table.path == path => Some(table),
+                DocPayload::Rpf(rpf) => rpf.session.rpf9_table(path),
+                _ => None,
+            })
+            .chain(explorer)
+    }
 }
 
 #[cfg(test)]
-#[path = "rpf9_tests.rs"]
+#[path = "document/rpf9_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "rpf9_table_document_tests.rs"]
+pub(crate) mod ui_tests;
+
+#[cfg(test)]
+#[path = "rpf9_table_shared_tests.rs"]
+mod shared_tests;

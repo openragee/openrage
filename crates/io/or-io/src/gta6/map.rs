@@ -392,6 +392,27 @@ pub fn root_type(virtual_section: &[u8]) -> Option<u32> {
     u32_at(usize::try_from(table & 0x0FFF_FFFF).ok()? + 16 * (root as usize - 1))
 }
 
+/// The 64-bit word a map data body states of its own name, from its root block alone; `None` for
+/// any other body, and for one whose classes are not laid out as measured.
+pub fn stated_name_word(virtual_section: &[u8], physical: &[u8]) -> Option<u64> {
+    if root_type(virtual_section)? != C_MAP_DATA {
+        return None;
+    }
+    name_word_of(&crate::meta::binary::rbm::gta6::read_model(virtual_section, physical).ok()?)
+}
+
+/// The name word of the map data body `model` is, read without its entities and lists.
+fn name_word_of(model: &RbmModel) -> Option<u64> {
+    check_layouts(model).ok()?;
+    let blocks = Blocks::new(&model.data_blocks);
+    let root = blocks
+        .block(u64::from(model.root_block_id), "the root block")
+        .ok()?;
+    (root.data_type == C_MAP_DATA)
+        .then(|| u64_at(&root.data, 0x10).ok())
+        .flatten()
+}
+
 /// The map body a headerless RBM resource holds, from its two inflated sections.
 pub fn open(virtual_section: &[u8], physical: &[u8]) -> Result<MapBody> {
     read(&crate::meta::binary::rbm::gta6::read_model(

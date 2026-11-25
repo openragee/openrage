@@ -113,8 +113,14 @@ fn sky_by_cycles(
         *kept = Some((key.0, key.1, key.2, sky));
         sky
     });
-    sky.map(|sky| or_renderer::game_shaders::meshlets::Sky {
+    // A developer's switch has the frame metered whole, as the game meters one.
+    use or_renderer::game_shaders::meshlets::{whole_frame_meter, Sky, Tone};
+    sky.map(|sky| Sky {
         exposure: exposure_times(exposure),
+        tone: sky.tone.map(|tone| Tone {
+            whole_frame: whole_frame_meter(),
+            ..tone
+        }),
         ..sky
     })
 }
@@ -133,8 +139,11 @@ impl RenderBridge {
         let tables = crate::state::gta6_shaders::timecycle::timecycle(state);
         let by_cycles =
             (tables.as_ref()).and_then(|tables| sky_by_cycles(tables, hour, weather, exposure));
-        self.renderer
-            .set_gta6_sky(by_cycles.unwrap_or_else(|| gta6_sky(hour, weather, exposure)));
+        let mut sky = by_cycles.unwrap_or_else(|| gta6_sky(hour, weather, exposure));
+        sky.scene.bounds = crate::render::gta6_shaded::bounds(state);
+        sky.scene.laid = (state.drivers.world_background.ground)
+            .then_some(glam::Vec3::splat(super::gta6_day::GROUND));
+        self.renderer.set_gta6_sky(sky);
         let key = (
             Arc::as_ptr(&data) as usize,
             hour.to_bits(),

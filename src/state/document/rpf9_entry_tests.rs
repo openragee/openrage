@@ -127,7 +127,15 @@ fn a_later_chunk_failure_preserves_the_destination_and_removes_partial_output() 
     let table = Rpf9TableDocument::open_using(&path, || Ok(keys()))
         .unwrap()
         .unwrap();
-    table.tree().nodes.get_mut(&0).unwrap().archive.entries[0].name = Some("texture.ytd".into());
+    table
+        .tree()
+        .nodes
+        .get_mut(&0)
+        .unwrap()
+        .mount
+        .archive
+        .entries[0]
+        .name = Some("texture.ytd".into());
     let source = table.entry(0, 0).unwrap();
     let mut partial = Vec::new();
     assert!(source.extract(&mut partial).is_err());
@@ -177,7 +185,15 @@ fn a_name_cannot_escape_the_destination_or_alias_another_entry() {
         "x:stream",
         "end.",
     ] {
-        table.tree().nodes.get_mut(&0).unwrap().archive.entries[1].name = Some(name.into());
+        table
+            .tree()
+            .nodes
+            .get_mut(&0)
+            .unwrap()
+            .mount
+            .archive
+            .entries[1]
+            .name = Some(name.into());
         let source = table.entry(0, 1).unwrap();
         assert_eq!(Path::new(&source.name).components().count(), 1);
         assert!(!source.name.contains(['/', '\\', ':']));
@@ -200,7 +216,15 @@ fn a_name_cannot_escape_the_destination_or_alias_another_entry() {
 fn unsupported_entry_opening_does_not_start_a_scan() {
     let _serial = crate::ui::theme::serial();
     let (_dir, table) = opened();
-    table.tree().nodes.get_mut(&0).unwrap().archive.entries[1].class = Some(14);
+    table
+        .tree()
+        .nodes
+        .get_mut(&0)
+        .unwrap()
+        .mount
+        .archive
+        .entries[1]
+        .class = Some(14);
     let mut state = AppState::from_prefs(Prefs::default());
     state.open_rpf9_entry(&table, 0, 1);
     assert!(state.load_receiver.is_none());
@@ -220,7 +244,7 @@ fn the_open_button_loads_the_selected_table_entry() {
     let mut state = AppState::from_prefs(Prefs::default());
     state.insert_document(
         table.path.clone(),
-        DocPayload::Rpf9(crate::state::Rpf9Document::Table(table.clone())),
+        DocPayload::Rpf9Table(table.clone()),
         None,
         None,
     );
@@ -283,12 +307,28 @@ fn the_open_button_loads_the_selected_table_entry() {
 #[test]
 fn text_opens_as_text_and_a_gta_vi_resource_is_not_given_a_gta_v_reader() {
     let (_dir, table) = opened();
-    table.tree().nodes.get_mut(&0).unwrap().archive.entries[1].name = Some("info.txt".into());
+    table
+        .tree()
+        .nodes
+        .get_mut(&0)
+        .unwrap()
+        .mount
+        .archive
+        .entries[1]
+        .name = Some("info.txt".into());
     assert!(matches!(
         table.entry(0, 1).unwrap().payload().unwrap(),
         DocPayload::Text(_)
     ));
-    table.tree().nodes.get_mut(&0).unwrap().archive.entries[1].name = Some("model.ydr".into());
+    table
+        .tree()
+        .nodes
+        .get_mut(&0)
+        .unwrap()
+        .mount
+        .archive
+        .entries[1]
+        .name = Some("model.ydr".into());
     assert!(matches!(
         table.entry(0, 1).unwrap().payload().unwrap(),
         DocPayload::Hex(_)
@@ -425,7 +465,7 @@ mod install {
     }
 
     fn walk(table: &Rpf9TableDocument, base: u64, output: &Path) -> usize {
-        let entries = table.tree().nodes[&base].archive.entries.clone();
+        let entries = table.tree().nodes[&base].mount.archive.entries.clone();
         let mut count = 0;
         for entry in entries {
             let source = table
@@ -510,6 +550,7 @@ mod install {
         let path = Path::new(&root).join("audio.rpf");
         let table = Arc::new(Rpf9TableDocument::open(&path).unwrap().unwrap());
         let parent = table.tree().nodes[&0]
+            .mount
             .archive
             .entries
             .iter()
@@ -517,7 +558,7 @@ mod install {
             .unwrap()
             .index;
         let base = table.expand_table(0, parent).unwrap();
-        let entries = table.tree().nodes[&base].archive.entries.clone();
+        let entries = table.tree().nodes[&base].mount.archive.entries.clone();
         let selected = entries
             .iter()
             .find(|entry| entry.display_name() == "hash_0fc08147e594a40c")
@@ -585,6 +626,7 @@ mod install {
         let path = Path::new(&root).join("appdata0.rpf");
         let table = Arc::new(Rpf9TableDocument::open(&path).unwrap().unwrap());
         let entry = table.tree().nodes[&0]
+            .mount
             .archive
             .entries
             .iter()
@@ -628,6 +670,14 @@ mod install {
                 .kind,
             kind
         );
+        let DocPayload::Meta(metadata) = source.payload().unwrap() else {
+            panic!("the ciphered PSIN entry opens in its metadata preview")
+        };
+        assert!(metadata.parse_error.is_none());
+        assert!(metadata.parsed.is_some());
+        let mut extracted = Vec::new();
+        source.extract(&mut extracted).unwrap();
+        assert_eq!(extracted, bytes);
         assert_eq!(source.name, "hash_336373b5566693f1.psin");
         assert!(!source.path.exists());
     }
@@ -730,6 +780,90 @@ mod install {
     }
 
     #[test]
+    fn every_entry_in_the_selected_archive_opens_and_extracts_in_memory() {
+        let Some(archive) = std::env::var_os("OPENRAGE_GTA6_ARCHIVE") else {
+            or_test_support::skip_install(
+                "RPF9 table opening and in-memory extraction",
+                format_args!("set OPENRAGE_GTA6_ARCHIVE and OPENRAGE_GTA6_KEYS"),
+            );
+            return;
+        };
+        let table = Rpf9TableDocument::open(Path::new(&archive))
+            .unwrap()
+            .unwrap();
+        let mut pending = vec![0];
+        let mut visited = std::collections::BTreeSet::new();
+        let (mut entries, mut leaves, mut extracted_bytes) = (0, 0, 0u64);
+        let mut failures = Vec::new();
+        while let Some(base) = pending.pop() {
+            if !visited.insert(base) {
+                continue;
+            }
+            let rows = table.tree().nodes[&base].mount.archive.entries.clone();
+            for entry in rows {
+                entries += 1;
+                let nested = entry.kind() == Some(Gta6Class::NestedArchive);
+                let result = (|| -> Result<(), String> {
+                    let source = table.entry(base, entry.index)?;
+                    let expected = source.decoded_len();
+                    let written = if nested {
+                        source.extract(&mut std::io::sink())?
+                    } else {
+                        if expected > LIMIT {
+                            return Err(format!(
+                                "decoded size {expected} exceeds preview limit {LIMIT}"
+                            ));
+                        }
+                        let mut bytes = Vec::new();
+                        let written = source.extract(&mut bytes)?;
+                        if bytes.len() as u64 != expected {
+                            return Err(format!(
+                                "decoded length {} differs from {expected}",
+                                bytes.len()
+                            ));
+                        }
+                        source.payload_from_bytes_at(&source.path, bytes)?;
+                        leaves += 1;
+                        written
+                    };
+                    if written != expected {
+                        return Err(format!(
+                            "extracted length {written} differs from {expected}"
+                        ));
+                    }
+                    extracted_bytes += written;
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    failures.push(format!("table {base:#x}, entry {}: {error}", entry.index));
+                }
+                if nested {
+                    match table.expand_table(base, entry.index) {
+                        Ok(child) => pending.push(child),
+                        Err(error) => failures.push(format!(
+                            "expand table {base:#x}, entry {}: {error}",
+                            entry.index
+                        )),
+                    }
+                }
+            }
+        }
+        table.check_current().unwrap();
+        assert!(entries > 0, "the selected archive is empty");
+        assert!(
+            failures.is_empty(),
+            "{} failures: {:#?}",
+            failures.len(),
+            &failures[..failures.len().min(20)]
+        );
+        assert!(leaves > 0, "the selected archive has no leaf entries");
+        println!(
+            "{entries} entries extracted in memory ({extracted_bytes} bytes), {leaves} leaf payloads opened, {} tables",
+            visited.len()
+        );
+    }
+
+    #[test]
     fn every_entry_in_the_selected_archive_opens_and_extracts_from_tables() {
         let Some(archive) = std::env::var_os("OPENRAGE_GTA6_ARCHIVE") else {
             or_test_support::skip_install(
@@ -753,128 +887,5 @@ mod install {
     }
 }
 
-fn media_table_fixture(body: &[u8]) -> (tempfile::TempDir, Rpf9TableDocument) {
-    let mut body = body.to_vec();
-    body.resize(body.len().next_multiple_of(16), 0);
-    use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
-    let mut bytes = Rpf9Builder::serialize(
-        &Rpf9Toc {
-            bytes: or_test_support::rpf9::table(&[(0, 0x1000, body.len() as u64, 0xff)]),
-            key_id: 0,
-            registry_id: 0,
-            entry_count: 0,
-            groups: Vec::new(),
-        },
-        &keys(),
-    )
-    .unwrap();
-    bytes.resize(0x1000, 0);
-    bytes.extend(body);
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("audio.rpf");
-    std::fs::write(&path, bytes).unwrap();
-    let table = Rpf9TableDocument::open_using(&path, || Ok(keys()))
-        .unwrap()
-        .unwrap();
-    (dir, table)
-}
-
-fn table_pcm_awc() -> Vec<u8> {
-    let mut record = vec![0u8; 32];
-    record[..4].copy_from_slice(&2u32.to_le_bytes());
-    record[4..8].copy_from_slice(&(-1i32).to_le_bytes());
-    record[8..10].copy_from_slice(&48000u16.to_le_bytes());
-    record[12..16].copy_from_slice(&2u32.to_le_bytes());
-    record[29] = 1;
-    let data = [-1234i16, 2345]
-        .into_iter()
-        .flat_map(i16::to_le_bytes)
-        .collect::<Vec<_>>();
-    let chunks = [(0x76u64, record), (0x55, data)];
-    let table_len = 16 + 4 + 8 * chunks.len();
-    let mut bytes = b"ADAT".to_vec();
-    bytes.extend(1u16.to_le_bytes());
-    bytes.extend(0xff02u16.to_le_bytes());
-    bytes.extend(1u32.to_le_bytes());
-    bytes.extend((table_len as u32).to_le_bytes());
-    bytes.extend(((chunks.len() as u32) << 29 | 1).to_le_bytes());
-    let mut offset = table_len;
-    for (kind, data) in &chunks {
-        bytes.extend(((kind << 56) | ((data.len() as u64) << 28) | offset as u64).to_le_bytes());
-        offset += data.len();
-    }
-    for (_, data) in chunks {
-        bytes.extend(data);
-    }
-    bytes.resize(bytes.len().next_multiple_of(16), 0);
-    bytes
-}
-
-#[test]
-fn awc_table_entries_open_and_decode_from_memory_despite_their_suffix() {
-    let (dir, table) = media_table_fixture(&table_pcm_awc());
-    table.tree().nodes.get_mut(&0).unwrap().archive.entries[0].name = Some("sound.txt".into());
-    let source = table.entry(0, 0).unwrap();
-    assert!(!source.path.exists());
-    let DocPayload::Awc(mut audio) = source.payload().unwrap() else {
-        panic!("the confirmed audio header must select the audio preview");
-    };
-    let key = or_io::awc::AwcKey::default();
-    let file = audio.file(key).unwrap();
-    let rows = or_media::awc::streams(file);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].info.codec, or_media::Codec::Pcm16);
-    let stream = or_media::awc::open(file, key, rows[0].stream).unwrap();
-    let samples = stream
-        .audio(&or_media::Decoders::new())
-        .unwrap()
-        .read_all_i16()
-        .unwrap();
-    assert_eq!(samples, [-1234, 2345]);
-    assert!(!source.path.exists());
-    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
-}
-
-#[test]
-fn malformed_awc_and_unsupported_endianness_are_errors_not_hex() {
-    let mut malformed = table_pcm_awc();
-    malformed[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
-    let mut big_endian = table_pcm_awc();
-    big_endian[..4].copy_from_slice(b"TADA");
-    for body in [malformed, big_endian] {
-        let (_dir, table) = media_table_fixture(&body);
-        assert!(table.entry(0, 0).unwrap().payload().is_err());
-        assert!(table.tree().errors.contains_key(&(0, 0)));
-    }
-}
-
-#[test]
-fn table_metadata_and_movies_select_their_content_reader() {
-    use crate::state::opening_an_rpf9_archive::{kb2n, table_form_pso};
-    let (_dir, table) = media_table_fixture(&table_form_pso());
-    let source = table.entry(0, 0).unwrap();
-    let DocPayload::Meta(meta) = source.payload().unwrap() else {
-        panic!("PSIN metadata view")
-    };
-    assert_eq!(
-        meta.parsed.unwrap().instance.fields[0].1,
-        or_io::meta::Value::UInt(77)
-    );
-    assert!(!source.path.exists());
-    let (_dir, table) = media_table_fixture(&kb2n());
-    let source = table.entry(0, 0).unwrap();
-    let DocPayload::Bik(movie) = source.payload().unwrap() else {
-        panic!("Bink movie view")
-    };
-    assert!(movie.header.is_some());
-    assert!(!source.path.exists());
-}
-
-#[test]
-fn a_malformed_confirmed_metadata_body_is_reported_as_an_error() {
-    let mut bytes = crate::state::opening_an_rpf9_archive::table_form_pso();
-    bytes.truncate(16);
-    let (_dir, table) = media_table_fixture(&bytes);
-    assert!(table.entry(0, 0).unwrap().payload().is_err());
-    assert!(table.tree().errors.contains_key(&(0, 0)));
-}
+#[path = "rpf9_entry_media_tests.rs"]
+mod media;

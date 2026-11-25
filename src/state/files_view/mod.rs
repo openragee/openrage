@@ -191,7 +191,7 @@ pub fn row_facts(session: &RpfEditSession, id: RpfNodeId) -> Option<RowFacts> {
         };
         if let Some((table, base, index)) = source {
             let tree = table.tree();
-            if let Some(archive) = tree.nodes.get(&base).map(|node| &node.archive) {
+            if let Some(archive) = tree.nodes.get(&base).map(|node| &node.mount.archive) {
                 if let Some(entry) = archive.entries.get(index as usize) {
                     facts.stored = entry.stored.or_else(|| {
                         archive

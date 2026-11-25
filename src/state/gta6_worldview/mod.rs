@@ -4,7 +4,7 @@
 //! ⚠ What is on the device is the render bridge's: a frame asks here what draws and which models
 //! arrived, and says which are on the device.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,7 +31,9 @@ mod model;
 mod occluders;
 mod pool;
 pub(crate) mod sky;
+mod sky_night;
 pub(crate) mod stream;
+pub(crate) mod terrain;
 mod texture;
 pub(crate) mod water;
 
@@ -99,6 +101,10 @@ pub struct Viewer {
     have: HashMap<ModelRef, Option<bool>>,
     /// How many times the world's thread was found dead and started again.
     pub world_restarts: u32,
+    /// How many of those deaths named no map it had taken in: only these give the thread up.
+    unexplained: u32,
+    /// The maps the world's thread died on, which it is started again without.
+    pub skipped: HashSet<u32>,
     /// The selection whose waited-for models the readers were last given.
     wanted_of: u64,
     /// The models that selection waits for, and those the far stand-ins' atlas waits for.
@@ -137,6 +143,8 @@ pub struct Viewer {
     pub models_waiting: usize,
     /// How many textures wait to be read.
     pub textures_waiting: usize,
+    /// How long the last frame took to work out its day, before the lights about the camera.
+    pub day_took: std::time::Duration,
 }
 
 impl Default for Viewer {
@@ -147,6 +155,8 @@ impl Default for Viewer {
             world: None,
             have: HashMap::new(),
             world_restarts: 0,
+            unexplained: 0,
+            skipped: HashSet::new(),
             wanted_of: 0,
             wanted: Vec::new(),
             species_models: Vec::new(),
@@ -176,6 +186,7 @@ impl Default for Viewer {
             lights: None,
             models_waiting: 0,
             textures_waiting: 0,
+            day_took: std::time::Duration::ZERO,
         }
     }
 }
@@ -215,7 +226,8 @@ impl Viewer {
             return;
         };
         (self.index, self.world, self.models, self.failed) = (None, None, None, None);
-        (self.have, self.world_restarts) = (HashMap::new(), 0);
+        (self.have, self.world_restarts, self.unexplained) = (HashMap::new(), 0, 0);
+        self.skipped.clear();
         (self.textures, self.lights) = (None, None);
         // What the workers held goes with them, and a new world's thread is told everything again.
         (self.held, self.sent) = (Arc::default(), None);
@@ -285,6 +297,7 @@ impl Viewer {
     fn take(&mut self, index: WorldIndex, places: Option<Places>) {
         let places = places.map(Arc::new);
         if let Some(places) = places.clone() {
+            sky_night::read(Arc::clone(&places));
             let held = Arc::clone(&self.held);
             let weigh = |read: &Option<CpuTexture>| read.as_ref().map_or(0, CpuTexture::bytes);
             self.textures = Some(Pool::bounded(
@@ -322,7 +335,12 @@ impl Viewer {
             },
         ));
         let (eye, scale) = (self.camera.position, self.distance_scale());
-        self.world = Some(World::new(Arc::clone(&index), eye, scale));
+        self.world = Some(World::new(
+            Arc::clone(&index),
+            eye,
+            scale,
+            self.skipped.clone(),
+        ));
         self.index = Some(index);
     }
 
@@ -410,7 +428,7 @@ impl Viewer {
         &mut self,
         models: &mut Vec<(ModelRef, Option<bool>)>,
     ) -> Option<Arc<Selected>> {
-        if self.world.as_ref().is_some_and(World::died) && self.world_restarts < MOST_RESTARTS {
+        if self.world.as_ref().is_some_and(World::died) && self.unexplained < MOST_RESTARTS {
             self.restart_world();
         }
         let world = self.world.as_ref()?;
@@ -450,13 +468,28 @@ impl Viewer {
         Some(latest)
     }
 
-    /// Start the world's thread again in place of one that died, told what the dead one was.
+    /// Start the world's thread again in place of one that died, told what the dead one was, and without the maps it took in since its last whole selection: what it died on.
     fn restart_world(&mut self) {
         self.world_restarts += 1;
-        tracing::error!(
-            times = self.world_restarts,
-            "the GTA VI world's thread stopped on an internal error and is started again"
-        );
+        let died_on = (self.world.as_ref()).map_or_else(Vec::new, World::unproven);
+        match died_on.is_empty() {
+            true => {
+                self.unexplained += 1;
+                tracing::error!(
+                    times = self.world_restarts,
+                    "the GTA VI world's thread stopped on an internal error and is started again"
+                );
+            }
+            false => {
+                let maps: Vec<String> = died_on.iter().map(|m| format!("{m:08X}")).collect();
+                tracing::error!(
+                    times = self.world_restarts,
+                    maps = %maps.join(" "),
+                    "the GTA VI world's thread stopped on an internal error with these maps just taken in, and is started again without them"
+                );
+                self.skipped.extend(died_on);
+            }
+        }
         let Some(index) = &self.index else {
             return;
         };
@@ -464,6 +497,7 @@ impl Viewer {
             Arc::clone(index),
             self.camera.position,
             self.distance_scale(),
+            self.skipped.clone(),
         );
         world.tell(
             &mut self
@@ -477,11 +511,10 @@ impl Viewer {
         self.sent = None;
     }
 
-    /// Whether the world's thread died too often to be started again: the world stands as it was last selected.
+    /// Whether the world's thread died too often, on nothing it had just taken in, to be started again: the world stands as it was last selected.
     pub fn world_given_up(&self) -> bool {
-        self.world_restarts >= MOST_RESTARTS && self.world.as_ref().is_some_and(World::died)
+        self.unexplained >= MOST_RESTARTS && self.world.as_ref().is_some_and(World::died)
     }
-
     /// Ask for the models the far stand-ins' atlas waits for, after what the selection waits for.
     pub fn want_species_models(&mut self, models: Vec<(f32, ModelRef)>) {
         if models != self.species_models {
@@ -564,21 +597,15 @@ impl Viewer {
         lights_frame::FrameLights,
         f32,
     ) {
+        let started = std::time::Instant::now();
         let (eye, hour) = (self.camera.position, self.hour);
         let tables = self.root.as_deref().and_then(sky::tables);
         let inside = self.inside();
         let moment = (tables.as_ref()).and_then(|tables| {
-            let moment = match &inside {
-                // Inside a room, the day takes the room's own modifier over the weather's.
-                Some(inside) => tables.moment_inside(
-                    hour,
-                    sky::weather_name(weather),
-                    eye.y,
-                    [inside.timecycle, inside.secondary_timecycle],
-                    inside.blend,
-                ),
-                None => sky::moment(tables, hour, weather, eye.y),
-            }?;
+            // Inside a room, the day takes the room's own modifier over the weather's.
+            let room = (inside.as_ref())
+                .map(|inside| ([inside.timecycle, inside.secondary_timecycle], inside.blend));
+            let moment = sky::moment(tables, hour, weather, eye.y, room)?;
             Some(sky::exposed(
                 tables,
                 moment,
@@ -588,9 +615,10 @@ impl Viewer {
             ))
         });
         let scale = sky::scale_of(moment.as_ref());
-        let day = (tables.as_ref()).zip(moment).map(|(tables, moment)| {
-            sky::day_of_moment(tables, moment, (hour, days), weather, eye.z)
-        });
+        let day = (tables.as_ref())
+            .zip(moment)
+            .map(|(tables, moment)| sky::day_of_moment(tables, moment, (hour, days), weather, eye));
+        self.day_took = started.elapsed();
         if let (Some(tables), Some(world)) = (&tables, &self.world) {
             world.set_fade(stream::fade_of(&tables.visual_settings));
         }

@@ -547,7 +547,7 @@ mod tests {
 
         use crate::state::document::rpf9::entry::READ_ONLY;
         use crate::state::{
-            texture_resolution, AppState, DocPayload, Document, DocumentKind, Prefs, Rpf9Document,
+            texture_resolution, AppState, DocPayload, Document, DocumentKind, Prefs,
         };
 
         let _serial = crate::ui::theme::serial();
@@ -582,7 +582,7 @@ mod tests {
             state.documents.push(Document::new(
                 archive_id,
                 Some(table.path.clone()),
-                DocPayload::Rpf9(Rpf9Document::Table(Arc::clone(&table))),
+                DocPayload::Rpf9Table(Arc::clone(&table)),
             ));
             let model_id = state.alloc_doc_id();
             let model_path = table
@@ -669,7 +669,7 @@ mod tests {
         state.documents.push(Document::new(
             archive,
             Some(table.path.clone()),
-            DocPayload::Rpf9(super::super::Rpf9Document::Table(Arc::clone(&table))),
+            DocPayload::Rpf9Table(Arc::clone(&table)),
         ));
         let model = state.alloc_doc_id();
         let key = name_hash64(b"table_external");
@@ -694,8 +694,7 @@ mod tests {
             .unwrap()
             .unwrap(),
         );
-        state.document_mut(archive).unwrap().payload =
-            DocPayload::Rpf9(super::super::Rpf9Document::Table(replacement));
+        state.document_mut(archive).unwrap().payload = DocPayload::Rpf9Table(replacement);
         let now = state.rpf9_texture_scope(Some(model));
         assert_eq!(now.key(), previous.key());
         assert_ne!(now.table_versions(), previous.table_versions());

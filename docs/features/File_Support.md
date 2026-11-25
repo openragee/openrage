@@ -75,9 +75,12 @@ the editor lists none of these games as a title.
 
 An RPF9 archive opens from its encrypted table of contents. It needs the user's key snapshot,
 `gtavi_magic.dat` in the configuration folder or the file `OPENRAGE_GTA6_KEYS` names; a masked
-snapshot also needs the executable `OPENRAGE_GTA6_EXE` names. Missing keys or an invalid table
-produce an error, with no scan fallback. The Files panel lists the entries and loads a nested
-archive's table when it is expanded, on a worker and within its containing entry's bounds.
+snapshot also needs the executable from Settings ▸ Games or `OPENRAGE_GTA6_EXE`.
+Missing keys or an invalid table produce an error, with no scan fallback. The Files and Archives
+panels share the same mounted document and its table; showing the Archives panel does not open
+the archive again. The Files panel loads a nested archive's table when it is expanded, on a
+worker and within its containing entry's bounds
+(`files_and_archives_share_the_mounted_table_without_reopening_the_file`).
 In an opened folder, RPF9 archives expand inside the same Files tree as other archives. Resolved
 paths form folders; unresolved hashes remain at the root of their owning archive. File icons use
 the table's type or the entry's leading header, independently of the displayed name. Opening a
@@ -120,6 +123,7 @@ silently changing to an octet view. These previews remain read-only and work in 
 | `.ymt`, `.psin`, `.rbf` | Structured metadata in RBM, PSO or RBF envelopes | Metadata tree; the bytes select the envelope |
 | `.ynv` | Navigation cells | Cell facts and navigation geometry |
 | `.ycd` | Animation dictionaries | Clips, tracks and timeline; external sets and clips are not searched through scans |
+| `.ysc` | Validated compiled scripts | Read-only instruction listing; no decompiled source |
 | `.yed` | Expression tracks | Expression inspector; no table-backed animation selector integration |
 | `.ypt` | Particle effects | Effects and supported preview data; external particle models are not searched through scans |
 | `.rel` | Audio configuration and references | Items and known fields; bank-reference resolution from tables is not implemented |
@@ -128,8 +132,9 @@ silently changing to an octet view. These previews remain read-only and work in 
 | `.mrf` | MoVE networks | Partial structural outline, not a full execution model |
 | `.dat` and unnamed bodies | Confirmed height maps, grids and object trees | Existing height view or structural facts when the leading structure identifies the body |
 
-An extension in the Files tree is not a promise of an implemented preview. In particular, `.ysc`,
-`.yld` and the other unconnected resource categories still open as bytes through this table path,
+An extension in the Files tree is not a promise of an implemented preview. A script opens as an
+instruction listing only when the existing compiled reader validates its header and code;
+other script bodies remain bytes. `.yld` and the other unconnected resource categories still open as bytes through this table path,
 even where another entry point has a reader. `.bin` means no extension was confirmed; EDUP bodies
 remain bytes. Textual `.xml`, `.txt` and `.list` entries keep the text view. Unknown field and file
 names remain hashes. The neighbouring-cell loader, audio bank links, animation searches and
@@ -176,7 +181,10 @@ the World index retain their scanners and their existing body readers. The insta
 plain folder.
 
 The [GTA VI modding guide](../guides/GTA_VI_Modding.md) describes obtaining keys from the user’s executable.
-View ▸ Panels ▸ Archives also lists tables; the CLI can write a new archive and export PSO strings.
+View ▸ Panels ▸ Archives uses the same table document for opening and extraction. Its
+**Replace with a file…** action writes a new archive for supported non-resource entries;
+headerless resources remain read-only there. Extraction writes their decoded bytes exactly,
+without inventing a loose resource envelope. The CLI can write a new archive and export PSO strings.
 
 - **Read.** Texture packs (`.ttpf`) and dictionary textures, drawables, fragments, dictionaries of
   drawables and their skeletons, bounds, navigation cells, map placements and map types, clip
@@ -186,7 +194,8 @@ View ▸ Panels ▸ Archives also lists tables; the CLI can write a new archive 
   Wireframe, Solid and Material and goes out to glTF. An enciphered entry opens deciphered: a PSO or
   RBF in the metadata editor, text as text and a resource in its kind's view. A PSO's enciphered
   strings name the hash values it holds. A deciphered script body reads as a compiled program, its
-  header, instructions and native calls, through `openrage-cli script compiled`.
+  header, instructions and native calls, through `openrage-cli script compiled`; a valid table
+  entry also opens as the same reader's instruction listing in the app, read-only.
 - **Textures.** A texture stored plainly or as zlib reads as it is. One stored through the pack's
   entropy coder decodes exactly as BC1; as BC3, BC4, BC5, BC6H or BC7 it decodes through tables
   that `openrage-cli ttpf calibrate`, or the app's job, fits on your machine from the packs of the
@@ -207,8 +216,9 @@ View ▸ Panels ▸ Archives also lists tables; the CLI can write a new archive 
   for GTA V, and a refusal names what it cannot write. `openrage-cli rpf9 copy`, `replace`, `remove`,
   `rename` and `defrag` write a new archive from an existing one, never over it; a plain replace of
   an entry whose row describes a paged resource is refused by name, and `replace --resource` replaces
-  it by its loose form. The app's File ▸ Save into a copy of the archive… writes a document's edits
-  in place of its entry, in a new copy of the archive it was read from.
+  it by its loose form. For an editable document opened through an explicit scan, the app's
+  File ▸ Save into a copy of the archive… writes its edits in place of its entry, in a new copy
+  of the archive it was read from. Table-backed previews remain read-only.
 - **Not done.** The game refuses every archive OpenRage writes with a changed table, because only its
   maker can sign a table, and no file OpenRage saved has been tried in the game. A script is not
   decompiled from its compiled body. A program the shader front end cannot translate or bind leaves

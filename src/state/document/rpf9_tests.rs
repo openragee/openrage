@@ -1,5 +1,3 @@
-use crate::state::Rpf9Document;
-
 use super::*;
 use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
 use or_test_support::rpf9;
@@ -63,10 +61,10 @@ fn table_open_requires_keys_and_never_uses_the_clear_bodies() {
         .unwrap();
     let tree = doc.tree();
     assert_eq!(tree.nodes.len(), 1, "children stay unopened");
-    assert_eq!(tree.nodes[&0].archive.entries.len(), 2);
-    assert_eq!(tree.nodes[&0].archive.entries[1].name, None);
+    assert_eq!(tree.nodes[&0].mount.archive.entries.len(), 2);
+    assert_eq!(tree.nodes[&0].mount.archive.entries[1].name, None);
     assert_eq!(
-        tree.nodes[&0].archive.entries[1].display_name(),
+        tree.nodes[&0].mount.archive.entries[1].display_name(),
         "hash_0000000000000000"
     );
 }
@@ -80,7 +78,7 @@ fn expanding_mounts_only_the_selected_child_and_caches_its_table() {
     doc.toggle(0, 0);
     wait(&doc);
     assert_eq!(doc.tree().nodes.len(), 2);
-    assert_eq!(doc.tree().nodes[&0x1000].archive.entries.len(), 1);
+    assert_eq!(doc.tree().nodes[&0x1000].mount.archive.entries.len(), 1);
     assert!(doc.tree().expanded.contains(&(0, 0)));
     doc.toggle(0, 0);
     assert!(!doc.tree().expanded.contains(&(0, 0)));
@@ -143,12 +141,7 @@ fn the_tree_arrow_loads_and_collapses_the_child_table() {
             .unwrap(),
     );
     let mut state = AppState::from_prefs(Prefs::default());
-    state.insert_document(
-        path,
-        DocPayload::Rpf9(Rpf9Document::Table(doc.clone())),
-        None,
-        None,
-    );
+    state.insert_document(path, DocPayload::Rpf9Table(doc.clone()), None, None);
     let mut panel = Panel::new(egui::Rect::from_min_size(
         egui::Pos2::ZERO,
         egui::vec2(560.0, 900.0),
@@ -209,12 +202,7 @@ fn a_child_table_is_a_job_that_can_be_cancelled() {
             .unwrap(),
     );
     let mut state = AppState::from_prefs(Prefs::default());
-    state.insert_document(
-        path,
-        DocPayload::Rpf9(Rpf9Document::Table(doc.clone())),
-        None,
-        None,
-    );
+    state.insert_document(path, DocPayload::Rpf9Table(doc.clone()), None, None);
     assert!(doc.job().is_none());
     doc.toggle(0, 0);
     assert!(state

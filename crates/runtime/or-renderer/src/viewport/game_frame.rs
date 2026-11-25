@@ -61,6 +61,7 @@ impl ViewportRenderer {
                 fog_sink: None,
                 meter: super::meter::Meter::new(device),
                 post: super::post::Post::new(device, self.colour_format.remove_srgb_suffix()),
+                grade: crate::game_shaders::grade::GradePass::new(device),
             });
         }
         self.rebind_deferred(device, queue);
@@ -264,7 +265,10 @@ impl ViewportRenderer {
         frame.meter.collect(device);
         frame.meter.bind(device, &frame.hdr);
         match self.day.as_ref().is_some_and(|day| day.post.is_some()) {
-            true => (frame.post).prepare(device, &frame.hdr, &frame.depth.depth, &frame.ldr),
+            true => {
+                (frame.post).prepare(device, &frame.hdr, &frame.depth.depth, &frame.ldr);
+                frame.grade.prepare(device, &frame.hdr);
+            }
             false => frame.post.forget(),
         }
         if frame.reflection_of != Some(revision) {
@@ -857,6 +861,7 @@ impl ViewportRenderer {
                 let exposure = (self.day.as_ref().and_then(|d| d.stated))
                     .map_or(1.0, |stated| stated.exposure);
                 (deferred.post).record_bloom(encoder, queue, &deferred.hdr, post, exposure);
+                (deferred.grade).record(encoder, queue, &deferred.hdr, &post.grade);
             }
             // The bright part of the lit frame is blurred and put back over it, before the frame is mapped
             None => deferred.passes.record_bloom(encoder, &deferred.hdr, &tone),

@@ -15,6 +15,7 @@ pub mod effect_pass;
 pub mod engine;
 pub mod fog_volumes;
 pub mod frame;
+pub mod grade;
 pub mod light_volumes;
 pub mod lighting;
 pub mod link;

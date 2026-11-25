@@ -4,6 +4,12 @@
 //! The staged regions name each point's type through their own look-ups; an
 //! install, under `OPENRAGE_GAME_ROOT` (`;`-separated roots), also names each
 //! type and model set against the scenario and model-set manifests it ships.
+//!
+//! The install suite of an interior's typed records is here too, beside the
+//! other suite of this crate that mounts an install and reads every file of a
+//! kind: every `.ytyp` opened as its typed root, the members the four records
+//! of an interior type held to the ones the install states, and each type file
+//! with an interior saved to its fixed point.
 
 mod support;
 
@@ -15,7 +21,10 @@ use or_io::container::rpf::crypto::{extract_keys, Gta5RetailCryptoProvider};
 use or_io::container::RpfCryptoProvider;
 use or_io::decl::File;
 use or_io::hash::literal_string_hash;
-use or_io::meta::{CScenarioPointRegion, MetaDocument, MetaInstance, Value};
+use or_io::meta::{
+    CBaseArchetypeDefAny, CMapTypes, CMloArchetypeDef, CMloEntitySet, CMloPortalDef, CMloRoomDef,
+    CMloTimeCycleModifier, CScenarioPointRegion, MetaDocument, MetaInstance, Value,
+};
 use or_io::Error;
 use or_test_support::{game_roots, skip_install, Corpus, CorpusOrigin, GAME_ROOT_ENV};
 use or_title::game::Game;
@@ -301,4 +310,255 @@ fn every_installed_points_type_and_model_set_is_named_by_a_manifest() {
                 .join("\n  ")
         );
     }
+}
+
+/// The four records of an interior, by the array of the interior that holds each and the members its record types.
+const INTERIOR_RECORDS: [(&str, &str, &[&str]); 4] = [
+    ("CMloRoomDef", "rooms", CMloRoomDef::MEMBERS),
+    ("CMloPortalDef", "portals", CMloPortalDef::MEMBERS),
+    ("CMloEntitySet", "entitySets", CMloEntitySet::MEMBERS),
+    (
+        "CMloTimeCycleModifier",
+        "timeCycleModifiers",
+        CMloTimeCycleModifier::MEMBERS,
+    ),
+];
+
+/// What the type files of one install hold of interiors.
+#[derive(Default)]
+struct Interiors {
+    label: String,
+    type_files: usize,
+    interiors: usize,
+    /// How many records of each class of [`INTERIOR_RECORDS`] were read typed.
+    records: [usize; 4],
+    /// The member names each class states in the install, by name hash, with one spelling of each.
+    stated: [BTreeMap<u32, String>; 4],
+    saved: usize,
+    problems: Vec<String>,
+}
+
+fn typed_interiors(types: &CMapTypes) -> impl Iterator<Item = &CMloArchetypeDef> {
+    types.archetypes.iter().filter_map(|a| match a {
+        CBaseArchetypeDefAny::CMloArchetypeDef(mlo) => Some(mlo),
+        _ => None,
+    })
+}
+
+impl Interiors {
+    fn fold(&mut self, path: &str, bytes: &[u8]) {
+        self.type_files += 1;
+        let types = match CMapTypes::from_bytes(bytes) {
+            Ok(types) => types,
+            Err(e) => return self.problems.push(format!("{path}: opens typed: {e}")),
+        };
+        if typed_interiors(&types).next().is_none() {
+            return;
+        }
+        let root = match MetaDocument::parse(support::schema(), bytes.to_vec()) {
+            Ok(document) => document.instance,
+            Err(e) => return self.problems.push(format!("{path}: reads: {e}")),
+        };
+        let viewed: Vec<_> = or_world::MapTypes::new(&root)
+            .into_iter()
+            .flat_map(|types| types.archetypes())
+            .filter_map(|a| a.interior().map(|interior| (a.instance(), interior)))
+            .collect();
+        let typed: Vec<_> = typed_interiors(&types).collect();
+        if viewed.len() != typed.len() {
+            return self.problems.push(format!(
+                "{path}: {} interiors read typed and {} in the tree",
+                typed.len(),
+                viewed.len()
+            ));
+        }
+        for ((inst, view), mlo) in viewed.iter().zip(&typed) {
+            self.interiors += 1;
+            let held = [
+                mlo.rooms.len(),
+                mlo.portals.len(),
+                mlo.entity_sets.len(),
+                mlo.time_cycle_modifiers.len(),
+            ];
+            let in_tree = [
+                view.room_count(),
+                view.portal_count(),
+                view.entity_set_count(),
+                view.time_cycle_modifier_count(),
+            ];
+            if held != in_tree {
+                self.problems.push(format!(
+                    "{path}: an interior holds {in_tree:?} rooms, portals, entity sets and modifiers, and {held:?} read typed"
+                ));
+            }
+            for (class, (_, array, _)) in INTERIOR_RECORDS.iter().enumerate() {
+                self.records[class] += held[class];
+                let key = literal_string_hash(array.as_bytes());
+                for record in field::structs_at(inst, key) {
+                    for (member, _) in &record.fields {
+                        self.stated[class]
+                            .entry(field::name_hash(member))
+                            .or_insert_with(|| member.clone());
+                    }
+                }
+            }
+            let names: Vec<Option<String>> = view.rooms().map(|room| room.name()).collect();
+            let typed_names: Vec<Option<String>> = (mlo.rooms.iter())
+                .map(|room| Some(room.name.clone()))
+                .collect();
+            if names != typed_names {
+                self.problems
+                    .push(format!("{path}: the rooms are named {names:?} in the tree"));
+            }
+            let broken = or_world::validate::check_interior(view);
+            if !broken.is_empty() {
+                self.problems.push(format!("{path}: {}", broken[0]));
+            }
+        }
+        // ⚠ An RBM goes back under a fresh DEFLATE, so the fixed point is the save of what the save reads as.
+        let fixed = types.to_bytes().and_then(|saved| {
+            let back = CMapTypes::from_bytes(&saved)?;
+            Ok((back == types, back.to_bytes()? == saved))
+        });
+        match fixed {
+            Ok((true, true)) => self.saved += 1,
+            Ok((equal, fixed)) => self.problems.push(format!(
+                "{path}: saved, it reads back equal: {equal}, and saves again to the same bytes: {fixed}"
+            )),
+            Err(e) => self.problems.push(format!("{path}: saves: {e}")),
+        }
+    }
+
+    /// The members a record types that no record of the install states, and the members the install states that no record types.
+    fn members_that_differ(&self) -> Vec<String> {
+        let mut differ = Vec::new();
+        for (class, (name, _, typed)) in INTERIOR_RECORDS.iter().enumerate() {
+            let keys: Vec<u32> = (typed.iter())
+                .map(|m| literal_string_hash(m.as_bytes()))
+                .collect();
+            for (member, key) in typed.iter().zip(&keys) {
+                if !self.stated[class].contains_key(key) {
+                    differ.push(format!("{name}::{member} is typed and never stated"));
+                }
+            }
+            for (key, spelt) in &self.stated[class] {
+                if !keys.contains(key) {
+                    differ.push(format!("{name}::{spelt} is stated and not typed"));
+                }
+            }
+        }
+        differ
+    }
+
+    fn report(&self) -> String {
+        format!(
+            "{}: {} type files, {} interiors ({} rooms, {} portals, {} entity sets, {} time cycle modifiers), {} type files with an interior saved to their fixed point, {} problems",
+            self.label,
+            self.type_files,
+            self.interiors,
+            self.records[0],
+            self.records[1],
+            self.records[2],
+            self.records[3],
+            self.saved,
+            self.problems.len()
+        )
+    }
+}
+
+fn interiors_of_install(root: &Path) -> Option<Interiors> {
+    support::schema();
+    let install = or_title::GtaInstall::from_path(root)?;
+    let game =
+        or_title::build_mounted_game(&install, crypto_for(root)?, or_title::DlcCutoff::All).ok()?;
+    let mut ytyp: BTreeMap<String, String> = BTreeMap::new();
+    game.for_each_file(|logical, _container, leaf| {
+        if leaf.to_ascii_lowercase().ends_with(".ytyp") {
+            ytyp.insert(logical.to_ascii_lowercase(), logical.to_string());
+        }
+    });
+    let mut out = Interiors {
+        label: root.display().to_string(),
+        ..Interiors::default()
+    };
+    for path in ytyp.values() {
+        match game.vfs.open(path) {
+            Some(bytes) => out.fold(path, &bytes),
+            None => out.problems.push(format!("{path}: does not open")),
+        }
+    }
+    Some(out)
+}
+
+/// ⚠ The install is opened read only and nothing here writes into one.
+#[test]
+fn every_interior_of_an_install_reads_typed_states_the_members_typed_and_saves_to_its_fixed_point()
+{
+    const WHAT: &str =
+        "every_interior_of_an_install_reads_typed_states_the_members_typed_and_saves_to_its_fixed_point";
+    let roots = game_roots();
+    if roots.is_empty() {
+        skip_install(
+            WHAT,
+            format_args!(
+                "no install root; set {GAME_ROOT_ENV} to a ;-separated list of install directories"
+            ),
+        );
+        return;
+    }
+    let installs: Vec<Interiors> = (roots.iter())
+        .filter_map(|r| interiors_of_install(r))
+        .collect();
+    if installs.is_empty() {
+        skip_install(WHAT, "no install root mounted");
+        return;
+    }
+    for install in &installs {
+        let report = install.report();
+        eprintln!("{report}");
+        // A census that read nothing would hold every member to nothing and pass.
+        assert!(install.interiors >= 100, "{report}");
+        assert!(
+            install.records.iter().all(|&records| records >= 100),
+            "{report}"
+        );
+        assert!(
+            install.problems.is_empty(),
+            "{report}\n  {}",
+            install
+                .problems
+                .iter()
+                .take(20)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        );
+        let differ = install.members_that_differ();
+        assert!(differ.is_empty(), "{report}\n  {}", differ.join("\n  "));
+    }
+}
+
+/// The census of an interior's members over trees built here, so the install suite's own judgement is seen to fail.
+#[test]
+fn the_census_of_an_interiors_members_names_one_typed_and_never_stated_and_one_stated_and_not_typed(
+) {
+    let mut census = Interiors::default();
+    for (class, (_, _, typed)) in INTERIOR_RECORDS.iter().enumerate() {
+        for member in *typed {
+            census.stated[class].insert(literal_string_hash(member.as_bytes()), member.to_string());
+        }
+    }
+    assert_eq!(census.members_that_differ(), Vec::<String>::new());
+
+    let blend = literal_string_hash(b"blend");
+    census.stated[0].remove(&blend);
+    let extra = literal_string_hash(b"aMemberNoRecordTypes");
+    census.stated[1].insert(extra, "aMemberNoRecordTypes".to_string());
+    assert_eq!(
+        census.members_that_differ(),
+        [
+            "CMloRoomDef::blend is typed and never stated",
+            "CMloPortalDef::aMemberNoRecordTypes is stated and not typed"
+        ]
+    );
 }

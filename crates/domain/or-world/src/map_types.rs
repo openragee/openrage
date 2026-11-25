@@ -385,9 +385,168 @@ fn indices(inst: &MetaInstance, key: u32) -> impl Iterator<Item = u32> + '_ {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use or_io::meta::Value;
+    use or_io::decl::File;
+    use or_io::meta::instance::value::HashedString;
+    use or_io::meta::{CBaseArchetypeDefAny, CMapTypes, MetaDocument, Value};
+
+    fn items(of: impl IntoIterator<Item = MetaInstance>) -> Value {
+        Value::Array(of.into_iter().map(|i| Value::Struct(Box::new(i))).collect())
+    }
+
+    fn pointers(of: impl IntoIterator<Item = MetaInstance>) -> Value {
+        let behind = |i| Value::Pointer(Some(Box::new(i)));
+        Value::Array(of.into_iter().map(behind).collect())
+    }
+
+    fn indexes(of: &[u32]) -> Value {
+        Value::Array(of.iter().map(|&i| Value::UInt(u64::from(i))).collect())
+    }
+
+    fn placed(guid: u32) -> MetaInstance {
+        let mut entity = MetaInstance::new("CEntityDef");
+        entity.set("archetypeName", Value::String("prop_bench_01a".into()));
+        entity.set("guid", Value::UInt(u64::from(guid)));
+        entity.set("parentIndex", Value::Int(-1));
+        entity
+    }
+
+    fn a_room(name: &str, floor: i64, attached: &[u32]) -> MetaInstance {
+        let mut room = MetaInstance::new("Item");
+        room.set("name", Value::String(name.into()));
+        room.set("bbMin", Value::Vec3([-4.0, -3.0, floor as f32]));
+        room.set("bbMax", Value::Vec3([4.0, 3.0, floor as f32 + 2.5]));
+        room.set("blend", Value::Float(0.75));
+        room.set("timecycleName", Value::String("int_hall".into()));
+        room.set("flags", Value::UInt(96));
+        room.set("floorId", Value::Int(floor));
+        room.set("attachedObjects", indexes(attached));
+        room
+    }
+
+    /// A type file with one interior, as the text a document with no schema is: two rooms, a portal between them with a
+    /// door attached, and an entity set of two lamps in the second room; `edit` changes the interior before it is written.
+    pub(crate) fn interior_file(edit: impl FnOnce(&mut MetaInstance)) -> Vec<u8> {
+        let mut portal = MetaInstance::new("Item");
+        portal.set("roomFrom", Value::UInt(0));
+        portal.set("roomTo", Value::UInt(1));
+        portal.set("flags", Value::UInt(8));
+        portal.set("opacity", Value::UInt(40));
+        let corners = [
+            [1.0, 3.0, 0.0],
+            [-1.0, 3.0, 0.0],
+            [-1.0, 3.0, 2.0],
+            [1.0, 3.0, 2.0],
+        ];
+        portal.set("corners", Value::Array(corners.map(Value::Vec3).to_vec()));
+        portal.set("attachedObjects", indexes(&[2]));
+
+        let mut set = MetaInstance::new("Item");
+        set.set("name", Value::String("set_party".into()));
+        set.set("locations", indexes(&[1, 1]));
+        set.set("entities", pointers([placed(10), placed(11)]));
+
+        let mut interior = MetaInstance::new("CMloArchetypeDef");
+        interior.set("name", Value::String("v_int_hills".into()));
+        interior.set("mloFlags", Value::UInt(1));
+        interior.set("entities", pointers([placed(1), placed(2), placed(3)]));
+        let rooms = [a_room("limbo", 0, &[]), a_room("hall", 1, &[0, 1])];
+        interior.set("rooms", items(rooms));
+        interior.set("portals", items([portal]));
+        interior.set("entitySets", items([set]));
+        edit(&mut interior);
+
+        let mut root = MetaInstance::new("CMapTypes");
+        root.set(
+            "archetypes",
+            Value::Array(vec![Value::Pointer(Some(Box::new(interior)))]),
+        );
+        or_io::meta::write_meta(&root)
+            .expect("the type file is written as text")
+            .into_bytes()
+    }
+
+    /// The tree `bytes` reads as, which the read views borrow.
+    pub(crate) fn tree(bytes: &[u8]) -> MetaInstance {
+        MetaDocument::parse(or_io::meta::default_library(), bytes.to_vec())
+            .expect("the type file reads")
+            .instance
+    }
+
+    #[test]
+    fn the_read_views_of_an_interior_read_what_the_typed_records_read() {
+        let bytes = interior_file(|_| {});
+        let root = tree(&bytes);
+        let types = MapTypes::new(&root).expect("a type file");
+        let viewed = types.archetypes().next().and_then(|a| a.interior());
+        let viewed = viewed.expect("the archetype is an interior");
+        let typed = CMapTypes::from_bytes(&bytes).expect("opens typed");
+        let CBaseArchetypeDefAny::CMloArchetypeDef(typed) = &typed.archetypes[0] else {
+            panic!("the archetype is an interior");
+        };
+
+        assert_eq!(viewed.mlo_flags(), typed.mlo_flags);
+        assert_eq!(viewed.entity_count(), typed.entities.len());
+        assert_eq!(viewed.room_count(), typed.rooms.len());
+        assert_eq!(typed.rooms.len(), 2);
+        for (room, typed) in viewed.rooms().zip(&typed.rooms) {
+            assert_eq!(room.name().as_deref(), Some(typed.name.as_str()));
+            let corner = |v: or_io::decl::Vec3| Vec3::new(v.x, v.y, v.z);
+            assert_eq!(
+                room.bounds(),
+                Some((corner(typed.bb_min), corner(typed.bb_max)))
+            );
+            assert_eq!(room.flags(), typed.flags);
+            assert_eq!(room.floor_id(), typed.floor_id);
+            assert_eq!(room.blend(), typed.blend);
+            assert_eq!(room.timecycle(), typed.timecycle_name.hash);
+            assert_eq!(
+                room.attached_objects().collect::<Vec<_>>(),
+                typed.attached_objects
+            );
+        }
+        assert_eq!(typed.rooms[1].name, "hall");
+        assert_eq!(
+            typed.rooms[1].timecycle_name.hash,
+            HashedString::new("int_hall").hash
+        );
+
+        assert_eq!(viewed.portal_count(), typed.portals.len());
+        assert_eq!(typed.portals.len(), 1);
+        for (portal, typed) in viewed.portals().zip(&typed.portals) {
+            assert_eq!(
+                (portal.room_from(), portal.room_to()),
+                (typed.room_from, typed.room_to)
+            );
+            assert_eq!(
+                (portal.flags(), portal.opacity()),
+                (typed.flags, typed.opacity)
+            );
+            let corners: Vec<Vec3> = (typed.corners.iter())
+                .map(|c| Vec3::new(c.x, c.y, c.z))
+                .collect();
+            assert_eq!(portal.corners(), corners);
+            assert_eq!(corners.len(), 4);
+            assert_eq!(
+                portal.attached_objects().collect::<Vec<_>>(),
+                typed.attached_objects
+            );
+        }
+
+        assert_eq!(viewed.entity_set_count(), typed.entity_sets.len());
+        assert_eq!(typed.entity_sets.len(), 1);
+        for (set, typed) in viewed.entity_sets().zip(&typed.entity_sets) {
+            assert_eq!(set.name(), typed.name.hash);
+            assert_eq!(set.locations().collect::<Vec<_>>(), typed.locations);
+            assert_eq!(set.entity_count(), typed.entities.len());
+            assert_eq!(typed.locations, [1, 1]);
+        }
+        assert_eq!(
+            viewed.time_cycle_modifier_count(),
+            typed.time_cycle_modifiers.len()
+        );
+    }
 
     fn archetype(type_name: &str) -> MetaInstance {
         let mut inst = MetaInstance::new(type_name);

@@ -10004,10 +10004,10 @@ moved or copied; and the health rules the brief names. The builder waits for rul
 room, a portal and an entity set, a new interior, a copy and a second instance
 ([brief](World_Editor_Plan.md#interiors-r70m)). The audio is [R70x](#r70x-the-audio-of-an-interior).
 
-**Where it stands.** Not built. The four records are carried in the value tree and written back as
-they came, and the members the install states for each are measured
-([what wave P44 built for Maps](Workbench_Views_Design.md#what-wave-p44-built-for-maps)).
-`interior-broken` in `crates/domain/or-maps/src/rules.rs` checks an interior today.
+**Where it stands.** The data part is built and its install suite has run on no install:
+`crates/io/or-io/src/meta/typed/interior.rs` types the four records, and a save refuses a broken
+interior ([in full, with what is left](../reference/Crate_Reference.md#io-crates)). Nothing after
+the data part is built.
 
 **Depends on.** Nothing for the data part; [R70f](#r70f-layers-of-what-the-game-hides) and
 [R70i](#r70i-selecting-and-moving-in-the-world) for the rest; ruling 2 for the builder.
@@ -10070,7 +10070,8 @@ drawn on a selected parking spot
 
 **Where it stands.** Not built. `crates/domain/or-world/src/map_data.rs` reads a box occluder, the
 stored box of an occlusion mesh and a parked vehicle's position and one length, counts the timecycle
-zones and tests whether far lights are present; a save carries each record as it came.
+zones and tests whether far lights are present; a save carries each record as it came. Which
+members an install states for them is unmeasured.
 
 **Depends on.** Nothing for the data part; [R70f](#r70f-layers-of-what-the-game-hides),
 [R70i](#r70i-selecting-and-moving-in-the-world), [R70k](#r70k-removing-what-the-game-placed) and

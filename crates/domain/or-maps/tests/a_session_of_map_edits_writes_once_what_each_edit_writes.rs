@@ -797,7 +797,7 @@ fn a_flush_that_cannot_write_an_operation_names_it_and_writes_nothing() {
         record: a_broken_interior(&held),
         expects: None,
     };
-    let said = "attaches object 5, past its 0 entities";
+    let said = "attaches object 5, past the 0 entities in this interior";
     // One by one, the save refuses it at the operation.
     let one = apply(&one_by_one, &broken).unwrap_err().to_string();
     assert!(one.contains(said), "{one}");

@@ -190,3 +190,79 @@ fn strict_mode_agrees_with_lenient() {
         );
     }
 }
+
+/// What `world_types::first_class_unstated` rests on: a world root with such a class is saved as reshaped, off the
+/// layout it arrived with, so a tree as it was read must never name one.
+#[test]
+fn every_staged_tree_names_only_classes_its_own_type_table_states() {
+    let corpus = Corpus::load();
+    require_corpus!(corpus);
+    let lib = support::schema();
+    let (mut judged, mut named) = (0usize, Vec::new());
+    for fixture in corpus.iter() {
+        let mut diags = Diagnostics::lenient();
+        let Ok((root, layout)) =
+            or_io::meta::binary::parse_meta_binary_full(lib, &fixture.bytes, &mut diags)
+        else {
+            continue;
+        };
+        judged += 1;
+        if let Some(class) = or_io::meta::typed::world_types::first_class_unstated(&layout, &root) {
+            named.push(format!("{}: `{class}`", fixture.name));
+        }
+    }
+    assert!(
+        judged > 0,
+        "no staged document was read, so nothing was judged"
+    );
+    assert!(
+        named.is_empty(),
+        "{} of {judged} staged documents name a class their own table does not state:\n  {}",
+        named.len(),
+        named
+            .iter()
+            .take(15)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+    eprintln!("{judged} staged documents judged, none names a class its own table lacks");
+}
+
+/// What `world_types::first_member_unstated` rests on: a save refuses a world root that holds such a member, as a copy
+/// that would lose it, so a tree as it was read must never hold one.
+#[test]
+fn every_staged_tree_holds_only_members_its_own_type_table_states() {
+    let corpus = Corpus::load();
+    require_corpus!(corpus);
+    let lib = support::schema();
+    let (mut judged, mut held) = (0usize, Vec::new());
+    for fixture in corpus.iter() {
+        let mut diags = Diagnostics::lenient();
+        let Ok((root, layout)) =
+            or_io::meta::binary::parse_meta_binary_full(lib, &fixture.bytes, &mut diags)
+        else {
+            continue;
+        };
+        judged += 1;
+        let found = or_io::meta::typed::world_types::first_member_unstated(&layout, &root);
+        if let Some((class, member)) = found {
+            held.push(format!("{}: `{class}::{member}`", fixture.name));
+        }
+    }
+    assert!(
+        judged > 0,
+        "no staged document was read, so nothing was judged"
+    );
+    assert!(
+        held.is_empty(),
+        "{} of {judged} staged documents hold a member their own table does not state:\n  {}",
+        held.len(),
+        held.iter()
+            .take(15)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+    eprintln!("{judged} staged documents judged, none holds a member its own table lacks");
+}

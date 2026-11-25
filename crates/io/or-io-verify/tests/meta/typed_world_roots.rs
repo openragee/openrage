@@ -16,8 +16,9 @@ use or_io::meta::binary::{ContainerLayout, MetaLayout};
 use or_io::meta::instance::HashedString;
 use or_io::meta::{
     write_meta_binary, BinaryFormat, CBaseArchetypeDef, CBaseArchetypeDefAny, CEntityDef,
-    CEntityDefAny, CMapData, CMapTypes, CMloArchetypeDef, CMloInstanceDef, CTimeArchetypeDef,
-    MetaDocument, MetaInstance, Value,
+    CEntityDefAny, CMapData, CMapTypes, CMloArchetypeDef, CMloEntitySet, CMloInstanceDef,
+    CMloPortalDef, CMloRoomDef, CMloTimeCycleModifier, CTimeArchetypeDef, MetaDocument,
+    MetaInstance, Value,
 };
 use or_io_verify::gates::{corpus_root, name};
 use or_test_support::ledger::{self, SkipReason};
@@ -1198,4 +1199,148 @@ fn a_record_built_here_saves_the_engines_inits() {
         assert!(seen.contains(&name_hash(typed)), "no `{typed}` was checked");
     }
     assert!(missed.is_empty(), "{}", missed.join("\n"));
+}
+
+fn by_value(items: Vec<MetaInstance>) -> Value {
+    Value::Array(
+        items
+            .into_iter()
+            .map(|i| Value::Struct(Box::new(i)))
+            .collect(),
+    )
+}
+
+fn distinct_indexes(name: &str) -> Value {
+    Value::Array(vec![Value::UInt(u64::from(distinct_seed(name)))])
+}
+
+/// ⚠ The same trap as `every_typed_member_reads_the_slot_the_engine_declares_for_it`, for the four records of an
+/// interior: a member misspelt reads as its init in every file, and one read as the wrong type opens nothing.
+#[test]
+fn every_typed_member_of_an_interiors_records_reads_the_slot_the_engine_declares_for_it() {
+    const WHAT: &str =
+        "every_typed_member_of_an_interiors_records_reads_the_slot_the_engine_declares_for_it";
+    let Some(library) = support::schema_or_skip(WHAT) else {
+        return;
+    };
+    for (class, typed) in [
+        ("CMloRoomDef", CMloRoomDef::MEMBERS),
+        ("CMloPortalDef", CMloPortalDef::MEMBERS),
+        ("CMloEntitySet", CMloEntitySet::MEMBERS),
+        ("CMloTimeCycleModifier", CMloTimeCycleModifier::MEMBERS),
+    ] {
+        let engine = library
+            .resolve_any(class)
+            .unwrap_or_else(|| panic!("the snapshot declares `{class}`"));
+        let declared: Vec<u32> = engine.fields.iter().map(|f| name_hash(&f.name)).collect();
+        assert_eq!(
+            hashed(typed),
+            {
+                let mut declared = declared.clone();
+                declared.sort_unstable();
+                declared
+            },
+            "`{class}` types the members the engine declares for it, no member more and none fewer"
+        );
+    }
+
+    let mut room = distinct("CMloRoomDef");
+    set(&mut room, "name", Value::String("a room's name".into()));
+    set(&mut room, "attachedObjects", Value::Array(Vec::new()));
+    let mut portal = distinct("CMloPortalDef");
+    // The interior holds one room and no entity, so the portal names room 0 and attaches nothing.
+    set(&mut portal, "roomFrom", Value::UInt(0));
+    set(&mut portal, "roomTo", Value::UInt(0));
+    let corner = distinct_vec3("corners");
+    set(
+        &mut portal,
+        "corners",
+        Value::Array(vec![Value::Vec3([corner.x, corner.y, corner.z])]),
+    );
+    set(&mut portal, "attachedObjects", Value::Array(Vec::new()));
+    let mut entity_set = distinct("CMloEntitySet");
+    set(&mut entity_set, "locations", distinct_indexes("locations"));
+    set(
+        &mut entity_set,
+        "entities",
+        behind_pointers(vec![distinct("CEntityDef")]),
+    );
+    let modifier = distinct("CMloTimeCycleModifier");
+    let mut interior = distinct("CMloArchetypeDef");
+    set(&mut interior, "entities", Value::Array(Vec::new()));
+    set(&mut interior, "rooms", by_value(vec![room]));
+    set(&mut interior, "portals", by_value(vec![portal]));
+    set(&mut interior, "entitySets", by_value(vec![entity_set]));
+    set(
+        &mut interior,
+        "timeCycleModifiers",
+        by_value(vec![modifier]),
+    );
+    let mut root = sampled("CMapTypes");
+    set(&mut root, "archetypes", behind_pointers(vec![interior]));
+    let bytes = encoded(&root);
+
+    let types = CMapTypes::from_bytes(&bytes).expect("opens typed");
+    let CBaseArchetypeDefAny::CMloArchetypeDef(mlo) = &types.archetypes[0] else {
+        panic!("the archetype is the interior");
+    };
+    let room = &mlo.rooms[0];
+    assert_eq!(room.name, "a room's name");
+    assert_eq!(room.bb_min, distinct_vec3("bbMin"));
+    assert_eq!(room.bb_max, distinct_vec3("bbMax"));
+    assert_eq!(room.blend, distinct_f32("blend"));
+    assert_eq!(
+        room.timecycle_name.hash,
+        distinct_hash("timecycleName").hash
+    );
+    assert_eq!(
+        room.secondary_timecycle_name.hash,
+        distinct_hash("secondaryTimecycleName").hash
+    );
+    assert_eq!(room.flags, distinct_seed("flags"));
+    assert_eq!(room.portal_count, distinct_seed("portalCount"));
+    assert_eq!(room.floor_id, distinct_seed("floorId") as i32);
+    assert_eq!(
+        room.exterior_visibilty_depth,
+        distinct_seed("exteriorVisibiltyDepth") as i32
+    );
+
+    let portal = &mlo.portals[0];
+    assert_eq!((portal.room_from, portal.room_to), (0, 0));
+    assert_eq!(portal.flags, distinct_seed("flags"));
+    assert_eq!(portal.mirror_priority, distinct_seed("mirrorPriority"));
+    assert_eq!(portal.opacity, distinct_seed("opacity"));
+    assert_eq!(portal.audio_occlusion, distinct_seed("audioOcclusion"));
+    assert_eq!(portal.corners, [distinct_vec3("corners")]);
+
+    let entity_set = &mlo.entity_sets[0];
+    assert_eq!(entity_set.name.hash, distinct_hash("name").hash);
+    assert_eq!(entity_set.locations, [distinct_seed("locations")]);
+    assert_distinct_entity(&entity_set.entities[0]);
+
+    let modifier = &mlo.time_cycle_modifiers[0];
+    assert_eq!(modifier.name.hash, distinct_hash("name").hash);
+    assert_eq!(modifier.sphere, distinct_vec4("sphere"));
+    assert_eq!(modifier.percentage, distinct_f32("percentage"));
+    assert_eq!(modifier.range, distinct_f32("range"));
+    assert_eq!(modifier.start_hour, distinct_seed("startHour"));
+    assert_eq!(modifier.end_hour, distinct_seed("endHour"));
+
+    assert_eq!(types.to_bytes().expect("an untouched save"), bytes);
+
+    // A member a table lacks reads as the engine's init, which is what a record built here states.
+    let engine = library
+        .resolve_any("CMloRoomDef")
+        .expect("the snapshot declares the room");
+    let depth = engine
+        .fields
+        .iter()
+        .find(|f| name_hash(&f.name) == name_hash("exteriorVisibiltyDepth"))
+        .expect("the room has the member");
+    assert_eq!(
+        depth.init,
+        Some(or_io::meta::Literal::Int(i64::from(
+            CMloRoomDef::default().exterior_visibilty_depth
+        )))
+    );
 }

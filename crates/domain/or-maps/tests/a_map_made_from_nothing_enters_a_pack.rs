@@ -1,5 +1,6 @@
 //! A map and a type file made from nothing become sources of a pack and break none of its rules, an empty map takes its first
-//! entity with no entity to copy, and an entity that is no copy is the record a copy with the same fields would be.
+//! entity with no entity to copy, an entity that is no copy is the record a copy with the same fields would be, and the first
+//! record an operation builds in an empty file is to the byte the one a copy of another file's gives.
 //!
 //! ⚠ The files are made here, by `or_world::create` and the crate's samples, so the clean checkout runs this. No schema snapshot
 //! is installed in this process, which is what a user's machine has.
@@ -12,12 +13,13 @@ use or_io::meta::instance::HashedString;
 use or_io::meta::typed::{CMapData, CMapTypes};
 use or_io::meta::{detect_binary_format, BinaryFormat, MetaDocument, SchemaLibrary};
 use or_maps::edit::{
-    add_entity, add_new_archetype, add_new_entity, edit_map, edit_types, grow_extents, pose_of,
-    Pose,
+    add_archetype, add_entity, add_new_archetype, add_new_entity, edit_map, edit_types,
+    grow_extents, pose_of, read_archetype, read_entity, Pose,
 };
 use or_maps::facts::{cooked, Name};
 use or_maps::import::{add_files, Incoming};
 use or_maps::model::Maps;
+use or_maps::operation::{apply, At, Operation};
 use or_maps::sample::{map_file, types_file, Entity};
 use or_maps::{check, inspect, Depth, Severity};
 use or_world::archetypes::ArchetypeIndex;
@@ -394,4 +396,111 @@ fn an_rbm_type_file_that_holds_no_archetype_refuses_one_that_is_no_copy_and_name
         "{refused}"
     );
     assert_eq!(std::fs::read(dir.join("metadata.xml")).unwrap(), before);
+}
+
+/// A pack of an empty map and an empty type file made from nothing, beside a map that places the crate and the type file that
+/// declares it, each made from nothing too.
+fn pack_with_donors(dir: &Path) -> PathBuf {
+    let types = crate_types();
+    let mut yard = create::map("yard");
+    create::place(&mut yard, &crate_at(Vec3::new(10.0, 20.0, 0.5))).expect("placed");
+    let yard = create::map_file(&yard, &index_of(&types), BinaryFormat::Pso).expect("saves");
+    let empty_types = create::types_file(&create::types("quay_types"), BinaryFormat::Pso)
+        .expect("an empty type file saves");
+    let folder = dir.join("maps");
+    let files = [
+        ("harbour.ymap", harbour(&[], &types)),
+        ("yard.ymap", yard),
+        ("harbour_types.ytyp", types),
+        ("quay_types.ytyp", empty_types),
+    ];
+    let incoming: Vec<Incoming<'_>> = (files.iter())
+        .map(|(name, bytes)| Incoming {
+            name,
+            bytes,
+            from_game: false,
+            virtual_path: None,
+        })
+        .collect();
+    let added = add_files(&folder, &incoming, None).expect("the files are added");
+    assert_eq!(added.refused, Vec::<(String, String)>::new());
+    folder
+}
+
+/// ⚠ An operation builds the first entity of a map and the first archetype of a type file and does not copy the donor, whose tree
+/// was another file's. A file that states no class for a record takes a copy too, laid out as the class is declared, so on donors
+/// made from nothing the two are one record: this fails when either path writes a member the other does not.
+#[test]
+fn the_first_record_an_operation_builds_is_to_the_byte_the_one_a_copy_of_another_files_gives() {
+    const MAP: &str = "harbour.metadata.src";
+    const YARD: &str = "yard.metadata.src";
+    const TYPES: &str = "harbour_types.metadata.src";
+    const QUAY: &str = "quay_types.metadata.src";
+    let scratch = tempfile::tempdir().unwrap();
+    let built = pack_with_donors(&scratch.path().join("built"));
+    let copied = pack_with_donors(&scratch.path().join("copied"));
+    let pose = Pose {
+        position: Vec3::new(60.0, 70.0, 0.5),
+        rotation: Quat::from_rotation_z(0.7),
+        scale_xy: 2.0,
+        scale_z: 1.5,
+    };
+
+    apply(
+        &built,
+        &Operation::AddEntity {
+            source: MAP.into(),
+            expects: None,
+            archetype: CRATE.into(),
+            pose: pose.into(),
+            donor: Some(At {
+                source: YARD.into(),
+                index: 0,
+            }),
+        },
+    )
+    .unwrap_or_else(|e| panic!("the first entity, built here: {e}"));
+    let donor = read_entity(&copied.join(YARD), 0).expect("the donor reads");
+    let known = boxes(&copied);
+    edit_map(&copied.join(MAP), |map| {
+        add_entity(map, &donor, Name::from_text(CRATE), pose)?;
+        grow_extents(map, |hash| known.get(&hash).copied());
+        Ok(())
+    })
+    .expect("the first entity, as a copy of one of another file");
+
+    apply(
+        &built,
+        &Operation::AddArchetype {
+            source: QUAY.into(),
+            expects: None,
+            name: "prop_quay_crate".into(),
+            asset: None,
+            donor: Some(At {
+                source: TYPES.into(),
+                index: 0,
+            }),
+        },
+    )
+    .unwrap_or_else(|e| panic!("the first archetype, built here: {e}"));
+    let donor = read_archetype(&copied.join(TYPES), 0).expect("the donor reads");
+    edit_types(&copied.join(QUAY), |types| {
+        add_archetype(types, Some(&donor), "prop_quay_crate", None).map(drop)
+    })
+    .expect("the first archetype, as a copy of one of another file");
+
+    for source in [MAP, QUAY] {
+        assert_eq!(
+            std::fs::read(built.join(source).join("metadata.xml")).unwrap(),
+            std::fs::read(copied.join(source).join("metadata.xml")).unwrap(),
+            "{source}: every member the source states"
+        );
+        assert_eq!(
+            cooked(&built.join(source)).unwrap(),
+            cooked(&copied.join(source)).unwrap(),
+            "{source}: and every byte the source cooks to"
+        );
+    }
+    assert_eq!(map_of(&built.join(MAP)).entities.len(), 1);
+    assert_eq!(types_of(&built.join(QUAY)).archetypes.len(), 1);
 }

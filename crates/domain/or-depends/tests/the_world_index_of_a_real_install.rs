@@ -1,5 +1,6 @@
-//! The world index of a real install, held to everything its mount lists, and the ground under the
-//! vehicle nodes of its own path regions.
+//! The world index of a real install, held to everything its mount lists, the ground under the
+//! vehicle nodes of its own path regions, and its own models found by name with each placement
+//! held to the map file it names.
 //!
 //! ⚠ Needs an install: without one each test records a skip and has checked nothing. Each reads
 //! every map, type file and bound of the install once, which is why it is in the slow tier.
@@ -13,7 +14,9 @@ use or_depends::{MountedWorld, WorldIndex};
 use or_io::container::rpf::crypto::RpfCryptoProvider;
 use or_title::vfs::{build_mounted_game, DlcCutoff};
 use or_title::GtaInstall;
-use world_fixture::{ground_at_the_road_nodes, held_to_its_mount, NODE_SCALES, STEP};
+use world_fixture::{
+    ground_at_the_road_nodes, held_to_its_mount, models_held_to_their_maps, NODE_SCALES, STEP,
+};
 
 /// The first install of the machine and the keys of its executable; without either, `what` is
 /// recorded as skipped.
@@ -112,4 +115,38 @@ fn the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them() {
             share(&other)
         );
     }
+}
+
+const FIND: &str =
+    "a_real_installs_own_models_are_found_by_name_and_each_placement_stands_in_the_map_it_names";
+
+/// How many models are asked for, spread over the names the install states.
+const HANDFUL: usize = 8;
+
+/// The least share of the placements read that must lie inside the streaming extents of their map.
+///
+/// ⚠ A floor set before any install was asked, not a measurement: a map is expected to stream from
+/// a box that holds what it places, and nothing here has yet counted the maps that do not.
+const INSIDE: f64 = 0.9;
+
+/// ⚠ Needs an install. The names are the install's own: archetypes its type files declare, that a
+/// file of it names and that a map of it places. Each is found by its name, and each placement
+/// listed is held to the entity at that index of the map file it names, read again.
+#[test]
+fn a_real_installs_own_models_are_found_by_name_and_each_placement_stands_in_the_map_it_names() {
+    let Some((root, crypto)) = install(FIND) else {
+        return;
+    };
+    let install = GtaInstall { root: root.clone() };
+    let game = build_mounted_game(&install, crypto, DlcCutoff::All).expect("the install mounts");
+    let source = MountedWorld::new(&game, &root);
+    let held = models_held_to_their_maps(&source, HANDFUL);
+    eprintln!("\n=== {held:?} ===");
+    assert_eq!(held.asked, HANDFUL, "{held:?}");
+    assert!(held.placements >= HANDFUL, "{held:?}");
+    let share = held.inside as f64 / held.placements as f64;
+    assert!(
+        share >= INSIDE,
+        "{share:.3} of the placements read lie inside their map's streaming extents: {held:?}"
+    );
 }

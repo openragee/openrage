@@ -21,6 +21,9 @@ or-world.workspace = true
 # inside `or-world`: a dependency is a name until something says which file
 # in which archive that name is, and only a mount knows.
 or-title.workspace = true
+# What a person pastes read as a place or a hash, and the forms a script takes a position in, which a search
+# reads its text with and copies a result as. `or-maps` does not depend on this crate, so the edge closes no ring.
+or-maps.workspace = true
 thiserror.workspace = true
 # The kept world index says when it refuses a file and reads the install again.
 tracing.workspace = true

@@ -3197,6 +3197,7 @@ dependencies = [
  "flate2",
  "glam",
  "or-io",
+ "or-maps",
  "or-test-support",
  "or-title",
  "or-world",

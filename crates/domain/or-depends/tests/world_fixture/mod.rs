@@ -22,13 +22,15 @@ use or_io::meta::{
 use or_title::vfs::{build_mounted_game, DlcCutoff};
 use or_title::{GtaInstall, MountedGame};
 
-/// The members the world index reads, and no other: a file written from this reads back to the
-/// tree it was written from, whatever schema snapshot the machine has.
+/// The members the world index and a search of it read, and no other: a file written from this
+/// reads back to the tree it was written from, whatever schema snapshot the machine has.
 const PSC: &str = r#"<?xml version="1.0"?>
 <ParserSchema>
   <structdef type="CEntityDef">
     <string name="archetypeName" type="atHashString"/>
+    <u32 name="guid"/>
     <Vector3 name="position"/>
+    <Vector4 name="rotation"/>
   </structdef>
   <structdef type="CMloInstanceDef" base="CEntityDef">
     <u32 name="groupId"/>
@@ -116,16 +118,59 @@ impl MapSpec {
     }
 }
 
+/// One entity a map of the fixture places.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Placed {
+    pub archetype: String,
+    pub position: [f32; 3],
+    /// The turn about the vertical axis that stands it, in degrees.
+    pub heading: f32,
+    pub guid: u32,
+}
+
+impl Placed {
+    pub fn new(archetype: &str, position: [f32; 3], heading: f32, guid: u32) -> Self {
+        Self {
+            archetype: archetype.to_string(),
+            position,
+            heading,
+            guid,
+        }
+    }
+}
+
 /// A `.ymap`'s bytes: a `CMapData` named `name`, as an RSC7 resource.
 pub fn map_bytes(name: &str, spec: &MapSpec) -> Vec<u8> {
-    let mut entity = MetaInstance::new("CEntityDef");
-    entity.set("archetypeName", Value::Hash(HashedString::new("prop_a")));
-    entity.set("position", Value::Vec3(spec.entities.0));
-    let mut entities = vec![Value::Pointer(Some(Box::new(entity)))];
+    let placed = Placed::new("prop_a", spec.entities.0, 0.0, 0);
+    placing_map_bytes(name, spec, &[placed])
+}
+
+/// A `.ymap`'s bytes: a `CMapData` named `name` whose entities are `placed`, in that order, and then its interiors.
+pub fn placing_map_bytes(name: &str, spec: &MapSpec, placed: &[Placed]) -> Vec<u8> {
+    let mut entities: Vec<Value> = placed
+        .iter()
+        .map(|placed| {
+            let turn = glam::Quat::from_rotation_z(placed.heading.to_radians());
+            let mut entity = MetaInstance::new("CEntityDef");
+            entity.set(
+                "archetypeName",
+                Value::Hash(HashedString::new(placed.archetype.as_str())),
+            );
+            entity.set("guid", Value::UInt(u64::from(placed.guid)));
+            entity.set("position", Value::Vec3(placed.position));
+            entity.set(
+                "rotation",
+                Value::Vec4(or_world::Placement::Entity.store(turn)),
+            );
+            Value::Pointer(Some(Box::new(entity)))
+        })
+        .collect();
     for interior in &spec.interiors {
         let mut placed = MetaInstance::new("CMloInstanceDef");
         placed.set("archetypeName", Value::Hash(HashedString::new(*interior)));
+        placed.set("guid", Value::UInt(0));
         placed.set("position", Value::Vec3(spec.entities.0));
+        placed.set("rotation", Value::Vec4([0.0, 0.0, 0.0, 1.0]));
         placed.set("groupId", Value::UInt(0));
         entities.push(Value::Pointer(Some(Box::new(placed))));
     }
@@ -490,6 +535,125 @@ pub fn held_to_its_mount(mount: &dyn Fn() -> MountedGame, root: &Path, file: &Pa
         maps_asked,
         bounds_asked,
     }
+}
+
+/// What [`models_held_to_their_maps`] compared, so a caller can say a mount with no model agreed with nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelsHeld {
+    /// The archetypes a file of the mount names and an entity of a map places.
+    pub named: usize,
+    /// Those asked for by name.
+    pub asked: usize,
+    /// The placements held to the entity of their map file.
+    pub placements: usize,
+    /// Those of them that lie inside the streaming extents of their map.
+    pub inside: usize,
+}
+
+/// Find up to `handful` models of `source` by their own names, spread over the names its files state, and hold each placement listed to the entity at that index of the map file it names, read again here.
+pub fn models_held_to_their_maps(
+    source: &dyn or_depends::WorldSource,
+    handful: usize,
+) -> ModelsHeld {
+    use or_depends::find::{
+        find, names_of, place_maps, placements_of, Asked, Budget, Detail, Install, Rank,
+        SearchNames,
+    };
+
+    let (index, _) = or_depends::WorldIndex::build(source, None);
+    let (catalogue, names) = names_of(source);
+    let search = SearchNames::new(&index, &names);
+    let mut placements = or_depends::PlacementIndex::new();
+    place_maps(&index, source, &mut placements);
+    let mut named: Vec<(String, u32)> = (index.archetypes())
+        .filter(|archetype| {
+            let mut placed = placements.of(archetype.name).iter();
+            placed.any(|placement| placement.placed != or_depends::Placed::GrassBatch)
+        })
+        .filter_map(|archetype| {
+            let flavour = or_io::names::HashFlavour::CaseFolding;
+            let name = names.resolve_with(flavour, archetype.name)?;
+            Some((name.to_ascii_lowercase(), archetype.name))
+        })
+        .collect();
+    named.sort();
+    let step = (named.len() / handful.max(1)).max(1);
+    let picked: Vec<&(String, u32)> = named.iter().step_by(step).take(handful).collect();
+
+    let asked = Asked {
+        near: None,
+        limit: 4,
+    };
+    let budget = Budget {
+        placements: 16,
+        bytes: 256 << 20,
+    };
+    let install = Install {
+        world: &index,
+        catalogue: &catalogue,
+        names: &names,
+        search: &search,
+        placements: &placements,
+    };
+    let mut held = ModelsHeld {
+        named: named.len(),
+        asked: picked.len(),
+        placements: 0,
+        inside: 0,
+    };
+    for (name, hash) in picked {
+        let found = find(name, &install, &asked, None).expect("a name is text");
+        let model = found.models.first();
+        let model = model.unwrap_or_else(|| panic!("{name} is not found by its name"));
+        assert_eq!(
+            (model.name.as_deref(), model.hash, model.rank),
+            (Some(name.as_str()), *hash, Rank::Exact)
+        );
+        assert_eq!(model.placements, placements.of(*hash).len(), "{name}");
+        let declared = index.archetype(*hash).expect("an archetype");
+        let file = index.type_file(declared.type_file).expect("its type file");
+        let said = model.type_file.as_ref().map(|file| &file.logical);
+        assert_eq!(said, Some(&file.logical), "{name}");
+
+        let listed = placements_of(*hash, &install, source, None, &budget);
+        assert!(
+            !listed.listed.is_empty(),
+            "{name} is placed and lists nothing"
+        );
+        for placement in &listed.listed {
+            let Detail::Entity {
+                index: at, guid, ..
+            } = placement.detail
+            else {
+                continue;
+            };
+            let map = index.map(placement.map).expect("the map a placement names");
+            assert_eq!(placement.logical.as_deref(), Some(map.logical.as_str()));
+            let bytes = source.open(map.archive, &map.logical).expect("the file");
+            let mut diags = or_io::meta::Diagnostics::new(or_io::meta::ErrorMode::Lenient);
+            let library = or_io::meta::default_library();
+            let (tree, _) =
+                or_io::meta::binary::parse_meta_binary_full(library, &bytes, &mut diags)
+                    .expect("the map reads");
+            let data = or_world::MapData::new(&tree).expect("a map");
+            // The index is a place in the array as the file holds it, where a pointer to nothing has one too.
+            let array = or_world::field::array_at(data.instance(), or_world::keys::ENTITIES);
+            let entity = array.get(at).and_then(or_world::field::as_struct);
+            let entity = entity.map(or_world::Entity::new);
+            let entity = entity.unwrap_or_else(|| panic!("{} has no entity {at}", map.logical));
+            let which = format!("{name} in {} at {at}", map.logical);
+            assert_eq!(entity.archetype(), *hash, "{which}");
+            assert_eq!(Some(entity.position()), placement.position, "{which}");
+            assert_eq!(entity.guid(), guid, "{which}");
+            held.placements += 1;
+            let position = entity.position();
+            held.inside +=
+                usize::from(map.streaming.is_some_and(|(min, max)| {
+                    position.cmpge(min).all() && position.cmple(max).all()
+                }));
+        }
+    }
+    held
 }
 
 /// A `.ynd`'s bytes: a region of `car` vehicle nodes and then `ped` pedestrian ones, each at the

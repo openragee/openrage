@@ -20,6 +20,7 @@ pub mod catalogue;
 pub mod census;
 pub mod contents;
 pub mod export;
+pub mod find;
 pub mod placement;
 pub mod resolve;
 pub mod rules;

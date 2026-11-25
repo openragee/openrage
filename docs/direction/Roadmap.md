@@ -9725,13 +9725,16 @@ box, each with a key to go to it; Copy for script in Lua, JSON and C#, as templa
 button keeping the form used last; and `openrage-cli world find`
 ([brief](World_Editor_Plan.md#find-anything-and-go-there-r70e)).
 
-**Where it stands.** Two modules are built in `or-maps`, which nothing calls yet:
-`crates/domain/or-maps/src/place.rs` reads a pasted position, a hash in each spelling or text, and
-`crates/domain/or-maps/src/script_text.rs` writes a position in Lua, JSON and C# from
-`crates/domain/or-maps/src/script_forms.json`, each held by its own tests
-(`just test-crate or-maps`). Left: every part on screen and `openrage-cli world find`. The palette,
-Go to File and the name index exist ([R59j](#r59j-one-command-registry), [R24b](#r24b-go-to-file),
-[R23](#r23-names-and-hashes)).
+**Where it stands.** The headless parts are built and no screen calls them
+([in full](../reference/Crate_Reference.md#domain-crates)).
+`crates/domain/or-maps/src/place.rs` reads what is pasted,
+`crates/domain/or-maps/src/script_text.rs` writes a position for a script, and
+`crates/domain/or-depends/src/find.rs` answers what a person typed from an install's indexes,
+which `openrage-cli world find` prints
+(`asking_a_mount_where_something_is`, on mounts built by hand). Both installs hold eight of their
+own models to their maps
+(`a_real_installs_own_models_are_found_by_name_and_each_placement_stands_in_the_map_it_names`,
+2026-11-25). Left: every part on screen.
 
 **Depends on.** [R70b](#r70b-the-gta-v-world-index);
 [R70c](#r70c-the-gta-v-world-streamed-and-drawn) to go there; [R70g](#r70g-collision-as-a-query) for

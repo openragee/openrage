@@ -1,5 +1,5 @@
-//! `openrage-cli world index`, `world at` and `world ground` over an install built by hand: what
-//! each prints, and where the index is kept when no file is named for it.
+//! `openrage-cli world index`, `world at`, `world ground` and `world find` over an install built by
+//! hand: what each prints, and where the index is kept when no file is named for it.
 //!
 //! ⚠ The commands print with `println!`, which a test cannot read back in its own process, so each
 //! runs in a child of this test binary that calls `or_cli::run` between two markers. The child is
@@ -15,8 +15,8 @@ use std::process::{Command, ExitCode};
 use or_title::dlc::{ContentChangeSet, ContentChangeSetGroup};
 use or_title::{ContentXml, DataFileEntry, DlcList, SetupData};
 use world_fixture::{
-    bound_bytes, cube, level_square, manifest_bytes, map_bytes, mesh_bound_bytes, write_archive,
-    MapSpec,
+    bound_bytes, cube, hash, level_square, manifest_bytes, map_bytes, mesh_bound_bytes,
+    placing_map_bytes, types_bytes, write_archive, MapSpec, Placed,
 };
 
 const CHILD_ENV: &str = "OPENRAGE_WORLD_INDEX_ARGS";
@@ -446,4 +446,160 @@ fn a_level_a_mode_a_kept_file_and_a_fresh_read_are_taken_from_the_command_line()
     assert_eq!(read_again["ground"]["height"], height(&low));
     assert_eq!(read_again["lookedIn"][0]["name"], "m_town_0");
     assert_eq!(ask(&moved)["ground"], read_again["ground"]);
+}
+
+#[test]
+fn where_something_is_is_asked_from_the_command_line() {
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let config = scratch.path().join("config");
+    std::fs::create_dir(&config).expect("mkdir");
+    // A town that stands a bench, and two packs its list names after it: the first holds no map,
+    // and the second a map that stands the same model, in an archive a change set of multiplayer
+    // alone enables.
+    let root = scratch.path().join("install");
+    std::fs::create_dir(&root).expect("mkdir");
+    let list = DlcList {
+        paths: ["alpha", "beta"]
+            .iter()
+            .map(|pack| format!("dlcpacks:/{pack}/").into())
+            .collect(),
+    };
+    write_archive(
+        &root,
+        "common.rpf",
+        &[
+            ("data/dlclist.xml", list.to_xml().into_bytes()),
+            ("data/_manifest.ymf", manifest_bytes(&[], &[])),
+        ],
+    );
+    let square = MapSpec::around(cube([100.0, 100.0, 0.0], 100.0));
+    let in_town = Placed::new("prop_bench", [110.0, 120.0, 10.0], 90.0, 7);
+    let in_beta = Placed::new("prop_bench", [150.0, 160.0, 10.0], 180.0, 8);
+    let unit = cube([-1.0; 3], 2.0);
+    write_archive(
+        &root,
+        "x64a.rpf",
+        &[
+            (
+                "levels/m_town.ymap",
+                placing_map_bytes("m_town", &square, std::slice::from_ref(&in_town)),
+            ),
+            (
+                "types/props.ytyp",
+                types_bytes("props", &[("prop_bench", unit, 80.0)]),
+            ),
+            ("models/prop_bench.ydr", b"a model".to_vec()),
+        ],
+    );
+    write_pack(&root, "alpha", 10, None, Vec::new());
+    write_pack(
+        &root,
+        "beta",
+        20,
+        Some(("BETA_MAP", "dlc_beta:/levels.rpf")),
+        vec![(
+            "levels.rpf/m_beta.ymap",
+            placing_map_bytes("m_beta", &square, std::slice::from_ref(&in_beta)),
+        )],
+    );
+    let game = root.to_string_lossy().into_owned();
+    let ask = |more: &[&str]| -> serde_json::Value {
+        let args: Vec<&str> = ["find", &game].iter().chain(more).copied().collect();
+        let (printed, ok) = world(&config, &args);
+        assert!(ok, "{more:?}: {printed}");
+        serde_json::from_str(printed.trim()).expect("one JSON value")
+    };
+    let maps_of = |answer: &serde_json::Value| -> Vec<String> {
+        let listed = answer["placements"]["listed"].as_array().expect("listed");
+        let maps = listed.iter().map(|placement| placement["map"].as_str());
+        maps.map(|map| map.expect("a map").to_string()).collect()
+    };
+
+    // Text that answers nothing prints its empty groups and succeeds.
+    let (printed, ok) = world(&config, &["find", &game, "no_such_thing"]);
+    assert!(ok, "{printed}");
+    let lines: Vec<&str> = printed.lines().collect();
+    assert_eq!(lines, ["Find `no_such_thing`", "Models: 0", "Maps: 0"]);
+    assert_eq!(kept_under(&config).len(), 1, "the index it built is kept");
+
+    // Every pack: the model is placed in the town and in the later pack, nearest the view first.
+    let near = ["prop_bench", "--json", "--near", "150,160,10"];
+    let whole = ask(&near);
+    assert_eq!(whole["models"][0]["placements"], 2);
+    assert_eq!(
+        whole["models"][0]["hash"],
+        format!("0x{:08X}", hash("prop_bench"))
+    );
+    assert_eq!(maps_of(&whole), ["m_beta", "m_town"]);
+    assert_eq!(whole["placements"]["listed"][0]["guid"], in_beta.guid);
+    assert_eq!(whole["notes"], serde_json::json!([]));
+
+    // Stopped at the pack before it: the town's alone, the pack left out named, and an index kept
+    // in a file of the level's own.
+    let level: Vec<&str> = near.iter().chain(&["--level", "alpha"]).copied().collect();
+    let level = ask(&level);
+    assert_eq!(level["models"][0]["placements"], 1);
+    assert_eq!(maps_of(&level), ["m_town"]);
+    assert_eq!(
+        level["notes"],
+        serde_json::json!(["the level leaves out 1 of 2 listed pack(s) and what they place: beta"])
+    );
+    assert_eq!(kept_under(&config).len(), 2, "a level keeps its own index");
+
+    // A mode reaches the mount, and leaves out no map: the note names the change set it left.
+    let story: Vec<&str> = near.iter().chain(&["--mode", "story"]).copied().collect();
+    let story = ask(&story);
+    assert_eq!(maps_of(&story), ["m_beta", "m_town"]);
+    let note = story["notes"][0].as_str().expect("a note");
+    assert!(
+        note.starts_with("mounted as story, which leaves out no map"),
+        "{note}"
+    );
+    assert!(
+        note.ends_with("; 1 change set(s) stated for the other mode: BETA_MAP"),
+        "{note}"
+    );
+    assert_eq!(
+        kept_under(&config).len(),
+        2,
+        "a mode keeps no index of its own"
+    );
+
+    // `--copy` prints the copy alone: the list of the model's placements, each as the form writes
+    // a place with its heading, and a place as it was typed.
+    let (printed, ok) = world(&config, &["find", &game, "prop_bench", "--copy", "lua"]);
+    assert!(ok, "{printed}");
+    assert!(
+        printed.starts_with('{') && printed.trim_end().ends_with('}'),
+        "{printed}"
+    );
+    for placed in [&in_town, &in_beta] {
+        let [x, y, z] = placed.position;
+        let one = format!("vector4({x:.3}, {y:.3}, {z:.3}, {:.3})", placed.heading);
+        assert!(printed.contains(&one), "{printed} lacks {one}");
+    }
+    let (printed, ok) = world(
+        &config,
+        &["find", &game, "1.5,", "-2.25,", "3", "--copy", "json"],
+    );
+    assert!(ok, "{printed}");
+    let copied: serde_json::Value = serde_json::from_str(printed.trim()).expect("JSON");
+    assert_eq!(
+        copied,
+        serde_json::json!({ "x": 1.5, "y": -2.25, "z": 3.0 })
+    );
+
+    // Nothing to copy fails, as do a flag the verb lacks, a form the tree lacks, a hash too wide
+    // for one, no text, and a folder that is no install: each prints nothing.
+    for refused in [
+        &["find", &game, "no_such_thing", "--copy", "lua"][..],
+        &["find", &game, "prop_bench", "--game", &game],
+        &["find", &game, "prop_bench", "--copy", "python"],
+        &["find", &game, "0x123456789"],
+        &["find", &game],
+        &["find", &config.to_string_lossy(), "prop_bench"],
+    ] {
+        let (printed, ok) = world(&config, refused);
+        assert!(!ok && printed.is_empty(), "{refused:?}: {printed}");
+    }
 }

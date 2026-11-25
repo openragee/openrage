@@ -450,6 +450,81 @@ nodes. ⚠ Nothing in a `.ynd` states the scale of a node's stored integers, so
 the suite tests one reading of it against four rivals (`NODE_SCALES`), and the
 share of nodes it asks to be within a step is a floor, not a measurement.
 
+`find` answers what a person typed from the indexes of a mounted install
+([R70e](../direction/Roadmap.md#r70e-find-anything-and-go-there)). `find::find`
+reads the text with `or_maps::place::read_pasted`, which is why this crate
+depends on `or-maps` and `or-maps` never on it, and returns rows in groups, each
+capped at the count asked for: a place, with the maps and the carried bounds
+that hold it and, handed a `WorldCollision`, its ground, which is where two
+numbers go; a hash in its three spellings, with the name a file of the install
+states for it and what it names (`find::Named`: an archetype with its type file,
+a map, a file of the `Catalogue` by its stem or, as an archive lists it, by its
+whole name); the models whose name answers, each with the
+type file that declares it and how many placements the `PlacementIndex` holds
+of it, and from a view its nearest; and the maps whose name answers, each with
+the centre of its extents. A name ranks as `find::Rank` says: the name itself,
+a prefix, a prefix of a part after an underscore, then contained
+(`a_models_exact_name_ranks_first_then_a_prefix_then_a_part_after_an_underscore_then_contained`).
+`find::SearchNames` is built once and holds the names in order and each part
+after an underscore in order, so a question is two binary searches and at most
+one pass over the names, which ends at the count asked for; it visits the
+placements of the rows it lists and no other
+(`a_question_costs_no_more_than_the_names_of_a_mount_and_never_their_square`,
+which counts `find::Work` on mounts of two sizes). ⚠ A type file states an
+archetype's hash and never its name, so a part of a name finds a model only
+where a file of the install carries that name (`find::names_of` takes the leaf
+and the stem of every entry); its hash and its name typed in full find it all
+the same, and `SearchNames::unnamed` counts the archetypes no file names.
+
+`find::placements_of` lists one model's placements, nearest a view first, each
+with its map file and, read from that file, the entity's index, its guid and
+its heading as a script takes one. A map is opened once, one tree at a time,
+while `find::Budget` allows, and a placement whose map was not read is listed
+where the index holds it, with why (`find::Unread`)
+(`a_models_placements_are_read_under_a_budget_and_a_model_nothing_places_says_so`).
+⚠ A placement is paired with its entity by its position to the bit, each entity
+once, because the `PlacementIndex` holds a position and a map and no index. The
+index said is the entity's place in the array as the file holds it, whatever
+stands before it
+(`an_entity_is_numbered_by_its_place_in_the_array_whatever_stands_before_it`). It
+holds a grass batch with no position, so a batch is listed last with none, and
+it folds maps alone: a model that only the entity list of an interior's
+archetype places reads as placed nowhere. `PlaceFound::script`,
+`PlacementFound::script` and `ModelPlacements::script` write a result in a form
+of `or_maps::script_text`, and each form of the tree reads back
+(`a_result_copied_for_a_script_reads_back_as_the_place_it_was_copied_from`). The
+suite is `asking_a_mount_where_something_is`, on mounts built by hand; the
+install suite
+(`a_real_installs_own_models_are_found_by_name_and_each_placement_stands_in_the_map_it_names`,
+slow tier) asks eight of an install's own models by name and holds each
+placement to the entity of the map file it names, the check
+`models_held_to_their_maps` also runs on a mount built by hand. On 2026-11-25
+it held on both installs: on Legacy 17 of 17 placements read are the entity
+their map file holds at the index said and lie inside that map's streaming
+extents, of 53,002 models a file names and a map places; on Enhanced 16 of 16,
+of 51,517.
+
+`openrage-cli world find <install> <text>` asks it, as lines or with `--json`:
+the groups, and the placements of the model the text names in full or by its
+hash. `--near` is the view placements are ordered from, `--limit` the most rows
+of a group, and `--copy` prints, alone, the place or that model's placements in
+the form named, to three decimals; a flag's value follows it or stands behind
+`=`, and a flag the verb lacks is refused. `--level` and `--mode` mount as `dlc-list`
+does, with the index of a level kept in a file of its own
+(`where_something_is_is_asked_from_the_command_line`), and its JSON lists what
+its lines list (`the_json_lists_what_the_text_lists`). ⚠ Nothing keeps which
+maps place a model, so the verb reads every map the index names for the models
+the text lists (`find::models_asked`, `find::place_maps`) and for no other, and
+a text that lists no model reads no map.
+Left of the row: every part on screen (the palette, the field of Files, Show in
+world, stepping through placements, bookmarks, the Copy for script button); the
+other things a script copies (a hash in both spellings as a line, the lines that
+spawn an object); a type as a row; and the placements an interior's own entity
+list makes. The palette, Go to File and the name index exist
+([R59j](../direction/Roadmap.md#r59j-one-command-registry),
+[R24b](../direction/Roadmap.md#r24b-go-to-file),
+[R23](../direction/Roadmap.md#r23-names-and-hashes)).
+
 ⚠ A declared `drawableDictionary` outranks a loose file of the same stem, and
 `assetName` is then an entry inside that `.ydd`. Read as a filename, 76,898
 archetypes disagree; with the precedence right, 158,665 of 158,665 comparable

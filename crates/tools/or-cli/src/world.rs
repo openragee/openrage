@@ -38,6 +38,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "index" => super::world_index::cmd_index(rest),
         "at" => super::world_index::cmd_at(rest),
         "ground" => super::world_ground::cmd_ground(rest),
+        "find" => super::world_find::cmd_find(rest),
         "-h" | "--help" | "help" => {
             print_usage();
             ExitCode::SUCCESS
@@ -1282,6 +1283,16 @@ fn print_usage() {
     eprintln!("                           `dlc-list` does. Static map collision only: an");
     eprintln!("                           interior's is named and not loaded, and a placed");
     eprintln!("                           prop's is not read.");
+    eprintln!("  find <install> <text>    Where something is: a place as pasted, with the maps");
+    eprintln!("                           and bounds that hold it and its ground; a hash in");
+    eprintln!("                           hexadecimal, unsigned or signed, with what it names;");
+    eprintln!("                           or a name, with the models and the maps it answers,");
+    eprintln!("                           best first, and the placements of the model it names");
+    eprintln!("                           in full. --near <x,y,z> orders placements from a");
+    eprintln!("                           view; --limit <n> is the most rows of a group (10);");
+    eprintln!("                           --copy <lua|json|csharp> prints the place, or the");
+    eprintln!("                           model's placements, as a script takes them. --level");
+    eprintln!("                           and --mode mount as `dlc-list` does.");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --types <dir>   Where to find `.ytyp` for archetype bounds. Defaults to");

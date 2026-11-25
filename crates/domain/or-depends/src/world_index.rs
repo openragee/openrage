@@ -136,6 +136,8 @@ pub struct Map {
     /// `string_hash` of [`Self::name`], which a parent and a manifest name it by.
     pub hash: u32,
     pub logical: String,
+    /// The root archive that lists it, by its place in mount order, which is where [`WorldSource::open`] reads it from.
+    pub archive: usize,
     /// Whether the file read as a map; every field below is empty where it did not.
     pub read: bool,
     /// The map's `parent`, zero where it has none.
@@ -275,7 +277,7 @@ fn leaf_and_stem(logical: &str) -> (String, String) {
 }
 
 /// A metadata file as its value tree, read as the dependency tables read one.
-fn parse(bytes: &[u8]) -> Option<MetaInstance> {
+pub(crate) fn parse(bytes: &[u8]) -> Option<MetaInstance> {
     let mut diags = Diagnostics::new(ErrorMode::Lenient);
     parse_meta_binary_full(or_io::meta::default_library(), bytes, &mut diags)
         .ok()
@@ -509,6 +511,7 @@ impl WorldIndex {
                     name,
                     hash,
                     logical: row.logical.clone(),
+                    archive: a,
                     read: facts.is_some(),
                     parent: facts.as_ref().map_or(0, |f| f.parent),
                     flags: facts.as_ref().map_or(0, |f| f.flags),

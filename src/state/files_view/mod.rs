@@ -73,6 +73,45 @@ pub(crate) fn rpf9_type_name(kind: or_io::container::rpf::Gta6EntryType) -> &'st
     }
 }
 
+/// Add a type suffix for display without changing a recovered name or a hash.
+pub(crate) fn rpf9_display_name(
+    name: &str,
+    kind: or_io::container::rpf::Gta6EntryType,
+) -> std::borrow::Cow<'_, str> {
+    use or_io::container::rpf::{Gta6EntryType, Rpf9Role};
+    use or_io::gta6::other_bodies::OtherBody;
+    use std::borrow::Cow;
+
+    let extension = match kind {
+        Gta6EntryType::Archive => "rpf",
+        Gta6EntryType::TextureDictionary => "ytd",
+        Gta6EntryType::Resource(role) => match role {
+            Rpf9Role::Drawable => "ydr",
+            Rpf9Role::Dictionary => "ydd",
+            Rpf9Role::DrawableWithBound => "yft",
+            Rpf9Role::Bound => "ybn",
+            Rpf9Role::NavMesh => "ynv",
+            Rpf9Role::Cloth => "yld",
+            Rpf9Role::ParticleEffects => "ypt",
+            _ => "bin",
+        },
+        Gta6EntryType::Body(body) => match body {
+            OtherBody::Gfx => "gfx",
+            OtherBody::HeightMap | OtherBody::HeightGrid => "dat",
+            OtherBody::MoveNetwork => "mrf",
+            _ => "bin",
+        },
+        Gta6EntryType::Rbf => "rbf",
+        Gta6EntryType::Unknown => "bin",
+    };
+    let existing = Path::new(name).extension().and_then(|s| s.to_str());
+    if existing.is_some_and(|ext| extension == "bin" || ext.eq_ignore_ascii_case(extension)) {
+        Cow::Borrowed(name)
+    } else {
+        Cow::Owned(format!("{name}.{extension}"))
+    }
+}
+
 fn encryption_label(encryption: RpfEncryption) -> &'static str {
     match encryption {
         RpfEncryption::None | RpfEncryption::Open => tr!("None"),

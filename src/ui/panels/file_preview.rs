@@ -36,7 +36,7 @@ fn key_of(state: &AppState, doc: DocumentId, node: RpfNodeId) -> Option<PreviewK
         doc,
         node,
         rpf.session.size_for(node),
-        row.name.clone(),
+        row.display_name().into_owned(),
         row.children.len(),
     ))
 }

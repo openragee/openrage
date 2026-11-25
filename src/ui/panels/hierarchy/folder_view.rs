@@ -379,14 +379,18 @@ fn details_table(
                         );
                         let colour = name_colour(&row);
                         ui.add(
-                            egui::Label::new(icons::icon_label(&icon, &row.node.name, colour))
-                                .selectable(false)
-                                .truncate(),
+                            egui::Label::new(icons::icon_label(
+                                &icon,
+                                row.node.display_name(),
+                                colour,
+                            ))
+                            .selectable(false)
+                            .truncate(),
                         );
                     }
                 });
                 crate::ui::accessible_name::named_with(name_cell, || {
-                    tr!("Name: {name}", name = row.node.name)
+                    tr!("Name: {name}", name = row.node.display_name())
                 });
                 for ((title, _, _), cell) in COLUMNS[1..].iter().zip(detail_cells(&row.facts)) {
                     let (_, response) = table_row.col(|ui| {
@@ -438,11 +442,11 @@ fn hover_of(row: &Row) -> String {
     let text = match row.facts.size {
         Some(size) if !row.node.is_dir() => format!(
             "{}\n{} · {}",
-            row.node.name,
+            row.node.display_name(),
             row.facts.kind,
             or_job::human_bytes(size)
         ),
-        _ => format!("{}\n{}", row.node.name, row.facts.kind),
+        _ => format!("{}\n{}", row.node.display_name(), row.facts.kind),
     };
     match row.facts.rpf9_entry {
         Some((index, hash)) => format!("{text}\n#{index} · {hash:016X}"),
@@ -619,7 +623,7 @@ fn tile(
         .inner;
     if !edited {
         let galley = ui.painter().layout_job(tile_name(
-            &row.node.name,
+            &row.node.display_name(),
             name_rect.width(),
             name_colour(&row),
         ));

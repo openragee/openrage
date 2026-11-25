@@ -16959,3 +16959,60 @@ msgstr "此文件从 RPF9 表中打开，为只读。请提取文件以保存单
 
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "此文档字符串的名称需要 GTA VI 密钥快照"
+
+msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
+msgstr "只有从 GTA VI 归档打开的文档才会保存到该归档的副本中"
+
+msgid "Cannot save into a copy of the archive: {reason}"
+msgstr "无法保存到归档的副本：{reason}"
+
+msgid "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale."
+msgstr "{file} 是一个新归档，其条目位置已写入修改；游戏会拒绝它，因为其表的签名已过期。"
+
+msgid "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds."
+msgstr "{file} 是一个与读取来源相同的新归档：修改写入的是条目原有的字节。"
+
+msgid "nothing this view holds is edited, or OpenRage writes none of its edits to a GTA VI body"
+msgstr "此视图中没有任何修改，或者 OpenRage 不会将其任何修改写入 GTA VI 内容"
+
+msgid "the copy is a new file, and the archive it is read from is never written"
+msgstr "副本是一个新文件，读取来源的归档永远不会被写入"
+
+msgid "more than one entry holds the body at {offset}, so which one to replace is not known"
+msgstr "不止一个条目包含位于 {offset} 的内容，因此无法确定要替换哪一个"
+
+msgid "no entry of the archive holds the body at {offset}"
+msgstr "归档中没有条目包含位于 {offset} 的内容"
+
+msgid "Save into a copy of the archive…"
+msgstr "保存到归档的副本…"
+
+msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"
+msgstr "将 GTA VI 文档的修改写入其条目的位置，保存到读取来源归档的新副本中。游戏会拒绝该副本，因为其表的签名已过期"
+
+msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
+msgstr "没有 GTA VI 密钥：请在 设置 ▸ 游戏 中设置 GTA VI 安装文件夹，以便其可执行文件解锁密钥。"
+
+msgid "resource"
+msgstr "资源"
+
+msgid "media"
+msgstr "媒体"
+
+msgid "other class"
+msgstr "其他类别"
+
+msgid "{file} is listed by a scan without its table: {why}"
+msgstr "{file} 由扫描列出，没有使用其表：{why}"
+
+msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
+msgstr "在设置中选择 GTA VI 文件夹，或打开其中一个归档，即可根据表列出其归档。"
+
+msgid "Find by name, or by hash as 0x hex"
+msgstr "按名称查找，或按 0x 十六进制哈希查找"
+
+msgid "Only the archives expanded are searched."
+msgstr "只搜索已展开的归档。"
+
+msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
+msgstr "{file} 是一个新归档，其条目位置已写入修改，其表与读取时相同。"

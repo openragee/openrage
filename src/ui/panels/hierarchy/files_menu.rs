@@ -141,7 +141,7 @@ pub(crate) fn draw_properties(ui: &mut egui::Ui, state: &mut AppState) {
                 (Some(root), None) => format!("{}\\{}", root.display(), inner.replace('/', "\\")),
                 (None, None) => format!("/{inner}"),
             };
-            Some((node.name.clone(), facts, path))
+            Some((node.display_name().into_owned(), facts, path))
         }
         _ => None,
     });

@@ -379,7 +379,7 @@ fn crumbs(ui: &mut egui::Ui, state: &mut AppState, listing: &Listing) {
                         break;
                     }
                     steps.push((
-                        node.name.clone(),
+                        node.display_name().into_owned(),
                         Location {
                             doc: listing.doc,
                             node: node.id,

@@ -196,7 +196,7 @@ pub fn preview(session: &RpfEditSession, id: RpfNodeId) -> Option<EntryPreview> 
         }
     };
     Some(EntryPreview {
-        name: node.name.clone(),
+        name: node.display_name().into_owned(),
         path,
         size,
         kind,

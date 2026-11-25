@@ -13,6 +13,9 @@ fn decrypted_payload(path: &Path, bytes: Vec<u8>) -> DocPayload {
     if super::super::document_io::is_text(&bytes) {
         return super::super::document_io::text_payload(path, bytes);
     }
+    if let Some(listing) = gta6_script_view::script_payload(&bytes) {
+        return listing;
+    }
     let banner = super::super::document_io::no_reader(path);
     DocPayload::Hex(HexDocument { bytes, banner })
 }
@@ -47,6 +50,9 @@ pub(super) fn take_ciphered(path: &Path) -> Option<CipheredRequest> {
 /// Decipher and inflate the content-ciphered leaf `entry_index` of the archive whose header is at
 /// `base` in the file at `archive`, loading the GTA VI key snapshot for the decipher. A test helper:
 /// the open path takes the stored bytes once through [`ciphered_payload`] instead.
+#[path = "gta6_script_view.rs"]
+mod gta6_script_view;
+
 #[cfg(test)]
 pub(crate) fn decipher_entry(
     archive: &Path,
@@ -89,12 +95,11 @@ pub(super) fn ciphered_payload(
 
 /// Load the GTA VI key snapshot and mount the archive whose header is at `base` in the file at
 /// `archive`, returning the keys, the open file and the mount so one open deciphers one entry.
-fn mount_ciphered(archive: &Path, base: u64) -> Result<(GtaViKeys, File, Gta6Mount), String> {
-    let keys = match GtaViKeys::for_install(or_title::config::config_dir().as_deref()) {
-        Ok(Some(keys)) => keys,
-        Ok(None) => return Err("no GTA VI key snapshot (set OPENRAGE_GTA6_KEYS)".to_string()),
-        Err(e) => return Err(e.to_string()),
-    };
+fn mount_ciphered(
+    archive: &Path,
+    base: u64,
+) -> Result<(std::sync::Arc<GtaViKeys>, File, Gta6Mount), String> {
+    let keys = super::rpf9_table::keys()?;
     let mut file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
     let mounted = open_at(&mut file, base, &keys).map_err(|e| e.to_string())?;
     Ok((

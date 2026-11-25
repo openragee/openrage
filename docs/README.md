@@ -41,6 +41,7 @@ Steps, checklists, traps and the policies a contributor follows.
 - [Private_Tier.md](guides/Private_Tier.md): what a clone lacks, why, and how to rebuild it.
 - [Interface_Languages.md](guides/Interface_Languages.md): how to make or change a language of the interface, and the words the French catalog uses.
 - [Workbench_Guide.md](guides/Workbench_Guide.md): how a clothing creator opens a pack, fixes it, builds it, installs it and shares a project; the app shows it under Help.
+- [GTA_VI_Modding.md](guides/GTA_VI_Modding.md): what a user does with a GTA VI install, from the keys of their executable to a copy of an archive, and why the game refuses what OpenRage writes.
 
 ## Features
 

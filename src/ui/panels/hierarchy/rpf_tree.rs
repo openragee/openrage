@@ -56,7 +56,10 @@ pub(super) fn list_rows(
             };
             let id_here = parent.with(("rpf_node", id));
             if !node.is_dir() {
-                if shown && (needle.is_empty() || node.name.to_ascii_lowercase().contains(needle)) {
+                if shown
+                    && (needle.is_empty()
+                        || node.display_name().to_ascii_lowercase().contains(needle))
+                {
                     rows.push(ListedRow {
                         node: id,
                         depth,
@@ -271,7 +274,7 @@ pub(super) fn draw_row(
             r
         } else {
             let icon = icons::rpf_node_icon(&node, unsaved, in_flight, true, row.open);
-            let job = icons::icon_label(&icon, &node.name, label_color.into());
+            let job = icons::icon_label(&icon, node.display_name(), label_color.into());
             ui.selectable_label(selected, job)
         };
         note_row(state, doc_id, node_id, resp.rect);
@@ -344,7 +347,7 @@ pub(super) fn draw_row(
             r
         } else {
             let icon = icons::rpf_node_icon(&node, unsaved, in_flight, supported, false);
-            let label = icons::icon_label(&icon, &node.name, color.into());
+            let label = icons::icon_label(&icon, node.display_name(), color.into());
             let r = selectable_header(ui, selected, label);
             let detail = size.map(|sz| format!("{:.1} KiB", (sz as f32) / 1024.0));
             ui.add(detail_label(detail.unwrap_or_default()));

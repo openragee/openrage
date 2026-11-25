@@ -290,7 +290,7 @@ impl AppState {
                 break;
             };
             steps.push(Crumb {
-                label: n.name.clone(),
+                label: n.display_name().into_owned(),
                 to: Location { doc, node: at },
             });
             at = parent;

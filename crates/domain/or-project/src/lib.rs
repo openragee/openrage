@@ -20,6 +20,7 @@ pub mod contribution;
 pub mod diff;
 mod dlc;
 pub mod extension;
+pub mod gta6;
 mod left_out;
 pub mod links;
 pub mod lock;

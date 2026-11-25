@@ -207,6 +207,10 @@ fn folders_and_installs_expand_rpf9_tables_and_nested_archives_lazily() {
         let row = session(&state, doc).node(child).unwrap();
         assert_eq!(row.name, format!("hash_{:016x}", name_hash64(CHILD_NAME)));
         assert_eq!(row.rpf9_entry(), Some((0, name_hash64(CHILD_NAME))));
+        assert_eq!(
+            row.display_name(),
+            format!("hash_{:016x}.rpf", name_hash64(CHILD_NAME))
+        );
         assert!(row.children.is_empty());
         assert_eq!(
             fixture.table.tree().nodes.len(),
@@ -224,6 +228,8 @@ fn folders_and_installs_expand_rpf9_tables_and_nested_archives_lazily() {
         assert_eq!(files.len(), 1);
         let file = session(&state, doc).node(files[0]).unwrap();
         assert_eq!(file.rpf9_type(), Some(Gta6EntryType::TextureDictionary));
+        assert_eq!(file.display_name(), format!("{}.ytd", file.name));
+        assert_eq!(fixture.table.entry(0x1000, 0).unwrap().name, file.name);
         assert!(session(&state, doc).is_rpf9(file.id));
         let icon = crate::ui::icons::rpf_node_icon(file, false, false, true, false);
         let expected = crate::ui::icons::doc_kind_icon(DocumentKind::Ytd, false);
@@ -259,10 +265,18 @@ fn known_rpf9_paths_make_virtual_folders_without_changing_the_table_address() {
     }
     let child = child_named(&state, doc, packs, "child.rpf");
     assert_eq!(
+        session(&state, doc).node(child).unwrap().display_name(),
+        "child.rpf"
+    );
+    assert_eq!(
         session(&state, doc).node(child).unwrap().rpf9_entry(),
         Some((0, name_hash64(CHILD_NAME)))
     );
     let file = child_named(&state, doc, texts, "readme.txt");
+    assert_eq!(
+        session(&state, doc).node(file).unwrap().display_name(),
+        "readme.txt"
+    );
     assert_eq!(
         session(&state, doc).node(file).unwrap().rpf9_entry(),
         Some((1, name_hash64(FILE_NAME)))

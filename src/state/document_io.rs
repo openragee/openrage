@@ -221,6 +221,7 @@ pub(super) fn parse_payload_from_path(
     // An archive can be tens of gigabytes; its table is read before any whole-file path.
     if matches!(kind, DocumentKind::Rpf | DocumentKind::Rpf9) {
         if let Some(table) = super::document::rpf9::Rpf9TableDocument::open(path)? {
+            super::rpf9_scan::rpf9_table::offer(path);
             return Ok((DocPayload::Rpf9(Rpf9Document::Table(Arc::new(table))), None));
         }
         if kind == DocumentKind::Rpf9 {

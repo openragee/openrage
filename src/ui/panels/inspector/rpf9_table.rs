@@ -4,6 +4,10 @@ use crate::state::rpf9::{is_archive, Rpf9TableDocument, Tree};
 use crate::ui::theme;
 use or_io::container::rpf::Gta6EntryType;
 
+fn display_name(entry: &or_io::container::rpf::Gta6Entry, kind: Gta6EntryType) -> String {
+    crate::state::files_view::rpf9_display_name(&entry.display_name(), kind).into_owned()
+}
+
 pub(super) enum Action {
     Open(u64, u32),
     Extract(u64, u32),
@@ -46,7 +50,7 @@ pub(super) fn draw_facts(ui: &mut egui::Ui, doc: &Rpf9TableDocument) -> Option<A
             .and_then(|node| node.archive.entries.get(index as usize))
         {
             ui.separator();
-            ui.strong(entry.display_name());
+            ui.strong(display_name(entry, tree.entry_type(base, index).0));
             ui.monospace(format!("#{index} · {:016x}", entry.name64));
             let (kind, detected) = tree.entry_type(base, index);
             ui.label(type_facts(kind, detected));
@@ -91,7 +95,7 @@ fn visible_rows(
         if archive
             || filter.is_empty()
             || matches_filter(
-                &entry.display_name(),
+                &display_name(entry, tree.entry_type(base, entry.index).0),
                 tree.entry_type(base, entry.index).0,
                 filter,
             )
@@ -155,7 +159,7 @@ pub(super) fn draw_tree(ui: &mut egui::Ui, doc: &Rpf9TableDocument) -> Option<Ac
                             ui.add_space(ui.spacing().indent);
                         }
                         let response =
-                            ui.selectable_label(selected == Some(key), entry.display_name());
+                            ui.selectable_label(selected == Some(key), display_name(entry, kind));
                         if response.clicked() {
                             selected = Some(key);
                         }

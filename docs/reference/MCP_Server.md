@@ -64,6 +64,8 @@ A tool that fails answers `isError` true with the reason as its text.
 | `search`, `packs`, `list`, `locate` | find files by name, extension or data-file type; list the DLC packs; list a folder; say which archive a file resolves to |
 | `extract`, `extract-many` | copy files out of the mounted install to paths the caller names |
 | `wardrobe-add`, `wardrobe-set`, `wardrobe-fix`, `wardrobe-waive` | change the clothing pack of a project |
+| `rpf9-list`, `rpf9-find`, `rpf9-read`, `rpf9-census` | list a GTA VI archive, find entries across an install, read one entry deciphered, count an install |
+| `rpf9-copy`, `rpf9-replace`, `rpf9-remove`, `rpf9-rename`, `rpf9-defrag` | write a new GTA VI archive from one, which the game refuses |
 | `cli` | run any `openrage-cli` command |
 | `shots` | draw the editor from a script and answer the pictures |
 
@@ -74,6 +76,27 @@ and `shutdown` are the transport's and are not tools.
 `every_route_but_the_transports_own_is_a_tool_of_the_mcp_server` in
 `crates/tools/or-cli/tests/the_external_surface_is_what_it_documents.rs` fails
 when a route has no tool.
+
+### GTA VI archives
+
+Each `rpf9-` tool runs the `openrage-cli rpf9` verb of the same name in a
+process of its own and answers as `cli` does;
+`rpf9-read` is `rpf9 extract --decrypt`, and `rpf9-list` answers JSON. A parameter is the verb's option of
+the same name, and `archive`, `folder`, `outDir` and `inner` are its
+positional words. They are declared in `crates/tools/or-cli/src/mcp_gta6.rs`.
+
+- `keys` names a key snapshot; without it the verb finds one as
+  `openrage-cli rpf9` does, and `exe` opens a masked one.
+- `entry` is an entry's recovered name, its hash or its decimal index, as
+  `rpf9-list` gives them; `inner` walks nested archives.
+- `rpf9-census` writes only counts, into the `out` folder it is given.
+- `rpf9-replace` with `resource` true replaces an entry with a 20-byte row,
+  a paged resource, by the loose form `with` names.
+
+⚠ The game refuses what a write tool writes. It checks a signature over the
+table when it mounts an archive, and only the game's maker can sign one, so a
+written archive is a structural result. Each write tool writes a new file at
+`out`, and the source is never changed.
 
 ### `cli`
 
@@ -108,6 +131,8 @@ does not continue the first.
 - `extract` and `extract-many` write the paths the caller names, and the
   `wardrobe-` tools change the pack of the project the caller names
   ([routes that change a pack](CLI_Server_Protocol.md#routes-that-change-a-pack)).
+- `rpf9-read` and `rpf9-census` write into the folder the caller names, and
+  each GTA VI write tool writes a new archive at `out`, never its source.
 - `cli` writes what its command writes: an `rpf`, `project`, `texture` or
   `navmesh` command given a path writes there, an install's file included.
 - A click in a `shots` script reaches every command of the editor.

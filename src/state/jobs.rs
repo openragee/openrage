@@ -494,6 +494,8 @@ impl AppState {
         self.poll_awc_opus();
         self.poll_install_scan();
         self.poll_texture_calibration();
+        self.poll_table_opens();
+        self.poll_archive_saves();
     }
 
     fn poll_search(&mut self) {

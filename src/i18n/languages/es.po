@@ -16959,3 +16959,60 @@ msgstr "Este archivo se abrió desde una tabla RPF9 y es de solo lectura. Extrá
 
 msgid "The names of this document's strings need the GTA VI key snapshot"
 msgstr "Los nombres de las cadenas de este documento necesitan la instantánea de claves de GTA VI"
+
+msgid "Only a document opened from a GTA VI archive is saved into a copy of it"
+msgstr "Solo un documento abierto desde un archivo comprimido de GTA VI se guarda en una copia de él"
+
+msgid "Cannot save into a copy of the archive: {reason}"
+msgstr "No se puede guardar en una copia del archivo comprimido: {reason}"
+
+msgid "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale."
+msgstr "{file} es un archivo comprimido nuevo con la edición en el lugar de su entrada, que el juego rechaza porque la firma de su tabla está obsoleta."
+
+msgid "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds."
+msgstr "{file} es un archivo comprimido nuevo igual al que se leyó: la edición escribe los bytes que contiene la entrada."
+
+msgid "nothing this view holds is edited, or OpenRage writes none of its edits to a GTA VI body"
+msgstr "nada de lo que muestra esta vista está editado, u OpenRage no escribe ninguna de sus ediciones en un contenido de GTA VI"
+
+msgid "the copy is a new file, and the archive it is read from is never written"
+msgstr "la copia es un archivo nuevo, y el archivo comprimido del que se lee nunca se escribe"
+
+msgid "more than one entry holds the body at {offset}, so which one to replace is not known"
+msgstr "más de una entrada contiene el contenido en {offset}, así que no se sabe cuál reemplazar"
+
+msgid "no entry of the archive holds the body at {offset}"
+msgstr "ninguna entrada del archivo comprimido contiene el contenido en {offset}"
+
+msgid "Save into a copy of the archive…"
+msgstr "Guardar en una copia del archivo comprimido…"
+
+msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"
+msgstr "Escribir las ediciones del documento de GTA VI en el lugar de su entrada, en una copia nueva del archivo comprimido del que se leyó. El juego rechaza esa copia, porque la firma de su tabla está obsoleta"
+
+msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
+msgstr "No hay claves de GTA VI: establece la carpeta de instalación de GTA VI en Configuración ▸ Juegos para que su ejecutable pueda desbloquearlas."
+
+msgid "resource"
+msgstr "recurso"
+
+msgid "media"
+msgstr "multimedia"
+
+msgid "other class"
+msgstr "otra clase"
+
+msgid "{file} is listed by a scan without its table: {why}"
+msgstr "{file} se lista mediante un escaneo sin su tabla: {why}"
+
+msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
+msgstr "Elige la carpeta de GTA VI en Configuración, o abre uno de sus archivos comprimidos, para listar sus archivos comprimidos desde sus tablas."
+
+msgid "Find by name, or by hash as 0x hex"
+msgstr "Buscar por nombre, o por hash en hexadecimal 0x"
+
+msgid "Only the archives expanded are searched."
+msgstr "Solo se buscan los archivos comprimidos expandidos."
+
+msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
+msgstr "{file} es un archivo comprimido nuevo con la edición en el lugar de su entrada y su tabla tal como se leyó."

@@ -249,6 +249,60 @@ fn a_gltf_replaces_a_gta_vi_drawable_s_geometry_as_a_step_that_undoes_and_saves(
 }
 
 #[test]
+fn a_gltf_import_is_in_the_loose_resource_a_save_or_a_write_into_an_archive_carries() {
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let path = dir.path().join("tri.rsc");
+    let sections = body();
+    std::fs::write(&path, write_rpf9_resource(&sections).expect("writes")).expect("written");
+    let mut state = AppState::new();
+    state.load_file(path.clone());
+    settle(&mut state);
+    let doc =
+        (state.active_document).unwrap_or_else(|| panic!("opened: {}", state.error_dialog_message));
+
+    let drawable = read_drawable(&sections.virtual_section, Some(&sections.physical))
+        .expect("the drawable reads");
+    let names = or_cli::Gta6Names {
+        effect: &|hash| format!("hash_{hash:08X}"),
+        texture: &|key| format!("hash_{key:016X}"),
+    };
+    let mut scene = or_cli::gta6_scene(&drawable, None, "tri", false, &names);
+    let p = &mut scene.objects[0].meshes[0].primitives[0];
+    p.positions.push([-1.0, -1.0, -1.0]);
+    p.normals.push([0.0, 0.0, 1.0]);
+    p.uvs[0].push([1.0, 1.0]);
+    p.indices.extend([1, 3, 2]);
+    let mesh = dir.path().join("tri.glb");
+    std::fs::write(&mesh, gltf::write(&scene, "tri", Container::Glb).primary).expect("written");
+    state.import_gltf(doc, mesh);
+    worked_out(&mut state);
+    state.apply_gltf_import();
+
+    // What the row hands a save, and a write into an archive, is the body with the import made.
+    let Some(Ok(EditedSave::Body {
+        archive,
+        offset,
+        edit,
+    })) = state.edited_sections(doc)
+    else {
+        panic!("the import is an edit a save writes");
+    };
+    let loose = super::super::gta6_edit::written(&archive, offset, &*edit).expect("written");
+    let (find, read) = read_rpf9_body(Cursor::new(&loose), 0, u64::MAX).expect("it reads");
+    assert_eq!(
+        only(&Rpf9Sections::of(&find, &read).expect("a resource")).vertex_count,
+        4
+    );
+
+    state.active_document = Some(doc);
+    assert!(state.save_active_document());
+    finished(&mut state);
+    let saved = std::fs::read(&path).expect("the saved file");
+    assert_eq!(saved, loose, "a save writes that same loose resource");
+}
+
+#[test]
 fn a_mesh_without_normals_at_another_count_is_refused_until_the_fill_is_ticked_and_saves_filled() {
     let _serial = crate::ui::theme::serial();
     let dir = tempfile::tempdir().expect("a scratch directory");

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -155,6 +156,14 @@ impl RpfSessionNode {
                 Some(table.tree().entry_type(*base, *index).0)
             }
             _ => None,
+        }
+    }
+
+    /// A visual extension never changes the name or table address used to open this node.
+    pub fn display_name(&self) -> Cow<'_, str> {
+        match self.rpf9_type() {
+            Some(kind) => super::files_view::rpf9_display_name(&self.name, kind),
+            None => Cow::Borrowed(&self.name),
         }
     }
 

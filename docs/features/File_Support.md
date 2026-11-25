@@ -80,7 +80,9 @@ produce an error, with no scan fallback. The Files panel lists the entries and l
 archive's table when it is expanded, on a worker and within its containing entry's bounds.
 In an opened folder, RPF9 archives expand inside the same Files tree as other archives. Resolved
 paths form folders; unresolved hashes remain at the root of their owning archive. File icons use
-the table's type, independently of the displayed name. Properties show the original entry index
+the table's type, independently of the displayed name. Files adds a visual extension to recovered
+names and hashes (`.ytd`, `.ydr`, `.rpf`, or `.bin` when no extension is identified), while keeping
+the original name and table hash unchanged. Properties show the original entry index
 and 64-bit hash. Opening an entry keeps its Files selection and breadcrumb trail. The archive's
 contents are read-only, including tree edits. An entry whose table does not state
 its class offers **Open as archive**, which checks only its stated position and extent.
@@ -123,12 +125,18 @@ reader as the app (`--decrypt` enables ciphered entries). The explicit `openrage
 the World index retain their scanners and their existing body readers. The install opens as a
 plain folder.
 
+The [GTA VI modding guide](../guides/GTA_VI_Modding.md) describes obtaining keys from the user’s executable.
+View ▸ Panels ▸ Archives also lists tables; the CLI can write a new archive and export PSO strings.
+
 - **Read.** Texture packs (`.ttpf`) and dictionary textures, drawables, fragments, dictionaries of
   drawables and their skeletons, bounds, navigation cells, map placements and map types, clip
   dictionaries and the other animation bodies, cloth, a ped's hair grooms among it, PSO, RBM and RBF
   metadata, ped catalogues among it, text tables, AWC audio,
   which plays and exports as Ogg Opus, and a Bink movie's pictures and sound. A drawable is drawn in
-  Wireframe, Solid and Material and goes out to glTF.
+  Wireframe, Solid and Material and goes out to glTF. An enciphered entry opens deciphered: a PSO or
+  RBF in the metadata editor, text as text and a resource in its kind's view. A PSO's enciphered
+  strings name the hash values it holds. A deciphered script body reads as a compiled program, its
+  header, instructions and native calls, through `openrage-cli script compiled`.
 - **Textures.** A texture stored plainly or as zlib reads as it is. One stored through the pack's
   entropy coder decodes exactly as BC1; as BC3, BC4, BC5, BC6H or BC7 it decodes through tables
   that `openrage-cli ttpf calibrate`, or the app's job, fits on your machine from the packs of the
@@ -146,9 +154,14 @@ plain folder.
   shades a part by its normal map alone.
 - **Written.** A texture pack saves with a texture replaced, and an edit to a scanned body saves as a
   loose file. Which values of a model, a bound, a map or a metadata body can be edited is narrower than
-  for GTA V, and a refusal names what it cannot write.
-- **Not done.** Nothing is written back into an archive, and no file OpenRage saved has been tried in
-  the game. Scripts do not read, their bodies being enciphered. A program the shader front end
-  cannot translate or bind leaves its pass undrawn in Shaded, and no save file of the game has been
-  opened: the save reader was written from a description of the layout.
+  for GTA V, and a refusal names what it cannot write. `openrage-cli rpf9 copy`, `replace`, `remove`,
+  `rename` and `defrag` write a new archive from an existing one, never over it; a plain replace of
+  an entry whose row describes a paged resource is refused by name, and `replace --resource` replaces
+  it by its loose form. The app's File ▸ Save into a copy of the archive… writes a document's edits
+  in place of its entry, in a new copy of the archive it was read from.
+- **Not done.** The game refuses every archive OpenRage writes with a changed table, because only its
+  maker can sign a table, and no file OpenRage saved has been tried in the game. A script is not
+  decompiled from its compiled body. A program the shader front end cannot translate or bind leaves
+  its pass undrawn in Shaded, and no save file of the game has been opened: the save reader was
+  written from a description of the layout.
   [GTA_VI_Xbox_Build.md](GTA_VI_Xbox_Build.md) has each reader, refusal and command.

@@ -6,11 +6,13 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use or_io::gta6::script::compiled::disasm;
 use or_io::gta6::script::compiled::Compiled;
 
 pub fn run(args: &[String]) -> ExitCode {
     let mut paths: Vec<PathBuf> = Vec::new();
     let mut list_natives = false;
+    let mut listing = false;
     for arg in args {
         match arg.as_str() {
             "-h" | "--help" | "help" => {
@@ -18,6 +20,7 @@ pub fn run(args: &[String]) -> ExitCode {
                 return ExitCode::SUCCESS;
             }
             "--natives" => list_natives = true,
+            "--listing" => listing = true,
             other if other.starts_with('-') => {
                 eprintln!("Error: unknown option {other}");
                 print_usage();
@@ -32,7 +35,7 @@ pub fn run(args: &[String]) -> ExitCode {
     }
     let mut failed = false;
     for path in &paths {
-        if let Err(why) = show(path, list_natives) {
+        if let Err(why) = show(path, list_natives, listing) {
             eprintln!("Error: {}: {why}", path.display());
             failed = true;
         }
@@ -44,7 +47,7 @@ pub fn run(args: &[String]) -> ExitCode {
     }
 }
 
-fn show(path: &std::path::Path, list_natives: bool) -> Result<(), String> {
+fn show(path: &std::path::Path, list_natives: bool, listing: bool) -> Result<(), String> {
     let body = std::fs::read(path).map_err(|e| e.to_string())?;
     let program = Compiled::open(&body).map_err(|e| e.to_string())?;
     let h = program.header;
@@ -78,16 +81,23 @@ fn show(path: &std::path::Path, list_natives: bool) -> Result<(), String> {
             );
         }
     }
+    if listing {
+        let out = disasm::listing(&program).map_err(|e| e.to_string())?;
+        print!("{}", out.text);
+    }
     Ok(())
 }
 
 fn print_usage() {
-    println!("Usage: openrage-cli script compiled [--natives] BODY...");
+    println!("Usage: openrage-cli script compiled [--natives] [--listing] BODY...");
     println!();
     println!(
         "Reads a decrypted GTA VI script body: its header, its instructions and its native calls."
     );
     println!(
         "  --natives   list every native call: code offset, native RVA, argument and result counts"
+    );
+    println!(
+        "  --listing   print every instruction by function: offset, opcode, mnemonic where one is established, operands"
     );
 }

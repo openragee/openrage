@@ -78,6 +78,14 @@ impl TexturePack {
         self.put_slice(index, slice, sliced, levels)
     }
 
+    /// How many mips a replacement of slice `slice` of texture `index` writes, once the writer covers it.
+    pub fn replaced_mips(&self, index: usize, slice: u32) -> Result<usize, TtpfError> {
+        if self.is_flat(index, slice)? {
+            return Ok(self.writable(index)?.layout.levels.len());
+        }
+        self.sliced(index, slice).map(|(_, _, kept)| kept)
+    }
+
     /// Whether texture `index` is a 2D texture of one slice, whose only slice is 0.
     fn is_flat(&self, index: usize, slice: u32) -> Result<bool, TtpfError> {
         let count = self.entries.len();

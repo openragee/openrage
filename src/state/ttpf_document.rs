@@ -306,6 +306,9 @@ pub(super) fn replace(
     let Some(index) = ttpf.index_of(name) else {
         return Some(Err(tr!("{name} is not in this pack", name = name)));
     };
+    if let Some(refused) = bcpack_refusal(&ttpf.pack, index) {
+        return Some(Err(refused));
+    }
     let before = ttpf.pack.replaced_mut().clone();
     let slice = shown.unwrap_or(0);
     let mips = match ttpf.pack.replace_slice(index, slice, image, options) {
@@ -323,6 +326,16 @@ pub(super) fn replace(
         replaced: true,
     };
     Some(Ok(((tr!("Replace {name}", name = name), change), edit)))
+}
+
+/// Why texture `index` is not replaced, where it is stored through the BCPack coder OpenRage does
+/// not encode.
+pub(super) fn bcpack_refusal(
+    pack: &or_io::gta6::ttpf::TexturePack,
+    index: usize,
+) -> Option<String> {
+    use or_io::gta6::ttpf_author::{bcpack_kind, AuthorError};
+    bcpack_kind(pack, index).map(|kind| AuthorError::BcPack { index, kind }.to_string())
 }
 
 /// A writer that fails once `cancel` is set, so a save stops between two writes.

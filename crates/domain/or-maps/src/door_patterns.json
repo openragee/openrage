@@ -1,0 +1,7 @@
+{
+  "format": "openrage-door-patterns",
+  "schema": 1,
+  "note": "A starting guess, measured on no install. A model whose name one of `doors` matches is a door, unless one of `not_doors` matches it too; `*` stands for any run of characters and case counts for nothing. A door whose archetype states the door extension is found without this file.",
+  "doors": ["*door*", "*gate*"],
+  "not_doors": ["*frame*", "*doorway*", "*_lod", "*_slod*"]
+}

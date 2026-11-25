@@ -10,8 +10,9 @@
 //! the removal of an entity with its chain of far models across the map files of a pack as a list of them, [`scene`] says what a set
 //! places as boxes in the world, and [`gizmo`] is the manipulator
 //! that moves, turns and scales one. [`place`] reads what a person pastes into a search field as a position, a hash or text, and
-//! [`script_text`] writes a position as the text a script takes. `openrage-cli maps` runs the first part, and a list of operations,
-//! without the editor.
+//! [`script_text`] writes a position as the text a script takes. [`doors`] finds the doors of a set, pairs them, opens each against
+//! what stands near it and holds them to the door rules, and [`door_text`] writes a selection of them as the text a door script
+//! takes. `openrage-cli maps` runs the first part, a list of operations and the doors, without the editor.
 //!
 //! The world model is `or-world`'s and the typed roots are `or_io::meta::typed`'s: this crate is the kind of content a project holds
 //! and the edits made to it, and holds no reader and no schema of its own.
@@ -25,6 +26,8 @@
 pub mod adopt;
 pub mod changes;
 pub mod delete;
+pub mod door_text;
+pub mod doors;
 pub mod edit;
 pub mod facts;
 pub mod gizmo;

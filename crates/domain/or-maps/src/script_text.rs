@@ -290,7 +290,7 @@ impl ScriptForm {
 }
 
 /// `value` with `decimals` decimals, and no sign on a nought.
-fn number(value: f32, decimals: usize) -> String {
+pub(crate) fn number(value: f32, decimals: usize) -> String {
     let written = format!("{value:.decimals$}");
     match written.strip_prefix('-') {
         Some(digits) if digits.bytes().all(|b| matches!(b, b'0' | b'.')) => digits.to_string(),
@@ -299,7 +299,7 @@ fn number(value: f32, decimals: usize) -> String {
 }
 
 /// `template` with each `{key}` of `values` replaced by its value, in one pass: a value is never read as a template.
-fn fill(template: &str, values: &[(&str, String)]) -> String {
+pub(crate) fn fill(template: &str, values: &[(&str, String)]) -> String {
     let mut filled = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(at) = rest.find('{') {

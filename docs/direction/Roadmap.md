@@ -10020,8 +10020,28 @@ replacement; and the door rules: a door model of the project whose archetype lac
 doors carry, a game door moved or deleted, two doors at one place, and a door whose arc is blocked
 ([brief](World_Editor_Plan.md#doors-r70n)).
 
-**Where it stands.** Not built. The door extension is typed in
-`crates/domain/or-world/src/extension.rs`, and the door tuning opens in the metadata editor.
+**Where it stands.** The headless part is built, and no screen uses it yet.
+`crates/domain/or-world/src/doors/` finds the doors among the entities of the maps handed to it, by
+the door extension of the archetype and then by name patterns kept as data
+(`crates/domain/or-maps/src/door_patterns.json`), and counts the entities whose model has no name,
+since a door among them is missed. It reads a leaf's hinge, width and motion from its archetype's
+box as proposals, pairs the leaves of a double door, and opens a swinging leaf through its arc
+against a `CollisionSet` and the boxes of the other entities
+(`crates/domain/or-world/tests/the_doors_of_a_map.rs`). `crates/domain/or-maps/src/doors.rs` holds
+the door rules as data, `doors-overlap` and `door-blocked`, and names a source of the set that is
+not there or does not cook; `crates/domain/or-maps/src/door_text.rs` writes a selection of doors
+through the templates of `crates/domain/or-maps/src/door_forms.json`, where the two forms named
+after community door scripts state that they are unverified; and `openrage-cli maps doors` lists
+the doors of a pack's maps, their pairing and what each rule says, as text and as JSON
+(`crates/domain/or-maps/tests/the_doors_of_a_pack.rs`;
+[the rest](../reference/Crate_Reference.md#domain-crates)).
+
+Left: the count over an install, not written and run nowhere; the door tuning read, with its
+entry, the line that gives it to a model and the zone; a door that opens in the view; the fitted
+replacement; the doors of an interior's entity sets; and the two rules that need the game, a
+project's door model that lacks what the game's doors carry and a game door moved or deleted. A pack holds no collision of its maps, so the verb holds an arc
+against the boxes of the other entities alone. The name patterns, the three cuts of the swept box
+and the turn short of which a door is said not to open are judgements to measure on an install.
 
 **Depends on.** [R70g](#r70g-collision-as-a-query) and
 [R70i](#r70i-selecting-and-moving-in-the-world).

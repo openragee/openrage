@@ -115,6 +115,38 @@ pub fn manifest_file(stated: &[Stated<'_>]) -> Vec<u8> {
     })
 }
 
+/// What the schema gains for a type file one of whose archetypes states the door extension: the member on the archetype, and the
+/// extension's classes.
+const EXTENSIONS_MEMBER: &str = r#"    <string name="assetName" type="atHashString"/>
+    <array name="extensions" type="atArray"><pointer type="rage::fwExtensionDef" policy="owner"/></array>"#;
+const DOOR_CLASSES: &str = r#"  <structdef type="rage::fwExtensionDef">
+    <string name="name" type="atHashString"/>
+  </structdef>
+  <structdef type="CExtensionDef" base="rage::fwExtensionDef">
+    <Vector3 name="offsetPosition"/>
+  </structdef>
+  <structdef type="CExtensionDefDoor" base="CExtensionDef">
+    <bool name="enableLimitAngle"/>
+    <bool name="startsLocked"/>
+    <bool name="canBreak"/>
+    <float name="limitAngle"/>
+    <float name="doorTargetRatio"/>
+    <string name="audioHash" type="atHashString"/>
+  </structdef>
+</ParserSchema>"#;
+
+/// The schema of a sample file, with the door extension where `doors` asks for it.
+fn schema(doors: bool) -> String {
+    if !doors {
+        return PSC.to_string();
+    }
+    PSC.replace(
+        r#"    <string name="assetName" type="atHashString"/>"#,
+        EXTENSIONS_MEMBER,
+    )
+    .replace("</ParserSchema>", DOOR_CLASSES)
+}
+
 /// One entity of a sample map.
 #[derive(Debug, Clone, Copy)]
 pub struct Entity<'a> {
@@ -171,8 +203,9 @@ fn entity(e: &Entity<'_>) -> MetaInstance {
     inst
 }
 
-fn encode(root: &MetaInstance) -> Vec<u8> {
-    let library = build_library([("inline.psc", PSC.as_bytes())]).expect("the schema parses");
+fn encode(root: &MetaInstance, doors: bool) -> Vec<u8> {
+    let library =
+        build_library([("inline.psc", schema(doors).as_bytes())]).expect("the schema parses");
     let layout =
         canonical::layout_for(&library, root, BinaryFormat::Rbm, None).expect("the file lays out");
     write_meta_binary(BinaryFormat::Rbm, Some(&layout), root).expect("the file encodes")
@@ -217,7 +250,7 @@ fn map_under(
                 .collect(),
         ),
     );
-    encode(&root)
+    encode(&root, false)
 }
 
 /// One archetype of a sample type file.
@@ -227,6 +260,8 @@ pub struct Archetype<'a> {
     pub asset: &'a str,
     pub min: [f32; 3],
     pub max: [f32; 3],
+    /// Whether it states the door extension.
+    pub door: bool,
 }
 
 impl<'a> Archetype<'a> {
@@ -236,11 +271,25 @@ impl<'a> Archetype<'a> {
             asset: name,
             min,
             max,
+            door: false,
         }
     }
 }
 
-fn archetype(a: &Archetype<'_>) -> MetaInstance {
+fn door_extension() -> MetaInstance {
+    let mut inst = MetaInstance::new("CExtensionDefDoor");
+    inst.set("name", Value::Hash(HashedString::from_hash(0)));
+    inst.set("offsetPosition", Value::Vec3([0.0; 3]));
+    for flag in ["enableLimitAngle", "startsLocked", "canBreak"] {
+        inst.set(flag, Value::Bool(false));
+    }
+    inst.set("limitAngle", Value::Float(0.0));
+    inst.set("doorTargetRatio", Value::Float(0.0));
+    inst.set("audioHash", Value::Hash(HashedString::from_hash(0)));
+    inst
+}
+
+fn archetype(a: &Archetype<'_>, extensions: bool) -> MetaInstance {
     let mut inst = MetaInstance::new("CBaseArchetypeDef");
     inst.set("lodDist", Value::Float(100.0));
     inst.set("flags", Value::UInt(0));
@@ -265,11 +314,25 @@ fn archetype(a: &Archetype<'_>) -> MetaInstance {
         inst.set(empty, Value::Hash(HashedString::from_hash(0)));
     }
     inst.set("assetName", Value::Hash(HashedString::new(a.asset)));
+    if extensions {
+        let stated = a.door.then(door_extension);
+        inst.set(
+            "extensions",
+            Value::Array(
+                stated
+                    .into_iter()
+                    .map(|e| Value::Pointer(Some(Box::new(e))))
+                    .collect(),
+            ),
+        );
+    }
     inst
 }
 
 /// A `.ytyp` called `name` that declares `archetypes`.
 pub fn types_file(name: &str, archetypes: &[Archetype<'_>]) -> Vec<u8> {
+    // ⚠ A file with no door keeps the schema it always had, so its bytes do not move for the suites that weigh them.
+    let doors = archetypes.iter().any(|a| a.door);
     let mut root = MetaInstance::new("CMapTypes");
     root.set("name", Value::Hash(HashedString::new(name)));
     root.set(
@@ -277,12 +340,12 @@ pub fn types_file(name: &str, archetypes: &[Archetype<'_>]) -> Vec<u8> {
         Value::Array(
             archetypes
                 .iter()
-                .map(|a| Value::Pointer(Some(Box::new(archetype(a)))))
+                .map(|a| Value::Pointer(Some(Box::new(archetype(a, doors)))))
                 .collect(),
         ),
     );
     root.set("dependencies", Value::Array(Vec::new()));
-    encode(&root)
+    encode(&root, doors)
 }
 
 #[cfg(test)]

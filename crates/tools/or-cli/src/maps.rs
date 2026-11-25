@@ -1,6 +1,6 @@
 //! `openrage-cli maps`: list what a project's map sets place and declare, validate them and say what the rules find, read a build back
-//! against them, apply a list of operations to their sources, plan or apply the deletion of entities with their chain of far models, and
-//! keep a manifest of the game for the manifest of the maps to be written from.
+//! against them, apply a list of operations to their sources, plan or apply the deletion of entities with their chain of far models,
+//! keep a manifest of the game for the manifest of the maps to be written from, and list their doors.
 //!
 //! The plan and the build of maps are `openrage-cli project plan` and `build`:
 //! a maps content is content like any other, and goes through the one plan.
@@ -26,6 +26,7 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("apply") => apply(rest),
         Some("keep-manifest") => keep_manifest(rest),
         Some("delete") => delete(rest),
+        Some("doors") => doors(rest),
         Some("-h" | "--help" | "help") => {
             print_usage();
             return ExitCode::SUCCESS;
@@ -57,7 +58,8 @@ fn print_usage() {
          openrage-cli maps keep-manifest <project.openrage-proj> <_manifest.ymf>... [--module <id>]\n  \
          openrage-cli maps keep-manifest <project.openrage-proj> --game <install root> [--keys <file>] [--module <id>]\n  \
          openrage-cli maps delete   <project.openrage-proj> <source>:<entity>... [--module <id>] [--apply]\n                             \
-         [--script <form>] [--radius <metres>]\n\n\
+         [--script <form>] [--radius <metres>]\n  \
+         openrage-cli maps doors    <project.openrage-proj> [--module <id>] [--json]\n\n\
          changes compares each map file and type file of the content with the base its source keeps,\n\
          the file it was imported from, and says by object what the source changed: the entities and\n\
          the archetypes added, deleted and changed, each with its index in the base and its index now,\n\
@@ -103,7 +105,14 @@ fn print_usage() {
          form --script names (lua, json or csharp; lua when none) within --radius metres (1 when none).\n\
          It reads the map files of the content and no other: a map that is not among them keeps its links.\n\
          With --apply it writes the deletion, every file or none. It exits 1 when an entity named is not\n\
-         there or the deletion is refused.\n\n\
+         there or the deletion is refused.\n\
+         doors lists the doors of each map set: an entity whose archetype states the door extension, and\n\
+         an entity whose model's name a door pattern matches, with how many entities have a model with\n\
+         no name, since a door among them is missed. For each door it says what its box reads as (a\n\
+         leaf that swings, slides or lifts, its hinge and its width), the other leaf of its double\n\
+         door, how far it opens each way before the box of another entity is in its arc, and what the\n\
+         door rules find. All of it is read from the model's box: the game's door tuning and the\n\
+         collision of the map are not read. --json prints the same doors as JSON.\n\n\
          A build checks the files. It does not test that GTA V loads them.\n"
     );
 }
@@ -132,6 +141,44 @@ pub(crate) fn maps_of(
         return Err(Run(format!("{path} holds no maps content")));
     }
     Ok((project, chosen))
+}
+
+/// List the doors of each map set of the content, with their pairing and what the door rules say.
+fn doors(args: &[String]) -> Result<ExitCode, Failure> {
+    let json_out = args.iter().any(|a| a == "--json");
+    let rest: Vec<String> = args.iter().filter(|a| *a != "--json").cloned().collect();
+    let (positional, flags) = parse(&rest, &["--module"])?;
+    let (project, modules) = maps_of(&positional, &flags)?;
+    let patterns = or_maps::doors::built_in_patterns().map_err(|e| Run(e.to_string()))?;
+    let mut reports = Vec::new();
+    for id in modules {
+        let module = (project.container.module(&id))
+            .ok_or_else(|| Run(format!("the project has no maps content `{id}`")))?;
+        let folder = or_maps::module_folder(&project.folder(), module)
+            .map_err(|e| Run(format!("content `{id}`: {e}")))?;
+        let model =
+            or_maps::Maps::read(&folder).map_err(|e| Run(format!("content `{id}`: {e}")))?;
+        let sets = or_maps::doors::doors_of(&folder, &model, None, &patterns);
+        if json_out {
+            reports.push(json!({ "module": id, "sets": sets }));
+            continue;
+        }
+        println!("content {id}: {} map set(s)", sets.len());
+        for line in sets.iter().flat_map(or_maps::doors::SetDoors::lines) {
+            println!("  {line}");
+        }
+    }
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&reports).map_err(|e| Run(e.to_string()))?
+        );
+    } else {
+        println!(
+            "A door's hinge, motion and arc are read from its model's box. The game's door tuning and the collision of the map are not read."
+        );
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Do the operations of a list to the sources of one maps content, all of them or none.

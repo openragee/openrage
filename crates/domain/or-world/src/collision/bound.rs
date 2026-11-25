@@ -182,6 +182,13 @@ impl BoundCollider {
     }
 }
 
+impl OrientedBox {
+    /// Whether this box and another share a point.
+    pub fn touches(&self, other: &OrientedBox) -> bool {
+        Shape::Box(obb_of(self)).touches(&obb_of(other))
+    }
+}
+
 pub(crate) fn obb_of(region: &OrientedBox) -> Obb {
     let rotation = region.rotation.normalize();
     Obb {

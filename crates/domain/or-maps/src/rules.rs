@@ -159,8 +159,12 @@ pub const RULES: &[Rule] = &[
     rule("waiver-unknown", Warning, false, "a waiver names no rule"),
 ];
 
+/// The rule `code` names, the door rules of [`crate::doors::DOOR_RULES`] among them.
 pub fn rule_of(code: &str) -> Option<&'static Rule> {
-    RULES.iter().find(|r| r.code == code)
+    RULES
+        .iter()
+        .chain(crate::doors::DOOR_RULES)
+        .find(|r| r.code == code)
 }
 
 /// How much the extents may fall short of an entity before a rule says so, in world units.

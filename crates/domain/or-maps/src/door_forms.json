@@ -1,0 +1,62 @@
+{
+  "format": "openrage-door-forms",
+  "schema": 1,
+  "forms": [
+    {
+      "id": "lua",
+      "name": "Lua",
+      "open": "{",
+      "single": "\n    { model = \"{name}\", hash = {hash_signed}, coords = vector3({x}, {y}, {z}), heading = {heading} }",
+      "pair": "\n    { double = {\n        { model = \"{a_name}\", hash = {a_hash_signed}, coords = vector3({a_x}, {a_y}, {a_z}), heading = {a_heading} },\n        { model = \"{b_name}\", hash = {b_hash_signed}, coords = vector3({b_x}, {b_y}, {b_z}), heading = {b_heading} }\n    } }",
+      "separator": ",",
+      "close": "\n}",
+      "escapes": {
+        "\\": "\\\\",
+        "\"": "\\\""
+      }
+    },
+    {
+      "id": "json",
+      "name": "JSON",
+      "open": "[",
+      "single": "\n  {\"model\": \"{name}\", \"hash\": {hash}, \"position\": {\"x\": {x}, \"y\": {y}, \"z\": {z}}, \"heading\": {heading}}",
+      "pair": "\n  {\"double\": [\n    {\"model\": \"{a_name}\", \"hash\": {a_hash}, \"position\": {\"x\": {a_x}, \"y\": {a_y}, \"z\": {a_z}}, \"heading\": {a_heading}},\n    {\"model\": \"{b_name}\", \"hash\": {b_hash}, \"position\": {\"x\": {b_x}, \"y\": {b_y}, \"z\": {b_z}}, \"heading\": {b_heading}}\n  ]}",
+      "separator": ",",
+      "close": "\n]",
+      "escapes": {
+        "\\": "\\\\",
+        "\"": "\\\""
+      }
+    },
+    {
+      "id": "qb-doorlock",
+      "name": "qb-doorlock (unverified)",
+      "unverified": "UNVERIFIED: written from memory of the shape of qb-doorlock's Config.DoorList and checked against no version of that script. Compare it with the script you run before you use it.",
+      "comment": "-- ",
+      "open": "",
+      "single": "Config.DoorList['{name}_{index}'] = {\n    objName = {hash_signed},\n    objCoords = vec3({x}, {y}, {z}),\n    textCoords = vec3({x}, {y}, {z}),\n    objYaw = {heading},\n    doorType = 'door',\n    locked = true,\n    distance = 2.0,\n    authorizedJobs = {},\n}",
+      "pair": "Config.DoorList['{a_name}_{index}'] = {\n    doorType = 'double',\n    textCoords = vec3({x}, {y}, {z}),\n    locked = true,\n    distance = 2.5,\n    authorizedJobs = {},\n    doors = {\n        { objName = {a_hash_signed}, objYaw = {a_heading}, objCoords = vec3({a_x}, {a_y}, {a_z}) },\n        { objName = {b_hash_signed}, objYaw = {b_heading}, objCoords = vec3({b_x}, {b_y}, {b_z}) },\n    },\n}",
+      "separator": "\n",
+      "close": "\n",
+      "escapes": {
+        "\\": "\\\\",
+        "'": "\\'"
+      }
+    },
+    {
+      "id": "ox_doorlock",
+      "name": "ox_doorlock (unverified)",
+      "unverified": "UNVERIFIED: written from memory of the fields ox_doorlock keeps for a door and checked against no version of that script, which stores its doors in a database and not in a file like this. Compare it with the script you run before you use it.",
+      "comment": "-- ",
+      "open": "{",
+      "single": "\n    {\n        name = '{name}_{index}',\n        model = {hash_signed},\n        coords = vec3({x}, {y}, {z}),\n        heading = {heading},\n        maxDistance = 2.0,\n        state = 1,\n    }",
+      "pair": "\n    {\n        name = '{a_name}_{index}',\n        coords = vec3({x}, {y}, {z}),\n        maxDistance = 2.5,\n        state = 1,\n        doors = {\n            { model = {a_hash_signed}, coords = vec3({a_x}, {a_y}, {a_z}), heading = {a_heading} },\n            { model = {b_hash_signed}, coords = vec3({b_x}, {b_y}, {b_z}), heading = {b_heading} },\n        },\n    }",
+      "separator": ",",
+      "close": "\n}\n",
+      "escapes": {
+        "\\": "\\\\",
+        "'": "\\'"
+      }
+    }
+  ]
+}

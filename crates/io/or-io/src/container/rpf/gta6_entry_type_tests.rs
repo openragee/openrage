@@ -496,3 +496,58 @@ fn binary_headers_and_xml_declarations_name_media_without_guessing_text_extensio
         assert_eq!(Gta6EntryType::from_header(text), None);
     }
 }
+
+#[test]
+fn confirmed_media_names_identify_text_and_data_from_hashes_without_a_body() {
+    for (name, extension) in [
+        ("force_empty_rpf.txt", "txt"),
+        ("data/tessellation.dat", "dat"),
+        ("shaders/preload.list", "list"),
+        ("config/minigame000_packlist.txt", "txt"),
+        ("config/audioconfig.dat26.rel.nametable", "nametable"),
+        ("data/glass/tempered_v1.txt", "txt"),
+    ] {
+        let mut entry = entry();
+        entry.class = Some(255);
+        entry.name64 = crate::gta6::hash::name_hash64(name.as_bytes());
+        entry.name32 = Some(name_hash32(name.as_bytes()));
+        assert_eq!(
+            Gta6EntryType::hint(&entry, &Gta6EntryExtra::default()).extension(),
+            extension
+        );
+        assert!(entry.name.is_none());
+        entry.name32 = None;
+        assert_eq!(
+            Gta6EntryType::hint(&entry, &Gta6EntryExtra::default()).extension(),
+            extension
+        );
+        entry.name32 = Some(name_hash32(b"a different file"));
+        assert_eq!(
+            Gta6EntryType::hint(&entry, &Gta6EntryExtra::default()),
+            Gta6EntryType::Unknown
+        );
+        entry.name32 = None;
+        entry.name64 = crate::gta6::hash::name_hash64(b"another/config.txt");
+        entry.name = Some(name.into());
+        assert_eq!(
+            Gta6EntryType::hint(&entry, &Gta6EntryExtra::default()),
+            Gta6EntryType::Unknown
+        );
+    }
+}
+
+#[test]
+fn confirmed_media_names_do_not_override_resource_table_types() {
+    let mut entry = entry();
+    entry.name64 = crate::gta6::hash::name_hash64(b"force_empty_rpf.txt");
+    entry.class = Some(5);
+    assert_eq!(
+        Gta6EntryType::hint(&entry, &Gta6EntryExtra::default()),
+        Gta6EntryType::TextureDictionary
+    );
+    entry.class = None;
+    assert_eq!(
+        Gta6EntryType::hint(&entry, &extra(255, 0, 0)),
+        Gta6EntryType::Unknown
+    );
+}

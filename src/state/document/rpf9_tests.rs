@@ -230,3 +230,55 @@ fn a_child_table_is_a_job_that_can_be_cancelled() {
         "a cancelled result must not mount the child"
     );
 }
+
+#[test]
+fn confirmed_media_extensions_survive_opening_without_changing_the_entry_address() {
+    for (name, extension) in [
+        ("force_empty_rpf.txt", "txt"),
+        ("data/tessellation.dat", "dat"),
+        ("shaders/preload.list", "list"),
+        ("config/audioconfig.dat26.rel.nametable", "nametable"),
+    ] {
+        let hash = or_io::gta6::hash::name_hash64(name.as_bytes());
+        let body = b"synthetic bytes\n";
+        let bytes = encrypted(&[(hash, 0x1000, body.len() as u64, 255)]);
+        let mut toc = Rpf9Toc::decrypt(&bytes, &keys()).unwrap();
+        let name32 = toc
+            .groups
+            .iter()
+            .find(|group| group.name_hash == or_io::container::rpf::GROUP_NAME32)
+            .unwrap()
+            .data
+            .clone();
+        toc.bytes[name32]
+            .copy_from_slice(&or_io::gta6::hash::name_hash32(name.as_bytes()).to_le_bytes());
+        let mut bytes = Rpf9Builder::serialize(&toc, &keys()).unwrap();
+        bytes.resize(0x1000, 0);
+        bytes.extend(body);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("table.rpf");
+        std::fs::write(&path, bytes).unwrap();
+        let table = Arc::new(
+            Rpf9TableDocument::open_using(&path, || Ok(keys()))
+                .unwrap()
+                .unwrap(),
+        );
+        let source = table.entry(0, 0).unwrap();
+        let original_name = source.name.clone();
+        let original_path = source.path.clone();
+        let expected = (Gta6EntryType::File(extension), false);
+        assert_eq!(table.tree().entry_type(0, 0), expected);
+        let displayed = crate::state::files_view::rpf9_display_name(&source.name, expected.0);
+        assert!(
+            displayed == format!("hash_{hash:016x}.{extension}")
+                || displayed == name.rsplit('/').next().unwrap(),
+            "unexpected display name: {displayed}"
+        );
+        source.payload().unwrap();
+        assert_eq!(table.tree().entry_type(0, 0), expected);
+        assert_eq!(table.entry(0, 0).unwrap().name, original_name);
+        assert_eq!(table.entry(0, 0).unwrap().path, original_path);
+        assert!(!original_path.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+}

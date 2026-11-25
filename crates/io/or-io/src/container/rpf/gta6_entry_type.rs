@@ -1,5 +1,8 @@
 //! Content hints and strict texture previews of bytes read from an RPF9 table entry.
 
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
 use super::{
     Gta6Class, Gta6Entry, Gta6EntryExtra, Rpf9Header, Rpf9Role, Rpf9Signature, RPF9_MAGIC,
 };
@@ -45,7 +48,7 @@ impl Gta6EntryType {
         }
     }
 
-    /// The file family stated by either row layout, without reading its body.
+    /// The file family from a row type or a confirmed media path hash, without reading its body.
     pub fn hint(entry: &Gta6Entry, extra: &Gta6EntryExtra) -> Self {
         let code = if let Some(row) = extra.nested {
             if entry.class.is_some() || entry.real.is_some() || entry.stored.is_some() {
@@ -70,6 +73,9 @@ impl Gta6EntryType {
             68 => Self::Resource(Rpf9Role::Cloth),
             72 => Self::Resource(Rpf9Role::ParticleEffects),
             79 => Self::Resource(Rpf9Role::NavMesh),
+            255 if extra.nested.is_none() => media_name_extension(entry)
+                .map(Self::File)
+                .unwrap_or(Self::Unknown),
             _ => table_extension(code)
                 .map(Self::File)
                 .unwrap_or(Self::Unknown),
@@ -120,6 +126,50 @@ fn starts_xml_element(head: &[u8]) -> bool {
         .iter()
         .position(|b| !b.is_ascii_alphanumeric() && !b"_:-.".contains(b));
     end.is_none_or(|end| name[end] == b'>' || name[end] == b'/' || name[end].is_ascii_whitespace())
+}
+
+// These complete media names have been matched to their table hashes; a display label alone
+// supplies no evidence, and a resource row always keeps its own type.
+fn media_name_extension(entry: &Gta6Entry) -> Option<&'static str> {
+    use crate::gta6::hash::{name_hash32, name_hash64};
+    static NAMES: LazyLock<HashMap<u64, (u32, &'static str)>> = LazyLock::new(|| {
+        [
+            ("force_empty_rpf.txt", "txt"),
+            ("config/chunklist.txt", "txt"),
+            ("config/audioconfig.dat26.rel.nametable", "nametable"),
+            ("config/audioconfig_common.dat26.rel.nametable", "nametable"),
+            ("config/packlist_rel.txt", "txt"),
+            ("config/minigame000_packlist.txt", "txt"),
+            ("config/story000_packlist.txt", "txt"),
+            ("config/story000_restofworld_packlist.txt", "txt"),
+            ("data/version.txt", "txt"),
+            ("data/tessellation.dat", "dat"),
+            ("data/visualsettings.dat", "dat"),
+            ("data/levels/americas/vfx.dat", "dat"),
+            ("shaders/preload.list", "list"),
+            ("shaders/preloadinit.list", "list"),
+            ("data/glass/0x0_crack_0.txt", "txt"),
+            ("data/glass/0x0_crack_1.txt", "txt"),
+            ("data/glass/0x0_crack_2.txt", "txt"),
+            ("data/glass/0x0_crack_3.txt", "txt"),
+            ("data/glass/1x1_crack_1.txt", "txt"),
+            ("data/glass/tempered_v1.txt", "txt"),
+            ("data/glass/tempered_v6.txt", "txt"),
+        ]
+        .into_iter()
+        .map(|(name, extension)| {
+            (
+                name_hash64(name.as_bytes()),
+                (name_hash32(name.as_bytes()), extension),
+            )
+        })
+        .collect()
+    });
+    let (name32, extension) = NAMES.get(&entry.name64)?;
+    entry
+        .name32
+        .is_none_or(|hash| hash == *name32)
+        .then_some(*extension)
 }
 
 // Resource suffixes use the same display prefix as the other RAGE titles; it is not hashed.

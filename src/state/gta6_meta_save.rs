@@ -1,12 +1,54 @@
 //! An edited GTA VI metadata document saved as a file of its own: a PSO or RBF body as its bytes,
 //! a headerless resource as a loose resource of its edited sections. A GTA VI `zppp` PSO's `CHKS`
-//! is recomputed on save; a frame whose rule is not reproduced is left carried.
+//! is recomputed on save; a frame whose rule is not reproduced is left carried. A table-form PSO's
+//! new texts go to its enciphered `LSNS` runs, enciphered with the held key snapshot.
 
-use or_io::container::rpf::Rpf9Sections;
+use std::sync::Arc;
 
-use super::document::DocPayload;
+use or_io::container::rpf::{GtaViKeys, Rpf9Sections};
+use or_io::meta::binary::pso::table_strings;
+use or_io::meta::binary::ContainerLayout;
+
+use super::document::{meta_schema, DocPayload, MetaDocument};
 use super::extract_job::{ExtractItem, OnClash};
 use super::{AppState, DocumentId};
+
+#[cfg(test)]
+#[path = "../../crates/tools/or-cli/src/gta6_string_fixture.rs"]
+mod string_fixture;
+
+/// The bytes `meta` saves as, a table-form PSO's new texts enciphered with the keys `keys` loads.
+// `keys` is called only when the write needs to encipher a text, which only the writer knows.
+pub(crate) fn meta_bytes(
+    meta: &MetaDocument,
+    keys: impl FnOnce() -> Option<Arc<GtaViKeys>>,
+) -> Result<Vec<u8>, String> {
+    let layout = (meta.layout.as_ref()).filter(|l| match &l.container {
+        ContainerLayout::Pso(p) => p.is_table_form(),
+        _ => false,
+    });
+    let Some(layout) = layout else {
+        return meta.to_bytes();
+    };
+    let instance = if meta.parsed_at_text_revision < meta.text_revision {
+        let xml = meta.text.text.to_string().into_bytes();
+        or_io::meta::MetaDocument::parse(meta_schema(), xml)
+            .map(|d| d.instance)
+            .map_err(|e| format!("the edited XML does not parse, so it cannot be saved: {e}"))?
+    } else {
+        match &meta.parsed {
+            Some(parsed) => parsed.instance.clone(),
+            None => return meta.to_bytes(),
+        }
+    };
+    table_strings::write_adding_strings(layout, &instance, None).or_else(|first| {
+        match keys().filter(|k| k.has_string_keys()) {
+            Some(keys) => table_strings::write_adding_strings(layout, &instance, Some(&keys)),
+            None => Err(first),
+        }
+        .map_err(|e| e.to_string())
+    })
+}
 
 /// The metadata row's `edited_sections`: a headerless resource's, once it is edited.
 pub(super) fn edited_sections(payload: &DocPayload) -> Option<Result<Rpf9Sections, String>> {
@@ -44,7 +86,7 @@ impl AppState {
         if !meta.is_edited() || meta.headerless_sections().is_some() {
             return None;
         }
-        match meta.to_bytes() {
+        match meta_bytes(meta, || super::rpf9_scan::rpf9_table::keys().ok()) {
             Ok(bytes) => {
                 let item = ExtractItem::bytes(name.clone(), bytes);
                 Some(self.start_scanned_extraction(name, dest, reads, vec![item], OnClash::Save))
@@ -60,9 +102,10 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use or_io::container::rpf::{read_rpf9_body, Rpf9Sections};
+    use or_io::container::rpf::{read_rpf9_body, GtaViKeys, Rpf9Sections};
     use or_io::meta::Value;
 
     use crate::state::opening_an_rpf9_archive::{
@@ -473,5 +516,46 @@ mod tests {
             root_value(&reopened.instance),
             &Value::Array([7u64, 9, 11].map(Value::UInt).into())
         );
+    }
+
+    /// The table-form document whose category-1 run is enciphered, its root's text set to `text`.
+    fn with_a_text(text: &str) -> (Vec<u8>, crate::state::MetaDocument, Arc<GtaViKeys>) {
+        let keys = super::string_fixture::string_keys();
+        let doc = super::string_fixture::document(&keys);
+        let mut meta = crate::state::MetaDocument::from_bytes(doc.clone());
+        let parsed = meta.parsed.as_mut().expect("it parsed");
+        parsed.instance.fields[0].1 = Value::String(text.into());
+        meta.after_visual_edit_in_place();
+        (doc, meta, Arc::new(keys))
+    }
+
+    #[test]
+    fn a_new_text_in_a_document_with_an_enciphered_run_saves_and_reads_back_named() {
+        use super::string_fixture::{hash_of, HELD};
+        let (_, meta, keys) = with_a_text("zq_new");
+        let saved = super::meta_bytes(&meta, || Some(keys.clone())).expect("it saves");
+        let strings = crate::state::DocumentStrings::of(&saved, || Some(keys.clone()));
+        let hash = or_io::string_hash(b"zq_new");
+        assert_eq!(strings.name(hash), Some("zq_new"));
+        assert_eq!(
+            strings.name(or_io::string_hash(HELD.as_bytes())),
+            Some(HELD)
+        );
+        let reopened = crate::state::MetaDocument::from_bytes(saved);
+        let parsed = reopened.parsed.expect("the saved document reads");
+        assert_eq!(hash_of(root_value(&parsed.instance)), Some(hash));
+    }
+
+    #[test]
+    fn without_keys_a_new_text_is_refused_by_name_and_an_unedited_save_needs_none() {
+        let (doc, meta, _) = with_a_text("zq_new");
+        let err = super::meta_bytes(&meta, || None).expect_err("no keys to encipher it");
+        assert!(
+            err.contains("zq_new") && err.contains("no key snapshot"),
+            "{err}"
+        );
+        let unedited = crate::state::MetaDocument::from_bytes(doc);
+        let saved = super::meta_bytes(&unedited, || None);
+        assert!(saved.is_ok(), "{saved:?}");
     }
 }

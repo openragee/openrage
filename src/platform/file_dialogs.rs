@@ -156,6 +156,19 @@ fn save_keeping_extension(info: &kinds::KindInfo, default_name: Option<&str>) ->
     })
 }
 
+/// Where a GTA VI archive's edits are written: always a new archive, offered as `default_name`.
+pub fn save_gta6_archive_copy(default_name: &str) -> Option<PathBuf> {
+    let title = tr!(
+        "Save the edits to a new archive, which the game refuses because its signature covers the table"
+    );
+    ask(title, |dialog| {
+        dialog
+            .add_filter("RPF archive", &["rpf"])
+            .set_file_name(default_name)
+            .save_file()
+    })
+}
+
 /// Where a whole pack is written as one package: a file called for the pack, with the package's extension.
 pub fn save_pack_package(pack: &str) -> Option<PathBuf> {
     let ext = or_wardrobe::pack_package::EXTENSION;

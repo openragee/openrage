@@ -1,14 +1,12 @@
 //! Save into a copy of the archive: a GTA VI document's edits, as its loose save writes them, put
 //! in place of the entry it was read from in a new archive file, which the game refuses as unsigned.
 
+use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::{BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use or_io::container::rpf::{
-    BodyForm, Gta6Class, Gta6Mount, GtaViKeys, Rpf9ArchiveWriter, RPF9_SLOT,
-};
+use or_io::container::rpf::{BodyForm, GtaViKeys, Rpf9ArchiveWriter};
 
 use crate::state::extract_job::ExtractItem;
 use crate::state::gta6_resource_save::EditedSave;
@@ -104,6 +102,7 @@ impl AppState {
 
     /// Say how each save into a copy of an archive ended.
     pub(in crate::state) fn poll_archive_saves(&mut self) {
+        self.poll_tree_saves();
         let done = std::mem::take(&mut *ended());
         for said in done {
             match said {
@@ -133,7 +132,10 @@ fn archive_item(doc: &Document) -> Result<ExtractItem, String> {
     let name = String::new();
     match &doc.payload {
         DocPayload::Meta(meta) if meta.is_edited() && meta.headerless_sections().is_none() => {
-            return meta.to_bytes().map(|bytes| ExtractItem::bytes(name, bytes));
+            return crate::state::gta6_meta_save::meta_bytes(meta, || {
+                crate::state::rpf9_scan::rpf9_table::keys().ok()
+            })
+            .map(|bytes| ExtractItem::bytes(name, bytes));
         }
         // An edited text body is written in the encoding and line endings it was read with.
         DocPayload::Text(text)
@@ -175,7 +177,9 @@ fn write_copy(
     keys: &GtaViKeys,
 ) -> Result<(bool, bool), String> {
     let mut file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
-    let (path, headerless) = entry_at(&mut file, offset, keys)?;
+    let wanted = BTreeSet::from([offset]);
+    let mut found = crate::state::rpf_archive_open::tree_verbs::chains(&mut file, &wanted, keys)?;
+    let (path, headerless) = found.remove(&offset).unwrap_or_default();
     write_entry(archive, &path, headerless, body, out, keys)
 }
 
@@ -190,90 +194,13 @@ pub(crate) fn write_entry(
     out: &Path,
     keys: &GtaViKeys,
 ) -> Result<(bool, bool), String> {
-    if crate::state::reload_open_file::same_file(out, archive) {
-        return Err(tr!(
-            "the copy is a new file, and the archive it is read from is never written"
-        )
-        .to_string());
-    }
-    let mut file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
     let mut writer = Rpf9ArchiveWriter::new();
     if headerless {
         writer.replace_resource(path, body, None);
     } else {
         writer.replace(path, body);
     }
-    let plan = writer.plan(&mut file, keys).map_err(|e| e.to_string())?;
-    // `create_new` refuses any file that exists, so the cleanup below only removes one made here.
-    let created = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(out)
-        .map_err(|e| format!("{}: {e}", out.display()))?;
-    let mut sink = BufWriter::new(created);
-    let written = (plan
-        .write_to(&mut file, &mut sink)
-        .map_err(|e| e.to_string()))
-    .and_then(|_| sink.flush().map_err(|e| e.to_string()));
-    drop(sink);
-    if let Err(e) = written {
-        let _ = std::fs::remove_file(out);
-        return Err(format!("{}: {e}", out.display()));
-    }
-    Ok((plan.tables_changed > 0, plan.bodies_changed > 0))
-}
-
-/// The entry indices from the top-level table to the entry whose body is at `offset`, and whether
-/// its row is a headerless resource's: a body opens at its row's start, or past a resource's slot.
-fn entry_at<R: Read + Seek>(
-    src: &mut R,
-    offset: u64,
-    keys: &GtaViKeys,
-) -> Result<(Vec<u32>, bool), String> {
-    let at_text = format!("{offset:#x}");
-    let mut mount = Gta6Mount::open_root(src, keys).map_err(|e| e.to_string())?;
-    let mut path = Vec::new();
-    loop {
-        let entries = &mount.archive.entries;
-        let extras = mount.archive.entry_extras();
-        let headerless = |at: usize| extras.get(at).is_some_and(|x| x.nested.is_some());
-        // Only a headerless resource's body opens past its slot.
-        let here: Vec<usize> = (0..entries.len())
-            .filter(|&at| {
-                mount
-                    .absolute_start(&entries[at])
-                    .is_some_and(|s| s == offset || (headerless(at) && s + RPF9_SLOT == offset))
-            })
-            .collect();
-        match here[..] {
-            [at] => {
-                path.push(entries[at].index);
-                return Ok((path, headerless(at)));
-            }
-            [] => {}
-            _ => {
-                return Err(tr!(
-                    "more than one entry holds the body at {offset}, so which one to replace is not known",
-                    offset = at_text
-                ))
-            }
-        }
-        let inside = entries.iter().find(|e| {
-            e.kind() == Some(Gta6Class::NestedArchive)
-                && matches!((mount.absolute_start(e), e.stored),
-                    (Some(s), Some(len)) if s < offset && offset < s + len)
-        });
-        let Some(entry) = inside.cloned() else {
-            return Err(tr!(
-                "no entry of the archive holds the body at {offset}",
-                offset = at_text
-            ));
-        };
-        path.push(entry.index);
-        mount = mount
-            .open_nested(src, &entry, keys)
-            .map_err(|e| e.to_string())?;
-    }
+    crate::state::rpf_archive_open::tree_verbs::write_plan(&writer, archive, out, keys)
 }
 
 #[cfg(test)]

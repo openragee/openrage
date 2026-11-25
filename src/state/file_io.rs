@@ -527,7 +527,7 @@ impl AppState {
         if let Some(started) = self.save_edited_resource(doc_id) {
             return started;
         }
-        if self.refused_as_read_only_document(doc_id) {
+        if self.refused_as_read_only_document(doc_id) || self.refused_gta6_tree_in_place(doc_id) {
             return false;
         }
         if let Some(doc) = self.document(doc_id) {
@@ -760,6 +760,7 @@ impl AppState {
                     archive_id = archive_id
                 )
             })?;
+            super::rpf_archive_open::tree_verbs::refuse_in_place(&slot.archive)?;
             let fs_path = slot.fs_path.clone().ok_or_else(|| {
                 tr!(
                     "Archive {archive_id} has no on-disk path",
@@ -836,7 +837,9 @@ impl AppState {
     }
 
     pub(super) fn save_as_inner(&mut self, doc_id: DocumentId, path: PathBuf) -> bool {
-        if let Some(started) = self.save_scanned_body_as(doc_id, &path) {
+        if let Some(started) = (self.save_scanned_body_as(doc_id, &path))
+            .or_else(|| self.save_gta6_tree_as(doc_id, &path))
+        {
             return started;
         }
         // ⚠ Asked before the document takes the new path, so a refusal leaves it where it was.

@@ -344,8 +344,6 @@ fn every_named_kind_has_a_payload_and_there_is_no_surplus() {
     let surplus: Vec<&String> = payloads
         .iter()
         .filter(|p| !kinds.contains(*p) && *p != OPEN_KIND && *p != OWNED_PAYLOAD)
-        // A GTA VI archive is listed from its table where a key opens it, and scanned where none does.
-        .filter(|p| *p != "Rpf9Table")
         .collect();
     assert!(
         surplus.is_empty(),

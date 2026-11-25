@@ -3,8 +3,9 @@
 //! placed after it, and the model's three arrays and the drawable's per-geometry table laid out
 //! anew past the virtual section's end. The arrays they replace stay as unreferenced bytes.
 //!
-//! ⚠ The table's density words are not derivable from the vertices, so each piece carries the
-//! replaced geometry's. Its box elements are one axis-aligned box per piece: it encloses the piece,
+//! ⚠ Each piece's density words are its own, derived as a replaced geometry's are: its world area
+//! over its texcoord area, times the power of 4 the replaced geometry's stored word states. Its box
+//! elements are one axis-aligned box per piece: it encloses the piece,
 //! as every stored element encloses its parts, but it is not the box the game's tool writes.
 
 use std::collections::HashMap;
@@ -97,12 +98,18 @@ pub fn write_geometry_cut(
         ));
     }
 
-    // Each further piece written alone over the geometry, for the bytes it then holds.
-    let mut alone = Vec::with_capacity(k);
+    // Each further piece written alone over the geometry, for the bytes and density words it then
+    // holds.
+    let (mut alone, mut own_densities) = (Vec::with_capacity(k), Vec::with_capacity(k));
     for piece in &pieces[1..] {
         let mut scratch = out.clone();
         write_geometry(&mut scratch, role, code, at, piece)?;
         alone.push(written_alone(&scratch, role, code, at)?);
+        let (_, _, own) = held(&scratch, role, code, at)?;
+        let density = (own.densities.get(q).cloned()).ok_or(Refused(
+            "the per-geometry table names no row 0 words of the geometry",
+        ))?;
+        own_densities.push(density);
     }
     let mut written = write_geometry(&mut out, role, code, at, &pieces[0])?;
 
@@ -224,7 +231,8 @@ pub fn write_geometry_cut(
     for (i, (density, run)) in table.densities.iter().zip(&table.elements).enumerate() {
         match i == q {
             true => {
-                for piece in &pieces {
+                let own = std::iter::once(density).chain(&own_densities);
+                for (piece, density) in pieces.iter().zip(own) {
                     densities.extend_from_slice(density);
                     elements.push(element(extremes(&piece.positions)));
                 }

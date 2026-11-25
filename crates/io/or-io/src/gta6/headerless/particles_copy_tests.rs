@@ -78,7 +78,7 @@ fn a_duplicated_effect_takes_its_own_edits_and_leaves_its_source_as_it_was() {
 }
 
 #[test]
-fn a_duplicate_is_refused_for_a_taken_name_a_missing_source_or_an_event_object() {
+fn a_duplicate_is_refused_for_a_taken_name_a_missing_source_or_an_event_object_of_no_rule() {
     let (v, at) = body();
     let mut s = mapped(v);
     let before = s.clone();
@@ -94,6 +94,7 @@ fn a_duplicate_is_refused_for_a_taken_name_a_missing_source_or_an_event_object()
         assert_eq!(s, before);
     }
 
+    // An event's +0x60 aimed at a particle rule, which reads as no measured object.
     let to = (0x5000_0000 + at.particle as u64).to_le_bytes();
     s.virtual_section[at.event + 0x60..at.event + 0x68].copy_from_slice(&to);
     let before = s.clone();

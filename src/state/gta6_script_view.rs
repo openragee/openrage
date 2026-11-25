@@ -1,12 +1,17 @@
 //! A decrypted GTA VI compiled script opens as its instruction listing instead of its bytes.
+//!
+//! A native prints by name from the table `openrage-cli` cached from the user's lifted listings,
+//! and by address without one; it runs on the load worker, never the UI thread.
 
 use crate::state::document::{DocPayload, TextDocument};
 use or_io::gta6::script::compiled::{disasm, Compiled};
+use or_io::gta6::script::native_addresses::NativeAddresses;
 
 /// The listing of `bytes` as text, or `None` when they are no compiled program or their code does not decode.
 pub(crate) fn script_payload(bytes: &[u8]) -> Option<DocPayload> {
     let program = Compiled::open(bytes).ok()?;
-    let listing = disasm::listing(&program).ok()?;
+    let natives = or_title::config::config_dir().and_then(|dir| NativeAddresses::cached(&dir));
+    let listing = disasm::listing(&program, natives.as_ref()).ok()?;
     Some(DocPayload::Text(TextDocument::decode(
         listing.text.as_bytes(),
     )))

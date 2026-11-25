@@ -121,6 +121,40 @@ fn an_event_is_duplicated_with_an_object_and_a_buffer_of_its_own() {
 }
 
 #[test]
+fn an_effect_is_duplicated_with_objects_and_buffers_of_its_own() {
+    const COPY: &str = "ent_test_spray_copy";
+    let (mut s, at, o) = with_object(&[(8, 0b101), (0x58, 0x80)]);
+    let (old, physical) = (s.virtual_section.clone(), s.physical.clone());
+    duplicate_particle_effect(&mut s, 0, COPY).expect("it copies with its objects");
+
+    let v = &s.virtual_section;
+    let list = read_list(v).expect("it reads");
+    let copy = (list.effects.iter().find(|e| e.name == COPY)).expect("the copy");
+    let source = (list.effects.iter().find(|e| e.name == EFFECT)).expect("the source");
+    assert_eq!(copy.events, source.events);
+    let event = place(v, place(v, copy.at as usize + 0x38));
+    let record = place(v, event + 0x60);
+    assert!(
+        record >= old.len() && record.is_multiple_of(16),
+        "its own record"
+    );
+    assert_eq!(&v[record..record + 0x80], &old[o.record..o.record + 0x80]);
+    let buffer = place(v, record + 0x80);
+    assert!(buffer >= old.len(), "its own buffer object");
+    let text = place(v, buffer + 0x30);
+    assert!(text >= old.len(), "its own name record");
+    let data = (u64_at(v, buffer + 0x18) & 0x0FFF_FFFF) as usize;
+    assert!(data >= physical.len(), "{data:#x}");
+    assert_eq!(&s.physical[data..data + 0x100], &physical[..]);
+
+    // The source keeps its object, and a second copy is refused for its taken name.
+    assert_eq!(place(v, at.event + 0x60), o.record);
+    let before = s.clone();
+    assert!(duplicate_particle_effect(&mut s, 0, COPY).is_err());
+    assert_eq!(s, before);
+}
+
+#[test]
 fn an_event_whose_object_has_no_buffer_is_duplicated_with_a_record_of_its_own() {
     let (mut s, at, o) = with_object(&[]);
     let (old, physical) = (s.virtual_section.clone(), s.physical.clone());

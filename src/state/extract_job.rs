@@ -173,9 +173,16 @@ impl ExtractItem {
                 device,
                 entry_index,
                 ..
-            } => device
-                .read_entry(*entry_index, form)
-                .map_err(|e| e.to_string()),
+            } => match super::rpf_archive_open::tree_verbs::loose_body(
+                device.archive(),
+                *entry_index,
+                form,
+            ) {
+                Some(loose) => Ok(loose),
+                None => device
+                    .read_entry(*entry_index, form)
+                    .map_err(|e| e.to_string()),
+            },
         }
     }
 

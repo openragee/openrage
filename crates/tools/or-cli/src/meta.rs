@@ -2,7 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use or_io::container::rpf::{GtaViKeys, GTA6_SNAPSHOT_ENV};
 use or_io::meta::binary::layout::ContainerLayout;
+use or_io::meta::binary::pso::table_strings::write_adding_strings;
 use or_io::meta::binary::{parse_meta_binary_full, write_meta_binary};
 use or_io::meta::{BinaryFormat, Diagnostics, ErrorMode, MetaInstance, Value};
 
@@ -382,7 +384,10 @@ fn cmd_from_xml(args: &[String]) -> Result<ExitCode, String> {
                 {
                     eprintln!("openrage-cli: {CHECKSUM_KEPT}");
                 }
-                write_meta_binary(format, Some(&layout), &instance).map_err(|e| e.to_string())?
+                write_like(&layout, &instance, || {
+                    GtaViKeys::for_install_with(or_title::config::config_dir().as_deref(), None)
+                        .map_err(|e| e.to_string())
+                })?
             }
         }
         (None, Some(format)) => {
@@ -422,6 +427,31 @@ fn cmd_from_xml(args: &[String]) -> Result<ExitCode, String> {
         format
     );
     Ok(ExitCode::SUCCESS)
+}
+
+/// `instance` written in the donor's `layout`, a table-form PSO's new texts enciphered with `keys`.
+// `keys` is called only when the write needs to encipher a text, which only the writer knows.
+fn write_like(
+    layout: &or_io::meta::binary::MetaLayout,
+    instance: &MetaInstance,
+    keys: impl FnOnce() -> Result<Option<GtaViKeys>, String>,
+) -> Result<Vec<u8>, String> {
+    if !matches!(&layout.container, ContainerLayout::Pso(p) if p.is_table_form()) {
+        return write_meta_binary(layout.format, Some(layout), instance).map_err(|e| e.to_string());
+    }
+    let first = match write_adding_strings(layout, instance, None) {
+        Ok(bytes) => return Ok(bytes),
+        Err(e) => e,
+    };
+    let why = match keys() {
+        Ok(Some(keys)) if keys.has_string_keys() => {
+            return write_adding_strings(layout, instance, Some(&keys)).map_err(|e| e.to_string());
+        }
+        Ok(Some(_)) => "the key snapshot carries no string section".to_owned(),
+        Ok(None) => format!("set {GTA6_SNAPSHOT_ENV} to a key snapshot"),
+        Err(why) => why,
+    };
+    Err(format!("{first}; {why}"))
 }
 
 /// Install what the type tables of every metadata file in `game_root` state,
@@ -1359,6 +1389,13 @@ fn print_usage() {
     eprintln!("  openrage-cli meta from-xml peds.xml new.ymt --like peds.ymt");
     eprintln!("  openrage-cli meta roundtrip --batch corpus/ --json");
 }
+
+#[cfg(test)]
+#[path = "gta6_string_fixture.rs"]
+mod gta6_string_fixture;
+#[cfg(test)]
+#[path = "meta_gta6_strings_tests.rs"]
+mod gta6_strings_tests;
 
 #[cfg(test)]
 mod tests {

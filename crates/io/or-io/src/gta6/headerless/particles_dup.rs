@@ -585,4 +585,4 @@ fn own_buffers(s: &Rpf9Sections, from: &ParticleRule, to: &ParticleRule) -> Resu
 }
 
 #[path = "particles_event_object.rs"]
-mod event_object;
+pub(super) mod event_object;

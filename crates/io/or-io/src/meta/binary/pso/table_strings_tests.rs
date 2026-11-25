@@ -243,7 +243,6 @@ fn a_namespace_with_no_run_takes_a_new_wide_hash() {
 mod build {
     use std::fs::File;
     use std::path::{Path, PathBuf};
-    use std::time::{Duration, Instant};
 
     use super::*;
     use crate::container::rpf::{Gta6Mount, GTA6_SNAPSHOT_ENV};
@@ -253,16 +252,16 @@ mod build {
     use crate::meta::schema::SchemaLibrary;
 
     const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
-    const CONTENT_CIPHER_TYPE: u16 = 17;
-    const MAX_DEPTH: usize = 8;
     /// String sections are small; a larger entry is not inflated for them.
     const MAX_ENTRY: u64 = 4 << 20;
-    /// How long a walk reads before it judges what it met, inside the slow tier's limit.
-    const WALK_TIME: Duration = Duration::from_secs(600);
     /// The enciphered runs the build holds: 64 in `LSNS`, one in `STNS`, one `STFN`.
     const RUNS: usize = 66;
-    /// The name hashes of the file names of the two archives that hold those runs.
-    const PSO_ARCHIVES: [u32; 2] = [0xBC35_2010, 0x61CA_8E15];
+    /// The name hashes of the file names of the four archives that hold those runs.
+    const PSO_ARCHIVES: [u32; 4] = [0xBC35_2010, 0x61CA_8E15, 0x6E66_352F, 0xCDF3_7CE5];
+    /// The class byte of a nested archive's row.
+    const NESTED_CLASS: u8 = 0x00;
+    /// The class byte of a compressed resource's row, which every document holding a run has.
+    const RESOURCE_CLASS: u8 = 0x0B;
     /// The hash values of one document a save tries as the one to take a new text.
     const TRIES: usize = 64;
     const ADDED: &str = "zq_openrage_added_text";
@@ -312,28 +311,32 @@ mod build {
                 rpfs_in(&pack.path());
             }
         }
-        out.sort();
-        // The archives that hold the PSO documents with string runs come first, so the walk meets
-        // them before it times out in the largest archives a sorted walk reads first.
-        out.sort_by_key(|path| {
+        out.retain(|path| {
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
-            !name.is_some_and(|n| {
+            name.is_some_and(|n| {
                 PSO_ARCHIVES.contains(&crate::gta6::hash::name_hash32(n.as_bytes()))
             })
         });
+        out.sort();
         out
     }
 
-    /// Hands `visit` each PSO document of the build, clear or content-ciphered, until it returns
-    /// `true` or the walk's time runs out.
+    /// Hands `visit` each PSO document of the archives that hold a run, clear or content-ciphered,
+    /// until it returns `true`.
+    // ⚠ The whole build is more than 600 s of reading; these archives' small resources and those of
+    // the archives nested in them hold every run.
     fn each_document(build: &Path, keys: &GtaViKeys, visit: &mut dyn FnMut(&[u8]) -> bool) {
-        let until = Instant::now() + WALK_TIME;
-        for path in archives(build) {
+        let archives = archives(build);
+        assert_eq!(
+            archives.len(),
+            PSO_ARCHIVES.len(),
+            "the build holds the archives with the runs"
+        );
+        for path in archives {
             let mut file = File::open(&path).expect("open the archive");
-            let Ok(mount) = Gta6Mount::open_root(&mut file, keys) else {
-                continue;
-            };
-            if walk(&mut file, &mount, keys, 0, until, visit) {
+            let mount = Gta6Mount::open_root(&mut file, keys)
+                .unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
+            if walk(&mut file, &mount, keys, visit) {
                 return;
             }
         }
@@ -343,36 +346,25 @@ mod build {
         file: &mut File,
         mount: &Gta6Mount,
         keys: &GtaViKeys,
-        depth: usize,
-        until: Instant,
         visit: &mut dyn FnMut(&[u8]) -> bool,
     ) -> bool {
-        if depth > MAX_DEPTH {
-            return false;
-        }
         for entry in &mount.archive.entries {
-            if Instant::now() >= until {
-                return true;
-            }
-            let clear = entry.cipher.is_none();
-            if clear
-                && entry.start.is_some()
-                && (mount.entry_begins_archive(&mut *file, entry)).unwrap_or(false)
-            {
+            if entry.class == Some(NESTED_CLASS) {
+                // A nested archive that does not open holds no run this counts; the count says so.
                 if let Ok(child) = mount.open_nested(&mut *file, entry, keys) {
-                    if walk(file, &child, keys, depth + 1, until, visit) {
+                    if walk(file, &child, keys, visit) {
                         return true;
                     }
                 }
                 continue;
             }
-            let content =
-                (entry.cipher.as_ref()).is_some_and(|c| c.cipher_type == CONTENT_CIPHER_TYPE);
-            if (clear || content) && !entry.real.is_some_and(|r| r > MAX_ENTRY) {
-                if let Ok(doc) = mount.read_entry_decrypted(&mut *file, entry, keys) {
-                    if doc.starts_with(b"PSIN") && visit(&doc) {
-                        return true;
-                    }
+            if entry.class != Some(RESOURCE_CLASS) || entry.real.is_some_and(|r| r > MAX_ENTRY) {
+                continue;
+            }
+            // A body of another cipher, or no PSO body, holds no run.
+            if let Ok(doc) = mount.read_entry_decrypted(&mut *file, entry, keys) {
+                if doc.starts_with(b"PSIN") && visit(&doc) {
+                    return true;
                 }
             }
         }
@@ -418,10 +410,13 @@ mod build {
                 met += 1;
                 identical += usize::from(run == stored);
             }
-            met >= RUNS
+            false
         });
         println!("string cipher encrypt: {identical} of {met} enciphered runs re-enciphered byte-identical");
-        assert!(met > 0, "the walk met no enciphered string run");
+        assert_eq!(
+            met, RUNS,
+            "the walk meets every enciphered run the build holds"
+        );
         assert_eq!(
             identical, met,
             "every run deciphered and enciphered again is its stored bytes"

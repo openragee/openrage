@@ -45,6 +45,7 @@ mod rel;
 mod rpf;
 mod rpf9;
 pub(crate) use rpf9::row_kind_label as rpf9_row_kind_label;
+mod rpf9_entry;
 mod structure;
 mod summary;
 mod text;

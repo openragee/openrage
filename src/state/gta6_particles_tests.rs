@@ -379,6 +379,64 @@ fn a_list_names_the_model_its_creation_mesh_domain_emits_from() {
     assert!(named.wanted.contains(&mesh));
 }
 
+/// The behaviours the first particle rule of `ypt` owns.
+fn owned(ypt: &mut PtxFxList) -> Vec<&mut PtxBehaviourAny> {
+    let rule = or_particle::list::particle_rules_mut(ypt)
+        .next()
+        .expect("a particle rule");
+    (rule.all_behaviours.iter_mut())
+        .filter_map(|b| match b {
+            Ref::Own(b) => Some(&mut **b),
+            Ref::To(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn an_edited_flip_chance_and_zcull_mode_reach_the_gta_vi_list_and_another_member_is_refused() {
+    use crate::state::gta6_particles_save::from_ypt;
+    let mut stored = list();
+    let mut zcull = behaviour(Some("ptxu_ZCull"), 0xA0, vec![]);
+    zcull.fields = BehaviourFields::ZCull {
+        mode: 1,
+        reference_space: 5,
+    };
+    let mut sprite = behaviour(None, 0x50, vec![]);
+    let drawn = |flip_chance| BehaviourFields::Sprite {
+        flip_chance,
+        alignment: 2,
+        bytes: [0; 16],
+    };
+    sprite.fields = drawn([0.5, 0.25]);
+    stored.behaviours.extend([zcull, sprite]);
+    stored.particles[0].behaviours.extend([4, 5]);
+    let mut ypt = as_ypt(&stored);
+    or_particle::list::canonical(&mut ypt);
+    for b in owned(&mut ypt) {
+        match b {
+            PtxBehaviourAny::PtxdSprite(s) => s.flip_chance_v = 0.75,
+            PtxBehaviourAny::PtxuZCull(z) => z.mode = 3,
+            _ => {}
+        }
+    }
+    let edited = from_ypt(&stored, &ypt).expect("both have a place");
+    assert_eq!(edited.behaviours[5].fields, drawn([0.5, 0.75]));
+    let culled = BehaviourFields::ZCull {
+        mode: 3,
+        reference_space: 5,
+    };
+    assert_eq!(edited.behaviours[4].fields, culled);
+
+    // A member the GTA VI list does not write.
+    let mut clipped = ypt.clone();
+    for b in owned(&mut clipped) {
+        if let PtxBehaviourAny::PtxdSprite(s) = b {
+            s.near_clip_dist = 2.0;
+        }
+    }
+    assert!(from_ypt(&stored, &clipped).is_err());
+}
+
 #[path = "gta6_particles_open_tests.rs"]
 mod open;
 

@@ -141,6 +141,7 @@ pub(super) fn draw_map(
                 let header = ui.horizontal(|ui| {
                     state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
                     ui.label(egui::RichText::new(key_text(k)).monospace());
+                    super::text_names::draw(ui, ctx, k);
                     let summary = super::widgets::item_summary(v);
                     if !summary.is_empty() {
                         ui.label(egui::RichText::new(summary).small().color(theme::TEXT_DIM));
@@ -209,11 +210,8 @@ mod tests {
         assert_eq!(pairs.len(), 2);
     }
 
-    #[test]
-    fn the_form_draws_a_map_s_count_and_each_pair_s_key_and_records_nothing_unclicked() {
-        let _serial = crate::ui::theme::serial();
-        let ctx = EditorCtx::for_test();
-        let field = Field {
+    fn map_field() -> Field {
+        Field {
             name: "entities".into(),
             ty: FieldType::Map {
                 key: Box::new(FieldType::String(StringKind::AtHashValue)),
@@ -227,9 +225,14 @@ mod tests {
             hide_widgets: false,
             description: None,
             hint: or_io::meta::FieldHint::None,
-        };
+        }
+    }
+
+    /// The shapes the form draws of a map of one pair whose key hashes `key`, and whether it changed.
+    fn drawn(ctx: &EditorCtx, key: u32) -> (String, bool) {
+        let field = map_field();
         let mut value = Value::Map(vec![(
-            Value::Hash(HashedString::from_hash(0xABCD_0001)),
+            Value::Hash(HashedString::from_hash(key)),
             Value::UInt(3),
         )]);
         let mut dirty = false;
@@ -237,12 +240,32 @@ mod tests {
             let FieldType::Map { key, value: of } = &field.ty else {
                 return;
             };
-            draw_map(ui, &ctx, &field, (&**key, &**of), &mut value, &mut dirty);
+            draw_map(ui, ctx, &field, (&**key, &**of), &mut value, &mut dirty);
         });
-        let shapes = format!("{:?}", output.shapes);
+        (format!("{:?}", output.shapes), dirty)
+    }
+
+    #[test]
+    fn the_form_draws_a_map_s_count_and_each_pair_s_key_and_records_nothing_unclicked() {
+        let _serial = crate::ui::theme::serial();
+        let ctx = EditorCtx::for_test();
+        let (shapes, dirty) = drawn(&ctx, 0xABCD_0001);
         assert!(shapes.contains("Pairs: 1"), "{shapes}");
         assert!(shapes.contains("hash_ABCD0001"), "{shapes}");
         assert!(!dirty);
         assert!(ctx.edits.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_pair_s_hash_key_the_document_s_strings_name_shows_that_name() {
+        let _serial = crate::ui::theme::serial();
+        let text = "zq_map_pair_key";
+        let mut ctx = EditorCtx::for_test();
+        let document = super::super::text_names::tests::document(text);
+        ctx.strings = std::sync::Arc::new(crate::state::DocumentStrings::of(&document, || None));
+        let (shapes, _) = drawn(&ctx, or_io::string_hash(text.as_bytes()));
+        assert!(shapes.contains(text), "{shapes}");
+        let (shapes, _) = drawn(&ctx, or_io::string_hash(text.as_bytes()) ^ 1);
+        assert!(!shapes.contains(text), "{shapes}");
     }
 }

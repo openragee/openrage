@@ -74,6 +74,8 @@ fn plan(v: Bytes, stored: &ParticleEffects, edited: &ParticleEffects) -> Result<
     }
     let counts = super::colour_word::patches(&stored.behaviours, &edited.behaviours);
     p.out.extend(counts);
+    let fields = super::fields_word::patches(&stored.behaviours, &edited.behaviours)?;
+    p.out.extend(fields);
     Ok(p.out)
 }
 

@@ -370,6 +370,7 @@ fn particle(
                 held.fields = held.fields.with_colour_max_enabled(c.rgba_max_enable.get());
             }
         }
+        super::gta6_particles::written_fields(b, held);
         for (id, prop) in behaviour_kfps(b) {
             if let Some(k) = held.kfps.iter_mut().find(|k| k.id == id) {
                 keys(k, prop);

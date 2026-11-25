@@ -381,9 +381,6 @@ mod view;
 use view::not_a_start;
 pub use view::{view_of, View};
 
-#[path = "rpf9_table_document.rs"]
-pub(crate) mod rpf9_table_document;
-
 #[path = "rpf9_table.rs"]
 pub(crate) mod rpf9_table;
 
@@ -455,6 +452,17 @@ pub(super) fn read_body(path: &Path, archive: &Path, offset: u64) -> Result<DocP
     // below reads only bytes stored in the clear.
     if let Some(req) = take_ciphered(path) {
         return ciphered_payload(path, archive, req);
+    }
+    // A clear row the archive's tree opened is read by its table, under the kind its start names.
+    if let Some(read) = super::rpf_archive_open::tree_open::read(path, archive, offset) {
+        use super::rpf_archive_open::tree_open::TableRead;
+        return match read? {
+            TableRead::Body(find, bytes) => {
+                origins().insert(path.to_path_buf(), (find, false));
+                body_payload(path, archive, find, bytes)
+            }
+            TableRead::Plain(payload) => Ok(payload),
+        };
     }
     let file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
     let (find, bytes) = match read_rpf9_body(&file, offset, BODY_LIMIT) {

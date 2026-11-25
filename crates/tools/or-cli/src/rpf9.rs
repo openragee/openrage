@@ -4,7 +4,11 @@
 //!   `rpf9 tree …`                          an alias of `list`, kept for the earlier name
 //!   `rpf9 extract <archive> <dest> …`      write entry bodies to disk, inflated, at their exact extent
 //!                                          (with `--decrypt`, a content-ciphered body is deciphered first);
-//!                                          a nested archive is written as its row's extent
+//!                                          a nested archive is written as its row's extent;
+//!                                          `--kind` keeps one kind, `--dry-run` writes nothing
+//!   `rpf9 tree-install <build-root>`       every path of the install merged across its archives in
+//!                                          mount order, each from the last archive that names it
+//!   `rpf9 pack <archive>`                  every row of one archive, nested archives indented
 //!   `rpf9 find <install-dir> …`            every entry of every archive, nested ones included, whose
 //!                                          name, hash or kind matches
 //!   `rpf9 census <build-root>`             walk every archive and nested table, count them, and
@@ -36,6 +40,8 @@ use or_io::meta::binary::pso::string_names;
 
 #[path = "rpf9_find.rs"]
 mod find;
+#[path = "rpf9_install.rs"]
+mod install;
 
 /// The environment variable that names a folder of recovered-names tables (`vocabulary.txt`,
 /// `resolved-names.tsv`, `toc-entries-resolved.tsv`), used when `--names` is not given.
@@ -46,6 +52,8 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         Some("list" | "tree") => list(&args[1..]),
         Some("extract") => extract(&args[1..]),
         Some("find") => find::run(&args[1..]),
+        Some("tree-install") => install::tree_install(&args[1..]),
+        Some("pack") => install::pack(&args[1..]),
         Some("census") => census(&args[1..]),
         Some(verb @ ("copy" | "replace" | "remove" | "rename" | "defrag")) => {
             crate::rpf9_write::run(verb, &args[1..])
@@ -61,7 +69,10 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
 const USAGE: &str = "\
 usage:
   openrage-cli rpf9 list <archive.rpf> [inner/path] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>] [--groups] [--nested] [--strings] [--json]
-  openrage-cli rpf9 extract <archive.rpf> <dest-dir> [inner/path] [--entry <selector>] [--filter <substr>] [--decrypt] [--strings] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 extract <archive.rpf> <dest-dir> [inner/path] [--entry <selector>] [--filter <substr>] [--kind <archive|resource|media|0xNN|kind label>] [--dry-run] [--decrypt] [--strings] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 tree-install <build-root> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+      (mount order: the archives at the build root, then those under pack/, each by path; a path two archives name is listed once, from the later)
+  openrage-cli rpf9 pack <archive.rpf> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli rpf9 find <install-dir> [--name <substr>] [--hash <hex>] [--kind <archive|resource|media|0xNN|kind label>] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli rpf9 census <build-root> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>] [--out <dir>] [--top-only]
   openrage-cli rpf9 copy <archive.rpf> --out <new.rpf> [--keys <snapshot>]
@@ -509,6 +520,7 @@ fn extract(args: &[String]) -> ExitCode {
     let mut positionals: Vec<&str> = Vec::new();
     let (mut entry_sel, mut filter): (Option<String>, Option<String>) = (None, None);
     let (mut decrypt, mut strings) = (false, false);
+    let mut scope = Scope::default();
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match take_common(&mut common, arg, &mut it) {
@@ -518,6 +530,12 @@ fn extract(args: &[String]) -> ExitCode {
         }
         match arg.as_str() {
             "--strings" => strings = true,
+            "--dry-run" => scope.dry_run = true,
+            "--kind" => match it.next().map(|v| find::parse_kind(v)) {
+                Some(Ok(kind)) => scope.kind = Some(kind),
+                Some(Err(e)) => return usage(&e),
+                None => return usage("--kind needs archive, a kind label or a class byte"),
+            },
             "--entry" => match it.next() {
                 Some(v) => entry_sel = Some(v.clone()),
                 None => return usage("--entry needs a selector"),
@@ -551,19 +569,21 @@ fn extract(args: &[String]) -> ExitCode {
         decrypt,
         strings,
     };
-    match do_extract(
+    match extract_entries(
         Path::new(archive),
         Path::new(dest),
         &inner,
         &pick,
+        &scope,
         &keys,
         &resolver,
     ) {
         Ok(n) => {
-            println!(
-                "Extracted {n} entr{} to {dest}",
-                if n == 1 { "y" } else { "ies" }
-            );
+            let entries = if n == 1 { "entry" } else { "entries" };
+            match scope.dry_run {
+                true => println!("Would extract {n} {entries} to {dest}; nothing was written"),
+                false => println!("Extracted {n} {entries} to {dest}"),
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -581,6 +601,16 @@ struct Pick<'a> {
     strings: bool,
 }
 
+/// What an extract keeps beyond [`Pick`], as GTA V's `rpf extract` takes it: only the entries of
+/// one kind, as `rpf9 find --kind` names it, and with `dry_run`, nothing written.
+#[derive(Default)]
+struct Scope {
+    kind: Option<find::Kind>,
+    dry_run: bool,
+}
+
+/// [`extract_entries`] of every kind, written.
+#[cfg(test)]
 fn do_extract(
     path: &Path,
     dest: &Path,
@@ -589,14 +619,48 @@ fn do_extract(
     keys: &GtaViKeys,
     resolver: &NameResolver,
 ) -> Result<usize, String> {
+    extract_entries(path, dest, inner, pick, &Scope::default(), keys, resolver)
+}
+
+/// Write the entries `pick` and `scope` choose into `dest`; the count written, or with
+/// `scope.dry_run` the count that would be, with no file or folder made.
+fn extract_entries(
+    path: &Path,
+    dest: &Path,
+    inner: &[String],
+    pick: &Pick<'_>,
+    scope: &Scope,
+    keys: &GtaViKeys,
+    resolver: &NameResolver,
+) -> Result<usize, String> {
     let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mount = mount_path(&mut file, inner, keys, resolver)?;
 
-    let chosen: Vec<Gta6Entry> = select_entries(&mount.archive.entries, pick.entry, pick.filter);
+    let kinds = entry_kinds(&mount.archive);
+    let mut of_kind = Vec::new();
+    for (entry, label) in mount.archive.entries.iter().zip(&kinds) {
+        let keep = scope.kind.is_none_or(|kind| {
+            let is_archive = kind == find::Kind::Archive
+                && mount
+                    .entry_begins_archive(&mut file, entry)
+                    .unwrap_or(false);
+            let query = find::Query {
+                kind: Some(kind),
+                ..find::Query::default()
+            };
+            find::matches(&query, entry, label, is_archive)
+        });
+        if keep {
+            of_kind.push(entry.clone());
+        }
+    }
+    let chosen: Vec<Gta6Entry> = select_entries(&of_kind, pick.entry, pick.filter);
     if chosen.is_empty() {
         return Err("no entry matched".to_string());
     }
-    std::fs::create_dir_all(dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+    if !scope.dry_run {
+        std::fs::create_dir_all(dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+    }
 
     let mut written = 0usize;
     for entry in &chosen {
@@ -611,17 +675,21 @@ fn do_extract(
         // A content-ciphered body is written only with `--decrypt`, deciphered and inflated; without
         // the flag it is skipped, as the clear reader would write ciphertext. A clear entry reads the
         // same either way.
-        if entry.cipher.is_some() {
-            if !pick.decrypt {
-                eprintln!(
-                    "  skipped {} (enciphered body; pass --decrypt to decipher it)",
-                    entry.display_name()
-                );
-                continue;
-            }
-        } else if mount
-            .entry_begins_archive(&mut file, entry)
-            .unwrap_or(false)
+        if entry.cipher.is_some() && !pick.decrypt {
+            eprintln!(
+                "  skipped {} (enciphered body; pass --decrypt to decipher it)",
+                entry.display_name()
+            );
+            continue;
+        }
+        if scope.dry_run {
+            written += 1;
+            continue;
+        }
+        if entry.cipher.is_none()
+            && mount
+                .entry_begins_archive(&mut file, entry)
+                .unwrap_or(false)
         {
             match write_nested(&mount, &mut file, entry, &out) {
                 Ok(()) => written += 1,

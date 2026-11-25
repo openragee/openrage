@@ -16625,6 +16625,7 @@ msgid "{count} pair"
 msgid_plural "{count} pairs"
 msgstr[0] "{count} Paar"
 msgstr[1] "{count} Paare"
+
 msgid "Set the GTA VI folder in Settings ▸ Games to fly through its world"
 msgstr "Den GTA VI-Ordner unter Einstellungen ▸ Spiele festlegen, um durch die Welt zu fliegen"
 
@@ -16936,88 +16937,11 @@ msgstr "Die Änderungen des GTA VI-Dokuments an der Stelle seines Eintrags in ei
 msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
 msgstr "Keine GTA VI-Schlüssel: Den GTA VI-Installationsordner unter Einstellungen ▸ Spiele festlegen, damit seine ausführbare Datei sie entsperren kann."
 
-msgid "resource"
-msgstr "Ressource"
-
-msgid "media"
-msgstr "Medien"
-
-msgid "other class"
-msgstr "andere Klasse"
-
 msgid "{file} is listed by a scan without its table: {why}"
 msgstr "{file} wird von einem Scan ohne seine Tabelle aufgelistet: {why}"
 
-msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
-msgstr "Den GTA VI-Ordner in den Einstellungen wählen oder eines seiner Archive öffnen, um seine Archive aus ihren Tabellen aufzulisten."
-
-msgid "Find by name, or by hash as 0x hex"
-msgstr "Nach Name suchen, oder nach Hash als 0x-Hex"
-
-msgid "Only the archives expanded are searched."
-msgstr "Nur die aufgeklappten Archive werden durchsucht."
-
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} ist ein neues Archiv mit der Änderung an der Stelle seines Eintrags und seiner Tabelle, wie sie gelesen wurde."
-
-msgid "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}."
-msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
-msgstr[0] "Aus seiner entschlüsselten Tabelle aufgelistet: {count} Eintrag, davon {named} benannt, unter dem Tabellenschlüssel {key}."
-msgstr[1] "Aus seiner entschlüsselten Tabelle aufgelistet: {count} Einträge, davon {named} benannt, unter dem Tabellenschlüssel {key}."
-
-msgid "This entry's row states no start, so its body cannot be read."
-msgstr "Die Zeile dieses Eintrags nennt keinen Anfang, daher kann sein Inhalt nicht gelesen werden."
-
-msgid "Click to expand or collapse this nested archive, listed from its own table."
-msgstr "Klicken, um dieses verschachtelte Archiv auf- oder zuzuklappen; es wird aus seiner eigenen Tabelle aufgelistet."
-
-msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
-msgstr "Klicken, um es im Vorschau-Tab zu öffnen, und doppelklicken, um es in einem eigenen Tab zu behalten; ein verschlüsselter Inhalt wird zuerst entschlüsselt."
-
-msgid "Extract to a file…"
-msgstr "In eine Datei extrahieren…"
-
-msgid "Replace with a file…"
-msgstr "Durch eine Datei ersetzen…"
-
-msgid "Writes a new copy of the archive with this entry replaced, which the game refuses: only its maker can sign the table."
-msgstr "Schreibt eine neue Kopie des Archivs mit diesem Eintrag ersetzt, die das Spiel ablehnt: Nur sein Hersteller kann die Tabelle signieren."
-
-msgid "Replace with a file"
-msgstr "Durch eine Datei ersetzen"
-
-msgid "Save the new archive"
-msgstr "Das neue Archiv speichern"
-
-msgid "Wrote {entry} to {file}."
-msgstr "{entry} nach {file} geschrieben."
-
-msgid "Cannot extract {entry}: {reason}"
-msgstr "{entry} kann nicht extrahiert werden: {reason}"
-
-msgid "{file} is a new archive with {entry} replaced, which the game refuses because only its maker can sign the table this changed."
-msgstr "{file} ist ein neues Archiv, in dem {entry} ersetzt ist; das Spiel lehnt es ab, weil nur sein Hersteller die dadurch geänderte Tabelle signieren kann."
-
-msgid "{file} is a new archive the same as the one it was read from: the file holds the bytes {entry} holds."
-msgstr "{file} ist ein neues Archiv, das dem gleicht, aus dem es gelesen wurde: Die Datei enthält die Bytes, die {entry} enthält."
-
-msgid "Cannot replace {entry}: {reason}"
-msgstr "{entry} kann nicht ersetzt werden: {reason}"
-
-msgid "the file written is a new one, and the archive it is read from is never written"
-msgstr "die geschriebene Datei ist eine neue, und das Archiv, aus dem gelesen wird, wird nie geschrieben"
-
-msgid "entry {index} is not in its table"
-msgstr "Eintrag {index} ist nicht in seiner Tabelle"
-
-msgid "the entry's row states no start, so its body is not known"
-msgstr "die Zeile des Eintrags nennt keinen Anfang, daher ist sein Inhalt nicht bekannt"
-
-msgid "a nested archive whose row states no stored size"
-msgstr "ein verschachteltes Archiv, dessen Zeile keine gespeicherte Größe nennt"
-
-msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
-msgstr "das Archiv endet {copied} Bytes in das {stored} Byte große verschachtelte Archiv hinein"
 
 msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
 msgstr "Ein EDUP-Inhalt: Sein Zählwort bei 0x04 ist {count}, und {length} Nutzdatenbytes folgen seinem 8-Byte-Kopf."
@@ -17039,3 +16963,63 @@ msgstr "In {place}"
 
 msgid "Look north over the square of 512 m where most maps of this place lie"
 msgstr "Nach Norden über das Quadrat von 512 m blicken, in dem die meisten Karten dieses Ortes liegen"
+
+msgid "entry {entry} is not in this table"
+msgstr "Eintrag {entry} ist nicht in dieser Tabelle"
+
+msgid "Real size"
+msgstr "Tatsächliche Größe"
+
+msgid "Enciphered"
+msgstr "Verschlüsselt"
+
+msgid "24 bytes"
+msgstr "24 Byte"
+
+msgid "20 bytes, a headerless resource's"
+msgstr "20 Byte, die einer Ressource ohne Kopf"
+
+msgid "Row"
+msgstr "Zeile"
+
+msgid "Name hash"
+msgstr "Namens-Hash"
+
+msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
+msgstr "{file} ist ein GTA-VI-Archiv, das nie an seiner Stelle geschrieben wird: Speichern unter… schreibt seine Änderungen in eine neue Datei, die das Spiel ablehnt, weil seine Signatur die Tabelle abdeckt."
+
+msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
+msgstr "{file} ist ein GTA-VI-Archiv, das nie an seiner Stelle geschrieben wird: Öffnen Sie es für sich, dann schreibt Speichern unter… seine Änderungen in eine neue Datei, die das Spiel ablehnt, weil seine Signatur die Tabelle abdeckt."
+
+msgid "{file} is a new archive with the tree's edits, which the game refuses because only its maker can sign the table they changed."
+msgstr "{file} ist ein neues Archiv mit den Änderungen des Baums; das Spiel lehnt es ab, weil nur sein Hersteller die dadurch geänderte Tabelle signieren kann."
+
+msgid "Save the edits to a new archive, which the game refuses because its signature covers the table"
+msgstr "Die Änderungen in ein neues Archiv speichern, das das Spiel ablehnt, weil seine Signatur die Tabelle abdeckt"
+
+msgid "the tree is no GTA VI archive opened on its own"
+msgstr "der Baum ist kein für sich geöffnetes GTA-VI-Archiv"
+
+msgid "an archive of the tree is no longer open"
+msgstr "ein Archiv des Baums ist nicht mehr geöffnet"
+
+msgid "entry {index} states no start"
+msgstr "Eintrag {index} gibt keinen Anfang an"
+
+msgid "{name} has no body of its own"
+msgstr "{name} hat keinen eigenen Inhalt"
+
+msgid "{name} is an archive moved in from another, which the GTA VI writer does not add"
+msgstr "{name} ist ein aus einem anderen Archiv verschobenes Archiv, das der GTA-VI-Schreiber nicht hinzufügt"
+
+msgid "{name} holds no bytes"
+msgstr "{name} enthält keine Bytes"
+
+msgid "list {list}: {entries}"
+msgstr "Liste {list}: {entries}"
+
+msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the scan is searched for them: a cell the scan holds no body of has no special link into this one. Try again once the search ends."
+msgstr "Polygon {polygon} wird nicht geändert, solange die Inhalte der Nachbarzellen {cells} nicht geöffnet sind und der Scan nach ihnen durchsucht wird: Eine Zelle, von der der Scan keinen Inhalt hat, hat keine besondere Verbindung in diese. Versuchen Sie es erneut, wenn die Suche endet."
+
+msgid "Add to the facial controls it writes"
+msgstr "Zu den Gesichtssteuerungen hinzufügen, die es schreibt"

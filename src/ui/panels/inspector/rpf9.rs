@@ -11,10 +11,6 @@ use crate::state::rpf9_scan::{
 /// The archive's header facts, what a scan without the table is, its progress and the bodies it
 /// found, laying out only the rows in view: a large archive holds hundreds of thousands.
 pub(super) fn draw_rpf9(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId) {
-    if let Some(DocPayload::Rpf9Table(table)) = state.document(doc_id).map(|d| &d.payload) {
-        draw_table_facts(ui, table);
-        return;
-    }
     let Some(DocPayload::Rpf9(scan)) = state.document(doc_id).map(|d| &d.payload) else {
         return;
     };
@@ -142,26 +138,6 @@ pub(super) fn draw_rpf9(ui: &mut egui::Ui, state: &mut AppState, doc_id: Documen
     if !nested && scan.header.is_some() {
         super::gta6_dialogue::draw_dialogue(ui, state);
     }
-}
-
-/// An archive listed from its table: the sentence that says so, with its entries and key, and its header's facts.
-fn draw_table_facts(
-    ui: &mut egui::Ui,
-    table: &crate::state::rpf9_scan::rpf9_table_document::Rpf9TableDocument,
-) {
-    ui.heading(tr!("GTA VI Archive"));
-    ui.separator();
-    if let Some(root) = &table.tree().root {
-        let named = root.rows.iter().filter(|row| row.name.is_some()).count();
-        ui.label(tr_n!(
-            "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}.",
-            "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}.",
-            root.rows.len(),
-            named = named,
-            key = format!("{:#010X}", root.key_id),
-        ));
-    }
-    ui.label(crate::state::gta_vi::rpf9_facts(&table.header));
 }
 
 /// The bodies a scan found, under their filter, laying out only the rows in view: a large archive
@@ -670,22 +646,5 @@ mod tests {
         };
         assert!(named_words(&row, Some("a_made_up_model.#dr")).ends_with("a_made_up_model.#dr"));
         assert_eq!(named_words(&row, None), row_words(&row));
-    }
-
-    #[test]
-    fn an_archive_listed_from_its_table_says_so_in_its_tab() {
-        use crate::state::rpf9_scan::rpf9_table_document::tests::{sample_document, state_showing};
-        let _serial = crate::ui::theme::serial();
-        let (_dir, doc) = sample_document();
-        let (mut state, id) = state_showing(doc);
-        let output = egui::Context::default().run_ui(Default::default(), |ui| {
-            draw_rpf9(ui, &mut state, id);
-        });
-        let shapes = format!("{:?}", output.shapes);
-        assert!(
-            shapes.contains("Listed from its decrypted table: 3 entries, 2 of them named"),
-            "{shapes}"
-        );
-        assert!(!shapes.contains("scan without the table"), "{shapes}");
     }
 }

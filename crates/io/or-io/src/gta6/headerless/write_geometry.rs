@@ -19,6 +19,7 @@ use super::HeaderlessError;
 use crate::container::rpf::{grow_section, Rpf9GrowError, Rpf9Role, Rpf9Section, Rpf9Sections};
 
 mod cut;
+mod per_geometry;
 mod posed;
 mod reference;
 mod reference_cells;
@@ -92,6 +93,8 @@ pub struct GeometryWritten {
     pub bounds_rewritten: bool,
     /// Whether the drawable's box and sphere were derived again from its level-0 boxes.
     pub root_reboxed: bool,
+    /// Whether the drawable's +0xB0 table took new row 0 words or row 4 elements for the geometry.
+    pub table_rederived: bool,
     /// Bytes the physical section grew by.
     pub physical_grown: usize,
 }
@@ -330,6 +333,11 @@ pub fn write_geometry(
     }
     if !positions_same {
         written.root_reboxed = rebox(&mut out.virtual_section, &found, at, &edit.positions)?;
+    }
+    if let Some(table) = per_geometry::table(&out.virtual_section, found.root, at) {
+        let decoded: Vec<[f32; 3]> = decoded.iter().map(|p| p.map(|x| x as f32)).collect();
+        let v = &mut out.virtual_section;
+        written.table_rederived = per_geometry::rederive(v, &table, g, edit, &decoded)?;
     }
     written.physical_grown = out.physical.len().saturating_sub(before);
     *sections = out;

@@ -146,7 +146,10 @@ pub fn build(
     };
     for (name, body) in entries {
         let e = insert_entry(&mut table, name)?;
-        set_new_body(&mut table, e, body)?;
+        set_new_body(&mut table, e, body).map_err(|err| match err {
+            crate::error::IoError::Invalid { why, .. } => bad(format!("{name}: {why}")),
+            other => other,
+        })?;
     }
 
     // The table's length does not depend on the starts it states.

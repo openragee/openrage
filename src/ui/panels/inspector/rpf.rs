@@ -90,4 +90,5 @@ pub(super) fn draw_rpf(
             row(ui, "Stored as", stored);
         }
     });
+    super::rpf9_entry::draw(ui, session, &node.backing);
 }

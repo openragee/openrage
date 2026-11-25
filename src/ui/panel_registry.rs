@@ -108,13 +108,7 @@ impl PanelRegistry {
 
 fn live() -> &'static RwLock<PanelRegistry> {
     static LIVE: OnceLock<RwLock<PanelRegistry>> = OnceLock::new();
-    LIVE.get_or_init(|| {
-        let mut registry = crate::ui::panels::registry::builtin();
-        // The GTA VI archive explorer is dynamic, not a builtin, so it stays out of the default
-        // layouts and their counts while still being offered through the View menu.
-        crate::ui::panels::gta6_archive_tree::register_into(&mut registry);
-        RwLock::new(registry)
-    })
+    LIVE.get_or_init(|| RwLock::new(crate::ui::panels::registry::builtin()))
 }
 
 // ⚠ Refuses an id already present rather than replacing it, unlike the other
@@ -255,6 +249,15 @@ mod tests {
             assert_eq!(intern(old), "details", "`{old}` did not become Details");
         }
         assert_eq!(current("files"), "files");
+    }
+
+    #[test]
+    fn a_gta_vi_archive_has_no_panel_of_its_own_beside_the_files_tree() {
+        let state = AppState::default();
+        let titled = (live().read().expect("panel registry poisoned").panels())
+            .find(|p| p.id() == "gta6_archive_tree" || p.title(&state) == "Archives")
+            .map(|p| p.id());
+        assert_eq!(titled, None, "a GTA VI archive is browsed in Files");
     }
 
     #[test]

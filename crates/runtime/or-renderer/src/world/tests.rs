@@ -1701,7 +1701,7 @@ fn a_glass_lies_over_the_lit_frame_by_its_coverage_and_a_forward_glow_adds_its_l
     ignore = "needs a GPU adapter: acquisition can hang, not just fail"
 )]
 #[test]
-fn an_emissive_map_lights_the_surface_by_its_strength_its_night_value_and_the_vertexs_second_colour(
+fn an_emissive_map_adds_its_light_over_the_lit_frame_by_its_strength_its_night_value_and_the_vertexs_second_colour(
 ) {
     let Some((device, queue, mut renderer)) = family_frame("an_emissive_map_lights_the_surface")
     else {
@@ -1726,20 +1726,25 @@ fn an_emissive_map_lights_the_surface_by_its_strength_its_night_value_and_the_ve
         shade(&device, &queue, &mut renderer, &[(mesh, grey)])
     };
     let (plain_words, plain_lit) = drawn(&matte, [1.0; 4]);
-    // A map of one at a strength of one, taking the whole of the surface's colour: as bright as the surface's colour, a sixteenth of the most the word holds
+    // Its light is no word of the G-buffer: it is added over the lit frame, so no cap of the word holds it
     let (targets, lit) = drawn(&by_day, [1.0; 4]);
-    assert!(near(targets[3], [255, 0, 16, 255], 1), "{targets:?}");
-    assert_eq!(targets[..3], plain_words[..3]);
+    assert_eq!(targets, plain_words);
     assert!(
-        (0..3).all(|c| lit[c] >= plain_lit[c]) && lit != plain_lit,
+        (0..3).all(|c| lit[c] >= plain_lit[c].saturating_add(4)),
         "{lit:?} {plain_lit:?}"
     );
     // With no day the night emissives are on, and a night value of three is the strength
-    let (targets, _) = drawn(&by_night, [1.0; 4]);
-    assert!(near(targets[3], [255, 0, 48, 255], 1), "{targets:?}");
+    let (_, brighter) = drawn(&by_night, [1.0; 4]);
+    assert!(
+        (0..3).all(|c| brighter[c] > lit[c] || brighter[c] == 255),
+        "{brighter:?} {lit:?}"
+    );
     // A vertex whose second colour is black gives no light
-    let (targets, _) = drawn(&by_day, [0.0, 0.0, 0.0, 1.0]);
-    assert!(near(targets[3], [255, 0, 0, 255], 1), "{targets:?}");
+    let (_, dark) = drawn(&by_day, [0.0, 0.0, 0.0, 1.0]);
+    assert!(
+        (0..3).all(|c| dark[c].abs_diff(plain_lit[c]) <= 1),
+        "{dark:?} {plain_lit:?}"
+    );
     assert!(accepted(scope), "the device accepted every pass");
 }
 

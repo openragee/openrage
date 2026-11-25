@@ -165,6 +165,8 @@ impl WorldConstants {
     pub const INTERIOR: u32 = 2048;
     /// With [`Self::INTERIOR`], the room's size is its vertices' rather than the constants'.
     pub const ROOM_BY_VERTEX: u32 = 4096;
+    /// Set by the renderer, not the caller: the material's own light is added whole over the lit frame rather than carried in the G-buffer.
+    pub const GLOWS: u32 = 8192;
 }
 
 impl Default for WorldConstants {

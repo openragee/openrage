@@ -69,6 +69,8 @@ pub struct WorldMaterial {
     bucket: WorldBucket,
     /// The material the G-buffer's stencil names it by, which picks the pass of the directional light that lights it.
     stencil: u32,
+    /// Whether its own light is added over the lit frame by a draw of its own, [`WorldConstants::GLOWS`].
+    glows: bool,
 }
 
 impl PartialEq for WorldMaterial {
@@ -247,6 +249,8 @@ pub(crate) struct World {
     /// The runs of `draws` one call issues, for a pass that samples the maps and for the cast of the shadow.
     batches: Vec<Range<u32>>,
     cast_batches: Vec<Range<u32>>,
+    /// The runs of `batches` whose material glows, whose light is added over the lit frame.
+    glow_batches: Vec<Range<u32>>,
     /// The arguments of each draw, where the device issues several draws by one call.
     indirect: Option<wgpu::Buffer>,
     multi: bool,
@@ -528,6 +532,7 @@ impl World {
             parts: Vec::new(),
             batches: Vec::new(),
             cast_batches: Vec::new(),
+            glow_batches: Vec::new(),
             indirect: None,
             // An indirect draw may start at an instance other than the first only where the device says so
             multi: device
@@ -540,6 +545,10 @@ impl World {
         let plain = surface.maps.iter().all(Option::is_none)
             && surface.family == WorldFamily::Standard
             && surface.constants == WorldConstants::default();
+        // An emissive map gives light only outside the four-layer family, whose slot it is its fourth layer's
+        let glows = surface.bucket.casts()
+            && surface.family != WorldFamily::FourLayer
+            && surface.maps[slot::EMISSIVE].is_some();
         let maps = match plain {
             true => Arc::clone(&self.plain),
             false => {
@@ -552,9 +561,13 @@ impl World {
                     _ => &self.stand_ins[at],
                 };
                 let views = std::array::from_fn(|at| surface.maps[at].unwrap_or(stand_in(at)));
-                let constants = (surface.family, &surface.constants);
+                let mut own = surface.constants;
+                if glows {
+                    own.flags |= WorldConstants::GLOWS;
+                }
+                let constants = (surface.family, &own);
                 // ⚠ A bind group alive holds its views, so a view met again under a live entry is the one it was made with.
-                let key = alike(&views, &uniform_bytes(surface.family, &surface.constants));
+                let key = alike(&views, &uniform_bytes(surface.family, &own));
                 let (made, prune_at) = &mut *self.alike.borrow_mut();
                 match made.get(&key).and_then(Weak::upgrade) {
                     Some(maps) => maps,
@@ -585,6 +598,7 @@ impl World {
             } else {
                 MATERIAL_DEFAULT
             },
+            glows,
         }
     }
 
@@ -610,6 +624,11 @@ impl World {
         let (draws, parts) = split(draws, self.per);
         self.batches = batches(&draws, &parts, false);
         self.cast_batches = batches(&draws, &parts, true);
+        // A batch is of one material
+        self.glow_batches = (self.batches.iter())
+            .filter(|batch| draws[batch.start as usize].mesh.material.glows)
+            .cloned()
+            .collect();
         let triangles = |draw: &WorldDraw| {
             u64::from(draw.mesh.index_count / 3)
                 * u64::from(draw.instances.end - draw.instances.start)
@@ -788,10 +807,15 @@ impl World {
         self.cards.draw_gbuffer(pass, camera);
     }
 
-    /// Draw what blends into a pass over the frame the game's passes lit, which reads the depth of the frame and writes none: the faces that turn away, then those that face the camera.
+    /// Draw into a pass over the frame the game's passes lit, which reads the depth of the frame and writes none: the light of what glows, then what blends, the faces that turn away before those that face the camera.
     pub(crate) fn draw_lit(&self, pass: &mut wgpu::RenderPass<'_>, camera: &wgpu::BindGroup) {
         // ⚠ The water draws where the world has nothing else to, as over the open sea; leaving the world takes its mesh away.
         self.water.draw(pass, camera, &self.light_group);
+        if self.draws_anything() && !self.glow_batches.is_empty() {
+            pass.set_bind_group(0, camera, &[]);
+            pass.set_bind_group(2, &self.light_group, &[]);
+            self.record(pass, &self.glow_batches, &self.pipelines.glow, None, false);
+        }
         for faces in &self.pipelines.lit {
             self.draw(pass, camera, faces, false);
         }

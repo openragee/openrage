@@ -108,6 +108,7 @@ const VERTEX_OVER_TINT: u32 = 512u;
 const TINT_MASKED: u32 = 1024u;
 const INTERIOR: u32 = 2048u;
 const ROOM_BY_VERTEX: u32 = 4096u;
+const GLOWS: u32 = 8192u;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -126,8 +127,9 @@ struct VsIn {
     @location(11) cast_only: f32,
 };
 
+// ⚠ A surface's own light is drawn a second time over the lit frame, tested against the depth its first draw wrote: both draws must place it exactly alike.
 struct VsOut {
-    @builtin(position) clip_pos: vec4<f32>,
+    @builtin(position) @invariant clip_pos: vec4<f32>,
     @location(0) world_normal: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) colour: vec4<f32>,
@@ -844,6 +846,10 @@ fn gbuffer(in: VsOut, front_facing: bool, cut: f32) -> GBufferOut {
     if (dropped(in, select(s.coverage, cut_coverage(in), cut >= CUTOUT_ALPHA), cut)) {
         discard;
     }
+    // Its own light is added over the lit frame by `glow`, whole.
+    if ((m.flags & GLOWS) != 0u) {
+        s.emissive = vec3<f32>(0.0);
+    }
     // ponytail: the forward lobe is the surface's own light, so no shadow falls on it; a pass of the viewer's own over the trees' stencil, after the sun's shadow, if leaves in shade show it.
     if (s.translucency > 0.0) {
         let view_dir = normalize(camera.camera_pos_ws.xyz - in.world_pos);
@@ -866,6 +872,25 @@ fn fs_gbuffer_cutout(in: VsOut, @builtin(front_facing) front_facing: bool) -> GB
 @fragment
 fn fs_gbuffer_emissive(in: VsOut, @builtin(front_facing) front_facing: bool) -> GBufferOut {
     return gbuffer(in, front_facing, 0.0);
+}
+
+// The light a material of `GLOWS` gives, added over the frame the passes lit, as the game adds its emissive target: the G-buffer's word holds at most a few times the surface's colour, and a lit room behind dark glass gives far more.
+fn glow(in: VsOut, front_facing: bool, cut: f32) -> vec4<f32> {
+    let s = surface_of(in, front_facing);
+    if (dropped(in, select(s.coverage, cut_coverage(in), cut >= CUTOUT_ALPHA), cut)) {
+        discard;
+    }
+    return vec4<f32>(s.emissive, 0.0);
+}
+
+@fragment
+fn fs_glow(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    return glow(in, front_facing, 0.0);
+}
+
+@fragment
+fn fs_glow_cutout(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    return glow(in, front_facing, CUTOUT_ALPHA);
 }
 
 // A decal is blended onto what the G-buffer holds: each target it writes takes its coverage times its own opacity as the alpha it is blended by, and the pipeline keeps the alpha that was there.

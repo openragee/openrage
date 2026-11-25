@@ -612,3 +612,151 @@ fn the_rows_of_the_list_are_named_in_french_in_the_french_interface() {
         );
     }
 }
+
+/// The edits the manipulator does not make are operations too: an entity renamed or taken out and an archetype added, changed or
+/// taken out are each one step, and Undo puts each source back to the bytes it held.
+#[test]
+fn an_entity_renamed_or_removed_and_an_archetype_added_changed_or_removed_are_each_one_step_undo_puts_back(
+) {
+    use or_io::decl::File;
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().unwrap();
+    let mut shell = a_maps_shell(dir.path());
+    let folder = shell.state.maps_pack().expect("a pack").folder.clone();
+    let types_source = "harbour_types.metadata.src";
+    let xml = |source: &str| std::fs::read(folder.join(source).join("metadata.xml")).unwrap();
+    let before = (xml("harbour.metadata.src"), xml(types_source));
+    let types = || {
+        or_io::meta::typed::CMapTypes::from_bytes(
+            &or_maps::facts::cooked(&folder.join(types_source)).unwrap(),
+        )
+        .unwrap()
+    };
+
+    select_entity(&mut shell, 1);
+    shell.state.rename_selected_entity_archetype("prop_crate_a");
+    assert!(the_map_file(&shell).entities[1].archetype_name == "prop_crate_a");
+    assert_eq!(the_map_file(&shell).entities[1].guid, 2);
+    shell.state.remove_selected_entity();
+    let map = the_map_file(&shell);
+    assert_eq!(map.entities.len(), 1);
+    assert_eq!(map.entities[0].guid, 1);
+    assert_eq!(shell.state.workbench.maps.undo.len(), 2);
+
+    let (module, set) = {
+        let (pack, set) = shell.state.shown_set().expect("a set");
+        (pack.module.clone(), set.id.clone())
+    };
+    shell.state.select_in_maps(
+        &module,
+        &set,
+        Some(Pick {
+            source: types_source.to_string(),
+            kind: PickKind::Archetype(1),
+        }),
+    );
+    shell
+        .state
+        .add_archetype_named("prop_new_crate", Some("prop_new_crate_lod"));
+    assert_eq!(types().archetypes.len(), 3);
+    assert!(types().archetypes[2].asset_name == "prop_new_crate_lod");
+    assert_eq!(
+        shell.state.workbench.maps.selected,
+        Some(Pick {
+            source: types_source.to_string(),
+            kind: PickKind::Archetype(2),
+        }),
+        "the archetype added is the one selected"
+    );
+    shell
+        .state
+        .edit_selected_archetype("Set the box".to_string(), &[], |archetype| {
+            archetype.bb_max.z = 9.5;
+        });
+    assert_eq!(types().archetypes[2].bb_max.z, 9.5);
+    assert!(types().archetypes[2].name == "prop_new_crate");
+    // A name another archetype holds is refused, and the source stays as it was.
+    let held = xml(types_source);
+    shell
+        .state
+        .edit_selected_archetype("Renamed".to_string(), &[], |archetype| {
+            archetype.name = or_io::meta::instance::HashedString::new("prop_crate_a");
+        });
+    assert_eq!(xml(types_source), held);
+    assert_eq!(shell.state.workbench.maps.undo.len(), 4);
+    shell.state.remove_selected_archetype();
+    assert_eq!(types().archetypes.len(), 2);
+    assert_eq!(shell.state.workbench.maps.undo.len(), 5);
+
+    for _ in 0..5 {
+        shell.state.undo_maps_change();
+    }
+    assert!(shell.state.workbench.maps.undo.is_empty());
+    assert!(
+        (xml("harbour.metadata.src"), xml(types_source)) == before,
+        "five steps back, the sources hold the bytes they held"
+    );
+}
+
+/// What is added is a copy of what is selected, and not of the first record its file holds.
+#[test]
+fn an_entity_and_an_archetype_added_are_copies_of_the_one_selected() {
+    use or_io::decl::File;
+    use or_maps::operation::{apply, Operation, Record};
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().unwrap();
+    let mut shell = a_maps_shell(dir.path());
+    let folder = shell.state.maps_pack().expect("a pack").folder.clone();
+    let types_source = "harbour_types.metadata.src";
+
+    // The second entity is given a distance of its own, which the first does not state.
+    let mut second = the_map_file(&shell).entities[1].clone();
+    let first = the_map_file(&shell).entities[0].lod_dist;
+    second.lod_dist = first + 23.5;
+    apply(
+        &folder,
+        &Operation::ReplaceEntity {
+            source: "harbour.metadata.src".to_string(),
+            entity: 1,
+            record: Record::entity(&second).unwrap(),
+            extents: None,
+        },
+    )
+    .unwrap();
+    select_entity(&mut shell, 1);
+    let pose = shell.state.selected_pose().expect("a pose");
+    shell
+        .state
+        .add_entity_at(or_maps::Name::from_text("prop_crate_a"), pose);
+    let map = the_map_file(&shell);
+    assert_eq!(map.entities.len(), 3);
+    assert_eq!(map.entities[2].lod_dist, first + 23.5);
+    assert!(map.entities[2].archetype_name == "prop_crate_a");
+
+    let (module, set) = {
+        let (pack, set) = shell.state.shown_set().expect("a set");
+        (pack.module.clone(), set.id.clone())
+    };
+    shell.state.select_in_maps(
+        &module,
+        &set,
+        Some(Pick {
+            source: types_source.to_string(),
+            kind: PickKind::Archetype(1),
+        }),
+    );
+    shell
+        .state
+        .edit_selected_archetype("Set the box".to_string(), &[], |archetype| {
+            archetype.bb_max.z = 9.5;
+        });
+    shell.state.add_archetype_named("prop_new_crate", None);
+    let types = or_io::meta::typed::CMapTypes::from_bytes(
+        &or_maps::facts::cooked(&folder.join(types_source)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(types.archetypes.len(), 3);
+    assert_eq!(types.archetypes[0].bb_max.z, 1.0);
+    assert_eq!(types.archetypes[2].bb_max.z, 9.5);
+    assert!(types.archetypes[2].name == "prop_new_crate");
+}

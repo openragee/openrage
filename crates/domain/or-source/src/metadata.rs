@@ -308,6 +308,56 @@ impl Inputs {
     pub fn output_name(&self) -> String {
         output_name(&self.manifest, &self.compile.extension)
     }
+
+    /// The game extension of the file the inputs compile to.
+    pub fn extension(&self) -> &str {
+        &self.compile.extension
+    }
+
+    /// The XML the inputs hold.
+    pub fn xml(&self) -> &[u8] {
+        &self.xml
+    }
+
+    /// Hold `xml` as the XML, which nothing has checked.
+    pub fn set_xml(&mut self, xml: Vec<u8>) {
+        self.xml = xml;
+    }
+
+    /// The XML that makes the inputs cook to `bytes`, a file of the kind they hold, refused as [`replace`] refuses it; nothing is written.
+    pub fn xml_of(&self, bytes: &[u8]) -> Result<Vec<u8>, Vec<Problem>> {
+        let xml = with_public_names_only(|| canonical_xml(bytes, &self.compile.extension))?;
+        if xml.as_bytes() == self.xml.as_slice() {
+            return Ok(xml.into_bytes());
+        }
+        let candidate = Self {
+            xml: xml.clone().into_bytes(),
+            ..self.clone()
+        };
+        let compiled = candidate.compile()?;
+        let again =
+            with_public_names_only(|| canonical_xml(&compiled.bytes, &self.compile.extension))?;
+        if again != xml {
+            return Err(vec![Problem::new(
+                "the edit changes the shape of the file: its XML does not compile back to itself through the type table of the base",
+            )]);
+        }
+        Ok(xml.into_bytes())
+    }
+
+    /// Whether the XML held is the XML that `bytes`, a file of the kind the inputs hold, exports as: XML a person typed is often not.
+    pub fn is_the_export_of(&self, bytes: &[u8]) -> bool {
+        if detect_binary_format(bytes).is_none() {
+            return bytes == self.xml.as_slice();
+        }
+        let exported = with_public_names_only(|| {
+            let mut diagnostics = Diagnostics::lenient();
+            let (instance, layout) =
+                parse_meta_binary_full(&SchemaLibrary::default(), bytes, &mut diagnostics).ok()?;
+            canonical::export(&instance, &layout).ok()
+        });
+        exported.is_some_and(|xml| xml.as_bytes() == self.xml.as_slice())
+    }
 }
 
 /// The `compile` block of `manifest`, refused when it names an extension a metadata source does not hold.
@@ -376,29 +426,22 @@ impl Replaced {
 pub fn replace(dir: &Path, bytes: &[u8]) -> Result<Replaced, Vec<Problem>> {
     let source = Source::open(dir).map_err(|p| vec![p])?;
     let inputs = Inputs::read(&source)?;
+    let xml = inputs.xml_of(bytes)?;
+    if xml != inputs.xml {
+        write_xml(dir, &xml)?;
+    }
+    Ok(Replaced {
+        file: dir.join(XML),
+        before: inputs.xml,
+        after: xml,
+    })
+}
+
+/// Write `xml` as the XML of the metadata source in `dir`, to a part file first, so a failure leaves the XML that was there.
+pub fn write_xml(dir: &Path, xml: &[u8]) -> Result<(), Vec<Problem>> {
     let file = dir.join(XML);
-    let xml = with_public_names_only(|| canonical_xml(bytes, &inputs.compile.extension))?;
-    if xml.as_bytes() == inputs.xml.as_slice() {
-        return Ok(Replaced {
-            file,
-            before: inputs.xml.clone(),
-            after: inputs.xml,
-        });
-    }
-    let candidate = Inputs {
-        xml: xml.clone().into_bytes(),
-        ..inputs.clone()
-    };
-    let compiled = candidate.compile()?;
-    let again =
-        with_public_names_only(|| canonical_xml(&compiled.bytes, &inputs.compile.extension))?;
-    if again != xml {
-        return Err(vec![Problem::new(
-            "the edit changes the shape of the file: its XML does not compile back to itself through the type table of the base",
-        )]);
-    }
     let held = dir.join(format!("{XML}.part"));
-    std::fs::write(&held, xml.as_bytes())
+    std::fs::write(&held, xml)
         .and_then(|()| std::fs::rename(&held, &file))
         .map_err(|e| {
             let _ = std::fs::remove_file(&held);
@@ -406,12 +449,7 @@ pub fn replace(dir: &Path, bytes: &[u8]) -> Result<Replaced, Vec<Problem>> {
                 "cannot write {}: {e}",
                 file.display()
             ))]
-        })?;
-    Ok(Replaced {
-        file,
-        before: inputs.xml,
-        after: xml.into_bytes(),
-    })
+        })
 }
 
 /// Whether a path inside a metadata source, relative to its folder, is a file the compile reads.

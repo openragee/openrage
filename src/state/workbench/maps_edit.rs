@@ -1,21 +1,47 @@
 //! The edits of the Map workspace: an entity placed, added or taken out, an archetype added, changed or taken out, and the Undo and Redo
 //! that move along them.
 //!
-//! ⚠ **Thin by design.** Each edit asks `or-maps` to change the map file or the type file a source cooks to, which writes the result back as
-//! the source's XML, and keeps the XML before and after as the step Undo moves along. Undo refuses once anything else has changed the file.
+//! ⚠ **Thin by design.** Each edit is an operation of `or_maps::operation`, applied by the one function `openrage-cli maps apply` applies
+//! a list with, which changes the map file or the type file a source cooks to and writes the result back as the source's XML. The XML
+//! before and after is the step Undo moves along, and Undo refuses once anything else has changed the file.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use glam::Vec3;
-use or_maps::edit::Pose;
+use or_maps::edit::{Edited, Pose};
+use or_maps::operation::{Applied, At, Operation, Record};
 use or_maps::Maps;
 use or_project::ModuleKind;
 
 use super::maps::{FileChange, Pick, PickKind, Step, KEPT};
 use crate::state::AppState;
 
+/// Do `operation` to the sources of the pack in `folder`; a refusal is its reason alone, which is what a toast reads.
+fn apply(folder: &Path, operation: &Operation) -> Result<Applied, String> {
+    or_maps::operation::apply(folder, operation).map_err(|refused| match refused {
+        or_maps::operation::Error::Refused { why, .. } => why,
+        other => other.to_string(),
+    })
+}
+
+/// The step of Undo that the XML an operation wrote is.
+fn step(label: String, edited: Edited) -> Step {
+    Step {
+        label,
+        changes: vec![FileChange {
+            path: edited.file,
+            before: edited.before,
+            after: edited.after,
+        }],
+    }
+}
+
 impl AppState {
+    /// The folder of the shown pack, which an operation is applied to.
+    fn maps_pack_folder(&self) -> Option<PathBuf> {
+        Some(self.maps_pack()?.folder.clone())
+    }
+
     /// The folder of the source `source` of the shown pack.
     fn map_source_dir(&self, source: &str) -> Option<PathBuf> {
         let pack = self.maps_pack()?;
@@ -38,25 +64,18 @@ impl AppState {
         let Some((module, _)) = self.maps_folder_to_write() else {
             return;
         };
-        let Some(dir) = self.map_source_dir(source) else {
+        let Some(folder) = self.maps_pack_folder() else {
             return;
         };
-        let boxes = self.shown_boxes();
-        match or_maps::edit::edit_map(&dir, |map| {
-            or_maps::edit::place_entity(map, index, pose)?;
-            or_maps::edit::grow_extents(map, |hash| boxes.get(&hash).copied());
-            Ok(())
-        }) {
-            Ok(edited) if edited.changed() => {
+        let operation = Operation::PlaceEntity {
+            source: source.to_string(),
+            entity: index,
+            pose: pose.into(),
+        };
+        match apply(&folder, &operation) {
+            Ok(applied) if applied.edited.changed() => {
                 self.patch_scene(source, index, pose);
-                self.push_maps_step(Step {
-                    label,
-                    changes: vec![FileChange {
-                        path: edited.file,
-                        before: edited.before,
-                        after: edited.after,
-                    }],
-                });
+                self.push_maps_step(step(label, applied.edited));
                 let set = self.workbench.maps.set.clone().unwrap_or_default();
                 self.workbench.maps.module = Some(module.clone());
                 if self.workbench.maps.selected.is_none() {
@@ -86,16 +105,6 @@ impl AppState {
             return;
         };
         self.place_entity_in(&source, index, pose, label);
-    }
-
-    /// The boxes the extents of a map of the shown set are grown to hold: what the type files of the set declare.
-    fn shown_boxes(&self) -> BTreeMap<u32, (Vec3, Vec3, f32)> {
-        let Some((pack, set)) = self.shown_set() else {
-            return BTreeMap::new();
-        };
-        (pack.read.as_ref())
-            .map(|read| or_maps::edit::archetype_boxes(set, &read.facts))
-            .unwrap_or_default()
     }
 
     /// Put the scene the shown set was last read as to the pose written, so the entity does not jump back for the frames before the next scan.
@@ -163,26 +172,29 @@ impl AppState {
             ));
             return;
         };
-        let Some(dir) = self.map_source_dir(&target) else {
+        let Some(folder) = self.maps_pack_folder() else {
             return;
         };
         // The record to copy: the entity selected, else the first the target holds, else the first any map file of the set holds.
-        let donor = match self.workbench.maps.selected.clone() {
+        let holds = |source: &str, at: usize| {
+            (self.map_source_dir(source))
+                .is_some_and(|dir| or_maps::edit::read_entity(&dir, at).is_ok())
+        };
+        let selected = match self.workbench.maps.selected.clone() {
             Some(Pick {
                 source,
-                kind: PickKind::Entity(at),
-            }) => self
-                .map_source_dir(&source)
-                .and_then(|d| or_maps::edit::read_entity(&d, at).ok()),
+                kind: PickKind::Entity(index),
+            }) => Some(At { source, index }),
             _ => None,
-        }
-        .or_else(|| or_maps::edit::first_entity(&dir))
-        .or_else(|| {
-            sources
-                .iter()
-                .filter_map(|s| self.map_source_dir(s))
-                .find_map(|d| or_maps::edit::first_entity(&d))
-        });
+        };
+        let first = |source: &String| At {
+            source: source.clone(),
+            index: 0,
+        };
+        let donor = selected
+            .filter(|at| holds(&at.source, at.index))
+            .or_else(|| Some(first(&target)).filter(|at| holds(&at.source, 0)))
+            .or_else(|| sources.iter().map(first).find(|at| holds(&at.source, 0)));
         let Some(donor) = donor else {
             self.show_warning_toast(tr!(
                 "No entity in this set can be copied: add the first from a map file that has one"
@@ -190,30 +202,24 @@ impl AppState {
             return;
         };
         let text = archetype.text.clone();
-        let mut index = 0;
         let label = tr!("Added an entity of {name}", name = archetype.shown());
-        let boxes = self.shown_boxes();
-        match or_maps::edit::edit_map(&dir, |map| {
-            index = or_maps::edit::add_entity(map, &donor, archetype, pose)?;
-            or_maps::edit::grow_extents(map, |hash| boxes.get(&hash).copied());
-            Ok(())
-        }) {
-            Ok(edited) => {
+        let operation = Operation::AddEntity {
+            source: target.clone(),
+            archetype: archetype.shown(),
+            pose: pose.into(),
+            donor: Some(donor),
+        };
+        match apply(&folder, &operation) {
+            Ok(applied) => {
                 self.remember_map_names(&module, &[text.as_deref().unwrap_or_default()]);
-                self.push_maps_step(Step {
-                    label,
-                    changes: vec![FileChange {
-                        path: edited.file,
-                        before: edited.before,
-                        after: edited.after,
-                    }],
-                });
+                let added = applied.added.map(PickKind::Entity);
+                self.push_maps_step(step(label, applied.edited));
                 self.select_in_maps(
                     &module,
                     &set_id,
-                    Some(Pick {
+                    added.map(|kind| Pick {
                         source: target,
-                        kind: PickKind::Entity(index),
+                        kind,
                     }),
                 );
             }
@@ -233,19 +239,18 @@ impl AppState {
         let Some((module, _)) = self.maps_folder_to_write() else {
             return;
         };
-        let Some(dir) = self.map_source_dir(&source) else {
+        let Some(folder) = self.maps_pack_folder() else {
             return;
         };
-        match or_maps::edit::edit_map(&dir, |map| or_maps::edit::remove_entity(map, index)) {
-            Ok(edited) => {
-                self.push_maps_step(Step {
-                    label: tr!("Removed entity {index}", index = index),
-                    changes: vec![FileChange {
-                        path: edited.file,
-                        before: edited.before,
-                        after: edited.after,
-                    }],
-                });
+        let operation = Operation::RemoveEntity {
+            source,
+            entity: index,
+            extents: None,
+        };
+        match apply(&folder, &operation) {
+            Ok(applied) => {
+                let label = tr!("Removed entity {index}", index = index);
+                self.push_maps_step(step(label, applied.edited));
                 let set = self.workbench.maps.set.clone().unwrap_or_default();
                 self.select_in_maps(&module, &set, None);
             }
@@ -333,27 +338,27 @@ impl AppState {
         let Some((module, _)) = self.maps_folder_to_write() else {
             return;
         };
-        let Some(dir) = self.map_source_dir(&source) else {
+        let (Some(folder), Some(dir)) = (self.maps_pack_folder(), self.map_source_dir(&source))
+        else {
             return;
         };
-        match or_maps::edit::edit_types(&dir, |types| {
-            let held = types.archetypes.len();
-            let archetype = types.archetypes.get_mut(index).ok_or_else(|| {
-                format!("archetype {index} is past the {held} the type file holds")
-            })?;
-            change(archetype);
-            Ok(())
-        }) {
-            Ok(edited) if edited.changed() => {
+        // The record as the person changed it, which the operation puts in the place of the one the file holds.
+        let changed = or_maps::edit::read_archetype(&dir, index).and_then(|mut archetype| {
+            change(&mut archetype);
+            Record::archetype(&archetype)
+        });
+        let done = changed.and_then(|record| {
+            let operation = Operation::ReplaceArchetype {
+                source,
+                archetype: index,
+                record,
+            };
+            apply(&folder, &operation)
+        });
+        match done {
+            Ok(applied) if applied.edited.changed() => {
                 self.remember_map_names(&module, typed);
-                self.push_maps_step(Step {
-                    label,
-                    changes: vec![FileChange {
-                        path: edited.file,
-                        before: edited.before,
-                        after: edited.after,
-                    }],
-                });
+                self.push_maps_step(step(label, applied.edited));
             }
             Ok(_) => {}
             Err(why) => self.show_error_toast(why),
@@ -376,33 +381,32 @@ impl AppState {
         let Some((module, _)) = self.maps_folder_to_write() else {
             return;
         };
-        let Some(dir) = self.map_source_dir(&source) else {
+        let (Some(folder), Some(dir)) = (self.maps_pack_folder(), self.map_source_dir(&source))
+        else {
             return;
         };
-        let held = or_io::meta::instance::HashedString::new(name);
-        match or_maps::edit::edit_map(&dir, |map| {
-            let held_by = map.entities.len();
-            let entity = map
-                .entities
-                .get_mut(index)
-                .ok_or_else(|| format!("entity {index} is past the {held_by} the map holds"))?;
-            entity.archetype_name = held;
-            Ok(())
-        }) {
-            Ok(edited) if edited.changed() => {
+        let renamed = or_maps::edit::read_entity(&dir, index).and_then(|mut entity| {
+            entity.archetype_name = or_io::meta::instance::HashedString::new(name);
+            Record::entity(&entity)
+        });
+        let done = renamed.and_then(|record| {
+            let operation = Operation::ReplaceEntity {
+                source,
+                entity: index,
+                record,
+                extents: None,
+            };
+            apply(&folder, &operation)
+        });
+        match done {
+            Ok(applied) if applied.edited.changed() => {
                 self.remember_map_names(&module, &[name]);
-                self.push_maps_step(Step {
-                    label: tr!(
-                        "Placed {name} as entity {index}",
-                        name = name,
-                        index = index
-                    ),
-                    changes: vec![FileChange {
-                        path: edited.file,
-                        before: edited.before,
-                        after: edited.after,
-                    }],
-                });
+                let label = tr!(
+                    "Placed {name} as entity {index}",
+                    name = name,
+                    index = index
+                );
+                self.push_maps_step(step(label, applied.edited));
             }
             Ok(_) => {}
             Err(why) => self.show_error_toast(why),
@@ -464,39 +468,39 @@ impl AppState {
             ));
             return;
         };
-        let Some(dir) = self.map_source_dir(&target) else {
+        let Some(folder) = self.maps_pack_folder() else {
             return;
         };
+        // The record to copy: the archetype selected, when its file still holds it.
         let donor = match self.workbench.maps.selected.clone() {
             Some(Pick {
                 source,
-                kind: PickKind::Archetype(at),
-            }) => self
-                .map_source_dir(&source)
-                .and_then(|d| or_maps::edit::read_archetype(&d, at).ok()),
+                kind: PickKind::Archetype(index),
+            }) => Some(At { source, index }),
             _ => None,
+        }
+        .filter(|at| {
+            (self.map_source_dir(&at.source))
+                .is_some_and(|dir| or_maps::edit::read_archetype(&dir, at.index).is_ok())
+        });
+        let operation = Operation::AddArchetype {
+            source: target.clone(),
+            name: name.to_string(),
+            asset: asset.map(str::to_string),
+            donor,
         };
-        let mut index = 0;
-        match or_maps::edit::edit_types(&dir, |types| {
-            index = or_maps::edit::add_archetype(types, donor.as_ref(), name, asset)?;
-            Ok(())
-        }) {
-            Ok(edited) => {
+        match apply(&folder, &operation) {
+            Ok(applied) => {
                 self.remember_map_names(&module, &[name, asset.unwrap_or(name)]);
-                self.push_maps_step(Step {
-                    label: tr!("Added the archetype {name}", name = name),
-                    changes: vec![FileChange {
-                        path: edited.file,
-                        before: edited.before,
-                        after: edited.after,
-                    }],
-                });
+                let added = applied.added.map(PickKind::Archetype);
+                let label = tr!("Added the archetype {name}", name = name);
+                self.push_maps_step(step(label, applied.edited));
                 self.select_in_maps(
                     &module,
                     &set_id,
-                    Some(Pick {
+                    added.map(|kind| Pick {
                         source: target,
-                        kind: PickKind::Archetype(index),
+                        kind,
                     }),
                 );
             }
@@ -516,20 +520,17 @@ impl AppState {
         let Some((module, _)) = self.maps_folder_to_write() else {
             return;
         };
-        let Some(dir) = self.map_source_dir(&source) else {
+        let Some(folder) = self.maps_pack_folder() else {
             return;
         };
-        match or_maps::edit::edit_types(&dir, |types| or_maps::edit::remove_archetype(types, index))
-        {
-            Ok(edited) => {
-                self.push_maps_step(Step {
-                    label: tr!("Removed archetype {index}", index = index),
-                    changes: vec![FileChange {
-                        path: edited.file,
-                        before: edited.before,
-                        after: edited.after,
-                    }],
-                });
+        let operation = Operation::RemoveArchetype {
+            source,
+            archetype: index,
+        };
+        match apply(&folder, &operation) {
+            Ok(applied) => {
+                let label = tr!("Removed archetype {index}", index = index);
+                self.push_maps_step(step(label, applied.edited));
                 let set = self.workbench.maps.set.clone().unwrap_or_default();
                 self.select_in_maps(&module, &set, None);
             }

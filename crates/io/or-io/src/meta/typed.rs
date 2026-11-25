@@ -797,6 +797,22 @@ macro_rules! meta_any {
         }
 
         impl $name {
+            /// The value tree this element saves as, behind a pointer when it arrived behind one.
+            pub fn to_value(&self) -> Result<Value, Error> {
+                self.write_element(None, None).map_err(|why| Error::Invalid {
+                    what: concat!("a `", stringify!($base), "` element").to_string(),
+                    why,
+                })
+            }
+
+            /// The element a value tree reads as, which keeps that tree as what it saves.
+            pub fn from_value(value: &Value) -> Result<Self, Error> {
+                Self::read_element(value).map_err(|why| Error::Invalid {
+                    what: concat!("a `", stringify!($base), "` element").to_string(),
+                    why,
+                })
+            }
+
             fn read(inst: &MetaInstance) -> Result<Self, String> {
                 $(if is_named(&inst.type_name, stringify!($derived)) {
                     return $derived::read(inst).map(Self::$derived);
@@ -1570,6 +1586,41 @@ mod tests {
         let h = HashedString::from_hash(crate::string_hash(b"Prop_Bench_01A"));
         assert!(h == "prop_bench_01a");
         assert!(h != "prop_bench_01b");
+    }
+
+    #[test]
+    fn an_element_comes_back_from_the_value_tree_it_saves_as() {
+        let mut inst = MetaInstance::new("CEntityDef");
+        inst.set("guid", Value::UInt(7));
+        // A member no record types, which the element carries.
+        inst.set("priorityLevel", Value::UInt(2));
+        for value in [
+            Value::Pointer(Some(Box::new(inst.clone()))),
+            Value::Struct(Box::new(inst.clone())),
+        ] {
+            let mut element = CEntityDefAny::from_value(&value).unwrap();
+            assert_eq!(element.guid, 7);
+            assert_eq!(element.to_value().unwrap(), value);
+            element.guid = 9;
+            let changed = element.to_value().unwrap();
+            assert_eq!(
+                std::mem::discriminant(&changed),
+                std::mem::discriminant(&value)
+            );
+            let (Value::Pointer(Some(saved)) | Value::Struct(saved)) = changed else {
+                panic!("a struct, behind a pointer or not");
+            };
+            assert_eq!(saved.get("guid"), Some(&Value::UInt(9)));
+            assert_eq!(saved.get("priorityLevel"), Some(&Value::UInt(2)));
+        }
+        assert!(CEntityDefAny::from_value(&Value::Pointer(None)).is_err());
+        assert!(CEntityDefAny::from_value(&Value::UInt(1)).is_err());
+        inst.type_name = "CMapData".into();
+        let refused = CEntityDefAny::from_value(&Value::Struct(Box::new(inst))).unwrap_err();
+        assert!(
+            refused.to_string().contains("`CEntityDef` element"),
+            "{refused}"
+        );
     }
 
     #[test]

@@ -389,6 +389,59 @@ fn a_metadata_source_cooks_to_the_game_extension_a_build_and_a_saved_xml_ask_for
     assert_eq!(content_flags(&now), 66);
 }
 
+#[test]
+fn the_xml_for_a_changed_file_is_given_with_nothing_written_and_xml_typed_by_hand_is_no_export() {
+    let scratch = tempfile::tempdir().unwrap();
+    let dir = extract(
+        scratch.path(),
+        &synthetic(BinaryFormat::Rbm),
+        "cs1_02",
+        "ymap",
+    );
+    let inputs = metadata::Inputs::read(&Source::open(&dir).unwrap()).unwrap();
+    let held = fs::read(dir.join("metadata.xml")).unwrap();
+    assert_eq!(inputs.xml(), held);
+    assert_eq!(inputs.extension(), "ymap");
+    let cooked = inputs.compile().unwrap().bytes;
+    assert!(inputs.is_the_export_of(&cooked));
+    assert_eq!(
+        inputs.xml_of(&cooked).unwrap(),
+        held,
+        "the file the source cooks to asks for the XML it holds"
+    );
+
+    // Another file of its kind: the XML for it is given, and the source is as it was.
+    let typed = String::from_utf8(held.clone()).unwrap();
+    let mut edited = inputs.clone();
+    edited.set_xml(
+        typed
+            .replace("contentFlags value=\"65\"", "contentFlags value=\"66\"")
+            .into_bytes(),
+    );
+    let other = edited.compile().unwrap().bytes;
+    assert_eq!(content_flags(&other), 66);
+    let xml = inputs.xml_of(&other).unwrap();
+    assert_eq!(xml, edited.xml());
+    assert!(!inputs.is_the_export_of(&other));
+    assert_eq!(fs::read(dir.join("metadata.xml")).unwrap(), held);
+    let before = names(&dir);
+    metadata::write_xml(&dir, &xml).unwrap();
+    assert_eq!(compile(&dir), other);
+    assert_eq!(names(&dir), before, "the part file is gone");
+
+    // The same document spaced as no export spaces it cooks to the same file, and is not that file's export.
+    let mut spaced = inputs.clone();
+    spaced.set_xml(
+        typed
+            .replacen("<entities", "\n\n   <entities", 1)
+            .into_bytes(),
+    );
+    assert_ne!(spaced.xml(), held);
+    assert_eq!(spaced.compile().unwrap().bytes, cooked);
+    assert!(!spaced.is_the_export_of(&cooked));
+    assert_eq!(spaced.xml_of(&cooked).unwrap(), held);
+}
+
 /// Where the staged binary metadata documents are, as the R37 suites find them.
 fn metadata_corpus() -> Option<Vec<PathBuf>> {
     let origin = or_test_support::owned_corpus_origin(

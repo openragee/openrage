@@ -9756,10 +9756,10 @@ roots; the first edit of a game object importing its map as a source with its ba
 new entity made from a donor of the mounted install; and the Map screen's Undo moved into the
 project's History ([brief](World_Editor_Plan.md#one-vocabulary-of-world-edits-r70h)).
 
-**Where it stands.** Not merged; lanes began it on 2026-11-25. `or_maps::edit` renumbers links
-inside one file, and the working set (`crates/domain/or-world/src/execute.rs`) follows them across
-files only where a schema snapshot is staged. The Map screen's Undo is its own stack, in memory
-(`src/state/workbench/maps.rs`).
+**Where it stands.** Built for one pack: `Operation`, `apply` and `apply_all` in
+`crates/domain/or-maps/src/operation.rs`, which the Map screen's edits and `openrage-cli maps apply`
+call (`an_operation_and_its_inverse_leave_the_sources_as_they_were`, on synthetic packs). Left:
+links across files, the import, a new map, Undo by inverses in History, the install measure.
 
 **Depends on.** Nothing in R70; it does the part of
 [R69h](#r69h-one-undo-for-the-tab-on-screen) a Map tab needs below the screen.

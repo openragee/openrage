@@ -10,7 +10,6 @@
 //! installed, which is every user's machine, so a new entity is a copy of another entity of its map and a new archetype a copy of
 //! another archetype of its type file.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use glam::{EulerRot, Quat, Vec3};
@@ -18,9 +17,6 @@ use or_io::decl::File;
 use or_io::meta::instance::HashedString;
 use or_io::meta::typed::{CBaseArchetypeDefAny, CEntityDefAny, CMapData, CMapTypes};
 use or_world::Placement;
-
-use crate::facts::Facts;
-use crate::model::MapSet;
 
 /// What an edit changed in the XML of a source.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,11 +183,6 @@ pub fn read_entity(dir: &Path, index: usize) -> Result<CEntityDefAny, String> {
         .ok_or_else(|| format!("entity {index} is past the {held} the map holds"))
 }
 
-/// The first entity of the map file the source in `dir` cooks to, none when it places nothing.
-pub fn first_entity(dir: &Path) -> Option<CEntityDefAny> {
-    read_entity(dir, 0).ok()
-}
-
 /// Add an entity to `map` that places `archetype` at `pose`, as a copy of `donor` with that name and pose, no parent, no children and a guid of its own; its index.
 pub fn add_entity(
     map: &mut CMapData,
@@ -212,6 +203,11 @@ pub fn add_entity(
     Ok(map.entities.len() - 1)
 }
 
+/// Whether an entity with these `flags` names its LOD parent in the parent map's array, which one file cannot see.
+pub(crate) fn in_parent_map(flags: u32) -> bool {
+    flags & (1 << 3) != 0
+}
+
 /// Take the entity `index` out of `map`, with the LOD links renumbered: what named it as a parent has none now, a parent it named has one child fewer, and what named an entity after it names the one before.
 ///
 /// ⚠ An entity whose `flags` bit 3 is set indexes the parent map's array, which one file cannot see, so its index is left alone.
@@ -222,15 +218,19 @@ pub fn remove_entity(map: &mut CMapData, index: usize) -> Result<(), String> {
             map.entities.len()
         ));
     }
-    let in_parent_map = |flags: u32| flags & (1 << 3) != 0;
     let removed = map.entities.remove(index);
     // Its parent, when that is in this map, has a child fewer.
     if let (false, Ok(parent)) = (
         in_parent_map(removed.flags),
         usize::try_from(removed.parent_index),
     ) {
-        let at = if parent > index { parent - 1 } else { parent };
-        if let Some(held) = map.entities.get_mut(at) {
+        // ⚠ An entity that named itself has no parent left to count: the one now at its index is another entity.
+        let at = match parent.cmp(&index) {
+            std::cmp::Ordering::Greater => Some(parent - 1),
+            std::cmp::Ordering::Less => Some(parent),
+            std::cmp::Ordering::Equal => None,
+        };
+        if let Some(held) = at.and_then(|at| map.entities.get_mut(at)) {
             held.num_children = held.num_children.saturating_sub(1);
         }
     }
@@ -356,24 +356,4 @@ pub fn grow_extents(map: &mut CMapData, boxes: impl Fn(u32) -> Option<(Vec3, Vec
         *min = from_vec(to_vec(*min).min(lo));
         *max = from_vec(to_vec(*max).max(hi));
     }
-}
-
-/// The local box and the stream distance of each archetype the type files of `set` declare, by the hash of its name: what [`grow_extents`] holds the entities to.
-///
-/// The first type file to declare a name wins, as it does in the [scene](crate::scene::scene).
-pub fn archetype_boxes(set: &MapSet, facts: &Facts) -> BTreeMap<u32, (Vec3, Vec3, f32)> {
-    let mut boxes = BTreeMap::new();
-    for path in &set.sources {
-        let Some(types) = facts.source(path).and_then(|s| s.types()) else {
-            continue;
-        };
-        for archetype in &types.archetypes {
-            boxes.entry(archetype.name.hash).or_insert((
-                Vec3::from(archetype.bb_min),
-                Vec3::from(archetype.bb_max),
-                archetype.lod_dist,
-            ));
-        }
-    }
-    boxes
 }

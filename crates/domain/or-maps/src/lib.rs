@@ -4,9 +4,9 @@
 //! resource, [`facts`] looks at the sources a module names and reads what the map files place and the type files declare, [`rules`] says
 //! what is wrong as data with codes, severities and waivers, [`plan`] hands all of it to the plan of a build as a
 //! [`or_project::Contribution`], [`verify`] reads a build back, [`adopt`] recognises a folder of maps and starts an empty one, and
-//! [`import`] makes sources of game files. [`edit`] changes what an entity or an archetype says in its source, [`scene`] says what a set
-//! places as boxes in the world, and [`gizmo`] is the manipulator that moves, turns and scales one. `openrage-cli maps` runs the
-//! first part without the editor.
+//! [`import`] makes sources of game files. [`edit`] changes what an entity or an archetype says in its source, [`operation`] names each
+//! of those changes as data with an inverse, [`scene`] says what a set places as boxes in the world, and [`gizmo`] is the manipulator
+//! that moves, turns and scales one. `openrage-cli maps` runs the first part, and a list of operations, without the editor.
 //!
 //! The world model is `or-world`'s and the typed roots are `or_io::meta::typed`'s: this crate is the kind of content a project holds
 //! and the edits made to it, and holds no reader and no schema of its own.
@@ -21,6 +21,7 @@ pub mod gizmo;
 pub mod import;
 pub mod layout;
 pub mod model;
+pub mod operation;
 pub mod plan;
 pub mod rules;
 pub mod sample;

@@ -1,4 +1,5 @@
-//! `openrage-cli maps`: list what a project's map sets place and declare, validate them and say what the rules find, and read a build back against them.
+//! `openrage-cli maps`: list what a project's map sets place and declare, validate them and say what the rules find, read a build back
+//! against them, and apply a list of operations to their sources.
 //!
 //! The plan and the build of maps are `openrage-cli project plan` and `build`:
 //! a maps content is content like any other, and goes through the one plan.
@@ -20,6 +21,7 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("list") => list(rest),
         Some("validate") => validate(rest),
         Some("verify") => verify(rest),
+        Some("apply") => apply(rest),
         Some("-h" | "--help" | "help") => {
             print_usage();
             return ExitCode::SUCCESS;
@@ -45,7 +47,8 @@ fn print_usage() {
         "Usage:\n  \
          openrage-cli maps list     <project.openrage-proj> [--module <id>]\n  \
          openrage-cli maps validate <project.openrage-proj> [--module <id>] [--json]\n  \
-         openrage-cli maps verify   <project.openrage-proj> [--build <id>] [--out <folder>]\n\n\
+         openrage-cli maps verify   <project.openrage-proj> [--build <id>] [--out <folder>]\n  \
+         openrage-cli maps apply    <project.openrage-proj> <operations.json> [--module <id>] [--dry-run]\n\n\
          list names the map sets of the content and, for each source, what it places (the entities of\n\
          a map file) or declares (the archetypes of a type file, and the rooms and portals of its\n\
          interiors).\n\
@@ -56,7 +59,15 @@ fn print_usage() {
          reached the place the plan gave it, that every map file and type file reloads with the\n\
          entities and archetypes its source states, and that the manifest registers each type file.\n\
          It exits 1 when a check fails. The plan and the build are `openrage-cli project plan` and\n\
-         `build`; maps go through them as any content does.\n\n\
+         `build`; maps go through them as any content does.\n\
+         apply does the operations of a list, in order, to the sources of the maps content: an entity\n\
+         placed, added as a copy or taken out with its LOD links renumbered, an archetype added or taken\n\
+         out, the extents grown or stated, a record put back. The list is JSON whose format is\n\
+         `openrage-map-operations` and whose schema is 1, each operation an object whose `op` names it\n\
+         and whose `source` is a source folder of the content. It writes all of them or none: an\n\
+         operation that is refused is named by its place in the list, and no source changes. With\n\
+         --dry-run it says what each operation would change and writes nothing. It exits 1 when an\n\
+         operation is refused.\n\n\
          A build checks the files. It does not test that GTA V loads them.\n"
     );
 }
@@ -85,6 +96,84 @@ fn maps_of(
         return Err(Run(format!("{path} holds no maps content")));
     }
     Ok((project, chosen))
+}
+
+/// Do the operations of a list to the sources of one maps content, all of them or none.
+fn apply(args: &[String]) -> Result<ExitCode, Failure> {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    let rest: Vec<String> = args.iter().filter(|a| *a != "--dry-run").cloned().collect();
+    let (positional, flags) = parse(&rest, &["--module"])?;
+    let [path, list] = positional.as_slice() else {
+        return Err(Usage(
+            "expected <project.openrage-proj> <operations.json>".into(),
+        ));
+    };
+    let (project, modules) = maps_of(std::slice::from_ref(path), &flags)?;
+    let [id] = modules.as_slice() else {
+        return Err(Run(format!(
+            "{path} holds {} maps contents ({}): say which with --module",
+            modules.len(),
+            modules.join(", ")
+        )));
+    };
+    let module = (project.container.module(id))
+        .ok_or_else(|| Run(format!("{path} has no maps content `{id}`")))?;
+    // ⚠ A dry run writes nothing, so it may read a linked content, which only the project that holds it may write.
+    let folder = if dry_run {
+        or_maps::module_folder(&project.folder(), module)
+    } else {
+        or_maps::module_folder_to_edit(Path::new(path), &project.container, module)
+    }
+    .map_err(|e| Run(format!("content `{id}`: {e}")))?;
+    let bytes = std::fs::read(list).map_err(|e| Run(format!("{list}: {e}")))?;
+    let operations = or_maps::operation::Operations::from_json(&bytes, list)
+        .map_err(|e| Run(e.to_string()))?
+        .operations;
+    let applied =
+        or_maps::operation::apply_all(&folder, &operations, dry_run).map_err(|e| match e {
+            // The one failure after which a source may hold what the list wrote: it says which.
+            or_maps::operation::Error::Write(_) => Run(e.to_string()),
+            refused => Run(format!("{refused}; no source was changed")),
+        })?;
+
+    // Each file with the XML it held before the list and the XML it holds after: an operation taken back later in the list changes nothing.
+    let mut files: Vec<(String, &[u8], &[u8])> = Vec::new();
+    for (at, (operation, done)) in operations.iter().zip(&applied).enumerate() {
+        let said = match (done.edited.changed(), done.added) {
+            (false, _) => ": no change".to_string(),
+            (true, Some(index)) => format!(": added at {index}"),
+            (true, None) => String::new(),
+        };
+        println!(
+            "  {}. {} of {}{said}",
+            at + 1,
+            operation.name(),
+            operation.source()
+        );
+        let file = (done.edited.file.strip_prefix(&folder))
+            .unwrap_or(&done.edited.file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        match files.iter_mut().find(|(held, ..)| *held == file) {
+            Some((.., after)) => *after = &done.edited.after,
+            None => files.push((file, &done.edited.before, &done.edited.after)),
+        }
+    }
+    let changed: Vec<&str> = (files.iter())
+        .filter(|(_, before, after)| before != after)
+        .map(|(file, ..)| file.as_str())
+        .collect();
+    let verb = if dry_run { "would change" } else { "changed" };
+    for file in &changed {
+        println!("{verb} {file}");
+    }
+    println!(
+        "content {id}: {} operation(s) {verb} {} source(s){}",
+        operations.len(),
+        changed.len(),
+        if dry_run { "; nothing was written" } else { "" }
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Read each resource the build of an output wrote against the maps content it holds.

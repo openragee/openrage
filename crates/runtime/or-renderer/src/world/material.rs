@@ -281,6 +281,15 @@ pub fn interior(vertices: &mut [MeshVertex], third: Colours, uv3: Coordinates) {
     }
 }
 
+/// The bytes of the uniform a material's constants are read from: the family in front, the whole a multiple of sixteen as a uniform struct is.
+pub(super) fn uniform_bytes(family: WorldFamily, constants: &WorldConstants) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(16 + size_of::<WorldConstants>() + 16);
+    bytes.extend_from_slice(bytemuck::bytes_of(&[family as u32, 0, 0, 0]));
+    bytes.extend_from_slice(bytemuck::bytes_of(constants));
+    bytes.resize(bytes.len().next_multiple_of(16), 0);
+    bytes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,13 +335,4 @@ mod tests {
             assert_eq!((half(halves & 0xFFFF), half(halves >> 16)), (1.0, stored));
         }
     }
-}
-
-/// The bytes of the uniform a material's constants are read from: the family in front, the whole a multiple of sixteen as a uniform struct is.
-pub(super) fn uniform_bytes(family: WorldFamily, constants: &WorldConstants) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(16 + size_of::<WorldConstants>() + 16);
-    bytes.extend_from_slice(bytemuck::bytes_of(&[family as u32, 0, 0, 0]));
-    bytes.extend_from_slice(bytemuck::bytes_of(constants));
-    bytes.resize(bytes.len().next_multiple_of(16), 0);
-    bytes
 }

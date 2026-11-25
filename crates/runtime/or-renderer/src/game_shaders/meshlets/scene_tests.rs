@@ -34,6 +34,17 @@ fn frames_of(test: &str, model: MeshletSurface, skies: &[Sky]) -> Option<Vec<Vec
 
 /// The frames each of `skies` lights `model` onto, seen by its matrix; none with no device.
 fn frames_seen(test: &str, model: MeshletSurface, skies: &[(Mat4, Sky)]) -> Option<Vec<Vec<u8>>> {
+    frames_stated(test, model, skies, |_, _, _| {})
+}
+
+/// The frames each of `skies` lights `model` onto, seen by its matrix, `state` handed the scene
+/// before each with the frame's number; none with no device.
+pub(super) fn frames_stated(
+    test: &str,
+    model: MeshletSurface,
+    skies: &[(Mat4, Sky)],
+    mut state: impl FnMut(&mut MeshletScene, &wgpu::Queue, usize),
+) -> Option<Vec<Vec<u8>>> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = match crate::instance::headless_adapter(&instance) {
         Ok(adapter) => adapter,
@@ -59,7 +70,7 @@ fn frames_seen(test: &str, model: MeshletSurface, skies: &[(Mat4, Sky)]) -> Opti
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut pipelines = MeshletPipelines::default();
     let surfaces = [model];
-    let scene = loop {
+    let mut scene = loop {
         let scene = MeshletScene::prepare(&device, &queue, &mut pipelines, &surfaces, size, &frame);
         match scene.expect("the scene prepares") {
             Some(scene) => break scene,
@@ -75,7 +86,8 @@ fn frames_seen(test: &str, model: MeshletSurface, skies: &[(Mat4, Sky)]) -> Opti
     );
     let depth = render_target(&device, "depth", size, DEPTH, wgpu::TextureUsages::empty());
     let mut frames = Vec::new();
-    for (view_proj, sky) in skies {
+    for (at, (view_proj, sky)) in skies.iter().enumerate() {
+        state(&mut scene, &queue, at);
         let lighting = Lighting {
             view_proj: *view_proj,
             sky: *sky,
@@ -129,7 +141,7 @@ fn seen_at(frame: &[u8], (x, y): (f32, f32)) -> [u8; 4] {
 }
 
 /// A white light that leans towards +x, and nothing from the sky.
-fn leaning() -> Sky {
+pub(super) fn leaning() -> Sky {
     Sky {
         towards: Vec3::new(0.6, 0.0, 0.8),
         sun: Vec3::splat(std::f32::consts::PI),

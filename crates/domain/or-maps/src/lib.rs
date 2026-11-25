@@ -4,8 +4,9 @@
 //! resource, [`facts`] looks at the sources a module names and reads what the map files place and the type files declare, [`rules`] says
 //! what is wrong as data with codes, severities and waivers, [`plan`] hands all of it to the plan of a build as a
 //! [`or_project::Contribution`], [`manifest`] is the manifest of its maps, written from the manifests of the game the module keeps,
-//! [`verify`] reads a build back, [`adopt`] recognises a folder of maps and starts an empty one, and
-//! [`import`] makes sources of game files. [`edit`] changes what an entity or an archetype says in its source, [`operation`] names each
+//! [`verify`] reads a build back, [`adopt`] recognises a folder of maps and starts an empty one,
+//! [`import`] makes sources of game files, and [`mapping`] reports and adopts a mapping that comes in as a folder or a zip. [`edit`]
+//! changes what an entity or an archetype says in its source, [`operation`] names each
 //! of those changes as data with an inverse and holds the sources of a pack open as a session that writes them once, [`delete`] plans
 //! the removal of an entity with its chain of far models across the map files of a pack as a list of them, [`scene`] says what a set
 //! places as boxes in the world, and [`gizmo`] is the manipulator
@@ -37,6 +38,7 @@ pub mod gizmo;
 pub mod import;
 pub mod layout;
 pub mod manifest;
+pub mod mapping;
 pub mod model;
 pub mod operation;
 pub mod place;

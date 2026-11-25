@@ -24,6 +24,8 @@ or-io = { workspace = true, features = ["meta", "gta6"] }
 or-title.workspace = true
 # How far a build has got and the flag that stops it.
 or-job.workspace = true
+# The zip a mapping comes in as, listed from its directory and unpacked only when it is adopted; such a zip is deflated.
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -31,3 +33,5 @@ tempfile.workspace = true
 or-test-support.workspace = true
 # The zlib chunks of the synthetic RPF9 archives the GTA VI project tests lay out.
 flate2.workspace = true
+# The archives the tests of a place write, with the crate that reads them.
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }

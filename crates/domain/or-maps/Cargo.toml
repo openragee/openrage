@@ -32,3 +32,5 @@ tempfile.workspace = true
 or-test-support.workspace = true
 # The mounted install the map files are measured on.
 or-title.workspace = true
+# The archives the tests of a mapping that comes in write, with the crate that reads them.
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }

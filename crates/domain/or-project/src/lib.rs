@@ -28,6 +28,7 @@ pub mod lock;
 mod merge;
 mod oiv;
 pub mod paths;
+pub mod place;
 pub mod plan;
 pub mod project;
 mod readers;

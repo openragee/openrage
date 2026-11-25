@@ -9909,10 +9909,13 @@ in the import report. Two parts wait for the owner: the thumbnails for the plan'
 ruling 5 the reader of the XML a Blender export writes and the watched folder
 ([brief](World_Editor_Plan.md#a-library-of-props-and-what-comes-in-r70j)).
 
-**Where it stands.** Not built. Links, adoption of a folder, the thumbnail cache and the import
-report exist ([R48](#r48-projects)). The ruling of 2026-09-22 keeps that XML out
-([R37](#r37-metadata-and-xml-at-parity)), and [Workbench_Plan.md](Workbench_Plan.md#held-back) holds
-its import back.
+**Where it stands.** What comes in is built headless, on archives made by hand: a zip
+read safely as a place to adopt from (`crates/domain/or-project/src/place.rs`), the report of an
+adoption with what the map rules find (`crates/domain/or-maps/src/mapping.rs`), and
+`openrage-cli project adopt` with `--dry-run`
+([in full](../reference/Crate_Reference.md#domain-crates)). No screen, Library, ghost or placement
+by surface is built. The ruling of 2026-09-22 keeps that XML out
+([R37](#r37-metadata-and-xml-at-parity)).
 
 **Depends on.** [R70i](#r70i-selecting-and-moving-in-the-world); rulings 2 and 5 for the parts that
 wait.

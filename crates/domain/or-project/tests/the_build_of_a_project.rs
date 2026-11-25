@@ -263,6 +263,74 @@ fn a_file_that_does_not_reload_through_its_reader_stops_the_build() {
 }
 
 #[test]
+fn a_file_an_asset_escrow_locks_ships_as_it_came_and_is_named_and_not_opened() {
+    let dir = tempfile::tempdir().unwrap();
+    // What follows the marker is no texture dictionary: a reader handed it would stop the build, as the test above shows.
+    let locked = [
+        or_project::resource::ESCROW_MARKER.as_slice(),
+        b"but not really",
+    ]
+    .concat();
+    let project = project(
+        dir.path(),
+        &[("a.lua", b"fine"), ("stream/sealed.ytd", &locked)],
+    );
+    let root = dir.path().join("out");
+
+    let built = build(&planned(&project), &root).expect("a locked file does not stop a build");
+
+    assert_eq!(built.verification.problems, Vec::<String>::new());
+    assert_eq!(built.verification.locked, ["stream/sealed.ytd"]);
+    assert!(
+        built
+            .verification
+            .reloaded
+            .iter()
+            .all(|r| r.path != "stream/sealed.ytd"),
+        "no reader opened it"
+    );
+    assert_eq!(
+        std::fs::read(root.join("pack/stream/sealed.ytd")).unwrap(),
+        locked,
+        "it ships byte for byte"
+    );
+    let read_back = verify(&planned(&project), &root.join("pack"));
+    assert_eq!(read_back.locked, ["stream/sealed.ytd"]);
+    assert!(read_back.problems.is_empty(), "{:?}", read_back.problems);
+}
+
+/// ⚠ What reads a built folder agrees with the build on a locked file: the check of a resource names it by the same marker and opens
+/// it no more than the build did, and the acceptance sheet counts it under its kind though no reader saw what it holds.
+#[test]
+fn a_built_folder_with_a_locked_file_is_read_as_the_build_read_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let locked = [
+        or_project::resource::ESCROW_MARKER.as_slice(),
+        b"but not really",
+    ]
+    .concat();
+    let project = project(
+        dir.path(),
+        &[("a.lua", b"fine"), ("stream/sealed.ytd", &locked)],
+    );
+    let root = dir.path().join("out");
+    let built = build(&planned(&project), &root).expect("a locked file does not stop a build");
+    assert_eq!(built.verification.locked, ["stream/sealed.ytd"]);
+
+    let report = or_project::resource::check(&built.folder, &Default::default());
+    assert_eq!((report.streamed, report.opened, report.locked), (1, 0, 1));
+    let about: Vec<&str> = (report.findings.iter())
+        .filter(|f| f.file.as_deref() == Some("stream/sealed.ytd"))
+        .map(|f| f.code)
+        .collect();
+    assert_eq!(about, ["file-locked"]);
+    assert_eq!(report.count(or_project::content::rule::Severity::Error), 0);
+
+    let kinds = or_project::acceptance::kinds_in(&built.folder).expect("a folder a build wrote");
+    assert_eq!(kinds.get("ytd"), Some(&1), "{kinds:?}");
+}
+
+#[test]
 fn a_plan_with_problems_is_refused_before_anything_is_written() {
     let dir = tempfile::tempdir().unwrap();
     let project = project(dir.path(), &[("a.lua", b"a")]);

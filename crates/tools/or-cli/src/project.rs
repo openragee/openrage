@@ -1,4 +1,4 @@
-//! `openrage-cli project`: create a project, adopt a folder, link content, share a template, print the plan of a build, build it and verify what was built.
+//! `openrage-cli project`: create a project, adopt a folder or a mapping that comes in as a zip, link content, share a template, print the plan of a build, build it and verify what was built.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -89,6 +89,9 @@ const USAGE: &str = "Usage:\n  \
          [--kind fivem|dlc|oiv] [--target legacy|enhanced] [--game legacy|enhanced|both]\n                              \
          [--template <file>] [<file>...]\n  \
          openrage-cli project adopt  <folder> [--name <project>] [--resource <name>]\n  \
+         openrage-cli project adopt  <mapping.zip|folder> --into <new folder> [--name <project>]\n                              \
+         [--resource <name>] [--root <resource in it>] [--limits <limit>=<n>,...]\n                              \
+         [--dry-run] [--json]\n  \
          openrage-cli project add-content  <project.openrage-proj> [--kind files|clothing] [<file>...]\n  \
          openrage-cli project add-build    <project.openrage-proj> [--name <resource>]\n                                    \
          [--kind fivem|dlc|oiv] [--target legacy|enhanced]\n  \
@@ -141,6 +144,24 @@ const USAGE: &str = "Usage:\n  \
          become addon ped content (an addonped.json), what no content claims is the Files\n\
          content, and what could not be placed is printed and recorded in\n\
          the project file.\n\
+         adopt --into makes a new project of a mapping that comes in as a zip or as a folder, which is\n\
+         read and never changed. It finds the resources (a folder with a manifest) and the loose stream\n\
+         folders, and prints what each file becomes: a map file, a type file, a model or a texture\n\
+         dictionary under stream/ becomes a source of a maps content; any other file is kept whole at\n\
+         its place; a file locked by a server's asset escrow is told by its first bytes, kept whole,\n\
+         counted and never opened; a map or a type file that does not read is refused with the reason;\n\
+         an archive inside is listed and not opened. It prints each line of the manifest with whether\n\
+         a build carries it, and what the map rules say of the set: an entity that places an archetype\n\
+         no type file of it declares, a type file whose archetype has no model. --dry-run prints that\n\
+         and writes nothing, and with --into or --root says what would stop that adoption and exits 1;\n\
+         --json prints it as data, and it exits 1 where there is no resource and no stream folder.\n\
+         A place of several is adopted one at a time with --root. A zip is listed\n\
+         from its directory and unpacked only by the adoption, into a hidden folder inside --into\n\
+         that is removed again; --into has to be new or empty. An archive is refused whole, with the\n\
+         entry named and nothing written, for an entry whose path is absolute, climbs out with ..,\n\
+         names a drive or a device, is a link, is encrypted, differs from another only by case, is\n\
+         longer than a path holds, or unpacks to more than it states, and past these limits:\n\
+         {LIMITS}\n\
          add-content adds the files named to the Files content, once each, and says why it\n\
          will not take one a build could not place. With --kind clothing it makes a clothing\n\
          folder with an empty pack instead, and every build takes it.\n\
@@ -260,7 +281,10 @@ const USAGE: &str = "Usage:\n  \
          OpenIV installs a package.\n";
 
 fn print_usage() {
-    eprintln!("{USAGE}");
+    eprintln!(
+        "{}",
+        USAGE.replace("{LIMITS}", &crate::project_mapping::limit_lines())
+    );
 }
 
 /// The flag that names a build of the project.
@@ -481,6 +505,9 @@ fn make_sources(folder: &Path) -> Result<(), Failure> {
 }
 
 fn adopt(args: &[String]) -> Result<ExitCode, Failure> {
+    if crate::project_mapping::is_asked(args) {
+        return crate::project_mapping::adopt_mapping(args);
+    }
     let (positional, flags) = parse(args, &["--name", "--resource"])?;
     let [folder] = positional.as_slice() else {
         return Err(Usage("expected one <folder> to adopt".into()));
@@ -1519,6 +1546,9 @@ pub(crate) fn report(found: &Verification) {
     println!("  {}", found.reload_line());
     for reloaded in &found.reloaded {
         println!("    {:<40} {}", reloaded.path, reloaded.reader);
+    }
+    for locked in &found.locked {
+        println!("    {locked:<40} locked by an asset escrow: shipped as it came and not opened");
     }
     for count in found.metadata() {
         println!(

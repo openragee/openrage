@@ -92,6 +92,7 @@ mod photo;
 mod project;
 mod project_acceptance;
 mod project_checks;
+mod project_mapping;
 mod project_resource;
 mod project_server;
 mod project_steps;

@@ -271,6 +271,19 @@ exits 0, 1 for a refusal or a check that failed and 2 for a usage error.
 sheet about its files, with what a person saw of each in a running game
 ([In_Game_Acceptance.md](../guides/In_Game_Acceptance.md)).
 
+`adopt <folder>` makes a project of a folder in place. `adopt <mapping.zip|folder> --into <folder>`
+makes a new project of a mapping that comes in as a zip or as a folder, which it reads and never
+changes: `--dry-run` prints what the mapping holds and writes nothing (each resource or loose
+stream folder, what each file becomes, whether a build carries each line of the manifest, and what
+the map rules say of the set), `--json` prints the same report as data, `--root` names the
+resource to adopt where there are several, and `--limits <limit>=<n>` states a bound of the place
+(`entries`, `bytes`, `ratio`, `ratio_floor`, `path`). A dry run that names `--into` or `--root`
+also says what would stop that adoption (a folder that holds something, a root the mapping does
+not hold, a path the folder cannot hold) and exits 1; with `--json` the refusal is the `refused`
+entry of `adopted`, as it is when an adoption is refused. An archive that is not safe to unpack is
+refused whole with the entry named and nothing written, and a place with no resource and no stream
+folder exits 1.
+
 `check-resource` takes no project and makes none: it reads any resource folder as a server
 will read it (its manifest, the files the manifest names and every file under `stream/`), lists
 what its rules find as text or, with `--json`, as data (a code, a severity, the file and a

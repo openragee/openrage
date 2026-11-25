@@ -381,6 +381,9 @@ mod view;
 use view::not_a_start;
 pub use view::{view_of, View};
 
+#[path = "rpf9_table_document.rs"]
+pub(crate) mod rpf9_table_document;
+
 #[path = "rpf9_table.rs"]
 pub(crate) mod rpf9_table;
 

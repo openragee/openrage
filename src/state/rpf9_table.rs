@@ -295,8 +295,11 @@ pub(in crate::state) fn offer(path: &Path) {
     if !rpf9 {
         return;
     }
-    let keys = keys();
-    let listing = listing(path, keys.as_deref().map_err(String::clone), &resolver());
+    // The resolver reads every harvested name, so a load with no key never builds it.
+    let listing = match keys() {
+        Ok(keys) => listing(path, Ok(&keys), &resolver()),
+        Err(why) => listing(path, Err(why), &NameResolver::new()),
+    };
     offers().insert(path.to_path_buf(), listing);
 }
 
@@ -341,6 +344,7 @@ pub(crate) mod gta6_keys_flow;
 
 #[path = "gta6_archive_save.rs"]
 mod gta6_archive_save;
+pub(crate) use gta6_archive_save::write_entry;
 
 #[cfg(test)]
 #[path = "rpf9_table_tests.rs"]

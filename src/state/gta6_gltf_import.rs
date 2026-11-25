@@ -23,12 +23,20 @@ use super::{AppState, DocPayload, DocumentId};
 const BODY_LIMIT: u64 = 1 << 30;
 
 /// One import made to a document: the dictionary entry it replaces, `None` for the body's own
-/// drawable or its fragment's, the mesh it was read from, and whether it filled what the mesh
-/// omits.
-type Held = (Option<u32>, Arc<Scene>, bool);
+/// drawable or its fragment's, the mesh it was read from, and what it was asked.
+type Held = (Option<u32>, Arc<Scene>, Choice);
 
-/// The mesh a worker read and its fill choice, kept for the save.
-type ReadScene = (Arc<Scene>, bool);
+/// The mesh a worker read and its choice, kept for the save.
+type ReadScene = (Arc<Scene>, Choice);
+
+/// What an import is asked, as `model replace` takes `--fill-missing` and `--lods replaced`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct Choice {
+    /// A channel the mesh omits at another vertex count takes its stated default.
+    pub(super) fill: bool,
+    /// A lower level the mesh names none of takes its level-0 mesh where the shader matches.
+    pub(super) lower_lods: bool,
+}
 
 /// The imports made to each scanned body, by its document's path, oldest first.
 // ponytail: one map for the whole app, as the scan's skeletons are; an undo swaps a path's list.
@@ -51,7 +59,7 @@ pub(crate) struct Gta6Import {
     code: Option<u32>,
     /// The imports the document already holds, made first.
     earlier: Vec<Held>,
-    /// The mesh the worker read and its fill choice, which Replace keeps for the save.
+    /// The mesh the worker read and its choice, which Replace keeps for the save.
     read: Arc<Mutex<Option<ReadScene>>>,
 }
 
@@ -86,22 +94,21 @@ impl Gta6Import {
 
     /// The body with the document's earlier imports and the glTF at `mesh` made to it, read back
     /// as the resource the document shows, and what each geometry took, as the report says it;
-    /// `None` once `cancel` stops it between two replacements. `fill` gives a channel the mesh
-    /// omits at another vertex count its stated default.
+    /// `None` once `cancel` stops it between two replacements.
     pub(super) fn imported(
         &self,
         mesh: &Path,
-        fill: bool,
+        choice: Choice,
         cancel: &or_job::Cancel,
     ) -> Option<Result<(Box<DocPayload>, ImportReport), String>> {
-        let made = self.made(mesh, fill, cancel);
+        let made = self.made(mesh, choice, cancel);
         (!cancel.is_set()).then_some(made)
     }
 
     fn made(
         &self,
         mesh: &Path,
-        fill: bool,
+        choice: Choice,
         cancel: &or_job::Cancel,
     ) -> Result<(Box<DocPayload>, ImportReport), String> {
         let named = super::jobs::file_name(mesh);
@@ -115,21 +122,20 @@ impl Gta6Import {
             )
         })?;
         let (mut sections, role) = body(&self.archive, self.offset)?;
-        for (code, earlier, filled) in &self.earlier {
+        for (code, earlier, asked) in &self.earlier {
             if cancel.is_set() {
                 return Err(String::new());
             }
-            sections =
-                or_cli::replace_gta6_model(&sections, role, earlier, &how(*code, *filled))?.0;
+            sections = or_cli::replace_gta6_model(&sections, role, earlier, &how(*code, *asked))?.0;
         }
         let (written, mut lines) =
-            or_cli::replace_gta6_model(&sections, role, &scene, &how(self.code, fill))?;
+            or_cli::replace_gta6_model(&sections, role, &scene, &how(self.code, choice))?;
         let dropped = scene.dropped.iter();
         lines.extend(dropped.map(|held| tr!("not carried: {held}", held = held)));
         let checks = tr!("This checks the body's bytes. It does not test that GTA VI loads them.");
         lines.push(checks.to_string());
         let resource = resource_of(&written, role)?;
-        *self.read.lock().unwrap_or_else(|p| p.into_inner()) = Some((Arc::new(scene), fill));
+        *self.read.lock().unwrap_or_else(|p| p.into_inner()) = Some((Arc::new(scene), choice));
         let report = ImportReport {
             splits: lines,
             ..ImportReport::default()
@@ -170,12 +176,15 @@ fn resource_of(s: &Rpf9Sections, role: Rpf9Role) -> Result<Resource, String> {
     read.map_err(|e| e.to_string())
 }
 
-/// How the app replaces drawable `code`'s meshes: the lower levels a glTF names none of are left.
-fn how(code: Option<u32>, fill: bool) -> or_cli::ModelReplace {
+/// How the app replaces drawable `code`'s meshes as `choice` asks.
+fn how(code: Option<u32>, choice: Choice) -> or_cli::ModelReplace {
     or_cli::ModelReplace {
         entry: code,
-        fill_missing: fill,
-        lods: or_cli::ModelLods::Left,
+        fill_missing: choice.fill,
+        lods: match choice.lower_lods {
+            true => or_cli::ModelLods::Replaced,
+            false => or_cli::ModelLods::Left,
+        },
     }
 }
 
@@ -243,7 +252,7 @@ impl AppState {
         };
         let mut read = Arc::try_unwrap(read).ok();
         let fresh = read.as_mut().and_then(|r| drawable_in(r, import.code));
-        let (Some((scene, fill)), Some(fresh)) = (scene, fresh) else {
+        let (Some((scene, choice)), Some(fresh)) = (scene, fresh) else {
             return self.show_error_toast(tr!(
                 "The model changed while the glTF was read: replace it again"
             ));
@@ -266,7 +275,7 @@ impl AppState {
         let min = std::mem::replace(&mut held.box_min, box_min);
         let max = std::mem::replace(&mut held.box_max, box_max);
         let mut list = imports().get(&path).cloned().unwrap_or_default();
-        list.push((code, scene, fill));
+        list.push((code, scene, choice));
         let other = imports().insert(path.clone(), list).unwrap_or_default();
         let mut change = Change::part("gta6 gltf import", before, move |p| {
             drawable_mut(p, code).map(|d| &mut d.levels)
@@ -306,9 +315,9 @@ pub(super) fn edited_save(document: &Document) -> Option<Result<EditedSave, Stri
             let edit: Arc<EditSections> = Arc::new(move |role, sections| {
                 edit(role, sections)?;
                 let role = role.ok_or_else(|| tr!("The body's role is not known.").to_string())?;
-                for (code, scene, fill) in &held {
+                for (code, scene, choice) in &held {
                     *sections =
-                        or_cli::replace_gta6_model(sections, role, scene, &how(*code, *fill))?.0;
+                        or_cli::replace_gta6_model(sections, role, scene, &how(*code, *choice))?.0;
                 }
                 Ok(())
             });

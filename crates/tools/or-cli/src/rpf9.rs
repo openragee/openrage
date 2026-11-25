@@ -1,6 +1,6 @@
 //! `rpf9`: the GTA VI (RPF9) archive explorer, over the decrypted table of contents.
 //!
-//!   `rpf9 list <archive> [inner/path]`     one row per entry: start, stored, real, name64, name
+//!   `rpf9 list <archive> [inner/path]`     one row per entry: index, name64, size, kind, name
 //!   `rpf9 tree …`                          an alias of `list`, kept for the earlier name
 //!   `rpf9 extract <archive> <dest> …`      write entry bodies to disk, inflated, at their exact extent
 //!                                          (with `--decrypt`, a content-ciphered body is deciphered first);
@@ -27,8 +27,9 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use or_io::container::rpf::gta6_kinds::entry_kinds;
 use or_io::container::rpf::{
-    decode_masked, is_masked, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver,
+    decode_masked, is_masked, Gta6Archive, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver,
 };
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
 use or_io::meta::binary::pso::string_names;
@@ -61,7 +62,7 @@ const USAGE: &str = "\
 usage:
   openrage-cli rpf9 list <archive.rpf> [inner/path] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>] [--groups] [--nested] [--strings] [--json]
   openrage-cli rpf9 extract <archive.rpf> <dest-dir> [inner/path] [--entry <selector>] [--filter <substr>] [--decrypt] [--strings] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
-  openrage-cli rpf9 find <install-dir> [--name <substr>] [--hash <hex>] [--kind <archive|resource|media|0xNN>] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 find <install-dir> [--name <substr>] [--hash <hex>] [--kind <archive|resource|media|0xNN|kind label>] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli rpf9 census <build-root> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>] [--out <dir>] [--top-only]
   openrage-cli rpf9 copy <archive.rpf> --out <new.rpf> [--keys <snapshot>]
   openrage-cli rpf9 replace <archive.rpf> [inner/path] --entry <selector> --with <file> --out <new.rpf> [--names <dir>] [--keys <snapshot>]
@@ -307,6 +308,10 @@ fn do_list(
 
     if show.json {
         let mut value = entries_json(&mount.archive.entries);
+        let kinds = entry_kinds(&mount.archive);
+        for (row, kind) in value.as_array_mut().into_iter().flatten().zip(&kinds) {
+            row["kind"] = serde_json::json!(kind);
+        }
         if show.strings {
             add_strings_json(&mut value, &mount.archive.entries, &strings);
         }
@@ -319,13 +324,7 @@ fn do_list(
 
     let label = display_path(path, inner);
     println!("{label}: {}", counts(&mount));
-    print_listing(
-        &mount.archive.entries,
-        mount.archive.groups(),
-        show.groups,
-        1,
-        &strings,
-    );
+    print_listing(&mount.archive, show.groups, 1, &strings);
 
     if show.nested {
         // One level of nested archives, mounted from the table (no scan). Deeper nesting is reached
@@ -349,13 +348,7 @@ fn do_list(
                 Strings::new()
             };
             println!("  {}: {}", entry.display_name(), counts(&child));
-            print_listing(
-                &child.archive.entries,
-                child.archive.groups(),
-                show.groups,
-                2,
-                &child_strings,
-            );
+            print_listing(&child.archive, show.groups, 2, &child_strings);
         }
     }
     Ok(())
@@ -446,17 +439,11 @@ fn display_path(path: &Path, inner: &[String]) -> String {
     }
 }
 
-fn print_listing(
-    entries: &[Gta6Entry],
-    groups: &[or_io::container::rpf::Rpf9Group],
-    show_groups: bool,
-    depth: usize,
-    strings: &Strings,
-) {
+fn print_listing(archive: &Gta6Archive, show_groups: bool, depth: usize, strings: &Strings) {
     let indent = "  ".repeat(depth);
     if show_groups {
         println!("{indent}groups:");
-        for group in groups {
+        for group in archive.groups() {
             println!(
                 "{indent}  {:#018X}  count {:>6}  width {:>3}  {}  [{}, {})",
                 group.name_hash,
@@ -469,7 +456,7 @@ fn print_listing(
         }
         println!("{indent}entries:");
     }
-    for entry in entries {
+    for (entry, kind) in archive.entries.iter().zip(entry_kinds(archive)) {
         let size = entry
             .size()
             .map(|s| format!("{s:>10}"))
@@ -480,7 +467,7 @@ fn print_listing(
             ""
         };
         println!(
-            "{indent}  {:>6}  {:#018X}  {size}  {}{cipher}",
+            "{indent}  {:>6}  {:#018X}  {size}  {kind:<22}  {}{cipher}",
             entry.index,
             entry.name64,
             entry.display_name(),

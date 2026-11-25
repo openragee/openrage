@@ -19,11 +19,13 @@ use super::HeaderlessError;
 use crate::container::rpf::{grow_section, Rpf9GrowError, Rpf9Role, Rpf9Section, Rpf9Sections};
 
 mod cut;
+mod posed;
 mod reference;
 mod reference_cells;
 mod skin;
 
 pub use cut::{write_geometry_cut, GeometryCut};
+pub use posed::{bind_positions, rebox_bind_pose};
 
 /// A vertex list's u16 entries name at most this many vertices.
 const MAX_VERTICES: usize = 0x1_0000;

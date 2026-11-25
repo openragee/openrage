@@ -22,6 +22,8 @@ mod table_form_depth;
 #[cfg(feature = "gta6")]
 pub(crate) mod table_layout;
 #[cfg(feature = "gta6")]
+pub mod table_strings;
+#[cfg(feature = "gta6")]
 mod table_values;
 pub mod writer;
 

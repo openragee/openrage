@@ -1,8 +1,9 @@
 //! The strings a GTA VI PSO document's string sections hold, enciphered runs deciphered with the key
 //! snapshot, so the hash values the document carries can be shown by the text they hash.
 //!
-//! `STDN` carries the `STNS` blob again byte for byte wherever it was measured, so it is read by the
-//! same descriptor layout and the same per-run id gate; the executable's loader leaves it as it is.
+//! Where `STDN` is a blob it carries the `STNS` blob again byte for byte, so [`document_strings`]
+//! reads it by the same descriptor layout; in 3 documents of the build it is no blob. The
+//! executable's loader leaves it as it is, so [`registered_strings`] does not read it.
 //!
 //! The executable registers a run's strings only under category 1 or 0x1E, keyed by that category's
 //! 32-bit hasher; a run of any other category (the high-entropy id `0x101` runs among them) is not
@@ -15,6 +16,8 @@ use crate::meta::error::{MetaError, Result};
 
 /// The sections laid out as a descriptor blob, `{u32 count; count × (u32 id, u32 len); data}`.
 const BLOBS: [&[u8; 4]; 3] = [b"LSNS", b"STNS", b"STDN"];
+/// The blob sections the executable registers strings from.
+const REGISTERED_BLOBS: [&[u8; 4]; 2] = [b"LSNS", b"STNS"];
 /// The section that is one buffer, enciphered wholesale as category 1.
 const STFN: &[u8; 4] = b"STFN";
 
@@ -87,9 +90,10 @@ pub fn category_hash(category: u32, text: &[u8]) -> Option<u32> {
     }
 }
 
-/// The strings the PSO `bytes` register, with their categories; refused as [`document_strings`] is.
+/// The strings the PSO `bytes` register, with their categories; refused as [`document_strings`] is,
+/// with `STDN` not read.
 pub fn registered_strings(bytes: &[u8], keys: Option<&GtaViKeys>) -> Result<Vec<CategoryString>> {
-    let runs = run_strings(bytes, keys)?;
+    let runs = run_strings(bytes, keys, &REGISTERED_BLOBS)?;
     let registered = runs.into_iter().filter_map(|(id, text)| {
         registered_category(id).map(|category| CategoryString { category, text })
     });
@@ -100,14 +104,18 @@ pub fn registered_strings(bytes: &[u8], keys: Option<&GtaViKeys>) -> Result<Vec<
 /// enciphered run deciphered with `keys`; a malformed blob, or an enciphered run with no `keys` or
 /// that `keys` cannot decipher, is refused.
 pub fn document_strings(bytes: &[u8], keys: Option<&GtaViKeys>) -> Result<Vec<String>> {
-    Ok(run_strings(bytes, keys)?
+    Ok(run_strings(bytes, keys, &BLOBS)?
         .into_iter()
         .map(|(_, text)| text)
         .collect())
 }
 
-/// Each string of the string sections with the descriptor id of the run it is in.
-fn run_strings(bytes: &[u8], keys: Option<&GtaViKeys>) -> Result<Vec<(u32, String)>> {
+/// Each string of `STFN` and the `blobs` sections with the descriptor id of the run it is in.
+fn run_strings(
+    bytes: &[u8],
+    keys: Option<&GtaViKeys>,
+    blobs: &[&[u8; 4]],
+) -> Result<Vec<(u32, String)>> {
     let needs_keys = |what: &str| {
         MetaError::Other(format!(
             "GTA VI PSO string blob: {what} is enciphered and no key snapshot was given"
@@ -130,7 +138,7 @@ fn run_strings(bytes: &[u8], keys: Option<&GtaViKeys>) -> Result<Vec<(u32, Strin
             );
             continue;
         }
-        if !BLOBS.iter().any(|tag| is(&section, tag)) {
+        if !blobs.iter().any(|tag| is(&section, tag)) {
             continue;
         }
         match keys {
@@ -301,6 +309,33 @@ mod tests {
         assert_eq!(registered_category(0x100), None);
         assert_eq!(registered_category(0x11F), Some(0x1E));
         assert_eq!(registered_category(0x120), None);
+    }
+
+    #[test]
+    fn stdn_registers_nothing_so_one_that_is_no_blob_leaves_the_registered_strings_readable() {
+        let mut doc = Vec::new();
+        frame(&mut doc, b"STDN", &[0xFF; 16]); // a count of 2^32 - 1 descriptors in 16 bytes
+        frame(&mut doc, b"STNS", &blob(0x01, b"zq_stns_name\0\0\0\0"));
+        let registered = registered_strings(&doc, None).expect("STDN is not read");
+        assert_eq!(
+            registered,
+            [CategoryString {
+                category: 1,
+                text: "zq_stns_name".into()
+            }]
+        );
+        assert!(document_strings(&doc, None).is_err());
+
+        // A blob STDN copying STNS adds no second registered string.
+        let mut copied = Vec::new();
+        let stns = blob(0x01, b"zq_stns_name\0\0\0\0");
+        frame(&mut copied, b"STDN", &stns);
+        frame(&mut copied, b"STNS", &stns);
+        assert_eq!(
+            registered_strings(&copied, None).expect("it reads").len(),
+            1
+        );
+        assert_eq!(document_strings(&copied, None).expect("it reads").len(), 2);
     }
 
     #[test]

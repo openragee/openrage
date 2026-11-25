@@ -208,10 +208,9 @@ pub(super) fn parse_payload_from_path(
     }
     // ⚠ Before the whole read: a GTA VI archive can be tens of gigabytes, and is scanned instead, as is the tab of one read again.
     if matches!(kind, DocumentKind::Rpf | DocumentKind::Rpf9) {
-        // Its table, where a key opens it, lists it in the archive explorer; else a toast says the scan does.
-        super::rpf9_scan::rpf9_table::offer(path);
-        if let Some(scan) = super::rpf9_scan::Rpf9ScanDocument::open(path)? {
-            return Ok((DocPayload::Rpf9(Arc::new(scan)), None));
+        // Its table, where a key opens it, lists it and no scan runs; else a toast says the scan does.
+        if let Some(payload) = super::rpf9_scan::rpf9_table_document::archive_payload(path)? {
+            return Ok((payload, None));
         }
     }
     // ⚠ Never read whole: a pack can be gigabytes, and a texture is read only when it is shown.

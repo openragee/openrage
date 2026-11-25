@@ -14177,9 +14177,6 @@ msgstr "Scaleformムービー"
 msgid "EDUP, high entropy"
 msgstr "EDUP、高エントロピー"
 
-msgid "This body starts with EDUP and its bytes after that are of high entropy with no structure found, so it is not read and no view shows it."
-msgstr "このボディはEDUPで始まり、それ以降のバイト列はエントロピーが高く、構造が見つかっていないため、読み取られず、表示できるビューもありません。"
-
 msgid "The reader of this {what} does not read it: {e}"
 msgstr "この{what}のリーダーは、これを読み取れません：{e}"
 
@@ -16953,3 +16950,77 @@ msgstr "展開したアーカイブだけが検索されます。"
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} はエントリの位置に編集を書き込み、テーブルは読み込んだときのままの新しいアーカイブです。"
+
+msgid "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}."
+msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
+msgstr[0] "復号したテーブルから一覧表示：{count} 件のエントリ、うち {named} 件に名前あり、テーブルキー {key}。"
+msgstr[1] "復号したテーブルから一覧表示：{count} 件のエントリ、うち {named} 件に名前あり、テーブルキー {key}。"
+
+msgid "This entry's row states no start, so its body cannot be read."
+msgstr "このエントリの行には開始位置が記されていないため、本体を読めません。"
+
+msgid "Click to expand or collapse this nested archive, listed from its own table."
+msgstr "クリックすると、自身のテーブルから一覧表示されるこの入れ子のアーカイブを展開または折りたたみます。"
+
+msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
+msgstr "クリックでプレビュータブに開き、ダブルクリックで専用のタブに残します。暗号化された本体は先に復号されます。"
+
+msgid "Extract to a file…"
+msgstr "ファイルへ抽出…"
+
+msgid "Replace with a file…"
+msgstr "ファイルで置き換え…"
+
+msgid "Writes a new copy of the archive with this entry replaced, which the game refuses: only its maker can sign the table."
+msgstr "このエントリを置き換えたアーカイブの新しいコピーを書き出しますが、ゲームはそれを拒否します。テーブルに署名できるのは作成者だけです。"
+
+msgid "Replace with a file"
+msgstr "ファイルで置き換え"
+
+msgid "Save the new archive"
+msgstr "新しいアーカイブを保存"
+
+msgid "Wrote {entry} to {file}."
+msgstr "{entry} を {file} に書き出しました。"
+
+msgid "Cannot extract {entry}: {reason}"
+msgstr "{entry} を抽出できません：{reason}"
+
+msgid "{file} is a new archive with {entry} replaced, which the game refuses because only its maker can sign the table this changed."
+msgstr "{file} は {entry} を置き換えた新しいアーカイブですが、変更されたテーブルに署名できるのは作成者だけなので、ゲームはこれを拒否します。"
+
+msgid "{file} is a new archive the same as the one it was read from: the file holds the bytes {entry} holds."
+msgstr "{file} は読み込み元と同じ新しいアーカイブです：ファイルの内容は {entry} のバイトと同じです。"
+
+msgid "Cannot replace {entry}: {reason}"
+msgstr "{entry} を置き換えられません：{reason}"
+
+msgid "the file written is a new one, and the archive it is read from is never written"
+msgstr "書き出すファイルは新しいもので、読み込み元のアーカイブには決して書き込みません"
+
+msgid "entry {index} is not in its table"
+msgstr "エントリ {index} はそのテーブルにありません"
+
+msgid "the entry's row states no start, so its body is not known"
+msgstr "エントリの行に開始位置が記されていないため、本体が分かりません"
+
+msgid "a nested archive whose row states no stored size"
+msgstr "行に格納サイズが記されていない入れ子のアーカイブ"
+
+msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
+msgstr "アーカイブが {stored} バイトの入れ子のアーカイブの {copied} バイト目で終わっています"
+
+msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
+msgstr "EDUP 本体：0x04 のカウントワードは {count} で、8 バイトのヘッダーの後に {length} バイトのペイロードが続きます。"
+
+msgid "With a count of zero, the word at 0x08 states {stated} bytes, and that many follow it."
+msgstr "カウントが 0 のとき、0x08 のワードは {stated} バイトを示し、その分のバイトが後に続きます。"
+
+msgid "Its payload is not read: no record width divides it by its count, and its bytes are of high entropy with no cipher record, so what it holds is not known and no view shows it."
+msgstr "ペイロードは読み込まれません：どのレコード幅でもカウントで割り切れず、バイトのエントロピーが高く暗号レコードもないため、内容は不明で、どのビューにも表示されません。"
+
+msgid "Replace the lower levels of detail too"
+msgstr "下位の詳細レベルも置き換える"
+
+msgid "Off, a level of detail the mesh names no geometry of is left as the model holds it. On, each such geometry takes the level-0 mesh at its model and place where both draw with one shader."
+msgstr "オフの場合、メッシュがジオメトリを指定していない詳細レベルはモデルのまま残ります。オンの場合、そのような各ジオメトリは、両者が同じシェーダーで描画される場所で、そのモデルと位置にレベル 0 のメッシュを使います。"

@@ -122,7 +122,7 @@ fn take_common<'a>(
 
 /// The key snapshot: the one `--keys` names, else the one a session supplies for the install; `exe`
 /// is the executable a masked snapshot opens with.
-fn load_keys(explicit: Option<&Path>, exe: Option<&Path>) -> Result<GtaViKeys, String> {
+pub(crate) fn load_keys(explicit: Option<&Path>, exe: Option<&Path>) -> Result<GtaViKeys, String> {
     if let Some(path) = explicit {
         return match exe {
             Some(exe) => keys_with_exe(path, exe),
@@ -156,7 +156,7 @@ fn keys_with_exe(path: &Path, exe: &Path) -> Result<GtaViKeys, String> {
 }
 
 /// Bundled names supplemented by `dir` or `OPENRAGE_GTA6_NAMES`, and the local vocabulary.
-fn load_resolver(dir: Option<&Path>) -> NameResolver {
+pub(crate) fn load_resolver(dir: Option<&Path>) -> NameResolver {
     crate::gta6_name_sources::load(dir)
 }
 
@@ -203,7 +203,7 @@ fn find_entry(mount: &Gta6Mount, selector: &str) -> Option<Gta6Entry> {
 
 /// Whether `entry` is named by `selector`: its recovered name, its `0x{hash}` or `hash_{hash}` form,
 /// or its decimal index.
-fn entry_matches(entry: &Gta6Entry, selector: &str) -> bool {
+pub(crate) fn entry_matches(entry: &Gta6Entry, selector: &str) -> bool {
     if entry.name.as_deref() == Some(selector) {
         return true;
     }
@@ -1128,7 +1128,7 @@ fn split_inner(path: &str) -> Vec<String> {
 
 /// Every `*.rpf` directly under `root` and every `pack/*/*.rpf`, sorted — the build's archive set,
 /// matching the explorer test's walk.
-fn build_archives(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn build_archives(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut rpfs_in = |dir: &Path| {
         if let Ok(entries) = std::fs::read_dir(dir) {

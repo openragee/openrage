@@ -20,6 +20,9 @@ mod compiled;
 #[path = "gta6_lifted.rs"]
 mod lifted;
 
+#[path = "gta6_script.rs"]
+mod gta6;
+
 const NATIVES_ENV: &str = "OPENRAGE_NATIVES";
 
 /// What `script download-natives` fetches: `(repository, branch, path, crossmap)`.
@@ -52,6 +55,10 @@ pub fn run(args: &[String]) -> ExitCode {
     }
     if args.first().map(String::as_str) == Some("compiled") {
         return compiled::run(&args[1..]);
+    }
+    // A compiled GTA VI script is told from GTA V's by the command that reads it.
+    if let Some(code) = gta6::run(args) {
+        return code;
     }
     let (mode, rest) = match args.first().map(String::as_str) {
         Some("disasm") => (Mode::Disasm, &args[1..]),
@@ -176,14 +183,6 @@ fn load(path: &Path) -> Option<ScrProgram> {
             return None;
         }
     };
-    if bytes.starts_with(&or_io::container::rpf::RPF9_MAGIC.to_le_bytes()) {
-        eprintln!(
-            "Error: {}: {}",
-            path.display(),
-            super::gta6_scripts::NO_PROGRAM
-        );
-        return None;
-    }
     match ScrProgram::from_bytes(&bytes) {
         Ok(p) => Some(p),
         Err(e) => {
@@ -566,9 +565,9 @@ fn print_usage() {
     eprintln!("              jump, case and call on an instruction, every native slot in");
     eprintln!("              the table. Exits non-zero if any script disagrees.");
     eprintln!("  lifted      Readable source from a lifted listing of a GTA VI script, the");
-    eprintln!("              text another decompiler writes from its bytecode. A compiled");
-    eprintln!("              GTA VI script cannot be read yet; `script lifted --help` says");
-    eprintln!("              what the command takes.");
+    eprintln!("              text another decompiler writes from its bytecode; a compiled");
+    eprintln!("              GTA VI script is read by the verbs above. `script lifted --help`");
+    eprintln!("              says what the command takes.");
     eprintln!("  --natives   The natives this script calls, by hash, named where a list does.");
     eprintln!("  --strings   The script's string heap, one entry per line.");
     eprintln!("  --statics   The initial static values; the leading ones are arguments.");

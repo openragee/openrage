@@ -25,6 +25,7 @@ pub mod extents;
 pub mod field;
 pub mod generate;
 pub mod group;
+pub mod interior_portals;
 pub mod keys;
 pub mod manifest;
 pub mod map_data;

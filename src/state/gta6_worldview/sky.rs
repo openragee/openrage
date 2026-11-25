@@ -753,7 +753,7 @@ mod tests {
     fn the_night_glows_by_the_moments_own_air_glow_in_thousandths() {
         let mut tables = tables();
         // ⚠ The last moment is held by the tables' address and the hour: each reading takes an hour of its own.
-        let at = |tables: &DayTables, hour: f32| {
+        let at = |tables: &Arc<DayTables>, hour: f32| {
             let day = day_of(tables, hour, 0.0, WeatherState::Clear, 0.0).expect("a day");
             day.sky_view.expect("a table").night.expect("a night")
         };
@@ -772,7 +772,7 @@ mod tests {
                 " 0.5".repeat(13),
                 format!(" {intensity}").repeat(13),
             );
-            tables.timecycle = DayTables::of_texts([cycle.as_str()]).timecycle;
+            Arc::make_mut(&mut tables).timecycle = DayTables::of_texts([cycle.as_str()]).timecycle;
             let fill = at(&tables, hour).fill;
             let want = 0.5 * intensity * 0.001;
             assert!((fill[2] - want).abs() < 1e-8, "{fill:?} {want}");

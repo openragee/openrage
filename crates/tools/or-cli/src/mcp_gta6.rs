@@ -185,7 +185,54 @@ pub(super) const TOOLS: &[Tool] = &[
         true,
         &[ARCHIVE, OUT, KEYS, EXE, TIMEOUT],
     ),
+    (
+        "rpf9-patch",
+        &["patch"],
+        "Write a patched copy of a GTA VI archive at `out`, which must not exist: one entry's body \
+         is changed chunk by chunk and the source is only read. A patched copy keeps every table \
+         byte-identical to the source's, so its table signature still matches, and no check read \
+         in the game's code rejects a body changed chunk by chunk; no run of the game was made \
+         with one, so whether the game loads it is not known.",
+        false,
+        &[ARCHIVE, ROW, ROW_WITH, OUT, NAMES, KEYS, EXE, TIMEOUT],
+    ),
+    (
+        "rpf9-fits",
+        &["fits"],
+        "Say per chunk whether a new body for one entry of a GTA VI archive goes in place, and by \
+         how much it misses where it does not; nothing is written. A patched copy keeps every \
+         table byte-identical to the source's, so its table signature still matches, and no \
+         check read in the game's code rejects a body changed chunk by chunk; no run of the game \
+         was made with one, so whether the game loads it is not known.",
+        false,
+        &[ARCHIVE, ROW, ROW_WITH, NAMES, KEYS, EXE, TIMEOUT],
+    ),
 ];
+
+/// The row a patch changes, by its path through the nested archives.
+const ROW: Param = (
+    "entry!",
+    "string",
+    "the entry's path through the nested archives, slash-separated, each part a recovered name, \
+     a 0x hash or a decimal index",
+);
+const ROW_WITH: Param = (
+    "with!",
+    "string",
+    "absolute path of the entry's new inflated body, as rpf9-read writes it",
+);
+
+#[cfg(test)]
+#[test]
+fn the_patch_tools_say_what_a_patched_copy_is() {
+    for name in ["rpf9-patch", "rpf9-fits"] {
+        let about = TOOLS.iter().find(|t| t.0 == name).map(|t| t.2);
+        assert!(
+            about.is_some_and(|a| a.contains(crate::rpf9::patch::PATCHED)),
+            "{name}"
+        );
+    }
+}
 
 pub(super) fn tools() -> Vec<Value> {
     TOOLS

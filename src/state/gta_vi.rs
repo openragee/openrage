@@ -3,7 +3,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use or_io::container::rpf::{Rpf9Header, RPF9_HEADER_SIZE};
+use or_io::container::rpf::{Rpf9Header, RPF9_HEADER_SIZE, RPF9_MAGIC};
 use or_title::ContainerFamily;
 
 use super::prefs::Game;
@@ -13,9 +13,56 @@ pub(crate) fn rpf9_why() -> &'static str {
     tr!("This is a GTA VI archive (RPF9). Its table of contents and its names are encrypted and OpenRage has no key for them, so its entries cannot be listed by name.")
 }
 
-/// Whether `message` is an [`rpf9_refusal`], which says why itself, rather than an error that may only name a path holding `RPF9`.
+/// The sentence [`rpf9_cut_short_at`] starts with.
+fn rpf9_cut_short() -> &'static str {
+    tr!("This GTA VI archive (RPF9) is cut short, so its table of contents cannot be read.")
+}
+
+/// The sentence the refusal of an RPF9 whose table does not open with the keys held starts with.
+fn rpf9_unreadable() -> &'static str {
+    tr!("This GTA VI archive (RPF9) has a table of contents that does not open with the GTA VI keys OpenRage holds, so its entries cannot be listed by name.")
+}
+
+/// Whether `message` is an RPF9 archive's refusal, which says why itself and leaves it to a scan, rather than an error that may only name a path holding `RPF9`.
 pub(crate) fn is_rpf9_refusal(message: &str) -> bool {
-    message.starts_with(rpf9_why())
+    [rpf9_why(), rpf9_cut_short(), rpf9_unreadable()]
+        .iter()
+        .any(|lead| message.starts_with(lead))
+}
+
+/// Why the RPF9 archive at `path` is too short for its header and table of contents, with what they take and what it holds; `None` when it holds them or is not RPF9.
+pub(crate) fn rpf9_cut_short_at(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let found = file.metadata().ok()?.len();
+    let mut head = Vec::with_capacity(RPF9_HEADER_SIZE);
+    file.take(RPF9_HEADER_SIZE as u64)
+        .read_to_end(&mut head)
+        .ok()?;
+    if !head.starts_with(&RPF9_MAGIC.to_le_bytes()) {
+        return None;
+    }
+    let header = RPF9_HEADER_SIZE as u64;
+    let needed = Rpf9Header::parse(&head).map_or(header, |h| u64::from(h.toc_end).max(header));
+    (found < needed).then(|| {
+        let what = tr!(
+            "Its header and table of contents take {needed} bytes, and the file holds only {found}: it may have been copied in part.",
+            needed = needed,
+            found = found,
+        );
+        format!("{}\n{what}", rpf9_cut_short())
+    })
+}
+
+/// Why the RPF9 archive at `path` did not open with the reader's `error`: cut short, no key, or a table the keys held do not open; `None` when it is not RPF9.
+pub(super) fn rpf9_unopened_at(path: &Path, error: &or_io::IoError) -> Option<String> {
+    if let Some(short) = rpf9_cut_short_at(path) {
+        return Some(short);
+    }
+    let refusal = rpf9_refusal_at(path)?;
+    Some(match error {
+        or_io::IoError::Rpf9TocEncrypted => refusal,
+        other => format!("{}\n{other}", rpf9_unreadable()),
+    })
 }
 
 /// Why the archive whose head is `head` is not opened, with what its header says; `None` when it is not RPF9.
@@ -246,7 +293,8 @@ mod tests {
     fn opening_an_rpf9_archive_says_it_is_gta_vi_from_its_head_and_offers_no_keys() {
         let (_scratch, dir) = gta_vi_folder();
         let archive = dir.join("common.rpf");
-        let expected = rpf9_refusal_at(&archive).expect("the archive is RPF9");
+        // ⚠ Its head alone: a table cut short is said so whether or not a key is held.
+        let expected = rpf9_cut_short_at(&archive).expect("the archive is a cut-short RPF9");
 
         // The open of a file (a dialog, a drop, a recent file) opens it as what a scan finds.
         let mut state = AppState::from_prefs(Prefs::default());
@@ -265,6 +313,13 @@ mod tests {
         assert!(!state.show_error_dialog, "{}", state.error_dialog_message);
         let opened = state.active_document().map(|d| d.kind);
         assert_eq!(opened, Some(DocumentKind::Rpf9));
+        // Its tab says why its table is not read, with a key held or none.
+        state.poll_jobs();
+        assert!(says(
+            &state,
+            ToastType::Info,
+            &["common.rpf", "scan without its table", rpf9_cut_short()]
+        ));
 
         // The archive browser's open of it as an archive.
         let crypto = state.keys.provider();
@@ -272,6 +327,56 @@ mod tests {
             .map(|_| ())
             .expect_err("an RPF9 archive does not open");
         assert_eq!(refused, expected);
+    }
+
+    #[test]
+    fn a_gta_vi_archive_cut_short_says_so_with_a_key_and_without() {
+        let (_scratch, dir) = gta_vi_folder();
+        let archive = dir.join("common.rpf");
+        let found = std::fs::metadata(&archive).expect("the archive").len();
+        let header = Rpf9Header::parse(&rpf9_head(418)).expect("the head parses");
+        let keys = super::super::rpf_archive_open::tree_verbs::tests::synthetic_keys()
+            .expect("the synthetic snapshot parses");
+        let keyed = |path: &Path| {
+            let mut file = std::fs::File::open(path).expect("the archive");
+            or_io::container::rpf::open_at(&mut file, 0, &keys).expect_err("no table opens")
+        };
+        let no_key = or_io::IoError::Rpf9TocEncrypted;
+
+        let short = rpf9_cut_short_at(&archive).expect("the archive is cut short");
+        assert!(short.starts_with(rpf9_cut_short()) && is_rpf9_refusal(&short));
+        for fact in [header.toc_end.to_string(), found.to_string()] {
+            assert!(short.contains(&fact), "{short:?} lacks {fact:?}");
+        }
+        for error in [&no_key, &keyed(&archive)] {
+            let said = rpf9_unopened_at(&archive, error);
+            assert_eq!(said.as_deref(), Some(short.as_str()), "{error}");
+        }
+
+        // A file shorter than a header is cut short at the header.
+        std::fs::write(&archive, &rpf9_head(418)[..RPF9_HEADER_SIZE / 2]).expect("write");
+        let short = rpf9_cut_short_at(&archive).expect("a part of a header is cut short");
+        assert!(short.contains(&RPF9_HEADER_SIZE.to_string()), "{short}");
+
+        // Whole, it is refused for want of a key, or as a table the keys held do not open.
+        let mut whole = rpf9_head(418);
+        whole.resize(header.toc_end as usize, 0x5A);
+        std::fs::write(&archive, whole).expect("write");
+        assert_eq!(rpf9_cut_short_at(&archive), None);
+        assert_eq!(
+            rpf9_unopened_at(&archive, &no_key),
+            rpf9_refusal_at(&archive)
+        );
+        let unreadable = rpf9_unopened_at(&archive, &keyed(&archive)).expect("an RPF9");
+        assert!(
+            unreadable.starts_with(rpf9_unreadable()) && is_rpf9_refusal(&unreadable),
+            "{unreadable}"
+        );
+
+        // Another file is no RPF9, whatever its error.
+        let config = dir.join(or_title::game::profile::GDK_CONFIG);
+        assert_eq!(rpf9_unopened_at(&config, &no_key), None);
+        assert_eq!(rpf9_cut_short_at(&config), None);
     }
 
     #[test]
@@ -514,7 +619,7 @@ mod tests {
         }
         let tip = (said.iter()).find(|(text, ..)| text.contains("It opens as a scan"));
         let (tip, ..) = tip.unwrap_or_else(|| panic!("the row says no such thing: {said:?}"));
-        assert!(tip.starts_with(rpf9_why()), "{tip}");
+        assert!(is_rpf9_refusal(tip), "{tip}");
     }
 
     #[test]

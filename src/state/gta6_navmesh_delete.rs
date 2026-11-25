@@ -78,10 +78,10 @@ impl Swap for CellPart {
     }
 }
 
-/// Why polygon `polygon` waits: the scan is searched for the bodies of the neighbouring `cells`.
+/// Why polygon `polygon` waits: the archive's table is searched for rows of the neighbouring `cells`.
 fn looking(polygon: usize, cells: &str) -> String {
     tr!(
-        "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the scan is searched for them: a cell the scan holds no body of has no special link into this one. Try again once the search ends.",
+        "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the archive's table is searched for them: a cell the table holds no navigation row of has no special link into this one. Try again once the search ends.",
         polygon = polygon,
         cells = cells
     )
@@ -415,17 +415,19 @@ mod tests {
     }
 
     #[test]
-    fn a_polygon_whose_neighbours_bodies_are_not_open_waits_for_the_scan_and_makes_no_step() {
+    fn a_polygon_whose_neighbours_bodies_are_not_open_waits_for_the_table_and_makes_no_step() {
         let _serial = crate::ui::theme::serial();
         let dir = tempfile::tempdir().expect("a scratch directory");
         let (mut state, doc) = opened(dir.path(), &navmesh_cell());
         let refused = state.delete_navmesh_polygon(doc, 0).unwrap_err();
-        assert!(
-            refused.contains("the scan is searched for them"),
-            "{refused}"
-        );
+        assert!(refused.contains("table is searched for them"), "{refused}");
         look::settled(&archive_of(&state, doc));
-        // The scan holds no other cell, so only the cell's own rules refuse it now.
+        // With no key the table does not open, so every neighbour may hold a body.
+        let refused = state.delete_navmesh_polygon(doc, 0).unwrap_err();
+        assert!(refused.contains("are not open"), "{refused}");
+        // A table that holds no neighbour leaves only the cell's own rules to refuse it.
+        let around = Border::around(cell().cell);
+        look::given_none_of(&archive_of(&state, doc), &around);
         let refused = state.delete_navmesh_polygon(doc, 0).unwrap_err();
         assert!(refused.contains("last chunk"), "{refused}");
         assert!(!state.document(doc).expect("open").history.can_undo());
@@ -512,17 +514,16 @@ mod tests {
     }
 
     #[test]
-    fn a_deletion_at_a_cell_whose_neighbours_the_scan_holds_no_body_of_saves_and_reads_back() {
+    fn a_deletion_at_a_cell_whose_neighbours_the_table_holds_no_row_of_saves_and_reads_back() {
         let _serial = crate::ui::theme::serial();
         let dir = tempfile::tempdir().expect("a scratch directory");
         let (mut state, doc) = opened(dir.path(), &two_triangles());
         let refused = state.delete_navmesh_polygon(doc, 0).unwrap_err();
-        assert!(
-            refused.contains("the scan is searched for them"),
-            "{refused}"
-        );
+        assert!(refused.contains("table is searched for them"), "{refused}");
         assert!(!state.document(doc).expect("open").history.can_undo());
         look::settled(&archive_of(&state, doc));
+        let around = Border::around(cell().cell);
+        look::given_none_of(&archive_of(&state, doc), &around);
 
         let said = state.delete_navmesh_polygon(doc, 0).expect("deleted");
         assert!(said.contains("Polygons left: 1."), "{said}");

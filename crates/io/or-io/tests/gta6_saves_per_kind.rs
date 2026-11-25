@@ -48,10 +48,11 @@ const HEAD: u64 = 512;
 const CLOSED: [&str; 2] = ["unknown mode", "not in the archive's dependency table"];
 
 /// The headerless kinds and their type codes, as the measured table of rows lists them.
-const HEADERLESS: [(&str, &[u32]); 13] = [
+const HEADERLESS: [(&str, &[u32]); 14] = [
     ("drawable", &[0x02]),
     ("fragment", &[0x03]),
-    ("texture dictionary", &[0x04, 0x05]),
+    ("drawable dictionary", &[0x04]),
+    ("texture dictionary", &[0x05]),
     ("bound", &[0x06]),
     ("nav mesh", &[0x4F]),
     ("nav octree", &[0x64]),

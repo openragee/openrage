@@ -1,5 +1,6 @@
-//! Install-gated: rows 0 and 4 of a sample of a build's drawables derived again from each
-//! geometry as read, beside what the table stores; the agreement is printed, not asserted.
+//! Install-gated: rows 0 and 4 of a sample of a build's drawables derived again by the writer's
+//! rules from each geometry as read, beside what the table stores; agreement printed and held to
+//! the share measured.
 //!   `OPENRAGE_GTA6_KEYS`   the `gtavi_magic.dat` key snapshot (never committed)
 //!   `OPENRAGE_GTA6_BUILD`  the build root holding `*.rpf` and `pack/*/*.rpf`
 
@@ -26,8 +27,8 @@ const MAX_DEPTH: usize = 8;
 /// One clear drawable in this many is read, until this many are.
 const STRIDE: usize = 4;
 const DRAWABLES: usize = 300;
-/// Metres a stored element may miss a vertex by and still hold it.
-const HOLD: f32 = 2e-5;
+/// Metres an element re-extended over the vertices it holds may differ from what it stores by.
+const NEAR: f32 = 1e-4;
 
 #[derive(Default, Debug)]
 struct Tally {
@@ -38,18 +39,20 @@ struct Tally {
     /// Row 0 words of a channel the geometry does not declare, and of those the ones stored 0.
     absent: usize,
     absent_zero: usize,
-    /// Row 0 words derived within 5 % of the stored word, or not.
+    /// Row 0 words a power of 4 times their area ratio within 5 % (or both 0), and the others,
+    /// which a write refuses.
     agree: usize,
     differ: usize,
-    /// Row 4 runs of one element equal to the derived box, of one element otherwise, and longer.
-    box_equal: usize,
-    one_element: usize,
-    longer: usize,
-    /// Vertices some stored element of their run holds, and vertices none does.
-    held: usize,
-    missed: usize,
-    /// Vertices outside their derived box.
-    outside: usize,
+    /// Row 4 elements of one-element and longer runs whose extremes over the vertices they hold
+    /// lie within 1e-4 m of what they store, and the others.
+    one_agree: usize,
+    one_differ: usize,
+    more_agree: usize,
+    more_differ: usize,
+    /// Geometries whose elements a moved-vertex write refuses, and why.
+    no_element: usize,
+    split_part: usize,
+    empty_element: usize,
 }
 
 fn env_path(var: &str) -> Option<PathBuf> {
@@ -85,15 +88,6 @@ fn build_archives(root: &Path) -> Vec<PathBuf> {
 
 fn f32_in(v: &[u8], at: usize) -> f32 {
     f32::from_le_bytes([v[at], v[at + 1], v[at + 2], v[at + 3]])
-}
-
-/// Whether the stored element at `e` holds `p` on its own axes.
-fn holds(v: &[u8], e: usize, p: [f32; 3]) -> bool {
-    (0..3).all(|a| {
-        let axis = e + 0x20 + 0x10 * a;
-        let along: f32 = (0..3).map(|k| p[k] * f32_in(v, axis + 4 * k)).sum();
-        (f32_in(v, e + 4 * a) - HOLD..=f32_in(v, e + 0x10 + 4 * a) + HOLD).contains(&along)
-    })
 }
 
 fn tally(s: &Rpf9Sections, t: &mut Tally) {
@@ -134,34 +128,33 @@ fn tally(s: &Rpf9Sections, t: &mut Tally) {
                     let Some(r) = ratio(positions, &g.triangles, uvs) else {
                         continue;
                     };
-                    let derived = r * scale(stored, r);
-                    let near = (derived - f64::from(stored)).abs() <= WITHIN * f64::from(stored);
-                    match near || (derived == 0.0 && stored == 0.0) {
+                    match power(stored, r).is_some() || (r == 0.0 && stored == 0.0) {
                         true => t.agree += 1,
                         false => t.differ += 1,
                     }
                 }
-                let (min, max) = extremes(positions);
-                t.outside += (positions.iter())
-                    .filter(|p| (0..3).any(|a| !(min[a]..=max[a]).contains(&p[a])))
-                    .count();
-                let (row3, row4) = (found.rows[3].0, found.rows[4].0);
-                let pair = |o: usize| usize::from(u16::from_le_bytes([v[o], v[o + 1]]));
-                let at3 = row3 + 4 * found.place;
-                let (first, end) = (pair(at3), pair(at3 + 2));
-                match end - first {
-                    1 if v[row4 + ELEMENT * first..row4 + ELEMENT * end]
-                        == element((min, max))[..] =>
-                    {
-                        t.box_equal += 1
+                let Ok(elements) = run(v, &found) else {
+                    continue;
+                };
+                let held_by = match members(&elements, positions, &g.triangles) {
+                    Ok(held_by) => held_by,
+                    Err(why) => {
+                        t.no_element += usize::from(why == NO_ELEMENT);
+                        t.split_part += usize::from(why == SPLIT_PART);
+                        t.empty_element += usize::from(why == EMPTY_ELEMENT);
+                        continue;
                     }
-                    1 => t.one_element += 1,
-                    _ => t.longer += 1,
-                }
-                for p in positions {
-                    match (first..end).any(|e| holds(v, row4 + ELEMENT * e, *p)) {
-                        true => t.held += 1,
-                        false => t.missed += 1,
+                };
+                for (e, m) in elements.iter().zip(&held_by) {
+                    let (min, max) = e.extents(m.iter().map(|&i| positions[i]));
+                    let near = (0..3).all(|a| {
+                        (min[a] - e.min[a]).abs() <= NEAR && (max[a] - e.max[a]).abs() <= NEAR
+                    });
+                    match (elements.len() == 1, near) {
+                        (true, true) => t.one_agree += 1,
+                        (true, false) => t.one_differ += 1,
+                        (false, true) => t.more_agree += 1,
+                        (false, false) => t.more_differ += 1,
                     }
                 }
             }
@@ -233,13 +226,33 @@ fn rows_0_and_4_derived_again_from_a_sample_of_the_build_beside_what_they_store(
         visit(&mut file, &keys, &mount, 0, &mut t);
     }
     println!("{t:#?}");
+    let (agree4, differ4) = (t.one_agree + t.more_agree, t.one_differ + t.more_differ);
     println!(
-        "row 0: {} agree, {} differ; row 4: {} equal the derived box, {} differ",
+        "row 0: {} agree, {} differ; row 4: {agree4} agree, {differ4} differ, {} geometries \
+         refused",
         t.agree,
         t.differ,
-        t.box_equal,
-        t.one_element + t.longer
+        t.no_element + t.split_part + t.empty_element
     );
     assert!(t.tables > 0, "the sample holds drawables whose table reads");
-    assert_eq!(t.outside, 0, "a derived box holds each of its vertices");
+    // Round 33 measured 2,423 agree and 845 differ over this sample, 74 %.
+    assert!(
+        10 * t.agree >= 7 * (t.agree + t.differ),
+        "row 0 words at a power of 4 times their area ratio: {} of {}",
+        t.agree,
+        t.agree + t.differ
+    );
+    // A node mirror over 1,500 drawables found 19,392 of 19,421 lone elements and 46,106 of
+    // 46,461 elements of longer runs within 1e-4 m.
+    assert!(
+        100 * agree4 >= 97 * (agree4 + differ4),
+        "row 4 elements re-extended within 1e-4 m: {agree4} of {}",
+        agree4 + differ4
+    );
+    assert!(
+        50 * (t.no_element + t.split_part + t.empty_element) <= t.geometries,
+        "geometries a moved-vertex write refuses: {} of {}",
+        t.no_element + t.split_part + t.empty_element,
+        t.geometries
+    );
 }

@@ -11,7 +11,6 @@ use super::target::{self, Hits, Target};
 use crate::platform::file_dialogs;
 use crate::state::explorer::Place;
 use crate::state::extract_job::TypeFilter;
-use crate::state::files_view::name_hash;
 use crate::state::gltf::Model;
 use crate::state::navigation::{Arrival, Location};
 use crate::state::{
@@ -378,16 +377,13 @@ pub(super) const COPY_HASH: Spec = Spec {
     on: Some(On {
         focused: target::selection,
         enabled: |state, target| row(state, target).map(|_| ()),
-        label: Some(|state, target| match row(state, target) {
-            Ok((_, node)) => tr!(
-                "Copy hash  {hash}",
-                hash = format!("0x{:08X}", name_hash(&node.name))
-            ),
+        label: Some(|state, target| match hash_of(state, target) {
+            Ok(hash) => tr!("Copy hash  {hash}", hash = hash),
             Err(_) => tr!("Copy hash").to_string(),
         }),
         run: |state, ctx, target| {
-            if let Ok((_, node)) = row(state, target) {
-                ctx.copy_text(format!("0x{:08X}", name_hash(&node.name)));
+            if let Ok(hash) = hash_of(state, target) {
+                ctx.copy_text(hash);
             }
         },
     }),
@@ -609,7 +605,22 @@ fn open(state: &mut AppState, _: &egui::Context, target: &Target) {
     let (id, folder) = (node.id, node.is_dir().then_some(node.parent));
     match folder {
         Some(parent) => hierarchy::go_into(state, doc, parent.unwrap_or(id), id),
-        None => state.open_rpf_entry(doc, id),
+        None => {
+            state.keep_gta6_preview(doc, id);
+            state.open_rpf_entry(doc, id)
+        }
+    }
+}
+
+/// The hash Copy hash gives for the one row `target` names.
+fn hash_of(state: &AppState, target: &Target) -> Result<String, &'static str> {
+    let (doc, node) = row(state, target)?;
+    match &state.document(doc).ok_or(crate::i18n::tr(GONE))?.payload {
+        DocPayload::Rpf(rpf) => Ok(crate::state::rpf9_scan::rpf9_tree_actions::copied_hash(
+            &rpf.session,
+            node,
+        )),
+        _ => Err(crate::i18n::tr(GONE)),
     }
 }
 

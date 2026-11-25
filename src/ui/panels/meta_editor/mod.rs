@@ -67,7 +67,11 @@ fn empty(ui: &mut egui::Ui) {
 }
 
 fn draw_visual_view(ui: &mut egui::Ui, state: &mut AppState, doc_id: crate::state::DocumentId) {
-    let library = crate::state::meta_schema();
+    // A GTA VI data XML is typed by GTA VI's library, every other document by GTA V's.
+    let library = match state.document(doc_id).map(|d| &d.payload) {
+        Some(DocPayload::Meta(meta)) => meta.schema(),
+        _ => crate::state::meta_schema(),
+    };
     let name_index = state.name_index.snapshot();
     let text_names = match state.document(doc_id).map(|d| &d.payload) {
         Some(DocPayload::Meta(meta)) => {
@@ -166,7 +170,7 @@ fn draw_visual_view(ui: &mut egui::Ui, state: &mut AppState, doc_id: crate::stat
             // first; failing that, the decoded instance says what each field
             // *is*. Without the fallback the visual editor is inert for every
             // binary document on a build with no snapshot.
-            let resolved = library.resolve(&parsed.instance.type_name);
+            let resolved = library.resolve_any(&parsed.instance.type_name);
             let described = resolved.is_some();
             let fields: Vec<or_io::meta::Field> = match resolved {
                 Some(resolved) => resolved.fields.iter().map(|f| (*f).clone()).collect(),

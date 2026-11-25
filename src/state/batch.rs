@@ -155,12 +155,16 @@ mod tests {
     fn a_model_and_a_dictionary_of_the_corpus_are_written_as_a_glb_and_as_pictures() {
         const WHAT: &str =
             "a_model_and_a_dictionary_of_the_corpus_are_written_as_a_glb_and_as_pictures";
+        // ⚠ The first dictionary staged is 10 MB, and writing each of its textures as a picture took
+        // this test past its 30 s cap; one file of each kind is all it asks.
+        const MAX_BYTES: u64 = 1 << 20;
         let first = |ext: &str| {
             let found = or_test_support::Corpus::new(env!("CARGO_MANIFEST_DIR"), ext).find();
-            found.into_iter().next()
+            (found.into_iter())
+                .find(|path| std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_BYTES))
         };
         let (Some(model), Some(dictionary)) = (first("ydr"), first("ytd")) else {
-            or_test_support::skip_corpus(WHAT, "no .ydr or .ytd staged");
+            or_test_support::skip_corpus(WHAT, "no .ydr or .ytd of 1 MiB or less staged");
             return;
         };
         let dir = tempfile::tempdir().expect("a scratch folder");

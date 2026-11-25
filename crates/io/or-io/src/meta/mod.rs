@@ -22,6 +22,7 @@ pub use schema::{
     FieldType, Literal, PointerPolicy, ResolvedStruct, SchemaLibrary, StringKind, StructDef,
     TypeName,
 };
+pub use snapshot::names_library;
 pub use snapshot::{
     builder_stamp, decode as decode_snapshot, default_library, default_origin,
     encode as encode_snapshot, has_default_library, has_names_library, install_default_library,

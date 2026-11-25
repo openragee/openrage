@@ -377,6 +377,7 @@ fn a_replaced_row_saved_to_a_new_file_reopens_with_the_new_body_and_the_source_i
     let before = std::fs::read(&path).expect("the source");
     let mut tree = tree(&path);
     let row = row_holding(&tree.session, &other());
+    let shown = (tree.session.node(row).map(|n| n.name.clone())).expect("the row");
     let replaced = b"a replaced body, which deflates. ".repeat(40);
     (tree.session.set_bytes_for(row, replaced.clone())).expect("the row takes the bytes");
     let mut state = showing(path.clone(), tree);
@@ -387,7 +388,14 @@ fn a_replaced_row_saved_to_a_new_file_reopens_with_the_new_body_and_the_source_i
     let started = state.save_gta6_tree_with(DOC, &out, synthetic_keys);
     assert_eq!(started, Some(true));
     finished(&mut state);
-    let refused = ["copy.rpf", "the game refuses"];
+    // A body of another size changes its row, so the copy is rebuilt, and the toast names the row.
+    let sizes = format!("{shown} is 1320 bytes, not the 1920 its row states");
+    let refused = [
+        "copy.rpf",
+        "the game refuses",
+        "kept it from being patched in place",
+        sizes.as_str(),
+    ];
     assert!(
         said(&state, ToastType::Success, &refused),
         "{:?}",
@@ -404,6 +412,62 @@ fn a_replaced_row_saved_to_a_new_file_reopens_with_the_new_body_and_the_source_i
         stored_sections(&copy, RESOURCE),
         stored_sections(&before, RESOURCE)
     );
+    assert_eq!(std::fs::read(&path).expect("the source"), before);
+}
+
+/// Every byte of `copy` outside the stored extent of the entry `name` of `before` is as in `before`,
+/// so every table span is byte-identical.
+fn only_the_body_differs(before: &[u8], copy: &[u8], name: &str) {
+    let mount = mount_of(before);
+    let entry = entry_named(&mount, name);
+    let start = mount.absolute_start(entry).expect("a start") as usize;
+    let end = start + entry.stored.expect("a stored extent") as usize;
+    assert_eq!(
+        copy.len(),
+        before.len(),
+        "the copy keeps the archive's size"
+    );
+    assert_eq!(copy[..start], before[..start], "every byte before the body");
+    assert_eq!(copy[end..], before[end..], "every byte after the body");
+    assert_ne!(copy[start..end], before[start..end], "the body changed");
+}
+
+#[test]
+fn a_replaced_row_of_its_own_size_saves_as_a_patched_copy_whose_table_is_as_read() {
+    let _serial = crate::ui::theme::serial();
+    let _reading = reading_with(synthetic_keys().expect("the synthetic snapshot parses"));
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let path = three(dir.path());
+    let before = std::fs::read(&path).expect("the source");
+    let mut tree = tree(&path);
+    let row = row_holding(&tree.session, &other());
+    // One letter over the row's size deflates far under the chunk's stored size, so it fits.
+    let replaced = vec![b'a'; other().len()];
+    (tree.session.set_bytes_for(row, replaced.clone())).expect("the row takes the bytes");
+    let mut state = showing(path.clone(), tree);
+
+    let out = dir.path().join("copy.rpf");
+    assert_eq!(
+        state.save_gta6_tree_with(DOC, &out, synthetic_keys),
+        Some(true)
+    );
+    finished(&mut state);
+    let patched = [
+        "copy.rpf",
+        "is a patched copy",
+        "byte-identical",
+        "has not been run",
+    ];
+    assert!(
+        said(&state, ToastType::Success, &patched),
+        "{:?}",
+        toasts(&state)
+    );
+    assert!(!toasts(&state).iter().any(|t| t.contains("refuses")));
+    let copy = std::fs::read(&out).expect("the copy");
+    only_the_body_differs(&before, &copy, OTHER);
+    assert_eq!(body_of(&copy, OTHER), replaced);
+    assert_eq!(body_of(&copy, PSO), table_form_pso());
     assert_eq!(std::fs::read(&path).expect("the source"), before);
 }
 
@@ -428,7 +492,16 @@ fn a_rename_a_removal_and_an_add_in_the_tree_are_written_as_the_tree_shows_them(
 
     let edits = tree_edits(session).expect("the tree's edits");
     let out = dir.path().join("copy.rpf");
-    write_tree(&path, &edits, &out, &keys).expect("the copy is written");
+    let saved = write_tree(&path, &edits, &out, &keys).expect("the copy is written");
+    let Saved::Rebuilt { tables, kept, .. } = saved else {
+        panic!("a rename, a removal and an add are never patched in place");
+    };
+    assert!(tables);
+    let named = |what: &str| kept.iter().any(|why| why.ends_with(what));
+    assert!(
+        named("is renamed") && named("is removed") && named("is added"),
+        "{kept:?}"
+    );
     let copy = std::fs::read(&out).expect("the copy");
     let names: BTreeSet<u64> = (mount_of(&copy).archive.entries.iter())
         .map(|e| e.name64)
@@ -530,6 +603,96 @@ fn a_small_clear_row_of_a_real_archive_replaced_into_a_copy_reads_back() {
         return;
     }
     let why = format_args!("no small clear row in the smallest archives of {BUILD_ENV}");
+    or_test_support::skip_install(WHAT, why);
+}
+
+/// A small clear row of a real archive, changed by one byte at its own size, saves as a patched copy
+/// whose bytes outside that body are the archive's.
+#[test]
+fn a_small_clear_row_of_a_real_archive_changed_at_its_size_saves_as_a_patched_copy() {
+    const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
+    const WHAT: &str = "gta6 patched tree save of a real archive";
+    let build = (std::env::var_os(BUILD_ENV).map(PathBuf::from)).filter(|p| p.is_dir());
+    let keys_set = std::env::var_os("OPENRAGE_GTA6_KEYS").is_some_and(|p| Path::new(&p).exists());
+    let keys = (build.as_ref().filter(|_| keys_set))
+        .and_then(|_| GtaViKeys::for_install(or_title::config::config_dir().as_deref()).ok())
+        .flatten();
+    let (Some(build), Some(keys)) = (build, keys) else {
+        let why = format_args!("set OPENRAGE_GTA6_KEYS and {BUILD_ENV}");
+        or_test_support::skip_install(WHAT, why);
+        return;
+    };
+    let _serial = crate::ui::theme::serial();
+    let keys = Arc::new(keys);
+    let _reading = reading_with(Arc::clone(&keys));
+    let mut archives: Vec<(u64, PathBuf)> = (std::fs::read_dir(&build).into_iter().flatten())
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("rpf"))
+        .filter_map(|p| Some((std::fs::metadata(&p).ok()?.len(), p)))
+        .collect();
+    archives.sort();
+    let mut rebuilt = Vec::new();
+    for (_, path) in archives.iter().take(8) {
+        let crypto = Arc::new(NoOpCryptoProvider::new());
+        let opened = (RpfArchive::open_with(path, crypto).map_err(|e| e.to_string()))
+            .and_then(RpfDocument::new);
+        let Ok(mut tree) = opened else {
+            continue;
+        };
+        let Some((row, entry)) = small_clear_row(&tree.session) else {
+            continue;
+        };
+        let Some(mut body) = tree.session.bytes_for(row).map(|b| b.to_vec()) else {
+            continue;
+        };
+        let Some(last) = body.last_mut() else {
+            continue;
+        };
+        *last ^= 1;
+        (tree.session.set_bytes_for(row, body.clone())).expect("the row takes the bytes");
+        let edits = tree_edits(&tree.session).expect("the tree's edits");
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let out = dir.path().join("copy.rpf");
+        let before = std::fs::read(path).expect("the source");
+        // A deflated chunk OpenRage's encoder cannot fit under its ceiling (nearly every one, as
+        // measured) is rebuilt, and another row may fit; a rebuild for any other reason fails.
+        let saved = write_tree(path, &edits, &out, &keys).expect("the copy is written");
+        if let Saved::Rebuilt { kept, .. } = saved {
+            if !kept.iter().all(|why| why.contains("deflates at best")) {
+                rebuilt.push(kept);
+            }
+            continue;
+        }
+        let copy = std::fs::read(&out).expect("the copy");
+        let mount = Gta6Mount::open_root(&mut Cursor::new(&before), &keys).expect("it opens");
+        let held = (mount.archive.entries.iter())
+            .find(|e| e.index == entry)
+            .expect("the entry");
+        let start = mount.absolute_start(held).expect("a start") as usize;
+        let end = start + held.stored.expect("a stored extent") as usize;
+        assert_eq!(copy.len(), before.len());
+        assert_eq!(copy[..start], before[..start], "every byte before the body");
+        assert_eq!(copy[end..], before[end..], "every byte after the body");
+        let reopened = Gta6Mount::open_root(&mut Cursor::new(&copy), &keys).expect("it opens");
+        let held = (reopened.archive.entries.iter())
+            .find(|e| e.index == entry)
+            .expect("the entry is kept");
+        let read = reopened
+            .read_entry(Cursor::new(&copy), held)
+            .expect("the body reads");
+        assert_eq!(read, body);
+        assert_eq!(std::fs::read(path).expect("the source"), before);
+        return;
+    }
+    assert!(
+        rebuilt.is_empty(),
+        "a row changed at its size was rebuilt for another reason than a chunk that does not fit: \
+         {rebuilt:?}"
+    );
+    let why = format_args!(
+        "no small clear row of the smallest archives of {BUILD_ENV} whose changed chunk fits"
+    );
     or_test_support::skip_install(WHAT, why);
 }
 

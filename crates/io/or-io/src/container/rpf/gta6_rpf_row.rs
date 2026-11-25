@@ -20,6 +20,8 @@ pub struct Rpf9Row {
     pub row_bytes: Option<u8>,
     /// The hash of its path, where no name is recovered.
     pub hash: Option<u64>,
+    /// The hash of its path as its table states it, named or not.
+    pub name64: u64,
 }
 
 impl RpfArchive {
@@ -51,6 +53,7 @@ fn row_of(leaf: &Leaf, entry: &Gta6Entry, extra: Option<Gta6EntryExtra>) -> Rpf9
             (None, None) => None,
         },
         hash: entry.name.is_none().then_some(entry.name64),
+        name64: entry.name64,
     }
 }
 

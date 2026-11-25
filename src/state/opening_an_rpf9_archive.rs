@@ -972,3 +972,25 @@ pub(super) fn files_and_centre(ui: &mut egui::Ui, state: &mut AppState) {
         .show_inside(ui, |ui| crate::ui::panels::hierarchy::draw(ui, state));
     crate::ui::panels::document_view::draw(ui, state, None);
 }
+
+/// A body opened from a GTA VI archive is of neither GTA V edition, so it offers no conversion.
+#[test]
+fn a_body_of_a_gta_vi_archive_is_of_no_gta_v_edition_and_does_not_convert() {
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let mut bytes = rpf9_head(1, 0x1A0);
+    bytes.resize(0x1010, 0);
+    bytes.extend(zlib(&navmesh_cell()));
+    let mut state = AppState::new();
+    let archive = scanned(&mut state, written(dir.path(), &bytes));
+    state.open_scanned_body(archive, row_at(&rows(&state, archive), 0x1010));
+    settle(&mut state);
+    let doc = (state.active_document)
+        .filter(|&d| d != archive)
+        .expect("the body opens");
+    let path = state.document(doc).and_then(|d| d.path.clone());
+    assert!(super::rpf9_scan::from_gta_vi(path.as_deref()));
+    let refused = state.document_conversion_to(doc).unwrap_err();
+    assert!(refused.contains("neither GTA V edition"), "{refused}");
+    assert!(!super::rpf9_scan::from_gta_vi(Some(Path::new("loose.ytd"))));
+}

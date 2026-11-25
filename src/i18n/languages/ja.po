@@ -13,6 +13,9 @@ msgstr "(シェーダーグループなし)"
 msgid "(no skeleton)"
 msgstr "(スケルトンなし)"
 
+msgid "A GTA VI body is of neither GTA V edition, so it does not convert"
+msgstr "GTA VI の本体は GTA V のどちらのエディションでもないため、変換されません"
+
 msgid "A map for the game: add .ymap and .ytyp files, and OpenRage shows what they place, lets you move, turn and scale each thing with a manipulator, checks the pack and makes a FiveM resource."
 msgstr "ゲーム用のマップです。.ymapファイルと.ytypファイルを追加すると、OpenRageが配置内容を表示し、配置されたものをマニピュレーターで移動、回転、スケール変更できます。パックのチェックとFiveMリソースの作成も行います。"
 
@@ -379,6 +382,9 @@ msgstr "フォーカス"
 msgid "Fog"
 msgstr "霧"
 
+msgid "GTA VI's library holds no structure {name}, so the whole document is untyped and kept as text."
+msgstr "GTA VI のライブラリには構造 {name} がないため、ドキュメント全体が型なしとなり、テキストとして保持されます。"
+
 msgid "Give the project maps: an empty pack in a folder of its own, shipped by every build, and the Map screen to fill it. Add map files… puts files into a pack that is there"
 msgstr "プロジェクトにマップを追加します：専用フォルダーに空のパックを作成し、すべてのビルドに同梱されます。内容はマップ画面で追加します。「マップファイルを追加…」は、既にあるパックにファイルを追加します"
 
@@ -444,6 +450,9 @@ msgstr "フィルターを反転"
 
 msgid "It places an interior"
 msgstr "インテリアを配置します"
+
+msgid "Its header and table of contents take {needed} bytes, and the file holds only {found}: it may have been copied in part."
+msgstr "ヘッダーと目次は {needed} バイトを占めますが、ファイルには {found} しかありません。一部だけコピーされた可能性があります。"
 
 msgid "Keep the entity on the ground while it moves"
 msgstr "移動中もエンティティを地面に接地させる"
@@ -679,6 +688,9 @@ msgstr "再生速度"
 msgid "Playback speed multiplier"
 msgstr "再生速度の倍率"
 
+msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the archive's table is searched for them: a cell the table holds no navigation row of has no special link into this one. Try again once the search ends."
+msgstr "隣接セル {cells} の本体が開かれておらず、アーカイブのテーブル内で検索中のため、ポリゴン {polygon} は変更されません。テーブルにナビゲーション行がないセルは、このセルへの特殊リンクを持ちません。検索が終わったら再試行してください。"
+
 msgid "Portal {at}: room {from} to room {to}, {corners} corners, flags {flags}"
 msgstr "ポータル {at}：ルーム {from} からルーム {to}、角 {corners} 個、フラグ {flags}"
 
@@ -768,6 +780,9 @@ msgstr "ルームとポータルはファイルから読み取られます。変
 
 msgid "Rotation"
 msgstr "回転"
+
+msgid "Save the edits to a new archive: a patched copy where every edit fits its entry's chunks, else a rebuilt archive, which the game refuses"
+msgstr "編集を新しいアーカイブに保存（すべての編集がエントリのチャンクに収まればパッチ済みコピー、そうでなければ再構築されたアーカイブとなり、ゲームはこれを拒否します）"
 
 msgid "Scale"
 msgstr "スケール"
@@ -925,8 +940,17 @@ msgstr "これらのマップは別のプロジェクトからリンクされて
 msgid "These particles are linked from another project, which alone edits them: open that project to change them"
 msgstr "これらのパーティクルは別のプロジェクトからリンクされており、そのプロジェクトだけが編集できます：変更するにはそのプロジェクトを開いてください"
 
+msgid "These rows kept it from being patched in place: {rows}."
+msgstr "次の行のため、その場でパッチできませんでした: {rows}。"
+
 msgid "These weapons are linked from another project, which alone edits them: open that project to change them"
 msgstr "これらの武器は別のプロジェクトからリンクされており、そのプロジェクトだけが編集できます：変更するにはそのプロジェクトを開いてください"
+
+msgid "This GTA VI archive (RPF9) has a table of contents that does not open with the GTA VI keys OpenRage holds, so its entries cannot be listed by name."
+msgstr "この GTA VI アーカイブ (RPF9) の目次は OpenRage が持つ GTA VI のキーで開けないため、エントリを名前で一覧にできません。"
+
+msgid "This GTA VI archive (RPF9) is cut short, so its table of contents cannot be read."
+msgstr "この GTA VI アーカイブ (RPF9) は途中で切れているため、目次を読み取れません。"
 
 msgid "This YPT has no embedded model dictionary"
 msgstr "このYPTには埋め込みモデルディクショナリがありません"
@@ -11457,6 +11481,11 @@ msgid_plural "{count} effects"
 msgstr[0] "{count} 個のエフェクト"
 msgstr[1] "{count} 個のエフェクト"
 
+msgid "{count} element GTA VI's library does not hold is untyped and kept as text."
+msgid_plural "{count} elements GTA VI's library does not hold are untyped and kept as text."
+msgstr[0] "GTA VI のライブラリにない {count} 個の要素は型なしとなり、テキストとして保持されます。"
+msgstr[1] "GTA VI のライブラリにない {count} 個の要素は型なしとなり、テキストとして保持されます。"
+
 msgid "{count} entity"
 msgid_plural "{count} entities"
 msgstr[0] "{count} 個のエンティティ"
@@ -11742,6 +11771,18 @@ msgstr "ピッカーで利用可能：{files}"
 
 msgid "{file} changed since: take back the changes made after this one first"
 msgstr "{file}はその後に変更されています：先に、これ以降に加えた変更を取り消してください"
+
+msgid "{file} exists, and a copy is written only to a new file"
+msgstr "{file} は存在します。コピーは新しいファイルにのみ書き込まれます"
+
+msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, a patched copy with its table byte-identical where every edit is a body of its entry's size that fits its chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{file} は GTA VI のアーカイブで、その場では書き込まれません。「名前を付けて保存…」は編集を新しいファイルに書き込みます。すべての編集がエントリと同じサイズでそのチャンクに収まる本体であれば、テーブルがバイト単位で同一のパッチ済みコピーになり、そうでなければ再構築されたアーカイブになります。テーブルに署名できるのは作成者だけなので、ゲームはそれを拒否します。"
+
+msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, a patched copy with its table byte-identical where every edit is a body of its entry's size that fits its chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{file} は GTA VI のアーカイブで、その場では書き込まれません。単独で開くと、「名前を付けて保存…」は編集を新しいファイルに書き込みます。すべての編集がエントリと同じサイズでそのチャンクに収まる本体であれば、テーブルがバイト単位で同一のパッチ済みコピーになり、そうでなければ再構築されたアーカイブになります。テーブルに署名できるのは作成者だけなので、ゲームはそれを拒否します。"
+
+msgid "{file} is a patched copy: each changed body is written in its entry's place, chunk by chunk, and its table is byte-identical, so the table's signature still matches and no check read in the game's code rejects it; the game has not been run with it."
+msgstr "{file} はパッチ済みコピーです。変更された各本体はチャンクごとにエントリの位置に書き込まれ、テーブルはバイト単位で同一なので、テーブルの署名は一致したままで、ゲームのコードで読み取ったどのチェックもこれを拒否しません。ただし、これでゲームを実行したことはありません。"
 
 msgid "{file}\nClick: draw the garment with this texture"
 msgstr "{file}\nクリック：このテクスチャで衣服を描画します"
@@ -12088,8 +12129,14 @@ msgstr "{name}には{kind}コンテンツがあります。"
 msgid "{name} is a folder, and the Files content holds files"
 msgstr "{name}はフォルダーですが、ファイルコンテンツが保持するのはファイルです"
 
+msgid "{name} is a headerless resource, whose loose form is stored under a new row"
+msgstr "{name} はヘッダーなしのリソースで、そのルーズ形式は新しい行に保存されます"
+
 msgid "{name} is a name Windows keeps for itself: choose another"
 msgstr "{name}はWindowsが予約している名前です：別の名前を選択してください"
+
+msgid "{name} is added"
+msgstr "{name} は追加されています"
 
 msgid "{name} is already in this dictionary; replace it from an image instead"
 msgstr "{name}はすでにこのディクショナリにあります：代わりに画像から置き換えてください"
@@ -12124,8 +12171,17 @@ msgstr "{name}はこのディクショナリにありません"
 msgid "{name} is now {format} with {mips} mip level(s)"
 msgstr "{name}は{format} (ミップレベル {mips} 個) になりました"
 
+msgid "{name} is removed"
+msgstr "{name} は削除されています"
+
+msgid "{name} is renamed"
+msgstr "{name} は名前が変更されています"
+
 msgid "{name} is selected: Compare with selected on another {kind} compares the two"
 msgstr "{name}が選択されています：別の{kind}で「選択項目と比較」を使用すると、2つを比較します"
+
+msgid "{name} is {size} bytes, not the {real} its row states"
+msgstr "{name} は {size} バイトで、その行が示す {real} ではありません"
 
 msgid "{name} leaves the pack"
 msgstr "{name}はパックから外れます"
@@ -16985,17 +17041,8 @@ msgstr "行"
 msgid "Name hash"
 msgstr "名前ハッシュ"
 
-msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
-msgstr "{file} は GTA VI のアーカイブで、その場では書き込まれません。「名前を付けて保存…」は編集を新しいファイルに書き込みますが、署名がテーブルを覆っているため、ゲームはそのファイルを拒否します。"
-
-msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
-msgstr "{file} は GTA VI のアーカイブで、その場では書き込まれません。単独で開くと「名前を付けて保存…」が編集を新しいファイルに書き込みますが、署名がテーブルを覆っているため、ゲームはそのファイルを拒否します。"
-
 msgid "{file} is a new archive with the tree's edits, which the game refuses because only its maker can sign the table they changed."
 msgstr "{file} はツリーの編集を含む新しいアーカイブですが、変更されたテーブルに署名できるのは作成者だけなので、ゲームはこれを拒否します。"
-
-msgid "Save the edits to a new archive, which the game refuses because its signature covers the table"
-msgstr "編集を新しいアーカイブに保存（署名がテーブルを覆っているため、ゲームはこれを拒否します）"
 
 msgid "the tree is no GTA VI archive opened on its own"
 msgstr "このツリーは単独で開いた GTA VI のアーカイブではありません"
@@ -17017,9 +17064,6 @@ msgstr "{name} にはバイトがありません"
 
 msgid "list {list}: {entries}"
 msgstr "リスト {list}: {entries}"
-
-msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the scan is searched for them: a cell the scan holds no body of has no special link into this one. Try again once the search ends."
-msgstr "隣接セル {cells} の本体が開かれておらず、スキャン内で検索中のため、ポリゴン {polygon} は変更されません。スキャンに本体がないセルは、このセルへの特殊リンクを持ちません。検索が終わったら再試行してください。"
 
 msgid "Add to the facial controls it writes"
 msgstr "書き込む顔の制御に追加"

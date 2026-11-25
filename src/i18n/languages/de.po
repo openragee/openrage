@@ -13,6 +13,9 @@ msgstr "(keine Shadergruppe)"
 msgid "(no skeleton)"
 msgstr "(kein Skelett)"
 
+msgid "A GTA VI body is of neither GTA V edition, so it does not convert"
+msgstr "Ein GTA-VI-Inhalt gehört zu keiner GTA-V-Edition und wird daher nicht konvertiert"
+
 msgid "A map for the game: add .ymap and .ytyp files, and OpenRage shows what they place, lets you move, turn and scale each thing with a manipulator, checks the pack and makes a FiveM resource."
 msgstr "Eine Map für das Spiel: .ymap- und .ytyp-Dateien hinzufügen. OpenRage zeigt, was sie platzieren, ermöglicht das Verschieben, Drehen und Skalieren jedes Objekts mit einem Manipulator, prüft das Pack und erstellt eine FiveM-Resource."
 
@@ -379,6 +382,9 @@ msgstr "Fokussieren"
 msgid "Fog"
 msgstr "Nebel"
 
+msgid "GTA VI's library holds no structure {name}, so the whole document is untyped and kept as text."
+msgstr "Die Bibliothek von GTA VI enthält keine Struktur {name}, daher ist das ganze Dokument untypisiert und wird als Text behalten."
+
 msgid "Give the project maps: an empty pack in a folder of its own, shipped by every build, and the Map screen to fill it. Add map files… puts files into a pack that is there"
 msgstr "Dem Projekt Maps hinzufügen: ein leeres Pack in einem eigenen Ordner, das mit jedem Build ausgeliefert wird, und der Bereich „Map“ zum Befüllen. „Map-Dateien hinzufügen…“ legt Dateien in einem vorhandenen Pack ab"
 
@@ -444,6 +450,9 @@ msgstr "Filter umkehren"
 
 msgid "It places an interior"
 msgstr "Es platziert ein Interior"
+
+msgid "Its header and table of contents take {needed} bytes, and the file holds only {found}: it may have been copied in part."
+msgstr "Sein Header und sein Inhaltsverzeichnis belegen {needed} Bytes, die Datei enthält aber nur {found}: Sie wurde womöglich nur teilweise kopiert."
 
 msgid "Keep the entity on the ground while it moves"
 msgstr "Entität beim Verschieben auf dem Boden halten"
@@ -679,6 +688,9 @@ msgstr "Wiedergabegeschwindigkeit"
 msgid "Playback speed multiplier"
 msgstr "Multiplikator der Wiedergabegeschwindigkeit"
 
+msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the archive's table is searched for them: a cell the table holds no navigation row of has no special link into this one. Try again once the search ends."
+msgstr "Polygon {polygon} wird nicht geändert, solange die Inhalte der Nachbarzellen {cells} nicht geöffnet sind und die Tabelle des Archivs nach ihnen durchsucht wird: Eine Zelle, von der die Tabelle keine Navigationszeile hat, hat keine besondere Verbindung in diese. Versuchen Sie es erneut, wenn die Suche endet."
+
 msgid "Portal {at}: room {from} to room {to}, {corners} corners, flags {flags}"
 msgstr "Portal {at}: Raum {from} zu Raum {to}, {corners} Ecken, Flags {flags}"
 
@@ -768,6 +780,9 @@ msgstr "Räume und Portale werden aus der Datei gelesen. Änderungen im Bereich 
 
 msgid "Rotation"
 msgstr "Rotation"
+
+msgid "Save the edits to a new archive: a patched copy where every edit fits its entry's chunks, else a rebuilt archive, which the game refuses"
+msgstr "Die Änderungen in ein neues Archiv speichern: eine gepatchte Kopie, wenn jede Änderung in die Chunks ihres Eintrags passt, sonst ein neu aufgebautes Archiv, das das Spiel ablehnt"
 
 msgid "Scale"
 msgstr "Skalierung"
@@ -925,8 +940,17 @@ msgstr "Diese Maps sind aus einem anderen Projekt verknüpft, das sie allein bea
 msgid "These particles are linked from another project, which alone edits them: open that project to change them"
 msgstr "Diese Partikel sind aus einem anderen Projekt verknüpft, das sie allein bearbeitet: Zum Ändern dieses Projekt öffnen"
 
+msgid "These rows kept it from being patched in place: {rows}."
+msgstr "Diese Zeilen haben verhindert, dass an Ort und Stelle gepatcht wurde: {rows}."
+
 msgid "These weapons are linked from another project, which alone edits them: open that project to change them"
 msgstr "Diese Waffen sind aus einem anderen Projekt verknüpft, das sie allein bearbeitet: Zum Ändern dieses Projekt öffnen"
+
+msgid "This GTA VI archive (RPF9) has a table of contents that does not open with the GTA VI keys OpenRage holds, so its entries cannot be listed by name."
+msgstr "Dieses GTA-VI-Archiv (RPF9) hat ein Inhaltsverzeichnis, das sich mit den GTA-VI-Schlüsseln von OpenRage nicht öffnen lässt, daher können seine Einträge nicht nach Namen aufgelistet werden."
+
+msgid "This GTA VI archive (RPF9) is cut short, so its table of contents cannot be read."
+msgstr "Dieses GTA-VI-Archiv (RPF9) ist abgeschnitten, daher kann sein Inhaltsverzeichnis nicht gelesen werden."
 
 msgid "This YPT has no embedded model dictionary"
 msgstr "Dieses YPT hat kein eingebettetes Modell-Dictionary"
@@ -11430,6 +11454,11 @@ msgid_plural "{count} effects"
 msgstr[0] "{count} Effekt"
 msgstr[1] "{count} Effekte"
 
+msgid "{count} element GTA VI's library does not hold is untyped and kept as text."
+msgid_plural "{count} elements GTA VI's library does not hold are untyped and kept as text."
+msgstr[0] "{count} Element, das die Bibliothek von GTA VI nicht enthält, ist untypisiert und wird als Text behalten."
+msgstr[1] "{count} Elemente, die die Bibliothek von GTA VI nicht enthält, sind untypisiert und werden als Text behalten."
+
 msgid "{count} entity"
 msgid_plural "{count} entities"
 msgstr[0] "{count} Entität"
@@ -11715,6 +11744,18 @@ msgstr "{files} bereit für die Auswahldialoge"
 
 msgid "{file} changed since: take back the changes made after this one first"
 msgstr "{file} wurde seitdem geändert: zuerst die nach diesem vorgenommenen Änderungen zurücknehmen"
+
+msgid "{file} exists, and a copy is written only to a new file"
+msgstr "{file} existiert, und eine Kopie wird nur in eine neue Datei geschrieben"
+
+msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, a patched copy with its table byte-identical where every edit is a body of its entry's size that fits its chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{file} ist ein GTA-VI-Archiv, das nie an seiner Stelle geschrieben wird: Speichern unter… schreibt seine Änderungen in eine neue Datei, eine gepatchte Kopie mit byte-gleicher Tabelle, wenn jede Änderung ein Inhalt in der Größe seines Eintrags ist, der in seine Chunks passt, sonst ein neu aufgebautes Archiv, das das Spiel ablehnt, weil nur sein Hersteller die Tabelle signieren kann."
+
+msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, a patched copy with its table byte-identical where every edit is a body of its entry's size that fits its chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{file} ist ein GTA-VI-Archiv, das nie an seiner Stelle geschrieben wird: Öffnen Sie es für sich, dann schreibt Speichern unter… seine Änderungen in eine neue Datei, eine gepatchte Kopie mit byte-gleicher Tabelle, wenn jede Änderung ein Inhalt in der Größe seines Eintrags ist, der in seine Chunks passt, sonst ein neu aufgebautes Archiv, das das Spiel ablehnt, weil nur sein Hersteller die Tabelle signieren kann."
+
+msgid "{file} is a patched copy: each changed body is written in its entry's place, chunk by chunk, and its table is byte-identical, so the table's signature still matches and no check read in the game's code rejects it; the game has not been run with it."
+msgstr "{file} ist eine gepatchte Kopie: Jeder geänderte Inhalt wird an der Stelle seines Eintrags geschrieben, Chunk für Chunk, und ihre Tabelle ist byte-gleich, daher passt die Signatur der Tabelle weiterhin und keine im Code des Spiels gelesene Prüfung lehnt sie ab; das Spiel wurde damit nicht ausgeführt."
 
 msgid "{file}\nClick: draw the garment with this texture"
 msgstr "{file}\nKlicken: Das Kleidungsstück mit dieser Textur zeichnen"
@@ -12061,8 +12102,14 @@ msgstr "{name} enthält Inhalt der Art {kind}."
 msgid "{name} is a folder, and the Files content holds files"
 msgstr "{name} ist ein Ordner, und der Inhalt „Dateien“ enthält Dateien"
 
+msgid "{name} is a headerless resource, whose loose form is stored under a new row"
+msgstr "{name} ist eine Ressource ohne Header, deren lose Form unter einer neuen Zeile gespeichert wird"
+
 msgid "{name} is a name Windows keeps for itself: choose another"
 msgstr "{name} ist ein Name, den Windows für sich reserviert: einen anderen wählen"
+
+msgid "{name} is added"
+msgstr "{name} ist hinzugefügt"
 
 msgid "{name} is already in this dictionary; replace it from an image instead"
 msgstr "{name} ist bereits in diesem Dictionary; stattdessen aus einem Bild ersetzen"
@@ -12097,8 +12144,17 @@ msgstr "{name} ist nicht in diesem Dictionary"
 msgid "{name} is now {format} with {mips} mip level(s)"
 msgstr "{name} ist jetzt {format} mit {mips} Mipmap-Stufe(n)"
 
+msgid "{name} is removed"
+msgstr "{name} ist entfernt"
+
+msgid "{name} is renamed"
+msgstr "{name} ist umbenannt"
+
 msgid "{name} is selected: Compare with selected on another {kind} compares the two"
 msgstr "{name} ist ausgewählt: „Mit Auswahl vergleichen“ bei einem anderen {kind} vergleicht die beiden"
+
+msgid "{name} is {size} bytes, not the {real} its row states"
+msgstr "{name} ist {size} Bytes groß, nicht die {real}, die seine Zeile angibt"
 
 msgid "{name} leaves the pack"
 msgstr "{name} verlässt das Pack"
@@ -16985,17 +17041,8 @@ msgstr "Zeile"
 msgid "Name hash"
 msgstr "Namens-Hash"
 
-msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
-msgstr "{file} ist ein GTA-VI-Archiv, das nie an seiner Stelle geschrieben wird: Speichern unter… schreibt seine Änderungen in eine neue Datei, die das Spiel ablehnt, weil seine Signatur die Tabelle abdeckt."
-
-msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
-msgstr "{file} ist ein GTA-VI-Archiv, das nie an seiner Stelle geschrieben wird: Öffnen Sie es für sich, dann schreibt Speichern unter… seine Änderungen in eine neue Datei, die das Spiel ablehnt, weil seine Signatur die Tabelle abdeckt."
-
 msgid "{file} is a new archive with the tree's edits, which the game refuses because only its maker can sign the table they changed."
 msgstr "{file} ist ein neues Archiv mit den Änderungen des Baums; das Spiel lehnt es ab, weil nur sein Hersteller die dadurch geänderte Tabelle signieren kann."
-
-msgid "Save the edits to a new archive, which the game refuses because its signature covers the table"
-msgstr "Die Änderungen in ein neues Archiv speichern, das das Spiel ablehnt, weil seine Signatur die Tabelle abdeckt"
 
 msgid "the tree is no GTA VI archive opened on its own"
 msgstr "der Baum ist kein für sich geöffnetes GTA-VI-Archiv"
@@ -17017,9 +17064,6 @@ msgstr "{name} enthält keine Bytes"
 
 msgid "list {list}: {entries}"
 msgstr "Liste {list}: {entries}"
-
-msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the scan is searched for them: a cell the scan holds no body of has no special link into this one. Try again once the search ends."
-msgstr "Polygon {polygon} wird nicht geändert, solange die Inhalte der Nachbarzellen {cells} nicht geöffnet sind und der Scan nach ihnen durchsucht wird: Eine Zelle, von der der Scan keinen Inhalt hat, hat keine besondere Verbindung in diese. Versuchen Sie es erneut, wenn die Suche endet."
 
 msgid "Add to the facial controls it writes"
 msgstr "Zu den Gesichtssteuerungen hinzufügen, die es schreibt"

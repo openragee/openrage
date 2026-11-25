@@ -175,6 +175,7 @@ fn write(
     let mut file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
 
     let mut writer = Rpf9ArchiveWriter::new();
+    let mut in_place = String::new();
     match verb {
         "copy" | "defrag" => {
             if !inner.is_empty() || options.entry.is_some() {
@@ -217,7 +218,9 @@ fn write(
                     writer.replace_resource(&path, read_with(options)?, dependencies);
                 }
                 "replace" => {
-                    writer.replace(&path, read_with(options)?);
+                    let body = read_with(options)?;
+                    in_place = crate::rpf9::patch::replace_note(&mut file, &path, &body, &keys);
+                    writer.replace(&path, body);
                 }
                 "remove" => {
                     writer.remove(&path);
@@ -241,7 +244,7 @@ fn write(
         (tables, _) => format!("{tables} table(s) rewritten. {STALE}"),
     };
     Ok(format!(
-        "{}: {written} bytes written. {verdict}",
+        "{}: {written} bytes written. {verdict}{in_place}",
         out.display()
     ))
 }

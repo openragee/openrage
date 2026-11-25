@@ -12,6 +12,7 @@ use quick_xml::name::QName;
 use quick_xml::Reader;
 
 use crate::meta::error::{MetaError, Result};
+use crate::meta::schema::library::hash_spelling;
 use crate::meta::schema::{
     normalize_member_name, ArrayKind, BitsetStorage, EnumDef, Field as SchemaField, FieldType,
     ResolvedStruct, SchemaLibrary, StringKind, StructDef, TypeName,
@@ -38,7 +39,7 @@ pub fn parse_meta(library: &SchemaLibrary, bytes: &[u8]) -> Result<MetaInstance>
                 let resolved = library
                     .resolve_any(&tag)
                     .ok_or_else(|| MetaError::UnknownType(tag.clone()))?;
-                let canonical = resolved.def.name.clone();
+                let canonical = kept_name(&resolved, &tag);
                 return read_struct_body(
                     &mut reader,
                     library,
@@ -53,13 +54,26 @@ pub fn parse_meta(library: &SchemaLibrary, bytes: &[u8]) -> Result<MetaInstance>
                 let resolved = library
                     .resolve_any(&tag)
                     .ok_or_else(|| MetaError::UnknownType(tag.clone()))?;
-                let mut inst = MetaInstance::new(resolved.def.name.clone());
+                let mut inst = MetaInstance::new(kept_name(&resolved, &tag));
                 apply_attribute_fields(&mut inst, &resolved, e.attributes())?;
                 return Ok(inst);
             }
             _ => {}
         }
         buf.clear();
+    }
+}
+
+/// XML `bytes` typed by `library`, or as the tree they state with the structure `library` lacks.
+pub fn parse_typed_or_tree(
+    library: &SchemaLibrary,
+    bytes: &[u8],
+) -> Result<(MetaInstance, Option<String>)> {
+    match parse_meta(library, bytes) {
+        Err(MetaError::UnknownType(name)) => {
+            super::schemaless::parse_schemaless(bytes).map(|tree| (tree, Some(name)))
+        }
+        read => read.map(|typed| (typed, None)),
     }
 }
 
@@ -81,11 +95,11 @@ fn read_struct_body(
             Event::End(e) if local_name(e.name()) == close_tag => break,
             Event::Start(e) => {
                 let tag = local_name(e.name());
-                if let Some(field) =
+                if let Some((field, name)) =
                     lookup_field(resolved, &tag).filter(|_| !is_a_reference(e.attributes()))
                 {
                     let value = read_field_open(reader, library, &field.ty, &tag, e.attributes())?;
-                    inst.fields.push((field.name.clone(), value));
+                    inst.fields.push((name, value));
                 } else {
                     let extra = read_unknown_open(reader, &tag, e.attributes())?;
                     inst.extras.push(extra);
@@ -93,11 +107,11 @@ fn read_struct_body(
             }
             Event::Empty(e) => {
                 let tag = local_name(e.name());
-                if let Some(field) =
+                if let Some((field, name)) =
                     lookup_field(resolved, &tag).filter(|_| !is_a_reference(e.attributes()))
                 {
                     let value = read_field_empty(library, &field.ty, e.attributes())?;
-                    inst.fields.push((field.name.clone(), value));
+                    inst.fields.push((name, value));
                 } else {
                     let extra = read_unknown_empty(&tag, e.attributes())?;
                     inst.extras.push(extra);
@@ -116,13 +130,54 @@ fn is_a_reference(attrs: Attributes) -> bool {
     attrs.flatten().any(|a| local_name(a.key) == "ref")
 }
 
-fn lookup_field<'a>(resolved: &'a ResolvedStruct<'_>, xml_tag: &str) -> Option<&'a SchemaField> {
+/// The member `xml_tag` names and the name the instance keeps for it: the library's, or the XML's
+/// spelling where the library holds the member only as its hash, which a save must write.
+fn lookup_field<'a>(
+    resolved: &'a ResolvedStruct<'_>,
+    xml_tag: &str,
+) -> Option<(&'a SchemaField, String)> {
     let key = normalize_member_name(xml_tag);
-    resolved
-        .fields
-        .iter()
-        .copied()
-        .find(|f| f.name == key || f.name == xml_tag)
+    let mut fields = resolved.fields.iter().copied();
+    if let Some(f) = fields.clone().find(|f| f.name == key || f.name == xml_tag) {
+        return Some((f, f.name.clone()));
+    }
+    let hashed = hash_spelling(xml_tag);
+    fields
+        .find(|f| f.name == hashed)
+        .map(|f| (f, xml_tag.to_string()))
+}
+
+/// The type name an instance of `resolved` keeps: the library's, or `spelling` where the library
+/// holds the structure only as its hash.
+fn kept_name(resolved: &ResolvedStruct<'_>, spelling: &str) -> String {
+    if resolved.def.name == hash_spelling(spelling) {
+        spelling.to_string()
+    } else {
+        resolved.def.name.clone()
+    }
+}
+
+/// The members an instance's tree holds typed, and the elements it keeps untyped, as text.
+pub fn member_counts(inst: &MetaInstance) -> (usize, usize) {
+    fn value(v: &Value, counts: &mut (usize, usize)) {
+        match v {
+            Value::Struct(inner) | Value::Pointer(Some(inner)) => instance(inner, counts),
+            Value::Array(items) => items.iter().for_each(|i| value(i, counts)),
+            Value::Map(pairs) => pairs.iter().for_each(|(k, v)| {
+                value(k, counts);
+                value(v, counts);
+            }),
+            _ => {}
+        }
+    }
+    fn instance(inst: &MetaInstance, counts: &mut (usize, usize)) {
+        counts.0 += inst.fields.len();
+        counts.1 += inst.extras.len();
+        inst.fields.iter().for_each(|(_, v)| value(v, counts));
+    }
+    let mut counts = (0, 0);
+    instance(inst, &mut counts);
+    counts
 }
 
 fn read_field_open(
@@ -164,8 +219,8 @@ fn read_field_open(
             let resolved = library
                 .resolve_any(&concrete)
                 .ok_or_else(|| MetaError::UnknownType(concrete.clone()))?;
-            let inner =
-                read_struct_body(reader, library, &resolved, tag, &resolved.def.name, attrs)?;
+            let kept = kept_name(&resolved, &concrete);
+            let inner = read_struct_body(reader, library, &resolved, tag, &kept, attrs)?;
             Ok(Value::Pointer(Some(Box::new(inner))))
         }
         _ => {
@@ -659,3 +714,65 @@ const _: fn() = || {
     let _: TypeName = String::new();
     let _ = ArrayKind::AtArray;
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::meta::par_tree::library_from_par_tree;
+
+    /// A made-up dump in the form a parser dump has, whose root, two members and a member's
+    /// structure it holds only as the hash of a spelling.
+    fn dump(root: &str) -> SchemaLibrary {
+        let hash = |name: &str| format!("_0x{:08x}", crate::literal_string_hash(name.as_bytes()));
+        let root = hash(root);
+        let (spot, part, kind) = (hash("zqSpot"), hash("zqPart"), hash("ZqPart"));
+        let json = format!(
+            r#"{{"structs":[
+              {{"name":"{root}","markup":"$struct$ =@{root}@\r\n{{\r\n\t$float$ Reach;\r\n\t$UnkVec3F$ {spot};\r\n\t$struct$ @{kind}@ {part};\r\n}};\r\n"}},
+              {{"name":"{kind}","markup":"$struct$ =@{kind}@\r\n{{\r\n\t$float$ Weight;\r\n}};\r\n"}}
+            ]}}"#
+        );
+        library_from_par_tree(json.as_bytes()).expect("the dump reads")
+    }
+
+    /// In the writer's own form, so a save that keeps every element gives these bytes back.
+    const XML: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<CZqRoot>\n  <Reach value=\"2.5\"/>\n  <zqSpot x=\"1.0\" y=\"2.0\" z=\"3.0\"/>\n  <zqPart>\n    <Weight value=\"0.5\"/>\n  </zqPart>\n  <zqUnheard>kept as written</zqUnheard>\n</CZqRoot>\n";
+
+    #[test]
+    fn a_root_and_members_held_only_by_hash_read_typed_under_the_xmls_names() {
+        let inst = parse_meta(&dump("CZqRoot"), XML.as_bytes()).expect("the root resolves by hash");
+        assert_eq!(inst.type_name, "CZqRoot");
+        let names: Vec<&str> = inst.fields.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["Reach", "zqSpot", "zqPart"]);
+        assert_eq!(inst.fields[1].1, Value::Vec3([1.0, 2.0, 3.0]));
+        let Value::Struct(part) = &inst.fields[2].1 else {
+            panic!("zqPart reads as its structure: {:?}", inst.fields[2].1);
+        };
+        assert_eq!(part.fields, [("Weight".to_string(), Value::Float(0.5))]);
+        assert_eq!(member_counts(&inst), (4, 1));
+    }
+
+    #[test]
+    fn a_member_the_library_lacks_is_kept_as_text_and_saves_byte_identical() {
+        let inst = parse_meta(&dump("CZqRoot"), XML.as_bytes()).expect("reads");
+        assert_eq!(inst.extras.len(), 1);
+        assert_eq!(inst.extras[0].tag, "zqUnheard");
+        assert_eq!(inst.extras[0].text, "kept as written");
+        let saved = crate::meta::write_meta(&inst).expect("writes");
+        assert_eq!(saved, XML, "no hash_ spelling and no element lost");
+    }
+
+    #[test]
+    fn a_root_whose_hash_is_of_another_spelling_is_not_found() {
+        match parse_meta(&dump("CZqOther"), XML.as_bytes()) {
+            Err(MetaError::UnknownType(name)) => assert_eq!(name, "CZqRoot"),
+            other => panic!("the root must not resolve: {other:?}"),
+        }
+        let (tree, untyped) =
+            parse_typed_or_tree(&dump("CZqOther"), XML.as_bytes()).expect("reads as its tree");
+        assert_eq!(tree.type_name, "CZqRoot");
+        assert_eq!(untyped.as_deref(), Some("CZqRoot"));
+        let (_, untyped) = parse_typed_or_tree(&dump("CZqRoot"), XML.as_bytes()).expect("typed");
+        assert_eq!(untyped, None);
+    }
+}

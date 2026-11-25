@@ -13,9 +13,11 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use or_io::container::rpf::{
-    read_rpf9_body, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver, RpfArchive, RPF9_MAGIC,
+    read_rpf9_body, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver, RpfArchive, GTA6_NAMES_ENV,
+    RPF9_MAGIC, RPF9_SLOT,
 };
 use or_io::gta6::hash::name_hash32;
+use or_io::gta6::names::{vocabulary_file, Vocabulary};
 use or_io::gta6::script::compiled::{Compiled, NATIVE};
 use or_io::gta6::script::native_addresses::NativeAddresses;
 use or_io::meta::binary::hash_index::spelled_hash;
@@ -36,8 +38,9 @@ usage:
                            [--exe <exe>] [--range <count>] [--max-bodies <n>|unlimited]
 
 Counts, per hash space, the hashes an install holds, how many resolve to a name and how many do
-not. A GTA VI install is walked through its mounted tables, nested archives included; a GTA V
-install through its RPF7 archives, whose entry names are text, and its metadata files.
+not, and how many each source of names resolved. A GTA VI install is walked through its mounted
+tables, nested archives included, every body read by its table row; a GTA V install through its
+RPF7 archives, whose entry names are text, and its metadata files.
   --out <file>        write each unresolved hash, its space and one place it occurs, to <file>
   --top-only          do not descend into nested archives
   --every <n>         read one body in every <n> (default 1)
@@ -64,6 +67,15 @@ const DEFAULT_BODIES: u64 = 5000;
 const BODIES_FLAG: &str = "--max-bodies";
 /// GTA V's metadata files, read through the metadata readers.
 const GTA5_METADATA: [&str; 4] = ["ymt", "ymf", "ymap", "ytyp"];
+/// The sources a resolved hash is credited to, as the report names them.
+const NAMES_TABLES: &str = "names-folder tables";
+const NAMES_VOCABULARY: &str = "names-folder vocabulary";
+const KEPT_VOCABULARY: &str = "kept vocabulary";
+const CACHE_AND_WORDS: &str = "local names cache and bundled words";
+const READER: &str = "metadata reader";
+const ROOT_TYPES: &str = "root type table";
+const DOCUMENT_STRINGS: &str = "document strings";
+const LISTINGS: &str = "lifted listings";
 
 /// A space of hashes that name one kind of thing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,10 +121,12 @@ impl Space {
     }
 }
 
-/// One space's distinct hashes: those resolved, and those not with the first place each was seen.
+/// One space's distinct hashes: those resolved, each credited to the source that first named it,
+/// and those not with the first place each was seen.
 #[derive(Default)]
 struct Count {
     resolved: HashSet<u64>,
+    by: BTreeMap<&'static str, usize>,
     unresolved: BTreeMap<u64, String>,
 }
 
@@ -153,6 +167,8 @@ struct Census {
     scripts: u64,
     /// How many natives the lifted listings declare by address, `None` where none were given.
     native_table: Option<usize>,
+    /// The sources of entry names the walk looked up, in the order it tried them.
+    entry_sources: Vec<&'static str>,
     /// Whether a body was passed over because the ceiling was reached.
     stopped: bool,
     cancelled: bool,
@@ -163,14 +179,38 @@ impl Census {
         &self.counts[space as usize]
     }
 
-    /// Record `key` in `space`; `place` is built only for a hash first seen unresolved.
-    fn note(&mut self, space: Space, key: u64, resolved: bool, place: impl FnOnce() -> String) {
+    /// Record `key` in `space`, resolved `by` a source or not; `place` is built only for a hash
+    /// first seen unresolved.
+    fn note(
+        &mut self,
+        space: Space,
+        key: u64,
+        by: Option<&'static str>,
+        place: impl FnOnce() -> String,
+    ) {
         let count = &mut self.counts[space as usize];
-        if resolved {
-            count.unresolved.remove(&key);
-            count.resolved.insert(key);
-        } else if !count.resolved.contains(&key) {
-            count.unresolved.entry(key).or_insert_with(place);
+        match by {
+            Some(source) => {
+                count.unresolved.remove(&key);
+                if count.resolved.insert(key) {
+                    *count.by.entry(source).or_default() += 1;
+                }
+            }
+            None if !count.resolved.contains(&key) => {
+                count.unresolved.entry(key).or_insert_with(place);
+            }
+            None => {}
+        }
+    }
+
+    /// The sources a hash of `space` can be resolved by in this run.
+    fn sources(&self, space: Space) -> Vec<&'static str> {
+        match space {
+            Space::Name64 | Space::Name32 | Space::Column => self.entry_sources.clone(),
+            Space::Class => vec![READER, ROOT_TYPES],
+            Space::Member | Space::Enum => vec![READER],
+            Space::Text => vec![READER, DOCUMENT_STRINGS],
+            Space::Native => self.native_table.map_or(Vec::new(), |_| vec![LISTINGS]),
         }
     }
 }
@@ -266,11 +306,11 @@ fn census_command(args: &[String]) -> Result<(), String> {
     let census = match game {
         Game::Gta6 => {
             let keys = super::gta6_keys::load(keys.as_deref(), exe.as_deref())?;
-            let resolver = load_resolver(names.as_deref());
+            let names = load_names(names.as_deref());
             let natives = load_natives(listings.as_deref())?;
             let gta6 = Gta6 {
                 keys: &keys,
-                resolver: &resolver,
+                names: &names,
                 natives: natives.as_ref(),
             };
             census_gta6(&root, &archives, &options, &cancel, &gta6)
@@ -306,6 +346,7 @@ fn census_gta6(
 ) -> Census {
     let mut walk = Walk::new(options, cancel);
     walk.census.native_table = gta6.natives.map(NativeAddresses::len);
+    walk.census.entry_sources = gta6.names.iter().map(|s| s.label).collect();
     let keys = gta6.keys;
     for (i, path) in archives.iter().enumerate() {
         if cancel.is_set() {
@@ -337,8 +378,68 @@ fn census_gta6(
 /// What a GTA VI walk opens and names with.
 struct Gta6<'a> {
     keys: &'a GtaViKeys,
-    resolver: &'a NameResolver,
+    /// The sources of entry names, tried in order.
+    names: &'a [Source],
     natives: Option<&'a NativeAddresses>,
+}
+
+impl<'a> Gta6<'a> {
+    /// The path whose name64 is `hash`, and the first source that names it.
+    fn name64(&self, hash: u64) -> Option<(&'a str, &'static str)> {
+        let names = self.names;
+        names
+            .iter()
+            .find_map(|s| s.resolver.lookup(hash).map(|name| (name, s.label)))
+    }
+
+    /// The first source whose vocabulary names the name32 `hash`.
+    fn name32(&self, hash: u32) -> Option<&'static str> {
+        let names = self.names;
+        let source = names
+            .iter()
+            .find(|s| s.resolver.lookup_name32(hash).is_some());
+        source.map(|s| s.label)
+    }
+}
+
+/// A source of entry names, under the label the report credits it with.
+struct Source {
+    label: &'static str,
+    resolver: NameResolver,
+}
+
+/// `entry`'s size as its row states it: a 24-byte row's inflated size, else a 20-byte row's
+/// stored extent.
+pub(super) fn row_size(mount: &Gta6Mount, entry: &Gta6Entry) -> Option<u64> {
+    entry.real.or_else(|| slot_extent(mount, entry))
+}
+
+/// The stored extent of a 20-byte row, the row of a headerless body that follows a 16-byte slot;
+/// `None` for any other row.
+fn slot_extent(mount: &Gta6Mount, entry: &Gta6Entry) -> Option<u64> {
+    if entry.stored.is_some() {
+        return None;
+    }
+    let extra = mount.archive.entry_extra(entry.index as usize)?;
+    extra.nested.map(|row| row.stored_size())
+}
+
+/// `entry`'s inflated body, read by its table row: deciphered and walked by its chunk table, or
+/// for a clear 20-byte row, read past the slot its headerless body follows, inflating at most
+/// `limit` bytes.
+pub(super) fn read_row(
+    file: &mut File,
+    mount: &Gta6Mount,
+    entry: &Gta6Entry,
+    keys: &GtaViKeys,
+    limit: u64,
+) -> Result<Vec<u8>, String> {
+    if entry.cipher.is_none() && slot_extent(mount, entry).is_some() {
+        let start = mount.absolute_start(entry).ok_or("no entry row")?;
+        let read = read_rpf9_body(&mut *file, start + RPF9_SLOT, limit);
+        return read.map(|(_, bytes)| bytes).map_err(|e| e.to_string());
+    }
+    (mount.read_entry_decrypted(&mut *file, entry, keys)).map_err(|e| e.to_string())
 }
 
 struct Walk<'a> {
@@ -380,9 +481,9 @@ impl<'a> Walk<'a> {
         depth: usize,
     ) {
         for group in mount.archive.groups() {
-            let named = gta6.resolver.lookup(group.name_hash).is_some();
+            let by = gta6.name64(group.name_hash).map(|(_, source)| source);
             self.census
-                .note(Space::Column, group.name_hash, named, || label.to_string());
+                .note(Space::Column, group.name_hash, by, || label.to_string());
         }
         for entry in &mount.archive.entries {
             if self.cancel.is_set() {
@@ -390,16 +491,19 @@ impl<'a> Walk<'a> {
                 return;
             }
             let place = || format!("{label}#{}", entry.index);
-            let name = gta6.resolver.lookup(entry.name64);
+            let named = gta6.name64(entry.name64);
+            let name = named.map(|(name, _)| name);
             if entry.name64 != 0 {
-                self.census
-                    .note(Space::Name64, entry.name64, name.is_some(), place);
+                let by = named.map(|(_, source)| source);
+                self.census.note(Space::Name64, entry.name64, by, place);
             }
             if let Some(hash) = entry.name32 {
-                let named = gta6.resolver.lookup_name32(hash).is_some()
-                    || name.is_some_and(|n| name_hash32(n.as_bytes()) == hash);
-                self.census
-                    .note(Space::Name32, u64::from(hash), named, place);
+                // A name32 is also named by the path its name64 resolves to.
+                let by = gta6.name32(hash).or_else(|| {
+                    let named = named.filter(|(n, _)| name_hash32(n.as_bytes()) == hash);
+                    named.map(|(_, source)| source)
+                });
+                self.census.note(Space::Name32, u64::from(hash), by, place);
             }
             match mount.entry_begins_archive(&mut *file, entry) {
                 Ok(true) if self.options.top_only => self.census.nested += 1,
@@ -430,47 +534,22 @@ impl<'a> Walk<'a> {
         place: &str,
     ) {
         let limit = self.options.limit;
-        let read = match entry.cipher {
-            Some(cipher)
-                if cipher.cipher_type != CONTENT_CIPHER || !gta6.keys.has_content_keys() =>
-            {
-                self.census.no_key += 1;
-                return;
-            }
-            Some(_) => {
-                let size = entry.real.or_else(|| {
-                    let extra = mount.archive.entry_extra(entry.index as usize)?;
-                    extra.nested.map(|row| row.stored_size())
-                });
-                if size.is_some_and(|s| s > limit) {
-                    self.census.over_limit += 1;
-                    return;
-                }
-                if !self.admit() {
-                    return;
-                }
-                mount
-                    .read_entry_decrypted(&mut *file, entry, gta6.keys)
-                    .map_err(|e| e.to_string())
-            }
-            None => {
-                if entry.real.is_some_and(|r| r > limit) {
-                    self.census.over_limit += 1;
-                    return;
-                }
-                if !self.admit() {
-                    return;
-                }
-                let cap = entry.real.map_or(limit, |r| r.min(limit));
-                match mount.absolute_start(entry) {
-                    Some(start) => read_rpf9_body(&mut *file, start, cap)
-                        .map(|(_, bytes)| bytes)
-                        .map_err(|e| e.to_string()),
-                    None => Err("no entry row".to_string()),
-                }
-            }
+        let keys = gta6.keys;
+        let unopened = |c: &or_io::container::rpf::Gta6Cipher| {
+            c.cipher_type != CONTENT_CIPHER || !keys.has_content_keys()
         };
-        match read {
+        if entry.cipher.as_ref().is_some_and(unopened) {
+            self.census.no_key += 1;
+            return;
+        }
+        if row_size(mount, entry).is_some_and(|s| s > limit) {
+            self.census.over_limit += 1;
+            return;
+        }
+        if !self.admit() {
+            return;
+        }
+        match read_row(file, mount, entry, keys, limit) {
             Ok(bytes) => {
                 let census = &mut self.census;
                 tally_body(&bytes, place, Some(gta6.keys), gta6.natives, census)
@@ -580,7 +659,8 @@ fn tally_body(
             let o = ins.operands;
             let rva = u32::from_le_bytes([o[0], o[1], o[2], o[3]]);
             let named = natives.is_some_and(|table| table.name_of(rva).is_some());
-            census.note(Space::Native, u64::from(rva), named, || {
+            let by = named.then_some(LISTINGS);
+            census.note(Space::Native, u64::from(rva), by, || {
                 format!("{place}+{:#x}", ins.offset)
             });
         }
@@ -632,12 +712,12 @@ impl Tree<'_> {
         match value {
             Value::Hash(h) if !h.raw.is_empty() => {
                 self.census
-                    .note(Space::Text, u64::from(h.hash), true, String::new)
+                    .note(Space::Text, u64::from(h.hash), Some(READER), String::new)
             }
             Value::Hash(h) if h.hash != 0 => {
-                let named = self.strings.contains(&h.hash);
+                let by = self.strings.contains(&h.hash).then_some(DOCUMENT_STRINGS);
                 self.census
-                    .note(Space::Text, u64::from(h.hash), named, || place.to_string())
+                    .note(Space::Text, u64::from(h.hash), by, || place.to_string())
             }
             Value::Enum { type_name, variant } => {
                 self.name(Space::Enum, type_name);
@@ -663,13 +743,14 @@ impl Tree<'_> {
         match spelled_hash(text) {
             Some(hash) => {
                 let named = space == Space::Class && root_types::name_for(hash).is_some();
+                let by = named.then_some(ROOT_TYPES);
                 self.census
-                    .note(space, u64::from(hash), named, || place.to_string());
+                    .note(space, u64::from(hash), by, || place.to_string());
             }
             None if text.is_empty() => {}
             None => {
                 let key = u64::from(literal_string_hash(text.as_bytes()));
-                self.census.note(space, key, true, String::new);
+                self.census.note(space, key, Some(READER), String::new);
             }
         }
     }
@@ -732,6 +813,7 @@ fn report(census: &Census, game: Game, options: &Options) -> String {
             count.unresolved().len(),
         ));
     }
+    out.push_str(&shares(census, game));
     if census.stopped {
         if let Some(note) = options.bodies.note(census.bodies, BODIES_FLAG) {
             out.push_str(&format!("  bodies: {note}\n"));
@@ -739,6 +821,28 @@ fn report(census: &Census, game: Game, options: &Options) -> String {
     }
     if census.cancelled {
         out.push_str("  CANCELLED: these counts cover only what was walked before the stop.\n");
+    }
+    out
+}
+
+/// Per space seen, how many of its hashes each source it could be named by resolved, and their
+/// share of the hashes seen, so a later run shows what a new source adds.
+fn shares(census: &Census, game: Game) -> String {
+    let mut out = String::from("  resolved by source, of the hashes each space saw\n");
+    for space in SPACES {
+        let count = census.count(space);
+        let sources = census.sources(space);
+        let entry_space = matches!(space, Space::Name64 | Space::Name32 | Space::Column);
+        if count.seen() == 0 || sources.is_empty() || (game == Game::Gta5 && entry_space) {
+            continue;
+        }
+        let share = |source: &&str| {
+            let n = count.by.get(source).copied().unwrap_or(0);
+            let percent = 100.0 * n as f64 / count.seen() as f64;
+            format!("{source} {n} ({percent:.1}%)")
+        };
+        let row: Vec<String> = sources.iter().map(share).collect();
+        out.push_str(&format!("  {:<18} {}\n", space.label(), row.join(", ")));
     }
     out
 }
@@ -823,9 +927,45 @@ fn load_natives(dir: Option<&Path>) -> Result<Option<NativeAddresses>, String> {
     Ok(Some(table))
 }
 
-/// The recovered names `--names` (or `OPENRAGE_GTA6_NAMES`) points at, with the vocabulary the app keeps.
-fn load_resolver(dir: Option<&Path>) -> NameResolver {
-    crate::gta6_name_sources::load(dir)
+/// The sources of entry names, in the order a lookup tries them: the name tables and the
+/// vocabulary of the recovered-names folder `--names` (or [`GTA6_NAMES_ENV`]) points at, then the
+/// vocabulary the app keeps, then its cache of resolved names and the bundled words.
+fn load_names(dir: Option<&Path>) -> Vec<Source> {
+    let folder = dir
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::var_os(GTA6_NAMES_ENV).map(PathBuf::from));
+    let mut names = Vec::new();
+    if let Some(folder) = folder {
+        // The files `NameResolver::load` reads as its shortcut, kept apart to be credited apart.
+        let mut tables = NameResolver::new();
+        if let Ok(text) = std::fs::read_to_string(folder.join("toc-entries-resolved.tsv")) {
+            tables.add_toc_entries_tsv(&text);
+        }
+        if let Ok(text) = std::fs::read_to_string(folder.join("resolved-names.tsv")) {
+            tables.add_hash_name_tsv(&text);
+        }
+        names.push(Source {
+            label: NAMES_TABLES,
+            resolver: tables,
+        });
+        names.push(Source {
+            label: NAMES_VOCABULARY,
+            resolver: NameResolver::load_vocabulary(&folder),
+        });
+    }
+    if let Some(config) = or_title::config::config_dir() {
+        let kept = Vocabulary::load(&vocabulary_file(&config));
+        names.push(Source {
+            label: KEPT_VOCABULARY,
+            resolver: NameResolver::from_vocabulary(kept),
+        });
+    }
+    // Every source at once, last: what it alone names is the local cache and the bundled words.
+    names.push(Source {
+        label: CACHE_AND_WORDS,
+        resolver: crate::gta6_name_sources::load(dir),
+    });
+    names
 }
 
 #[cfg(test)]

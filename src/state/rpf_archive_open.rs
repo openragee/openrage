@@ -19,14 +19,13 @@ pub fn open_archive_from_disk(
         give_gta6_keys();
     }
     let opened = RpfArchive::open_with(path, crypto);
-    opened.map(Arc::new).map_err(|e| match e {
-        or_io::IoError::Rpf9TocEncrypted => super::gta_vi::rpf9_refusal_at(path)
-            .unwrap_or_else(|| format!("open '{}': {e}", path.display())),
-        _ => format!("open '{}': {e}", path.display()),
+    opened.map(Arc::new).map_err(|e| {
+        super::gta_vi::rpf9_unopened_at(path, &e)
+            .unwrap_or_else(|| format!("open '{}': {e}", path.display()))
     })
 }
 
-/// A GTA VI archive on disk as the tree every archive opens as, read entry by entry from its file; `None` for any other file, and with no key.
+/// A GTA VI archive on disk as the tree every archive opens as, read entry by entry from its file; `None` for any other file, with no key, and, said in a toast, where it does not open.
 pub(super) fn gta6_tree(
     path: &Path,
     crypto: &Arc<dyn RpfCryptoProvider>,
@@ -39,9 +38,16 @@ pub(super) fn gta6_tree(
     if magic != or_io::container::rpf::RPF9_MAGIC.to_le_bytes() || !give_gta6_keys() {
         return None;
     }
-    let archive = RpfArchive::open_with(path, Arc::clone(crypto)).ok()?;
-    let tree = super::rpf_session::RpfDocument::new(archive).ok()?;
-    Some(super::DocPayload::Rpf(tree))
+    let opened = RpfArchive::open_with(path, Arc::clone(crypto))
+        .map_err(|e| super::gta_vi::rpf9_unopened_at(path, &e).unwrap_or_else(|| e.to_string()))
+        .and_then(super::rpf_session::RpfDocument::new);
+    match opened {
+        Ok(tree) => Some(super::DocPayload::Rpf(tree)),
+        Err(why) => {
+            super::rpf9_scan::rpf9_table::offer_unopened(path, why);
+            None
+        }
+    }
 }
 
 /// Hands the archive reader the GTA VI keys and names the app holds; `false` when it holds no keys.

@@ -57,6 +57,10 @@ pub(super) fn draw_facts_grid(ui: &mut egui::Ui, id: &str, facts: &Facts) {
 
 /// `Legacy, version 165`: the edition a resource's own version names, and the file's own version once a save would write another.
 pub(super) fn edition(doc: &crate::state::Document) -> Option<String> {
+    // A GTA VI body is of neither GTA V edition, whatever its resource's version reads as.
+    if crate::state::rpf9_scan::from_gta_vi(doc.path.as_deref()) {
+        return None;
+    }
     let version = doc.resource.as_ref()?.seal.version();
     let format = or_io::gta5::formats::format(doc.kind.extension())?;
     let target = format.target_of_version(version).ok()?;

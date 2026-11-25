@@ -25,13 +25,16 @@ pub(super) fn body_payload(
             if let Some(names) = gta6_name_pool::payload(path, &find, &bytes) {
                 return Ok(names);
             }
+            if let Some(listing) = script_of(&bytes) {
+                return Ok(listing);
+            }
             return Ok(DocPayload::Hex(HexDocument { bytes, banner }));
         }
         view => view?,
     };
     let resource = || resource.ok_or_else(not_a_start);
     let read = match view {
-        View::Xml | View::Text => return Ok(document_io::text_payload(path, bytes)),
+        View::Xml | View::Text => return Ok(super::gta6_data_xml::payload(path, bytes)),
         View::Pso => {
             gta6_dialogue::opened(path, &find, &bytes);
             return Ok(DocPayload::Meta(MetaDocument::from_bytes(bytes)));
@@ -139,5 +142,13 @@ pub(super) fn body_payload(
         }
     };
     // A body its reader refuses is shown as its bytes, under the refusal.
-    read.or_else(|banner| Ok(DocPayload::Hex(HexDocument { bytes, banner })))
+    read.or_else(|banner| match script_of(&bytes) {
+        Some(listing) => Ok(listing),
+        None => Ok(DocPayload::Hex(HexDocument { bytes, banner })),
+    })
+}
+
+/// A compiled GTA VI program's listing, which a headerless body no measured layout names may be.
+fn script_of(bytes: &[u8]) -> Option<DocPayload> {
+    super::ciphered::gta6_script_view::script_payload(bytes)
 }

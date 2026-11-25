@@ -13,6 +13,8 @@
 //!                                          name, hash or kind matches
 //!   `rpf9 census <build-root>`             walk every archive and nested table, count them, and
 //!                                          classify each flagged body by its inflated head
+//!   `rpf9 patch|fits <archive> --entry …`  bodies changed chunk by chunk, the tables kept byte for
+//!                                          byte; `fits` writes nothing
 //!
 //! With `--strings`, `list` and `extract` show the strings a PSO document carries, its enciphered runs
 //! deciphered with the key snapshot. `--exe` names the game executable a masked snapshot opens with.
@@ -40,6 +42,8 @@ use or_io::meta::binary::pso::string_names;
 mod find;
 #[path = "rpf9_install.rs"]
 mod install;
+#[path = "rpf9_patch.rs"]
+pub(crate) mod patch;
 
 pub(crate) fn run(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
@@ -53,6 +57,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             crate::rpf9_write::run(verb, &args[1..])
         }
         Some(verb @ ("add" | "build")) => crate::rpf9_write::run(verb, &args[1..]),
+        Some(verb @ ("patch" | "fits")) => patch::run(verb, &args[1..]),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -75,7 +80,10 @@ usage:
   openrage-cli rpf9 rename <archive.rpf> [inner/path] --entry <selector> --name <path> --out <new.rpf> [--names <dir>] [--keys <snapshot>]
   openrage-cli rpf9 defrag <archive.rpf> --out <new.rpf> [--keys <snapshot>]
   openrage-cli rpf9 add <archive.rpf> [inner/path] --name <path> --with <file> [--type <code>] --out <new.rpf> [--names <dir>] [--keys <snapshot>]
-  openrage-cli rpf9 build <folder> --key-from <archive.rpf> --out <new.rpf> [--keys <snapshot>]";
+  openrage-cli rpf9 build <folder> --key-from <archive.rpf> --out <new.rpf> [--keys <snapshot>]
+  openrage-cli rpf9 patch <archive.rpf> --entry <path> --with <file> [--entry <path> --with <file> ...] --out <new.rpf> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 fits <archive.rpf> --entry <path> --with <file> [--entry <path> --with <file> ...] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+      (patch changes bodies chunk by chunk into a new file whose tables stay byte-identical; fits says per chunk whether each would, and writes nothing)";
 
 fn usage(msg: &str) -> ExitCode {
     eprintln!("Error: {msg}");
@@ -163,8 +171,8 @@ fn load_resolver(dir: Option<&Path>) -> NameResolver {
 // --- mounting and the inner path --------------------------------------------
 
 /// Open the top-level archive at `path` and walk `inner` (slash-separated nested-archive selectors)
-/// into it, returning the mount reached. Each component must name a nested archive; the file stays
-/// open in `file` for later body reads.
+/// into it, returning the mount reached. Each run of components must name a nested archive, the
+/// longest first, as a recovered name may hold slashes; the file stays open for later body reads.
 fn mount_path(
     file: &mut File,
     inner: &[String],
@@ -173,9 +181,13 @@ fn mount_path(
 ) -> Result<Gta6Mount, String> {
     let mut mount = Gta6Mount::open_root(file, keys).map_err(|e| e.to_string())?;
     mount.archive.resolve_names(resolver);
-    for component in inner {
-        let entry = find_entry(&mount, component)
-            .ok_or_else(|| format!("no entry {component:?} in the archive"))?;
+    let mut at = 0;
+    while at < inner.len() {
+        let (entry, next) = ((at + 1..=inner.len()).rev())
+            .find_map(|end| find_entry(&mount, &inner[at..end].join("/")).map(|e| (e, end)))
+            .ok_or_else(|| format!("no entry {:?} in the archive", inner[at..].join("/")))?;
+        let component = inner[at..next].join("/");
+        at = next;
         if !mount
             .entry_begins_archive(file, &entry)
             .map_err(|e| e.to_string())?

@@ -22,7 +22,7 @@ pub const CLASSES: [(u8, &str); 9] = [
 pub const TYPES: [(u32, &str); 36] = [
     (0x02, "drawable"),
     (0x03, "fragment"),
-    (0x04, "texture dictionary"),
+    (0x04, "drawable dictionary"),
     (0x05, "texture dictionary"),
     (0x06, "bound"),
     (0x0B, "headerless metadata"),
@@ -100,6 +100,9 @@ mod tests {
         }
         assert_eq!(TYPES.map(|(c, _)| c), VERSIONS.map(|(c, _)| c));
         assert_eq!(kind_label(None, Some(0x02)), "drawable");
+        // Type 4's rows hold drawables, at a drawable's version; type 5's open as textures.
+        assert_eq!(kind_label(None, Some(0x04)), "drawable dictionary");
+        assert_eq!(kind_label(None, Some(0x05)), "texture dictionary");
         assert_eq!(kind_label(None, Some(0x58)), "cloth");
     }
 

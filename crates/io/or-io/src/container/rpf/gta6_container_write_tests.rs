@@ -457,9 +457,9 @@ fn replace_then_reopen_reads_the_new_bytes() {
 }
 
 #[test]
-fn a_body_the_reader_would_not_read_back_is_refused() {
+fn a_body_the_reader_would_not_read_back_is_refused_and_a_stored_chunk_reads_by_its_table() {
     let file = sample();
-    // Plain text stored raw, and a chunk that does not compress, are not bodies the reader detects.
+    // Plain text stored raw is no body the reader detects, under a row with no chunk table.
     assert!(write(&file, |w| {
         w.replace(&[0], text("a longer alpha ", 300));
     })
@@ -473,10 +473,12 @@ fn a_body_the_reader_would_not_read_back_is_refused() {
             x as u8
         })
         .collect();
-    assert!(write(&file, |w| {
-        w.replace(&[1], noise);
+    // A chunk that does not compress is stored, and the row's chunk table reads it back.
+    let (_, out) = write(&file, |w| {
+        w.replace(&[1], noise.clone());
     })
-    .is_err());
+    .expect("a stored chunk is written");
+    assert_eq!(chunked(&out, &open(&out), 1), noise);
 }
 
 #[test]

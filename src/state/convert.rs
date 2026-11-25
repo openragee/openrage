@@ -344,6 +344,11 @@ impl AppState {
     /// The edition the open document `doc` converts to, or why it does not convert.
     pub fn document_conversion_to(&self, doc: DocumentId) -> Result<Generation, &'static str> {
         let document = self.document(doc).ok_or("That document is closed")?;
+        if super::rpf9_scan::from_gta_vi(document.path.as_deref()) {
+            return Err(tr!(
+                "A GTA VI body is of neither GTA V edition, so it does not convert"
+            ));
+        }
         match document.kind {
             DocumentKind::Ytd | DocumentKind::Ydr | DocumentKind::Ydd | DocumentKind::Yft => {}
             _ => return Err(ONLY),

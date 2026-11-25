@@ -97,6 +97,18 @@ pub struct MetaDocument {
     validation: Option<(u64, Option<String>)>,
     /// The names a GTA VI PSO's own string sections give its hash values.
     pub strings: std::sync::Arc<DocumentStrings>,
+    /// Whether its XML reads through GTA VI's library, as a GTA VI archive's data XML does.
+    pub gta6_library: bool,
+    /// The structure the document names that GTA VI's library lacks, so it read untyped.
+    pub gta6_untyped: Option<String>,
+    /// The elements of a GTA VI data XML its library does not type, counted when its text is read.
+    pub gta6_untyped_elements: usize,
+}
+
+/// GTA VI's library where `gta6` and one is installed, else the default.
+fn library_for(gta6: bool) -> &'static or_io::meta::SchemaLibrary {
+    let default = meta_schema();
+    (or_io::meta::names_library().filter(|_| gta6)).unwrap_or(default)
 }
 
 impl MetaDocument {
@@ -111,6 +123,34 @@ impl MetaDocument {
             _ => DocumentStrings::default(),
         };
         Self::from_parse(bytes, parse_result, strings)
+    }
+
+    /// GTA VI data XML `bytes` as `instance` read through GTA VI's library, which lacks `untyped`.
+    pub fn from_gta_vi_xml(
+        bytes: Vec<u8>,
+        instance: or_io::meta::MetaInstance,
+        untyped: Option<String>,
+    ) -> Self {
+        let parsed = or_io::meta::MetaDocument {
+            instance,
+            raw_bytes: Vec::new(),
+            layout: None,
+            revision: 0,
+            source_format: or_io::meta::SourceFormat::Xml,
+        };
+        let elements = or_io::meta::instance::parser::member_counts(&parsed.instance).1;
+        let doc = Self::from_parse(bytes, Ok(parsed), DocumentStrings::default());
+        Self {
+            gta6_library: true,
+            gta6_untyped: untyped,
+            gta6_untyped_elements: elements,
+            ..doc
+        }
+    }
+
+    /// The library this document's XML reads through.
+    pub fn schema(&self) -> &'static or_io::meta::SchemaLibrary {
+        library_for(self.gta6_library)
     }
 
     /// A GTA VI headerless RBM resource, from its virtual and its physical section.
@@ -179,6 +219,9 @@ impl MetaDocument {
             raw_bytes: bytes,
             validation: None,
             strings: std::sync::Arc::new(strings),
+            gta6_library: false,
+            gta6_untyped: None,
+            gta6_untyped_elements: 0,
         }
     }
 
@@ -199,6 +242,9 @@ impl MetaDocument {
             raw_bytes: Vec::new(),
             validation: None,
             strings: Default::default(),
+            gta6_library: false,
+            gta6_untyped: None,
+            gta6_untyped_elements: 0,
         }
     }
 
@@ -207,7 +253,11 @@ impl MetaDocument {
             return;
         }
         let xml: String = self.text.text.to_string();
-        let result = or_io::meta::MetaDocument::parse(meta_schema(), xml.into_bytes());
+        if self.gta6_library {
+            self.reparse_gta_vi_xml(xml.as_bytes());
+            return;
+        }
+        let result = or_io::meta::MetaDocument::parse(self.schema(), xml.into_bytes());
         match result {
             Ok(parsed_doc) => {
                 let prev_rev = self.parsed.as_ref().map(|p| p.revision).unwrap_or(0);
@@ -224,6 +274,26 @@ impl MetaDocument {
             Err(e) => {
                 self.parse_error = Some(e.to_string());
             }
+        }
+        self.parsed_at_text_revision = self.text_revision;
+    }
+
+    /// Read edited GTA VI data XML again as it was opened: typed where GTA VI's library holds its
+    /// structures, else as the schemaless tree, naming what is untyped.
+    fn reparse_gta_vi_xml(&mut self, xml: &[u8]) {
+        use or_io::meta::instance::parser::{member_counts, parse_typed_or_tree};
+        match parse_typed_or_tree(self.schema(), xml) {
+            Ok((instance, untyped)) => {
+                let prev_rev = self.parsed.as_ref().map(|p| p.revision).unwrap_or(0);
+                self.gta6_untyped_elements = member_counts(&instance).1;
+                self.gta6_untyped = untyped;
+                self.parsed = Some(ParsedMeta {
+                    instance,
+                    revision: prev_rev.wrapping_add(1),
+                });
+                self.parse_error = None;
+            }
+            Err(e) => self.parse_error = Some(e.to_string()),
         }
         self.parsed_at_text_revision = self.text_revision;
     }
@@ -389,7 +459,7 @@ impl MetaDocument {
         let text_is_newer = self.parsed_at_text_revision < self.text_revision;
         if text_is_newer {
             let xml: String = self.text.text.to_string();
-            return or_io::meta::MetaDocument::parse(meta_schema(), xml.into_bytes())
+            return or_io::meta::MetaDocument::parse(self.schema(), xml.into_bytes())
                 .map(|d| d.instance)
                 .map_err(|e| format!("the edited XML does not parse, so it cannot be saved: {e}"));
         }

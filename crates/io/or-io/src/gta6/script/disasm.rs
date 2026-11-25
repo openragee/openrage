@@ -571,6 +571,7 @@ pub fn op(opcode: u16) -> Option<Op> {
         0x18E => row("enter", ARGS1_LOCALS2_ALIGN1, "--", 0),
         0x18F => row("call_virtual", ARGS1_METHOD4_RAW2, "ref args -- results", 0),
         0x190 => row("virtual_function_ref", TYPE4_METHOD2, "ref -- fn", 0),
+        0x191 => row("builtin_function_ref", BUILTIN2, "-- fn", 0),
         0x192 => row("zero_slots", SLOTS2_SLOTS1, "v.. -- 0.. v..", 0),
         0x193 => row("load_i8", OFFSET2, "ref -- v", 0x08),
         0x194 => row("load_u8", OFFSET2, "ref -- v", 0x08),
@@ -629,6 +630,10 @@ pub fn op(opcode: u16) -> Option<Op> {
         0x1C9 => row("load_global_bytes", IMPORT1_OFFSET4_BYTES2, "-- v..", 0),
         0x1CA => row("global_ref", IMPORT1_OFFSET4, "-- ptr", 0),
         0x1CB => row("store_global_bytes", IMPORT1_OFFSET4_BYTES2, "v.. --", 0),
+        0x1CC => Op {
+            implied: Some((Kind::Offset, 8)),
+            ..row("load_u32", NONE, "ref -- v", 0)
+        },
         0x1CD => row(
             "replication_barrier",
             OFFSET2_BYTES2,
@@ -643,6 +648,13 @@ pub fn op(opcode: u16) -> Option<Op> {
         ),
         0x1CF => row("replication_barrier", OFFSET2_BYTES2, "ref -- ref", 0x08),
         0x1D0 => row("replication_barrier", OFFSET2_BYTES2, "ptr -- ptr", 0),
+        0x1D3 => row("array_replication_barrier", NONE, "arr i v -- arr i v", 0),
+        0x1D4 => row(
+            "array_replication_barrier",
+            SLOTS1,
+            "arr i v.. -- arr i v..",
+            0,
+        ),
         0x1D6 => row("intrinsic", RAW1, "n -- ptr", 0),
         0x1D7 => row("element_address", BYTES1, "ref i -- ptr", 0),
         0x1D8 => row("stack_address", SLOTS1, "v.. -- v.. ptr", 0),

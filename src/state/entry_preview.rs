@@ -170,7 +170,7 @@ pub fn preview(session: &RpfEditSession, id: RpfNodeId) -> Option<EntryPreview> 
         .map(|p| format!("/{p}"))
         .unwrap_or_default();
     let size = (!node.is_dir()).then(|| session.size_for(id)).flatten();
-    let kind = super::files_view::type_in_words(node);
+    let kind = super::files_view::kind_in_words(session, node);
     let drawn = matches!(
         super::files_view::pictures::picture_kind(&node.name),
         Some(PictureKind::Texture | PictureKind::Model)

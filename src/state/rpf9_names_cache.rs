@@ -56,7 +56,23 @@ fn sources(names_dir: Option<&Path>, config: Option<&Path>) -> Vec<PathBuf> {
         ]
         .map(|f| dir.join(f))
     });
-    dir.chain(config.map(vocabulary_file)).collect()
+    let config = config
+        .into_iter()
+        .flat_map(|config| [mined(config), vocabulary_file(config)]);
+    dir.chain(config).collect()
+}
+
+/// The table `hashes mine` writes under the configuration folder, beside the harvest.
+fn mined(config: &Path) -> PathBuf {
+    vocabulary_file(config).with_file_name("resolved-names.tsv")
+}
+
+/// The `hash<TAB>name` rows of a `resolved-names.tsv` table; a row that is not one is skipped.
+fn table_rows(text: &str) -> impl Iterator<Item = (u64, &str)> {
+    text.lines().filter_map(|line| {
+        let mut fields = line.split('\t');
+        Some((fields.next().and_then(hash_of)?, fields.next()?))
+    })
 }
 
 /// The key a cache is kept under: each source's path, then its size and modification time in
@@ -82,7 +98,7 @@ fn stamp(sources: &[PathBuf]) -> Vec<u8> {
 }
 
 /// Every hash the sources name, with the first name a source gives it: the folder's two name
-/// tables, its vocabulary, then the harvested one, as the resolver looked them up before.
+/// tables, the configuration folder's mined table, the folder's vocabulary, then the harvested one.
 fn gather(names_dir: Option<&Path>, config: Option<&Path>) -> HashMap<u64, String> {
     let mut pairs = HashMap::new();
     let mut add = |hash: u64, name: &str| {
@@ -101,11 +117,13 @@ fn gather(names_dir: Option<&Path>, config: Option<&Path>) -> HashMap<u64, Strin
                 }
             }
         }
-        for line in table("resolved-names.tsv").lines() {
-            let mut fields = line.split('\t');
-            if let (Some(hash), Some(path)) = (fields.next().and_then(hash_of), fields.next()) {
-                add(hash, path);
-            }
+        for (hash, path) in table_rows(&table("resolved-names.tsv")) {
+            add(hash, path);
+        }
+    }
+    if let Some(config) = config {
+        for (hash, path) in table_rows(&fs::read_to_string(mined(config)).unwrap_or_default()) {
+            add(hash, path);
         }
     }
     let folder = names_dir.map(|dir| {
@@ -348,6 +366,20 @@ mod tests {
         let resolver = load(Some(names.path()), Some(config.path()));
         assert_eq!(resolver.lookup(hash), Some("from/table"));
         assert_eq!(resolver.lookup(0x2a), Some("from/list"));
+    }
+
+    #[test]
+    fn the_mined_table_of_the_configuration_folder_names_a_hash() {
+        let (names, config) = folders();
+        let mined = super::mined(config.path());
+        fs::create_dir_all(mined.parent().expect("a folder")).expect("make the folder");
+        fs::write(&mined, "0x2b\tfrom/mined\nnot a row\n").expect("write the table");
+        let resolver = load(Some(names.path()), Some(config.path()));
+        assert_eq!(resolver.lookup(0x2b), Some("from/mined"));
+        assert_eq!(
+            load(None, Some(config.path())).lookup(0x2b),
+            Some("from/mined")
+        );
     }
 
     #[test]

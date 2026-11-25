@@ -81,7 +81,7 @@ pub fn draw(ui: &mut egui::Ui, state: &AppState, doc_id: DocumentId) {
             .on_hover_text(why);
             ui.separator();
         }
-        let lib = crate::state::meta_schema();
+        let lib = meta.schema();
         if !or_io::meta::has_default_library() {
             ui.label(
                 egui::RichText::new("⚠ no schema")
@@ -91,7 +91,7 @@ pub fn draw(ui: &mut egui::Ui, state: &AppState, doc_id: DocumentId) {
             )
             .on_hover_text(NO_SCHEMA);
         }
-        if let Some(s) = lib.struct_any(type_name).filter(|_| internals) {
+        if let Some(s) = (lib.resolve_any(type_name).map(|r| r.def)).filter(|_| internals) {
             ui.label(
                 egui::RichText::new(format!("← {}", s.source_path))
                     .small()

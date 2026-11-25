@@ -37,7 +37,7 @@ use super::gta6_archive::{
 };
 use super::gta6_chunk_table::{author, Chunk, Table as ChunkTable};
 use super::gta6_form_h;
-use super::gta6_mount::{open_at, Gta6Mount};
+use super::gta6_mount::{open_at, walk_table, Gta6Mount};
 use super::gta6_write::Rpf9Builder;
 use super::rpf9_scan::{read_rpf9_body, RPF9_SLOT, STREAM_CAP};
 use super::rpf9_toc::{GtaViKeys, Rpf9Toc};
@@ -846,8 +846,18 @@ fn stored_chunked(body: &[u8]) -> Result<(Vec<u8>, u32, Vec<u64>)> {
 /// As [`stored_chunked`], under a table of `mode`.
 fn stored_chunked_in(body: &[u8], mode: u8) -> Result<(Vec<u8>, u32, Vec<u64>)> {
     let (bytes, chunks) = chunk_body(body)?;
+    // A sized row is read by its chunk table, so a stored chunk need not be one the detector names.
+    if walk_table(&bytes, &chunks)
+        .ok()
+        .map(|(read, _, _)| read)
+        .as_deref()
+        != Some(body)
+    {
+        return Err(bad(
+            "the new body would be stored in a form OpenRage's reader does not read back",
+        ));
+    }
     let (u1, words) = author(&ChunkTable { mode, chunks })?;
-    check_reads_back(&bytes, body)?;
     Ok((bytes, u1, words))
 }
 

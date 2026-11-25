@@ -2,20 +2,32 @@
 
 What OpenRage reads, edits and saves of a GTA VI Xbox build, what it refuses and why, and how far each part was checked against a real build.
 
-GTA VI is a title of its own (`crates/title/or-title/src/game/profiles.rs`) with no declared format: nothing of it is a `#[record]` declaration, because there is no source to name a field by. Its readers are ordinary code in `crates/io/or-io/src/gta6/`, behind `or-io`'s `gta6` feature, and a name there says the role a field was measured to play. The archive is `crates/io/or-io/src/container/rpf/rpf9.rs` and the files beside it. The layouts themselves are in the gitignored docs/extra/ tier and are not repeated here.
+GTA VI is a title of its own (`crates/title/or-title/src/game/profiles.rs`) with no declared format: nothing of it is a `#[record]` declaration, because there is no source to name a field by. Its readers are ordinary code in `crates/io/or-io/src/gta6/`, behind `or-io`'s `gta6` feature, and a name there says the role a field was measured to play. The archive is read from its table by `crates/io/or-io/src/container/rpf/gta6_rpf.rs` and the files beside it, and scanned where no key is held. The layouts themselves are in the gitignored docs/extra/ tier and are not repeated here.
 
-## An archive is scanned, never listed
+## An archive is read from its table
 
-An RPF9 archive's header is in the clear; its table of contents and its names are encrypted with a key OpenRage does not have. So the archive is refused as an archive, and read another way: `crates/io/or-io/src/container/rpf/rpf9_scan.rs` passes over the file and finds the bodies stored in the clear by their own bytes.
+An RPF9 archive's header is in the clear, and its table of contents is enciphered with keys that are in the game's executable. OpenRage ships no key: it reads them out of the user's own executable, and [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md#give-openrage-your-executables-keys) gives the steps. With them, an archive opens behind `RpfArchive` as `RpfVersion::Rpf9` and is browsed as a GTA V archive is.
 
-- **A find has an offset and no name or path.** Every command and every view addresses a body by its offset in its archive. A body's end is stated only where its bytes state it or where the measured rule has no exception.
+- **One Files tree.** An archive the app opens is a folder of the Files tree, a nested archive is a folder in it, and a double-click opens an entry (`src/state/rpf_archive_open.rs`). An entry is read through its row's chunk table (`crates/io/or-io/src/container/rpf/gta6_mount.rs`, `crates/io/or-io/src/container/rpf/gta6_chunk_table.rs`), and an enciphered one is deciphered on a worker with the content key (`crates/io/or-io/src/container/rpf/gta6_content.rs`).
+- **Names.** A row names its entry by the 64-bit hash of its path. The tree shows the text where OpenRage holds a name that hashes to it, and the hash otherwise; the names are a folder of names `OPENRAGE_GTA6_NAMES` names, the table `hashes mine` writes into the configuration folder and the harvest kept there ([below](#names-naming-rules-and-use-labels)), read into one cache there (`src/state/rpf9_names_cache.rs`), and after those the names of the default hash index (the installed schema snapshot's, the public names and the parser names), each under its path hash.
+- **Kinds.** A row states what its entry is, a 24-byte row by its class byte and a 20-byte row by its resource type code (`crates/io/or-io/src/container/rpf/gta6_kinds.rs`). The tree and the Files table show each row's kind, and the filter matches a kind's words and the GTA V extension of the same kind. The Inspector shows a selected entry's kind, its stored and real sizes, whether it is enciphered, the shape of its row and, where no name is held, its name hash (`src/ui/panels/inspector/rpf9_entry.rs`).
+- **The tree's actions.** A single click opens a row in the preview tab, read on the load worker as a double-click reads it, and Copy hash gives the 64-bit path hash the table states, in the `0x` form the filter finds a row by (`src/state/rpf9_tree_actions.rs`).
+- **Extract and save from the tree.** Extract writes a row's body as the open reads it, a clear headerless resource in the loose form OpenRage reopens (`src/state/rpf9_tree_verbs.rs`). The tree's edits are never written into the archive they were read from: Save as… writes them to a new file, as [How an edit is saved](#how-an-edit-is-saved) says.
+
+The install opens as a plain folder, its archives in it.
+
+### With no key, a scan
+
+Without keys, or where a table does not open with the keys held, an archive opens in a tab of its own as the list of what a scan finds, a slice at a time on a worker, and a message says why (`src/state/rpf9_table.rs`, `src/state/rpf9_scan.rs`). `crates/io/or-io/src/container/rpf/rpf9_scan.rs` passes over the file and finds the bodies stored in the clear by their own bytes.
+
+- **A find has an offset and no name or path.** Every scan command and view addresses a body by its offset in its archive. A body's end is stated only where its bytes state it or where the measured rule has no exception.
 - **A find has a kind and a family.** The kind is what the bytes are (a nested archive, a run of zlib chunks, a stored resource, a movie, an audio container, an effect container, and a few more); the family is the word a person filters by: models, dictionaries, collision, navigation, animations, metadata, text, audio, movies, shaders, archives, other and unknown.
 - **A headerless resource has a role.** A resource with no header is placed in a family of layouts by the shape of its first words (`Rpf9Role`): a drawable, a fragment, a bound, a dictionary, a navigation cell, a particle effects list and the others the enum lists. A resource no layout places opens as its bytes, under the reason.
 - **A whole scan is kept.** A scan that read an archive to its end is kept in the configuration folder (`src/state/rpf9_kept.rs`), and the archive is listed from it while its size and modification time stand.
 
-The app opens a GTA VI folder as a plain folder, and an archive as the list of what a scan finds, a slice at a time on a worker (`src/state/rpf9_scan.rs`). Above the folder's Files view, a scan of every archive tallies the bodies by kind across the folder (`src/state/gta6_install_scan.rs`), and a click opens one.
+Above a GTA VI folder's Files view, Harvest names reads the names the folder's archives spell, and Scan every archive tallies the bodies a scan finds by kind across the folder, a click opening one (`src/ui/panels/hierarchy/gta6_install.rs`, `src/state/gta6_install_scan.rs`).
 
-⚠ A scan is not the table. A body stored encrypted, or one whose bytes fit no detector, is not found, and nothing a scan finds can be written back into its archive: every save writes a file of its own.
+⚠ A scan is not the table. A body stored enciphered, or one whose bytes fit no detector, is not found, and a body a scan finds saves only as a file of its own, never into an archive.
 
 ## What is read
 
@@ -50,22 +62,43 @@ A reader names what it does not read. Where the meaning of a field is not known,
 
 ## How an edit is saved
 
-Nothing is written into an archive. A save of a scanned body writes a **loose resource**, a file that a read at offset 0 returns as the sections it was written from (`crates/io/or-io/src/container/rpf/rpf9_write.rs`). Save As makes one from a scanned body, and Save writes over a loose resource that was opened from disk (`src/state/gta6_resource_save.rs`).
+Nothing is written into the archive a body was read from: every save writes a new file, of one of three kinds, and each save says which it wrote.
 
-Edits come in two kinds, and the difference decides how much can go wrong:
+- **A loose resource** is a file that a read at offset 0 returns as the sections it was written from (`crates/io/or-io/src/container/rpf/rpf9_write.rs`). Save As makes one from a body opened from an archive or found by a scan, and Save writes over a loose resource that was opened from disk (`src/state/gta6_resource_save.rs`).
+- **A patched copy** of an archive has each changed body written in its entry's place, chunk by chunk, and every byte of every table, header and signature as it was read. The table's signature still matches, and no check read in the game's code rejects such a body; the game has not been run with one.
+- **A rebuilt archive** has rows added, removed, renamed or resized, or its table laid out again (`crates/io/or-io/src/container/rpf/gta6_container_write.rs`). The game checks a signature over the table when it mounts an archive, and only its maker can sign one, so the game refuses a rebuilt archive.
+
+### A patched copy
+
+`crates/io/or-io/src/container/rpf/gta6_patch.rs` writes a patched copy (`plan_patch`, `write_patched_copy`). A body goes in place only at its row's real size, split at the row's own chunk boundaries, because each chunk's sizes are in the signed table:
+
+- A chunk's inflated size does not change, and its stored size is a ceiling: the game's read stops at the end of a chunk's DEFLATE stream and reads nothing of the bytes after it, up to the stored size.
+- A chunk whose content is unchanged keeps its stored bytes. A stored chunk takes new content of exactly its length. A deflated chunk takes new content of its inflated length whose DEFLATE fits the ceiling, filled to it by empty DEFLATE blocks laid before the stream, which no slack of 1 to 4 or 8 bytes can take.
+- An enciphered row is enciphered again over the windows its framing covers, at their absolute offsets, so an unchanged byte keeps its enciphered form.
+- A body of another length, and a chunk whose DEFLATE outgrows its ceiling, are refused by name with their sizes.
+- No write may touch a header, a table or a names blob of any archive on the way to the row, or the header and table of any archive nested in one. The copy is written beside its name, checked span by span against the source, and renamed only then; a file already at that name is refused.
+
+In the app, Save as… of an archive's tree (`src/state/rpf9_tree_verbs.rs`) and File ▸ Save into a copy of the archive… of a document opened from one (`src/state/gta6_archive_save.rs`) choose on a worker: a patched copy when every changed row is a body replaced at its real size that fits its chunks, else a rebuilt archive, and then the message names each row that kept the copy from being patched in place and why. In the CLI, `rpf9 patch` writes a patched copy and `rpf9 fits` says, writing nothing, whether each chunk of a replacement fits and by how many bytes one does not; `rpf9 replace` writes a rebuilt archive, and says so and names `rpf9 patch` where its change would have fitted in place.
+
+### An edit that moves nothing, and one that changes a length
+
+Edits of a body come in two kinds, and the difference decides how much can go wrong. Only one that moves nothing can give a body of its row's real size, which a patched copy needs:
 
 - **An edit that moves nothing** is written over the bytes its reader read: a constant, a texture key, a bone's transform, a key of a channel, a particle value, a texture in its own size, format and mips. The body is read again on the save's worker and the values shown are written in place.
 - **An edit that changes a length** lays out part of a section anew: a material that gains a parameter, a bone renamed, a geometry that outgrows its buffer, a navigation polygon deleted, a dictionary texture resized. `crates/io/or-io/src/gta6/map_grow.rs` adds and removes a map's entities the same way, and no view or command offers it yet. `crates/io/or-io/src/container/rpf/rpf9_grow.rs` moves every pointer at or past the edit. What a pointer is comes from a typed reader, so a word that looks like a pointer and that no reader names refuses the edit.
 
 A pack saves as a pack: every row of a texture left alone is carried as the file stores it, and a replaced texture is written as zlib rows of the sizes its entry states (`crates/io/or-io/src/gta6/ttpf_write.rs`). A texture given another size, format or mip count moves every texture after it (`crates/io/or-io/src/gta6/ttpf_relayout.rs`).
 
-⚠ No written file has been seen to load in the game. A loose resource and a saved pack open again in OpenRage as what was written, which is a round trip through one description and proves nothing about the game's reader.
+⚠ No written file has been run in the game. A loose resource, a saved pack and a patched copy open again in OpenRage as what was written, which is a round trip through one description and proves nothing about the game's reader.
 
 ## What is refused, and why
 
 | Refused | Why |
 |---|---|
-| Listing an archive by name, and writing an entry back into one | the table and the names are encrypted and OpenRage has no key |
+| Reading an archive's table without the keys | the table is enciphered and OpenRage ships no key; the archive is scanned instead |
+| Writing into the archive a body or a tree was read from | every save writes a new file, and the source is refused as its path |
+| A rebuilt archive, by the game | the game checks a signature over the table when it mounts an archive, and only its maker can sign one |
+| A body put in place at another length, or a chunk whose DEFLATE outgrows its stored size | a chunk's sizes are in the signed table, so the change needs a rebuilt archive |
 | Recomputing a PSO body's checksum | the algorithm is not known; an edited PSO is saved with the checksum it was read with, and the app says the game may refuse it (`src/state/gta6_meta_save.rs`) |
 | Writing a changed save record | its header holds a checksum of an unknown algorithm, so a record is read and never written |
 | A packed copy of a save | its body is compressed or encrypted; it is refused by the title and slot its clear head states |
@@ -93,7 +126,7 @@ A body is stored plainly, as zlib, or through **BCPack**, the console's entropy 
 
 ## Names, naming rules and use labels
 
-Nothing in an archive names a body, and a pack names no texture. Names come from what the bodies spell.
+An archive's table names an entry only by a hash, and a pack names no texture. Names come from what the bodies spell.
 
 **The harvest.** `crates/io/or-io/src/gta6/names.rs` reads the start of each body for printable names: the names resources state of themselves and of each other, and plain ones. Each name is hashed both ways, 32-bit and 64-bit (`crates/io/or-io/src/gta6/hash.rs`), into a `Vocabulary` kept in the configuration folder. From then on a hash read anywhere is shown by its name, in the CLI and in the app. The harvest also keeps the name each drawable and fragment states of itself, by its offset, which a scan's list shows beside the row. `openrage-cli rpf scan-names` runs it, and the app runs it as a job (`src/state/gta6_names.rs`, `src/state/gta6_install_harvest.rs`).
 
@@ -152,14 +185,25 @@ Radio and dialogue are joins across bodies, all read only. A station names track
 - **Checked by hand with the CLI.** The other readers were written against the owner's build and re-checked with commands that can fail: `rpf scan-relayout` (the loose-resource writer's rules against stored resources), `rpf scan-particles --validate` (an in-place write gives a section back unchanged), `rpf scan-maps --check` (level-of-detail links resolve), `ttpf plan` (a save's rows against the file's). No suite in the tree runs them, and no measured figure of a build is committed.
 - **Tested on inputs built by hand only.** Every unit test under `crates/io/or-io/src/gta6/` and `crates/tools/or-shader-front/src/rdna/` assembles its input from the layout; none reads a game file. Such a test passes when reader and writer are wrong the same way.
 - **Not checked against real bytes.** The saves, as above.
-- **Not checked in the game.** Anything written.
+- **A patched copy against its source.** The writer compares every table span of a copy with the source's before it returns, and `crates/io/or-io/tests/gta6_patch_in_place.rs` patches rows of each row shape of the build `OPENRAGE_GTA6_BUILD` names, reads each back and counts the rows that fit and those refused by name. It is install-gated, so a run without the build is a skip and not a pass.
+- **Not checked in the game.** Anything written, a patched copy included.
 
 ## Commands
 
-Every command is `openrage-cli` and a row below; `openrage-cli rpf` and `openrage-cli ttpf` with no argument print the full usage. An offset is where a scan found the body.
+Every command is `openrage-cli` and a row below; `openrage-cli rpf9`, `openrage-cli rpf` and `openrage-cli ttpf` with no argument print the full usage. An `rpf9` verb reads an archive's table and names an entry by its name, its hash as `0x…` or its number, through an inner path of nested archives; an `rpf` command's offset is where a scan found the body.
 
 | Command | What it does |
 |---|---|
+| `keys gta6` | reads the key snapshot out of the user's executable and keeps it masked in the configuration folder |
+| `rpf9 list`, `rpf9 pack` | an archive's rows from its table, each with its kind, its name or hash and its sizes; `pack` prints every row, each nested archive indented under its own |
+| `rpf9 tree-install` | every path of an install merged across its archives in the order the game mounts them, each from the last archive that names it |
+| `rpf9 find`, `rpf9 census` | the entries of every archive of an install, nested ones included, by `--name`, `--hash` or `--kind`; and the counts of entries, nested archives and enciphered entries per archive, never a name, into the folder `--out` names |
+| `rpf9 extract` | entries' bodies, inflated, at their exact extent; `--decrypt` deciphers an enciphered one, `--kind` keeps one kind, and `--dry-run` counts what would be written and writes nothing |
+| `rpf9 patch`, `rpf9 fits` | a patched copy from entries and their new bodies; and, writing nothing, whether each chunk of a replacement fits and by how many bytes one does not |
+| `rpf9 copy` | a new archive with every table deciphered and enciphered again and every body copied |
+| `rpf9 replace`, `remove`, `rename`, `defrag`, `add`, `build` | a rebuilt archive from one, or with `build` from a folder, which the game refuses, and each says so |
+| `dlc create-gta6` | a pack from a folder: a setup, a content definition and a change set packed with the folder's files into a new archive, which the game refuses |
+| `script compiled` | a deciphered script body as a compiled program: its header, instructions and native calls |
 | `rpf scan` | lists the bodies a scan finds in an archive, or those that start in a range |
 | `rpf list`, `rpf extract` | on an RPF9 archive, the scan's list by family, and the bodies extracted as stored, inflated or converted (textures as PNG, audio as `awc export` writes it, a model as glTF, metadata as XML) |
 | `rpf scan-install` | scans every archive under a folder and tallies the bodies by kind |

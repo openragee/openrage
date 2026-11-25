@@ -150,11 +150,13 @@ fn field_type<'a>(stated: &'a str, subtype: &str) -> (FieldType, &'a str) {
         "uint" => scalar(FieldType::U32),
         "int64" | "ptrdiff_t" => scalar(FieldType::S64),
         "uint64" | "size_t" => scalar(FieldType::U64),
-        "float" => scalar(FieldType::Float),
+        "float" | "ScalarV" => scalar(FieldType::Float),
         "float16" => scalar(FieldType::Float16),
         "double" => scalar(FieldType::Double),
         "Vec2f" => scalar(FieldType::Vector2),
         "Vec2V" => scalar(FieldType::Vec2V),
+        // Written as `x`, `y` and `z` attributes.
+        "UnkVec3F" => scalar(FieldType::Vector3),
         "Vec3V" => scalar(FieldType::Vec3V),
         "Vec4V" | "QuatV" => scalar(FieldType::Vec4V),
         "Mat33V" => scalar(FieldType::Mat33V),
@@ -394,6 +396,15 @@ mod tests {
             None
         );
         assert_eq!(index.name_or_literal(0x1234_ABCD), "hash_1234ABCD");
+    }
+
+    #[test]
+    fn a_three_float_vector_and_a_vector_scalar_read_typed() {
+        let dump = r#"{"structs":[{"name":"Zq","markup":"$struct$ =@Zq@\r\n{\r\n\t$UnkVec3F$ Spot;\r\n\t$ScalarV$ Gain;\r\n};\r\n"}]}"#;
+        let library = library_from_par_tree(dump.as_bytes()).expect("the dump reads");
+        let fields = &library.struct_("Zq").expect("Zq").fields;
+        assert_eq!(fields[0].ty, FieldType::Vector3);
+        assert_eq!(fields[1].ty, FieldType::Float);
     }
 
     #[test]

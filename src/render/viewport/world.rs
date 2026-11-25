@@ -526,18 +526,23 @@ impl RenderBridge {
                             wanted.push((material.priority, key, pixels));
                         }
                     }
-                    Some(Texture::Missing) => *stamp = MISSING,
+                    Some(Texture::Missing) => {
+                        *stamp = match world.cards.stated(key) {
+                            Some(_) => cards::stated::STATED,
+                            None => MISSING,
+                        }
+                    }
                     None => wanted.push((material.priority, key, pixels)),
                 }
             }
             if (material.made.as_ref()).is_none_or(|(_, made_with)| *made_with != with) {
-                // A colour map that is not on the device is a mid grey; a slot that names none samples the renderer's own stand-in.
+                // A colour map that is not on the device is a mid grey, or the colour its species' far stand-ins state where no file holds it; a slot that names none samples the renderer's own stand-in.
                 let constants = material.constants;
                 let maps = std::array::from_fn(|at| {
                     let key = material.maps[at]?;
                     let view = (world.palettes.get(&key)).or(world.textures.of(key).1);
                     match material.colours[at] {
-                        true => Some(view.unwrap_or(&grey)),
+                        true => Some(view.or(world.cards.stated(key)).unwrap_or(&grey)),
                         false => view,
                     }
                 });

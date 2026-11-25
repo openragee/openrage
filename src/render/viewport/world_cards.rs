@@ -18,6 +18,10 @@ use super::{Slot, WorldGpu};
 use crate::state::gta6_world::worldview::index::ModelRef;
 use crate::state::gta6_world::worldview::stream::slod::Species;
 use crate::state::gta6_world::worldview::stream::Selected;
+use stated::{stated, view_of};
+
+#[path = "world_cards_stated.rs"]
+pub(super) mod stated;
 
 /// What of the far stand-ins the renderer holds.
 #[derive(Default)]
@@ -32,6 +36,18 @@ pub(super) struct Cards {
     next: u32,
     /// The lists shown last, by their place in the selection.
     shown: Vec<u32>,
+    /// The colour a species' records state, by each colour map of its model no file holds, and a map of each such colour.
+    stated: HashMap<u64, [u8; 3]>,
+    views: HashMap<[u8; 3], wgpu::TextureView>,
+    /// The colour each species id's records state, worked out once a table.
+    by_id: HashMap<usize, Option<[u8; 3]>>,
+}
+
+impl Cards {
+    /// The colour map that stands in for `key`, a colour map no file holds, where the records of its species state a colour.
+    pub(super) fn stated(&self, key: u64) -> Option<&wgpu::TextureView> {
+        self.views.get(self.stated.get(&key)?)
+    }
 }
 
 /// Whether the camera at `eye` sees some of a list's sphere within its distance; a list faded out draws nothing.
@@ -58,15 +74,17 @@ impl WorldGpu {
     /// The meshes of the least detailed level of `model` whose every map is on the device or
     /// known never to come, each with the material the world draws it with, and the maps of its
     /// least detailed level that have not arrived put in `absent` with whether each is read
-    /// whole; what blends or lies on a surface is left out of a stand-in.
+    /// whole; what blends or lies on a surface is left out of a stand-in. A colour map no file
+    /// holds is `stand_in` where its species' records state a colour, and its key put in `stood`.
     // ponytail: every map a material names is waited for, normal maps too, which a bake reads
     // nothing of; wait for those of colour and coverage alone if the bakes are seen to lag.
     fn card_meshes<'a>(
         &'a self,
         (renderer, device): (&ViewportRenderer, &wgpu::Device),
         model: &ModelRef,
-        grey: &'a wgpu::TextureView,
+        (grey, stand_in): (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>),
         absent: &mut Vec<(u64, bool)>,
+        stood: &mut Vec<u64>,
     ) -> Option<Vec<CardMesh<'a>>> {
         let Some(Slot::Ready { lods, .. }) = self.models.get(model) else {
             return None;
@@ -81,7 +99,7 @@ impl WorldGpu {
                 if matches!(material.bucket, WorldBucket::Decal | WorldBucket::Blend) {
                     continue;
                 }
-                // As the world binds them: a model's own palette, a map on the device, a mid grey for a colour map no pack holds
+                // As the world binds them: a model's own palette, a map on the device, for a colour map no pack holds the colour its records state or a mid grey
                 let mut maps = [None; WORLD_MAPS];
                 for (at, key) in material.maps.iter().enumerate() {
                     let Some(key) = *key else {
@@ -98,7 +116,13 @@ impl WorldGpu {
                             }
                             None
                         }
-                        (None, (_, None)) => material.colours[at].then_some(grey),
+                        (None, (_, None)) if material.colours[at] => {
+                            if stand_in.is_some() {
+                                stood.push(key);
+                            }
+                            Some(stand_in.unwrap_or(grey))
+                        }
+                        (None, (_, None)) => None,
                     };
                 }
                 match self.pages.buffers(mesh.place.page) {
@@ -178,6 +202,7 @@ impl WorldGpu {
         if changed {
             self.cards.table = Some(Arc::clone(species));
             self.cards.slots.clear();
+            self.cards.by_id.clear();
         }
         // The model of each species a shown list names and no slot holds, by the nearest list that names it.
         let mut waits: HashMap<usize, f32> = HashMap::new();
@@ -197,6 +222,7 @@ impl WorldGpu {
         }
         // ponytail: a few bakes a frame, by id; nearest first if the bakes are seen to lag.
         let (mut settled, mut absent, mut models) = (Vec::new(), Vec::new(), Vec::new());
+        let mut stood = Vec::new();
         let grey = self.textures.grey(device, queue);
         let mut bakes = BAKES_A_FRAME;
         let mut more = false;
@@ -223,8 +249,23 @@ impl WorldGpu {
                 }
                 Some(Slot::Ready { .. }) => {}
             }
-            let Some(meshes) = self.card_meshes((&*renderer, device), &model, &grey, &mut absent)
-            else {
+            let lists = &selected.cards;
+            let colour = *(self.cards.by_id.entry(id))
+                .or_insert_with(|| u16::try_from(id).ok().and_then(|id| stated(lists, id)));
+            if let Some(colour) = colour {
+                (self.cards.views.entry(colour)).or_insert_with(|| view_of(device, queue, colour));
+            }
+            let stand_in = colour.and_then(|colour| self.cards.views.get(&colour));
+            let mut keys = Vec::new();
+            let found = self.card_meshes(
+                (&*renderer, device),
+                &model,
+                (&grey, stand_in),
+                &mut absent,
+                &mut keys,
+            );
+            stood.extend(keys.into_iter().zip(std::iter::repeat(colour)));
+            let Some(meshes) = found else {
                 continue;
             };
             if bakes == 0 {
@@ -239,6 +280,11 @@ impl WorldGpu {
                 self.cards.next += 1;
             }
             settled.push((id, fits.then_some(slot)));
+        }
+        for (key, colour) in stood {
+            if let Some(colour) = colour {
+                self.cards.stated.insert(key, colour);
+            }
         }
         for (id, slot) in settled {
             self.cards.slots.insert(id, slot);

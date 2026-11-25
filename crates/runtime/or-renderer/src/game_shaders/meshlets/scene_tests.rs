@@ -496,3 +496,99 @@ fn each_of_a_probe_s_nine_numbers_lights_a_floor_that_leans_along_every_axis() {
     }
     assert_ne!(seen_at(&frames[2], OPEN), by_nine, "two rows changed over");
 }
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_surface_s_gloss_takes_the_probe_s_light_from_about_the_mirrored_way_as_the_table_weighs_it() {
+    // A floor that leans, as the floor of the nine numbers' test leans, half rough; and the
+    // same floor reflecting all the light it takes head on.
+    let e = Vec3::new(3040.0, 2606.0, 0.0) / 2047.5 - Vec3::new(1.0, 1.0, 0.0);
+    let n = Vec3::new(e.x, e.y, 1.0 - e.x.abs() - e.y.abs()).normalize();
+    let upright = "2047u | (2047u << 12u)";
+    let dull = "vec4<f32>(0.5, bytes / 255.0),\n        vec4<f32>(0.0),";
+    let mirror = "vec4<f32>(0.5, bytes / 255.0),\n        vec4<f32>(1.0, 1.0, 1.0, 0.0),";
+    assert!(super::tests::PIXEL.contains(upright) && super::tests::PIXEL.contains(dull));
+    let leaning_pixel = super::tests::PIXEL.replace(upright, "3040u | (2606u << 12u)");
+    let floor = |pixel: &str| {
+        let mut floor = two_levels(true);
+        floor.fragment = Arc::new(naga::front::wgsl::parse_str(pixel).expect("the WGSL parses"));
+        floor
+    };
+    // Where the floor is seen, the way to the camera and the way that mirrors it; and a way
+    // across the floor's own, along which a probe's light leans without a matte floor's
+    // taking more or less of it.
+    // The middle of the pixel that shows the place.
+    let middle = |along: f32| {
+        (((along + 1.0) * 0.5 * SIZE as f32).floor() + 0.5) / (0.5 * SIZE as f32) - 1.0
+    };
+    let at = Vec3::new(middle(OPEN.0), -middle(-OPEN.1), 0.1);
+    let v = (Vec3::new(0.0, 0.0, 4.0) - at).normalize();
+    let mirrored = 2.0 * n.dot(v) * n - v;
+    let across = (mirrored - mirrored.dot(n) * n).normalize();
+    assert!(across.dot(n).abs() < 1e-5 && across.dot(mirrored) > 0.5);
+    // An even light from all around, and the same with more of it from that way, or less.
+    let (even, lean) = (0.4, 0.2);
+    let probe = |lean: f32| {
+        let mut nine = [Vec3::ZERO; 9];
+        nine[0] = Vec3::splat(even);
+        nine[1] = Vec3::splat(lean * across.y);
+        nine[2] = Vec3::splat(lean * across.z);
+        nine[3] = Vec3::splat(lean * across.x);
+        nine
+    };
+    // A tone that exposes every frame alike, by no stops.
+    let tone = Tone {
+        least: 0.0,
+        most: 0.0,
+        ..metering(false)
+    };
+    let lit = |lean: f32| {
+        let mut sky = Sky {
+            sun: Vec3::ZERO,
+            tone: Some(tone),
+            ..leaning()
+        };
+        sky.scene.around = Some(probe(lean));
+        sky
+    };
+    let skies = [lit(lean), lit(0.0), lit(-lean)];
+    let test = "a_surface_s_gloss_takes_the_probe_s_light";
+    let pixel = leaning_pixel.replace(dull, mirror);
+    let Some(mirrors) = frames_of(test, floor(&pixel), &skies) else {
+        return;
+    };
+    let Some(dulls) = frames_of(test, floor(&leaning_pixel), &skies) else {
+        return;
+    };
+    // The floor is red, so its green is its gloss alone. The mirror's gloss is brighter with
+    // the light that leans towards the mirrored way, and dimmer with the light that leans
+    // from it; and the dull floor, which reflects only at grazing angles, shows far less.
+    let green = |frames: &[Vec<u8>], frame: usize| seen_at(&frames[frame], OPEN)[1];
+    let [towards, level, away] = [0, 1, 2].map(|frame| green(&mirrors, frame));
+    assert!(
+        towards > level + 10 && level > away + 10,
+        "{towards} {level} {away}"
+    );
+    assert!(
+        green(&dulls, 0) + 30 < towards,
+        "{} {towards}",
+        green(&dulls, 0)
+    );
+    // What the mirror shows is what the cone about the mirrored way holds, whole: half rough,
+    // the cone is the narrowest, and a surface that reflects everything head on reflects what
+    // its facets send onto one another too.
+    let k: f32 = 0.8;
+    let cone = |lean: f32| {
+        let held = 0.886_227 * (1.0 - k * k) * even
+            + 1.023_328 * (1.0 - k.powi(3)) * lean * across.dot(mirrored);
+        held / (std::f32::consts::PI * (1.0 - k * k))
+    };
+    for (frame, lean) in [(0, lean), (1, 0.0), (2, -lean)] {
+        let shown = tone.filmic(1.0).toned(cone(lean)).powf(0.4545) * 255.0;
+        let seen = f32::from(green(&mirrors, frame));
+        assert!((seen - shown).abs() <= 3.0, "{seen} against {shown}");
+    }
+}

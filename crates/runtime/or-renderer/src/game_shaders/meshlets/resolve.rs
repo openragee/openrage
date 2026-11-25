@@ -61,6 +61,11 @@ pub(super) const RESOLVE: &str = r#"struct Light {
     dome: array<vec4<f32>, 18>,
     // From the world to the clip space.
     project: mat4x4<f32>,
+    // What a surface reflects of a light that comes evenly from all around, by the cosine of
+    // the angle it is seen at, across, and its roughness, down, sixteen places a side: the
+    // share its facets reflect by the part of their reflectance that grows towards grazing,
+    // the share they reflect whole, and the share its matte part sends back.
+    fit: array<vec4<f32>, 256>,
 }
 @group(0) @binding(0) var colour: texture_2d<f32>;
 @group(0) @binding(1) var normal: texture_2d<f32>;
@@ -113,6 +118,34 @@ fn falls_on(n: vec3<f32>) -> vec3<f32> {
         + (0.743125 * n.z * n.z - 0.247708) * light.around[6].rgb
         + 0.429043 * (n.x * n.x - n.y * n.y) * light.around[8].rgb;
     return max(fallen, vec3<f32>(0.0));
+}
+
+// What a surface seen at the cosine `n_v` with the roughness `roughness` reflects of an even
+// light: the table, read between its four nearest places.
+fn fit_at(n_v: f32, roughness: f32) -> vec3<f32> {
+    let at = clamp(vec2<f32>(n_v, roughness), vec2<f32>(0.0), vec2<f32>(1.0)) * 15.0;
+    let low = min(vec2<u32>(at), vec2<u32>(14u));
+    let part = at - vec2<f32>(low);
+    let row = low.y * 16u + low.x;
+    let upper = mix(light.fit[row].xyz, light.fit[row + 1u].xyz, part.x);
+    let lower = mix(light.fit[row + 16u].xyz, light.fit[row + 17u].xyz, part.x);
+    return mix(upper, lower, part.y);
+}
+
+// The light that comes to a surface of `roughness` along `way` for its gloss, of what the
+// probe's nine numbers hold: the mean over a cone about the way, each way of it weighed by its
+// cosine to the cone's axis, as GTA VI takes a reflection it does not trace of a probe. The
+// cone opens with the roughness and is never narrower than the angle whose cosine is 0.8; the
+// probe's first four numbers are all it takes.
+// The editor's own: that the probe is the one the matte light is taken of. The game traces the
+// reflection, and where it does not, reads a volume of such probes about the camera.
+fn mirrored(way: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let r4 = roughness * roughness * roughness * roughness;
+    let k = min(0.8, inverseSqrt(1.0 + 9.0 * r4 * r4));
+    let even = 0.886227 * (1.0 - k * k) * light.around[0].rgb;
+    let leaning = 1.023328 * (1.0 - k * k * k)
+        * (light.around[1].rgb * way.y + light.around[2].rgb * way.z + light.around[3].rgb * way.x);
+    return max(even + leaning, vec3<f32>(0.0)) / (PI * (1.0 - k * k));
 }
 
 fn normal_of(packed_normal: vec4<f32>) -> vec3<f32> {
@@ -356,7 +389,17 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
     // gloss, less as the surface is rougher.
     let grazing = f0 + (max(vec3<f32>(1.0 - roughness), f0) - f0) * pow(1.0 - n_v, 5.0);
     let matte_around = select(surroundings(n), falls_on(n) / PI, probed);
-    let around = albedo * matte_around + grazing * surroundings(reflect(-v, n)) * (1.0 - roughness);
+    var around = albedo * matte_around + grazing * surroundings(reflect(-v, n)) * (1.0 - roughness);
+    if game && probed {
+        // As the game's lighting program weighs the two lights it is handed from all around:
+        // the gloss by what the surface reflects of an even light, and by what its facets
+        // reflect onto one another; the matte by what is left, and by its own share.
+        let fit = fit_at(n_v, roughness);
+        let reflects = f0 * fit.y + (1.0 - f0) * fit.x;
+        let again = 1.0 + f0 * (1.0 / max(fit.y, 1e-3) - 1.0);
+        around = albedo * matte_around * (1.0 - reflects) * fit.z
+            + mirrored(reflect(-v, n), roughness) * reflects * again;
+    }
     return direct + around;
 }
 

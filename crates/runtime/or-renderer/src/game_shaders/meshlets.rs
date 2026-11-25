@@ -961,7 +961,7 @@ impl Default for Sky {
 }
 
 /// The bytes of what the resolve reads of a frame's light.
-const LIGHT_BYTES: usize = 912;
+const LIGHT_BYTES: usize = 912 + 16 * env_fit::SIDE * env_fit::SIDE;
 /// The format of the texel the surfaces are metered into: the stops the frame is exposed by.
 const METERED: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -992,6 +992,9 @@ fn light_bytes(lighting: &Lighting, casts: bool) -> [u8; LIGHT_BYTES] {
     words[88..92].copy_from_slice(&sun_shadow::words(sky, casts));
     words[92..212].copy_from_slice(&sky.scene.words());
     words[212..228].copy_from_slice(&lighting.view_proj.to_cols_array());
+    for (held, fit) in words[228..].chunks_exact_mut(4).zip(env_fit::table()) {
+        held[..3].copy_from_slice(fit);
+    }
     bytemuck::cast(words)
 }
 
@@ -1386,6 +1389,7 @@ impl MeshletScene {
     }
 }
 
+mod env_fit;
 mod resolve;
 mod scene;
 mod sun_mask;

@@ -416,6 +416,11 @@ impl Viewer {
         (self.world.as_ref()).map_or_else(Streaming::default, |w| w.latest().streaming)
     }
 
+    /// Whether the world's thread was told something its last selection does not stand on yet.
+    pub fn selecting(&self) -> bool {
+        self.world.as_ref().is_some_and(World::unselected)
+    }
+
     /// The interior and room the camera stood in at the last selection, where it stood in one.
     pub fn inside(&self) -> Option<interior::Inside> {
         self.world.as_ref()?.latest().inside

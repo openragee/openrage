@@ -717,6 +717,8 @@ struct Told {
     models: Vec<(ModelRef, Option<bool>)>,
     /// Whether anything was told since the thread last took what was.
     changed: bool,
+    /// How many times something was told.
+    times: u64,
     stopped: bool,
 }
 
@@ -726,6 +728,8 @@ struct Shared {
     latest: Mutex<Arc<Selected>>,
     /// The maps the thread took in since its last whole selection.
     unproven: Arc<Mutex<Vec<u32>>>,
+    /// Up to how many tellings the thread has taken and, where they called for one, selected after.
+    done: std::sync::atomic::AtomicU64,
 }
 
 /// The world as a thread of its own streams and selects it, so that a frame only reads what was
@@ -754,6 +758,7 @@ impl World {
             woken: Condvar::new(),
             latest: Mutex::default(),
             unproven: Arc::default(),
+            done: Default::default(),
         });
         let theirs = Arc::clone(&shared);
         let thread = std::thread::spawn(move || run(index, skipped, &theirs));
@@ -798,6 +803,7 @@ impl World {
         let mut told = self.shared.told.lock().unwrap_or_else(|p| p.into_inner());
         let changed = tell(&mut told);
         told.changed |= changed;
+        told.times += u64::from(changed);
         drop(told);
         if changed {
             self.shared.woken.notify_one();
@@ -851,6 +857,12 @@ impl World {
         });
     }
 
+    /// Whether something was told the thread that the last selection does not stand on yet.
+    pub(super) fn unselected(&self) -> bool {
+        let times = (self.shared.told.lock().unwrap_or_else(|p| p.into_inner())).times;
+        self.shared.done.load(std::sync::atomic::Ordering::Acquire) != times
+    }
+
     /// What was selected last.
     pub(super) fn latest(&self) -> Arc<Selected> {
         Arc::clone(&self.shared.latest.lock().unwrap_or_else(|p| p.into_inner()))
@@ -874,7 +886,7 @@ fn run(index: Arc<WorldIndex>, skipped: HashSet<u32>, shared: &Shared) {
     let mut moved_at: Option<(Vec3, Instant)> = None;
     let (mut velocity, mut fading, mut version) = (Vec3::ZERO, false, 0);
     loop {
-        let (eye, scale, hour, fade, enabled, models) = {
+        let (eye, scale, hour, fade, enabled, models, times) = {
             let mut told = shared.told.lock().unwrap_or_else(|p| p.into_inner());
             // What was told while the last selection was made is taken at once.
             if !told.changed && !told.stopped {
@@ -886,7 +898,9 @@ fn run(index: Arc<WorldIndex>, skipped: HashSet<u32>, shared: &Shared) {
             }
             told.changed = false;
             let (enabled, models) = (told.enabled.take(), std::mem::take(&mut told.models));
-            (told.eye, told.scale, told.hour, told.fade, enabled, models)
+            (
+                told.eye, told.scale, told.hour, told.fade, enabled, models, told.times,
+            )
         };
         velocity = velocity_at(&mut moved_at, velocity, eye, Instant::now());
         let mut stale = !models.is_empty() || fading;
@@ -917,6 +931,9 @@ fn run(index: Arc<WorldIndex>, skipped: HashSet<u32>, shared: &Shared) {
             // What was taken in has been through a whole selection.
             (shared.unproven.lock().unwrap_or_else(|p| p.into_inner())).clear();
         }
+        shared
+            .done
+            .store(times, std::sync::atomic::Ordering::Release);
     }
 }
 

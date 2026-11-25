@@ -179,6 +179,8 @@ pub(super) struct Found {
     pub adapting: bool,
     /// A part of the water that was asked for is still being read.
     pub water: bool,
+    /// The world's thread was told something, such as models that came, that its last selection does not stand on yet.
+    pub selecting: bool,
 }
 
 /// The rule `world settle` waits by: an index held, nothing waited for, the exposure arrived, no water being read, and nothing changed for [`QUIET`].
@@ -203,7 +205,12 @@ impl Settle {
         if found.adapting {
             self.waited[4] = Some(now);
         }
-        let quiet = found.indexed && found.waiting == [0; 4] && !found.adapting && !found.water;
+        // ⚠ A selection can take longer than the quiet time: models told ready and not yet selected were dumped as not drawn.
+        let quiet = found.indexed
+            && found.waiting == [0; 4]
+            && !found.adapting
+            && !found.water
+            && !found.selecting;
         if !quiet || self.last != Some(found) {
             (self.last, self.since) = (Some(found), now);
             return false;
@@ -228,6 +235,9 @@ impl Settle {
             Some(found) if !found.indexed => "no index of the install is held".into(),
             Some(found) if found.waiting == [0; 4] && found.water => {
                 "the water's ground or fog was still being read".into()
+            }
+            Some(found) if found.waiting == [0; 4] && found.selecting => {
+                "the world's thread had not yet selected on what it was told".into()
             }
             Some(Found {
                 waiting: [0, 0, 0, 0],
@@ -270,6 +280,7 @@ fn found() -> Result<Found, String> {
         ],
         adapting: crate::state::gta6_world::worldview::sky::adapting(),
         water: viewer.water_reading(),
+        selecting: viewer.selecting(),
     })
 }
 
@@ -497,6 +508,7 @@ mod tests {
         standing: [40, 40, 900, 700],
         adapting: false,
         water: false,
+        selecting: false,
     };
 
     fn at(millis: u64) -> Duration {
@@ -697,7 +709,20 @@ mod tests {
             rule.still(),
             "the water's ground or fog was still being read"
         );
-        assert!(!rule.settled(QUIET * 21, IDLE));
+        let selecting = Found {
+            selecting: true,
+            ..IDLE
+        };
+        assert!(!rule.settled(QUIET * 21, selecting));
+        assert!(
+            !rule.settled(QUIET * 30, selecting),
+            "never while the world's thread has not selected on what it was told"
+        );
+        assert_eq!(
+            rule.still(),
+            "the world's thread had not yet selected on what it was told"
+        );
+        assert!(!rule.settled(QUIET * 31, IDLE));
         assert_eq!(rule.still(), "what is streamed in was still changing");
     }
 }

@@ -902,3 +902,34 @@ fn a_world_thread_that_dies_on_a_map_it_just_took_in_is_started_again_without_it
     }
     assert_eq!(viewer.skipped.len() as u32, deaths);
 }
+
+#[test]
+fn what_was_told_the_world_s_thread_is_unselected_until_a_pass_has_taken_it() {
+    use std::time::Duration;
+    let world = World::new(Arc::new(made_up_index()), Vec3::ZERO, 1.0, HashSet::new());
+    let settled = |world: &World| {
+        let until = Instant::now() + Duration::from_secs(20);
+        while world.unselected() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        !world.unselected()
+    };
+    assert!(
+        settled(&world),
+        "the first pass takes what it was made with"
+    );
+    // A pass that selects cannot publish while the selection is held, so it is not done meanwhile.
+    let latest = world
+        .shared
+        .latest
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    world.look(Vec3::new(500.0, 0.0, 0.0), 1.0);
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        world.unselected(),
+        "told, and the pass that took it has not selected"
+    );
+    drop(latest);
+    assert!(settled(&world), "a pass took it and selected after it");
+}

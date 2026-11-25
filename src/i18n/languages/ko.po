@@ -17002,9 +17002,6 @@ msgstr "미디어"
 msgid "other class"
 msgstr "기타 클래스"
 
-msgid "{file} is listed by a scan without its table: {why}"
-msgstr "{file}은(는) 테이블 없이 검사로 나열됩니다: {why}"
-
 msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
 msgstr "설정에서 GTA VI 폴더를 선택하거나 그 아카이브 하나를 열면 테이블에서 아카이브를 나열합니다."
 

@@ -15,6 +15,7 @@ pub enum Gta6EntryType {
     TextureDictionary,
     Awc,
     Pso,
+    File(&'static str),
     Resource(Rpf9Role),
     Body(OtherBody),
     Rbf,
@@ -24,32 +25,121 @@ impl Gta6EntryType {
     /// Identify a container from its leading header without validating its complete contents.
     pub fn from_header(bytes: &[u8]) -> Option<Self> {
         let head = bytes.get(..16)?;
+        if crate::gta6::audio_data::stamped(head) {
+            return Some(Self::File("rel"));
+        }
+        let text = head.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(head);
+        if (text.starts_with(b"<?xml") && text.get(5).is_some_and(u8::is_ascii_whitespace))
+            || starts_xml_element(text)
+        {
+            return Some(Self::File("xml"));
+        }
         match &head[..4] {
             b"ADAT" | b"TADA" => Some(Self::Awc),
             b"PSIN" => Some(Self::Pso),
+            b"KB2j" | b"KB2n" => Some(Self::File("bk2")),
+            b"RBF0" => Some(Self::Rbf),
+            b"PAMH" => Some(Self::Body(OtherBody::HeightMap)),
+            b"MHIU" => Some(Self::Body(OtherBody::HeightGrid)),
             _ => None,
         }
     }
 
-    /// The measured content family in the table, without reading the entry's body.
+    /// The file family stated by either row layout, without reading its body.
     pub fn hint(entry: &Gta6Entry, extra: &Gta6EntryExtra) -> Self {
-        if let Some(row) = extra.nested {
+        let code = if let Some(row) = extra.nested {
             if entry.class.is_some() || entry.real.is_some() || entry.stored.is_some() {
                 return Self::Unknown;
             }
-            return match row.resource_type {
-                2 => Self::Resource(Rpf9Role::Drawable),
-                3 => Self::Resource(Rpf9Role::DrawableWithBound),
-                4 => Self::Resource(Rpf9Role::Dictionary),
-                5 => Self::TextureDictionary,
-                6 => Self::Resource(Rpf9Role::Bound),
-                _ => Self::Unknown,
+            row.resource_type
+        } else {
+            if entry.kind() == Some(Gta6Class::NestedArchive) {
+                return Self::Archive;
+            }
+            let Some(class) = entry.class else {
+                return Self::Unknown;
             };
+            u32::from(class)
+        };
+        match code {
+            2 => Self::Resource(Rpf9Role::Drawable),
+            3 => Self::Resource(Rpf9Role::DrawableWithBound),
+            4 => Self::Resource(Rpf9Role::Dictionary),
+            5 => Self::TextureDictionary,
+            6 => Self::Resource(Rpf9Role::Bound),
+            68 => Self::Resource(Rpf9Role::Cloth),
+            72 => Self::Resource(Rpf9Role::ParticleEffects),
+            79 => Self::Resource(Rpf9Role::NavMesh),
+            _ => table_extension(code)
+                .map(Self::File)
+                .unwrap_or(Self::Unknown),
         }
-        match entry.kind() {
-            Some(Gta6Class::NestedArchive) => Self::Archive,
-            _ => Self::Unknown,
+    }
+
+    /// The display suffix, independent of the name hash and of decoder availability.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Archive => "rpf",
+            Self::TextureDictionary => "ytd",
+            Self::Awc => "awc",
+            Self::Pso => "psin",
+            Self::File(extension) => extension,
+            Self::Rbf => "rbf",
+            Self::Resource(role) => match role {
+                Rpf9Role::Drawable => "ydr",
+                Rpf9Role::Dictionary => "ydd",
+                Rpf9Role::DrawableWithBound => "yft",
+                Rpf9Role::Bound => "ybn",
+                Rpf9Role::NavMesh => "ynv",
+                Rpf9Role::Cloth => "yld",
+                Rpf9Role::ParticleEffects => "ypt",
+                _ => "bin",
+            },
+            Self::Body(body) => match body {
+                OtherBody::Gfx => "gfx",
+                OtherBody::HeightMap | OtherBody::HeightGrid => "dat",
+                OtherBody::MoveNetwork => "mrf",
+                _ => "bin",
+            },
+            Self::Unknown => "bin",
         }
+    }
+}
+
+fn starts_xml_element(head: &[u8]) -> bool {
+    let Some(name) = head.strip_prefix(b"<") else {
+        return false;
+    };
+    if !name
+        .first()
+        .is_some_and(|b| b.is_ascii_alphabetic() || *b == b'_')
+    {
+        return false;
+    }
+    let end = name
+        .iter()
+        .position(|b| !b.is_ascii_alphanumeric() && !b"_:-.".contains(b));
+    end.is_none_or(|end| name[end] == b'>' || name[end] == b'/' || name[end].is_ascii_whitespace())
+}
+
+// Resource suffixes use the same display prefix as the other RAGE titles; it is not hashed.
+fn table_extension(code: u32) -> Option<&'static str> {
+    const BASE: &[&str] = &[
+        "rpf", "ymf", "ydr", "yft", "ydd", "ytd", "ybn", "ybd", "ypd", "ybs", "ysd", "ymt", "ysc",
+        "ycs", "ydatb", "ybdr", "ybdd", "ybft", "yvert",
+    ];
+    const STREAMED: &[&str] = &[
+        "mrf", "cut", "gfx", "ycd", "yld", "ypmd", "ypm", "yed", "ypt", "ymap", "ytyp", "ych",
+        "yldb", "yjd", "yad", "ynv", "ynvs", "ypl", "ynd", "yvr", "ywr", "ynh", "yfd", "yas",
+        "ysm", "yscript", "yascript", "ysma", "iasf", "yfc", "ylfc", "ycg", "yasd", "rdb", "yfbs",
+        "ycps", "ysp", "ytsl", "ymmd", "yfid", "ymsk", "yhdat", "ynmd", "ysmm", "yascd", "yrd",
+        "ysmam", "yldbmt", "ynmd", "ykit", "ycgc", "ycov",
+    ];
+    if code < BASE.len() as u32 {
+        BASE.get(code as usize).copied()
+    } else {
+        code.checked_sub(64)
+            .and_then(|index| STREAMED.get(index as usize).copied())
     }
 }
 

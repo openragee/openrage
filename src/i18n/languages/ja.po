@@ -17002,9 +17002,6 @@ msgstr "メディア"
 msgid "other class"
 msgstr "その他のクラス"
 
-msgid "{file} is listed by a scan without its table: {why}"
-msgstr "{file} はテーブルなしでスキャンにより一覧表示されています: {why}"
-
 msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
 msgstr "設定でGTA VIフォルダーを選択するか、そのアーカイブを1つ開くと、テーブルからアーカイブを一覧表示します。"
 

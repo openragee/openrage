@@ -348,6 +348,7 @@ fn rpf9_icon(kind: or_io::container::rpf::Gta6EntryType) -> IconBadge {
         Gta6EntryType::Archive => Some(DocumentKind::Rpf9),
         Gta6EntryType::TextureDictionary => Some(DocumentKind::Ytd),
         Gta6EntryType::Awc => Some(DocumentKind::Awc),
+        Gta6EntryType::File(extension) => crate::state::files_view::rpf9_file_kind(extension),
         Gta6EntryType::Resource(Rpf9Role::Drawable) => Some(DocumentKind::Ydr),
         Gta6EntryType::Resource(Rpf9Role::DrawableWithBound) => Some(DocumentKind::Yft),
         Gta6EntryType::Resource(Rpf9Role::Bound) => Some(DocumentKind::Ybn),

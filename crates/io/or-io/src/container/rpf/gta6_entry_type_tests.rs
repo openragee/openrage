@@ -88,7 +88,7 @@ fn table_hints_do_not_infer_types_from_archive_names_or_extensions() {
         (4, Gta6EntryType::Resource(Rpf9Role::Dictionary)),
         (5, Gta6EntryType::TextureDictionary),
         (6, Gta6EntryType::Resource(Rpf9Role::Bound)),
-        (11, Gta6EntryType::Unknown),
+        (255, Gta6EntryType::Unknown),
     ] {
         assert_eq!(Gta6EntryType::hint(&entry, &extra(code, 0, 0)), expected);
     }
@@ -388,5 +388,111 @@ fn container_headers_are_identified_only_at_the_start_of_the_entry() {
         let detected =
             Gta6EntryContent::detect(&entry(), &Gta6EntryExtra::default(), &later).unwrap();
         assert_eq!(detected.kind, Gta6EntryType::Unknown);
+    }
+}
+
+#[test]
+fn streamed_table_codes_identify_maps_animations_and_navigation_without_a_body() {
+    for code in [
+        11, 14, 15, 16, 17, 18, 64, 66, 67, 69, 70, 72, 73, 74, 77, 78, 79, 86, 87, 88, 89, 93, 94,
+        95, 96, 99, 100, 101, 102, 103, 104, 105, 108, 109, 110, 111, 113, 114, 115,
+    ] {
+        assert_ne!(
+            Gta6EntryType::hint(&entry(), &extra(code, 0, 0)),
+            Gta6EntryType::Unknown,
+            "table type {code}"
+        );
+        let mut sized = entry();
+        sized.class = Some(code as u8);
+        sized.real = Some(16);
+        sized.stored = Some(16);
+        assert_ne!(
+            Gta6EntryType::hint(&sized, &Gta6EntryExtra::default()),
+            Gta6EntryType::Unknown,
+            "sized table type {code}"
+        );
+    }
+}
+
+#[test]
+fn table_extensions_do_not_collapse_distinct_resource_families() {
+    for (code, extension) in [
+        (11, "ymt"),
+        (15, "ybdr"),
+        (16, "ybdd"),
+        (17, "ybft"),
+        (18, "yvert"),
+        (67, "ycd"),
+        (70, "ypm"),
+        (73, "ymap"),
+        (74, "ytyp"),
+        (78, "yad"),
+        (79, "ynv"),
+        (86, "yfd"),
+        (87, "yas"),
+        (88, "ysm"),
+        (89, "yscript"),
+        (93, "yfc"),
+        (94, "ylfc"),
+        (100, "ysp"),
+        (103, "yfid"),
+        (104, "ymsk"),
+        (105, "yhdat"),
+        (108, "yascd"),
+        (111, "yldbmt"),
+        (115, "ycov"),
+    ] {
+        assert_eq!(
+            Gta6EntryType::hint(&entry(), &extra(code, 0, 0)).extension(),
+            extension
+        );
+    }
+    for code in [19, 63, 116, 255, u32::MAX] {
+        assert_eq!(
+            Gta6EntryType::hint(&entry(), &extra(code, 0, 0)),
+            Gta6EntryType::Unknown
+        );
+    }
+}
+
+#[test]
+fn binary_headers_and_xml_declarations_name_media_without_guessing_text_extensions() {
+    for (prefix, suffix) in [
+        (b"KB2n".as_slice(), "bk2"),
+        (b"KB2j", "bk2"),
+        (b"<?xml version=", "xml"),
+        (b"\xEF\xBB\xBF<?xml version", "xml"),
+        (b"<Root>\r\n        ", "xml"),
+        (b"<LongRootElement", "xml"),
+        (b"PAMH", "dat"),
+        (b"MHIU", "dat"),
+        (b"RBF0", "rbf"),
+    ] {
+        let mut head = [0; 16];
+        head[..prefix.len()].copy_from_slice(prefix);
+        assert_eq!(
+            Gta6EntryType::from_header(&head).unwrap().extension(),
+            suffix
+        );
+        let later = [b"unrelated bytes!".as_slice(), &head].concat();
+        assert_eq!(Gta6EntryType::from_header(&later), None);
+    }
+    let mut audio = [0; 16];
+    u32_at(&mut audio, 0, 18);
+    u32_at(&mut audio, 4, 4);
+    u32_at(&mut audio, 8, crate::gta6::audio_data::STAMP);
+    assert_eq!(
+        Gta6EntryType::from_header(&audio).unwrap().extension(),
+        "rel"
+    );
+    audio[8] ^= 1;
+    assert_eq!(Gta6EntryType::from_header(&audio), None);
+    for text in [
+        b"<?xmlish is text ".as_slice(),
+        b"a text file here",
+        b"KB2xnot a movie!",
+        b"<0invalid-root/> ",
+    ] {
+        assert_eq!(Gta6EntryType::from_header(text), None);
     }
 }

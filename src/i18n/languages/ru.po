@@ -17148,9 +17148,6 @@ msgstr "медиа"
 msgid "other class"
 msgstr "другой класс"
 
-msgid "{file} is listed by a scan without its table: {why}"
-msgstr "{file} перечислен сканированием без его таблицы: {why}"
-
 msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
 msgstr "Выберите папку GTA VI в параметрах или откройте один из её архивов, чтобы перечислить её архивы по их таблицам."
 

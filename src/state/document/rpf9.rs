@@ -79,8 +79,26 @@ pub struct Tree {
 
 impl Tree {
     pub fn entry_type(&self, base: u64, index: u32) -> (Gta6EntryType, bool) {
+        let hint = self
+            .nodes
+            .get(&base)
+            .and_then(|node| {
+                let entry = node.archive.entries.get(index as usize)?;
+                let extra = node.archive.entry_extra(index as usize)?;
+                Some(Gta6EntryType::hint(entry, &extra))
+            })
+            .unwrap_or(Gta6EntryType::Unknown);
         if let Some(kind) = self.detected.get(&(base, index)) {
-            return (*kind, true);
+            // The container signature can be shared by several distinct table file types.
+            return (
+                if hint == Gta6EntryType::Unknown {
+                    *kind
+                } else {
+                    hint
+                },
+                *kind != Gta6EntryType::Unknown
+                    && (hint == Gta6EntryType::Unknown || *kind == hint),
+            );
         }
         if let Some(kind) = self
             .nodes
@@ -89,12 +107,7 @@ impl Tree {
         {
             return (*kind, true);
         }
-        let hint = self.nodes.get(&base).and_then(|node| {
-            let entry = node.archive.entries.get(index as usize)?;
-            let extra = node.archive.entry_extra(index as usize)?;
-            Some(Gta6EntryType::hint(entry, &extra))
-        });
-        (hint.unwrap_or(Gta6EntryType::Unknown), false)
+        (hint, false)
     }
 
     pub fn pending(&self) -> Option<(u64, u32)> {

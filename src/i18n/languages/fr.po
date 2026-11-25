@@ -17002,9 +17002,6 @@ msgstr "média"
 msgid "other class"
 msgstr "autre classe"
 
-msgid "{file} is listed by a scan without its table: {why}"
-msgstr "{file} est listée par un balayage sans sa table : {why}"
-
 msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
 msgstr "Choisissez le dossier de GTA VI dans les Paramètres, ou ouvrez l'une de ses archives, pour lister ses archives d'après leurs tables."
 

@@ -568,3 +568,20 @@ mod install {
         );
     }
 }
+
+#[test]
+fn a_dictionary_body_does_not_replace_its_specific_table_extension() {
+    let (_dir, table, _) = dictionary_archive(&sections(), 16);
+    let source = table.entry(0x1000, 0).unwrap();
+    let original = source.name.clone();
+    let before = table.tree().entry_type(0x1000, 0);
+    assert_eq!(before, (Gta6EntryType::File("ybdd"), false));
+    assert!(crate::state::files_view::rpf9_display_name(&original, before.0).ends_with(".ybdd"));
+    assert!(matches!(source.payload().unwrap(), DocPayload::Hex(_)));
+    assert_eq!(
+        table.tree().entry_type(0x1000, 0),
+        (Gta6EntryType::File("ybdd"), false)
+    );
+    assert_eq!(table.entry(0x1000, 0).unwrap().name, original);
+    assert!(!source.path.exists());
+}

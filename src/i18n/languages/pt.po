@@ -17002,9 +17002,6 @@ msgstr "mídia"
 msgid "other class"
 msgstr "outra classe"
 
-msgid "{file} is listed by a scan without its table: {why}"
-msgstr "{file} é listado por uma varredura sem a sua tabela: {why}"
-
 msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
 msgstr "Escolha a pasta do GTA VI nas Configurações, ou abra um dos arquivos dela, para listar os arquivos a partir das tabelas deles."
 

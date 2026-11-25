@@ -72,6 +72,22 @@ pub(crate) fn rpf9_type_name(kind: or_io::container::rpf::Gta6EntryType) -> &'st
         Gta6EntryType::Resource(role) => super::gta6_resource::role_name(Some(role)),
         Gta6EntryType::Body(body) => super::gta6_other_bodies::label(body),
         Gta6EntryType::Rbf => tr!("RBF metadata"),
+        Gta6EntryType::File(extension) => {
+            rpf9_file_kind(extension).map_or(extension, |kind| kind.info().noun)
+        }
+    }
+}
+
+pub(crate) fn rpf9_file_kind(extension: &str) -> Option<DocumentKind> {
+    match extension {
+        "bk2" => Some(DocumentKind::Bik),
+        "yad" | "ypm" | "ypmd" | "ymmd" | "yrd" => Some(DocumentKind::Gta6Anim),
+        "yscript" | "yascript" => Some(DocumentKind::Registered(
+            or_io::container::resource::ResourceType::Ysc,
+        )),
+        "ysp" => Some(DocumentKind::Ynv),
+        "yascd" => Some(DocumentKind::Meta),
+        _ => DocumentKind::from_path(Path::new(&format!("entry.{extension}"))),
     }
 }
 
@@ -80,34 +96,9 @@ pub(crate) fn rpf9_display_name(
     name: &str,
     kind: or_io::container::rpf::Gta6EntryType,
 ) -> std::borrow::Cow<'_, str> {
-    use or_io::container::rpf::{Gta6EntryType, Rpf9Role};
-    use or_io::gta6::other_bodies::OtherBody;
     use std::borrow::Cow;
 
-    let extension = match kind {
-        Gta6EntryType::Archive => "rpf",
-        Gta6EntryType::TextureDictionary => "ytd",
-        Gta6EntryType::Awc => "awc",
-        Gta6EntryType::Pso => "psin",
-        Gta6EntryType::Resource(role) => match role {
-            Rpf9Role::Drawable => "ydr",
-            Rpf9Role::Dictionary => "ydd",
-            Rpf9Role::DrawableWithBound => "yft",
-            Rpf9Role::Bound => "ybn",
-            Rpf9Role::NavMesh => "ynv",
-            Rpf9Role::Cloth => "yld",
-            Rpf9Role::ParticleEffects => "ypt",
-            _ => "bin",
-        },
-        Gta6EntryType::Body(body) => match body {
-            OtherBody::Gfx => "gfx",
-            OtherBody::HeightMap | OtherBody::HeightGrid => "dat",
-            OtherBody::MoveNetwork => "mrf",
-            _ => "bin",
-        },
-        Gta6EntryType::Rbf => "rbf",
-        Gta6EntryType::Unknown => "bin",
-    };
+    let extension = kind.extension();
     let existing = Path::new(name).extension().and_then(|s| s.to_str());
     if existing.is_some_and(|ext| extension == "bin" || ext.eq_ignore_ascii_case(extension)) {
         Cow::Borrowed(name)

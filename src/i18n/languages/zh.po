@@ -17002,9 +17002,6 @@ msgstr "媒体"
 msgid "other class"
 msgstr "其他类别"
 
-msgid "{file} is listed by a scan without its table: {why}"
-msgstr "{file} 由扫描列出，没有使用其表：{why}"
-
 msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
 msgstr "在设置中选择 GTA VI 文件夹，或打开其中一个归档，即可根据表列出其归档。"
 

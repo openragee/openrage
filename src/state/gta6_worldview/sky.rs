@@ -9,6 +9,7 @@ use glam::Vec3;
 use or_renderer::game_shaders::lighting::{night_emissive, Day, Stated};
 use or_renderer::game_shaders::sky_view::{Clouds, SkyView};
 use or_renderer::game_shaders::tone::{Gta6Post, ToneSettings};
+use or_renderer::viewport::post_math::{ExposureWindow, WindowInput, EXPOSURE_RESET_FRAMES};
 use or_renderer::viewport::Metered;
 use or_title::gta6_cloud::{CloudLayer, EXTINCTION};
 use or_title::gta6_day::{read_day, DayTables, Moment};
@@ -213,6 +214,37 @@ struct Adapting {
     at: Instant,
     fresh: bool,
     reached: bool,
+    /// Readings left of the build's reset, which empties its window for three frames.
+    reset: u32,
+    /// The box mean of the stops read back, which the lights take as the build's CPU side does.
+    window: ExposureWindow,
+}
+
+/// The time, in seconds, the build's emptied window states as its mean frame.
+const RESET_SECONDS: f32 = 1.0;
+/// Readings the lights' box mean of the exposure spans.
+// Stand-in: the build's length has no writer found; one keeps the lights in step with the frame until it is read.
+// ⚠ A longer window that starts empty halves its first means: the build fills a ring of zeros, never emptied.
+const LIGHT_WINDOW: usize = 1;
+
+impl Adapting {
+    /// `moment` at the stops the frame is exposed at, its lights at the window's mean of them; `reading` when a new reading of `seconds` goes into the window.
+    fn give(&mut self, moment: &Moment, reading: Option<(f32, bool)>) -> Moment {
+        let mut given = moment.exposed_at(self.stops);
+        let Some((seconds, reset)) = reading else {
+            return given;
+        };
+        let mean = self.window.update(&WindowInput {
+            exposure: self.stops,
+            dt: seconds,
+            reset,
+            hold: false,
+            live: false,
+            force: false,
+        });
+        given.light_scale *= (mean.metered(self.stops) - self.stops).exp2();
+        given
+    }
 }
 
 // ponytail: one exposure for the one World view; a second view would share it.
@@ -251,6 +283,8 @@ pub fn exposed(
             at: now,
             fresh: true,
             reached: false,
+            reset: 0,
+            window: ExposureWindow::new(LIGHT_WINDOW),
         });
         return moment;
     };
@@ -258,11 +292,20 @@ pub fn exposed(
     let low = moment.own.get_or("postfx_exposure_lowlights_percent", 0.0);
     let high = moment.own.get_or("postfx_exposure_highlights_percent", 0.0);
     let Some(luminance) = metered.and_then(|m| m.average(low, high)) else {
-        return moment.exposed_at(adapting.stops);
+        return adapting.give(&moment, None);
     };
-    let seconds = match std::mem::take(&mut adapting.fresh) {
-        true => 0.0,
-        false => now.duration_since(adapting.at).as_secs_f32(),
+    // The moment's own reset (v0x31e) starts the three readings again.
+    let reset = moment.own.get_or("postfx_exposure_adaptation_reset", 0.0) > 0.0;
+    if reset {
+        adapting.reset = EXPOSURE_RESET_FRAMES;
+    }
+    // While the reset counts down the build hands its adaptation a mean of one second.
+    let resetting = adapting.reset > 0;
+    adapting.reset = adapting.reset.saturating_sub(1);
+    let seconds = match (std::mem::take(&mut adapting.fresh), resetting) {
+        (true, _) => 0.0,
+        (false, true) => RESET_SECONDS,
+        (false, false) => now.duration_since(adapting.at).as_secs_f32(),
     };
     let settings = tables.exposure_settings();
     let scene = luminance / adapting.stops.exp2();
@@ -270,11 +313,10 @@ pub fn exposed(
     let exposed = moment.metered(&settings, luminance, adapting.stops, seconds);
     adapting.reached = (target - exposed.stops).abs() < REACHED;
     // ponytail: a step too small to see is not taken, so that a still frame keeps its day.
-    if (exposed.stops - adapting.stops).abs() < STEADY {
-        return moment.exposed_at(adapting.stops);
+    if (exposed.stops - adapting.stops).abs() >= STEADY {
+        (adapting.stops, adapting.at) = (exposed.stops, now);
     }
-    (adapting.stops, adapting.at) = (exposed.stops, now);
-    exposed
+    adapting.give(&moment, Some((seconds, reset)))
 }
 /// The day the frame is lit by at `hour` of the `days`th day in `weather`, for a camera `y` metres north on the map; `None` where the tables hold no cycle for it.
 #[cfg(test)]

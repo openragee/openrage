@@ -103,9 +103,105 @@ impl OceanPresets {
     }
 }
 
+/// One keyframe of a cascade of `WaveData`: its wind in metres a second and the side of its patch in metres; nought where it states neither.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct WaveKey {
+    pub wind_speed: f32,
+    pub size: f32,
+}
+
+/// The document `WaveData`, one cascade of the ocean simulation: a keyframe for each Beaufort number from nought.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WaveParams {
+    pub keys: Vec<WaveKey>,
+}
+
+impl WaveParams {
+    pub fn parse(text: &str) -> Result<Self, WaterError> {
+        let mut out = Self::default();
+        let mut open: Vec<&str> = Vec::new();
+        for token in tokens(text) {
+            match token {
+                Token::Open { name, attrs, empty } => {
+                    if open.is_empty() && name != "WaveData" {
+                        return Err(WaterError::Broken(format!(
+                            "the wave parameters have the root `{name}`"
+                        )));
+                    }
+                    let value = || attr(attrs, "value").and_then(|v| v.trim().parse().ok());
+                    match (name, open.last().copied(), out.keys.last_mut()) {
+                        ("Item", Some("Params"), _) => out.keys.push(WaveKey::default()),
+                        ("fWindSpeed", Some("Item"), Some(k)) => {
+                            k.wind_speed = value().unwrap_or(0.0)
+                        }
+                        ("Lx", Some("Item"), Some(k)) => k.size = value().unwrap_or(0.0),
+                        _ => {}
+                    }
+                    if !empty {
+                        open.push(name);
+                    }
+                }
+                Token::Close(_) => {
+                    open.pop();
+                }
+                Token::Text(_) => {}
+            }
+        }
+        if out.keys.is_empty() {
+            return Err(WaterError::Broken(
+                "the wave parameters state no keyframe".into(),
+            ));
+        }
+        Ok(out)
+    }
+
+    /// The keyframe at Beaufort `beaufort`, held to nought and twelve and between its two keyframes by a straight line, as the game reads it.
+    pub fn at(&self, beaufort: f32) -> WaveKey {
+        let last = self.keys.len().saturating_sub(1);
+        let x = beaufort.clamp(0.0, 12.0).min(last as f32);
+        let (low, high) = (x.floor() as usize, x.ceil() as usize);
+        let (a, b) = (self.keys.get(low).copied(), self.keys.get(high).copied());
+        let (a, b) = (a.unwrap_or_default(), b.unwrap_or_default());
+        let t = x - low as f32;
+        WaveKey {
+            wind_speed: a.wind_speed + (b.wind_speed - a.wind_speed) * t,
+            size: a.size + (b.size - a.size) * t,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_wave_parameters_read_by_keyframe_and_are_read_between_them() {
+        let text = r#"<?xml version="1.0" encoding="UTF-8"?>
+<WaveData>
+  <Params>
+    <Item><nWindAlignment value="2" /><fWindSpeed value="1.0" /><Lx value="800.0" /></Item>
+    <Item><fWindSpeed value="3.0" /><Lx value="800.0" /><fChoppiness value="2.0" /></Item>
+    <Item><Lx value="110.0" /></Item>
+  </Params>
+</WaveData>"#;
+        let params = WaveParams::parse(text).expect("reads");
+        assert_eq!(params.keys.len(), 3);
+        assert_eq!(
+            params.keys[1],
+            WaveKey {
+                wind_speed: 3.0,
+                size: 800.0
+            }
+        );
+        assert_eq!(
+            params.keys[2].wind_speed, 0.0,
+            "a keyframe that states no wind"
+        );
+        assert_eq!(params.at(0.5).wind_speed, 2.0);
+        assert_eq!(params.at(-1.0).wind_speed, 1.0);
+        assert_eq!(params.at(9.0).size, 110.0, "held at the last keyframe");
+        assert!(WaveParams::parse("<Other></Other>").is_err());
+    }
 
     const TEXT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <OceanSimPresets>

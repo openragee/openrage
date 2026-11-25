@@ -195,6 +195,10 @@ fn the_world_program_is_valid_and_reads_a_materials_constants_where_the_renderer
             "emissive_diffuse_tint",
             std::mem::offset_of!(WorldConstants, emissive_diffuse_tint),
         ),
+        (
+            "grass_bend",
+            std::mem::offset_of!(WorldConstants, grass_bend),
+        ),
     ];
     for (name, offset) in fields {
         assert_eq!(at(name), 16 + offset as u32, "{name}");
@@ -207,8 +211,8 @@ fn the_world_program_is_valid_and_reads_a_materials_constants_where_the_renderer
         at("interior_slant"),
         16 + std::mem::offset_of!(WorldConstants, interior_slant) as u32
     );
-    // The family, twenty-one vectors and fifteen scalars
-    assert_eq!(members.len(), 37);
+    // The family, twenty-one vectors and sixteen scalars
+    assert_eq!(members.len(), 38);
     // The frame's light: four vectors, the night's, then the lamps' rows
     assert_eq!(declared("Light").1 as usize, lamps::LIGHT_FLOATS * 4);
 }

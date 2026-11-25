@@ -102,6 +102,8 @@ pub struct Constants {
     /// A decal's opacity into colour, normal, smoothness and specular, and ambient.
     pub decal_blend_opacity: [f32; 4],
     pub gtintensity: f32,
+    /// How far a grass blade bends in the wind.
+    pub bendiness: f32,
     /// A four-layer material's scale and offset of the first and of the second texture coordinate.
     pub uv0_transform: [f32; 4],
     pub uv1_transform: [f32; 4],
@@ -160,6 +162,7 @@ impl Default for Constants {
             hard_light: false,
             decal_blend_opacity: [1.0; 4],
             gtintensity: 0.0,
+            bendiness: 0.0,
             uv0_transform: [1.0, 1.0, 0.0, 0.0],
             uv1_transform: [1.0, 1.0, 0.0, 0.0],
             uv_sets: [1.0; 4],
@@ -342,6 +345,7 @@ const DECAL_OPACITY: [u32; 4] = [
     name_hash32(b"DecalBlendOpacityGBuffer3"),
 ];
 const GRASS_TINT: u32 = name_hash32(b"gtintensity");
+const BENDINESS: u32 = name_hash32(b"bendiness");
 const UV0_TRANSFORM: u32 = 0x4344_D2CC;
 const UV1_TRANSFORM: u32 = 0x9ECA_AA1E;
 const UV_SETS: u32 = name_hash32(b"uvSet");
@@ -487,6 +491,7 @@ fn constants_of(r: &Records) -> Constants {
         hard_light: r.flag(HARD_LIGHT, d.hard_light),
         decal_blend_opacity: DECAL_OPACITY.map(|hash| r.float(hash, 1.0)),
         gtintensity: r.float(GRASS_TINT, d.gtintensity),
+        bendiness: r.float(BENDINESS, d.bendiness),
         uv0_transform: r.floats(UV0_TRANSFORM, d.uv0_transform),
         uv1_transform: r.floats(UV1_TRANSFORM, d.uv1_transform),
         uv_sets: r.sets(UV_SETS, d.uv_sets),

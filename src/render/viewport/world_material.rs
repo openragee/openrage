@@ -110,6 +110,7 @@ pub(super) fn constants_of(material: &CpuMaterial) -> WorldConstants {
         control_offset: c.layer_weight_bias,
         dirt_intensity: c.dirt_intensity,
         grass_tint: c.gtintensity,
+        grass_bend: c.bendiness,
         ..WorldConstants::default()
     };
     // A ground decal's height span reaches the shader as the first layer's scale and bias

@@ -15,7 +15,7 @@ struct Lamp {
     colour: vec4<f32>,
     way: vec4<f32>,
 };
-// The light of the game's frame, in the units its lighting passes sum, in `frame.x` how far the night emissives are on, in `frame.y` the exposure a material's own light is multiplied by and in `frame.z` how many lamps light what blends.
+// The light of the game's frame, in the units its lighting passes sum, in `frame.x` how far the night emissives are on, in `frame.y` the exposure a material's own light is multiplied by, in `frame.z` how many lamps light what blends and in `frame.w` the seconds the world has run, which the wind moves by.
 struct Light {
     sun_travel: vec4<f32>,
     sun_colour: vec4<f32>,
@@ -63,6 +63,7 @@ struct Constants {
     emissive_night: f32,
     emissive_view_power: f32,
     emissive_diffuse_tint: f32,
+    grass_bend: f32,
 };
 @group(0) @binding(0) var<uniform> camera: Camera;
 // Slots 9 to 11 are the fourth layer's in the four-layer family, and material B of the first and second layer and the emissive map in every other.
@@ -159,6 +160,21 @@ fn placed(in: VsIn) -> vec3<f32> {
     return vec3<f32>(dot(in.row0, local), dot(in.row1, local), dot(in.row2, local));
 }
 
+// ponytail: a stand-in for the game's wind. Its grass bends each blade by its material's `bendiness` towards the wind of global wind volumes the game fills at run time, which no file holds; here one wind blows along +x in gusts that roll across the ground, bending a blade by its height above its clump's foot, the foot still. Read the volumes' writer if a frame of the game's grass is to be matched.
+fn swayed(in: VsIn, world: vec3<f32>) -> vec3<f32> {
+    if (m.family.x != GRASS || m.grass_bend <= 0.0) {
+        return world;
+    }
+    let foot = vec3<f32>(in.row0.w, in.row1.w, in.row2.w);
+    let high = max(world.z - foot.z, 0.0);
+    let t = light.frame.w;
+    // Gusts a few seconds long rolling downwind, and a quicker flutter of each clump
+    let gust = 0.6 + 0.4 * sin(0.9 * t - 0.15 * foot.x + 0.05 * foot.y);
+    let flutter = 0.15 * sin(4.7 * t + dot(foot.xy, vec2<f32>(1.7, 2.3)));
+    let lean = m.grass_bend * 0.25 * (gust + flutter) * high * high / (high + 0.3);
+    return world + vec3<f32>(lean, 0.0, -0.5 * lean * lean / max(high, 0.05));
+}
+
 // What both vertex stages hand on, but for where the vertex is drawn.
 fn handed_on(in: VsIn, world: vec3<f32>) -> VsOut {
     var out: VsOut;
@@ -195,9 +211,10 @@ fn handed_on(in: VsIn, world: vec3<f32>) -> VsOut {
     return out;
 }
 
+// ⚠ A cascade's cast binds no light, so grass casts unswayed.
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
-    let world = placed(in);
+    let world = swayed(in, placed(in));
     var out = handed_on(in, world);
     out.clip_pos = camera.view_proj * vec4<f32>(world, 1.0);
     // One that only casts its shadow is put past the far plane, where every triangle of it is clipped.

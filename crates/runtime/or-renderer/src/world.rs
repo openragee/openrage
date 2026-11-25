@@ -265,6 +265,8 @@ pub(crate) struct World {
     pub(crate) terrain: Option<shadow_terrain::TerrainShadow>,
     /// What a material's own light is multiplied by: the exposure the day's light is given at, 1 where the frame keeps its own day.
     exposure: f32,
+    /// When the world was made: the wind moves by the seconds since.
+    started: std::time::Instant,
     /// The lamps that light what blends, nearest first.
     lamps: Vec<WorldLamp>,
     /// The maps and constants of each material made, by [`alike`], so that materials alike bind one group and their draws join; and the size past which the dead are let go.
@@ -478,7 +480,8 @@ impl World {
             label: Some("viewport-world-light-bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                // The vertex stage reads the seconds the wind moves by
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -506,6 +509,7 @@ impl World {
             focus: ShadowFocus::FREE,
             terrain: None,
             exposure: 1.0,
+            started: std::time::Instant::now(),
             lamps: Vec::new(),
             alike: RefCell::default(),
             materials,
@@ -806,7 +810,9 @@ impl World {
             .map(|vector| vector.extend(0.0).to_array())
             .to_vec();
         let lamps = self.lamps.len().min(WORLD_LAMPS) as f32;
-        light.push([night, self.exposure, lamps, 0.0]);
+        // ⚠ Seconds are kept under a day so that a float still holds a frame's step.
+        let seconds = self.started.elapsed().as_secs_f32() % 86_400.0;
+        light.push([night, self.exposure, lamps, seconds]);
         light.extend(lamps::rows(&self.lamps));
         queue.write_buffer(&self.light, 0, bytemuck::cast_slice(&light));
     }

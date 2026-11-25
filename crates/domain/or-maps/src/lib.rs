@@ -20,6 +20,8 @@
 //!
 //! [`changes`] says what a map or a type file changed of the base its source keeps, by object and not by field: the entities and the
 //! archetypes added, deleted and changed, and the ones no guid and no place tells from a twin. `openrage-cli maps changes` prints it.
+//! [`merge`] merges two copies of one map, or of one type file, against the file both were made from, with what `changes` says each
+//! changed: a conflict where they disagree, and never a guess. `openrage-cli maps merge` runs it.
 //!
 //! [`roads`] is the path regions a folder holds as sources: the operations that edit their nodes and links, each with its inverse, and
 //! the rules that say what is wrong in them. `openrage-cli maps roads` lists them and applies a list of operations.
@@ -39,6 +41,7 @@ pub mod import;
 pub mod layout;
 pub mod manifest;
 pub mod mapping;
+pub mod merge;
 pub mod model;
 pub mod operation;
 pub mod place;

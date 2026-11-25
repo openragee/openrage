@@ -80,6 +80,7 @@ mod jobs;
 mod keys;
 mod maps;
 mod maps_changes;
+mod maps_merge;
 mod maps_roads;
 mod mcp;
 mod mesh;

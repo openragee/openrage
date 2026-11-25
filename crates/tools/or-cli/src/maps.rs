@@ -1,7 +1,7 @@
 //! `openrage-cli maps`: list what a project's map sets place and declare, validate them and say what the rules find, read a build back
-//! against them, apply a list of operations to their sources, plan or apply the deletion of entities with their chain of far models,
-//! keep a manifest of the game for the manifest of the maps to be written from, list their doors, and list and edit the path regions
-//! a folder holds as sources.
+//! against them, apply a list of operations to their sources, merge two copies of one map, plan or apply the deletion of entities with
+//! their chain of far models, keep a manifest of the game for the manifest of the maps to be written from, list their doors, and list
+//! and edit the path regions a folder holds as sources.
 //!
 //! The plan and the build of maps are `openrage-cli project plan` and `build`:
 //! a maps content is content like any other, and goes through the one plan.
@@ -22,6 +22,7 @@ pub fn run(args: &[String]) -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("changes") => crate::maps_changes::run(rest),
         Some("list") => list(rest),
+        Some("merge") => crate::maps_merge::run(rest),
         Some("validate") => validate(rest),
         Some("verify") => verify(rest),
         Some("apply") => apply(rest),
@@ -54,6 +55,7 @@ fn print_usage() {
         "Usage:\n  \
          openrage-cli maps changes  <project.openrage-proj> [--module <id>] [--json]\n  \
          openrage-cli maps list     <project.openrage-proj> [--module <id>]\n  \
+         openrage-cli maps merge    --base <file> --ours <file> --theirs <file> --out <file> [--take ours|theirs] [--json]\n  \
          openrage-cli maps validate <project.openrage-proj> [--module <id>] [--json]\n  \
          openrage-cli maps verify   <project.openrage-proj> [--build <id>] [--out <folder>]\n  \
          openrage-cli maps apply    <project.openrage-proj> <operations.json> [--module <id>] [--dry-run]\n  \
@@ -74,6 +76,20 @@ fn print_usage() {
          list names the map sets of the content and, for each source, what it places (the entities of\n\
          a map file) or declares (the archetypes of a type file, and the rooms and portals of its\n\
          interiors).\n\
+         merge merges two copies of one map file or type file, ours and theirs, against the file both\n\
+         were made from, the base, which for a map of the game is the game's file. It takes each\n\
+         change `changes` would list of a side: an entity only one side moved, changed or deleted, the\n\
+         entities each added, each with a guid of its own that the base does not state, and the\n\
+         archetypes of a type file by name. What both changed to one value is one change. The rest is\n\
+         a conflict, named with the entity as each of the three files indexes it: one member both\n\
+         changed to different values, an entity one side changed and the other deleted, an entity of\n\
+         one archetype both added at one position that does not state the same on both sides, and an\n\
+         entity either side cannot tell from a twin, which is never paired by guess. With no --take\n\
+         a conflict stops the merge: nothing is written and it exits 1. --take ours or --take theirs\n\
+         decides every conflict for that side. The merged file is written to --out with its LOD links,\n\
+         its counts of children and its extents right, and a merge that cannot be made valid is\n\
+         refused with the reason. The report says what was applied, each conflict with what was taken,\n\
+         and what the merge does not look into; with --json it is the same report as data.\n\
          validate reads every source of the maps content, opens the map files and type files through\n\
          the typed world family, and lists what the rules find, each with a code and a severity. It\n\
          exits 1 when a finding that is not waived is an error.\n\

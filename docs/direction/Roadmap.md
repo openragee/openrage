@@ -10202,32 +10202,33 @@ install's file when the index is rebuilt; `openrage-cli project check-server` an
 folder the server does not look in
 ([brief](World_Editor_Plan.md#other-resources-of-the-server-r70r)).
 
-**Where it stands.** The check of one resource folder and the scan of a server's resources are
-built, both headless
+**Where it stands.** The check of one resource folder, the scan of a server's resources and the
+three-way merge of a map are built
 ([each in full, with what is open](../reference/Crate_Reference.md#domain-crates)).
-`crates/domain/or-project/src/resource.rs` reads any resource folder as a server will: the manifest is read and never run, each row of `RULES` fires on a folder built by hand to
-break it and on no other (`each_rule_fires_on_the_folder_built_to_break_it_and_on_no_other`), a file
-an asset escrow locks is counted and never opened, and a path that leaves the resource is reported
-and not followed. `openrage-cli project check-resource` prints the findings and exits 1 on an
-error. What `--game` asks of an install ran on a catalogue built by hand and on no install.
+`crates/domain/or-project/src/resource.rs` reads any resource folder as a server will: the manifest
+is never run, and each row of `RULES` fires on a folder built to break it and on no other (`each_rule_fires_on_the_folder_built_to_break_it_and_on_no_other`).
+`openrage-cli project check-resource` prints the findings and exits 1 on an error; `--game` ran
+on no install.
 
-`crates/domain/or-project/src/server.rs` reads a server's resources folder through its category
-folders, each file once
-(`a_scan_opens_each_file_once_and_a_second_scan_gives_the_same_findings_in_the_same_order`), with
-the resource check's manifest reader. Its rules find two resources that stream one name, a warning
-where the bytes differ, two that declare one archetype and two folders of one resource name, and
-say which starts last where a configuration's `ensure`, `start` and `exec` lines tell
-(`server::config`). `concerning` and `placement` say what a build would write again and whether a
-server looks where it is written; no build calls them. A build is asked about the archetypes its
-contents claim and those of every type file it ships, a manifest of maps is no clash between two
-resources, and a resource or a category that is a link is said not to have been read. `openrage-cli project check-server` and
-`check-build` print both and exit 1 on a warning.
+`crates/domain/or-project/src/server.rs` reads a server's resources folder, each file once
+(`a_scan_opens_each_file_once_and_a_second_scan_gives_the_same_findings_in_the_same_order`). Its
+rules find two resources that stream one name, two that declare one archetype and two folders of
+one resource name, and say which starts last where a configuration tells. `concerning` and
+`placement` say what a build would write again and whether a server looks where it is written; no
+build calls them. `openrage-cli project check-server` and `check-build` print both.
+
+`crates/domain/or-maps/src/merge.rs` merges two copies of a map, or of a type file by name, against
+the file both were made from: a change one side made is taken, and the rest is a conflict a policy
+answers with ours, theirs or stop. Twins are never paired
+(`twins_one_side_moved_are_a_conflict_that_names_them_and_nothing_is_merged_for_them`), and a
+merged map the rules find in error is refused. `openrage-cli maps merge` runs it over three files.
+⚠ An added entity whose guid is taken gets one more than the largest of the three files: that rule
+is the owner's, as are three readings the reference lists. A link into the parent map is merged as
+the number it is, and no map of an install was merged.
 
 Open: which of two copies a server loads is never said, and what a category and the configuration
-commands are was read from no server. Left: the three-way merge, the server as a layer of the
-mount, the Problems panel's rule raised by the edit that imports a file, the two questions called by
-a build, and the finding for a base that is no longer the install's. Nothing here says the game
-loads a file.
+commands are was read from no server. Left: the server as a layer of the mount, the Problems
+panel's rule raised by the edit that imports a file, and the finding for a base that is no longer the install's. Nothing here says the game loads a file.
 
 **Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn),
 [R70h](#r70h-one-vocabulary-of-world-edits) and

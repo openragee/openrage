@@ -190,7 +190,7 @@ pub struct Extents {
 }
 
 impl Extents {
-    fn of(map: &CMapData) -> Self {
+    pub(crate) fn of(map: &CMapData) -> Self {
         let corner = |v: or_io::decl::Vec3| [v.x, v.y, v.z];
         Self {
             entities_extents_min: corner(map.entities_extents_min),
@@ -261,7 +261,7 @@ impl Record {
         archetype.to_value().map(Self).map_err(|e| e.to_string())
     }
 
-    fn as_entity(&self) -> Result<CEntityDefAny, String> {
+    pub(crate) fn as_entity(&self) -> Result<CEntityDefAny, String> {
         CEntityDefAny::from_value(&self.0).map_err(|e| e.to_string())
     }
 
@@ -1511,6 +1511,16 @@ fn change_map(
             operation.name()
         )),
     }
+}
+
+/// Do `operation` to `map`, a root that is no source of a pack, with no box of any archetype to grow the extents by.
+pub(crate) fn apply_to_map(map: &mut CMapData, operation: &Operation) -> Result<(), String> {
+    change_map(map, operation, &Context::default()).map(|_| ())
+}
+
+/// Do `operation` to `types`, a root that is no source of a pack.
+pub(crate) fn apply_to_types(types: &mut CMapTypes, operation: &Operation) -> Result<(), String> {
+    change_types(types, operation, &Context::default()).map(|_| ())
 }
 
 /// Do `operation` to `types`; a refusal leaves `types` as it was.

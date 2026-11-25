@@ -46,7 +46,7 @@ use serde::{Serialize, Serializer};
 use crate::facts::Name;
 
 /// The flag of an entity that names its parent in the parent map's array.
-const IN_PARENT_MAP: u32 = 1 << 3;
+pub(crate) const IN_PARENT_MAP: u32 = 1 << 3;
 
 /// For each member listed, its engine name beside it: `$differs`, a `&mut` closure, with the name and what each record states where they state another thing, and the member blanked in the two copies `$blank` holds, so that what the copies still differ in is what no member listed names.
 macro_rules! members {
@@ -63,7 +63,7 @@ macro_rules! members {
     }};
 }
 
-fn name_of(name: &HashedString) -> Name {
+pub(crate) fn name_of(name: &HashedString) -> Name {
     Name {
         hash: name.hash,
         text: (!name.raw.is_empty() && or_io::string_hash(name.raw.as_bytes()) == name.hash)
@@ -206,7 +206,7 @@ fn placement_of(entity: &CEntityDefAny) -> Placement {
 }
 
 /// The pose of an entity as the file stores it, bit for bit.
-fn pose_key(entity: &CEntityDef) -> [u32; 9] {
+pub(crate) fn pose_key(entity: &CEntityDef) -> [u32; 9] {
     let (p, r) = (entity.position, entity.rotation);
     [
         p.x,
@@ -511,8 +511,8 @@ fn match_entities(base: &[CEntityDefAny], now: &[CEntityDefAny]) -> Matching {
 }
 
 /// What an entity names as its parent.
-#[derive(Clone, Copy, PartialEq)]
-enum Link {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Link {
     None,
     /// An index of the file's own entities.
     Own(usize),
@@ -520,7 +520,7 @@ enum Link {
     ParentMap(i32),
 }
 
-fn link_of(entity: &CEntityDef) -> Link {
+pub(crate) fn link_of(entity: &CEntityDef) -> Link {
     if entity.flags & IN_PARENT_MAP != 0 {
         return Link::ParentMap(entity.parent_index);
     }
@@ -528,7 +528,7 @@ fn link_of(entity: &CEntityDef) -> Link {
 }
 
 /// How many entities of `list` name each of its entities as their parent.
-fn own_children(list: &[CEntityDefAny]) -> Vec<i64> {
+pub(crate) fn own_children(list: &[CEntityDefAny]) -> Vec<i64> {
     let mut children = vec![0i64; list.len()];
     for entity in list {
         if let Link::Own(parent) = link_of(entity) {
@@ -709,7 +709,7 @@ fn position_of(entity: &CEntityDef) -> [f32; 3] {
     [entity.position.x, entity.position.y, entity.position.z]
 }
 
-fn entity_ref(index: usize, entity: &CEntityDef) -> EntityRef {
+pub(crate) fn entity_ref(index: usize, entity: &CEntityDef) -> EntityRef {
     EntityRef {
         index,
         guid: entity.guid,
@@ -720,7 +720,7 @@ fn entity_ref(index: usize, entity: &CEntityDef) -> EntityRef {
 
 /// What the map `now` changed of the map `base`: its entities, and what it states of itself.
 pub fn map_changes(base: &CMapData, now: &CMapData) -> MapChanges {
-    map_changes_under(base, now, None)
+    maps_compared(base, now, None).0
 }
 
 /// [`map_changes`], with a link into the parent map compared by the entity it names when `parent` gives that map's entities.
@@ -729,7 +729,20 @@ pub fn map_changes_under(
     now: &CMapData,
     parent: Option<ParentMap<'_>>,
 ) -> MapChanges {
-    let mut out = entities_compared(&base.entities, &now.entities, parent);
+    maps_compared(base, now, parent).0
+}
+
+/// [`map_changes`], and for each entity of `base` the index of the entity of `now` it was found to be: none for one deleted and for one of an ambiguous group.
+pub fn map_changes_paired(base: &CMapData, now: &CMapData) -> (MapChanges, Vec<Option<usize>>) {
+    maps_compared(base, now, None)
+}
+
+fn maps_compared(
+    base: &CMapData,
+    now: &CMapData,
+    parent: Option<ParentMap<'_>>,
+) -> (MapChanges, Vec<Option<usize>>) {
+    let (mut out, pairs) = entities_compared(&base.entities, &now.entities, parent);
     // ⚠ A typed root carries the tree it was read from, so a copy of one is a copy of the file: none is made of two equal maps.
     if base != now {
         let (mut was, mut is) = (base.clone(), now.clone());
@@ -747,19 +760,20 @@ pub fn map_changes_under(
         (was.entities, is.entities) = (Vec::new(), Vec::new());
         out.other = was != is;
     }
-    out
+    (out, pairs)
 }
 
 /// [`map_changes`] of two lists of entities, which the entities of an interior are too.
 pub fn entity_changes(base: &[CEntityDefAny], now: &[CEntityDefAny]) -> MapChanges {
-    entities_compared(base, now, None)
+    entities_compared(base, now, None).0
 }
 
+/// [`entity_changes`] with the parent map's entities when `parent` gives them, and the pairs [`map_changes_paired`] gives.
 fn entities_compared(
     base: &[CEntityDefAny],
     now: &[CEntityDefAny],
     parent: Option<ParentMap<'_>>,
-) -> MapChanges {
+) -> (MapChanges, Vec<Option<usize>>) {
     let compared = Compared {
         base,
         now,
@@ -803,7 +817,10 @@ fn entities_compared(
             now: of_now.iter().map(|&i| entity_ref(i, &now[i])).collect(),
         });
     }
-    out
+    let pairs = (matching.now_of.iter())
+        .map(|found| found.map(|(to, _)| to))
+        .collect();
+    (out, pairs)
 }
 
 /// What a member of a record states, as a comparison shows it.
@@ -960,7 +977,7 @@ fn type_of(archetype: &CBaseArchetypeDefAny) -> &'static str {
 }
 
 /// What the archetype `now` states differently from `base`, the same archetype of the base.
-fn archetype_changes(
+pub(crate) fn archetype_changes(
     from: usize,
     base: &CBaseArchetypeDefAny,
     to: usize,

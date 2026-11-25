@@ -415,11 +415,14 @@ fn held(kind: JobKind) -> Held {
         JobKind::OpusAudio => {
             Held::By("an_opus_stream_plays_exports_and_is_replaced_on_a_worker_the_list_stops")
         }
+        JobKind::TextureCalibration => {
+            Held::By("a_calibration_of_texture_decoding_is_a_job_that_stops_when_asked")
+        }
     }
 }
 
 /// Every kind of job there is.
-const EVERY: [JobKind; 30] = [
+const EVERY: [JobKind; 31] = [
     JobKind::Extraction,
     JobKind::Defragment,
     JobKind::OverlayCopy,
@@ -450,6 +453,7 @@ const EVERY: [JobKind; 30] = [
     JobKind::WorldIndex,
     JobKind::AudioLinks,
     JobKind::OpusAudio,
+    JobKind::TextureCalibration,
 ];
 
 #[test]
@@ -490,6 +494,7 @@ fn the_kinds_the_list_test_runs_are_those_no_other_test_holds() {
         include_str!("gta6_map_tests.rs"),
         include_str!("gta6_audio_links_tests.rs"),
         include_str!("opus_on_a_worker.rs"),
+        include_str!("gta6_bcpack_calibration.rs"),
     ];
     for test in named {
         let defined = sources

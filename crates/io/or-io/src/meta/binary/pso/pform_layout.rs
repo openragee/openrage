@@ -44,6 +44,7 @@ const MISSED: &str =
 /// A GTA VI P-form document's bytes with `instance` laid out anew, refused when the rules do not
 /// give back the document `layout` was read from.
 pub(crate) fn write(layout: &PsoLayout, instance: &MetaInstance) -> Result<Vec<u8>> {
+    let _names = crate::meta::binary::hash_index::title_names();
     let stored = stored_bytes(layout);
     let library = SchemaLibrary::default();
     let (original, _) = super::reader::parse_full(&library, &stored, &mut Diagnostics::lenient())?;

@@ -9,13 +9,20 @@ struct Camera {
     camera_misc: vec4<f32>,
     key_light: vec4<f32>,
 };
-// The light of the game's frame, in the units its lighting passes sum, in `frame.x` how far the night emissives are on and in `frame.y` the exposure a material's own light is multiplied by.
+// A lamp that lights what blends, as `WorldLamp`'s rows: its place and reach, its colour times its strength and a spot's outer cosine, and a spot's way and one over its span.
+struct Lamp {
+    at: vec4<f32>,
+    colour: vec4<f32>,
+    way: vec4<f32>,
+};
+// The light of the game's frame, in the units its lighting passes sum, in `frame.x` how far the night emissives are on, in `frame.y` the exposure a material's own light is multiplied by and in `frame.z` how many lamps light what blends.
 struct Light {
     sun_travel: vec4<f32>,
     sun_colour: vec4<f32>,
     ambient_down: vec4<f32>,
     ambient_up: vec4<f32>,
     frame: vec4<f32>,
+    lamps: array<Lamp, 256>,
 };
 // A material's constants, laid out as `WorldConstants` after a word of the family.
 struct Constants {
@@ -691,7 +698,32 @@ fn fs_gbuffer_decal(in: VsOut, @builtin(front_facing) front_facing: bool) -> GBu
     return out;
 }
 
-// What blends over the frame the game's passes lit, lit by the same sun and ambient light, premultiplied by its coverage; a forward emissive adds its own light instead.
+// The light the lamps give a surface at `world_pos`, by GTA VI's law: the window `(1 - (d²/R²)²)²` over the distance squared, and a spot's angular factor across its cones.
+fn lamps_lit(s: Surface, world_pos: vec3<f32>) -> vec3<f32> {
+    var sum = vec3<f32>(0.0);
+    let count = u32(light.frame.z);
+    for (var i = 0u; i < count; i = i + 1u) {
+        let l = light.lamps[i];
+        let to = l.at.xyz - world_pos;
+        // A centimetre at the least: the glass of a lamp lies a hand's breadth from it, never on it.
+        let d2 = max(dot(to, to), 1e-4);
+        let t = d2 / (l.at.w * l.at.w);
+        if (t >= 1.0) {
+            continue;
+        }
+        let w = 1.0 - t * t;
+        let towards = to * inverseSqrt(d2);
+        var a = 1.0;
+        if (dot(l.way.xyz, l.way.xyz) > 0.0) {
+            let x = clamp((dot(l.way.xyz, -towards) - l.colour.w) * l.way.w, 0.0, 1.0);
+            a = x * (x - x * x + x * x * x * x * (3.0 - 2.0 * x * x));
+        }
+        sum = sum + l.colour.rgb * (w * w * a / d2) * max(dot(s.normal, towards), 0.0);
+    }
+    return sum;
+}
+
+// What blends over the frame the game's passes lit, lit by the same sun and ambient light and by the nearest lamps, which the passes cannot reach here, premultiplied by its coverage; a forward emissive adds its own light instead.
 @fragment
 fn fs_lit(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     let s = surface_of(in, front_facing);
@@ -717,7 +749,7 @@ fn fs_lit(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) 
     if (dropped(in, max(s.coverage, max3(surface)), BLEND_ALPHA)) {
         discard;
     }
-    let lit = (diffuse_of(s) * (sun + ambient) + s.emissive) * s.coverage + surface;
+    let lit = (diffuse_of(s) * (sun + ambient + lamps_lit(s, in.world_pos)) + s.emissive) * s.coverage + surface;
     return vec4<f32>(lit, s.coverage + share - s.coverage * share);
 }
 

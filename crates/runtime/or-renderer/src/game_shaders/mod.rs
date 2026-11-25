@@ -19,6 +19,7 @@ pub mod light_volumes;
 pub mod lighting;
 pub mod link;
 pub mod mesh;
+pub mod meshlets;
 pub mod mips;
 pub mod model;
 pub mod pack;

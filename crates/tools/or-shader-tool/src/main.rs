@@ -8,6 +8,8 @@ use or_shader_tool::pack_protocol::{throttled, Event};
 use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod rdna_command;
+
 fn main() -> ExitCode {
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
@@ -41,6 +43,7 @@ fn main() -> ExitCode {
         "backend-check" => run_backend_check(&args),
         "render-drawable" => run_render_drawable(&args),
         "render-census" => run_render_census(&args),
+        "rdna-devices" => rdna_command::run(&args),
         "-h" | "--help" | "help" => {
             print_usage(&program);
             ExitCode::SUCCESS
@@ -1373,6 +1376,7 @@ fn print_usage(program: &str) {
     eprintln!("                                write the SPIR-V pack: one legalized module per program a pass runs,");
     eprintln!("                                and a manifest saying which pass of which technique runs which");
     eprintln!("                                (needs the `native-front` feature)");
+    rdna_command::print_usage(program);
     eprintln!("  {program} defs build --input <INSTALL-OR-DIR> --out <FILE> [--title gta5] [--target gen8]");
     eprintln!("  {program} defs show  <FILE> [SHADER]");
     eprintln!("  {program} defs find  <FILE> <NAME-OR-0xHASH>");

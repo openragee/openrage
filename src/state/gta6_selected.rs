@@ -271,6 +271,8 @@ mod tests {
 
     fn geometry(positions: Vec<[f32; 3]>, triangles: usize) -> Geometry {
         Geometry {
+            vertex_data: Vec::new(),
+            index_data: Vec::new(),
             shader: 1,
             vertex_count: positions.len() as u32,
             channels: vec![Channel {

@@ -804,6 +804,8 @@ mod tests {
             triangles: vec![[0, 1, 2]],
             positions: Ok(positions),
             vertices,
+            vertex_data: Vec::new(),
+            index_data: Vec::new(),
         }
     }
 

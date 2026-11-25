@@ -134,16 +134,12 @@ fn every_nested_table_in_the_build_mounts() {
         "{} non-ciphered entries have no entry row (unknown columns {:?})",
         w.rowless, w.rowless_columns
     );
-    // The top-level nested count is exactly known; the total is about 4,348 across all depths.
+    // The build's 22 tables hold 4,351 nested archives, every one directly under the top level.
     assert_eq!(
-        w.top_level, 4_315,
+        w.top_level, 4_351,
         "nested archives directly under the top level"
     );
-    assert!(
-        w.nested >= 4_348,
-        "mounted only {} nested archives; the build holds about 4,348",
-        w.nested
-    );
+    assert_eq!(w.nested, 4_351, "nested archives at every depth");
     println!(
         "mounted {} nested RPF9 archives ({} at the top level), 0 refusals",
         w.nested, w.top_level

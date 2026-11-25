@@ -1,6 +1,7 @@
 use or_io::gta5::data::timecycle::Timecycle;
 use or_io::gta5::data::visual_settings::VisualSettings;
 
+use super::gta6_weather::Gta6Weather;
 use crate::Vfs;
 
 pub const TIME_VFS_PATH: &str = "common:/data/levels/gta5/time.xml";
@@ -29,6 +30,8 @@ const CYCLES: [&str; 14] = [
 pub struct TimecycleData {
     pub timecycle: Timecycle,
     pub visual_settings: VisualSettings,
+    /// The weather types and modifiers a GTA VI install states; empty for any other.
+    pub gta6_weather: Gta6Weather,
 }
 
 /// Read the time table, the weather cycles and the visual settings the install holds; whatever it does not hold is left empty.
@@ -54,7 +57,30 @@ pub fn load_timecycle(vfs: &Vfs) -> TimecycleData {
     TimecycleData {
         timecycle,
         visual_settings,
+        gta6_weather: Gta6Weather::default(),
     }
+}
+
+/// The look of the day the XML texts `documents` state, for an install whose files have no names: each is known by its root element, and a text of neither kind is passed over.
+pub fn timecycle_of_documents<'a>(documents: impl IntoIterator<Item = &'a str>) -> TimecycleData {
+    let mut data = TimecycleData::default();
+    for text in documents {
+        // The root is the first element after the declaration; the tuning values are no XML
+        // and say what they are in a comment.
+        let head = String::from_utf8_lossy(&text.as_bytes()[..text.len().min(512)]);
+        if head.contains("<time_data") {
+            data.timecycle.table = or_io::gta5::data::timecycle::TimeTable::parse(text);
+        } else if head.contains("<timecycle_keyframe_data") {
+            data.timecycle.add_cycles(text);
+        } else if head.contains("<CContentsOfWeatherXmlFile") {
+            data.gta6_weather.add_types(text);
+        } else if head.contains("<timecycle_modifier_data") {
+            data.gta6_weather.add_modifiers(text);
+        } else if head.contains("# Visual Configuration Table") {
+            data.visual_settings = VisualSettings::parse(text);
+        }
+    }
+    data
 }
 
 #[cfg(test)]
@@ -104,6 +130,52 @@ mod tests {
         assert_eq!(data.timecycle.cycles.len(), 1);
         assert!(data.timecycle.cycle("clear").is_some());
         assert_eq!(data.visual_settings.get_f32("misc.MoonDimMult", 1.0), 0.3);
+    }
+
+    #[test]
+    fn nameless_documents_are_told_apart_by_their_roots_in_any_order() {
+        // A cycle whose file opens with values of its own before the cycle, and whose samples
+        // state no duration.
+        let cycle = r#"<?xml version="1.0" encoding="UTF-8"?>
+<timecycle_keyframe_data>
+  <summary><overall> 0.5</overall></summary>
+  <cycle name="Rain" regions="2">
+    <region name="GLOBAL"><light_dir_mult> 1 3 5</light_dir_mult></region>
+    <region name="URBAN"><light_dir_mult> 2 2 2</light_dir_mult></region>
+  </cycle>
+</timecycle_keyframe_data>"#;
+        let time = r#"<?xml version="1.0" encoding="UTF-8"?>
+<time_data version="1.000000" mode="dynamic">
+  <sample name="00:00" hour="0" uw_tc_mod="underwater"/>
+  <sample name="07:00" hour="7" uw_tc_mod="underwater" interpolation_type="EASE_QUARTIC_INOUT"/>
+  <sample name="12:00" hour="12" uw_tc_mod="underwater"/>
+  <region name="URBAN"/>
+</time_data>"#;
+        let other = r#"<?xml version="1.0"?><some_other_table/>"#;
+        let data = timecycle_of_documents([cycle, other, time]);
+        let hours: Vec<f32> = (data.timecycle.table.samples.iter())
+            .map(|s| s.hour)
+            .collect();
+        assert_eq!(hours, [0.0, 7.0, 12.0]);
+        use or_io::gta5::data::timecycle::Easing;
+        let bends: Vec<Easing> = (data.timecycle.table.samples.iter())
+            .map(|s| s.easing)
+            .collect();
+        assert_eq!(
+            bends,
+            [Easing::Linear, Easing::QuarticInOut, Easing::Linear]
+        );
+        assert_eq!(data.timecycle.cycles.len(), 1);
+        let rain = data.timecycle.cycle("RAIN").expect("named in its file");
+        assert_eq!(rain.regions.len(), 2);
+        assert!(
+            !rain.regions[0].vars.contains_key("overall"),
+            "what stands before the cycle is none of its variables"
+        );
+        assert_eq!(rain.overall.get("overall"), Some(&0.5));
+        let between = (data.timecycle).keyframe_between((1, 2, 0.5), "rain", "rain", 0.0, 0.0);
+        assert_eq!(between.expect("read").get("light_dir_mult"), Some(4.0));
+        assert_eq!(timecycle_of_documents([other]), TimecycleData::default());
     }
 
     #[test]

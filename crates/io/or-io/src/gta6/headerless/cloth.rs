@@ -61,7 +61,7 @@ pub struct ClothEdge {
     pub word: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ClothMesh {
     pub box_min: [f32; 3],
     pub box_max: [f32; 3],
@@ -86,6 +86,11 @@ pub struct ClothMesh {
     /// The triangle each strand's root lies on.
     pub root_triangles: Vec<u32>,
     pub rest_lengths: Vec<f32>,
+    /// Each strand's two float16 of per-strand array 2, read as its root's UV.
+    pub root_uvs: Vec<[f32; 2]>,
+    /// Each triangle's four bytes of index array 6. The first three rise and fall together from
+    /// triangle to triangle; which of them counts strands no body states.
+    pub triangle_bytes: Vec<[u8; 4]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -405,6 +410,12 @@ fn mesh(v: Bytes, p: Bytes) -> Result<ClothMesh> {
     if six != 4 * m || (seven != m && seven != m.next_multiple_of(4)) {
         return refuse("its index arrays 6 and 7 do not hold 4 bytes and 1 byte a triangle");
     }
+    let uvs = p.get("root UVs", vertex_arrays[2] as usize, 4 * strands)?;
+    let root_uvs: Vec<[f32; 2]> = (uvs.as_chunks::<4>().0.iter())
+        .map(|r| [half(&[r[0], r[1]]), half(&[r[2], r[3]])])
+        .collect();
+    let bytes = p.get("triangle bytes", index_arrays[6] as usize, six)?;
+    let triangle_bytes = bytes.as_chunks::<4>().0.to_vec();
     Ok(ClothMesh {
         box_min,
         box_max,
@@ -420,6 +431,8 @@ fn mesh(v: Bytes, p: Bytes) -> Result<ClothMesh> {
         weights,
         root_triangles,
         rest_lengths,
+        root_uvs,
+        triangle_bytes,
     })
 }
 

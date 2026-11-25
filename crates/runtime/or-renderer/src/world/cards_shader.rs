@@ -274,10 +274,11 @@ fn dropped(in: VsOut, coverage: f32) -> bool {
     return coverage * in.half_size.z < dither(in.clip_pos.xy + moved);
 }
 
-// A card has no normal map: its normal bows out from its pivot towards the viewer, as a sphere's would.
+// A card has no normal map: its normal is that of the half of its crown's sphere turned to the viewer, square to the view at the rim.
 fn normal_of(in: VsOut) -> vec3<f32> {
     let toward = normalize(camera.camera_pos_ws.xyz - in.pivot);
-    return normalize(toward + (in.world_pos - in.pivot) / max(in.half_size.x, in.half_size.y));
+    let o = (in.world_pos - in.pivot) / max(in.half_size.x, in.half_size.y);
+    return normalize(o + toward * sqrt(max(1.0 - dot(o, o), 0.0)));
 }
 
 @fragment

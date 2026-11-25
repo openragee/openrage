@@ -205,8 +205,8 @@ fn the_world_program_is_valid_and_reads_a_materials_constants_where_the_renderer
     );
     // The family, seventeen vectors and fifteen scalars
     assert_eq!(members.len(), 33);
-    // The frame's light: four vectors and the night's
-    assert_eq!(declared("Light").1, 80);
+    // The frame's light: four vectors, the night's, then the lamps' rows
+    assert_eq!(declared("Light").1 as usize, lamps::LIGHT_FLOATS * 4);
 }
 
 #[test]

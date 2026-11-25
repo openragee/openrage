@@ -48,6 +48,12 @@ pub(super) enum Step {
         modifiers: egui::Modifiers,
     },
     Hover(egui::Pos2),
+    /// The pointer pressed at one place and let go at another, as a drag in the viewport orbits or, with shift, pans.
+    Drag {
+        from: egui::Pos2,
+        to: egui::Pos2,
+        modifiers: egui::Modifiers,
+    },
     Scroll {
         at: egui::Pos2,
         dy: f32,
@@ -200,6 +206,15 @@ fn parse_step(line: &str) -> Result<Step, String> {
                     egui::PointerButton::Primary
                 },
                 times: if word == "dclick" { 2 } else { 1 },
+                modifiers: modifiers(held)?,
+            })
+        }
+        "drag" => {
+            let (places, held) = args.split_at(args.len().min(4));
+            let [x, y, to_x, to_y] = numbers::<4>(places)?;
+            Ok(Step::Drag {
+                from: egui::pos2(x, y),
+                to: egui::pos2(to_x, to_y),
                 modifiers: modifiers(held)?,
             })
         }
@@ -434,6 +449,17 @@ mod tests {
             "a channel is not a mode to ask for"
         );
         assert!(one("mode").is_err());
+    }
+
+    #[test]
+    fn a_drag_takes_two_places_and_the_modifiers_held() {
+        let dragged = Step::Drag {
+            from: egui::pos2(10.0, 20.0),
+            to: egui::pos2(30.0, 40.0),
+            modifiers: egui::Modifiers::SHIFT,
+        };
+        assert_eq!(one("drag 10 20 30 40 shift"), Ok(dragged));
+        assert!(one("drag 10 20 30").is_err());
     }
 
     #[test]

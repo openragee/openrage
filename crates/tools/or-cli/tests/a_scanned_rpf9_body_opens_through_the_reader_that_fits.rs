@@ -285,12 +285,8 @@ fn each_scanned_body_prints_what_its_reader_reads_and_an_uncertain_resource_is_r
     let frames = DECODED / (2 * 2);
     assert!(
         movie.contains(&format!(
-            "flags state Bink audio (DCT), 2 channel(s), 48000 Hz, {frames} sample frames"
+            "flags state Bink 2 audio, 2 channel(s), 48000 Hz, {frames} sample frames"
         )),
-        "{movie}"
-    );
-    assert!(
-        movie.contains("does not play: the sound of a KB2n movie"),
         "{movie}"
     );
 }

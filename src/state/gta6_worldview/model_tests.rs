@@ -21,6 +21,8 @@ fn geometry(shader: u16, read: bool) -> Geometry {
             }),
         },
         vertices: Vertices::default(),
+        vertex_data: Vec::new(),
+        index_data: Vec::new(),
     }
 }
 

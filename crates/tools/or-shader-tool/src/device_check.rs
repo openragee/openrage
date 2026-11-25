@@ -17,8 +17,9 @@ pub struct DeviceCompiler {
 
 /// The machine's best adapter with no surface, taking the most it allows, and the name of the adapter; wgpu's `WGPU_BACKEND` and `WGPU_VALIDATION` choose the backend and its validation layer.
 pub fn open_device() -> Result<(wgpu::Device, wgpu::Queue, String), String> {
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    descriptor.backends = or_renderer::instance::backends_from_env()?;
+    let instance = wgpu::Instance::new(or_renderer::instance::with_dxc(descriptor));
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
@@ -69,7 +70,7 @@ fn wgsl_type(kind: ScalarKind, count: usize) -> Option<String> {
 }
 
 /// A vertex shader that passes zero for every input a fragment entry point takes, with matching interpolation.
-fn matching_vertex_shader(
+pub(crate) fn matching_vertex_shader(
     module: &naga::Module,
     entry: &naga::EntryPoint,
 ) -> Result<String, String> {
@@ -165,7 +166,7 @@ impl DeviceCompiler {
 }
 
 /// A wgpu error's lines joined, without the pipeline's label and naga's source diagram.
-fn one_line(description: &str) -> String {
+pub(crate) fn one_line(description: &str) -> String {
     description
         .lines()
         .map(str::trim)

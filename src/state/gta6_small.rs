@@ -3,9 +3,9 @@
 
 use or_io::gta6::headerless::{AssetIndex, KeyedBlobDescriptor, NeighbourTable};
 
-/// `hash_` and a 64-bit key, which nothing here names.
+/// A 64-bit key by the name the harvested vocabulary holds for it, else `hash_` and its digits.
 fn key_name(key: u64) -> String {
-    format!("hash_{key:016X}")
+    super::gta6_names::said64(key)
 }
 
 /// A descriptor's key, stream length, pair and words.

@@ -59,6 +59,7 @@ fn grow(e: Gta6GrowError) -> MetaError {
 /// A headerless resource's sections with `instance` written in, its arrays resized to it first.
 // An unchanged tree is laid out anew only where that gives back the stored bytes.
 pub fn write_grown(layout: &RbmLayout, instance: &MetaInstance) -> Result<(Vec<u8>, Vec<u8>)> {
+    let _names = crate::meta::binary::hash_index::title_names();
     // A table that gains or loses a pair is rebuilt and the regions after it move.
     if super::gta6_pairs::pairs_changed(layout, instance)? {
         return super::gta6_relayout::write(layout, instance);

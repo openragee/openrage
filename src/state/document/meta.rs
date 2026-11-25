@@ -16,6 +16,11 @@ pub fn meta_schema() -> &'static or_io::meta::SchemaLibrary {
     static FOUND: std::sync::Once = std::sync::Once::new();
     FOUND.call_once(|| {
         let config = crate::state::prefs::config_root();
+        if let Some(path) = or_title::schema::find_gta6_snapshot(config.as_deref()) {
+            if let Err(error) = or_io::meta::install_names_snapshot(&path) {
+                tracing::warn!(path = %path.display(), %error, "GTA VI's schema snapshot is unusable");
+            }
+        }
         let Some(path) = or_title::schema::find_snapshot(config.as_deref()) else {
             tracing::info!("no metadata schema snapshot found; field names read as hashes");
             return;
@@ -110,6 +115,8 @@ impl MetaDocument {
 
     /// A GTA VI headerless RBM resource, from its virtual and its physical section.
     pub fn from_gta_vi_headerless(virtual_section: &[u8], physical: &[u8]) -> Result<Self, String> {
+        // The names of GTA VI's snapshot are installed by the first ask for the schema.
+        meta_schema();
         let (instance, layout) = or_io::meta::binary::rbm::gta6::open(virtual_section, physical)
             .map_err(|e| e.to_string())?;
         let parsed = or_io::meta::MetaDocument {
@@ -305,6 +312,15 @@ impl MetaDocument {
         let pso = matches!(self.layout.as_ref().map(|l| &l.container),
             Some(ContainerLayout::Pso(p)) if p.is_table_form() || p.is_gta6());
         pso && or_io::meta::binary::pso::keeps_stale_checksum(&self.raw_bytes)
+    }
+
+    /// Whether this is a GTA VI body, a PSO of that game or a headerless resource, whose own
+    /// table states its fields.
+    pub fn is_gta_vi_body(&self) -> bool {
+        use or_io::meta::binary::ContainerLayout;
+        self.keeps_a_checksum()
+            || matches!(self.layout.as_ref().map(|l| &l.container),
+                Some(ContainerLayout::Rbm(rbm)) if rbm.seal.is_none())
     }
 
     /// A GTA VI headerless resource's sections with its tree written in; `None` for any other

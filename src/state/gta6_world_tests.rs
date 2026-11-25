@@ -507,3 +507,70 @@ fn an_interior_s_lights_stand_at_each_instance_of_it_the_map_shown_places() {
     };
     assert_eq!(lights, [blue]);
 }
+
+#[test]
+fn a_region_reads_the_maps_that_meet_it_once_a_pass_has_kept_where_every_body_is() {
+    use fill::{bodies_of, Extent};
+    // A pass over a near map, a far one, a map that places nothing, archetypes and a lane list;
+    // a pass for a region keeps where the maps outside it are too.
+    let passed = |region: Option<&fill::Region>| {
+        let map = |name, lo, hi, entities| {
+            AreaBody::Map(MapBody::Data(map_of(name, lo, hi, entities)), None)
+        };
+        let mut read = fill::Gathered::default();
+        read.add(
+            0x100,
+            map(1, 0.0, 200.0, vec![entity(7, [10.0, 10.0, 0.0])]),
+            region,
+        );
+        read.add(
+            0x200,
+            map(2, 5000.0, 5100.0, vec![entity(7, [5050.0, 5050.0, 0.0])]),
+            region,
+        );
+        read.add(0x280, map(4, 0.0, 200.0, Vec::new()), region);
+        let types = MapTypes {
+            name: 3,
+            archetypes: vec![archetype(7)],
+        };
+        read.add(0x300, AreaBody::Map(MapBody::Types(types), None), region);
+        let nodes = vec![node(0, [0.0, 0.0, 1.0], 0)];
+        read.add(0x400, AreaBody::Lanes(LaneBody::Nodes(nodes)), region);
+        read.bodies().to_vec()
+    };
+    let near: fill::Region = ([0.0, 0.0], [300.0, 300.0]);
+    let bodies = passed(None);
+    assert_eq!(bodies, passed(Some(&near)));
+    let starts: Vec<u64> = bodies.iter().map(|(offset, _)| *offset).collect();
+    assert_eq!(
+        starts,
+        [0x100, 0x200, 0x300, 0x400],
+        "a map that places nothing is no body of a fill"
+    );
+    assert!(matches!(bodies[0].1, Extent::Map(b) if b.max[0] == 200.0));
+    assert_eq!(bodies[2].1, Extent::Everywhere);
+
+    assert_eq!(bodies_of(&bodies, &near), [0x100, 0x300, 0x400]);
+    assert_eq!(
+        bodies_of(&bodies, &([5090.0, 5090.0], [6000.0, 6000.0])),
+        [0x200, 0x300, 0x400]
+    );
+    assert_eq!(
+        bodies_of(&bodies, &([300.0, 300.0], [4000.0, 4000.0])),
+        [0x300, 0x400]
+    );
+    assert_eq!(bodies_of(&bodies, &([-1e6, -1e6], [1e6, 1e6])), starts);
+
+    // The bodies are kept by the archive's path, size and time, as a fill is.
+    let dir = tempfile::tempdir().expect("a folder");
+    let archive = dir.path().join("zq_levels.rpf");
+    std::fs::write(&archive, [0u8; 64]).expect("a made-up archive");
+    let kept = fill::Kept::of(dir.path(), &archive).expect("the archive states its size and time");
+    assert_eq!(kept.read_bodies(), None, "nothing is kept yet");
+    kept.keep_bodies(&bodies).expect("kept");
+    assert_eq!(kept.read_bodies().as_ref(), Some(&bodies));
+    assert_eq!(kept.read(), None, "the bodies are no fill");
+    std::fs::write(&archive, [0u8; 65]).expect("grown");
+    let grown = fill::Kept::of(dir.path(), &archive).expect("stated");
+    assert_eq!(grown.read_bodies(), None);
+}

@@ -145,6 +145,8 @@ fn a_gta_vi_dictionary_draws_the_drawable_chosen_from_its_list_and_none_before()
         levels: [
             Some(vec![Model {
                 geometries: vec![Ok(Geometry {
+                    vertex_data: Vec::new(),
+                    index_data: Vec::new(),
                     shader: 0,
                     vertex_count: 3,
                     channels: Vec::new(),

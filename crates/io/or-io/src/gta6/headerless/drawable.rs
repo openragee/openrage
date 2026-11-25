@@ -8,6 +8,7 @@ use super::skeleton::{skeleton_at, Skeleton};
 use super::streams::{self, buffer, Vertices, INDEX_BUFFER, VERTEX_BUFFER};
 use super::surfaces::{surfaces_at, Surface};
 use super::{HeaderlessError, Result};
+use crate::container::rpf::Rpf9Role;
 
 pub(super) const DRAWABLE_ROOT: usize = 0xE0;
 
@@ -88,6 +89,13 @@ pub struct Geometry {
     /// Read only where the decoded vertices reach the geometry's box.
     pub positions: Result<Vec<[f32; 3]>>,
     pub vertices: Vertices,
+    /// The vertex data as the file stores it: the slot table, the quantisation block and the
+    /// streams, which the game's mesh programs read as they are.
+    // ponytail: a second copy of the streams beside the decoded channels; share the section's bytes when a large model's memory shows.
+    pub vertex_data: Vec<u8>,
+    /// The index data as the file stores it: the header, the meshlet records, the triangles and
+    /// the vertex list.
+    pub index_data: Vec<u8>,
 }
 
 /// One channel of a vertex declaration: its stream's offset in the vertex data, its element size
@@ -180,6 +188,30 @@ pub fn read_drawable_with_bound(
             fragment,
         })
     })
+}
+
+/// The name each model of a body of `role` states and its shaders, read from the virtual section
+/// alone: a drawable's own, a fragment's drawable under the fragment's name, each drawable of a
+/// dictionary that reads; none of a body of another role.
+pub fn model_shaders(role: Rpf9Role, virtual_section: &[u8]) -> Result<Vec<(String, Vec<Shader>)>> {
+    sections(virtual_section, None, |v, _| match role {
+        Rpf9Role::Drawable => Ok(vec![named_shaders(v, 0, 0)?]),
+        Rpf9Role::DrawableWithBound => Ok(vec![named_shaders(v, 0, v.to("drawable", 0x18)?)?]),
+        Rpf9Role::Dictionary => {
+            let entries = super::dictionary::drawable_entries(v)?.into_iter();
+            Ok(entries
+                .filter_map(|at| named_shaders(v, at, at).ok())
+                .collect())
+        }
+        _ => Ok(Vec::new()),
+    })
+}
+
+/// The name the root at `named` states at 0xA8, and the shaders of the drawable at `at`.
+fn named_shaders(v: Bytes, named: usize, at: usize) -> Result<(String, Vec<Shader>)> {
+    let name = v.c_str("name", v.to("name", named + 0xA8)?)?;
+    let shaders = shaders_at(v, at)?.into_iter().map(|(shader, _)| shader);
+    Ok((name, shaders.collect()))
 }
 
 /// Whether a drawable root lies at `at`; a fragment's may have no level, under the empty box.
@@ -542,7 +574,15 @@ fn geometry(
     let (vertex_count, channels) =
         declaration(v, v.to("vertex declaration", vb + 0x40)?, data.len())?;
     streams::slot_table(data, &channels)?;
-    let triangles = meshlets(v, p, v.to("meshlet record", at + 0x40)?, vertex_count)?;
+    let record = v.to("meshlet record", at + 0x40)?;
+    let index = buffer(
+        v,
+        p,
+        "index data",
+        v.to("index buffer", record)?,
+        INDEX_BUFFER,
+    )?;
+    let triangles = meshlets(v, index, record, vertex_count)?;
     let positions = streams::positions(data, &channels, vertex_count, &triangles, bounds);
     Ok(Geometry {
         shader,
@@ -551,6 +591,8 @@ fn geometry(
         positions,
         vertices: streams::vertices(data, &channels, vertex_count),
         channels,
+        vertex_data: data.to_vec(),
+        index_data: index.to_vec(),
     })
 }
 
@@ -600,15 +642,8 @@ pub(super) fn declaration(v: Bytes, at: usize, data_len: usize) -> Result<(u32, 
 }
 
 /// The triangles of a meshlet list: a header, meshlet records, triangle words and a vertex list.
-fn meshlets(v: Bytes, p: Bytes, record: usize, vertex_count: u32) -> Result<Vec<[u32; 3]>> {
+fn meshlets(v: Bytes, data: &[u8], record: usize, vertex_count: u32) -> Result<Vec<[u32; 3]>> {
     let refuse = |why| HeaderlessError::Meshlets { why };
-    let data = buffer(
-        v,
-        p,
-        "index data",
-        v.to("index buffer", record)?,
-        INDEX_BUFFER,
-    )?;
     let words = data.len() / 4;
     let word = |k: usize| {
         data.get(4 * k..4 * k + 4)

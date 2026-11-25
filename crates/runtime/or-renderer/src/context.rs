@@ -23,13 +23,13 @@ impl<'window> RenderContext<'window> {
     {
         info!("Initializing wgpu render context");
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+        let instance = wgpu::Instance::new(crate::instance::with_dxc(wgpu::InstanceDescriptor {
+            backends: crate::instance::BACKENDS,
             flags: wgpu::InstanceFlags::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             backend_options: wgpu::BackendOptions::default(),
             display: None,
-        });
+        }));
 
         debug!("Created wgpu instance with PRIMARY backends");
 

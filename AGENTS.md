@@ -299,6 +299,9 @@ recipe.
   holding every target root passes the 32,766-character command-line limit
   and fails with os error 206. `just fmt` is `cargo xtask fmt`, the same on
   every OS.
+- ⚠ On Apple silicon every profile builds with LLVM (`.cargo/config.toml`):
+  Cranelift there does not catch a panic, and 8 tests of the default tier fail
+  on it.
 
 ## Before merging, and how to push
 
@@ -528,6 +531,8 @@ The module table and the app's traps are in
   [Mesh_Interchange.md](docs/features/Mesh_Interchange.md) and
   [Dlc_Pack_Creation.md](docs/features/Dlc_Pack_Creation.md): what each kind of file
   supports per game, shading modes, glTF out and back, and generating a DLC pack.
+- [GTA_VI_Xbox_Build.md](docs/features/GTA_VI_Xbox_Build.md): what is read, saved and
+  refused of a GTA VI Xbox build, and its commands.
 - [GTA_VI_World_Viewer.md](docs/features/GTA_VI_World_Viewer.md): the World screen, how a
   GTA VI install is mounted with no table to read, and the streaming rules.
 - [CLI_Server_Protocol.md](docs/reference/CLI_Server_Protocol.md), with

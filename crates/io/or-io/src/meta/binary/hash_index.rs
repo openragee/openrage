@@ -11,6 +11,13 @@ pub struct HashIndex {
 
 impl HashIndex {
     pub fn from_library(library: &SchemaLibrary) -> Self {
+        let mut index = Self::default();
+        index.add_library(library);
+        index
+    }
+
+    /// Add the names of `library` for the hashes nothing held names yet.
+    pub fn add_library(&mut self, library: &SchemaLibrary) {
         let mut names: Vec<(&str, bool)> =
             Vec::with_capacity(library.structs.len() * 8 + library.enums.len() * 4);
         for s in library.structs.values() {
@@ -28,15 +35,15 @@ impl HashIndex {
         names.sort_unstable();
         names.dedup();
 
-        let mut map: HashMap<u32, String> = HashMap::with_capacity(names.len() * 2);
-        for (name, is_type) in names {
+        self.map.reserve(names.len());
+        // A name a library spells as a hash is no name.
+        for (name, is_type) in names.into_iter().filter(|(n, _)| spelled_hash(n).is_none()) {
             if is_type {
-                insert_type(&mut map, name);
+                insert_type(&mut self.map, name);
             } else {
-                insert(&mut map, name);
+                insert(&mut self.map, name);
             }
         }
-        Self { map }
     }
 
     /// Add the identifiers public sources name, for the hashes a library
@@ -132,6 +139,27 @@ std::thread_local! {
     static PUBLIC_ONLY: Cell<bool> = const { Cell::new(false) };
 }
 
+std::thread_local! {
+    static TITLE_NAMES: Cell<bool> = const { Cell::new(false) };
+}
+
+/// While held, a hash read on this thread is named by the second title's library first.
+pub struct TitleNames(bool);
+
+impl Drop for TitleNames {
+    fn drop(&mut self) {
+        TITLE_NAMES.with(|on| on.set(self.0));
+    }
+}
+
+/// Names the hashes of the second title's bodies, read and written on this thread until the guard drops.
+///
+/// ⚠ Two titles' hash spaces are unrelated: outside a guard no name of the second title's library is
+/// given, so a document of the first title prints as it does with no such library installed.
+pub fn title_names() -> TitleNames {
+    TitleNames(TITLE_NAMES.with(|on| on.replace(true)))
+}
+
 /// Runs `f` naming every hash on this thread from the public table alone, whatever library the host installed, so what `f` reads and writes is what a clean checkout makes.
 pub fn with_public_names_only<R>(f: impl FnOnce() -> R) -> R {
     struct Restore(bool);
@@ -153,6 +181,7 @@ pub fn default_hash_index() -> &'static HashIndex {
     static INSTALLED_INDEX: OnceLock<HashIndex> = OnceLock::new();
     static PUBLIC_INDEX: OnceLock<HashIndex> = OnceLock::new();
     static CLEAN_INDEX: OnceLock<HashIndex> = OnceLock::new();
+    static TITLE_INDEX: OnceLock<HashIndex> = OnceLock::new();
     // ⚠ The override is the clean-checkout simulation, which has no recovered
     // name corpus either, so it excludes the parser names a dev machine's
     // `OPENRAGE_PARSER_NAMES` would otherwise fold in.
@@ -161,7 +190,16 @@ pub fn default_hash_index() -> &'static HashIndex {
             HashIndex::from_library(&SchemaLibrary::default()).with_public_names()
         });
     }
-    match crate::meta::snapshot::installed() {
+    let installed = crate::meta::snapshot::installed();
+    let title = crate::meta::snapshot::names_library().filter(|_| TITLE_NAMES.with(Cell::get));
+    if let Some(title) = title {
+        return TITLE_INDEX.get_or_init(|| {
+            let mut index = HashIndex::from_library(title);
+            installed.into_iter().for_each(|l| index.add_library(l));
+            index.with_public_names().with_parser_names()
+        });
+    }
+    match installed {
         Some(library) => INSTALLED_INDEX.get_or_init(|| {
             HashIndex::from_library(library)
                 .with_public_names()
@@ -228,6 +266,32 @@ mod tests {
         assert_eq!(idx.lookup(h_field), Some("m_Probability"));
         assert_eq!(idx.lookup(h_enum), Some("EFooKind"));
         assert_eq!(idx.lookup(h_value), Some("EFK_Default"));
+    }
+
+    #[test]
+    fn a_second_library_names_only_what_the_first_left_unnamed() {
+        let mut second = SchemaLibrary::new();
+        for name in ["CFooBar", "cfoobar_other", "hash_0000BEEF"] {
+            second.insert_struct(StructDef {
+                name: name.into(),
+                base: None,
+                abstract_: false,
+                simple: true,
+                fields: vec![],
+                source_path: String::new(),
+            });
+        }
+        let mut idx = HashIndex::from_library(&make_library());
+        let before = idx.len();
+        idx.add_library(&second);
+        assert_eq!(
+            idx.len(),
+            before + 1,
+            "one new name; a spelled hash is none"
+        );
+        let other = crate::literal_string_hash(b"cfoobar_other");
+        assert_eq!(idx.lookup(other), Some("cfoobar_other"));
+        assert_eq!(idx.lookup(0xBEEF), None);
     }
 
     #[test]

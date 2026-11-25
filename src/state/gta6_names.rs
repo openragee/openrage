@@ -5,11 +5,14 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use or_io::container::rpf::RPF9_MAGIC;
-use or_io::gta6::names::{self, load_labels, Labels, Vocabulary, HARVEST_PREFIX};
+use or_io::gta6::names::{
+    self, load_labels, Labels, TextureUse, TextureUses, Vocabulary, HARVEST_PREFIX,
+};
+use or_io::gta6::texture_names::{name_keys_by, parameter_name};
 use or_job::{Cancel, Progress};
 
 use super::gta6_texture_naming::{NamingEnded, TextureNaming};
@@ -107,11 +110,100 @@ fn serve(mut vocabulary: Vocabulary) {
     };
     *served() = Some(now);
     held().clear();
+    // The textures the archives' models name are read again when next asked.
+    *uses_slot() = None;
+}
+
+/// The textures the harvested archives' models name by key, once asked for.
+static USES: Mutex<Option<Arc<TextureUses>>> = Mutex::new(None);
+
+fn uses_slot() -> MutexGuard<'static, Option<Arc<TextureUses>>> {
+    USES.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// The textures the models of every archive harvested name by key: none until the kept ones are
+/// read, on a worker the first ask starts, since a whole install's are some hundred thousand.
+// ponytail: a read that began before a harvest ended serves what it read after it; the harvest
+// after that, or a restart, serves the files as they are.
+pub(crate) fn texture_uses() -> Arc<TextureUses> {
+    let mut slot = uses_slot();
+    if let Some(uses) = &*slot {
+        return Arc::clone(uses);
+    }
+    let none = Arc::new(TextureUses::new());
+    *slot = Some(Arc::clone(&none));
+    if let Some(root) = super::prefs::config_root() {
+        std::thread::spawn(move || {
+            let kept = names::load_texture_uses(&root);
+            *uses_slot() = Some(Arc::new(kept));
+        });
+    }
+    none
+}
+
+/// What the texture `key` keys is used by, as [`said_use`] says it; `None` where no model of an
+/// archive harvested names the key.
+pub(crate) fn texture_use_label(key: u64) -> Option<String> {
+    texture_uses().get(&key).map(said_use)
+}
+
+/// What a texture is used by, for one no name is known for: the first model a harvest found to
+/// name its key, the parameter that binds it there, and how many models more name it.
+pub(crate) fn said_use(used: &TextureUse) -> String {
+    let parameter = parameter_name(used.parameter)
+        .map_or_else(|| format!("hash_{:08X}", used.parameter), str::to_string);
+    match used.models.saturating_sub(1) {
+        0 => tr!(
+            "used by {model} as {parameter}",
+            model = used.model,
+            parameter = parameter
+        ),
+        more => tr_n!(
+            "used by {model} as {parameter}, and by {count} model more",
+            "used by {model} as {parameter}, and by {count} models more",
+            more,
+            model = used.model,
+            parameter = parameter
+        ),
+    }
+}
+
+/// Which of `keys`, by their place, key a texture whose first model's name holds `needle`.
+pub(crate) fn used_by_model(
+    keys: impl Iterator<Item = u64>,
+    uses: &TextureUses,
+    needle: &str,
+) -> Vec<usize> {
+    let used = |key: &u64| (uses.get(key)).is_some_and(|used| used.model.contains(needle));
+    let places = keys.enumerate().filter(|(_, key)| used(key));
+    places.map(|(place, _)| place).collect()
 }
 
 /// The name the 32-bit `hash` names alone in the vocabulary.
 pub(crate) fn name32(hash: u32) -> Option<String> {
     vocabulary().name32(hash).map(str::to_string)
+}
+
+/// What a 32-bit name hash of a GTA VI body is shown as: the name `vocabulary` holds for it alone,
+/// else the one GTA VI's name snapshot gives, else `hash_` and its digits.
+fn said32_in(vocabulary: &Vocabulary, hash: u32) -> String {
+    vocabulary.name32(hash).map_or_else(
+        || {
+            let _names = or_io::meta::binary::hash_index::title_names();
+            or_io::meta::binary::hash_index::default_hash_index().name_or_literal(hash)
+        },
+        str::to_string,
+    )
+}
+
+/// [`said32_in`] the vocabulary of every archive harvested.
+pub(crate) fn said32(hash: u32) -> String {
+    said32_in(&vocabulary(), hash)
+}
+
+/// The name the 64-bit `word` names in the vocabulary, else `hash_` and its digits.
+pub(crate) fn said64(word: u64) -> String {
+    (vocabulary().name64(word)).map_or_else(|| format!("hash_{word:016X}"), str::to_string)
 }
 
 /// Whether a harvest runs now.
@@ -168,6 +260,9 @@ fn harvest_into(
                         if let Err(error) = names::save_labels(config, path, &gave.labels) {
                             tracing::warn!(%error, archive = %path.display(), "the names its bodies state were not kept");
                         }
+                        if let Err(error) = names::save_texture_uses(config, path, &gave.textures) {
+                            tracing::warn!(%error, archive = %path.display(), "the textures its models name were not kept");
+                        }
                     }
                 }
                 Err(error) => {
@@ -182,8 +277,9 @@ fn harvest_into(
 }
 
 /// Learn, for each key of `keys`, the name `vocabulary` holds for it, then the names the naming
-/// rules give from each name it holds with an ending; how many keys were named, and whether
-/// `cancel` stopped it.
+/// rules give from each name it holds with an ending, then those the map kind and level-of-detail
+/// rules give from each name it holds with none; how many keys were named, and whether `cancel`
+/// stopped it.
 fn name_textures(
     vocabulary: &Vocabulary,
     keys: &HashSet<u64>,
@@ -193,13 +289,23 @@ fn name_textures(
     let spelled =
         (keys.iter()).filter_map(|key| Some((*key, vocabulary.name64(*key)?.to_string())));
     let mut named = super::ttpf_document::learn_named(spelled);
-    let stems: Vec<&str> = vocabulary.resource_names().collect();
-    for (done, stem) in stems.iter().enumerate() {
+    let (total, done) = (vocabulary.len() as u64, AtomicU64::new(0));
+    let go_on = |more: usize| {
+        let more = more as u64;
+        progress.reached(done.fetch_add(more, Ordering::Relaxed) + more, total);
+        !cancel.is_set()
+    };
+    // One pass over the names with an ending, then one over the others, each on every core.
+    for plain in [false, true] {
+        let found = match plain {
+            false => name_keys_by(vocabulary.resource_names(), keys, plain, &go_on),
+            true => name_keys_by(vocabulary.plain_names(), keys, plain, &go_on),
+        };
+        let found = found.into_iter().map(|(key, (name, _))| (key, name));
+        named += super::ttpf_document::learn_named(found);
         if cancel.is_set() {
             return (named, true);
         }
-        progress.reached(done as u64, stems.len() as u64);
-        named += super::ttpf_document::learn_rule_names(stem, keys);
     }
     (named, false)
 }
@@ -289,6 +395,17 @@ mod tests {
     use or_io::gta6::hash::{name_hash32, name_hash64};
 
     use super::*;
+
+    #[test]
+    fn a_hash_the_vocabulary_names_is_said_by_its_name_and_another_by_its_digits() {
+        let mut held = Vocabulary::default();
+        held.add("ZQ_State_One", None);
+        assert_eq!(
+            said32_in(&held, name_hash32(b"zq_state_one")),
+            "zq_state_one"
+        );
+        assert_eq!(said32_in(&held, 0xDEAD_BEEF), "hash_DEADBEEF");
+    }
 
     #[test]
     fn the_names_kept_of_an_archive_are_served_and_an_archive_with_none_has_none() {
@@ -392,14 +509,51 @@ mod tests {
         vocabulary.add("zq_names_job_decal", None);
         let spelled = name_hash64(b"zq_names_job_decal");
         let ruled = name_hash64(b"zq_names_job_wall_nm");
-        let keys = HashSet::from([spelled, ruled, 7]);
+        // A name spelled with no ending names by its map kinds too.
+        let of_plain = name_hash64(b"zq_names_job_decal_ab");
+        let keys = HashSet::from([spelled, ruled, of_plain, 7]);
         let (cancel, progress) = (Cancel::new(), Progress::new());
         let (named, stopped) = name_textures(&vocabulary, &keys, &cancel, &progress);
-        assert_eq!((named, stopped), (2, false));
+        assert_eq!((named, stopped), (3, false));
         let known = crate::state::ttpf_document::known_name;
+        assert_eq!(known(of_plain).as_deref(), Some("zq_names_job_decal_ab"));
         assert_eq!(known(spelled).as_deref(), Some("zq_names_job_decal"));
         assert_eq!(known(ruled).as_deref(), Some("zq_names_job_wall_nm"));
         assert_eq!(known(7), None);
+    }
+
+    #[test]
+    fn a_texture_s_use_is_said_by_its_model_its_parameter_and_the_models_more() {
+        let mut used = TextureUse {
+            model: "zq_use_shed".to_string(),
+            parameter: name_hash32(b"DiffuseTex"),
+            models: 1,
+        };
+        assert_eq!(said_use(&used), "used by zq_use_shed as DiffuseTex");
+        // A parameter whose name is not known is said by its hash.
+        (used.parameter, used.models) = (0x1234, 2);
+        assert_eq!(
+            said_use(&used),
+            "used by zq_use_shed as hash_00001234, and by 1 model more"
+        );
+        used.models = 4;
+        assert_eq!(
+            said_use(&used),
+            "used by zq_use_shed as hash_00001234, and by 3 models more"
+        );
+    }
+
+    #[test]
+    fn a_model_filter_keeps_the_textures_whose_first_model_s_name_holds_it() {
+        let mut uses = TextureUses::new();
+        names::add_texture_uses(&mut uses, "zq_use_shed_07", &[(7, 0xA1), (9, 0xB2)]);
+        names::add_texture_uses(&mut uses, "zq_use_mast", &[(9, 0xC3), (11, 0xD4)]);
+        let kept = |needle: &str| used_by_model([5u64, 7, 9, 11, 0].into_iter(), &uses, needle);
+        assert_eq!(kept("shed"), [1, 2]);
+        assert_eq!(kept("zq_use_"), [1, 2, 3]);
+        // The first model to name a key is the one a filter reads: 9 is the shed's.
+        assert_eq!(kept("mast"), [3]);
+        assert!(kept("zq_none").is_empty());
     }
 
     #[test]

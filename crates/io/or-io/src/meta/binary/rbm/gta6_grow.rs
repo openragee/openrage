@@ -71,6 +71,7 @@ pub fn insert_element(
     index: usize,
     element: &[u8],
 ) -> Result<()> {
+    let _names = crate::meta::binary::hash_index::title_names();
     let mut s = sections.clone();
     let before = read_model(&s.virtual_section, &s.physical)?;
     let a = array(&before, block, member)?;
@@ -127,6 +128,7 @@ pub fn remove_element(
     member: usize,
     index: usize,
 ) -> Result<()> {
+    let _names = crate::meta::binary::hash_index::title_names();
     let mut s = sections.clone();
     let before = read_model(&s.virtual_section, &s.physical)?;
     let a = array(&before, block, member)?;
@@ -177,6 +179,7 @@ pub(crate) fn append_to_block(
     align: usize,
     bytes: &[u8],
 ) -> Result<usize> {
+    let _names = crate::meta::binary::hash_index::title_names();
     let model = read_model(&sections.virtual_section, &sections.physical)?;
     let b = block_of(&model, block)?;
     let at = virtual_at(b, block)?;

@@ -14612,6 +14612,39 @@ msgstr "Ombré — les passes du jeu lui-même, traduites des programmes de GTA 
 msgid "Shaded — the game's own passes, translated from GTA VI's programs: {drawn} of {total} surfaces drawn"
 msgstr "Ombré — les passes du jeu lui-même, traduites des programmes de GTA VI : surfaces dessinées : {drawn} sur {total}"
 
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
+msgstr "Ombré — les programmes de maillage et de pixel de ce drawable lui-même, traduits de ceux de GTA VI : {drawn} surfaces dessinées, éclairées par le soleil et le ciel de l'éditeur lui-même, à l'heure et par le temps réglés. {zeroed} liaisons que seul le jeu remplit sont lues comme des zéros"
+
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts"
+msgstr "Ombré — les programmes de maillage et de pixel de ce drawable lui-même, traduits de ceux de GTA VI : {drawn} surfaces dessinées, éclairées par le cycle météo de l'installation, à l'heure et par le temps réglés, sous le ciel que donne son atmosphère, avec la mesure et la courbe de ton du jeu. {zeroed} liaisons que seul le jeu remplit sont lues comme des zéros"
+
+msgid "a worker is still decoding its maps"
+msgstr "un fil de travail décode encore ses textures"
+
+msgid "a worker is still building its passes for this device"
+msgstr "un fil de travail construit encore ses passes pour ce périphérique"
+
+msgid "Drawn as Material: {count} surfaces; the first: {why}"
+msgstr "Dessinées comme Matériau : {count} surfaces ; la première : {why}"
+
+msgid "Its own mesh and pixel programs do not draw it: {why}"
+msgstr "Ses propres programmes de maillage et de pixel ne le dessinent pas : {why}"
+
+msgid "{effect}: none of its passes reads the streams this geometry has"
+msgstr "{effect} : aucune de ses passes ne lit les flux de cette géométrie"
+
+msgid "{effect}: its programs are not translated yet"
+msgstr "{effect} : ses programmes ne sont pas encore traduits"
+
+msgid "{effect}: the graphics device was lost while its own passes drew, so it draws as Material until OpenRage is started again"
+msgstr "{effect} : le périphérique graphique a été perdu pendant que ses propres passes dessinaient, donc il est dessiné comme Matériau jusqu'au redémarrage d'OpenRage"
+
+msgid "The graphics device was lost. The view is back to Material, and what the Shaded view was drawing when it was lost draws as Material until OpenRage is started again"
+msgstr "Le périphérique graphique a été perdu. La vue revient à Matériau, et ce que la vue Ombrée dessinait à ce moment-là est dessiné comme Matériau jusqu'au redémarrage d'OpenRage"
+
+msgid "none of its techniques is a mesh pass that writes the deferred targets"
+msgstr "aucune de ses techniques n'est une passe de maillage qui écrit les cibles différées"
+
 msgid "{count} program is not translated: {why}"
 msgid_plural "{count} programs are not translated; the first: {why}"
 msgstr[0] "{count} programme n'est pas traduit : {why}"
@@ -15974,8 +16007,8 @@ msgstr "Ses stations de radio ne se lisent pas : {why}"
 msgid "GTA VI Radio"
 msgstr "Radio de GTA VI"
 
-msgid "A station's key is the key of its name in the text tables, and a track plays the streamed sound of a sounds body: index the open scans with the scans of the text and audio archives open to name the stations and play their tracks. A track's title and artists are the identifiers its text states; the titles the game shows are keyed by a track id the stream carries, which is not read."
-msgstr "La clé d'une station est la clé de son nom dans les tables de textes, et une piste joue le son diffusé d'un corps de sons : indexez les parcours ouverts, ceux des archives de textes et d'audio étant ouverts, pour nommer les stations et jouer leurs pistes. Le titre et les artistes d'une piste sont les identifiants que son texte indique ; les titres que le jeu affiche ont pour clé un numéro de piste que porte le flux, qui n'est pas lu."
+msgid "A station's key is the key of its name in the text tables, and a track plays the streamed sound of a sounds body: index the open scans with the scans of the text and audio archives open to name the stations, show their tracks' titles and artists and play them. A title the game shows is keyed by the track id a marker of the track's stream states; a track with none is listed by the identifiers its text states. A station kept off the wheel is named from the names harvested."
+msgstr "La clé d'une station est la clé de son nom dans les tables de textes, et une piste joue le son diffusé d'un corps de sons : indexez les parcours ouverts, ceux des archives de textes et d'audio étant ouverts, pour nommer les stations, afficher les titres et les artistes de leurs pistes et les jouer. Un titre que le jeu affiche a pour clé le numéro de piste qu'indique un marqueur du flux de la piste ; une piste qui n'en a pas est listée par les identifiants que son texte indique. Une station tenue hors de la roue est nommée d'après les noms récoltés."
 
 msgid "GTA VI Dialogue"
 msgstr "Dialogues de GTA VI"
@@ -16277,6 +16310,84 @@ msgstr "Pièces"
 
 msgid "Draw the weapon as the first of each kind of its parts, each on its bone, in place of its own mesh"
 msgstr "Dessine l'arme avec la première pièce de chaque sorte, chacune sur son os, à la place de son propre maillage"
+
+msgid "A mix of {count} track"
+msgid_plural "A mix of {count} tracks"
+msgstr[0] "Un mix de {count} piste"
+msgstr[1] "Un mix de {count} pistes"
+
+msgid "exact"
+msgstr "exact"
+
+msgid "calibrated"
+msgstr "calibrée"
+
+msgid "calibrated, {percent} % of its coded blocks through a slot not known"
+msgstr "calibrée, {percent} % de ses blocs codés par un emplacement non connu"
+
+msgid "Calibrating GTA VI texture decoding from the packs of {folder}"
+msgstr "Calibrage du décodage des textures de GTA VI à partir des packs de {folder}"
+
+msgid "A calibration of GTA VI texture decoding is already running"
+msgstr "Un calibrage du décodage des textures de GTA VI est déjà en cours"
+
+msgid "No GTA VI texture pack opens under that folder"
+msgstr "Aucun pack de textures de GTA VI ne s'ouvre sous ce dossier"
+
+msgid "The calibration could not be kept: {why}"
+msgstr "Le calibrage n'a pas pu être conservé : {why}"
+
+msgid "GTA VI texture calibration"
+msgstr "Calibrage des textures de GTA VI"
+
+msgid "Calibrate decoding"
+msgstr "Calibrer le décodage"
+
+msgid "Fit the tables of the console's texture coder from every pack of this game, so that the textures stored through it for BC3, BC4, BC5, BC6H and BC7 read. No file holds those tables, so such a texture is an estimate and is marked calibrated"
+msgstr "Ajuste les tables du codeur de textures de la console à partir de tous les packs de ce jeu, pour que les textures BC3, BC4, BC5, BC6H et BC7 stockées par ce codeur se lisent. Aucun fichier ne contient ces tables : une telle texture est donc une estimation, marquée calibrée"
+
+msgid "Decode"
+msgstr "Décodage"
+
+msgid "Wrote {path}. This texture is {how}: an estimate, not the blocks the pack stores"
+msgstr "{path} écrit. Cette texture est {how} : une estimation, pas les blocs que le pack stocke"
+
+msgid "{count} GTA VI texture pack calibrated: {bodies} coded mips now read as estimates, {unknown} % of their blocks through a slot not known"
+msgid_plural "{count} GTA VI texture packs calibrated: {bodies} coded mips now read as estimates, {unknown} % of their blocks through a slot not known"
+msgstr[0] "{count} pack de textures de GTA VI calibré : {bodies} mips codés se lisent désormais comme des estimations, {unknown} % de leurs blocs par un emplacement non connu"
+msgstr[1] "{count} packs de textures de GTA VI calibrés : {bodies} mips codés se lisent désormais comme des estimations, {unknown} % de leurs blocs par un emplacement non connu"
+
+msgid "Filter by the model that uses a texture"
+msgstr "Filtrer par le modèle qui utilise une texture"
+
+msgid "Show only the textures used by a model whose name holds this text. A harvest of the game's names finds, for each texture, the first model whose material binds it"
+msgstr "N'affiche que les textures utilisées par un modèle dont le nom contient ce texte. Une récolte des noms du jeu trouve, pour chaque texture, le premier modèle dont le matériau la lie"
+
+msgid "used by {model} as {parameter}"
+msgstr "utilisée par {model} comme {parameter}"
+
+msgid "used by {model} as {parameter}, and by {count} model more"
+msgid_plural "used by {model} as {parameter}, and by {count} models more"
+msgstr[0] "utilisée par {model} comme {parameter}, et par {count} autre modèle"
+msgstr[1] "utilisée par {model} comme {parameter}, et par {count} autres modèles"
+
+msgid "Use"
+msgstr "Utilisation"
+
+msgid "Some textures of this game are stored through the console's coder and do not read yet. A calibration fits what they need from the game's own packs, once: about a quarter of an hour, which can be stopped and taken up again. They then read as estimates, marked calibrated"
+msgstr "Certaines textures de ce jeu sont stockées par le codeur de la console et ne se lisent pas encore. Une calibration ajuste ce qu'il leur faut à partir des packs du jeu, une seule fois : environ un quart d'heure, que l'on peut arrêter et reprendre. Elles se lisent ensuite comme des estimations, marquées calibrées"
+
+msgid "An estimate, not the exact picture: {how}"
+msgstr "Une estimation, pas l'image exacte : {how}"
+
+msgid "Stopped before it finished. The next calibration of this game goes on from where this one stopped"
+msgstr "Arrêté avant la fin. La prochaine calibration de ce jeu reprendra là où celle-ci s'est arrêtée"
+
+msgid "The fields below are the ones this GTA VI body's own table states. Names come from GTA VI's name snapshot; a name the snapshot holds only as a hash shows its hash."
+msgstr "Les champs ci-dessous sont ceux qu'énonce la table de ce corps GTA VI. Les noms viennent de l'instantané de noms de GTA VI ; un nom que l'instantané ne contient que sous forme de hash affiche son hash."
+
+msgid "No schema is staged for this type, so the fields below are the ones the document itself carries. Names come from the public tables; a field the tables do not name shows its hash."
+msgstr "Aucun schéma n'est disponible pour ce type ; les champs ci-dessous sont donc ceux que le document porte lui-même. Les noms viennent des tables publiques ; un champ que les tables ne nomment pas affiche son hash."
 
 msgid "Network name: {name}"
 msgstr "Nom du réseau : {name}"

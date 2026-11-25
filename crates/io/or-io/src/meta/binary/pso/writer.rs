@@ -126,6 +126,9 @@ pub(super) fn encode(
     instance: &MetaInstance,
     poison: Option<u8>,
 ) -> Result<Vec<u8>> {
+    let _names = layout
+        .is_gta6()
+        .then(crate::meta::binary::hash_index::title_names);
     if layout.is_table_form() {
         #[cfg(feature = "gta6")]
         return super::table_layout::write(layout, instance);

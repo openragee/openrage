@@ -5,6 +5,9 @@
 //! of wma_freqs.c, LGPL-2.1-or-later. Ported to safe Rust; the transforms are OpenRage's own, in
 //! `crate::transform`. Mono and stereo, which is all the container's flags can state. Listed in
 //! LICENSE-third-party.md.
+//!
+//! A `KB2n` movie's DCT blocks differ in two things, measured on such movies and written here
+//! from that: a band's step is seven bits, and a span's signs follow all of its values.
 
 use crate::bits::BitReader;
 use crate::transform::{Dct3, Rdft};
@@ -43,6 +46,8 @@ pub struct Decoder {
     previous: [Vec<f32>; 2],
     first: bool,
     transform: Transform,
+    /// Whether blocks are in the coding of a `KB2n` movie.
+    revised: bool,
 }
 
 impl Decoder {
@@ -105,7 +110,14 @@ impl Decoder {
             previous: [vec![0.0; overlap_len], vec![0.0; overlap_len]],
             first: true,
             transform,
+            revised: false,
         })
+    }
+
+    /// The same decoder for the blocks of a `KB2n` movie.
+    pub fn revised(mut self) -> Self {
+        self.revised = true;
+        self
     }
 
     /// Forgets the last block, as at the start of a track.
@@ -165,12 +177,13 @@ impl Decoder {
             }
             coeffs[0] = Self::get_float(gb) * self.root;
             coeffs[1] = Self::get_float(gb) * self.root;
-            if gb.bits_left() < (self.num_bands * 8) as i64 {
+            let step_bits = if self.revised { 7 } else { 8 };
+            if gb.bits_left() < (self.num_bands as u32 * step_bits) as i64 {
                 return Err(bad("the band table runs past the end"));
             }
             let mut quant = [0.0f32; 26];
             for q in quant.iter_mut().take(self.num_bands) {
-                *q = self.quant_table[(gb.get(8) as usize).min(95)];
+                *q = self.quant_table[(gb.get(step_bits) as usize).min(95)];
             }
 
             let mut k = 0;
@@ -192,6 +205,7 @@ impl Decoder {
                         k += 1;
                     }
                 } else {
+                    let span = i..j;
                     while i < j {
                         if self.bands[k] == i {
                             q = quant[k];
@@ -200,12 +214,20 @@ impl Decoder {
                         let coeff = gb.get(width);
                         coeffs[i] = if coeff == 0 {
                             0.0
-                        } else if gb.get1() != 0 {
+                        } else if !self.revised && gb.get1() != 0 {
                             -q * coeff as f32
                         } else {
                             q * coeff as f32
                         };
                         i += 1;
+                    }
+                    if self.revised {
+                        // A step is never zero, so a value that is not zero has a sign.
+                        for coeff in coeffs[span].iter_mut().filter(|c| **c != 0.0) {
+                            if gb.get1() != 0 {
+                                *coeff = -*coeff;
+                            }
+                        }
                     }
                 }
             }
@@ -310,5 +332,103 @@ impl AudioStream for Stream {
         self.at = 0;
         self.skip = usize::try_from(frame).unwrap_or(usize::MAX);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bits written lowest first, as the reader takes them.
+    #[derive(Default)]
+    struct Bits {
+        bytes: Vec<u8>,
+        len: usize,
+    }
+
+    impl Bits {
+        fn put(&mut self, value: u32, n: usize) {
+            for i in 0..n {
+                if self.len.is_multiple_of(8) {
+                    self.bytes.push(0);
+                }
+                let last = self.bytes.len() - 1;
+                self.bytes[last] |= (((value >> i) & 1) as u8) << (self.len % 8);
+                self.len += 1;
+            }
+        }
+    }
+
+    /// A span's values, each with whether it is negative.
+    type Span = (bool, u32, u32, Vec<(u32, bool)>);
+
+    /// One stereo block of 2,048 coefficients a channel in either coding: two floats, 25 steps,
+    /// two spans of values, then runs of zeros to the end.
+    fn block(revised: bool) -> Vec<u8> {
+        let spans: [Span; 2] = [
+            (
+                false,
+                0,
+                3,
+                [1, 0, 5, 0, 0, 7, 2, 0].map(|v| (v, v > 2)).to_vec(),
+            ),
+            (true, 1, 2, (0..24).map(|i| (i % 4, i > 9)).collect()),
+        ];
+        let mut bits = Bits::default();
+        bits.put(0, 2);
+        for channel in 0..2u32 {
+            // A power, a mantissa and a sign, twice.
+            for float in 0..2 {
+                bits.put(10 + channel, 5);
+                bits.put(0x40_0000 | (0x1234 << float), 23);
+                bits.put(float, 1);
+            }
+            for band in 0..25 {
+                bits.put(20 + band + channel, if revised { 7 } else { 8 });
+            }
+            for (run, code, width, values) in &spans {
+                bits.put(u32::from(*run), 1);
+                if *run {
+                    bits.put(*code, 4);
+                }
+                bits.put(*width, 4);
+                for (value, negative) in values {
+                    bits.put(*value, *width as usize);
+                    if !revised && *value != 0 {
+                        bits.put(u32::from(*negative), 1);
+                    }
+                }
+                if revised {
+                    for (_, negative) in values.iter().filter(|v| v.0 != 0) {
+                        bits.put(u32::from(*negative), 1);
+                    }
+                }
+            }
+            // Four runs of 512 zeros pass the 2,014 coefficients left.
+            for _ in 0..4 {
+                bits.put(1, 1);
+                bits.put(15, 4);
+                bits.put(0, 4);
+            }
+        }
+        let mut packet = 7680u32.to_le_bytes().to_vec();
+        packet.extend(bits.bytes);
+        packet.resize(packet.len().next_multiple_of(4), 0);
+        packet
+    }
+
+    #[test]
+    fn a_kb2n_block_decodes_to_what_the_same_values_do_in_the_older_coding() {
+        let mut older = Decoder::new(48_000, 2, true).expect("a track");
+        let mut newer = Decoder::new(48_000, 2, true).expect("a track").revised();
+        let (old, new) = (block(false), block(true));
+        assert!(new.len() < old.len(), "25 bits fewer a channel");
+        let want = older.decode_packet(&old).expect("the older coding");
+        assert_eq!(want.len(), 2 * 1920);
+        assert!(want.iter().any(|s| *s != 0.0));
+        assert_eq!(newer.decode_packet(&new).expect("the newer coding"), want);
+        // Each coding read as the other is another signal.
+        let mut crossed = Decoder::new(48_000, 2, true).expect("a track").revised();
+        assert_ne!(crossed.decode_packet(&old).ok(), Some(want));
     }
 }

@@ -540,6 +540,8 @@ pub(super) fn drawable_keyed(key: u64) -> or_io::gta6::headerless::Drawable {
         Drawable, Geometry, Model, Parameter, ParameterValue, Shader, Vertices,
     };
     let geometry = Geometry {
+        vertex_data: Vec::new(),
+        index_data: Vec::new(),
         shader: 0,
         vertex_count: 3,
         channels: Vec::new(),

@@ -10,10 +10,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod compare;
+mod drag;
+mod lost_device;
 mod perf;
 mod png;
 mod script;
 mod waits;
+mod watched;
 mod world;
 use png::{paint, save_png, target_texture};
 use script::{parse, Step};
@@ -40,6 +43,9 @@ const LOGO_SETTLE: Duration = Duration::from_secs(1);
 
 /// The exit code.
 pub fn run(script: &Path, out: &Path) -> i32 {
+    if let Some(limit) = watched::limit() {
+        return watched::run(limit);
+    }
     match run_script(script, out) {
         Ok(()) => 0,
         Err(why) => {
@@ -59,24 +65,7 @@ fn run_script(script: &Path, out: &Path) -> Result<(), String> {
 
     let mut state = AppState::new();
     let (device, queue) = super::headless_gpu()?;
-    let mut bridge = RenderBridge::new(device.clone(), queue.clone(), FORMAT);
-    // A pack baked elsewhere is named by `OPENRAGE_GAME_PACK`; without one the mode is not offered
-    bridge.set_game_pack_path(state.game_pack.root());
-    let mut shell = Shell {
-        bridge,
-        renderer: egui_wgpu::Renderer::new(&device, FORMAT, egui_wgpu::RendererOptions::default()),
-        ctx: crate::app::gpu::configured_egui_context(Some(8192), &state.prefs.appearance),
-        device,
-        queue,
-        size: egui::vec2(1600.0, 900.0),
-        time: 0.0,
-        target: None,
-        dropped: Vec::new(),
-        hovering: Vec::new(),
-        held: false,
-        failed: Vec::new(),
-        submitted: Default::default(),
-    };
+    let mut shell = Shell::on(&state, device, queue);
     for (number, line, step) in &steps {
         println!("> {line}");
         shell
@@ -240,6 +229,11 @@ impl Shell {
                     }
                 }
             }
+            Step::Drag {
+                from,
+                to,
+                modifiers,
+            } => self.drag(state, *from, *to, *modifiers)?,
             Step::Hover(at) => {
                 self.frame(state, vec![egui::Event::PointerMoved(*at)], None)?;
                 // Long enough for a tooltip to appear.
@@ -418,6 +412,7 @@ impl Shell {
         modifiers: egui::Modifiers,
         capture: Option<&Path>,
     ) -> Result<(), String> {
+        self.stop_once_lost(state)?;
         state.poll_load_result();
         state.poll_save_result();
         // No dialog opens in a script, so a document never saved stays unsaved and its close is called off.
@@ -525,6 +520,11 @@ impl Shell {
         let submitting = std::time::Instant::now();
         queue.submit(std::iter::once(encoder.finish()));
         self.submitted.1 = submitting.elapsed();
+        // A software adapter draws when it is waited for: a frame it never finishes stops here, where the watch sees it.
+        if or_renderer::instance::software_asked() {
+            let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        }
+        watched::beat();
         let saved = match capture {
             Some(path) => save_png(&device, &queue, target, w, h, path),
             None => Ok(()),
@@ -544,6 +544,9 @@ impl Shell {
         path: &Path,
         mut draw: impl FnMut(&egui::Context, &mut AppState),
     ) -> Result<(), String> {
+        if self.bridge.device_lost() {
+            return Err(lost_device::DEVICE_LOST.to_owned());
+        }
         let ctx = crate::app::gpu::configured_egui_context(Some(8192), &state.prefs.appearance);
         let mut renderer =
             egui_wgpu::Renderer::new(&self.device, FORMAT, egui_wgpu::RendererOptions::default());

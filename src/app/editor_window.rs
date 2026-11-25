@@ -176,7 +176,59 @@ impl App {
         }
     }
 
+    /// A new device once the one every window drew on is lost, with each window's surface and
+    /// painter and the viewport on it; the view goes back to Material and a person is told.
+    // ⚠ Never run: it takes a window and a lost device. What is exercised without them is the
+    // flag, what the state does, and the windowless frames of a script.
+    fn recover_lost_device(&mut self) -> Result<()> {
+        let now = Instant::now();
+        if self.device_retry.is_some_and(|at| now < at) {
+            return Ok(());
+        }
+        let Some(editor) = self.editor.as_ref() else {
+            return Ok(());
+        };
+        if self.device_retry.is_none() {
+            self.app_state.graphics_device_lost(editor.bridge.mode());
+        }
+        self.device_retry = Some(now + std::time::Duration::from_secs(2));
+        let window = editor.surface.window.clone();
+        let lost = self.gpu.take();
+        if let Err(why) = self.init_gpu(&window) {
+            self.gpu = lost;
+            return Err(why);
+        }
+        let (Some(gpu), Some(editor)) = (self.gpu.as_ref(), self.editor.as_mut()) else {
+            return Ok(());
+        };
+        let appearance = &self.app_state.prefs.appearance;
+        editor.surface.on_new_device(gpu, appearance)?;
+        if let Some(settings) = self.settings.as_mut() {
+            settings.surface.on_new_device(gpu, appearance)?;
+        }
+        let mut bridge =
+            RenderBridge::new(gpu.device.clone(), gpu.queue.clone(), gpu.surface_format)
+                .with_instance(gpu.instance.clone());
+        bridge.set_game_pack_path(self.app_state.game_pack.root());
+        bridge.set_mode(or_renderer::ShadingMode::Material);
+        editor.bridge = bridge;
+        self.device_retry = None;
+        Ok(())
+    }
+
+    /// Whether the device the windows draw on is lost.
+    pub(super) fn device_lost(&self) -> bool {
+        (self.editor.as_ref()).is_some_and(|editor| editor.bridge.device_lost())
+    }
+
     fn render_editor(&mut self) -> Result<()> {
+        // ⚠ Before anything is drawn: the painter panics on a buffer a lost device does not write.
+        if self.device_lost() {
+            self.recover_lost_device()?;
+            if self.device_lost() {
+                return Ok(());
+            }
+        }
         let Some(editor) = self.editor.as_mut() else {
             return Ok(());
         };

@@ -21,6 +21,8 @@ pub enum Codec {
     BinkAudioDct,
     /// Bink audio coded with the real DFT.
     BinkAudioRdft,
+    /// Bink audio coded with the DCT as a `KB2n` movie stores it.
+    Bink2Audio,
     /// Bink 2 video, the `KB2g` to `KB2k` revisions.
     Bink2,
     /// GTA VI's codec 2: a mono signal stored as overlapping 2,048-point spectra.
@@ -41,6 +43,7 @@ impl Codec {
             Codec::Bink1 => "Bink 1".to_string(),
             Codec::BinkAudioDct => "Bink audio (DCT)".to_string(),
             Codec::BinkAudioRdft => "Bink audio (RDFT)".to_string(),
+            Codec::Bink2Audio => "Bink 2 audio".to_string(),
             Codec::Bink2 => "Bink 2".to_string(),
             Codec::Spectra => "Spectra".to_string(),
             Codec::Unknown(code) => format!("unknown({code})"),

@@ -428,6 +428,7 @@ fn the_viewports_overlay_stays_within_its_box() {
                 rect,
                 &mut state,
                 None,
+                None,
                 egui::Rect::NOTHING,
             )
         });

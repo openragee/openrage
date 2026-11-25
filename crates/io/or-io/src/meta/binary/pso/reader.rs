@@ -66,6 +66,7 @@ pub(crate) fn parse_full(
     let gta6 = sections
         .iter()
         .any(|s| s.ident == PsoSection::Chks && chks_states_gta6(&s.bytes));
+    let _names = gta6.then(crate::meta::binary::hash_index::title_names);
     let psin_data = psin_data(&psin.bytes)?;
     let pmap_section = PmapSection::parse(&pmap.bytes)?;
     let schema_section = PsoSchemaSection::parse_for(&psch.bytes, gta6)?;

@@ -45,9 +45,13 @@ fn a_random_picture_packet_is_decoded_or_refused_and_never_panics() {
 fn a_random_sound_packet_is_decoded_or_refused_and_never_panics() {
     let mut noise = Noise(0x2545_f491_4f6c_dd1d);
     let mut decoded = 0;
-    for dct in [true, false] {
+    // The DCT coding, the RDFT one, and the DCT coding of a `KB2n` movie.
+    for (dct, revised) in [(true, false), (false, false), (true, true)] {
         for (rate, channels) in [(11_025, 1), (22_050, 2), (44_100, 2), (48_000, 1)] {
             let mut decoder = audio::Decoder::new(rate, channels, dct).expect("a track");
+            if revised {
+                decoder = decoder.revised();
+            }
             for _ in 0..200 {
                 let len = (noise.next() % 1500) as usize;
                 let packet = noise.bytes(len);
@@ -58,7 +62,7 @@ fn a_random_sound_packet_is_decoded_or_refused_and_never_panics() {
             decoder.reset();
         }
     }
-    eprintln!("{decoded} of 1600 random sound packets decoded");
+    eprintln!("{decoded} of 2400 random sound packets decoded");
 }
 
 #[test]

@@ -14657,6 +14657,39 @@ msgstr "着色 — 游戏自身的渲染通道，由 GTA VI 的程序翻译而�
 msgid "Shaded — the game's own passes, translated from GTA VI's programs: {drawn} of {total} surfaces drawn"
 msgstr "着色 — 游戏自身的渲染通道，由 GTA VI 的程序翻译而来：已绘制 {total} 个表面中的 {drawn} 个"
 
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the editor's own sun and sky at the hour and the weather set. {zeroed} bindings only the game fills read as noughts"
+msgstr "着色 — 此 drawable 自身的网格程序和像素程序，由 GTA VI 的程序翻译而来：已绘制 {drawn} 个表面，由编辑器自身的太阳和天空按所设时间和天气照亮。{zeroed} 个仅由游戏填充的绑定读作零"
+
+msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts"
+msgstr "着色 — 此 drawable 自身的网格程序和像素程序，由 GTA VI 的程序翻译而来：已绘制 {drawn} 个表面，由安装目录的天气循环按所设时间和天气照亮，天空由其大气给出，测光和色调曲线与游戏相同。{zeroed} 个仅由游戏填充的绑定读作零"
+
+msgid "a worker is still decoding its maps"
+msgstr "工作线程仍在解码它的贴图"
+
+msgid "a worker is still building its passes for this device"
+msgstr "工作线程仍在为此设备构建它的渲染通道"
+
+msgid "Drawn as Material: {count} surfaces; the first: {why}"
+msgstr "按“材质”绘制：{count} 个表面；第一个：{why}"
+
+msgid "Its own mesh and pixel programs do not draw it: {why}"
+msgstr "它自身的网格程序和像素程序无法绘制它：{why}"
+
+msgid "{effect}: none of its passes reads the streams this geometry has"
+msgstr "{effect}：它的渲染通道均不读取此几何体拥有的流"
+
+msgid "{effect}: its programs are not translated yet"
+msgstr "{effect}：它的程序尚未翻译"
+
+msgid "{effect}: the graphics device was lost while its own passes drew, so it draws as Material until OpenRage is started again"
+msgstr "{effect}：在它自身的渲染通道绘制时图形设备丢失，因此在重新启动 OpenRage 之前按“材质”绘制"
+
+msgid "The graphics device was lost. The view is back to Material, and what the Shaded view was drawing when it was lost draws as Material until OpenRage is started again"
+msgstr "图形设备已丢失。视图已回到“材质”，丢失时“着色”视图正在绘制的内容在重新启动 OpenRage 之前按“材质”绘制"
+
+msgid "none of its techniques is a mesh pass that writes the deferred targets"
+msgstr "它的技术中没有写入延迟目标的网格通道"
+
 msgid "{count} program is not translated: {why}"
 msgid_plural "{count} programs are not translated; the first: {why}"
 msgstr[0] "{count} 个程序未被翻译；第一个：{why}"
@@ -15974,8 +16007,8 @@ msgstr "无法读取其电台：{why}"
 msgid "GTA VI Radio"
 msgstr "GTA VI 电台"
 
-msgid "A station's key is the key of its name in the text tables, and a track plays the streamed sound of a sounds body: index the open scans with the scans of the text and audio archives open to name the stations and play their tracks. A track's title and artists are the identifiers its text states; the titles the game shows are keyed by a track id the stream carries, which is not read."
-msgstr "电台的键就是其名称在文本表中的键，曲目播放声音数据体中的流式声音：请在文本归档和音频归档的扫描处于打开状态时为已打开的扫描建立索引，以便为电台命名并播放其曲目。曲目的标题和艺术家是其文本所声明的标识符；游戏显示的标题以流所携带的曲目 ID 为键，该 ID 不会被读取。"
+msgid "A station's key is the key of its name in the text tables, and a track plays the streamed sound of a sounds body: index the open scans with the scans of the text and audio archives open to name the stations, show their tracks' titles and artists and play them. A title the game shows is keyed by the track id a marker of the track's stream states; a track with none is listed by the identifiers its text states. A station kept off the wheel is named from the names harvested."
+msgstr "电台的键就是其名称在文本表中的键，曲目播放声音数据体中的流式声音：请在文本归档和音频归档的扫描处于打开状态时为已打开的扫描建立索引，以便为电台命名、显示其曲目的标题和艺术家并播放这些曲目。游戏显示的标题以曲目流的某个标记所声明的曲目 ID 为键；没有此类标记的曲目则按其文本所声明的标识符列出。不在电台轮盘上的电台根据已收集的名称命名。"
 
 msgid "GTA VI Dialogue"
 msgstr "GTA VI 对话"
@@ -16277,6 +16310,84 @@ msgstr "部件"
 
 msgid "Draw the weapon as the first of each kind of its parts, each on its bone, in place of its own mesh"
 msgstr "用每种部件的第一个来绘制武器，各自位于其骨骼上，取代武器自身的网格"
+
+msgid "A mix of {count} track"
+msgid_plural "A mix of {count} tracks"
+msgstr[0] "{count} 条曲目的混音"
+msgstr[1] "{count} 条曲目的混音"
+
+msgid "exact"
+msgstr "精确"
+
+msgid "calibrated"
+msgstr "已校准"
+
+msgid "calibrated, {percent} % of its coded blocks through a slot not known"
+msgstr "已校准，其已编码块中有 {percent}% 经由未知槽位"
+
+msgid "Calibrating GTA VI texture decoding from the packs of {folder}"
+msgstr "正在根据 {folder} 下的包校准 GTA VI 纹理解码"
+
+msgid "A calibration of GTA VI texture decoding is already running"
+msgstr "GTA VI 纹理解码的校准已在运行"
+
+msgid "No GTA VI texture pack opens under that folder"
+msgstr "该文件夹下没有可打开的 GTA VI 纹理包"
+
+msgid "The calibration could not be kept: {why}"
+msgstr "无法保存校准：{why}"
+
+msgid "GTA VI texture calibration"
+msgstr "GTA VI 纹理校准"
+
+msgid "Calibrate decoding"
+msgstr "校准解码"
+
+msgid "Fit the tables of the console's texture coder from every pack of this game, so that the textures stored through it for BC3, BC4, BC5, BC6H and BC7 read. No file holds those tables, so such a texture is an estimate and is marked calibrated"
+msgstr "根据此游戏的所有包拟合主机纹理编码器的表，以便读取经由它存储的 BC3、BC4、BC5、BC6H 和 BC7 纹理。没有任何文件包含这些表，因此此类纹理只是估算值，并标记为“已校准”"
+
+msgid "Decode"
+msgstr "解码"
+
+msgid "Wrote {path}. This texture is {how}: an estimate, not the blocks the pack stores"
+msgstr "已写入 {path}。此纹理{how}：这是估算值，并非包中存储的块"
+
+msgid "{count} GTA VI texture pack calibrated: {bodies} coded mips now read as estimates, {unknown} % of their blocks through a slot not known"
+msgid_plural "{count} GTA VI texture packs calibrated: {bodies} coded mips now read as estimates, {unknown} % of their blocks through a slot not known"
+msgstr[0] "已校准 {count} 个 GTA VI 纹理包：{bodies} 个已编码的 mip 现作为估算值读取，其块中有 {unknown}% 经由未知槽位"
+msgstr[1] "已校准 {count} 个 GTA VI 纹理包：{bodies} 个已编码的 mip 现作为估算值读取，其块中有 {unknown}% 经由未知槽位"
+
+msgid "Filter by the model that uses a texture"
+msgstr "按使用纹理的模型筛选"
+
+msgid "Show only the textures used by a model whose name holds this text. A harvest of the game's names finds, for each texture, the first model whose material binds it"
+msgstr "只显示名称包含此文本的模型所使用的纹理。对游戏名称的收集会为每张纹理找出第一个其材质绑定该纹理的模型"
+
+msgid "used by {model} as {parameter}"
+msgstr "由 {model} 用作 {parameter}"
+
+msgid "used by {model} as {parameter}, and by {count} model more"
+msgid_plural "used by {model} as {parameter}, and by {count} models more"
+msgstr[0] "由 {model} 用作 {parameter}，另有 {count} 个模型也在使用"
+msgstr[1] "由 {model} 用作 {parameter}，另有 {count} 个模型也在使用"
+
+msgid "Use"
+msgstr "用途"
+
+msgid "Some textures of this game are stored through the console's coder and do not read yet. A calibration fits what they need from the game's own packs, once: about a quarter of an hour, which can be stopped and taken up again. They then read as estimates, marked calibrated"
+msgstr "此游戏的部分纹理通过主机的编码器存储，目前尚无法读取。校准会根据游戏自身的包拟合所需的数据，只需一次：大约一刻钟，可以停止并在之后继续。此后这些纹理将作为估算值读取，并标记为已校准"
+
+msgid "An estimate, not the exact picture: {how}"
+msgstr "这是估算值，并非精确图像：{how}"
+
+msgid "Stopped before it finished. The next calibration of this game goes on from where this one stopped"
+msgstr "在完成前已停止。下次校准此游戏时将从这次停止的地方继续"
+
+msgid "The fields below are the ones this GTA VI body's own table states. Names come from GTA VI's name snapshot; a name the snapshot holds only as a hash shows its hash."
+msgstr "下方的字段是这个 GTA VI 主体自身的表所声明的字段。名称来自 GTA VI 的名称快照；快照中只以哈希保存的名称显示为其哈希。"
+
+msgid "No schema is staged for this type, so the fields below are the ones the document itself carries. Names come from the public tables; a field the tables do not name shows its hash."
+msgstr "此类型没有可用的架构，因此下方的字段是文档本身携带的字段。名称来自公开表；表中未命名的字段显示为其哈希。"
 
 msgid "Network name: {name}"
 msgstr "网络名称：{name}"

@@ -608,7 +608,19 @@ fn draw_tile(
     } else {
         ui.visuals().text_color()
     };
-    let dim_text = format!("{}\u{00d7}{}", tex.width, tex.height);
+    // A GTA VI pack's texture read through fitted tables is an estimate, which its tile says; one
+    // with no name is captioned by the model that uses it.
+    let (estimate, used) = match state.document(doc_id).map(|d| &d.payload) {
+        Some(DocPayload::Ttpf(ttpf)) => {
+            let index = tex.selection_id as usize;
+            (ttpf.estimate_label(index), ttpf.use_label(index))
+        }
+        _ => (None, None),
+    };
+    let dim_text = match &estimate {
+        Some(_) => format!("{} {}\u{00d7}{}", tr!("calibrated"), tex.width, tex.height),
+        None => format!("{}\u{00d7}{}", tex.width, tex.height),
+    };
     let dim_galley = caption_painter.layout_no_wrap(
         dim_text,
         egui::FontId::proportional(10.0),
@@ -616,7 +628,7 @@ fn draw_tile(
     );
     // The name wraps short of the size, which sits at the bottom right under its second line.
     let mut name_job = egui::text::LayoutJob::simple(
-        tex.name.clone(),
+        used.clone().unwrap_or_else(|| tex.name.clone()),
         egui::FontId::proportional(11.0),
         name_color,
         caption_rect.width() - 8.0 - dim_galley.size().x,
@@ -636,8 +648,13 @@ fn draw_tile(
 
     hover(response, || {
         format!(
-            "{}\n{}\u{00d7}{} {:?}\nDouble-click: open in Texture workspace",
-            tex.name, tex.width, tex.height, tex.format
+            "{}\n{}\u{00d7}{} {:?}{}{}\nDouble-click: open in Texture workspace",
+            tex.name,
+            tex.width,
+            tex.height,
+            tex.format,
+            estimate.map(|how| format!("\n{how}")).unwrap_or_default(),
+            used.map(|used| format!("\n{used}")).unwrap_or_default()
         )
     })
 }

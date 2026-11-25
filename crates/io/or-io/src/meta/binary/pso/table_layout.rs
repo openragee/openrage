@@ -53,6 +53,7 @@ pub(crate) struct Laid {
 /// A table-form document's bytes with `instance` laid out in it, refused when the rules do not
 /// give back the document `layout` was read from.
 pub(crate) fn write(layout: &PsoLayout, instance: &MetaInstance) -> Result<Vec<u8>> {
+    let _names = crate::meta::binary::hash_index::title_names();
     let sections = sections_of(layout);
     let model = super::table_form::model(&sections)?;
     let stored: Vec<u8> = sections.iter().flat_map(|s| s.bytes.clone()).collect();
@@ -174,6 +175,7 @@ pub(crate) fn lay_out(
     instance: &MetaInstance,
     held: Option<&Held>,
 ) -> Result<(Laid, Held)> {
+    let _names = crate::meta::binary::hash_index::title_names();
     walk(model, instance, held, false, false)
 }
 
@@ -184,6 +186,7 @@ pub(crate) fn lay_out_in_place(
     instance: &MetaInstance,
     held: Option<&Held>,
 ) -> Result<(Laid, Held)> {
+    let _names = crate::meta::binary::hash_index::title_names();
     walk(model, instance, held, true, false)
 }
 

@@ -5,11 +5,40 @@ use std::collections::BTreeMap;
 /// Degrees to radians, which the angles of `time.xml` are read through.
 const DEGREES: f32 = std::f32::consts::PI / 180.0;
 
+/// How the way from one sample to the next is bent: a sample of GTA VI names it, and GTA V's go straight.
+// The other kinds a sample may name are not read here, and go straight.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Easing {
+    #[default]
+    Linear,
+    QuarticInOut,
+}
+
+impl Easing {
+    fn named(name: &str) -> Self {
+        match name.trim().eq_ignore_ascii_case("EASE_QUARTIC_INOUT") {
+            true => Self::QuarticInOut,
+            false => Self::Linear,
+        }
+    }
+
+    /// How far along `along` is once bent, both from nought to one.
+    pub fn ease(self, along: f32) -> f32 {
+        match self {
+            Self::Linear => along,
+            Self::QuarticInOut if along < 0.5 => 8.0 * along.powi(4),
+            Self::QuarticInOut => 1.0 - 0.5 * (2.0 * along - 2.0).powi(4),
+        }
+    }
+}
+
 /// One hour the day is sampled at: the value holds for `duration` hours, then blends to the next sample.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimeSample {
     pub hour: f32,
     pub duration: f32,
+    /// How the blend from this sample to the next is bent.
+    pub easing: Easing,
 }
 
 /// What `time.xml` states of the day: its samples, and where the sun and moon travel.
@@ -38,6 +67,8 @@ pub struct Region {
 pub struct Cycle {
     pub name: String,
     pub regions: Vec<Region>,
+    /// The single values a file of GTA VI states of the weather as a whole, before the cycle.
+    pub overall: BTreeMap<String, f32>,
 }
 
 /// The value of each variable at one moment, by the name its file gives it.
@@ -98,6 +129,9 @@ impl TimeTable {
                         table.samples.push(TimeSample {
                             hour,
                             duration: number("duration").unwrap_or(0.0),
+                            easing: attr(attrs, "interpolation_type")
+                                .map(Easing::named)
+                                .unwrap_or_default(),
                         });
                     }
                 }
@@ -149,6 +183,7 @@ impl Cycle {
     fn parse_into(text: &str, out: &mut Vec<Cycle>) {
         let mut open: Option<(String, String)> = None;
         let mut cycle: Option<Cycle> = None;
+        let mut overall = BTreeMap::new();
         for token in tokens(text) {
             match token {
                 Token::Open { name, attrs, empty } => match name {
@@ -156,6 +191,7 @@ impl Cycle {
                         cycle = Some(Cycle {
                             name: attr(attrs, "name").unwrap_or_default().to_string(),
                             regions: Vec::new(),
+                            overall: std::mem::take(&mut overall),
                         });
                     }
                     "region" => {
@@ -166,7 +202,7 @@ impl Cycle {
                             });
                         }
                     }
-                    other if !empty && cycle.is_some() => {
+                    other if !empty => {
                         open = Some((other.to_string(), String::new()));
                     }
                     _ => {}
@@ -188,11 +224,21 @@ impl Cycle {
                             .split_whitespace()
                             .map(|v| v.parse::<f32>().ok())
                             .collect();
-                        let region = cycle.as_mut().and_then(|c| c.regions.last_mut());
-                        if let (Some(values), Some(region), true) =
-                            (values, region, tag == name && !body.trim().is_empty())
-                        {
-                            region.vars.insert(tag, values);
+                        let (Some(values), true) = (values, tag == name && !body.trim().is_empty())
+                        else {
+                            continue;
+                        };
+                        match cycle.as_mut().map(|c| c.regions.last_mut()) {
+                            Some(Some(region)) => {
+                                region.vars.insert(tag, values);
+                            }
+                            Some(None) => {}
+                            // Before the cycle a value stands alone, with no sample to its name.
+                            None => {
+                                if let [value] = values[..] {
+                                    overall.insert(tag, value);
+                                }
+                            }
                         }
                     }
                 },

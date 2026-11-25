@@ -255,6 +255,7 @@ mod tests {
             weights: vec![[255, 0, 0, 0, 0, 0, 0, 0]; count],
             root_triangles: vec![0; count],
             rest_lengths: vec![0.1 * (per - 1) as f32; count],
+            ..ClothMesh::default()
         }))
     }
 

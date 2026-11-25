@@ -365,9 +365,10 @@ pub(crate) fn cmd_scan_radio(args: &[String]) -> Result<(), String> {
     );
     println!("  languages     {}", texts.said());
     println!(
-        "  not read      a track's shown title and artist, keyed by a track id its audio stream \
-         carries: a track's text names them as identifiers; what a list's flags say of its play \
-         order; a track's start time, which is not stored"
+        "  not read      here, a track's shown title and artist, keyed by the track id a marker \
+         of its audio stream states (the app's index reads them): a track's text names them as \
+         identifiers; what a list's flags say of its play order; a track's start time, which is \
+         not stored"
     );
     for music in &found {
         for list in &music.lists {

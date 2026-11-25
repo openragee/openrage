@@ -2,15 +2,17 @@
 //! they name, and a sounds body's streamed sounds with their lengths and audio streams. A track
 //! names its streamed sound by index key, which joins a station to the streams it plays.
 //!
-//! A station's key is also the key of its name in the text tables. A track may name a text item
-//! that spells its title and its artists as identifiers; the texts the game shows are keyed by a
-//! track id the audio stream carries, which is not read here. No start time is stored, and a
-//! list's order is the order it states its tracks: what its flags say of the order is not known.
+//! A station's key is also the key of its name in the text tables, and the hash of its item's
+//! name, which [`station_names`] finds again among known names. A track may name a text item
+//! that spells its title and its artists as identifiers; the texts the game shows are keyed by
+//! the track id a marker of the audio stream states ([`track_text_keys`]). No start time is
+//! stored, and a list's order is the order it states its tracks.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::audio_data::{AudioData, AudioDataKind, AudioItem};
 use super::audio_links::{layout, ItemLayout};
+use super::hash::name_hash32;
 
 /// The class of a music body's station items.
 pub const STATION_CLASS: u8 = 16;
@@ -53,22 +55,96 @@ pub enum RadioError {
 type Result<T> = std::result::Result<T, RadioError>;
 
 /// A station: its index key, which it also states, and its track lists in the order stated.
-// Its other fields are not read: a flags word, a float, reference rows whose roles are not
-// known, and two counted arrays of rows after the track lists.
+// Its other fields are not read: a float, reference rows whose roles are not known, and two
+// counted arrays of rows after the track lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Station {
     pub key: u32,
-    /// The word after the key: a multiple of 1,000 that stations share. Its role is not known.
+    /// The word after the class byte, two bits a flag ([`flag`]). The third flag is set in the
+    /// stations kept off the wheel; what the others say is not known.
+    pub flags: u32,
+    /// The word after the key, an order: the stations a text names each state another value,
+    /// rising nearly as their names do. The stations kept off the wheel share a few values.
     pub band: u32,
     pub lists: Vec<TrackList>,
+}
+
+/// The flag `n` of a flags word, two bits a flag from the lowest; `None` where it is not stated.
+pub fn flag(word: u32, n: u32) -> Option<bool> {
+    match word.checked_shr(2 * n)? & 3 {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
+}
+
+/// The text keys of the title and of the artist of the track of id `id`.
+pub fn track_text_keys(id: u32) -> (u32, u32) {
+    let key = |end: char| name_hash32(format!("{id}{end}").as_bytes());
+    (key('S'), key('A'))
+}
+
+/// What a station's name starts with: a station of the wheel, and one kept off it.
+const NAME_STARTS: [&str; 2] = ["radio_", "hidden_radio_"];
+/// The most words of a name, in a row, that are tried as a station's.
+const NAME_WORDS: usize = 3;
+
+/// The name of each of `keys` that hashes from one of `names`: a name as it is, or the name or
+/// up to three of its `_`-separated words in a row after `radio_` or `hidden_radio_`.
+// A whole name is kept over a run of words, which is more often chance.
+pub fn station_names<'a>(
+    keys: &BTreeSet<u32>,
+    names: impl Iterator<Item = &'a str>,
+) -> BTreeMap<u32, String> {
+    let mut found: BTreeMap<u32, (bool, String)> = BTreeMap::new();
+    let mut keep = |name: String, whole: bool| {
+        let key = name_hash32(name.as_bytes());
+        if keys.contains(&key) && found.get(&key).is_none_or(|kept| whole && !kept.0) {
+            found.insert(key, (whole, name));
+        }
+    };
+    let mut tried = |stem: &str, whole: bool| {
+        for start in NAME_STARTS {
+            keep(format!("{start}{stem}"), whole);
+        }
+        if whole {
+            keep(stem.to_string(), true);
+        }
+    };
+    for name in names {
+        tried(name, true);
+        let words: Vec<&str> = name.split('_').filter(|w| !w.is_empty()).collect();
+        for first in 0..words.len() {
+            for count in 1..=NAME_WORDS.min(words.len() - first) {
+                if count < words.len() {
+                    tried(&words[first..first + count].join("_"), false);
+                }
+            }
+        }
+    }
+    (found.into_iter().map(|(key, kept)| (key, kept.1))).collect()
+}
+
+/// `text` as a station's item would be named after it: lower case, each run of other characters
+/// one `_`.
+pub fn name_of_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    out.trim_end_matches('_').to_string()
 }
 
 /// A track list a station names, with what it states where the body holds the list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackList {
     pub key: u32,
-    /// The word after the class byte: two bits a flag, `0b10` where a flag is not stated. The
-    /// two lowest flags are set in some lists; what they say of the play order is not known.
+    /// The word after the class byte, two bits a flag ([`flag`]). The lowest is set in lists
+    /// of a track or two beside a station's long ones; what it and the second say is not known.
     pub flags: Option<u32>,
     /// The key of the item the list names first, which lists of one kind share.
     pub category: Option<u32>,
@@ -132,10 +208,10 @@ fn bytes_of<'a>(data: &'a AudioData, item: &AudioItem) -> &'a [u8] {
     (data.data.get(start..start + item.span as usize)).unwrap_or_default()
 }
 
-/// A station's band and its track lists' keys.
-// +8 its own key, +12 the band, +60 a count of 12-byte track list entries from +64, each a
+/// A station's flags, its band and its track lists' keys.
+// +1 the flags, +8 its own key, +12 the band, +60 a count of 12-byte track list entries from +64, each a
 // reference row first; then a count of 8-byte entries, and a count of 12-byte entries.
-fn station(item: &AudioItem, bytes: &[u8]) -> std::result::Result<(u32, Vec<u32>), String> {
+fn station(item: &AudioItem, bytes: &[u8]) -> std::result::Result<(u32, u32, Vec<u32>), String> {
     let word =
         |at: usize| u32_at(bytes, at).ok_or_else(|| format!("ends before the word at +{at}"));
     if word(8)? != item.key {
@@ -160,7 +236,7 @@ fn station(item: &AudioItem, bytes: &[u8]) -> std::result::Result<(u32, Vec<u32>
             row_at(item, at).ok_or_else(|| format!("holds no reference row at +{at}"))
         })
         .collect::<std::result::Result<_, _>>()?;
-    Ok((band, keys))
+    Ok((word(1)?, band, keys))
 }
 
 /// The keys an item of rows names: a count at +8, then a row for each.
@@ -270,10 +346,15 @@ pub fn stations(music: &AudioData) -> Result<Vec<Station>> {
         .filter(|item| item.class == Some(STATION_CLASS))
         .map(|item| {
             let key = item.key;
-            let (band, keys) = station(item, bytes_of(music, item))
+            let (flags, band, keys) = station(item, bytes_of(music, item))
                 .map_err(|why| RadioError::Station { key, why })?;
             let lists = (keys.into_iter().map(&list)).collect::<Result<Vec<TrackList>>>()?;
-            Ok(Station { key, band, lists })
+            Ok(Station {
+                key,
+                flags,
+                band,
+                lists,
+            })
         })
         .collect()
 }
@@ -425,6 +506,11 @@ pub fn streamed_sounds(sounds: &AudioData) -> Result<(BTreeMap<u32, StreamedSoun
 }
 
 impl Station {
+    /// Whether the station is kept off the wheel: its third flag.
+    pub fn hidden(&self) -> bool {
+        flag(self.flags, 2) == Some(true)
+    }
+
     /// Each track of the station's lists, in order, with the streamed sound of `sounds` it plays.
     pub fn tracks<'a>(
         &'a self,

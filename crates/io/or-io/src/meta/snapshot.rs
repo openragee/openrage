@@ -39,6 +39,11 @@ struct Installed {
 /// definitions) would otherwise answer for a library that is gone.
 static INSTALLED: OnceLock<Installed> = OnceLock::new();
 
+/// A second library, read for its names alone and only for its own title's bodies
+/// ([`crate::meta::binary::hash_index::title_names`]): its structures may be named as the
+/// default's are and laid out otherwise.
+static NAMES: OnceLock<SchemaLibrary> = OnceLock::new();
+
 static EMPTY: LazyLock<SchemaLibrary> = LazyLock::new(SchemaLibrary::default);
 
 /// Whether a snapshot came out of the `build_library` this source tree has.
@@ -149,6 +154,31 @@ pub fn install_snapshot(path: &Path) -> Result<&'static SchemaLibrary> {
         origin: Some(path.to_path_buf()),
     };
     Ok(&INSTALLED.get_or_init(|| installed).library)
+}
+
+/// Install the snapshot at `path` for the names of the second title's bodies; the first wins.
+///
+/// ⚠ Before the first name is asked for: the hash index is built once.
+pub fn install_names_snapshot(path: &Path) -> Result<&'static SchemaLibrary> {
+    if let Some(held) = NAMES.get() {
+        return Ok(held);
+    }
+    let library = load_snapshot(path)?;
+    Ok(NAMES.get_or_init(|| library))
+}
+
+/// Install `library` for the names of the second title's bodies; the first wins.
+pub fn install_names_library(library: SchemaLibrary) -> &'static SchemaLibrary {
+    NAMES.get_or_init(|| library)
+}
+
+pub(crate) fn names_library() -> Option<&'static SchemaLibrary> {
+    NAMES.get()
+}
+
+/// Whether a library for the names of the second title's bodies is installed.
+pub fn has_names_library() -> bool {
+    NAMES.get().is_some()
 }
 
 pub(crate) fn installed() -> Option<&'static SchemaLibrary> {

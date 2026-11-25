@@ -58,7 +58,7 @@ impl TheBox {
         let gizmo = column(self.rect, 0.0, 0.0).gizmo;
         let rect = self.rect;
         (self.ctx).run_ui(input, |ui| {
-            draw_viewport_overlay(ui, rect, state, None, gizmo)
+            draw_viewport_overlay(ui, rect, state, None, None, gizmo)
         })
     }
 

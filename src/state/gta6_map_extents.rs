@@ -15,6 +15,7 @@ const STREAMING_MIN: u32 = lit(b"streamingExtentsMin");
 const STREAMING_MAX: u32 = lit(b"streamingExtentsMax");
 
 fn get(tree: &MetaInstance, member: u32) -> Option<[f32; 3]> {
+    let _names = or_io::meta::binary::hash_index::title_names();
     match tree.get(&default_hash_index().name_or_literal(member))? {
         Value::Vec3(v) => Some(*v),
         _ => None,

@@ -244,6 +244,8 @@ impl ViewportRenderer {
             meshes: Vec::new(),
             world,
             game_scene: None,
+            gta6_scene: None,
+            gta6_sky: Default::default(),
             deferred: None,
             deferred_scene: None,
             refracts: false,

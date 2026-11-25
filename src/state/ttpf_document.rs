@@ -11,6 +11,8 @@ use or_io::authoring::TextureBuildOptions;
 use or_io::codec::texture::{GrcTextureFormat, RgbaImage};
 use or_io::gta5::gen8::GrcTexture;
 use or_io::gta5::shared::PgDictionary;
+use or_io::gta6::bcpack::calibrate::load_cache;
+use or_io::gta6::bcpack::Decode;
 use or_io::gta6::hash::name_hash64;
 use or_io::gta6::headerless::{Dictionary, DictionaryTexture, Entry, Resource};
 use or_io::gta6::texture_names::name_keys;
@@ -32,14 +34,58 @@ fn names() -> std::sync::MutexGuard<'static, BTreeMap<u64, String>> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// The name the app has learned for a texture key, if any.
+/// The name the app has learned for a texture key, else the one the kept vocabulary holds for it.
+// ⚠ What a harvest learns lasts a session, and the vocabulary it keeps is what names a key after it.
 pub(crate) fn known_name(key: u64) -> Option<String> {
-    names().get(&key).cloned()
+    let learned = names().get(&key).cloned();
+    named_by(learned, &super::gta6_names::vocabulary(), key)
+}
+
+pub(super) fn named_by(
+    learned: Option<String>,
+    vocabulary: &or_io::gta6::names::Vocabulary,
+    key: u64,
+) -> Option<String> {
+    learned.or_else(|| vocabulary.name64(key).map(str::to_string))
 }
 
 /// How many texture names the app has learned.
 pub(crate) fn names_known() -> usize {
     names().len()
+}
+
+/// How each texture read was rebuilt from its bodies through the BCPack coder, by its pack's
+/// file and its index: a worker's copy of a document reads for the one that is shown.
+// ponytail: one map for the whole app, which a calibration that ends empties.
+static DECODES: Mutex<BTreeMap<(PathBuf, usize), Decode>> = Mutex::new(BTreeMap::new());
+
+fn decodes() -> std::sync::MutexGuard<'static, BTreeMap<(PathBuf, usize), Decode>> {
+    DECODES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Forget how every texture was rebuilt, as a calibration that ended changes it.
+pub(super) fn forget_decodes() {
+    decodes().clear();
+}
+
+/// Where the BCPack coder's tables fitted on this machine are kept.
+pub(crate) fn calibration_dir() -> Option<PathBuf> {
+    super::prefs::config_root().map(|dir| dir.join("bcpack"))
+}
+
+/// The calibration kept for `pack`, if one read it, set on it.
+fn calibrate(pack: &mut TexturePack) {
+    let tables = calibration_dir().and_then(|dir| load_cache(&dir, pack.member_key()));
+    pack.set_calibration(tables.map(Arc::new));
+}
+
+/// The pack `payload` is, read from now on through the calibration kept for it, with what it has read forgotten.
+pub(super) fn recalibrate(payload: &mut DocPayload) {
+    if let Some(ttpf) = edited(payload) {
+        calibrate(&mut ttpf.pack);
+    }
 }
 
 pub struct TtpfDocument {
@@ -62,7 +108,9 @@ struct Read {
 impl TtpfDocument {
     /// Reads the pack's header, table and directory, and no body.
     pub fn open(path: &std::path::Path) -> Result<Self, String> {
-        let pack = TexturePack::open(path).map_err(|e| e.to_string())?;
+        let mut pack = TexturePack::open(path).map_err(|e| e.to_string())?;
+        // A body that does not decode exactly is drawn through a calibration that read the pack.
+        calibrate(&mut pack);
         let keys = (pack.entries.iter().enumerate())
             .filter(|(_, e)| e.on_disk && e.key != 0)
             .map(|(index, e)| (e.key, index))
@@ -79,8 +127,17 @@ impl TtpfDocument {
         let Some(entry) = (self.pack.entries.get(index)).filter(|e| e.on_disk && e.key != 0) else {
             return format!("#{index}");
         };
-        let known = names().get(&entry.key).cloned();
-        known.unwrap_or_else(|| format!("hash_{:016X}", entry.key))
+        known_name(entry.key).unwrap_or_else(|| format!("hash_{:016X}", entry.key))
+    }
+
+    /// What texture `index` is used by, where no name is known for it and a model of an archive
+    /// harvested names its key: what its tile and its row say beside the hash.
+    pub fn use_label(&self, index: usize) -> Option<String> {
+        let entry = (self.pack.entries.get(index)).filter(|e| e.on_disk && e.key != 0)?;
+        if known_name(entry.key).is_some() {
+            return None;
+        }
+        super::gta6_names::texture_use_label(entry.key)
     }
 
     /// The texture [`Self::name`] names, or whose key a name of the user's hashes to.
@@ -136,9 +193,11 @@ impl TtpfDocument {
         if let Some(why) = read.refused.get(&index) {
             return Err(why.clone());
         }
-        match self
-            .pack
-            .texture(index)
+        let noted = self.pack.texture_noted(index).map(|(texture, how)| {
+            decodes().insert((self.pack.path().to_path_buf(), index), how);
+            texture
+        });
+        match noted
             .map_err(|e| e.to_string())
             .and_then(|t| grc(self.name(index), t.face(at.1).unwrap_or(t)))
         {
@@ -152,6 +211,45 @@ impl TtpfDocument {
                 Err(why)
             }
         }
+    }
+
+    /// How texture `index`'s bodies through the BCPack coder are rebuilt: exactly, or as an
+    /// estimate through tables fitted on this machine, with the share of its coded blocks drawn
+    /// through a slot or symbol the fit did not solve once it has been read. `None` for a
+    /// texture with no such body, and for one not read yet that may decode exactly.
+    pub fn decode_label(&self, index: usize) -> Option<String> {
+        use or_io::gta6::ttpf::{KIND_STORED, KIND_ZLIB};
+        let rows = self.pack.rows_of(index)?;
+        let kinds = || rows.clone().map(|row| self.pack.rows[row].kind);
+        if !kinds().any(|kind| kind != KIND_STORED && kind != KIND_ZLIB) {
+            return None;
+        }
+        let read = decodes()
+            .get(&(self.pack.path().to_path_buf(), index))
+            .copied();
+        match read {
+            Some(how) if how.is_exact() => Some(tr!("exact").to_string()),
+            Some(how) => Some(tr!(
+                "calibrated, {percent} % of its coded blocks through a slot not known",
+                percent = format!("{:.1}", how.unknown_percent())
+            )),
+            // A BC3, BC4 or BC5 body reads only through a calibration.
+            None if self.pack.is_calibrated() && kinds().any(|kind| (3..=5).contains(&kind)) => {
+                Some(tr!("calibrated").to_string())
+            }
+            None => None,
+        }
+    }
+
+    /// [`Self::decode_label`] where the texture is an estimate; `None` for one that reads exactly.
+    pub fn estimate_label(&self, index: usize) -> Option<String> {
+        let read = decodes()
+            .get(&(self.pack.path().to_path_buf(), index))
+            .copied();
+        if read.is_some_and(|how| how.is_exact()) {
+            return None;
+        }
+        self.decode_label(index)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Read> {
@@ -633,6 +731,9 @@ pub(super) fn grc(name: String, texture: or_io::gta6::Texture) -> Result<GrcText
         ..Default::default()
     })
 }
+
+#[path = "gta6_bcpack_calibration.rs"]
+pub(crate) mod calibration;
 
 #[path = "ttpf_reshape.rs"]
 mod relaid;

@@ -340,6 +340,8 @@ pub(crate) fn named_for_tests(path: &Path, named: Named) {
 pub(crate) fn one_triangle(box_max: [f32; 3]) -> Drawable {
     use or_io::gta6::headerless::{Geometry, Model, Palette, Vertices};
     let geometry = Geometry {
+        vertex_data: Vec::new(),
+        index_data: Vec::new(),
         shader: 0,
         vertex_count: 3,
         channels: Vec::new(),
@@ -378,6 +380,8 @@ mod tests {
     fn a_surface_is_the_triangles_of_the_first_level_that_holds_models() {
         let corners = vec![[0.0; 3], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]];
         let geometry = |positions, triangles| Geometry {
+            vertex_data: Vec::new(),
+            index_data: Vec::new(),
             shader: 0,
             vertex_count: 4,
             channels: Vec::new(),

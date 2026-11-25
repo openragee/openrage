@@ -5,6 +5,9 @@ use thiserror::Error;
 pub mod dxil;
 mod layout;
 pub mod rdna;
+pub mod rdna_bind;
+pub mod rdna_cache;
+pub mod rdna_corpus;
 pub use layout::{program_type, Binding, BindingLayout, ResourceClass, Window};
 
 #[derive(Debug, Error, PartialEq, Eq)]

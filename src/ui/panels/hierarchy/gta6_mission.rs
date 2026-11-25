@@ -82,7 +82,11 @@ impl Tables<'_> {
             return;
         };
         for (k, record) in records.iter().enumerate() {
-            let name = crate::state::hash_name_or_text(record.key);
+            let name = {
+                // GTA VI's name snapshot names a key before the text does.
+                let _names = or_io::meta::binary::hash_index::title_names();
+                crate::state::hash_name_or_text(record.key)
+            };
             let detail = match record.run {
                 Some((block, offset)) => tr_n!(
                     "{count} element at {offset} of block {block}",
@@ -113,17 +117,13 @@ impl Tables<'_> {
                             let [x, y, z] = element.position;
                             let [a, b, c] = element.rotation;
                             leaf_row(ui, |ui| {
-                                let archetype = format!("{:08X}", element.archetype);
-                                ui.label(match crate::state::hash_text_name(element.archetype) {
-                                    Some(name) => format!("{archetype} {name}"),
-                                    None => archetype,
-                                });
+                                ui.label(crate::state::gta6_names::said32(element.archetype));
                                 ui.add(detail_label(tr!(
                                     "at {at}: position {position}, rotation {rotation}, link {link}",
                                     at = format!("{at:#X}"),
                                     position = format!("{x:.3} {y:.3} {z:.3}"),
                                     rotation = format!("{a:.3} {b:.3} {c:.3}"),
-                                    link = format!("{:08X}", element.link)
+                                    link = crate::state::gta6_names::said32(element.link)
                                 )));
                             });
                         }

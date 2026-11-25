@@ -14,6 +14,8 @@ mod day;
 mod dressed;
 mod framing;
 mod game_shaders;
+mod gta6_air;
+mod gta6_day;
 mod photo;
 pub mod pick;
 mod pick_gta6_bound;
@@ -210,8 +212,23 @@ pub struct RenderBridge {
     /// The textures the last game scene was made from, as decoded for it.
     decoded: crate::render::game_scene::DecodedTextures,
     game_scene_report: Option<GameSceneReport>,
+    /// How the active GTA VI drawable's own mesh and pixel programs came out: the surfaces they
+    /// draw and the bindings left at nought, or why it draws without them; `None` where they
+    /// were not tried.
+    gta6_own: Option<Result<crate::render::gta6_shaded::Own, String>>,
     /// The pipelines of the game's passes built for this pack and this viewport, kept across the scenes an edit makes again.
     game_pipelines: or_renderer::game_shaders::mesh::PipelineCache,
+    /// The passes of GTA VI's own programs built so far, kept across the models opened.
+    gta6_pipelines: or_renderer::game_shaders::meshlets::MeshletPipelines,
+    /// The active GTA VI drawable while a worker still builds a pass of its own programs: asked
+    /// for again each frame, and drawn as Material until then.
+    gta6_building: Option<crate::render::gta6_meshlets::Meshlets>,
+    /// Whether a worker still decodes a map of the active GTA VI drawable: it is read again each
+    /// frame, and drawn as Material until then.
+    gta6_decoding: bool,
+    /// The GTA VI drawable Shaded was last asked for, since when, and whether its own programs
+    /// have drawn it since: how long a model takes to its first shaded frame is said once.
+    gta6_since: Option<(crate::state::DocumentId, std::time::Instant, bool)>,
     /// What the day the renderer holds was worked out from: the install's timecycle, the hour and the weather.
     day_key: Option<(usize, u32, u32, crate::state::drivers::WeatherState)>,
 
@@ -239,6 +256,9 @@ pub struct RenderBridge {
 
     /// What the device came from, which `with_instance` gives for wgpu to count its objects through.
     instance: Option<wgpu::Instance>,
+
+    /// Set once the device is lost: nothing drawn on it after that is seen.
+    lost: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl RenderBridge {
@@ -249,7 +269,14 @@ impl RenderBridge {
     ) -> Self {
         let renderer = ViewportRenderer::new(&device, &queue, colour_format, 1, 1);
         let material_bgl = renderer.material_bind_group_layout();
+        let lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let told = Arc::clone(&lost);
+        device.set_device_lost_callback(move |reason, message| {
+            tracing::error!(?reason, %message, "the graphics device was lost");
+            told.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
         Self {
+            lost,
             device,
             queue,
             renderer,
@@ -277,7 +304,12 @@ impl RenderBridge {
             skin_key: None,
             decoded: Default::default(),
             game_scene_report: None,
+            gta6_own: None,
             game_pipelines: Default::default(),
+            gta6_pipelines: game_shaders::gta6_pipelines(),
+            gta6_building: None,
+            gta6_decoding: false,
+            gta6_since: None,
             day_key: None,
             gpu_textures: crate::render::gpu_budget::GpuTextures::new(
                 crate::state::DEFAULT_GPU_TEXTURE_MIB as usize * 1024 * 1024,
@@ -384,6 +416,12 @@ impl RenderBridge {
 
     pub fn mode(&self) -> ShadingMode {
         self.mode
+    }
+
+    /// Whether the device this draws on is lost. Its owner draws nothing more on it: a painter
+    /// that cannot write a buffer panics.
+    pub fn device_lost(&self) -> bool {
+        self.lost.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Every channel the meshes now on screen carry, in menu order.

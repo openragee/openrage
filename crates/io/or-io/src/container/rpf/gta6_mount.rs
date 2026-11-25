@@ -150,10 +150,37 @@ impl Gta6Mount {
     /// does not recognise at that start is an error. For a leaf body (a resource, a PSO, a movie); a
     /// nested archive is opened with [`Self::open_nested`], and an enciphered body
     /// (`entry.cipher.is_some()`) is not opened by this.
-    pub fn read_entry<R: Read + Seek>(&self, src: R, entry: &Gta6Entry) -> Result<Vec<u8>> {
+    pub fn read_entry<R: Read + Seek>(&self, mut src: R, entry: &Gta6Entry) -> Result<Vec<u8>> {
         let start = self
             .absolute_start(entry)
             .ok_or_else(|| no_entry_row(entry))?;
+        // A sized row with a chunk table is read by that table. The detector below reads a body by
+        // its contents and can end at a chunk boundary, returning a cut-off body with no error.
+        if let (Some(stored), Some(real)) = (entry.stored, entry.real) {
+            let body_bad = |why: String| IoError::Invalid {
+                what: "an RPF9 entry body".into(),
+                why: format!("entry {} {why}", entry.index),
+            };
+            let table = super::gta6_chunk_table::entry_chunks(&self.archive, entry.index as usize)
+                .map_err(|e| body_bad(format!("has a malformed chunk table ({e})")))?;
+            if let Some(table) = table {
+                let end = src.seek(SeekFrom::End(0)).map_err(mount_io)?;
+                if start.checked_add(stored).is_none_or(|s| s > end) {
+                    return Err(body_bad(
+                        "has a stored extent that runs past the source".into(),
+                    ));
+                }
+                let body = read_at(&mut src, start, stored as usize)?;
+                let (data, _, _) = walk_table(&body, &table).map_err(body_bad)?;
+                if data.len() as u64 != real {
+                    return Err(body_bad(format!(
+                        "inflated to {} bytes, not the {real} its row states",
+                        data.len()
+                    )));
+                }
+                return Ok(data);
+            }
+        }
         // The inflated size, where the row states it, caps the inflated output; a 20-byte row states
         // none, so the detector's own measure of the body stands.
         let limit = entry.real.unwrap_or(u64::MAX);

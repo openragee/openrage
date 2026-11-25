@@ -303,7 +303,7 @@ impl<'a> ChannelWalk<'a> {
         Ok(f32::from_bits(self.constant_word(offset)?))
     }
 
-    fn frame_words(&self, frame: usize) -> Result<Vec<u32>> {
+    pub(crate) fn frame_words(&self, frame: usize) -> Result<Vec<u32>> {
         if self.frame_size == 0 {
             return Ok(Vec::new());
         }
@@ -360,7 +360,7 @@ impl<'a> ChannelWalk<'a> {
     }
 
     /// [`ChannelWalk::evaluate_channels`] with the two frames' words already read.
-    fn evaluate_between(
+    pub(crate) fn evaluate_between(
         &self,
         channels: &[DecodedChannel],
         prev: &[u32],

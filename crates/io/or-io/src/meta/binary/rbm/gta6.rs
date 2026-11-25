@@ -30,6 +30,7 @@ pub enum Gta6RbmError {
 /// blocks `layout` was read with, each region where it was.
 #[cfg(feature = "gta6")]
 pub fn write_sections(layout: &RbmLayout, instance: &MetaInstance) -> Result<(Vec<u8>, Vec<u8>)> {
+    let _names = crate::meta::binary::hash_index::title_names();
     use crate::meta::binary::pso::table_layout::{
         free_namespace, lay_out_in_place, where_they_miss,
     };
@@ -69,6 +70,7 @@ pub fn write_sections(layout: &RbmLayout, instance: &MetaInstance) -> Result<(Ve
 /// offset 0 opens.
 #[cfg(feature = "gta6")]
 pub fn write_loose(layout: &RbmLayout, instance: &MetaInstance) -> Result<Vec<u8>> {
+    let _names = crate::meta::binary::hash_index::title_names();
     use crate::container::rpf::{write_rpf9_resource, Rpf9Form, Rpf9Sections};
     let (virtual_section, physical) = write_sections(layout, instance)?;
     let sections = Rpf9Sections {
@@ -249,6 +251,7 @@ impl<'b> Sections<'b> {
 
 /// The value tree and layout of a GTA VI headerless RBM resource, from its two inflated sections.
 pub fn open(virtual_section: &[u8], physical_section: &[u8]) -> Result<(MetaInstance, MetaLayout)> {
+    let _names = crate::meta::binary::hash_index::title_names();
     let (whole_virtual, whole_physical) = (padded(virtual_section), padded(physical_section));
     let (virtual_section, physical_section) = (&*whole_virtual, &*whole_physical);
     let model = read_model(virtual_section, physical_section)?;
@@ -300,6 +303,7 @@ pub fn open(virtual_section: &[u8], physical_section: &[u8]) -> Result<(MetaInst
 /// The class table, enums and data blocks of a GTA VI headerless RBM resource, read without
 /// decoding its value tree.
 pub fn read_model(virtual_section: &[u8], physical_section: &[u8]) -> Result<RbmModel> {
+    let _names = crate::meta::binary::hash_index::title_names();
     // ⚠ Where each section ends is the caller's to say: a section is the sum
     // of the blocks the block map counts, and no word of this header states
     // its length.

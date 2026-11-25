@@ -281,10 +281,21 @@ impl Lane {
 ///
 /// `alphabet_bits` holds each lane's symbol width less one, and `stream_len` bounds the clocks.
 pub(super) fn decode_lanes(
+    next: impl FnMut(usize) -> Option<u8>,
+    alphabet_bits: &[u8],
+    target: usize,
+    stream_len: usize,
+) -> Result<(Vec<Vec<u16>>, usize), BcPackError> {
+    decode_lanes_until(next, alphabet_bits, target, stream_len, target)
+}
+
+/// [`decode_lanes`], stopping with the stream unfinished once every lane holds `prefix` symbols.
+pub(super) fn decode_lanes_until(
     mut next: impl FnMut(usize) -> Option<u8>,
     alphabet_bits: &[u8],
     target: usize,
     stream_len: usize,
+    prefix: usize,
 ) -> Result<(Vec<Vec<u16>>, usize), BcPackError> {
     let count = alphabet_bits.len();
     let symbols_each = u32::try_from(target)
@@ -354,6 +365,9 @@ pub(super) fn decode_lanes(
         }
         if slots != 0 && slots & running == running {
             slots = 0;
+        }
+        if prefix < target && symbols.iter().all(|lane| lane.len() >= prefix) {
+            return Ok((symbols, consumed));
         }
         if finished {
             // A coder may leave off up to two zero bytes at the end of a lane.

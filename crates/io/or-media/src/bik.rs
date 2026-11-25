@@ -36,11 +36,15 @@ struct Track {
     sample_rate: u32,
     channels: u16,
     dct: bool,
+    /// Whether the track is a `KB2n` movie's DCT one, whose blocks are coded another way.
+    revised: bool,
 }
 
 impl Track {
     fn codec(self) -> Codec {
-        if self.dct {
+        if self.revised {
+            Codec::Bink2Audio
+        } else if self.dct {
             Codec::BinkAudioDct
         } else {
             Codec::BinkAudioRdft
@@ -111,10 +115,12 @@ impl Layout {
                     .get(at..at + 4)
                     .ok_or_else(|| bad("its sound track table is cut short"))?;
                 let flags = u16::from_le_bytes([head[2], head[3]]);
+                let dct = flags & AUDIO_DCT != 0;
                 tracks.push(Track {
                     sample_rate: u32::from(u16::from_le_bytes([head[0], head[1]])),
                     channels: if flags & AUDIO_STEREO != 0 { 2 } else { 1 },
-                    dct: flags & AUDIO_DCT != 0,
+                    dct,
+                    revised: dct && bytes.starts_with(b"KB2") && revision == b'n',
                 });
                 at += 4;
             }
@@ -217,23 +223,9 @@ impl Source for Movie {
     fn audio(&self, decoders: &Decoders) -> Result<Box<dyn AudioStream>, MediaError> {
         let audio = self.info.audio.ok_or(MediaError::NoAudio)?;
         let layout = self.layout.as_ref().ok_or(MediaError::NoAudio)?;
-        sound_is_known(layout, &self.bytes)?;
         let open = decoders.audio_decoder(audio.codec)?;
         open(&audio, &track_packets(layout, &self.bytes, 0))
     }
-}
-
-/// ⚠ A `KB2n` track's flags say DCT, but its blocks are not in the coding the Bink audio decoder
-/// reads: in a packet of one block the first channel alone takes nearly every bit, and band
-/// quantisers pass the table's 95.
-fn sound_is_known(layout: &Layout, bytes: &[u8]) -> Result<(), MediaError> {
-    if bytes.starts_with(b"KB2") && layout.revision == b'n' {
-        return Err(MediaError::Decode(
-            "the sound of a KB2n movie, the Bink 2 revision GTA VI ships, is in a coding OpenRage does not know"
-                .into(),
-        ));
-    }
-    Ok(())
 }
 
 /// A track's packets, each a little-endian `u32` length and then its bytes: what an audio row is given.
@@ -443,7 +435,6 @@ pub fn audio_track(
     if index >= layout.tracks.len() {
         return Err(MediaError::NoAudio);
     }
-    sound_is_known(&layout, bytes)?;
     let info = layout.audio_info(bytes, index);
     decoders.audio_decoder(info.codec)?(&info, &track_packets(&layout, bytes, index))
 }
@@ -453,11 +444,11 @@ pub(crate) fn open_audio(
     info: &AudioInfo,
     packets: &[u8],
 ) -> Result<Box<dyn AudioStream>, MediaError> {
-    let decoder = audio::Decoder::new(
-        info.sample_rate,
-        info.channels,
-        info.codec == Codec::BinkAudioDct,
-    )?;
+    let dct = info.codec != Codec::BinkAudioRdft;
+    let mut decoder = audio::Decoder::new(info.sample_rate, info.channels, dct)?;
+    if info.codec == Codec::Bink2Audio {
+        decoder = decoder.revised();
+    }
     Ok(Box::new(audio::Stream::new(decoder, packets.to_vec())))
 }
 
@@ -611,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn a_kb2n_head_states_its_track_after_the_extra_field_and_its_sound_is_refused_by_name() {
+    fn a_kb2n_head_states_its_track_after_the_extra_field_and_its_sound_has_a_row() {
         // One stereo DCT track at 48,000 Hz, after an extra field no reader takes as a count.
         let mut packet = vec![0u8; 8];
         packet[..4].copy_from_slice(&7680u32.to_le_bytes());
@@ -623,7 +614,7 @@ mod tests {
         bytes[HEAD_BYTES..HEAD_BYTES + 4].copy_from_slice(&[0xA5; 4]);
         let source = open(bytes.clone().into()).expect("it opens");
         let expected = AudioInfo {
-            codec: Codec::BinkAudioDct,
+            codec: Codec::Bink2Audio,
             channels: 2,
             sample_rate: 48000,
             frames: 2 * 7680 / 4,
@@ -631,14 +622,16 @@ mod tests {
         assert_eq!(source.info().audio, Some(expected));
         assert_eq!(audio_tracks(&bytes), Ok(vec![expected]));
 
-        let Err(why) = source.audio(&Decoders::new()) else {
-            panic!("KB2n sound does not decode");
-        };
-        assert!(why.to_string().contains("KB2n"), "{why}");
-        let Err(why) = audio_track(&bytes, 0, &Decoders::new()) else {
-            panic!("nor by its index");
-        };
-        assert!(why.to_string().contains("KB2n"), "{why}");
+        assert!(source.audio(&Decoders::new()).is_ok());
+        assert!(audio_track(&bytes, 0, &Decoders::new()).is_ok());
+        // The same flags in a revision before it are the coding Bink 1 has.
+        let older = movie(
+            b"KB2g",
+            &[(48000, 0x1000)],
+            &[(vec![vec![]], b"v0".to_vec())],
+        );
+        let stated = audio_tracks(&older).expect("its tracks");
+        assert_eq!(stated[0].codec, Codec::BinkAudioDct);
     }
 
     #[test]

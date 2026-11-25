@@ -18,6 +18,7 @@ pub mod headerless;
 #[cfg(feature = "meta")]
 pub mod map;
 pub mod map_grid;
+pub mod map_names;
 #[cfg(feature = "meta")]
 pub mod mission_other;
 pub mod mission_tables;
@@ -26,6 +27,8 @@ pub mod move_network;
 pub(crate) mod mutated_tests;
 pub mod names;
 pub mod other_bodies;
+#[cfg(feature = "meta")]
+pub mod ped_catalogue;
 pub mod save;
 // Its natives list is GTA V's `NativeDb`, which `gta5` builds.
 #[cfg(feature = "gta5")]

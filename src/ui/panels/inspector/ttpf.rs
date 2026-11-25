@@ -72,6 +72,10 @@ pub(super) fn draw_ttpf(
         row(ui, "sRGB", if srgb { tr!("yes") } else { tr!("no") });
         row(ui, tr!("Shape"), &shape(&entry));
         row(ui, tr!("Key"), &format!("{:016X}", entry.key));
+        // The model a names harvest found to bind the key, which says what a texture with no name is.
+        if let Some(used) = crate::state::gta6_names::texture_use_label(entry.key) {
+            row(ui, tr!("Use"), &used);
+        }
         let mips = match entry.mip_count {
             0 => tr!("not stated").to_string(),
             n => n.to_string(),
@@ -110,6 +114,10 @@ pub(super) fn draw_ttpf(
         let bodies = pack.rows_of(index).map_or(0, |rows| rows.len());
         row(ui, tr!("Bodies"), &bodies.to_string());
         row(ui, tr!("Readable"), readable);
+        // Whether its bodies through the coder read exactly, or as an estimate through fitted tables.
+        if let Some(decode) = ttpf.decode_label(index).filter(|_| refusal.is_none()) {
+            row(ui, tr!("Decode"), &decode);
+        }
     });
     if let Some(why) = refusal {
         ui.label(egui::RichText::new(why).color(theme::TEXT_SECONDARY));

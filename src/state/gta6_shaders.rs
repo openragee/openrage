@@ -9,9 +9,12 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use or_cli::{translate_gta6_program, Gta6Program};
+use or_cli::{
+    gta6_view_passes, is_gta6_shading_pass, translate_gta6_mesh_stage, translate_gta6_pixel_stage,
+    translate_gta6_program, Gta6Program, Gta6ShadingPass,
+};
 use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9Scan};
-use or_io::gta5::shaders::sgd5::{Sgd5Effect, Sgd5File, Sgd5Program};
+use or_io::gta5::shaders::sgd5::{Sgd5Effect, Sgd5File, Sgd5Program, Sgd5Table};
 use or_io::gta5::shaders::sgd5_pack::{pack_effect, vertex_pixel_passes};
 use or_io::gta5::shaders::spirv_pack::{
     Effect, NagaReach, Outcome, Pass, Production, Program, Reach, Reflection, ShaderStageKind,
@@ -34,6 +37,9 @@ struct ShaderSource {
     archive: PathBuf,
     base: u64,
     file: Sgd5File,
+    /// Whether it is the container as its archive holds it, and not one effect of it kept by a
+    /// session before this one.
+    whole: bool,
 }
 
 /// A program by where it lies: its archive, its container's offset and its offset in that.
@@ -41,6 +47,10 @@ type Place = (PathBuf, u64, usize);
 
 /// A program read: its key, and whether its inputs read blend indices.
 type Keyed = (String, bool);
+
+/// The passes that shade a model with one effect, one for each mesh program its techniques run:
+/// a geometry is drawn by the one that reads the streams it has.
+pub(crate) type Passes = Vec<Arc<Gta6ShadingPass>>;
 
 /// A program translated or refused, with the stage its pass runs it at.
 struct Done {
@@ -60,6 +70,9 @@ struct Shaders {
     modules: HashMap<String, Arc<wgpu::naga::Module>>,
     /// Each effect's manifest entry, by the hash of its name.
     effects: HashMap<u32, Effect>,
+    /// The pass that shades a model with each effect, by the hash of the effect's name, or why
+    /// the renderer cannot be handed it.
+    shading: HashMap<u32, Result<Passes, String>>,
     /// The effects a job has looked for since the containers last changed, found or not.
     tried: HashSet<u32>,
     running: Option<Running>,
@@ -99,6 +112,7 @@ struct Found {
     keys: Vec<(Place, Keyed)>,
     done: Vec<(String, Done)>,
     effects: Vec<(u32, Effect)>,
+    shading: Vec<(u32, Result<Passes, String>)>,
 }
 
 /// Where the drawable's effects stand, for the Shaded button to say.
@@ -136,6 +150,7 @@ pub(super) fn add_source(archive: &Path, base: u64, bytes: &[u8]) {
         archive: archive.to_path_buf(),
         base,
         file,
+        whole: true,
     };
     with(|s| keep(s, vec![Arc::new(source)]));
 }
@@ -157,8 +172,9 @@ fn keep(s: &mut Shaders, sources: Vec<Arc<ShaderSource>>) {
 
 /// Start translating the vertex and pixel passes of the effects `hashes` name, on a worker,
 /// unless each was looked for already; a job running for other effects is stopped. `install` is
-/// the GTA VI install's `shaders.rpf`, searched once a session where no container read holds one.
-pub(crate) fn request(hashes: &[u32], install: Option<PathBuf>) {
+/// the GTA VI install's `shaders.rpf`, asked for when a job starts and searched once a session
+/// where no container read holds one.
+pub(crate) fn request(hashes: &[u32], install: impl FnOnce() -> Option<PathBuf>) {
     let mut wanted = hashes.to_vec();
     wanted.sort_unstable();
     wanted.dedup();
@@ -167,21 +183,26 @@ pub(crate) fn request(hashes: &[u32], install: Option<PathBuf>) {
         if running || wanted.iter().all(|h| s.tried.contains(h)) {
             return;
         }
+        // An effect a job has looked for is not translated again beside one it has not.
+        let fresh = (wanted.iter().copied())
+            .filter(|hash| !s.tried.contains(hash))
+            .collect();
         let input = Input {
             sources: s.sources.clone(),
             keys: s.keys.clone(),
             known: s.done.keys().cloned().collect(),
-            wanted,
-            install: install.filter(|path| !s.searched.contains(path)),
+            wanted: fresh,
+            install: install().filter(|path| !s.searched.contains(path)),
         };
-        s.running = Some(Running::start(input));
+        s.running = Some(Running::start(input, wanted));
     });
 }
 
 impl Running {
-    fn start(input: Input) -> Self {
+    /// Start the job of `input` for a request of the effects `wanted`.
+    fn start(input: Input, wanted: Vec<u32>) -> Self {
         let running = Self {
-            wanted: input.wanted.clone(),
+            wanted,
             cancel: Cancel::new(),
             progress: Progress::new(),
             ended: Arc::default(),
@@ -191,15 +212,88 @@ impl Running {
             running.progress.clone(),
             Arc::clone(&running.ended),
         );
+        if let Some(folder) = kept_folder() {
+            or_cli::gta6_kept::keep_translations_in(folder.join("translations"));
+        }
         std::thread::spawn(move || {
             // A panic still ends the job, or the Shaded button says Translating for ever.
+            let started = std::time::Instant::now();
             let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 work(input, &cancel, &progress)
             }))
             .unwrap_or_else(|_| Err(tr!("It stopped on an internal error").to_string()));
+            tracing::info!(elapsed = ?started.elapsed(), "GTA VI's programs for Shaded were read and translated");
             *ended.lock().unwrap_or_else(|p| p.into_inner()) = Some(found);
         });
         running
+    }
+}
+
+/// The folder a session keeps what it read and translated of GTA VI's programs in, for the next.
+fn kept_folder() -> Option<PathBuf> {
+    Some(super::prefs::config_root()?.join("gta6_shaders"))
+}
+
+/// The file the effect whose name hashes to `hash` is kept in as `archive` holds it now: by the
+/// archive's path, its size and when it was last written.
+fn kept_effect(archive: &Path, hash: u32) -> Option<PathBuf> {
+    use std::hash::{Hash, Hasher};
+    let stat = super::gta6_texture_index::stat(archive)?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (archive, stat).hash(&mut hasher);
+    let folder = format!("{:016x}", hasher.finish());
+    Some(
+        kept_folder()?
+            .join(folder)
+            .join(format!("{hash:08x}.effect")),
+    )
+}
+
+/// The effect a session before this one kept in `kept`, as a container of that one effect.
+fn read_kept(archive: &Path, kept: &Path) -> Option<Arc<ShaderSource>> {
+    let bytes = std::fs::read(kept).ok()?;
+    let (base, file) = (or_cli::gta6_kept::decode_containers(&bytes)?.into_iter()).next()?;
+    Some(Arc::new(ShaderSource {
+        archive: archive.to_path_buf(),
+        base,
+        file,
+        whole: false,
+    }))
+}
+
+/// Keep `effect` of `source` in `kept` for the next session: a container of the one effect and
+/// the programs its passes run, which reads in a moment where the whole container takes seconds.
+fn keep_effect(source: &ShaderSource, effect: &Sgd5Effect, kept: &Path) {
+    let listed = |program: &&Sgd5Program| {
+        let (Some(bank), Some(index)) = (program.bank, program.index) else {
+            return false;
+        };
+        (effect.programs.get(bank)).is_some_and(|list| list.contains(&index))
+    };
+    let file = Sgd5File {
+        head_word: source.file.head_word,
+        layouts: Vec::new(),
+        globals: Sgd5Table::default(),
+        bank_counts: source.file.bank_counts,
+        programs: source
+            .file
+            .programs
+            .iter()
+            .filter(listed)
+            .cloned()
+            .collect(),
+        gaps: Vec::new(),
+        effect_count: None,
+        effects: vec![effect.clone()],
+    };
+    // Beside its place, then moved there: a session that reads it never sees half a file.
+    let partial = kept.with_extension(format!("{}.part", std::process::id()));
+    let bytes = or_cli::gta6_kept::encode_containers(&[(source.base, &file)]);
+    let written = (kept.parent().map_or(Ok(()), std::fs::create_dir_all))
+        .and_then(|()| std::fs::write(&partial, bytes))
+        .and_then(|()| std::fs::rename(&partial, kept));
+    if let Err(error) = written {
+        tracing::debug!(%error, "a GTA VI effect is not kept for the next session");
     }
 }
 
@@ -219,10 +313,22 @@ fn work(input: Input, cancel: &Cancel, progress: &Progress) -> Result<Found, Str
         install,
     } = input;
     let mut found = Found::default();
-    let missing = |sources: &[Arc<ShaderSource>]| {
-        (wanted.iter()).any(|h| !sources.iter().any(|s| effect_of(s, *h).is_some()))
+    let held = |sources: &[Arc<ShaderSource>], hash: u32| {
+        sources.iter().any(|s| effect_of(s, hash).is_some())
     };
-    if let Some(archive) = install.filter(|_| missing(&sources)) {
+    // What a session before this one kept of the install's effects stands in for its containers.
+    let lacking: Vec<(u32, PathBuf)> = (wanted.iter())
+        .filter(|hash| !held(&sources, **hash))
+        .filter_map(|hash| Some((*hash, kept_effect(install.as_deref()?, *hash)?)))
+        .collect();
+    if let Some(archive) = &install {
+        let kept = lacking
+            .iter()
+            .filter_map(|(_, kept)| read_kept(archive, kept));
+        sources.extend(kept);
+    }
+    let missing = wanted.iter().any(|hash| !held(&sources, *hash));
+    if let Some(archive) = install.filter(|_| missing) {
         match search(&archive, cancel, progress) {
             Ok(more) => found.sources = more,
             Err(_) if cancel.is_set() => return Err(stopped()),
@@ -246,8 +352,30 @@ fn work(input: Input, cancel: &Cancel, progress: &Progress) -> Result<Found, Str
     let mut files = HashMap::new();
     let mut at = 0;
     for (hash, source, effect) in &effects {
+        if cancel.is_set() {
+            return Err(stopped());
+        }
+        // An effect read from a whole container is kept for the next session, once.
+        let kept = Some(*source)
+            .filter(|source| source.whole)
+            .and_then(|source| kept_effect(&source.archive, *hash))
+            .filter(|kept| !kept.exists());
+        if let Some(kept) = kept {
+            keep_effect(source, effect, &kept);
+        }
+        let started = std::time::Instant::now();
+        let shading = shading_passes(source, effect, &mut files);
+        tracing::info!(effect = %effect.name, elapsed = ?started.elapsed(), passes = shading.as_ref().map_or(0, Vec::len), "a GTA VI effect's shading passes were translated");
+        // An effect a model draws with by its own mesh and pixel programs needs none of its
+        // vertex and pixel passes, which are many: they are translated only where it has none.
+        let own = shading.is_ok();
+        found.shading.push((*hash, shading));
         let mut passes = Vec::new();
-        for (_, vertex, pixel) in vertex_pixel_passes(&source.file, effect) {
+        let pairs = match own {
+            true => Vec::new(),
+            false => vertex_pixel_passes(&source.file, effect),
+        };
+        for (_, vertex, pixel) in pairs {
             let mut stages = BTreeMap::new();
             let mut skinned = false;
             for (program, stage) in [
@@ -262,7 +390,7 @@ fn work(input: Input, cancel: &Cancel, progress: &Progress) -> Result<Found, Str
                 let place = (source.archive.clone(), source.base, program.at);
                 let keyed = match keys.get(&place) {
                     Some(keyed) => keyed.clone(),
-                    None => match read(source, program, &mut files) {
+                    None => match read(source, program, &effect.parameters, &mut files) {
                         Ok(read) => {
                             let keyed = (read.key.clone(), read.skinned);
                             keys.insert(place.clone(), keyed.clone());
@@ -298,12 +426,73 @@ fn work(input: Input, cancel: &Cancel, progress: &Progress) -> Result<Found, Str
     Ok(found)
 }
 
-/// `program`'s stream, read alone from its archive, through the DXIL front end.
+/// `program`'s stream, read alone from its archive, through the front end its payload takes;
+/// `effect` is the first table of the effect that runs it.
+// ponytail: a program two effects run keeps the names the first gives it.
 fn read(
     source: &ShaderSource,
     program: &Sgd5Program,
+    effect: &Sgd5Table,
     files: &mut HashMap<PathBuf, File>,
 ) -> Result<Gta6Program, String> {
+    let stream = stream(source, program, files)?;
+    translate_gta6_program(program, &stream, Some(effect))
+}
+
+/// The passes that shade a model with `effect`: each technique whose first pass is a mesh
+/// program no earlier one ran and a pixel program that writes the targets whose contents are
+/// established, translated as one; `Err` says why the renderer cannot be handed any.
+fn shading_passes(
+    source: &ShaderSource,
+    effect: &Sgd5Effect,
+    files: &mut HashMap<PathBuf, File>,
+) -> Result<Passes, String> {
+    let mut seen = HashSet::new();
+    let mut passes = Vec::new();
+    let mut refused = None;
+    // Several passes of an effect run one pixel program: it is translated once.
+    let mut pixels = HashMap::new();
+    for (first, pixel) in gta6_view_passes(&source.file, effect) {
+        if seen.contains(&first.at) {
+            continue;
+        }
+        let mut container = |program: &Sgd5Program| {
+            let stream = stream(source, program, files)?;
+            program.inflate(&stream).map_err(|e| e.to_string())
+        };
+        let (Ok(mesh), Ok(fragment)) = (container(first), container(pixel)) else {
+            continue;
+        };
+        if is_gta6_shading_pass(&mesh, &fragment) {
+            seen.insert(first.at);
+            let parameters = &effect.parameters;
+            let stage = pixels.entry(pixel.at).or_insert_with(|| {
+                translate_gta6_pixel_stage(&fragment, &pixel.variables, parameters)
+            });
+            let pass = (stage.as_ref().map_err(Clone::clone)).and_then(|stage| {
+                translate_gta6_mesh_stage(&mesh, &first.variables, parameters, stage)
+            });
+            match pass {
+                Ok(pass) => passes.push(Arc::new(pass)),
+                Err(why) => refused = refused.or(Some(why)),
+            }
+        }
+    }
+    if passes.is_empty() {
+        return Err(refused.unwrap_or_else(|| {
+            tr!("none of its techniques is a mesh pass that writes the deferred targets")
+                .to_string()
+        }));
+    }
+    Ok(passes)
+}
+
+/// `program`'s stream, read alone from its archive.
+fn stream(
+    source: &ShaderSource,
+    program: &Sgd5Program,
+    files: &mut HashMap<PathBuf, File>,
+) -> Result<Vec<u8>, String> {
     let len = program.stream.len();
     if len > MAX_STREAM {
         return Err(format!(
@@ -323,7 +512,7 @@ fn read(
     file.seek(SeekFrom::Start(at)).map_err(|e| e.to_string())?;
     let mut stream = vec![0; len];
     file.read_exact(&mut stream).map_err(|e| e.to_string())?;
-    translate_gta6_program(program, &stream)
+    Ok(stream)
 }
 
 /// Every `SGD5` container a scan of `archive` finds, its place the job's progress; one that does
@@ -353,6 +542,7 @@ fn search(
                 archive: archive.to_path_buf(),
                 base: find.offset,
                 file: read,
+                whole: true,
             })),
             Err(e) => tracing::warn!(offset = find.offset, "an effect container is not read: {e}"),
         }
@@ -414,6 +604,9 @@ fn merge(s: &mut Shaders, found: Found) -> (usize, usize) {
     }
     s.keys.extend(found.keys);
     s.effects.extend(found.effects);
+    for (hash, pass) in found.shading {
+        s.shading.insert(hash, pass);
+    }
     let number = s.pack.as_ref().map_or(1, |(number, _)| number + 1);
     s.pack = Some((number, Arc::new(pack_of(s))));
     (translated, refused)
@@ -474,6 +667,12 @@ pub(crate) fn pack() -> Option<(u64, Arc<GamePack>)> {
     with(|s| s.pack.clone())
 }
 
+/// The passes that shade a model with the effect whose name hashes to `hash`, or why the
+/// renderer cannot be handed one; `None` before a job has looked for the effect.
+pub(crate) fn shading(hash: u32) -> Option<Result<Passes, String>> {
+    with(|s| s.shading.get(&hash).cloned())
+}
+
 /// Whether a translation job runs.
 pub(crate) fn running() -> bool {
     with(|s| s.running.is_some())
@@ -532,6 +731,29 @@ pub(super) fn stop() {
         }
     });
 }
+
+impl super::AppState {
+    /// What the editor does once its graphics device is lost while the view draws in `mode`: the
+    /// view goes back to Material, what a GTA VI drawable's own passes were drawing is kept from
+    /// the next device, and a person is told.
+    pub(crate) fn graphics_device_lost(&mut self, mode: or_renderer::ShadingMode) {
+        use or_renderer::ShadingMode;
+        let own = self.active_document().map(|doc| &doc.payload);
+        if mode == ShadingMode::Shaded && matches!(own, Some(super::DocPayload::Gta6Drawable(_))) {
+            crate::render::gta6_meshlets::device_lost();
+        }
+        self.remember_shading_mode(ShadingMode::Material);
+        self.show_warning_toast(tr!(
+            "The graphics device was lost. The view is back to Material, and what the Shaded view was drawing when it was lost draws as Material until OpenRage is started again"
+        ));
+    }
+}
+
+#[path = "gta6_layer_index.rs"]
+pub(crate) mod layer_index;
+
+#[path = "gta6_timecycle.rs"]
+pub(crate) mod timecycle;
 
 #[cfg(test)]
 #[path = "gta6_shaders_tests.rs"]

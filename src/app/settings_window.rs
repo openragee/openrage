@@ -71,6 +71,10 @@ impl App {
     }
 
     fn render_settings(&mut self) -> Result<()> {
+        // The editor's frame asks for a new device; nothing is drawn on a lost one.
+        if self.device_lost() {
+            return Ok(());
+        }
         let Some(settings) = self.settings.as_mut() else {
             return Ok(());
         };

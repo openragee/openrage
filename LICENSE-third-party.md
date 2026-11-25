@@ -60,8 +60,8 @@ Ported from CodeX with the permission of its authors.
 
 ## Ported from bcpack-rs: the BCPack coder of GTA VI texture packs
 
-`crates/io/or-io/src/gta6/bcpack/` decodes the BC1 bodies of a GTA VI `.ttpf` pack that are stored
-through BCPack, the console's entropy coder over BC blocks. It is ported from
+`crates/io/or-io/src/gta6/bcpack/` decodes the bodies of a GTA VI `.ttpf` pack that are stored
+through BCPack, the console's entropy coder over BC blocks. Its entropy layer and its BC1 mode are ported from
 [Ahmet-Dedeler/bcpack-rs](https://github.com/Ahmet-Dedeler/bcpack-rs), Copyright (c) 2026 Ahmet
 Dedeler, licensed MIT OR Apache-2.0 and taken under MIT, at commit
 5bf5cc56ed56f1ababf1f9592300bd182ff90bd8. Each file opens with the header bcpack-rs asks a port to
@@ -75,8 +75,12 @@ keep, then its origin.
 | `crates/io/or-io/src/gta6/bcpack/bc1_tables.rs` | the two JSON tables of its data folder | The preset endpoints and the quadrant indices of the BC1 mode, which bcpack-rs fitted; the values are unchanged. |
 | `crates/io/or-io/src/gta6/bcpack/tests.rs` | encode.rs of its sources | The coder the tests build their streams with; the tests are OpenRage's own. |
 
-`crates/io/or-io/src/gta6/bcpack.rs` is OpenRage's own. Its lane widths for the modes other than
-BC1 are facts stated in the documentation of [ItsNotRexed/Leonida](https://github.com/ItsNotRexed/Leonida)
+`crates/io/or-io/src/gta6/bcpack.rs` is OpenRage's own, and so are
+`crates/io/or-io/src/gta6/bcpack/planes.rs`, which rebuilds BC1, BC3, BC4 and BC5 blocks through
+tables, and `crates/io/or-io/src/gta6/bcpack/calibrate.rs`, which fits those tables on the user's
+machine from the user's own packs: no table of the modes other than BC1 is in the tree. The lane
+widths of the modes other than BC1 are facts stated in the documentation of
+[ItsNotRexed/Leonida](https://github.com/ItsNotRexed/Leonida)
 (GPL-3.0), from which no code and no table is taken. Both MIT notices are reproduced at the end of
 this file.
 

@@ -436,6 +436,7 @@ Coordinates are points on a 1600×900 screen unless `size` changes it.
 | `workspace NAME`, `reset` | switches workspace; restores its default layout |
 | `mode NAME` | picks the viewport's shading mode as its pill does: `wireframe`, `solid`, `material`, `shaded` or `game`, which draws with the SPIR-V pack that `OPENRAGE_GAME_PACK` names (the mode is not offered without one) |
 | `click X Y [ctrl] [shift] [alt]`, `rclick X Y [ctrl] [shift] [alt]`, `dclick X Y [ctrl] [shift] [alt]`, `hover X Y`, `scroll X Y DY` | pointer input; a click holds the modifiers it names, so `click 800 450 alt` is the Alt click that selects a model in the viewport |
+| `drag X Y TOX TOY [ctrl] [shift] [alt]` | presses the pointer at one place, moves it to another over a few frames and lets go, the named modifiers held: in the viewport a drag orbits and `shift` pans, which brings into view a model the camera was not framed on |
 | `type TEXT`, `key NAME [ctrl] [shift] [alt]` | keyboard input, with egui's key names (`Escape`, `Enter`, `F2`) |
 | `palette`, `closeall`, `frames N` | opens the command palette; closes every document, asking first when one is unsaved; draws N frames |
 | `startpage`, `closeproject`, `newproject TEMPLATE [details [FOLDER]]` | raises the start page over the shell, as View ▸ Start page does; closes the open project, as Close project does, which asks first when the project has a change nothing wrote down, and raises the start page; opens the New project dialog on `empty`, `files`, `clothing`, `weapon`, `particle`, `map` or `adopt`, on its gallery or, with `details`, on the name and folder a goal card opens it on, and with a `FOLDER` to adopt, as its picker would choose it |
@@ -464,6 +465,27 @@ Coordinates are points on a 1600×900 screen unless `size` changes it.
 
 App shortcuts such as Ctrl+S are dispatched from winit, so no step reaches
 them.
+
+A GTA VI model drawn in Shaded by its own translated programs has one developer
+option, the environment variable `OPENRAGE_GTA6_SHADED`: words separated by
+commas. `target=N` shows a target of the pass raw in place of the lit frame (1 the
+colour to 6 the fourth channels), `pixel=FILE` and `mesh=FILE` draw with a stage of
+WGSL of one's own in place of the translated one, such as one
+`openrage-cli rpf scan-shading … --wgsl` wrote and a person edited to store a
+value, `record=FILE` draws with the bytes of FILE as the record a material's
+texture numbers head, whose other bytes only the game fills, `plain-device`
+asks the device for no optional feature and no raised limit, and `unguarded` has the
+binder let through a stage whose loop counts up to a number only the game fills, after
+which no pass is built but on a software adapter. `Aids` in `crates/runtime/or-renderer/src/game_shaders/meshlets.rs` reads it.
+
+⚠ A translated program that never ends resets the display driver of a hardware
+adapter. `OPENRAGE_SOFTWARE_ADAPTER=1` draws a script, a self-check and the
+`gpu-tests` of `or-renderer` on the machine's software adapter instead (Direct3D
+12's Basic Render Driver on Windows, lavapipe under Vulkan), and refuses to start
+where the adapter it is given is no CPU's. With it a script runs in a child
+process that its parent ends, naming the step, once no frame has finished for
+ten minutes; `OPENRAGE_FRAME_LIMIT=SECONDS` states another limit, and asks for
+the same watch on a hardware adapter. Draw what is not known to draw there first.
 
 Nothing a script clicks reaches past the app. A self-check's first act,
 `stand_in_for_the_desktop`, sends every call that would to its stand-in in

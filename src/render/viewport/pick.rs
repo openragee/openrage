@@ -711,6 +711,8 @@ mod tests {
             Dictionary, Drawable, Entry, Geometry, Model, Palette, Resource, Vertices,
         };
         let square = |g: usize| Geometry {
+            vertex_data: Vec::new(),
+            index_data: Vec::new(),
             shader: 0,
             vertex_count: 4,
             channels: Vec::new(),

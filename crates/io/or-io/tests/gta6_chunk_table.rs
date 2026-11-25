@@ -1,5 +1,5 @@
 //! The `0xe0c1` chunk table over a whole build: every entry that carries a row, top-level and nested,
-//! decodes and sums to its row sizes; modes 2 and 3 author back byte-identical. Flagged entries
+//! decodes and sums to its row sizes; modes 2, 3 and 4 author back byte-identical. Flagged entries
 //! read through the bounded table reader to exactly their declared sizes.
 //!
 //! Install-gated and game-derived, so it needs the key snapshot and the build and skips cleanly
@@ -61,7 +61,11 @@ struct Tally {
     mode4: usize,
     failures: Vec<String>,
     flagged_walked: usize,
+    clear_read: usize,
 }
+
+/// A clear body larger than this is not read back: the check is the read, not the volume.
+const CLEAR_READ_CAP: u64 = 4 << 20;
 
 fn ceil16(x: u32) -> u64 {
     (u64::from(x) + 15) & !15
@@ -87,35 +91,30 @@ fn check_row(mount: &Gta6Mount, index: usize, at: usize, t: &mut Tally) -> Optio
             format!("decoded mode {} from a mode-{mode} cell", table.mode),
         );
     }
-    if mode == 4 {
-        assert!(author(&table).is_err(), "mode 4 is read-only");
-        t.mode4 += 1;
-    } else {
-        let (u1, words) = match author(&table) {
-            Ok(authored) => authored,
-            Err(e) => {
-                fail(t, format!("author: {e}"));
-                return None;
-            }
-        };
-        let heap = at + LE::read_u32(&cell[0..]) as usize;
-        let stored_words: Vec<u64> = bytes[heap..heap + 8 * words.len()]
-            .as_chunks::<8>()
-            .0
-            .iter()
-            .map(|w| u64::from_le_bytes(*w))
-            .collect();
-        if u1 != LE::read_u32(&cell[4..]) || words != stored_words {
-            fail(
-                t,
-                "authored cell or heap differs from the stored bytes".into(),
-            );
+    let (u1, words) = match author(&table) {
+        Ok(authored) => authored,
+        Err(e) => {
+            fail(t, format!("author: {e}"));
+            return None;
         }
-        if mode == 3 {
-            t.mode3 += 1;
-        } else {
-            t.mode2 += 1;
-        }
+    };
+    let heap = at + LE::read_u32(&cell[0..]) as usize;
+    let stored_words: Vec<u64> = bytes[heap..heap + 8 * words.len()]
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|w| u64::from_le_bytes(*w))
+        .collect();
+    if u1 != LE::read_u32(&cell[4..]) || words != stored_words {
+        fail(
+            t,
+            "authored cell or heap differs from the stored bytes".into(),
+        );
+    }
+    match mode {
+        3 => t.mode3 += 1,
+        2 => t.mode2 += 1,
+        _ => t.mode4 += 1,
     }
     let chunks = table.chunks;
 
@@ -153,6 +152,22 @@ fn walk(
         if let Some(at) = cell_offset(&mount.archive, index) {
             let chunks = check_row(mount, index, at, t);
             let flagged = entry.cipher.map(|c| c.cipher_type) == Some(CONTENT_CIPHER_TYPE);
+            // A clear sized entry reads whole through its table, never cut off at a chunk boundary.
+            let clear_sized = entry.cipher.is_none()
+                && entry.stored.is_some()
+                && entry.real.is_some_and(|real| real <= CLEAR_READ_CAP);
+            if chunks.is_some() && clear_sized {
+                t.clear_read += 1;
+                match mount.read_entry(&mut *file, entry) {
+                    Ok(body) if Some(body.len() as u64) == entry.real => {}
+                    Ok(body) => t.failures.push(format!(
+                        "entry {index}: a clear chunked body read {} of {:?} bytes",
+                        body.len(),
+                        entry.real
+                    )),
+                    Err(e) => t.failures.push(format!("entry {index}: clear read: {e}")),
+                }
+            }
             if let (Some(chunks), true) = (chunks, flagged) {
                 t.flagged_walked += 1;
                 let result = Gta6EntryRead::from_table(
@@ -223,12 +238,13 @@ fn every_chunk_row_decodes_and_supported_modes_author_back() {
         walk(&mut file, &mount, 0..end, &keys, 0, &mut t);
     }
     println!(
-        "chunk rows {} (mode 3 {}, mode 2 {}, mode 4 {}), flagged walked {}, failures {}",
+        "chunk rows {} (mode 3 {}, mode 2 {}, mode 4 {}), flagged walked {}, clear read {}, failures {}",
         t.rows,
         t.mode3,
         t.mode2,
         t.mode4,
         t.flagged_walked,
+        t.clear_read,
         t.failures.len()
     );
     for failure in t.failures.iter().take(20) {
@@ -243,4 +259,6 @@ fn every_chunk_row_decodes_and_supported_modes_author_back() {
         "the top-level tables hold at least 928 mode-3 rows"
     );
     assert!(t.mode2 > 0, "the nested tables hold mode-2 rows");
+    assert!(t.mode4 > 0, "the nested tables hold mode-4 rows");
+    assert!(t.clear_read > 0, "clear chunked bodies were read back");
 }

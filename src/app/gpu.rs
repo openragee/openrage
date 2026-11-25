@@ -17,6 +17,8 @@ pub(super) struct WindowSurface {
     pub(super) appearance: AppearancePrefs,
     /// The code of the language the fonts were ordered for.
     pub(super) language: &'static str,
+    /// The frames until the fonts are set again, after a new device: see `on_new_device`.
+    pub(super) refont: u8,
 }
 
 impl WindowSurface {
@@ -27,11 +29,42 @@ impl WindowSurface {
     pub(super) fn sync_appearance(&mut self, appearance: &AppearancePrefs) {
         // The language too: it orders the fallback fonts.
         let language = crate::i18n::active().code.as_str();
-        if &self.appearance != appearance || self.language != language {
+        let again = self.refont == 1;
+        self.refont = self.refont.saturating_sub(1);
+        if again || &self.appearance != appearance || self.language != language {
             apply_appearance(&self.egui_ctx, appearance);
             self.appearance = appearance.clone();
             self.language = language;
         }
+    }
+}
+
+impl WindowSurface {
+    /// This window's surface and painter on `gpu`, a device made after the one they were on
+    /// was lost.
+    // The new painter holds none of the context's textures, and a context sends its font atlas
+    // whole only for fonts it has not laid out yet: it is given the same fonts with one more
+    // entry now, and `sync_appearance` sets its own again the frame after.
+    pub(super) fn on_new_device(
+        &mut self,
+        gpu: &SharedGpu,
+        appearance: &AppearancePrefs,
+    ) -> Result<()> {
+        self.surface = gpu.instance.create_surface(self.window.clone())?;
+        self.surface_config.format = gpu.surface_format;
+        self.surface.configure(&gpu.device, &self.surface_config);
+        self.egui_renderer = egui_wgpu::Renderer::new(
+            &gpu.device,
+            gpu.surface_format,
+            egui_wgpu::RendererOptions::default(),
+        );
+        let (mut fonts, _) = font_definitions(&appearance.font);
+        if let Some(data) = fonts.font_data.values().next().cloned() {
+            fonts.font_data.insert("sent again".to_owned(), data);
+        }
+        self.egui_ctx.set_fonts(fonts);
+        self.refont = 2;
+        Ok(())
     }
 }
 
@@ -281,13 +314,14 @@ impl App {
             return Ok(());
         }
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            flags: wgpu::InstanceFlags::default(),
-            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-            backend_options: wgpu::BackendOptions::default(),
-            display: None,
-        });
+        let instance =
+            wgpu::Instance::new(or_renderer::instance::with_dxc(wgpu::InstanceDescriptor {
+                backends: or_renderer::instance::BACKENDS,
+                flags: wgpu::InstanceFlags::default(),
+                memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+                backend_options: wgpu::BackendOptions::default(),
+                display: None,
+            }));
 
         let probe = instance.create_surface(first_window.clone())?;
 
@@ -296,7 +330,10 @@ impl App {
             compatible_surface: Some(&probe),
             force_fallback_adapter: false,
         }))
-        .map_err(|e| anyhow::anyhow!("Failed to find suitable GPU adapter: {e}"))?;
+        .map_err(|e| {
+            let needs = or_renderer::instance::UNSUPPORTED;
+            anyhow::anyhow!("Failed to find suitable GPU adapter: {e}. {needs}")
+        })?;
 
         tracing::info!("Using GPU: {}", adapter.get_info().name);
 
@@ -316,15 +353,19 @@ impl App {
                 required_features |= wanted;
             }
         }
+        let mut required_limits = wgpu::Limits::default();
+        required_limits.max_bind_groups = required_limits.max_bind_groups.max(5);
+        // A GTA VI drawable's own programs bind arrays of textures and more buffers than a device gives unasked
+        required_features |= or_renderer::game_shaders::meshlets::device_needs(
+            adapter_features,
+            &adapter.limits(),
+            &mut required_limits,
+        );
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("OpenRage device"),
                 required_features,
-                required_limits: {
-                    let mut l = wgpu::Limits::default();
-                    l.max_bind_groups = l.max_bind_groups.max(5);
-                    l
-                },
+                required_limits,
                 experimental_features: wgpu::ExperimentalFeatures::default(),
                 memory_hints: wgpu::MemoryHints::Performance,
                 trace: wgpu::Trace::Off,
@@ -412,6 +453,7 @@ impl App {
             egui_renderer,
             appearance,
             language: crate::i18n::active().code.as_str(),
+            refont: 0,
         })
     }
 }

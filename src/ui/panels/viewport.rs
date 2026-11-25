@@ -136,7 +136,17 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState, bridge: Option<&mut RenderB
         egui::StrokeKind::Inside,
     );
 
-    draw_viewport_overlay(ui, rect, state, bridge.palette_retarget(), gizmo_rect);
+    let shaded = (bridge.game_scene_report())
+        .filter(|_| bridge.mode() == ShadingMode::Shaded)
+        .and_then(|report| Some(report.gta6.as_ref()?.1.as_str()));
+    draw_viewport_overlay(
+        ui,
+        rect,
+        state,
+        bridge.palette_retarget(),
+        shaded,
+        gizmo_rect,
+    );
     if !matches!(bridge.mode(), ShadingMode::Wireframe) {
         if let Some(action) = draw_texture_badge(ui, rect, state) {
             apply_texture_badge_action(state, bridge, action);
@@ -297,7 +307,7 @@ pub(super) fn framing_hint(prefs: &Prefs) -> String {
 
 pub(crate) const SHADING_PILL_H: f32 = 22.0;
 const HUD_ROW_H: f32 = 28.0;
-const HUD_W: f32 = 336.0;
+const HUD_W: f32 = 380.0;
 const CHANNEL_BAR_H: f32 = 26.0;
 
 /// How tall the bar under the pills is, with its gap: Shaded's, or Channel's where it offers channels.
@@ -679,9 +689,11 @@ pub(crate) fn draw_viewport_overlay(
     rect: egui::Rect,
     state: &mut AppState,
     retarget: Option<&or_anim::PaletteRetarget>,
+    shaded: Option<&str>,
     clear_of: egui::Rect,
 ) {
-    let viewport_layout::Overlay { text, picked } = viewport_layout::overlay(state, retarget);
+    let viewport_layout::Overlay { text, picked } =
+        viewport_layout::overlay(state, retarget, shaded);
     // The box is sized from its text, which wraps within 8 points of the
     // viewport's edges, or of what the box keeps clear of, and 8 of the box's.
     let padding = egui::vec2(8.0, 6.0);

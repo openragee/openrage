@@ -487,3 +487,10 @@ priority = 100
 filter = 'test(the_typed_world_family_names_only_what_the_install_states_and_the_rules_fire_on_few_of_its_maps)'
 slow-timeout = { period = "60s", terminate-after = 45 }
 priority = 100
+
+# The install suite of GTA VI's texture packs reads every texture of every pack of an install.
+# It took fourteen and a half minutes beside two building lanes, so it is held to forty-five, and starts first.
+[[profile.all.overrides]]
+filter = 'test(every_present_head_holds_to_the_container_model_and_each_texture_reads_or_is_refused_by_name)'
+slow-timeout = { period = "60s", terminate-after = 45 }
+priority = 100

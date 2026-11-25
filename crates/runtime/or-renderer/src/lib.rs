@@ -13,6 +13,7 @@ pub mod error;
 pub mod fly;
 pub mod game_shaders;
 pub mod gpu_timer;
+pub mod instance;
 pub mod particle_game;
 pub mod particle_meshes;
 pub mod particle_models;
@@ -39,4 +40,6 @@ pub use particles::{ParticleAlignment, ParticleBatch, ParticleBlendMode, Particl
 pub use surface::{FrameStats, Renderer};
 pub use trails::{TrailBatch, TrailVertex, MAX_TRAIL_CONTROL_POINTS};
 pub use viewport::{LineVertex, MeshDraw, MeshVertex, OrbitCamera, ShadingMode, ViewportRenderer};
-pub use world::{WorldBucket, WorldDraw, WorldInstance, WorldMaterial, WorldMesh, OUTDOORS};
+pub use world::{
+    WorldBucket, WorldDraw, WorldInstance, WorldLamp, WorldMaterial, WorldMesh, OUTDOORS,
+};

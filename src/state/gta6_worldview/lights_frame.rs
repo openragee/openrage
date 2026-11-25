@@ -33,6 +33,8 @@ pub struct FrameLights {
     pub sprite_look: SpriteLook,
     /// The coronas of the placed lights, and how the pass reads the depth about each.
     pub coronas: Option<(or_renderer::CoronaLook, Vec<or_renderer::Corona>)>,
+    /// The lamps drawn, which light what blends, a lamp's own glass among it: the nearest of them count.
+    pub lamps: Vec<or_renderer::WorldLamp>,
 }
 /// A level-of-detail light stands for a placed light this near it, in metres.
 const SAME_PLACE: f32 = 0.02;
@@ -306,6 +308,28 @@ pub fn cones_within(inner: f32, outer: f32) -> Vec<(f32, f32, f32, f32)> {
 /// The widest cone the spot pass draws, in degrees.
 const MOST_CONE: f32 = 89.0;
 
+/// `l` drawn as `kind` as a lamp that lights what blends, of `strength` (its colour times its intensity in the frame's units): a spot by its cones, an area light as one from a right angle in, anything else all round from its place.
+fn lamp_of(l: &Light, kind: LightKind, strength: Vec3, direction: Vec3) -> or_renderer::WorldLamp {
+    let (inner, outer) = match kind {
+        LightKind::Spot => (l.cone_inner, l.cone_outer),
+        LightKind::Area => (0.0, 90.0),
+        _ => (0.0, 180.0),
+    };
+    let (cos_in, cos_out) = (inner.to_radians().cos(), outer.to_radians().cos());
+    let shines_one_way = matches!(kind, LightKind::Spot | LightKind::Area);
+    or_renderer::WorldLamp {
+        position: Vec3::from(l.position),
+        radius: l.radius,
+        colour: strength,
+        direction: if shines_one_way {
+            direction
+        } else {
+            Vec3::ZERO
+        },
+        cone: [cos_out, 1.0 / (cos_in - cos_out).max(1e-4)],
+    }
+}
+
 /// The volumes of `chosen` lit at `hour`, their intensity times `scale`.
 pub fn volumes_of(chosen: &[Chosen], hour: f32, scale: f32) -> FrameLights {
     let mut out = FrameLights {
@@ -325,6 +349,8 @@ pub fn volumes_of(chosen: &[Chosen], hour: f32, scale: f32) -> FrameLights {
             false => l.kind,
         };
         let inner = l.cone_inner;
+        out.lamps
+            .push(lamp_of(&l, kind, colour * intensity, direction));
         let pieces: Vec<(f32, f32, f32, f32)> = match kind {
             LightKind::Spot => (spot_cones(inner, l.cone_outer).iter())
                 .filter(|(_, part)| *part > 0.0)

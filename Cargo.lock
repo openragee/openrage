@@ -574,6 +574,9 @@ name = "bitflags"
 version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
+dependencies = [
+ "serde_core",
+]
 
 [[package]]
 name = "block-buffer"
@@ -1811,6 +1814,7 @@ dependencies = [
  "cfg-if",
  "crunchy",
  "num-traits",
+ "serde",
  "zerocopy",
 ]
 
@@ -1843,6 +1847,8 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -2055,6 +2061,8 @@ checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
 dependencies = [
  "equivalent",
  "hashbrown 0.16.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -2472,6 +2480,7 @@ dependencies = [
  "once_cell",
  "petgraph",
  "rustc-hash 1.1.0",
+ "serde",
  "spirv",
  "thiserror 2.0.18",
  "unicode-ident",
@@ -3135,6 +3144,7 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "glam",
+ "naga",
  "or-addonped",
  "or-anim",
  "or-content",
@@ -3385,9 +3395,14 @@ dependencies = [
 name = "or-shader-front"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "cc",
+ "flate2",
  "naga",
  "or-io",
+ "serde",
+ "sha1",
+ "tempfile",
  "thiserror 1.0.69",
 ]
 

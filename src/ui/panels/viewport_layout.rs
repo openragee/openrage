@@ -17,9 +17,12 @@ pub(crate) struct Column {
 pub(crate) fn column(rect: egui::Rect, row_h: f32, bar_h: f32) -> Column {
     let row = rect.top() + 8.0 + super::viewport::SHADING_PILL_H + 6.0;
     let bar = row + row_h;
+    let top = bar + bar_h + 2.0;
+    // A short viewport under a wrapped bar has less room than the gizmo's size: it shrinks to stay inside.
+    let size = GIZMO_SIZE.min(rect.bottom() - top).max(0.0);
     let gizmo = egui::Rect::from_min_size(
-        egui::pos2(rect.right() - 10.0 - GIZMO_SIZE, bar + bar_h + 2.0),
-        egui::vec2(GIZMO_SIZE, GIZMO_SIZE),
+        egui::pos2(rect.right() - 10.0 - size, top),
+        egui::vec2(size, size),
     );
     Column { row, bar, gizmo }
 }
@@ -37,11 +40,16 @@ pub(crate) fn overlay_text(
     state: &AppState,
     retarget: Option<&or_anim::PaletteRetarget>,
 ) -> String {
-    overlay(state, retarget).text
+    overlay(state, retarget, None).text
 }
 
-/// What the box at the viewport's bottom left says: what it shows, in words, and how to move.
-pub(crate) fn overlay(state: &AppState, retarget: Option<&or_anim::PaletteRetarget>) -> Overlay {
+/// What the box at the viewport's bottom left says: what it shows, in words, what Shaded says of a
+/// GTA VI drawable, such as why it draws as Material, and how to move.
+pub(crate) fn overlay(
+    state: &AppState,
+    retarget: Option<&or_anim::PaletteRetarget>,
+    shaded: Option<&str>,
+) -> Overlay {
     let mut picked = None;
     let mut lines = match state.active_document() {
         Some(_) if state.active_workspace == Workspace::Animation => {
@@ -52,6 +60,8 @@ pub(crate) fn overlay(state: &AppState, retarget: Option<&or_anim::PaletteRetarg
         Some(doc) => vec![format!("{} · {}", doc.file_name(), doc.kind.info().noun)],
         None => vec![tr!("Nothing open").to_string()],
     };
+    // ⚠ A mode that draws as another says so where it is read: the pill's tooltip alone is not seen.
+    lines.extend(shaded.map(str::to_string));
     let sim = &state.sim;
     if state.active_workspace == Workspace::Particle && sim.last_built.is_some() {
         let (t, length) = (sim.manager.current_time(), sim.manager.duration());
@@ -133,4 +143,17 @@ fn preview_lines(state: &AppState) -> (Vec<String>, bool) {
     let names_a_pick = picked.is_some();
     lines.extend(picked);
     (lines, names_a_pick)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_box_says_what_shaded_says_of_a_drawable_that_draws_as_material() {
+        let state = AppState::from_prefs(crate::state::Prefs::default());
+        let why = "Shaded draws as Material: a made-up reason";
+        assert!(overlay(&state, None, Some(why)).text.contains(why));
+        assert!(!overlay(&state, None, None).text.contains("Shaded"));
+    }
 }

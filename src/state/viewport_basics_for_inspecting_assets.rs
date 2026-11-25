@@ -746,7 +746,7 @@ fn the_overlays_leave_the_axis_gizmo_clear_and_fit_a_narrow_viewport() {
                     ShadingMode::Shaded => draw_shaded_hud_bar(ui, rect, col.bar, &mut state),
                     _ => draw_channel_selector(ui, rect, col.bar, &offered, &mut state),
                 }
-                draw_viewport_overlay(ui, rect, &mut state, None, col.gizmo);
+                draw_viewport_overlay(ui, rect, &mut state, None, None, col.gizmo);
             });
             assert!(
                 rect.contains_rect(col.gizmo),

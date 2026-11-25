@@ -108,6 +108,8 @@ mod tests {
                 tangents: vec![TANGENT; 3],
                 ..Vertices::default()
             },
+            vertex_data: Vec::new(),
+            index_data: Vec::new(),
         }
     }
 

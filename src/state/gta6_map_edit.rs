@@ -46,6 +46,7 @@ fn number_like(stored: Option<&Value>, n: u64) -> Value {
 
 /// A member's name as the tree reader names it.
 fn name(hash: u32) -> String {
+    let _names = or_io::meta::binary::hash_index::title_names();
     default_hash_index().name_or_literal(hash)
 }
 

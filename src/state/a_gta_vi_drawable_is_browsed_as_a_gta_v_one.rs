@@ -20,6 +20,8 @@ const KEY: u64 = 0x0123_4567_89AB_CDEF;
 
 fn triangle(at: f32, vertices: Vertices) -> Geometry {
     Geometry {
+        vertex_data: Vec::new(),
+        index_data: Vec::new(),
         shader: 0,
         vertex_count: 3,
         channels: Vec::new(),

@@ -7,6 +7,8 @@ use wgpu::util::DeviceExt;
 
 use crate::viewport::MeshVertex;
 
+// The light the world's program reads is bound all nought, so that nothing gives light of its own.
+use super::super::lamps::LIGHT_FLOATS;
 use super::super::pipelines::WORLD_VERTEX_ATTRIBUTES;
 use super::super::{WorldBucket, WorldInstance, CAMERA_FLOATS};
 use super::shader::{bake_shader, MIP_SHADER};
@@ -28,8 +30,6 @@ pub(super) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSr
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// The bytes of one frame's view, laid out as the viewport's camera uniform.
 const VIEW_BYTES: u64 = (CAMERA_FLOATS * size_of::<f32>()) as u64;
-/// The floats of the light the world's program reads: none, so that nothing gives light of its own.
-const LIGHT_FLOATS: usize = 20;
 const FRAMES: u32 = CARD_FRAMES * CARD_FRAMES;
 
 /// How many species the atlas holds at most on `device`: four a layer.

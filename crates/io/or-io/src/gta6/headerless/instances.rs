@@ -148,8 +148,11 @@ fn instances_at(v: Bytes, p: Bytes) -> Result<Instances> {
                     bytes[k].into(),
                 ));
             }
-            if start == map && bytes[8..10] != [1, 1] {
-                let counts = u16::from_le_bytes([bytes[8], bytes[9]]);
+            // An array that starts where the map does is shorter than the map, and no map.
+            let counts = bytes
+                .get(8..10)
+                .map_or(0, |c| u16::from_le_bytes([c[0], c[1]]));
+            if start == map && counts != 0x0101 {
                 return Err(constant("block map's counts", start + 8, counts.into()));
             }
         }

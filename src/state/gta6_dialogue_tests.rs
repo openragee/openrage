@@ -233,3 +233,17 @@ fn a_stream_asked_for_plays_once_in_the_container_that_holds_it() {
     assert_eq!(play_asked(&container, &rows), Some(4));
     assert_eq!(play_asked(&container, &rows), None, "asked once");
 }
+
+#[test]
+fn a_sound_s_track_ids_are_those_the_markers_of_one_of_its_streams_state() {
+    let mut lines = Lines::default();
+    lines.track_ids.insert(0x0123, vec![7, 9]);
+    let sound = |stream: u32| StreamedSound {
+        key: 1,
+        duration_ms: 0,
+        channels: vec![(2, None), (3, Some(stream))],
+    };
+    // A stream's id is the low 29 bits of the word a sound names it by.
+    assert_eq!(lines.track_ids(&sound(0xE000_0123)), [7, 9]);
+    assert!(lines.track_ids(&sound(0x0456)).is_empty());
+}

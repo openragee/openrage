@@ -8,7 +8,7 @@ use glam::{Affine3A, Vec3};
 use super::bound::{obb_of, BoundCollider};
 use super::bvh::{boxes_touch, reaches};
 use super::shape::{Obb, Shape, Similarity, Touch};
-use super::{BoxOverlap, CollisionError, GroundProbe, Hit, OrientedBox};
+use super::{BoxOverlap, CollisionError, GroundProbe, Hit, OrientedBox, Part};
 use crate::extents::Aabb;
 
 #[derive(Debug, Clone)]
@@ -147,6 +147,30 @@ impl<K: Ord> CollisionSet<K> {
             if !(overlap.inside.is_empty() && overlap.crossing.is_empty()) {
                 out.push((key, overlap));
             }
+        }
+        out
+    }
+
+    /// For each bound a box reaches, the shapes near the box as they stand in the world, each with the piece it is.
+    pub(crate) fn shapes_near(&self, world: &Obb) -> Vec<(&K, Vec<(Part, Shape)>)> {
+        let reach = Shape::Box(*world).aabb();
+        let mut out = Vec::new();
+        for (key, placed) in &self.placed {
+            if !boxes_touch(&placed.world_box, &reach) {
+                continue;
+            }
+            let local = Obb {
+                centre: placed.to_local.point(world.centre),
+                axes: world.axes.map(|axis| placed.to_local.turn(axis)),
+                half: world.half * placed.to_local.scale(),
+            };
+            let near = placed.collider.shapes_reaching(&Shape::Box(local).aabb());
+            out.push((
+                key,
+                near.into_iter()
+                    .map(|(part, shape)| (part, shape.placed(&placed.to_world)))
+                    .collect(),
+            ));
         }
         out
     }

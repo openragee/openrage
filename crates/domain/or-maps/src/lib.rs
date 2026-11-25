@@ -31,6 +31,7 @@
 
 pub mod adopt;
 pub mod changes;
+pub mod collision;
 pub mod delete;
 pub mod door_text;
 pub mod doors;

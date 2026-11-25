@@ -1,7 +1,7 @@
 //! `openrage-cli maps`: list what a project's map sets place and declare, validate them and say what the rules find, read a build back
-//! against them, apply a list of operations to their sources, merge two copies of one map, plan or apply the deletion of entities with
-//! their chain of far models, keep a manifest of the game for the manifest of the maps to be written from, list their doors, and list
-//! and edit the path regions a folder holds as sources.
+//! against them, apply a list of operations to their sources, merge two copies of one map, propose and take out the collision of an
+//! object, plan or apply the deletion of entities with their chain of far models, keep a manifest of the game for the manifest of the
+//! maps to be written from, list their doors, and list and edit the path regions a folder holds as sources.
 //!
 //! The plan and the build of maps are `openrage-cli project plan` and `build`:
 //! a maps content is content like any other, and goes through the one plan.
@@ -21,6 +21,7 @@ pub fn run(args: &[String]) -> ExitCode {
     let rest = args.get(1..).unwrap_or_default();
     let result = match args.first().map(String::as_str) {
         Some("changes") => crate::maps_changes::run(rest),
+        Some("collision") => crate::maps_collision::run(rest),
         Some("list") => list(rest),
         Some("merge") => crate::maps_merge::run(rest),
         Some("validate") => validate(rest),
@@ -54,6 +55,11 @@ fn print_usage() {
     eprintln!(
         "Usage:\n  \
          openrage-cli maps changes  <project.openrage-proj> [--module <id>] [--json]\n  \
+         openrage-cli maps collision <project.openrage-proj> --object <map source>:<entity> [--box <x,y,z,x,y,z>]\n  \
+         \x20                          [--take-ground] [--apply | --move <x,y,z> [--turn <degrees>]] [--inverse <file>]\n  \
+         \x20                          [--dry-run] [--module <id>] [--json]\n  \
+         openrage-cli maps collision <project.openrage-proj> --operations <operations.json> [--inverse <file>]\n  \
+         \x20                          [--dry-run] [--module <id>] [--json]\n  \
          openrage-cli maps list     <project.openrage-proj> [--module <id>]\n  \
          openrage-cli maps merge    --base <file> --ours <file> --theirs <file> --out <file> [--take ours|theirs] [--json]\n  \
          openrage-cli maps validate <project.openrage-proj> [--module <id>] [--json]\n  \
@@ -73,6 +79,24 @@ fn print_usage() {
          moved. What a file states of itself differently, such as its flags and its extents, is a\n\
          line of its own, and the entities of an interior are under the interior. With --json it\n\
          prints the same changes as data. It exits 1 when a source cannot be compared.\n\
+         collision says which polygons of the bounds sources the content holds are proposed as the\n\
+         collision of an object, the entity of a map source: the polygons its box holds whole, with the\n\
+         ground left, each polygon the box cuts listed apart with the share of it in the box, and the\n\
+         reason for each one left. The box is the one a type file of the content declares for the\n\
+         archetype, or the one --box states in the archetype's own space; an object under two metres\n\
+         is not judged. --take-ground proposes the ground too. It writes nothing unless asked: --apply\n\
+         takes the proposal out, and --move and --turn move it by an offset in metres and a turn in\n\
+         degrees about where the object stands, leaving the corners shared with what stays. The\n\
+         versions of an area, the files `<area>`, `hi@<area>` and `ma@<area>`, hold polygons of their\n\
+         own, so each is changed by what is proposed in it, and all are written or none. An operation\n\
+         of a list that does not state `alone` is done to every version alike, or refused naming the\n\
+         version that lacks a polygon; a bound its source cannot build again is refused by name.\n\
+         --json prints the proposal and its operations as data, a list whose format is\n\
+         `openrage-collision-operations` that --operations applies after a person has edited it, and\n\
+         --inverse writes the list that puts every source back byte for byte. A list names polygons\n\
+         by their place in a source as it was when the list was made, and is refused once that\n\
+         source has changed. It moves no entity: `maps apply` does. It exits 1 when an operation is\n\
+         refused.\n\
          list names the map sets of the content and, for each source, what it places (the entities of\n\
          a map file) or declares (the archetypes of a type file, and the rooms and portals of its\n\
          interiors).\n\

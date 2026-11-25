@@ -9977,10 +9977,13 @@ default, takes them; and the option that moves a building's collision with it, w
 polygons inside its box, leaves the ground and says what it moved
 ([brief](World_Editor_Plan.md#editing-collision-r70l)).
 
-**Where it stands.** Not built. A bound is built, rebuilt and validated in `or-io`
-([R41c](#r41c-bounds-and-physics-construction)) and opens in the app, and a changed bound is held as
-a source ([R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources)); no screen edits a
-polygon.
+**Where it stands.** The headless half is built, on no install
+([in full](../reference/Crate_Reference.md#domain-crates)).
+`crates/domain/or-world/src/collision/association.rs` proposes the polygons under an object's box,
+`crates/domain/or-maps/src/collision.rs` takes them out, sets a material or moves them, with
+inverses, and `openrage-cli maps collision` runs both. ⚠ The versions of an area the game ships are
+not copies (`the_staged_versions_of_an_area_hold_polygons_of_their_own`), so keeping them alike
+awaits the owner. Left: the tool, its screen and the proposal inside a deletion or a move.
 
 **Depends on.** [R70f](#r70f-layers-of-what-the-game-hides),
 [R70i](#r70i-selecting-and-moving-in-the-world), [R70k](#r70k-removing-what-the-game-placed) and

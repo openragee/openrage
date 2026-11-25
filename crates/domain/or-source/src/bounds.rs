@@ -49,6 +49,8 @@ use crate::models::{problem, target_of, Compiled};
 use crate::textures::Extraction;
 use crate::Problem;
 
+pub mod edit;
+
 /// The `kind` of a bound's source.
 pub const KIND: &str = "bounds";
 /// The document of the bounds, which a person edits.

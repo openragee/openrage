@@ -580,3 +580,226 @@ fn a_triangle_taken_out_of_a_corpus_ybn_cooks_to_a_bound_that_holds_one_fewer_or
         "no staged .ybn took the edit"
     );
 }
+
+#[test]
+fn every_soup_of_a_corpus_ybn_restated_with_what_it_holds_cooks_to_the_canonical_save() {
+    use or_io::container::resource::{ResourceEnvelope, Rsc7};
+    use or_io::decl::{Aligned, File};
+    use or_io::desc::Image;
+    use or_io::gta5::bounds::PhBoundAny;
+    use or_source::bounds::edit::leaves;
+    use or_source::bounds::Inputs;
+    let what =
+        "every soup of a corpus .ybn restated with what it holds cooks to the canonical save";
+    let Some(files) =
+        or_test_support::Corpus::new(env!("CARGO_MANIFEST_DIR"), "ybn").find_or_skip(what)
+    else {
+        return;
+    };
+    let how = or_source::textures::Extraction {
+        from_game: true,
+        virtual_path: None,
+    };
+    let (mut soups, mut polygons) = (0usize, 0usize);
+    // What taking the first polygon out of a soup comes to: built again, or refused, by the reason the compile gives.
+    let (mut built_again, mut refused) = (0usize, std::collections::BTreeMap::new());
+    for path in &files {
+        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        let bytes = fs::read(path).unwrap();
+        let canonical = PhBoundAny::from_bytes(&bytes).unwrap().to_bytes().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let folder = or_source::bounds::extract(&bytes, "subject", work.path(), &how)
+            .unwrap_or_else(|why| panic!("{file}: {why:?}"));
+        let inputs = Inputs::read(&Source::open(&folder).unwrap()).unwrap();
+        let bound = PhBoundAny::from_bytes(&inputs.compile().unwrap().bytes).unwrap();
+        for leaf in leaves(&bound).unwrap_or_else(|why| panic!("{file}: {why}")) {
+            let Some(soup) = &leaf.soup else { continue };
+            soups += 1;
+            polygons += soup.polygons.len();
+            let again = inputs
+                .restated(&leaf.address, soup)
+                .unwrap_or_else(|why| panic!("{file}, {}: {why:?}", leaf.address));
+            let cooked = again
+                .compile()
+                .unwrap_or_else(|why| panic!("{file}, {}: {why:?}", leaf.address));
+            assert!(
+                cooked.bytes == canonical,
+                "{file}, {}: restated with what it holds, the source cooks to another file",
+                leaf.address
+            );
+            if soup.polygons.len() < 2 {
+                continue;
+            }
+            let mut fewer = soup.clone();
+            fewer.polygons.remove(0);
+            let taken = inputs
+                .restated(&leaf.address, &fewer)
+                .unwrap_or_else(|why| panic!("{file}, {}: {why:?}", leaf.address));
+            match taken.compile() {
+                Ok(made) => {
+                    // The check of what the game would misread, over the image of the file.
+                    let opened = Rsc7::open(&made.bytes).unwrap();
+                    let aligned = Aligned::from_bytes(&opened.data);
+                    let image = Image::new(aligned.bytes(), opened.virtual_size as usize);
+                    or_io::gta5::bounds::validate(image, 0)
+                        .unwrap_or_else(|why| panic!("{file}, {}: {why}", leaf.address));
+                    let now = PhBoundAny::from_bytes(&made.bytes).unwrap();
+                    let held = leaves(&now)
+                        .unwrap()
+                        .into_iter()
+                        .find(|l| l.address == leaf.address)
+                        .and_then(|l| l.soup)
+                        .map_or(0, |s| s.polygons.len());
+                    assert_eq!(held, fewer.polygons.len(), "{file}, {}", leaf.address);
+                    built_again += 1;
+                }
+                Err(why) => {
+                    let said = why
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    let reason = ["a shrunk hull", "an octant map", "for each of its vertices"]
+                        .into_iter()
+                        .find(|reason| said.contains(reason))
+                        .unwrap_or_else(|| panic!("{file}, {}: {said}", leaf.address));
+                    *refused.entry(reason).or_insert(0usize) += 1;
+                }
+            }
+        }
+    }
+    eprintln!(
+        "{soups} soup(s) of {polygons} polygon(s) in {} staged .ybn restated to the canonical save; with one polygon taken out {built_again} were built again and the rest refused: {refused:?}",
+        files.len()
+    );
+    assert!(soups > 0, "no staged .ybn holds a polygon soup");
+}
+
+#[test]
+fn the_staged_versions_of_an_area_hold_polygons_of_their_own() {
+    use or_io::decl::File;
+    use or_io::gta5::bounds::PhBoundAny;
+    use or_source::bounds::edit::{leaves, Polygon};
+    use std::collections::{BTreeMap, HashMap};
+    /// How far apart one corner may be held by two files, in metres.
+    const SAME_CORNER: f32 = 0.01;
+    /// The side of a cell of the grid polygons are looked up in, in metres: wider than two polygons alike hold their middles apart.
+    const CELL: f32 = 0.25;
+    const { assert!(CELL > 2.0 * SAME_CORNER) };
+    let what = "the staged versions of an area hold polygons of their own";
+    let Some(files) =
+        or_test_support::Corpus::new(env!("CARGO_MANIFEST_DIR"), "ybn").find_or_skip(what)
+    else {
+        return;
+    };
+    // Whether two files hold one polygon: the same kind on the same points, in any order.
+    let alike = |a: &Polygon, b: &Polygon| {
+        let near = |p: &[f32; 3], q: &[f32; 3]| {
+            (0..3).map(|k| (p[k] - q[k]).powi(2)).sum::<f32>().sqrt() <= SAME_CORNER
+        };
+        let mut spare: Vec<&[f32; 3]> = b.points.iter().collect();
+        a.kind == b.kind
+            && (a.radius - b.radius).abs() <= SAME_CORNER
+            && a.points.len() == b.points.len()
+            && a.points.iter().all(|p| {
+                let found = spare.iter().position(|q| near(p, q));
+                found.map(|at| spare.swap_remove(at)).is_some()
+            })
+    };
+    // The soups of a file and the polygons of every one of them, where the file has them.
+    let polygons_of = |path: &Path| -> (usize, Vec<Polygon>) {
+        let bound = PhBoundAny::from_bytes(&fs::read(path).unwrap()).unwrap();
+        let (mut soups, mut held) = (0, Vec::new());
+        for leaf in leaves(&bound).unwrap() {
+            assert!(
+                leaf.placed_by.iter().all(|m| *m
+                    == [
+                        [1.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0],
+                        [0.0, 0.0, 1.0],
+                        [0.0, 0.0, 0.0]
+                    ]),
+                "{}: a soup is placed by its composite, so its points are not the file's",
+                path.display()
+            );
+            soups += usize::from(leaf.soup.is_some());
+            held.extend(leaf.soup.into_iter().flat_map(|soup| soup.polygons));
+        }
+        (soups, held)
+    };
+    // The cell the middle of a polygon is in.
+    let cell = |polygon: &Polygon| -> [i64; 3] {
+        let count = polygon.points.len().max(1) as f32;
+        std::array::from_fn(|k| {
+            let middle = polygon.points.iter().map(|p| p[k]).sum::<f32>() / count;
+            (middle / CELL).floor() as i64
+        })
+    };
+    // How many of `sought` a file that holds `held` holds: every polygon is looked for, among those whose middle is a cell away at most.
+    let held_of = |sought: &[Polygon], held: &[Polygon]| -> usize {
+        let mut grid: HashMap<[i64; 3], Vec<&Polygon>> = HashMap::new();
+        for polygon in held {
+            grid.entry(cell(polygon)).or_default().push(polygon);
+        }
+        (sought.iter())
+            .filter(|p| {
+                let [x, y, z] = cell(p);
+                (-1..=1).any(|i| {
+                    (-1..=1).any(|j| {
+                        (-1..=1).any(|k| {
+                            (grid.get(&[x + i, y + j, z + k]).into_iter().flatten())
+                                .any(|q| alike(p, q))
+                        })
+                    })
+                })
+            })
+            .count()
+    };
+    // The files of each area: the name with `hi@` or `ma@` before it is a version of the same area, and the name alone is the third.
+    let mut areas: BTreeMap<String, Vec<(String, &std::path::PathBuf)>> = BTreeMap::new();
+    for path in &files {
+        let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+        let area = (stem.strip_prefix("hi@"))
+            .or_else(|| stem.strip_prefix("ma@"))
+            .unwrap_or(&stem)
+            .to_string();
+        areas.entry(area).or_default().push((stem, path));
+    }
+    let (mut pairs, mut looked_for, mut shared) = (0usize, 0usize, 0usize);
+    for (area, versions) in areas.iter().filter(|(_, versions)| versions.len() > 1) {
+        // No two files of the corpus are one version of an area: what tells them apart is the prefix alone.
+        let mut stems: Vec<&str> = versions.iter().map(|(stem, _)| stem.as_str()).collect();
+        stems.sort_unstable();
+        stems.dedup();
+        assert_eq!(stems.len(), versions.len(), "{area}");
+        assert!(
+            stems.iter().all(
+                |stem| [area.clone(), format!("hi@{area}"), format!("ma@{area}")]
+                    .contains(&stem.to_string())
+            ),
+            "{stems:?}"
+        );
+        for (stem, of) in versions {
+            let (soups, held) = polygons_of(of);
+            // The measure finds what is there: a file holds every polygon of its own.
+            assert_eq!(held_of(&held, &held), held.len(), "{stem}");
+            for (other, theirs) in versions.iter().filter(|(other, _)| other != stem) {
+                let found = held_of(&held, &polygons_of(theirs).1);
+                eprintln!(
+                    "{stem} ({soups} soup(s)): {found} of its {} polygon(s) are held by {other}",
+                    held.len()
+                );
+                // ⚠ What the collision operations of a map rest on: were a version a copy of another, an operation could ask them
+                // to be alike.
+                assert!(found < held.len(), "{other} holds every polygon of {stem}");
+                pairs += 1;
+                looked_for += held.len();
+                shared += found;
+            }
+        }
+    }
+    eprintln!(
+        "{shared} of {looked_for} polygons of a staged version of an area are held by another version of it, over {pairs} ordered pair(s) of versions"
+    );
+    assert!(pairs > 0, "no staged area has two versions to compare");
+}

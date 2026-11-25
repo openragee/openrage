@@ -1,18 +1,24 @@
 //! Collision as a query over bounds placed in the world, Z up: a ray, a swept sphere, a box
 //! overlap and the ground under a point. A [`BoundCollider`] is one bound's shapes in the bound's
 //! own space under a tree built once, and a [`CollisionSet`] holds colliders by key, each with the
-//! transform that places it.
+//! transform that places it. [`associate`] proposes which pieces of the bounds under a placed object
+//! are the object's own.
 
 use glam::{Quat, Vec3};
 
 // ⚠ A shape is itself, never a mesh of it: a ray meets a sphere where the sphere is. The particle
 // preview's collider (`or_simulation::collision`) makes triangles of the same bounds and leaves
 // out the primitives of a geometry, so the two do not agree on a curved bound.
+mod association;
 mod bound;
 mod bvh;
 mod set;
 mod shape;
 
+pub use association::{
+    associate, Association, AssociationOptions, BoundAssociation, LeafAssociation, Left, NotJudged,
+    Proposed, Reason, BOX_SLACK, GROUND_SLOPE, GROUND_STEP, JUDGED_FROM, MOST, SHARED_CORNER,
+};
 pub use bound::BoundCollider;
 pub use set::CollisionSet;
 
@@ -45,6 +51,17 @@ pub struct OrientedBox {
     pub centre: Vec3,
     pub rotation: Quat,
     pub half_extents: Vec3,
+}
+
+impl OrientedBox {
+    /// The box of an archetype, from `bb_min` to `bb_max` in its own space, under the placement of an object.
+    pub fn placed(bb_min: Vec3, bb_max: Vec3, position: Vec3, rotation: Quat, scale: Vec3) -> Self {
+        Self {
+            centre: position + rotation * (scale * (bb_min + bb_max) * 0.5),
+            rotation,
+            half_extents: (scale * (bb_max - bb_min) * 0.5).abs(),
+        }
+    }
 }
 
 /// The pieces of one bound a box holds, in the order the bound lists them.

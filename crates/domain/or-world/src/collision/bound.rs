@@ -97,6 +97,17 @@ impl BoundCollider {
         self.overlap(&obb_of(region))
     }
 
+    /// The shapes whose own box touches `reach`, each with the piece it is, in the order the bound lists them.
+    pub(crate) fn shapes_reaching(&self, reach: &Aabb) -> Vec<(Part, Shape)> {
+        let mut found = Vec::new();
+        self.tree.overlap(reach, |item| found.push(item));
+        found.sort_unstable();
+        found
+            .into_iter()
+            .map(|item| (self.sources[item as usize].part, self.shapes[item as usize]))
+            .collect()
+    }
+
     pub(crate) fn hit(&self, touch: &Touch, item: usize) -> Hit {
         let source = &self.sources[item];
         Hit {

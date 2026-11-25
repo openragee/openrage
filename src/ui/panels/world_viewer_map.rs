@@ -158,7 +158,8 @@ impl Grid {
                     let inside = (quad.low.cmple(middle) & middle.cmple(quad.high)).all();
                     let at = row * SIDE + col;
                     // ⚠ The ground NaN where the height map holds none: water is then taken as standing.
-                    if inside && !(shade.ground[at] >= quad.z) {
+                    let ground_above = shade.ground[at].is_finite() && shade.ground[at] >= quad.z;
+                    if inside && !ground_above {
                         shade.wet[at] = true;
                     }
                 }
@@ -204,7 +205,7 @@ impl Shade {
                 return 0.0;
             }
             // The rise from the cell to the north-west, lit from there.
-            let behind = (k >= SIDE + 1 && k % SIDE > 0).then(|| at(k - SIDE - 1));
+            let behind = (k > SIDE && k % SIDE > 0).then(|| at(k - SIDE - 1));
             let rise = behind.filter(|b| b.is_finite()).map_or(0.0, |b| h - b);
             0.2 + 0.35 * (h.max(0.0) / highest).sqrt() + (rise / 20.0).clamp(-0.12, 0.12)
         }))

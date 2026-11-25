@@ -27,7 +27,7 @@ pub mod sky_dome;
 pub mod water;
 mod water_shader;
 
-pub use lamps::{WorldLamp, WORLD_LAMPS};
+pub use lamps::{WorldLamp, WorldWind, WORLD_GUSTS, WORLD_LAMPS};
 pub use material::{
     colour1, coloured, interior, slot, WorldConstants, WorldFamily, WorldSurface, WORLD_MAPS,
 };
@@ -275,6 +275,8 @@ pub(crate) struct World {
     started: std::time::Instant,
     /// The lamps that light what blends, nearest first.
     lamps: Vec<WorldLamp>,
+    /// The wind the grass bends in.
+    wind: WorldWind,
     /// The maps and constants of each material made, by [`alike`], so that materials alike bind one group and their draws join; and the size past which the dead are let go.
     alike: RefCell<(Alike, usize)>,
 }
@@ -517,6 +519,7 @@ impl World {
             exposure: 1.0,
             started: std::time::Instant::now(),
             lamps: Vec::new(),
+            wind: WorldWind::default(),
             alike: RefCell::default(),
             materials,
             sampler,
@@ -840,6 +843,7 @@ impl World {
         let seconds = self.started.elapsed().as_secs_f32() % 86_400.0;
         light.push([night, self.exposure, lamps, seconds]);
         light.extend(lamps::rows(&self.lamps));
+        light.extend(self.wind.rows());
         queue.write_buffer(&self.light, 0, bytemuck::cast_slice(&light));
     }
 
@@ -958,6 +962,11 @@ impl ViewportRenderer {
     /// Light what blends over the lit frame by `lamps`, nearest first, of which the first [`WORLD_LAMPS`] count.
     pub fn set_world_lamps(&mut self, lamps: Vec<WorldLamp>) {
         self.world.lamps = lamps;
+    }
+
+    /// Bend the grass in `wind`.
+    pub fn set_world_wind(&mut self, wind: WorldWind) {
+        self.world.wind = wind;
     }
 
     /// How many instances the world draws.

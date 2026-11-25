@@ -36,6 +36,7 @@ pub(crate) mod stream;
 pub(crate) mod terrain;
 mod texture;
 pub(crate) mod water;
+mod wind;
 
 pub use interior::Inside;
 pub use model::{Bucket, CpuMaterial, CpuModel, Family, RegionTint};
@@ -150,6 +151,8 @@ pub struct Viewer {
     pub textures_waiting: usize,
     /// How long the last frame took to work out its day, before the lights about the camera.
     pub day_took: std::time::Duration,
+    /// The game's wind about the camera.
+    wind: wind::Wind,
 }
 
 impl Default for Viewer {
@@ -192,6 +195,7 @@ impl Default for Viewer {
             models_waiting: 0,
             textures_waiting: 0,
             day_took: std::time::Duration::ZERO,
+            wind: wind::Wind::default(),
         }
     }
 }

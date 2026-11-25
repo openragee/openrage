@@ -6,8 +6,31 @@ use glam::Vec3;
 pub const WORLD_LAMPS: usize = 256;
 /// The floats a lamp takes in the light's buffer: three rows of four.
 pub(crate) const LAMP_FLOATS: usize = 12;
-/// The floats of the light the world's program reads: the sun's, the ambient's and the frame's five rows, then the lamps.
-pub(crate) const LIGHT_FLOATS: usize = 20 + WORLD_LAMPS * LAMP_FLOATS;
+/// The most gusts the game's wind keeps alive at once.
+pub const WORLD_GUSTS: usize = 2;
+/// The floats of the wind after the lamps: the wind's row, then each gust's.
+pub(crate) const WIND_FLOATS: usize = 4 + 4 * WORLD_GUSTS;
+
+/// The wind the grass bends in, in metres and metres a second, x east and y north: the way it blows, its base speed and the most speed the game's wind reaches, then each live gust's centre, its strength times its ramp, and the half-width of the square it wraps in; a gust of no strength adds nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct WorldWind {
+    pub direction: [f32; 2],
+    pub speed: f32,
+    pub most: f32,
+    pub gusts: [[f32; 4]; WORLD_GUSTS],
+}
+
+impl WorldWind {
+    /// The rows the light's buffer holds after the lamps.
+    pub(crate) fn rows(&self) -> [[f32; 4]; 1 + WORLD_GUSTS] {
+        let [x, y] = self.direction;
+        let mut out = [[x, y, self.speed, self.most]; 1 + WORLD_GUSTS];
+        out[1..].copy_from_slice(&self.gusts);
+        out
+    }
+}
+/// The floats of the light the world's program reads: the sun's, the ambient's and the frame's five rows, the lamps, then the wind.
+pub(crate) const LIGHT_FLOATS: usize = 20 + WORLD_LAMPS * LAMP_FLOATS + WIND_FLOATS;
 
 /// A lamp that lights what blends: where it stands and how far it reaches, its colour times its strength in the frame's units, and for a spot the way it shines with the cosine of its outer cone and one over the span from it to the inner one's; a light that shines all round has no way.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -74,6 +97,23 @@ mod tests {
         let one = super::rows(&[lamp]);
         assert!(one[3..].iter().all(|row| *row == [0.0; 4]));
         let declared = format!("lamps: array<Lamp, {WORLD_LAMPS}>");
+        assert!(super::super::shader::WORLD_SHADER.contains(&declared));
+    }
+
+    #[test]
+    fn the_wind_is_its_way_speed_and_most_then_a_row_a_gust() {
+        let wind = WorldWind {
+            direction: [0.0, -1.0],
+            speed: 3.0,
+            most: 20.0,
+            gusts: [[400.0, -400.0, 5.0, 800.0], [0.0; 4]],
+        };
+        let rows = wind.rows();
+        assert_eq!(rows.len() * 4, WIND_FLOATS);
+        assert_eq!(rows[0], [0.0, -1.0, 3.0, 20.0]);
+        assert_eq!(rows[1], [400.0, -400.0, 5.0, 800.0]);
+        assert_eq!(rows[2], [0.0; 4]);
+        let declared = format!("gusts: array<vec4<f32>, {WORLD_GUSTS}>");
         assert!(super::super::shader::WORLD_SHADER.contains(&declared));
     }
 }

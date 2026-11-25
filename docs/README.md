@@ -13,7 +13,9 @@ Records, plans and specifications: what is decided, what comes next, and the des
 - [Workbench_UX_Design.md](direction/Workbench_UX_Design.md): what a person sees and does around a project.
 - [Project_Model_Design.md](direction/Project_Model_Design.md): how a project holds several kinds of content and ships it.
 - [Workbench_Views_Design.md](direction/Workbench_Views_Design.md): a draft of the weapon, particle, map and other project views, and the order they could be built in; its first step, the table of task screens, is built.
-- [World_Editor_Plan.md](direction/World_Editor_Plan.md): what OpenRage takes from NodeRunner Studio for GTA V, how it fits the World screen, the Map content and projects, what a mapper meets and the order it is built in.
+- [World_Editor_Plan.md](direction/World_Editor_Plan.md): what OpenRage takes from NodeRunner Studio for GTA V, what that rests on, how it fits the tree, and the order and the briefs of the rows that build it.
+- [World_Editor_Parity.md](direction/World_Editor_Parity.md): what NodeRunner Studio does for a GTA V map, capability by capability, and what OpenRage has, takes, adapts, defers, holds for a ruling or leaves out.
+- [World_Editor_UX_Design.md](direction/World_Editor_UX_Design.md): what a mapper would meet in the GTA V world editor, flow by flow, each part tagged with the row that builds it.
 - [Source_Format_Design.md](direction/Source_Format_Design.md): how a game file becomes an editable source and compiles back.
 - [Clothing_Tool_Design.md](direction/Clothing_Tool_Design.md): where a clothing and ped-component tool lives.
 - [Wardrobe_Parity.md](direction/Wardrobe_Parity.md): what each clothing tool does that the Wardrobe does, will do or leaves out, and what a project costs a clothing creator.

@@ -507,10 +507,9 @@ R70l, R70m, R70n, R70p, R70q, R70r, R70v, R70w and R70y are built, on installs a
 hand and on the staged corpus, with no screen but the Build tab's line of R70a, the Map screen's
 Undo of R70h and the presets of keys in Settings of R70v. No row is closed, the install suites
 that have run are those of R70m's data part and, on the two installs, of R70b, R70c, R70e, R70h and
-R70k (R70b's fails on Enhanced, and R70k's finished on Legacy alone), and nothing was loaded in a
-game: each row's Where it stands says what is built and what is left. R70 has no letter left: a
-finding that fits no row opens the
-next number.
+R70k (R70b's fails on Enhanced), and nothing was loaded in a game: each row's Where it stands says
+what is built and what is left. R70 has no letter left: a finding that fits no row opens the next
+number.
 
 - [ ] [R70 The GTA V world editor](#r70-the-gta-v-world-editor) — the plan of 2026-11-25, in the parts below, begun in lanes the same day; parts of R70a, R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70l, R70m, R70n, R70p, R70q, R70r, R70v, R70w and R70y are built and no row is closed, and the Map screen of wave P44 and the World screen of GTA VI are what it starts from
   - [ ] [R70a What the game loads](#r70a-what-the-game-loads)
@@ -9964,10 +9963,9 @@ back, with the links of each child map renumbered and the parents' counts lowere
 (`a_deletion_takes_the_chain_of_far_models_across_the_files_of_a_pack`, on packs built by hand),
 and a session does it whole or not at all
 (`crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`).
-On Legacy, of 47 maps sampled, 40 deletions keep every link and are undone to the byte
-(`deleting_an_entity_of_the_install_keeps_every_link`, 2026-11-25; Enhanced not finished). A map
-that is not among
-the sources keeps its links, and the rules `parent-link-broken` and `lod-children-uncounted` name
+Both installs keep every link over the deletions sampled and undone, 40 on Legacy and 39 on
+Enhanced (`deleting_an_entity_of_the_install_keeps_every_link`, 2026-11-25). A map that is not
+among the sources keeps its links, and the rules `parent-link-broken` and `lod-children-uncounted` name
 what a removal alone leaves. Left: the rule for a door, the preview on a screen and the Map
 screen's Delete through the plan; the game's maps a deletion reaches come in by
 [R70h](#r70h-one-vocabulary-of-world-edits)'s first edit

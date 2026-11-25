@@ -19,6 +19,7 @@ use super::gta6_mount::{open_at, Gta6Mount};
 use super::header::{RpfEncryption, RpfHeader};
 use super::layout::{Input, Toc};
 use super::reader::{read_at, BodyForm};
+use super::rpf9_scan::RPF9_SLOT;
 use super::rpf9_toc::GtaViKeys;
 use crate::error::{IoError, Result};
 
@@ -91,6 +92,8 @@ struct Leaf {
     real: u64,
     /// A nested archive, which opens as a folder.
     archive: bool,
+    /// Its row is the 20-byte one of a headerless resource, whose body follows a 16-byte zero slot.
+    slot: bool,
     ciphered: bool,
 }
 
@@ -160,6 +163,7 @@ fn leaf<R: Read + Seek>(mount: &Gta6Mount, src: &mut R, at: usize, entry: &Gta6E
         real,
         archive,
         ciphered: entry.cipher.is_some(),
+        slot: entry.stored.is_none() && row.is_some(),
     }
 }
 
@@ -382,7 +386,7 @@ impl RpfArchive {
         Some(Rpf9Place {
             file: file_of(&self.source)?.to_path_buf(),
             base: self.start_pos,
-            offset: self.start_pos + offset,
+            offset: self.start_pos + offset + if leaf.slot { RPF9_SLOT } else { 0 },
             entry: entry.index,
             ciphered: leaf.ciphered,
         })
@@ -466,6 +470,7 @@ mod tests {
                     real: e.real.unwrap_or(0),
                     archive,
                     ciphered: false,
+                    slot: false,
                 }
             })
             .collect()

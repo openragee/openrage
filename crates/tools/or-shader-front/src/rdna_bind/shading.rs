@@ -180,6 +180,8 @@ pub enum Unfed {
     SkinnedBefore,
     #[error("it places the instances of a batch by a list and records only the game fills, at nought here, and draws nothing")]
     Batch,
+    #[error("it places each instance of an instanced draw by a record only the game fills, at nought here, and draws nothing")]
+    Instanced,
 }
 
 /// One stage of a shading pass ready for the renderer: its module, what fills each binding, and
@@ -337,6 +339,19 @@ const BATCH: u32 = 0x1AB3_F264;
 /// Whether a stage fed `feeds` draws the instances of a batch.
 fn draws_a_batch(feeds: &[Fed]) -> bool {
     feeds.iter().any(|fed| fed.feed == Feed::Zero(Some(BATCH)))
+}
+
+/// The records an instanced draw places its instances by, by the hash of their name: 128 bytes
+/// an instance, which start with the three rows of four floats that place it.
+// ⚠ A mesh stage that reads them binds no matrix of the object: with the records at nought every
+// corner of every triangle is the origin. With rows that leave a vertex where it is, three
+// effects still showed nothing: the rest of a record (the tile it stands in, a fade, the row of
+// its tint) is the game's, and what it holds for an instance at rest is not read.
+const INSTANCE_RECORDS: u32 = 0xB66F_6950;
+
+/// Whether a stage fed `feeds` places the instances of an instanced draw.
+fn places_instances(feeds: &[Fed]) -> bool {
+    (feeds.iter()).any(|fed| fed.feed == Feed::Zero(Some(INSTANCE_RECORDS)))
 }
 
 /// The constant buffers a device with default limits gives a stage.
@@ -860,6 +875,9 @@ pub fn feed(
     if mesh && draws_a_batch(&feeds) {
         return Err(Unfed::Batch);
     }
+    if mesh && places_instances(&feeds) {
+        return Err(Unfed::Instanced);
+    }
     if mesh {
         to_pixel_slots(&mut module, &parameter_slots(&native.outputs));
     }
@@ -1076,6 +1094,25 @@ var x = 0.0;
         assert!(!draws_a_batch(&[
             fed(Feed::Placement),
             fed(Feed::Zero(Some(OTHER)))
+        ]));
+    }
+
+    #[test]
+    fn a_stage_that_places_instances_is_told_by_their_records_at_nought() {
+        let fed = |feed| Fed {
+            group: 0,
+            binding: 7,
+            feed,
+            header: None,
+        };
+        assert!(places_instances(&[
+            fed(Feed::Meshlets),
+            fed(Feed::Zero(Some(INSTANCE_RECORDS)))
+        ]));
+        // An object's own record and a batch's list are other draws.
+        assert!(!places_instances(&[
+            fed(Feed::Instance),
+            fed(Feed::Zero(Some(BATCH)))
         ]));
     }
 
@@ -1625,5 +1662,13 @@ struct Words { words: array<u32> }
         assert!(stage.textures.is_empty());
 
         assert!(stage.streams.is_empty());
+
+        // With the records of an instanced draw where its matrix was, the stage is refused.
+        let mut instanced = native.clone();
+        instanced.records[1].stride = 128;
+        let mut named = program();
+        named.resources[3].name_hash = INSTANCE_RECORDS;
+        let refused = feed(&instanced, lowered(resources), &named, &effect).map(|_| ());
+        assert_eq!(refused, Err(Unfed::Instanced));
     }
 }

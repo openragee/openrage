@@ -128,7 +128,7 @@ pub(super) fn draw_tree(ui: &mut egui::Ui, doc: &Rpf9TableDocument) -> Option<Ac
     let row_height = ui.text_style_height(&egui::TextStyle::Body) + 4.0;
     egui::ScrollArea::both()
         .id_salt(("rpf9 table", &doc.path))
-        .auto_shrink([false, false])
+        .auto_shrink([false, true])
         .show_rows(ui, row_height, rows.len(), |ui, visible| {
             for row in visible {
                 let (base, index, depth) = rows[row];
@@ -216,14 +216,7 @@ pub(super) fn draw_tree(ui: &mut egui::Ui, doc: &Rpf9TableDocument) -> Option<Ac
 }
 
 fn type_name(kind: Gta6EntryType) -> &'static str {
-    match kind {
-        Gta6EntryType::Unknown => tr!("Unknown"),
-        Gta6EntryType::Archive => tr!("Archive"),
-        Gta6EntryType::TextureDictionary => tr!("Texture dictionary"),
-        Gta6EntryType::Resource(role) => crate::state::gta6_resource::role_name(Some(role)),
-        Gta6EntryType::Body(body) => crate::state::gta6_other_bodies::label(body),
-        Gta6EntryType::Rbf => tr!("RBF metadata"),
-    }
+    crate::state::files_view::rpf9_type_name(kind)
 }
 
 fn type_facts(kind: Gta6EntryType, detected: bool) -> String {

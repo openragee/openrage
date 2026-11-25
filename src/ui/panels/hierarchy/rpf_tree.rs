@@ -21,15 +21,7 @@ pub(super) struct ListedRow {
 }
 
 fn needs_expand(node: &RpfSessionNode) -> bool {
-    matches!(
-        node.backing,
-        RpfNodeBacking::DiskFolder { scanned: false, .. }
-            | RpfNodeBacking::Archive {
-                scanned: false,
-                open_error: None,
-                ..
-            }
-    )
+    node.backing.needs_scan()
 }
 
 /// Every row the tree shows, top to bottom: the rows under each open folder, less the files the filter drops.
@@ -159,7 +151,7 @@ fn row_clicked(
     } else {
         select_and_visit(state, doc_id, node_id);
         single(state);
-        if sole {
+        if sole && !super::rows::is_rpf9(state, doc_id, node_id) {
             super::ui_state(state).schedule_rename(doc_id, node_id, node.name.clone(), now);
         } else {
             super::ui_state(state).cancel_pending_rename();
@@ -219,12 +211,14 @@ pub(super) fn draw_row(
     let sole = state.selection.selected_ids(doc_id) == [node_id];
     let in_flight = state.expander.is_in_flight(doc_id, node_id);
 
-    let mut taken_rename: Option<RenameState> =
-        if super::ui_state(state).is_renaming_rpf(doc_id, node_id) {
-            super::ui_state(state).renaming.take()
-        } else {
-            None
-        };
+    let mut taken_rename: Option<RenameState> = if super::ui_state(state)
+        .is_renaming_rpf(doc_id, node_id)
+        && !super::rows::is_rpf9(state, doc_id, node_id)
+    {
+        super::ui_state(state).renaming.take()
+    } else {
+        None
+    };
     let renaming = taken_rename.is_some();
     let mut rename_action = InlineRenameAction::Editing;
 
@@ -235,17 +229,16 @@ pub(super) fn draw_row(
                 recovered_hint,
                 ..
             } => (open_error.as_deref(), recovered_hint.as_deref()),
+            RpfNodeBacking::Rpf9Archive { open_error, .. } => (open_error.as_deref(), None),
             _ => (None, None),
         };
-        // ⚠ GTA VI's refusal is no failure: the archive opens as a scan, and is drawn as one that opens.
-        let scans = archive_open_error.is_some_and(crate::state::gta_vi::is_rpf9_refusal);
         let outgrown = node
             .backing
             .fs_path()
             .is_some_and(|path| state.overlay_copy.stale_copy(path).is_some());
         let label_color = if selected {
             theme::ACCENT_TEXT
-        } else if archive_open_error.is_some() && !scans {
+        } else if archive_open_error.is_some() {
             theme::TEXT_SECONDARY
         } else if outgrown {
             theme::WARNING
@@ -283,15 +276,19 @@ pub(super) fn draw_row(
         };
         note_row(state, doc_id, node_id, resp.rect);
         let resp = resp.interact(egui::Sense::click_and_drag());
+        let resp = if let Some((index, hash)) = node.rpf9_entry() {
+            resp.on_hover_text(format!(
+                "{}\n#{index} · {hash:016X}",
+                crate::state::files_view::type_in_words(&node)
+            ))
+        } else {
+            resp
+        };
         if !renaming {
-            // ⚠ GTA VI's refusal says why itself; the GTA V key advice below is not true of it.
-            // The words are made only once the pointer rests on the row.
-            let resp = if let Some(err) = archive_open_error.filter(|_| scans) {
-                resp.on_hover_ui(|ui| {
-                    ui.set_max_width(ui.spacing().tooltip_width);
-                    ui.label(err);
-                    ui.label(tr!("It opens from its table in a tab of its own."));
-                })
+            let table_error = matches!(node.backing, RpfNodeBacking::Rpf9Archive { .. })
+                || archive_open_error.is_some_and(crate::state::gta_vi::is_rpf9_refusal);
+            let resp = if let Some(err) = archive_open_error.filter(|_| table_error) {
+                resp.on_hover_text(err)
             } else if let Some(err) = archive_open_error {
                 resp.on_hover_ui(|ui| {
                     ui.set_max_width(ui.spacing().tooltip_width);
@@ -332,7 +329,7 @@ pub(super) fn draw_row(
             rpf_context_menu(&resp, state, doc_id, &node, asked, false);
         }
     } else {
-        let supported = rpf_path_supported(&node.name);
+        let supported = node.rpf9_type().is_some() || rpf_path_supported(&node.name);
         let color = if !supported {
             theme::TEXT_SECONDARY
         } else if selected {
@@ -355,6 +352,14 @@ pub(super) fn draw_row(
         };
         note_row(state, doc_id, node_id, resp.rect);
         let resp = resp.interact(egui::Sense::click_and_drag());
+        let resp = if let Some((index, hash)) = node.rpf9_entry() {
+            resp.on_hover_text(format!(
+                "{}\n#{index} · {hash:016X}",
+                crate::state::files_view::type_in_words(&node)
+            ))
+        } else {
+            resp
+        };
         if !renaming {
             // ⚠ An entry open as its own document is a leaf here: its tree is the Outline's.
             let open = |state: &mut AppState| match bound_doc_id {

@@ -12,10 +12,6 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
     super::rows::focus_on_drop(ui, state, ids::FILES);
     history_input(ui, state);
 
-    if crate::ui::panels::inspector::draw_archive_table(ui, state) {
-        return;
-    }
-
     // Explicit scan documents and their bodies retain the scan's list.
     if let Some(scan) = state.scan_listing_the_active_tab() {
         crate::ui::panels::inspector::draw_scan_list(ui, state, scan);
@@ -179,8 +175,19 @@ fn draw_trees(ui: &mut egui::Ui, state: &mut AppState) {
     let doc_ids: Vec<DocumentId> = state
         .documents
         .iter()
-        .filter(|d| d.rpf_entry_binding.is_none() && matches!(d.payload, DocPayload::Rpf(_)))
-        .map(|d| d.id)
+        .filter(|doc| {
+            doc.rpf_entry_binding.is_none()
+                && match &doc.payload {
+                    DocPayload::Rpf(_) => true,
+                    DocPayload::Rpf9(crate::state::Rpf9Document::Table(table)) => {
+                        !state.documents.iter().any(|doc| {
+                            matches!(&doc.payload, DocPayload::Rpf(rpf) if rpf.session.rpf9_table(&table.path).is_some())
+                        })
+                    }
+                    _ => false,
+                }
+        })
+        .map(|doc| doc.id)
         .collect();
     if doc_ids.is_empty() {
         let scope = ui.scope(|ui| {

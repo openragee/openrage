@@ -71,6 +71,7 @@ enum ExtractSource {
         kind: RpfEntryKind,
     },
     Rpf9Table(Arc<super::document::rpf9::entry::EntrySource>),
+    Failed(String),
     Disk(PathBuf),
     Bytes(Arc<Vec<u8>>),
     /// A body a scan of the GTA VI archive at `archive` found at `offset`.
@@ -182,6 +183,7 @@ impl ExtractItem {
             } => super::gta6_edit::written(archive, *offset, &**edit),
             ExtractSource::Written(write) => write(),
             ExtractSource::Rpf9Table(source) => source.bytes(),
+            ExtractSource::Failed(error) => Err(error.clone()),
             ExtractSource::Archive {
                 device,
                 entry_index,
@@ -393,6 +395,10 @@ pub(super) fn sanitise(name: &str) -> String {
 fn source_for(session: &RpfEditSession, node_id: RpfNodeId) -> Option<ExtractSource> {
     let node = session.node(node_id)?;
     match &node.backing {
+        RpfNodeBacking::Rpf9File { table, base, index } => Some(match table.entry(*base, *index) {
+            Ok(source) => ExtractSource::Rpf9Table(Arc::new(source)),
+            Err(error) => ExtractSource::Failed(error),
+        }),
         RpfNodeBacking::InMemoryFile { bytes } => Some(ExtractSource::Bytes(Arc::clone(bytes))),
         RpfNodeBacking::DiskFile {
             fs_path,
@@ -883,7 +889,7 @@ impl AppState {
                 ExtractSource::Scanned { archive, .. } => Some(archive.as_path()),
                 ExtractSource::Edited { archive, .. } => Some(archive.as_path()),
                 ExtractSource::Bytes(_) | ExtractSource::Sections(_) => None,
-                ExtractSource::Written(_) => None,
+                ExtractSource::Written(_) | ExtractSource::Failed(_) => None,
             })
             .collect::<std::collections::HashSet<&Path>>()
             .into_iter()

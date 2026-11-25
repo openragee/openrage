@@ -16816,9 +16816,6 @@ msgstr "GTA VI 归档根据其表列出条目，且为只读；OpenRage 不会�
 msgid "a GTA VI archive opens from its own file using its encrypted table of contents"
 msgstr "GTA VI 归档通过加密的目录表从其自身文件打开"
 
-msgid "It opens from its table in a tab of its own."
-msgstr "它会根据其表在单独的标签页中打开。"
-
 msgid "RPF9 — a GTA VI archive listed from its table, read-only"
 msgstr "RPF9 — 根据其表列出条目的 GTA VI 归档，只读"
 

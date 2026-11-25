@@ -77,8 +77,12 @@ An RPF9 archive opens from its encrypted table of contents. It needs the user's 
 `gtavi_magic.dat` in the configuration folder or the file `OPENRAGE_GTA6_KEYS` names; a masked
 snapshot also needs the executable `OPENRAGE_GTA6_EXE` names. Missing keys or an invalid table
 produce an error, with no scan fallback. The Files panel lists the entries and loads a nested
-archive's table when it is expanded, on a worker and within its containing entry's bounds. A name
-the loaded vocabulary does not resolve is shown as its hash. An entry whose table does not state
+archive's table when it is expanded, on a worker and within its containing entry's bounds.
+In an opened folder, RPF9 archives expand inside the same Files tree as other archives. Resolved
+paths form folders; unresolved hashes remain at the root of their owning archive. File icons use
+the table's type, independently of the displayed name. Properties show the original entry index
+and 64-bit hash. Opening an entry keeps its Files selection and breadcrumb trail. The archive's
+contents are read-only, including tree edits. An entry whose table does not state
 its class offers **Open as archive**, which checks only its stated position and extent.
 
 The table view opens a file with **Open** or a double-click, and **Extract…** writes its decoded

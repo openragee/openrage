@@ -168,22 +168,35 @@ pub fn draw_scan_list(ui: &mut egui::Ui, state: &mut AppState, doc: DocumentId) 
     draw_scan_rows(ui, state, doc);
 }
 
-/// Draw the table-backed archive tree when the active document holds one.
+#[cfg(test)]
 pub fn draw_archive_table(ui: &mut egui::Ui, state: &mut AppState) -> bool {
-    let document = state.active_document().and_then(|active| {
-        let archive = active
-            .path
-            .as_deref()
-            .and_then(crate::state::rpf9::entry::archive_path);
-        match archive {
-            Some(archive) => state
-                .documents
-                .iter()
-                .find(|doc| doc.path.as_deref() == Some(archive)),
-            None => Some(active),
-        }
-    });
-    let Some(DocPayload::Rpf9(Rpf9Document::Table(table))) = document.map(|doc| &doc.payload)
+    let document = state
+        .active_document()
+        .and_then(|active| {
+            let archive = active
+                .path
+                .as_deref()
+                .and_then(crate::state::rpf9::entry::archive_path);
+            match archive {
+                Some(archive) => state
+                    .documents
+                    .iter()
+                    .find(|doc| doc.path.as_deref() == Some(archive)),
+                None => Some(active),
+            }
+        })
+        .map(|doc| doc.id);
+    document.is_some_and(|id| draw_archive_table_document(ui, state, id))
+}
+
+/// Draw the table-backed archive tree of document `doc_id`.
+pub fn draw_archive_table_document(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    doc_id: DocumentId,
+) -> bool {
+    let Some(DocPayload::Rpf9(Rpf9Document::Table(table))) =
+        state.document(doc_id).map(|doc| &doc.payload)
     else {
         return false;
     };

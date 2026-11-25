@@ -87,6 +87,14 @@ pub struct Rpf9TableDocument {
     tree: Arc<Mutex<Tree>>,
 }
 
+impl std::fmt::Debug for Rpf9TableDocument {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Rpf9TableDocument")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Rpf9TableDocument {
     /// Recognise RPF9 by its magic, then open its table or return the error without recovery.
     pub fn open(path: &Path) -> Result<Option<Self>, String> {
@@ -97,7 +105,7 @@ impl Rpf9TableDocument {
         })
     }
 
-    fn open_using(
+    pub(crate) fn open_using(
         path: &Path,
         keys: impl FnOnce() -> Result<GtaViKeys, String>,
     ) -> Result<Option<Self>, String> {
@@ -171,6 +179,97 @@ impl Rpf9TableDocument {
                         .sum::<usize>()
             })
             .sum()
+    }
+
+    pub(crate) fn check_current(&self) -> Result<(), String> {
+        let now = std::fs::metadata(&self.path).map_err(|e| e.to_string())?;
+        if now.len() != self.metadata.len() || now.modified().ok() != self.metadata.modified().ok()
+        {
+            return Err(
+                tr!("The archive changed on disk. Reopen it to read its table.").to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Load a bounded child table synchronously on an archive expansion worker.
+    pub fn expand_table(&self, base: u64, index: u32) -> Result<u64, String> {
+        self.check_current()?;
+        let (extent, depth, chain) = {
+            let tree = self.tree();
+            let parent = tree
+                .nodes
+                .get(&base)
+                .ok_or_else(|| tr!("The archive table could not be loaded.").to_string())?;
+            if !parent
+                .archive
+                .entries
+                .get(index as usize)
+                .is_some_and(is_archive)
+            {
+                return Err(
+                    tr!("This entry does not describe a bounded nested archive.").to_string(),
+                );
+            }
+            let extent = child_extent(parent, index)?;
+            if let Some(node) = tree.nodes.get(&extent.start) {
+                return if node.extent == extent {
+                    Ok(extent.start)
+                } else {
+                    Err(tr!("This entry does not describe a bounded nested archive.").to_string())
+                };
+            }
+            let mut chain = parent.chain.clone();
+            chain.push(index);
+            (extent, parent.depth + 1, chain)
+        };
+        let loaded: Result<Node, String> = (|| {
+            let mut file = File::open(&self.path).map_err(|e| e.to_string())?;
+            let check = |file: &File| -> Result<(), String> {
+                let now = file.metadata().map_err(|e| e.to_string())?;
+                if now.len() != self.metadata.len()
+                    || now.modified().ok() != self.metadata.modified().ok()
+                {
+                    return Err(
+                        tr!("The archive changed on disk. Reopen it to read its table.")
+                            .to_string(),
+                    );
+                }
+                Ok(())
+            };
+            check(&file)?;
+            let mut archive = open_at_bounded(&mut file, extent.clone(), &self.keys)
+                .map_err(|e| e.to_string())?;
+            check(&file)?;
+            archive.resolve_names(&self.resolver);
+            Ok(Node {
+                archive,
+                extent: extent.clone(),
+                depth,
+                chain,
+            })
+        })();
+        let mut tree = self.tree();
+        match loaded {
+            Ok(node) => {
+                if tree
+                    .nodes
+                    .get(&extent.start)
+                    .is_some_and(|old| old.extent != extent)
+                {
+                    return Err(
+                        tr!("This entry does not describe a bounded nested archive.").to_string(),
+                    );
+                }
+                tree.nodes.entry(extent.start).or_insert(node);
+                tree.errors.remove(&(base, index));
+                Ok(extent.start)
+            }
+            Err(error) => {
+                tree.errors.insert((base, index), error.clone());
+                Err(error)
+            }
+        }
     }
 
     /// Toggle a child archive, loading its table on a worker on the first expansion.

@@ -16816,9 +16816,6 @@ msgstr "GTA VIアーカイブはテーブルから一覧表示され、読み取
 msgid "a GTA VI archive opens from its own file using its encrypted table of contents"
 msgstr "GTA VIアーカイブは、暗号化された目次を使って自身のファイルから開きます"
 
-msgid "It opens from its table in a tab of its own."
-msgstr "専用のタブでテーブルから開きます。"
-
 msgid "RPF9 — a GTA VI archive listed from its table, read-only"
 msgstr "RPF9 — テーブルから一覧表示されるGTA VIアーカイブ、読み取り専用"
 

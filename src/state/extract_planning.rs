@@ -103,7 +103,8 @@ impl OpenUnder {
             return Look::Open(Vec::new());
         };
         let (is_archive, open_error) = match &node.backing {
-            RpfNodeBacking::Archive { open_error, .. } => (true, open_error.clone()),
+            RpfNodeBacking::Archive { open_error, .. }
+            | RpfNodeBacking::Rpf9Archive { open_error, .. } => (true, open_error.clone()),
             _ => (false, None),
         };
         let unopened = rpf.session.needs_expansion(id);
@@ -128,6 +129,12 @@ impl OpenUnder {
             self.opened += 1;
             self.asked.remove(&id);
             return Look::Open(folders());
+        }
+        if let Some(error) = open_error {
+            if self.skip.contains(&id) {
+                return Look::Open(Vec::new());
+            }
+            return Look::Failed(format!("`{}`: {error}", named()));
         }
         if !unopened {
             return Look::Open(folders());

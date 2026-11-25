@@ -51,6 +51,9 @@ pub(super) fn add_items(
     else {
         return;
     };
+    if super::rows::is_rpf9(state, doc_id, parent) {
+        return;
+    }
     commands::offer(ui, state, Action::NewFolder, target, asked);
     let mut new_file_kind: Option<DocumentKind> = None;
     crate::ui::commands::submenu(ui, tr!("New file"), |ui| {
@@ -85,7 +88,9 @@ pub(super) fn background_menu(
             return;
         };
         add_items(ui, state, &target, asked);
-        commands::offer(ui, state, Action::Paste, &target, asked);
+        if !super::rows::is_rpf9(state, doc_id, folder) {
+            commands::offer(ui, state, Action::Paste, &target, asked);
+        }
         ui.separator();
         commands::offer(ui, state, Action::Properties, &target, asked);
     });
@@ -182,7 +187,7 @@ pub(super) fn property_rows(
         None => "—".to_string(),
     };
     let text = |t: Option<&str>| t.unwrap_or("—").to_string();
-    vec![
+    let mut rows = vec![
         (tr!("Name"), name.to_string()),
         (tr!("Type"), facts.kind.clone()),
         (tr!("Size"), bytes(facts.size)),
@@ -194,7 +199,17 @@ pub(super) fn property_rows(
             tr!("Version"),
             facts.version.map_or("—".to_string(), |v| v.to_string()),
         ),
-        (tr!("Hash"), format!("0x{:08X}", name_hash(name))),
+        (
+            tr!("Hash"),
+            match facts.rpf9_entry {
+                Some((_, hash)) => format!("0x{hash:016X}"),
+                None => format!("0x{:08X}", name_hash(name)),
+            },
+        ),
         (tr!("Path"), path.to_string()),
-    ]
+    ];
+    if let Some((index, _)) = facts.rpf9_entry {
+        rows.insert(2, (tr!("Entry"), index.to_string()));
+    }
+    rows
 }

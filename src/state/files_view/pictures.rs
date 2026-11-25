@@ -41,6 +41,15 @@ pub fn picture_kind(name: &str) -> Option<PictureKind> {
     }
 }
 
+/// A row's picture family, with the RPF9 table taking precedence over a filename.
+pub fn picture_kind_for(node: &super::super::RpfSessionNode) -> Option<PictureKind> {
+    if let Some(kind) = node.rpf9_type() {
+        return (kind == or_io::container::rpf::Gta6EntryType::TextureDictionary)
+            .then_some(PictureKind::Texture);
+    }
+    picture_kind(&node.name)
+}
+
 /// Entries larger than this are shown by their glyph: the whole file is read to make one.
 pub const PICTURE_LIMIT: u64 = 32 * 1024 * 1024;
 
@@ -141,8 +150,13 @@ struct Job {
     key: PictureKey,
     kind: PictureKind,
     name: String,
-    item: ExtractItem,
+    source: Source,
     crypto: Arc<dyn RpfCryptoProvider>,
+}
+
+enum Source {
+    Entry(ExtractItem),
+    Rpf9(Box<super::super::document::rpf9::entry::EntrySource>),
 }
 
 /// The pictures being made, newest asked first.
@@ -182,11 +196,23 @@ impl Pictures {
         let Some(node) = session.node(key.node).filter(|n| !n.is_dir()) else {
             return false;
         };
-        let Some(kind) = picture_kind(&node.name).filter(|_| key.size <= PICTURE_LIMIT) else {
+        let Some(kind) = picture_kind_for(node).filter(|_| key.size <= PICTURE_LIMIT) else {
             return false;
         };
-        let Some(item) = plan(session, key.node, &TypeFilter::All).into_iter().next() else {
-            return false;
+        let source = match &node.backing {
+            super::super::RpfNodeBacking::Rpf9File { table, base, index } => {
+                let Ok(source) = table.entry(*base, *index) else {
+                    return false;
+                };
+                Source::Rpf9(Box::new(source))
+            }
+            _ => {
+                let Some(item) = plan(session, key.node, &TypeFilter::All).into_iter().next()
+                else {
+                    return false;
+                };
+                Source::Entry(item)
+            }
         };
         // ⚠ The rows asked for last are the ones on screen; the oldest asked
         // were scrolled past, and are asked again if they come back.
@@ -199,7 +225,7 @@ impl Pictures {
             key,
             kind,
             name: node.name.clone(),
-            item,
+            source,
             crypto,
         });
         self.asked.insert(key);
@@ -229,9 +255,15 @@ impl Pictures {
             self.running += 1;
             let tx = self.tx.clone();
             std::thread::spawn(move || {
-                let made = match job.item.read(BodyForm::Decoded) {
-                    Ok(bytes) => make(job.kind, &job.name, &bytes, job.key.side, job.crypto),
-                    Err(e) => Made::Failed(tr!("Its bytes could not be read: {e}", e = e)),
+                let made = match job.source {
+                    Source::Rpf9(source) => match source.payload_limited(PICTURE_LIMIT) {
+                        Ok(payload) => first_texture(&payload, &job.name, job.key.side),
+                        Err(error) => Made::Failed(error),
+                    },
+                    Source::Entry(item) => match item.read(BodyForm::Decoded) {
+                        Ok(bytes) => make(job.kind, &job.name, &bytes, job.key.side, job.crypto),
+                        Err(e) => Made::Failed(tr!("Its bytes could not be read: {e}", e = e)),
+                    },
                 };
                 let _ = tx.send((job.key, made));
             });

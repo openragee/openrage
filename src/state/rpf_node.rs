@@ -2,7 +2,10 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use or_io::container::rpf::Gta6EntryType;
 use or_io::container::RpfArchive;
+
+use super::document::rpf9::Rpf9TableDocument;
 
 use super::document::{ArchiveId, RpfNodeId};
 use super::memory::hash_table_bytes;
@@ -37,6 +40,20 @@ pub enum RpfNodeBacking {
         open_error: Option<String>,
         recovered_hint: Option<String>,
     },
+    Rpf9Archive {
+        table: Arc<Rpf9TableDocument>,
+        owner: Option<(u64, u32)>,
+        opened_base: Option<u64>,
+        open_error: Option<String>,
+    },
+    Rpf9Dir {
+        table: Arc<Rpf9TableDocument>,
+    },
+    Rpf9File {
+        table: Arc<Rpf9TableDocument>,
+        base: u64,
+        index: u32,
+    },
     ArchiveDir {
         archive_id: ArchiveId,
     },
@@ -69,6 +86,11 @@ impl RpfNodeBacking {
                     open_error: None,
                     ..
                 }
+                | RpfNodeBacking::Rpf9Archive {
+                    opened_base: None,
+                    open_error: None,
+                    ..
+                }
         )
     }
 
@@ -80,6 +102,9 @@ impl RpfNodeBacking {
                 source: ArchiveSource::Disk(Some(path)),
                 ..
             } => Some(path.as_path()),
+            RpfNodeBacking::Rpf9Archive {
+                table, owner: None, ..
+            } => Some(&table.path),
             _ => None,
         }
     }
@@ -123,6 +148,31 @@ impl RpfSessionNode {
         matches!(self.kind, RpfSessionNodeKind::Directory)
     }
 
+    pub fn rpf9_type(&self) -> Option<Gta6EntryType> {
+        match &self.backing {
+            RpfNodeBacking::Rpf9Archive { .. } => Some(Gta6EntryType::Archive),
+            RpfNodeBacking::Rpf9File { table, base, index } => {
+                Some(table.tree().entry_type(*base, *index).0)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn rpf9_entry(&self) -> Option<(u32, u64)> {
+        let (table, base, index) = match &self.backing {
+            RpfNodeBacking::Rpf9File { table, base, index } => (table, *base, *index),
+            RpfNodeBacking::Rpf9Archive {
+                table,
+                owner: Some((base, index)),
+                ..
+            } => (table, *base, *index),
+            _ => return None,
+        };
+        let tree = table.tree();
+        let entry = tree.nodes.get(&base)?.archive.entries.get(index as usize)?;
+        Some((index, entry.name64))
+    }
+
     /// What the row allocates besides the node: its name, its children and the paths its backing names.
     pub fn row_bytes(&self) -> usize {
         let backing = match &self.backing {
@@ -140,6 +190,9 @@ impl RpfSessionNode {
                 };
                 path + open_error.as_ref().map_or(0, String::capacity)
                     + recovered_hint.as_ref().map_or(0, String::capacity)
+            }
+            RpfNodeBacking::Rpf9Archive { open_error, .. } => {
+                open_error.as_ref().map_or(0, String::capacity)
             }
             _ => 0,
         };
@@ -179,7 +232,20 @@ impl super::rpf_session::RpfEditSession {
             .lock()
             .map_or(0, |c| c.iter().map(|(_, b)| b.len()).sum());
         let archives: usize = self.archives.values().map(ArchiveSlot::memory_bytes).sum();
-        entries + cached + archives
+        let mut seen = HashSet::new();
+        let rpf9: usize = self
+            .nodes
+            .values()
+            .filter_map(|node| match &node.backing {
+                RpfNodeBacking::Rpf9Archive { table, .. }
+                | RpfNodeBacking::Rpf9Dir { table, .. }
+                | RpfNodeBacking::Rpf9File { table, .. } => Some(table),
+                _ => None,
+            })
+            .filter(|table| seen.insert(Arc::as_ptr(table)))
+            .map(|table| table.held_bytes())
+            .sum();
+        entries + cached + archives + rpf9
     }
 
     /// The rows of the tree: each node, its name, its children and the paths it reads from.

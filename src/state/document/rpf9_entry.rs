@@ -1,7 +1,9 @@
 //! Opening and extracting an entry through its table, with a reloadable archive/index address.
 
 use super::*;
-use crate::state::{AppState, DocPayload, DocumentKind, LoadResult, LoadingState};
+use crate::state::{
+    AppState, DocPayload, DocumentKind, LoadResult, LoadingState, RpfEntryBinding, RpfNodeBacking,
+};
 use or_io::container::rpf::{Gta6EntryContent, Gta6EntryExtra, Gta6EntryRead};
 
 const MARKER: &str = ".rpf9-table";
@@ -186,10 +188,14 @@ fn checked_file(path: &Path, metadata: &Metadata) -> Result<File, String> {
 
 impl EntrySource {
     pub fn bytes(&self) -> Result<Vec<u8>, String> {
+        self.bytes_limited(LIMIT)
+    }
+
+    fn bytes_limited(&self, limit: u64) -> Result<Vec<u8>, String> {
         let mut file = checked_file(&self.archive, &self.metadata)?;
         let bytes = self
             .read
-            .read_limited(&mut file, &self.keys, LIMIT)
+            .read_limited(&mut file, &self.keys, limit)
             .map_err(|e| e.to_string())?;
         checked_file(&self.archive, &self.metadata)?;
         Ok(bytes)
@@ -205,9 +211,13 @@ impl EntrySource {
         Ok(count)
     }
 
-    fn payload(&self) -> Result<DocPayload, String> {
+    pub(crate) fn payload(&self) -> Result<DocPayload, String> {
+        self.payload_limited(LIMIT)
+    }
+
+    pub(crate) fn payload_limited(&self, limit: u64) -> Result<DocPayload, String> {
         let result = (|| {
-            let bytes = self.bytes()?;
+            let bytes = self.bytes_limited(limit)?;
             let content = Gta6EntryContent::detect(&self.entry, &self.extra, &bytes)
                 .map_err(|e| e.to_string())?;
             let payload = if let Some(textures) = content.textures {
@@ -241,7 +251,61 @@ impl EntrySource {
 }
 
 impl AppState {
+    pub(crate) fn rpf9_tree_context(
+        &self,
+        path: &Path,
+    ) -> Option<(Arc<Rpf9TableDocument>, Option<RpfEntryBinding>)> {
+        let (archive, chain) = address(path).ok()?;
+        let (&index, parents) = chain.split_last()?;
+        for doc in &self.documents {
+            let DocPayload::Rpf(rpf) = &doc.payload else {
+                continue;
+            };
+            let table = rpf.session.rpf9_table(&archive).cloned();
+            let Some(table) = table else { continue };
+            let base = table
+                .tree()
+                .nodes
+                .iter()
+                .find_map(|(&base, node)| (node.chain == parents).then_some(base));
+            let binding = base.and_then(|base| {
+                rpf.session
+                    .nodes
+                    .values()
+                    .find_map(|node| match &node.backing {
+                        RpfNodeBacking::Rpf9File {
+                            table: owner,
+                            base: at,
+                            index: row,
+                        } if owner.path == archive && *at == base && *row == index => {
+                            Some(RpfEntryBinding {
+                                parent_doc_id: doc.id,
+                                entry_id: node.id,
+                            })
+                        }
+                        _ => None,
+                    })
+            });
+            return Some((table, binding));
+        }
+        self.documents.iter().find_map(|doc| match &doc.payload {
+            DocPayload::Rpf9(super::super::Rpf9Document::Table(table)) if table.path == archive => {
+                Some((Arc::clone(table), None))
+            }
+            _ => None,
+        })
+    }
     pub fn open_rpf9_entry(&mut self, table: &Rpf9TableDocument, base: u64, index: u32) {
+        self.open_rpf9_row(table, base, index, None);
+    }
+
+    pub(crate) fn open_rpf9_row(
+        &mut self,
+        table: &Rpf9TableDocument,
+        base: u64,
+        index: u32,
+        binding: Option<RpfEntryBinding>,
+    ) {
         let source = match table.entry(base, index) {
             Ok(source) => source,
             Err(error) => {
@@ -249,23 +313,30 @@ impl AppState {
                 return;
             }
         };
-        if let Some(open) = self.document_holding(&source.path, None) {
+        if let Some(open) = self.document_holding(&source.path, binding) {
+            self.bind_rpf9_document(open, binding);
             self.set_active_document(open);
             return;
         }
         if self.load_receiver.is_some() {
+            if let Some(binding) = binding {
+                self.tabs
+                    .queued_rpf9
+                    .push_back((source.path.clone(), binding));
+            }
             self.load_file(source.path);
             return;
         }
         self.loading = LoadingState::Loading;
         let (tx, rx) = mpsc::channel();
         self.load_receiver = Some((source.path.clone(), rx));
+        self.tabs.arriving = binding;
         std::thread::spawn(move || {
             let result = match source.payload() {
                 Ok(payload) => LoadResult::Success {
                     path: source.path,
                     payload,
-                    binding: None,
+                    binding,
                     resource: None,
                 },
                 Err(message) => LoadResult::Error {
@@ -275,6 +346,23 @@ impl AppState {
             };
             let _ = tx.send(result);
         });
+    }
+
+    pub(crate) fn bind_rpf9_document(
+        &mut self,
+        open: crate::state::DocumentId,
+        binding: Option<RpfEntryBinding>,
+    ) {
+        let Some(binding) = binding else { return };
+        if let Some(doc) = self.document_mut(open) {
+            doc.rpf_entry_binding = Some(binding);
+        }
+        if let Some(DocPayload::Rpf(rpf)) = self
+            .document_mut(binding.parent_doc_id)
+            .map(|doc| &mut doc.payload)
+        {
+            rpf.entry_documents.insert(binding.entry_id, open);
+        }
     }
 
     pub fn extract_rpf9_entry(

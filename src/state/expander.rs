@@ -6,6 +6,7 @@ use std::thread;
 use or_io::container::{RpfArchive, RpfCryptoProvider};
 use or_title::vfs::{ArchiveDevice, ArchiveEntry, ArchiveEntryKind};
 
+use super::document::rpf9::Rpf9TableDocument;
 use super::document::{DocumentId, RpfNodeId};
 use super::rpf_archive_open::open_archive_from_disk;
 
@@ -24,6 +25,10 @@ pub enum ExpansionRequest {
 }
 
 pub enum WorkerArchiveSource {
+    Rpf9 {
+        table: Arc<Rpf9TableDocument>,
+        owner: Option<(u64, u32)>,
+    },
     Disk(PathBuf),
     /// A nested archive the VFS listing of its parent already opened.
     Opened(Arc<RpfArchive>),
@@ -42,12 +47,21 @@ pub enum ExpansionResult {
     Archive {
         doc_id: DocumentId,
         node_id: RpfNodeId,
-        result: Result<ResolvedArchive, String>,
+        result: Result<ResolvedArchiveTree, String>,
     },
     Failure {
         doc_id: DocumentId,
         node_id: RpfNodeId,
         error: String,
+    },
+}
+
+pub enum ResolvedArchiveTree {
+    Archive(ResolvedArchive),
+    Rpf9 {
+        table: Arc<Rpf9TableDocument>,
+        owner: Option<(u64, u32)>,
+        base: u64,
     },
 }
 
@@ -258,9 +272,28 @@ fn disk_item_name(item: &DiskScanItem) -> &str {
 pub(super) fn open_archive(
     source: WorkerArchiveSource,
     crypto: Arc<dyn RpfCryptoProvider>,
-) -> Result<ResolvedArchive, String> {
+) -> Result<ResolvedArchiveTree, String> {
     let (archive, fs_path) = match source {
-        WorkerArchiveSource::Disk(path) => (open_archive_from_disk(&path, crypto)?, Some(path)),
+        WorkerArchiveSource::Disk(path) => {
+            if let Some(table) = Rpf9TableDocument::open(&path)? {
+                return Ok(ResolvedArchiveTree::Rpf9 {
+                    table: Arc::new(table),
+                    owner: None,
+                    base: 0,
+                });
+            }
+            (open_archive_from_disk(&path, crypto)?, Some(path))
+        }
+        WorkerArchiveSource::Rpf9 { table, owner } => {
+            let base = match owner {
+                Some((base, index)) => table.expand_table(base, index)?,
+                None => {
+                    table.check_current()?;
+                    0
+                }
+            };
+            return Ok(ResolvedArchiveTree::Rpf9 { table, owner, base });
+        }
         WorkerArchiveSource::Opened(archive) => (archive, None),
         WorkerArchiveSource::Nested {
             parent,
@@ -273,11 +306,11 @@ pub(super) fn open_archive(
         ),
     };
     let listing = list_archive(Arc::clone(&archive))?;
-    Ok(ResolvedArchive {
+    Ok(ResolvedArchiveTree::Archive(ResolvedArchive {
         archive,
         fs_path,
         listing,
-    })
+    }))
 }
 
 /// One entry of the VFS listing of an archive and, for a folder, what it holds.

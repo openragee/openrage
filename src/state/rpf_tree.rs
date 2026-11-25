@@ -1,12 +1,25 @@
 use super::*;
 
 impl AppState {
+    pub(super) fn require_writable_rpf_row(
+        &self,
+        doc: DocumentId,
+        node: RpfNodeId,
+    ) -> Result<(), String> {
+        if matches!(self.document(doc).map(|doc| &doc.payload),
+            Some(DocPayload::Rpf(rpf)) if rpf.session.is_rpf9(node))
+        {
+            return Err(crate::i18n::tr(document::rpf9::entry::READ_ONLY).to_string());
+        }
+        Ok(())
+    }
     pub fn rpf_add_folder(
         &mut self,
         doc_id: DocumentId,
         parent_id: RpfNodeId,
         name: &str,
     ) -> Result<RpfNodeId, String> {
+        self.require_writable_rpf_row(doc_id, parent_id)?;
         let target = self.affected_disk_path(doc_id, parent_id);
         self.gate_tree_edit(
             target.as_deref(),
@@ -26,6 +39,7 @@ impl AppState {
         parent_id: RpfNodeId,
         name: &str,
     ) -> Result<RpfNodeId, String> {
+        self.require_writable_rpf_row(doc_id, parent_id)?;
         if self.is_disk_folder(doc_id, parent_id) {
             let (name, new_path) = self.claim_name(doc_id, parent_id, name, None)?;
             std::fs::create_dir(&new_path).map_err(|e| {
@@ -71,6 +85,7 @@ impl AppState {
         node_id: RpfNodeId,
         name: &str,
     ) -> Result<(), String> {
+        self.require_writable_rpf_row(doc_id, node_id)?;
         // ⚠ Before the gate: a name the row already has changes nothing, so it asks and writes nothing.
         let unchanged = matches!(
             self.document(doc_id).map(|d| &d.payload),
@@ -99,6 +114,7 @@ impl AppState {
         node_id: RpfNodeId,
         name: &str,
     ) -> Result<(), String> {
+        self.require_writable_rpf_row(doc_id, node_id)?;
         let disk_path = self.disk_path_for_node(doc_id, node_id);
         if let Some(old_path) = disk_path {
             self.no_job_holds(&old_path, tr!("rename it"))?;
@@ -155,6 +171,7 @@ impl AppState {
         doc_id: DocumentId,
         node_id: RpfNodeId,
     ) -> Result<(), String> {
+        self.require_writable_rpf_row(doc_id, node_id)?;
         let target = self.affected_disk_path(doc_id, node_id);
         self.gate_tree_edit(
             target.as_deref(),
@@ -170,6 +187,7 @@ impl AppState {
         doc_id: DocumentId,
         node_id: RpfNodeId,
     ) -> Result<Option<super::rpf_undo::Rows>, String> {
+        self.require_writable_rpf_row(doc_id, node_id)?;
         let disk_path = self.disk_path_for_node(doc_id, node_id);
         if let Some(path) = &disk_path {
             self.no_job_holds(path, tr!("delete it"))?;
@@ -214,6 +232,8 @@ impl AppState {
         node_id: RpfNodeId,
         new_parent: RpfNodeId,
     ) -> Result<(), String> {
+        self.require_writable_rpf_row(doc_id, node_id)?;
+        self.require_writable_rpf_row(doc_id, new_parent)?;
         let src_disk = self.disk_path_for_node(doc_id, node_id);
         match (src_disk.as_ref(), self.is_disk_folder(doc_id, new_parent)) {
             (Some(src), true) => {
@@ -275,6 +295,7 @@ impl AppState {
         folder_id: RpfNodeId,
         file_path: PathBuf,
     ) -> Result<RpfNodeId, String> {
+        self.require_writable_rpf_row(doc_id, folder_id)?;
         let target = self.affected_disk_path(doc_id, folder_id);
         self.gate_tree_edit(
             target.as_deref(),
@@ -294,6 +315,7 @@ impl AppState {
         folder_id: RpfNodeId,
         file_path: PathBuf,
     ) -> Result<RpfNodeId, String> {
+        self.require_writable_rpf_row(doc_id, folder_id)?;
         let bytes = std::fs::read(&file_path).map_err(|e| {
             tr!(
                 "Read error ({file_path}): {e}",
@@ -571,6 +593,12 @@ impl AppState {
         let node = rpf.session.node(node_id)?;
         if let Some(p) = node.backing.fs_path() {
             return Some(p.to_path_buf());
+        }
+        match &node.backing {
+            RpfNodeBacking::Rpf9Archive { table, .. }
+            | RpfNodeBacking::Rpf9Dir { table, .. }
+            | RpfNodeBacking::Rpf9File { table, .. } => return Some(table.path.clone()),
+            _ => {}
         }
         match rpf.session.archive_on_disk_around(node_id) {
             Some((_, path)) => Some(path),

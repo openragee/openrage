@@ -373,7 +373,25 @@ mod tests {
             doc: folder,
             node: archive,
         });
-        let failed = |state: &AppState| state.show_error_dialog;
+        let failed = |state: &AppState| {
+            let Some(super::super::DocPayload::Rpf(rpf)) =
+                state.document(folder).map(|doc| &doc.payload)
+            else {
+                return false;
+            };
+            matches!(
+                rpf.session.node(archive).map(|node| &node.backing),
+                Some(
+                    super::super::RpfNodeBacking::Archive {
+                        open_error: Some(_),
+                        ..
+                    } | super::super::RpfNodeBacking::Rpf9Archive {
+                        open_error: Some(_),
+                        ..
+                    }
+                )
+            )
+        };
         frames(
             &mut state,
             &failed,
@@ -383,6 +401,21 @@ mod tests {
             .documents
             .iter()
             .any(|doc| doc.kind == DocumentKind::Rpf9));
+        assert!(
+            !state.show_error_dialog,
+            "the error belongs to the archive row"
+        );
+        assert_eq!(
+            state.navigation.current(),
+            Some(Location {
+                doc: folder,
+                node: archive
+            })
+        );
+        assert!(
+            state.navigate_back(),
+            "Back returns to the containing folder"
+        );
         assert_eq!(state.navigation.current(), Some(Location::document(folder)));
 
         // The folder's tab shows the folder again, and stays on screen.
@@ -393,6 +426,7 @@ mod tests {
         }
         assert_eq!(state.active_document, Some(folder));
         assert!(lists_it(&state), "{:?}", listed(&state, folder));
+        assert!(!state.expander.is_in_flight(folder, archive));
         assert!(!state.navigate_back(), "Back led into the archive again");
     }
 
@@ -471,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn a_gta_vi_archive_is_drawn_in_the_tree_as_one_that_opens_from_its_table() {
+    fn an_unreadable_gta_vi_archive_shows_its_error_in_the_files_tree() {
         use super::super::nothing_draws_over_what_it_belongs_to::Panel;
         use super::super::{DocPayload, RpfNodeBacking};
         use crate::ui::theme;
@@ -482,7 +516,6 @@ mod tests {
         state.open_folder(dir);
         let folder = state.active_document.expect("the folder opens");
 
-        // The archive's row once its open as an archive was refused, as a click on it leaves it.
         let deadline = Instant::now() + Duration::from_secs(30);
         let row = loop {
             assert!(Instant::now() < deadline, "the archive was never refused");
@@ -492,7 +525,18 @@ mod tests {
             };
             let rows = rpf.session.children_of(rpf.session.root_id());
             let mut rows = rows.iter().filter_map(|id| rpf.session.node(*id));
-            let refused = |backing: &RpfNodeBacking| matches!(backing, RpfNodeBacking::Archive { open_error: Some(why), .. } if is_rpf9_refusal(why));
+            let refused = |backing: &RpfNodeBacking| {
+                matches!(
+                    backing,
+                    RpfNodeBacking::Archive {
+                        open_error: Some(_),
+                        ..
+                    } | RpfNodeBacking::Rpf9Archive {
+                        open_error: Some(_),
+                        ..
+                    }
+                )
+            };
             let row = rows.find(|row| row.name == "common.rpf").cloned();
             match row {
                 Some(row) if refused(&row.backing) => break row,
@@ -502,7 +546,19 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         };
         let icon = crate::ui::icons::rpf_node_icon(&row, false, false, true, false);
-        assert_eq!(icon.badge, None, "badged as an archive that did not open");
+        assert_eq!(icon.badge, Some(crate::ui::icons::BadgeKind::Error));
+        let error = match &row.backing {
+            RpfNodeBacking::Archive {
+                open_error: Some(error),
+                ..
+            }
+            | RpfNodeBacking::Rpf9Archive {
+                open_error: Some(error),
+                ..
+            } => error,
+            _ => unreachable!("the row failed to open"),
+        };
+        assert!(!is_rpf9_refusal(error));
 
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(560.0, 900.0));
         let mut panel = Panel::new(area);
@@ -516,16 +572,20 @@ mod tests {
         let (_, at, colour) = (drawn.iter())
             .find(|(text, ..)| text.ends_with("common.rpf"))
             .unwrap_or_else(|| panic!("the row is not drawn: {drawn:?}"));
-        assert_eq!(*colour, theme::TEXT_PRIMARY.get(), "its name is dimmed");
+        assert_eq!(*colour, theme::TEXT_SECONDARY.get());
 
         // Held still for long enough for a tooltip.
         let mut said = frame(&mut state, vec![egui::Event::PointerMoved(at.center())]);
         for _ in 0..45 {
             said = frame(&mut state, Vec::new());
         }
-        let tip = (said.iter()).find(|(text, ..)| text.contains("It opens from its table"));
-        let (tip, ..) = tip.unwrap_or_else(|| panic!("the row says no such thing: {said:?}"));
-        assert!(tip.contains("in a tab of its own"), "{tip}");
+        assert!(
+            said.iter().any(|(text, ..)| text.contains(error)),
+            "{said:?}"
+        );
+        assert!(!said
+            .iter()
+            .any(|(text, ..)| text.contains("in a tab of its own")));
     }
 
     #[test]

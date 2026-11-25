@@ -16816,9 +16816,6 @@ msgstr "un archivio di GTA VI viene elencato dalla sua tabella ed è di sola let
 msgid "a GTA VI archive opens from its own file using its encrypted table of contents"
 msgstr "un archivio di GTA VI si apre dal proprio file tramite la tabella dei contenuti cifrata"
 
-msgid "It opens from its table in a tab of its own."
-msgstr "Si apre dalla sua tabella in una scheda dedicata."
-
 msgid "RPF9 — a GTA VI archive listed from its table, read-only"
 msgstr "RPF9 — un archivio di GTA VI elencato dalla sua tabella, di sola lettura"
 

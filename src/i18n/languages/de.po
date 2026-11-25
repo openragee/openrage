@@ -16816,9 +16816,6 @@ msgstr "ein GTA-VI-Archiv wird aus seiner Tabelle aufgelistet und ist schreibges
 msgid "a GTA VI archive opens from its own file using its encrypted table of contents"
 msgstr "ein GTA-VI-Archiv wird aus seiner eigenen Datei anhand seines verschlüsselten Inhaltsverzeichnisses geöffnet"
 
-msgid "It opens from its table in a tab of its own."
-msgstr "Es wird anhand seiner Tabelle in einem eigenen Tab geöffnet."
-
 msgid "RPF9 — a GTA VI archive listed from its table, read-only"
 msgstr "RPF9 — ein GTA-VI-Archiv, anhand seiner Tabelle aufgelistet, schreibgeschützt"
 

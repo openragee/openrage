@@ -36,6 +36,9 @@ impl Rows {
 impl RpfEditSession {
     /// Take the row `id` and every row under it out of the tree, as a delete does, to put back later.
     pub(super) fn take_rows(&mut self, id: RpfNodeId) -> Option<Rows> {
+        if self.is_rpf9(id) {
+            return None;
+        }
         let (parent, at) = self.place_of(id)?;
         self.nodes.get_mut(&parent)?.children.remove(at);
         let (mut nodes, mut archives, mut stack) = (Vec::new(), Vec::new(), vec![id]);

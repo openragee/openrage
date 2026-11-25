@@ -286,6 +286,29 @@ pub(super) fn rpf_context_menu(
         let Some(target) = Target::rows(state, doc_id, rows, centre) else {
             return;
         };
+        if let Target::Rows { rows, .. } = &target {
+            if rows
+                .iter()
+                .any(|&id| super::rows::is_rpf9(state, doc_id, id))
+            {
+                ui.label(tr!("Read-only"));
+                if rows.len() == 1 {
+                    commands::offer(ui, state, Action::OpenSelection, &target, asked);
+                }
+                commands::offer(ui, state, Action::Extract, &target, asked);
+                commands::offer(ui, state, Action::CopyPath, &target, asked);
+                if rows.len() == 1 {
+                    if !node.is_dir() {
+                        commands::offer(ui, state, Action::ExportAs, &target, asked);
+                    }
+                    commands::offer(ui, state, Action::Properties, &target, asked);
+                    if node.backing.fs_path().is_some() {
+                        commands::offer(ui, state, Action::RevealOnDisk, &target, asked);
+                    }
+                }
+                return;
+            }
+        }
         if acts_on_selection {
             selection_menu(ui, state, node, &target, asked);
             return;

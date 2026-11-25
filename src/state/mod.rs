@@ -317,6 +317,8 @@ mod reordering_mods_from_the_app;
 mod replacing_geometry_from_the_app;
 pub mod retail;
 mod rpf9_counted_names;
+#[cfg(test)]
+mod rpf9_files_tests;
 mod rpf9_kept;
 mod rpf9_list;
 pub mod rpf9_scan;

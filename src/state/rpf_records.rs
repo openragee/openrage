@@ -16,6 +16,22 @@ use super::rpf_session::RpfEditSession;
 impl RpfEditSession {
     /// The bytes of the archive at `id`: its file on disk, or its entry in the archive around it.
     pub fn archive_size(&self, id: RpfNodeId) -> Option<u64> {
+        if let RpfNodeBacking::Rpf9Archive { table, owner, .. } = &self.nodes.get(&id)?.backing {
+            let tree = table.tree();
+            return match owner {
+                Some((base, index)) => tree
+                    .nodes
+                    .get(base)?
+                    .archive
+                    .entries
+                    .get(*index as usize)
+                    .and_then(|entry| entry.stored),
+                None => tree
+                    .nodes
+                    .get(&0)
+                    .map(|node| node.extent.end - node.extent.start),
+            };
+        }
         let RpfNodeBacking::Archive { source, .. } = &self.nodes.get(&id)?.backing else {
             return None;
         };
@@ -53,6 +69,9 @@ impl RpfEditSession {
             let Some(node) = self.nodes.get(&id) else {
                 continue;
             };
+            if self.is_rpf9(id) {
+                return Err(crate::i18n::tr(super::document::rpf9::entry::READ_ONLY).to_string());
+            }
             if id != root {
                 if matches!(node.backing, RpfNodeBacking::Archive { .. }) {
                     let path =
@@ -351,6 +370,16 @@ impl RpfEditSession {
             } else {
                 to.join(rest)
             };
+            if matches!(
+                node.backing,
+                RpfNodeBacking::Rpf9Archive { owner: None, .. }
+            ) {
+                self.unload_archive(id);
+                if let Some(node) = self.nodes.get_mut(&id) {
+                    node.backing.set_fs_path(moved);
+                }
+                continue;
+            }
             node.backing.set_fs_path(moved.clone());
             match node.backing {
                 RpfNodeBacking::Archive {

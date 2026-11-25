@@ -21,6 +21,7 @@ pub struct Tabs {
     preview: Option<RpfEntryBinding>,
     /// The archive row a thread is loading.
     pub(super) arriving: Option<RpfEntryBinding>,
+    pub(super) queued_rpf9: std::collections::VecDeque<(PathBuf, RpfEntryBinding)>,
     /// A preview replaced while it was arriving, dropped once it arrives.
     abandoned: Option<RpfEntryBinding>,
     /// The body of a scan's list open in the preview tab, by the path the scan names it under.
@@ -102,7 +103,10 @@ impl AppState {
         if let DocPayload::Rpf(rpf) = &parent.payload {
             let mut at = rpf.session.node(row.entry_id).and_then(|n| n.parent);
             while let Some(node) = at.and_then(|id| rpf.session.node(id)) {
-                if matches!(node.backing, RpfNodeBacking::Archive { .. }) {
+                if matches!(
+                    node.backing,
+                    RpfNodeBacking::Archive { .. } | RpfNodeBacking::Rpf9Archive { .. }
+                ) {
                     return Some(node.name.clone());
                 }
                 at = node.parent;
@@ -206,11 +210,18 @@ impl AppState {
             return;
         }
         let kind = match self.document(doc).map(|d| &d.payload) {
-            Some(DocPayload::Rpf(rpf)) => rpf
-                .session
-                .node(node)
-                .filter(|n| !n.is_dir())
-                .and_then(|n| DocumentKind::from_path(Path::new(&n.name))),
+            Some(DocPayload::Rpf(rpf)) => {
+                rpf.session
+                    .node(node)
+                    .filter(|n| !n.is_dir())
+                    .and_then(|n| match n.rpf9_type() {
+                        Some(or_io::container::rpf::Gta6EntryType::TextureDictionary) => {
+                            Some(DocumentKind::Ytd)
+                        }
+                        Some(_) => Some(DocumentKind::Hex),
+                        None => DocumentKind::from_path(Path::new(&n.name)),
+                    })
+            }
             _ => None,
         };
         if !kind.is_some_and(|kind| self.active_workspace.handles_kind(kind)) {

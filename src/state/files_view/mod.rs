@@ -33,10 +33,18 @@ pub struct RowFacts {
     /// The edition its RSC7 version names, for a resource.
     pub edition: Option<&'static str>,
     pub version: Option<u32>,
+    /// The index and original 64-bit name hash carried by an RPF9 table row.
+    pub rpf9_entry: Option<(u32, u64)>,
 }
 
 /// What a row is, in words.
 pub fn type_in_words(node: &RpfSessionNode) -> String {
+    if matches!(node.backing, RpfNodeBacking::Rpf9Dir { .. }) {
+        return tr!("Folder").to_string();
+    }
+    if let Some(kind) = node.rpf9_type() {
+        return rpf9_type_name(kind).to_string();
+    }
     if matches!(node.backing, RpfNodeBacking::Archive { .. }) {
         return DocumentKind::Rpf.info().noun.to_string();
     }
@@ -49,6 +57,19 @@ pub fn type_in_words(node: &RpfSessionNode) -> String {
             ext if ext.is_empty() => tr!("File").to_string(),
             ext => format!("{} file", ext.to_ascii_uppercase()),
         },
+    }
+}
+
+/// The content family identified by an RPF9 table or the bytes of its entry.
+pub(crate) fn rpf9_type_name(kind: or_io::container::rpf::Gta6EntryType) -> &'static str {
+    use or_io::container::rpf::Gta6EntryType;
+    match kind {
+        Gta6EntryType::Unknown => tr!("Unknown"),
+        Gta6EntryType::Archive => tr!("Archive"),
+        Gta6EntryType::TextureDictionary => tr!("Texture dictionary"),
+        Gta6EntryType::Resource(role) => super::gta6_resource::role_name(Some(role)),
+        Gta6EntryType::Body(body) => super::gta6_other_bodies::label(body),
+        Gta6EntryType::Rbf => tr!("RBF metadata"),
     }
 }
 
@@ -121,6 +142,39 @@ pub fn row_facts(session: &RpfEditSession, id: RpfNodeId) -> Option<RowFacts> {
         kind: type_in_words(node),
         ..Default::default()
     };
+    if session.is_rpf9(id) {
+        facts.edition = Some(or_title::Game::GtaVI.profile().label());
+        facts.size = session.size_for(id).or_else(|| session.archive_size(id));
+        facts.rpf9_entry = node.rpf9_entry();
+        let source = match &node.backing {
+            RpfNodeBacking::Rpf9File { table, base, index } => Some((table, *base, *index)),
+            RpfNodeBacking::Rpf9Archive {
+                table,
+                owner: Some((base, index)),
+                ..
+            } => Some((table, *base, *index)),
+            _ => None,
+        };
+        if let Some((table, base, index)) = source {
+            let tree = table.tree();
+            if let Some(archive) = tree.nodes.get(&base).map(|node| &node.archive) {
+                if let Some(entry) = archive.entries.get(index as usize) {
+                    facts.stored = entry.stored.or_else(|| {
+                        archive
+                            .entry_extra(index as usize)?
+                            .nested
+                            .map(|row| row.stored_size())
+                    });
+                    facts.encryption = Some(if entry.cipher.is_some() {
+                        tr!("Encrypted")
+                    } else {
+                        tr!("None")
+                    });
+                }
+            }
+        }
+        return Some(facts);
+    }
     match &node.backing {
         RpfNodeBacking::ArchiveFile {
             archive_id,
@@ -469,6 +523,9 @@ impl AppState {
             })
             .collect();
         for child in gone {
+            if rpf.session.is_rpf9(child) {
+                rpf.session.unload_archive(child);
+            }
             rpf.session.delete_node(child)?;
         }
         if let Some(RpfNodeBacking::DiskFolder { scanned, .. }) =

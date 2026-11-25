@@ -158,6 +158,8 @@ pub(super) struct Streamer {
     /// The occluder maps, streamed by a tier of their own: they hold nothing the forest draws.
     occluders: super::occluders::Occluders,
     pub(super) streaming: Streaming,
+    /// The maps taken in since the last selection that was made whole: what a thread that dies is taken to have died on.
+    unproven: Arc<Mutex<Vec<u32>>>,
 }
 
 /// The sphere that holds the spheres of `instances`.
@@ -198,7 +200,17 @@ fn hour_of(hour: f32) -> u32 {
 }
 
 impl Streamer {
+    #[cfg(test)]
     pub(super) fn new(index: Arc<WorldIndex>) -> Self {
+        Self::skipping(index, HashSet::new(), Arc::default())
+    }
+
+    /// The maps around the camera of `index`, `skipped` never taken in, saying in `unproven` the maps it takes in until a selection is made whole.
+    pub(super) fn skipping(
+        index: Arc<WorldIndex>,
+        skipped: HashSet<u32>,
+        unproven: Arc<Mutex<Vec<u32>>>,
+    ) -> Self {
         let shared = Arc::clone(&index);
         let readers = Pool::new(
             4,
@@ -236,7 +248,7 @@ impl Streamer {
             forest: Forest::new(),
             loaded: HashMap::new(),
             wanted: HashMap::new(),
-            failed: HashSet::new(),
+            failed: skipped,
             empty: HashSet::new(),
             linked: HashSet::new(),
             streamed_at: None,
@@ -245,6 +257,7 @@ impl Streamer {
             readers,
             occluders,
             streaming: Streaming::default(),
+            unproven,
         }
     }
 
@@ -273,7 +286,11 @@ impl Streamer {
         let mut changed = false;
         for (name, read) in self.readers.take(|| true) {
             match read {
-                Some(read) => changed |= self.insert(name, read),
+                Some(read) => {
+                    // ⚠ Said before it is taken in: what it holds may stop the thread on its way in.
+                    (self.unproven.lock().unwrap_or_else(|p| p.into_inner())).push(name);
+                    changed |= self.insert(name, read);
+                }
                 None => {
                     self.failed.insert(name);
                 }
@@ -707,6 +724,8 @@ struct Shared {
     told: Mutex<Told>,
     woken: Condvar,
     latest: Mutex<Arc<Selected>>,
+    /// The maps the thread took in since its last whole selection.
+    unproven: Arc<Mutex<Vec<u32>>>,
 }
 
 /// The world as a thread of its own streams and selects it, so that a frame only reads what was
@@ -717,7 +736,13 @@ pub(super) struct World {
 }
 
 impl World {
-    pub(super) fn new(index: Arc<WorldIndex>, eye: Vec3, scale: f32) -> Self {
+    /// The world of `index` about a camera at `eye`, its distances `scale`d, that never takes in the maps `skipped`.
+    pub(super) fn new(
+        index: Arc<WorldIndex>,
+        eye: Vec3,
+        scale: f32,
+        skipped: HashSet<u32>,
+    ) -> Self {
         let shared = Arc::new(Shared {
             told: Mutex::new(Told {
                 eye,
@@ -728,10 +753,32 @@ impl World {
             }),
             woken: Condvar::new(),
             latest: Mutex::default(),
+            unproven: Arc::default(),
         });
         let theirs = Arc::clone(&shared);
-        let thread = std::thread::spawn(move || run(index, &theirs));
+        let thread = std::thread::spawn(move || run(index, skipped, &theirs));
         Self { shared, thread }
+    }
+
+    /// The maps the thread took in since its last whole selection: for a thread that died, what it is taken to have died on.
+    pub(super) fn unproven(&self) -> Vec<u32> {
+        (self
+            .shared
+            .unproven
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()))
+        .clone()
+    }
+
+    /// Say the thread took `map` in, as the thread does before it takes one.
+    #[cfg(test)]
+    pub(super) fn took(&self, map: u32) {
+        (self
+            .shared
+            .unproven
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()))
+        .push(map);
     }
 
     /// Whether the thread ended though it was not stopped: a panic in a build that unwinds.
@@ -820,8 +867,8 @@ impl Drop for World {
 /// The world's thread: stream the maps around the camera, and select again whenever the camera
 /// moved, a map came or went, a model did, the hour, the fade bands or what is switched on
 /// changed, or a fade in time is under way.
-fn run(index: Arc<WorldIndex>, shared: &Shared) {
-    let mut streamer = Streamer::new(index);
+fn run(index: Arc<WorldIndex>, skipped: HashSet<u32>, shared: &Shared) {
+    let mut streamer = Streamer::skipping(index, skipped, Arc::clone(&shared.unproven));
     let mut ready: HashMap<ModelRef, Option<bool>> = HashMap::new();
     let mut selected_at: Option<(Vec3, f32, [f32; Level::COUNT])> = None;
     let mut moved_at: Option<(Vec3, Instant)> = None;
@@ -867,6 +914,8 @@ fn run(index: Arc<WorldIndex>, shared: &Shared) {
             fading = selected.fading;
             selected_at = Some((eye, scale, fade));
             *shared.latest.lock().unwrap_or_else(|p| p.into_inner()) = Arc::new(selected);
+            // What was taken in has been through a whole selection.
+            (shared.unproven.lock().unwrap_or_else(|p| p.into_inner())).clear();
         }
     }
 }

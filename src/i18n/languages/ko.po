@@ -913,6 +913,9 @@ msgstr "프로젝트의 무기를 기록할 수 없습니다"
 msgid "The world stopped on an internal error and was started again ({times} times so far)"
 msgstr "월드가 내부 오류로 멈춰 다시 시작되었습니다(지금까지 {times}번)"
 
+msgid "The world leaves out {maps} maps it stopped on as they came in"
+msgstr "들어올 때 멈춤을 일으킨 맵 {maps}개를 제외합니다"
+
 msgid "The world stopped on an internal error {times} times and is not started again: it stands as it was last drawn. Build the index again to start afresh."
 msgstr "월드가 내부 오류로 {times}번 멈춰 다시 시작하지 않습니다. 마지막으로 그려진 상태로 남습니다. 처음부터 다시 시작하려면 인덱스를 다시 만드세요."
 

@@ -81,26 +81,128 @@ pub fn tables(root: &Path) -> Option<Arc<DayTables>> {
     (!tables.is_empty()).then(|| Arc::clone(tables))
 }
 
-/// The moment of GTA VI's day at `hour` in `weather` for a camera `y` metres north on the map, which a frame takes its day, its lights' scale and its exposure from; `None` where the tables hold no cycle for it.
-pub fn moment(tables: &DayTables, hour: f32, weather: WeatherState, y: f32) -> Option<Moment> {
-    type Key = (usize, u32, WeatherState, i32);
-    // ponytail: the last moment held, as a frame asks for the same one many times over.
-    static LAST: Mutex<Option<(Key, Option<Moment>)>> = Mutex::new(None);
+/// The room a camera stands in, for the day: the hashes of its time-cycle modifier and second modifier, and how far in it is (0 to 1).
+pub type Room = ([u32; 2], f32);
+
+/// What a moment is worked out for: the tables, the hour, the weather, the camera's row north, and its room with how far in.
+type MomentKey = (usize, u32, WeatherState, i32, Option<([u32; 2], u32)>);
+
+/// What the worker of moments is given: the key, the tables, the hour, the camera's place north, and its room.
+type MomentAsk = (MomentKey, Arc<DayTables>, f32, f32, Option<Room>);
+
+/// The most moments held at once: one for each set of tables, hour and weather, out of doors and in a room, that asks.
+const MOMENTS_HELD: usize = 4;
+
+/// The moments last worked out and what for, the last asked for at the end.
+static MOMENT: Mutex<Vec<(MomentKey, Option<Moment>)>> = Mutex::new(Vec::new());
+/// What the worker of moments is working out, and the moments asked of it next.
+static MOMENT_WORK: Mutex<(Option<MomentKey>, Vec<MomentAsk>)> = Mutex::new((None, Vec::new()));
+
+/// Whether two keys are of the same tables, hour and weather, and both out of doors or both in a room: one stands for the other while it is worked out.
+fn near(a: &MomentKey, b: &MomentKey) -> bool {
+    (a.0, a.1, a.2, a.4.is_some()) == (b.0, b.1, b.2, b.4.is_some())
+}
+
+/// Hold `moment` for `key` in place of a moment `near` it, the oldest let go past [`MOMENTS_HELD`].
+fn hold(held: &mut Vec<(MomentKey, Option<Moment>)>, key: MomentKey, moment: Option<Moment>) {
+    held.retain(|(was, _)| !near(was, &key));
+    held.push((key, moment));
+    if held.len() > MOMENTS_HELD {
+        held.remove(0);
+    }
+}
+
+/// The moment of GTA VI's day at `hour` in `weather` for a camera `y` metres north on the map, in `room` where it stands in one, which a frame takes its day, its lights' scale and its exposure from; `None` where the tables hold no cycle for it. The first moment of an hour and weather is worked out at once; one of another place or room on a worker, the last shown until it is ready.
+// ⚠ Measured: a moment is a tenth of a second's work and more, its light integrated through the air, and a camera flying north asks for a new one every hundred metres.
+pub fn moment(
+    tables: &Arc<DayTables>,
+    hour: f32,
+    weather: WeatherState,
+    y: f32,
+    room: Option<Room>,
+) -> Option<Moment> {
     // The latitude moves the sun by a hundredth of a degree over a hundred metres.
     let rows = (y / LATITUDE_STEP).round();
-    let key = (
-        std::ptr::from_ref(tables) as usize,
+    let key: MomentKey = (
+        Arc::as_ptr(tables) as usize,
         hour.to_bits(),
         weather,
         rows as i32,
+        room.map(|(modifiers, blend)| (modifiers, blend.to_bits())),
     );
-    let mut last = LAST.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some((_, moment)) = last.as_ref().filter(|(held, _)| *held == key) {
+    let mut held = MOMENT.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some((_, moment)) = held.iter().find(|(was, _)| *was == key) {
         return moment.clone();
     }
-    let moment = tables.moment(hour, weather_name(weather), rows * LATITUDE_STEP);
-    *last = Some((key, moment.clone()));
+    // Only the place or the room moved: the moment held stands while a worker works the new one out.
+    if let Some((_, moment)) = held.iter().find(|(was, _)| near(was, &key)) {
+        let moment = moment.clone();
+        drop(held);
+        ask_moment((key, Arc::clone(tables), hour, rows * LATITUDE_STEP, room));
+        return moment;
+    }
+    let moment = moment_of(tables, hour, weather, rows * LATITUDE_STEP, room);
+    hold(&mut held, key, moment.clone());
     moment
+}
+
+/// The moment `tables` state for these, a tenth of a second's work and more.
+fn moment_of(
+    tables: &DayTables,
+    hour: f32,
+    weather: WeatherState,
+    y: f32,
+    room: Option<Room>,
+) -> Option<Moment> {
+    match room {
+        Some((modifiers, blend)) => {
+            tables.moment_inside(hour, weather_name(weather), y, modifiers, blend)
+        }
+        None => tables.moment(hour, weather_name(weather), y),
+    }
+}
+
+/// Ask the worker of moments for `ask` in place of what was asked of it near it, starting it where it is not at work.
+fn ask_moment(ask: MomentAsk) {
+    let mut work = MOMENT_WORK.lock().unwrap_or_else(|p| p.into_inner());
+    let (working, next) = &mut *work;
+    if *working == Some(ask.0) || next.iter().any(|was| was.0 == ask.0) {
+        return;
+    }
+    let idle = working.is_none() && next.is_empty();
+    next.retain(|was| !near(&was.0, &ask.0));
+    next.push(ask);
+    if idle {
+        std::thread::spawn(work_moments);
+    }
+}
+
+/// Work out the moments asked for, one after another, until none is.
+fn work_moments() {
+    loop {
+        let next = {
+            let mut work = MOMENT_WORK.lock().unwrap_or_else(|p| p.into_inner());
+            let next = (!work.1.is_empty()).then(|| work.1.remove(0));
+            work.0 = next.as_ref().map(|ask| ask.0);
+            next
+        };
+        let Some((key, tables, hour, y, room)) = next else {
+            return;
+        };
+        let worked = || moment_of(&tables, hour, key.2, y, room);
+        let moment = super::pool::or_on_panic("the day's moment", worked, None);
+        hold(
+            &mut MOMENT.lock().unwrap_or_else(|p| p.into_inner()),
+            key,
+            moment,
+        );
+    }
+}
+
+/// Whether a moment is being worked out for the camera's new place, which the frame waits for to settle.
+fn moment_pending() -> bool {
+    let work = MOMENT_WORK.lock().unwrap_or_else(|p| p.into_inner());
+    work.0.is_some() || !work.1.is_empty()
 }
 
 /// Where the frame's exposure stands: the moment it was metered for, the camera's cut it began at, its stops and when they were set, whether the next reading is the first of that moment, and whether the last reading had reached what the curve wants.
@@ -116,10 +218,10 @@ struct Adapting {
 // ponytail: one exposure for the one World view; a second view would share it.
 static ADAPTING: Mutex<Option<Adapting>> = Mutex::new(None);
 
-/// Whether the frame's exposure is still on its way: no reading of its own moment taken yet, or the last short of what the curve wants of it.
+/// Whether the frame's exposure is still on its way: its moment still being worked out, no reading of it taken yet, or the last short of what the curve wants of it.
 pub fn adapting() -> bool {
     let held = ADAPTING.lock().unwrap_or_else(|p| p.into_inner());
-    held.as_ref().is_some_and(|a| a.fresh || !a.reached)
+    held.as_ref().is_some_and(|a| a.fresh || !a.reached) || moment_pending()
 }
 
 /// `moment` exposed by the frame's own luminance, `metered` as last read from a frame drawn under the day set now, for a camera last cut to its place at `cut`: adapted from frame to frame at the pace of the settings, taken whole at the first reading of a new hour or weather or after a cut, and held where nothing was read.
@@ -172,13 +274,13 @@ pub fn exposed(
 /// The day the frame is lit by at `hour` of the `days`th day in `weather`, for a camera `y` metres north on the map; `None` where the tables hold no cycle for it.
 #[cfg(test)]
 pub fn day_of(
-    tables: &DayTables,
+    tables: &Arc<DayTables>,
     hour: f32,
     days: f32,
     weather: WeatherState,
     y: f32,
 ) -> Option<Day> {
-    let moment = moment(tables, hour, weather, y)?;
+    let moment = moment(tables, hour, weather, y, None)?;
     Some(day_of_moment(
         tables,
         moment,
@@ -444,10 +546,15 @@ fn worked_out(of: &SkyOf) -> Radiance {
 
 /// What a light the game states in its own unit is multiplied by to be the frame's at `hour` in `weather` for a camera `y` metres north: the moment's exposure over pi, and the old stand-in where no GTA VI day is read.
 #[cfg(test)]
-pub fn light_scale(tables: Option<&DayTables>, hour: f32, weather: WeatherState, y: f32) -> f32 {
+pub fn light_scale(
+    tables: Option<&Arc<DayTables>>,
+    hour: f32,
+    weather: WeatherState,
+    y: f32,
+) -> f32 {
     scale_of(
         tables
-            .and_then(|tables| moment(tables, hour, weather, y))
+            .and_then(|tables| moment(tables, hour, weather, y, None))
             .as_ref(),
     )
 }
@@ -462,7 +569,12 @@ mod tests {
     use super::*;
     use or_renderer::game_shaders::lighting::View;
 
-    fn tables() -> DayTables {
+    fn tables() -> Arc<DayTables> {
+        tables_with("")
+    }
+
+    /// The tables, their visual settings with `more` after the rest.
+    fn tables_with(more: &str) -> Arc<DayTables> {
         let samples: String = (0..13)
             .map(|k| format!(r#"<sample name="s{k}" hour="{k}"/>"#))
             .collect();
@@ -471,7 +583,12 @@ mod tests {
             <light_dir_mult> 1 1 1 1 1 1 1 1 1 1 1 1 1</light_dir_mult>
             </region></cycle></timecycle_keyframe_data>"#;
         let settings = "Tonemapping.dark.filmic.W 11.2\nExposure.curve.scale -2.0\nemissive.night.start.time 22\nemissive.night.end.time 4\n";
-        DayTables::of_texts([time.as_str(), cycle, settings])
+        let settings = format!("{settings}{more}");
+        Arc::new(DayTables::of_texts([
+            time.as_str(),
+            cycle,
+            settings.as_str(),
+        ]))
     }
 
     #[test]
@@ -548,10 +665,10 @@ mod tests {
     fn the_frame_is_exposed_by_its_own_luminance_from_the_first_reading_of_its_own_hour() {
         let tables = tables();
         let at = |metered: Option<&Metered>| {
-            let moment = moment(&tables, 9.5, WeatherState::Clear, 0.0).expect("a moment");
+            let moment = moment(&tables, 9.5, WeatherState::Clear, 0.0, None).expect("a moment");
             exposed(&tables, moment, (9.5, WeatherState::Clear), 0, metered)
         };
-        let unread = moment(&tables, 9.5, WeatherState::Clear, 0.0).expect("a moment");
+        let unread = moment(&tables, 9.5, WeatherState::Clear, 0.0, None).expect("a moment");
         // What is read in the first frame of an hour was drawn under the hour before.
         let bright = Metered::of(vec![8.0; 16]);
         let grey = at(Some(&bright));
@@ -578,7 +695,7 @@ mod tests {
         assert!(adapting(), "still on its way");
         // A cut of the camera starts again, and its first reading is taken whole.
         let cut = |metered: Option<&Metered>| {
-            let moment = moment(&tables, 9.5, WeatherState::Clear, 0.0).expect("a moment");
+            let moment = moment(&tables, 9.5, WeatherState::Clear, 0.0, None).expect("a moment");
             exposed(&tables, moment, (9.5, WeatherState::Clear), 1, metered)
         };
         assert_eq!(cut(Some(&brighter)).stops, unread.stops);
@@ -593,6 +710,32 @@ mod tests {
             "{whole} {curve}"
         );
         assert!(!adapting(), "arrived");
+    }
+
+    #[test]
+    fn a_moment_of_a_new_hour_is_worked_out_at_once_and_one_of_another_place_on_a_worker() {
+        // The latitude runs from 20 to 30 degrees over 100 km north.
+        let tables = tables_with("sky.latitude.YPosMin -50000\nsky.latitude.YPosMax 50000\nsky.latitude.rangeMin 20\nsky.latitude.rangeMax 30\n");
+        let clear = WeatherState::Clear;
+        let first = moment(&tables, 10.25, clear, 0.0, None).expect("a moment");
+        let far = 40_000.0;
+        // The moment held stands for the far place while a worker works it out.
+        let held = moment(&tables, 10.25, clear, far, None).expect("a moment");
+        assert_eq!(held.sun, first.sun);
+        let until = Instant::now() + std::time::Duration::from_secs(20);
+        while moment_pending() && Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let arrived = moment(&tables, 10.25, clear, far, None).expect("a moment");
+        let own = tables.moment(10.25, "Sunny", far).expect("a moment");
+        assert_eq!(arrived.sun, own.sun);
+        assert_ne!(arrived.sun, first.sun, "the latitude moved the sun");
+        // Another hour is worked out at once.
+        let later = moment(&tables, 15.5, clear, far, None).expect("a moment");
+        assert_eq!(
+            later.sun,
+            tables.moment(15.5, "Sunny", far).expect("a moment").sun
+        );
     }
 
     #[test]

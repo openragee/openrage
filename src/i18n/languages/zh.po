@@ -913,6 +913,9 @@ msgstr "无法写入项目的武器"
 msgid "The world stopped on an internal error and was started again ({times} times so far)"
 msgstr "世界因内部错误停止并已重新启动（迄今 {times} 次）"
 
+msgid "The world leaves out {maps} maps it stopped on as they came in"
+msgstr "世界略去了载入时导致其停止的 {maps} 张地图"
+
 msgid "The world stopped on an internal error {times} times and is not started again: it stands as it was last drawn. Build the index again to start afresh."
 msgstr "世界因内部错误已停止 {times} 次，不再重新启动：它保持最后一次绘制时的样子。重新构建索引即可从头开始。"
 

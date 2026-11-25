@@ -913,6 +913,9 @@ msgstr "プロジェクトの武器は書き込めません"
 msgid "The world stopped on an internal error and was started again ({times} times so far)"
 msgstr "世界は内部エラーで停止し、再起動されました（これまでに {times} 回）"
 
+msgid "The world leaves out {maps} maps it stopped on as they came in"
+msgstr "読み込み時に停止の原因となった {maps} 個のマップを除外しています"
+
 msgid "The world stopped on an internal error {times} times and is not started again: it stands as it was last drawn. Build the index again to start afresh."
 msgstr "世界は内部エラーで {times} 回停止したため、再起動しません。最後に描画された状態のままです。最初からやり直すにはインデックスを再作成してください。"
 

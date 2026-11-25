@@ -230,6 +230,9 @@ impl AppState {
         if self.tabs.arriving == Some(row) {
             return;
         }
+        if self.open_gta6_archive_entry(parent_doc_id, entry_id) {
+            return;
+        }
 
         let (parent_path, child_path) = {
             let Some(doc) = self.document(parent_doc_id) else {

@@ -220,8 +220,13 @@ static ADAPTING: Mutex<Option<Adapting>> = Mutex::new(None);
 
 /// Whether the frame's exposure is still on its way: its moment still being worked out, no reading of it taken yet, or the last short of what the curve wants of it.
 pub fn adapting() -> bool {
+    exposure_adapting() || moment_pending()
+}
+
+/// Whether the exposure alone is still on its way, whatever moment a worker is working out.
+fn exposure_adapting() -> bool {
     let held = ADAPTING.lock().unwrap_or_else(|p| p.into_inner());
-    held.as_ref().is_some_and(|a| a.fresh || !a.reached) || moment_pending()
+    held.as_ref().is_some_and(|a| a.fresh || !a.reached)
 }
 
 /// `moment` exposed by the frame's own luminance, `metered` as last read from a frame drawn under the day set now, for a camera last cut to its place at `cut`: adapted from frame to frame at the pace of the settings, taken whole at the first reading of a new hour or weather or after a cut, and held where nothing was read.
@@ -692,7 +697,7 @@ mod tests {
         let next = at(Some(&brighter)).stops;
         let wanted = curve - 2.0 * 4f32.ln();
         assert!(next <= first.stops && next > wanted, "{next} {wanted}");
-        assert!(adapting(), "still on its way");
+        assert!(exposure_adapting(), "still on its way");
         // A cut of the camera starts again, and its first reading is taken whole.
         let cut = |metered: Option<&Metered>| {
             let moment = moment(&tables, 9.5, WeatherState::Clear, 0.0, None).expect("a moment");
@@ -709,7 +714,8 @@ mod tests {
             whole != unread.stops && (whole - curve).abs() < 1e-3,
             "{whole} {curve}"
         );
-        assert!(!adapting(), "arrived");
+        // ⚠ Another test's moment may be on a worker meanwhile, which `adapting` also counts.
+        assert!(!exposure_adapting(), "arrived");
     }
 
     #[test]

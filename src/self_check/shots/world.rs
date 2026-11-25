@@ -181,6 +181,8 @@ pub(super) struct Found {
     pub water: bool,
     /// The world's thread was told something, such as models that came, that its last selection does not stand on yet.
     pub selecting: bool,
+    /// The last selection was made for where the camera stands.
+    pub caught_up: bool,
 }
 
 /// The rule `world settle` waits by: an index held, nothing waited for, the exposure arrived, no water being read, and nothing changed for [`QUIET`].
@@ -207,6 +209,7 @@ impl Settle {
         }
         // ⚠ A selection can take longer than the quiet time: models told ready and not yet selected were dumped as not drawn.
         let quiet = found.indexed
+            && found.caught_up
             && found.waiting == [0; 4]
             && !found.adapting
             && !found.water
@@ -281,6 +284,7 @@ fn found() -> Result<Found, String> {
         adapting: crate::state::gta6_world::worldview::sky::adapting(),
         water: viewer.water_reading(),
         selecting: viewer.selecting(),
+        caught_up: viewer.caught_up(),
     })
 }
 
@@ -510,6 +514,7 @@ mod tests {
         adapting: false,
         water: false,
         selecting: false,
+        caught_up: true,
     };
 
     fn at(millis: u64) -> Duration {
@@ -639,6 +644,20 @@ mod tests {
         assert!(!rule.settled(at(0), IDLE), "one frame is no quiet time");
         assert!(!rule.settled(QUIET - at(1), IDLE));
         assert!(rule.settled(QUIET, IDLE));
+    }
+
+    #[test]
+    fn a_selection_made_for_the_last_place_of_the_camera_never_settles() {
+        // Nothing is waited for yet: the world's thread has not chosen for the new place.
+        let behind = Found {
+            caught_up: false,
+            ..IDLE
+        };
+        let mut rule = Settle::default();
+        assert!(!rule.settled(at(0), behind));
+        assert!(!rule.settled(QUIET * 10, behind));
+        assert!(!rule.settled(QUIET * 10 + at(1), IDLE));
+        assert!(rule.settled(QUIET * 11 + at(1), IDLE));
     }
 
     #[test]

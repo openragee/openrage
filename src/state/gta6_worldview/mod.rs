@@ -421,6 +421,11 @@ impl Viewer {
         self.world.as_ref().is_some_and(World::unselected)
     }
 
+    /// Whether the last selection was made for where the camera stands now: until it is, what it waits for is the last place's.
+    pub fn caught_up(&self) -> bool {
+        (self.world.as_ref()).is_none_or(|w| w.latest().eye == self.camera.position)
+    }
+
     /// The interior and room the camera stood in at the last selection, where it stood in one.
     pub fn inside(&self) -> Option<interior::Inside> {
         self.world.as_ref()?.latest().inside

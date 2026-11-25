@@ -12,6 +12,8 @@ pub mod audio_data;
 pub mod audio_links;
 pub mod audio_radio;
 pub mod bcpack;
+#[cfg(feature = "meta")]
+pub mod constellations;
 pub mod dialogue;
 pub mod hash;
 pub mod headerless;

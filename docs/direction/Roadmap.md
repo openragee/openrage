@@ -502,16 +502,17 @@ would meet. The rows are listed in the order of the plan's stages
 nothing of this phase, R70g needs R70b only for the bounds at a position, and R70c, the GTA V map
 drawn with its models, is what most screen rows wait for. A row takes the default beside its
 question in [the rulings asked](World_Editor_Plan.md#rulings-asked-of-the-owner), except a part
-whose ruling says "It waits". Parts of R70a, R70b, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70m,
-R70n, R70p, R70q, R70r, R70v, R70w and R70y are built, on installs and packs made by hand and on
-the staged corpus, with no screen but the Build tab's line of R70a, the Map screen's Undo of R70h
-and the presets of keys in Settings of R70v. No row
-is closed, the one install suite that has run is that of R70m's data part and nothing was loaded in
-a game: each row's Where it stands
-says what is built and what is left. R70 has no letter left: a finding that fits no row opens the
+whose ruling says "It waits". Parts of R70a, R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k,
+R70l, R70m, R70n, R70p, R70q, R70r, R70v, R70w and R70y are built, on installs and packs made by
+hand and on the staged corpus, with no screen but the Build tab's line of R70a, the Map screen's
+Undo of R70h and the presets of keys in Settings of R70v. No row is closed, the install suites
+that have run are those of R70m's data part and, on the two installs, of R70b, R70c, R70e, R70h and
+R70k (R70b's fails on Enhanced, and R70k's finished on Legacy alone), and nothing was loaded in a
+game: each row's Where it stands says what is built and what is left. R70 has no letter left: a
+finding that fits no row opens the
 next number.
 
-- [ ] [R70 The GTA V world editor](#r70-the-gta-v-world-editor) — the plan of 2026-11-25, in the parts below, begun in lanes the same day; parts of R70a, R70b, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70m, R70n, R70p, R70q, R70r, R70v, R70w and R70y are built and no row is closed, and the Map screen of wave P44 and the World screen of GTA VI are what it starts from
+- [ ] [R70 The GTA V world editor](#r70-the-gta-v-world-editor) — the plan of 2026-11-25, in the parts below, begun in lanes the same day; parts of R70a, R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70l, R70m, R70n, R70p, R70q, R70r, R70v, R70w and R70y are built and no row is closed, and the Map screen of wave P44 and the World screen of GTA VI are what it starts from
   - [ ] [R70a What the game loads](#r70a-what-the-game-loads)
   - [ ] [R70b The GTA V world index](#r70b-the-gta-v-world-index)
   - [ ] [R70g Collision as a query](#r70g-collision-as-a-query)
@@ -9549,9 +9550,9 @@ together.
 
 A part's Done when is its check; its brief says what to read and what to build. A part that writes a
 kind of file adds it to the recipe and the sheet of R70a. Lanes began on 2026-11-25: parts of R70a,
-R70b, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70m, R70n, R70p, R70q, R70r, R70v, R70w and R70y
-are built, with no part closed, one install suite run (R70m's data part) and nothing loaded in a game. R70 has no letter left: a finding that fits no part opens
-the next number.
+R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70l, R70m, R70n, R70p, R70q, R70r, R70v, R70w
+and R70y are built, with no part closed, install suites run for R70m's data part and for R70b,
+R70c, R70e, R70h and R70k, and nothing loaded in a game.
 
 ### R70a What the game loads
 
@@ -9619,7 +9620,10 @@ and the choice, kept on disk and rebuilt only where the install changed. It adds
 `openrage-cli world at` and `openrage-cli world index`
 ([brief](World_Editor_Plan.md#the-gta-v-world-index-r70b)).
 
-**Where it stands.** Two parts are built on installs made by hand; no install suite has run.
+**Where it stands.** The install suite holds on Legacy and fails on Enhanced, where a second
+start reads one archive again
+(`the_world_index_names_everything_a_real_install_lists`, 2026-11-25;
+[figures](../reference/Crate_Reference.md#domain-crates)).
 `crates/domain/or-depends/src/world_index.rs` reads every map, type file, manifest and bound an
 archive at a time, answers the maps and carried bounds at a position and is kept on disk by each
 archive's stamp (`the_world_index_of_a_mount`), behind `openrage-cli world index` and `world at`.
@@ -9636,8 +9640,7 @@ keeps each group's gate and each archetype's files for
 [R70c](#r70c-the-gta-v-world-streamed-and-drawn)
 (`an_instance_names_the_files_its_archetype_states_and_a_kept_index_names_them_too`). Left:
 the mode in the index's key; a level and a mode for `world index` and `world at`, and from a
-screen; an archive a level leaves folders out of, which has no stamp and is read at every build;
-the cost on an install.
+screen; an archive read at every build, for the folders a level leaves out of it.
 
 **Done when.** Over a mounted install the index names every map and type file the mount lists, and a
 position inside a known map's extents answers that map, in an install suite of the slow tier, named
@@ -9837,8 +9840,8 @@ project's History ([brief](World_Editor_Plan.md#one-vocabulary-of-world-edits-r7
 **Where it stands.** The vocabulary, for one pack: `Operation`, `apply`, `apply_all` and `Session`
 in `crates/domain/or-maps/src/operation.rs`, which the Map screen's edits and
 `openrage-cli maps apply` call (`an_operation_and_its_inverse_leave_the_sources_as_they_were`, on
-synthetic packs). A session holds the sources as typed roots and writes them once at a flush, as
-`apply` writes them one by one; an inverse states the digest or the session token it applies to,
+synthetic packs). A session holds the sources as typed roots and writes them once at a flush; an
+inverse states the digest or the session token it applies to,
 or is refused (`a_session_of_map_edits_writes_once_what_each_edit_writes`); and the Map screen's
 Undo keeps the operation and its inverse
 (`an_undo_is_refused_once_its_source_was_edited_from_outside_and_goes_through_once_that_edit_is_taken_back`,
@@ -9855,13 +9858,16 @@ donor. What a pack that holds too little takes, a first record built and a last 
 the XML, holds in a session as one by one
 (`crates/domain/or-maps/tests/an_operation_where_the_pack_holds_too_little.rs`,
 `crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`). A deletion
-planned by [R70k](#r70k-removing-what-the-game-placed) renumbers the links of the child maps; one
-entity taken out alone leaves them, says so in a note, and the rule `parent-link-broken` or
-`lod-children-uncounted` reports it. A session that refused an operation writes nothing when
+planned by [R70k](#r70k-removing-what-the-game-placed) renumbers the links of the child maps, and
+one entity taken out alone leaves them, with a note. A session that refused an operation writes
+nothing when
 dropped. The first edit: `crates/domain/or-maps/src/first_edit.rs` imports each map file an edit
 of a game object changes, with the game's file as its base, as one record taken back whole,
 behind `openrage-cli maps edit-game` (`the_first_edit_of_a_game_object_imports_its_map`, an
-install built by hand); its install census ran past 900 s on Legacy, 2026-11-25. Left: the Map screen on a session, a
+install built by hand); on both installs no map file refuses one
+(`the_map_files_of_the_install_a_first_edit_refuses_are_counted`, 2026-11-25). ⚠ A new entity's
+guid is one more than its map's largest, the owner's to rule
+([R70y](#r70y-what-a-project-changed-and-putting-it-back)). Left: the Map screen on a session, a
 create across files, a new map and a built entity as operations, the donor and the install's
 boxes, History, the rule for a source of the other edition, the install measure.
 
@@ -9958,12 +9964,13 @@ back, with the links of each child map renumbered and the parents' counts lowere
 (`a_deletion_takes_the_chain_of_far_models_across_the_files_of_a_pack`, on packs built by hand),
 and a session does it whole or not at all
 (`crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`).
-Not run: `deleting_an_entity_of_the_install_keeps_every_link`, which needs an install; its body
-runs on maps built by hand
-(`the_checks_of_the_install_suite_hold_on_a_tree_of_maps_built_by_hand`). A map that is not among
+On Legacy, of 47 maps sampled, 40 deletions keep every link and are undone to the byte
+(`deleting_an_entity_of_the_install_keeps_every_link`, 2026-11-25; Enhanced not finished). A map
+that is not among
 the sources keeps its links, and the rules `parent-link-broken` and `lod-children-uncounted` name
-what a removal alone leaves. Left: the rule for a door, the preview on a screen, the Map screen's
-Delete through the plan, and the import of the game's maps a deletion reaches
+what a removal alone leaves. Left: the rule for a door, the preview on a screen and the Map
+screen's Delete through the plan; the game's maps a deletion reaches come in by
+[R70h](#r70h-one-vocabulary-of-world-edits)'s first edit
 ([or-maps](../reference/Crate_Reference.md#domain-crates)).
 
 **Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits) and

@@ -6,6 +6,9 @@
 
 use glam::Vec3;
 use or_io::gta6::timecycle::ARTIFICIAL_AMBIENT_LUX;
+use or_world::interior_portals::{
+    portal_is_shut, portal_leads_outside, PortalDoor, PORTAL_LINK, PORTAL_MIRROR,
+};
 
 /// How near a portal's plane the camera may stand and still look through the whole of it, in metres.
 const DOORWAY: f32 = 0.1;
@@ -43,30 +46,18 @@ pub(super) struct Opening {
     pub(super) shut: bool,
 }
 
-// ⚠ GTA V's bits, which the build's portals match in kind: every portal with 4 (many of them also
-// 128, 256 and 1024, GTA V's mirror bits) and every portal with 2 joins its room to room 0.
-/// A portal's flag: it is a mirror, no opening.
-const MIRROR: u32 = 4;
-/// A portal's flag: it opens on another interior, not on the sky.
-const LINK: u32 = 2;
-/// A portal's flag: it is looked through one way alone, and never shut.
-const ONE_WAY: u32 = 1;
-/// A portal's flag: it shuts while what it holds is shut.
-const ALLOW_CLOSING: u32 = 64;
-
-/// Whether a portal of `flags` that holds `held` entities, `doors` of them doors, is shut while
-/// every door stands closed, as an interior stands when it is placed: one to the outside that may
-/// close is shut by whatever it holds, one between two rooms by the doors it holds.
-// ⚠ GTA V's rule: an interior shuts its closable portals to the outside that hold anything when it
-// is placed, and a door reopens its portal only once it opens.
-pub(super) fn shut_at_rest(flags: u32, rooms: [u32; 2], held: usize, doors: usize) -> bool {
-    if flags & ALLOW_CLOSING == 0 || flags & LINK != 0 {
-        return false;
-    }
-    match rooms.contains(&0) {
-        true => flags & ONE_WAY == 0 && held > 0,
-        false => doors > 0,
-    }
+/// Whether a portal of `flags` that holds `doors` doors is shut as the interior stands when it is
+/// placed: one that may close and holds a door is, whatever rooms it joins; one that holds none, or
+/// a link, whose doors never reach it, is open.
+// ⚠ Inferred: a placed door stands at rest unopened, and the placed interior's proxy is set.
+// ponytail: no door keeps its portal open by its own flags or its archetype's, which the viewer does not read.
+pub(super) fn shut_at_rest(flags: u32, doors: usize) -> bool {
+    let at_rest = PortalDoor {
+        open_ratio: 0.0,
+        keeps_open: false,
+    };
+    let doors = if flags & PORTAL_LINK != 0 { 0 } else { doors };
+    portal_is_shut(flags, true, &vec![at_rest; doors])
 }
 
 /// What a camera sees of an interior: by room and by portal; from a room, the pyramids through the
@@ -195,7 +186,7 @@ impl Walk<'_> {
                 _ => continue,
             };
             // A mirror is seen in the room it hangs in, and nothing is seen through it.
-            if portal.flags & MIRROR != 0 {
+            if portal.flags & PORTAL_MIRROR != 0 {
                 self.seen.portals[k] = true;
                 continue;
             }
@@ -236,7 +227,8 @@ impl Walk<'_> {
             }
             // ⚠ GTA V's rule: from a room the outside is drawn through the portals to it the camera sees.
             let outside = self.seen.outside.as_mut();
-            if let Some(outside) = outside.filter(|_| other == 0 && portal.flags & LINK == 0) {
+            let leads_out = other == 0 && portal_leads_outside(room, other, portal.flags);
+            if let Some(outside) = outside.filter(|_| leads_out) {
                 outside.push(next.clone());
             }
             self.enter(other, &next);
@@ -305,7 +297,11 @@ pub(super) fn ambient_of(
         return or_renderer::OUTDOORS;
     };
     let outward = portals.iter().filter(|o| {
-        o.rooms.contains(&room) && o.rooms.contains(&0) && o.flags & (MIRROR | LINK) == 0 && !o.shut
+        let [a, b] = o.rooms;
+        o.rooms.contains(&room)
+            && portal_leads_outside(a, b, o.flags)
+            && o.flags & PORTAL_MIRROR == 0
+            && !o.shut
     });
     let (mut window, mut near) = (0.0, 0.0);
     for o in outward {

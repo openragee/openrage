@@ -130,8 +130,20 @@ fn model(offset: u64) -> ModelRef {
 }
 
 #[test]
+fn a_door_the_map_places_in_an_opening_of_the_shell_shuts_it_where_it_may_close() {
+    let mut shell = interior();
+    shell.portals[0].flags = 64;
+    // The opening at x 4 of the shell's space, turned a quarter about z and moved to (10, 20, 30).
+    let in_doorway = Vec3::new(10.0, 24.0, 31.0);
+    let away = Vec3::new(10.0, 20.0, 31.0);
+    assert!(place(&index(), &instance(), &shell, &[in_doorway]).portals[0].shut);
+    assert!(!place(&index(), &instance(), &shell, &[away]).portals[0].shut);
+    assert!(!place(&index(), &instance(), &interior(), &[in_doorway]).portals[0].shut);
+}
+
+#[test]
 fn an_interior_s_entities_stand_in_the_world_under_the_instance_that_places_it() {
-    let placed = place(&index(), &instance(), &interior());
+    let placed = place(&index(), &instance(), &interior(), &[]);
     // The ghost has no model, 0xDEAD no archetype, and the set 0xB is off.
     let [chair, lamp] = placed.children.as_slice() else {
         panic!("{} children", placed.children.len());
@@ -163,7 +175,7 @@ fn an_instance_that_states_a_distance_draws_its_interior_to_it() {
         lod_dist: 80.0,
         ..instance()
     };
-    assert_eq!(place(&index(), &far, &interior()).lod_dist, 80.0);
+    assert_eq!(place(&index(), &far, &interior(), &[]).lod_dist, 80.0);
 }
 
 /// The models `placed` draws at noon for a camera `north` metres along y from its middle, which
@@ -206,7 +218,7 @@ fn faded_at(
 
 #[test]
 fn the_contents_draw_within_the_interior_s_distance_and_each_within_its_own() {
-    let placed = place(&index(), &instance(), &interior());
+    let placed = place(&index(), &instance(), &interior(), &[]);
     let (chair, lamp) = (model(0x1000), model(0x2000));
     assert_eq!(drawn(&placed, 0.0, 1.0), [chair, lamp]);
     // 10 m out the lamp is past its 5 m and the 5 m band past it.
@@ -224,7 +236,7 @@ fn the_contents_draw_within_the_interior_s_distance_and_each_within_its_own() {
 
 #[test]
 fn a_camera_inside_the_interior_s_sphere_is_in_range_of_a_shorter_distance() {
-    let mut placed = place(&index(), &instance(), &interior());
+    let mut placed = place(&index(), &instance(), &interior(), &[]);
     placed.lod_dist = 2.0;
     assert_eq!(drawn(&placed, 4.0, 1.0), [model(0x1000), model(0x2000)]);
     assert!(drawn(&placed, 6.0, 1.0).is_empty());
@@ -232,7 +244,7 @@ fn a_camera_inside_the_interior_s_sphere_is_in_range_of_a_shorter_distance() {
 
 #[test]
 fn a_child_of_a_time_archetype_draws_inside_its_hours_alone() {
-    let mut placed = place(&index(), &instance(), &interior());
+    let mut placed = place(&index(), &instance(), &interior(), &[]);
     let chair = index().archetype(CHAIR).expect("the chair").hours;
     assert_eq!(placed.children[0].hours, chair);
     placed.children[0].hours = 1 << 20;
@@ -246,7 +258,7 @@ fn a_child_of_a_time_archetype_draws_inside_its_hours_alone() {
 
 #[test]
 fn a_child_s_distance_scales_by_its_level_and_the_interior_s_by_hd() {
-    let placed = place(&index(), &instance(), &interior());
+    let placed = place(&index(), &instance(), &interior(), &[]);
     let mut scales = [1.0; Level::COUNT];
     scales[Level::OrphanHd as usize] = 0.5;
     // The chair, 9 m away, is within half its 20 m; 15 m away it is past that and its band.
@@ -264,7 +276,7 @@ fn a_child_s_distance_scales_by_its_level_and_the_interior_s_by_hd() {
 
 #[test]
 fn a_child_fades_out_over_its_band_and_with_the_interior() {
-    let placed = place(&index(), &instance(), &interior());
+    let placed = place(&index(), &instance(), &interior(), &[]);
     let every = [1.0; Level::COUNT];
     // The chair states 20 m, which fades over 5: 22.5 m away it is half there.
     let faded = faded_at(&placed, 23.5, &every, 12);
@@ -280,7 +292,7 @@ fn a_child_fades_out_over_its_band_and_with_the_interior() {
 
 #[test]
 fn from_outside_the_contents_draw_seen_through_a_portal_alone() {
-    let placed = place(&index(), &instance(), &interior());
+    let placed = place(&index(), &instance(), &interior(), &[]);
     // South of the middle is the interior's west, whose wall has no opening.
     assert!(drawn(&placed, -10.0, 1.0).is_empty());
     assert_eq!(drawn(&placed, 10.0, 1.0), [model(0x1000)]);
@@ -288,7 +300,7 @@ fn from_outside_the_contents_draw_seen_through_a_portal_alone() {
 
 #[test]
 fn the_camera_in_a_room_is_inside_the_interior_and_that_room() {
-    let placed = place(&index(), &instance(), &interior());
+    let placed = place(&index(), &instance(), &interior(), &[]);
     let inside = placed.inside(placed.centre).expect("in the second room");
     assert_eq!((inside.interior, inside.room), (9, 1));
     assert_eq!(
@@ -299,7 +311,7 @@ fn the_camera_in_a_room_is_inside_the_interior_and_that_room() {
 
 #[test]
 fn a_plane_through_the_camera_in_the_interior_s_space_is_turned_into_the_world_s() {
-    let mut placed = place(&index(), &instance(), &interior());
+    let mut placed = place(&index(), &instance(), &interior(), &[]);
     // Turned a quarter round the vertical and twice as wide as it is high: its own +x is the world's +y.
     let outer = Mat4::from_scale_rotation_translation(
         Vec3::new(2.0, 2.0, 1.0),
@@ -317,7 +329,7 @@ fn a_plane_through_the_camera_in_the_interior_s_space_is_turned_into_the_world_s
 
 #[test]
 fn a_sphere_reaches_into_a_room_where_it_touches_the_room_s_box() {
-    let placed = place(&index(), &instance(), &interior());
+    let placed = place(&index(), &instance(), &interior(), &[]);
     assert!(placed.reaches_a_room(placed.centre, 0.1));
     let far = placed.centre + Vec3::new(0.0, 0.0, 1000.0);
     assert!(!placed.reaches_a_room(far, 1.0));

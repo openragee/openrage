@@ -15,6 +15,7 @@ use or_io::gta6::map::lights::Pose;
 use or_io::gta6::map::links::EntitySetLocation;
 use or_io::gta6::map::stream::StreamMap;
 use or_io::meta::binary::rbm::schema::RbmModel;
+use or_world::interior_portals::point_polygon_distance;
 use or_world::streaming::{Level, View, FADE_SMALL, SMALL};
 
 use super::index::{BodyRow, ModelRef, WorldIndex};
@@ -26,6 +27,10 @@ const BODY_LIMIT: u64 = 256 << 20;
 /// An archetype's flag: what it draws is a door.
 // ⚠ GTA V's bit, which the build's archetypes held by closable portals carry.
 const DOOR: u32 = 1 << 26;
+/// How far from an opening a door's origin, its hinge, may stand and be the opening's door, in metres.
+// ⚠ Measured: a map's door near an opening of a shell stands on it, within centimetres, and none
+// stands from there to metres off it.
+const IN_OPENING: f32 = 0.25;
 
 fn rows_of(m: Mat4) -> Rows {
     let t = m.transpose().to_cols_array_2d();
@@ -163,11 +168,13 @@ pub(super) fn lit(rooms: &RoomsSeen, at: (u32, u32), room: u32) -> bool {
     (rooms.get(&at)).is_some_and(|seen| seen.get(room as usize).copied().unwrap_or(true))
 }
 
-/// `interior` as `instance` places it: each entity it draws that the index has a model for.
+/// `interior` as `instance` places it: each entity it draws that the index has a model for; the
+/// doors its map places, `map_doors` in the world, close the openings of its shell they stand in.
 pub(super) fn place(
     index: &WorldIndex,
     instance: &InteriorInstance,
     interior: &Interior,
+    map_doors: &[Vec3],
 ) -> Placed {
     let outer = placing(
         instance.scale_xy,
@@ -175,24 +182,40 @@ pub(super) fn place(
         instance.rotation,
         instance.position,
     );
-    // What each portal holds, and how many of those are doors.
-    let mut held = vec![(0, 0); interior.portals.len()];
+    // How many doors each portal holds.
+    let mut doors = vec![0; interior.portals.len()];
     for (e, location) in interior.drawn(&instance.default_entity_sets) {
         let EntitySetLocation::Portal(k) = location else {
             continue;
         };
-        if let Some((all, doors)) = held.get_mut(k as usize) {
-            *all += 1;
+        if let Some(count) = doors.get_mut(k as usize) {
             let flags = index.archetype(e.archetype_word).map_or(0, |a| a.flags);
-            *doors += usize::from(flags & DOOR != 0);
+            *count += usize::from(flags & DOOR != 0);
         }
     }
-    let portals: Vec<Opening> = (interior.portals.iter().zip(held))
-        .map(|(p, (all, doors))| Opening {
+    // ⚠ Inferred: a door reaches a portal by where it stands, and the door of a shell's opening
+    // is the map's own entity, which the interior holds only the frame of.
+    let inward = outer.inverse();
+    let map_doors: Vec<Vec3> = map_doors
+        .iter()
+        .map(|d| inward.transform_point3(*d))
+        .collect();
+    for (count, p) in doors.iter_mut().zip(&interior.portals) {
+        if p.room_from != 0 && p.room_to != 0 {
+            continue;
+        }
+        let corners = p.corners.map(Vec3::from);
+        let in_opening = |d: &&Vec3| {
+            point_polygon_distance(**d, &corners).is_some_and(|away| away <= IN_OPENING)
+        };
+        *count += map_doors.iter().filter(in_opening).count();
+    }
+    let portals: Vec<Opening> = (interior.portals.iter().zip(doors))
+        .map(|(p, doors)| Opening {
             rooms: [p.room_from, p.room_to],
             corners: p.corners.map(Vec3::from),
             flags: p.flags,
-            shut: interior_rooms::shut_at_rest(p.flags, [p.room_from, p.room_to], all, doors),
+            shut: interior_rooms::shut_at_rest(p.flags, doors),
         })
         .collect();
     let rooms: Vec<RoomBox> = (interior.rooms.iter())
@@ -459,9 +482,14 @@ pub(super) fn read_placed(
             return Vec::new();
         }
     };
+    let is_door = |word: u64| index.archetype(word).is_some_and(|a| a.flags & DOOR != 0);
+    let doors: Vec<Vec3> = (map.entities.iter())
+        .filter(|e| !e.interior && is_door(e.archetype_word))
+        .map(|e| Vec3::from(e.position))
+        .collect();
     let mut placed = Vec::with_capacity(instances.len());
     with_interiors(index, files, &instances, |instance, interior| {
-        placed.push(place(index, instance, interior));
+        placed.push(place(index, instance, interior, &doors));
     });
     placed
 }

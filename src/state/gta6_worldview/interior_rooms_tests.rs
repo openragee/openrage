@@ -1,4 +1,7 @@
 use super::*;
+use or_world::interior_portals::{
+    PORTAL_ALLOW_CLOSING, PORTAL_LINK as LINK, PORTAL_MIRROR as MIRROR,
+};
 
 /// Three rooms 4 m long in a row along x, 4 m wide and 3 high: a front door from the outside into
 /// room 1 at x = 0, a door from room 1 into room 2 at x = 4 and one from room 2 into room 3 at
@@ -158,18 +161,15 @@ fn a_shut_door_is_seen_and_lets_neither_the_eye_nor_the_sky_through() {
 }
 
 #[test]
-fn a_portal_that_may_close_is_shut_by_what_it_holds_to_the_outside_and_by_its_doors_within() {
-    let closing = ALLOW_CLOSING | 8;
-    // To the outside, whatever it holds shuts it; holding nothing, or looked through one way, never.
-    assert!(shut_at_rest(closing, [3, 0], 1, 0));
-    assert!(!shut_at_rest(closing, [3, 0], 0, 0));
-    assert!(!shut_at_rest(closing | ONE_WAY, [0, 3], 2, 1));
-    // Between two rooms, a door shuts it and a frame alone does not.
-    assert!(shut_at_rest(closing, [1, 2], 2, 1));
-    assert!(!shut_at_rest(closing, [1, 2], 2, 0));
-    // One that may not close, or that links another interior, never shuts.
-    assert!(!shut_at_rest(8, [1, 0], 2, 1));
-    assert!(!shut_at_rest(closing | LINK, [1, 0], 2, 1));
+fn a_portal_that_may_close_is_shut_at_rest_by_a_door_and_open_with_none() {
+    let closing = PORTAL_ALLOW_CLOSING | 8;
+    // A door shuts it, one-way or not; with no door it stays open.
+    assert!(shut_at_rest(closing, 1));
+    assert!(shut_at_rest(closing | 1, 2));
+    assert!(!shut_at_rest(closing, 0));
+    // A link's doors never reach it, and one that may not close never shuts.
+    assert!(!shut_at_rest(closing | LINK, 1));
+    assert!(!shut_at_rest(8 | 1, 1));
 }
 
 #[test]

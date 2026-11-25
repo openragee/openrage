@@ -16957,6 +16957,9 @@ msgstr "이 문서의 문자열 이름에는 GTA VI 키 스냅샷이 필요합�
 msgid "Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan."
 msgstr "dxcompiler.dll을 OpenRage 옆, PATH, Windows SDK 어디에서도 찾지 못해 Direct3D 12가 FXC로 셰이더를 컴파일하고 있습니다. FXC는 GTA VI 셰이더 프로그램 일부를 거부하고 다른 일부에는 몇 분이 걸리므로, 이를 필요로 하는 모델은 머티리얼 보기로 그려집니다. dxcompiler.dll과 dxil.dll을 openrage.exe 옆에 두거나 WGPU_BACKEND=vulkan으로 OpenRage를 시작하세요."
 
+msgid "Direct3D 12 is compiling shaders with FXC, which refuses some GTA VI shader programs, so the models that need them are drawn in Material. The Log says how to change that."
+msgstr "Direct3D 12가 FXC로 셰이더를 컴파일하고 있습니다. FXC는 GTA VI 셰이더 프로그램 일부를 거부하므로, 이를 필요로 하는 모델은 머티리얼 보기로 그려집니다. 바꾸는 방법은 로그에 기록되어 있습니다."
+
 msgid "It casts no shadow: one of its surfaces reads the view at an offset the light's view cannot be copied to"
 msgstr "그림자를 드리우지 않습니다: 서피스 중 하나가 광원의 뷰를 복사할 수 없는 오프셋에서 뷰를 읽습니다"
 

@@ -17104,6 +17104,9 @@ msgstr "Для имён строк этого документа нужен сн
 msgid "Direct3D 12 is compiling shaders with FXC, because no dxcompiler.dll was found beside OpenRage, on PATH or in a Windows SDK. FXC refuses some GTA VI shader programs and takes minutes over others, so the models that need them are drawn in Material. Put dxcompiler.dll and dxil.dll beside openrage.exe, or start OpenRage with WGPU_BACKEND=vulkan."
 msgstr "Direct3D 12 компилирует шейдеры с помощью FXC, потому что dxcompiler.dll не найден ни рядом с OpenRage, ни в PATH, ни в Windows SDK. FXC отклоняет некоторые шейдерные программы GTA VI, а на другие тратит минуты, поэтому модели, которым они нужны, рисуются в виде «Материал». Положите dxcompiler.dll и dxil.dll рядом с openrage.exe или запустите OpenRage с WGPU_BACKEND=vulkan."
 
+msgid "Direct3D 12 is compiling shaders with FXC, which refuses some GTA VI shader programs, so the models that need them are drawn in Material. The Log says how to change that."
+msgstr "Direct3D 12 компилирует шейдеры через FXC, который отклоняет часть шейдерных программ GTA VI, поэтому нужные им модели рисуются в виде «Материал». Как это изменить, сказано на панели «Журнал»."
+
 msgid "It casts no shadow: one of its surfaces reads the view at an offset the light's view cannot be copied to"
 msgstr "Он не отбрасывает тень: одна из его поверхностей читает вид по смещению, в которое вид источника света нельзя скопировать"
 

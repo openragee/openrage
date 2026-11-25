@@ -357,6 +357,9 @@ pub struct Temporal {
     pub near: f32,
     pub far: f32,
     pub far_depth: f32,
+    /// Seconds to converge at the camera while it moves forward, and the speeds along the view, in metres a second, the move starts and ends at.
+    pub forward: f32,
+    pub forward_speed: [f32; 2],
     /// How many deviations of the pixels about it the history is held within.
     pub gamma: f32,
 }

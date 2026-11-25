@@ -3,23 +3,16 @@
 use std::cell::Cell;
 use std::time::Instant;
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 
+use super::post_math::{
+    history_weight, jitter_table, neighbourhood_weights, HistoryTimes, ResolveKernel,
+    STANDIN_JITTER_PERIOD, STANDIN_JITTER_SCALE,
+};
 use super::post_shaders::{module, Part};
 use crate::game_shaders::deferred::HDR_FORMAT;
-use crate::game_shaders::tone::{Gta6Post, BLOOM_SIZES, COMPENSATION_SAMPLES};
+use crate::game_shaders::tone::{Gta6Post, Temporal, BLOOM_SIZES, COMPENSATION_SAMPLES};
 
-/// The offsets of the camera from frame to frame, in pixels: the first eight of the Halton sequences in two and three, about the middle of the pixel.
-const JITTER: [[f32; 2]; 8] = [
-    [0.0, -0.166_666_67],
-    [-0.25, 0.166_666_67],
-    [0.25, -0.388_888_9],
-    [-0.375, -0.055_555_556],
-    [0.125, 0.277_777_8],
-    [-0.125, -0.277_777_8],
-    [0.375, 0.055_555_556],
-    [-0.437_5, 0.388_888_9],
-];
 /// The longest a frame counts for when the history takes its share, in seconds: a slow frame converges by frames, not by time.
 const LONGEST_FRAME: f32 = 1.0 / 30.0;
 /// How far, in metres, the camera goes in one frame before its history is thrown away as another place.
@@ -52,15 +45,43 @@ pub(super) fn doublings(weights: &[f32; BLOOM_SIZES]) -> [f32; BLOOM_SIZES - 1] 
     factors
 }
 
+/// The camera's offset of frame `frame` in pixels, x right and y up: a point of the build's sixteen, cycled over the stand-in period and scale.
+pub(super) fn offset(frame: u32) -> Vec2 {
+    // Stand-in: the build's period and scale have no writer found; 8 frames and half a pixel are inferred.
+    jitter_table()[frame as usize % STANDIN_JITTER_PERIOD] * STANDIN_JITTER_SCALE
+}
+
 /// The camera's offset this frame, as a change of the clip space.
 pub(super) fn jitter(frame: u32, (width, height): (u32, u32)) -> Mat4 {
-    let [x, y] = JITTER[frame as usize % JITTER.len()];
+    let j = offset(frame);
     let ndc = Vec3::new(
-        2.0 * x / width.max(1) as f32,
-        2.0 * y / height.max(1) as f32,
+        2.0 * j.x / width.max(1) as f32,
+        2.0 * j.y / height.max(1) as f32,
         0.0,
     );
     Mat4::from_translation(ndc)
+}
+
+/// The resolve's nine tent weights for frame `frame`: centred where the pixel's own middle fell on the offset frame, normalised to sum one.
+pub(super) fn resolve_weights(frame: u32) -> [f32; 9] {
+    // The offset moves the image by (x, -y) texels, x right and y down: the pixel's middle lies there.
+    // Inferred: the build's (-0.5 j.x, 0.5 j.y) is this point in its own units of the offset.
+    let j = offset(frame);
+    neighbourhood_weights(ResolveKernel::Tent, Vec2::new(j.x, -j.y), true)
+}
+
+/// The share of this frame a pixel near the camera takes in after `seconds`, the camera moving `speed` metres a second along the view: the build's history weight, toward the forward time as the speed rises.
+pub(super) fn near_share(seconds: f32, speed: f32, temporal: &Temporal) -> f32 {
+    let seconds = seconds.clamp(0.0, LONGEST_FRAME);
+    let times = HistoryTimes {
+        base: temporal.near,
+        second: temporal.near,
+        moving: temporal.forward,
+        speed_low: temporal.forward_speed[0],
+        speed_high: temporal.forward_speed[1],
+    };
+    // Inferred: the build's speed is the view's forward axis dotted with the camera's motion; its unit was not read.
+    1.0 - history_weight(0.0, 0.0, seconds, &times, true, speed, false).0
 }
 
 /// The targets of one size of frame.
@@ -276,7 +297,7 @@ impl Post {
             ),
             sampler: crate::game_shaders::samplers::linear(device),
             composite_values: uniform(device, 16 * (4 + COMPENSATION_SAMPLES as u64 / 4)),
-            temporal_values: uniform(device, 64 * 3 + 16 * 3),
+            temporal_values: uniform(device, 64 * 3 + 16 * 6),
             sharpen_values: uniform(device, 16),
             targets: None,
             bound: None,
@@ -409,18 +430,29 @@ impl Post {
             .map_or(0.0, |at| now.duration_since(at).as_secs_f32());
         let valid = kept.valid && kept.eye.distance(eye) < CUT;
         let temporal = settings.temporal;
-        let mut values: Vec<f32> = Vec::with_capacity(60);
+        // A point ahead on the middle of the screen gives the view's forward axis, whatever the depth's direction.
+        let ahead = unjittered
+            .inverse()
+            .project_point3(Vec3::new(0.0, 0.0, 0.5));
+        let forward = (ahead - eye).normalize_or_zero();
+        let speed = match valid && seconds > 0.0 {
+            true => forward.dot(eye - kept.eye) / seconds,
+            false => 0.0,
+        };
+        let mut values: Vec<f32> = Vec::with_capacity(72);
         values.extend(jittered.inverse().to_cols_array());
         values.extend(unjittered.to_cols_array());
         values.extend(kept.before.to_cols_array());
         values.extend([eye.x, eye.y, eye.z, 1.0]);
         values.extend([
-            share(seconds, temporal.near),
+            near_share(seconds, speed, &temporal),
             share(seconds, temporal.far),
             temporal.far_depth,
             temporal.gamma,
         ]);
         values.extend([f32::from(u8::from(valid)), 0.0, 0.0, 0.0]);
+        values.extend(resolve_weights(kept.frame));
+        values.extend([0.0; 3]);
         queue.write_buffer(&self.temporal_values, 0, bytemuck::cast_slice(&values));
         let (read, write) = (kept.written, 1 - kept.written);
         draw(
@@ -588,14 +620,50 @@ mod tests {
 
     #[test]
     fn the_offsets_stay_within_the_pixel_and_average_to_its_middle() {
-        let n = JITTER.len() as f32;
-        let mean = JITTER
-            .iter()
-            .fold([0.0f32; 2], |m, j| [m[0] + j[0] / n, m[1] + j[1] / n]);
-        assert!(mean[0].abs() < 0.07 && mean[1].abs() < 0.07, "{mean:?}");
-        assert!(JITTER.iter().all(|j| j[0].abs() < 0.5 && j[1].abs() < 0.5));
+        let offsets: Vec<Vec2> = (0..STANDIN_JITTER_PERIOD as u32).map(offset).collect();
+        let mean = offsets.iter().copied().sum::<Vec2>() / offsets.len() as f32;
+        assert!(mean.x.abs() < 0.07 && mean.y.abs() < 0.07, "{mean:?}");
+        assert!(offsets.iter().all(|j| j.x.abs() <= 0.5 && j.y.abs() <= 0.5));
+        // Frame 2 is the table's entry 2, (1/2, -7/9), at half a pixel.
         let m = jitter(2, (1280, 720));
         let moved = m * glam::Vec4::new(0.0, 0.0, 0.5, 2.0);
         assert!((moved.x / moved.w - 2.0 * 0.25 / 1280.0).abs() < 1e-7);
+    }
+
+    #[test]
+    fn the_resolve_weighs_the_texels_about_where_the_pixels_middle_fell() {
+        // Frame 2 offsets the image by (0.25, 7/18) texels right and down: the tent splits x 3:1
+        // between the middle and the right, y 11:7 between the middle and the row below.
+        let w = resolve_weights(2);
+        assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5);
+        let (x, y) = (0.25f32, 7.0f32 / 18.0);
+        assert!((w[4] - (1.0 - x) * (1.0 - y)).abs() < 1e-5, "{w:?}");
+        assert!((w[5] - x * (1.0 - y)).abs() < 1e-5);
+        assert!((w[7] - (1.0 - x) * y).abs() < 1e-5);
+        assert_eq!([w[0], w[1], w[2], w[3], w[6]], [0.0; 5]);
+        // Frame 0 is entry 0, (0, -1/3): no move across, a sixth of a texel down.
+        let w = resolve_weights(0);
+        assert!((w[4] - 5.0 / 6.0).abs() < 1e-5 && (w[7] - 1.0 / 6.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_camera_moving_forward_takes_in_less_of_its_frame_near_it() {
+        let temporal = Temporal {
+            near: 0.15,
+            far: 1.0,
+            far_depth: 250.0,
+            forward: 0.2,
+            forward_speed: [0.0, 0.1],
+            gamma: 1.25,
+        };
+        let dt = 1.0 / 60.0;
+        let still = near_share(dt, 0.0, &temporal);
+        assert!((still - share(dt, 0.15)).abs() < 1e-6, "{still}");
+        let moving = near_share(dt, 5.0, &temporal);
+        assert!((moving - share(dt, 0.2)).abs() < 1e-6, "{moving}");
+        // Half way between the speeds, the history weight is half way between the two.
+        let half = near_share(dt, 0.05, &temporal);
+        let weight = 0.5 * ((-dt / 0.15f32).exp() + (-dt / 0.2f32).exp());
+        assert!((half - (1.0 - weight)).abs() < 1e-6, "{half}");
     }
 }

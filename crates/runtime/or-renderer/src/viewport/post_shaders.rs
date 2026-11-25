@@ -150,6 +150,8 @@ struct Temporal {
     shares: vec4<f32>,
     // whether there is a history to read
     flags: vec4<f32>,
+    // the nine tent weights of the 3x3 about the pixel, row by row, that put this frame back on the pixel's middle
+    weights: array<vec4<f32>, 3>,
 }
 
 @group(0) @binding(2) var history: texture_2d<f32>;
@@ -175,18 +177,22 @@ fn screen_of(m: mat4x4<f32>, world: vec4<f32>) -> vec2<f32> {
 fn fs_temporal(v: Out) -> @location(0) vec4<f32> {
     let size = vec2<i32>(textureDimensions(source));
     let at = vec2<i32>(v.position.xy);
-    let here = textureLoad(source, at, 0);
-    if (temporal.flags.x < 0.5) {
-        return here;
-    }
     var mean = vec3<f32>(0.0);
     var square = vec3<f32>(0.0);
+    var resolved = vec3<f32>(0.0);
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
-            let c = tamed(textureLoad(source, clamp(at + vec2<i32>(x, y), vec2<i32>(0), size - 1), 0).rgb);
+            let raw = textureLoad(source, clamp(at + vec2<i32>(x, y), vec2<i32>(0), size - 1), 0).rgb;
+            let k = u32((y + 1) * 3 + x + 1);
+            resolved += raw * temporal.weights[k / 4u][k % 4u];
+            let c = tamed(raw);
             mean += c;
             square += c * c;
         }
+    }
+    let here = vec4<f32>(resolved, textureLoad(source, at, 0).a);
+    if (temporal.flags.x < 0.5) {
+        return here;
     }
     mean /= 9.0;
     let deviation = sqrt(max(square / 9.0 - mean * mean, vec3<f32>(0.0)));
@@ -249,4 +255,23 @@ pub(super) enum Part {
     Composite,
     Temporal,
     Sharpen,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_module_of_the_passes_parses_and_validates() {
+        for part in [Part::Halve, Part::Composite, Part::Temporal, Part::Sharpen] {
+            let parsed = naga::front::wgsl::parse_str(&module(part))
+                .unwrap_or_else(|e| panic!("{part:?}: {e}"));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&parsed)
+            .unwrap_or_else(|e| panic!("{part:?}: {e:?}"));
+        }
+    }
 }

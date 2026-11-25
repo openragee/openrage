@@ -408,6 +408,11 @@ fn post_of(
             near: visual("temporalaa.convergenceTime", 0.15),
             far: visual("temporalaa.convergenceTimeFar", 1.0),
             far_depth: visual("temporalaa.convergenceTimeDepthMax", 250.0),
+            forward: visual("temporalaa.convergenceTimeForward", 0.2),
+            forward_speed: [
+                visual("temporalaa.convergenceTimeForwardSpeedMin", 0.0),
+                visual("temporalaa.convergenceTimeForwardSpeedMax", 0.1),
+            ],
             gamma: visual("temporalaa.varianceGammaMin", 1.25),
         },
         sharpen: visual("sharpen.intensity", 0.15),

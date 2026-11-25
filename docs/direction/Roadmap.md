@@ -9722,10 +9722,20 @@ near a position, read through the index of R70b and kept by the caller that has 
 caller, and `openrage-cli world ground` answers a position
 ([brief](World_Editor_Plan.md#collision-as-a-query-r70g)).
 
-**Where it stands.** Not merged; a lane began the primitives on 2026-11-25. `BvhCollider` in
-`crates/runtime/or-simulation/src/collision.rs` casts a ray at one bound for particles, and the Map
-screen's ground is the highest box under a point. `or-depends` depends on `or-world` and not the
-reverse, so `or-world` is handed its bounds and reaches no index.
+**Where it stands.** The primitives are built in
+`crates/domain/or-world/src/collision/`: `BoundCollider` is a bound's exact shapes under a tree, and
+`CollisionSet` holds the colliders its caller hands it by key and answers a ray, a swept sphere, a
+box overlap and the ground, held on bounds built by hand
+(`crates/domain/or-world/tests/collision_queries.rs`,
+`crates/domain/or-world/tests/collision_world.rs`). Of the staged corpus, 948 bounds become
+colliders with none refused
+(`every_staged_bound_becomes_a_collider_whose_ray_and_swept_sphere_agree`, 2026-11-25), and 897 of
+971 geometries stop 40 mm short of the box they state
+(`every_staged_geometry_lies_in_the_box_it_states`, 2026-11-25), so whether the game's surface is
+the polygons is open. Left: a caller that hands the set the index's bounds;
+`openrage-cli world ground`; the install check; and the particle collider, `BvhCollider` in
+`crates/runtime/or-simulation/src/collision.rs`, unchanged because it makes triangles of the curved
+shapes the query meets exactly, which is the owner's to rule on.
 
 **Depends on.** Nothing for the primitives; [R70b](#r70b-the-gta-v-world-index) for the bounds near
 a position.

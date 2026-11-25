@@ -18,6 +18,7 @@
 //! hashes of their own names.
 
 pub mod archetypes;
+pub mod collision;
 pub mod content_flags;
 pub mod execute;
 pub mod extension;

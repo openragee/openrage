@@ -670,7 +670,11 @@ copies, reads fields by name hash, and `write` edits the tree against the
 document's own layout. `scenario` is the exception: it names a scenario
 region's points over the typed `CScenarioPointRegion`. `streaming` is the
 other: the rules of which maps a camera streams in and which nodes of their
-level-of-detail forest draw, over plain values, for any title.
+level-of-detail forest draw, over plain values, for any title. `collision`
+is the third, over `or-io`'s declared bounds: a `BoundCollider` is one bound's
+shapes under a tree built once, a `CollisionSet` holds colliders by key with
+the transform that places each, and the set answers a ray, a swept sphere, a
+box overlap and the ground under a point in world space.
 
 - `parentIndex` does not index its own map when bit 3 of `CEntityDef::flags` is
   set, and `write::refuse_if_broken` honours the bit. A map name names a set of
@@ -693,6 +697,24 @@ level-of-detail forest draw, over plain values, for any title.
 - A prefab is typed by its entities' member set, which Enhanced extends, so a
   catalogue is one title's and a prefab of the other is refused
   (`a_prefab_round_trips_every_map`).
+- A collision shape is exact, where the particle preview's `BvhCollider` makes
+  triangles of the same bound, so the two differ on a curved one. A box
+  primitive's four vertices are corners no edge joins
+  (`a_box_primitive_names_four_corners_no_edge_joins`), a placing transform is
+  a rotation, one scale and a translation or it is refused, a ray in a
+  triangle's plane meets nothing, and a query that starts inside a solid meets
+  it at distance 0, which the ground under a point passes through
+  (`crates/domain/or-world/src/collision/shape.rs`). A shape is refused by asking each of its
+  numbers, never its box alone, because `min` and `max` pass over a NaN
+  (`a_bound_of_sizes_and_places_that_are_no_numbers_is_refused`). `BvhCollider`
+  also leaves out the primitives of a geometry and passes over a polygon that
+  names a missing vertex, where the query refuses the bound, and two of its
+  suites count its triangles (`a_shipped_disc_bound_collides_with_thickness`),
+  so making it a caller changes what the particle preview collides with. The
+  staged capsule, disc, cylinder and box bounds each fill the box their header
+  states, which holds the axis and the radius each is read with
+  (`every_staged_primitive_bound_fills_the_box_it_states`); no sphere bound is
+  staged, so a sphere's reading is held by bounds built by hand alone.
 - An archetype's bounds match its drawable's only about half the time, because
   the archetype's frame is not recorded in the drawable, and `lodDist` and
   `textureDictionary` are authoring decisions

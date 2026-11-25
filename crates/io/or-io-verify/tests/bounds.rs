@@ -639,6 +639,99 @@ fn a_cylinder_does_not_carry_its_own_dimensions() {
     assert_eq!(disc_shaped, discs);
 }
 
+/// The largest cosine between two of three edges, and the shortest edge; an edge of no length is at right angles to all.
+fn worst_cosine(edges: [[f32; 3]; 3]) -> (f32, f32) {
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let cosine = [(0, 1), (0, 2), (1, 2)]
+        .into_iter()
+        .map(|(i, j)| {
+            let lengths = (dot(edges[i], edges[i]) * dot(edges[j], edges[j])).sqrt();
+            if lengths > 0.0 {
+                dot(edges[i], edges[j]).abs() / lengths
+            } else {
+                0.0
+            }
+        })
+        .fold(0.0, f32::max);
+    let shortest = edges
+        .iter()
+        .map(|e| dot(*e, *e).sqrt())
+        .filter(|l| *l > 0.0)
+        .fold(f32::MAX, f32::min);
+    (cosine, shortest)
+}
+
+/// A box primitive's four vertices are corners no edge of the box joins, so
+/// the sums and differences of the four are its three edges, at right angles.
+/// The rival reading, one corner and the three an edge joins it to, is
+/// measured beside it: the file states neither.
+#[test]
+fn a_box_primitive_names_four_corners_no_edge_joins() {
+    let what = "what a box primitive's four vertices are";
+    let (Some(ybn), Some(yft)) = (owned_ybn(what), files("yft", Some(T), what)) else {
+        return;
+    };
+    let mut bounds: Vec<PhBoundAny> = ybn.into_iter().map(|(_, b)| b).collect();
+    for path in &yft {
+        let opened = Opened::read(path);
+        let image = opened.image();
+        for at in fragment_bounds(image, &["PhBoundGeometry", "PhBoundBVH"]) {
+            bounds.push(owned_bound_at(image, at));
+        }
+    }
+    let (mut boxes, mut apart, mut adjacent, mut rival_nearer) = (0usize, 0usize, 0usize, 0usize);
+    for bound in &bounds {
+        let mut found = Vec::new();
+        geometries(bound, &mut found);
+        for g in found {
+            let f = &g.un_quantize_factor;
+            let quantum = (f.x * f.x + f.y * f.y + f.z * f.z).sqrt();
+            for p in g.polygons.iter().filter(|p| p.primitive() == 3) {
+                let (indices, _) = g.polygon_vertices(p).expect("a box primitive");
+                let v: Vec<[f32; 3]> = indices
+                    .iter()
+                    .map(|i| g.vertex_position(*i).expect("a vertex the bound holds"))
+                    .collect();
+                let mix = |s: [f32; 4]| -> [f32; 3] {
+                    std::array::from_fn(|a| (0..4).map(|k| s[k] * v[k][a]).sum::<f32>() * 0.5)
+                };
+                let (no_edge, shortest) = worst_cosine([
+                    mix([1.0, 1.0, -1.0, -1.0]),
+                    mix([1.0, -1.0, 1.0, -1.0]),
+                    mix([1.0, -1.0, -1.0, 1.0]),
+                ]);
+                let one_corner = (0..4)
+                    .map(|corner| {
+                        let others: Vec<[f32; 3]> = (0..4)
+                            .filter(|k| *k != corner)
+                            .map(|k| std::array::from_fn(|a| v[k][a] - v[corner][a]))
+                            .collect();
+                        worst_cosine([others[0], others[1], others[2]]).0
+                    })
+                    .fold(f32::MAX, f32::min);
+                boxes += 1;
+                // ⚠ A vertex is sixteen bits an axis, so each of the four is up to half a quantum
+                // off and an edge, half their sum, up to a whole one: a short edge turns by that
+                // over its length.
+                let slack = 1e-3 + 2.0 * quantum / shortest;
+                apart += usize::from(no_edge <= slack);
+                adjacent += usize::from(one_corner <= slack);
+                rival_nearer += usize::from(one_corner < no_edge);
+            }
+        }
+    }
+    println!(
+        "{boxes} box primitives: {apart} are corners no edge joins, {adjacent} one corner and \
+         its three neighbours, and the second reading is the squarer in {rival_nearer}"
+    );
+    assert!(
+        boxes > 0,
+        "no box primitive was reached, so this measured nothing"
+    );
+    assert_eq!(apart, boxes);
+    assert_eq!(rival_nearer, 0);
+}
+
 /// Every polygon's first word and every vertex, through the typed API from the root.
 #[inline(never)]
 fn typed_sum(b: View<'_, Raw<PhBound>>) -> u64 {

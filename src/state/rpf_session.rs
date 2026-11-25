@@ -287,6 +287,18 @@ impl RpfEditSession {
         Some(parts.join("/"))
     }
 
+    /// The visible path includes type extensions without changing the archive's entry names.
+    pub fn display_path_of(&self, id: RpfNodeId) -> Option<String> {
+        let mut parts = Vec::new();
+        let mut cur = self.nodes.get(&id)?;
+        while let Some(parent) = cur.parent {
+            parts.push(cur.display_name().into_owned());
+            cur = self.nodes.get(&parent)?;
+        }
+        parts.reverse();
+        Some(parts.join("/"))
+    }
+
     pub fn all_nodes(&self) -> Vec<RpfNodeId> {
         let mut out: Vec<RpfNodeId> = self.nodes.keys().copied().collect();
         out.sort_unstable();

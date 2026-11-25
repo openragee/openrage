@@ -162,11 +162,23 @@ pub enum Resolved {
 pub fn resolve_path(session: &RpfEditSession, inner: &str) -> Resolved {
     let mut at = session.root_id();
     for segment in inner.split('/').filter(|s| !s.is_empty()) {
-        let next = session.children_of(at).into_iter().find(|&id| {
-            session
-                .node(id)
-                .is_some_and(|n| n.name.eq_ignore_ascii_case(segment))
-        });
+        let children = session.children_of(at);
+        // Stored names take precedence over visual aliases.
+        let next = children
+            .iter()
+            .copied()
+            .find(|&id| {
+                session
+                    .node(id)
+                    .is_some_and(|n| n.name.eq_ignore_ascii_case(segment))
+            })
+            .or_else(|| {
+                children.into_iter().find(|&id| {
+                    session
+                        .node(id)
+                        .is_some_and(|n| n.display_name().eq_ignore_ascii_case(segment))
+                })
+            });
         match next {
             Some(id) => at = id,
             None if session.needs_expansion(at) => return Resolved::Unloaded(at),

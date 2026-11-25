@@ -728,7 +728,7 @@ fn paths(state: &AppState, target: &Target) -> Result<Vec<String>, &'static str>
     let paths: Vec<String> = match target {
         Target::Rows { doc, rows, .. } => match &state.document(*doc).map(|d| &d.payload) {
             Some(DocPayload::Rpf(rpf)) => (rows.iter())
-                .filter_map(|&row| rpf.session.path_of(row))
+                .filter_map(|&row| rpf.session.display_path_of(row))
                 .map(|path| format!("/{path}"))
                 .collect(),
             _ => Vec::new(),

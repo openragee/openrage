@@ -332,6 +332,24 @@ fn a_position_is_three_numbers_and_a_flags_value_is_not_one_of_them() {
     }
     assert!(position_of(&strings(&["100,200"])).is_err(), "no height");
     assert!(position_of(&strings(&["prop_bench_01a"])).is_err());
+
+    // A place pasted with no quotes reaches the verb as the words a shell split it into, a flag among them or not.
+    for pasted in [
+        vec!["-75.0,", "-818.2,", "326.1"],
+        vec!["--game", "g", "-75.0,", "-818.2,", "--json", "326.1"],
+        vec!["X:", "-75.0,", "Y:", "-818.2,", "Z:", "326.1"],
+        vec!["vector3(-75.0,", "-818.2,", "326.1)"],
+    ] {
+        assert_eq!(
+            position_of(&strings(&pasted)),
+            Ok(Vec3::new(-75.0, -818.2, 326.1)),
+            "{pasted:?}"
+        );
+    }
+    assert_eq!(
+        position_of(&strings(&["-75.0,", "there", "326.1"])),
+        Err("`-75.0,` is not a number".to_string())
+    );
 }
 
 #[test]

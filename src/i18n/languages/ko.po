@@ -8702,6 +8702,9 @@ msgstr "나중에 설정의 편집 페이지에서 변경할 수 있습니다"
 msgid "The Wardrobe's rules found nothing wrong in it."
 msgstr "옷장의 규칙에서 문제를 찾지 못했습니다."
 
+msgid "The acceptance sheet has no line about what else this build wrote: {kinds}"
+msgstr "이 빌드가 기록한 그 밖의 파일에 대해서는 수락 시트에 줄이 없습니다: {kinds}"
+
 msgid "The active document has no file yet"
 msgstr "활성 문서에 아직 파일이 없습니다"
 

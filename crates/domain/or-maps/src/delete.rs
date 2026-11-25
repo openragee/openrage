@@ -39,11 +39,12 @@ use crate::model::{self, Maps};
 use crate::operation::{self, Applied, At, Operation};
 use crate::script_text::{self, ScriptForm};
 
+/// Why a deletion was not planned.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
     Model(#[from] model::Error),
-    #[error("the source `{0}` is not read, and a deletion follows the links of every map file of the pack: {1}")]
+    #[error("the source `{0}` is not read, and it may be a map file, whose links a deletion follows: {1}")]
     Source(String, String),
     #[error("no entity is named")]
     Nothing,
@@ -223,8 +224,21 @@ fn map_files(folder: &Path, model: &Maps) -> Result<Vec<MapFile>, Error> {
             return Err(unread("it leaves the folder of the pack".to_string()));
         }
         let dir = folder.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
-        let source = or_source::asset::Source::open(&dir).map_err(|p| unread(p.to_string()))?;
+        // ⚠ Only what may be a map file refuses a deletion: a folder that names another kind is none, whether it opens or not, and
+        // neither is a metadata source that says it cooks to another file, whatever else of it does not read.
+        let another_kind = (path.rsplit('/').next())
+            .and_then(or_source::asset::parse_folder_name)
+            .is_some_and(|(_, kind)| kind != or_source::metadata::KIND);
+        let source = match or_source::asset::Source::open(&dir) {
+            Ok(source) => source,
+            Err(_) if another_kind => continue,
+            Err(why) => return Err(unread(why.to_string())),
+        };
         if source.manifest.kind != or_source::metadata::KIND {
+            continue;
+        }
+        let cooks_to = or_source::metadata::cooked_name(&source.manifest);
+        if cooks_to.is_ok_and(|file| !file.ends_with(&format!(".{}", CMapData::EXTENSION))) {
             continue;
         }
         let inputs = Inputs::read(&source).map_err(|found| unread(problems(found)))?;
@@ -656,6 +670,14 @@ pub fn plan(folder: &Path, chosen: &[At]) -> Result<Deletion, Error> {
 /// Do the deletion `planned` to the sources of the pack of maps in `folder`, whole or not at all; the inverses of what it did, the last first, put every file back.
 pub fn apply(folder: &Path, planned: &Deletion) -> Result<Vec<Applied>, operation::Error> {
     operation::apply_all(folder, &planned.operations, false)
+}
+
+/// Do the deletion `planned` in `session`, whole or not at all: an operation the session refuses leaves every root as it was, and nothing is written until the session is flushed.
+pub fn apply_in(
+    session: &mut operation::Session,
+    planned: &Deletion,
+) -> Result<Vec<operation::Done>, operation::Error> {
+    session.apply_all(&planned.operations)
 }
 
 #[cfg(test)]

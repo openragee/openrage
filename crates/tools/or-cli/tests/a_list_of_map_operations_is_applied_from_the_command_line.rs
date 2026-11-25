@@ -1,5 +1,6 @@
 //! `openrage-cli maps apply` does a list of operations to the sources of a maps content exactly as `or_maps::operation::apply_all`
-//! does, says what a dry run would change without writing, and refuses a list whole.
+//! does, remembers in the content the names the list states, says what a dry run would change without writing, and refuses a list
+//! whole.
 //!
 //! ⚠ The command prints with `println!` and `eprintln!`, which a test cannot read back in its own process, so what it says is read
 //! from a child of this test binary that calls `or_cli::run`.
@@ -191,6 +192,15 @@ fn a_list_applied_from_the_command_line_and_by_the_function_leaves_the_same_sour
     assert!(after != before, "the list changes the sources");
 
     apply_all(&by_function.path().join("maps"), &operations, false).unwrap();
+    // The command remembers the names the list states, which a file keeps the hash of alone: the function edits the sources and
+    // leaves the names of the content to its caller.
+    let function_wrote = files(&by_function.path().join("maps"));
+    let model = Path::new("maps.json");
+    assert!(function_wrote[model] == before[model] && after[model] != before[model]);
+    let mut remembered = or_maps::Maps::read(&by_function.path().join("maps")).unwrap();
+    assert!(remembered.names.is_empty());
+    remembered.remember(&["prop_new_crate"]);
+    remembered.write(&by_function.path().join("maps")).unwrap();
     let same = files(&by_function.path().join("maps"));
     assert_eq!(
         after.keys().collect::<Vec<_>>(),

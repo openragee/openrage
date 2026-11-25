@@ -197,6 +197,93 @@ fn the_json_lists_the_same_doors_as_the_text_with_their_pairing_and_what_the_rul
 }
 
 #[test]
+fn a_pack_that_remembers_no_name_finds_its_doors_by_a_list_of_names_or_by_what_an_operation_states()
+{
+    let dir = tempfile::tempdir().unwrap();
+    let project = a_project_with_doors(dir.path());
+    let folder = dir.path().join("maps");
+    // As an import leaves a pack: its files keep hashes, and nobody typed a name.
+    let mut model = Maps::read(&folder).unwrap();
+    model.names.clear();
+    model.write(&folder).unwrap();
+    let (printed, succeeded) = said(&[text(&project)]);
+    assert!(succeeded, "{printed}");
+    assert!(
+        printed.contains(
+            "1 door(s) among 7 entity(ies), 0 double door(s), 6 entity(ies) whose model has no name\n"
+        ),
+        "only the gate, by its extension: {printed}"
+    );
+
+    let names = dir.path().join("names.txt");
+    std::fs::write(&names, format!("{DOOR}\n\n  cellar_door_a  \n{SOFA}\n")).unwrap();
+    let (printed, succeeded) = said(&[text(&project), "--names", text(&names)]);
+    assert!(succeeded, "{printed}");
+    assert!(
+        printed.contains(
+            "4 door(s) among 7 entity(ies), 1 double door(s), 1 entity(ies) whose model has no name\n"
+        ),
+        "{printed}"
+    );
+    let (_, succeeded) = said(&[
+        text(&project),
+        "--names",
+        text(&dir.path().join("gone.txt")),
+    ]);
+    assert!(!succeeded, "a list that is not there is refused");
+
+    // An operation that adds an entity states its archetype, which the content then remembers.
+    let list = dir.path().join("add.json");
+    let added = or_maps::operation::Operation::AddEntity {
+        source: "shop.metadata.src".into(),
+        expects: None,
+        archetype: DOOR.into(),
+        pose: or_maps::operation::PoseData {
+            position: [40.0, 20.0, 0.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale_xy: 1.0,
+            scale_z: 1.0,
+        },
+        donor: None,
+    };
+    let hashed = or_maps::operation::Operation::AddEntity {
+        source: "shop.metadata.src".into(),
+        expects: None,
+        archetype: format!("hash_{:08X}", or_io::string_hash(GATE.as_bytes())),
+        pose: or_maps::operation::PoseData {
+            position: [44.0, 20.0, 0.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale_xy: 1.0,
+            scale_z: 1.0,
+        },
+        donor: None,
+    };
+    assert_eq!(added.names(), [DOOR]);
+    assert_eq!(
+        hashed.names(),
+        [] as [&str; 0],
+        "a hash spelled out is no name"
+    );
+    let operations = or_maps::operation::Operations::new(vec![added, hashed]);
+    std::fs::write(&list, operations.to_json().unwrap()).unwrap();
+    let dry = ["maps", "apply", text(&project), text(&list), "--dry-run"].map(str::to_string);
+    assert_eq!(or_cli::run(&dry), ExitCode::SUCCESS);
+    assert_eq!(
+        Maps::read(&folder).unwrap().names,
+        [] as [&str; 0],
+        "a dry run writes nothing"
+    );
+    assert_eq!(or_cli::run(&dry[..4]), ExitCode::SUCCESS);
+    assert_eq!(Maps::read(&folder).unwrap().names, [DOOR]);
+    let (printed, succeeded) = said(&[text(&project)]);
+    assert!(succeeded, "{printed}");
+    assert!(
+        printed.contains("5 door(s) among 9 entity(ies), 1 double door(s), "),
+        "the two leaves, the one added, the gate and the gate added: {printed}"
+    );
+}
+
+#[test]
 fn a_project_with_no_maps_content_and_a_content_that_is_not_there_are_refused() {
     let dir = tempfile::tempdir().unwrap();
     let project = a_project_with_doors(dir.path());

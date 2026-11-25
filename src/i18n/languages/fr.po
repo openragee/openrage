@@ -8729,6 +8729,9 @@ msgstr "La page Édition des Paramètres permet de le changer plus tard"
 msgid "The Wardrobe's rules found nothing wrong in it."
 msgstr "Les règles de la Garde-robe n'y ont rien trouvé d'anormal."
 
+msgid "The acceptance sheet has no line about what else this build wrote: {kinds}"
+msgstr "La fiche de vérification en jeu n'a aucune ligne sur ce que ce build a écrit d'autre : {kinds}"
+
 msgid "The active document has no file yet"
 msgstr "Le document actif n'a pas encore de fichier"
 

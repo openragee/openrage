@@ -35,6 +35,15 @@ pub enum Collider {
     Placed(u64),
 }
 
+impl std::fmt::Display for Collider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::File(at) => write!(f, "bounds file {at} of the mount"),
+            Self::Placed(key) => write!(f, "placed collider {key}"),
+        }
+    }
+}
+
 /// Why a bounds file gave no collider.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum Unread {

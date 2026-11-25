@@ -115,6 +115,15 @@ pub enum Error {
         of: usize,
         refused: Box<Error>,
     },
+    #[error(
+        "{refused}; and operation {number} of the list, done before it, could not be taken back ({why}), so the session holds part of the list: discard it"
+    )]
+    NotTakenBack {
+        refused: Box<Error>,
+        /// Counted from one.
+        number: usize,
+        why: String,
+    },
     #[error("{0}")]
     Write(String),
 }
@@ -617,6 +626,20 @@ impl Operation {
         }
     }
 
+    /// The names it states as text, which a file keeps the hash of alone: the archetype an entity is added of, and the name and the asset of an archetype added; none of one spelled `hash_XXXXXXXX`.
+    pub fn names(&self) -> Vec<&str> {
+        let stated: Vec<&str> = match self {
+            Self::AddEntity { archetype, .. } => vec![archetype],
+            Self::AddArchetype { name, asset, .. } => {
+                (std::iter::once(name).chain(asset).map(String::as_str)).collect()
+            }
+            _ => Vec::new(),
+        };
+        (stated.into_iter().map(str::trim))
+            .filter(|text| name_of(text).text.is_some())
+            .collect()
+    }
+
     /// The operation, refused unless its source has the digest `digest`.
     pub fn expecting(mut self, digest: impl Into<String>) -> Self {
         self.set_expects(Some(digest.into()));
@@ -680,7 +703,7 @@ pub struct Applied {
     pub edited: Edited,
     /// The index of the entity or the archetype it added, when it added one.
     pub added: Option<usize>,
-    /// What it could not read and went without, a sentence each: an archetype with no box in the pack, a type file that does not cook.
+    /// What it could not read and went without, or left to another file, a sentence each: an archetype with no box in the pack, a type file that does not cook, the links of another map file into entities it moved.
     pub notes: Vec<String>,
 }
 
@@ -830,6 +853,37 @@ fn local_parent(entity: &CEntityDefAny, index: usize) -> Option<usize> {
         .filter(|parent| *parent != index && !in_parent_map(entity.flags))
 }
 
+/// Refuse to take out or put in entities of `map` from the index `lowest` up while a container LOD of the file names an entity there.
+///
+/// ⚠ A container LOD states the index of an entity, which no operation renumbers: an entity at or after `lowest` moves or goes.
+fn container_lods_hold(map: &CMapData, lowest: usize) -> Result<(), String> {
+    let Some(Value::Array(lods)) = map.carried("containerLods") else {
+        return Ok(());
+    };
+    let parent_index = or_world::field::name_hash("parentIndex");
+    let moved = lods.iter().find_map(|lod| {
+        let named = match lod {
+            Value::Struct(lod) | Value::Pointer(Some(lod)) => {
+                or_world::field::i32_at(lod, parent_index)
+            }
+            _ => None,
+        };
+        match named.map(usize::try_from) {
+            // A container LOD that names no entity is moved by nothing.
+            Some(Err(_)) => None,
+            Some(Ok(named)) if named < lowest => None,
+            Some(Ok(named)) => Some(format!("entity {named}")),
+            None => Some("an entity this build does not read".to_string()),
+        }
+    });
+    match moved {
+        Some(named) => Err(format!(
+            "the map carries container LODs, whose indexes no operation renumbers, and one names {named}, which would move or go"
+        )),
+        None => Ok(()),
+    }
+}
+
 /// Take the entities `named` out of `map` with one renumbering, and say what puts them back; a refusal leaves `map` as it was.
 fn remove_entities(
     map: &mut CMapData,
@@ -840,6 +894,7 @@ fn remove_entities(
     if let Some(past) = removed.iter().find(|index| **index >= held) {
         return Err(format!("entity {past} is past the {held} the map holds"));
     }
+    container_lods_hold(map, removed[0])?;
     let goes = |index: usize| removed.binary_search(&index).is_ok();
     // The entities that stay and name one that goes, by where they stand afterwards.
     let mut orphans: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
@@ -916,6 +971,7 @@ fn insert_entities(
     }
     let total = held + inserted.len();
     link(total)?;
+    container_lods_hold(map, inserted[0])?;
     let records = (sorted.iter())
         .map(|put| put.record.as_entity())
         .collect::<Result<Vec<_>, _>>()?;
@@ -1214,6 +1270,7 @@ fn change_map(
             let index = *entity;
             let removed = entity_at(map, index)?;
             let record = Record::entity(removed)?;
+            container_lods_hold(map, index)?;
             if let Some(extents) = extents {
                 extents.finite()?;
             }
@@ -1268,6 +1325,7 @@ fn change_map(
             }
             // ⚠ Every refusal comes before the first change: a session keeps the map an operation was refused on.
             links_hold(&inserted, index, held + 1)?;
+            container_lods_hold(map, index)?;
             let parent = usize::try_from(inserted.parent_index)
                 .ok()
                 .filter(|_| !in_parent_map(inserted.flags));
@@ -1697,6 +1755,96 @@ fn does_not_cook(path: &str, why: &str) -> String {
     )
 }
 
+/// What a map file states of its place among the maps of a pack.
+#[derive(Clone)]
+struct Linked {
+    /// The hash of its name, which a map under it states as its parent.
+    name: u32,
+    /// The hash of the name of the map it names as parent; nought for none.
+    parent: u32,
+    /// The index each of its LOD links into the parent map states.
+    into_parent: Vec<usize>,
+}
+
+impl Linked {
+    fn of(map: &CMapData) -> Self {
+        Self {
+            name: map.name.hash,
+            parent: map.parent.hash,
+            into_parent: (map.entities.iter())
+                .filter(|entity| in_parent_map(entity.flags))
+                .filter_map(|entity| usize::try_from(entity.parent_index).ok())
+                .collect(),
+        }
+    }
+}
+
+/// The words by which a note of [`links_left`] names the operation that settles it: the renumbering `by` of the map file `other`.
+fn renumbers(by: &str, other: &str) -> String {
+    format!("`{by}` of `{other}` renumbers them")
+}
+
+/// A sentence for each other map file of the pack whose LOD links into the map `source` state an index at or after `lowest`, where an operation takes entities out of `source` (`removed`) or puts some in.
+///
+/// ⚠ Those indexes are the other file's to keep, and the operation edits one file: each names another entity than it did until a
+/// renumbering of the other file follows, which is the entity it should name only where an insertion takes back a removal done alone.
+fn links_left(
+    pack: &mut impl Pack,
+    source: &str,
+    lowest: Option<usize>,
+    removed: bool,
+) -> Vec<String> {
+    let Some(lowest) = lowest else {
+        return Vec::new();
+    };
+    let Some(name) = pack.linked(source).map(|linked| linked.name) else {
+        return Vec::new();
+    };
+    let mut notes = Vec::new();
+    for other in pack.sources().into_iter().filter(|other| other != source) {
+        let Some(linked) = pack.linked(&other) else {
+            continue;
+        };
+        let moved = (linked.into_parent.iter())
+            .filter(|index| **index >= lowest)
+            .count();
+        if linked.parent != name || name == 0 || moved == 0 {
+            continue;
+        }
+        let links = format!(
+            "the map file `{other}` names {moved} LOD parent(s) in this map by an index at or after entity {lowest}, which this operation does not renumber"
+        );
+        notes.push(if removed {
+            format!(
+                "{links}, so each names another entity until {}: `openrage-cli maps delete` plans a removal with the links into it",
+                renumbers("renumber_for_removed", &other)
+            )
+        } else {
+            format!(
+                "{links}, so each names the entity before the one it named, which is right only where this insertion takes back a removal done alone: otherwise each names another entity until {}",
+                renumbers("renumber_for_inserted", &other)
+            )
+        });
+    }
+    notes
+}
+
+/// Take out of the notes of the operations of a list done whole what another operation of the list settles: the links a removal or an insertion left to a renumbering the list holds.
+fn settle_notes<'a>(operations: &[Operation], notes: impl Iterator<Item = &'a mut Vec<String>>) {
+    let settling: Vec<String> = (operations.iter())
+        .filter(|operation| {
+            matches!(
+                operation,
+                Operation::RenumberForRemoved { .. } | Operation::RenumberForInserted { .. }
+            )
+        })
+        .map(|operation| renumbers(operation.name(), operation.source()))
+        .collect();
+    for notes in notes {
+        notes.retain(|note| !settling.iter().any(|settled| note.contains(settled)));
+    }
+}
+
 /// The sources of a pack as an operation reads them besides the file it edits.
 trait Pack {
     /// The boxes of the archetypes that the type files of every set naming `source` declare, and a sentence for each type file that does not cook, which declares none.
@@ -1705,6 +1853,10 @@ trait Pack {
     fn entity(&mut self, at: &At) -> Result<CEntityDefAny, String>;
     /// The archetype `at` names.
     fn archetype(&mut self, at: &At) -> Result<CBaseArchetypeDefAny, String>;
+    /// Every source the pack names, once each.
+    fn sources(&self) -> Vec<String>;
+    /// What the map file `source` states of its place among the maps; none for a source that is no map file or does not cook.
+    fn linked(&mut self, source: &str) -> Option<Linked>;
 }
 
 /// What `operation` reads besides the file it edits.
@@ -1732,11 +1884,25 @@ fn context(pack: &mut impl Pack, operation: &Operation) -> Result<Context, Strin
                 context.archetype = Some(pack.archetype(&at).map_err(|why| named(&at, why))?);
             }
         }
-        Operation::RemoveEntity { .. }
-        | Operation::InsertEntity { .. }
-        | Operation::RemoveEntities { .. }
-        | Operation::InsertEntities { .. }
-        | Operation::SetNumChildren { .. }
+        Operation::RemoveEntity { entity, .. } => {
+            let left = links_left(pack, source, Some(*entity), true);
+            context.notes = RefCell::new(left);
+        }
+        Operation::RemoveEntities { entities, .. } => {
+            let lowest = entities.iter().min().copied();
+            let left = links_left(pack, source, lowest, true);
+            context.notes = RefCell::new(left);
+        }
+        Operation::InsertEntity { entity, .. } => {
+            let left = links_left(pack, source, Some(*entity), false);
+            context.notes = RefCell::new(left);
+        }
+        Operation::InsertEntities { entities, .. } => {
+            let lowest = entities.iter().map(|put| put.entity).min();
+            let left = links_left(pack, source, lowest, false);
+            context.notes = RefCell::new(left);
+        }
+        Operation::SetNumChildren { .. }
         | Operation::RenumberForRemoved { .. }
         | Operation::RenumberForInserted { .. }
         | Operation::ReplaceEntity { .. }
@@ -1781,6 +1947,8 @@ struct Work<'a> {
     folder: &'a Path,
     model: Maps,
     held: BTreeMap<String, Held>,
+    /// What each map source read so far states of its place among the maps, until an operation changes it.
+    linked: BTreeMap<String, Option<Linked>>,
 }
 
 impl<'a> Work<'a> {
@@ -1789,6 +1957,7 @@ impl<'a> Work<'a> {
             folder,
             model: Maps::read(folder)?,
             held: BTreeMap::new(),
+            linked: BTreeMap::new(),
         })
     }
 
@@ -1902,6 +2071,7 @@ impl<'a> Work<'a> {
                 ))
             }
         };
+        self.linked.remove(source);
         let held = self.hold(source)?;
         let before = held.inputs.xml().to_vec();
         held.inputs.set_xml(xml.clone());
@@ -1947,6 +2117,27 @@ impl Pack for Work<'_> {
         (self.root::<CMapTypes>(&at.source))
             .and_then(|types| archetype_at(&types, at.index).cloned())
     }
+
+    fn sources(&self) -> Vec<String> {
+        sources_of(&self.model)
+    }
+
+    fn linked(&mut self, source: &str) -> Option<Linked> {
+        if let Some(known) = self.linked.get(source) {
+            return known.clone();
+        }
+        let is_map =
+            (self.hold(source)).is_ok_and(|held| held.inputs.extension() == CMapData::EXTENSION);
+        let linked = (is_map.then(|| self.root::<CMapData>(source).ok()).flatten())
+            .map(|map| Linked::of(&map));
+        self.linked.insert(source.to_string(), linked.clone());
+        linked
+    }
+}
+
+/// Every source `model` names, once each.
+fn sources_of(model: &Maps) -> Vec<String> {
+    (crate::facts::named_paths(model).map(str::to_string)).collect()
 }
 
 /// Apply `operation` to the sources of the pack of maps in `folder`, and say what takes it back; a refusal leaves every source as it was.
@@ -1976,6 +2167,7 @@ pub fn apply_all(
     if !dry_run {
         work.commit()?;
     }
+    settle_notes(operations, applied.iter_mut().map(|done| &mut done.notes));
     Ok(applied)
 }
 

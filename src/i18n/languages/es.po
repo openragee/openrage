@@ -8702,6 +8702,9 @@ msgstr "La página Edición de Configuración lo cambia más adelante"
 msgid "The Wardrobe's rules found nothing wrong in it."
 msgstr "Las reglas del Guardarropa no encontraron nada incorrecto."
 
+msgid "The acceptance sheet has no line about what else this build wrote: {kinds}"
+msgstr "La hoja de aceptación no tiene ninguna línea sobre lo demás que escribió esta compilación: {kinds}"
+
 msgid "The active document has no file yet"
 msgstr "El documento activo aún no tiene archivo"
 

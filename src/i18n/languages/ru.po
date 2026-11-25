@@ -8707,6 +8707,9 @@ msgstr "Позже это можно изменить в разделе «Ред
 msgid "The Wardrobe's rules found nothing wrong in it."
 msgstr "Правила экрана «Гардероб» ничего в нём не нашли."
 
+msgid "The acceptance sheet has no line about what else this build wrote: {kinds}"
+msgstr "В листе приёмки нет строки о том, что ещё записала эта сборка: {kinds}"
+
 msgid "The active document has no file yet"
 msgstr "У активного документа пока нет файла"
 

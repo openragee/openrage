@@ -703,3 +703,78 @@ fn a_door_form_that_drops_a_position_or_cannot_say_it_is_unverified_is_refused()
         "no two door rules share a code"
     );
 }
+
+#[test]
+fn a_door_two_type_files_of_a_set_declare_is_read_from_the_first_as_the_scene_and_the_extents_read_it(
+) {
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = scratch.path().join("maps");
+    let map = map_file(
+        "shop",
+        &[Entity::at(DOOR, [10.0, 0.0, 0.0], 1)],
+        ([-50.0; 3], [5.0; 3]),
+    );
+    let narrow = types_file("shop_types", &[leaf(DOOR)]);
+    let wide = types_file(
+        "shop_more_types",
+        &[Archetype::new(DOOR, [0.0, -0.05, 0.0], [3.0, 0.05, 2.0])],
+    );
+    let incoming = [
+        ("shop.ymap", &map),
+        ("shop_types.ytyp", &narrow),
+        ("shop_more_types.ytyp", &wide),
+    ]
+    .map(|(name, bytes)| Incoming {
+        name,
+        bytes,
+        from_game: false,
+        virtual_path: None,
+    });
+    let added = add_files(&folder, &incoming, None).unwrap();
+    assert_eq!(added.refused, Vec::<(String, String)>::new());
+    let mut model = Maps::read(&folder).unwrap();
+    model.remember(&[DOOR]);
+    model.write(&folder).unwrap();
+    let sources = &model.maps[0].sources;
+    let (first, second) = (
+        sources
+            .iter()
+            .position(|s| s.starts_with("shop_types"))
+            .unwrap(),
+        sources
+            .iter()
+            .position(|s| s.starts_with("shop_more_types"))
+            .unwrap(),
+    );
+    assert!(
+        first < second,
+        "the set names the narrow leaf's type file first: {sources:?}"
+    );
+
+    // The scene draws the box of the first declaration, and the doors are read from the same one.
+    let facts = inspect(&folder, &model, Depth::Open);
+    let scene = or_maps::scene::scene(&model.maps[0], &facts);
+    let drawn = scene.placed[0].obb.max.x - scene.placed[0].obb.min.x;
+    let set = one_set(&folder, &model);
+    let [door] = set.doors.as_slice() else {
+        panic!("one door: {:?}", set.doors);
+    };
+    let width = door.leaf.as_ref().expect("its leaf reads").width;
+    assert_eq!((drawn, width), (1.0, 1.0));
+    // An operation grows the extents to the same metre of leaf.
+    let grown = or_maps::operation::apply(
+        &folder,
+        &or_maps::operation::Operation::GrowExtents {
+            source: "shop.metadata.src".into(),
+            expects: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(grown.notes, Vec::<String>::new());
+    let facts = inspect(&folder, &model, Depth::Open);
+    let map = facts
+        .source("shop.metadata.src")
+        .and_then(|s| s.map())
+        .unwrap();
+    assert_eq!(map.stored_entities.unwrap().1[0], 11.0);
+}

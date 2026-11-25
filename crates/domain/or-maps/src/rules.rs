@@ -8,7 +8,7 @@
 //! measured over the owner's Legacy install (`what_the_rules_say_of_the_install`), and a rule that fires on a tenth of the game's maps
 //! only warns. Nothing here says a map loads in game.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
@@ -77,6 +77,12 @@ pub const RULES: &[Rule] = &[
         Warning,
         true,
         "an entity names a LOD parent in the map its own names as parent, past the entities that map holds in the pack",
+    ),
+    rule(
+        "lod-children-uncounted",
+        Warning,
+        true,
+        "an entity counts fewer LOD children than the entities of the pack's map files name it as their parent, as a removal alone in a parent map leaves it",
     ),
     rule(
         "archetype-twice",
@@ -257,6 +263,7 @@ pub fn check(model: &Maps, facts: &Facts, known: Known<'_>) -> Vec<Finding> {
         .filter_map(|path| facts.source(path)?.map())
         .map(|map| (map.name.hash, map.entities.len()))
         .collect();
+    let children = Children::of(model, facts);
     for set in &model.maps {
         let who = name_of(set);
         for path in &set.sources {
@@ -302,7 +309,7 @@ pub fn check(model: &Maps, facts: &Facts, known: Known<'_>) -> Vec<Finding> {
                 }
             }
         }
-        check_set(set, facts, known, &held, &mut say);
+        check_set(set, facts, known, &held, &children, &mut say);
     }
     for (path, held) in named.iter().filter(|(_, held)| held.len() > 1) {
         for set in held {
@@ -346,12 +353,60 @@ fn of_role<'f>(
     })
 }
 
+/// How many entities of the map files of a pack name each entity as their LOD parent.
+struct Children {
+    /// By the hash of the name of the map the parent is in, and its index there.
+    named: BTreeMap<(u32, usize), u32>,
+    /// The maps two files of the pack each hold entities of: an index into one is into the two put together, which no file states.
+    split: BTreeSet<u32>,
+}
+
+impl Children {
+    fn of(model: &Maps, facts: &Facts) -> Self {
+        let mut named: BTreeMap<(u32, usize), u32> = BTreeMap::new();
+        let mut files: BTreeMap<u32, u32> = BTreeMap::new();
+        let maps = crate::facts::named_paths(model).filter_map(|path| facts.source(path)?.map());
+        for map in maps.filter(|map| !map.entities.is_empty()) {
+            *files.entry(map.name.hash).or_default() += 1;
+            for entity in &map.entities {
+                let Ok(index) = usize::try_from(entity.parent_index) else {
+                    continue;
+                };
+                let into = match entity.flags & (1 << 3) != 0 {
+                    true => map.parent.hash,
+                    false => map.name.hash,
+                };
+                *named.entry((into, index)).or_default() += 1;
+            }
+        }
+        let split = (files.into_iter())
+            .filter(|(_, files)| *files > 1)
+            .map(|(name, _)| name)
+            .collect();
+        Self { named, split }
+    }
+
+    /// The entities of `map` that count fewer children than name them: each with the count it states and the count that name it.
+    fn uncounted(&self, map: &crate::facts::MapInside) -> Vec<(usize, u32, u32)> {
+        if map.name.hash == 0 || self.split.contains(&map.name.hash) {
+            return Vec::new();
+        }
+        (map.entities.iter().enumerate())
+            .filter_map(|(index, entity)| {
+                let named = *self.named.get(&(map.name.hash, index))?;
+                (named > entity.num_children).then_some((index, entity.num_children, named))
+            })
+            .collect()
+    }
+}
+
 /// The rules that read inside the files of one set.
 fn check_set(
     set: &MapSet,
     facts: &Facts,
     known: Known<'_>,
     held: &BTreeMap<u32, usize>,
+    children: &Children,
     say: &mut impl FnMut(&'static str, Option<&MapSet>, Place, String),
 ) {
     let who = name_of(set);
@@ -470,6 +525,23 @@ fn check_set(
                     "{count} entities of `{path}` name a LOD parent in the parent map `{}` past the {len} entities it holds, the first #{first} naming entity {}",
                     map.parent.shown(),
                     map.entities[first].parent_index
+                ),
+            );
+        }
+        // ⚠ A link that is not past the end names another entity once an entity before it is taken out of the parent map alone,
+        // which the counts show: a pack whose counts held before has one too low after it, or a link past the end.
+        if let [(first, stated, named), rest @ ..] = children.uncounted(map).as_slice() {
+            say(
+                "lod-children-uncounted",
+                Some(set),
+                Place {
+                    source: Some(path.to_string()),
+                    entity: Some(*first),
+                    ..Place::default()
+                },
+                format!(
+                    "{} entities of `{path}` count fewer LOD children than name them among the map files of the pack, the first #{first} counting {stated} where {named} name it: a removal alone in a parent map leaves the links into it on other entities, and `openrage-cli maps delete` plans one with its links",
+                    rest.len() + 1
                 ),
             );
         }

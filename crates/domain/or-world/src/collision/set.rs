@@ -157,7 +157,9 @@ impl<K: Ord> CollisionSet<K> {
         if !usable(probe.max_rise) || !usable(probe.max_drop) {
             return None;
         }
-        let flattest = probe.max_slope.cos();
+        // ⚠ A few ulps under the cosine: the normal of a level triangle comes out of its cross product just short of one, and a
+        // limit of nought would refuse the floor and answer with whatever lies under it.
+        let flattest = probe.max_slope.cos() - 4.0 * f32::EPSILON;
         self.nearest(
             point + Vec3::Z * probe.max_rise,
             Vec3::NEG_Z,

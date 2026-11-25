@@ -1542,6 +1542,14 @@ pub mod world_types;
 pub use alternate::*;
 pub use ped::*;
 
+impl CMapData {
+    /// What the file it was read from states under `member`, a member no typed record names.
+    pub fn carried(&self, member: &str) -> Option<&Value> {
+        let key = name_hash(member);
+        (self.carry.carried().find(|(held, _)| *held == key)).map(|(_, value)| value)
+    }
+}
+
 impl File for CMapData {
     const EXTENSION: &'static str = "ymap";
 

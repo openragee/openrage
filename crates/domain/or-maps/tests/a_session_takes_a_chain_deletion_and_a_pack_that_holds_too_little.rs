@@ -1,6 +1,6 @@
-//! Three things were built apart and meet in `or_maps::operation`: a session that holds the sources open, the deletion of an entity
-//! with its chain across files, and what an operation does where the pack holds less than it reads. Each is held here through the
-//! other two: a chain deletion done through a session and taken back by its inverses leaves every byte, the links of a child map are
+//! Three things meet in `or_maps::operation`: a session that holds the sources open, the deletion of an entity with its chain
+//! across files, and what an operation does where the pack holds less than it reads. Each is held here through the other two: a
+//! chain deletion done through a session and taken back by its inverses leaves every byte, the links of a child map are
 //! renumbered so the rule that names a broken one stays silent, and a session says and does what one by one says and does for an
 //! archetype the pack does not declare, a type file that does not cook and the first record of a file that holds none.
 //!
@@ -19,7 +19,9 @@ use or_maps::operation::{
     apply, apply_all, inverses, At, Done, Error, Extents, Inserted, Operation, PoseData, Record,
     Session,
 };
-use or_maps::sample::{child_map_file, map_file, types_file, Archetype, Entity};
+use or_maps::sample::{
+    child_map_file, map_file, map_file_with_container_lods, types_file, Archetype, Entity,
+};
 use or_maps::{check, inspect, Depth};
 use or_world::archetypes::ArchetypeIndex;
 use or_world::create;
@@ -728,8 +730,8 @@ fn a_yard_under_the_harbour(dir: &Path) -> PathBuf {
     pack_of(dir, &[("harbour.ymap", harbour), ("yard.ymap", yard)])
 }
 
-/// What the review left to the chain deletion: an entity taken out of a parent map by the plan of a deletion has the links of the
-/// child map renumbered, where the one operation that takes it out alone leaves them for the rule `parent-link-broken` to name.
+/// An entity taken out of a parent map by the plan of a deletion has the links of the child map renumbered, where the one
+/// operation that takes it out alone leaves them for the rule `parent-link-broken` to name.
 #[test]
 fn a_deletion_planned_in_a_parent_map_renumbers_the_link_the_bare_removal_leaves_past_its_end() {
     let (_scratch, [planned_in, bare]) = copies(a_yard_under_the_harbour);
@@ -761,4 +763,388 @@ fn a_deletion_planned_in_a_parent_map_renumbers_the_link_the_bare_removal_leaves
     .unwrap();
     assert_eq!(read_entity(&bare.join(YARD), 0).unwrap().parent_index, 3);
     assert!(codes(&bare).contains(&"parent-link-broken"));
+}
+
+/// The deletion of the far model of the row of `city`, planned before a third house is put under that far model: a plan that is
+/// stale, whose last operation, the renumbering of `city`, is refused because the new house still names what goes.
+fn a_stale_plan(folder: &Path) -> Vec<Operation> {
+    let planned = delete::plan(folder, &[at(LOD, 1)]).unwrap();
+    assert_eq!(planned.operations.len(), 4, "{:?}", planned.operations);
+    let house = Record::entity(&read_entity(&folder.join(CITY), 1).unwrap()).unwrap();
+    apply(
+        folder,
+        &Operation::InsertEntity {
+            source: CITY.into(),
+            expects: None,
+            entity: 6,
+            record: house,
+            parent_num_children: None,
+            children: Vec::new(),
+            extents: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(read_entity(&folder.join(CITY), 6).unwrap().parent_index, 1);
+    planned.operations
+}
+
+#[test]
+fn a_chain_deletion_refused_part_way_through_a_session_is_taken_back_whole_and_a_session_let_go_writes_nothing(
+) {
+    let (_scratch, [one_by_one, whole, by_hand]) = copies(city);
+    let stale = a_stale_plan(&one_by_one);
+    for folder in [&whole, &by_hand] {
+        assert_eq!(a_stale_plan(folder), stale);
+    }
+    let before = files(&whole);
+    assert_eq!(differing(&before, &files(&by_hand)), Vec::<PathBuf>::new());
+
+    let refused = apply_all(&one_by_one, &stale, false)
+        .unwrap_err()
+        .to_string();
+    assert!(refused.starts_with("operation 4 of 4, "), "{refused}");
+    assert_eq!(
+        differing(&before, &files(&one_by_one)),
+        Vec::<PathBuf>::new()
+    );
+
+    // Whole or not at all through a session: the refusal is the one a list gives, and the three operations done are taken back.
+    {
+        let mut session = Session::open(&whole).unwrap();
+        let as_read: Vec<_> = [CITY, LOD, SLOD]
+            .iter()
+            .map(|source| session.map(source).unwrap().clone())
+            .collect();
+        let said = session.apply_all(&stale).unwrap_err().to_string();
+        assert_eq!(said, refused);
+        assert!(!session.unwritten(), "nothing is left to write");
+        for (source, was) in [CITY, LOD, SLOD].iter().zip(&as_read) {
+            assert_eq!(session.map(source).unwrap(), was, "{source}");
+        }
+    }
+    assert_eq!(differing(&before, &files(&whole)), Vec::<PathBuf>::new());
+
+    // By hand, the operations before the refused one are done and a drop would write them: the session is let go.
+    let mut session = Session::open(&by_hand).unwrap();
+    let stopped = stale
+        .iter()
+        .try_for_each(|operation| session.apply(operation).map(|_| ()));
+    assert!(matches!(stopped, Err(Error::Refused { .. })), "{stopped:?}");
+    assert!(
+        session.unwritten(),
+        "three operations of a deletion that is sound only whole"
+    );
+    session.discard();
+    assert_eq!(differing(&before, &files(&by_hand)), Vec::<PathBuf>::new());
+
+    // A plan that is not stale goes through the same way and is written by the flush.
+    let (_scratch, [fresh, listed]) = copies(city);
+    let planned = delete::plan(&fresh, &[at(LOD, 1)]).unwrap();
+    delete::apply(&listed, &planned).unwrap();
+    let mut session = Session::open(&fresh).unwrap();
+    let done = delete::apply_in(&mut session, &planned).unwrap();
+    assert_eq!(done.len(), planned.operations.len());
+    session.flush().unwrap();
+    assert_eq!(
+        differing(&files(&listed), &files(&fresh)),
+        Vec::<PathBuf>::new()
+    );
+}
+
+#[test]
+fn a_session_dropped_after_a_refusal_writes_nothing_of_what_it_did_before_it_and_one_that_is_flushed_does(
+) {
+    let (_scratch, [dropped, flushed, sound, whole]) = copies(city);
+    let stale = a_stale_plan(&dropped);
+    for folder in [&flushed, &sound, &whole] {
+        assert_eq!(a_stale_plan(folder), stale);
+    }
+    let before = files(&dropped);
+    let by_hand = |session: &mut Session| {
+        let stopped = (stale.iter()).try_for_each(|operation| session.apply(operation).map(|_| ()));
+        assert!(matches!(stopped, Err(Error::Refused { .. })), "{stopped:?}");
+        assert!(
+            session.unwritten(),
+            "three operations of a deletion that is sound only whole"
+        );
+    };
+    let moved = Operation::PlaceEntity {
+        source: SLOD.into(),
+        expects: None,
+        entity: 0,
+        pose: pose([11.0, 10.0, 0.0]),
+    };
+    let xml_of_slod = [Path::new(SLOD).join("metadata.xml")];
+
+    // The loop a caller writes with `?`: it stops at the refusal and the session goes out of scope, which writes no source.
+    {
+        let mut session = Session::open(&dropped).unwrap();
+        by_hand(&mut session);
+    }
+    assert_eq!(differing(&before, &files(&dropped)), Vec::<PathBuf>::new());
+
+    // A caller that wants what was done before the refusal says so with a flush, and what the session does after it is written
+    // when the session is dropped.
+    {
+        let mut session = Session::open(&flushed).unwrap();
+        by_hand(&mut session);
+        assert_eq!(session.flush().unwrap().len(), 3);
+        let after = files(&flushed);
+        assert_eq!(differing(&before, &after).len(), 3);
+        session.apply(&moved).unwrap();
+        drop(session);
+        assert_eq!(differing(&after, &files(&flushed)), xml_of_slod);
+    }
+
+    // A session nothing was refused in writes when it is dropped.
+    {
+        let mut session = Session::open(&sound).unwrap();
+        session.apply(&moved).unwrap();
+    }
+    assert_eq!(differing(&before, &files(&sound)), xml_of_slod);
+
+    // A list refused and taken back whole leaves the session as it was before the list: what was done before the list is written.
+    {
+        let mut session = Session::open(&whole).unwrap();
+        session.apply(&moved).unwrap();
+        session.apply_all(&stale).unwrap_err();
+    }
+    assert_eq!(differing(&before, &files(&whole)), xml_of_slod);
+}
+
+/// `block_lod` holds three far models, each counting one child, and a lamp that counts none; `block`, the map under it, holds a
+/// house under each far model.
+fn a_block_under_its_far_models(dir: &Path) -> PathBuf {
+    let extents = ([0.0; 3], [100.0; 3]);
+    let far = |name, x, guid| Entity {
+        children: 1,
+        ..Entity::at(name, [x, 0.0, 0.0], guid)
+    };
+    let lod = map_file(
+        "block_lod",
+        &[
+            far("far_a", 10.0, 1),
+            far("far_b", 20.0, 2),
+            far("far_c", 30.0, 3),
+            Entity::at("lamp", [40.0, 0.0, 0.0], 4),
+        ],
+        extents,
+    );
+    let block = child_map_file(
+        "block",
+        "block_lod",
+        &[
+            under("house_a", [10.0, 5.0, 0.0], 11, 0),
+            under("house_b", [20.0, 5.0, 0.0], 12, 1),
+            under("house_c", [30.0, 5.0, 0.0], 13, 2),
+        ],
+        extents,
+    );
+    pack_of(dir, &[("block_lod.ymap", lod), ("block.ymap", block)])
+}
+
+#[test]
+fn a_removal_alone_in_a_parent_map_says_which_map_file_keeps_links_it_did_not_renumber() {
+    const FAR: &str = "block_lod.metadata.src";
+    const NEAR: &str = "block.metadata.src";
+    let (_scratch, [one_by_one, held, last, planned_in]) = copies(a_block_under_its_far_models);
+    let first = Operation::RemoveEntity {
+        source: FAR.into(),
+        expects: None,
+        entity: 0,
+        extents: None,
+    };
+    assert!(!codes(&one_by_one).contains(&"lod-children-uncounted"));
+    let applied = apply(&one_by_one, &first).unwrap();
+    // No link is past the end: each house is under the far model after its own, and the last under the lamp, which counts no
+    // child. The rule that holds a count of children to the entities that name it across the files says so.
+    assert!(!codes(&one_by_one).contains(&"parent-link-broken"));
+    let model = Maps::read(&one_by_one).unwrap();
+    let found = check(&model, &inspect(&one_by_one, &model, Depth::Open), None);
+    let uncounted: Vec<_> = (found.iter())
+        .filter(|finding| finding.code == "lod-children-uncounted")
+        .collect();
+    let [finding] = uncounted.as_slice() else {
+        panic!("one finding: {found:?}");
+    };
+    assert_eq!(
+        (finding.place.source.as_deref(), finding.place.entity),
+        (Some(FAR), Some(2))
+    );
+    assert!(
+        finding.message.contains("counting 0 where 1 name it") && !finding.blocks(),
+        "{finding:?}"
+    );
+    // The deletion planned with its links leaves every count as the entities give it.
+    let planned = delete::plan(&planned_in, &[at(FAR, 0)]).unwrap();
+    let done = delete::apply(&planned_in, &planned).unwrap();
+    assert!(!codes(&planned_in).contains(&"lod-children-uncounted"));
+    assert!(
+        done.iter().all(|step| step.notes.is_empty()),
+        "a list that renumbers the links a removal leaves says nothing of them: {done:?}"
+    );
+    let [note] = applied.notes.as_slice() else {
+        panic!("one note: {:?}", applied.notes);
+    };
+    for part in [
+        NEAR,
+        "3 LOD parent(s)",
+        "renumber_for_removed",
+        "maps delete",
+    ] {
+        assert!(note.contains(part), "{part}: {note}");
+    }
+    // A session says the same of one removal and of several at once, and the insertion that takes it back says its own.
+    let mut session = Session::open(&held).unwrap();
+    let done = session.apply(&first).unwrap();
+    assert_eq!(done.notes, applied.notes);
+    let back = session.apply(&done.inverse).unwrap();
+    assert!(
+        back.notes.len() == 1 && back.notes[0].contains("renumber_for_inserted"),
+        "{:?}",
+        back.notes
+    );
+    let several = Operation::RemoveEntities {
+        source: FAR.into(),
+        expects: None,
+        entities: vec![3, 1],
+        extents: None,
+    };
+    let done = session.apply(&several).unwrap();
+    assert!(
+        done.notes.len() == 1 && done.notes[0].contains("2 LOD parent(s)"),
+        "the links at and after entity 1: {:?}",
+        done.notes
+    );
+    session.discard();
+
+    // An entity after every one a link names moves no link, and a removal in the map under it moves none of another file.
+    for (source, entity) in [(FAR, 3), (NEAR, 0)] {
+        let quiet = Operation::RemoveEntity {
+            source: source.into(),
+            expects: None,
+            entity,
+            extents: None,
+        };
+        assert_eq!(apply(&last, &quiet).unwrap().notes, Vec::<String>::new());
+    }
+}
+
+#[test]
+fn an_entity_a_container_lod_names_or_one_before_it_is_taken_out_by_no_operation() {
+    const QUAY: &str = "quay.metadata.src";
+    let quay = map_file_with_container_lods(
+        "quay",
+        &[
+            Entity::at("prop_crate_a", [1.0, 2.0, 0.5], 1),
+            Entity::at("prop_crate_b", [3.0, 2.0, 0.5], 2),
+            Entity::at("prop_crate_c", [5.0, 2.0, 0.5], 3),
+            Entity::at("prop_crate_d", [7.0, 2.0, 0.5], 4),
+        ],
+        &[2],
+        ([0.0; 3], [100.0; 3]),
+    );
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = pack_of(scratch.path(), &[("quay.ymap", quay)]);
+    let before = files(&folder);
+    let planned = delete::plan(&folder, &[at(QUAY, 0)]).unwrap_err();
+    assert!(
+        matches!(planned, delete::Error::ContainerLods(_)),
+        "{planned}"
+    );
+
+    let one = |entity| Operation::RemoveEntity {
+        source: QUAY.into(),
+        expects: None,
+        entity,
+        extents: None,
+    };
+    let several = |entities: &[usize]| Operation::RemoveEntities {
+        source: QUAY.into(),
+        expects: None,
+        entities: entities.to_vec(),
+        extents: None,
+    };
+    let record = Record::entity(&read_entity(&folder.join(QUAY), 3).unwrap()).unwrap();
+    let put = |entity| Operation::InsertEntity {
+        source: QUAY.into(),
+        expects: None,
+        entity,
+        record: record.clone(),
+        parent_num_children: None,
+        children: Vec::new(),
+        extents: None,
+    };
+    let put_several = Operation::InsertEntities {
+        source: QUAY.into(),
+        expects: None,
+        entities: vec![Inserted {
+            entity: 1,
+            record: record.clone(),
+            children: Vec::new(),
+        }],
+        num_children: Vec::new(),
+        extents: None,
+    };
+    let mut session = Session::open(&folder).unwrap();
+    for refused in [one(0), one(2), several(&[3, 1]), put(2), put_several] {
+        for said in [
+            apply(&folder, &refused).unwrap_err().to_string(),
+            session.apply(&refused).unwrap_err().to_string(),
+        ] {
+            assert!(
+                said.contains("container LODs") && said.contains("entity 2"),
+                "{}: {said}",
+                refused.name()
+            );
+        }
+    }
+    assert!(!session.unwritten());
+    drop(session);
+    assert_eq!(differing(&before, &files(&folder)), Vec::<PathBuf>::new());
+
+    // What stands after the entity a container LOD names moves no index it states: an entity is added there and taken back.
+    let added = apply(
+        &folder,
+        &Operation::AddEntity {
+            source: QUAY.into(),
+            expects: None,
+            archetype: "prop_crate_e".into(),
+            pose: pose([9.0, 2.0, 0.5]),
+            donor: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(added.added, Some(4));
+    apply(&folder, &added.inverse).unwrap();
+    apply(&folder, &one(3)).unwrap();
+    assert!(read_entity(&folder.join(QUAY), 3).is_err());
+    assert_eq!(read_entity(&folder.join(QUAY), 2).unwrap().guid, 3);
+}
+
+#[test]
+fn a_deletion_is_planned_past_a_source_that_can_be_no_map_file_and_refused_by_one_that_may_be() {
+    let (_scratch, [named_a_model, without_a_base, missing]) = copies(harbour_with_a_bench);
+    let chosen = [at(HARBOUR, 0)];
+
+    // A source of another kind by its name, which is not in the folder.
+    let mut model = Maps::read(&named_a_model).unwrap();
+    model.maps[0].sources.push("crane.drawable.src".to_string());
+    model.write(&named_a_model).unwrap();
+    assert_eq!(delete::plan(&named_a_model, &chosen).unwrap().goes.len(), 1);
+
+    // A type file that reads as one and holds no base to cook from.
+    std::fs::remove_file(without_a_base.join(TYPES).join("base.ytyp")).unwrap();
+    assert_eq!(
+        delete::plan(&without_a_base, &chosen).unwrap().goes.len(),
+        1
+    );
+
+    // A metadata source that does not open says nothing of which file it cooks to, and a map file's links are the deletion's to follow.
+    std::fs::remove_dir_all(missing.join(TYPES)).unwrap();
+    let refused = delete::plan(&missing, &chosen).unwrap_err().to_string();
+    assert!(
+        refused.contains(TYPES) && refused.contains("it may be a map file"),
+        "{refused}"
+    );
 }

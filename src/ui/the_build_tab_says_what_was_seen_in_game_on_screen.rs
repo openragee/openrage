@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use egui::epaint::ClippedShape;
 use or_maps::sample::{map_file, types_file, Archetype, Entity};
-use or_project::acceptance::{Seen, Sheet, SHEET};
+use or_project::acceptance::{Place, Seen, Sheet, SHEET};
 use or_project::{OutputKind, Target};
 
 use super::frames_of_the_shell::{key, Shell};
@@ -21,7 +21,7 @@ use crate::state::front_door::GuideDocument;
 use crate::state::workbench::{BuiltPart, BuiltSummary, LastBuild};
 use crate::ui::commands::{self, Action};
 use crate::ui::panels::guide;
-use crate::ui::panels::project::in_game::{sentence, IN_STORY_MODE, LINK, ON_A_SERVER};
+use crate::ui::panels::project::in_game::{sentence, silent, IN_STORY_MODE, LINK, ON_A_SERVER};
 
 /// The id of the build the project of these tests declares.
 const OUTPUT: &str = "fivem";
@@ -129,6 +129,15 @@ fn a_sheet_seen_for(edition: Target) -> (Sheet, String) {
     (sheet, newest)
 }
 
+/// The test's own copy of the sheet with every result taken out, so that what a person writes into the sheet the tree ships changes nothing here.
+fn a_sheet_with_no_result() -> Sheet {
+    let mut own: serde_json::Value = serde_json::from_str(SHEET).unwrap();
+    for line in own["lines"].as_array_mut().unwrap() {
+        line["results"] = serde_json::json!([]);
+    }
+    Sheet::parse(&own.to_string()).expect("the copy is a sheet")
+}
+
 fn unseen(kinds: &[&str]) -> Seen {
     Seen::Not(kinds.iter().map(ToString::to_string).collect())
 }
@@ -209,6 +218,7 @@ fn a_build_that_wrote_a_map_and_a_type_file_names_both_kinds_nobody_saw_loading(
     let _english = crate::i18n::pin("en");
     let dir = tempfile::tempdir().unwrap();
     let mut shell = a_map_project(dir.path(), None);
+    (shell.state.workbench).read_builds_against(a_sheet_with_no_result());
     assert!(
         !shows(&shell, "seen loading") && named(&shell, LINK) == 0,
         "nothing is built yet, so nothing is said of the sheet: {:?}",
@@ -221,8 +231,9 @@ fn a_build_that_wrote_a_map_and_a_type_file_names_both_kinds_nobody_saw_loading(
         kinds.contains("ymap") && kinds.contains("ytyp"),
         "the build wrote a map and a type file: {kinds:?}"
     );
-    // The build states no edition, so the sheet is read for each of the two, and it ships with no result.
-    let read = shell.state.workbench.builds().sheet().seen(&kinds, None);
+    // The build states no edition, so the sheet is read for each of the two, by the results from a server, of which it holds none.
+    let sheet = shell.state.workbench.builds().sheet();
+    let read = sheet.seen(&kinds, None, Place::FivemServer);
     assert_eq!(
         read,
         [
@@ -233,6 +244,8 @@ fn a_build_that_wrote_a_map_and_a_type_file_names_both_kinds_nobody_saw_loading(
     for said in [
         "2 kinds of file this build wrote were not seen loading in GTA V Legacy: maps, type files",
         "2 kinds of file this build wrote were not seen loading in GTA V Enhanced: maps, type files",
+        // The manifest of the resource, which no line is about, is said once and not for each edition.
+        "The acceptance sheet has no line about what else this build wrote: .lua files",
     ] {
         assert_eq!(named(&shell, said), 1, "`{said}`: {:?}", names(&shell));
     }
@@ -479,9 +492,12 @@ fn the_link_under_a_story_pack_opens_the_steps_for_story_mode() {
         )
         .expect("a build");
     shell.state.workbench.selected_output = Some(pack.clone());
+    // ⚠ A pack is read by the results from story mode alone: every map line of this copy seen on a server says nothing of it.
+    let (seen_on_a_server, _) = a_sheet_seen_for(Target::Legacy);
+    shell.state.workbench.read_builds_against(seen_on_a_server);
     // What the worker keeps of a pack it wrote: the archive is a kind of its own, beside the kinds of the files in it.
     let part = BuiltPart {
-        kinds: ["rpf", "ytd"].map(str::to_string).into(),
+        kinds: ["rpf", "ytd", "ymap", "ytyp"].map(str::to_string).into(),
         target: Some(Target::Legacy),
         ..a_part(0)
     };
@@ -496,7 +512,7 @@ fn the_link_under_a_story_pack_opens_the_steps_for_story_mode() {
     shell.settled();
 
     let said =
-        "1 kind of file this build wrote was not seen loading in GTA V Legacy: singleplayer DLC packs";
+        "3 kinds of file this build wrote were not seen loading in GTA V Legacy: maps, type files, singleplayer DLC packs";
     assert_eq!(named(&shell, said), 1, "`{said}`: {:?}", names(&shell));
     let link = scrolled_to(&mut shell, LINK).center();
     shell.click(link);
@@ -617,7 +633,8 @@ fn a_build_that_says_both_sentences(dir: &Path) -> (Shell, Vec<(Target, Seen)>) 
     shell.state.workbench.read_builds_against(sheet);
     build(&mut shell, EDITOR, None);
     let kinds = kinds_built(&shell);
-    let readings = shell.state.workbench.builds().sheet().seen(&kinds, None);
+    let sheet = shell.state.workbench.builds().sheet();
+    let readings = sheet.seen(&kinds, None, Place::FivemServer);
     assert!(
         matches!(readings.as_slice(), [(_, Seen::All(_)), (_, Seen::Not(_))]),
         "{readings:?}"
@@ -667,6 +684,7 @@ fn each_sentence_wraps_inside_a_narrow_column_in_every_language() {
         let mut drawn: Vec<String> = (readings.iter())
             .map(|(edition, reading)| sentence(reading, *edition))
             .collect();
+        drawn.extend(silent(&sheet, &part.kinds));
         drawn.push(crate::i18n::tr(LINK).to_string());
         for said in &drawn {
             let bounds = (shell.described.iter())
@@ -706,14 +724,18 @@ fn each_sentence_wraps_as_the_tabs_other_lines_do_in_a_narrow_window_in_its_wide
         let _pin = crate::i18n::pin(&widest);
         let said = sentence(reading, *edition);
         shell.settled_sized(NARROW);
-        let mine: Vec<String> = (readings.iter())
+        let mut mine: Vec<String> = (readings.iter())
             .map(|(edition, reading)| sentence(reading, *edition))
             .collect();
+        mine.extend(silent(
+            shell.state.workbench.builds().sheet(),
+            &kinds_built(&shell),
+        ));
         let label = (shell.described.iter())
             .find(|w| w.name.as_deref() == Some(said.as_str()))
             .unwrap_or_else(|| panic!("{widest}: `{said}` is not drawn: {:?}", names(&shell)))
             .bounds;
-        // The lines the Verification part wrapped before this one was added start where it starts.
+        // The other lines the Verification part wraps start where this one starts.
         let beside = (shell.described.iter())
             .filter(|w| w.role == egui::accesskit::Role::Label && w.bounds.min.x == label.min.x)
             .filter(|w| !w.name.as_ref().is_some_and(|name| mine.contains(name)))

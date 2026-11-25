@@ -4,7 +4,8 @@
 //! ⚠ **Thin by design.** Each edit is an operation of `or_maps::operation`, applied by the one function `openrage-cli maps apply` applies
 //! a list with, which changes the map file or the type file a source cooks to and writes the result back as the source's XML. A step
 //! of Undo keeps the inverse the operation gave, which states the digest of the XML it applies to, so Undo refuses once anything
-//! else has changed the source.
+//! else has changed the source. What an operation went without or left to another file, its notes, is said as a warning where
+//! `maps apply` prints a note.
 
 use std::path::{Path, PathBuf};
 
@@ -23,16 +24,6 @@ fn apply(folder: &Path, operation: &Operation) -> Result<Applied, String> {
         or_maps::operation::Error::Refused { why, .. } => why,
         other => other.to_string(),
     })
-}
-
-/// The step of Undo that `operation`, applied to the pack in `folder`, is.
-fn step(label: String, folder: &Path, operation: Operation, applied: Applied) -> Step {
-    Step {
-        label,
-        folder: folder.to_path_buf(),
-        undo: applied.inverse,
-        redo: operation,
-    }
 }
 
 impl AppState {
@@ -75,7 +66,7 @@ impl AppState {
         match apply(&folder, &operation) {
             Ok(applied) if applied.edited.changed() => {
                 self.patch_scene(source, index, pose);
-                self.push_maps_step(step(label, &folder, operation, applied));
+                self.push_maps_applied(label, &folder, operation, applied);
                 let set = self.workbench.maps.set.clone().unwrap_or_default();
                 self.workbench.maps.module = Some(module.clone());
                 if self.workbench.maps.selected.is_none() {
@@ -214,7 +205,7 @@ impl AppState {
             Ok(applied) => {
                 self.remember_map_names(&module, &[text.as_deref().unwrap_or_default()]);
                 let added = applied.added.map(PickKind::Entity);
-                self.push_maps_step(step(label, &folder, operation, applied));
+                self.push_maps_applied(label, &folder, operation, applied);
                 self.select_in_maps(
                     &module,
                     &set_id,
@@ -252,7 +243,7 @@ impl AppState {
         match apply(&folder, &operation) {
             Ok(applied) => {
                 let label = tr!("Removed entity {index}", index = index);
-                self.push_maps_step(step(label, &folder, operation, applied));
+                self.push_maps_applied(label, &folder, operation, applied);
                 let set = self.workbench.maps.set.clone().unwrap_or_default();
                 self.select_in_maps(&module, &set, None);
             }
@@ -361,7 +352,7 @@ impl AppState {
         match done {
             Ok((operation, applied)) if applied.edited.changed() => {
                 self.remember_map_names(&module, typed);
-                self.push_maps_step(step(label, &folder, operation, applied));
+                self.push_maps_applied(label, &folder, operation, applied);
             }
             Ok(_) => {}
             Err(why) => self.show_error_toast(why),
@@ -410,7 +401,7 @@ impl AppState {
                     name = name,
                     index = index
                 );
-                self.push_maps_step(step(label, &folder, operation, applied));
+                self.push_maps_applied(label, &folder, operation, applied);
             }
             Ok(_) => {}
             Err(why) => self.show_error_toast(why),
@@ -499,7 +490,7 @@ impl AppState {
                 self.remember_map_names(&module, &[name, asset.unwrap_or(name)]);
                 let added = applied.added.map(PickKind::Archetype);
                 let label = tr!("Added the archetype {name}", name = name);
-                self.push_maps_step(step(label, &folder, operation, applied));
+                self.push_maps_applied(label, &folder, operation, applied);
                 self.select_in_maps(
                     &module,
                     &set_id,
@@ -536,7 +527,7 @@ impl AppState {
         match apply(&folder, &operation) {
             Ok(applied) => {
                 let label = tr!("Removed archetype {index}", index = index);
-                self.push_maps_step(step(label, &folder, operation, applied));
+                self.push_maps_applied(label, &folder, operation, applied);
                 let set = self.workbench.maps.set.clone().unwrap_or_default();
                 self.select_in_maps(&module, &set, None);
             }
@@ -577,6 +568,30 @@ impl AppState {
         );
     }
 
+    /// Keep `operation`, which was applied to the pack in `folder`, as a step of Undo, and say what it went without.
+    fn push_maps_applied(
+        &mut self,
+        label: String,
+        folder: &Path,
+        operation: Operation,
+        applied: Applied,
+    ) {
+        self.say_maps_notes(&applied.notes);
+        self.push_maps_step(Step {
+            label,
+            folder: folder.to_path_buf(),
+            undo: applied.inverse,
+            redo: operation,
+        });
+    }
+
+    /// Say the notes of an operation, the sentences of `or_maps::operation`, each as a warning.
+    fn say_maps_notes(&mut self, notes: &[String]) {
+        for note in notes {
+            self.show_warning_toast(note.clone());
+        }
+    }
+
     fn push_maps_step(&mut self, step: Step) {
         let work = &mut self.workbench.maps;
         work.undo.push(step);
@@ -607,6 +622,7 @@ impl AppState {
                     other => other.to_string(),
                 },
             )?;
+        self.say_maps_notes(&applied.notes);
         if undo {
             step.redo = applied.inverse;
         } else {

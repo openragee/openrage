@@ -135,6 +135,15 @@ const DOOR_CLASSES: &str = r#"  <structdef type="rage::fwExtensionDef">
   </structdef>
 </ParserSchema>"#;
 
+/// What the schema gains for a map file that carries container LODs: the member on the map, and the class of one.
+const CONTAINER_LODS_MEMBER: &str = r#"    <array name="entities" type="atArray"><pointer type="CEntityDef" policy="owner"/></array>
+    <array name="containerLods" type="atArray"><struct type="rage::fwContainerLodDef"/></array>"#;
+const CONTAINER_LOD_CLASS: &str = r#"  <structdef type="rage::fwContainerLodDef">
+    <string name="name" type="atHashString"/>
+    <u32 name="parentIndex"/>
+  </structdef>
+</ParserSchema>"#;
+
 /// The schema of a sample file, with the door extension where `doors` asks for it.
 fn schema(doors: bool) -> String {
     if !doors {
@@ -204,8 +213,11 @@ fn entity(e: &Entity<'_>) -> MetaInstance {
 }
 
 fn encode(root: &MetaInstance, doors: bool) -> Vec<u8> {
-    let library =
-        build_library([("inline.psc", schema(doors).as_bytes())]).expect("the schema parses");
+    encode_with(root, &schema(doors))
+}
+
+fn encode_with(root: &MetaInstance, schema: &str) -> Vec<u8> {
+    let library = build_library([("inline.psc", schema.as_bytes())]).expect("the schema parses");
     let layout =
         canonical::layout_for(&library, root, BinaryFormat::Rbm, None).expect("the file lays out");
     write_meta_binary(BinaryFormat::Rbm, Some(&layout), root).expect("the file encodes")
@@ -226,12 +238,50 @@ pub fn child_map_file(
     map_under(name, HashedString::new(parent), entities, extents)
 }
 
+/// A `.ymap` as [`map_file`] makes one, that carries a container LOD for each index of `container_lods`, the entity it names.
+pub fn map_file_with_container_lods(
+    name: &str,
+    entities: &[Entity<'_>],
+    container_lods: &[u32],
+    extents: ([f32; 3], [f32; 3]),
+) -> Vec<u8> {
+    let mut root = map_root(name, HashedString::from_hash(0), entities, extents);
+    let lods = (container_lods.iter().enumerate())
+        .map(|(at, parent)| {
+            let mut lod = MetaInstance::new("rage::fwContainerLodDef");
+            lod.set(
+                "name",
+                Value::Hash(HashedString::new(format!("{name}_lod{at}"))),
+            );
+            lod.set("parentIndex", Value::UInt(u64::from(*parent)));
+            Value::Struct(Box::new(lod))
+        })
+        .collect();
+    root.set("containerLods", Value::Array(lods));
+    let schema = PSC
+        .replace(
+            r#"    <array name="entities" type="atArray"><pointer type="CEntityDef" policy="owner"/></array>"#,
+            CONTAINER_LODS_MEMBER,
+        )
+        .replace("</ParserSchema>", CONTAINER_LOD_CLASS);
+    encode_with(&root, &schema)
+}
+
 fn map_under(
     name: &str,
     parent: HashedString,
     entities: &[Entity<'_>],
     extents: ([f32; 3], [f32; 3]),
 ) -> Vec<u8> {
+    encode(&map_root(name, parent, entities, extents), false)
+}
+
+fn map_root(
+    name: &str,
+    parent: HashedString,
+    entities: &[Entity<'_>],
+    extents: ([f32; 3], [f32; 3]),
+) -> MetaInstance {
     let mut root = MetaInstance::new("CMapData");
     root.set("name", Value::Hash(HashedString::new(name)));
     root.set("parent", Value::Hash(parent));
@@ -250,7 +300,7 @@ fn map_under(
                 .collect(),
         ),
     );
-    encode(&root, false)
+    root
 }
 
 /// One archetype of a sample type file.

@@ -182,6 +182,8 @@ pub struct EntityFact {
     pub scale_z: f32,
     pub flags: u32,
     pub parent_index: i32,
+    /// How many entities it states name it as their LOD parent, in its own map file and in the ones under it.
+    pub num_children: u32,
     pub lod_dist: f32,
     /// The level of detail it is for, as the file names it (`LODTYPES_DEPTH_HD`), none where the file states none.
     pub lod_level: Option<String>,
@@ -441,6 +443,7 @@ fn read_map(map: &MapData<'_>, names: Names<'_>) -> MapInside {
                     scale_z: field::f32_at(inst, keys::SCALE_Z).unwrap_or(1.0),
                     flags: entity.flags(),
                     parent_index: field::i32_at(inst, keys::PARENT_INDEX).unwrap_or(-1),
+                    num_children: entity.num_children(),
                     lod_dist: entity.lod_dist(),
                     lod_level: entity.lod_level().map(str::to_string),
                     interior: entity.is_interior_instance(),

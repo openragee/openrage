@@ -1598,3 +1598,75 @@ fn a_collider_says_how_many_bytes_it_holds() {
         "{first} bytes for the first thousand, {second} for the second"
     );
 }
+
+/// A level floor at height nought of `cells` by `cells` squares of `cell` metres, its lowest corner at `corner`.
+fn level_grid(corner: Vec3, cell: f32, cells: usize) -> PhBoundGeometry {
+    let side = cells + 1;
+    let mut positions = Vec::new();
+    for y in 0..side {
+        for x in 0..side {
+            positions.push(corner + Vec3::new(x as f32 * cell, y as f32 * cell, 0.0));
+        }
+    }
+    let mut triangles = Vec::new();
+    for y in 0..cells {
+        for x in 0..cells {
+            let at = (y * side + x) as u16;
+            let side = side as u16;
+            triangles.push([at, at + 1, at + side + 1]);
+            triangles.push([at, at + side + 1, at + side]);
+        }
+    }
+    let material = vec![0; triangles.len()];
+    bounds::geometry(&positions, &triangles, Vec::new(), &[FLOOR], &material)
+}
+
+#[test]
+fn a_level_floor_is_ground_to_a_probe_that_takes_no_slope_at_all() {
+    // ⚠ The normal of a level triangle comes out of its cross product an ulp under one, at these cell sizes and places among others.
+    let far = Vec3::new(3000.0, -3000.0, 0.0);
+    for (corner, cell) in [(Vec3::ZERO, 3.3), (far, 0.37), (far, 7.77), (far, 1.0)] {
+        let set = set_of(vec![(
+            "floor",
+            PhBoundAny::PhBoundGeometry(level_grid(corner, cell, 4)),
+            Affine3A::IDENTITY,
+        )]);
+        for max_slope in [0.0, 1e-4] {
+            let probe = GroundProbe {
+                max_rise: 1.0,
+                max_drop: 10.0,
+                max_slope,
+            };
+            let mut missed = Vec::new();
+            for y in 0..4 {
+                for x in 0..4 {
+                    // Inside each of the two triangles of a square, off the edge they share.
+                    for (u, v) in [(0.7, 0.2), (0.2, 0.7)] {
+                        let over =
+                            corner + Vec3::new((x as f32 + u) * cell, (y as f32 + v) * cell, 0.5);
+                        if set.ground(over, &probe).is_none() {
+                            missed.push(over);
+                        }
+                    }
+                }
+            }
+            assert!(
+                missed.is_empty(),
+                "cells of {cell} m at {corner}, a slope of {max_slope}: no ground under {} of 32 points, the first {:?}",
+                missed.len(),
+                missed.first()
+            );
+        }
+    }
+    // A slope is still refused by a probe that takes none: the steep triangle of the building is no ground to it.
+    let g = building();
+    let set = set_of(vec![(
+        "building",
+        PhBoundAny::PhBoundGeometry(g),
+        Affine3A::IDENTITY,
+    )]);
+    let (_, hit) = set
+        .ground(Vec3::new(2.0, 2.0, 2.9), &walker(0.0, 0.0))
+        .expect("the floor under the steep triangle");
+    assert_at(hit.position, Vec3::new(2.0, 2.0, 0.0));
+}

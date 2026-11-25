@@ -8729,6 +8729,9 @@ msgstr "あとで設定の「編集」ページから変更できます"
 msgid "The Wardrobe's rules found nothing wrong in it."
 msgstr "ワードローブのルールでは、問題は見つかりませんでした。"
 
+msgid "The acceptance sheet has no line about what else this build wrote: {kinds}"
+msgstr "このビルドが書き出したその他のファイルについては、受け入れシートに行がありません: {kinds}"
+
 msgid "The active document has no file yet"
 msgstr "アクティブなドキュメントにはまだファイルがありません"
 

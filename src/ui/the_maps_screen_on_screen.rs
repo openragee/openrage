@@ -869,3 +869,49 @@ fn the_last_entity_of_a_map_taken_out_is_put_back_by_undo() {
     shell.state.undo_maps_change();
     assert!(std::fs::read(&file).unwrap() == before);
 }
+
+/// What an operation went without is said on the screen as `maps apply` prints it: an entity of a model no type file of the pack
+/// declares, moved past the extents, grows them to where it stands and not to its box.
+#[test]
+fn an_edit_says_what_its_operation_went_without_as_a_warning() {
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().unwrap();
+    let mut shell = a_maps_shell(dir.path());
+    let warnings = |shell: &Shell| -> Vec<String> {
+        (shell.state.toasts.iter())
+            .filter(|toast| toast.toast_type == crate::state::ToastType::Warning)
+            .map(|toast| toast.message.clone())
+            .collect()
+    };
+    select_entity(&mut shell, 0);
+    let pose = shell.state.selected_pose().expect("a pose");
+    let far = |x: f32| or_maps::edit::Pose {
+        position: Vec3::new(x, 20.0, 0.5),
+        ..pose
+    };
+    // A model the type file declares has its box in the pack: nothing is gone without.
+    shell
+        .state
+        .place_selected_entity(far(150.0), "Moved".to_string());
+    assert_eq!(warnings(&shell), Vec::<String>::new());
+
+    select_entity(&mut shell, 1);
+    shell
+        .state
+        .rename_selected_entity_archetype("prop_bench_01a");
+    assert_eq!(
+        warnings(&shell),
+        Vec::<String>::new(),
+        "a name alone grows nothing"
+    );
+    shell
+        .state
+        .place_selected_entity(far(300.0), "Moved".to_string());
+    let said = warnings(&shell);
+    let bench = format!("hash_{:08X}", or_io::string_hash(b"prop_bench_01a"));
+    assert!(
+        matches!(said.as_slice(), [note] if note.contains("no type file of the pack declares") && note.contains(&bench)),
+        "{said:?}"
+    );
+    assert_eq!(the_map_file(&shell).entities[1].position.x, 300.0);
+}

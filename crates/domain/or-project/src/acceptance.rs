@@ -4,6 +4,11 @@
 //! run of the game is written down.
 //!
 //! ⚠ Nothing here writes an observation, and a line with none is not checked in game, which is all that may be said of it.
+//!
+//! ⚠ **A reading is short of what was seen, never past it.** A line is matched by its kind alone, which is an extension, so a line
+//! about what an extension does not tell, as a map made from nothing is a PSO where the game's own maps are RBM, is about every build
+//! that wrote a file of the kind. And a result counts only for the place it was seen in ([`Place`]): a pack loads its maps through
+//! the archive it registers, which a run on a server says nothing of.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -12,7 +17,7 @@ use serde_json::{Map, Value};
 
 use crate::build::files_under;
 use crate::built::{unpack, BuiltKind};
-use crate::container::Target;
+use crate::container::{OutputKind, Target};
 use crate::dlc::PACK;
 use crate::oiv::EXTENSION;
 use crate::plan::MANIFEST;
@@ -98,6 +103,23 @@ impl Place {
         match self {
             Self::FivemServer => "on a FiveM server",
             Self::StoryMode => "in story mode",
+        }
+    }
+
+    /// Where the game loads what an output of `kind` builds: a pack or a package in story mode, a resource on a server.
+    pub fn of_output(kind: &OutputKind) -> Self {
+        match kind {
+            OutputKind::FivemResource | OutputKind::Unknown(_) => Self::FivemServer,
+            OutputKind::SingleplayerDlc | OutputKind::OivPackage => Self::StoryMode,
+        }
+    }
+
+    /// Where the game loads the build at `built`: a pack or a package in story mode, a resource folder on a server.
+    pub fn of_built(built: &Path) -> Self {
+        if is_packed(built) {
+            Self::StoryMode
+        } else {
+            Self::FivemServer
         }
     }
 }
@@ -191,6 +213,18 @@ impl Line {
             .filter(|seen| seen.edition == edition)
             .max_by(|a, b| a.date.cmp(&b.date))
     }
+
+    /// The newest run of the line for `edition` among those loaded in `place`.
+    pub fn newest_in(&self, edition: Target, place: Place) -> Option<&Observation> {
+        (self.results.iter())
+            .filter(|seen| seen.edition == edition && seen.place == place)
+            .max_by(|a, b| a.date.cmp(&b.date))
+    }
+
+    /// Whether the newest run of the line for `edition` in `place` says the game loaded it, with no fault.
+    pub fn loaded_in(&self, edition: Target, place: Place) -> bool {
+        (self.newest_in(edition, place)).is_some_and(|seen| seen.verdict == Verdict::Loaded)
+    }
 }
 
 impl Sheet {
@@ -244,11 +278,7 @@ impl Sheet {
         Ok(sheet)
     }
 
-    /// The lines about files of `kinds`, in the sheet's order, each with what the sheet holds of it for `edition`.
-    ///
-    /// ⚠ A line is matched by its kind alone, which is an extension. A line about what an extension does not tell, as a map made
-    /// from nothing is a PSO where the game's own maps are RBM, is about every build that wrote a file of the kind, so the kind is
-    /// not said to be seen until that line has a result too: a reading that is short of what was seen, never past it.
+    /// The lines about files of `kinds`, in the sheet's order, each with the newest run the sheet holds of it for `edition`, wherever it was loaded.
     pub fn about(&self, kinds: &BTreeSet<String>, edition: Target) -> Vec<Concern<'_>> {
         (self.lines.iter())
             .filter(|line| kinds.contains(&line.kind))
@@ -259,26 +289,33 @@ impl Sheet {
             .collect()
     }
 
-    /// What was seen in game of files of `kinds`, for the edition a build states or for each of the two when it states none; nothing where no line is about any.
-    pub fn seen(&self, kinds: &BTreeSet<String>, stated: Option<Target>) -> Vec<(Target, Seen)> {
+    /// What was seen of files of `kinds` in `place`, where the build that wrote them loads, for the edition it states or for each of the two when it states none; nothing where no line is about any.
+    pub fn seen(
+        &self,
+        kinds: &BTreeSet<String>,
+        stated: Option<Target>,
+        place: Place,
+    ) -> Vec<(Target, Seen)> {
         let editions = match stated {
             Some(edition) => vec![edition],
             None => vec![Target::Legacy, Target::Enhanced],
         };
         (editions.into_iter())
             .filter_map(|edition| {
-                let about = self.about(kinds, edition);
+                let about: Vec<&Line> = (self.lines.iter())
+                    .filter(|line| kinds.contains(&line.kind))
+                    .collect();
                 let mut unseen: Vec<String> = Vec::new();
-                for concern in about.iter().filter(|concern| !concern.loaded()) {
-                    if !unseen.contains(&concern.line.kind) {
-                        unseen.push(concern.line.kind.clone());
+                for line in (about.iter()).filter(|line| !line.loaded_in(edition, place)) {
+                    if !unseen.contains(&line.kind) {
+                        unseen.push(line.kind.clone());
                     }
                 }
                 if !unseen.is_empty() {
                     return Some((edition, Seen::Not(unseen)));
                 }
                 // ⚠ Every line is loaded here, so each has a newest result, and no line at all leaves no day and says nothing.
-                let newest = about.iter().filter_map(|concern| concern.newest);
+                let newest = (about.iter()).filter_map(|line| line.newest_in(edition, place));
                 let day = newest.map(|seen| seen.date.as_str()).max()?;
                 Some((edition, Seen::All(day.to_string())))
             })
@@ -291,6 +328,19 @@ impl Sheet {
             .filter(|kind| !self.lines.iter().any(|line| line.kind == **kind))
             .map(String::as_str)
             .collect()
+    }
+
+    /// The sentence a build's report says of the kinds of `kinds` no line is about, in English; none when a line is about each, or about none, where nothing is read.
+    pub fn silent_sentence(&self, kinds: &BTreeSet<String>) -> Option<String> {
+        let silent = self.without_a_line(kinds);
+        if silent.is_empty() || silent.len() == kinds.len() {
+            return None;
+        }
+        let named: Vec<String> = silent.iter().map(|kind| kind_words(kind)).collect();
+        Some(format!(
+            "The acceptance sheet has no line about what else this build wrote: {}",
+            named.join(", ")
+        ))
     }
 }
 
@@ -783,9 +833,12 @@ mod tests {
         );
     }
 
-    /// The sheet the tree ships with each result of `results` added to the line it names: a copy, which is never written back.
+    /// The lines the tree ships, with the results a person wrote taken out and each result of `results` added to the line it names: a copy, which is never written back.
     fn shipped_with(results: &[(&str, Value)]) -> Sheet {
         let mut sheet: Value = serde_json::from_str(SHEET).unwrap();
+        for line in sheet["lines"].as_array_mut().unwrap() {
+            line["results"] = serde_json::json!([]);
+        }
         for (id, result) in results {
             let line = (sheet["lines"].as_array_mut().unwrap().iter_mut())
                 .find(|line| line["id"] == *id)
@@ -800,15 +853,14 @@ mod tests {
         let wrote: BTreeSet<String> = ["ymap", "ytyp", "lua"].map(str::to_string).into();
         let unseen = |kinds: &[&str]| Seen::Not(kinds.iter().map(ToString::to_string).collect());
 
-        // The sheet ships with no result: a kind is named once, in the sheet's order, however many lines are about it.
-        let shipped = Sheet::shipped().unwrap();
-        assert!(shipped.lines.iter().all(|line| line.results.is_empty()));
+        // With no result written down, a kind is named once, in the sheet's order, however many lines are about it.
+        let shipped = shipped_with(&[]);
         assert_eq!(
-            shipped.seen(&wrote, Some(Target::Legacy)),
+            shipped.seen(&wrote, Some(Target::Legacy), Place::FivemServer),
             [(Target::Legacy, unseen(&["ymap", "ytyp"]))]
         );
         assert_eq!(
-            shipped.seen(&wrote, None),
+            shipped.seen(&wrote, None, Place::FivemServer),
             [
                 (Target::Legacy, unseen(&["ymap", "ytyp"])),
                 (Target::Enhanced, unseen(&["ymap", "ytyp"])),
@@ -817,7 +869,7 @@ mod tests {
         );
         let script: BTreeSet<String> = ["lua".to_string()].into();
         assert_eq!(
-            shipped.seen(&script, None),
+            shipped.seen(&script, None, Place::FivemServer),
             [],
             "nothing is said of a build that wrote no kind a line is about"
         );
@@ -829,25 +881,36 @@ mod tests {
         let types = ("type-file-read", loaded("2026-12-02"));
         // One line of a kind seen and the other not leaves the kind unseen.
         assert_eq!(
-            shipped_with(std::slice::from_ref(&moved)).seen(&wrote, Some(Target::Legacy)),
+            shipped_with(std::slice::from_ref(&moved)).seen(
+                &wrote,
+                Some(Target::Legacy),
+                Place::FivemServer
+            ),
             [(Target::Legacy, unseen(&["ymap", "ytyp"]))]
         );
         // ⚠ A line is matched by its kind alone, so the line of a map made from nothing is about every build that wrote a map:
         // the two lines of a map changed, seen, leave maps unseen until that one is seen too.
         assert_eq!(
-            shipped_with(&[moved.clone(), added.clone()]).seen(&wrote, Some(Target::Legacy)),
+            shipped_with(&[moved.clone(), added.clone()]).seen(
+                &wrote,
+                Some(Target::Legacy),
+                Place::FivemServer
+            ),
             [(Target::Legacy, unseen(&["ytyp", "ymap"]))]
         );
         assert_eq!(
-            shipped_with(&[moved.clone(), added.clone(), made.clone()])
-                .seen(&wrote, Some(Target::Legacy)),
+            shipped_with(&[moved.clone(), added.clone(), made.clone()]).seen(
+                &wrote,
+                Some(Target::Legacy),
+                Place::FivemServer
+            ),
             [(Target::Legacy, unseen(&["ytyp"]))]
         );
 
         // Every line seen for Legacy: the day said is the newest of them, and Enhanced is as it was.
         let all = [moved, added, made, types];
         assert_eq!(
-            shipped_with(&all).seen(&wrote, None),
+            shipped_with(&all).seen(&wrote, None, Place::FivemServer),
             [
                 (Target::Legacy, Seen::All("2026-12-02".into())),
                 (Target::Enhanced, unseen(&["ymap", "ytyp"])),
@@ -860,9 +923,68 @@ mod tests {
         let mut later = all.to_vec();
         later.push(("type-file-read", refused));
         assert_eq!(
-            shipped_with(&later).seen(&wrote, Some(Target::Legacy)),
+            shipped_with(&later).seen(&wrote, Some(Target::Legacy), Place::FivemServer),
             [(Target::Legacy, unseen(&["ytyp"]))]
         );
+    }
+
+    #[test]
+    fn a_result_counts_for_the_place_it_was_seen_in_and_a_pack_is_not_seen_by_a_run_on_a_server() {
+        let pack: BTreeSet<String> = ["rpf", "ymap", "ytyp", "ymf", "xml", "meta"]
+            .map(str::to_string)
+            .into();
+        let unseen = |kinds: &[&str]| Seen::Not(kinds.iter().map(ToString::to_string).collect());
+        let on_a_server = || result_with(serde_json::json!({ "date": "2026-12-01" }));
+        let in_story_mode =
+            |date: &str| result_with(serde_json::json!({ "where": "story-mode", "date": date }));
+        let maps = [
+            "map-object-moved",
+            "map-object-added",
+            "map-made-from-nothing",
+            "type-file-read",
+        ];
+        let mut results: Vec<(&str, Value)> = maps.iter().map(|id| (*id, on_a_server())).collect();
+        results.push(("story-pack-mounts", in_story_mode("2026-12-03")));
+        let sheet = shipped_with(&results);
+        assert_eq!(
+            Place::of_output(&OutputKind::SingleplayerDlc),
+            Place::StoryMode
+        );
+        assert_eq!(Place::of_output(&OutputKind::OivPackage), Place::StoryMode);
+        assert_eq!(
+            Place::of_output(&OutputKind::FivemResource),
+            Place::FivemServer
+        );
+        // The maps were seen on a server and the pack in story mode: of the pack's maps, nobody saw one load from a pack.
+        assert_eq!(
+            sheet.seen(&pack, Some(Target::Legacy), Place::StoryMode),
+            [(Target::Legacy, unseen(&["ymap", "ytyp"]))]
+        );
+        // The same kinds built as a resource: its maps were seen, and a pack is no file of a resource.
+        let resource: BTreeSet<String> = ["ymap", "ytyp", "lua"].map(str::to_string).into();
+        assert_eq!(
+            sheet.seen(&resource, Some(Target::Legacy), Place::FivemServer),
+            [(Target::Legacy, Seen::All("2026-12-01".into()))]
+        );
+        // Each map line seen in story mode too, the pack's kinds are all seen, and the day is the newest of the runs there.
+        for id in maps {
+            results.push((id, in_story_mode("2026-12-02")));
+        }
+        let sheet = shipped_with(&results);
+        assert_eq!(
+            sheet.seen(&pack, Some(Target::Legacy), Place::StoryMode),
+            [(Target::Legacy, Seen::All("2026-12-03".into()))]
+        );
+
+        // What the build wrote that no line is about is said beside the reading, and nothing where every kind has a line or none has.
+        assert_eq!(
+            sheet.silent_sentence(&pack).as_deref(),
+            Some("The acceptance sheet has no line about what else this build wrote: .meta files, .xml files, .ymf files")
+        );
+        let with_lines: BTreeSet<String> = ["ymap", "ytyp"].map(str::to_string).into();
+        assert_eq!(sheet.silent_sentence(&with_lines), None);
+        let script: BTreeSet<String> = ["lua".to_string()].into();
+        assert_eq!(sheet.silent_sentence(&script), None);
     }
 
     #[test]

@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 use std::process::ExitCode;
 
 use or_maps::changes::{
-    source_changes, EntityChange, EntityRef, MapChanges, Matched, MemberChange, SourceChanges,
-    Stated, TypesChanges,
+    EntityChange, EntityRef, MapChanges, Matched, MemberChange, PackSources, SourceChanges, Stated,
+    TypesChanges,
 };
 use or_maps::facts::{Fact, Name};
 use or_maps::{Depth, Maps, Role};
@@ -41,6 +41,15 @@ pub(crate) fn report(args: &[String]) -> Result<(String, bool), Failure> {
         let model =
             or_maps::Maps::read(&folder).map_err(|e| Run(format!("content `{id}`: {e}")))?;
         let facts = or_maps::inspect(&folder, &model, Depth::Stat);
+        let compared_role = |path: &&str| {
+            let role = facts.source(path).and_then(|source| source.role());
+            matches!(role, Some(Role::Map | Role::Types))
+        };
+        // Read once, so that a link of a map file into its parent map is compared by the entity it names there.
+        let read = PackSources::read(
+            &folder,
+            or_maps::facts::named_paths(&model).filter(compared_role),
+        );
         let mut sources = Vec::new();
         let _ = writeln!(text, "content {id}:");
         for path in or_maps::facts::named_paths(&model) {
@@ -59,8 +68,7 @@ pub(crate) fn report(args: &[String]) -> Result<(String, bool), Failure> {
                 continue;
             }
             let file = source.file_name();
-            let dir = folder.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
-            match source_changes(&dir) {
+            match read.changes(path) {
                 Ok(changes) => {
                     let _ = writeln!(text, "  {path} ({file}): {}", counts(&changes));
                     match &changes {

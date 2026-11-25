@@ -59,7 +59,7 @@ fn print_usage() {
          openrage-cli maps keep-manifest <project.openrage-proj> --game <install root> [--keys <file>] [--module <id>]\n  \
          openrage-cli maps delete   <project.openrage-proj> <source>:<entity>... [--module <id>] [--apply]\n                             \
          [--script <form>] [--radius <metres>]\n  \
-         openrage-cli maps doors    <project.openrage-proj> [--module <id>] [--json]\n\n\
+         openrage-cli maps doors    <project.openrage-proj> [--module <id>] [--names <file>] [--json]\n\n\
          changes compares each map file and type file of the content with the base its source keeps,\n\
          the file it was imported from, and says by object what the source changed: the entities and\n\
          the archetypes added, deleted and changed, each with its index in the base and its index now,\n\
@@ -87,7 +87,9 @@ fn print_usage() {
          the SHA-256 of the XML its source is to hold, is refused when the source holds another. It\n\
          writes all of them or none: an operation that is refused is named by its place in the list,\n\
          and no source changes. With --dry-run it says what each operation would change and writes\n\
-         nothing. It exits 1 when an operation is refused.\n\
+         nothing. It exits 1 when an operation is refused. A name an operation states, the archetype\n\
+         of an entity added or the name and the asset of an archetype added, is remembered in the\n\
+         content, since a file keeps its hash alone.\n\
          keep-manifest keeps a manifest of the game in the maps content, as the game ships it. A build\n\
          writes the manifest of its own maps from the ones kept: they say how that document is laid\n\
          out and what flags the entry of a map takes, which nothing else in a project says. Name the\n\
@@ -108,11 +110,14 @@ fn print_usage() {
          there or the deletion is refused.\n\
          doors lists the doors of each map set: an entity whose archetype states the door extension, and\n\
          an entity whose model's name a door pattern matches, with how many entities have a model with\n\
-         no name, since a door among them is missed. For each door it says what its box reads as (a\n\
-         leaf that swings, slides or lifts, its hinge and its width), the other leaf of its double\n\
-         door, how far it opens each way before the box of another entity is in its arc, and what the\n\
-         door rules find. All of it is read from the model's box: the game's door tuning and the\n\
-         collision of the map are not read. --json prints the same doors as JSON.\n\n\
+         no name, since a door among them is missed. A model has a name when the content remembers it\n\
+         (one typed on the Map screen or stated by an operation of `maps apply`) or the file --names\n\
+         gives lists it, a name a line: a map file a project imported keeps hashes alone. For each\n\
+         door it says what its box reads as (a leaf that swings, slides or lifts, its hinge and its\n\
+         width), the other leaf of its double door, how far it opens each way before the box of\n\
+         another entity is in its arc, and what the door rules find. All of it is read from the\n\
+         model's box: the game's door tuning and the collision of the map are not read. --json prints\n\
+         the same doors as JSON.\n\n\
          A build checks the files. It does not test that GTA V loads them.\n"
     );
 }
@@ -147,9 +152,21 @@ pub(crate) fn maps_of(
 fn doors(args: &[String]) -> Result<ExitCode, Failure> {
     let json_out = args.iter().any(|a| a == "--json");
     let rest: Vec<String> = args.iter().filter(|a| *a != "--json").cloned().collect();
-    let (positional, flags) = parse(&rest, &["--module"])?;
+    let (positional, flags) = parse(&rest, &["--module", "--names"])?;
     let (project, modules) = maps_of(&positional, &flags)?;
     let patterns = or_maps::doors::built_in_patterns().map_err(|e| Run(e.to_string()))?;
+    // The names a file lists, a line each, by the hash a map file keeps of each.
+    let listed: HashMap<u32, String> = match flags.get("--names") {
+        Some(file) => std::fs::read_to_string(file)
+            .map_err(|e| Run(format!("{file}: {e}")))?
+            .lines()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(|name| (or_io::string_hash(name.as_bytes()), name.to_string()))
+            .collect(),
+        None => HashMap::new(),
+    };
+    let named = |hash: u32| listed.get(&hash).cloned();
     let mut reports = Vec::new();
     for id in modules {
         let module = (project.container.module(&id))
@@ -158,7 +175,7 @@ fn doors(args: &[String]) -> Result<ExitCode, Failure> {
             .map_err(|e| Run(format!("content `{id}`: {e}")))?;
         let model =
             or_maps::Maps::read(&folder).map_err(|e| Run(format!("content `{id}`: {e}")))?;
-        let sets = or_maps::doors::doors_of(&folder, &model, None, &patterns);
+        let sets = or_maps::doors::doors_of(&folder, &model, Some(&named), &patterns);
         if json_out {
             reports.push(json!({ "module": id, "sets": sets }));
             continue;
@@ -218,6 +235,20 @@ fn apply(args: &[String]) -> Result<ExitCode, Failure> {
             or_maps::operation::Error::Write(_) => Run(e.to_string()),
             refused => Run(format!("{refused}; no source was changed")),
         })?;
+
+    // ⚠ A file keeps the hash of a name alone, so the names the list states are remembered in the pack, as the Map screen remembers
+    // the ones a person types: a door is found by its model's name.
+    let stated: Vec<&str> = operations.iter().flat_map(|op| op.names()).collect();
+    if !dry_run && !stated.is_empty() {
+        let remembered =
+            or_maps::Maps::read(&folder).and_then(|mut model| match model.remember(&stated) {
+                true => model.write(&folder),
+                false => Ok(()),
+            });
+        if let Err(e) = remembered {
+            eprintln!("note: the names the operations state are not remembered: {e}");
+        }
+    }
 
     // Each file with the XML it held before the list and the XML it holds after: an operation taken back later in the list changes nothing.
     let mut files: Vec<(String, &[u8], &[u8])> = Vec::new();
@@ -795,6 +826,19 @@ mod tests {
             archetype: Name::from_text(archetype),
             position: [1.5, -2.0, 30.25],
         }
+    }
+
+    #[test]
+    fn the_door_survey_takes_the_colliders_a_mount_streams_and_names_one() {
+        use or_depends::world_collision::Collider;
+        let colliders: or_world::collision::CollisionSet<Collider> = Default::default();
+        let patterns = or_maps::doors::built_in_patterns().unwrap();
+        let (model, set) = (or_maps::Maps::new(), or_maps::MapSet::new("shop"));
+        let surveyed =
+            or_maps::doors::survey(&model, &set, &[], &[], &|_| None, &patterns, &colliders);
+        assert!(surveyed.doors.is_empty());
+        assert_eq!(Collider::File(3).to_string(), "bounds file 3 of the mount");
+        assert_eq!(Collider::Placed(7).to_string(), "placed collider 7");
     }
 
     #[test]

@@ -28,6 +28,7 @@ use crate::script_text::heading_of;
 
 /// What the `format` of a file of door patterns says.
 pub const PATTERNS_FORMAT: &str = "openrage-door-patterns";
+/// The newest schema of a file of door patterns this build reads.
 pub const PATTERNS_SCHEMA: u32 = 1;
 
 const BUILT_IN_PATTERNS: &str = include_str!("door_patterns.json");
@@ -57,6 +58,7 @@ pub const DOOR_RULES: &[Rule] = &[
     ),
 ];
 
+/// Why a file of door patterns was not read.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("the door patterns are not read: {0}")]
@@ -511,6 +513,9 @@ pub fn doors_of(
                 unread.push((path.to_string(), what.to_string()));
             }
         }
+        // ⚠ Of two type files of a set that declare one name the pack believes the first, as the scene, the rules and the extents an
+        // operation grows do, and `find` believes the last it is handed: the type files go to it last first.
+        types.reverse();
         let mut doors = survey(model, set, &maps, &types, &known, patterns, &nothing);
         doors.unread = unread;
         out.push(doors);

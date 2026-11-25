@@ -2,6 +2,11 @@
 //! its typed root, an operation changes that root and writes nothing, and [`Session::flush`] writes the XML of every source that
 //! changed. A drag of many steps writes once.
 //!
+//! ⚠ **A session that refused an operation does not write when it is dropped.** A session dropped with operations unwritten writes
+//! them, but not once [`Session::apply`] refused one since the last flush: what was done before the refusal may be the first
+//! operations of a list that is sound only whole. [`Session::apply_all`] does such a list or none of it, and a caller that wants
+//! what was done before a refusal written flushes.
+//!
 //! ⚠ **What a flush writes is what [`super::apply`] writes, operation by operation**, byte for byte, and each source is written through
 //! the same guard. What a save or the guard refuses is refused at the flush and not at the operation, because finding it out is the
 //! cost a session is there to pay once: the flush then writes nothing and names the first operation it could not write.
@@ -27,8 +32,8 @@ use sha2::{Digest, Sha256};
 
 use super::{
     archetype_at, change_map, change_types, context, declare, digest_of, entity_at, opened,
-    problems, proven, refused, restores, sure_in_map, sure_in_types, text_of, write_all, At, Boxes,
-    Changed, Context, Error, Operation, Pack,
+    problems, proven, refused, restores, settle_notes, sure_in_map, sure_in_types, text_of,
+    write_all, At, Boxes, Changed, Context, Error, Linked, Operation, Pack,
 };
 use crate::model::Maps;
 
@@ -395,6 +400,8 @@ pub struct Session {
     boxes: BTreeMap<String, (Arc<Boxes>, Vec<String>)>,
     nonce: String,
     tokens: u64,
+    /// Whether an operation was refused since the last flush, so that what was done before it may be part of a list that is sound only whole.
+    refused: bool,
 }
 
 impl Session {
@@ -407,6 +414,7 @@ impl Session {
             boxes: BTreeMap::new(),
             nonce: nonce(),
             tokens: 0,
+            refused: false,
         })
     }
 
@@ -472,8 +480,14 @@ impl Session {
             .any(|held| !held.pending.is_empty() || held.inputs.xml() != held.on_disk.as_slice())
     }
 
-    /// Do `operation` to the root of its source and say what takes it back; nothing is written, and a refusal leaves every root as it was.
+    /// Do `operation` to the root of its source and say what takes it back; nothing is written, and a refusal leaves every root as it was and keeps the session from writing when it is dropped.
     pub fn apply(&mut self, operation: &Operation) -> Result<Done, Error> {
+        let done = self.apply_one(operation);
+        self.refused |= done.is_err();
+        done
+    }
+
+    fn apply_one(&mut self, operation: &Operation) -> Result<Done, Error> {
         let source = operation.source();
         let held = (self.hold(source)).map_err(|why| refused(operation, why))?;
         if let Some(expects) = operation.expects().filter(|expects| !held.is(expects)) {
@@ -503,6 +517,44 @@ impl Session {
             added,
             notes,
         })
+    }
+
+    /// Do `operations` in order, all of them or none, and say what each did; nothing is written, and when one is refused the ones done before it are taken back by their inverses, so every root is as it was.
+    pub fn apply_all(&mut self, operations: &[Operation]) -> Result<Vec<Done>, Error> {
+        let refused_before = self.refused;
+        let mut done: Vec<Done> = Vec::with_capacity(operations.len());
+        for (index, operation) in operations.iter().enumerate() {
+            let refused = match self.apply(operation) {
+                Ok(step) => {
+                    done.push(step);
+                    continue;
+                }
+                Err(refused) => Error::InList {
+                    number: index + 1,
+                    of: operations.len(),
+                    refused: Box::new(refused),
+                },
+            };
+            for (number, step) in done.iter().enumerate().rev() {
+                if let Err(left) = self.apply(&step.inverse) {
+                    return Err(Error::NotTakenBack {
+                        refused: Box::new(refused),
+                        number: number + 1,
+                        why: left.to_string(),
+                    });
+                }
+            }
+            // The roots are as they were before the list, so the refusal leaves nothing half done for a drop to write.
+            self.refused = refused_before;
+            return Err(refused);
+        }
+        settle_notes(operations, done.iter_mut().map(|step| &mut step.notes));
+        Ok(done)
+    }
+
+    /// Let the session go with nothing written: what no flush wrote is forgotten, where a session that is dropped with no refusal writes it.
+    pub fn discard(mut self) {
+        self.held.clear();
     }
 
     /// Hold `xml` as the XML of the source of `operation`; the operation that holds the XML it held.
@@ -635,6 +687,8 @@ impl Session {
                 proven: !std::mem::take(&mut held.unproven),
             });
         }
+        // The caller chose to write what the session held, a refusal before it or not.
+        self.refused = false;
         Ok(written)
     }
 }
@@ -674,13 +728,34 @@ impl Pack for Session {
     fn archetype(&mut self, at: &At) -> Result<CBaseArchetypeDefAny, String> {
         (self.types_of(&at.source)).and_then(|types| archetype_at(types, at.index).cloned())
     }
+
+    fn sources(&self) -> Vec<String> {
+        super::sources_of(&self.model)
+    }
+
+    fn linked(&mut self, source: &str) -> Option<Linked> {
+        let is_map =
+            (self.hold(source)).is_ok_and(|held| held.inputs.extension() == CMapData::EXTENSION);
+        (is_map.then(|| self.map_of(source).ok()).flatten()).map(Linked::of)
+    }
 }
 
 impl Drop for Session {
-    /// Writes what no flush wrote. A refusal can only be logged here, so a caller that has to know flushes itself.
+    /// Writes what no flush wrote, unless an operation was refused since the last flush. A refusal can only be logged here, so a caller that has to know flushes itself.
+    ///
+    /// ⚠ A session that refused an operation writes nothing here: what it did before the refusal may be the first operations of a
+    /// list that is sound only whole, a chain deletion among them, and a caller that stops at the refusal with `?` drops the
+    /// session. Such a caller that wants them written flushes.
     fn drop(&mut self) {
         // ⚠ Not while a panic unwinds: what it interrupted may have left a root half changed.
         if !self.unwritten() || std::thread::panicking() {
+            return;
+        }
+        if self.refused {
+            tracing::error!(
+                folder = %self.folder.display(),
+                "a session of map edits was dropped after it refused an operation, so what it did before the refusal was not written"
+            );
             return;
         }
         if let Err(refused) = self.flush() {

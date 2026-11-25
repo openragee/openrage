@@ -12,7 +12,7 @@ use std::process::{Command, ExitCode};
 use or_io::decl::File;
 use or_io::meta::typed::{CMapData, CMapTypes};
 use or_maps::sample::{map_file, types_file, Archetype, Entity};
-use or_project::acceptance::{kind_of, kinds_in, knows, Sheet};
+use or_project::acceptance::{kind_of, kinds_in, knows, Place, Seen, Sheet};
 use or_project::Target;
 
 const CHILD_TEST: &str = "the_child_that_runs_one_command";
@@ -240,22 +240,31 @@ fn the_build_of_the_recipe_says_which_kinds_nobody_saw_loading_as_the_sheet_read
 
     // The recipe makes its project for Legacy, so the build is read for that edition alone.
     let kinds: BTreeSet<String> = kinds_in(&resource).unwrap().into_keys().collect();
-    let seen = Sheet::shipped().unwrap().seen(&kinds, Some(Target::Legacy));
+    // ⚠ Read from the sheet the tree ships, which a person writes results into: what the build says follows the sheet, by the
+    // results from a server, where a resource loads.
+    let sheet = Sheet::shipped().unwrap();
+    let seen = sheet.seen(&kinds, Some(Target::Legacy), Place::FivemServer);
     let [(edition, reading)] = seen.as_slice() else {
         panic!("the build wrote a map and a type file, which the sheet has lines about: {seen:?}");
     };
     let sentence = format!("  {}\n", reading.sentence(*edition));
     assert_eq!(said.matches(&sentence).count(), 1, "{sentence}{said}");
-    assert!(
-        sentence.contains("maps, type files") && sentence.contains("GTA V Legacy"),
-        "{sentence}"
-    );
+    assert!(sentence.contains("GTA V Legacy"), "{sentence}");
     assert!(!said.contains("GTA V Enhanced"), "{said}");
+    let no_line = sheet
+        .silent_sentence(&kinds)
+        .expect("the manifest has no line");
+    assert!(
+        said.contains(&format!("  {no_line}\n")),
+        "{no_line}\n{said}"
+    );
     let to_check = format!(
         "  to check: openrage-cli project acceptance \"{}\" lists what to look for",
         text(&resource)
     );
-    assert!(said.contains(&to_check), "{to_check}\n{said}");
+    // The steps are named while a kind is left to check, and no longer once every line was seen.
+    let left = matches!(reading, Seen::Not(_));
+    assert_eq!(said.contains(&to_check), left, "{to_check}\n{said}");
     // What the build read back comes first, and the closing line still says what a build is not.
     let (read_back, in_game, closing) = (
         said.find("  names: ").expect("the names the build checked"),
@@ -316,22 +325,27 @@ fn the_build_of_a_clothing_pack_says_that_nobody_saw_a_story_pack_loading_from_e
         // The pack states no edition, so it is read for each, and the archive is the one kind a line is about.
         let kinds: BTreeSet<String> = kinds_in(&folder).unwrap().into_keys().collect();
         assert!(kinds.contains("rpf") && kinds.contains("ydd"), "{kinds:?}");
-        let seen = Sheet::shipped().unwrap().seen(&kinds, None);
+        // ⚠ Read from the sheet the tree ships, by the results from story mode, where a pack loads.
+        let seen = Sheet::shipped()
+            .unwrap()
+            .seen(&kinds, None, Place::StoryMode);
         assert_eq!(seen.len(), 2, "{seen:?}");
         for (edition, reading) in &seen {
             let sentence = format!("  {}\n", reading.sentence(*edition));
-            assert!(
-                sentence.contains("1 kind of file") && sentence.contains("singleplayer DLC packs"),
-                "{sentence}"
-            );
+            if let Seen::Not(unseen) = reading {
+                assert_eq!(unseen, &["rpf"], "{sentence}");
+                assert!(sentence.contains("singleplayer DLC packs"), "{sentence}");
+            }
             assert_eq!(
                 said.matches(&sentence).count(),
                 1,
                 "{family} build: {sentence}{said}"
             );
         }
-        assert!(
+        let left = (seen.iter()).any(|(_, reading)| matches!(reading, Seen::Not(_)));
+        assert_eq!(
             said.contains(&to_check),
+            left,
             "{family} build: {to_check}\n{said}"
         );
     }

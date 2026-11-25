@@ -16,12 +16,12 @@ use or_io::meta::typed::{
 use or_io::meta::{build_library, canonical, write_meta_binary, BinaryFormat, MetaInstance, Value};
 use or_maps::changes::{
     entity_changes, map_changes, source_changes, types_changes, EntityChange, Error, MapChanges,
-    Matched, SourceChanges, Stated,
+    Matched, PackSources, SourceChanges, Stated,
 };
 use or_maps::edit::{add_entity, edit_map, place_entity, pose_of, remove_entity, Pose};
 use or_maps::facts::Name;
 use or_maps::import::{add_files, Incoming};
-use or_maps::sample::{map_file, types_file, Archetype, Entity};
+use or_maps::sample::{child_map_file, map_file, types_file, Archetype, Entity};
 
 fn hash(name: &str) -> u32 {
     Name::from_text(name).hash
@@ -1485,5 +1485,118 @@ fn several_thousand_entities_compare_in_time_that_does_not_grow_with_the_square_
             many_took < few_took * 10,
             "{what}: {small} entities took {few_took:?} and {large} took {many_took:?}, more than ten times as long, in each of {measures} measures"
         );
+    }
+}
+
+/// A pack of `block_lod`, three far models, and `block`, the map under it: a house under the first far model, two under the
+/// second and a shed under the third.
+fn a_block_under_its_far_models(dir: &Path) -> PathBuf {
+    let extents = ([0.0; 3], [100.0; 3]);
+    let far = |name, x: f32, guid, children| Entity {
+        children,
+        ..Entity::at(name, [x, 0.0, 0.0], guid)
+    };
+    let under = |name, x: f32, guid, parent| Entity {
+        parent,
+        in_parent_map: true,
+        ..Entity::at(name, [x, 5.0, 0.0], guid)
+    };
+    let lod = map_file(
+        "block_lod",
+        &[
+            far("far_a", 10.0, 1, 1),
+            far("far_b", 20.0, 2, 2),
+            far("far_c", 30.0, 3, 1),
+        ],
+        extents,
+    );
+    let block = child_map_file(
+        "block",
+        "block_lod",
+        &[
+            under("house_a", 10.0, 11, 0),
+            under("house_b", 20.0, 12, 1),
+            under("house_c", 22.0, 13, 1),
+            under("shed", 30.0, 14, 2),
+        ],
+        extents,
+    );
+    let folder = dir.join("maps");
+    let incoming =
+        [("block_lod.ymap", &lod), ("block.ymap", &block)].map(|(name, bytes)| Incoming {
+            name,
+            bytes,
+            from_game: false,
+            virtual_path: None,
+        });
+    let added = add_files(&folder, &incoming, None).unwrap();
+    assert_eq!(added.refused, Vec::<(String, String)>::new());
+    folder
+}
+
+#[test]
+fn a_link_into_the_parent_map_of_a_pack_is_the_entity_it_names_there_and_not_its_number() {
+    const FAR: &str = "block_lod.metadata.src";
+    const NEAR: &str = "block.metadata.src";
+    let map_changes_of = |folder: &Path, path: &str| match PackSources::read(folder, [FAR, NEAR])
+        .changes(path)
+        .unwrap()
+    {
+        SourceChanges::Map(changes) => changes,
+        SourceChanges::Types(_) => panic!("{path} is a map file"),
+    };
+
+    // The first house deleted with its chain: its far model goes, and the links of the others are renumbered to the far models
+    // they named, which is no change of theirs.
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = a_block_under_its_far_models(scratch.path());
+    let chosen = or_maps::operation::At {
+        source: NEAR.to_string(),
+        index: 0,
+    };
+    let planned = or_maps::delete::plan(&folder, &[chosen]).unwrap();
+    or_maps::delete::apply(&folder, &planned).unwrap();
+    let near = map_changes_of(&folder, NEAR);
+    assert_eq!(indexes(&near), (vec![], vec![0], vec![]), "{near:?}");
+    assert_eq!(near.unchanged, 3);
+    let far = map_changes_of(&folder, FAR);
+    assert_eq!(indexes(&far), (vec![], vec![0], vec![]), "{far:?}");
+    // Compared alone, a source has no parent map in hand and its links are their numbers.
+    let SourceChanges::Map(alone) = source_changes(&folder.join(NEAR)).unwrap() else {
+        panic!("a map file");
+    };
+    assert_eq!(
+        indexes(&alone),
+        (vec![], vec![0], vec![(1, 0), (2, 1), (3, 2)])
+    );
+
+    // The first far model taken out alone: no byte of the map under it changed, and each of its entities names another far model,
+    // the house of the far model that went and the shed whose link is past the end among them.
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = a_block_under_its_far_models(scratch.path());
+    let before = std::fs::read(folder.join(NEAR).join("metadata.xml")).unwrap();
+    let alone = or_maps::operation::Operation::RemoveEntity {
+        source: FAR.into(),
+        expects: None,
+        entity: 0,
+        extents: None,
+    };
+    or_maps::operation::apply(&folder, &alone).unwrap();
+    assert_eq!(
+        std::fs::read(folder.join(NEAR).join("metadata.xml")).unwrap(),
+        before
+    );
+    let near = map_changes_of(&folder, NEAR);
+    assert_eq!(
+        indexes(&near),
+        (vec![], vec![], vec![(0, 0), (1, 1), (2, 2), (3, 3)]),
+        "{near:?}"
+    );
+    for (kept, link) in near.changed.iter().zip([0, 1, 1, 2]) {
+        let same_number = EntityChange::Parent {
+            from: link,
+            to: link,
+        };
+        assert_eq!(kept.changes, [same_number]);
     }
 }

@@ -8702,6 +8702,9 @@ msgstr "之后可在“设置”的“编辑”页中更改"
 msgid "The Wardrobe's rules found nothing wrong in it."
 msgstr "“衣橱”的规则未发现其中有任何问题。"
 
+msgid "The acceptance sheet has no line about what else this build wrote: {kinds}"
+msgstr "验收表中没有关于此构建写入的其他文件的条目：{kinds}"
+
 msgid "The active document has no file yet"
 msgstr "活动文档尚无文件"
 

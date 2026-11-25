@@ -365,6 +365,19 @@ fn a_position_is_two_numbers_or_three_and_a_flags_value_is_none_of_them() {
             ..plain
         })
     );
+    // A place as `world at` takes one: pasted in one argument, or as the words a shell split it into, with a height or none.
+    for (pasted, z) in [
+        (&["-12.5,40"][..], None),
+        (&["-12.5,", "40"], None),
+        (&["(-12.5, 40, 3)"], Some(3.0)),
+        (&["X:", "-12.5,", "Y:", "40,", "Z:", "3"], Some(3.0)),
+        (
+            &["--game", "7", "vector3(-12.5,", "40,", "3)", "--json"],
+            Some(3.0),
+        ),
+    ] {
+        assert_eq!(asked(pasted), Ok(Asked { z, ..plain }), "{pasted:?}");
+    }
     for (args, why) in [
         (&["40"][..], "and 1 were given"),
         (&["1", "2", "3", "4"], "and 4 were given"),

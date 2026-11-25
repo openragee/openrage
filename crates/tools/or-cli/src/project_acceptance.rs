@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
 
-use or_project::acceptance::{kinds_in, Concern, Seen, Sheet, Verdict};
+use or_project::acceptance::{kinds_in, Concern, Place, Seen, Sheet, Verdict};
 use or_project::Target;
 
 use crate::project::{parse, Failure};
@@ -24,16 +24,20 @@ pub(crate) fn acceptance(args: &[String]) -> Result<ExitCode, Failure> {
 
 /// What a build's report says of `sheet` for the folder it wrote: what was seen in game of its kinds of file, and where the steps to check are.
 ///
-/// ⚠ The sentences are `Sheet::seen`'s, which the Build tab says too, so the command and the screen read one sheet one way.
+/// ⚠ The sentences are `Sheet::seen`'s, which the Build tab says too, so the command and the screen read one sheet one way: by the
+/// results from where the build loads, story mode for a pack or a package and a server for a resource folder.
 pub(crate) fn seen_lines(sheet: &Sheet, built: &Path, stated: Option<Target>) -> Vec<String> {
     let kinds: BTreeSet<String> = match kinds_in(built) {
         Ok(counted) => counted.into_keys().collect(),
         Err(why) => return vec![format!("not read against the acceptance sheet: {why}")],
     };
-    let seen = sheet.seen(&kinds, stated);
+    let seen = sheet.seen(&kinds, stated, Place::of_built(built));
     let mut lines: Vec<String> = (seen.iter())
         .map(|(edition, seen)| seen.sentence(*edition))
         .collect();
+    if !seen.is_empty() {
+        lines.extend(sheet.silent_sentence(&kinds));
+    }
     if seen.iter().any(|(_, seen)| matches!(seen, Seen::Not(_))) {
         // ⚠ Between quotes, since a folder under a person's own name often holds a space, and the line is there to be copied.
         lines.push(format!(
@@ -118,18 +122,22 @@ fn acceptance_to(
         ));
     }
     if !first.is_empty() {
+        // ⚠ Counted by the runs from where this build loads: a line seen only in the other place is not seen for it.
+        let place = Place::of_built(Path::new(built));
         let unseen: Vec<String> = (EDITIONS.iter().zip(&by_edition))
             .map(|(edition, concerns)| {
+                let not_seen = |c: &&Concern| !c.line.loaded_in(*edition, place);
                 format!(
                     "{} of {} line(s) for {}",
-                    concerns.iter().filter(|c| !c.loaded()).count(),
+                    concerns.iter().filter(not_seen).count(),
                     concerns.len(),
                     edition.generation().edition_label()
                 )
             })
             .collect();
         text.push_str(&format!(
-            "not seen to load in game: {}\n",
+            "not seen to load {}: {}\n",
+            place.label(),
             unseen.join(", ")
         ));
     }
@@ -235,7 +243,7 @@ mod tests {
         let all = format!("{0} of {0} line(s)", about.len());
         assert!(
             text.contains(&format!(
-                "not seen to load in game: {all} for Legacy, {all} for Enhanced"
+                "not seen to load on a FiveM server: {all} for Legacy, {all} for Enhanced"
             )),
             "{text}"
         );
@@ -332,7 +340,7 @@ mod tests {
         let unseen = lines.len() - 1;
         assert!(
             text.contains(&format!(
-                "not seen to load in game: {unseen} of {0} line(s) for Legacy, {0} of {0} line(s) for Enhanced",
+                "not seen to load on a FiveM server: {unseen} of {0} line(s) for Legacy, {0} of {0} line(s) for Enhanced",
                 lines.len()
             )),
             "{text}"
@@ -349,9 +357,11 @@ mod tests {
             "to check: openrage-cli project acceptance \"{built}\" lists what to look for, and docs/guides/In_Game_Acceptance.md says how"
         );
 
-        let shipped = Sheet::shipped().unwrap();
+        let no_line =
+            "The acceptance sheet has no line about what else this build wrote: .lua files";
+        let shipped = Sheet::parse(&the_sheet_with_no_result().to_string()).unwrap();
         let said = |sheet: &Sheet, stated: Option<Target>| -> Vec<String> {
-            (sheet.seen(&kinds, stated).iter())
+            (sheet.seen(&kinds, stated, Place::FivemServer).iter())
                 .map(|(edition, seen)| seen.sentence(*edition))
                 .collect()
         };
@@ -365,6 +375,7 @@ mod tests {
             lines,
             [
                 "2 kinds of file this build wrote were not seen loading in GTA V Legacy: maps, type files",
+                no_line,
                 to_check.as_str(),
             ]
         );
@@ -382,7 +393,10 @@ mod tests {
         let own = Sheet::parse(&own.to_string()).unwrap();
         assert_eq!(
             seen_lines(&own, folder, Some(Target::Legacy)),
-            ["Every kind of file this build wrote that the acceptance sheet has a line about was seen loading in GTA V Legacy; the newest result is dated 2026-12-01"],
+            [
+                "Every kind of file this build wrote that the acceptance sheet has a line about was seen loading in GTA V Legacy; the newest result is dated 2026-12-01",
+                no_line,
+            ],
             "a build whose kinds were all seen is sent to no steps"
         );
         let unstated = seen_lines(&own, folder, None);
@@ -391,6 +405,7 @@ mod tests {
             unstated[1..],
             [
                 "2 kinds of file this build wrote were not seen loading in GTA V Enhanced: maps, type files",
+                no_line,
                 to_check.as_str(),
             ],
             "a build that states no edition is read for both: {unstated:?}"
@@ -403,6 +418,18 @@ mod tests {
             std::fs::write(scripts.join(file), b"").unwrap();
         }
         assert_eq!(seen_lines(&shipped, &scripts, None), [] as [&str; 0]);
+
+        // The same files in a pack are read by the runs in story mode: the runs on a server, which saw the resource, say nothing of it.
+        let pack = dir.path().join("pack");
+        std::fs::create_dir_all(&pack).unwrap();
+        std::fs::write(pack.join("dlc.rpf"), b"").unwrap();
+        assert_eq!(Place::of_built(&pack), Place::StoryMode);
+        assert_eq!(Place::of_built(folder), Place::FivemServer);
+        let kinds_of_a_pack: BTreeSet<String> = ["ymap", "ytyp", "rpf"].map(str::to_string).into();
+        assert!(matches!(
+            own.seen(&kinds_of_a_pack, Some(Target::Legacy), Place::StoryMode).as_slice(),
+            [(Target::Legacy, Seen::Not(unseen))] if unseen.contains(&"ymap".to_string())
+        ));
 
         let gone = seen_lines(&shipped, &dir.path().join("gone"), None);
         assert!(

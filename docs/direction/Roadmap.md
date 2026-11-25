@@ -9574,17 +9574,19 @@ a resource or a pack a build wrote (`a_folder_no_build_wrote_is_refused`). The B
 kinds of file of a build nobody saw the game load for its edition, with a link to the guide, and
 `openrage-cli project build` and `wardrobe build` print the same (`Sheet::seen`,
 `src/ui/the_build_tab_says_what_was_seen_in_game_on_screen.rs`). The guide's table is the data
-file's lines (`the_guide_lists_the_lines_of_the_sheet`), and the recipe's commands are read from
-the guide and run over synthetic files
+file's lines (`the_guide_lists_the_lines_of_the_sheet`), and the recipe's `openrage-cli project`
+commands are read from the guide and run over synthetic files
 (`the_recipe_builds_a_resource_and_the_command_names_the_lines_about_its_files`); a line whose kind
 the recipe does not build, or a kind it builds with no line, fails
 `the_sheet_and_the_recipe_are_about_the_same_kinds_of_file`
 ([the rest](../reference/Crate_Reference.md#domain-crates)).
 
 ⚠ A line is matched by its kind alone, so the line of a map made from nothing is read for every
-build that wrote a map.
+build that wrote a map, and a result counts for the place it was seen in, a server or story mode.
 
-Left: the recipe run headless over an install, in the slow tier; a kind a part writes that is in
+Left: the recipe run headless over an install, in the slow tier, with its five commands that need
+one and that no test runs (`depends placements`, `names --resolve`, `depends of` and the two of
+`bulk`); a kind a part writes that is in
 neither the recipe nor the sheet, which no test fails for, as a bound and a path region from
 a source ([R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources)) and the manifest of a
 build's maps ([R70q](#r70q-a-build-a-server-and-a-story-install-take)); a second condition for what
@@ -9621,13 +9623,16 @@ archive at a time, answers the maps and carried bounds at a position and is kept
 archive's stamp (`the_world_index_of_a_mount`), behind `openrage-cli world index` and `world at`.
 `DlcCutoff::Level` stops the mount at a pack of the DLC list and `MountOptions::mode` takes the map
 as story or multiplayer
-(`a_mount_stops_at_a_level_of_dlc_and_takes_the_map_as_story_or_multiplayer`), set only by
-`openrage-cli dlc-list`. The older cutoff by a pack's name hash, which `--dlc` is, keeps the
+(`a_mount_stops_at_a_level_of_dlc_and_takes_the_map_as_story_or_multiplayer`), set by
+`openrage-cli dlc-list` and by `world ground` ([R70g](#r70g-collision-as-a-query)), which keeps
+the index of a level in a file of its own. The older cutoff by a pack's name hash, which `--dlc` is, keeps the
 folders of the packs past it from the walk as a level does
 (`a_pack_past_a_name_hash_is_left_out_of_the_walk_as_one_past_a_level_is`), and an archive one of
 whose files did not open is kept with no stamp, so the next build reads it again
-(`a_file_that_did_not_open_is_read_again_by_the_next_build_though_its_archive_stands`). Left: both in the index's key and from a screen; the group that requests a
-map; the cost on an install.
+(`a_file_that_did_not_open_is_read_again_by_the_next_build_though_its_archive_stands`). Left:
+the mode in the index's key; a level and a mode for `world index` and `world at`, and from a
+screen; an archive a level leaves folders out of, which has no stamp and is read at every build;
+the group that requests a map; the cost on an install.
 
 **Done when.** Over a mounted install the index names every map and type file the mount lists, and a
 position inside a known map's extents answers that map, in an install suite of the slow tier, named
@@ -9823,8 +9828,10 @@ in `crates/domain/or-maps/src/operation.rs`, which the Map screen's edits and
 `openrage-cli maps apply` call (`an_operation_and_its_inverse_leave_the_sources_as_they_were`, on
 synthetic packs). A session holds the sources as typed roots and writes them once at a flush, as
 `apply` writes them one by one; an inverse states the digest or the session token it applies to,
-or is refused; and the Map screen's Undo keeps the operation and its inverse
-(`a_session_of_map_edits_writes_once_what_each_edit_writes`). On a synthetic map of 20,000 entities
+or is refused (`a_session_of_map_edits_writes_once_what_each_edit_writes`); and the Map screen's
+Undo keeps the operation and its inverse
+(`an_undo_is_refused_once_its_source_was_edited_from_outside_and_goes_through_once_that_edit_is_taken_back`,
+slow tier). On a synthetic map of 20,000 entities
 a pose edit took 2.4 s one by one, and 0.83 ms with one flush of 2.2 s in a session
 (`one_pose_edit_is_timed_on_synthetic_maps_of_two_thousand_and_twenty_thousand_entities`, release,
 2026-11-25). And a map, a built entity, a type file and a base archetype made
@@ -9841,8 +9848,9 @@ declare is held by the extents where it stands, said in a note, in a session as 
 (`crates/domain/or-maps/tests/an_operation_where_the_pack_holds_too_little.rs`,
 `crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`). A deletion
 planned by [R70k](#r70k-removing-what-the-game-placed) renumbers the links of the child maps; one
-entity taken out alone leaves them, which the rule `parent-link-broken` names once one is past the
-end. Left: the Map screen on a session, a create across files, the import, a new map and a built
+entity taken out alone leaves them, says so in a note, and the rule `parent-link-broken` or
+`lod-children-uncounted` reports it. A session that refused an operation writes nothing when
+dropped. Left: the Map screen on a session, a create across files, the import, a new map and a built
 entity as operations, the donor and the install's boxes, History, the install measure.
 
 **Depends on.** Nothing in R70; it does the part of
@@ -9930,21 +9938,19 @@ left; and the rule for a door left where a building was deleted. The building's 
 stay ([brief](World_Editor_Plan.md#removing-what-the-game-placed-r70k)).
 
 **Where it stands.** The chain is built for a pack whose sources hold the maps: `plan` in
-`crates/domain/or-maps/src/delete.rs` says what goes with the entities chosen, each far model that
-stays with its count lowered, each twin left and every file written, as one list of operations
-whose inverses put the files back, with the script line that hides a model and
+`crates/domain/or-maps/src/delete.rs` gives one list of operations whose inverses put the files
+back, with the links of each child map renumbered and the parents' counts lowered, behind
 `openrage-cli maps delete`
-(`a_deletion_takes_the_chain_of_far_models_across_the_files_of_a_pack`, on packs built by hand,
-with no schema snapshot). Not run: `deleting_an_entity_of_the_install_keeps_every_link`, which
-needs an install; its body runs on maps built by hand
-(`the_checks_of_the_install_suite_hold_on_a_tree_of_maps_built_by_hand`). The plan renumbers the
-links of each child map among the sources and lowers the counts of the parents
-(`renumber_for_removed`, `set_num_children`), through a session as one by one
-(`crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`);
-a map that is not among
-the sources keeps its links, and the rule `parent-link-broken` names one left past the end of its
-parent map. Left: the rule for a door, the preview on a screen, and the import of the game's maps a
-deletion reaches ([or-maps](../reference/Crate_Reference.md#domain-crates)).
+(`a_deletion_takes_the_chain_of_far_models_across_the_files_of_a_pack`, on packs built by hand),
+and a session does it whole or not at all
+(`crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`).
+Not run: `deleting_an_entity_of_the_install_keeps_every_link`, which needs an install; its body
+runs on maps built by hand
+(`the_checks_of_the_install_suite_hold_on_a_tree_of_maps_built_by_hand`). A map that is not among
+the sources keeps its links, and the rules `parent-link-broken` and `lod-children-uncounted` name
+what a removal alone leaves. Left: the rule for a door, the preview on a screen, the Map screen's
+Delete through the plan, and the import of the game's maps a deletion reaches
+([or-maps](../reference/Crate_Reference.md#domain-crates)).
 
 **Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits) and
 [R70i](#r70i-selecting-and-moving-in-the-world).
@@ -10027,28 +10033,17 @@ replacement; and the door rules: a door model of the project whose archetype lac
 doors carry, a game door moved or deleted, two doors at one place, and a door whose arc is blocked
 ([brief](World_Editor_Plan.md#doors-r70n)).
 
-**Where it stands.** The headless part is built, and no screen uses it yet.
-`crates/domain/or-world/src/doors/` finds the doors among the entities of the maps handed to it, by
-the door extension of the archetype and then by name patterns kept as data
-(`crates/domain/or-maps/src/door_patterns.json`), and counts the entities whose model has no name,
-since a door among them is missed. It reads a leaf's hinge, width and motion from its archetype's
-box as proposals, pairs the leaves of a double door, and opens a swinging leaf through its arc
-against a `CollisionSet` and the boxes of the other entities
-(`crates/domain/or-world/tests/the_doors_of_a_map.rs`). `crates/domain/or-maps/src/doors.rs` holds
-the door rules as data, `doors-overlap` and `door-blocked`, and names a source of the set that is
-not there or does not cook; `crates/domain/or-maps/src/door_text.rs` writes a selection of doors
-through the templates of `crates/domain/or-maps/src/door_forms.json`, where the two forms named
-after community door scripts state that they are unverified; and `openrage-cli maps doors` lists
-the doors of a pack's maps, their pairing and what each rule says, as text and as JSON
-(`crates/domain/or-maps/tests/the_doors_of_a_pack.rs`;
-[the rest](../reference/Crate_Reference.md#domain-crates)).
+**Where it stands.** The headless part is built on packs made by hand, and no screen uses it:
+the search, the pairing, the arc, the rules `doors-overlap` and `door-blocked`, the copy forms and
+`openrage-cli maps doors` (`crates/domain/or-world/tests/the_doors_of_a_map.rs`,
+`crates/domain/or-maps/tests/the_doors_of_a_pack.rs`;
+[what each reads](../reference/Crate_Reference.md#domain-crates)).
 
-Left: the count over an install, not written and run nowhere; the door tuning read, with its
-entry, the line that gives it to a model and the zone; a door that opens in the view; the fitted
-replacement; the doors of an interior's entity sets; and the two rules that need the game, a
-project's door model that lacks what the game's doors carry and a game door moved or deleted. A pack holds no collision of its maps, so the verb holds an arc
-against the boxes of the other entities alone. The name patterns, the three cuts of the swept box
-and the turn short of which a door is said not to open are judgements to measure on an install.
+Left: the count over an install; the door tuning with its entry, its line and its zone; a door
+that opens in the view; the fitted replacement; an interior's entity sets; the two rules that need
+the game; an arc held against the game's collision, where the verb holds it against the boxes of
+the other entities alone; a verb that writes a door form or reads a person's patterns; and the
+name patterns, the cuts of the swept box and the least turn, which are judgements to measure.
 
 **Depends on.** [R70g](#r70g-collision-as-a-query) and
 [R70i](#r70i-selecting-and-moving-in-the-world).

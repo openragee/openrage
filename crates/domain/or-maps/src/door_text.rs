@@ -21,6 +21,7 @@ use crate::script_text::{fill, number, MOST_DECIMALS};
 
 /// What the `format` of a file of door forms says.
 pub const FORMAT: &str = "openrage-door-forms";
+/// The newest schema of a file of door forms this build reads.
 pub const SCHEMA: u32 = 1;
 
 const BUILT_IN: &str = include_str!("door_forms.json");
@@ -37,6 +38,7 @@ const OF_A_DOOR: [&str; 8] = [
     "heading",
 ];
 
+/// Why a file of door forms was not read, or a door not written through a form.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("the door forms are not read: {0}")]
@@ -183,6 +185,7 @@ impl DoorForms {
         Ok(forms)
     }
 
+    /// The form `id` names.
     pub fn form(&self, id: &str) -> Option<&DoorForm> {
         self.forms.iter().find(|form| form.id == id)
     }

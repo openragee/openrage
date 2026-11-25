@@ -208,53 +208,42 @@ pub(crate) fn cmd_index(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The numbers of `args` that are neither a flag nor the value of one of `valued`.
+/// The numbers of `args` that are neither a flag nor the value of one of `valued`: numbers apart, or a place as a script or a coordinates command writes one, of which the height is given where it states one and its heading never.
+///
+/// ⚠ A place pasted as it was copied reaches here as one argument between quotes or as the several a shell split it into
+/// (`-75.0, -818.2, 326.1`), so what is not numbers alone is joined again and read as a pasted place is.
 pub(super) fn numbers_of(args: &[String], valued: &[&str]) -> Result<Vec<f32>, String> {
-    let mut numbers = Vec::new();
+    let mut words = Vec::new();
     let mut skip = false;
     for arg in args {
         if skip {
             skip = false;
         } else if valued.contains(&arg.as_str()) {
             skip = true;
-        } else if let Some(number) = arg.parse::<f32>().ok().filter(|n| n.is_finite()) {
+        } else if arg.parse::<f32>().is_ok() || !arg.starts_with("--") {
             // A coordinate may be negative, so a leading dash does not make an argument a flag.
-            numbers.push(number);
-        } else if !arg.starts_with("--") {
-            // ⚠ `nan` and `inf` parse as numbers and are no place.
-            return Err(format!("`{arg}` is not a number"));
+            words.push(arg.as_str());
         }
     }
-    Ok(numbers)
+    // ⚠ `nan` and `inf` parse as numbers and are no place.
+    let number = |word: &&str| word.parse::<f32>().ok().filter(|n| n.is_finite());
+    let numbers: Vec<f32> = words.iter().filter_map(number).collect();
+    let Some(other) = words.iter().find(|word| number(word).is_none()) else {
+        return Ok(numbers);
+    };
+    use or_maps::place::{read_pasted, Pasted};
+    match read_pasted(&words.join(" ")) {
+        Ok(Pasted::Place(place)) => Ok([Some(place.x), Some(place.y), place.z]
+            .into_iter()
+            .flatten()
+            .collect()),
+        Err(refused) => Err(refused.to_string()),
+        Ok(_) => Err(format!("`{other}` is not a number")),
+    }
 }
 
-/// The position, in metres, that the arguments of `args` that are neither a flag nor a flag's value give: three numbers, or one argument that writes a place as a script does.
+/// The position, in metres, that the arguments of `args` that are neither a flag nor a flag's value give: three numbers, or a place as a script writes one.
 fn position_of(args: &[String]) -> Result<Vec3, String> {
-    let mut skip = false;
-    let mut words = Vec::new();
-    for arg in args {
-        match skip || VALUED_FLAGS.contains(&arg.as_str()) {
-            true => skip = !skip,
-            false if !arg.starts_with("--") => words.push(arg.as_str()),
-            false => {}
-        }
-    }
-    // One argument that is no lone number is a place as `world new-map --at` and a script write one, read as a pasted place is.
-    if let [written] = words[..] {
-        use or_maps::place::{read_pasted, Pasted};
-        match read_pasted(written) {
-            Ok(Pasted::Place(place)) => {
-                return match place.z {
-                    Some(z) => Ok(Vec3::new(place.x, place.y, z)),
-                    None => Err(format!(
-                        "`{written}` gives no height, and a position is x, y and z"
-                    )),
-                }
-            }
-            Err(refused) => return Err(refused.to_string()),
-            Ok(_) => {}
-        }
-    }
     let numbers = numbers_of(args, VALUED_FLAGS)?;
     match numbers[..] {
         [x, y, z] => Ok(Vec3::new(x, y, z)),

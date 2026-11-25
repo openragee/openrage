@@ -4,7 +4,9 @@
 //! ⚠ **What was seen, never what loads.** A reading is `or_project::acceptance::Seen`, which `openrage-cli project build` prints in
 //! English; `the_tab_and_the_command_say_a_reading_in_the_same_english` holds the two to one text.
 
-use or_project::acceptance::{Seen, Sheet};
+use std::collections::BTreeSet;
+
+use or_project::acceptance::{Place, Seen, Sheet};
 use or_project::{Output, OutputKind, Target};
 
 use super::build_tab::said;
@@ -18,11 +20,11 @@ pub(crate) const IN_STORY_MODE: &str = "Load it in story mode";
 /// The link's name, which a screen reader speaks.
 pub(crate) const LINK: &str = tr_key!("How to check it in the game");
 
-/// The section of the acceptance guide that says how a build of `kind` is loaded.
+/// The section of the acceptance guide that says how a build of `kind` is loaded, which is where a result has to be from to count for it.
 pub(crate) fn section_of(kind: &OutputKind) -> &'static str {
-    match kind {
-        OutputKind::FivemResource | OutputKind::Unknown(_) => ON_A_SERVER,
-        OutputKind::SingleplayerDlc | OutputKind::OivPackage => IN_STORY_MODE,
+    match Place::of_output(kind) {
+        Place::FivemServer => ON_A_SERVER,
+        Place::StoryMode => IN_STORY_MODE,
     }
 }
 
@@ -58,16 +60,31 @@ pub(crate) fn sentence(seen: &Seen, edition: Target) -> String {
     }
 }
 
-/// Says what `sheet` holds of the kinds of file `part` wrote, for the edition it was written for or for both when the build stated none; the guide section its link asked for.
+/// The sentence the tab says of the kinds of `kinds` no line of `sheet` is about, in the language in use; none where the command says none.
+pub(crate) fn silent(sheet: &Sheet, kinds: &BTreeSet<String>) -> Option<String> {
+    sheet.silent_sentence(kinds)?;
+    let named: Vec<String> = (sheet.without_a_line(kinds).into_iter())
+        .map(kind_words)
+        .collect();
+    Some(tr!(
+        "The acceptance sheet has no line about what else this build wrote: {kinds}",
+        kinds = named.join(", "),
+    ))
+}
+
+/// Says what `sheet` holds of the kinds of file `part` wrote, as seen where a build of its kind loads, for the edition it was written for or for both when the build stated none; the guide section its link asked for.
 pub(crate) fn seen_in_game(
     ui: &mut egui::Ui,
     sheet: &Sheet,
     output: &Output,
     part: &BuiltPart,
 ) -> Option<&'static str> {
-    let seen = sheet.seen(&part.kinds, part.target);
+    let seen = sheet.seen(&part.kinds, part.target, Place::of_output(&output.kind));
     for (edition, reading) in &seen {
         said(ui, theme::TEXT_PRIMARY, sentence(reading, *edition));
+    }
+    if let Some(silent) = silent(sheet, &part.kinds).filter(|_| !seen.is_empty()) {
+        said(ui, theme::TEXT_PRIMARY, silent);
     }
     // ⚠ The steps are offered where something is left to check: a build whose kinds were all seen is sent nowhere.
     if !seen
@@ -112,6 +129,13 @@ mod tests {
                 assert_eq!(sentence(reading, edition), reading.sentence(edition));
             }
         }
+        // What no line is about, which both say beside a reading or not at all.
+        let all: BTreeSet<String> = kinds.iter().cloned().chain(["lua".to_string()]).collect();
+        let none: BTreeSet<String> = ["lua".to_string()].into();
+        for wrote in [&all, &none] {
+            assert_eq!(silent(&sheet, wrote), sheet.silent_sentence(wrote));
+        }
+        assert!(silent(&sheet, &all).is_some_and(|said| said.ends_with(": .lua files, .ybn files")));
     }
 
     #[test]

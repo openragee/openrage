@@ -20,7 +20,10 @@
 //! a pair is from, and [`EntityChange::Guid`] that the guid is another.
 //!
 //! The parent links are compared after the matching and through it: `parentIndex` is a position in the file's own array, which a
-//! deletion renumbers, so two links are one link when the entities they name are one entity.
+//! deletion renumbers, so two links are one link when the entities they name are one entity. A link into the parent map is a
+//! position in that map's array, which a deletion there renumbers ([`crate::operation::Operation::RenumberForRemoved`]): it is
+//! compared through the matching of the parent map's own entities where a caller gives them ([`ParentMap`], which [`PackSources`]
+//! does for the sources of a pack), and by its number where none does.
 //!
 //! What a file states of itself beside its entities or its archetypes (its flags, its extents, the files it depends on) is compared
 //! member by member ([`MapChanges::root`], [`TypesChanges::root`]), and what no typed member names, such as a car generator, is said
@@ -42,7 +45,7 @@ use serde::{Serialize, Serializer};
 
 use crate::facts::Name;
 
-/// The flag of an entity that names its parent in the parent map's array, which a change of this file does not renumber.
+/// The flag of an entity that names its parent in the parent map's array.
 const IN_PARENT_MAP: u32 = 1 << 3;
 
 /// For each member listed, its engine name beside it: `$differs`, a `&mut` closure, with the name and what each record states where they state another thing, and the member blanked in the two copies `$blank` holds, so that what the copies still differ in is what no member listed names.
@@ -537,11 +540,35 @@ fn own_children(list: &[CEntityDefAny]) -> Vec<i64> {
     children
 }
 
+/// The entities of the map two compared maps name as their parent: as the base of its source holds them, and as it holds them now.
+#[derive(Debug, Clone, Copy)]
+pub struct ParentMap<'a> {
+    pub base: &'a [CEntityDefAny],
+    pub now: &'a [CEntityDefAny],
+}
+
+/// Whether the entity `from` of the base of a list is the entity `to` of the list as it is now, by the matching of the two.
+fn same_entity(matching: &Matching, from: usize, to: usize) -> bool {
+    match (matching.now_of.get(from), matching.base_of.get(to)) {
+        (Some(Some((at, _))), Some(_)) => *at == to,
+        // A parent that cannot be told from a twin is the same parent while the link stays among its twins.
+        (Some(None), Some(_)) => {
+            let group = matching.group_of_base[from];
+            group.is_some() && group == matching.group_of_now[to]
+        }
+        // A link past the end of both files names nothing, and is the same link while it is the same number.
+        (None, None) => from == to,
+        _ => false,
+    }
+}
+
 /// The two lists compared, with what the matching and the links of each say.
 struct Compared<'a> {
     base: &'a [CEntityDefAny],
     now: &'a [CEntityDefAny],
     matching: Matching,
+    /// Which entity of the parent map each of its base is, when the parent map's entities are given.
+    parent: Option<Matching>,
     children_base: Vec<i64>,
     children_now: Vec<i64>,
 }
@@ -551,20 +578,14 @@ impl Compared<'_> {
     fn same_parent(&self, base: &CEntityDef, now: &CEntityDef) -> bool {
         match (link_of(base), link_of(now)) {
             (Link::None, Link::None) => true,
-            (Link::ParentMap(from), Link::ParentMap(to)) => from == to,
-            (Link::Own(from), Link::Own(to)) => {
-                match (self.matching.now_of.get(from), self.now.get(to)) {
-                    (Some(Some((at, _))), Some(_)) => *at == to,
-                    // A parent that cannot be told from a twin is the same parent while the link stays among its twins.
-                    (Some(None), Some(_)) => {
-                        let group = self.matching.group_of_base[from];
-                        group.is_some() && group == self.matching.group_of_now[to]
-                    }
-                    // A link past the end of both files names nothing, and is the same link while it is the same number.
-                    (None, None) => from == to,
-                    _ => false,
+            (Link::ParentMap(from), Link::ParentMap(to)) => {
+                match (&self.parent, usize::try_from(from), usize::try_from(to)) {
+                    (Some(parent), Ok(from), Ok(to)) => same_entity(parent, from, to),
+                    // ⚠ With the parent map not given, the number is all there is: a renumbering of that map reads as a change.
+                    _ => from == to,
                 }
             }
+            (Link::Own(from), Link::Own(to)) => same_entity(&self.matching, from, to),
             _ => false,
         }
     }
@@ -699,7 +720,16 @@ fn entity_ref(index: usize, entity: &CEntityDef) -> EntityRef {
 
 /// What the map `now` changed of the map `base`: its entities, and what it states of itself.
 pub fn map_changes(base: &CMapData, now: &CMapData) -> MapChanges {
-    let mut out = entity_changes(&base.entities, &now.entities);
+    map_changes_under(base, now, None)
+}
+
+/// [`map_changes`], with a link into the parent map compared by the entity it names when `parent` gives that map's entities.
+pub fn map_changes_under(
+    base: &CMapData,
+    now: &CMapData,
+    parent: Option<ParentMap<'_>>,
+) -> MapChanges {
+    let mut out = entities_compared(&base.entities, &now.entities, parent);
     // ⚠ A typed root carries the tree it was read from, so a copy of one is a copy of the file: none is made of two equal maps.
     if base != now {
         let (mut was, mut is) = (base.clone(), now.clone());
@@ -722,10 +752,19 @@ pub fn map_changes(base: &CMapData, now: &CMapData) -> MapChanges {
 
 /// [`map_changes`] of two lists of entities, which the entities of an interior are too.
 pub fn entity_changes(base: &[CEntityDefAny], now: &[CEntityDefAny]) -> MapChanges {
+    entities_compared(base, now, None)
+}
+
+fn entities_compared(
+    base: &[CEntityDefAny],
+    now: &[CEntityDefAny],
+    parent: Option<ParentMap<'_>>,
+) -> MapChanges {
     let compared = Compared {
         base,
         now,
         matching: match_entities(base, now),
+        parent: parent.map(|parent| match_entities(parent.base, parent.now)),
         children_base: own_children(base),
         children_now: own_children(now),
     };
@@ -1056,7 +1095,7 @@ pub fn types_changes(base: &CMapTypes, now: &CMapTypes) -> TypesChanges {
 }
 
 /// Why a source could not be compared with its base.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
     Source(String),
@@ -1101,8 +1140,13 @@ fn read<T: File>(what: &'static str, root: &'static str, bytes: &[u8]) -> Result
     })
 }
 
-/// What the map file or type file the source in `dir` cooks to changed of the file its base cooks to.
-pub fn source_changes(dir: &Path) -> Result<SourceChanges, Error> {
+/// A metadata source read to be compared: the file its base cooks to, and the file it cooks to.
+enum Roots {
+    Map(Box<CMapData>, Box<CMapData>),
+    Types(Box<CMapTypes>, Box<CMapTypes>),
+}
+
+fn roots_of(dir: &Path) -> Result<Roots, Error> {
     let source = or_source::asset::Source::open(dir).map_err(|p| Error::Source(p.to_string()))?;
     let file = or_source::metadata::cooked_name(&source.manifest)
         .map_err(|p| Error::Source(p.to_string()))?;
@@ -1117,14 +1161,74 @@ pub fn source_changes(dir: &Path) -> Result<SourceChanges, Error> {
     let now = or_source::metadata::compile(&source).map_err(|p| Error::Cook(said(p)))?;
     let base = or_source::metadata::compile_base(&source).map_err(|p| Error::Base(said(p)))?;
     Ok(if extension == "ymap" {
-        SourceChanges::Map(map_changes(
-            &read("the base", "map file", &base.bytes)?,
-            &read("the source", "map file", &now.bytes)?,
-        ))
+        Roots::Map(
+            Box::new(read("the base", "map file", &base.bytes)?),
+            Box::new(read("the source", "map file", &now.bytes)?),
+        )
     } else {
-        SourceChanges::Types(types_changes(
-            &read("the base", "type file", &base.bytes)?,
-            &read("the source", "type file", &now.bytes)?,
-        ))
+        Roots::Types(
+            Box::new(read("the base", "type file", &base.bytes)?),
+            Box::new(read("the source", "type file", &now.bytes)?),
+        )
     })
+}
+
+/// What the map file or type file the source in `dir` cooks to changed of the file its base cooks to.
+pub fn source_changes(dir: &Path) -> Result<SourceChanges, Error> {
+    Ok(match roots_of(dir)? {
+        Roots::Map(base, now) => SourceChanges::Map(map_changes(&base, &now)),
+        Roots::Types(base, now) => SourceChanges::Types(types_changes(&base, &now)),
+    })
+}
+
+/// The map files and type files of a pack read once, so that each map file is compared with its parent map in hand.
+pub struct PackSources {
+    read: BTreeMap<String, Result<Roots, Error>>,
+}
+
+impl PackSources {
+    /// Read each source of `paths`, a folder of the pack in `folder` named with `/`.
+    pub fn read<'a>(folder: &Path, paths: impl IntoIterator<Item = &'a str>) -> Self {
+        let read = (paths.into_iter())
+            .map(|path| {
+                let dir = folder.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
+                (path.to_string(), roots_of(&dir))
+            })
+            .collect();
+        Self { read }
+    }
+
+    /// The entities of the map `child` names as its parent, when it named the same one in its base and one source read cooks to it.
+    fn parent_of(&self, path: &str, base: &CMapData, now: &CMapData) -> Option<ParentMap<'_>> {
+        let named = now.parent.hash;
+        if named == 0 || base.parent.hash != named {
+            return None;
+        }
+        let mut cooking = (self.read.iter()).filter_map(|(other, read)| match read {
+            Ok(Roots::Map(base, now)) if other != path && now.name.hash == named => {
+                Some(ParentMap {
+                    base: &base.entities,
+                    now: &now.entities,
+                })
+            }
+            _ => None,
+        });
+        // ⚠ Two sources that each cook to a map of that name leave an index into it naming neither.
+        let parent = cooking.next()?;
+        cooking.next().is_none().then_some(parent)
+    }
+
+    /// What the source `path` changed of its base, as [`source_changes`] says it, with the links of a map file into its parent map compared by the entity each names where a source read cooks to that map.
+    pub fn changes(&self, path: &str) -> Result<SourceChanges, Error> {
+        match self.read.get(path) {
+            Some(Ok(Roots::Map(base, now))) => Ok(SourceChanges::Map(map_changes_under(
+                base,
+                now,
+                self.parent_of(path, base, now),
+            ))),
+            Some(Ok(Roots::Types(base, now))) => Ok(SourceChanges::Types(types_changes(base, now))),
+            Some(Err(why)) => Err(why.clone()),
+            None => Err(Error::Source(format!("`{path}` was not read"))),
+        }
+    }
 }

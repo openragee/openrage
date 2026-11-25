@@ -129,7 +129,7 @@ fn a_dlc_is_declared_for_an_edition_remembered_by_the_file_and_built_with_its_li
 
 #[test]
 fn a_pack_built_by_the_app_is_read_against_the_line_about_a_story_pack_for_its_edition() {
-    use or_project::acceptance::Seen;
+    use or_project::acceptance::{Place, Seen};
 
     let dir = tempfile::tempdir().unwrap();
     let files = [("x64/models/cdimages/peds.rpf/road.ytd", legacy_ytd())];
@@ -161,13 +161,14 @@ fn a_pack_built_by_the_app_is_read_against_the_line_about_a_story_pack_for_its_e
         part.kinds
     );
     assert_eq!(part.target, Some(Target::Enhanced));
-    let sheet = state.workbench.builds().sheet();
-    assert!(
-        sheet.lines.iter().all(|line| line.results.is_empty()),
-        "the sheet ships with no result"
-    );
+    // ⚠ The test's own copy of the sheet with no result, so that what a person writes into the sheet the tree ships changes nothing here.
+    let mut own: serde_json::Value = serde_json::from_str(or_project::acceptance::SHEET).unwrap();
+    for line in own["lines"].as_array_mut().unwrap() {
+        line["results"] = serde_json::json!([]);
+    }
+    let sheet = or_project::acceptance::Sheet::parse(&own.to_string()).unwrap();
     assert_eq!(
-        sheet.seen(&part.kinds, part.target),
+        sheet.seen(&part.kinds, part.target, Place::StoryMode),
         [(Target::Enhanced, Seen::Not(vec!["rpf".to_string()]))],
         "the line about a story pack is the one line about what this build wrote"
     );

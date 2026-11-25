@@ -1,5 +1,6 @@
 //! `openrage-cli maps delete` prints the plan `or_maps::delete::plan` makes and writes nothing, writes with `--apply` what
-//! `or_maps::delete::apply` writes, and refuses an entity that is not there with every source as it was.
+//! `or_maps::delete::apply` writes, and refuses an entity that is not there with every source as it was; `maps changes` then reads
+//! the deletion as what it took out.
 //!
 //! ⚠ The command prints with `println!` and `eprintln!`, which a test cannot read back in its own process, so what it says is read
 //! from a child of this test binary that calls `or_cli::run`.
@@ -16,7 +17,11 @@ const FAR: &str = "block_far.metadata.src";
 const NEAR: &str = "block.metadata.src";
 
 fn cli(args: &[&str]) -> ExitCode {
-    let mut all = vec!["maps".to_string(), "delete".to_string()];
+    maps("delete", args)
+}
+
+fn maps(verb: &str, args: &[&str]) -> ExitCode {
+    let mut all = vec!["maps".to_string(), verb.to_string()];
     all.extend(args.iter().map(|a| a.to_string()));
     or_cli::run(&all)
 }
@@ -126,6 +131,8 @@ fn write(folder: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) {
 }
 
 const CHILD_ENV: &str = "OPENRAGE_MAPS_DELETE_ARGS";
+/// The verb of `maps` the child runs, where it is not `delete`.
+const CHILD_VERB: &str = "OPENRAGE_MAPS_VERB";
 const CHILD_TEST: &str = "run_maps_delete_for_a_parent";
 const SEPARATOR: char = '\u{1f}';
 
@@ -139,16 +146,23 @@ fn run_maps_delete_for_a_parent() {
         .map(str::to_string)
         .collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    if cli(&args) != ExitCode::SUCCESS {
+    let verb = std::env::var(CHILD_VERB).unwrap_or_else(|_| "delete".to_string());
+    if maps(&verb, &args) != ExitCode::SUCCESS {
         std::process::exit(1);
     }
 }
 
 /// What `openrage-cli maps delete <args>` prints and what it says of an error, with whether it succeeded.
 fn said(args: &[&str]) -> (String, String, bool) {
+    said_by("delete", args)
+}
+
+/// [`said`], of the verb `verb` of `maps`.
+fn said_by(verb: &str, args: &[&str]) -> (String, String, bool) {
     let output = Command::new(std::env::current_exe().expect("this test binary"))
         .args([CHILD_TEST, "--exact", "--nocapture", "--test-threads=1"])
         .env(CHILD_ENV, args.join(&SEPARATOR.to_string()))
+        .env(CHILD_VERB, verb)
         .output()
         .expect("this test binary runs as a child");
     (
@@ -222,6 +236,57 @@ fn the_plan_printed_names_what_goes_what_stays_and_each_file_and_writes_nothing(
     assert!(printed.contains(&line), "{line:?} in {printed}");
     assert!(printed.contains("(C#, within 0.25 m)"), "{printed}");
     assert!(files(&dir.path().join("maps")) == before);
+}
+
+#[test]
+fn the_changes_of_a_pack_name_what_a_deletion_took_out_and_the_links_a_removal_alone_left_on_other_entities(
+) {
+    let counts = |printed: &str, source: &str| -> String {
+        let line = (printed.lines())
+            .find(|line| line.starts_with(&format!("  {source} (")))
+            .unwrap_or_else(|| panic!("{source} in {printed}"));
+        line.split_once("): ").expect("its counts").1.to_string()
+    };
+
+    // The tower deleted with its chain: its far model goes with it, and the links of the two houses are renumbered to the far
+    // model they named, which is no change of theirs.
+    let dir = tempfile::tempdir().unwrap();
+    let project = a_project_with_maps(dir.path());
+    let (printed, error, succeeded) = said(&[text(&project), &format!("{NEAR}:0"), "--apply"]);
+    assert!(succeeded, "{printed}{error}");
+    let (printed, error, succeeded) = said_by("changes", &[text(&project)]);
+    assert!(succeeded, "{printed}{error}");
+    assert_eq!(
+        counts(&printed, NEAR),
+        "0 added, 1 deleted, 0 changed, 0 ambiguous, 4 unchanged",
+        "{printed}"
+    );
+    assert_eq!(
+        counts(&printed, FAR),
+        "0 added, 1 deleted, 0 changed, 0 ambiguous, 1 unchanged",
+        "{printed}"
+    );
+    assert!(!printed.contains(" parent "), "{printed}");
+
+    // The far model of the tower taken out alone: the map under it holds the bytes it held, and each of its three links is on
+    // another entity, the two of the houses past the end among them.
+    let dir = tempfile::tempdir().unwrap();
+    let project = a_project_with_maps(dir.path());
+    let alone = or_maps::operation::Operation::RemoveEntity {
+        source: FAR.into(),
+        expects: None,
+        entity: 0,
+        extents: None,
+    };
+    or_maps::operation::apply(&dir.path().join("maps"), &alone).unwrap();
+    let (printed, error, succeeded) = said_by("changes", &[text(&project)]);
+    assert!(succeeded, "{printed}{error}");
+    assert_eq!(
+        counts(&printed, NEAR),
+        "0 added, 0 deleted, 3 changed, 0 ambiguous, 2 unchanged",
+        "{printed}"
+    );
+    assert!(printed.contains(" parent 0 is another entity"), "{printed}");
 }
 
 #[test]

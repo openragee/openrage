@@ -177,6 +177,36 @@ fn two_stages_that_make_one_binding_two_resources_conflict_in_the_merge() {
 }
 
 #[test]
+fn a_pass_of_a_pack_whose_vertex_stage_nests_loops_is_not_built_on_an_amd_card_under_direct3d_12() {
+    use crate::instance::{made_up, AMD};
+    let nested = wgsl(
+        "@vertex fn main(@builtin(vertex_index) at: u32) -> @builtin(position) vec4<f32> {
+            var sum = 0u;
+            for (var i = 0u; i < at; i++) { for (var j = 0u; j < i; j++) { sum += j; } }
+            return vec4<f32>(f32(sum));
+        }",
+    );
+    let fragment = wgsl("@fragment fn main() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }");
+    let stages = [
+        (&nested, wgpu::ShaderStages::VERTEX),
+        (&fragment, wgpu::ShaderStages::FRAGMENT),
+    ];
+    let amd = made_up(AMD, 0x1681, wgpu::Backend::Dx12);
+    let refused = groups_on(&amd, &stages).expect_err("the driver is not handed the pass");
+    assert!(
+        matches!(&refused, PipelineError::Driver(why) if why.contains("loop inside a loop")),
+        "{refused}"
+    );
+    // The same card under Vulkan builds it, and a pixel stage's loops are not the matter.
+    assert!(groups_on(&made_up(AMD, 0x1681, wgpu::Backend::Vulkan), &stages).is_ok());
+    let turned = [
+        (&fragment, wgpu::ShaderStages::VERTEX),
+        (&nested, wgpu::ShaderStages::FRAGMENT),
+    ];
+    assert!(groups_on(&amd, &turned).is_ok());
+}
+
+#[test]
 fn inputs_told_to_step_per_instance_are_read_from_a_second_buffer_packed_on_its_own() {
     use wgpu::VertexFormat as V;
     let module = wgsl(

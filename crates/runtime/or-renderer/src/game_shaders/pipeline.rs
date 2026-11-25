@@ -26,6 +26,9 @@ pub enum PipelineError {
     Bindings(#[from] BindingError),
     #[error("group {group} binding {binding} is two different resources in the two stages")]
     Conflict { group: u32, binding: u32 },
+    /// The adapter's driver is not handed the pass, and why.
+    #[error("{0}")]
+    Driver(String),
 }
 
 /// What a pipeline draws into: the format of the first colour target, which a pass's colour output is written in, and the depth target with the comparison by which a nearer surface wins.
@@ -447,6 +450,19 @@ fn merge_groups(stages: &[(&naga::Module, wgpu::ShaderStages)]) -> Result<Groups
     Ok(groups)
 }
 
+/// [`merge_groups`] for a pass built on the adapter `info`, whose first stage is its vertex
+/// stage: refused where that adapter's driver ends the program on such a stage.
+fn groups_on(
+    info: &wgpu::AdapterInfo,
+    stages: &[(&naga::Module, wgpu::ShaderStages)],
+) -> Result<Groups, PipelineError> {
+    let vertex = stages.first().map(|(vertex, _)| *vertex);
+    match vertex.and_then(|vertex| crate::instance::refused_by_driver(info, vertex)) {
+        Some(why) => Err(PipelineError::Driver(why)),
+        None => merge_groups(stages),
+    }
+}
+
 /// `ty` as a binding that is never filtered: a float texture that is not, and a sampler that does not.
 fn unfiltered(ty: wgpu::BindingType) -> wgpu::BindingType {
     match ty {
@@ -516,7 +532,7 @@ pub fn build_pass_pipeline_drawn(
     if let Some(fragment) = fragment {
         stages.push((fragment, wgpu::ShaderStages::FRAGMENT));
     }
-    let groups = merge_groups(&stages)?;
+    let groups = groups_on(&device.adapter_info(), &stages)?;
     let mut layouts = BTreeMap::new();
     let mut required = BTreeMap::new();
     for (group, bindings) in &groups {

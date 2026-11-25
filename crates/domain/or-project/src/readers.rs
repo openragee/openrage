@@ -17,7 +17,7 @@ pub struct Reload {
 }
 
 /// The extensions [`reload`] opens with a reader of its own; every other one it opens is a declared RSC7 format.
-const OWN: [&str; 5] = ["dds", "meta", "ymap", "ytyp", "ymt"];
+const OWN: [&str; 6] = ["dds", "meta", "ymap", "ytyp", "ymt", "ymf"];
 
 /// Whether a build opens a file of the extension `ext`, in lower case, again through a reader: the kinds of file a build knows.
 pub fn reads(ext: &str) -> bool {

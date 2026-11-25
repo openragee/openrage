@@ -9561,9 +9561,9 @@ install, never a project in the repository ([brief](World_Editor_Plan.md#what-th
 
 **Where it stands.** The sheet, its reader, its command and its guide are built; the Build tab's
 reading, a run of the recipe over an install and every result are not. The sheet is
-`crates/domain/or-project/src/acceptance.json`, with the lines of what a build writes for a map
-today and of a story pack, and no result: who runs the game is held back in
-[Workbench_Plan.md](Workbench_Plan.md#held-back). `or_project::acceptance` refuses a line or a
+`crates/domain/or-project/src/acceptance.json`, with the lines of a map changed, of a map made from
+nothing ([R70h](#r70h-one-vocabulary-of-world-edits)) and of a story pack, and no result: who runs
+the game is held back in [Workbench_Plan.md](Workbench_Plan.md#held-back). `or_project::acceptance` refuses a line or a
 result that is wrong, with the line's id (`a_line_that_is_wrong_is_refused_with_its_id`,
 `a_result_that_is_wrong_is_refused_with_the_id_of_its_line`), a row a line names has a heading
 here (`every_line_names_a_row_of_the_roadmap`), and `Sheet::about` gives a build the lines about
@@ -9573,16 +9573,17 @@ the kinds of file it wrote, with the newest result of each for an edition
 a folder that is neither (`a_folder_no_build_wrote_is_refused`). The guide's table is the data
 file's lines (`the_guide_lists_the_lines_of_the_sheet`), its example of a result is one the sheet
 reads (`the_guide_writes_a_result_the_way_the_sheet_reads_one`), and the recipe's
-`openrage-cli project` commands are read from the guide and run over synthetic files in
-`the_recipe_builds_a_resource_and_the_command_names_the_lines_about_its_files`, which reads the
-moved object, its copy and the changed archetype back from the build. A line whose kind that
+`openrage-cli project` commands are read from the guide and run over synthetic files
+(`the_recipe_builds_a_resource_and_the_command_names_the_lines_about_its_files`). A line whose kind that
 recipe does not build fails `the_sheet_and_the_recipe_are_about_the_same_kinds_of_file`, and so
 does a kind it builds, and a build reads back, that has no line.
 
 Left: the Build tab's line, a change to the app; the recipe run headless over an install, in the
 slow tier; a kind a part writes that is in neither the recipe nor the sheet, which no test fails
-for; the line each later part adds; a map in a story pack, which
-[R70q](#r70q-a-build-a-server-and-a-story-install-take) writes
+for, as today a bound and a path region from a source
+([R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources)) and the manifest of a build's
+maps ([R70q](#r70q-a-build-a-server-and-a-story-install-take)); the step of the recipe that makes a
+map from nothing; a map in a story pack
 (`a_story_pack_refuses_the_sample_as_the_guide_says_it_does_today`); and the results.
 
 **Depends on.** The plan's ruling 1, whose default is that the owner fills the sheet, once a stage.

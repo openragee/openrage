@@ -248,8 +248,8 @@ mod tests {
             .filter(|line| line["kind"] == "ymap")
             .map(|line| line["id"].as_str().unwrap().to_string())
             .collect();
-        let [loaded, refused] = ids.as_slice() else {
-            panic!("the sheet holds two lines about a map: {ids:?}");
+        let [loaded, refused, ..] = ids.as_slice() else {
+            panic!("the sheet holds two lines about a map or more: {ids:?}");
         };
         for line in lines.iter_mut() {
             if line["id"] == loaded.as_str() {

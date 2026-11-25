@@ -211,6 +211,7 @@ fn a_build_that_wrote_a_map_and_a_type_file_is_told_their_lines_and_that_nobody_
         ("map-object-moved".to_string(), false),
         ("map-object-added".to_string(), false),
         ("type-file-read".to_string(), false),
+        ("map-made-from-nothing".to_string(), false),
     ];
     for edition in [Target::Legacy, Target::Enhanced] {
         assert_eq!(standing(&sheet, &kinds, edition), unchecked, "{edition:?}");
@@ -233,6 +234,7 @@ fn a_build_that_wrote_a_map_and_a_type_file_is_told_their_lines_and_that_nobody_
             ("map-object-moved".to_string(), true),
             ("map-object-added".to_string(), false),
             ("type-file-read".to_string(), false),
+            ("map-made-from-nothing".to_string(), false),
         ],
         "the line a result says loaded is checked for the result's edition, and no other line is"
     );

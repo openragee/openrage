@@ -27,6 +27,14 @@
       "results": []
     },
     {
+      "id": "map-made-from-nothing",
+      "kind": "ymap",
+      "row": "R70h",
+      "do": "Go to the place of the object in a map you made from nothing.",
+      "look_for": "The object is drawn where the map places it.",
+      "results": []
+    },
+    {
       "id": "story-pack-mounts",
       "kind": "rpf",
       "row": "R51c",

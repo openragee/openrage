@@ -23,6 +23,7 @@ mod pipelines;
 mod shader;
 pub(crate) mod shadow;
 mod shadow_terrain;
+pub mod sky_dome;
 pub mod water;
 mod water_shader;
 

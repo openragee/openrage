@@ -9583,13 +9583,13 @@ and the choice, kept on disk and rebuilt only where the install changed. It adds
 `openrage-cli world at` and `openrage-cli world index`
 ([brief](World_Editor_Plan.md#the-gta-v-world-index-r70b)).
 
-**Where it stands.** Not merged; lanes began it on 2026-11-25. The mount takes a level of DLC to
-stop at (`DlcCutoff` in `crates/title/or-title/src/vfs/game_mount.rs`, held by
-`base_game_cutoff_skips_dlc`; `--dlc` in `openrage-cli`), and the app always mounts every pack.
-`crates/domain/or-depends` answers the type file of an archetype, what a map needs, the maps that
-place a model, and a map's bounds by the manifest's groups and otherwise by filename.
-`crates/io/or-io/src/cache_loader.rs` reads the game's cache files, which state each map's extents
-and each bound, and no index uses them. Nothing answers a position.
+**Where it stands.** The index is built, on an install made by hand; its install suite has not run.
+`crates/domain/or-depends/src/world_index.rs` reads every map, type file, manifest and bound a root
+archive at a time, answers the maps and the carried bounds at a position, and is kept on disk by
+each archive's stamp (`the_world_index_of_a_mount`); `openrage-cli world index` and `world at` run
+it. Left: the level of DLC and story or multiplayer, on the mount and in the key (the mount stops at
+a name hash); the group that requests a map; the cost on an install; the game's cache files, which
+no index reads.
 
 **Done when.** Over a mounted install the index names every map and type file the mount lists, and a
 position inside a known map's extents answers that map, in an install suite of the slow tier, named

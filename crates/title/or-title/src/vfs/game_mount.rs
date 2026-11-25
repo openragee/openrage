@@ -22,6 +22,29 @@ pub enum DlcCutoff {
     NameHash(String),
 }
 
+/// The size and modification time of a file on disk, which tell a changed archive from the one a mount opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileStamp {
+    /// Bytes.
+    pub size: u64,
+    /// Nanoseconds since the Unix epoch.
+    pub modified: u64,
+}
+
+impl FileStamp {
+    /// The stamp of the file at `path`; `None` where there is no such file or it states no time.
+    pub fn of(path: &Path) -> Option<Self> {
+        let meta = std::fs::metadata(path).ok()?;
+        let modified = meta.modified().ok()?;
+        let modified = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+        meta.is_file().then_some(Self {
+            size: meta.len(),
+            // Nanoseconds, which a u64 holds for some centuries yet.
+            modified: modified.as_nanos() as u64,
+        })
+    }
+}
+
 pub struct MountRoot {
     pub device: String,
     pub archive: Arc<RpfArchive>,
@@ -31,6 +54,11 @@ pub struct MountRoot {
     /// ⚠ A partial overlay is the normal state, so this is a fact about each
     /// archive, recorded here rather than inferred from the container string.
     pub origin: ArchiveOrigin,
+    /// The file on disk that holds this archive, for a nested one the file its outermost archive is.
+    ///
+    /// ⚠ Taken before the archive is opened: a file written after its mount was made has another
+    /// stamp than the mount, so what is read through an old mount is never kept under the new file.
+    pub stamp: Option<FileStamp>,
 }
 
 pub struct MountedPack {
@@ -116,15 +144,22 @@ impl MountedGame {
     /// an install.
     pub fn for_each_entry<F: FnMut(&EntryFacts)>(&self, mut visit: F) {
         for root in &self.roots {
-            walk_archive(
-                &root.archive,
-                &root.device,
-                "",
-                &root.container,
-                0,
-                &mut visit,
-            );
+            root.for_each_entry(&mut visit);
         }
+    }
+}
+
+impl MountRoot {
+    /// Every file of this root archive, its nested archives descended, as [`MountedGame::for_each_entry`] visits them.
+    pub fn for_each_entry<F: FnMut(&EntryFacts)>(&self, mut visit: F) {
+        walk_archive(
+            &self.archive,
+            &self.device,
+            "",
+            &self.container,
+            0,
+            &mut visit,
+        );
     }
 }
 
@@ -257,6 +292,7 @@ pub fn build_mounted_game_with(
         archive: opened.archive,
         container: opened.label,
         origin: opened.origin,
+        stamp: opened.stamp,
     });
 
     for path in glob_platform_packs(&install.root) {
@@ -273,6 +309,7 @@ pub fn build_mounted_game_with(
                     archive: opened.archive,
                     container: opened.label,
                     origin: opened.origin,
+                    stamp: opened.stamp,
                 });
             }
             Err(e) => diagnostics.push(
@@ -316,6 +353,7 @@ pub fn build_mounted_game_with(
             archive: Arc::clone(&update),
             container: opened.label.clone(),
             origin: opened.origin,
+            stamp: opened.stamp,
         });
         Some(UpdateMount {
             archive: update,
@@ -361,6 +399,7 @@ pub fn build_mounted_game_with(
             archive: opened.archive,
             container: opened.label,
             origin: opened.origin,
+            stamp: opened.stamp,
         });
     }
 
@@ -424,6 +463,7 @@ struct OpenedArchive {
     origin: ArchiveOrigin,
     /// Install-relative, and of the copy actually opened.
     label: String,
+    stamp: Option<FileStamp>,
 }
 
 fn open_install_archive(
@@ -434,6 +474,7 @@ fn open_install_archive(
     diagnostics: &mut Diagnostics,
 ) -> Result<OpenedArchive, VfsBuildError> {
     let (path, origin) = resolve_archive(install_root, install_path, options);
+    let stamp = FileStamp::of(&path);
     let archive = open_rpf_file(&path, Arc::clone(crypto))?;
     let label = file_label(install_root, &path);
     if origin.is_overlay() {
@@ -449,6 +490,7 @@ fn open_install_archive(
         archive,
         origin,
         label,
+        stamp,
     })
 }
 
@@ -554,6 +596,7 @@ fn mount_dlc(
         container: String,
         source: DlcSource,
         origin: ArchiveOrigin,
+        stamp: Option<FileStamp>,
     }
     let mut discovered: Vec<Discovered> = Vec::new();
     let mut skipped_gen9 = 0usize;
@@ -596,6 +639,7 @@ fn mount_dlc(
             container: located.container,
             source: located.source,
             origin: located.origin,
+            stamp: located.stamp,
         });
     }
 
@@ -694,12 +738,13 @@ fn mount_dlc(
             archive: Arc::clone(&d.archive),
             container: d.container.clone(),
             origin: d.origin,
+            stamp: d.stamp,
         });
 
         for n in 1..=d.setup.sub_pack_count {
             let sub_name = format!("dlc{n}.rpf");
             match open_sub_pack(install, &d.source, &sub_name, crypto, options, diagnostics) {
-                Some((sub_archive, sub_container, sub_origin)) => {
+                Some((sub_archive, sub_container, sub_origin, sub_stamp)) => {
                     // ⚠ Labelled: `locate` says where a file sits by its device's
                     // label, and an unlabelled one answers a path inside the
                     // archive that no walk from the install root finds.
@@ -717,6 +762,7 @@ fn mount_dlc(
                         archive: sub_archive,
                         container: sub_container,
                         origin: sub_origin,
+                        stamp: sub_stamp,
                     });
                 }
                 None => diagnostics.push(
@@ -852,6 +898,7 @@ enum DlcSource {
         parent_container: String,
         dir: String,
         parent_origin: ArchiveOrigin,
+        parent_stamp: Option<FileStamp>,
     },
 }
 
@@ -861,6 +908,7 @@ struct LocatedDlc {
     container: String,
     source: DlcSource,
     origin: ArchiveOrigin,
+    stamp: Option<FileStamp>,
 }
 
 fn locate_dlc(
@@ -895,6 +943,7 @@ fn locate_dlc(
         if !path.is_file() {
             continue;
         }
+        let stamp = FileStamp::of(&path);
         match open_rpf_file(&path, Arc::clone(crypto)) {
             Ok(a) => {
                 let container = file_label(&install.root, &path);
@@ -916,6 +965,7 @@ fn locate_dlc(
                     // is overlaid and whose `dlc1.rpf` is not still finds both.
                     source: DlcSource::Disk(candidate),
                     origin,
+                    stamp,
                 });
             }
             Err(e) => diagnostics.push(
@@ -953,11 +1003,13 @@ fn locate_dlc(
                             parent_container: root.container.clone(),
                             dir,
                             parent_origin: root.origin,
+                            parent_stamp: root.stamp,
                         },
                         // A pack inside an archive comes from wherever that
                         // archive did. There is no overlay copy of a path that
                         // only exists inside an `.rpf`.
                         origin: root.origin,
+                        stamp: root.stamp,
                     });
                 }
                 Err(e) => diagnostics.push(
@@ -985,7 +1037,7 @@ fn open_sub_pack(
     crypto: &Arc<dyn RpfCryptoProvider>,
     options: MountOptions,
     diagnostics: &mut Diagnostics,
-) -> Option<(Arc<RpfArchive>, String, ArchiveOrigin)> {
+) -> Option<(Arc<RpfArchive>, String, ArchiveOrigin, Option<FileStamp>)> {
     match source {
         DlcSource::Disk(dlc_path) => {
             let sibling = dlc_path.with_file_name(sub_name);
@@ -993,6 +1045,7 @@ fn open_sub_pack(
             if !path.is_file() {
                 return None;
             }
+            let stamp = FileStamp::of(&path);
             let a = open_rpf_file(&path, Arc::clone(crypto)).ok()?;
             let label = file_label(&install.root, &path);
             if origin.is_overlay() {
@@ -1004,13 +1057,14 @@ fn open_sub_pack(
                     .at(label.clone()),
                 );
             }
-            Some((a, label, origin))
+            Some((a, label, origin, stamp))
         }
         DlcSource::Nested {
             parent,
             parent_container,
             dir,
             parent_origin,
+            parent_stamp,
         } => {
             let rel = format!("{dir}/{sub_name}");
             let nested = parent.open_nested(parent.find(&rel)?).ok()?;
@@ -1018,6 +1072,7 @@ fn open_sub_pack(
                 Arc::new(nested),
                 format!("{parent_container}/{rel}"),
                 *parent_origin,
+                *parent_stamp,
             ))
         }
     }

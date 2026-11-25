@@ -3193,6 +3193,7 @@ dependencies = [
 name = "or-depends"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "glam",
  "or-io",
  "or-test-support",
@@ -3200,6 +3201,7 @@ dependencies = [
  "or-world",
  "tempfile",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]

@@ -21,6 +21,10 @@ or-world.workspace = true
 # in which archive that name is, and only a mount knows.
 or-title.workspace = true
 thiserror.workspace = true
+# The kept world index says when it refuses a file and reads the install again.
+tracing.workspace = true
+# The kept world index is a zlib stream, whose checksum says a file is whole.
+flate2.workspace = true
 
 [dev-dependencies]
 or-test-support.workspace = true

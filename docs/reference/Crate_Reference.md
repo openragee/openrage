@@ -286,6 +286,34 @@ rather than mounting it, because Legacy keeps its wave banks in archives the
 mount does not hold, and joins each container to the `.rel` items naming its
 waves.
 
+`world_index::WorldIndex` is the world of a mounted GTA V install by name and
+by position: every map with its extents, parent and flags, every archetype with
+its type file, box and level-of-detail distance, each map's bounds as
+`InstallTables` and the filename convention give them, and the maps and the
+carried bounds at a point, through a tree over the boxes. It reads the mount
+through `WorldSource`, a root archive at a time and each file from the archive
+that lists it (`MountedWorld`), which is the seam a test counts reads through.
+`world_index::refresh` keeps the index in a file keyed by the install's path
+and each archive's place, size and modification time, so a start after nothing
+changed reads no file and a changed archive is read again alone; a file of
+another version or key, or one cut short or altered, is refused and rebuilt
+(`the_world_index_of_a_mount`). ⚠ The size and the time are `MountRoot::stamp`,
+which `or-title` takes before it opens the archive: asked of the disk when the
+index is built, they would file what an old mount read under the archive
+written since. `openrage-cli world index` and `world at` run
+it. ⚠ Every copy of a map, a type file and a bound that an archive holds is
+read, and which copy wins is settled when the archives are put together: a row
+kept for the copy the mount loads alone would be missing once the archive that
+shadowed it changed. A bound is answered at a position only where a map group, a
+map's name or an interior carries it, because an archetype's own `.ybn` states
+its box about the model's origin
+(`a_point_answers_the_bounds_something_carries_whose_box_holds_it`). An archive
+is told from the one before it by its size and its time alone, so on a file
+system that keeps times to the second one written twice within a second at one
+size reads as unchanged, until `world index --fresh` reads it all again. With
+no `--kept` the index is kept under the configuration directory, a file an
+install.
+
 ⚠ A declared `drawableDictionary` outranks a loose file of the same stem, and
 `assetName` is then an entry inside that `.ydd`. Read as a filename, 76,898
 archetypes disagree; with the precedence right, 158,665 of 158,665 comparable

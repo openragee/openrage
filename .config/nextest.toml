@@ -221,6 +221,7 @@ not (
   | binary_id(=or-cli::the_power_features_run_from_the_command_line)
   | binary_id(=or-cli::the_rule_list_is_written_from_the_command_line)
   | binary_id(=or-content::a_source_a_garment_names_is_cooked_once_and_by_the_garment_not_by_the_files_content)
+  | binary_id(=or-depends::the_world_index_of_a_real_install)
   | binary_id(=or-interchange::decimation)
   | binary_id(=or-interchange::every_corpus_drawable_comes_back)
   | binary_id(=or-interchange::every_corpus_drawable_exports)

@@ -34,6 +34,8 @@ pub fn run(args: &[String]) -> ExitCode {
         "to-xml" => cmd_to_xml(rest),
         "from-xml" => cmd_from_xml(rest),
         "archetypes" => super::world_archetypes::run(rest),
+        "index" => super::world_index::cmd_index(rest),
+        "at" => super::world_index::cmd_at(rest),
         "-h" | "--help" | "help" => {
             print_usage();
             ExitCode::SUCCESS
@@ -1250,6 +1252,13 @@ fn print_usage() {
     eprintln!("                           Remove a map, its manifest entries and its group.");
     eprintln!("  prefab capture|place|list");
     eprintln!("                           Prefab catalogues, one directory per title.");
+    eprintln!("  index --game <dir>       Build the world index of an install, or refresh the");
+    eprintln!("                           kept one: every map, type file, archetype and bound,");
+    eprintln!("                           and which archives were read again. --kept <file>");
+    eprintln!("                           names the file it is kept in; --fresh reads it all.");
+    eprintln!("  at --game <dir> <x> <y> <z>");
+    eprintln!("                           The maps whose streaming extents hold a position and");
+    eprintln!("                           the bounds whose box does, from the world index.");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --types <dir>   Where to find `.ytyp` for archetype bounds. Defaults to");

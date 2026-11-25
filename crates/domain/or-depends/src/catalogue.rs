@@ -209,7 +209,7 @@ impl Catalogue {
 }
 
 /// The map a static bound's stem names: `<map>_N`, with an optional `hi@` or `ma@`.
-fn map_of_bound_stem(stem: &str) -> Option<&str> {
+pub(crate) fn map_of_bound_stem(stem: &str) -> Option<&str> {
     let stem = (stem.strip_prefix("hi@"))
         .or_else(|| stem.strip_prefix("ma@"))
         .unwrap_or(stem);

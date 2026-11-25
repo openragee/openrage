@@ -119,6 +119,7 @@ mod weapons;
 mod world;
 mod world_archetypes;
 mod world_edit;
+mod world_index;
 
 pub use depends::DependencyIndex;
 pub use dlc::{create_dlc_pack, dlc_pack_of_folder, dlc_refusals};

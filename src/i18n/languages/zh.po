@@ -17023,3 +17023,94 @@ msgstr "在相邻单元格 {cells} 的主体未打开、且正在扫描中查找
 
 msgid "Add to the facial controls it writes"
 msgstr "添加到它写入的面部控制中"
+
+msgid "the decompiler stopped on a fault in this program"
+msgstr "反编译器在此程序中因故障而停止"
+
+msgid "This is a compiled GTA VI script that does not decompile, so it is shown as its bytes: {e}"
+msgstr "这是一个无法反编译的 GTA VI 已编译脚本，因此显示为其字节：{e}"
+
+msgid "{count} function"
+msgid_plural "{count} functions"
+msgstr[0] "{count} 个函数"
+msgstr[1] "{count} 个函数"
+
+msgid "{name}: {count} line from line {line}"
+msgid_plural "{name}: {count} lines from line {line}"
+msgstr[0] "{name}：从第 {line} 行起共 {count} 行"
+msgstr[1] "{name}：从第 {line} 行起共 {count} 行"
+
+msgid "{count} class"
+msgid_plural "{count} classes"
+msgstr[0] "{count} 个类"
+msgstr[1] "{count} 个类"
+
+msgid "The instructions of this function do not decode: {e}"
+msgstr "无法解码此函数的指令：{e}"
+
+msgid "Select a function in the outline to list its instructions"
+msgstr "在大纲中选择一个函数以列出其指令"
+
+msgid "Decompiling again…"
+msgstr "正在重新反编译…"
+
+msgid "{count} function has no body in the source"
+msgid_plural "{count} functions have no body in the source"
+msgstr[0] "{count} 个函数在源代码中没有函数体"
+msgstr[1] "{count} 个函数在源代码中没有函数体"
+
+msgid "{count} imported program"
+msgid_plural "{count} imported programs"
+msgstr[0] "{count} 个导入的程序"
+msgstr[1] "{count} 个导入的程序"
+
+msgid "Natives are named from {list}"
+msgstr "原生函数按 {list} 命名"
+
+msgid "No natives list was supplied, so a native is shown as the program spells it"
+msgstr "未提供原生函数列表，因此原生函数按程序中的写法显示"
+
+msgid "Names are read from {lists}"
+msgstr "名称读取自 {lists}"
+
+msgid "No names list was supplied, so a type, a field or a method is shown by its hash or its offset"
+msgstr "未提供名称列表，因此类型、字段或方法按其哈希或偏移显示"
+
+msgid "Open names folder"
+msgstr "打开名称文件夹"
+
+msgid "Put natives lists and names lists in this folder, then open the script again: OpenRage ships none. A file whose name starts with natives is read as a natives list, any other as a names list"
+msgstr "将原生函数列表和名称列表放入此文件夹，然后重新打开脚本：OpenRage 不附带任何列表。名称以 natives 开头的文件按原生函数列表读取，其他文件按名称列表读取"
+
+msgid "The caret is on no name"
+msgstr "插入点处没有名称"
+
+msgid "{name} follows a dot: it may be defined in another program, and only a name that stands alone is followed"
+msgstr "{name} 位于点号之后：它可能定义在其他程序中，只有单独出现的名称才能跳转"
+
+msgid "This script defines no one thing called {name}"
+msgstr "此脚本中名为 {name} 的定义并非恰好一个"
+
+msgid "No GTA VI script is in front"
+msgstr "当前最前面的不是 GTA VI 脚本"
+
+msgid "Go to definition"
+msgstr "转到定义"
+
+msgid "Move the caret to where this script defines the name under it"
+msgstr "将插入点移到此脚本定义其所在名称的位置"
+
+msgid "Find references"
+msgstr "查找引用"
+
+msgid "Find every place of this script that spells the name under the caret"
+msgstr "查找此脚本中写有插入点处名称的每个位置"
+
+msgid "GTA VI Script"
+msgstr "GTA VI 脚本"
+
+msgid "A compiled GTA VI script, read from the archive that holds it or from a deciphered file: the source it decompiles to and the classes and functions that source lists, read-only"
+msgstr "GTA VI 的已编译脚本，从包含它的归档或已解密的文件中读取：显示其反编译得到的源代码，以及该源代码列出的类和函数，只读"
+
+msgid "a GTA VI script holds compiled bytecode; OpenRage reads one and does not write one"
+msgstr "GTA VI 脚本包含已编译的字节码；OpenRage 只读取而不写入此类脚本"

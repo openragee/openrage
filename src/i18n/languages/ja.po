@@ -17023,3 +17023,94 @@ msgstr "隣接セル {cells} の本体が開かれておらず、スキャン内
 
 msgid "Add to the facial controls it writes"
 msgstr "書き込む顔の制御に追加"
+
+msgid "the decompiler stopped on a fault in this program"
+msgstr "このプログラムでデコンパイラが障害により停止しました"
+
+msgid "This is a compiled GTA VI script that does not decompile, so it is shown as its bytes: {e}"
+msgstr "これはデコンパイルできないコンパイル済みのGTA VIスクリプトのため、バイト列として表示されます：{e}"
+
+msgid "{count} function"
+msgid_plural "{count} functions"
+msgstr[0] "{count} 個の関数"
+msgstr[1] "{count} 個の関数"
+
+msgid "{name}: {count} line from line {line}"
+msgid_plural "{name}: {count} lines from line {line}"
+msgstr[0] "{name}：{line} 行目から {count} 行"
+msgstr[1] "{name}：{line} 行目から {count} 行"
+
+msgid "{count} class"
+msgid_plural "{count} classes"
+msgstr[0] "{count} 個のクラス"
+msgstr[1] "{count} 個のクラス"
+
+msgid "The instructions of this function do not decode: {e}"
+msgstr "この関数の命令をデコードできません：{e}"
+
+msgid "Select a function in the outline to list its instructions"
+msgstr "アウトラインで関数を選択すると、その命令が一覧表示されます"
+
+msgid "Decompiling again…"
+msgstr "再デコンパイル中…"
+
+msgid "{count} function has no body in the source"
+msgid_plural "{count} functions have no body in the source"
+msgstr[0] "{count} 個の関数はソースに本体がありません"
+msgstr[1] "{count} 個の関数はソースに本体がありません"
+
+msgid "{count} imported program"
+msgid_plural "{count} imported programs"
+msgstr[0] "{count} 個のインポートされたプログラム"
+msgstr[1] "{count} 個のインポートされたプログラム"
+
+msgid "Natives are named from {list}"
+msgstr "ネイティブ関数の名前は {list} から付けられています"
+
+msgid "No natives list was supplied, so a native is shown as the program spells it"
+msgstr "ネイティブ関数のリストが指定されていないため、ネイティブ関数はプログラムでの表記のまま表示されます"
+
+msgid "Names are read from {lists}"
+msgstr "名前は {lists} から読み込まれています"
+
+msgid "No names list was supplied, so a type, a field or a method is shown by its hash or its offset"
+msgstr "名前リストが指定されていないため、型、フィールド、メソッドはハッシュまたはオフセットで表示されます"
+
+msgid "Open names folder"
+msgstr "名前フォルダーを開く"
+
+msgid "Put natives lists and names lists in this folder, then open the script again: OpenRage ships none. A file whose name starts with natives is read as a natives list, any other as a names list"
+msgstr "ネイティブ関数のリストと名前リストをこのフォルダーに置いてから、スクリプトを開き直してください。OpenRageにはどちらも同梱されていません。名前がnativesで始まるファイルはネイティブ関数のリストとして、それ以外は名前リストとして読み込まれます"
+
+msgid "The caret is on no name"
+msgstr "カーソルの位置に名前がありません"
+
+msgid "{name} follows a dot: it may be defined in another program, and only a name that stands alone is followed"
+msgstr "{name} はドットの後にあります。別のプログラムで定義されている可能性があり、移動できるのは単独で書かれた名前だけです"
+
+msgid "This script defines no one thing called {name}"
+msgstr "このスクリプトには {name} という名前の定義がちょうど1つはありません"
+
+msgid "No GTA VI script is in front"
+msgstr "前面にGTA VIスクリプトがありません"
+
+msgid "Go to definition"
+msgstr "定義へ移動"
+
+msgid "Move the caret to where this script defines the name under it"
+msgstr "このスクリプトがカーソル位置の名前を定義している場所へカーソルを移動します"
+
+msgid "Find references"
+msgstr "参照を検索"
+
+msgid "Find every place of this script that spells the name under the caret"
+msgstr "このスクリプト内で、カーソル位置の名前が書かれているすべての場所を検索します"
+
+msgid "GTA VI Script"
+msgstr "GTA VIスクリプト"
+
+msgid "A compiled GTA VI script, read from the archive that holds it or from a deciphered file: the source it decompiles to and the classes and functions that source lists, read-only"
+msgstr "コンパイル済みのGTA VIスクリプトです。格納しているアーカイブ、または復号済みのファイルから読み取ります。デコンパイルして得られるソースと、そのソースに含まれるクラスと関数を表示します。読み取り専用です"
+
+msgid "a GTA VI script holds compiled bytecode; OpenRage reads one and does not write one"
+msgstr "GTA VIスクリプトにはコンパイル済みのバイトコードが含まれています。OpenRageはスクリプトを読み取りますが、書き込みは行いません"

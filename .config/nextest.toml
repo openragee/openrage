@@ -241,6 +241,7 @@ not (
       | test(/^gta6::headerless::write_geometry::per_geometry::build_tests::/)
       | test(/^gta6::script::native_addresses::tests::the_users_listings/)
       | test(/^gta5::texture_dict::tests::/)
+      | test(/^gta6::script::exec::corpus::/)
       | test(/^meta::binary::pso::chks::tests::every_clear_pso_body/)
       | test(/^meta::binary::pso::table_strings::tests::build::/)
       | test(/^meta::typed::tests::/)
@@ -273,6 +274,7 @@ not (
   | binary_id(=or-io::gta6_string_blobs)
   | binary_id(=or-io::gta6_string_hashes)
   | binary_id(=or-io::gta6_rpf9_toc_roundtrips_through_encrypt)
+  | binary_id(=or-io::gta6_script_refuses_hostile_input)
   | binary_id(=or-io-verify::a_save_pads_a_chain_the_size_word_cannot_state)
   | binary_id(=or-io-verify::bounds)
   | binary_id(=or-io-verify::clip_dict)
@@ -514,5 +516,13 @@ priority = 100
 # It took fourteen and a half minutes beside two building lanes, so it is held to forty-five, and starts first.
 [[profile.all.overrides]]
 filter = 'test(every_present_head_holds_to_the_container_model_and_each_texture_reads_or_is_refused_by_name)'
+slow-timeout = { period = "60s", terminate-after = 45 }
+priority = 100
+
+# The GTA VI script suites over a folder run every function of the user's listings through the passes on eight threads
+# of their own. No run of them is timed yet, so they are held to forty-five minutes, and start first.
+[[profile.all.overrides]]
+filter = 'test(/^gta6::script::exec::corpus::/)'
+threads-required = 8
 slow-timeout = { period = "60s", terminate-after = 45 }
 priority = 100

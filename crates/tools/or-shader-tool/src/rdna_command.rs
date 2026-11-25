@@ -12,7 +12,7 @@ pub fn print_usage(program: &str) {
     eprintln!("               [--adapter <TEXT>] [--jobs <N>] [--chunk <N>] [--timeout <SECONDS>] [--units <FROM>..<TO>]");
     eprintln!("               [--stack-mib <N>] [--technique <NAME>[,<NAME>...]] [--draw] [--msl]");
     eprintln!("               [--skip-crashed <REPORT.json>] [--software] [--run] [--pick <FILE>] [--msl-dir <DIR>]");
-    eprintln!("               [--try-refused]");
+    eprintln!("               [--try-refused] [--fit] [--fed]");
     eprintln!("                                translate every native program of the GTA VI effect container at OFFSET");
     eprintln!("                                (or of a container saved as a file, with no OFFSET) and build a pipeline");
     eprintln!("                                of each on every adapter of this machine, of every backend, the software");
@@ -47,6 +47,11 @@ pub fn print_usage(program: &str) {
     eprintln!(
         "                                the worker: the way to see whether the driver still does."
     );
+    eprintln!("                                --fit is --msl with one more row: each unit written again with its");
+    eprintln!("                                buffers brought within what wgpu's Metal backend takes, by merging");
+    eprintln!("                                them, and noted with what that took. --fed checks each pair as the");
+    eprintln!("                                binder hands it to the renderer, fed by its tables, and with --fit its");
+    eprintln!("                                buffers are fitted by what the editor leaves at nought first.");
     eprintln!("  {program} rdna-devices <ARCHIVE.rpf> <OFFSET> --list");
     eprintln!("                                every unit on a line: its number, its name in a report, then a program's");
     eprintln!("                                kind (pixel, vertex, compute, mesh) and name, or the effects and");
@@ -194,14 +199,17 @@ fn check(mut args: Vec<String>, out: Option<PathBuf>) -> Result<(), String> {
         args.len() < before
     };
     let (drawn, run, software) = (flag("--draw"), flag("--run"), flag("--software"));
+    let (fit, fed) = (flag("--fit"), flag("--fed"));
     let ways = rdna_devices::Ways {
         draw: match (run, drawn) {
             (true, _) => Draw::Run,
             (false, true) => Draw::Empty,
             (false, false) => Draw::No,
         },
-        msl: flag("--msl") || msl_dir.is_some(),
+        msl: flag("--msl") || msl_dir.is_some() || fit,
         msl_dir,
+        fit,
+        fed,
         try_refused: flag("--try-refused"),
     };
     let list = flag("--list");

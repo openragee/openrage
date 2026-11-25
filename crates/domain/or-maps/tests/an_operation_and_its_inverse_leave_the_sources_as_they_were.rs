@@ -9,17 +9,19 @@ use std::path::{Path, PathBuf};
 use or_maps::edit::{read_archetype, read_entity};
 use or_maps::import::{add_files, Incoming};
 use or_maps::operation::{
-    apply, apply_all, digest_of, At, Error, Extents, Operation, Operations, PoseData, Record,
-    FORMAT,
+    apply, apply_all, digest_of, At, Counted, Error, Extents, Inserted, Operation, Operations,
+    PoseData, Record, FORMAT,
 };
-use or_maps::sample::{map_file, types_file, Archetype, Entity};
+use or_maps::sample::{child_map_file, map_file, types_file, Archetype, Entity};
 
 const HARBOUR: &str = "harbour.metadata.src";
 const YARD: &str = "yard.metadata.src";
+const PIER: &str = "pier.metadata.src";
 const TYPES: &str = "harbour_types.metadata.src";
 
-/// A pack of one set: `harbour`, whose entity 0 is the LOD parent of 1 and 2 and whose 3 stands alone, `yard` with one entity, and a
-/// type file of two crates. The extents `harbour` states hold none of what stands past 100.
+/// A pack of one set: `harbour`, whose entity 0 is the LOD parent of 1 and 2 and whose 3 stands alone, `yard` with one entity, `pier`,
+/// whose parent map is `harbour` and whose two entities name its entities 0 and 3 as their LOD parents, and a type file of two crates.
+/// The extents `harbour` states hold none of what stands past 100.
 fn pack(dir: &Path) -> PathBuf {
     let folder = dir.join("maps");
     let harbour = map_file(
@@ -50,6 +52,23 @@ fn pack(dir: &Path) -> PathBuf {
         }],
         ([-50.0; 3], [50.0; 3]),
     );
+    let pier = child_map_file(
+        "pier",
+        "harbour",
+        &[
+            Entity {
+                parent: 0,
+                in_parent_map: true,
+                ..Entity::at("prop_crate_a", [30.0, 20.0, 0.5], 21)
+            },
+            Entity {
+                parent: 3,
+                in_parent_map: true,
+                ..Entity::at("prop_crate_b", [34.0, 20.0, 0.5], 22)
+            },
+        ],
+        ([0.0; 3], [100.0; 3]),
+    );
     let types = types_file(
         "harbour_types",
         &[
@@ -68,6 +87,7 @@ fn pack(dir: &Path) -> PathBuf {
         &[
             incoming("harbour.ymap", harbour.leak()),
             incoming("yard.ymap", yard.leak()),
+            incoming("pier.ymap", pier.leak()),
             incoming("harbour_types.ytyp", types.leak()),
         ],
         None,
@@ -109,6 +129,42 @@ fn place() -> Operation {
         entity: 1,
         pose: pose([420.0, -66.5, 12.25]),
         expects: None,
+    }
+}
+
+fn remove_several(entities: &[usize]) -> Operation {
+    Operation::RemoveEntities {
+        source: HARBOUR.into(),
+        expects: None,
+        entities: entities.to_vec(),
+        extents: None,
+    }
+}
+
+/// The extents a removal is handed to state: none `harbour` states, and none its entities would grow it to.
+const STATED: Extents = Extents {
+    entities_extents_min: [-7.5, -8.5, -9.5],
+    entities_extents_max: [300.0, 301.0, 302.0],
+    streaming_extents_min: [-600.25, -600.5, -600.75],
+    streaming_extents_max: [600.1, 600.2, 600.3],
+};
+
+/// A child and the entity that stands alone taken out of `harbour`, with the extents the map is to state afterwards.
+fn remove_several_stating() -> Operation {
+    Operation::RemoveEntities {
+        source: HARBOUR.into(),
+        expects: None,
+        entities: vec![1, 3],
+        extents: Some(STATED),
+    }
+}
+
+/// The links of `pier` renumbered for the entity 1 taken out of `harbour`, which neither of its entities names.
+fn renumber() -> Operation {
+    Operation::RenumberForRemoved {
+        source: PIER.into(),
+        expects: None,
+        removed: vec![1],
     }
 }
 
@@ -158,6 +214,24 @@ const CASES: &[Case] = &[
     |_| remove(1),
     |folder| inverse_of(folder, &remove(0)),
     |folder| inverse_of(folder, &remove(1)),
+    // A child and the entity that stands alone, named last first: the parent counts one fewer and nothing is renumbered twice.
+    |_| remove_several(&[3, 1]),
+    // The LOD parent and one of its two children: the other child is left with no parent, and moves down by one.
+    |_| remove_several(&[0, 2]),
+    |folder| inverse_of(folder, &remove_several(&[3, 1])),
+    |folder| inverse_of(folder, &remove_several(&[0, 2])),
+    // A removal handed extents, and its inverse, which carries the extents it replaced.
+    |_| remove_several_stating(),
+    |folder| inverse_of(folder, &remove_several_stating()),
+    |_| Operation::SetNumChildren {
+        source: HARBOUR.into(),
+        expects: None,
+        entity: 3,
+        num_children: 5,
+    },
+    // The link of `pier` to the entity 3 of `harbour` names 2; its link to 0 stays.
+    |_| renumber(),
+    |folder| inverse_of(folder, &renumber()),
     |folder| inverse_of(folder, &place()),
     // An archetype of an entity changed, as the record a person edited: no extents move.
     |folder| {
@@ -234,6 +308,77 @@ const CASES: &[Case] = &[
         }
     },
 ];
+
+#[test]
+fn a_removal_of_several_states_the_extents_it_is_handed_and_its_inverse_carries_the_ones_it_replaced(
+) {
+    use or_io::decl::File;
+    let stated = |folder: &Path| {
+        let cooked = or_maps::facts::cooked(&folder.join(HARBOUR)).unwrap();
+        let map = or_io::meta::typed::CMapData::from_bytes(&cooked).unwrap();
+        let corner = |v: or_io::decl::Vec3| [v.x, v.y, v.z];
+        Extents {
+            entities_extents_min: corner(map.entities_extents_min),
+            entities_extents_max: corner(map.entities_extents_max),
+            streaming_extents_min: corner(map.streaming_extents_min),
+            streaming_extents_max: corner(map.streaming_extents_max),
+        }
+    };
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = pack(scratch.path());
+    let was = stated(&folder);
+    assert_ne!(was, STATED);
+
+    let applied = apply(&folder, &remove_several_stating()).unwrap();
+    assert_eq!(stated(&folder), STATED);
+    let Operation::InsertEntities {
+        extents, entities, ..
+    } = &applied.inverse
+    else {
+        panic!("taken back by {}", applied.inverse.name());
+    };
+    assert_eq!(*extents, Some(was));
+    assert_eq!(
+        entities.iter().map(|put| put.entity).collect::<Vec<_>>(),
+        [1, 3]
+    );
+    apply(&folder, &applied.inverse).unwrap();
+    assert_eq!(stated(&folder), was);
+}
+
+#[test]
+fn a_map_file_emptied_of_its_entities_gets_them_back_from_the_inverse_of_what_emptied_it() {
+    // ⚠ `yard` holds one entity. A map file with none declares no entity, and one is put back into it only where a schema snapshot
+    // is staged, so the inverse given must be one that applies to the file as it is read again: the XML as it was, where none is.
+    let emptying: [Operation; 2] = [
+        Operation::RemoveEntity {
+            source: YARD.into(),
+            expects: None,
+            entity: 0,
+            extents: None,
+        },
+        Operation::RemoveEntities {
+            source: YARD.into(),
+            expects: None,
+            entities: vec![0],
+            extents: None,
+        },
+    ];
+    for operation in emptying {
+        let name = operation.name();
+        let scratch = tempfile::tempdir().unwrap();
+        let folder = pack(scratch.path());
+        let before = files(&folder);
+        let applied = apply(&folder, &operation).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(applied.edited.changed(), "{name}");
+        apply(&folder, &applied.inverse)
+            .unwrap_or_else(|e| panic!("the inverse of {name}, {}: {e}", applied.inverse.name()));
+        assert!(
+            files(&folder) == before,
+            "{name}: the sources are not as they were after its inverse"
+        );
+    }
+}
 
 /// The names of the operations, as the type itself lists them when it refuses a name.
 fn variants() -> BTreeSet<String> {
@@ -402,13 +547,103 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
             Operation::InsertEntity {
                 source: HARBOUR.into(),
                 entity: 6,
-                record,
+                record: record.clone(),
                 parent_num_children: None,
                 children: Vec::new(),
                 extents: None,
                 expects: None,
             },
             "entity 6 is past the end of the 4",
+        ),
+        (remove_several(&[1, 4]), "entity 4 is past the 4"),
+        (remove_several(&[2, 1, 2]), "entity 2 is named twice"),
+        (remove_several(&[]), "no entity is named"),
+        (
+            Operation::InsertEntities {
+                source: HARBOUR.into(),
+                expects: None,
+                entities: vec![
+                    Inserted {
+                        entity: 4,
+                        record: record.clone(),
+                        children: Vec::new(),
+                    },
+                    Inserted {
+                        entity: 6,
+                        record: record.clone(),
+                        children: Vec::new(),
+                    },
+                ],
+                num_children: Vec::new(),
+                extents: None,
+            },
+            "entity 6 is past the end of the 5",
+        ),
+        (
+            Operation::InsertEntities {
+                source: HARBOUR.into(),
+                expects: None,
+                entities: vec![Inserted {
+                    entity: 4,
+                    record: record.clone(),
+                    children: vec![4],
+                }],
+                num_children: Vec::new(),
+                extents: None,
+            },
+            "child 4 is past the 4",
+        ),
+        (
+            Operation::InsertEntities {
+                source: HARBOUR.into(),
+                expects: None,
+                entities: vec![Inserted {
+                    entity: 4,
+                    record: record.clone(),
+                    children: Vec::new(),
+                }],
+                num_children: vec![Counted {
+                    entity: 5,
+                    num_children: 1,
+                }],
+                extents: None,
+            },
+            "entity 5 is past the 5",
+        ),
+        (
+            Operation::SetNumChildren {
+                source: HARBOUR.into(),
+                expects: None,
+                entity: 4,
+                num_children: 1,
+            },
+            "entity 4 is past the 4",
+        ),
+        (
+            Operation::SetNumChildren {
+                source: TYPES.into(),
+                expects: None,
+                entity: 0,
+                num_children: 1,
+            },
+            "does not edit a type file",
+        ),
+        // An entity of `pier` names the entity 3 of `harbour`: with it taken out, the link would name nothing.
+        (
+            Operation::RenumberForRemoved {
+                source: PIER.into(),
+                expects: None,
+                removed: vec![1, 3],
+            },
+            "entity 1 names entity 3 of the parent map",
+        ),
+        (
+            Operation::RenumberForInserted {
+                source: PIER.into(),
+                expects: None,
+                inserted: Vec::new(),
+            },
+            "no entity is named",
         ),
         (
             Operation::AddEntity {

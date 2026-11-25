@@ -1,6 +1,6 @@
 //! `openrage-cli maps`: list what a project's map sets place and declare, validate them and say what the rules find, read a build back
-//! against them, apply a list of operations to their sources, and keep a manifest of the game for the manifest of the maps to be
-//! written from.
+//! against them, apply a list of operations to their sources, plan or apply the deletion of entities with their chain of far models, and
+//! keep a manifest of the game for the manifest of the maps to be written from.
 //!
 //! The plan and the build of maps are `openrage-cli project plan` and `build`:
 //! a maps content is content like any other, and goes through the one plan.
@@ -25,6 +25,7 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("verify") => verify(rest),
         Some("apply") => apply(rest),
         Some("keep-manifest") => keep_manifest(rest),
+        Some("delete") => delete(rest),
         Some("-h" | "--help" | "help") => {
             print_usage();
             return ExitCode::SUCCESS;
@@ -54,7 +55,9 @@ fn print_usage() {
          openrage-cli maps verify   <project.openrage-proj> [--build <id>] [--out <folder>]\n  \
          openrage-cli maps apply    <project.openrage-proj> <operations.json> [--module <id>] [--dry-run]\n  \
          openrage-cli maps keep-manifest <project.openrage-proj> <_manifest.ymf>... [--module <id>]\n  \
-         openrage-cli maps keep-manifest <project.openrage-proj> --game <install root> [--keys <file>] [--module <id>]\n\n\
+         openrage-cli maps keep-manifest <project.openrage-proj> --game <install root> [--keys <file>] [--module <id>]\n  \
+         openrage-cli maps delete   <project.openrage-proj> <source>:<entity>... [--module <id>] [--apply]\n                             \
+         [--script <form>] [--radius <metres>]\n\n\
          changes compares each map file and type file of the content with the base its source keeps,\n\
          the file it was imported from, and says by object what the source changed: the entities and\n\
          the archetypes added, deleted and changed, each with its index in the base and its index now,\n\
@@ -89,7 +92,18 @@ fn print_usage() {
          files, or name an install with --game to keep every manifest of it that states a map of the\n\
          content. With none kept a build writes no manifest and its plan says so. A kept manifest\n\
          is the game's own file, whole: `project check-sharing` names it and the project's .gitignore\n\
-         leaves it out.\n\n\
+         leaves it out.\n\
+         delete plans the removal of entities of the map files of the content, each named by its source\n\
+         folder and its index there (`city.metadata.src:12`), and prints the plan: what goes with them (what\n\
+         stands under each in the level-of-detail tree, and each far model left standing for nothing, in\n\
+         this file and in the map it names as parent), each far model that stays because it stands for\n\
+         another entity too, with its count of children lowered, each entity left because another of its\n\
+         archetype stands at its pose, and every file the deletion would write with what changes in it.\n\
+         It also prints the script line that hides each model at its place and changes no file, in the\n\
+         form --script names (lua, json or csharp; lua when none) within --radius metres (1 when none).\n\
+         It reads the map files of the content and no other: a map that is not among them keeps its links.\n\
+         With --apply it writes the deletion, every file or none. It exits 1 when an entity named is not\n\
+         there or the deletion is refused.\n\n\
          A build checks the files. It does not test that GTA V loads them.\n"
     );
 }
@@ -306,6 +320,249 @@ fn stating(
     Ok(found)
 }
 
+/// The entity `at` as a line names it.
+fn entity_text(entity: &or_maps::delete::Entity) -> String {
+    let [x, y, z] = entity.position;
+    format!(
+        "{} entity {}, {} at {x}, {y}, {z}",
+        entity.at.source,
+        entity.at.index,
+        entity.archetype.shown()
+    )
+}
+
+/// `count` of a thing, with the plural its noun takes.
+fn counted(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
+/// The lines that say a plan of a deletion: what goes, what stays, what is left, what the sources do not reach, and each file with what changes in it.
+fn deletion_lines(planned: &or_maps::delete::Deletion, applied: bool) -> Vec<String> {
+    use or_maps::delete::{Note, Why};
+    let mut lines = Vec::new();
+    for going in &planned.goes {
+        let why = match &going.why {
+            Why::Chosen => "chosen".to_string(),
+            Why::Under(parent) => {
+                format!("under entity {} of {}", parent.index, parent.source)
+            }
+            Why::LeftWithNoChild => "left standing for nothing".to_string(),
+        };
+        lines.push(format!("  goes   {}: {why}", entity_text(&going.entity)));
+    }
+    for staying in &planned.stays {
+        let mut stands = Vec::new();
+        if staying.children_left > 0 {
+            stands.push(format!(
+                "{} still under it",
+                counted(staying.children_left, "entity is", "entities are")
+            ));
+        }
+        if staying.children_elsewhere > 0 {
+            stands.push(format!(
+                "it counts {} no source holds",
+                counted(staying.children_elsewhere as usize, "child", "children")
+            ));
+        }
+        lines.push(format!(
+            "  stays  {}: {}; its count of children goes from {} to {}",
+            entity_text(&staying.entity),
+            stands.join(" and "),
+            staying.counted,
+            staying.counts
+        ));
+    }
+    for left in &planned.ambiguous {
+        let twins: Vec<String> = (left.twins.iter())
+            .map(|twin| format!("entity {} of {}", twin.index, twin.source))
+            .collect();
+        lines.push(format!(
+            "  left   {}: ambiguous, it cannot be told from {}, of the same archetype at the same pose; name them all to take them all",
+            entity_text(&left.entity),
+            twins.join(" and ")
+        ));
+    }
+    for note in &planned.notes {
+        let named = |at: &or_maps::operation::At| format!("{} entity {}", at.source, at.index);
+        lines.push(format!("  note   {}", match note {
+            Note::ParentMapNotAmongSources { entity, parent } => format!(
+                "{} names its far model in the map {}, which is not among the sources: the far model stays, and counts a child it lost",
+                named(entity),
+                parent.shown()
+            ),
+            Note::NoParentMap { entity } => format!(
+                "{} names a far model in a parent map, and its map names none",
+                named(entity)
+            ),
+            Note::ParentMapSplit { entity, sources } => format!(
+                "{} names its far model in a map that {} each hold entities of, so its link says none of them",
+                named(entity),
+                sources.join(" and ")
+            ),
+            Note::ParentPastTheEnd { entity, index, len } => format!(
+                "{} names entity {index} of its parent map, which holds {len}",
+                named(entity)
+            ),
+            Note::ChildrenNotAmongSources { entity, counted, found } => format!(
+                "{} counts {counted} children and the sources hold {found}: the others are in a map that is not among the sources, and lose their parent",
+                named(entity)
+            ),
+        }));
+    }
+    let verb = if applied { "changed" } else { "would change" };
+    for file in &planned.files {
+        let mut what = Vec::new();
+        if !file.removed.is_empty() {
+            let indexes: Vec<String> = file.removed.iter().map(usize::to_string).collect();
+            what.push(format!(
+                "{} taken out ({})",
+                counted(file.removed.len(), "entity", "entities"),
+                indexes.join(", ")
+            ));
+        }
+        for lowered in &file.lowered {
+            what.push(format!(
+                "the count of children of entity {} lowered from {} to {}",
+                lowered.entity, lowered.from, lowered.to
+            ));
+        }
+        if file.renumbered > 0 {
+            what.push(format!(
+                "{} renumbered",
+                counted(file.renumbered, "LOD link", "LOD links")
+            ));
+        }
+        if file.renumbered_into_parent > 0 {
+            what.push(format!(
+                "{} into the parent map renumbered",
+                counted(file.renumbered_into_parent, "LOD link", "LOD links")
+            ));
+        }
+        lines.push(format!("{verb} {}: {}", file.file, what.join(", ")));
+    }
+    if !planned.goes.is_empty() {
+        lines.push(
+            "  stays  the collision and the occluders of what goes: a deletion does not reach them"
+                .to_string(),
+        );
+    }
+    lines
+}
+
+/// Plan the deletion of entities of one maps content with their chain of far models, print the plan, and write it with `--apply`.
+fn delete(args: &[String]) -> Result<ExitCode, Failure> {
+    let apply = args.iter().any(|a| a == "--apply");
+    let rest: Vec<String> = args.iter().filter(|a| *a != "--apply").cloned().collect();
+    let (positional, flags) = parse(&rest, &["--module", "--script", "--radius"])?;
+    let [path, named @ ..] = positional.as_slice() else {
+        return Err(Usage(
+            "expected <project.openrage-proj> <source>:<entity>...".into(),
+        ));
+    };
+    if named.is_empty() {
+        return Err(Usage(
+            "name an entity to delete as <source>:<entity>".into(),
+        ));
+    }
+    let chosen = (named.iter())
+        .map(|text| {
+            let parsed = text.rsplit_once(':').and_then(|(source, index)| {
+                Some(or_maps::operation::At {
+                    source: source.to_string(),
+                    index: index.parse().ok()?,
+                })
+            });
+            parsed.filter(|at| !at.source.is_empty()).ok_or_else(|| {
+                Usage(format!(
+                    "`{text}` names no entity: say <source>:<entity>, such as city.metadata.src:12"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let radius = match flags.get("--radius") {
+        Some(text) => (text.parse::<f32>().ok())
+            .filter(|metres| metres.is_finite() && *metres > 0.0)
+            .ok_or_else(|| {
+                Usage(format!(
+                    "--radius takes metres above nought, and `{text}` is none"
+                ))
+            })?,
+        None => or_maps::script_text::HIDE_RADIUS,
+    };
+    let forms = or_maps::script_text::ScriptForms::built_in().map_err(|e| Run(e.to_string()))?;
+    let form_id = flags.get("--script").map_or("lua", String::as_str);
+    let form = forms.form(form_id).ok_or_else(|| {
+        let known: Vec<&str> = forms.forms.iter().map(|form| form.id.as_str()).collect();
+        Usage(format!(
+            "no script form is called `{form_id}`: the forms are {}",
+            known.join(", ")
+        ))
+    })?;
+
+    let (project, modules) = maps_of(std::slice::from_ref(path), &flags)?;
+    let [id] = modules.as_slice() else {
+        return Err(Run(format!(
+            "{path} holds {} maps contents ({}): say which with --module",
+            modules.len(),
+            modules.join(", ")
+        )));
+    };
+    let module = (project.container.module(id))
+        .ok_or_else(|| Run(format!("{path} has no maps content `{id}`")))?;
+    // ⚠ A plan writes nothing, so it may read a linked content, which only the project that holds it may write.
+    let folder = if apply {
+        or_maps::module_folder_to_edit(Path::new(path), &project.container, module)
+    } else {
+        or_maps::module_folder(&project.folder(), module)
+    }
+    .map_err(|e| Run(format!("content `{id}`: {e}")))?;
+
+    let planned = or_maps::delete::plan(&folder, &chosen)
+        .map_err(|e| Run(format!("content `{id}`: {e}; no source was changed")))?;
+    let script = planned
+        .script(form, radius, HIDE_DECIMALS)
+        .map_err(|e| Run(e.to_string()))?;
+    if apply {
+        or_maps::delete::apply(&folder, &planned).map_err(|e| match e {
+            // The one failure after which a source may hold what the deletion wrote: it says which.
+            or_maps::operation::Error::Write(_) => Run(e.to_string()),
+            refused => Run(format!("{refused}; no source was changed")),
+        })?;
+    }
+    println!(
+        "content {id}: {} named, {} to take out",
+        counted(chosen.len(), "entity", "entities"),
+        counted(planned.goes.len(), "entity", "entities"),
+    );
+    for line in deletion_lines(&planned, apply) {
+        println!("{line}");
+    }
+    if !script.is_empty() {
+        println!(
+            "or hide by script, which changes no file and takes no collision away ({}, within {radius} m):",
+            form.name
+        );
+        for line in &script {
+            println!("  {line}");
+        }
+    }
+    println!(
+        "content {id}: {} {} {}{}",
+        counted(planned.operations.len(), "operation", "operations"),
+        if apply { "changed" } else { "would change" },
+        counted(planned.files.len(), "source", "sources"),
+        if apply {
+            ""
+        } else {
+            "; nothing was written (write it with --apply)"
+        }
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The decimals a script line states a place with: a millimetre.
+const HIDE_DECIMALS: usize = 3;
+
 /// Read each resource the build of an output wrote against the maps content it holds.
 fn verify(args: &[String]) -> Result<ExitCode, Failure> {
     let (positional, flags) = parse(args, &["--build", "--out"])?;
@@ -467,4 +724,156 @@ fn list(args: &[String]) -> Result<ExitCode, Failure> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deletion_lines;
+    use or_maps::delete::{
+        Ambiguous, Deletion, Entity, FileChange, Going, Lowered, Note, Staying, Why,
+    };
+    use or_maps::facts::Name;
+    use or_maps::operation::At;
+
+    fn at(source: &str, index: usize) -> At {
+        At {
+            source: source.to_string(),
+            index,
+        }
+    }
+
+    fn entity(source: &str, index: usize, archetype: &str) -> Entity {
+        Entity {
+            at: at(source, index),
+            archetype: Name::from_text(archetype),
+            position: [1.5, -2.0, 30.25],
+        }
+    }
+
+    #[test]
+    fn every_part_of_a_plan_has_its_line_and_a_part_that_is_empty_has_none() {
+        let planned = Deletion {
+            goes: vec![
+                Going {
+                    entity: entity("far", 4, "block_far"),
+                    why: Why::Chosen,
+                },
+                Going {
+                    entity: entity("near", 7, "house"),
+                    why: Why::Under(at("far", 4)),
+                },
+                Going {
+                    entity: entity("farther", 0, "block_farther"),
+                    why: Why::LeftWithNoChild,
+                },
+            ],
+            stays: vec![
+                Staying {
+                    entity: entity("farthest", 2, "district"),
+                    children_left: 0,
+                    children_elsewhere: 1,
+                    counted: 2,
+                    counts: 1,
+                },
+                Staying {
+                    entity: entity("farthest", 3, "district"),
+                    children_left: 2,
+                    children_elsewhere: 3,
+                    counted: 6,
+                    counts: 5,
+                },
+            ],
+            ambiguous: vec![Ambiguous {
+                entity: entity("near", 1, "lamp"),
+                twins: vec![at("near", 2), at("other", 5)],
+            }],
+            notes: vec![
+                Note::ParentMapNotAmongSources {
+                    entity: at("near", 7),
+                    parent: Name::from_text("far_away"),
+                },
+                Note::NoParentMap {
+                    entity: at("near", 8),
+                },
+                Note::ParentMapSplit {
+                    entity: at("near", 9),
+                    sources: vec!["far_a".to_string(), "far_b".to_string()],
+                },
+                Note::ParentPastTheEnd {
+                    entity: at("near", 10),
+                    index: 12,
+                    len: 11,
+                },
+                Note::ChildrenNotAmongSources {
+                    entity: at("far", 4),
+                    counted: 3,
+                    found: 1,
+                },
+            ],
+            files: vec![
+                FileChange {
+                    source: "far".to_string(),
+                    file: "far/metadata.xml".to_string(),
+                    removed: vec![4],
+                    lowered: vec![Lowered {
+                        entity: 6,
+                        from: 2,
+                        to: 1,
+                    }],
+                    renumbered: 1,
+                    renumbered_into_parent: 3,
+                },
+                FileChange {
+                    source: "near".to_string(),
+                    file: "near/metadata.xml".to_string(),
+                    removed: Vec::new(),
+                    lowered: Vec::new(),
+                    renumbered: 0,
+                    renumbered_into_parent: 1,
+                },
+            ],
+            operations: Vec::new(),
+            hidden: Vec::new(),
+        };
+        let place = "at 1.5, -2, 30.25";
+        assert_eq!(
+            deletion_lines(&planned, false),
+            [
+                format!("  goes   far entity 4, block_far {place}: chosen"),
+                format!("  goes   near entity 7, house {place}: under entity 4 of far"),
+                format!("  goes   farther entity 0, block_farther {place}: left standing for nothing"),
+                format!("  stays  farthest entity 2, district {place}: it counts 1 child no source holds; its count of children goes from 2 to 1"),
+                format!("  stays  farthest entity 3, district {place}: 2 entities are still under it and it counts 3 children no source holds; its count of children goes from 6 to 5"),
+                format!("  left   near entity 1, lamp {place}: ambiguous, it cannot be told from entity 2 of near and entity 5 of other, of the same archetype at the same pose; name them all to take them all"),
+                "  note   near entity 7 names its far model in the map far_away, which is not among the sources: the far model stays, and counts a child it lost".to_string(),
+                "  note   near entity 8 names a far model in a parent map, and its map names none".to_string(),
+                "  note   near entity 9 names its far model in a map that far_a and far_b each hold entities of, so its link says none of them".to_string(),
+                "  note   near entity 10 names entity 12 of its parent map, which holds 11".to_string(),
+                "  note   far entity 4 counts 3 children and the sources hold 1: the others are in a map that is not among the sources, and lose their parent".to_string(),
+                "would change far/metadata.xml: 1 entity taken out (4), the count of children of entity 6 lowered from 2 to 1, 1 LOD link renumbered, 3 LOD links into the parent map renumbered".to_string(),
+                "would change near/metadata.xml: 1 LOD link into the parent map renumbered".to_string(),
+                "  stays  the collision and the occluders of what goes: a deletion does not reach them".to_string(),
+            ]
+        );
+
+        let applied = deletion_lines(&planned, true);
+        assert!(
+            applied[11].starts_with("changed far/metadata.xml: "),
+            "{applied:?}"
+        );
+        assert!(
+            applied[12].starts_with("changed near/metadata.xml: "),
+            "{applied:?}"
+        );
+
+        let nothing = Deletion {
+            goes: Vec::new(),
+            stays: Vec::new(),
+            ambiguous: Vec::new(),
+            notes: Vec::new(),
+            files: Vec::new(),
+            ..planned
+        };
+        assert_eq!(deletion_lines(&nothing, false), Vec::<String>::new());
+    }
 }

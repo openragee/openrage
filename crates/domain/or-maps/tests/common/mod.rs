@@ -1,6 +1,8 @@
-//! What the suites of this crate share: the mount of an install.
+//! What the suites of this crate share: the mount of an install, and the deletion of one entity of a map with its chain.
 
 #![allow(dead_code)]
+
+pub mod chain;
 
 use std::path::Path;
 use std::sync::Arc;

@@ -6,7 +6,9 @@
 //! [`or_project::Contribution`], [`manifest`] is the manifest of its maps, written from the manifests of the game the module keeps,
 //! [`verify`] reads a build back, [`adopt`] recognises a folder of maps and starts an empty one, and
 //! [`import`] makes sources of game files. [`edit`] changes what an entity or an archetype says in its source, [`operation`] names each
-//! of those changes as data with an inverse and holds the sources of a pack open as a session that writes them once, [`scene`] says what a set places as boxes in the world, and [`gizmo`] is the manipulator
+//! of those changes as data with an inverse and holds the sources of a pack open as a session that writes them once, [`delete`] plans
+//! the removal of an entity with its chain of far models across the map files of a pack as a list of them, [`scene`] says what a set
+//! places as boxes in the world, and [`gizmo`] is the manipulator
 //! that moves, turns and scales one. [`place`] reads what a person pastes into a search field as a position, a hash or text, and
 //! [`script_text`] writes a position as the text a script takes. `openrage-cli maps` runs the first part, and a list of operations,
 //! without the editor.
@@ -22,6 +24,7 @@
 
 pub mod adopt;
 pub mod changes;
+pub mod delete;
 pub mod edit;
 pub mod facts;
 pub mod gizmo;

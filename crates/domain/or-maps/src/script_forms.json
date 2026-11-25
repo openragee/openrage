@@ -11,6 +11,7 @@
       "list_item": "\n    { name = \"{name}\", coords = {place} }",
       "list_separator": ",",
       "list_close": "\n}",
+      "hide_model": "CreateModelHide({x}, {y}, {z}, {radius}, {hash}, true) -- {name}",
       "escapes": { "\\": "\\\\", "\"": "\\\"" }
     },
     {
@@ -22,6 +23,7 @@
       "list_item": "\n  {\"name\": \"{name}\", \"position\": {place}}",
       "list_separator": ",",
       "list_close": "\n]",
+      "hide_model": "{\"model\": {hash}, \"name\": \"{name}\", \"x\": {x}, \"y\": {y}, \"z\": {z}, \"radius\": {radius}}",
       "escapes": { "\\": "\\\\", "\"": "\\\"" }
     },
     {
@@ -33,6 +35,7 @@
       "list_item": "\n    new { Name = \"{name}\", Position = {place} }",
       "list_separator": ",",
       "list_close": "\n};",
+      "hide_model": "API.CreateModelHide({x}f, {y}f, {z}f, {radius}f, {hash}u, true); // {name}",
       "escapes": { "\\": "\\\\", "\"": "\\\"", "\u2028": "\\u2028", "\u2029": "\\u2029" }
     }
   ]

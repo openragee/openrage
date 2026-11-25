@@ -384,7 +384,7 @@ fn print_usage() {
     eprintln!("  wardrobe   Clothing packs: validate, plan, build, diff, import, fix and optimise textures");
     eprintln!("  addonped   Addon peds: validate and verify");
     eprintln!("  particles  Particles: list, validate and verify");
-    eprintln!("  maps       Maps: list, validate, verify, changes of a map from its base, apply operations and keep a manifest of the game");
+    eprintln!("  maps       Maps: list, validate, verify, changes of a map from its base, apply operations, delete entities and keep a manifest of the game");
     eprintln!("  weapons    Weapons: validate and verify");
     eprintln!("  photo      A WebP picture of each model in a folder or the game, with no window");
     eprintln!(

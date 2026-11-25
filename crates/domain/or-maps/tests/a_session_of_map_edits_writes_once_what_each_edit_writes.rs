@@ -13,12 +13,13 @@ use or_io::meta::{MetaInstance, Value};
 use or_maps::edit::{read_archetype, read_entity};
 use or_maps::import::{add_files, Incoming};
 use or_maps::operation::{
-    apply, apply_all, digest_of, At, Error, Extents, Operation, PoseData, Record, Session,
+    apply, apply_all, digest_of, At, Error, Extents, Inserted, Operation, PoseData, Record, Session,
 };
-use or_maps::sample::{map_file, types_file, Archetype, Entity};
+use or_maps::sample::{child_map_file, map_file, types_file, Archetype, Entity};
 
 const HARBOUR: &str = "harbour.metadata.src";
 const YARD: &str = "yard.metadata.src";
+const PIER: &str = "pier.metadata.src";
 const TYPES: &str = "harbour_types.metadata.src";
 
 fn incoming(name: &'static str, bytes: Vec<u8>) -> Incoming<'static> {
@@ -84,6 +85,31 @@ fn pack(dir: &Path) -> PathBuf {
             incoming("harbour_types.ytyp", types),
         ],
     )
+}
+
+/// The pack of [`pack`] with `pier`, whose parent map is `harbour` and whose two entities name its entities 0 and 3 as their LOD parents.
+fn pack_with_a_child_map(dir: &Path) -> PathBuf {
+    let folder = pack(dir);
+    let pier = child_map_file(
+        "pier",
+        "harbour",
+        &[
+            Entity {
+                parent: 0,
+                in_parent_map: true,
+                ..Entity::at("prop_crate_a", [30.0, 20.0, 0.5], 21)
+            },
+            Entity {
+                parent: 3,
+                in_parent_map: true,
+                ..Entity::at("prop_crate_b", [34.0, 20.0, 0.5], 22)
+            },
+        ],
+        ([0.0; 3], [100.0; 3]),
+    );
+    let added = add_files(&folder, &[incoming("pier.ymap", pier)], None).unwrap();
+    assert_eq!(added.refused, Vec::<(String, String)>::new());
+    folder
 }
 
 /// Every file under `folder`, by its path inside it.
@@ -320,6 +346,47 @@ const STEPS: &[Step] = &[
         }
     },
     |_| place(YARD, 0, [-90.0, 61.0, 1.0]),
+    // Two entities at once, named last first, with one renumbering.
+    |_| Operation::RemoveEntities {
+        source: HARBOUR.into(),
+        entities: vec![3, 1],
+        extents: None,
+        expects: None,
+    },
+    // Two copies of an entity of another source put in at once.
+    |folder| {
+        let record = Record::entity(&read_entity(&folder.join(YARD), 0).unwrap()).unwrap();
+        let put = |entity| Inserted {
+            entity,
+            record: record.clone(),
+            children: Vec::new(),
+        };
+        Operation::InsertEntities {
+            source: HARBOUR.into(),
+            entities: vec![put(2), put(1)],
+            num_children: Vec::new(),
+            extents: None,
+            expects: None,
+        }
+    },
+    |_| Operation::SetNumChildren {
+        source: HARBOUR.into(),
+        entity: 0,
+        num_children: 7,
+        expects: None,
+    },
+    // The links of `pier` into its parent map, for the entity 1 taken out of that map: the link to 3 names 2.
+    |_| Operation::RenumberForRemoved {
+        source: PIER.into(),
+        removed: vec![1],
+        expects: None,
+    },
+    // And for an entity put in at its start: both links name the one after.
+    |_| Operation::RenumberForInserted {
+        source: PIER.into(),
+        inserted: vec![0],
+        expects: None,
+    },
 ];
 
 /// The names of the operations, as the type itself lists them when it refuses a name.
@@ -337,7 +404,7 @@ fn variants() -> BTreeSet<String> {
 
 #[test]
 fn a_list_done_through_a_session_and_flushed_once_leaves_what_doing_it_one_by_one_leaves() {
-    let (_scratch, [one_by_one, flushed_once, flushed_each]) = copies(pack);
+    let (_scratch, [one_by_one, flushed_once, flushed_each]) = copies(pack_with_a_child_map);
     let imported = files(&one_by_one);
     assert_eq!(
         differing(&imported, &files(&flushed_once)),
@@ -374,8 +441,9 @@ fn a_list_done_through_a_session_and_flushed_once_leaves_what_doing_it_one_by_on
                 done.inverse
                     .expects()
                     .map(|d| d == applied.inverse.expects().unwrap()),
-                // What a rewrite leaves is an XML, which has its digest; a root an operation changed has none yet.
-                Some(name == "rewrite_source"),
+                // What a rewrite leaves is an XML, which has its digest, and so has what several entities put in at once leave, an
+                // operation no session holds to be sure and does as `apply` does it; a root an operation changed has none yet.
+                Some(matches!(name, "rewrite_source" | "insert_entities")),
                 "step {number} ({name}), {way}"
             );
         }
@@ -417,7 +485,7 @@ fn a_list_done_through_a_session_and_flushed_once_leaves_what_doing_it_one_by_on
             .iter()
             .map(|w| w.source.as_str())
             .collect::<Vec<_>>(),
-        [HARBOUR, TYPES, YARD]
+        [HARBOUR, TYPES, PIER, YARD]
     );
     for source in &written {
         assert_eq!(

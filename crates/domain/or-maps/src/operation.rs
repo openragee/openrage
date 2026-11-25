@@ -13,7 +13,7 @@
 //! XML is the export of the file it cooks to and the inverse, read back from its JSON and applied to the edited file, saves the file as it
 //! was. Otherwise the inverse is [`Operation::RewriteSource`] with the XML as it was: XML a person typed by hand, which the first edit
 //! rewrites whole, a file whose links no renumbering restores, and a file the last record of a class was taken out of, which read
-//! again from its XML saves no record of that class, are put back that way.
+//! again from its XML saves no record of that class (a map file left with no entity is one), are put back that way.
 //!
 //! ⚠ **An inverse states what it applies to.** An operation may state `expects`, the digest of the XML its source is to hold
 //! ([`digest_of`]), and is refused when the source holds another ([`Error::Stale`]). Every inverse states the digest of the XML its
@@ -22,6 +22,11 @@
 //!
 //! [`Session`] holds the sources of a pack open as typed roots, does an operation to a root with no XML produced, and writes the
 //! sources when it is flushed: what an edit costs on a large map is in `tests/what_one_pose_edit_costs.rs`.
+//!
+//! ⚠ **A LOD link into a parent map is another file's to keep.** An entity whose `flags` bit 3 is set names an index of the map its own
+//! names as parent, so taking entities out of one file moves indexes a second file holds and lowers a count a third states. The
+//! operations that say so are `remove_entities`, `set_num_children` and `renumber_for_removed`, with the two that take them back, and
+//! [`crate::delete`] writes the list of them that removes an entity with its chain.
 //!
 //! ⚠ **The boxes the extents grow to hold are the pack's own.** An operation that places an entity reads the type files of every map set
 //! that names its source, the first to declare a name winning, so what it writes does not depend on which set a screen shows. An entity
@@ -341,6 +346,26 @@ impl<'de> Deserialize<'de> for Record {
     }
 }
 
+/// One entity an [`Operation::InsertEntities`] puts into a map file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Inserted {
+    /// Its index once every entity of the operation is in.
+    pub entity: usize,
+    pub record: Record,
+    /// The entities, by their index before the insertion, that name the record as their LOD parent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<usize>,
+}
+
+/// The children an entity of a map file is to count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Counted {
+    pub entity: usize,
+    pub num_children: u32,
+}
+
 /// One edit of a source of a pack of maps, by the name its JSON states as `op`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
@@ -388,6 +413,49 @@ pub enum Operation {
         children: Vec<usize>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         extents: Option<Extents>,
+    },
+    /// Take several entities out of a map file at once, with the LOD links inside the file renumbered once, and state `extents` when it carries some.
+    RemoveEntities {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        entities: Vec<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        extents: Option<Extents>,
+    },
+    /// Put several entities into a map file with the LOD links a removal of them took: what takes that removal back.
+    InsertEntities {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        entities: Vec<Inserted>,
+        /// The children the entities named here are to count, by their index after the insertion.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        num_children: Vec<Counted>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        extents: Option<Extents>,
+    },
+    /// State the children an entity of a map file counts: what a deletion in a map whose parent this one is lowers.
+    SetNumChildren {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        entity: usize,
+        num_children: u32,
+    },
+    /// Renumber the LOD links of a map file into its parent map for entities taken out of that map, named by their indexes there before.
+    RenumberForRemoved {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        removed: Vec<usize>,
+    },
+    /// Renumber the LOD links of a map file into its parent map for entities put into that map, named by their indexes there after.
+    RenumberForInserted {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        inserted: Vec<usize>,
     },
     /// Put a record in the place of an entity of a map file, and state `extents` when it carries some: what takes a pose or a name back.
     ReplaceEntity {
@@ -464,6 +532,11 @@ impl Operation {
             Self::AddEntity { .. } => "add_entity",
             Self::RemoveEntity { .. } => "remove_entity",
             Self::InsertEntity { .. } => "insert_entity",
+            Self::RemoveEntities { .. } => "remove_entities",
+            Self::InsertEntities { .. } => "insert_entities",
+            Self::SetNumChildren { .. } => "set_num_children",
+            Self::RenumberForRemoved { .. } => "renumber_for_removed",
+            Self::RenumberForInserted { .. } => "renumber_for_inserted",
             Self::ReplaceEntity { .. } => "replace_entity",
             Self::GrowExtents { .. } => "grow_extents",
             Self::SetExtents { .. } => "set_extents",
@@ -482,6 +555,11 @@ impl Operation {
             | Self::AddEntity { source, .. }
             | Self::RemoveEntity { source, .. }
             | Self::InsertEntity { source, .. }
+            | Self::RemoveEntities { source, .. }
+            | Self::InsertEntities { source, .. }
+            | Self::SetNumChildren { source, .. }
+            | Self::RenumberForRemoved { source, .. }
+            | Self::RenumberForInserted { source, .. }
             | Self::ReplaceEntity { source, .. }
             | Self::GrowExtents { source, .. }
             | Self::SetExtents { source, .. }
@@ -500,6 +578,11 @@ impl Operation {
             | Self::AddEntity { expects, .. }
             | Self::RemoveEntity { expects, .. }
             | Self::InsertEntity { expects, .. }
+            | Self::RemoveEntities { expects, .. }
+            | Self::InsertEntities { expects, .. }
+            | Self::SetNumChildren { expects, .. }
+            | Self::RenumberForRemoved { expects, .. }
+            | Self::RenumberForInserted { expects, .. }
             | Self::ReplaceEntity { expects, .. }
             | Self::GrowExtents { expects, .. }
             | Self::SetExtents { expects, .. }
@@ -518,6 +601,11 @@ impl Operation {
             | Self::AddEntity { expects, .. }
             | Self::RemoveEntity { expects, .. }
             | Self::InsertEntity { expects, .. }
+            | Self::RemoveEntities { expects, .. }
+            | Self::InsertEntities { expects, .. }
+            | Self::SetNumChildren { expects, .. }
+            | Self::RenumberForRemoved { expects, .. }
+            | Self::RenumberForInserted { expects, .. }
             | Self::ReplaceEntity { expects, .. }
             | Self::GrowExtents { expects, .. }
             | Self::SetExtents { expects, .. }
@@ -707,6 +795,192 @@ fn name_of(text: &str) -> Name {
     }
 }
 
+/// `indexes` in ascending order; a list that names none, or one twice, is refused.
+fn ascending(indexes: &[usize]) -> Result<Vec<usize>, String> {
+    let mut sorted = indexes.to_vec();
+    sorted.sort_unstable();
+    if sorted.is_empty() {
+        return Err("no entity is named".to_string());
+    }
+    match sorted.windows(2).find(|pair| pair[0] == pair[1]) {
+        Some(pair) => Err(format!("entity {} is named twice", pair[0])),
+        None => Ok(sorted),
+    }
+}
+
+/// Where the entity at `index` stands once the entities at `removed`, ascending, are taken out; it is not one of them.
+fn after_removal(index: usize, removed: &[usize]) -> usize {
+    index - removed.partition_point(|gone| *gone < index)
+}
+
+/// Where the entity at `index` stands once entities stand at `inserted`, ascending.
+fn after_insertion(index: usize, inserted: &[usize]) -> usize {
+    (inserted.iter()).fold(index, |at, put| if at >= *put { at + 1 } else { at })
+}
+
+/// `index` as a LOD link states it.
+fn link(index: usize) -> Result<i32, String> {
+    i32::try_from(index).map_err(|_| format!("entity {index} is past what a LOD link can name"))
+}
+
+/// The entity `entity` names as its LOD parent in its own map file, when it names one that is not itself.
+fn local_parent(entity: &CEntityDefAny, index: usize) -> Option<usize> {
+    usize::try_from(entity.parent_index)
+        .ok()
+        .filter(|parent| *parent != index && !in_parent_map(entity.flags))
+}
+
+/// Take the entities `named` out of `map` with one renumbering, and say what puts them back; a refusal leaves `map` as it was.
+fn remove_entities(
+    map: &mut CMapData,
+    named: &[usize],
+) -> Result<(Vec<Inserted>, Vec<Counted>), String> {
+    let removed = ascending(named)?;
+    let held = map.entities.len();
+    if let Some(past) = removed.iter().find(|index| **index >= held) {
+        return Err(format!("entity {past} is past the {held} the map holds"));
+    }
+    let goes = |index: usize| removed.binary_search(&index).is_ok();
+    // The entities that stay and name one that goes, by where they stand afterwards.
+    let mut orphans: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (index, entity) in map.entities.iter().enumerate() {
+        if goes(index) {
+            continue;
+        }
+        if let Some(parent) = local_parent(entity, index).filter(|parent| goes(*parent)) {
+            (orphans.entry(parent).or_default()).push(after_removal(index, &removed));
+        }
+    }
+    // ⚠ Every record is read before the first change: a session keeps the map an operation was refused on.
+    let mut inserted = Vec::with_capacity(removed.len());
+    for &index in &removed {
+        inserted.push(Inserted {
+            entity: index,
+            record: Record::entity(&map.entities[index])?,
+            children: orphans.remove(&index).unwrap_or_default(),
+        });
+    }
+    // The parents that stay, with the children each counted before one of them went.
+    let mut counted: BTreeMap<usize, u32> = BTreeMap::new();
+    for &index in &removed {
+        let parent = local_parent(&map.entities[index], index).filter(|parent| !goes(*parent));
+        if let Some((parent, stays)) = parent.and_then(|p| Some((p, map.entities.get_mut(p)?))) {
+            counted.entry(parent).or_insert(stays.num_children);
+            stays.num_children = stays.num_children.saturating_sub(1);
+        }
+    }
+    for (index, entity) in map.entities.iter_mut().enumerate() {
+        if goes(index) || in_parent_map(entity.flags) {
+            continue;
+        }
+        let Ok(parent) = usize::try_from(entity.parent_index) else {
+            continue;
+        };
+        // A link to an entity that stays names one no later than it did, which a link can state.
+        entity.parent_index = match link(after_removal(parent, &removed)) {
+            Ok(stated) if !goes(parent) => stated,
+            _ => -1,
+        };
+    }
+    let mut index = 0;
+    map.entities.retain(|_| {
+        index += 1;
+        !goes(index - 1)
+    });
+    let counted = (counted.into_iter())
+        .map(|(entity, num_children)| Counted {
+            entity,
+            num_children,
+        })
+        .collect();
+    Ok((inserted, counted))
+}
+
+/// Put the entities `named` into `map` at the indexes they state, with one renumbering, and state the counts of `counted`; the indexes they stand at. A refusal leaves `map` as it was.
+fn insert_entities(
+    map: &mut CMapData,
+    named: &[Inserted],
+    counted: &[Counted],
+) -> Result<Vec<usize>, String> {
+    let mut sorted: Vec<&Inserted> = named.iter().collect();
+    sorted.sort_by_key(|put| put.entity);
+    let inserted = ascending(&sorted.iter().map(|put| put.entity).collect::<Vec<_>>())?;
+    let held = map.entities.len();
+    for (earlier, index) in inserted.iter().enumerate() {
+        if *index > held + earlier {
+            return Err(format!(
+                "entity {index} is past the end of the {} the map holds by then",
+                held + earlier
+            ));
+        }
+    }
+    let total = held + inserted.len();
+    link(total)?;
+    let records = (sorted.iter())
+        .map(|put| put.record.as_entity())
+        .collect::<Result<Vec<_>, _>>()?;
+    let children = sorted.iter().flat_map(|put| &put.children);
+    if let Some(past) = children.clone().find(|child| **child >= held) {
+        return Err(format!("child {past} is past the {held} the map holds"));
+    }
+    if let Some(past) = counted.iter().find(|count| count.entity >= total) {
+        return Err(format!(
+            "entity {} is past the {total} the map holds once they are in",
+            past.entity
+        ));
+    }
+    for (index, record) in inserted.iter().zip(&records) {
+        links_hold(record, *index, total)?;
+    }
+    // ⚠ Every refusal comes before the first change: a session keeps the map an operation was refused on.
+    let mut renumbered = Vec::new();
+    for (at, entity) in map.entities.iter().enumerate() {
+        if in_parent_map(entity.flags) {
+            continue;
+        }
+        if let Ok(parent) = usize::try_from(entity.parent_index) {
+            renumbered.push((at, link(after_insertion(parent, &inserted))?));
+        }
+    }
+    for (at, stated) in renumbered {
+        map.entities[at].parent_index = stated;
+    }
+    for put in &sorted {
+        for child in &put.children {
+            // An index of an entity that goes in, which `total` showed a link can state.
+            map.entities[*child].parent_index = link(put.entity)?;
+        }
+    }
+    for (index, record) in inserted.iter().zip(records) {
+        map.entities.insert(*index, record);
+    }
+    for count in counted {
+        map.entities[count.entity].num_children = count.num_children;
+    }
+    Ok(inserted)
+}
+
+/// Renumber the links of `map` into its parent map by `moved`, which is given each index a link names; how many links there are. A refusal leaves `map` as it was.
+fn renumber_into_parent(
+    map: &mut CMapData,
+    moved: impl Fn(usize, usize) -> Result<usize, String>,
+) -> Result<usize, String> {
+    let mut renumbered = Vec::new();
+    for (index, entity) in map.entities.iter().enumerate() {
+        if !in_parent_map(entity.flags) {
+            continue;
+        }
+        if let Ok(parent) = usize::try_from(entity.parent_index) {
+            renumbered.push((index, link(moved(index, parent)?)?));
+        }
+    }
+    let links = renumbered.len();
+    for (index, stated) in renumbered {
+        map.entities[index].parent_index = stated;
+    }
+    Ok(links)
+}
+
 /// Refuse `record` at `index` of a map of `len` entities when the LOD parent it names in this map is itself or past the entities: an index the game trusts, which a save refuses.
 fn links_hold(record: &CEntityDefAny, index: usize, len: usize) -> Result<(), String> {
     if in_parent_map(record.flags) {
@@ -737,28 +1011,30 @@ fn classes(value: &Value, into: &mut BTreeSet<String>) {
     }
 }
 
-/// Whether the file still holds a record of every class of the record `index` of `held` once that one is taken out, or `replacing` stands in its place.
+/// Whether the file still holds a record of every class of the records `taken` of `held` once those are taken out, or `replacing` stands in their place.
 ///
 /// ⚠ A file read again from the XML an operation wrote names the classes its records are of and saves no record of another, so the
 /// record that was the last of its class is not put back there, though it is on the file the operation was done to.
 fn classes_stay<E>(
     held: &[E],
-    index: usize,
+    taken: &[usize],
     replacing: Option<&Record>,
     record: fn(&E) -> Result<Record, String>,
 ) -> bool {
-    // What the operation refuses needs no inverse.
-    let Some(Ok(taken)) = held.get(index).map(record) else {
-        return true;
-    };
     let mut needed = BTreeSet::new();
-    classes(&taken.0, &mut needed);
+    for index in taken {
+        // What the operation refuses needs no inverse.
+        let Some(Ok(taken)) = held.get(*index).map(record) else {
+            return true;
+        };
+        classes(&taken.0, &mut needed);
+    }
     let mut stay = BTreeSet::new();
     if let Some(replacing) = replacing {
         classes(&replacing.0, &mut stay);
     }
     // The other records are read only until every class is found, which among records of one class is the first of them.
-    let mut others = (held.iter().enumerate()).filter(|(at, _)| *at != index);
+    let mut others = (held.iter().enumerate()).filter(|(at, _)| !taken.contains(at));
     while !needed.is_subset(&stay) {
         match others.next() {
             Some((_, other)) => {
@@ -777,8 +1053,9 @@ fn classes_stay<E>(
 /// ⚠ A map that saves has every LOD parent inside it, which is what makes a removal and an insertion each other's inverse. What is
 /// not sure is proven by a save, as [`proven`] and [`restores`] do it: extents that are not finite, which an inverse could not state
 /// again, an insertion that claims a child another entity has, or leaves its parent a count a removal would not bring back, an
-/// entity taken out whose class may leave the file with it ([`classes_stay`]), and the first entity of a map that holds none,
-/// which is built here ([`first_entity`]) and which only a save shows the file to lay out.
+/// entity taken out whose class may leave the file with it ([`classes_stay`]), the first entity of a map that holds none,
+/// which is built here ([`first_entity`]) and which only a save shows the file to lay out, and several entities put in at once,
+/// whose children and counts nothing short of the removal that gave them shows to be the ones a removal brings back.
 fn sure_in_map(map: &CMapData, operation: &Operation) -> bool {
     if Extents::of(map).finite().is_err() {
         return false;
@@ -786,10 +1063,14 @@ fn sure_in_map(map: &CMapData, operation: &Operation) -> bool {
     match operation {
         Operation::AddEntity { .. } => return !map.entities.is_empty(),
         Operation::RemoveEntity { entity, .. } => {
-            return classes_stay(&map.entities, *entity, None, Record::entity)
+            return classes_stay(&map.entities, &[*entity], None, Record::entity)
         }
+        Operation::RemoveEntities { entities, .. } => {
+            return classes_stay(&map.entities, entities, None, Record::entity)
+        }
+        Operation::InsertEntities { .. } => return false,
         Operation::ReplaceEntity { entity, record, .. } => {
-            return classes_stay(&map.entities, *entity, Some(record), Record::entity)
+            return classes_stay(&map.entities, &[*entity], Some(record), Record::entity)
         }
         _ => {}
     }
@@ -834,7 +1115,7 @@ fn sure_in_types(types: &CMapTypes, operation: &Operation) -> bool {
         (types.archetypes.iter().enumerate()).any(|(at, a)| at != but && a.name.hash == hash)
     };
     let stay = |index: usize, replacing: Option<&Record>| {
-        classes_stay(&types.archetypes, index, replacing, Record::archetype)
+        classes_stay(&types.archetypes, &[index], replacing, Record::archetype)
     };
     match operation {
         Operation::AddArchetype { .. } => !types.archetypes.is_empty(),
@@ -1031,6 +1312,91 @@ fn change_map(
             };
             Ok((inverse, Some(index)))
         }
+        Operation::RemoveEntities {
+            entities, extents, ..
+        } => {
+            if let Some(extents) = extents {
+                extents.finite()?;
+            }
+            let (inserted, num_children) = remove_entities(map, entities)?;
+            if let Some(extents) = extents {
+                extents.state(map)?;
+            }
+            let inverse = Operation::InsertEntities {
+                source,
+                expects: None,
+                entities: inserted,
+                num_children,
+                extents: was.unless_stated_by(map),
+            };
+            Ok((inverse, None))
+        }
+        Operation::InsertEntities {
+            entities,
+            num_children,
+            extents,
+            ..
+        } => {
+            if let Some(extents) = extents {
+                extents.finite()?;
+            }
+            let inserted = insert_entities(map, entities, num_children)?;
+            if let Some(extents) = extents {
+                extents.state(map)?;
+            }
+            let inverse = Operation::RemoveEntities {
+                source,
+                expects: None,
+                entities: inserted,
+                extents: was.unless_stated_by(map),
+            };
+            Ok((inverse, None))
+        }
+        Operation::SetNumChildren {
+            entity,
+            num_children,
+            ..
+        } => {
+            let held = map.entities.len();
+            let counting = (map.entities.get_mut(*entity))
+                .ok_or_else(|| format!("entity {entity} is past the {held} the map holds"))?;
+            let inverse = Operation::SetNumChildren {
+                source,
+                expects: None,
+                entity: *entity,
+                num_children: counting.num_children,
+            };
+            counting.num_children = *num_children;
+            Ok((inverse, None))
+        }
+        Operation::RenumberForRemoved { removed, .. } => {
+            let removed = ascending(removed)?;
+            renumber_into_parent(map, |index, parent| {
+                if removed.binary_search(&parent).is_ok() {
+                    // ⚠ A link with nothing to name would be put back by no renumbering: the entity goes first.
+                    return Err(format!(
+                        "entity {index} names entity {parent} of the parent map as its LOD parent, which is taken out: take entity {index} out of this map first"
+                    ));
+                }
+                Ok(after_removal(parent, &removed))
+            })?;
+            let inverse = Operation::RenumberForInserted {
+                source,
+                expects: None,
+                inserted: removed,
+            };
+            Ok((inverse, None))
+        }
+        Operation::RenumberForInserted { inserted, .. } => {
+            let inserted = ascending(inserted)?;
+            renumber_into_parent(map, |_, parent| Ok(after_insertion(parent, &inserted)))?;
+            let inverse = Operation::RenumberForRemoved {
+                source,
+                expects: None,
+                removed: inserted,
+            };
+            Ok((inverse, None))
+        }
         Operation::ReplaceEntity {
             entity,
             record,
@@ -1180,6 +1546,11 @@ fn change_types(
         | Operation::AddEntity { .. }
         | Operation::RemoveEntity { .. }
         | Operation::InsertEntity { .. }
+        | Operation::RemoveEntities { .. }
+        | Operation::InsertEntities { .. }
+        | Operation::SetNumChildren { .. }
+        | Operation::RenumberForRemoved { .. }
+        | Operation::RenumberForInserted { .. }
         | Operation::ReplaceEntity { .. }
         | Operation::GrowExtents { .. }
         | Operation::SetExtents { .. }
@@ -1199,6 +1570,9 @@ fn problems(found: Vec<or_source::Problem>) -> String {
 }
 
 /// `inverse` as its JSON reads back, once doing that to the file `after` the change saves the bytes `was`.
+///
+/// ⚠ `after` is the root the change was made to, which still holds what the file it was read from declared: an entity goes back into
+/// that root, and into no map file read again with none where no schema snapshot is staged. [`restores`] is the proof on that file.
 fn proven<R: File + Clone>(
     after: &R,
     inverse: &Operation,
@@ -1360,6 +1734,11 @@ fn context(pack: &mut impl Pack, operation: &Operation) -> Result<Context, Strin
         }
         Operation::RemoveEntity { .. }
         | Operation::InsertEntity { .. }
+        | Operation::RemoveEntities { .. }
+        | Operation::InsertEntities { .. }
+        | Operation::SetNumChildren { .. }
+        | Operation::RenumberForRemoved { .. }
+        | Operation::RenumberForInserted { .. }
         | Operation::ReplaceEntity { .. }
         | Operation::SetExtents { .. }
         | Operation::RemoveArchetype { .. }
@@ -1598,6 +1977,13 @@ pub fn apply_all(
         work.commit()?;
     }
     Ok(applied)
+}
+
+/// The list that takes back the list whose operations did `applied`: the inverse of each, the last first.
+pub fn inverses(applied: &[Applied]) -> Vec<Operation> {
+    (applied.iter().rev())
+        .map(|done| done.inverse.clone())
+        .collect()
 }
 
 #[cfg(test)]

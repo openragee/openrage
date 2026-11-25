@@ -5,6 +5,9 @@
 //! and a list's item has `{name}` and `{place}`, the place being the form's own; any other brace is written as it is. Every
 //! number is written with the decimals the caller chose, and [`crate::place::read_pasted`] reads each built-in form back.
 //!
+//! A form may also hold `hide_model`, the line of a script that hides a model near a position and changes no file: `{x}`, `{y}`,
+//! `{z}`, `{radius}` and `{hash}`, the hash of the model's name as a number, with `{name}` where a person is to read which model it is.
+//!
 //! ⚠ **A heading is one turn about the vertical axis** ([`heading_of`]), which is all a script's heading holds: an object that
 //! also leans is written with the Z of the turns the Map screen shows, and a script that sets that heading stands it upright.
 
@@ -18,6 +21,9 @@ use crate::edit::Pose;
 /// What the `format` of a file of script forms says.
 pub const FORMAT: &str = "openrage-script-forms";
 pub const SCHEMA: u32 = 1;
+
+/// How far from the position a line that hides a model reaches when nothing says otherwise, in metres.
+pub const HIDE_RADIUS: f32 = 1.0;
 
 /// The most decimals a number is written with: a 32-bit number has no digit past them.
 pub const MOST_DECIMALS: usize = (f32::MANTISSA_DIGITS as i32 - f32::MIN_EXP) as usize;
@@ -77,6 +83,9 @@ pub struct ScriptForm {
     /// What stands between two items and never after the last.
     pub list_separator: String,
     pub list_close: String,
+    /// The line that hides a model: `{x}`, `{y}`, `{z}`, `{radius}` and `{hash}`, and `{name}` where it says which; a form may have none.
+    #[serde(default)]
+    pub hide_model: Option<String>,
     /// What a character of a name is written as inside the quotes of `list_item`.
     #[serde(default)]
     pub escapes: BTreeMap<char, String>,
@@ -152,11 +161,19 @@ impl ScriptForm {
             ),
             ("list_item", &self.list_item, &["name", "place"]),
         ];
-        for (template, text, filled) in templates {
-            for placeholder in ["x", "y", "z", "heading", "name", "place"] {
+        let hide: Option<(&'static str, &str, &[&'static str])> = (self.hide_model.as_deref())
+            .map(|text| ("hide_model", text, &["x", "y", "z", "radius", "hash"][..]));
+        for (template, text, filled) in templates.into_iter().chain(hide) {
+            for placeholder in ["x", "y", "z", "heading", "name", "place", "radius", "hash"] {
                 let held = text.contains(&format!("{{{placeholder}}}"));
                 let form = || self.id.clone();
+                // A line that hides a model may say its name, and a place has no radius or hash to hold as text.
+                let free = match template {
+                    "hide_model" => placeholder == "name",
+                    _ => matches!(placeholder, "radius" | "hash"),
+                };
                 match (held, filled.contains(&placeholder)) {
+                    _ if free => {}
                     (false, true) => {
                         return Err(Error::Lacks {
                             form: form(),
@@ -224,6 +241,36 @@ impl ScriptForm {
             items.join(&self.list_separator),
             self.list_close
         ))
+    }
+
+    /// The line that hides the model called `name`, whose hash is `hash`, within `radius` metres of `position`; none when the form has no such line.
+    pub fn hide_model(
+        &self,
+        name: &str,
+        hash: u32,
+        position: Vec3,
+        radius: f32,
+        decimals: usize,
+    ) -> Result<Option<String>, Error> {
+        let Some(template) = &self.hide_model else {
+            return Ok(None);
+        };
+        if !(position.is_finite() && radius.is_finite()) {
+            return Err(Error::NotFinite);
+        }
+        if decimals > MOST_DECIMALS {
+            return Err(Error::Decimals(decimals));
+        }
+        let [x, y, z] = position.to_array().map(|value| number(value, decimals));
+        let values = [
+            ("x", x),
+            ("y", y),
+            ("z", z),
+            ("radius", number(radius, decimals)),
+            ("hash", hash.to_string()),
+            ("name", self.quoted(name)?),
+        ];
+        Ok(Some(fill(template, &values)))
     }
 
     /// `name` as it stands between the quotes of an item.
@@ -616,6 +663,128 @@ mod tests {
                 form.place(position, None, 1).unwrap()
             )
         );
+    }
+
+    #[test]
+    fn every_form_of_the_tree_writes_the_line_that_hides_a_model_by_its_hash_at_its_place() {
+        let name = "prop_bench_01a";
+        let hash = or_io::string_hash(name.as_bytes());
+        let position = Vec3::new(125.5, -340.25, 28.0);
+        for form in &forms().forms {
+            let line = form
+                .hide_model(name, hash, position, 1.5, 2)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{} hides a model", form.id));
+            for written in [
+                "125.50",
+                "-340.25",
+                "28.00",
+                "1.50",
+                &hash.to_string(),
+                name,
+            ] {
+                assert_eq!(line.matches(written).count(), 1, "{written} in {line}");
+            }
+            assert!(!line.contains('\n'), "{line:?} is one line");
+        }
+        let forms = forms();
+        let hide = |id: &str| {
+            let form = forms.form(id).unwrap();
+            form.hide_model(name, hash, position, HIDE_RADIUS, 1)
+                .unwrap()
+                .unwrap()
+        };
+        assert_eq!(
+            hide("lua"),
+            format!("CreateModelHide(125.5, -340.2, 28.0, 1.0, {hash}, true) -- {name}")
+        );
+        assert_eq!(
+            hide("csharp"),
+            format!("API.CreateModelHide(125.5f, -340.2f, 28.0f, 1.0f, {hash}u, true); // {name}")
+        );
+        let json: serde_json::Value = serde_json::from_str(&hide("json")).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "model": hash, "name": name, "x": 125.5, "y": -340.2, "z": 28.0, "radius": 1.0 })
+        );
+    }
+
+    #[test]
+    fn a_form_with_no_line_that_hides_a_model_offers_none_and_one_that_could_not_be_filled_is_refused(
+    ) {
+        let changed = |change: &dyn Fn(&mut serde_json::Value)| {
+            let mut file: serde_json::Value = serde_json::from_str(BUILT_IN).unwrap();
+            change(&mut file);
+            ScriptForms::from_json(&file.to_string())
+        };
+        let position = Vec3::new(125.5, -340.25, 28.0);
+        let without = changed(&|file| {
+            file["forms"][0]
+                .as_object_mut()
+                .expect("a form is an object")
+                .remove("hide_model")
+                .expect("the form hid a model");
+        })
+        .expect("a form that hides no model reads");
+        assert!(matches!(
+            without.forms[0].hide_model("prop", 7, position, 1.0, 2),
+            Ok(None)
+        ));
+        assert!(matches!(
+            changed(&|file| file["forms"][0]["hide_model"] = "Hide({x}, {y}, {z}, {radius})".into()),
+            Err(Error::Lacks { form, template: "hide_model", placeholder: "hash" }) if form == "lua"
+        ));
+        assert!(matches!(
+            changed(&|file| file["forms"][1]["hide_model"] = "Hide({x}, {y}, {z}, {hash})".into()),
+            Err(Error::Lacks { form, template: "hide_model", placeholder: "radius" }) if form == "json"
+        ));
+        assert!(matches!(
+            changed(&|file| file["forms"][0]["hide_model"] =
+                "Hide({x}, {y}, {z}, {radius}, {hash}, {heading})".into()),
+            Err(Error::Stray { form, template: "hide_model", placeholder: "heading" }) if form == "lua"
+        ));
+        // What a line that hides a model is filled with is, in a place, a brace like any other: written as it is.
+        let braces =
+            changed(&|file| file["forms"][0]["place"] = "at({x}, {y}, {z}) {radius} {hash}".into())
+                .expect("a place may hold a brace that nothing fills");
+        assert_eq!(
+            braces.forms[0].place(position, None, 0).unwrap(),
+            "at(126, -340, 28) {radius} {hash}"
+        );
+        // The name is said where the form has a place for it, and a line need not have one.
+        let bare = changed(&|file| {
+            file["forms"][0]["hide_model"] = "Hide({x}, {y}, {z}, {radius}, {hash})".into()
+        })
+        .expect("a line that does not say the name reads");
+        assert_eq!(
+            bare.forms[0]
+                .hide_model("prop", 7, position, 2.0, 0)
+                .unwrap()
+                .as_deref(),
+            Some("Hide(126, -340, 28, 2, 7)")
+        );
+
+        let forms = forms();
+        let form = forms.form("lua").unwrap();
+        for bad in [f32::NAN, f32::INFINITY] {
+            assert!(matches!(
+                form.hide_model("prop", 7, position, bad, 2),
+                Err(Error::NotFinite)
+            ));
+            assert!(matches!(
+                form.hide_model("prop", 7, Vec3::new(0.0, bad, 0.0), 1.0, 2),
+                Err(Error::NotFinite)
+            ));
+        }
+        assert!(matches!(
+            form.hide_model("prop", 7, position, 1.0, MOST_DECIMALS + 1),
+            Err(Error::Decimals(refused)) if refused == MOST_DECIMALS + 1
+        ));
+        // A name that ends the line would run the rest of it as script.
+        assert!(matches!(
+            form.hide_model("prop\nos.exit()", 7, position, 1.0, 2),
+            Err(Error::Name(_))
+        ));
     }
 
     #[test]

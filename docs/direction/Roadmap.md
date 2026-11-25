@@ -9812,12 +9812,12 @@ in `crates/domain/or-maps/src/operation.rs`, which the Map screen's edits and
 `openrage-cli maps apply` call (`an_operation_and_its_inverse_leave_the_sources_as_they_were`, on
 synthetic packs). A session holds the sources as typed roots and writes them once at a flush, as
 `apply` writes them one by one; an inverse states the digest or the session token it applies to,
-else it is refused; and the Map screen's Undo keeps the operation and its inverse
+or is refused; and the Map screen's Undo keeps the operation and its inverse
 (`a_session_of_map_edits_writes_once_what_each_edit_writes`). On a synthetic map of 20,000 entities
 a pose edit took 2.4 s one by one, and 0.83 ms with one flush of 2.2 s in a session
 (`one_pose_edit_is_timed_on_synthetic_maps_of_two_thousand_and_twenty_thousand_entities`, release,
-load average 70, 2026-11-25). And a map, an entity that is no copy, a type file and a base
-archetype made with no donor and no snapshot (`crates/domain/or-world/src/create.rs`), behind
+load average 70, 2026-11-25). And a map, a built entity, a type file and a base archetype made
+with no donor and no snapshot (`crates/domain/or-world/src/create.rs`), behind
 `openrage-cli world new-map` and `world archetypes`, which pass the rules of a pack
 (`a_map_and_a_type_file_made_from_nothing_enter_a_pack_and_break_none_of_its_rules`).
 
@@ -9827,11 +9827,11 @@ one written as PSO is a line of [R70a](#r70a-what-the-game-loads)'s sheet, and n
 install's donor. The first entity or archetype of a file that holds none is built that way,
 the last one taken out is put back by the XML, and an entity of an archetype the pack does not
 declare is held by the extents where it stands, said in a note
-(`crates/domain/or-maps/tests/an_operation_where_the_pack_holds_too_little.rs`). An entity taken
-out of a parent map leaves its child maps' links as they were, which the rule `parent-link-broken`
-names once one is past the end. Left: the Map screen on a session, links across files, the import,
-a new map and a built entity as operations, the donor and the install's boxes, History, the
-install measure.
+(`crates/domain/or-maps/tests/an_operation_where_the_pack_holds_too_little.rs`). A deletion
+planned by [R70k](#r70k-removing-what-the-game-placed) renumbers the links of the child maps; one
+entity taken out alone leaves them, which the rule `parent-link-broken` names once one is past the
+end. Left: the Map screen on a session, a create across files, the import, a new map and a built
+entity as operations, the donor and the install's boxes, History, the install measure.
 
 **Depends on.** Nothing in R70; it does the part of
 [R69h](#r69h-one-undo-for-the-tab-on-screen) a Map tab needs below the screen.
@@ -9917,10 +9917,20 @@ left; and the rule for a door left where a building was deleted. The building's 
 [R70o](#r70o-parked-vehicles-zones-lights-and-occluders)'s: until they land, the preview says both
 stay ([brief](World_Editor_Plan.md#removing-what-the-game-placed-r70k)).
 
-**Where it stands.** Not built. `MapGroup` and the working set delete an entity with its subtree and
-keep every link ([R32](#r32-world-data-ymap-ytyp-and-interiors),
-`executing_a_plan_keeps_every_link`), reached from `openrage-cli world` only and written only where
-a schema snapshot is staged.
+**Where it stands.** The chain is built for a pack whose sources hold the maps: `plan` in
+`crates/domain/or-maps/src/delete.rs` says what goes with the entities chosen, each far model that
+stays with its count lowered, each twin left and every file written, as one list of operations
+whose inverses put the files back, with the script line that hides a model and
+`openrage-cli maps delete`
+(`a_deletion_takes_the_chain_of_far_models_across_the_files_of_a_pack`, on packs built by hand,
+with no schema snapshot). Not run: `deleting_an_entity_of_the_install_keeps_every_link`, which
+needs an install; its body runs on maps built by hand
+(`the_checks_of_the_install_suite_hold_on_a_tree_of_maps_built_by_hand`). The plan renumbers the
+links of each child map among the sources and lowers the counts of the parents
+(`renumber_for_removed`, `set_num_children`); a map that is not among
+the sources keeps its links, and the rule `parent-link-broken` names one left past the end of its
+parent map. Left: the rule for a door, the preview on a screen, and the import of the game's maps a
+deletion reaches ([or-maps](../reference/Crate_Reference.md#domain-crates)).
 
 **Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits) and
 [R70i](#r70i-selecting-and-moving-in-the-world).

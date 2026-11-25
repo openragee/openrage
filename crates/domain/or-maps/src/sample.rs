@@ -125,6 +125,8 @@ pub struct Entity<'a> {
     pub scale: f32,
     pub guid: u32,
     pub parent: i32,
+    /// Whether `parent` is an index into the entities of the map this one names as its parent.
+    pub in_parent_map: bool,
     pub children: u32,
 }
 
@@ -137,15 +139,22 @@ impl<'a> Entity<'a> {
             scale: 1.0,
             guid,
             parent: -1,
+            in_parent_map: false,
             children: 0,
         }
     }
 }
 
+/// The flags of a sample entity that names its LOD parent in this map.
+const FLAGS: u64 = 32;
+/// The bit of an entity's flags that says its `parentIndex` is an index into the parent map.
+const LOD_IN_PARENT: u64 = 1 << 3;
+
 fn entity(e: &Entity<'_>) -> MetaInstance {
     let mut inst = MetaInstance::new("CEntityDef");
     inst.set("archetypeName", Value::Hash(HashedString::new(e.archetype)));
-    inst.set("flags", Value::UInt(32));
+    let in_parent = if e.in_parent_map { LOD_IN_PARENT } else { 0 };
+    inst.set("flags", Value::UInt(FLAGS | in_parent));
     inst.set("guid", Value::UInt(u64::from(e.guid)));
     inst.set("position", Value::Vec3(e.position));
     let stored = Placement::Entity.store(glam::Quat::from_rotation_z(e.yaw));
@@ -171,9 +180,28 @@ fn encode(root: &MetaInstance) -> Vec<u8> {
 
 /// A `.ymap` called `name` that places `entities`, whose extents are `extents` (the lowest and highest corner).
 pub fn map_file(name: &str, entities: &[Entity<'_>], extents: ([f32; 3], [f32; 3])) -> Vec<u8> {
+    map_under(name, HashedString::from_hash(0), entities, extents)
+}
+
+/// A `.ymap` called `name` whose parent map is `parent`, as [`map_file`] makes one.
+pub fn child_map_file(
+    name: &str,
+    parent: &str,
+    entities: &[Entity<'_>],
+    extents: ([f32; 3], [f32; 3]),
+) -> Vec<u8> {
+    map_under(name, HashedString::new(parent), entities, extents)
+}
+
+fn map_under(
+    name: &str,
+    parent: HashedString,
+    entities: &[Entity<'_>],
+    extents: ([f32; 3], [f32; 3]),
+) -> Vec<u8> {
     let mut root = MetaInstance::new("CMapData");
     root.set("name", Value::Hash(HashedString::new(name)));
-    root.set("parent", Value::Hash(HashedString::from_hash(0)));
+    root.set("parent", Value::Hash(parent));
     root.set("flags", Value::UInt(0));
     root.set("contentFlags", Value::UInt(65));
     root.set("streamingExtentsMin", Value::Vec3(extents.0));

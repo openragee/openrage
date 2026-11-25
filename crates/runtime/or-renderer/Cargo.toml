@@ -50,6 +50,8 @@ image.workspace = true
 # The shader pack manifest schema and the shader-name lookups, and
 # `half_to_f32` for the tests that read back half-float render targets.
 or-io.workspace = true
+# The day's floor on a light direction, which the shadow direction shares.
+or-title.workspace = true
 
 # Pre-flighting WGSL before wgpu sees it, since wgpu answers a bad module with
 # a panic rather than an error. Shared with the shader baker so both ends of

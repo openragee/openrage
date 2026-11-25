@@ -2,6 +2,7 @@
 //! Left out: the corona's reflection-phase, bit-11 and mode-2 near fades and its bit 4 and 9 multipliers (runtime values), the cascades' depth extension and margin, and the first-person and vehicle lambda overrides.
 
 use glam::{Vec3, Vec4};
+use or_title::gta6_day_sun::floor_light_direction;
 
 /// Hour a night lamp starts to fade on, before its offset, hours (the build's value at rest).
 pub const NIGHT_ON_HOUR: f64 = 18.0;
@@ -741,14 +742,6 @@ pub fn shadow_direction(toward_light: Vec3) -> Vec3 {
     let tilted_toward_light =
         Vec3::new(toward_light.x * scale, toward_light.y * scale, tilted.cos());
     -floor_light_direction(tilted_toward_light)
-}
-
-/// Lowest z of a light direction toward the light, unitless.
-const MIN_LIGHT_Z: f32 = 0.15;
-
-// Copied from the day track's sun_moon module, which or-renderer cannot reach: the lander keeps one of the two.
-fn floor_light_direction(direction: Vec3) -> Vec3 {
-    Vec3::new(direction.x, direction.y, direction.z.max(MIN_LIGHT_Z)).normalize()
 }
 
 /// Linear split distances for a cascade count (clamped to 1..=4), padded with the far split, metres.

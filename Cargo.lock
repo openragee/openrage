@@ -3382,6 +3382,7 @@ dependencies = [
  "or-io",
  "or-particle",
  "or-test-support",
+ "or-title",
  "pollster",
  "raw-window-handle",
  "rayon",

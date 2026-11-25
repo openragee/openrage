@@ -992,7 +992,8 @@ fn light_bytes(lighting: &Lighting, casts: bool) -> [u8; LIGHT_BYTES] {
     words[88..92].copy_from_slice(&sun_shadow::words(sky, casts));
     words[92..212].copy_from_slice(&sky.scene.words());
     words[212..228].copy_from_slice(&lighting.view_proj.to_cols_array());
-    for (held, fit) in words[228..].chunks_exact_mut(4).zip(env_fit::table()) {
+    let (fits, _) = words[228..].as_chunks_mut::<4>();
+    for (held, fit) in fits.iter_mut().zip(env_fit::table()) {
         held[..3].copy_from_slice(fit);
     }
     bytemuck::cast(words)

@@ -406,6 +406,11 @@ pub(crate) fn read(
         "dds" => ("Dds", parsed(or_io::dds::Dds::from_bytes(bytes))),
         // A binary world `.dat` has no tag to tell it from a text one: the game names each.
         "dat" => world_dat(leaf, bytes)?,
+        // The level's water is known by its file name, ahead of the metadata an `.xml` otherwise is.
+        "xml" if or_io::gta5::data::water::is_water_file(leaf) => (
+            "CWaterData",
+            parsed(or_io::gta5::data::water::CWaterData::open(bytes)),
+        ),
         "nametable" => (
             "NameTable",
             parsed(or_io::gta5::data::nametable::parse(bytes)),

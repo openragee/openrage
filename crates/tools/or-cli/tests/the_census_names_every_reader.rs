@@ -354,6 +354,13 @@ fn staged(dir: &Path, library: &SchemaLibrary) -> BTreeMap<&'static str, BTreeMa
             br#"<CEntityDef><flags value="2"/></CEntityDef>"#.to_vec(),
             "meta XML".into(),
         ),
+        // Known by its name among the `.xml` that is metadata.
+        (
+            "water.xml",
+            br#"<WaterData><WaterQuads><Item><minX value="0" /><maxX value="8" /><minY value="0" /><maxY value="4" /></Item></WaterQuads></WaterData>"#
+                .to_vec(),
+            "CWaterData".into(),
+        ),
         ("a.ymt", binary_meta(library, BinaryFormat::Pso), "meta PSO".into()),
         ("b.ymt", binary_meta(library, BinaryFormat::Rbm), "meta RBM".into()),
         ("c.ymt", binary_meta(library, BinaryFormat::Rbf), "meta RBF".into()),
@@ -456,8 +463,13 @@ fn the_verify_sweep_parses_every_synthetic_file_but_metadata() {
 
     let mut wrong = Vec::new();
     for (ext, readers) in &expected {
-        let files: u64 = readers.values().sum();
-        let want = (!METADATA.contains(ext)).then_some((files, 0));
+        // A water file is the one `.xml` the sweep parses.
+        let swept_here = |reader: &str| !METADATA.contains(ext) || reader == "CWaterData";
+        let files: u64 = (readers.iter())
+            .filter(|(reader, _)| swept_here(reader))
+            .map(|(_, count)| count)
+            .sum();
+        let want = (files > 0).then_some((files, 0));
         let got = swept.get(*ext).copied();
         if got != want {
             wrong.push(format!(

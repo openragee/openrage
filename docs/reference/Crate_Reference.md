@@ -99,7 +99,10 @@ back. The binary world tables are ordinary code behind no feature:
 `or_io::world_blanket` and `or_io::nav_precalc`, and so are the streaming cache
 files, `metadata.dat` and the audio sector grid (`or_io::cache_loader`,
 `or_io::social_club_metadata`, `or_io::audio_world_sectors`) and the `.mrf` move
-networks (`or_io::mrf`). `gta5::script::decompile`
+networks (`or_io::mrf`). The level's `water.xml` is ordinary code beside the other data
+files, `or_io::gta5::data::water`: `CWaterData` types its water, calming and wave quads,
+keeps every other element and attribute of the document for the save, and answers the
+height of the water over a point. `gta5::script::decompile`
 turns a script's bytecode into C-like source over the same reader as its
 disassembler.
 

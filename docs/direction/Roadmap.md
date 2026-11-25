@@ -9641,12 +9641,28 @@ shadows reach as a setting; and a measure of what drawing GTA V's materials thro
 shaders costs over the whole map, for the plan's ruling 9
 ([brief](World_Editor_Plan.md#the-day-sky-water-and-shadows-of-the-world-r70d)).
 
-**Where it stands.** Not built. For a GTA VI install the world has the install's day, the sun's
-shadow in cascades (`crates/runtime/or-renderer/src/world/shadow.rs`), the game's lighting passes,
-lamps, a sky and water ([the day](../features/GTA_VI_World_Viewer.md#the-day)). For GTA V the Shaded
-viewport lights one model from the install's timecycle
-([Viewport_Shading_Modes.md](../features/Viewport_Shading_Modes.md)), nothing feeds GTA V's day to
-the world, and `or-io` reads no GTA V water file.
+**Where it stands.** The water file reads and saves; nothing draws it, and nothing feeds GTA V's
+day to the world. `CWaterData` in `crates/io/or-io/src/gta5/data/water.rs` opens a `water.xml` into
+its water, calming and wave quads, keeps every element and attribute it does not type and writes
+them back, so an unchanged file saves to the bytes it came as and a changed value is written among
+them; a quad or a list the document did not hold is written with the document's own line endings
+and indentation (`what_the_document_did_not_hold_is_laid_out_as_the_document_is`); `height_at`
+answers the height of the water over a point, with a cut quad's half and a quad the game leaves
+out. `openrage-cli convert` and the formats census take the file by its name.
+Documents written by hand hold it, in `crates/io/or-io/src/gta5/data/water/tests.rs`:
+`a_document_reads_to_its_quads_and_saves_to_its_fixed_point`,
+`an_element_and_an_attribute_the_reader_does_not_name_survive_a_read_and_a_save`,
+`the_height_at_a_point_inside_a_quad_on_its_edge_and_outside_every_quad` and
+`each_refusal_names_its_element` among them. ⚠ No install's water file has been read: the list of
+what the reader types awaits one, `crates/title/or-title/tests/the_water_file_of_an_install.rs`
+holds the reader on a mount built by hand, and its test over a real install is in the slow tier and
+has not run. For a GTA VI install the world has the install's day, the sun's shadow in cascades
+(`crates/runtime/or-renderer/src/world/shadow.rs`), the game's lighting passes, lamps, a sky and
+water ([the day](../features/GTA_VI_World_Viewer.md#the-day)). For GTA V the Shaded viewport lights
+one model from the install's timecycle
+([Viewport_Shading_Modes.md](../features/Viewport_Shading_Modes.md)). Left: the water drawn, the
+feed of GTA V's timecycle and weather into the world's lighting, the shadow cascades and the sky,
+the distance shadows reach as a setting, and the measure of the game's own shaders.
 
 **Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn).
 

@@ -14,6 +14,7 @@ use or_io::container::resource::ResourceType;
 use or_io::container::resource::{ResourceEnvelope, Rsc7};
 use or_io::decl::{Gen8, Gen9, Raw, View};
 use or_io::distant_lights::DistantLights;
+use or_io::gta5::data::water::CWaterData;
 use or_io::gta5::drawable::DrawableTarget;
 use or_io::gta5::pose_db::PoseMatcherDatabase;
 use or_io::gta5::shaders::fxc::{FxcArchive, GrcEffect};
@@ -46,6 +47,7 @@ enum Subject {
     HeightMap,
     DistantLights,
     WaterMap,
+    WaterData,
     WorldBlanket,
     NavPrecalc,
     Mrf,
@@ -83,6 +85,9 @@ impl Subject {
                 return Some(Self::AudioWorldSectors);
             }
         }
+        if or_io::gta5::data::water::is_water_file(&name) {
+            return Some(Self::WaterData);
+        }
         let extension = path.extension().and_then(OsStr::to_str)?;
         if extension.eq_ignore_ascii_case("gxt2") {
             return Some(Self::Gxt2);
@@ -104,6 +109,7 @@ impl Subject {
             Self::Resource(resource) => Some(resource),
             Self::Gxt2 | Self::Ypdb | Self::Fxc | Self::HeightMap | Self::DistantLights => None,
             Self::WaterMap | Self::WorldBlanket | Self::NavPrecalc | Self::Mrf => None,
+            Self::WaterData => None,
             Self::CacheFile | Self::SocialClubMetadata | Self::AudioWorldSectors => None,
         }
     }
@@ -119,6 +125,7 @@ impl Subject {
             Self::HeightMap => "Height map (terrain height grid)".to_string(),
             Self::DistantLights => "Distant lights (far traffic and street lights)".to_string(),
             Self::WaterMap => "Water height map (river, lake and pool tiles)".to_string(),
+            Self::WaterData => "Water (water, calming and wave quads)".to_string(),
             Self::WorldBlanket => "World blanket (a square grid of 16-bit cells)".to_string(),
             Self::NavPrecalc => "Nav precalc (NAVP cells and a BITS block)".to_string(),
             Self::Mrf => "MRF (Move network definition)".to_string(),
@@ -237,6 +244,7 @@ fn cmd_info(path: &Path, json: bool) -> Result<(), String> {
         Subject::HeightMap => info_height_map(&data),
         Subject::DistantLights => info_distant_lights(&data),
         Subject::WaterMap => info_water_map(&data),
+        Subject::WaterData => info_water_data(&data),
         Subject::WorldBlanket => info_world_blanket(&data),
         Subject::NavPrecalc => info_nav_precalc(&data),
         Subject::Mrf => info_mrf(&data),
@@ -653,6 +661,16 @@ fn info_json(resource_type: Subject, path: &Path, data: &[u8]) -> Result<Value, 
                 "lakeBoxes": map.lake_boxes.len(),
                 "lakes": map.lakes.len(),
                 "pools": map.pools.len(),
+            }))
+        }
+        Subject::WaterData => {
+            let water = CWaterData::open(data).map_err(|e| e.to_string())?;
+            Ok(json!({
+                "waterQuads": water.water_quads.len(),
+                "calmingQuads": water.calming_quads.len(),
+                "waveQuads": water.wave_quads.len(),
+                "heights": water_heights(&water),
+                "unnamed": water.unnamed(),
             }))
         }
         Subject::WorldBlanket => {
@@ -1950,6 +1968,30 @@ fn info_water_map(data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// The lowest and the highest surface among the water quads, or `None` with none.
+fn water_heights(water: &CWaterData) -> Option<[f32; 2]> {
+    let heights = water.water_quads.iter().map(|quad| quad.z);
+    heights.fold(None, |range, z| match range {
+        None => Some([z, z]),
+        Some([low, high]) => Some([low.min(z), high.max(z)]),
+    })
+}
+
+fn info_water_data(data: &[u8]) -> Result<(), String> {
+    let water = CWaterData::open(data).map_err(|e| format!("Failed to parse water: {e}"))?;
+    println!("Water:");
+    println!("  Water quads: {}", water.water_quads.len());
+    if let Some([low, high]) = water_heights(&water) {
+        println!("  Surfaces from {low} to {high}");
+    }
+    println!("  Calming quads: {}", water.calming_quads.len());
+    println!("  Wave quads: {}", water.wave_quads.len());
+    for path in water.unnamed() {
+        println!("  Kept as it came: {path}");
+    }
+    Ok(())
+}
+
 fn info_world_blanket(data: &[u8]) -> Result<(), String> {
     let blanket =
         WorldBlanket::open(data).map_err(|e| format!("Failed to parse world blanket: {e}"))?;
@@ -2115,6 +2157,9 @@ fn cmd_convert(input: &Path, output: &Path) -> Result<(), String> {
             .map_err(|e| e.to_string())?,
         Subject::WaterMap => WaterMap::open(&input_data)
             .and_then(|map| map.save())
+            .map_err(|e| e.to_string())?,
+        Subject::WaterData => CWaterData::open(&input_data)
+            .and_then(|water| water.save())
             .map_err(|e| e.to_string())?,
         Subject::WorldBlanket => WorldBlanket::open(&input_data)
             .map_err(|e| e.to_string())?
@@ -2769,6 +2814,14 @@ fn verify_stats(resource_type: Subject, path: &Path, data: &[u8]) -> Result<Valu
             let map = WaterMap::open(data).map_err(|e| format!("Parse failed: {e}"))?;
             Ok(json!({ "columns": map.num_tile_cols, "rows": map.num_tile_rows() }))
         }
+        Subject::WaterData => {
+            let water = CWaterData::open(data).map_err(|e| format!("Parse failed: {e}"))?;
+            Ok(json!({
+                "waterQuads": water.water_quads.len(),
+                "calmingQuads": water.calming_quads.len(),
+                "waveQuads": water.wave_quads.len(),
+            }))
+        }
         Subject::WorldBlanket => {
             let blanket = WorldBlanket::open(data).map_err(|e| format!("Parse failed: {e}"))?;
             Ok(json!({ "side": blanket.side() }))
@@ -2975,6 +3028,7 @@ fn verify_data(resource_type: Subject, path: &Path, data: &[u8]) -> Result<(), S
         Subject::HeightMap
         | Subject::DistantLights
         | Subject::WaterMap
+        | Subject::WaterData
         | Subject::WorldBlanket
         | Subject::NavPrecalc
         | Subject::Mrf
@@ -3473,6 +3527,10 @@ fn roundtrip_one(
             .map_err(|e| format!("parse: {e}"))?
             .save()
             .map_err(|e| format!("write: {e}"))?,
+        Subject::WaterData => CWaterData::open(&input)
+            .map_err(|e| format!("parse: {e}"))?
+            .save()
+            .map_err(|e| format!("write: {e}"))?,
         Subject::WorldBlanket => WorldBlanket::open(&input)
             .map_err(|e| format!("parse: {e}"))?
             .save(),
@@ -3593,6 +3651,7 @@ fn print_usage(program: &str) {
     eprintln!("  heightmap*.dat      Terrain height map");
     eprintln!("  distantlights*.dat  Distant lights");
     eprintln!("  waterheight.dat     Water height map");
+    eprintln!("  water.xml, water_*.xml  Water, calming and wave quads");
     eprintln!("  worldblanket.dat    World blanket");
     eprintln!("  navprecalc.dat      Nav precalc");
     eprintln!("  *_cache_y.dat       Cache file (map data, interior proxy and bounds extents)");
@@ -3872,6 +3931,46 @@ mod tests {
             let info = info_json(subject, path, &bytes).expect("reports");
             assert_eq!(info[key], value, "{name}: {info}");
         }
+    }
+
+    #[test]
+    fn a_water_file_reports_its_quads_and_what_it_keeps_by_file_name() {
+        let quad = |x: i16, z: &str| {
+            format!(
+                r#"<Item><minX value="{x}" /><maxX value="{}" /><minY value="0" /><maxY value="4" />{z}</Item>"#,
+                x + 8
+            )
+        };
+        let text = format!(
+            "<WaterData><WaterQuads>{}{}</WaterQuads><WaveQuads>{}</WaveQuads></WaterData>",
+            quad(0, r#"<z value="2.5" /><ocean value="true" />"#),
+            quad(8, r#"<z value="-1" />"#),
+            quad(0, ""),
+        );
+        for name in ["common/data/levels/gta5/water.xml", "Water_Island.xml"] {
+            let subject = Subject::from_extension(Path::new(name));
+            assert_eq!(subject, Some(Subject::WaterData), "{name}");
+        }
+        assert_eq!(Subject::from_extension(Path::new("watertune.xml")), None);
+
+        let path = Path::new("water.xml");
+        let info = info_json(Subject::WaterData, path, text.as_bytes()).expect("reports");
+        assert_eq!(info["waterQuads"], json!(2), "{info}");
+        assert_eq!(info["calmingQuads"], json!(0), "{info}");
+        assert_eq!(info["waveQuads"], json!(1), "{info}");
+        assert_eq!(info["heights"], json!([-1.0, 2.5]), "{info}");
+        assert_eq!(
+            info["unnamed"],
+            json!(["WaterData/WaterQuads/Item/ocean"]),
+            "{info}"
+        );
+        let stats = verify_stats(Subject::WaterData, path, text.as_bytes()).expect("verifies");
+        assert_eq!(stats["waterQuads"], json!(2), "{stats}");
+        let refused = info_json(Subject::WaterData, path, b"<WaterTune/>").unwrap_err();
+        assert_eq!(
+            refused,
+            "the document's root is <WaterTune>, not <WaterData>"
+        );
     }
 
     #[test]

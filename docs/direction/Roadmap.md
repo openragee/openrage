@@ -502,10 +502,11 @@ would meet. The rows are listed in the order of the plan's stages
 nothing of this phase, R70g needs R70b only for the bounds at a position, and R70c, the GTA V map
 drawn with its models, is what most screen rows wait for. A row takes the default beside its
 question in [the rulings asked](World_Editor_Plan.md#rulings-asked-of-the-owner), except a part
-whose ruling says "It waits". R70 has no letter left: a finding that fits no row opens the next
-number.
+whose ruling says "It waits". Parts of R70b, R70e, R70g and R70h are built, with no screen and on
+installs and packs made by hand, and no row is closed: each row's Where it stands says what is built
+and what is left. R70 has no letter left: a finding that fits no row opens the next number.
 
-- [ ] [R70 The GTA V world editor](#r70-the-gta-v-world-editor) — the plan of 2026-11-25, in the parts below, begun in lanes the same day; nothing has merged, and the Map screen of wave P44 and the World screen of GTA VI are what it starts from
+- [ ] [R70 The GTA V world editor](#r70-the-gta-v-world-editor) — the plan of 2026-11-25, in the parts below, begun in lanes the same day; parts of R70b, R70e, R70g and R70h are built and no row is closed, and the Map screen of wave P44 and the World screen of GTA VI are what it starts from
   - [ ] [R70a What the game loads](#r70a-what-the-game-loads)
   - [ ] [R70b The GTA V world index](#r70b-the-gta-v-world-index)
   - [ ] [R70g Collision as a query](#r70g-collision-as-a-query)
@@ -9542,9 +9543,10 @@ an open part of [R69](#r69-one-window-of-tabs-and-a-rail) that edit the same she
 together.
 
 A part's Done when is its check; its brief says what to read and what to build. A part that writes a
-kind of file adds it to the recipe and the sheet of R70a. On 2026-11-25 lanes began R70b, R70e,
-R70g, R70h, R70q, R70r and R70w as local branches, and nothing has merged. R70 has no letter left: a
-finding that fits no part opens the next number.
+kind of file adds it to the recipe and the sheet of R70a. Lanes began on 2026-11-25: parts of R70b,
+R70e, R70g and R70h are built, with no part closed and no install suite run, and R70q, R70r and R70w
+are begun as local branches. R70 has no letter left: a finding that fits no part opens the next
+number.
 
 ### R70a What the game loads
 

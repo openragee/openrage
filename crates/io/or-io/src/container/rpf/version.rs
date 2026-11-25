@@ -31,6 +31,7 @@ pub enum RpfVersion {
     Rpf7,
     /// Red Dead Redemption 2; names are hashes, and the table has no directories.
     Rpf8,
+    Rpf9,
     /// GTA III and Vice City: a `.dir` of rows beside the `.img` of bodies.
     Img1,
     /// GTA San Andreas.
@@ -40,7 +41,7 @@ pub enum RpfVersion {
 }
 
 impl RpfVersion {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Rpf0,
         Self::Rpf2,
         Self::Rpf3,
@@ -48,6 +49,7 @@ impl RpfVersion {
         Self::Rpf6,
         Self::Rpf7,
         Self::Rpf8,
+        Self::Rpf9,
         Self::Img1,
         Self::Img2,
         Self::Img3,
@@ -68,6 +70,7 @@ impl RpfVersion {
             Self::Rpf6 => 0x3646_5052,
             Self::Rpf7 => RPF7_MAGIC,
             Self::Rpf8 => 0x5250_4638,
+            Self::Rpf9 => super::rpf9::RPF9_MAGIC,
             Self::Img2 => 0x3252_4556,
             Self::Img3 => 0xA94E_2A52,
             Self::Img1 => return None,
@@ -83,6 +86,7 @@ impl RpfVersion {
             Self::Rpf6 => "RPF6",
             Self::Rpf7 => "RPF7",
             Self::Rpf8 => "RPF8",
+            Self::Rpf9 => "RPF9",
             Self::Img1 => "IMG1",
             Self::Img2 => "IMG2",
             Self::Img3 => "IMG3",
@@ -106,7 +110,7 @@ impl RpfVersion {
             Self::Rpf2 | Self::Rpf3 => 256,
             Self::Rpf4 | Self::Rpf6 | Self::Img1 | Self::Img2 | Self::Img3 => 2048,
             Self::Rpf7 => 512,
-            Self::Rpf8 => 16,
+            Self::Rpf8 | Self::Rpf9 => 16,
         }
     }
 
@@ -116,7 +120,7 @@ impl RpfVersion {
             Self::Rpf2 | Self::Rpf3 | Self::Rpf4 | Self::Img3 => Some(RSC5_MAGIC),
             Self::Rpf6 => Some(RSC6_MAGIC),
             Self::Rpf8 => Some(RSC8_MAGIC),
-            Self::Rpf0 | Self::Rpf7 | Self::Img1 | Self::Img2 => None,
+            Self::Rpf0 | Self::Rpf7 | Self::Rpf9 | Self::Img1 | Self::Img2 => None,
         }
     }
 

@@ -1,6 +1,11 @@
-//! A model put on the device is told to the world's thread only once every map its materials sample
-//! is there too, or never will be: until then the level it replaces keeps drawing, as the game holds a
-//! parent until its children are whole, and no level draws grey for want of its textures.
+//! A model put on the device is told to the world's thread only once every map its levels sample is
+//! there too, or never will be: until then what it replaces keeps drawing, as the game holds a parent
+//! until its children are whole, and no level draws grey for want of its textures.
+//!
+//! ⚠ Only for what is in view: holding every model waited for read the textures of everything around
+//! the camera, twice what a street camera draws, past the budget, so what was put on the device was
+//! let go and read again. ⚠ Every level: holding for the first level alone left the nearer levels of
+//! a model grey as a fast camera closed on it.
 
 use std::collections::HashMap;
 
@@ -57,14 +62,23 @@ impl WorldGpu {
 
     /// What the models held back wait for: each map at the size its level is needed at where that
     /// level first draws, `wanted` saying how far the nearest thing that waits for each model is.
-    /// What they hold already is kept on the device this frame.
+    /// What they hold already is kept on the device this frame. A model nothing in view (`seen`)
+    /// waits for is told at once: what draws out of view is never seen grey.
     pub(super) fn ask_whole(
         &mut self,
         wanted: &[(f32, ModelRef)],
+        seen: impl Fn(&ModelRef) -> bool,
         (eye, lod_scale): (Vec3, f32),
         (per_metre, most_side): (f32, u32),
         frame: u64,
     ) -> Vec<(f32, u64, u32)> {
+        let unseen: Vec<ModelRef> = self.pending.iter().filter(|m| !seen(m)).copied().collect();
+        for model in unseen {
+            self.pending.remove(&model);
+            if matches!(self.models.get(&model), Some(Slot::Ready { .. })) {
+                self.told.push((model, Some(true)));
+            }
+        }
         let mut nearest: HashMap<ModelRef, f32> = HashMap::new();
         for (away, model) in wanted {
             let at = nearest.entry(*model).or_insert(*away);

@@ -94,7 +94,8 @@ pub struct Viewer {
     root: Option<PathBuf>,
     pub index: Option<Arc<WorldIndex>>,
     world: Option<World>,
-    /// The models on the device (`Some(true)`) or known never to come (`None`), which are not asked for again.
+    /// The models on the device (`Some(true)`), there but held back for their textures
+    /// (`Some(false)`) or known never to come (`None`), which are not asked for again.
     have: HashMap<ModelRef, Option<bool>>,
     /// How many times the world's thread was found dead and started again.
     pub world_restarts: u32,
@@ -520,6 +521,11 @@ impl Viewer {
                     .collect(),
             );
         }
+    }
+
+    /// Say `model` is on the device though not yet told ready: it is not read again meanwhile.
+    pub fn on_device(&mut self, model: ModelRef) {
+        self.have.entry(model).or_insert(Some(false));
     }
 
     /// Whether any texture is read: with no pack indexed none is.

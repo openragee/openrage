@@ -114,7 +114,7 @@ pub struct WorldConstants {
     pub interior_plane: [f32; 4],
     /// The glass's absorption per channel, and its thickness.
     pub interior_glass: [f32; 4],
-    /// The most the glass is thick seen aslant, how much of that slant it takes, and how much light the back plane gives.
+    /// The most the glass is thick seen aslant, how much of that slant it takes, how much light the back plane gives, and the share of the room's light a veiled pane lets through.
     pub interior_slant: [f32; 4],
     pub flags: u32,
     /// The row of the palette, which the instance's own tint states where it states one.
@@ -165,6 +165,10 @@ impl WorldConstants {
     pub const INTERIOR: u32 = 2048;
     /// With [`Self::INTERIOR`], the room's size is its vertices' rather than the constants'.
     pub const ROOM_BY_VERTEX: u32 = 4096;
+    /// With [`Self::INTERIOR`], a pane its first layer covers lets through the share of its room's light in `interior_slant`'s fourth, by a tenth of what the layer leaves.
+    pub const VEIL: u32 = 16384;
+    /// With [`Self::VEIL`], such a pane shows its room whatever the curtain layer holds.
+    pub const VEIL_BARES: u32 = 32768;
     /// Set by the renderer, not the caller: the material's own light is added whole over the lit frame rather than carried in the G-buffer.
     pub const GLOWS: u32 = 8192;
 }

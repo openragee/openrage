@@ -109,6 +109,8 @@ const TINT_MASKED: u32 = 1024u;
 const INTERIOR: u32 = 2048u;
 const ROOM_BY_VERTEX: u32 = 4096u;
 const GLOWS: u32 = 8192u;
+const VEIL: u32 = 16384u;
+const VEIL_BARES: u32 = 32768u;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -703,7 +705,11 @@ fn surface_of(in: VsOut, front_facing: bool) -> Surface {
 // The interior effect's window: how much of the room the two layers' alphas let be seen, the glass's absorption by how far the view crosses it, the room through it over the layers as the glass's open share, and the room's light through the glass by its emissive map at this hour.
 fn behind_glass(s: ptr<function, Surface>, maps: Maps, in: VsOut, across: vec3<f32>, up: vec3<f32>, rooms: f32) {
     let room = room_behind(in, across, up, rooms);
-    let shows = clamp(1.0 - maps.c0.a, 0.0, 1.0) * pow(clamp(1.0 - 1.186 * (maps.c1.a - 0.15686), 0.0, 1.0), 3.0);
+    // A pane the first layer covers takes the veil's way where the material states one: its room shows whatever the curtain layer holds, where the effect's words allow it, and lets through only a share of its light.
+    let veiled = maps.c0.a > 0.05 && (m.flags & VEIL) != 0u;
+    let curtain = pow(clamp(1.0 - 1.186 * (maps.c1.a - 0.15686), 0.0, 1.0), 3.0);
+    let shows = clamp(1.0 - maps.c0.a, 0.0, 1.0) * select(curtain, 1.0, veiled && (m.flags & VEIL_BARES) != 0u);
+    let let_through = select(1.0, m.interior_slant.w * 0.1 * (1.0 - clamp(1.186 * (maps.c0.a - 0.15686), 0.0, 1.0)), veiled);
     let n = normalize(in.world_normal);
     let facing = max(abs(dot(n, normalize(camera.camera_pos_ws.xyz - in.world_pos))), 1e-4);
     let thin = m.interior_glass.w;
@@ -712,7 +718,7 @@ fn behind_glass(s: ptr<function, Surface>, maps: Maps, in: VsOut, across: vec3<f
     let layer = (*s).albedo;
     (*s).albedo = mix(layer, through * mix(layer, room.seen, shows), 1.0 - maps.c1.a);
     let own = clamp(1.2439 * (maps.c0.a - 0.19607), 0.0, 1.0);
-    (*s).emissive = emissive_strength() * maps.a3.rgb * through * room.light * mix(room.colour, layer, own) * shows;
+    (*s).emissive = emissive_strength() * maps.a3.rgb * through * room.light * mix(room.colour, layer, own) * shows * let_through;
 }
 
 // The colour the diffuse light multiplies: the albedo less what its metal turns to reflection.

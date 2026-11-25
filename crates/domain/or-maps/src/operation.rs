@@ -12,15 +12,25 @@
 //! edit replaced, the entity a removal took with the links that named it, the extents a move grew), and it is given only once the source's
 //! XML is the export of the file it cooks to and the inverse, read back from its JSON and applied to the edited file, saves the file as it
 //! was. Otherwise the inverse is [`Operation::RewriteSource`] with the XML as it was: XML a person typed by hand, which the first edit
-//! rewrites whole, and a file whose links no renumbering restores, are put back that way.
+//! rewrites whole, a file whose links no renumbering restores, and a file the last record of a class was taken out of, which read
+//! again from its XML saves no record of that class, are put back that way.
+//!
+//! ⚠ **An inverse states what it applies to.** An operation may state `expects`, the digest of the XML its source is to hold
+//! ([`digest_of`]), and is refused when the source holds another ([`Error::Stale`]). Every inverse states the digest of the XML its
+//! operation wrote, so an inverse applied after another edit of its source is refused, and a step of Undo is an operation and its
+//! inverse with no copy of the XML.
+//!
+//! [`Session`] holds the sources of a pack open as typed roots, does an operation to a root with no XML produced, and writes the
+//! sources when it is flushed: what an edit costs on a large map is in `tests/what_one_pose_edit_costs.rs`.
 //!
 //! ⚠ **The boxes the extents grow to hold are the pack's own.** An operation that places an entity reads the type files of every map set
 //! that names its source, the first to declare a name winning, so what it writes does not depend on which set a screen shows. An entity
 //! of an archetype none of them declares, as any prop of the game is, is held where it stands, and [`Applied::notes`] says so.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use glam::{Quat, Vec3};
 use or_io::decl::File;
@@ -35,6 +45,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::edit::{self, in_parent_map, Edited, Pose};
 use crate::facts::{stays_inside, Name};
 use crate::model::{self, Maps};
+
+mod session;
+pub use session::{Done, Session, Written};
 
 /// The file a list of operations states it is.
 pub const FORMAT: &str = "openrage-map-operations";
@@ -62,6 +75,34 @@ pub enum Error {
         at: String,
         why: String,
     },
+    #[error(
+        "{name} of `{at}`: the source is not as the operation expects it, so it was edited since the operation was made: \
+         take back what was done after it first (it expects the digest {expects}, and the source has {found})"
+    )]
+    Stale {
+        name: &'static str,
+        at: String,
+        expects: String,
+        /// The digest of the XML the source holds, or the name a session gives a state it has not written.
+        found: String,
+    },
+    #[error(
+        "`{at}` cannot be written: {why}; it could be until operation {number} of the {of} done to it since it was last written ({name})"
+    )]
+    Unwritten {
+        at: String,
+        why: String,
+        /// Counted from one, among the operations done to the source since it was last written.
+        number: usize,
+        of: usize,
+        name: &'static str,
+    },
+    #[error("`{at}`: {why}")]
+    Source { at: String, why: String },
+    #[error(
+        "`{at}` was changed on disk since the session read it, so what the session holds of it was not written over it; no source was written"
+    )]
+    Changed { at: String },
     #[error("operation {number} of {of}, {refused}")]
     InList {
         /// Counted from one.
@@ -154,11 +195,18 @@ impl Extents {
         ]
     }
 
+    /// Refuse a number of these that is not finite.
+    fn finite(&self) -> Result<(), String> {
+        if self.corners().iter().flatten().all(|n| n.is_finite()) {
+            Ok(())
+        } else {
+            Err("extents that are not finite numbers cannot be stored".to_string())
+        }
+    }
+
     /// State these as the extents of `map`; a number that is not finite is refused.
     fn state(&self, map: &mut CMapData) -> Result<(), String> {
-        if !self.corners().iter().flatten().all(|n| n.is_finite()) {
-            return Err("extents that are not finite numbers cannot be stored".to_string());
-        }
+        self.finite()?;
         let corner = |[x, y, z]: [f32; 3]| or_io::decl::Vec3 { x, y, z };
         map.entities_extents_min = corner(self.entities_extents_min);
         map.entities_extents_max = corner(self.entities_extents_max);
@@ -300,12 +348,16 @@ pub enum Operation {
     /// Stand an entity of a map file at a pose, and grow the extents the map states to hold it.
     PlaceEntity {
         source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         entity: usize,
         pose: PoseData,
     },
     /// Add an entity that places `archetype` at `pose` to a map file, as a copy of `donor` (else of the map's first entity) with a guid of its own, and grow the extents; the first of a map that holds none is built with what `donor` states and is no copy.
     AddEntity {
         source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         /// The name of the archetype, or `hash_XXXXXXXX` for one known by its hash alone.
         archetype: String,
         pose: PoseData,
@@ -315,6 +367,8 @@ pub enum Operation {
     /// Take an entity out of a map file with the LOD links renumbered, and state `extents` when it carries some.
     RemoveEntity {
         source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         entity: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         extents: Option<Extents>,
@@ -322,6 +376,8 @@ pub enum Operation {
     /// Put an entity into a map file at an index with the LOD links a removal there took: what takes a removal back.
     InsertEntity {
         source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         entity: usize,
         record: Record,
         /// The children the LOD parent the record names is to count, when it names one in this map.
@@ -336,18 +392,31 @@ pub enum Operation {
     /// Put a record in the place of an entity of a map file, and state `extents` when it carries some: what takes a pose or a name back.
     ReplaceEntity {
         source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         entity: usize,
         record: Record,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         extents: Option<Extents>,
     },
     /// Grow the extents a map file states to hold its entities, never shrinking them.
-    GrowExtents { source: String },
+    GrowExtents {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+    },
     /// State the extents of a map file.
-    SetExtents { source: String, extents: Extents },
+    SetExtents {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        extents: Extents,
+    },
     /// Add an archetype called `name` to a type file, as a copy of `donor` (else of the file's first plain archetype); the first of a file that holds none is built with what `donor` states and is no copy.
     AddArchetype {
         source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         name: String,
         /// The asset it names; its own name when none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -356,21 +425,35 @@ pub enum Operation {
         donor: Option<At>,
     },
     /// Take an archetype out of a type file.
-    RemoveArchetype { source: String, archetype: usize },
+    RemoveArchetype {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+    },
     /// Put an archetype into a type file at an index: what takes a removal back.
     InsertArchetype {
         source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         archetype: usize,
         record: Record,
     },
     /// Put a record in the place of an archetype of a type file.
     ReplaceArchetype {
         source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         archetype: usize,
         record: Record,
     },
     /// Hold `xml` as the XML of a source, as it is given: what takes back an edit of XML that was not the export of its file.
-    RewriteSource { source: String, xml: String },
+    RewriteSource {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        xml: String,
+    },
 }
 
 impl Operation {
@@ -400,7 +483,7 @@ impl Operation {
             | Self::RemoveEntity { source, .. }
             | Self::InsertEntity { source, .. }
             | Self::ReplaceEntity { source, .. }
-            | Self::GrowExtents { source }
+            | Self::GrowExtents { source, .. }
             | Self::SetExtents { source, .. }
             | Self::AddArchetype { source, .. }
             | Self::RemoveArchetype { source, .. }
@@ -409,6 +492,53 @@ impl Operation {
             | Self::RewriteSource { source, .. } => source,
         }
     }
+
+    /// The digest its source is to have when it is applied, when it states one: every inverse does.
+    pub fn expects(&self) -> Option<&str> {
+        match self {
+            Self::PlaceEntity { expects, .. }
+            | Self::AddEntity { expects, .. }
+            | Self::RemoveEntity { expects, .. }
+            | Self::InsertEntity { expects, .. }
+            | Self::ReplaceEntity { expects, .. }
+            | Self::GrowExtents { expects, .. }
+            | Self::SetExtents { expects, .. }
+            | Self::AddArchetype { expects, .. }
+            | Self::RemoveArchetype { expects, .. }
+            | Self::InsertArchetype { expects, .. }
+            | Self::ReplaceArchetype { expects, .. }
+            | Self::RewriteSource { expects, .. } => expects.as_deref(),
+        }
+    }
+
+    /// State the digest its source is to have, or that any state will do.
+    pub fn set_expects(&mut self, digest: Option<String>) {
+        match self {
+            Self::PlaceEntity { expects, .. }
+            | Self::AddEntity { expects, .. }
+            | Self::RemoveEntity { expects, .. }
+            | Self::InsertEntity { expects, .. }
+            | Self::ReplaceEntity { expects, .. }
+            | Self::GrowExtents { expects, .. }
+            | Self::SetExtents { expects, .. }
+            | Self::AddArchetype { expects, .. }
+            | Self::RemoveArchetype { expects, .. }
+            | Self::InsertArchetype { expects, .. }
+            | Self::ReplaceArchetype { expects, .. }
+            | Self::RewriteSource { expects, .. } => *expects = digest,
+        }
+    }
+
+    /// The operation, refused unless its source has the digest `digest`.
+    pub fn expecting(mut self, digest: impl Into<String>) -> Self {
+        self.set_expects(Some(digest.into()));
+        self
+    }
+}
+
+/// The digest of the XML of a source: what an operation that states `expects` is held to.
+pub fn digest_of(xml: &[u8]) -> String {
+    or_source::asset::sha256_hex(xml)
 }
 
 /// A list of operations as a file: what `openrage-cli maps apply` takes.
@@ -456,7 +586,7 @@ impl Operations {
 /// What an operation did.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Applied {
-    /// The operation that puts the source back byte for byte.
+    /// The operation that puts the source back byte for byte, which states the digest of the XML this one left.
     pub inverse: Operation,
     /// The XML of the source it edited, as it was and as the operation left it.
     pub edited: Edited,
@@ -472,7 +602,7 @@ type Boxes = BTreeMap<u32, (Vec3, Vec3, f32)>;
 /// What an operation reads besides the file it edits.
 #[derive(Default)]
 struct Context {
-    boxes: Boxes,
+    boxes: Arc<Boxes>,
     /// The entity an added one is a copy of, when it is in another source.
     entity: Option<CEntityDefAny>,
     /// The archetype an added one is a copy of, when it is in another source.
@@ -577,7 +707,156 @@ fn name_of(text: &str) -> Name {
     }
 }
 
-/// Do `operation` to `map`.
+/// Refuse `record` at `index` of a map of `len` entities when the LOD parent it names in this map is itself or past the entities: an index the game trusts, which a save refuses.
+fn links_hold(record: &CEntityDefAny, index: usize, len: usize) -> Result<(), String> {
+    if in_parent_map(record.flags) {
+        return Ok(());
+    }
+    match usize::try_from(record.parent_index) {
+        Ok(parent) if parent == index => Err(format!("entity {index} would be its own LOD parent")),
+        Ok(parent) if parent >= len => Err(format!(
+            "entity {index} would name LOD parent {parent}, past the {len} entities of the map"
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// The names of the classes `value` holds a record of.
+fn classes(value: &Value, into: &mut BTreeSet<String>) {
+    match value {
+        Value::Struct(inst) | Value::Pointer(Some(inst)) => {
+            into.insert(inst.type_name.clone());
+            inst.fields.iter().for_each(|(_, held)| classes(held, into));
+        }
+        Value::Array(items) => items.iter().for_each(|item| classes(item, into)),
+        Value::Map(pairs) => pairs.iter().for_each(|(key, held)| {
+            classes(key, into);
+            classes(held, into);
+        }),
+        _ => {}
+    }
+}
+
+/// Whether the file still holds a record of every class of the record `index` of `held` once that one is taken out, or `replacing` stands in its place.
+///
+/// ⚠ A file read again from the XML an operation wrote names the classes its records are of and saves no record of another, so the
+/// record that was the last of its class is not put back there, though it is on the file the operation was done to.
+fn classes_stay<E>(
+    held: &[E],
+    index: usize,
+    replacing: Option<&Record>,
+    record: fn(&E) -> Result<Record, String>,
+) -> bool {
+    // What the operation refuses needs no inverse.
+    let Some(Ok(taken)) = held.get(index).map(record) else {
+        return true;
+    };
+    let mut needed = BTreeSet::new();
+    classes(&taken.0, &mut needed);
+    let mut stay = BTreeSet::new();
+    if let Some(replacing) = replacing {
+        classes(&replacing.0, &mut stay);
+    }
+    // The other records are read only until every class is found, which among records of one class is the first of them.
+    let mut others = (held.iter().enumerate()).filter(|(at, _)| *at != index);
+    while !needed.is_subset(&stay) {
+        match others.next() {
+            Some((_, other)) => {
+                if let Ok(other) = record(other) {
+                    classes(&other.0, &mut stay);
+                }
+            }
+            None => return false,
+        }
+    }
+    true
+}
+
+/// Whether the inverse [`change_map`] gives for `operation` puts `map` back as it is with nothing to prove, given that `map` saves as it is.
+///
+/// ⚠ A map that saves has every LOD parent inside it, which is what makes a removal and an insertion each other's inverse. What is
+/// not sure is proven by a save, as [`proven`] and [`restores`] do it: extents that are not finite, which an inverse could not state
+/// again, an insertion that claims a child another entity has, or leaves its parent a count a removal would not bring back, an
+/// entity taken out whose class may leave the file with it ([`classes_stay`]), and the first entity of a map that holds none,
+/// which is built here ([`first_entity`]) and which only a save shows the file to lay out.
+fn sure_in_map(map: &CMapData, operation: &Operation) -> bool {
+    if Extents::of(map).finite().is_err() {
+        return false;
+    }
+    match operation {
+        Operation::AddEntity { .. } => return !map.entities.is_empty(),
+        Operation::RemoveEntity { entity, .. } => {
+            return classes_stay(&map.entities, *entity, None, Record::entity)
+        }
+        Operation::ReplaceEntity { entity, record, .. } => {
+            return classes_stay(&map.entities, *entity, Some(record), Record::entity)
+        }
+        _ => {}
+    }
+    let Operation::InsertEntity {
+        entity,
+        record,
+        parent_num_children,
+        children,
+        ..
+    } = operation
+    else {
+        return true;
+    };
+    // What the operation refuses needs no inverse.
+    let Ok(inserted) = record.as_entity() else {
+        return true;
+    };
+    let free = |child: &usize| {
+        (map.entities.get(*child)).is_none_or(|e| !in_parent_map(e.flags) && e.parent_index == -1)
+    };
+    let parent = usize::try_from(inserted.parent_index)
+        .ok()
+        .filter(|parent| !in_parent_map(inserted.flags) && parent != entity)
+        // The parent by its index before the insertion.
+        .and_then(|parent| map.entities.get(parent - usize::from(parent > *entity)));
+    let counted = parent.is_none_or(|parent| {
+        parent_num_children
+            .unwrap_or(parent.num_children)
+            .saturating_sub(1)
+            == parent.num_children
+    });
+    children.iter().all(free) && counted
+}
+
+/// Whether the inverse [`change_types`] gives for `operation` puts `types` back as it is with nothing to prove.
+///
+/// ⚠ An archetype is put back by an insertion or a replacement, and both refuse a name another archetype of the file declares; its
+/// class may leave the file with it ([`classes_stay`]); and the first archetype of a file that holds none is built here
+/// ([`first_archetype`]), which only a save shows the file to lay out.
+fn sure_in_types(types: &CMapTypes, operation: &Operation) -> bool {
+    let shared = |hash: u32, but: usize| {
+        (types.archetypes.iter().enumerate()).any(|(at, a)| at != but && a.name.hash == hash)
+    };
+    let stay = |index: usize, replacing: Option<&Record>| {
+        classes_stay(&types.archetypes, index, replacing, Record::archetype)
+    };
+    match operation {
+        Operation::AddArchetype { .. } => !types.archetypes.is_empty(),
+        Operation::RemoveArchetype { archetype, .. } => {
+            (types.archetypes.get(*archetype))
+                .is_none_or(|held| !shared(held.name.hash, *archetype))
+                && stay(*archetype, None)
+        }
+        Operation::ReplaceArchetype {
+            archetype, record, ..
+        } => match (types.archetypes.get(*archetype), record.as_archetype()) {
+            (Some(held), Ok(replacing)) => {
+                (replacing.name.hash == held.name.hash || !shared(held.name.hash, *archetype))
+                    && stay(*archetype, Some(record))
+            }
+            _ => true,
+        },
+        _ => true,
+    }
+}
+
+/// Do `operation` to `map`; a refusal leaves `map` as it was.
 fn change_map(
     map: &mut CMapData,
     operation: &Operation,
@@ -606,6 +885,7 @@ fn change_map(
             grow(map);
             let inverse = Operation::ReplaceEntity {
                 source,
+                expects: None,
                 entity: *entity,
                 record,
                 extents: was.unless_stated_by(map),
@@ -641,6 +921,7 @@ fn change_map(
             grow(map);
             let inverse = Operation::RemoveEntity {
                 source,
+                expects: None,
                 entity: added,
                 extents: was.unless_stated_by(map),
             };
@@ -652,6 +933,9 @@ fn change_map(
             let index = *entity;
             let removed = entity_at(map, index)?;
             let record = Record::entity(removed)?;
+            if let Some(extents) = extents {
+                extents.finite()?;
+            }
             let parent_num_children = usize::try_from(removed.parent_index)
                 .ok()
                 .filter(|parent| *parent != index && !in_parent_map(removed.flags))
@@ -671,6 +955,7 @@ fn change_map(
             }
             let inverse = Operation::InsertEntity {
                 source,
+                expects: None,
                 entity: index,
                 record,
                 parent_num_children,
@@ -700,27 +985,39 @@ fn change_map(
             if let Some(past) = children.iter().find(|child| **child >= held) {
                 return Err(format!("child {past} is past the {held} the map holds"));
             }
+            // ⚠ Every refusal comes before the first change: a session keeps the map an operation was refused on.
+            links_hold(&inserted, index, held + 1)?;
+            let parent = usize::try_from(inserted.parent_index)
+                .ok()
+                .filter(|_| !in_parent_map(inserted.flags));
+            if parent_num_children.is_some() && parent.is_none() {
+                return Err(
+                    "the record names no LOD parent in this map to count children for".to_string(),
+                );
+            }
+            if (map.entities.iter()).any(|e| !in_parent_map(e.flags) && e.parent_index == i32::MAX)
+            {
+                return Err(
+                    "a LOD link past what an index can state cannot be renumbered".to_string(),
+                );
+            }
+            if let Some(extents) = extents {
+                extents.finite()?;
+            }
             // What named an entity at or after the index names the one after it now.
             for e in map.entities.iter_mut() {
                 if !in_parent_map(e.flags) && e.parent_index >= stated {
-                    e.parent_index = e.parent_index.checked_add(1).ok_or_else(|| {
-                        "a LOD link past what an index can state cannot be renumbered".to_string()
-                    })?;
+                    e.parent_index += 1;
                 }
             }
             for child in children {
                 map.entities[*child].parent_index = stated;
             }
             map.entities.insert(index, inserted);
-            if let Some(count) = parent_num_children {
-                let parent = usize::try_from(map.entities[index].parent_index)
-                    .ok()
-                    .filter(|parent| *parent != index && !in_parent_map(map.entities[index].flags))
-                    .and_then(|parent| map.entities.get_mut(parent))
-                    .ok_or_else(|| {
-                        "the record names no LOD parent in this map to count children for"
-                            .to_string()
-                    })?;
+            if let (Some(count), Some(parent)) = (
+                parent_num_children,
+                parent.and_then(|parent| map.entities.get_mut(parent)),
+            ) {
                 parent.num_children = *count;
             }
             if let Some(extents) = extents {
@@ -728,6 +1025,7 @@ fn change_map(
             }
             let inverse = Operation::RemoveEntity {
                 source,
+                expects: None,
                 entity: index,
                 extents: was.unless_stated_by(map),
             };
@@ -740,12 +1038,18 @@ fn change_map(
             ..
         } => {
             let before = Record::entity(entity_at(map, *entity)?)?;
-            map.entities[*entity] = record.as_entity()?;
+            let replacing = record.as_entity()?;
+            links_hold(&replacing, *entity, map.entities.len())?;
+            if let Some(extents) = extents {
+                extents.finite()?;
+            }
+            map.entities[*entity] = replacing;
             if let Some(extents) = extents {
                 extents.state(map)?;
             }
             let inverse = Operation::ReplaceEntity {
                 source,
+                expects: None,
                 entity: *entity,
                 record: before,
                 extents: was.unless_stated_by(map),
@@ -757,6 +1061,7 @@ fn change_map(
             Ok((
                 Operation::SetExtents {
                     source,
+                    expects: None,
                     extents: was,
                 },
                 None,
@@ -767,6 +1072,7 @@ fn change_map(
             Ok((
                 Operation::SetExtents {
                     source,
+                    expects: None,
                     extents: was,
                 },
                 None,
@@ -783,7 +1089,7 @@ fn change_map(
     }
 }
 
-/// Do `operation` to `types`.
+/// Do `operation` to `types`; a refusal leaves `types` as it was.
 fn change_types(
     types: &mut CMapTypes,
     operation: &Operation,
@@ -812,6 +1118,7 @@ fn change_types(
             };
             let inverse = Operation::RemoveArchetype {
                 source,
+                expects: None,
                 archetype: added,
             };
             Ok((inverse, Some(added)))
@@ -821,6 +1128,7 @@ fn change_types(
             edit::remove_archetype(types, *archetype)?;
             let inverse = Operation::InsertArchetype {
                 source,
+                expects: None,
                 archetype: *archetype,
                 record,
             };
@@ -842,6 +1150,7 @@ fn change_types(
             types.archetypes.insert(*archetype, inserted);
             let inverse = Operation::RemoveArchetype {
                 source,
+                expects: None,
                 archetype: *archetype,
             };
             Ok((inverse, Some(*archetype)))
@@ -861,6 +1170,7 @@ fn change_types(
             types.archetypes[*archetype] = replacing;
             let inverse = Operation::ReplaceArchetype {
                 source,
+                expects: None,
                 archetype: *archetype,
                 record: before,
             };
@@ -901,42 +1211,58 @@ fn proven<R: File + Clone>(
     (back.to_bytes().ok()? == was).then_some(read_back)
 }
 
+/// Whether `inverse`, done to the file `inputs` cook to once they hold `xml`, writes the XML `inputs` hold: what applying it to the source as it was written does.
+///
+/// ⚠ That file is read again from the XML, and is not the file [`proven`] did the inverse to: it names no class it holds no record of.
+fn restores<R: File>(
+    inputs: &Inputs,
+    xml: &[u8],
+    inverse: &Operation,
+    change: fn(&mut R, &Operation, &Context) -> Result<Changed, String>,
+) -> bool {
+    let mut written = inputs.clone();
+    written.set_xml(xml.to_vec());
+    let saved = (written.compile().ok())
+        .and_then(|cooked| R::from_bytes(&cooked.bytes).ok())
+        .and_then(|mut back| {
+            change(&mut back, inverse, &Context::default()).ok()?;
+            back.to_bytes().ok()
+        });
+    saved.is_some_and(|saved| {
+        written
+            .xml_of(&saved)
+            .is_ok_and(|back| back == inputs.xml())
+    })
+}
+
 /// Do `operation` to the file `inputs` cook to; the XML that makes them cook to the result, the inverse and the index of what was added.
 fn through<R: File + Clone>(
     inputs: &Inputs,
     operation: &Operation,
     context: &Context,
     change: fn(&mut R, &Operation, &Context) -> Result<Changed, String>,
+    sure: fn(&R, &Operation) -> bool,
 ) -> Result<(Vec<u8>, Operation, Option<usize>), String> {
     let cooked = inputs.compile().map_err(problems)?.bytes;
     let mut root = R::from_bytes(&cooked).map_err(|e| e.to_string())?;
     // What the file saves as before the change: what an inverse has to save again.
     let untouched = root.to_bytes().ok();
+    let sure = sure(&root, operation);
     let (inverse, added) = change(&mut root, operation, context)?;
     let bytes = root.to_bytes().map_err(|e| e.to_string())?;
     let xml = inputs.xml_of(&bytes).map_err(problems)?;
-    // ⚠ An inverse that carries a record is proven on the file the new XML cooks to, never on the root the change was made to: that
-    // root keeps the type table of the file it was read from, which states a class the cooked file loses with its last element.
-    let cooked_again = || {
-        let mut edited = inputs.clone();
-        edited.set_xml(xml.clone());
-        R::from_bytes(&edited.compile().ok()?.bytes).ok()
-    };
-    let keeps_every_record = matches!(
-        operation,
-        Operation::PlaceEntity { .. }
-            | Operation::GrowExtents { .. }
-            | Operation::SetExtents { .. }
-    );
+    // ⚠ An inverse is proven on the root the change was made to, and, unless it holds by construction, on the file the new XML cooks
+    // to as well: that root keeps the type table of the file it was read from, which states a class the cooked file loses with its
+    // last element.
     let inverse = match untouched
         .filter(|was| inputs.is_the_export_of(was))
-        .and_then(|was| match keeps_every_record {
-            true => proven(&root, &inverse, &was, change),
-            false => proven(&cooked_again()?, &inverse, &was, change),
-        }) {
+        .and_then(|was| proven(&root, &inverse, &was, change))
+        .filter(|inverse| sure || restores(inputs, &xml, inverse, change))
+    {
         Some(inverse) => inverse,
         None => Operation::RewriteSource {
             source: operation.source().to_string(),
+            expects: None,
             xml: text_of(inputs)?,
         },
     };
@@ -948,6 +1274,120 @@ fn text_of(inputs: &Inputs) -> Result<String, String> {
     String::from_utf8(inputs.xml().to_vec()).map_err(|_| {
         "the XML of the source is not UTF-8, so the operation could not be taken back".to_string()
     })
+}
+
+/// The folder and the inputs of the source `source` of the pack `model` in `folder`; a name no set of the pack holds, or one that leaves its folder, is refused, so an operation reaches nothing else.
+fn opened(folder: &Path, model: &Maps, source: &str) -> Result<(PathBuf, Inputs), String> {
+    let named = (model.maps.iter()).any(|set| set.sources.iter().any(|s| s == source));
+    if !named {
+        return Err("no map set of the pack names this source".to_string());
+    }
+    // ⚠ The pack's file is a file anyone can edit, and a name in it with `..` would be written beside the pack.
+    if !stays_inside(source) {
+        return Err(
+            "the source leaves the folder of the pack, and an operation edits what is inside it"
+                .to_string(),
+        );
+    }
+    let dir = folder.join(source.replace('/', std::path::MAIN_SEPARATOR_STR));
+    let opened = or_source::asset::Source::open(&dir).map_err(|p| p.to_string())?;
+    let inputs = Inputs::read(&opened).map_err(problems)?;
+    Ok((dir, inputs))
+}
+
+/// Why `operation` was not done.
+fn refused(operation: &Operation, why: String) -> Error {
+    Error::Refused {
+        name: operation.name(),
+        at: operation.source().to_string(),
+        why,
+    }
+}
+
+/// Add the boxes of the archetypes `types` declares to `boxes`, a name declared already keeping the box it has.
+fn declare(boxes: &mut Boxes, types: &CMapTypes) {
+    let corner = |v: or_io::decl::Vec3| Vec3::new(v.x, v.y, v.z);
+    for archetype in &types.archetypes {
+        boxes.entry(archetype.name.hash).or_insert((
+            corner(archetype.bb_min),
+            corner(archetype.bb_max),
+            archetype.lod_dist,
+        ));
+    }
+}
+
+/// The sentence an operation says of the type file `path`, which declares no box because it does not cook.
+fn does_not_cook(path: &str, why: &str) -> String {
+    format!(
+        "the type file `{path}` does not cook, so the extents are grown without the boxes it declares: {why}"
+    )
+}
+
+/// The sources of a pack as an operation reads them besides the file it edits.
+trait Pack {
+    /// The boxes of the archetypes that the type files of every set naming `source` declare, and a sentence for each type file that does not cook, which declares none.
+    fn boxes(&mut self, source: &str) -> (Arc<Boxes>, Vec<String>);
+    /// The entity `at` names.
+    fn entity(&mut self, at: &At) -> Result<CEntityDefAny, String>;
+    /// The archetype `at` names.
+    fn archetype(&mut self, at: &At) -> Result<CBaseArchetypeDefAny, String>;
+}
+
+/// What `operation` reads besides the file it edits.
+fn context(pack: &mut impl Pack, operation: &Operation) -> Result<Context, String> {
+    let source = operation.source();
+    let elsewhere = |donor: &Option<At>| donor.clone().filter(|at| at.source != source);
+    let named = |at: &At, why: String| format!("the donor in `{}`: {why}", at.source);
+    let mut context = Context::default();
+    match operation {
+        Operation::PlaceEntity { .. } | Operation::GrowExtents { .. } => {
+            let (boxes, notes) = pack.boxes(source);
+            context.boxes = boxes;
+            context.notes = RefCell::new(notes);
+        }
+        Operation::AddEntity { donor, .. } => {
+            let (boxes, notes) = pack.boxes(source);
+            context.boxes = boxes;
+            context.notes = RefCell::new(notes);
+            if let Some(at) = elsewhere(donor) {
+                context.entity = Some(pack.entity(&at).map_err(|why| named(&at, why))?);
+            }
+        }
+        Operation::AddArchetype { donor, .. } => {
+            if let Some(at) = elsewhere(donor) {
+                context.archetype = Some(pack.archetype(&at).map_err(|why| named(&at, why))?);
+            }
+        }
+        Operation::RemoveEntity { .. }
+        | Operation::InsertEntity { .. }
+        | Operation::ReplaceEntity { .. }
+        | Operation::SetExtents { .. }
+        | Operation::RemoveArchetype { .. }
+        | Operation::InsertArchetype { .. }
+        | Operation::ReplaceArchetype { .. }
+        | Operation::RewriteSource { .. } => {}
+    }
+    Ok(context)
+}
+
+/// Write the XML of each source of `changed` (its folder, the XML to write and the XML it holds); when one cannot be written, the ones written before it are put back.
+fn write_all(changed: &[(&Path, &[u8], &[u8])]) -> Result<(), Error> {
+    for (at, (dir, xml, _)) in changed.iter().enumerate() {
+        if let Err(why) = or_source::metadata::write_xml(dir, xml) {
+            let mut said = problems(why);
+            for (earlier, _, was) in &changed[..at] {
+                if let Err(left) = or_source::metadata::write_xml(earlier, was) {
+                    said.push_str(&format!(
+                        "; and {} could not be put back as it was: {}",
+                        earlier.display(),
+                        problems(left)
+                    ));
+                }
+            }
+            return Err(Error::Write(said));
+        }
+    }
+    Ok(())
 }
 
 /// A source the work has opened: its inputs with the XML the operations so far leave, and the XML on disk.
@@ -973,25 +1413,10 @@ impl<'a> Work<'a> {
         })
     }
 
-    /// The source `source`, opened once; a name no set of the pack holds, or one that leaves its folder, is refused, so an operation reaches nothing else.
+    /// The source `source`, opened once.
     fn hold(&mut self, source: &str) -> Result<&mut Held, String> {
         if !self.held.contains_key(source) {
-            let named = (self.model.maps.iter()).any(|set| set.sources.iter().any(|s| s == source));
-            if !named {
-                return Err("no map set of the pack names this source".to_string());
-            }
-            // ⚠ The pack's file is a file anyone can edit, and a name in it with `..` would be written beside the pack.
-            if !stays_inside(source) {
-                return Err(
-                    "the source leaves the folder of the pack, and an operation edits what is inside it"
-                        .to_string(),
-                );
-            }
-            let dir = self
-                .folder
-                .join(source.replace('/', std::path::MAIN_SEPARATOR_STR));
-            let opened = or_source::asset::Source::open(&dir).map_err(|p| p.to_string())?;
-            let inputs = Inputs::read(&opened).map_err(problems)?;
+            let (dir, inputs) = opened(self.folder, &self.model, source)?;
             let on_disk = inputs.xml().to_vec();
             let held = Held {
                 dir,
@@ -1025,7 +1450,6 @@ impl<'a> Work<'a> {
             .filter(|set| set.sources.iter().any(|s| s == source))
             .flat_map(|set| set.sources.iter().cloned())
             .collect();
-        let corner = |v: or_io::decl::Vec3| Vec3::new(v.x, v.y, v.z);
         let mut boxes = Boxes::new();
         let mut notes = Vec::new();
         for path in paths {
@@ -1035,70 +1459,33 @@ impl<'a> Work<'a> {
             if !is_types {
                 continue;
             }
-            let types = match self.root::<CMapTypes>(&path) {
-                Ok(types) => types,
-                Err(why) => {
-                    notes.push(format!(
-                        "the type file `{path}` does not cook, so the extents are grown without the boxes it declares: {why}"
-                    ));
-                    continue;
-                }
-            };
-            for archetype in &types.archetypes {
-                boxes.entry(archetype.name.hash).or_insert((
-                    corner(archetype.bb_min),
-                    corner(archetype.bb_max),
-                    archetype.lod_dist,
-                ));
+            match self.root::<CMapTypes>(&path) {
+                Ok(types) => declare(&mut boxes, &types),
+                Err(why) => notes.push(does_not_cook(&path, &why)),
             }
         }
         (boxes, notes)
     }
 
-    /// What `operation` reads besides the file it edits.
-    fn context(&mut self, operation: &Operation) -> Result<Context, String> {
-        let source = operation.source();
-        let elsewhere = |donor: &Option<At>| donor.clone().filter(|at| at.source != source);
-        let mut context = Context::default();
-        match operation {
-            Operation::PlaceEntity { .. } | Operation::GrowExtents { .. } => {
-                let (boxes, notes) = self.boxes(source);
-                context.boxes = boxes;
-                context.notes = RefCell::new(notes);
+    /// Do `operation` to the XML the work holds of its source, once that XML has the digest the operation states.
+    fn apply(&mut self, operation: &Operation) -> Result<Applied, Error> {
+        let held = (self.hold(operation.source())).map_err(|why| refused(operation, why))?;
+        if let Some(expects) = operation.expects() {
+            let found = digest_of(held.inputs.xml());
+            if found != expects {
+                return Err(Error::Stale {
+                    name: operation.name(),
+                    at: operation.source().to_string(),
+                    expects: expects.to_string(),
+                    found,
+                });
             }
-            Operation::AddEntity { donor, .. } => {
-                let (boxes, notes) = self.boxes(source);
-                context.boxes = boxes;
-                context.notes = RefCell::new(notes);
-                if let Some(at) = elsewhere(donor) {
-                    let copied = (self.root::<CMapData>(&at.source))
-                        .and_then(|map| entity_at(&map, at.index).cloned())
-                        .map_err(|why| format!("the donor in `{}`: {why}", at.source))?;
-                    context.entity = Some(copied);
-                }
-            }
-            Operation::AddArchetype { donor, .. } => {
-                if let Some(at) = elsewhere(donor) {
-                    let copied = (self.root::<CMapTypes>(&at.source))
-                        .and_then(|types| archetype_at(&types, at.index).cloned())
-                        .map_err(|why| format!("the donor in `{}`: {why}", at.source))?;
-                    context.archetype = Some(copied);
-                }
-            }
-            Operation::RemoveEntity { .. }
-            | Operation::InsertEntity { .. }
-            | Operation::ReplaceEntity { .. }
-            | Operation::SetExtents { .. }
-            | Operation::RemoveArchetype { .. }
-            | Operation::InsertArchetype { .. }
-            | Operation::ReplaceArchetype { .. }
-            | Operation::RewriteSource { .. } => {}
         }
-        Ok(context)
+        (self.change(operation)).map_err(|why| refused(operation, why))
     }
 
     /// Do `operation` to the XML the work holds of its source.
-    fn apply(&mut self, operation: &Operation) -> Result<Applied, String> {
+    fn change(&mut self, operation: &Operation) -> Result<Applied, String> {
         let source = operation.source();
         let extension = self.hold(source)?.inputs.extension().to_string();
         let mut notes = Vec::new();
@@ -1112,21 +1499,23 @@ impl<'a> Work<'a> {
                 candidate.compile().map_err(problems)?;
                 let inverse = Operation::RewriteSource {
                     source: source.to_string(),
+                    expects: None,
                     xml: was,
                 };
                 (xml.clone().into_bytes(), inverse, None)
             }
             (_, CMapData::EXTENSION) => {
-                let context = self.context(operation)?;
+                let context = context(self, operation)?;
                 let inputs = &self.hold(source)?.inputs;
-                let done = through::<CMapData>(inputs, operation, &context, change_map)?;
+                let done =
+                    through::<CMapData>(inputs, operation, &context, change_map, sure_in_map)?;
                 notes = context.notes.into_inner();
                 done
             }
             (_, CMapTypes::EXTENSION) => {
-                let context = self.context(operation)?;
+                let context = context(self, operation)?;
                 let inputs = &self.hold(source)?.inputs;
-                through::<CMapTypes>(inputs, operation, &context, change_types)?
+                through::<CMapTypes>(inputs, operation, &context, change_types, sure_in_types)?
             }
             (_, other) => {
                 return Err(format!(
@@ -1138,7 +1527,7 @@ impl<'a> Work<'a> {
         let before = held.inputs.xml().to_vec();
         held.inputs.set_xml(xml.clone());
         Ok(Applied {
-            inverse,
+            inverse: inverse.expecting(digest_of(&xml)),
             edited: Edited {
                 file: held.dir.join(or_source::metadata::XML),
                 before,
@@ -1151,40 +1540,40 @@ impl<'a> Work<'a> {
 
     /// Write the XML of every source the operations changed; when one cannot be written, the ones written before it are put back.
     fn commit(self) -> Result<(), Error> {
-        let mut written: Vec<&Held> = Vec::new();
-        for held in self.held.values() {
-            if held.inputs.xml() == held.on_disk.as_slice() {
-                continue;
-            }
-            if let Err(why) = or_source::metadata::write_xml(&held.dir, held.inputs.xml()) {
-                let mut said = problems(why);
-                for earlier in written {
-                    if let Err(left) =
-                        or_source::metadata::write_xml(&earlier.dir, &earlier.on_disk)
-                    {
-                        said.push_str(&format!(
-                            "; and {} could not be put back as it was: {}",
-                            earlier.dir.display(),
-                            problems(left)
-                        ));
-                    }
-                }
-                return Err(Error::Write(said));
-            }
-            written.push(held);
-        }
-        Ok(())
+        let changed: Vec<(&Path, &[u8], &[u8])> = (self.held.values())
+            .filter(|held| held.inputs.xml() != held.on_disk.as_slice())
+            .map(|held| {
+                (
+                    held.dir.as_path(),
+                    held.inputs.xml(),
+                    held.on_disk.as_slice(),
+                )
+            })
+            .collect();
+        write_all(&changed)
+    }
+}
+
+impl Pack for Work<'_> {
+    fn boxes(&mut self, source: &str) -> (Arc<Boxes>, Vec<String>) {
+        let (boxes, notes) = Work::boxes(self, source);
+        (Arc::new(boxes), notes)
+    }
+
+    fn entity(&mut self, at: &At) -> Result<CEntityDefAny, String> {
+        (self.root::<CMapData>(&at.source)).and_then(|map| entity_at(&map, at.index).cloned())
+    }
+
+    fn archetype(&mut self, at: &At) -> Result<CBaseArchetypeDefAny, String> {
+        (self.root::<CMapTypes>(&at.source))
+            .and_then(|types| archetype_at(&types, at.index).cloned())
     }
 }
 
 /// Apply `operation` to the sources of the pack of maps in `folder`, and say what takes it back; a refusal leaves every source as it was.
 pub fn apply(folder: &Path, operation: &Operation) -> Result<Applied, Error> {
     let mut work = Work::open(folder)?;
-    let applied = work.apply(operation).map_err(|why| Error::Refused {
-        name: operation.name(),
-        at: operation.source().to_string(),
-        why,
-    })?;
+    let applied = work.apply(operation)?;
     work.commit()?;
     Ok(applied)
 }
@@ -1198,14 +1587,10 @@ pub fn apply_all(
     let mut work = Work::open(folder)?;
     let mut applied = Vec::with_capacity(operations.len());
     for (index, operation) in operations.iter().enumerate() {
-        let done = work.apply(operation).map_err(|why| Error::InList {
+        let done = work.apply(operation).map_err(|refused| Error::InList {
             number: index + 1,
             of: operations.len(),
-            refused: Box::new(Error::Refused {
-                name: operation.name(),
-                at: operation.source().to_string(),
-                why,
-            }),
+            refused: Box::new(refused),
         })?;
         applied.push(done);
     }

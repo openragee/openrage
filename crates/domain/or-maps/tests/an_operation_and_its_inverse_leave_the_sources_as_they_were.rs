@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use or_maps::edit::{read_archetype, read_entity};
 use or_maps::import::{add_files, Incoming};
 use or_maps::operation::{
-    apply, apply_all, At, Error, Extents, Operation, Operations, PoseData, Record, FORMAT,
+    apply, apply_all, digest_of, At, Error, Extents, Operation, Operations, PoseData, Record,
+    FORMAT,
 };
 use or_maps::sample::{map_file, types_file, Archetype, Entity};
 
@@ -107,6 +108,7 @@ fn place() -> Operation {
         source: HARBOUR.into(),
         entity: 1,
         pose: pose([420.0, -66.5, 12.25]),
+        expects: None,
     }
 }
 
@@ -115,6 +117,7 @@ fn remove(entity: usize) -> Operation {
         source: HARBOUR.into(),
         entity,
         extents: None,
+        expects: None,
     }
 }
 
@@ -136,6 +139,7 @@ const CASES: &[Case] = &[
         archetype: "prop_crate_b".into(),
         pose: pose([-300.0, 8.0, 1.0]),
         donor: None,
+        expects: None,
     },
     // A copy of an entity of another map file, of an archetype known by its hash alone.
     |_| Operation::AddEntity {
@@ -146,6 +150,7 @@ const CASES: &[Case] = &[
             source: YARD.into(),
             index: 0,
         }),
+        expects: None,
     },
     // The LOD parent of two: both lose their parent and the later ones move down.
     |_| remove(0),
@@ -164,11 +169,13 @@ const CASES: &[Case] = &[
             entity: 3,
             record: Record::entity(&entity).unwrap(),
             extents: None,
+            expects: None,
         }
     },
     // Entity 3 stands past the extents the map states.
     |_| Operation::GrowExtents {
         source: HARBOUR.into(),
+        expects: None,
     },
     |_| Operation::SetExtents {
         source: HARBOUR.into(),
@@ -178,6 +185,7 @@ const CASES: &[Case] = &[
             streaming_extents_min: [-400.25, -400.5, -400.75],
             streaming_extents_max: [0.1, 0.2, 0.3],
         },
+        expects: None,
     },
     |_| Operation::AddArchetype {
         source: TYPES.into(),
@@ -187,10 +195,12 @@ const CASES: &[Case] = &[
             source: TYPES.into(),
             index: 1,
         }),
+        expects: None,
     },
     |_| Operation::RemoveArchetype {
         source: TYPES.into(),
         archetype: 0,
+        expects: None,
     },
     |folder| {
         inverse_of(
@@ -198,6 +208,7 @@ const CASES: &[Case] = &[
             &Operation::RemoveArchetype {
                 source: TYPES.into(),
                 archetype: 0,
+                expects: None,
             },
         )
     },
@@ -209,6 +220,7 @@ const CASES: &[Case] = &[
             source: TYPES.into(),
             archetype: 1,
             record: Record::archetype(&archetype).unwrap(),
+            expects: None,
         }
     },
     |folder| {
@@ -218,6 +230,7 @@ const CASES: &[Case] = &[
         Operation::RewriteSource {
             source: YARD.into(),
             xml: rewritten,
+            expects: None,
         }
     },
 ];
@@ -370,6 +383,7 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
                 source: HARBOUR.into(),
                 entity: 9,
                 pose: pose([0.0; 3]),
+                expects: None,
             },
             "entity 9 is past the 4",
         ),
@@ -380,6 +394,7 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
                 entity: 7,
                 record: record.clone(),
                 extents: None,
+                expects: None,
             },
             "entity 7 is past the 4",
         ),
@@ -391,6 +406,7 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
                 parent_num_children: None,
                 children: Vec::new(),
                 extents: None,
+                expects: None,
             },
             "entity 6 is past the end of the 4",
         ),
@@ -403,6 +419,7 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
                     source: YARD.into(),
                     index: 3,
                 }),
+                expects: None,
             },
             "entity 3 is past the 1",
         ),
@@ -412,6 +429,7 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
                 archetype: "  ".into(),
                 pose: pose([0.0; 3]),
                 donor: None,
+                expects: None,
             },
             "an entity places an archetype, and none is named",
         ),
@@ -419,6 +437,7 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
             Operation::RemoveArchetype {
                 source: TYPES.into(),
                 archetype: 2,
+                expects: None,
             },
             "archetype 2 is past the 2",
         ),
@@ -428,6 +447,7 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
                 name: "PROP_CRATE_A".into(),
                 asset: None,
                 donor: None,
+                expects: None,
             },
             "resolves a name once",
         ),
@@ -439,6 +459,7 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
                     position: [f32::NAN, 0.0, 0.0],
                     ..pose([0.0; 3])
                 },
+                expects: None,
             },
             "finite",
         ),
@@ -450,6 +471,7 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
                     rotation: [0.0; 4],
                     ..pose([0.0; 3])
                 },
+                expects: None,
             },
             "rotation of no length",
         ),
@@ -458,6 +480,7 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
                 source: TYPES.into(),
                 entity: 0,
                 pose: pose([0.0; 3]),
+                expects: None,
             },
             "does not edit a type file",
         ),
@@ -465,12 +488,14 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
             Operation::RemoveArchetype {
                 source: HARBOUR.into(),
                 archetype: 0,
+                expects: None,
             },
             "does not edit a map file",
         ),
         (
             Operation::GrowExtents {
                 source: nowhere.into(),
+                expects: None,
             },
             "no map set of the pack names this source",
         ),
@@ -478,6 +503,7 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
             Operation::RewriteSource {
                 source: HARBOUR.into(),
                 xml: "<CMapData><entities>".into(),
+                expects: None,
             },
             "metadata.xml",
         ),
@@ -540,6 +566,7 @@ fn a_dry_run_says_what_a_list_would_change_and_writes_nothing() {
             name: "prop_new_crate".into(),
             asset: None,
             donor: None,
+            expects: None,
         },
         // Reads the type file as the operation before it left it.
         Operation::AddEntity {
@@ -547,6 +574,7 @@ fn a_dry_run_says_what_a_list_would_change_and_writes_nothing() {
             archetype: "prop_new_crate".into(),
             pose: pose([900.0, 0.0, 0.0]),
             donor: None,
+            expects: None,
         },
     ];
     let dry = apply_all(&folder, &list, true).unwrap();
@@ -589,8 +617,9 @@ fn xml_typed_by_hand_is_put_back_as_it_was_typed() {
         Operation::RewriteSource {
             source: HARBOUR.into(),
             xml: typed,
+            expects: Some(digest_of(&std::fs::read(&file).unwrap())),
         },
-        "an edit rewrites the XML whole, so what takes it back is the XML as it was typed"
+        "an edit rewrites the XML whole, so what takes it back is the XML as it was typed, stated for the XML the edit wrote"
     );
     assert_ne!(files(&folder), before);
     apply(&folder, &applied.inverse).unwrap();
@@ -610,6 +639,7 @@ fn an_inverse_that_would_not_put_the_file_back_is_the_xml_as_it_was() {
         parent_num_children: None,
         children,
         extents: None,
+        expects: None,
     };
 
     // Entity 1 names 0 as its parent: once it is claimed by the inserted one, a removal cannot say whose it was.
@@ -687,6 +717,7 @@ fn an_entity_put_in_before_a_lod_parent_moves_the_links_that_name_the_parent() {
         source: QUAY.into(),
         entity: 0,
         extents: None,
+        expects: None,
     };
 
     // Taken out, the parent stands first and its children name it there.
@@ -709,6 +740,7 @@ fn an_entity_put_in_before_a_lod_parent_moves_the_links_that_name_the_parent() {
         parent_num_children: None,
         children: Vec::new(),
         extents: None,
+        expects: None,
     };
     let applied = apply(&folder, &put_in).unwrap();
     assert_eq!(
@@ -763,6 +795,7 @@ fn an_entity_that_names_itself_as_its_lod_parent_is_taken_out_and_no_other_count
             source: QUAY.into(),
             entity: 0,
             extents: None,
+            expects: None,
         },
     )
     .unwrap();
@@ -807,11 +840,13 @@ fn a_source_that_leaves_the_folder_of_the_pack_is_refused_and_is_not_written() {
         Operation::RewriteSource {
             source: named.into(),
             xml: rewritten,
+            expects: None,
         },
         Operation::PlaceEntity {
             source: named.into(),
             entity: 0,
             pose: pose([900.0, 0.0, 0.0]),
+            expects: None,
         },
     ] {
         match apply(&folder, &operation) {
@@ -859,6 +894,7 @@ fn a_rotation_that_is_not_of_length_one_is_stored_as_the_rotation_it_turns_by() 
             source: HARBOUR.into(),
             entity: 3,
             pose: stretched,
+            expects: None,
         },
     )
     .unwrap();
@@ -869,6 +905,7 @@ fn a_rotation_that_is_not_of_length_one_is_stored_as_the_rotation_it_turns_by() 
             archetype: "prop_crate_a".into(),
             pose: stretched,
             donor: None,
+            expects: None,
         },
     )
     .unwrap()

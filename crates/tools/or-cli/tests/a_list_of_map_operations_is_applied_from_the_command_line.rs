@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use or_maps::import::{add_files, Incoming};
-use or_maps::operation::{apply_all, At, Operation, Operations, PoseData};
+use or_maps::operation::{apply_all, digest_of, At, Operation, Operations, PoseData};
 use or_maps::sample::{map_file, types_file, Archetype, Entity};
 
 const HARBOUR: &str = "harbour.metadata.src";
@@ -126,6 +126,7 @@ fn a_list() -> Vec<Operation> {
             source: HARBOUR.into(),
             entity: 2,
             pose: pose([240.0, -31.5, 4.0]),
+            expects: None,
         },
         Operation::AddArchetype {
             source: TYPES.into(),
@@ -135,21 +136,25 @@ fn a_list() -> Vec<Operation> {
                 source: TYPES.into(),
                 index: 1,
             }),
+            expects: None,
         },
         Operation::AddEntity {
             source: HARBOUR.into(),
             archetype: "prop_new_crate".into(),
             pose: pose([-90.0, 12.0, 0.0]),
             donor: None,
+            expects: None,
         },
         Operation::RemoveEntity {
             source: HARBOUR.into(),
             entity: 0,
             extents: None,
+            expects: None,
         },
         Operation::RemoveArchetype {
             source: TYPES.into(),
             archetype: 0,
+            expects: None,
         },
     ]
 }
@@ -212,6 +217,7 @@ fn a_list_with_an_operation_that_cannot_be_done_is_refused_whole_and_so_is_one_o
         source: HARBOUR.into(),
         entity: 40,
         extents: None,
+        expects: None,
     });
     let good = Operations::new(a_list()).to_json().unwrap();
     std::fs::write(&list, Operations::new(operations).to_json().unwrap()).unwrap();
@@ -299,6 +305,7 @@ fn a_dry_run_names_each_operation_and_file_and_a_refusal_names_the_operation_ref
         source: HARBOUR.into(),
         entity: 40,
         extents: None,
+        expects: None,
     });
     let refused = apply_all(&dir.path().join("maps"), &operations, true)
         .unwrap_err()
@@ -352,4 +359,56 @@ fn a_project_with_two_maps_contents_is_asked_which_and_only_the_one_named_change
         "the content that was not named is as it was"
     );
     assert!(files(&dir.path().join("more")) != before);
+}
+
+/// A list is a file a person keeps, and the source it was made for may have been edited since: an operation that states the XML its
+/// source holds is done to that XML and to no other.
+#[test]
+fn an_operation_that_states_the_xml_of_its_source_is_refused_once_the_source_holds_another() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = a_project_with_maps(dir.path());
+    let folder = dir.path().join("maps");
+    let list = dir.path().join("operations.json");
+    let imported = std::fs::read(folder.join(HARBOUR).join("metadata.xml")).unwrap();
+    let place = Operation::PlaceEntity {
+        source: HARBOUR.into(),
+        entity: 2,
+        pose: pose([30.0, 20.0, 0.5]),
+        expects: None,
+    }
+    .expecting(digest_of(&imported));
+    // The operation that takes it back states the XML it leaves, so the two in one list leave the source as it was.
+    let [back] = apply_all(&folder, std::slice::from_ref(&place), true)
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let both = Operations::new(vec![place.clone(), back.inverse]);
+    std::fs::write(&list, both.to_json().unwrap()).unwrap();
+    let before = files(&folder);
+    let (printed, error, succeeded) = said(&[text(&project), text(&list)]);
+    assert!(succeeded, "{error}");
+    assert!(
+        printed.contains("content maps: 2 operation(s) changed 0 source(s)"),
+        "{printed}"
+    );
+    assert!(files(&folder) == before);
+
+    let written = Operations::new(vec![place]).to_json().unwrap();
+    assert!(written.contains("\"expects\": \""), "{written}");
+    std::fs::write(&list, written).unwrap();
+    let (_, error, succeeded) = said(&[text(&project), text(&list)]);
+    assert!(succeeded, "{error}");
+    let moved = files(&folder);
+    assert!(moved != before);
+
+    // The same list a second time: its source holds what the first time wrote.
+    let (printed, error, succeeded) = said(&[text(&project), text(&list)]);
+    assert!(!succeeded, "{printed}");
+    assert!(
+        error.contains(
+            "error: operation 1 of 1, place_entity of `harbour.metadata.src`: the source is not as the operation expects it"
+        ) && error.contains("; no source was changed"),
+        "{error}"
+    );
+    assert!(files(&folder) == moved);
 }

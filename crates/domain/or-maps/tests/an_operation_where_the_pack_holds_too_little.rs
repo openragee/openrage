@@ -125,6 +125,7 @@ fn an_entity_of_an_archetype_the_pack_does_not_declare_is_held_by_the_extents_an
         &folder,
         &Operation::PlaceEntity {
             source: HARBOUR.into(),
+            expects: None,
             entity: 1,
             pose: pose(far),
         },
@@ -141,6 +142,7 @@ fn an_entity_of_an_archetype_the_pack_does_not_declare_is_held_by_the_extents_an
         &folder,
         &Operation::AddEntity {
             source: HARBOUR.into(),
+            expects: None,
             archetype: BENCH.into(),
             pose: pose(farther),
             donor: Some(At {
@@ -176,6 +178,7 @@ fn an_entity_of_an_archetype_the_pack_does_not_declare_is_held_by_the_extents_an
         &folder,
         &Operation::PlaceEntity {
             source: YARD.into(),
+            expects: None,
             entity: 0,
             pose: pose([-300.0, 20.0, 0.5]),
         },
@@ -244,11 +247,13 @@ fn the_last_entity_and_the_last_archetype_of_a_file_are_taken_out_and_the_invers
     for operation in [
         Operation::RemoveEntity {
             source: YARD.into(),
+            expects: None,
             entity: 0,
             extents: None,
         },
         Operation::RemoveArchetype {
             source: TYPES.into(),
+            expects: None,
             archetype: 0,
         },
     ] {
@@ -295,6 +300,7 @@ fn a_map_and_a_type_file_that_hold_nothing_take_their_first_through_an_operation
         &folder,
         &Operation::AddEntity {
             source: HARBOUR.into(),
+            expects: None,
             archetype: "prop_crate_a".into(),
             pose: pose([60.0, 70.0, 0.5]),
             donor: None,
@@ -312,6 +318,7 @@ fn a_map_and_a_type_file_that_hold_nothing_take_their_first_through_an_operation
         &folder,
         &Operation::AddEntity {
             source: "quay.metadata.src".into(),
+            expects: None,
             archetype: "prop_crate_a".into(),
             pose: pose([6.0, 7.0, 0.5]),
             donor: Some(At {
@@ -333,6 +340,7 @@ fn a_map_and_a_type_file_that_hold_nothing_take_their_first_through_an_operation
         &folder,
         &Operation::AddArchetype {
             source: "quay_types.metadata.src".into(),
+            expects: None,
             name: "prop_quay_crate".into(),
             asset: None,
             donor: Some(At {
@@ -381,11 +389,13 @@ fn an_entity_added_after_the_one_with_the_largest_guid_went_takes_its_guid_and_c
     let list = [
         Operation::RemoveEntity {
             source: HARBOUR.into(),
+            expects: None,
             entity: 2,
             extents: None,
         },
         Operation::AddEntity {
             source: HARBOUR.into(),
+            expects: None,
             archetype: "prop_crate_b".into(),
             pose: pose([60.0, 70.0, 0.5]),
             donor: None,
@@ -452,6 +462,7 @@ fn an_entity_taken_out_of_a_parent_map_leaves_a_link_past_its_end_which_a_rule_n
         &folder,
         &Operation::RemoveEntity {
             source: HARBOUR.into(),
+            expects: None,
             entity: 1,
             extents: None,
         },
@@ -506,6 +517,7 @@ fn a_type_file_that_does_not_cook_is_said_and_an_rbm_map_that_holds_nothing_refu
         &folder,
         &Operation::AddEntity {
             source: HARBOUR.into(),
+            expects: None,
             archetype: "prop_crate_a".into(),
             pose: pose([1.0, 2.0, 3.0]),
             donor: Some(At {
@@ -528,6 +540,7 @@ fn a_type_file_that_does_not_cook_is_said_and_an_rbm_map_that_holds_nothing_refu
         &folder,
         &Operation::PlaceEntity {
             source: YARD.into(),
+            expects: None,
             entity: 0,
             pose: pose([-300.0, 20.0, 0.5]),
         },

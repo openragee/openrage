@@ -9807,33 +9807,31 @@ roots; the first edit of a game object importing its map as a source with its ba
 new entity made from a donor of the mounted install; and the Map screen's Undo moved into the
 project's History ([brief](World_Editor_Plan.md#one-vocabulary-of-world-edits-r70h)).
 
-**Where it stands.** Two parts are built. The vocabulary, for one pack: `Operation`, `apply` and
-`apply_all` in `crates/domain/or-maps/src/operation.rs`, which the Map screen's edits and
+**Where it stands.** The vocabulary, for one pack: `Operation`, `apply`, `apply_all` and `Session`
+in `crates/domain/or-maps/src/operation.rs`, which the Map screen's edits and
 `openrage-cli maps apply` call (`an_operation_and_its_inverse_leave_the_sources_as_they_were`, on
-synthetic packs). And a map, an entity that is no copy, a type file and a base archetype made with
-no donor and no schema snapshot in `crates/domain/or-world/src/create.rs`, saved against the four
-world classes `or-io` declares by hand (`crates/io/or-io/src/meta/typed/world_types.rs`), behind
-`openrage-cli world new-map`, `world archetypes` with no `--like`, and `add_new_entity` and
-`add_new_archetype` of `crates/domain/or-maps/src/edit.rs`. Such a map reads back as its root,
-breaks no check and passes the rules of a pack
+synthetic packs). A session holds the sources as typed roots and writes them once at a flush, as
+`apply` writes them one by one; an inverse states the digest or the session token it applies to,
+else it is refused; and the Map screen's Undo keeps the operation and its inverse
+(`a_session_of_map_edits_writes_once_what_each_edit_writes`). On a synthetic map of 20,000 entities
+a pose edit took 2.4 s one by one, and 0.83 ms with one flush of 2.2 s in a session
+(`one_pose_edit_is_timed_on_synthetic_maps_of_two_thousand_and_twenty_thousand_entities`, release,
+load average 70, 2026-11-25). And a map, an entity that is no copy, a type file and a base
+archetype made with no donor and no snapshot (`crates/domain/or-world/src/create.rs`), behind
+`openrage-cli world new-map` and `world archetypes`, which pass the rules of a pack
 (`a_map_and_a_type_file_made_from_nothing_enter_a_pack_and_break_none_of_its_rules`).
 
-⚠ It is written as PSO, and RBM is refused (`rbm_is_refused_with_the_word_nothing_derives_named`):
-nothing derives the signature word of an RBM class ([R62](#r62-the-rbm-layout-synthesiser)). The
-game's own world files are RBM, so whether it loads one written as PSO is a line of
-[R70a](#r70a-what-the-game-loads)'s sheet, and no map is made from a donor of an install, which
-What asks for. An entity made so states only what the typed family names
-([what it leaves out](../reference/Crate_Reference.md#domain-crates)). The first entity of a map
-that holds none, and the first archetype of a type file that holds none, is built that way by
-`add_entity` and `add_archetype` with what the donor states, and the last one taken out is put back
-by the XML as it was (`crates/domain/or-maps/tests/an_operation_where_the_pack_holds_too_little.rs`).
-An entity of an archetype no type file of the pack declares is held by the extents where it
-stands, a lower bound the operation says in a note, since no operation is handed the boxes of the
-install ([R70b](#r70b-the-gta-v-world-index)). An entity taken out of a map that another map of
-the pack names as parent leaves that map's links as they were, which the rule
-`parent-link-broken` names once a link is past the end. Left: links across files, the
-import, a new map and an entity that is no copy as operations, the donor and the install's boxes,
-Undo by inverses in History, the install measure.
+⚠ They are written as PSO, and RBM is refused (`rbm_is_refused_with_the_word_nothing_derives_named`,
+[R62](#r62-the-rbm-layout-synthesiser)); the game's own world files are RBM, so whether it loads
+one written as PSO is a line of [R70a](#r70a-what-the-game-loads)'s sheet, and none is made from an
+install's donor. The first entity or archetype of a file that holds none is built that way,
+the last one taken out is put back by the XML, and an entity of an archetype the pack does not
+declare is held by the extents where it stands, said in a note
+(`crates/domain/or-maps/tests/an_operation_where_the_pack_holds_too_little.rs`). An entity taken
+out of a parent map leaves its child maps' links as they were, which the rule `parent-link-broken`
+names once one is past the end. Left: the Map screen on a session, links across files, the import,
+a new map and a built entity as operations, the donor and the install's boxes, History, the
+install measure.
 
 **Depends on.** Nothing in R70; it does the part of
 [R69h](#r69h-one-undo-for-the-tab-on-screen) a Map tab needs below the screen.

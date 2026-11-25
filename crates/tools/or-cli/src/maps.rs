@@ -78,10 +78,11 @@ fn print_usage() {
          placed, added as a copy or taken out with its LOD links renumbered, an archetype added or taken\n\
          out, the extents grown or stated, a record put back. The list is JSON whose format is\n\
          `openrage-map-operations` and whose schema is 1, each operation an object whose `op` names it\n\
-         and whose `source` is a source folder of the content. It writes all of them or none: an\n\
-         operation that is refused is named by its place in the list, and no source changes. With\n\
-         --dry-run it says what each operation would change and writes nothing. It exits 1 when an\n\
-         operation is refused.\n\
+         and whose `source` is a source folder of the content. An operation that states `expects`,\n\
+         the SHA-256 of the XML its source is to hold, is refused when the source holds another. It\n\
+         writes all of them or none: an operation that is refused is named by its place in the list,\n\
+         and no source changes. With --dry-run it says what each operation would change and writes\n\
+         nothing. It exits 1 when an operation is refused.\n\
          keep-manifest keeps a manifest of the game in the maps content, as the game ships it. A build\n\
          writes the manifest of its own maps from the ones kept: they say how that document is laid\n\
          out and what flags the entry of a map takes, which nothing else in a project says. Name the\n\

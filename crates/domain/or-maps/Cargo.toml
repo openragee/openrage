@@ -22,6 +22,8 @@ glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# The refusal of a flush made when a session is dropped, which nothing else can report.
+tracing.workspace = true
 # The digest of a map's content, which the diff of two builds compares.
 sha2 = "0.10"
 

@@ -720,6 +720,7 @@ fn an_entity_and_an_archetype_added_are_copies_of_the_one_selected() {
             entity: 1,
             record: Record::entity(&second).unwrap(),
             extents: None,
+            expects: None,
         },
     )
     .unwrap();
@@ -759,4 +760,112 @@ fn an_entity_and_an_archetype_added_are_copies_of_the_one_selected() {
     assert_eq!(types.archetypes[0].bb_max.z, 1.0);
     assert_eq!(types.archetypes[2].bb_max.z, 9.5);
     assert!(types.archetypes[2].name == "prop_new_crate");
+}
+
+/// A step of Undo keeps the operation that takes its change back, which states the XML it applies to.
+#[test]
+fn an_undo_is_refused_once_its_source_was_edited_from_outside_and_goes_through_once_that_edit_is_taken_back(
+) {
+    use or_maps::operation::{apply, Operation, PoseData};
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().unwrap();
+    let mut shell = a_maps_shell(dir.path());
+    let folder = shell.state.maps_pack().expect("a pack").folder.clone();
+    let file = the_map_source(&shell).join("metadata.xml");
+    let before = std::fs::read(&file).unwrap();
+
+    select_entity(&mut shell, 0);
+    let pose = shell.state.selected_pose().expect("a pose");
+    let moved = or_maps::edit::Pose {
+        position: pose.position + Vec3::new(2.0, 0.0, 0.0),
+        ..pose
+    };
+    shell
+        .state
+        .place_selected_entity(moved, "Moved".to_string());
+    assert_eq!(shell.state.workbench.maps.undo.len(), 1);
+    let step = &shell.state.workbench.maps.undo[0];
+    assert_eq!(
+        step.undo.expects(),
+        Some(or_maps::operation::digest_of(&std::fs::read(&file).unwrap()).as_str()),
+        "the step keeps the inverse, which states the XML the move wrote"
+    );
+
+    // Another entity of the same source is moved by something that is not this history.
+    let outside = apply(
+        &folder,
+        &Operation::PlaceEntity {
+            source: "harbour.metadata.src".to_string(),
+            expects: None,
+            entity: 1,
+            pose: PoseData {
+                position: [40.0, 41.0, 0.5],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale_xy: 1.0,
+                scale_z: 1.0,
+            },
+        },
+    )
+    .unwrap();
+    let edited = std::fs::read(&file).unwrap();
+    shell.state.undo_maps_change();
+    assert_eq!(
+        (
+            shell.state.workbench.maps.undo.len(),
+            shell.state.workbench.maps.redo.len()
+        ),
+        (1, 0),
+        "the step is kept for when the source is as it left it"
+    );
+    assert!(
+        std::fs::read(&file).unwrap() == edited,
+        "a refused Undo writes nothing"
+    );
+
+    apply(&folder, &outside.inverse).unwrap();
+    shell.state.undo_maps_change();
+    assert!(shell.state.workbench.maps.undo.is_empty());
+    assert!(std::fs::read(&file).unwrap() == before);
+    shell.state.redo_maps_change();
+    assert_eq!(
+        the_map_file(&shell).entities[0].position.x,
+        moved.position.x
+    );
+    shell.state.undo_maps_change();
+    assert!(std::fs::read(&file).unwrap() == before);
+}
+
+/// A map read again with no entity in it saves none, so the step that took the last one out keeps the XML and Undo puts it back.
+#[test]
+fn the_last_entity_of_a_map_taken_out_is_put_back_by_undo() {
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().unwrap();
+    let mut shell = a_maps_shell(dir.path());
+    let file = the_map_source(&shell).join("metadata.xml");
+    let before = std::fs::read(&file).unwrap();
+
+    for _ in 0..2 {
+        select_entity(&mut shell, 0);
+        shell.state.remove_selected_entity();
+    }
+    assert!(the_map_file(&shell).entities.is_empty());
+    assert_eq!(shell.state.workbench.maps.undo.len(), 2);
+    let emptied = std::fs::read(&file).unwrap();
+
+    shell.state.undo_maps_change();
+    assert_eq!(
+        the_map_file(&shell).entities.len(),
+        1,
+        "the entity taken out last is put back"
+    );
+    shell.state.undo_maps_change();
+    assert!(shell.state.workbench.maps.undo.is_empty());
+    assert!(std::fs::read(&file).unwrap() == before);
+
+    shell.state.redo_maps_change();
+    shell.state.redo_maps_change();
+    assert!(std::fs::read(&file).unwrap() == emptied);
+    shell.state.undo_maps_change();
+    shell.state.undo_maps_change();
+    assert!(std::fs::read(&file).unwrap() == before);
 }

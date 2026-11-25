@@ -306,9 +306,11 @@ fn tone_of(frame: &Keyframe, settings: &VisualSettings, disc: f32) -> Tone {
 /// The clouds over a model in a weather whose cycle says they cover `cover` of the sky, and
 /// what `frame` states of the directional light under them.
 // The open share is a stand-in. The game marches the light's way through its field of clouds
-// for every place, and a model alone has no field: the clouds are taken to hide the share of
-// the ground the cycle says they cover, as deeply as it says a cloud's shadow shows, and the
-// model stands in the mean of that.
+// for every place, a map of four kinds of cloud laid by maps of the weather and broken by two
+// volumes of noise, and takes what comes through, less as the cycle says a cloud's shadow
+// shows, into the mask of the directional light. A model alone has no field: the clouds are
+// taken to hide the share of the ground the cycle says they cover, to nought where they do,
+// and the model stands in the mean of what the game would take.
 fn clouds_of(cover: f32, frame: &Keyframe) -> Clouds {
     let shows = frame.get_or("local_atmosphere_cloud_shadow_alpha", 1.0);
     Clouds {
@@ -360,9 +362,12 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
             * frame.get_or(&format!("light_dir_{word}_mult"), 1.0);
         let through = air.light_through(towards)
             * frame.get_or("sky_transmittance_correction_factor", 1.0 / PI);
+        // The game's lighting program multiplies three things: the light's colour by its
+        // strength, the body's lux by that strength again, and what comes through the air.
+        let scalar = lux(word) * strength;
         (
             towards,
-            rgb(&frame, "light_dir_col") * lux(word) * strength * through,
+            rgb(&frame, "light_dir_col") * strength * scalar * through,
         )
     });
     let (towards, colour) = light.unwrap_or((sun, Vec3::ZERO));

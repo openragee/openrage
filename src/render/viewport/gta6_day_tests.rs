@@ -174,13 +174,14 @@ fn the_cycle_states_the_light_by_its_lux_its_tint_its_multipliers_and_the_air() 
     let noon_hours = SOLAR_NOON * 24.0;
 
     let noon = at(noon_hours);
-    // A thousand lux, half of it, twice, by the tint, through the air, with the air's own
-    // share of a matte surface's light.
+    // A thousand lux, half of it, by the tint, through the air, with the air's own share of
+    // a matte surface's light; and the cycle's multiplier of two twice, once on the tint and
+    // once on the lux.
     let through = air.light_through(sun_towards(noon_hours)) / PI;
-    let sun = Vec3::new(1.0, 0.5, 1.0) * 1000.0 * 0.5 * 2.0 * through;
+    let sun = Vec3::new(1.0, 0.5, 1.0) * 1000.0 * 0.5 * 2.0 * 2.0 * through;
     assert!(close(noon.sun, sun), "{:?} against {sun:?}", noon.sun);
     assert!(
-        sun.x > sun.z && sun.x > 200.0,
+        sun.x > sun.z && sun.x > 400.0,
         "the air takes the blue: {sun:?}"
     );
     assert!(close(noon.towards, sun_towards(noon_hours)));
@@ -261,9 +262,10 @@ fn the_cycle_states_the_light_by_its_lux_its_tint_its_multipliers_and_the_air() 
     assert_eq!(clouds_of(0.0, &stated).open, 1.0);
 
     let night = at(noon_hours + 12.0);
-    // Two lux of moon, three times, halved by the moon's own multiplier.
+    // Two lux of moon, three times, halved by the moon's own multiplier, and that strength of
+    // one and a half again.
     let through = air.light_through(moon_towards(noon_hours + 12.0)) / PI;
-    let moon = Vec3::new(1.0, 0.5, 1.0) * 2.0 * 3.0 * 0.5 * through;
+    let moon = Vec3::new(1.0, 0.5, 1.0) * 2.0 * 1.5 * 1.5 * through;
     assert!(close(night.sun, moon), "{:?} against {moon:?}", night.sun);
     assert!(close(night.towards, moon_towards(noon_hours + 12.0)));
     assert!(night.sky.y < noon.sky.y * 0.02, "{:?}", night.sky);
@@ -333,7 +335,8 @@ fn a_weather_is_drawn_with_the_cycle_its_type_names_under_that_type_s_modifiers(
         r#"<modifier name="M_air"><light_dir_mult>4.000000 0.000000</light_dir_mult></modifier>"#,
     );
     let modified = lit(&data).expect("the type's cycle lights");
-    assert!(close(modified.sun, plain.sun * 4.0), "{:?}", modified.sun);
+    // A multiplier of four is in the light twice.
+    assert!(close(modified.sun, plain.sun * 16.0), "{:?}", modified.sun);
 }
 
 #[test]

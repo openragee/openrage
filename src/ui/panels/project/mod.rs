@@ -15,6 +15,7 @@ mod content;
 mod create;
 mod credit_window;
 mod fixes;
+pub(crate) mod in_game;
 mod maps_window;
 mod optimise_window;
 mod picker;

@@ -46,7 +46,7 @@ Press `Ctrl+B`, or Project ▸ Build. The Build tab says what the build will wri
 
 Tick Verify with a second build on the Build tab and the build is made a second time into a scratch folder and compared byte for byte; the tab says whether it ran, and it is off to begin with because it cooks every source again.
 
-A build tells you that every file it wrote reloads through OpenRage's readers. It never says that the game loads the pack, because nobody can run the game from here.
+A build tells you that every file it wrote reloads through OpenRage's readers. It never says that the game loads the pack, because nobody can run the game from here. Where a build wrote a kind of file that somebody can look for in a running game, such as a map, the Build tab says how many of those kinds nobody has recorded seeing the game load, and How to check it in the game under that sentence opens the steps, which are also under Help ▸ In-game acceptance guide.
 
 ## Many garments, and places that stay put
 

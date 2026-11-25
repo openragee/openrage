@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
 
-use or_project::acceptance::{kinds_in, Concern, Sheet, Verdict};
+use or_project::acceptance::{kinds_in, Concern, Seen, Sheet, Verdict};
 use or_project::Target;
 
 use crate::project::{parse, Failure};
@@ -20,6 +20,39 @@ const EDITIONS: [Target; 2] = [Target::Legacy, Target::Enhanced];
 pub(crate) fn acceptance(args: &[String]) -> Result<ExitCode, Failure> {
     let sheet = Sheet::shipped().map_err(|e| Run(e.to_string()))?;
     acceptance_to(args, &sheet, &mut std::io::stdout().lock())
+}
+
+/// What a build's report says of `sheet` for the folder it wrote: what was seen in game of its kinds of file, and where the steps to check are.
+///
+/// ⚠ The sentences are `Sheet::seen`'s, which the Build tab says too, so the command and the screen read one sheet one way.
+pub(crate) fn seen_lines(sheet: &Sheet, built: &Path, stated: Option<Target>) -> Vec<String> {
+    let kinds: BTreeSet<String> = match kinds_in(built) {
+        Ok(counted) => counted.into_keys().collect(),
+        Err(why) => return vec![format!("not read against the acceptance sheet: {why}")],
+    };
+    let seen = sheet.seen(&kinds, stated);
+    let mut lines: Vec<String> = (seen.iter())
+        .map(|(edition, seen)| seen.sentence(*edition))
+        .collect();
+    if seen.iter().any(|(_, seen)| matches!(seen, Seen::Not(_))) {
+        // ⚠ Between quotes, since a folder under a person's own name often holds a space, and the line is there to be copied.
+        lines.push(format!(
+            "to check: openrage-cli project acceptance \"{}\" lists what to look for, and docs/guides/In_Game_Acceptance.md says how",
+            built.display()
+        ));
+    }
+    lines
+}
+
+/// Prints [`seen_lines`] for the sheet the binary was built with, under the report of the build that wrote `built`.
+pub(crate) fn report_seen(built: &Path, stated: Option<Target>) {
+    let lines = match Sheet::shipped() {
+        Ok(sheet) => seen_lines(&sheet, built, stated),
+        Err(e) => vec![e.to_string()],
+    };
+    for line in lines {
+        println!("  {line}");
+    }
 }
 
 /// What the sheet holds of a line for one edition, as the end of a line that names the edition.
@@ -303,6 +336,78 @@ mod tests {
                 lines.len()
             )),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn a_builds_report_says_what_the_sheet_says_of_its_kinds_and_where_the_steps_are() {
+        let dir = tempfile::tempdir().unwrap();
+        let built = a_built_resource(dir.path());
+        let folder = Path::new(&built);
+        let kinds: BTreeSet<String> = ["ymap", "ytyp", "lua"].map(str::to_string).into();
+        let to_check = format!(
+            "to check: openrage-cli project acceptance \"{built}\" lists what to look for, and docs/guides/In_Game_Acceptance.md says how"
+        );
+
+        let shipped = Sheet::shipped().unwrap();
+        let said = |sheet: &Sheet, stated: Option<Target>| -> Vec<String> {
+            (sheet.seen(&kinds, stated).iter())
+                .map(|(edition, seen)| seen.sentence(*edition))
+                .collect()
+        };
+        let lines = seen_lines(&shipped, folder, Some(Target::Legacy));
+        assert_eq!(
+            lines[..1],
+            said(&shipped, Some(Target::Legacy)),
+            "{lines:?}"
+        );
+        assert_eq!(
+            lines,
+            [
+                "2 kinds of file this build wrote were not seen loading in GTA V Legacy: maps, type files",
+                to_check.as_str(),
+            ]
+        );
+
+        // The test's own copy of the sheet, with every line about a map or a type file seen to load in Legacy.
+        let mut own: Value = serde_json::from_str(SHEET).unwrap();
+        for line in own["lines"].as_array_mut().unwrap() {
+            if line["kind"] == "ymap" || line["kind"] == "ytyp" {
+                line["results"] = json!([{
+                    "edition": "legacy", "build": "3258", "where": "fivem-server",
+                    "date": "2026-12-01", "verdict": "loaded",
+                }]);
+            }
+        }
+        let own = Sheet::parse(&own.to_string()).unwrap();
+        assert_eq!(
+            seen_lines(&own, folder, Some(Target::Legacy)),
+            ["Every kind of file this build wrote that the acceptance sheet has a line about was seen loading in GTA V Legacy; the newest result is dated 2026-12-01"],
+            "a build whose kinds were all seen is sent to no steps"
+        );
+        let unstated = seen_lines(&own, folder, None);
+        assert_eq!(unstated[..2], said(&own, None), "{unstated:?}");
+        assert_eq!(
+            unstated[1..],
+            [
+                "2 kinds of file this build wrote were not seen loading in GTA V Enhanced: maps, type files",
+                to_check.as_str(),
+            ],
+            "a build that states no edition is read for both: {unstated:?}"
+        );
+
+        // A build of scripts alone wrote nothing a line is about, and its report gains nothing.
+        let scripts = dir.path().join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        for file in ["client.lua", "fxmanifest.lua"] {
+            std::fs::write(scripts.join(file), b"").unwrap();
+        }
+        assert_eq!(seen_lines(&shipped, &scripts, None), [] as [&str; 0]);
+
+        let gone = seen_lines(&shipped, &dir.path().join("gone"), None);
+        assert!(
+            matches!(gone.as_slice(), [one] if one.starts_with("not read against the acceptance sheet: ")),
+            "{gone:?}"
         );
     }
 

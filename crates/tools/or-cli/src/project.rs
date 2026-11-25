@@ -205,6 +205,8 @@ const USAGE: &str = "Usage:\n  \
          database OPENRAGE_SHADER_DEFS names, respells the parameters of a drawable that\n\
          moves; with none, they are dropped and named. With --reproducible it then builds\n\
          again into a scratch folder and says whether every byte is the same.\n\
+         Under each resource it says which kinds of file it wrote nobody has seen GTA V load,\n\
+         for the build's edition or for both when it states none, as the acceptance sheet holds it.\n\
          verify reads a built resource back against the plan the project has now.\n\
          acceptance reads the folder a build wrote (a resource, or the folder of a dlc.rpf or an\n\
          .oiv) and prints the lines of the acceptance sheet about the kinds of file in it: what to\n\
@@ -1410,6 +1412,7 @@ fn build_of(args: &[String]) -> Result<ExitCode, Failure> {
         );
         cooked(built);
         report(&built.verification);
+        crate::project_acceptance::report_seen(&built.folder, plan.target);
         losses(built);
         if let Some(found) = &built.since {
             since(found);

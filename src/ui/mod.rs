@@ -55,6 +55,8 @@ mod the_addon_peds_on_screen;
 #[cfg(test)]
 mod the_build_tab_on_screen;
 #[cfg(test)]
+mod the_build_tab_says_what_was_seen_in_game_on_screen;
+#[cfg(test)]
 mod the_builds_read_plainly_on_screen;
 #[cfg(test)]
 mod the_builds_say_what_changed_and_what_they_checked_on_screen;

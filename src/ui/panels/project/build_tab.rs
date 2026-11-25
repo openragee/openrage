@@ -6,12 +6,13 @@
 use crate::state::front_door::KindWords as _;
 use std::str::FromStr;
 
-use or_project::{Container, Diff, Item, Origin};
+use or_project::acceptance::Sheet;
+use or_project::{Container, Diff, Item, Origin, Output};
 use or_wardrobe::Slot;
 
 use super::build_part::built_part;
 use super::{command_button, severity_colour, size, REFRESH};
-use crate::state::front_door::{counted, spoken};
+use crate::state::front_door::{counted, spoken, GuideDocument};
 use crate::state::workbench::{
     verifies, BuildDot, BuiltPart, Counts, LastBuild, Resource, Scope, Severity, STEPS,
 };
@@ -64,6 +65,7 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
     };
 
     let mut go_to_problems = false;
+    let mut how_to_check = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -163,10 +165,11 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
                 }
             });
             section(ui, tr!("Verification"), true, |ui| {
-                verification(
+                let builds = state.workbench.builds();
+                how_to_check = verification(
                     ui,
-                    &state.project_carried.container,
-                    state.workbench.builds().last(&output.id),
+                    (&state.project_carried.container, &output, builds.sheet()),
+                    builds.last(&output.id),
                 );
             });
             section(ui, tr!("Size map"), !built, |ui| {
@@ -181,6 +184,11 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
                 .color(theme::TEXT_SECONDARY),
             );
         });
+    if let Some(section) = how_to_check {
+        state
+            .front_door
+            .show_document(GuideDocument::Acceptance, section);
+    }
     if go_to_problems {
         state.workspace_docks.reveal(
             crate::ui::dock::Workspace::Project,
@@ -713,8 +721,13 @@ fn diff_view(ui: &mut egui::Ui, diff: &Diff) {
     }
 }
 
-/// "was" or "were", for the count `n` of a thing.
-fn verification(ui: &mut egui::Ui, container: &Container, last: Option<&LastBuild>) {
+/// What the last build wrote and read back; the section of the acceptance guide a link of it asked for.
+fn verification(
+    ui: &mut egui::Ui,
+    of: (&Container, &Output, &Sheet),
+    last: Option<&LastBuild>,
+) -> Option<&'static str> {
+    let mut asked = None;
     match last {
         None => {
             ui.label(
@@ -728,7 +741,7 @@ fn verification(ui: &mut egui::Ui, container: &Container, last: Option<&LastBuil
                 ));
             }
             for part in &done.parts {
-                built_part(ui, container, done.at, part);
+                asked = built_part(ui, of, done.at, part).or(asked);
             }
         }
         // The reasons are under the buttons, beside the word Failed; nothing was read back.
@@ -741,6 +754,7 @@ fn verification(ui: &mut egui::Ui, container: &Container, last: Option<&LastBuil
             );
         }
     }
+    asked
 }
 
 /// One line of what a build found, and how it reads: said in words, the colour only agreeing.

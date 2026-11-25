@@ -3682,6 +3682,9 @@ msgstr "다시 열어 검사한 모든 파일({count}개):"
 msgid "Every job running in the background and the ones just finished, with their progress, a Cancel and what each left"
 msgstr "백그라운드에서 실행 중인 모든 작업과 방금 끝난 작업을 진행 상황, 취소 단추, 각 작업이 남긴 결과와 함께 표시합니다"
 
+msgid "Every kind of file this build wrote that the acceptance sheet has a line about was seen loading in GTA V {edition}; the newest result is dated {date}"
+msgstr "이 빌드가 기록한 파일 종류 중 수락 시트에 줄이 있는 것은 모두 GTA V {edition}에서 로드되는 것이 확인되었습니다. 가장 최근 결과의 날짜는 {date}입니다"
+
 msgid "Every level of detail"
 msgstr "모든 세부 수준(LOD)"
 
@@ -4483,6 +4486,9 @@ msgstr "디퓨즈의 밝기가 노멀 맵을 얼마나 가파르게 기울이는
 msgid "How the 3D view draws the ped: with textures, as a shape, as edges, or as the vertex data"
 msgstr "3D 뷰가 페드를 그리는 방식: 텍스처 포함, 형태, 에지 또는 버텍스 데이터"
 
+msgid "How to check it in the game"
+msgstr "게임에서 확인하는 방법"
+
 msgid "How to open a pack, fix it, build it, put it on a server and share a project, for someone who comes from Durty Cloth Tool"
 msgstr "Durty Cloth Tool에서 넘어온 사용자를 위한 안내: 팩 열기, 수정, 빌드, 서버 배포, 프로젝트 공유 방법"
 
@@ -4575,6 +4581,9 @@ msgstr "이 프로젝트  ·  {count}"
 
 msgid "In {source}"
 msgstr "{source} 안"
+
+msgid "In-game acceptance guide"
+msgstr "게임 내 수락 가이드"
 
 msgid "Info and above"
 msgstr "정보 이상"
@@ -7018,6 +7027,9 @@ msgstr "구성된 GTA 설치와 추출된 키를 사용하여 `common.rpf`에서
 
 msgid "Read \"{section}\" in the guide"
 msgstr "가이드의 “{section}” 읽기"
+
+msgid "Read \"{section}\" in the guide to checking a build in the game, which nothing in OpenRage runs"
+msgstr "빌드를 게임에서 확인하는 가이드의 “{section}” 읽기. OpenRage는 게임을 실행하지 않습니다"
 
 msgid "Read a .glb or .gltf, show what it replaces or why it cannot, then change the open model as one step to undo or save, as openrage-cli mesh import does"
 msgstr ".glb 또는 .gltf를 읽어 교체될 항목 또는 교체할 수 없는 이유를 보여 준 뒤, 열려 있는 모델을 실행 취소하거나 저장할 수 있는 한 단계로 변경합니다. openrage-cli mesh import와 같은 방식입니다"
@@ -10205,6 +10217,9 @@ msgstr "폴더에 포함된 항목을, 인식된 종류별로 묶어 표시합�
 msgid "What this writes"
 msgstr "기록되는 내용"
 
+msgid "What to look for in a running game to say that it loads what a build wrote, how to load a build on a FiveM server and in story mode, and how to write down what you saw"
+msgstr "빌드가 기록한 것을 게임이 로드한다고 말하려면 실행 중인 게임에서 무엇을 봐야 하는지, FiveM 서버와 스토리 모드에서 빌드를 로드하는 방법, 본 것을 적는 방법"
+
 msgid "What would be made"
 msgstr "만들어질 항목"
 
@@ -11099,6 +11114,9 @@ msgstr "상점 이름"
 msgid "singleplayer DLC"
 msgstr "싱글 플레이어 DLC"
 
+msgid "singleplayer DLC packs"
+msgstr "싱글 플레이어 DLC 팩"
+
 msgid "source"
 msgstr "소스"
 
@@ -11259,6 +11277,9 @@ msgid "to"
 msgstr "대상"
 
 msgid "type file"
+msgstr "타입 파일"
+
+msgid "type files"
 msgstr "타입 파일"
 
 msgid "under"
@@ -11501,6 +11522,11 @@ msgid "{count} item keeps a stable id, so the next build can tell what moved"
 msgid_plural "{count} items keep a stable id, so the next build can tell what moved"
 msgstr[0] "항목 {count}개가 안정 ID를 유지하므로 다음 빌드가 무엇이 이동했는지 알 수 있습니다"
 msgstr[1] "항목 {count}개가 안정 ID를 유지하므로 다음 빌드가 무엇이 이동했는지 알 수 있습니다"
+
+msgid "{count} kind of file this build wrote was not seen loading in GTA V {edition}: {kinds}"
+msgid_plural "{count} kinds of file this build wrote were not seen loading in GTA V {edition}: {kinds}"
+msgstr[0] "이 빌드가 기록한 파일 종류 {count}개는 GTA V {edition}에서 로드되는 것이 확인되지 않았습니다: {kinds}"
+msgstr[1] "이 빌드가 기록한 파일 종류 {count}개는 GTA V {edition}에서 로드되는 것이 확인되지 않았습니다: {kinds}"
 
 msgid "{count} map set"
 msgid_plural "{count} map sets"
@@ -14439,6 +14465,9 @@ msgstr "선택한 엔티티로부터 반지름 안에서 가장 가까운 모델
 
 msgid "map {map}, index {index}: open that map body to follow it"
 msgstr "맵 {map}, 인덱스 {index}: 따라가려면 해당 맵 본문을 여십시오"
+
+msgid "maps"
+msgstr "맵"
 
 msgid "index {index} names nothing in {file}"
 msgstr "인덱스 {index}은(는) {file}에서 아무것도 지정하지 않습니다"

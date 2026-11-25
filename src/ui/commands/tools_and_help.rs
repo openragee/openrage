@@ -132,6 +132,19 @@ pub(super) const OPEN_GUIDE: Spec = Spec {
     ..BASE
 };
 
+pub(super) const OPEN_ACCEPTANCE_GUIDE: Spec = Spec {
+    action: Action::OpenAcceptanceGuide,
+    id: "open_acceptance_guide",
+    label: tr_key!("In-game acceptance guide"),
+    category: tr_key!("Help"),
+    hover: tr_key!("What to look for in a running game to say that it loads what a build wrote, how to load a build on a FiveM server and in story mode, and how to write down what you saw"),
+    run: |state, _| {
+        let document = crate::state::front_door::GuideDocument::Acceptance;
+        state.front_door.show_document(document, "");
+    },
+    ..BASE
+};
+
 pub(super) const OPEN_SAMPLE_PROJECT: Spec = Spec {
     action: Action::OpenSampleProject,
     id: "open_sample_project",

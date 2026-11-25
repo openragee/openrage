@@ -3682,6 +3682,9 @@ msgstr "Cada arquivo aberto de novo para verificação ({count}):"
 msgid "Every job running in the background and the ones just finished, with their progress, a Cancel and what each left"
 msgstr "Todas as tarefas em execução em segundo plano e as que acabaram de terminar, com o progresso delas, um Cancelar e o que cada uma deixou"
 
+msgid "Every kind of file this build wrote that the acceptance sheet has a line about was seen loading in GTA V {edition}; the newest result is dated {date}"
+msgstr "Cada tipo de arquivo que este build gravou e sobre o qual a ficha de aceitação tem uma linha foi visto carregando no GTA V {edition}; o resultado mais recente é de {date}"
+
 msgid "Every level of detail"
 msgstr "Todo nível de detalhe"
 
@@ -4483,6 +4486,9 @@ msgstr "O quanto o brilho do diffuse inclina o mapa normal"
 msgid "How the 3D view draws the ped: with textures, as a shape, as edges, or as the vertex data"
 msgstr "Como a visualização 3D desenha o ped: com texturas, como forma, como arestas ou como dados de vértice"
 
+msgid "How to check it in the game"
+msgstr "Como verificar isso no jogo"
+
 msgid "How to open a pack, fix it, build it, put it on a server and share a project, for someone who comes from Durty Cloth Tool"
 msgstr "Como abrir um pack, corrigi-lo, gerá-lo, colocá-lo em um servidor e compartilhar um projeto, para quem vem do Durty Cloth Tool"
 
@@ -4575,6 +4581,9 @@ msgstr "Neste projeto  ·  {count}"
 
 msgid "In {source}"
 msgstr "Em {source}"
+
+msgid "In-game acceptance guide"
+msgstr "Guia de aceitação no jogo"
 
 msgid "Info and above"
 msgstr "Info e acima"
@@ -7018,6 +7027,9 @@ msgstr "Extrair `materials.dat` + `materialfx.dat` de `common.rpf` novamente, us
 
 msgid "Read \"{section}\" in the guide"
 msgstr "Ler “{section}” no guia"
+
+msgid "Read \"{section}\" in the guide to checking a build in the game, which nothing in OpenRage runs"
+msgstr "Ler “{section}” no guia de verificação de um build no jogo, que nada no OpenRage executa"
 
 msgid "Read a .glb or .gltf, show what it replaces or why it cannot, then change the open model as one step to undo or save, as openrage-cli mesh import does"
 msgstr "Ler um .glb ou .gltf, mostrar o que ele substitui ou por que não pode, e então alterar o modelo aberto em uma única etapa a desfazer ou salvar, como o openrage-cli mesh import faz"
@@ -10205,6 +10217,9 @@ msgstr "O que a pasta contém, agrupado pelo que é reconhecido nela"
 msgid "What this writes"
 msgstr "O que isto grava"
 
+msgid "What to look for in a running game to say that it loads what a build wrote, how to load a build on a FiveM server and in story mode, and how to write down what you saw"
+msgstr "O que procurar em um jogo em execução para dizer que ele carrega o que um build gravou, como carregar um build em um servidor FiveM e no modo história, e como anotar o que você viu"
+
 msgid "What would be made"
 msgstr "O que seria criado"
 
@@ -11099,6 +11114,9 @@ msgstr "nomes da loja"
 msgid "singleplayer DLC"
 msgstr "DLC singleplayer"
 
+msgid "singleplayer DLC packs"
+msgstr "packs de DLC singleplayer"
+
 msgid "source"
 msgstr "fonte"
 
@@ -11260,6 +11278,9 @@ msgstr "para"
 
 msgid "type file"
 msgstr "arquivo de tipos"
+
+msgid "type files"
+msgstr "arquivos de tipos"
 
 msgid "under"
 msgstr "sob"
@@ -11501,6 +11522,11 @@ msgid "{count} item keeps a stable id, so the next build can tell what moved"
 msgid_plural "{count} items keep a stable id, so the next build can tell what moved"
 msgstr[0] "{count} item mantém um ID estável, para que o próximo build possa dizer o que mudou de lugar"
 msgstr[1] "{count} itens mantêm um ID estável, para que o próximo build possa dizer o que mudou de lugar"
+
+msgid "{count} kind of file this build wrote was not seen loading in GTA V {edition}: {kinds}"
+msgid_plural "{count} kinds of file this build wrote were not seen loading in GTA V {edition}: {kinds}"
+msgstr[0] "{count} tipo de arquivo que este build gravou não foi visto carregando no GTA V {edition}: {kinds}"
+msgstr[1] "{count} tipos de arquivo que este build gravou não foram vistos carregando no GTA V {edition}: {kinds}"
 
 msgid "{count} map set"
 msgid_plural "{count} map sets"
@@ -14439,6 +14465,9 @@ msgstr "No máximo os {most} modelos mais próximos são desenhados, até o raio
 
 msgid "map {map}, index {index}: open that map body to follow it"
 msgstr "mapa {map}, índice {index}: abra esse corpo de mapa para segui-lo"
+
+msgid "maps"
+msgstr "mapas"
 
 msgid "index {index} names nothing in {file}"
 msgstr "o índice {index} não nomeia nada em {file}"

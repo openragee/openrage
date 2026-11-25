@@ -136,6 +136,54 @@ impl Concern<'_> {
     }
 }
 
+/// What the sheet holds, for one edition, of the kinds of file a build wrote that a line is about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Seen {
+    /// The kinds a line of which has no newest result of loaded, in the sheet's order.
+    Not(Vec<String>),
+    /// Every line about them was last seen to load; the day of the newest of those results.
+    All(String),
+}
+
+impl Seen {
+    /// The reading as a sentence of a build's report, in English: what was seen in a running game, and never that a file loads.
+    pub fn sentence(&self, edition: Target) -> String {
+        let edition = edition.generation().edition_label();
+        match self {
+            Self::Not(kinds) => {
+                let named: Vec<String> = kinds.iter().map(|kind| kind_words(kind)).collect();
+                let (kind, was) = match kinds.len() {
+                    1 => ("kind", "was"),
+                    _ => ("kinds", "were"),
+                };
+                format!(
+                    "{} {kind} of file this build wrote {was} not seen loading in GTA V {edition}: {}",
+                    kinds.len(),
+                    named.join(", ")
+                )
+            }
+            Self::All(date) => format!(
+                "Every kind of file this build wrote that the acceptance sheet has a line about was seen loading in GTA V {edition}; the newest result is dated {date}"
+            ),
+        }
+    }
+}
+
+/// The words a person has for the files of `kind`, several of them; none for a kind nobody has named yet.
+fn named(kind: &str) -> Option<&'static str> {
+    match kind {
+        "ymap" => Some("maps"),
+        "ytyp" => Some("type files"),
+        "rpf" => Some("singleplayer DLC packs"),
+        _ => None,
+    }
+}
+
+/// What a person calls the files of `kind`, several of them: by their extension where the kind has no words yet.
+pub fn kind_words(kind: &str) -> String {
+    named(kind).map_or_else(|| format!(".{kind} files"), str::to_string)
+}
+
 impl Line {
     /// The newest run of the line for `edition`; of two on one day, the later in the file.
     pub fn newest(&self, edition: Target) -> Option<&Observation> {
@@ -197,12 +245,42 @@ impl Sheet {
     }
 
     /// The lines about files of `kinds`, in the sheet's order, each with what the sheet holds of it for `edition`.
+    ///
+    /// ⚠ A line is matched by its kind alone, which is an extension. A line about what an extension does not tell, as a map made
+    /// from nothing is a PSO where the game's own maps are RBM, is about every build that wrote a file of the kind, so the kind is
+    /// not said to be seen until that line has a result too: a reading that is short of what was seen, never past it.
     pub fn about(&self, kinds: &BTreeSet<String>, edition: Target) -> Vec<Concern<'_>> {
         (self.lines.iter())
             .filter(|line| kinds.contains(&line.kind))
             .map(|line| Concern {
                 line,
                 newest: line.newest(edition),
+            })
+            .collect()
+    }
+
+    /// What was seen in game of files of `kinds`, for the edition a build states or for each of the two when it states none; nothing where no line is about any.
+    pub fn seen(&self, kinds: &BTreeSet<String>, stated: Option<Target>) -> Vec<(Target, Seen)> {
+        let editions = match stated {
+            Some(edition) => vec![edition],
+            None => vec![Target::Legacy, Target::Enhanced],
+        };
+        (editions.into_iter())
+            .filter_map(|edition| {
+                let about = self.about(kinds, edition);
+                let mut unseen: Vec<String> = Vec::new();
+                for concern in about.iter().filter(|concern| !concern.loaded()) {
+                    if !unseen.contains(&concern.line.kind) {
+                        unseen.push(concern.line.kind.clone());
+                    }
+                }
+                if !unseen.is_empty() {
+                    return Some((edition, Seen::Not(unseen)));
+                }
+                // ⚠ Every line is loaded here, so each has a newest result, and no line at all leaves no day and says nothing.
+                let newest = about.iter().filter_map(|concern| concern.newest);
+                let day = newest.map(|seen| seen.date.as_str()).max()?;
+                Some((edition, Seen::All(day.to_string())))
             })
             .collect()
     }
@@ -703,6 +781,115 @@ mod tests {
             !legacy[0].loaded(),
             "a run that loaded with a fault is not one that loaded"
         );
+    }
+
+    /// The sheet the tree ships with each result of `results` added to the line it names: a copy, which is never written back.
+    fn shipped_with(results: &[(&str, Value)]) -> Sheet {
+        let mut sheet: Value = serde_json::from_str(SHEET).unwrap();
+        for (id, result) in results {
+            let line = (sheet["lines"].as_array_mut().unwrap().iter_mut())
+                .find(|line| line["id"] == *id)
+                .unwrap_or_else(|| panic!("the sheet has no line `{id}`"));
+            line["results"].as_array_mut().unwrap().push(result.clone());
+        }
+        Sheet::parse(&sheet.to_string()).expect("the copy is a sheet")
+    }
+
+    #[test]
+    fn a_build_is_told_the_kinds_nobody_saw_loading_for_its_edition_or_the_day_all_were_seen() {
+        let wrote: BTreeSet<String> = ["ymap", "ytyp", "lua"].map(str::to_string).into();
+        let unseen = |kinds: &[&str]| Seen::Not(kinds.iter().map(ToString::to_string).collect());
+
+        // The sheet ships with no result: a kind is named once, in the sheet's order, however many lines are about it.
+        let shipped = Sheet::shipped().unwrap();
+        assert!(shipped.lines.iter().all(|line| line.results.is_empty()));
+        assert_eq!(
+            shipped.seen(&wrote, Some(Target::Legacy)),
+            [(Target::Legacy, unseen(&["ymap", "ytyp"]))]
+        );
+        assert_eq!(
+            shipped.seen(&wrote, None),
+            [
+                (Target::Legacy, unseen(&["ymap", "ytyp"])),
+                (Target::Enhanced, unseen(&["ymap", "ytyp"])),
+            ],
+            "a build that states no edition is read for each of the two"
+        );
+        let script: BTreeSet<String> = ["lua".to_string()].into();
+        assert_eq!(
+            shipped.seen(&script, None),
+            [],
+            "nothing is said of a build that wrote no kind a line is about"
+        );
+
+        let loaded = |date: &str| result_with(serde_json::json!({ "date": date }));
+        let moved = ("map-object-moved", loaded("2026-12-01"));
+        let added = ("map-object-added", loaded("2026-12-01"));
+        let made = ("map-made-from-nothing", loaded("2026-12-01"));
+        let types = ("type-file-read", loaded("2026-12-02"));
+        // One line of a kind seen and the other not leaves the kind unseen.
+        assert_eq!(
+            shipped_with(std::slice::from_ref(&moved)).seen(&wrote, Some(Target::Legacy)),
+            [(Target::Legacy, unseen(&["ymap", "ytyp"]))]
+        );
+        // ⚠ A line is matched by its kind alone, so the line of a map made from nothing is about every build that wrote a map:
+        // the two lines of a map changed, seen, leave maps unseen until that one is seen too.
+        assert_eq!(
+            shipped_with(&[moved.clone(), added.clone()]).seen(&wrote, Some(Target::Legacy)),
+            [(Target::Legacy, unseen(&["ytyp", "ymap"]))]
+        );
+        assert_eq!(
+            shipped_with(&[moved.clone(), added.clone(), made.clone()])
+                .seen(&wrote, Some(Target::Legacy)),
+            [(Target::Legacy, unseen(&["ytyp"]))]
+        );
+
+        // Every line seen for Legacy: the day said is the newest of them, and Enhanced is as it was.
+        let all = [moved, added, made, types];
+        assert_eq!(
+            shipped_with(&all).seen(&wrote, None),
+            [
+                (Target::Legacy, Seen::All("2026-12-02".into())),
+                (Target::Enhanced, unseen(&["ymap", "ytyp"])),
+            ]
+        );
+
+        // A later run that did not load stands over the one that did.
+        let refused =
+            result_with(serde_json::json!({ "date": "2026-12-05", "verdict": "not-loaded" }));
+        let mut later = all.to_vec();
+        later.push(("type-file-read", refused));
+        assert_eq!(
+            shipped_with(&later).seen(&wrote, Some(Target::Legacy)),
+            [(Target::Legacy, unseen(&["ytyp"]))]
+        );
+    }
+
+    #[test]
+    fn the_sentence_of_a_reading_says_what_was_seen_and_never_that_a_file_loads() {
+        let unseen = |kinds: &[&str]| Seen::Not(kinds.iter().map(ToString::to_string).collect());
+        assert_eq!(
+            unseen(&["ymap", "ytyp"]).sentence(Target::Legacy),
+            "2 kinds of file this build wrote were not seen loading in GTA V Legacy: maps, type files"
+        );
+        assert_eq!(
+            unseen(&["rpf"]).sentence(Target::Enhanced),
+            "1 kind of file this build wrote was not seen loading in GTA V Enhanced: singleplayer DLC packs"
+        );
+        assert_eq!(
+            Seen::All("2026-12-02".into()).sentence(Target::Legacy),
+            "Every kind of file this build wrote that the acceptance sheet has a line about was seen loading in GTA V Legacy; the newest result is dated 2026-12-02"
+        );
+        assert_eq!(kind_words("ybn"), ".ybn files");
+        // ⚠ A line about a kind with no words of its own reads as an extension on the Build tab: the line and its words come together.
+        for line in &Sheet::shipped().unwrap().lines {
+            assert!(
+                named(&line.kind).is_some(),
+                "{}: files of the kind `{}` have no words",
+                line.id,
+                line.kind
+            );
+        }
     }
 
     #[test]

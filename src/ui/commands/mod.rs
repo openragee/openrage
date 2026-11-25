@@ -678,7 +678,7 @@ pub fn glyph(id: &str) -> Option<&'static str> {
         "open_settings" | "plugin_settings" | "project_properties" | "properties" => ph::GEAR,
         "keyboard_shortcuts" => ph::KEYBOARD,
         "command_palette" => ph::TERMINAL_WINDOW,
-        "open_guide" => ph::BOOK_OPEN,
+        "open_guide" | "open_acceptance_guide" => ph::BOOK_OPEN,
         "take_the_tour" => ph::ARROW_RIGHT,
         "about" => ph::INFO,
         "start_page" => ph::HOUSE,

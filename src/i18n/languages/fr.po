@@ -3682,6 +3682,9 @@ msgstr "Chaque fichier rouvert pour le vérifier ({count}) :"
 msgid "Every job running in the background and the ones just finished, with their progress, a Cancel and what each left"
 msgstr "Chaque tâche qui tourne en arrière-plan et celles qui viennent de finir, avec leur progression, un Annuler et ce que chacune a laissé"
 
+msgid "Every kind of file this build wrote that the acceptance sheet has a line about was seen loading in GTA V {edition}; the newest result is dated {date}"
+msgstr "Chaque type de fichier écrit par ce build dont parle une ligne de la fiche de vérification en jeu a été vu se charger dans GTA V {edition} ; le résultat le plus récent date du {date}"
+
 msgid "Every level of detail"
 msgstr "Chaque niveau de détail"
 
@@ -4510,6 +4513,9 @@ msgstr "À quel point la luminosité de la diffuse incline la carte normale"
 msgid "How the 3D view draws the ped: with textures, as a shape, as edges, or as the vertex data"
 msgstr "La façon dont la vue 3D dessine le ped : avec les textures, comme une forme, comme des arêtes, ou comme les données de sommets"
 
+msgid "How to check it in the game"
+msgstr "Comment le vérifier dans le jeu"
+
 msgid "How to open a pack, fix it, build it, put it on a server and share a project, for someone who comes from Durty Cloth Tool"
 msgstr "Comment ouvrir un pack, le corriger, le construire, le mettre sur un serveur et partager un projet, pour quelqu'un qui vient de Durty Cloth Tool"
 
@@ -4602,6 +4608,9 @@ msgstr "Dans ce projet  ·  {count}"
 
 msgid "In {source}"
 msgstr "Dans {source}"
+
+msgid "In-game acceptance guide"
+msgstr "Guide de vérification en jeu"
 
 msgid "Info and above"
 msgstr "Infos et au-dessus"
@@ -7045,6 +7054,9 @@ msgstr "Ré-extraire `materials.dat` + `materialfx.dat` de `common.rpf` avec l'i
 
 msgid "Read \"{section}\" in the guide"
 msgstr "Lire « {section} » dans le guide"
+
+msgid "Read \"{section}\" in the guide to checking a build in the game, which nothing in OpenRage runs"
+msgstr "Lire « {section} » dans le guide de vérification d'un build dans le jeu, que rien dans OpenRage ne lance"
 
 msgid "Read a .glb or .gltf, show what it replaces or why it cannot, then change the open model as one step to undo or save, as openrage-cli mesh import does"
 msgstr "Lire un .glb ou .gltf, montrer ce qu'il remplace ou pourquoi il ne le peut pas, puis changer le modèle ouvert en une étape à annuler ou à enregistrer, comme le fait openrage-cli mesh import"
@@ -10232,6 +10244,9 @@ msgstr "Ce que contient le dossier, regroupé selon ce qui y est reconnu"
 msgid "What this writes"
 msgstr "Ce que cela écrit"
 
+msgid "What to look for in a running game to say that it loads what a build wrote, how to load a build on a FiveM server and in story mode, and how to write down what you saw"
+msgstr "Ce qu'il faut regarder dans un jeu en marche pour dire qu'il charge ce qu'un build a écrit, comment charger un build sur un serveur FiveM et en mode histoire, et comment noter ce que vous avez vu"
+
 msgid "What would be made"
 msgstr "Ce qui serait créé"
 
@@ -11126,6 +11141,9 @@ msgstr "noms de boutique"
 msgid "singleplayer DLC"
 msgstr "DLC solo"
 
+msgid "singleplayer DLC packs"
+msgstr "packs de DLC solo"
+
 msgid "source"
 msgstr "source"
 
@@ -11287,6 +11305,9 @@ msgstr "vers"
 
 msgid "type file"
 msgstr "fichier de types"
+
+msgid "type files"
+msgstr "fichiers de types"
 
 msgid "under"
 msgstr "sous"
@@ -11528,6 +11549,11 @@ msgid "{count} item keeps a stable id, so the next build can tell what moved"
 msgid_plural "{count} items keep a stable id, so the next build can tell what moved"
 msgstr[0] "{count} élément garde un identifiant stable, pour que le prochain build puisse dire ce qui a bougé"
 msgstr[1] "{count} éléments gardent un identifiant stable, pour que le prochain build puisse dire ce qui a bougé"
+
+msgid "{count} kind of file this build wrote was not seen loading in GTA V {edition}: {kinds}"
+msgid_plural "{count} kinds of file this build wrote were not seen loading in GTA V {edition}: {kinds}"
+msgstr[0] "{count} type de fichier écrit par ce build n'a pas été vu se charger dans GTA V {edition} : {kinds}"
+msgstr[1] "{count} types de fichier écrits par ce build n'ont pas été vus se charger dans GTA V {edition} : {kinds}"
 
 msgid "{count} map set"
 msgid_plural "{count} map sets"
@@ -14394,6 +14420,9 @@ msgstr "Au plus les {most} modèles les plus proches sont dessinés, jusqu'au ra
 
 msgid "map {map}, index {index}: open that map body to follow it"
 msgstr "carte {map}, index {index} : ouvrez ce corps de carte pour le suivre"
+
+msgid "maps"
+msgstr "cartes"
 
 msgid "index {index} names nothing in {file}"
 msgstr "l'index {index} ne nomme rien dans {file}"

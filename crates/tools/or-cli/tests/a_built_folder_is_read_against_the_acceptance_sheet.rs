@@ -232,6 +232,112 @@ fn the_recipe_builds_a_resource_and_the_command_names_the_lines_about_its_files(
 }
 
 #[test]
+fn the_build_of_the_recipe_says_which_kinds_nobody_saw_loading_as_the_sheet_reads_them() {
+    let work = tempfile::tempdir().unwrap();
+    the_sample(work.path());
+    let said = run_step("build", work.path());
+    let resource = work.path().join("acceptance/build/or_acceptance");
+
+    // The recipe makes its project for Legacy, so the build is read for that edition alone.
+    let kinds: BTreeSet<String> = kinds_in(&resource).unwrap().into_keys().collect();
+    let seen = Sheet::shipped().unwrap().seen(&kinds, Some(Target::Legacy));
+    let [(edition, reading)] = seen.as_slice() else {
+        panic!("the build wrote a map and a type file, which the sheet has lines about: {seen:?}");
+    };
+    let sentence = format!("  {}\n", reading.sentence(*edition));
+    assert_eq!(said.matches(&sentence).count(), 1, "{sentence}{said}");
+    assert!(
+        sentence.contains("maps, type files") && sentence.contains("GTA V Legacy"),
+        "{sentence}"
+    );
+    assert!(!said.contains("GTA V Enhanced"), "{said}");
+    let to_check = format!(
+        "  to check: openrage-cli project acceptance \"{}\" lists what to look for",
+        text(&resource)
+    );
+    assert!(said.contains(&to_check), "{to_check}\n{said}");
+    // What the build read back comes first, and the closing line still says what a build is not.
+    let (read_back, in_game, closing) = (
+        said.find("  names: ").expect("the names the build checked"),
+        said.find(&sentence).unwrap(),
+        said.find("This checks the files. It does not test that GTA V loads them.")
+            .expect("the closing line"),
+    );
+    assert!(read_back < in_game && in_game < closing, "{said}");
+}
+
+/// A project whose one clothing content holds a jacket dropped on it, and which builds a singleplayer DLC named `name` for no stated edition.
+fn a_clothing_pack_project(dir: &Path, name: &str) -> PathBuf {
+    use or_project::{Container, Module, Output, OutputKind, Project};
+
+    let pack = dir.join("pack");
+    or_wardrobe::edit::create(&pack, name).unwrap();
+    let drop = dir.join("drop");
+    std::fs::create_dir_all(&drop).unwrap();
+    let c = format!("mp_m_freemode_01_mp_m_{name}");
+    std::fs::write(
+        drop.join(format!("{c}^jbib_000_u.ydd")),
+        or_source::sample::drawables_of("jacket"),
+    )
+    .unwrap();
+    std::fs::write(
+        drop.join(format!("{c}^jbib_diff_000_a_uni.ytd")),
+        or_source::sample::textures_of("jacket"),
+    )
+    .unwrap();
+    or_wardrobe::edit::add_clothes(&pack, &[drop]).unwrap();
+    let container = Container {
+        modules: vec![Module::clothing("wardrobe", "pack")],
+        outputs: vec![Output::of(
+            OutputKind::SingleplayerDlc,
+            "dlc",
+            name,
+            &["wardrobe"],
+        )],
+    };
+    let path = dir.join(format!("{name}.openrage-proj"));
+    Project::create(&path, &container, &[]).unwrap();
+    path
+}
+
+#[test]
+fn the_build_of_a_clothing_pack_says_that_nobody_saw_a_story_pack_loading_from_either_build_verb() {
+    let work = tempfile::tempdir().unwrap();
+    let project = a_clothing_pack_project(work.path(), "demo");
+    let folder = work.path().join("build/demo");
+    let to_check = format!(
+        "  to check: openrage-cli project acceptance \"{}\" lists what to look for",
+        text(&folder)
+    );
+    for family in ["wardrobe", "project"] {
+        let (built, said) = cli(&[family, "build", text(&project)]);
+        assert!(built, "{family} build: {said}");
+
+        // The pack states no edition, so it is read for each, and the archive is the one kind a line is about.
+        let kinds: BTreeSet<String> = kinds_in(&folder).unwrap().into_keys().collect();
+        assert!(kinds.contains("rpf") && kinds.contains("ydd"), "{kinds:?}");
+        let seen = Sheet::shipped().unwrap().seen(&kinds, None);
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        for (edition, reading) in &seen {
+            let sentence = format!("  {}\n", reading.sentence(*edition));
+            assert!(
+                sentence.contains("1 kind of file") && sentence.contains("singleplayer DLC packs"),
+                "{sentence}"
+            );
+            assert_eq!(
+                said.matches(&sentence).count(),
+                1,
+                "{family} build: {sentence}{said}"
+            );
+        }
+        assert!(
+            said.contains(&to_check),
+            "{family} build: {to_check}\n{said}"
+        );
+    }
+}
+
+#[test]
 fn the_sheet_and_the_recipe_are_about_the_same_kinds_of_file() {
     let work = tempfile::tempdir().unwrap();
     let resource = the_built_sample(work.path());

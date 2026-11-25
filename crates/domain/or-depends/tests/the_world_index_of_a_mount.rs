@@ -20,8 +20,8 @@ use or_depends::{
 };
 use or_title::MountedGame;
 use world_fixture::{
-    bound_bytes, cube, hash, held_to_its_mount, manifest_bytes, map_bytes, mount, types_bytes,
-    write_archive, Counting, Held, MapSpec, Span,
+    bound_bytes, cube, hash, held_to_its_mount, manifest_bytes, map_bytes, mount, mount_all,
+    types_bytes, write_archive, Counting, Held, MapSpec, Span,
 };
 
 /// One file of the fixture: where it sits in its archive, and what it is.
@@ -1760,4 +1760,206 @@ fn a_file_that_did_not_open_is_read_again_by_the_next_build_though_its_archive_s
         report.kept,
         report.opened
     );
+}
+
+/// An install whose DLC list names `listed`, with each pack of `packs` on disk under its name, and a title update that patches the
+/// pack `beta` from the folder `dlc_patch/beta/`, which holds `patch`.
+fn patched_install(
+    listed: &[&str],
+    packs: &[(&str, Files)],
+    patch: &Files,
+) -> (tempfile::TempDir, PathBuf) {
+    use or_title::{ContentXml, DlcList, ExtraTitleUpdateData, SetupData, TitleUpdateMount};
+
+    let (scratch, root) = install_of(&[]);
+    let paths = listed
+        .iter()
+        .map(|pack| format!("dlcpacks:/{pack}/").into());
+    let list = DlcList {
+        paths: paths.collect(),
+    };
+    let list = ("data/dlclist.xml", list.to_xml().into_bytes());
+    write_archive(&root, "common.rpf", &[list]);
+    for (order, (pack, files)) in packs.iter().enumerate() {
+        let setup = SetupData {
+            name_hash: pack.to_string(),
+            device_name: format!("dlc_{pack}"),
+            dat_file: "content.xml".into(),
+            order: order as i32,
+            ..Default::default()
+        };
+        let mut held = vec![
+            ("setup2.xml", setup.to_xml().into_bytes()),
+            ("content.xml", ContentXml::default().to_xml().into_bytes()),
+        ];
+        held.extend(
+            files
+                .iter()
+                .map(|(path, what)| (*path, bytes_of(path, what))),
+        );
+        let folder = format!("x64/dlcpacks/{pack}");
+        std::fs::create_dir_all(root.join(&folder)).expect("mkdir");
+        write_archive(&root, &format!("{folder}/dlc.rpf"), &held);
+    }
+    // ⚠ In another case than the archive spells the folder, as a table may.
+    let table = ExtraTitleUpdateData {
+        mounts: vec![TitleUpdateMount {
+            device_name: "dlc_beta".into(),
+            path: "update:/DLC_Patch/beta/".into(),
+        }],
+    };
+    let patched: Vec<(String, Vec<u8>)> = (patch.iter())
+        .map(|(path, what)| (format!("dlc_patch/beta/{path}"), bytes_of(path, what)))
+        .collect();
+    let mut held = vec![(
+        "common/data/ExtraTitleUpdateData.meta",
+        table.to_xml().into_bytes(),
+    )];
+    held.extend(
+        patched
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.clone())),
+    );
+    std::fs::create_dir_all(root.join("update")).expect("mkdir");
+    write_archive(&root, "update/update.rpf", &held);
+    (scratch, root)
+}
+
+/// ⚠ The title update mounts before every pack, so by the order of the archives alone the pack's own copy would be the last, and
+/// the mount opens the patch's at the pack's path.
+#[test]
+fn a_file_the_title_update_patches_is_named_where_the_mount_opens_it() {
+    let own = MapSpec {
+        content_flags: 1,
+        ..MapSpec::around(north())
+    };
+    let patched = MapSpec {
+        content_flags: 2,
+        ..MapSpec::around(south())
+    };
+    let later = MapSpec {
+        content_flags: 4,
+        ..MapSpec::around(group())
+    };
+    let unit = cube([-1.0, -1.0, -1.0], 2.0);
+    let beta: Files = vec![
+        ("levels/m_patched.ymap", What::Map(own.clone())),
+        ("levels/m_plain.ymap", What::Map(own.clone())),
+        ("levels/m_later.ymap", What::Map(own)),
+        (
+            "levels/m_types.ytyp",
+            What::Types(vec![("prop_a", unit, 10.0)]),
+        ),
+        ("levels/m_patched_0.ybn", What::Bound(north())),
+        (
+            "levels/_manifest.ymf",
+            What::Groups(vec![("m_patched", vec!["m_patched_0"])]),
+        ),
+    ];
+    let patch: Files = vec![
+        ("levels/m_patched.ymap", What::Map(patched.clone())),
+        ("levels/m_later.ymap", What::Map(patched.clone())),
+        (
+            "levels/m_types.ytyp",
+            What::Types(vec![("prop_a", unit, 20.0)]),
+        ),
+        ("levels/m_patched_0.ybn", What::Bound(south())),
+        (
+            "levels/_manifest.ymf",
+            What::Groups(vec![("m_patched", vec!["m_patched_0", "hi@m_patched_0"])]),
+        ),
+    ];
+    let gamma: Files = vec![("levels/m_later.ymap", What::Map(later))];
+    let (scratch, root) = patched_install(
+        &["beta", "gamma"],
+        &[("beta", beta), ("gamma", gamma)],
+        &patch,
+    );
+    let game = mount_all(&root);
+    let place = |container: &str| {
+        (game.roots.iter()).position(|root| root.container.replace('\\', "/") == container)
+    };
+    let (update, pack) = (
+        place("update/update.rpf"),
+        place("x64/dlcpacks/beta/dlc.rpf"),
+    );
+    assert!(
+        update.is_some() && update < pack,
+        "the update is mounted before the pack it patches: {update:?} {pack:?}"
+    );
+    let source = MountedWorld::new(&game, &root);
+    let (index, _) = WorldIndex::build(&source, None);
+
+    // The patched map is the patch's copy, by the path it is listed at, with what that copy states.
+    let at_the_pack = "dlc_beta:/levels/m_patched.ymap";
+    let map = index.map(hash("m_patched")).expect("m_patched");
+    assert_eq!(map.logical, "update:/dlc_patch/beta/levels/m_patched.ymap");
+    assert_eq!(Some(map.archive), update);
+    assert_eq!(map.content_flags, 2);
+    assert_eq!(map.streaming, Some(span(patched.streaming)));
+    let opened = game.vfs.open(at_the_pack);
+    assert!(opened.is_some() && opened == source.open(map.archive, &map.logical));
+    assert_ne!(opened, source.open(pack.expect("the pack"), at_the_pack));
+
+    // A file the patch does not hold is the pack's own, and a later pack's copy lies over the patch of an earlier one.
+    let plain = index.map(hash("m_plain")).expect("m_plain");
+    assert_eq!(plain.logical, "dlc_beta:/levels/m_plain.ymap");
+    let later = index.map(hash("m_later")).expect("m_later");
+    assert_eq!(later.logical, "dlc_gamma:/levels/m_later.ymap");
+    assert_eq!(later.content_flags, 4);
+
+    // A type file, a bound and a manifest follow the same rule.
+    let types = index.type_file(hash("m_types")).expect("m_types");
+    assert_eq!(types.logical, "update:/dlc_patch/beta/levels/m_types.ytyp");
+    assert_eq!(
+        index.archetype(hash("prop_a")).map(|a| a.lod_dist),
+        Some(20.0)
+    );
+    assert_eq!(
+        index.redefined(),
+        0,
+        "the pack's own type file was read as a second one"
+    );
+    let bound = index.bound(hash("m_patched_0")).expect("m_patched_0");
+    assert_eq!(
+        bound.logical,
+        "update:/dlc_patch/beta/levels/m_patched_0.ybn"
+    );
+    assert_eq!(bound.span, Some(span(south())));
+    assert_eq!(
+        index.tables().static_bounds_of(hash("m_patched")),
+        [hash("m_patched_0"), hash("hi@m_patched_0")]
+    );
+
+    // And everything the install suite checks holds of it, the second start from the kept file included.
+    let held = held_to_its_mount(&|| mount_all(&root), &root, &kept_file(&scratch));
+    assert_eq!((held.maps, held.type_files, held.bounds), (3, 1, 1));
+}
+
+/// ⚠ A DLC list can name a pack twice, and the mount then lists its archive twice under one device and one container.
+#[test]
+fn an_archive_the_mount_lists_twice_is_kept_both_times() {
+    let beta: Files = vec![("levels/m_patched.ymap", What::Map(MapSpec::around(north())))];
+    let (scratch, root) = patched_install(&["beta", "beta"], &[("beta", beta)], &Vec::new());
+    let file = kept_file(&scratch);
+    let game = mount_all(&root);
+    let twice = (game.roots.iter())
+        .filter(|root| root.container.replace('\\', "/") == "x64/dlcpacks/beta/dlc.rpf")
+        .count();
+    assert_eq!(twice, 2, "the fixture's mount lists the pack once");
+
+    let (first, report) = refresh(&MountedWorld::new(&game, &root), &file);
+    assert_eq!(report.read.len(), game.roots.len());
+    for _ in 0..2 {
+        let game = mount_all(&root);
+        let (again, report) = refresh(&MountedWorld::new(&game, &root), &file);
+        assert!(
+            matches!(report.kept, KeptState::Current),
+            "{:?}: read again {:?}",
+            report.kept,
+            report.read
+        );
+        assert_eq!(report.opened, 0);
+        assert_eq!(answers(&again), answers(&first));
+    }
 }

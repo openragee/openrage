@@ -74,20 +74,7 @@ pub(super) fn asked_of(args: &[String]) -> Result<(String, Asked), String> {
     if let Some(flag) = (args.last()).filter(|arg| VALUED_FLAGS.contains(&arg.as_str())) {
         return Err(format!("`{flag}` takes a value"));
     }
-    let mut rest = args.to_vec();
-    let install = match flag_value(args, "--game") {
-        Some(game) => game.to_string(),
-        None => {
-            let mut after_flag = false;
-            let first = args.iter().position(|arg| {
-                let value =
-                    std::mem::replace(&mut after_flag, VALUED_FLAGS.contains(&arg.as_str()));
-                !value && !arg.starts_with("--")
-            });
-            let first = first.ok_or("the install's folder comes first")?;
-            rest.remove(first)
-        }
-    };
+    let (install, rest) = super::world_index::install_of(args, VALUED_FLAGS)?;
     let numbers = super::world_index::numbers_of(&rest, VALUED_FLAGS)?;
     let [x, y, z] = numbers[..] else {
         return Err(format!(
@@ -411,29 +398,12 @@ pub(super) fn select_json(
     })
 }
 
-/// What is said of the mount a view was asked of, a line each.
-fn mount_notes(game: &MountedGame, mode: Option<MapMode>) -> Vec<String> {
-    let mut notes = Vec::new();
-    let left_out = super::search::packs_left_out(game);
-    if !left_out.is_empty() {
-        notes.push(format!(
-            "the level leaves out {} of {} listed pack(s) and their maps: {}",
-            left_out.len(),
-            game.listed.len(),
-            left_out.join(", ")
-        ));
-    }
-    if let Some(mode) = mode {
-        // ⚠ A mode takes or leaves a pack's change sets, and the index reads no change set: it
-        // reads every map of every archive mounted.
-        notes.push(format!(
-            "mounted as {}, which leaves out no map: the index reads every one a mounted pack \
-             holds, whatever change set would load it",
-            mode.label()
-        ));
-    }
-    notes
-}
+/// What a level and a mode leave out of what this verb reads, in its words.
+const MAPS_LEFT_OUT: super::world_ground::LeftOutWords = super::world_ground::LeftOutWords {
+    with_a_pack: "their maps",
+    none_of: "map",
+    every: "one",
+};
 
 /// What `world select` says of `asked` over `game`, mounted from `root`, with its index kept in `kept`: its lines, its JSON, and why the index was not kept where it was not.
 pub(super) fn said(
@@ -452,7 +422,7 @@ pub(super) fn said(
     }
     let mut forest = WorldForest::new(&index, &source, BUDGET);
     let answer = answer_of(&mut forest, asked);
-    let notes = mount_notes(game, mode);
+    let notes = super::world_ground::mount_notes(game, mode, &MAPS_LEFT_OUT);
     (
         select_lines(asked, &answer, &index, &catalogue, &notes),
         select_json(asked, &answer, &index, &catalogue, &notes),

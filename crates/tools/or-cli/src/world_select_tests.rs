@@ -587,7 +587,10 @@ fn the_install_comes_first_or_after_its_flag_and_a_place_is_three_numbers() {
             vec!["an install", "1", "2"],
             "a place is three numbers, x,y,z, and 2 were given",
         ),
-        (vec!["--json"], "the install's folder comes first"),
+        (
+            vec!["--json"],
+            "the install's folder comes first, or --game <dir> names it",
+        ),
         (
             vec!["an install", "1,2,3", "--far"],
             "`--far` is no flag of this verb",

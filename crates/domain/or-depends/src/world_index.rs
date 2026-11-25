@@ -7,13 +7,17 @@
 //! ⚠ Every copy an archive holds is read, not only the one the mount would load: which copy wins is
 //! settled when the archives are put together, last in mount order as [`crate::Catalogue`] has it,
 //! so an archive that changes cannot leave the index without the copy it used to shadow.
+//!
+//! ⚠ A file in the folder that patches a pack ([`WorldSource::patch_of`]) lies in the title update,
+//! which mounts before every pack, and is the copy the mount opens at the pack's own path: it takes
+//! its place in the order right after the pack's archive, and keeps the logical path it is listed at.
 
 mod kept;
 mod mounted;
 pub(crate) mod tree;
 
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use glam::Vec3;
 use or_io::meta::binary::parse_meta_binary_full;
@@ -69,6 +73,11 @@ pub trait WorldSource {
 
     /// The front of it, of at most `limit` bytes where the archive can read less than the whole.
     fn open_head(&self, archive: usize, logical: &str, limit: usize) -> Option<Vec<u8>>;
+
+    /// The folder whose files the mount stacks over root archive `archive`'s on its device, as the logical path they start with (`update:/dlc_patch/pack/`); none where nothing patches it.
+    fn patch_of(&self, _archive: usize) -> Option<String> {
+        None
+    }
 }
 
 /// What a `.ymap` states of itself; `None` in its row where the file did not read as a map.
@@ -299,6 +308,42 @@ fn leaf_and_stem(logical: &str) -> (String, String) {
     (leaf, stem)
 }
 
+/// Where a file stands in the mount's order: its root archive, or for a file of a patch folder the last archive that folder
+/// patches, and above that archive's own files; then the archive that lists it and the place of its row there.
+type Rank = (usize, bool, usize, usize);
+
+/// The rows `rows` picks of each archive, each with its logical path, in the mount's order.
+fn ranked<'a>(
+    archives: &'a [ArchiveRows],
+    patches: &[(usize, String)],
+    rows: impl Fn(&'a ArchiveRows) -> Vec<&'a str>,
+) -> Vec<(Rank, &'a str)> {
+    let mut all = Vec::new();
+    for (a, archive) in archives.iter().enumerate() {
+        for (r, logical) in rows(archive).into_iter().enumerate() {
+            let under = |folder: &str| {
+                (logical.get(..folder.len()))
+                    .is_some_and(|front| front.eq_ignore_ascii_case(folder))
+            };
+            let patched =
+                (patches.iter().filter(|(_, folder)| under(folder))).map(|(root, _)| *root);
+            let rank = match patched.max() {
+                Some(root) => (root, true, a, r),
+                None => (a, false, a, r),
+            };
+            all.push((rank, logical));
+        }
+    }
+    all.sort_unstable();
+    all
+}
+
+/// The archive and the row of the last copy of each leaf of `ranked`, by the leaf in lower case.
+fn winners(ranked: &[(Rank, &str)]) -> HashMap<String, (usize, usize)> {
+    let last = |&((_, _, a, r), logical): &(Rank, &str)| (leaf_and_stem(logical).0, (a, r));
+    ranked.iter().map(last).collect()
+}
+
 /// A metadata file as its value tree, read as the dependency tables read one.
 pub(crate) fn parse(bytes: &[u8]) -> Option<MetaInstance> {
     let mut diags = Diagnostics::new(ErrorMode::Lenient);
@@ -445,7 +490,8 @@ impl WorldIndex {
         let identity = source.identity();
         let listed = source.archives();
         let mut state = KeptState::Absent;
-        let mut carried: HashMap<(String, String), ArchiveRows> = HashMap::new();
+        // ⚠ A queue: a mount can list one archive twice, and each listing takes rows of its own.
+        let mut carried: HashMap<(String, String), VecDeque<ArchiveRows>> = HashMap::new();
         if let Some(kept) = kept {
             if kept.identity != identity {
                 state = KeptState::Foreign;
@@ -455,19 +501,22 @@ impl WorldIndex {
                 } else {
                     KeptState::Changed
                 };
-                carried.extend(kept.archives.into_iter().map(|rows| {
+                for rows in kept.archives {
                     let at = (rows.archive.device.clone(), rows.archive.container.clone());
-                    (at, rows)
-                }));
+                    carried.entry(at).or_default().push_back(rows);
+                }
             }
         }
         let opened = Cell::new(0);
         let mut read = Vec::new();
         let mut archives = Vec::with_capacity(listed.len());
+        let patches: Vec<(usize, String)> = (0..listed.len())
+            .filter_map(|archive| Some((archive, source.patch_of(archive)?)))
+            .collect();
         for (index, archive) in listed.into_iter().enumerate() {
             let at = (archive.device.clone(), archive.container.clone());
             // ⚠ An archive with no stamp is never taken from a kept index: nothing says it stands.
-            let same = (carried.remove(&at))
+            let same = (carried.get_mut(&at).and_then(VecDeque::pop_front))
                 .filter(|rows| archive.stamp.is_some() && rows.archive == archive);
             archives.push(match same {
                 Some(rows) => rows,
@@ -488,26 +537,37 @@ impl WorldIndex {
             opened: opened.get(),
             not_kept: None,
         };
-        (Self::of_rows(identity, archives), report)
+        (Self::of_rows(identity, archives, &patches), report)
     }
 
     /// Put the archives' rows together: the copy the mount would load of each file, the tables,
-    /// what carries each bound and the two trees.
-    fn of_rows(identity: String, archives: Vec<ArchiveRows>) -> Self {
+    /// what carries each bound and the two trees. `patches` names the folder that patches a root archive, by its place.
+    fn of_rows(identity: String, archives: Vec<ArchiveRows>, patches: &[(usize, String)]) -> Self {
+        let maps = ranked(&archives, patches, |rows| {
+            rows.maps.iter().map(|row| row.logical.as_str()).collect()
+        });
+        let type_files = ranked(&archives, patches, |rows| {
+            (rows.type_files.iter().map(|row| row.logical.as_str())).collect()
+        });
+        let manifests = ranked(&archives, patches, |rows| {
+            (rows.manifests.iter().map(|row| row.logical.as_str())).collect()
+        });
+        let bounds = ranked(&archives, patches, |rows| {
+            rows.bounds.iter().map(|row| row.logical.as_str()).collect()
+        });
         // The last copy of a leaf wins, and a file takes its winner's place in the mount's order,
         // so a later pack's type file is the one a redefined archetype is taken from.
-        let mut map_winner: HashMap<String, (usize, usize)> = HashMap::new();
-        let mut types_winner: HashMap<String, (usize, usize)> = HashMap::new();
-        let mut bound_winner: HashMap<String, (usize, usize)> = HashMap::new();
-        for (a, rows) in archives.iter().enumerate() {
-            for (r, row) in rows.maps.iter().enumerate() {
-                map_winner.insert(leaf_and_stem(&row.logical).0, (a, r));
-            }
-            for (r, row) in rows.type_files.iter().enumerate() {
-                types_winner.insert(leaf_and_stem(&row.logical).0, (a, r));
-            }
-            for (r, row) in rows.bounds.iter().enumerate() {
-                bound_winner.insert(leaf_and_stem(&row.logical).0, (a, r));
+        let (map_winner, types_winner, bound_winner) =
+            (winners(&maps), winners(&type_files), winners(&bounds));
+        // ⚠ Every manifest is called the same, so a patched one replaces by its path: the path under the archive's device that a
+        // file of the folder patching it answers at, in lower case.
+        let mut patched_manifests: HashSet<String> = HashSet::new();
+        for &((root, over, ..), logical) in &manifests {
+            let folder = patches.iter().find(|(patched, _)| over && *patched == root);
+            if let Some((_, folder)) = folder {
+                let rest = &logical[folder.len()..];
+                let under = format!("{}:/{rest}", archives[root].archive.device);
+                patched_manifests.insert(under.to_ascii_lowercase());
             }
         }
 
@@ -530,91 +590,96 @@ impl WorldIndex {
             map_tree: BoxTree::default(),
             bound_tree: BoxTree::default(),
         };
-        for (a, rows) in archives.iter().enumerate() {
-            for (r, row) in rows.maps.iter().enumerate() {
-                let (leaf, name) = leaf_and_stem(&row.logical);
-                if map_winner.get(&leaf) != Some(&(a, r)) {
-                    continue;
-                }
-                let hash = or_io::string_hash(name.as_bytes());
-                let facts = row.facts.clone();
-                index.map_by_hash.insert(hash, index.maps.len());
-                index.maps.push(Map {
-                    name,
-                    hash,
-                    logical: row.logical.clone(),
-                    archive: a,
-                    read: facts.is_some(),
-                    parent: facts.as_ref().map_or(0, |f| f.parent),
-                    flags: facts.as_ref().map_or(0, |f| f.flags),
-                    content_flags: facts.as_ref().map_or(0, |f| f.content_flags),
-                    entities: facts.as_ref().and_then(|f| f.entities),
-                    streaming: facts.as_ref().and_then(|f| f.streaming),
-                    interiors: facts.map(|f| f.interiors).unwrap_or_default(),
-                });
+        for &((_, _, a, r), _) in &maps {
+            let row = &archives[a].maps[r];
+            let (leaf, name) = leaf_and_stem(&row.logical);
+            if map_winner.get(&leaf) != Some(&(a, r)) {
+                continue;
             }
-            for (r, row) in rows.type_files.iter().enumerate() {
-                let (leaf, name) = leaf_and_stem(&row.logical);
-                if types_winner.get(&leaf) != Some(&(a, r)) {
-                    continue;
-                }
-                let hash = or_io::string_hash(name.as_bytes());
-                for archetype in row.archetypes.iter().flatten() {
-                    let declared = Archetype {
-                        name: archetype.name,
-                        type_file: hash,
-                        span: archetype.span,
-                        lod_dist: archetype.lod_dist,
-                        asset_name: archetype.asset_name,
-                        drawable_dictionary: archetype.drawable_dictionary,
-                        texture_dictionary: archetype.texture_dictionary,
-                    };
-                    if index.archetypes.insert(archetype.name, declared).is_some() {
-                        index.redefined += 1;
-                    }
-                }
-                (index.type_file_by_hash).insert(hash, index.type_files.len());
-                index.type_files.push(TypeFile {
-                    name,
-                    hash,
-                    logical: row.logical.clone(),
-                    archive: a,
-                    read: row.archetypes.is_some(),
-                    archetypes: row.archetypes.as_ref().map_or(0, Vec::len),
-                });
+            let hash = or_io::string_hash(name.as_bytes());
+            let facts = row.facts.clone();
+            index.map_by_hash.insert(hash, index.maps.len());
+            index.maps.push(Map {
+                name,
+                hash,
+                logical: row.logical.clone(),
+                archive: a,
+                read: facts.is_some(),
+                parent: facts.as_ref().map_or(0, |f| f.parent),
+                flags: facts.as_ref().map_or(0, |f| f.flags),
+                content_flags: facts.as_ref().map_or(0, |f| f.content_flags),
+                entities: facts.as_ref().and_then(|f| f.entities),
+                streaming: facts.as_ref().and_then(|f| f.streaming),
+                interiors: facts.map(|f| f.interiors).unwrap_or_default(),
+            });
+        }
+        for &((_, _, a, r), _) in &type_files {
+            let row = &archives[a].type_files[r];
+            let (leaf, name) = leaf_and_stem(&row.logical);
+            if types_winner.get(&leaf) != Some(&(a, r)) {
+                continue;
             }
-            for row in &rows.manifests {
-                (index.tables).add_bounds(row.groups.clone(), row.interiors.clone());
-                for gate in &row.gates {
-                    let bounds = row.groups.iter().find(|(name, _)| *name == gate.name);
-                    index.state_groups.add_group(
-                        gate.name,
-                        (gate.flags, gate.hours),
-                        gate.weather_types.clone(),
-                        bounds.map(|(_, bounds)| bounds.clone()).unwrap_or_default(),
-                        &row.logical,
-                    );
+            let hash = or_io::string_hash(name.as_bytes());
+            for archetype in row.archetypes.iter().flatten() {
+                let declared = Archetype {
+                    name: archetype.name,
+                    type_file: hash,
+                    span: archetype.span,
+                    lod_dist: archetype.lod_dist,
+                    asset_name: archetype.asset_name,
+                    drawable_dictionary: archetype.drawable_dictionary,
+                    texture_dictionary: archetype.texture_dictionary,
+                };
+                if index.archetypes.insert(archetype.name, declared).is_some() {
+                    index.redefined += 1;
                 }
             }
-            for (r, row) in rows.bounds.iter().enumerate() {
-                let (leaf, name) = leaf_and_stem(&row.logical);
-                if bound_winner.get(&leaf) != Some(&(a, r)) {
-                    continue;
-                }
-                let hash = or_io::string_hash(name.as_bytes());
-                if let Some(map) = map_of_bound_stem(&name) {
-                    let map = or_io::string_hash(map.as_bytes());
-                    index.stem_bounds.entry(map).or_default().push(hash);
-                }
-                index.bound_by_hash.insert(hash, index.bounds.len());
-                index.bounds.push(Bound {
-                    name,
-                    hash,
-                    logical: row.logical.clone(),
-                    archive: a,
-                    span: row.span,
-                });
+            (index.type_file_by_hash).insert(hash, index.type_files.len());
+            index.type_files.push(TypeFile {
+                name,
+                hash,
+                logical: row.logical.clone(),
+                archive: a,
+                read: row.archetypes.is_some(),
+                archetypes: row.archetypes.as_ref().map_or(0, Vec::len),
+            });
+        }
+        for &((_, over, a, r), _) in &manifests {
+            let row = &archives[a].manifests[r];
+            if !over && patched_manifests.contains(&row.logical.to_ascii_lowercase()) {
+                continue;
             }
+            (index.tables).add_bounds(row.groups.clone(), row.interiors.clone());
+            for gate in &row.gates {
+                let bounds = row.groups.iter().find(|(name, _)| *name == gate.name);
+                index.state_groups.add_group(
+                    gate.name,
+                    (gate.flags, gate.hours),
+                    gate.weather_types.clone(),
+                    bounds.map(|(_, bounds)| bounds.clone()).unwrap_or_default(),
+                    &row.logical,
+                );
+            }
+        }
+        for &((_, _, a, r), _) in &bounds {
+            let row = &archives[a].bounds[r];
+            let (leaf, name) = leaf_and_stem(&row.logical);
+            if bound_winner.get(&leaf) != Some(&(a, r)) {
+                continue;
+            }
+            let hash = or_io::string_hash(name.as_bytes());
+            if let Some(map) = map_of_bound_stem(&name) {
+                let map = or_io::string_hash(map.as_bytes());
+                index.stem_bounds.entry(map).or_default().push(hash);
+            }
+            index.bound_by_hash.insert(hash, index.bounds.len());
+            index.bounds.push(Bound {
+                name,
+                hash,
+                logical: row.logical.clone(),
+                archive: a,
+                span: row.span,
+            });
         }
         for map in &index.maps {
             index.state_groups.add_map_flags(map.hash, map.flags);

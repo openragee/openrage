@@ -398,3 +398,29 @@ fn the_verbs_run_from_their_arguments_and_keep_the_index_where_told() {
     let nowhere = strings(&["--game", "no/such/install", "--kept", &kept_arg]);
     assert_eq!(cmd_index(&nowhere), ExitCode::from(2));
 }
+
+#[test]
+fn the_install_is_the_first_argument_or_the_value_of_game_whichever_verb_reads_it() {
+    let named = |args: &[&str]| install_of(&strings(args), VALUED_FLAGS);
+    // First among the arguments that are no flag and no flag's value, and taken out of them.
+    assert_eq!(
+        named(&["--kept", "k", "/gta", "1", "2", "3"]),
+        Ok(("/gta".to_string(), strings(&["--kept", "k", "1", "2", "3"])))
+    );
+    // By `--game`, wherever it stands, and the arguments stay as they are.
+    let flagged = ["1", "2", "3", "--game", "/gta"];
+    assert_eq!(named(&flagged), Ok(("/gta".to_string(), strings(&flagged))));
+    assert_eq!(
+        named(&["--game=/gta", "1"]).map(|(install, _)| install),
+        Ok("/gta".to_string())
+    );
+    assert!(named(&["--kept", "k", "--json"]).is_err());
+    // What is left of either way is the position `world at` and `world ground` read.
+    for args in [
+        &["/gta", "1", "2", "3"][..],
+        &["--game", "/gta", "1", "2", "3"],
+    ] {
+        let at = named(args).and_then(|(_, rest)| position_of(&rest));
+        assert_eq!(at, Ok(Vec3::new(1.0, 2.0, 3.0)), "{args:?}");
+    }
+}

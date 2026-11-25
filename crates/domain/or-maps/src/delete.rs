@@ -332,8 +332,7 @@ impl Reached {
 }
 
 /// What lies beyond the pack, which a plan asks for the map files its links lead into: the caller that has the mount answers.
-///
-/// ⚠ An error stops the plan: a map file that is there and does not read may hold links a deletion would break.
+// ⚠ An error stops the plan: a map file that is there and does not read may hold links a deletion would break.
 pub trait Beyond {
     /// The map file of the map called `name`, by the hash of its name; none where there is no such map.
     fn named(&mut self, name: u32) -> Result<Option<Reached>, String>;
@@ -748,12 +747,11 @@ pub fn plan(folder: &Path, chosen: &[At]) -> Result<Deletion, Error> {
 }
 
 /// [`plan`] over the map files of the pack and the map files `reached` beside them, with every map file `beyond` holds that the chain leads into; the plan, and the map files read beside the pack's.
-///
-/// A map file is asked of `beyond` when an entity that goes names a parent in it, and when a file loses an entity, whose index the maps
-/// under it may name and whose children they may hold. A map the files already hold under its name is not taken again, so a source of
-/// the pack stands for the game's file it was made of.
-///
-/// ⚠ The operations name a map file read beside the pack's by the source it is to have: they apply once it is one.
+// A map file is asked of `beyond` when an entity that goes names a parent in it, and when a file loses an entity, whose index the maps
+// under it may name and whose children they may hold. A map the files already hold under its name is not taken again, so a source of
+// the pack stands for the game's file it was made of.
+//
+// ⚠ The operations name a map file read beside the pack's by the source it is to have: they apply once it is one.
 pub fn plan_reaching(
     folder: &Path,
     reached: Vec<Reached>,

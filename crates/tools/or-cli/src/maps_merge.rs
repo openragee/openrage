@@ -171,6 +171,7 @@ fn kind(what: &Disagreement) -> &'static str {
         Disagreement::Double { .. } => "double",
         Disagreement::Ambiguous => "ambiguous",
         Disagreement::File { .. } => "file",
+        Disagreement::ParentMapLink { .. } => "parent-map-link",
     }
 }
 
@@ -226,6 +227,9 @@ fn conflict(conflict: &Conflict) -> String {
         Disagreement::File { member, ours, theirs } => {
             format!("both changed {member} of the file, {}", values(ours, theirs))
         }
+        Disagreement::ParentMapLink { ours, theirs } => format!(
+            "both changed the link of {what} into the parent map, ours to {ours} and theirs to {theirs}: a deletion in the parent map renumbers such a link, and the merged parent map may hold its entities in neither order, so merge the parent map first and set this link by hand"
+        ),
     };
     let side = match conflict.taken {
         Take::Ours => Some(Side::Ours),

@@ -84,6 +84,8 @@ pub struct MountRoot {
     pub stamp: Option<FileStamp>,
     /// The folders of this archive that hold or patch a pack a level leaves out, lowercase and ending in `/`: the walk skips them, and a path written into one still opens.
     pub left_out: Vec<String>,
+    /// The folder of the title update that patches this archive's device, as the logical path its files start with (`update:/dlc_patch/pack/`): a file there lies over this archive's file of the same path. `None` where nothing patches it.
+    pub patch: Option<String>,
 }
 
 pub struct MountedPack {
@@ -334,6 +336,7 @@ pub fn build_mounted_game_with(
         origin: opened.origin,
         stamp: opened.stamp,
         left_out: Vec::new(),
+        patch: None,
     });
 
     for path in glob_platform_packs(&install.root) {
@@ -352,6 +355,7 @@ pub fn build_mounted_game_with(
                     origin: opened.origin,
                     stamp: opened.stamp,
                     left_out: Vec::new(),
+                    patch: None,
                 });
             }
             Err(e) => diagnostics.push(
@@ -397,6 +401,7 @@ pub fn build_mounted_game_with(
             origin: opened.origin,
             stamp: opened.stamp,
             left_out: Vec::new(),
+            patch: None,
         });
         Some(UpdateMount {
             archive: update,
@@ -444,6 +449,7 @@ pub fn build_mounted_game_with(
             origin: opened.origin,
             stamp: opened.stamp,
             left_out: Vec::new(),
+            patch: None,
         });
     }
 
@@ -796,6 +802,7 @@ fn mount_dlc(
         vfs.mount(&format!("{device}:"), base_dev.clone());
         vfs.mount(&format!("{device}CRC:"), base_dev);
 
+        let mut patched_by = None;
         if let (Some(update), Some(patch_path)) = (update_mount, etud.mount_for(&device)) {
             if let Some(sub_root) = patch_folder(patch_path) {
                 let patch = Arc::new(
@@ -804,6 +811,7 @@ fn mount_dlc(
                 );
                 vfs.mount(&format!("{device}:"), patch.clone());
                 vfs.mount(&format!("{device}CRC:"), patch);
+                patched_by = (!sub_root.is_empty()).then(|| format!("update:/{sub_root}/"));
             }
         }
 
@@ -856,6 +864,7 @@ fn mount_dlc(
             origin: d.origin,
             stamp: d.stamp,
             left_out: Vec::new(),
+            patch: patched_by,
         });
 
         for n in 1..=d.setup.sub_pack_count {
@@ -881,6 +890,7 @@ fn mount_dlc(
                         origin: sub_origin,
                         stamp: sub_stamp,
                         left_out: Vec::new(),
+                        patch: None,
                     });
                 }
                 None => diagnostics.push(

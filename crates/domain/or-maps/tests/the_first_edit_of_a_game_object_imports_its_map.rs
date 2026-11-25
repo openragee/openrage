@@ -718,7 +718,8 @@ fn a_second_edit_in_a_map_the_project_holds_imports_nothing_and_is_taken_back_fi
         second.operations
     );
 
-    // A third, of an entity named by the game's path in a map the project holds, imports nothing and reads nothing of the game.
+    // A third, of an entity named by the game's path in a map the project holds, imports nothing, and reads of the game the one
+    // file its place was given in.
     let read = mounted.read.get();
     let third = apply(
         &project.place(),
@@ -731,7 +732,11 @@ fn a_second_edit_in_a_map_the_project_holds_imports_nothing_and_is_taken_back_fi
     assert_eq!(third.told.sharing, None);
     assert_eq!(third.rewritten, Vec::new());
     assert_eq!(third.entity.source, "block_lod.metadata.src");
-    assert_eq!(mounted.read.get(), read, "no file of the game was read");
+    assert_eq!(
+        mounted.read.get(),
+        read + 1,
+        "the game's file was read once, to carry the place, and no other"
+    );
     assert_eq!(project.sources().len(), 3);
 
     // An earlier record is refused while a later edit of one of its sources stands, and nothing is changed by the refusal.
@@ -1123,17 +1128,24 @@ fn a_source_changed_in_more_than_the_edit_wrote_is_not_removed_and_the_edit_stan
     std::fs::write(&notes, "mine").unwrap();
     let standing = files(&project.folder());
     let refused = take_back(&project.place(), &record).unwrap_err();
-    let Refusal::Touched(sources) = &refused else {
+    let Refusal::Touched { sources, added } = &refused else {
         panic!("{refused}");
     };
     assert_eq!(sources, &["m_town.metadata.src"]);
+    // The file at fault is named, so the person knows what to move away.
+    assert_eq!(added, &["m_town.metadata.src/notes.txt"]);
+    assert!(refused
+        .to_string()
+        .contains("the edit did not make `m_town.metadata.src/notes.txt`"));
     assert_eq!(
         differing(&standing, &files(&project.folder())),
         Vec::<String>::new()
     );
 
     // Once it is as the edit left it, the record is taken back; a `maps.json` changed meanwhile keeps what was added to it.
+    // ⚠ What a file browser left in the folder is no person's work and holds nothing back.
     std::fs::remove_file(&notes).unwrap();
+    std::fs::write(notes.with_file_name(".DS_Store"), b"\0\0\0\x01Bud1").unwrap();
     let mut model = Maps::read(&project.maps()).unwrap();
     model.maps.push(or_maps::MapSet::new("later"));
     model.write(&project.maps()).unwrap();
@@ -1440,4 +1452,259 @@ fn the_census_of_an_install_counts_the_map_files_a_first_edit_refuses_each_with_
     // Every other one is asked.
     let sampled = common::census::census(&game, 2);
     assert_eq!(sampled.asked, census.maps.div_ceil(2));
+}
+
+/// Entities, each as its index in the game's file and its guid.
+type Named = Vec<(usize, u32)>;
+
+/// The entities `changes::source_changes` says the source `name` of `project` changed of its base, and those it deleted.
+fn changed_and_deleted(project: &Made, name: &str) -> (Named, Named) {
+    let dir = project.maps().join(format!("{name}.metadata.src"));
+    let SourceChanges::Map(found) = changes::source_changes(&dir).unwrap() else {
+        panic!("a map file");
+    };
+    let changed = found
+        .changed
+        .iter()
+        .map(|kept| (kept.base.index, kept.base.guid));
+    let deleted = found
+        .deleted
+        .iter()
+        .map(|entity| (entity.index, entity.guid));
+    (changed.collect(), deleted.collect())
+}
+
+/// ⚠ `world find` and `world select` read the install and go on printing an entity's place in the game's file, whatever the project
+/// has done to its source of that file since.
+#[test]
+fn a_place_in_the_games_file_names_the_same_object_after_an_earlier_edit_took_one_out_of_the_source(
+) {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path().join("install");
+    std::fs::create_dir(&root).unwrap();
+    let row: Vec<Entity<'_>> = (["bin", "bench", "lamp", "sign", "post"].iter().enumerate())
+        .map(|(i, name)| Entity::at(name, [10.0 * (i as f32 + 1.0), 20.0, 1.0], 100 + i as u32))
+        .collect();
+    world_fixture::write_archive(&root, "common.rpf", &[("data/empty.txt", Vec::new())]);
+    let files = [("levels/m_row.ymap", map_file("m_row", &row, BOX))];
+    world_fixture::write_archive(&root, "x64a.rpf", &files);
+    let game = world_fixture::mount(&root);
+    let mounted = Mounted::new(&game, &root);
+    let project = Made::new(scratch.path(), Vec::new());
+    let logical = mounted.logical("m_row");
+
+    // The bench, entity 1 of the game's file, goes. The game still numbers the lamp 2, and that is what is asked to move.
+    apply(&project.place(), &mounted, &deleted(&logical, 1)).unwrap();
+    let lamp = moved(&logical, Which::Index(2), [30.0, 25.0, 1.0]);
+    let record = apply(&project.place(), &mounted, &lamp).unwrap();
+    assert_eq!(
+        changed_and_deleted(&project, "m_row"),
+        (vec![(2, 102)], vec![(1, 101)]),
+        "the lamp moved, and no other object"
+    );
+    assert_eq!(
+        (record.entity.source.as_str(), record.entity.index),
+        ("m_row.metadata.src", 1)
+    );
+    assert!(
+        (record.notes.iter()).any(|note| note
+            .contains("entity 2 of the game's `m_row.ymap` is entity 1 of `m_row.metadata.src`")),
+        "{:?}",
+        record.notes
+    );
+
+    // The same place given with the source's own name is a place in the source: entity 2 there is the sign.
+    let sign = moved("m_row.metadata.src", Which::Index(2), [40.0, 25.0, 1.0]);
+    apply(&project.place(), &mounted, &sign).unwrap();
+    assert_eq!(
+        changed_and_deleted(&project, "m_row").0,
+        [(2, 102), (3, 103)]
+    );
+
+    // An entity the source no longer holds is refused by name, and one past the end of the game's file by the game's count.
+    let gone = plan(&project.place(), &mounted, &deleted(&logical, 1));
+    assert!(
+        matches!(&gone, Err(Refusal::GoneHere { index: 1, source_there, .. }) if source_there == "m_row.metadata.src"),
+        "{:?}",
+        gone.map(|planned| planned.record.lines())
+    );
+    let past = plan(&project.place(), &mounted, &deleted(&logical, 5));
+    assert!(
+        matches!(
+            past,
+            Err(Refusal::NoSuchEntity {
+                index: 5,
+                len: 5,
+                ..
+            })
+        ),
+        "the end is the game's file's, which holds five"
+    );
+}
+
+/// ⚠ Half the map names of a retail install are held by more than one archive, and a path can name a copy a later one replaces.
+#[test]
+fn a_copy_of_a_map_that_a_later_archive_replaces_is_refused_with_the_copy_the_install_loads() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path().join("install");
+    std::fs::create_dir(&root).unwrap();
+    let bench = Entity::at("bench", [10.0, 20.0, 1.0], 11);
+    let lamp = Entity::at("lamp", [30.0, 20.0, 1.0], 12);
+    let first = map_file("m_town", std::slice::from_ref(&bench), BOX);
+    let later = map_file("m_town", &[lamp, bench], BOX);
+    world_fixture::write_archive(&root, "common.rpf", &[("data/empty.txt", Vec::new())]);
+    world_fixture::write_archive(&root, "x64a.rpf", &[("levels/m_town.ymap", first)]);
+    world_fixture::write_archive(&root, "x64b.rpf", &[("later/m_town.ymap", later)]);
+    let game = world_fixture::mount(&root);
+    let mounted = Mounted::new(&game, &root);
+    let project = Made::new(scratch.path(), Vec::new());
+    let before = files(&project.folder());
+
+    let loaded = mounted.logical("m_town");
+    let replaced = "platform:/levels/m_town.ymap";
+    assert_eq!(loaded, "platform:/later/m_town.ymap");
+    assert!(
+        game.vfs.open(replaced).is_some(),
+        "the replaced copy still opens at its path"
+    );
+    let edit = moved(replaced, Which::Index(0), [11.0, 21.0, 2.0]);
+    for refused in [
+        plan(&project.place(), &mounted, &edit).map(drop),
+        apply(&project.place(), &mounted, &edit).map(drop),
+    ] {
+        assert!(
+            matches!(&refused, Err(Refusal::NotTheCopyLoaded { file, loaded: named }) if file == replaced && *named == loaded),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(
+        differing(&before, &files(&project.folder())),
+        Vec::<String>::new()
+    );
+
+    // The copy the install loads comes in, with every entity it holds.
+    apply(
+        &project.place(),
+        &mounted,
+        &moved(&loaded, Which::Index(0), [31.0, 21.0, 2.0]),
+    )
+    .unwrap();
+    assert_eq!(project.sources(), ["m_town.metadata.src"]);
+    assert_eq!(changed_and_deleted(&project, "m_town").0, [(0, 12)]);
+}
+
+/// ⚠ A rotation the game stores is not always at length one, and a move states the rotation the entity has.
+#[test]
+fn a_move_alone_leaves_the_rotation_of_an_object_as_the_game_stores_it() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path().join("install");
+    std::fs::create_dir(&root).unwrap();
+    // Thirty objects, each turned a little more about the vertical axis than the last.
+    let turned: Vec<Entity<'_>> = (0..30u32)
+        .map(|i| Entity {
+            yaw: 0.05 + i as f32 * 0.1,
+            ..Entity::at("bench", [10.0 + i as f32, 20.0, 1.0], 100 + i)
+        })
+        .collect();
+    world_fixture::write_archive(&root, "common.rpf", &[("data/empty.txt", Vec::new())]);
+    let files = [("levels/m_turn.ymap", map_file("m_turn", &turned, BOX))];
+    world_fixture::write_archive(&root, "x64a.rpf", &files);
+    let game = world_fixture::mount(&root);
+    let mounted = Mounted::new(&game, &root);
+    let project = Made::new(scratch.path(), Vec::new());
+    let logical = mounted.logical("m_turn");
+    // The check is of rotations a reading at length one would change, so the map holds some.
+    use or_io::decl::File as _;
+    let shipped = or_io::meta::typed::CMapData::from_bytes(&game.vfs.open(&logical).unwrap());
+    let off_length = (shipped.unwrap().entities.iter())
+        .filter(|entity| {
+            let r = &entity.rotation;
+            let stored = glam::Quat::from_xyzw(r.x, r.y, r.z, r.w);
+            stored.normalize().to_array().map(f32::to_bits) != stored.to_array().map(f32::to_bits)
+        })
+        .count();
+    assert!(
+        off_length > 0,
+        "every rotation of the fixture is at length one to the bit"
+    );
+
+    for i in 0..30usize {
+        let to = [10.0 + i as f32, 25.0, 1.0];
+        apply(
+            &project.place(),
+            &mounted,
+            &moved(&logical, Which::Index(i), to),
+        )
+        .unwrap();
+    }
+    let dir = project.maps().join("m_turn.metadata.src");
+    let SourceChanges::Map(found) = changes::source_changes(&dir).unwrap() else {
+        panic!("a map file");
+    };
+    assert_eq!(found.changed.len(), 30);
+    for kept in &found.changed {
+        assert!(
+            matches!(kept.changes.as_slice(), [EntityChange::Moved { .. }]),
+            "entity {} moved and nothing else: {:?}",
+            kept.base.index,
+            kept.changes
+        );
+    }
+}
+
+/// ⚠ A move writes one entity of one map file, and a deletion writes map files alone: what is left where it was is said.
+#[test]
+fn a_first_edit_says_what_it_leaves_where_it_was_the_far_model_on_a_move_and_the_collision_on_both()
+{
+    let scratch = tempfile::tempdir().unwrap();
+    let root = install(scratch.path());
+    let game = world_fixture::mount(&root);
+    let mounted = Mounted::new(&game, &root);
+    let project = Made::new(scratch.path(), Vec::new());
+    let says = |notes: &[String], what: &str| notes.iter().any(|note| note.contains(what));
+    let collision = "the static collision of the area is not changed";
+
+    // The shop of `block` is the one child of the far model `lod_shop` of `block_lod`, which a move of the shop leaves.
+    let shop = moved(
+        &mounted.logical("block"),
+        Which::Index(SHOP),
+        [40.0, 40.0, 3.0],
+    );
+    let record = plan(&project.place(), &mounted, &shop).unwrap().record;
+    let far = format!(
+        "the far model of the object, entity {LOD_SHOP} of `block_lod.ymap`, stays where it was"
+    );
+    assert!(says(&record.notes, &far), "{:?}", record.notes);
+    assert!(says(&record.notes, collision), "{:?}", record.notes);
+    // A far model that is moved leaves the models it stands for.
+    let lod = moved(
+        &mounted.logical("block_lod"),
+        Which::Index(0),
+        [21.0, 10.0, 0.0],
+    );
+    let record = plan(&project.place(), &mounted, &lod).unwrap().record;
+    assert!(
+        says(
+            &record.notes,
+            "stands for 3 nearer model(s), which stay where they were"
+        ),
+        "{:?}",
+        record.notes
+    );
+    // An object with no far model is said to leave none, and a deletion says the collision stays too.
+    let bench = moved(
+        &mounted.logical("m_town"),
+        Which::Index(BENCH),
+        [11.0, 21.0, 2.0],
+    );
+    let record = plan(&project.place(), &mounted, &bench).unwrap().record;
+    assert!(!says(&record.notes, "far model"), "{:?}", record.notes);
+    let record = plan(
+        &project.place(),
+        &mounted,
+        &deleted(&mounted.logical("shed"), 0),
+    )
+    .unwrap()
+    .record;
+    assert!(says(&record.notes, collision), "{:?}", record.notes);
 }

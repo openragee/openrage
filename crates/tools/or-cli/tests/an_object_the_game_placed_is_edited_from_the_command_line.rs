@@ -480,3 +480,46 @@ fn the_edition_of_the_install_the_verb_was_given_is_what_a_build_of_the_other_re
     );
     assert_eq!(files(project.parent().unwrap()), before);
 }
+
+/// ⚠ `world find` and `world select` mount as `--level` and `--mode` say, and a path and a place they print go to this verb.
+#[test]
+fn the_verb_mounts_at_the_level_and_in_the_mode_the_verbs_that_print_an_entity_mount_at() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = install(scratch.path());
+    let project = project(scratch.path());
+    let kept = scratch.path().join("world.index");
+    let town = logical(&root, "m_town");
+    let common = [
+        "edit-game",
+        text(&project),
+        "--game",
+        text(&root),
+        "--kept",
+        text(&kept),
+        "--map",
+        town.as_str(),
+        "--entity",
+        "0",
+        "--move",
+        "1,2,3",
+    ];
+    let with = |more: &[&str]| -> (String, String, bool) {
+        let args: Vec<&str> = common.iter().chain(more).copied().collect();
+        maps(scratch.path(), &args)
+    };
+    let (plain, error, ok) = with(&[]);
+    assert!(ok, "{error}");
+    let (in_mode, error, ok) = with(&["--mode", "story"]);
+    assert!(ok, "{error}");
+    assert_eq!(
+        in_mode, plain,
+        "an install with no pack is one map in either mode"
+    );
+    // A level the install's list does not name is the mount's refusal, with the level, and no unknown flag.
+    let (printed, error, ok) = with(&["--level", "nowhere"]);
+    assert!(!ok, "{printed}");
+    assert!(
+        error.contains("nowhere") && !error.contains("unknown flag"),
+        "{error}"
+    );
+}

@@ -23,7 +23,7 @@ const USAGE: &str = "world find <install> <text> [--near <x,y,z>] [--limit <n>] 
 
 /// The flags of this verb that take a value, so the value is not read as the text.
 const VALUED_FLAGS: &[&str] = &[
-    "--near", "--limit", "--copy", "--level", "--mode", "--kept", "--keys",
+    "--game", "--near", "--limit", "--copy", "--level", "--mode", "--kept", "--keys",
 ];
 
 /// The flags of this verb that take no value.
@@ -78,8 +78,11 @@ pub(super) fn question_of(args: &[String]) -> Result<Question, String> {
         }
         at += 1;
     }
-    let Some((install, text)) = words.split_first() else {
-        return Err("<install> names the install".to_string());
+    // The install is `--game`'s value, else the first word, as every verb over an install takes it.
+    let (install, text) = match (flag_value(args, "--game"), words.split_first()) {
+        (Some(game), _) => (game, &words[..]),
+        (None, Some((install, text))) => (*install, text),
+        (None, None) => return Err("<install> names the install".to_string()),
     };
     if text.is_empty() {
         return Err("<text> is what to find: a place, a hash or a name".to_string());
@@ -122,41 +125,12 @@ fn form_of(forms: &ScriptForms, id: &str) -> Result<ScriptForm, String> {
     })
 }
 
-/// What is said of the mount a question was asked of, a line each.
-fn mount_notes(game: &MountedGame, mode: Option<MapMode>) -> Vec<String> {
-    let mut notes = Vec::new();
-    let left_out = super::search::packs_left_out(game);
-    if !left_out.is_empty() {
-        notes.push(format!(
-            "the level leaves out {} of {} listed pack(s) and what they place: {}",
-            left_out.len(),
-            game.listed.len(),
-            left_out.join(", ")
-        ));
-    }
-    if let Some(mode) = mode {
-        // ⚠ A mode takes or leaves a pack's change sets, and the index reads no change set: it reads every map and type file
-        // of every archive mounted.
-        let sets = game
-            .packs
-            .iter()
-            .flat_map(|pack| &pack.change_sets_left_out);
-        let sets: Vec<&str> = sets.map(String::as_str).collect();
-        let left_out = match sets.len() {
-            0 => String::new(),
-            count => format!(
-                "; {count} change set(s) stated for the other mode: {}",
-                sets.join(", ")
-            ),
-        };
-        notes.push(format!(
-            "mounted as {}, which leaves out no map: the index reads every map and type file a mounted pack holds, \
-             whatever change set would load it{left_out}",
-            mode.label()
-        ));
-    }
-    notes
-}
+/// What a level and a mode leave out of what this verb reads, in its words.
+const PLACED_LEFT_OUT: super::world_ground::LeftOutWords = super::world_ground::LeftOutWords {
+    with_a_pack: "what they place",
+    none_of: "map",
+    every: "map and type file",
+};
 
 fn hex(hash: u32) -> String {
     format!("0x{hash:08X}")
@@ -496,7 +470,7 @@ pub(super) fn said(
     let (catalogue, names) = names_of(&source);
     let search = SearchNames::new(&index, &names);
     let (text, limit) = (question.text.as_str(), question.limit);
-    let mut notes = mount_notes(game, mode);
+    let mut notes = super::world_ground::mount_notes(game, mode, &PLACED_LEFT_OUT);
 
     // ⚠ Nothing keeps which maps place a model, so the maps are walked for the models the text lists and for no other; a text
     // that lists no model reads no map.

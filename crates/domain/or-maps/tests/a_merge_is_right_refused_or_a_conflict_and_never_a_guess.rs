@@ -900,7 +900,15 @@ fn links_into_the_parent_map_are_the_numbers_their_sides_state_whatever_goes_out
     for (first, second) in [(&ours, &theirs), (&theirs, &ours)] {
         let merge = merged(&base, first, second, Take::Stop);
         assert_eq!(merge.report.conflicts, Vec::<Conflict>::new());
-        assert_eq!(merge.report.notes, Vec::<String>::new());
+        // The one link a side changed is said to be that side's number, which no parent map was read for.
+        let [note] = merge.report.notes.as_slice() else {
+            panic!("{:?}", merge.report.notes);
+        };
+        assert!(
+            note.starts_with("1 link(s) into the parent map are as ")
+                && note.contains("read no parent map"),
+            "{note}"
+        );
         let map = merge.merged.unwrap();
         let links: Vec<i32> = map.entities.iter().map(|e| e.parent_index).collect();
         assert_eq!(
@@ -910,6 +918,60 @@ fn links_into_the_parent_map_are_the_numbers_their_sides_state_whatever_goes_out
         );
         assert!(map.entities.iter().all(|e| e.num_children == 0));
     }
+}
+
+/// ⚠ A deletion in the parent map renumbers the links of every map under it, so two sides that each took another entity out of it
+/// can both give one link one number, and the merged parent map, which lost both entities, has the entity meant at another.
+#[test]
+fn a_link_into_the_parent_map_that_both_sides_changed_is_a_conflict_of_its_own_though_they_state_one_number(
+) {
+    let mut base = map(&[
+        Entity::at("yard_lod", [0.0, 0.0, 0.0], 1),
+        Entity::at("yard_hd", [0.0, 1.0, 0.0], 2),
+        Entity::at("yard_hd", [0.0, 2.0, 0.0], 3),
+    ]);
+    for (index, parent) in [(1, 4), (2, 9)] {
+        base.entities[index].flags |= 1 << 3;
+        base.entities[index].parent_index = parent;
+    }
+    let base = CMapData::from_bytes(&base.to_bytes().unwrap()).unwrap();
+    let (mut ours, mut theirs) = (base.clone(), base.clone());
+    // Ours took entity 0 of the parent map out and theirs entity 6: both renumber the link to 9, to 8, and ours the link to 4 too.
+    ours.entities[1].parent_index = 3;
+    ours.entities[2].parent_index = 8;
+    theirs.entities[2].parent_index = 8;
+
+    let stopped = merged(&base, &ours, &theirs, Take::Stop);
+    assert!(
+        stopped.merged.is_none(),
+        "one number from both sides was taken as agreed"
+    );
+    let said: Vec<&Disagreement> = stopped.report.conflicts.iter().map(|c| &c.what).collect();
+    assert_eq!(
+        said,
+        [&Disagreement::ParentMapLink {
+            ours: "entity 8 of the parent map".to_string(),
+            theirs: "entity 8 of the parent map".to_string(),
+        }]
+    );
+    assert!(
+        (stopped.report.not_compared.iter())
+            .any(|said| said.contains("are not merged file by file")),
+        "{:?}",
+        stopped.report.not_compared
+    );
+
+    // Answered for a side, the links are that side's numbers, and the report says that no parent map was read for them.
+    let taken = merged(&base, &ours, &theirs, Take::Ours);
+    let map = taken.merged.unwrap();
+    let links: Vec<i32> = map.entities.iter().map(|e| e.parent_index).collect();
+    assert_eq!(links, [-1, 3, 8]);
+    assert!(
+        (taken.report.notes.iter())
+            .any(|note| note.starts_with("2 link(s) into the parent map are as ours changed them")),
+        "{:?}",
+        taken.report.notes
+    );
 }
 
 #[test]

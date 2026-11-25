@@ -98,8 +98,7 @@ pub fn extract(
 }
 
 /// Whether `bytes`, a game file called `name` with `extension`, would become a source: what [`extract`] refuses it for, with nothing written.
-///
-/// ⚠ A folder of that name already in the way is not asked here: only the caller knows where the source would go.
+// ⚠ A folder of that name already in the way is not asked here: only the caller knows where the source would go.
 pub fn check(bytes: &[u8], name: &str, extension: &str) -> Result<(), Vec<Problem>> {
     if !EXTENSIONS.contains(&extension) {
         return Err(vec![unknown_extension(extension)]);

@@ -38,7 +38,11 @@ const ALWAYS_DEFAULT: &[&str] = &[
 ///
 /// ⚠ Each walks an install, so a run on a machine with none times it at a skip, and on one with an install it passes the
 /// 30 s a default-tier test is ended at.
-const ALWAYS_SLOW: &[&str] = &["or-maps::what_the_rules_say_of_the_install"];
+const ALWAYS_SLOW: &[&str] = &[
+    "or-maps::what_the_rules_say_of_the_install",
+    "or-maps::deleting_an_entity_of_the_install_keeps_every_link",
+    "or-depends::the_world_index_of_a_real_install",
+];
 
 const BEGIN: &str = "# slow-tier:begin";
 const END: &str = "# slow-tier:end";
@@ -323,19 +327,25 @@ mod tests {
 
     #[test]
     fn a_binary_that_walks_an_install_is_slow_though_a_run_timed_it_at_a_skip() {
-        let tests = vec![
-            timed(ALWAYS_SLOW[0], "the_rules_fire_on_few_of_its_maps", 0.01),
-            timed("lib", "units::one", 1.0),
-        ];
+        let mut tests: Vec<Timed> = (ALWAYS_SLOW.iter())
+            .map(|binary| timed(binary, "a_walk_of_the_install", 0.01))
+            .collect();
+        tests.push(timed("lib", "units::one", 1.0));
         let slow = slow_modules(&tests, 100.0);
+        let mut walks: Vec<(String, String)> = (ALWAYS_SLOW.iter())
+            .map(|binary| (binary.to_string(), String::new()))
+            .collect();
+        walks.sort();
         assert_eq!(
             slow.into_iter().collect::<Vec<_>>(),
-            [(ALWAYS_SLOW[0].to_string(), String::new())],
+            walks,
             "the run fits its budget, and the walk of an install is slow all the same"
         );
         // ⚠ The block of `.config/nextest.toml` in the tree states it, so a tier written by hand and one written from a run agree.
         let config = include_str!("../../../../.config/nextest.toml");
-        assert!(SlowTier::parse(config).whole(ALWAYS_SLOW[0]));
+        for binary in ALWAYS_SLOW {
+            assert!(SlowTier::parse(config).whole(binary), "{binary}");
+        }
     }
 
     #[test]

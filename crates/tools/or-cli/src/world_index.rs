@@ -55,9 +55,29 @@ pub(super) fn indexed(
     (index, report)
 }
 
-/// Mount the install `--game` names and index it, as `--kept`, `--keys` and `--fresh` say.
+/// The install `args` name, and `args` without it where it stood among them: `--game`'s value, else the first argument that is neither a flag nor the value of one of `valued`.
+// ⚠ One reader for every verb over an install, so the folder is said one way from one verb to the next.
+pub(super) fn install_of(
+    args: &[String],
+    valued: &[&str],
+) -> Result<(String, Vec<String>), String> {
+    let mut rest = args.to_vec();
+    if let Some(game) = flag_value(args, "--game") {
+        return Ok((game.to_string(), rest));
+    }
+    let mut after_flag = false;
+    let first = args.iter().position(|arg| {
+        let value = std::mem::replace(&mut after_flag, valued.contains(&arg.as_str()));
+        !value && !arg.starts_with("--")
+    });
+    let first = first.ok_or("the install's folder comes first, or --game <dir> names it")?;
+    Ok((rest.remove(first), rest))
+}
+
+/// Mount the install `args` name and index it, as `--kept`, `--keys` and `--fresh` say.
 fn open(args: &[String]) -> Result<(WorldIndex, Report, PathBuf, PathBuf), String> {
-    let game = flag_value(args, "--game").ok_or("--game <dir> names the install")?;
+    let (game, _) = install_of(args, VALUED_FLAGS)?;
+    let game = game.as_str();
     // The path as the file system spells it, so one install is one kept index however it is named.
     let root = std::fs::canonicalize(game).map_err(|e| format!("{game}: {e}"))?;
     let kept = match flag_value(args, "--kept") {
@@ -340,8 +360,8 @@ fn at_json(index: &WorldIndex, at: Vec3) -> serde_json::Value {
 }
 
 pub(crate) fn cmd_at(args: &[String]) -> ExitCode {
-    let usage = "world at --game <dir> <x> <y> <z> [--kept <file>]";
-    let at = match position_of(args) {
+    let usage = "world at <install> <x> <y> <z> [--kept <file>]";
+    let at = match install_of(args, VALUED_FLAGS).and_then(|(_, rest)| position_of(&rest)) {
         Ok(at) => at,
         Err(e) => {
             eprintln!("Error: {usage}: {e}");

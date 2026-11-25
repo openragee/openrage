@@ -199,6 +199,10 @@ impl WorldSource for Reads<'_> {
     fn open_head(&self, archive: usize, logical: &str, limit: usize) -> Option<Vec<u8>> {
         self.source.open_head(archive, logical, limit)
     }
+
+    fn patch_of(&self, archive: usize) -> Option<String> {
+        self.source.patch_of(archive)
+    }
 }
 
 fn built(source: &dyn WorldSource) -> WorldIndex {

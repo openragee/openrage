@@ -75,4 +75,8 @@ impl WorldSource for MountedWorld<'_> {
     fn open_head(&self, archive: usize, logical: &str, limit: usize) -> Option<Vec<u8>> {
         (self.devices.get(archive)?).open_head(self.inside(archive, logical)?, limit)
     }
+
+    fn patch_of(&self, archive: usize) -> Option<String> {
+        self.game.roots.get(archive)?.patch.clone()
+    }
 }

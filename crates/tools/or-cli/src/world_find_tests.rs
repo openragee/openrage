@@ -114,6 +114,12 @@ fn the_arguments_are_an_install_the_text_and_its_options() {
     assert_eq!((asked.limit, asked.copy.as_deref()), (3, Some("lua")));
     let signed = question_of(&strings(&["/gta", "-1234"])).expect("a question");
     assert_eq!(signed.text, "-1234");
+    // The install by `--game`, as the verbs beside this one take it: every word is then of the text.
+    let flagged = question_of(&strings(&["--game", "/gta", "prop", "bench"])).expect("a question");
+    assert_eq!(
+        (flagged.install.as_str(), flagged.text.as_str()),
+        ("/gta", "prop bench")
+    );
     // A value written after `=`, as the verbs beside this one read a flag, is its flag's and no word of the text.
     let args = ["/gta", "bench", "--limit=3", "--near=1,-2,3", "--copy=json"];
     let joined = question_of(&strings(&args)).expect("a question");
@@ -124,8 +130,6 @@ fn the_arguments_are_an_install_the_text_and_its_options() {
     for (refused, why) in [
         (&[][..], "<install>"),
         (&["/gta"], "<text>"),
-        (&["/gta", "bench", "--game", "x"], "`--game` is no flag"),
-        (&["/gta", "bench", "--game=x"], "`--game=x` is no flag"),
         (&["/gta", "bench", "--json=yes"], "`--json=yes` is no flag"),
         (&["/gta", "bench", "--limit"], "`--limit` takes a value"),
         (&["/gta", "bench", "--limit", "many"], "--limit is a count"),

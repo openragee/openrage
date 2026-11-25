@@ -47,7 +47,7 @@ pub const FORMAT: &str = "openrage-first-edit";
 /// The one schema of a record this build reads and writes.
 pub const SCHEMA: u32 = 1;
 
-/// The English texts a first edit is told with, each the key the catalogs of the app translate; `{name}` stands for an argument.
+/// The English texts a first edit is told with, each the key a catalog of the app is to translate it by; `{name}` stands for an argument. ⚠ No catalog holds one yet, and no screen shows them: the command line prints the English.
 pub mod told {
     pub const MOVED: &str = "Moved an object of {map}";
     /// One entity gone, and several: the object with the far models that stood for it alone.
@@ -162,6 +162,10 @@ pub enum Refusal {
         "the content holds `{source_there}`, which is named as the source of `{file}` would be and was not taken from it. If it is the content's own map of that name, edit the object there; if it is not, move it out of the way. Nothing was imported and no source was changed"
     )]
     InTheWay { file: String, source_there: String },
+    #[error(
+        "`{file}` is not the copy of that map the install loads: a later archive holds the map again, at `{loaded}`, and a source made of this copy would put back what the install no longer loads. Name the object in `{loaded}`. Nothing was imported and no source was changed"
+    )]
+    NotTheCopyLoaded { file: String, loaded: String },
     #[error("`{map}` holds {len} entities, so there is no entity {index}")]
     NoSuchEntity {
         map: String,
@@ -188,6 +192,22 @@ pub enum Refusal {
         index: usize,
         twins: Vec<At>,
     },
+    #[error(
+        "entity {index} of `{map}` is not in `{source_there}`, the project's source of that map file, where it was deleted: there is nothing to edit"
+    )]
+    GoneHere {
+        map: String,
+        index: usize,
+        source_there: String,
+    },
+    #[error(
+        "entity {index} of `{map}` cannot be told from another of its archetype in `{source_there}`, the project's source of that map file, so its place there is not known: name it by its place in the source, with `{source_there}` as the map"
+    )]
+    NotToldHere {
+        map: String,
+        index: usize,
+        source_there: String,
+    },
     #[error("a position that is not a finite number cannot be stored")]
     NotFinite,
     #[error("{0}; nothing was imported and no source was changed")]
@@ -207,15 +227,27 @@ pub enum Refusal {
     #[error("{0}; nothing was taken back")]
     Stale(operation::Error),
     #[error(
-        "{} changed since the edit in more than the edit wrote, so the edit was not taken back and every source is as it was",
-        .0.join(" and ")
+        "{} changed since the edit in more than the edit wrote ({}), so the edit was not taken back and every source is as it was",
+        .sources.join(" and "),
+        strangers_said(.added)
     )]
-    Touched(Vec<String>),
+    Touched {
+        sources: Vec<String>,
+        /// The files those sources hold that the import did not make, each inside the content's folder with `/`.
+        added: Vec<String>,
+    },
 }
 
 fn list(indexes: &[usize]) -> String {
     let said: Vec<String> = indexes.iter().map(usize::to_string).collect();
     said.join(" and ")
+}
+
+fn strangers_said(added: &[String]) -> String {
+    match added {
+        [] => "a file the import made was changed by hand or removed".to_string(),
+        added => format!("the edit did not make `{}`", added.join("` and `")),
+    }
 }
 
 fn twins_said(twins: &[At]) -> String {
@@ -225,7 +257,7 @@ fn twins_said(twins: &[At]) -> String {
     said.join(" and ")
 }
 
-/// A sentence a person is told, as the key the catalogs translate with what its names stand for.
+/// A sentence a person is told, as the key a catalog is to translate it by, with what its names stand for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Message {
@@ -309,6 +341,9 @@ pub struct Imported {
     /// The digest of the source folder as the import made it, before the edit: what it has again once the inverses are applied. Empty in a plan.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub digest: String,
+    /// The files of the source folder as the import made it, each inside it with `/`, by which a file added since is named. Empty in a plan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
 }
 
 /// A file of the project that is no source and that the edit rewrote: the content's `maps.json`, the project's ignore rules.
@@ -387,6 +422,25 @@ fn source_name(logical: &str) -> Result<String, Refusal> {
 
 fn dir_of(folder: &Path, source: &str) -> PathBuf {
     folder.join(source.replace('/', std::path::MAIN_SEPARATOR_STR))
+}
+
+/// Every file under `dir` but what a file browser leaves, each inside it with `/`, sorted; what cannot be listed is left out.
+fn files_in(dir: &Path) -> Vec<String> {
+    fn walk(dir: &Path, inside: &str, into: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, &format!("{inside}{name}/"), into);
+            } else if !or_source::game_import::LEFT_BY_A_FILE_BROWSER.contains(&name.as_str()) {
+                into.push(format!("{inside}{name}"));
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(dir, "", &mut files);
+    files.sort();
+    files
 }
 
 /// The source of the content that `map` names: one called that, else the one taken from the game's file at that logical path.
@@ -485,6 +539,9 @@ impl Beyond for Reach<'_> {
     }
 }
 
+/// The note of every first edit: an entity is a record of a map file, and what collides for it is in another file.
+const COLLISION_STAYS: &str = "the static collision of the area is not changed, so what the object collides with stays where it was: `openrage-cli maps collision` proposes it, takes it out or moves it";
+
 /// What an edit comes to, before anything is written.
 struct Prepared {
     folder: PathBuf,
@@ -524,6 +581,71 @@ fn index_of(map: &CMapData, named: &str, which: Which) -> Result<usize, Refusal>
                 }),
             }
         }
+    }
+}
+
+/// The place in `now`, the map the content's `source` cooks to, of the entity at `place` of the game's file at `logical`.
+///
+/// ⚠ A path of the install comes with a place in the game's file, as `world find` and `world select` print one, and the source of
+/// that file holds other entities before it once one was deleted or added there: the two files are paired by what they hold.
+fn carried(
+    game: &dyn Game,
+    logical: &str,
+    source: &str,
+    now: &CMapData,
+    place: usize,
+) -> Result<usize, Refusal> {
+    let bytes = game.read(logical).ok_or_else(|| Refusal::NoSuchMap {
+        map: logical.to_string(),
+    })?;
+    let shipped = CMapData::from_bytes(&bytes).map_err(|e| Refusal::Unread {
+        file: logical.to_string(),
+        why: e.to_string(),
+    })?;
+    let len = shipped.entities.len();
+    if place >= len {
+        return Err(Refusal::NoSuchEntity {
+            map: logical.to_string(),
+            index: place,
+            len,
+        });
+    }
+    let (changes, pairs) = crate::changes::map_changes_paired(&shipped, now);
+    let (map, source_there) = (logical.to_string(), source.to_string());
+    match pairs.get(place).copied().flatten() {
+        Some(there) => Ok(there),
+        None if (changes.ambiguous.iter())
+            .any(|group| group.base.iter().any(|entity| entity.index == place)) =>
+        {
+            Err(Refusal::NotToldHere {
+                map,
+                index: place,
+                source_there,
+            })
+        }
+        None => Err(Refusal::GoneHere {
+            map,
+            index: place,
+            source_there,
+        }),
+    }
+}
+
+/// Refuse a map file at `logical` that is not the copy the mount loads for the map of its name.
+///
+/// ⚠ By where each lies and not by its path: the copy a title update patches answers at the pack's path and at its own.
+fn loaded_copy(game: &dyn Game, logical: &str) -> Result<(), Refusal> {
+    let name = leaf(logical).to_ascii_lowercase();
+    let stem = name
+        .rsplit_once('.')
+        .map_or(name.as_str(), |(stem, _)| stem);
+    let loaded = game.map_file(or_io::string_hash(stem.as_bytes()));
+    match loaded.filter(|loaded| game.lies_at(loaded) != game.lies_at(logical)) {
+        Some(loaded) => Err(Refusal::NotTheCopyLoaded {
+            file: logical.to_string(),
+            loaded,
+        }),
+        None => Ok(()),
     }
 }
 
@@ -593,18 +715,25 @@ fn prepare(
                 });
             }
             same_edition(place, game, &edit.map)?;
+            loaded_copy(game, &edit.map)?;
             let reached = reach.take(&edit.map, bytes)?;
             let map = reached.map().clone();
             (source, map, vec![reached])
         }
     };
-    let index = index_of(&map, &edit.map, edit.entity)?;
+    let (index, of_the_game) = match (edit.entity, &held) {
+        (Which::Index(place), Some(held)) if *held != edit.map => {
+            let there = carried(game, &edit.map, held, &map, place)?;
+            (there, (there != place).then_some(place))
+        }
+        (which, _) => (index_of(&map, &edit.map, which)?, None),
+    };
     let entity = At {
         source: source.clone(),
         index,
     };
 
-    let (operations, deletion, touched, notes, gone) = match edit.change {
+    let (operations, deletion, touched, mut notes, gone) = match edit.change {
         Change::Move { position } => {
             let pose = Pose {
                 position: Vec3::from_array(position),
@@ -618,7 +747,34 @@ fn prepare(
             };
             let touched: BTreeSet<String> =
                 held.is_none().then(|| source.clone()).into_iter().collect();
-            (vec![place_entity], None, touched, Vec::new(), 0)
+            // ⚠ A move changes one entity of one map: what stands for the object from afar and what it stands for stay.
+            let moved = &map.entities[index];
+            let far_model = match crate::changes::link_of(moved) {
+                crate::changes::Link::None => None,
+                crate::changes::Link::Own(parent) => Some(format!("entity {parent} of `{source}`")),
+                crate::changes::Link::ParentMap(parent) => {
+                    let file = game.map_file(map.parent.hash);
+                    let named = file.map_or_else(
+                        || "its parent map".to_string(),
+                        |file| format!("`{}`", leaf(&file)),
+                    );
+                    Some(format!("entity {parent} of {named}"))
+                }
+            };
+            let mut notes = Vec::new();
+            if let Some(far_model) = far_model {
+                notes.push(format!(
+                    "the far model of the object, {far_model}, stays where it was, and is drawn for it there from afar until it is moved too"
+                ));
+            }
+            if moved.num_children > 0 {
+                notes.push(format!(
+                    "the object is a far model that stands for {} nearer model(s), which stay where they were",
+                    moved.num_children
+                ));
+            }
+            notes.push(COLLISION_STAYS.to_string());
+            (vec![place_entity], None, touched, notes, 0)
         }
         Change::Delete => {
             let chosen = [entity.clone()];
@@ -644,12 +800,23 @@ fn prepare(
                 .map(|change| change.source.clone())
                 .filter(|source| beside.iter().any(|reached| reached.source() == source))
                 .collect();
-            let notes = deletion.notes.iter().map(ToString::to_string).collect();
+            let mut notes: Vec<String> = deletion.notes.iter().map(ToString::to_string).collect();
+            notes.push(COLLISION_STAYS.to_string());
             let gone = deletion.goes.len();
             let operations = deletion.operations.clone();
             (operations, Some(deletion), touched, notes, gone)
         }
     };
+
+    if let Some(place) = of_the_game {
+        notes.insert(
+            0,
+            format!(
+                "entity {place} of the game's `{}` is entity {index} of `{source}`, the project's source of it, which holds other entities before it",
+                leaf(&edit.map)
+            ),
+        );
+    }
 
     // Only what the edit changes comes in: a map file read to follow the chain and left as it is stays the game's.
     let imports: Vec<(String, Fetched)> = (reach.fetched.into_iter())
@@ -715,6 +882,7 @@ fn record_of(place: &Place<'_>, edit: &Edit, prepared: &Prepared) -> Record {
                 source: source.clone(),
                 base_sha256: sha256_hex(&fetched.bytes),
                 digest: String::new(),
+                files: Vec::new(),
             })
             .collect(),
         operations: prepared.operations.clone(),
@@ -933,6 +1101,7 @@ pub fn apply(place: &Place<'_>, game: &dyn Game, edit: &Edit) -> Result<Record, 
             )));
         };
         imported.digest = digest;
+        imported.files = files_in(&dir);
     }
     let undo = |made: &[PathBuf]| {
         remove(made);
@@ -1010,7 +1179,20 @@ pub fn take_back(place: &Place<'_>, record: &Record) -> Result<TakenBack, Refusa
                 touched.join(" and ")
             ))
         })?;
-        return Err(Refusal::Touched(touched));
+        let made_then =
+            |source: &String| record.imported.iter().find(|made| made.source == *source);
+        let added = (touched.iter().filter_map(made_then))
+            .filter(|made| !made.files.is_empty())
+            .flat_map(|made| {
+                let now = files_in(&dir_of(&folder, &made.source));
+                let strangers = now.into_iter().filter(|file| !made.files.contains(file));
+                strangers.map(|file| format!("{}/{file}", made.source))
+            })
+            .collect();
+        return Err(Refusal::Touched {
+            sources: touched,
+            added,
+        });
     }
 
     let mut taken = TakenBack {

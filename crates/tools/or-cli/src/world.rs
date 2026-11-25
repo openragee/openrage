@@ -1267,14 +1267,16 @@ fn print_usage() {
     eprintln!("                           Remove a map, its manifest entries and its group.");
     eprintln!("  prefab capture|place|list");
     eprintln!("                           Prefab catalogues, one directory per title.");
-    eprintln!("  index --game <dir>       Build the world index of an install, or refresh the");
+    eprintln!("  index, at, ground, find and select name the install as their first argument");
+    eprintln!("                           or with --game <dir>.");
+    eprintln!("  index <install>          Build the world index of an install, or refresh the");
     eprintln!("                           kept one: every map, type file, archetype and bound,");
     eprintln!("                           and which archives were read again. --kept <file>");
     eprintln!("                           names the file it is kept in; --fresh reads it all.");
-    eprintln!("  at --game <dir> <x> <y> <z>   (or a place as pasted: x,y,z or vector3(x, y, z))");
+    eprintln!("  at <install> <x> <y> <z>   (or a place as pasted: x,y,z or vector3(x, y, z))");
     eprintln!("                           The maps whose streaming extents hold a position and");
     eprintln!("                           the bounds whose box does, from the world index.");
-    eprintln!("  ground --game <dir> <x> <y> [<z>]   (or a place as pasted, as `at` takes one)");
+    eprintln!("  ground <install> <x> <y> [<z>]   (or a place as pasted, as `at` takes one)");
     eprintln!("                           The ground under a position: its height, material");
     eprintln!("                           and bounds file, or none and the files looked in.");
     eprintln!("                           With no z, the highest ground of the column; with");
@@ -1294,9 +1296,7 @@ fn print_usage() {
     eprintln!("                           --copy <lua|json|csharp> prints the place, or the");
     eprintln!("                           model's placements, as a script takes them. --level");
     eprintln!("                           and --mode mount as `dlc-list` does.");
-    eprintln!(
-        "  select <install> <x,y,z> [--distance <m>]   (or --game <dir> and a place as pasted)"
-    );
+    eprintln!("  select <install> <x,y,z> [--distance <m>]   (or a place as pasted)");
     eprintln!("                           What the streamed world takes for a view at a place:");
     eprintln!("                           the maps wanted, the instances selected by level of");
     eprintln!("                           detail with every model taken as loaded, those that");

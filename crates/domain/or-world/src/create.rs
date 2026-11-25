@@ -103,17 +103,19 @@ impl Placed {
     }
 }
 
-/// A guid no entity of `map` states: one more than the largest, or the smallest above zero that is free when the largest is the last number.
-pub fn free_guid(map: &CMapData) -> u32 {
-    match map.entities.iter().map(|e| e.guid).max() {
-        None => 1,
-        Some(largest) if largest < u32::MAX => largest + 1,
-        Some(_) => {
-            let stated: std::collections::BTreeSet<u32> =
-                map.entities.iter().map(|e| e.guid).collect();
-            (1..=u32::MAX).find(|g| !stated.contains(g)).unwrap_or(0)
-        }
+/// A guid none of `stated` is: one more than the largest, or the smallest above zero that is free when the largest is the last number; none when every number is stated.
+pub fn free_guid_among(stated: &std::collections::BTreeSet<u32>) -> Option<u32> {
+    match stated.last() {
+        None => Some(1),
+        Some(&largest) if largest < u32::MAX => Some(largest + 1),
+        Some(_) => (1..=u32::MAX).find(|guid| !stated.contains(guid)),
     }
+}
+
+/// A guid no entity of `map` states, as [`free_guid_among`] gives one; zero when every number is stated.
+pub fn free_guid(map: &CMapData) -> u32 {
+    let stated = map.entities.iter().map(|e| e.guid).collect();
+    free_guid_among(&stated).unwrap_or(0)
 }
 
 /// The record of an entity that is no copy: `placed`, with `guid`, no parent and no child.

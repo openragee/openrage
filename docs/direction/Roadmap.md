@@ -506,8 +506,8 @@ whose ruling says "It waits". Parts of R70a, R70b, R70c, R70d, R70e, R70g, R70h,
 R70l, R70m, R70n, R70p, R70q, R70r, R70v, R70w and R70y are built, on installs and packs made by
 hand and on the staged corpus, with no screen but the Build tab's line of R70a, the Map screen's
 Undo of R70h and the presets of keys in Settings of R70v. No row is closed, the install suites
-that have run are those of R70m's data part and, on the two installs, of R70b, R70c, R70e, R70h and
-R70k (R70b's fails on Enhanced), and nothing was loaded in a game: each row's Where it stands says
+that have run are those of R70m's data part and, on the two installs, of R70b, R70c, R70e, R70g,
+R70h and R70k, and nothing was loaded in a game: each row's Where it stands says
 what is built and what is left. R70 has no letter left: a finding that fits no row opens the next
 number.
 
@@ -9551,7 +9551,7 @@ A part's Done when is its check; its brief says what to read and what to build. 
 kind of file adds it to the recipe and the sheet of R70a. Lanes began on 2026-11-25: parts of R70a,
 R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70l, R70m, R70n, R70p, R70q, R70r, R70v, R70w
 and R70y are built, with no part closed, install suites run for R70m's data part and for R70b,
-R70c, R70e, R70h and R70k, and nothing loaded in a game.
+R70c, R70e, R70g, R70h and R70k, and nothing loaded in a game.
 
 ### R70a What the game loads
 
@@ -9619,10 +9619,11 @@ and the choice, kept on disk and rebuilt only where the install changed. It adds
 `openrage-cli world at` and `openrage-cli world index`
 ([brief](World_Editor_Plan.md#the-gta-v-world-index-r70b)).
 
-**Where it stands.** The install suite holds on Legacy and fails on Enhanced, where a second
-start reads one archive again
-(`the_world_index_names_everything_a_real_install_lists`, 2026-11-25;
-[figures](../reference/Crate_Reference.md#domain-crates)).
+**Where it stands.** The install suite holds on both installs
+(`the_world_index_names_everything_a_real_install_lists`, 2026-11-26;
+[figures](../reference/Crate_Reference.md#domain-crates)): it failed on Enhanced while an archive
+the mount lists twice was read again at each start, and the index now names the copy of a file the
+title update patches, which is the one the mount opens.
 `crates/domain/or-depends/src/world_index.rs` reads every map, type file, manifest and bound an
 archive at a time, answers the maps and carried bounds at a position and is kept on disk by each
 archive's stamp (`the_world_index_of_a_mount`), behind `openrage-cli world index` and `world at`.
@@ -9806,13 +9807,17 @@ bounds the index names for a column, held under a budget of bytes, behind
 `openrage-cli world ground`, on mounts built by hand
 (`crates/domain/or-depends/tests/the_ground_under_a_place_of_a_mount.rs`). Named and not loaded:
 the collision of an interior and of a placed prop, which needs the entity's placement and is next;
-`WorldCollision::place` is its seam. The install check is written and has not run
-(`the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them`). Of the staged corpus, 948
+`WorldCollision::place` is its seam. The install check holds on both installs
+(`the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them`, 2026-11-26;
+[figures](../reference/Crate_Reference.md#domain-crates)). A ray's slack past a triangle's edges
+grows with how far its origin is from the triangle over the triangle's size, so a slanted ray from
+hundreds of metres no longer passes through a seam
+(`a_slanted_ray_from_hundreds_of_metres_meets_the_corner_and_the_edge_it_is_aimed_at`). Of the staged corpus, 948
 bounds become colliders with none refused
 (`every_staged_bound_becomes_a_collider_whose_ray_and_swept_sphere_agree`, 2026-11-25), and 897 of
 971 geometries stop 40 mm short of the box they state
 (`every_staged_geometry_lies_in_the_box_it_states`, 2026-11-25), so whether the game's surface is
-the polygons is open. Left: the collision of interiors and placed props; the install check, run;
+the polygons is open. Left: the collision of interiors and placed props;
 and the particle collider, `BvhCollider` in `crates/runtime/or-simulation/src/collision.rs`,
 unchanged because it makes triangles of the curved shapes the query meets exactly, which is the
 owner's to rule on.
@@ -9863,12 +9868,18 @@ nothing when
 dropped. The first edit: `crates/domain/or-maps/src/first_edit.rs` imports each map file an edit
 of a game object changes, with the game's file as its base, as one record taken back whole,
 behind `openrage-cli maps edit-game` (`the_first_edit_of_a_game_object_imports_its_map`, an
-install built by hand); on both installs no map file refuses one
-(`the_map_files_of_the_install_a_first_edit_refuses_are_counted`, 2026-11-25). ⚠ A new entity's
+install built by hand); on both installs no map file that holds an entity refuses the plan of a
+move of its first, of the 11,076 map files of Legacy and the 11,052 of Enhanced, 1,833 and 1,842
+holding none (`the_map_files_of_the_install_a_first_edit_refuses_are_counted`, 2026-11-25). A place
+given with the game's path is a place in the game's file, carried to the source the project holds
+of it, and a copy of a map a later archive replaces is refused with the copy the install loads
+([or-maps](../reference/Crate_Reference.md#domain-crates)). ⚠ A new entity's
 guid is one more than its map's largest, the owner's to rule
 ([R70y](#r70y-what-a-project-changed-and-putting-it-back)). Left: the Map screen on a session, a
 create across files, a new map and a built entity as operations, the donor and the install's
-boxes, History, the rule for a source of the other edition, the install measure.
+boxes, History, the rule for a source of the other edition, the install measure; a first edit that
+deletes, applied over an install through the index, which no install suite does; and a deletion's
+refusal where the index holds a map file it could not read, whose parent is unknown.
 
 **Depends on.** Nothing in R70; it does the part of
 [R69h](#r69h-one-undo-for-the-tab-on-screen) a Map tab needs below the screen.
@@ -9963,8 +9974,10 @@ back, with the links of each child map renumbered and the parents' counts lowere
 (`a_deletion_takes_the_chain_of_far_models_across_the_files_of_a_pack`, on packs built by hand),
 and a session does it whole or not at all
 (`crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`).
-Both installs keep every link over the deletions sampled and undone, 40 on Legacy and 39 on
-Enhanced (`deleting_an_entity_of_the_install_keeps_every_link`, 2026-11-25). A map that is not
+Both installs keep every link over the deletions sampled and undone: 40 of 47 maps sampled on
+Legacy and 39 of 47 on Enhanced, one map in two hundred of the 9,243 and 9,210 that hold entities,
+the rest holding no entity that stands for no other
+(`deleting_an_entity_of_the_install_keeps_every_link`, 2026-11-25). A map that is not
 among the sources keeps its links, and the rules `parent-link-broken` and `lod-children-uncounted` name
 what a removal alone leaves. Left: the rule for a door, the preview on a screen and the Map
 screen's Delete through the plan; the game's maps a deletion reaches come in by

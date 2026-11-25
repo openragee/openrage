@@ -1217,8 +1217,16 @@ fn change_map(
     };
     match operation {
         Operation::PlaceEntity { entity, pose, .. } => {
-            let record = Record::entity(entity_at(map, *entity)?)?;
+            let stands = entity_at(map, *entity)?;
+            let record = Record::entity(stands)?;
+            let (stated, stored) = (edit::pose_of(stands).rotation, stands.rotation);
             edit::place_entity(map, *entity, pose.checked()?)?;
+            // ⚠ A pose that restates the rotation the entity has turns nothing, and the four numbers stay as the file stores
+            // them: a stored rotation is a little off length one for about one entity of the game in six, and taken to length
+            // one it would read as a turn beside the move.
+            if pose.rotation.map(f32::to_bits) == stated.to_array().map(f32::to_bits) {
+                map.entities[*entity].rotation = stored;
+            }
             grow(map);
             let inverse = Operation::ReplaceEntity {
                 source,

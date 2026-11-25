@@ -178,6 +178,8 @@ pub enum Disagreement {
         ours: String,
         theirs: String,
     },
+    /// Both changed the link of one entity into the parent map: a place among that map's entities, which a deletion there renumbers in every map under it, so neither number is known to name the right entity of the merged parent map, the same number least of all.
+    ParentMapLink { ours: String, theirs: String },
 }
 
 /// One thing the two sides disagree on, with the records it is about as each file indexes them, and what the policy answered.
@@ -510,7 +512,7 @@ fn not_compared(entities: bool) -> Vec<String> {
                 .to_string(),
         );
         said.push(
-            "a link into the parent map is the number a side states, and no other map of the group is read"
+            "a link into the parent map is the number a side states, and no other map of the group is read: two copies of which either deleted an entity with its chain of far models are not merged file by file, since that deletion renumbers the links of every map under the parent map"
                 .to_string(),
         );
     } else {

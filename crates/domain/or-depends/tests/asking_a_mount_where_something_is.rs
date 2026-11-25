@@ -103,6 +103,10 @@ impl WorldSource for Opened<'_> {
     fn open_head(&self, archive: usize, logical: &str, limit: usize) -> Option<Vec<u8>> {
         self.source.open_head(archive, logical, limit)
     }
+
+    fn patch_of(&self, archive: usize) -> Option<String> {
+        self.source.patch_of(archive)
+    }
 }
 
 const TOWN: [f32; 3] = [100.0, 100.0, 0.0];

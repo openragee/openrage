@@ -29,7 +29,7 @@ const RISE: f32 = 1.0;
 /// The steepest surface taken for ground, in degrees from level, with no `--slope`.
 const SLOPE: f32 = 60.0;
 
-const USAGE: &str = "world ground --game <dir> <x> <y> [<z>] [--level <pack>] \
+const USAGE: &str = "world ground <install> <x> <y> [<z>] [--level <pack>] \
                      [--mode <story|multiplayer>] [--rise <m>] [--slope <degrees>] [--kept <file>] \
                      [--keys <file>] [--fresh] [--json]";
 
@@ -110,21 +110,40 @@ pub(super) fn mount_of(args: &[String]) -> Result<(DlcCutoff, MountOptions), Str
     super::search::dlc_list_mount(None, level, mode)
 }
 
-/// What is said of the mount a question was asked of, a line each.
-pub(super) fn mount_notes(game: &MountedGame, mode: Option<MapMode>) -> Vec<String> {
+/// What a verb says a level and a mode leave out of what it reads: with a pack (`their bounds`), what a mode leaves none of
+/// (`bounds file`), and what the index reads of every mounted pack (`one`).
+pub(super) struct LeftOutWords {
+    pub with_a_pack: &'static str,
+    pub none_of: &'static str,
+    pub every: &'static str,
+}
+
+const BOUNDS_LEFT_OUT: LeftOutWords = LeftOutWords {
+    with_a_pack: "their bounds",
+    none_of: "bounds file",
+    every: "one",
+};
+
+/// What is said of the mount a question was asked of, a line each, in the words of the verb that asks.
+pub(super) fn mount_notes(
+    game: &MountedGame,
+    mode: Option<MapMode>,
+    words: &LeftOutWords,
+) -> Vec<String> {
     let mut notes = Vec::new();
     let left_out = super::search::packs_left_out(game);
     if !left_out.is_empty() {
         notes.push(format!(
-            "the level leaves out {} of {} listed pack(s) and their bounds: {}",
+            "the level leaves out {} of {} listed pack(s) and {}: {}",
             left_out.len(),
             game.listed.len(),
+            words.with_a_pack,
             left_out.join(", ")
         ));
     }
     if let Some(mode) = mode {
         // ⚠ A mode takes or leaves a pack's change sets, and the index reads no change set: it
-        // reads every bounds file of every archive mounted.
+        // reads every file of every archive mounted.
         let sets = game
             .packs
             .iter()
@@ -138,9 +157,11 @@ pub(super) fn mount_notes(game: &MountedGame, mode: Option<MapMode>) -> Vec<Stri
             ),
         };
         notes.push(format!(
-            "mounted as {}, which leaves out no bounds file: the index reads every one a \
+            "mounted as {}, which leaves out no {}: the index reads every {} a \
              mounted pack holds, whatever change set would load it{left_out}",
-            mode.label()
+            mode.label(),
+            words.none_of,
+            words.every
         ));
     }
     notes
@@ -290,7 +311,7 @@ pub(super) fn said(
     let source = MountedWorld::new(game, root);
     let mut world = WorldCollision::new(&index, &source, BUDGET);
     let answer = ground_of(&mut world, asked);
-    let notes = mount_notes(game, mode);
+    let notes = mount_notes(game, mode, &BOUNDS_LEFT_OUT);
     (
         ground_lines(asked, &answer, palette, &notes),
         ground_json(asked, &answer, palette, &notes),
@@ -303,7 +324,11 @@ pub(crate) fn cmd_ground(args: &[String]) -> ExitCode {
         eprintln!("Error: {USAGE}: {e}");
         ExitCode::from(2)
     };
-    let asked = match asked_of(args) {
+    let (game, rest) = match super::world_index::install_of(args, VALUED_FLAGS) {
+        Ok(named) => named,
+        Err(e) => return usage(&e),
+    };
+    let asked = match asked_of(&rest) {
         Ok(asked) => asked,
         Err(e) => return usage(&e),
     };
@@ -311,11 +336,8 @@ pub(crate) fn cmd_ground(args: &[String]) -> ExitCode {
         Ok(mount) => mount,
         Err(e) => return usage(&e),
     };
-    let Some(game) = flag_value(args, "--game") else {
-        return usage("--game <dir> names the install");
-    };
     // The path as the file system spells it, so one install is one kept index however it is named.
-    let root = match std::fs::canonicalize(game) {
+    let root = match std::fs::canonicalize(&game) {
         Ok(root) => root,
         Err(e) => return usage(&format!("{game}: {e}")),
     };

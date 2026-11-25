@@ -1376,3 +1376,66 @@ fn the_tree_gives_the_answer_of_asking_every_polygon_in_turn() {
         "{rays} rays and {sweeps} sweeps met something"
     );
 }
+
+/// ⚠ The two triangles of a seam share their corners to the bit, and a ray's place in each is computed from its origin: from far
+/// off the rounding of that is larger than any fixed slack past an edge, and both would turn the ray away.
+#[test]
+fn a_slanted_ray_from_hundreds_of_metres_meets_the_corner_and_the_edge_it_is_aimed_at() {
+    // A height field of quarter-metre cells far from the origin, each cell two triangles.
+    let (o, n, cell) = (Vec3::new(-7900.13, 7411.9, 912.4), 24usize, 0.25f32);
+    let mut dice = Dice(4);
+    let mut positions = Vec::new();
+    for i in 0..=n {
+        for j in 0..=n {
+            let across = Vec3::new(i as f32 - n as f32 * 0.5, j as f32 - n as f32 * 0.5, 0.0);
+            positions.push(o + across * cell + Vec3::Z * dice.between(0.0, 0.1));
+        }
+    }
+    let at = |i: usize, j: usize| (i * (n + 1) + j) as u16;
+    let mut faces = Vec::new();
+    for i in 0..n {
+        for j in 0..n {
+            faces.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+            faces.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+        }
+    }
+    let field = bounds::triangles(&positions, &faces);
+    let collider = collider(&PhBoundAny::PhBoundGeometry(field.clone()));
+    let corner = |i: usize, j: usize| stored(&field, usize::from(at(i, j)));
+
+    let (mut asked, mut missed) = (0usize, Vec::new());
+    for i in 2..n - 1 {
+        for j in 2..n - 1 {
+            // The corner six triangles share, and a point of the edge to the next corner.
+            let (here, next) = (corner(i, j), corner(i + 1, j + 1));
+            for aim in [here, here + (next - here) * 0.37] {
+                for _ in 0..3 {
+                    let away = DVec3::new(
+                        f64::from(dice.between(-400.0, 400.0)),
+                        f64::from(dice.between(-400.0, 400.0)),
+                        f64::from(dice.between(150.0, 400.0)),
+                    );
+                    let from = (aim + away).as_vec3();
+                    let to = aim.as_vec3() - from;
+                    asked += 1;
+                    match collider.ray_cast(from, to, to.length() * 2.0) {
+                        // A slanted ray may meet a rise of the field before the point it is aimed at, a little short of it.
+                        Some(hit) => assert!(
+                            (d(hit.position) - aim).length() < 1.0,
+                            "a ray aimed at {aim} met the field at {}",
+                            hit.position
+                        ),
+                        None => missed.push((from, aim)),
+                    }
+                }
+            }
+        }
+    }
+    assert!(asked > 2000, "{asked} rays");
+    assert!(
+        missed.is_empty(),
+        "{} of {asked} rays passed through a seam, the first from {:?}",
+        missed.len(),
+        missed.first()
+    );
+}

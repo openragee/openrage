@@ -21,7 +21,7 @@
 //!
 //! ⚠ **An inverse is the files as they were.** A glb written again is not held to be the glb a tool wrote, so what takes an edit back
 //! is [`Operation::RestoreSources`] with the document and the glb of every version it changed, byte for byte. It is as large as they
-//! are.
+//! are, and it states the digest of each source as the edit left it, so it is refused over a later edit of that source.
 //!
 //! A moved polygon gets corners of its own: the polygons that stay state the corners they stated, so a corner shared with one of them
 //! stays where it was.
@@ -150,6 +150,9 @@ pub struct Restored {
     /// The bytes of `bounds.glb`; none for a source that holds no glb.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<Hex>,
+    /// The digest of the source as the operation this takes back left it; stated, the files are put back only while the source is that one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expects: Option<String>,
 }
 
 /// One edit of the collision of an area, by the name its JSON states as `op`.
@@ -460,6 +463,7 @@ impl Held {
                 format!("the document of `{source}` is not UTF-8, so the operation could not be taken back")
             })?,
             model: self.inputs.model().map(|glb| Hex(glb.to_vec())),
+            expects: None,
         })
     }
 }
@@ -737,6 +741,13 @@ impl<'a> Work<'a> {
         let mut put_back = Vec::new();
         for restored in sources {
             let held = self.hold(&restored.source)?;
+            // ⚠ Whole files are put back, so over a later edit of the source they would take that edit out with no word.
+            if (restored.expects.as_ref()).is_some_and(|left| *left != hex(&held.inputs.digest())) {
+                return Err(format!(
+                    "`{}` changed since the edit this takes back, and putting its files back would discard that change: take the later edit back first",
+                    restored.source
+                ));
+            }
             let candidate = held.inputs.with_files(
                 restored.document.clone().into_bytes(),
                 restored.model.as_ref().map(|glb| glb.0.clone()),
@@ -774,10 +785,13 @@ impl<'a> Work<'a> {
         report: Vec<String>,
     ) -> Result<Applied, String> {
         let mut changed = Vec::new();
-        for (source, was) in touched.iter().zip(&before) {
-            if self.hold(source)?.restored(source)? != *was {
+        let mut before = before;
+        for (source, was) in touched.iter().zip(&mut before) {
+            let held = self.hold(source)?;
+            if held.restored(source)? != *was {
                 changed.push(source.clone());
             }
+            was.expects = Some(hex(&held.inputs.digest()));
         }
         Ok(Applied {
             inverse: Operation::RestoreSources { sources: before },

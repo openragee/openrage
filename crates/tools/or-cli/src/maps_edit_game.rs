@@ -142,6 +142,8 @@ pub(crate) fn run(args: &[String]) -> Result<ExitCode, Failure> {
         "--game",
         "--keys",
         "--kept",
+        "--level",
+        "--mode",
         "--map",
         "--entity",
         "--move",
@@ -200,14 +202,22 @@ pub(crate) fn run(args: &[String]) -> Result<ExitCode, Failure> {
     })?;
     // The path as the file system spells it, so one install is one kept index however it is named.
     let root = std::fs::canonicalize(game).map_err(|e| Run(format!("{game}: {e}")))?;
-    let mount = crate::keys::mount_all(&root, flags.get("--keys").map(Path::new)).map_err(Run)?;
+    // ⚠ At the level and in the mode `world find` and `world select` were asked at: a path and a place they print name the copy
+    // that mount loads, and the index kept for a level is another file than the whole install's.
+    let (cutoff, options) = crate::world_ground::mount_of(args).map_err(Usage)?;
+    let keys = flags.get("--keys").map(Path::new);
+    let (mount, _) = crate::keys::mount_at(&root, keys, cutoff, options).map_err(Run)?;
+    let level = flags.get("--level").map(String::as_str);
     let kept = match flags.get("--kept") {
         Some(file) => PathBuf::from(file),
-        None => crate::world_index::default_kept(&root, None).ok_or_else(|| {
+        None => crate::world_index::default_kept(&root, level).ok_or_else(|| {
             Run("no configuration directory to keep the world index in: name a file with --kept <file>".into())
         })?,
     };
-    let (index, _) = crate::world_index::indexed(&mount, &root, &kept, has("--fresh"));
+    let (index, built) = crate::world_index::indexed(&mount, &root, &kept, has("--fresh"));
+    if let Some(error) = &built.not_kept {
+        eprintln!("warning: the index was not kept: {error}");
+    }
     let edition = match or_title::game::Game::detect_from_root(&root)
         .generation()
         .is_gen9()

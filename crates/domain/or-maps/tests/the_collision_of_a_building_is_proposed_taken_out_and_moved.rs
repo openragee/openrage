@@ -768,6 +768,8 @@ fn a_bound_the_source_cannot_build_again_refuses_the_operation_by_name_and_nothi
         "taking nothing out still says what puts the source back"
     );
     sources[0].document = "not a document".to_string();
+    // The run wrote nothing, so the source is not the one its inverse expects: a list a person writes may state no digest.
+    sources[0].expects = None;
     let said = apply(&folder, &Operation::RestoreSources { sources })
         .expect_err("no document")
         .to_string();
@@ -1463,5 +1465,59 @@ fn a_source_named_otherwise_than_the_pack_holds_it_is_not_edited() {
         matches!(&refused, Error::InList { number: 2, .. }),
         "{refused}"
     );
+    assert_eq!(differing(&before, &files(&folder)), Vec::<String>::new());
+}
+
+/// ⚠ An inverse carries whole files, so applied over a later edit of the source it would take that edit out too.
+#[test]
+fn the_inverse_of_an_edit_is_refused_over_a_later_edit_of_the_same_source_and_taken_back_in_order()
+{
+    let work = tempfile::tempdir().unwrap();
+    let folder = pack(work.path());
+    let before = files(&folder);
+    // A material no soup of the pack lists.
+    const METAL: u64 = 0x0000_0003_0000_0044;
+    let third = |folder: &Path| {
+        let held = leaves(&compiled(folder, PLAIN)).unwrap();
+        let soup = held[0].soup.clone().expect("a soup");
+        let names = |slot: u8| soup.materials.get(usize::from(slot)) == Some(&METAL);
+        let naming = soup
+            .polygons
+            .iter()
+            .filter(|p| p.material.is_some_and(names));
+        naming.count()
+    };
+
+    // The building is taken out, and then six polygons of what stays are given a material the soup did not list.
+    let first = apply(&folder, &of_every_version(&folder, PLAIN)).unwrap();
+    let later = Operation::SetMaterial {
+        source: PLAIN.to_string(),
+        soup: SOUP.to_string(),
+        polygons: vec![0, 1, 2, 3, 4, 5],
+        material: format!("{METAL:#018x}"),
+        expects: None,
+        alone: true,
+    };
+    let second = apply(&folder, &later).unwrap();
+    assert_eq!(third(&folder), 6);
+    let with_both = files(&folder);
+
+    // The inverse of the first is refused while the second stands, by name, and writes nothing.
+    let said = apply(&folder, &first.inverse)
+        .expect_err("a later edit stands")
+        .to_string();
+    assert!(
+        said.contains(&format!("`{PLAIN}` changed since the edit this takes back")),
+        "{said}"
+    );
+    assert_eq!(differing(&with_both, &files(&folder)), Vec::<String>::new());
+    assert_eq!(third(&folder), 6, "the later edit was discarded");
+
+    // In order, the last first, both are taken back to the byte: as two calls, and as one list.
+    let in_order = [second.inverse.clone(), first.inverse.clone()];
+    let dry = apply_all(&folder, &in_order, true);
+    assert!(dry.is_ok(), "{:?}", dry.err().map(|e| e.to_string()));
+    apply(&folder, &second.inverse).unwrap();
+    apply(&folder, &first.inverse).unwrap();
     assert_eq!(differing(&before, &files(&folder)), Vec::<String>::new());
 }

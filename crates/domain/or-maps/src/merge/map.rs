@@ -179,13 +179,9 @@ fn union_of(a: ([f32; 3], [f32; 3]), b: ([f32; 3], [f32; 3])) -> ([f32; 3], [f32
     }
 }
 
-/// A guid none of `stated` is: one more than the largest, else the smallest above zero that is free.
+/// A guid none of `stated` is, by the rule a new entity of a map takes one, which `stated` then holds.
 fn free_guid(stated: &mut BTreeSet<u32>) -> Option<u32> {
-    let free = match stated.last() {
-        None => 1,
-        Some(&largest) if largest < u32::MAX => largest + 1,
-        Some(_) => (1..=u32::MAX).find(|guid| !stated.contains(guid))?,
-    };
+    let free = or_world::create::free_guid_among(stated)?;
     stated.insert(free);
     Some(free)
 }
@@ -926,6 +922,8 @@ pub fn merge_maps(
     let mut targets: Vec<Option<Target>> = Vec::with_capacity(count + appended.len());
     let mut excess: Vec<i64> = Vec::with_capacity(count + appended.len());
     let mut link_members: Vec<(usize, MemberBy)> = Vec::new();
+    // How many links into the parent map were taken as each side changed them.
+    let mut renumbered = [0usize; 2];
     for index in 0..count {
         if matches!(slots[index], Slot::Gone) {
             targets.push(None);
@@ -963,20 +961,41 @@ pub fn merge_maps(
                     }
                 };
                 let (a, b) = (of(Side::Ours)?, of(Side::Theirs)?);
+                // ⚠ A link into the parent map is a place in another file, which a deletion there renumbers in every map under it:
+                // two sides that both changed one agree in nothing by stating one number, since the merged parent map may be
+                // numbered as neither side's is.
+                let into_parent_map = matches!(
+                    (a, b),
+                    (Some(Target::ParentMap(_)), Some(Target::ParentMap(_)))
+                );
                 let from = three_way(
                     a.is_some(),
                     b.is_some(),
-                    || matches!((a, b), (Some(a), Some(b)) if a.same(b)),
+                    || !into_parent_map && matches!((a, b), (Some(a), Some(b)) if a.same(b)),
                     || {
                         let (base, ours, theirs) = named();
-                        let what = Disagreement::Member {
-                            member: PARENT.to_string(),
-                            ours: a.map(shown).unwrap_or_default(),
-                            theirs: b.map(shown).unwrap_or_default(),
+                        let said = (
+                            a.map(shown).unwrap_or_default(),
+                            b.map(shown).unwrap_or_default(),
+                        );
+                        let what = match into_parent_map {
+                            true => Disagreement::ParentMapLink {
+                                ours: said.0,
+                                theirs: said.1,
+                            },
+                            false => Disagreement::Member {
+                                member: PARENT.to_string(),
+                                ours: said.0,
+                                theirs: said.1,
+                            },
                         };
                         asked.ask(what, base, ours, theirs)
                     },
                 );
+                let taken = from.map(|(side, _)| (side, [a, b][side as usize]));
+                if let Some((side, Some(Target::ParentMap(_)))) = taken {
+                    renumbered[side as usize] += 1;
+                }
                 let target = match (from, a, b) {
                     (Some((Side::Ours, _)), Some(a), _) => (a, Some(Side::Ours)),
                     (Some((Side::Theirs, _)), _, Some(b)) => (b, Some(Side::Theirs)),
@@ -1229,6 +1248,16 @@ pub fn merge_maps(
                         }
                     }
                     _ => {}
+                }
+            }
+            for side in [Side::Ours, Side::Theirs] {
+                let links = renumbered[side as usize];
+                if links > 0 {
+                    notes.push(format!(
+                        "{links} link(s) into the parent map are as {} changed them: each names the right entity only where the merged parent map holds its entities in the order {}'s does, and this merge read no parent map",
+                        side.word(),
+                        side.word()
+                    ));
                 }
             }
             // An entity a conflict kept is in no list of what was applied, so the guid it was given is said here.

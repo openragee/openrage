@@ -1060,6 +1060,10 @@ impl WorldSource for Hiding<'_> {
             .then(|| self.source.open_head(archive, logical, limit))
             .flatten()
     }
+
+    fn patch_of(&self, archive: usize) -> Option<String> {
+        self.source.patch_of(archive)
+    }
 }
 
 #[test]

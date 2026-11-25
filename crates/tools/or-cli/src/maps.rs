@@ -73,7 +73,8 @@ fn print_usage() {
          [--script <form>] [--radius <metres>]\n  \
          openrage-cli maps edit-game <project.openrage-proj> --game <install root> --map <logical path>\n                             \
          --entity <index|guid:guid> (--move x,y,z | --delete) [--apply] [--record <file>] [--json]\n                             \
-         [--module <id>] [--keys <file>] [--kept <file>] [--fresh]\n  \
+         [--module <id>] [--level <pack>] [--mode <story|multiplayer>] [--keys <file>] [--kept <file>]\n                             \
+         [--fresh]\n  \
          openrage-cli maps edit-game <project.openrage-proj> --take-back <record.json> [--module <id>]\n  \
          openrage-cli maps doors    <project.openrage-proj> [--module <id>] [--names <file>] [--json]\n  \
          openrage-cli maps roads    <folder> [--json]\n  \
@@ -160,14 +161,19 @@ fn print_usage() {
          there or the deletion is refused.\n\
          edit-game moves or deletes an object the game placed, in the maps content. The object is an\n\
          entity of a map file of the install --game names, said by the logical path of that file as\n\
-         `world index` and `world at` print it and by its index there, or by `guid:` and its guid when\n\
-         one entity of the file states it. It prints what the edit would import and do: each map file of\n\
+         `world find` and `world select` print it and by its index there, or by `guid:` and its guid\n\
+         when one entity of the file states it. The install is mounted as --level and --mode say, as\n\
+         those verbs mount it, and a path that is not the copy of its map that mount loads is refused\n\
+         with the path of the copy it loads. It prints what the edit would import and do: each map file of\n\
          the game that would become a source of the content with the game's file as its base (for a\n\
          move the one map, for a deletion every map file its chain of far models changes), each\n\
          operation, each note, what goes and stays for a deletion, and what the person is told, with\n\
          what a source taken from the game is to a repository of the project. A map file that is a\n\
-         source of the content already is edited there and nothing is imported, and --map may name\n\
-         such a source as the content does (`city.metadata.src`). With --apply it does it, all or\n\
+         source of the content already is edited there and nothing is imported: an index given with\n\
+         the path of the game's file is a place in the game's file and is carried to the source by\n\
+         what the two hold, refused where that entity is deleted there or cannot be told from a twin.\n\
+         --map may name such a source as the content does (`city.metadata.src`), and an index is then\n\
+         a place in the source. With --apply it does it, all or\n\
          nothing: a map file that cannot become a source, one that does not read, and one of an install\n\
          of the other edition than a build of the content targets refuse the whole edit by name, and\n\
          nothing stays written. --record keeps the record of what was done in a file, and --take-back\n\

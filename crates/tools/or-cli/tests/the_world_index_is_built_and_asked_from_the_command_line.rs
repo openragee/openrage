@@ -593,7 +593,7 @@ fn where_something_is_is_asked_from_the_command_line() {
     // for one, no text, and a folder that is no install: each prints nothing.
     for refused in [
         &["find", &game, "no_such_thing", "--copy", "lua"][..],
-        &["find", &game, "prop_bench", "--game", &game],
+        &["find", &game, "prop_bench", "--distance", "5"],
         &["find", &game, "prop_bench", "--copy", "python"],
         &["find", &game, "0x123456789"],
         &["find", &game],

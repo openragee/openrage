@@ -8,6 +8,10 @@ use crate::extents::Aabb;
 const IN_PLANE: f32 = 1e-6;
 /// How far past its edges a triangle is still hit, in barycentric units, so the seam of two leaves no gap.
 const EDGE_SLACK: f32 = 1e-5;
+/// The rounding of a ray's place in a triangle, in steps of the float for each unit of the ray's reach to the triangle over the triangle's size.
+const EDGE_ROUNDING: f32 = 8.0;
+/// The most slack a far or a grazing ray is given, so a triangle is never hit more than a hundredth of itself past an edge.
+const EDGE_SLACK_MOST: f32 = 1e-2;
 /// A ray within this sine of a cylinder's axis runs along it.
 const ALONG_AXIS: f32 = 1e-6;
 /// How far a placing matrix's axes may be from one length and right angles, as a fraction.
@@ -459,7 +463,12 @@ fn ray_triangle(o: Vec3, d: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<Entry> {
     let u = s.dot(h) / det;
     let q = s.cross(e1);
     let v = d.dot(q) / det;
-    if u < -EDGE_SLACK || v < -EDGE_SLACK || u + v > 1.0 + EDGE_SLACK {
+    // ⚠ `u` and `v` are sums of products of `s`, so what they are off by grows with how far the origin is from the triangle
+    // over the triangle's size: from hundreds of metres a fixed slack is less than that, and both triangles of a seam would
+    // turn away a ray aimed at it.
+    let reach = s.length() * d.length() * e1.length().max(e2.length()) / det.abs();
+    let slack = (EDGE_SLACK + EDGE_ROUNDING * f32::EPSILON * reach).min(EDGE_SLACK_MOST);
+    if u < -slack || v < -slack || u + v > 1.0 + slack {
         return None;
     }
     let t = e2.dot(q) / det;

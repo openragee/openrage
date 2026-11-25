@@ -320,6 +320,19 @@ pub fn write_archive(root: &Path, name: &str, files: &[(&str, Vec<u8>)]) {
     std::fs::write(root.join(name), archive_bytes(files)).expect("save");
 }
 
+/// The install at `root`, mounted with every pack its DLC list names.
+pub fn mount_all(root: &Path) -> MountedGame {
+    let install = GtaInstall {
+        root: root.to_path_buf(),
+    };
+    build_mounted_game(
+        &install,
+        Arc::new(NoOpCryptoProvider::new()),
+        DlcCutoff::All,
+    )
+    .expect("the synthetic install mounts")
+}
+
 /// The install at `root`, mounted with no DLC.
 pub fn mount(root: &Path) -> MountedGame {
     build_mounted_game(
@@ -380,19 +393,80 @@ impl or_depends::WorldSource for Counting<'_> {
         self.opened.borrow_mut()[archive] += 1;
         self.source.open_head(archive, logical, limit)
     }
+
+    fn patch_of(&self, archive: usize) -> Option<String> {
+        self.source.patch_of(archive)
+    }
 }
 
 /// The copy the mount would load of each file of `extension`: its lower-case stem, and the last
-/// logical path the mount lists it under.
+/// logical path the mount lists it under, by a walk of its root archives in their order.
+///
+/// ⚠ A file of a folder that patches a root archive lies in the title update, which is walked before every pack, and is stacked
+/// over that archive on its device: it is taken after that archive's own files and not where the update is walked.
 fn winners(game: &MountedGame, extension: &str) -> std::collections::BTreeMap<String, String> {
-    let mut winners = std::collections::BTreeMap::new();
-    game.for_each_file(|logical, _container, leaf| {
-        let leaf = leaf.to_ascii_lowercase();
-        if let Some(stem) = leaf.strip_suffix(extension) {
-            winners.insert(stem.to_string(), logical.to_string());
+    use std::collections::BTreeMap;
+    let folders: Vec<String> = (game.roots.iter())
+        .filter_map(|root| Some(root.patch.as_ref()?.to_ascii_lowercase()))
+        .collect();
+    let patching = |logical: &str| -> Option<&String> {
+        let lower = logical.to_ascii_lowercase();
+        folders
+            .iter()
+            .find(|folder| lower.starts_with(folder.as_str()))
+    };
+    let named = |facts: &or_title::vfs::EntryFacts| -> Option<(String, String)> {
+        let leaf = facts.leaf.to_ascii_lowercase();
+        Some((
+            leaf.strip_suffix(extension)?.to_string(),
+            facts.logical.clone(),
+        ))
+    };
+    let mut in_a_patch: BTreeMap<&String, Vec<(String, String)>> = BTreeMap::new();
+    game.for_each_entry(|facts| {
+        if let (Some(folder), Some(file)) = (patching(&facts.logical), named(facts)) {
+            in_a_patch.entry(folder).or_default().push(file);
         }
     });
+    let mut winners = BTreeMap::new();
+    for root in &game.roots {
+        root.for_each_entry(|facts| {
+            if let (None, Some((stem, logical))) = (patching(&facts.logical), named(facts)) {
+                winners.insert(stem, logical);
+            }
+        });
+        let folder = root.patch.as_ref().map(|patch| patch.to_ascii_lowercase());
+        let patched = folder.as_ref().and_then(|folder| in_a_patch.get(folder));
+        winners.extend(patched.into_iter().flatten().cloned());
+    }
     winners
+}
+
+/// Hold `named`, what the index names of one kind by stem, to `listed`, what the mount lists, each difference on a line.
+#[track_caller]
+fn same_files(
+    kind: &str,
+    named: std::collections::BTreeMap<String, String>,
+    listed: &std::collections::BTreeMap<String, String>,
+) {
+    let stems: std::collections::BTreeSet<&String> = named.keys().chain(listed.keys()).collect();
+    let differing: Vec<String> = (stems.into_iter())
+        .filter(|stem| named.get(*stem) != listed.get(*stem))
+        .map(|stem| {
+            format!(
+                "{stem}: the index names {:?}, the mount lists {:?}",
+                named.get(stem),
+                listed.get(stem)
+            )
+        })
+        .collect();
+    assert!(
+        differing.is_empty(),
+        "{} {kind} of {} differ, the first:\n{}",
+        differing.len(),
+        listed.len(),
+        differing[..differing.len().min(12)].join("\n")
+    );
 }
 
 /// What [`held_to_its_mount`] compared, so a caller can say an empty install agreed with nothing.
@@ -411,6 +485,7 @@ pub struct Held {
 /// built with no kept file, and once from the file by a mount made anew.
 pub fn held_to_its_mount(mount: &dyn Fn() -> MountedGame, root: &Path, file: &Path) -> Held {
     use or_depends::world_index::{refresh, KeptState};
+    use or_depends::WorldSource as _;
     use std::collections::BTreeMap;
 
     let game = mount();
@@ -444,9 +519,29 @@ pub fn held_to_its_mount(mount: &dyn Fn() -> MountedGame, root: &Path, file: &Pa
         !listed_maps.is_empty() && !listed_types.is_empty(),
         "an install with no world"
     );
-    assert_eq!(named(maps.collect()), listed_maps);
-    assert_eq!(named(types.collect()), listed_types);
-    assert_eq!(named(bounds.collect()), winners(&game, ".ybn"));
+    same_files("map(s)", named(maps.collect()), &listed_maps);
+    same_files("type file(s)", named(types.collect()), &listed_types);
+    same_files("bound(s)", named(bounds.collect()), &winners(&game, ".ybn"));
+
+    // What the index reads of a file's own archive is what the mount opens at the path the index names.
+    let maps = (index.maps().iter()).map(|m| (m.archive, m.logical.as_str()));
+    let types = (index.type_files().iter()).map(|f| (f.archive, f.logical.as_str()));
+    let bounds = (index.bounds().iter()).map(|b| (b.archive, b.logical.as_str()));
+    let (mut both_ways, mut patched) = (0usize, 0usize);
+    for (archive, logical) in maps.chain(types).chain(bounds) {
+        let by_archive = source.open(archive, logical);
+        assert!(
+            by_archive.is_some() && by_archive == game.vfs.open(logical),
+            "{logical} is one file in archive {archive} and another through the mount"
+        );
+        both_ways += 1;
+        let under = |patch: &String| {
+            (logical.get(..patch.len())).is_some_and(|front| front.eq_ignore_ascii_case(patch))
+        };
+        let patches = game.roots.iter().filter_map(|root| root.patch.as_ref());
+        patched += usize::from(patches.into_iter().any(under));
+    }
+    eprintln!("\n=== {both_ways} file(s) read both ways, {patched} of them in a folder that patches a pack ===");
 
     // A map whose extents are a box answers at their centre, and a carried bound at its own.
     let is_box = |(min, max): (glam::Vec3, glam::Vec3)| {

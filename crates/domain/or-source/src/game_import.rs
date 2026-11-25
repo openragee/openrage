@@ -1258,7 +1258,10 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// A digest of a file, or of a folder's names and the bytes of every file in it.
+/// What a file browser writes into a folder a person opens, which is no part of what a tool made there or a person changed.
+pub const LEFT_BY_A_FILE_BROWSER: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
+
+/// A digest of a file, or of a folder's names and the bytes of every file in it but those of [`LEFT_BY_A_FILE_BROWSER`].
 pub fn tree_digest(path: &Path) -> io::Result<String> {
     let mut hash = Sha256::new();
     digest_into(&mut hash, path, "")?;
@@ -1284,6 +1287,7 @@ fn digest_into(hash: &mut Sha256, path: &Path, name: &str) -> io::Result<()> {
         let mut names: Vec<String> = std::fs::read_dir(path)?
             .map(|e| e.map(|e| e.file_name().to_string_lossy().into_owned()))
             .collect::<io::Result<_>>()?;
+        names.retain(|child| !LEFT_BY_A_FILE_BROWSER.contains(&child.as_str()));
         names.sort();
         for child in names {
             digest_into(hash, &path.join(&child), &format!("{name}/{child}"))?;

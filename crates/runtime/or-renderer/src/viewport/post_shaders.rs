@@ -117,6 +117,28 @@ fn compensation_at(ev: f32) -> f32 {
     return clamp(y, min(r.z, r.w), max(r.z, r.w));
 }
 
+// The light about a pixel read through a cubic B-spline of its texels, four bilinear taps: a bilinear
+// read of so coarse a size bends the clamp's edge along its texels into a square round the sun.
+// Stand-in: the build reads its own target here, whose making is not read.
+fn smooth_local(uv: vec2<f32>) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(local_light));
+    let p = uv * size - 0.5;
+    let i = floor(p);
+    let f = p - i;
+    let w0 = (1.0 - f) * (1.0 - f) * (1.0 - f) / 6.0;
+    let w1 = (4.0 - 6.0 * f * f + 3.0 * f * f * f) / 6.0;
+    let w3 = f * f * f / 6.0;
+    let w2 = 1.0 - w0 - w1 - w3;
+    let g0 = w0 + w1;
+    let g1 = w2 + w3;
+    let c0 = (i - 0.5 + w1 / g0) / size;
+    let c1 = (i + 1.5 + w3 / g1) / size;
+    return g0.y * (g0.x * textureSampleLevel(local_light, linear_clamp, c0, 0.0).rgb
+            + g1.x * textureSampleLevel(local_light, linear_clamp, vec2<f32>(c1.x, c0.y), 0.0).rgb)
+        + g1.y * (g0.x * textureSampleLevel(local_light, linear_clamp, vec2<f32>(c0.x, c1.y), 0.0).rgb
+            + g1.x * textureSampleLevel(local_light, linear_clamp, c1, 0.0).rgb);
+}
+
 @fragment
 fn fs_composite(v: Out) -> @location(0) vec4<f32> {
     let p = composite.mix_amount_stops_exposure;
@@ -126,7 +148,7 @@ fn fs_composite(v: Out) -> @location(0) vec4<f32> {
     var light = mix(frame.rgb, blurred, p.x);
     if (p.y > 0.0) {
         // The frame holds its light at the frame's exposure: the luminance about the pixel is that over the exposure
-        let about = luminance(textureSampleLevel(local_light, linear_clamp, v.uv, 0.0).rgb) / max(p.w, 1e-30);
+        let about = luminance(smooth_local(v.uv)) / max(p.w, 1e-30);
         let c = composite.curve;
         let ev = c.x * log(max(c.y + about, 1e-6)) + c.w * about + c.z - 10.0;
         let k = composite.clamps;

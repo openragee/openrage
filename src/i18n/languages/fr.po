@@ -913,6 +913,9 @@ msgstr "Les armes du projet ne peuvent pas être écrites"
 msgid "The world stopped on an internal error and was started again ({times} times so far)"
 msgstr "Le monde s'est arrêté sur une erreur interne et a été relancé ({times} fois jusqu'ici)"
 
+msgid "The world leaves out {maps} maps it stopped on as they came in"
+msgstr "Le monde laisse de côté {maps} cartes sur lesquelles il s'est arrêté à leur arrivée"
+
 msgid "The world stopped on an internal error {times} times and is not started again: it stands as it was last drawn. Build the index again to start afresh."
 msgstr "Le monde s'est arrêté sur une erreur interne {times} fois et n'est plus relancé : il reste tel qu'il a été dessiné en dernier. Reconstruisez l'index pour repartir de zéro."
 

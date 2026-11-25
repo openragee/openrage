@@ -210,6 +210,12 @@ impl WaterGround {
         Some(sum)
     }
 
+    /// The grid's west and north edges and its extent along x and y, in metres.
+    pub fn extent(&self) -> (f32, f32, [f32; 2]) {
+        let size = self.tiles_across.map(|n| n as f32 * self.tile_size);
+        (self.west, self.north, size)
+    }
+
     /// The tiles laid.
     pub fn tiles(&self) -> usize {
         self.tiles.len()

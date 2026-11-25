@@ -841,7 +841,12 @@ fn a_world_thread_that_dies_is_started_again_until_it_has_died_too_often_and_the
     use std::time::Duration;
     let index = Arc::new(made_up_index());
     let mut viewer = super::super::Viewer {
-        world: Some(World::new(Arc::clone(&index), Vec3::ZERO, 1.0)),
+        world: Some(World::new(
+            Arc::clone(&index),
+            Vec3::ZERO,
+            1.0,
+            HashSet::new(),
+        )),
         index: Some(index),
         ..Default::default()
     };
@@ -859,4 +864,41 @@ fn a_world_thread_that_dies_is_started_again_until_it_has_died_too_often_and_the
         assert_eq!(viewer.world_given_up(), given_up, "after death {death}");
         assert_eq!(viewer.world.as_ref().is_some_and(World::died), given_up);
     }
+}
+
+#[test]
+fn a_world_thread_that_dies_on_a_map_it_just_took_in_is_started_again_without_it_and_never_given_up(
+) {
+    use std::time::Duration;
+    let index = Arc::new(made_up_index());
+    let mut viewer = super::super::Viewer {
+        world: Some(World::new(
+            Arc::clone(&index),
+            Vec3::ZERO,
+            1.0,
+            HashSet::new(),
+        )),
+        index: Some(index),
+        ..Default::default()
+    };
+    // More deaths than give the thread up, each on a map of its own.
+    let deaths = super::super::MOST_RESTARTS + 2;
+    for death in 1..=deaths {
+        let world = viewer.world.as_ref().expect("a world");
+        world.took(0x100 + death);
+        world.end();
+        let until = Instant::now() + Duration::from_secs(20);
+        while !world.died() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        viewer.selected(&mut Vec::new());
+        assert_eq!(viewer.world_restarts, death, "after death {death}");
+        assert!(
+            viewer.skipped.contains(&(0x100 + death)),
+            "after death {death}"
+        );
+        assert!(!viewer.world_given_up(), "after death {death}");
+        assert!(!viewer.world.as_ref().is_some_and(World::died));
+    }
+    assert_eq!(viewer.skipped.len() as u32, deaths);
 }

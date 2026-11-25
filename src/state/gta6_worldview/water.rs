@@ -111,19 +111,22 @@ pub struct Seen {
     hour: f32,
     /// The name of the day's cycle the weather stands for.
     weather: &'static str,
+    /// The weather of the Weather bar it stands for.
+    state: WeatherState,
     y: f32,
 }
 
 impl Seen {
     /// The medium the water is at the hour and weather it was seen in; `None` until the day is read or where it states none.
     pub fn medium(&self) -> Option<Medium> {
-        let moment = (self.day.as_ref()?).moment(self.hour, self.weather, self.y)?;
+        let moment = super::sky::moment(self.day.as_ref()?, self.hour, self.state, self.y, None)?;
         Medium::of(|name| moment.own.get(name))
     }
 
     /// The waves of the surface about `x`, `y` at the hour and weather it was seen in: the preset set up nearest, at the day's Beaufort number.
     pub fn waves(&self, x: f32, y: f32) -> [[f32; 4]; or_renderer::world::water::WAVES] {
-        let moment = (self.day.as_ref()).and_then(|d| d.moment(self.hour, self.weather, self.y));
+        let moment = (self.day.as_ref())
+            .and_then(|d| super::sky::moment(d, self.hour, self.state, self.y, None));
         let beaufort = (moment.as_ref()).and_then(|m| m.own.get("water_ocean_beaufort_scale"));
         let fetch = moment.and_then(|m| m.own.get("water_ocean_fetch"));
         let preset = self.presets.as_ref().and_then(|p| p.nearest(x, y));
@@ -161,6 +164,7 @@ pub fn seen(root: &Path, hour: f32, weather: WeatherState, y: f32) -> Option<See
         day: super::sky::tables(root),
         hour,
         weather: super::sky::weather_name(weather),
+        state: weather,
         y,
     })
 }

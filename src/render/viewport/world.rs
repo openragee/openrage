@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use glam::Vec3;
-use or_renderer::world::{ShadowFocus, WorldConstants, WorldFamily, WorldSurface, WORLD_MAPS};
+use or_renderer::world::{WorldConstants, WorldFamily, WorldSurface, WORLD_MAPS};
 use or_renderer::{Frustum, ShadingMode, WorldBucket, WorldDraw, WorldMaterial, WorldMesh};
 
 use super::RenderBridge;
@@ -50,9 +50,6 @@ use textures::{Texture, Textures, ABSENT, MISSING};
 
 /// What a material is told of a map that is a model's own palette.
 const OWN_PALETTE: u64 = u64::MAX;
-
-/// How high above the ground the camera is taken to ride an aircraft, in metres: the viewer's choice, for the game stretches its cascades by what its camera rides and the viewer's camera rides nothing.
-const AIRBORNE: f32 = 30.0;
 
 /// One mesh of a level of a model: where it lies in the pages and what draws it.
 struct Mesh {
@@ -185,6 +182,8 @@ pub(super) struct WorldGpu {
     cost: WorldCost,
     /// The models and textures let go, to count those that come back; each set held to a bound by `remember`.
     gone: (HashSet<ModelRef>, HashSet<u64>),
+    /// The terrain's heights the renderer was given, by their place in memory.
+    terrain: usize,
 }
 
 fn bucket_of(bucket: Bucket) -> WorldBucket {
@@ -338,13 +337,22 @@ impl RenderBridge {
         self.renderer.set_world_lamps(lights.lamps);
         self.renderer.set_world_exposure(exposure);
         world.cost.lights = lighting.elapsed();
-        // ⚠ The game stretches its cascades by what the camera rides: a camera this high above the ground is taken to ride an aircraft.
-        let ground = viewer.ground_under(eye.x, eye.y);
-        let airborne = ground.is_some_and(|ground| eye.z - ground > AIRBORNE);
-        (self.renderer).set_shadow_focus(match airborne {
-            true => ShadowFocus::AIRCRAFT,
-            false => ShadowFocus::FREE,
-        });
+        // ⚠ The game stretches its cascades by what its camera rides; the viewer's rides nothing, so its cascades are the free camera's, and past them the terrain alone shades, as the game's does.
+        if let Some(terrain) = viewer.terrain() {
+            let given = Arc::as_ptr(&terrain) as usize;
+            if world.terrain != given {
+                world.terrain = given;
+                let grid = or_renderer::world::TerrainGrid {
+                    west: terrain.west,
+                    north: terrain.north,
+                    texel: terrain.texel,
+                    width: terrain.width,
+                    height: terrain.height,
+                    heights: &terrain.heights,
+                };
+                (self.renderer).set_world_terrain(&self.device, &self.queue, Some(grid));
+            }
+        }
         // The GTA V day is worked out again once the world is left.
         self.day_key = None;
         // From a room that sees no portal to the outside, no water.

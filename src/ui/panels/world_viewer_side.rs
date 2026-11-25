@@ -196,6 +196,16 @@ fn blocked(
         );
         any = true;
     }
+    if !viewer.skipped.is_empty() {
+        warned(
+            ui,
+            &tr!(
+                "The world leaves out {maps} maps it stopped on as they came in",
+                maps = viewer.skipped.len()
+            ),
+        );
+        any = true;
+    }
     if drawn.is_some_and(|d| d.draws > 0 && !d.lit_by_the_game) {
         warned(
             ui,

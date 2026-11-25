@@ -20,6 +20,24 @@ pub fn open_archive_from_disk(
     })
 }
 
+/// A GTA VI archive on disk as the tree every archive opens as, read entry by entry from its file; `None` for any other file, and with no key.
+pub(super) fn gta6_tree(
+    path: &Path,
+    crypto: &Arc<dyn RpfCryptoProvider>,
+) -> Option<super::DocPayload> {
+    use std::io::Read;
+    let mut magic = [0u8; 4];
+    (std::fs::File::open(path).ok()?)
+        .read_exact(&mut magic)
+        .ok()?;
+    if magic != or_io::container::rpf::RPF9_MAGIC.to_le_bytes() || !give_gta6_keys() {
+        return None;
+    }
+    let archive = RpfArchive::open_with(path, Arc::clone(crypto)).ok()?;
+    let tree = super::rpf_session::RpfDocument::new(archive).ok()?;
+    Some(super::DocPayload::Rpf(tree))
+}
+
 /// Hands the archive reader the GTA VI keys and names the app holds; `false` when it holds no keys.
 fn give_gta6_keys() -> bool {
     use or_io::container::rpf::Gta6Context;

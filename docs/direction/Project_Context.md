@@ -26,6 +26,16 @@ A RAGE byte layout exists in one place. Since 2026-09-24 that place is the `or-i
 
 Newest first. An entry records a decision as it was taken; one a later decision overturns says so on a `Superseded` line. or-io's D1–D18 are in full, with the owner's words, in [the specification's table](OR_IO_Specification.md#owner-decisions).
 
+### Every NodeRunner Studio capability for GTA V is wanted in OpenRage (2026-11-25)
+
+The owner pointed at NodeRunner Studio (`https://github.com/HypnoZDev/NodeRunner`), a map editor for GTA V built for FiveM mapping, and wrote: "Je veux toutes les fonctionnalités sur openrage pour gta v", asking for a plan of every feature, what makes each product good, the case for and against, and "comment bien intégrer les choses dans openrage, intégrer le world editor, le système de projets, avec une bonne UX pour les mappers", as a detailed roadmap.
+
+[World_Editor_Plan.md](World_Editor_Plan.md) is that plan and [R70](Roadmap.md#r70-the-gta-v-world-editor) schedules it. The request is for GTA V, so the earlier games NodeRunner also shows stay with [2026-10-01](#earlier-rage-titles-are-a-future-goal-2026-10-01).
+
+The request says the capabilities are wanted and does not rule on how. The plan takes defaults that a sentence reverses ([the rulings asked](World_Editor_Plan.md#rulings-asked-of-the-owner)), and two of them touch earlier entries: the interior builder, the walk mode and the thumbnail browser are planned in the app, where [2026-10-03](#the-ux-reviews-plan-is-the-apps-next-work-2026-10-03) left the world editor a plugin and the ruling of 2026-10-20 in [Workbench_Plan.md](Workbench_Plan.md#rulings-in-force) had already moved placement into the app; and the XML a Blender export writes would be read on import. Neither is decided by this entry.
+
+NodeRunner's licence, PolyForm Strict 1.0.0, forbids a work based on the software, so nothing of its code, text or assets enters the tree ([Licence_And_Provenance_Policy.md](../guides/Licence_And_Provenance_Policy.md#sources)).
+
 ### Hosted CI is on again, and the self-hosted workflows stay off (2026-11-23)
 
 The owner asked, of the public repository: "Make sure the openrage CI pass, and that on a tag it publish a github release with all the builds". `ci.yml` is enabled again (`gh workflow enable`), and `release.yml` published `v0.1.0` with a package for each OS. `local-gate.yml` and `main-tip.yml` stay disabled, because the repository has no self-hosted runner: no automatic check sees the corpus, and `just ready` with a format's `just test-format` stays the gate before a merge.

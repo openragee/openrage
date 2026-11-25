@@ -21,6 +21,7 @@ fn row() -> (Vec<RoomBox>, Vec<Opening>, Vec3) {
         ],
         flags: 0,
         shut: false,
+        door: false,
     };
     let rooms = vec![
         room(0.0, 12.0),
@@ -161,6 +162,18 @@ fn a_shut_door_is_seen_and_lets_neither_the_eye_nor_the_sky_through() {
 }
 
 #[test]
+fn a_door_in_the_front_opening_keeps_the_sky_from_the_room_and_takes_it_where_it_stands() {
+    let (rooms, mut portals, middle) = row();
+    portals[0].door = true;
+    let at = |portals: &[Opening], p: [f32; 3]| ambient_of(&rooms, portals, 1, Vec3::from(p), 0.0);
+    assert_eq!(at(&portals, [1.0, 0.0, 1.0]), [0.0, 0.0]);
+    assert_eq!(at(&portals, [0.0, 0.0, 1.0]), [1.0, 0.0]);
+    // It shuts nothing: the eye still goes in.
+    let from_outside = seen(&rooms, &portals, middle, Vec3::new(-5.0, 0.0, 1.0));
+    assert_eq!(from_outside.rooms, [true, true, true, false]);
+}
+
+#[test]
 fn a_portal_that_may_close_is_shut_at_rest_by_a_door_and_open_with_none() {
     let closing = PORTAL_ALLOW_CLOSING | 8;
     // A door shuts it, one-way or not; with no door it stays open.
@@ -229,6 +242,7 @@ fn rooms_that_all_open_on_each_other_where_the_camera_stands_are_walked_in_bound
         ],
         flags: 0,
         shut: false,
+        door: false,
     };
     let portals: Vec<Opening> = (1..ROOMS)
         .flat_map(|a| (a + 1..ROOMS).map(move |b| door([a, b])))

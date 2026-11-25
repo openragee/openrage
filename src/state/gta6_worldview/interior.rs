@@ -12,7 +12,7 @@ use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9ZlibRun};
 use or_io::gta6::map::interior::{self, Interior, InteriorInstance};
 use or_io::gta6::map::light_ext::{Light, LightKind};
 use or_io::gta6::map::lights::Pose;
-use or_io::gta6::map::links::EntitySetLocation;
+use or_io::gta6::map::links::{EntitySetLocation, Portal};
 use or_io::gta6::map::stream::StreamMap;
 use or_io::meta::binary::rbm::schema::RbmModel;
 use or_world::interior_portals::point_polygon_distance;
@@ -193,29 +193,25 @@ pub(super) fn place(
             *count += usize::from(flags & DOOR != 0);
         }
     }
-    // ⚠ Inferred: a door reaches a portal by where it stands, and the door of a shell's opening
-    // is the map's own entity, which the interior holds only the frame of.
+    // ⚠ The door of a shell's opening is the map's own entity, of which the interior holds the
+    // frame alone; whether the build puts it on the portal was not read, so it shuts nothing.
     let inward = outer.inverse();
     let map_doors: Vec<Vec3> = map_doors
         .iter()
         .map(|d| inward.transform_point3(*d))
         .collect();
-    for (count, p) in doors.iter_mut().zip(&interior.portals) {
-        if p.room_from != 0 && p.room_to != 0 {
-            continue;
-        }
+    let in_opening = |p: &Portal| {
         let corners = p.corners.map(Vec3::from);
-        let in_opening = |d: &&Vec3| {
-            point_polygon_distance(**d, &corners).is_some_and(|away| away <= IN_OPENING)
-        };
-        *count += map_doors.iter().filter(in_opening).count();
-    }
+        let near = |d: &Vec3| point_polygon_distance(*d, &corners).is_some_and(|a| a <= IN_OPENING);
+        (p.room_from == 0 || p.room_to == 0) && map_doors.iter().any(near)
+    };
     let portals: Vec<Opening> = (interior.portals.iter().zip(doors))
         .map(|(p, doors)| Opening {
             rooms: [p.room_from, p.room_to],
             corners: p.corners.map(Vec3::from),
             flags: p.flags,
             shut: interior_rooms::shut_at_rest(p.flags, doors),
+            door: in_opening(p),
         })
         .collect();
     let rooms: Vec<RoomBox> = (interior.rooms.iter())

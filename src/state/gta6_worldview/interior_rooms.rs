@@ -44,6 +44,8 @@ pub(super) struct Opening {
     pub(super) flags: u32,
     /// Whether it is shut as the interior stands at rest: its own entities are seen, nothing past it.
     pub(super) shut: bool,
+    /// Whether a door the map places stands in it: the sky does not come in through it.
+    pub(super) door: bool,
 }
 
 /// Whether a portal of `flags` that holds `doors` doors is shut as the interior stands when it is
@@ -306,8 +308,11 @@ pub(super) fn ambient_of(
     let (mut window, mut near) = (0.0, 0.0);
     for o in outward {
         let c = &o.corners;
-        window += (c[2] - c[0]).cross(c[3] - c[1]).length() / 2.0;
+        // ⚠ A door in an opening stands in its light, which the room past it does not take.
         near += feather(c, p);
+        if !o.door {
+            window += (c[2] - c[0]).cross(c[3] - c[1]).length() / 2.0;
+        }
     }
     let size = (of.max - of.min).max(Vec3::ZERO);
     let surface = 2.0 * (size.x * size.y + size.x * size.z + size.y * size.z);

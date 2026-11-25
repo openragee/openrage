@@ -130,15 +130,15 @@ fn model(offset: u64) -> ModelRef {
 }
 
 #[test]
-fn a_door_the_map_places_in_an_opening_of_the_shell_shuts_it_where_it_may_close() {
+fn a_door_the_map_places_in_an_opening_of_the_shell_stands_in_it_and_shuts_nothing() {
     let mut shell = interior();
     shell.portals[0].flags = 64;
     // The opening at x 4 of the shell's space, turned a quarter about z and moved to (10, 20, 30).
     let in_doorway = Vec3::new(10.0, 24.0, 31.0);
     let away = Vec3::new(10.0, 20.0, 31.0);
-    assert!(place(&index(), &instance(), &shell, &[in_doorway]).portals[0].shut);
-    assert!(!place(&index(), &instance(), &shell, &[away]).portals[0].shut);
-    assert!(!place(&index(), &instance(), &interior(), &[in_doorway]).portals[0].shut);
+    let front = |doors: &[Vec3]| place(&index(), &instance(), &shell, doors).portals[0];
+    assert!(front(&[in_doorway]).door && !front(&[in_doorway]).shut);
+    assert!(!front(&[away]).door);
 }
 
 #[test]

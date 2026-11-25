@@ -17,6 +17,7 @@ use crate::viewport::{MeshVertex, OrbitCamera, ViewportRenderer};
 
 pub mod cards;
 mod lamps;
+pub mod light_math;
 mod material;
 mod pipelines;
 mod shader;

@@ -13,12 +13,24 @@ pub enum Gta6EntryType {
     Unknown,
     Archive,
     TextureDictionary,
+    Awc,
+    Pso,
     Resource(Rpf9Role),
     Body(OtherBody),
     Rbf,
 }
 
 impl Gta6EntryType {
+    /// Identify a container from its leading header without validating its complete contents.
+    pub fn from_header(bytes: &[u8]) -> Option<Self> {
+        let head = bytes.get(..16)?;
+        match &head[..4] {
+            b"ADAT" | b"TADA" => Some(Self::Awc),
+            b"PSIN" => Some(Self::Pso),
+            _ => None,
+        }
+    }
+
     /// The measured content family in the table, without reading the entry's body.
     pub fn hint(entry: &Gta6Entry, extra: &Gta6EntryExtra) -> Self {
         if let Some(row) = extra.nested {
@@ -102,6 +114,8 @@ impl Gta6EntryContent {
             Gta6EntryType::Archive
         } else if hint == Gta6EntryType::Archive {
             return Err(bad("the nested archive has no RPF9 header"));
+        } else if let Some(kind) = Gta6EntryType::from_header(bytes) {
+            kind
         } else if is_rbf(bytes) {
             Gta6EntryType::Rbf
         } else if let Some(body) = OtherBody::of(bytes, bytes.len() as u64) {

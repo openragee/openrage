@@ -347,6 +347,7 @@ fn rpf9_icon(kind: or_io::container::rpf::Gta6EntryType) -> IconBadge {
     let document = match kind {
         Gta6EntryType::Archive => Some(DocumentKind::Rpf9),
         Gta6EntryType::TextureDictionary => Some(DocumentKind::Ytd),
+        Gta6EntryType::Awc => Some(DocumentKind::Awc),
         Gta6EntryType::Resource(Rpf9Role::Drawable) => Some(DocumentKind::Ydr),
         Gta6EntryType::Resource(Rpf9Role::DrawableWithBound) => Some(DocumentKind::Yft),
         Gta6EntryType::Resource(Rpf9Role::Bound) => Some(DocumentKind::Ybn),
@@ -356,7 +357,7 @@ fn rpf9_icon(kind: or_io::container::rpf::Gta6EntryType) -> IconBadge {
         Gta6EntryType::Body(OtherBody::Gfx) => Some(DocumentKind::Gfx),
         Gta6EntryType::Body(OtherBody::HeightMap) => Some(DocumentKind::HeightMap),
         Gta6EntryType::Body(OtherBody::MoveNetwork) => Some(DocumentKind::MoveNetwork),
-        Gta6EntryType::Rbf => Some(DocumentKind::Meta),
+        Gta6EntryType::Rbf | Gta6EntryType::Pso => Some(DocumentKind::Meta),
         _ => None,
     };
     let mut icon = document

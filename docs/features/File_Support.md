@@ -80,8 +80,11 @@ produce an error, with no scan fallback. The Files panel lists the entries and l
 archive's table when it is expanded, on a worker and within its containing entry's bounds.
 In an opened folder, RPF9 archives expand inside the same Files tree as other archives. Resolved
 paths form folders; unresolved hashes remain at the root of their owning archive. File icons use
-the table's type, independently of the displayed name. Files adds a visual extension to recovered
-names and hashes (`.ytd`, `.ydr`, `.rpf`, or `.bin` when no extension is identified), while keeping
+the table's type or the entry's leading header, independently of the displayed name. Opening a
+folder also checks entry headers at their table addresses: AWC containers show the audio icon and
+`.awc`, and PSIN metadata shows `.psin`. This reads only the leading bytes, with a bounded input
+budget for compressed or encrypted entries. Files adds a visual extension to recovered names and
+hashes (`.ytd`, `.ydr`, `.rpf`, `.awc`, `.psin`, or `.bin` when no extension is identified), while keeping
 the original name and table hash unchanged. Properties show the original entry index
 and 64-bit hash. Opening an entry keeps its Files selection and breadcrumb trail. The archive's
 contents are read-only, including tree edits. An entry whose table does not state

@@ -429,6 +429,140 @@ mod install {
     }
 
     #[test]
+    fn audio_entries_show_awc_without_opening_or_extracting_their_bodies() {
+        let Some(root) = std::env::var_os("OPENRAGE_GTA6_BUILD") else {
+            or_test_support::skip_install(
+                "RPF9 audio types",
+                format_args!("set OPENRAGE_GTA6_BUILD and OPENRAGE_GTA6_KEYS"),
+            );
+            return;
+        };
+        let path = Path::new(&root).join("audio.rpf");
+        let table = Arc::new(Rpf9TableDocument::open(&path).unwrap().unwrap());
+        let parent = table.tree().nodes[&0]
+            .archive
+            .entries
+            .iter()
+            .find(|entry| entry.display_name() == "hash_0b5060262bec3202")
+            .unwrap()
+            .index;
+        let base = table.expand_table(0, parent).unwrap();
+        let entries = table.tree().nodes[&base].archive.entries.clone();
+        let selected = entries
+            .iter()
+            .find(|entry| entry.display_name() == "hash_0fc08147e594a40c")
+            .unwrap();
+        assert_eq!(selected.display_name(), "hash_0fc08147e594a40c");
+        for entry in &entries {
+            let (kind, detected) = table.tree().entry_type(base, entry.index);
+            let name = entry.display_name();
+            assert_eq!(
+                crate::state::files_view::rpf9_display_name(&name, kind),
+                format!("{name}.awc")
+            );
+            assert!(
+                detected,
+                "{} must be identified before opening its body",
+                entry.index
+            );
+            let node = crate::state::RpfSessionNode {
+                id: 1,
+                parent: None,
+                name: name.clone(),
+                kind: crate::state::RpfSessionNodeKind::BinaryFile,
+                children: Vec::new(),
+                backing: RpfNodeBacking::Rpf9File {
+                    table: Arc::clone(&table),
+                    base,
+                    index: entry.index,
+                },
+            };
+            assert_eq!(node.display_name(), format!("{name}.awc"));
+            assert_eq!(node.rpf9_entry(), Some((entry.index, entry.name64)));
+            let icon = crate::ui::icons::rpf_node_icon(&node, false, false, true, false);
+            let expected = crate::ui::icons::doc_kind_icon(DocumentKind::Awc, false);
+            assert_eq!(icon.glyph, expected.glyph);
+            assert_eq!(icon.type_tooltip, DocumentKind::Awc.info().noun);
+            let source = table.entry(base, entry.index).unwrap();
+            let bytes = source.bytes().unwrap();
+            let audio = or_io::awc::AwcFile::parse(&bytes, or_io::awc::AwcKey::default()).unwrap();
+            assert!(!audio.streams.is_empty());
+            assert_eq!(
+                Gta6EntryContent::detect(entry, &source.extra, &bytes)
+                    .unwrap()
+                    .kind,
+                kind
+            );
+            assert_eq!(source.name, name);
+            assert_eq!(node.name, name);
+            assert!(!source.path.exists());
+        }
+        println!(
+            "{} audio entries identified before opening and cross-checked with the AWC reader",
+            entries.len()
+        );
+    }
+
+    #[test]
+    fn encrypted_psin_is_named_before_its_body_is_opened() {
+        let Some(root) = std::env::var_os("OPENRAGE_GTA6_BUILD") else {
+            or_test_support::skip_install(
+                "RPF9 PSIN types",
+                format_args!("set OPENRAGE_GTA6_BUILD and OPENRAGE_GTA6_KEYS"),
+            );
+            return;
+        };
+        let path = Path::new(&root).join("appdata0.rpf");
+        let table = Arc::new(Rpf9TableDocument::open(&path).unwrap().unwrap());
+        let entry = table.tree().nodes[&0]
+            .archive
+            .entries
+            .iter()
+            .find(|entry| entry.display_name() == "hash_336373b5566693f1")
+            .unwrap()
+            .clone();
+        assert!(entry.cipher.is_some());
+        assert!(entry.stored < entry.real);
+        let (kind, detected) = table.tree().entry_type(0, entry.index);
+        assert!(detected);
+        assert_eq!(
+            crate::state::files_view::rpf9_display_name(&entry.display_name(), kind),
+            "hash_336373b5566693f1.psin"
+        );
+        let node = crate::state::RpfSessionNode {
+            id: 1,
+            parent: None,
+            name: entry.display_name(),
+            kind: crate::state::RpfSessionNodeKind::BinaryFile,
+            children: Vec::new(),
+            backing: RpfNodeBacking::Rpf9File {
+                table: Arc::clone(&table),
+                base: 0,
+                index: entry.index,
+            },
+        };
+        let icon = crate::ui::icons::rpf_node_icon(&node, false, false, true, false);
+        assert_eq!(
+            icon.glyph,
+            crate::ui::icons::doc_kind_icon(DocumentKind::Meta, false).glyph
+        );
+        let source = table.entry(0, entry.index).unwrap();
+        let bytes = source.bytes().unwrap();
+        assert_eq!(
+            or_io::meta::binary::detect_binary_format(&bytes),
+            Some(or_io::meta::binary::BinaryFormat::Pso)
+        );
+        assert_eq!(
+            Gta6EntryContent::detect(&entry, &source.extra, &bytes)
+                .unwrap()
+                .kind,
+            kind
+        );
+        assert_eq!(source.name, "hash_336373b5566693f1");
+        assert!(!source.path.exists());
+    }
+
+    #[test]
     fn every_entry_in_the_selected_archive_opens_and_extracts_from_tables() {
         let Some(archive) = std::env::var_os("OPENRAGE_GTA6_ARCHIVE") else {
             or_test_support::skip_install(

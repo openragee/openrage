@@ -365,3 +365,28 @@ fn a_packed_ten_bit_volume_preserves_each_slice_and_its_channels() {
         assert_eq!(&image.data, rgba);
     }
 }
+
+#[test]
+fn container_headers_are_identified_only_at_the_start_of_the_entry() {
+    for (magic, expected) in [
+        (b"ADAT", Gta6EntryType::Awc),
+        (b"TADA", Gta6EntryType::Awc),
+        (b"PSIN", Gta6EntryType::Pso),
+    ] {
+        let mut bytes = [0; 16];
+        bytes[..4].copy_from_slice(magic);
+        let detected =
+            Gta6EntryContent::detect(&entry(), &Gta6EntryExtra::default(), &bytes).unwrap();
+        assert_eq!(detected.kind, expected);
+        assert!(detected.textures.is_none());
+        for length in 0..16 {
+            assert_eq!(Gta6EntryType::from_header(&bytes[..length]), None);
+        }
+        let mut later = vec![0xFF; 32];
+        later.extend(bytes);
+        assert_eq!(Gta6EntryType::from_header(&later), None);
+        let detected =
+            Gta6EntryContent::detect(&entry(), &Gta6EntryExtra::default(), &later).unwrap();
+        assert_eq!(detected.kind, Gta6EntryType::Unknown);
+    }
+}

@@ -67,6 +67,8 @@ pub(crate) fn rpf9_type_name(kind: or_io::container::rpf::Gta6EntryType) -> &'st
         Gta6EntryType::Unknown => tr!("Unknown"),
         Gta6EntryType::Archive => tr!("Archive"),
         Gta6EntryType::TextureDictionary => tr!("Texture dictionary"),
+        Gta6EntryType::Awc => DocumentKind::Awc.info().noun,
+        Gta6EntryType::Pso => DocumentKind::Meta.info().noun,
         Gta6EntryType::Resource(role) => super::gta6_resource::role_name(Some(role)),
         Gta6EntryType::Body(body) => super::gta6_other_bodies::label(body),
         Gta6EntryType::Rbf => tr!("RBF metadata"),
@@ -85,6 +87,8 @@ pub(crate) fn rpf9_display_name(
     let extension = match kind {
         Gta6EntryType::Archive => "rpf",
         Gta6EntryType::TextureDictionary => "ytd",
+        Gta6EntryType::Awc => "awc",
+        Gta6EntryType::Pso => "psin",
         Gta6EntryType::Resource(role) => match role {
             Rpf9Role::Drawable => "ydr",
             Rpf9Role::Dictionary => "ydd",

@@ -153,12 +153,7 @@ fn inflate<R: BufRead, W: Write + ?Sized>(
         }
     }
 }
-pub(super) fn extract<R: Read + Seek, W: Write + ?Sized>(
-    plan: &Gta6EntryRead,
-    source: &mut R,
-    keys: &GtaViKeys,
-    output: &mut W,
-) -> Result<u64> {
+fn begin<R: Read + Seek>(plan: &Gta6EntryRead, source: &mut R, keys: &GtaViKeys) -> Result<()> {
     if let Some(cipher) = plan.cipher {
         keys.content_decrypt(cipher.key_id, &cipher.iv, &mut [])?;
     }
@@ -172,6 +167,96 @@ pub(super) fn extract<R: Read + Seek, W: Write + ?Sized>(
     source
         .seek(SeekFrom::Start(plan.extent.start))
         .map_err(|e| bad(e.to_string()))?;
+    Ok(())
+}
+
+pub(super) fn header<R: Read + Seek>(
+    plan: &Gta6EntryRead,
+    source: &mut R,
+    keys: &GtaViKeys,
+) -> Result<[u8; 16]> {
+    if !matches!(plan.decoding, Decoding::Raw) {
+        return compressed_header(plan, source, keys);
+    }
+    begin(plan, source, keys)?;
+    let mut bytes = [0; 16];
+    source
+        .read_exact(&mut bytes)
+        .map_err(|e| bad(e.to_string()))?;
+    if let Some(cipher) = plan.cipher {
+        let len = plan.extent.end - plan.extent.start;
+        for (a, b) in enciphered_window(&cipher.framing, len, 0..16) {
+            keys.content_decrypt(
+                cipher.key_id,
+                &cipher.iv,
+                &mut bytes[a as usize..b as usize],
+            )?;
+        }
+    }
+    Ok(bytes)
+}
+
+fn compressed_header<R: Read + Seek>(
+    plan: &Gta6EntryRead,
+    source: &mut R,
+    keys: &GtaViKeys,
+) -> Result<[u8; 16]> {
+    begin(plan, source, keys)?;
+    let len = plan.extent.end - plan.extent.start;
+    let mut budget = source.take(65536);
+    let mut body = Body {
+        source: &mut budget,
+        keys,
+        cipher: plan.cipher,
+        len,
+        loaded: 0,
+        buffer: [0; 65536],
+        begin: 0,
+        end: 0,
+    };
+    let mut bytes = [0; 16];
+    let Decoding::Table(chunks) = &plan.decoding else {
+        flate2::bufread::DeflateDecoder::new(&mut body)
+            .read_exact(&mut bytes)
+            .map_err(|e| bad(e.to_string()))?;
+        return Ok(bytes);
+    };
+    let mut filled = 0;
+    for chunk in chunks {
+        let count = (chunk.inflated as usize).min(bytes.len() - filled);
+        let mut output = &mut bytes[filled..filled + count];
+        let mut input = (&mut body).take(u64::from(chunk.stored));
+        if chunk.zlib && count < chunk.inflated as usize {
+            flate2::bufread::ZlibDecoder::new(&mut input)
+                .read_exact(output)
+                .map_err(|e| bad(e.to_string()))?;
+        } else if chunk.zlib {
+            let used = inflate(&mut input, &mut output, u64::from(chunk.inflated), true)?;
+            if used != u64::from(chunk.stored) {
+                return Err(bad(
+                    "compressed header chunk does not match its stored size",
+                ));
+            }
+        } else {
+            input.read_exact(output).map_err(|e| bad(e.to_string()))?;
+        }
+        filled += count;
+        if filled == bytes.len() {
+            return Ok(bytes);
+        }
+        let padding = (16 - u64::from(chunk.stored) % 16) % 16;
+        copy(&mut body, &mut io::sink(), padding)?;
+    }
+    Err(bad("the chunks do not hold a complete header"))
+}
+
+pub(super) fn extract<R: Read + Seek, W: Write + ?Sized>(
+    plan: &Gta6EntryRead,
+    source: &mut R,
+    keys: &GtaViKeys,
+    output: &mut W,
+) -> Result<u64> {
+    begin(plan, source, keys)?;
     let len = plan.extent.end - plan.extent.start;
     let mut body = Body {
         source,

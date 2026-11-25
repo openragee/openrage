@@ -158,21 +158,18 @@ fn read_chain(doc: &Rpf9TableDocument, chain: &[u32]) -> Result<EntrySource, Str
         let mut tree = doc.tree();
         let parent = &tree.nodes[&base];
         let extent = child_extent(parent, index)?;
-        let mut archive =
-            open_at_bounded(&mut file, extent.clone(), &doc.keys).map_err(|e| e.to_string())?;
-        archive.resolve_names(&doc.resolver);
         let mut chain = parent.chain.clone();
         chain.push(index);
         base = extent.start;
-        tree.nodes.insert(
-            base,
-            Node {
-                archive,
-                extent,
-                depth: chain.len(),
-                chain,
-            },
-        );
+        let node = Node::open(
+            &mut file,
+            extent,
+            chain.len(),
+            chain,
+            &doc.keys,
+            &doc.resolver,
+        )?;
+        tree.nodes.insert(base, node);
     }
     doc.entry(base, chain[chain.len() - 1])
 }

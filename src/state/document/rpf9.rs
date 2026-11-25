@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 
 use or_io::container::rpf::{
-    open_at_bounded, Gta6Archive, Gta6Class, Gta6Entry, Gta6EntryType, GtaViKeys, NameResolver,
-    RPF9_HEADER_SIZE, RPF9_MAGIC,
+    open_at_bounded, Gta6Archive, Gta6Class, Gta6Entry, Gta6EntryRead, Gta6EntryType, GtaViKeys,
+    NameResolver, RPF9_HEADER_SIZE, RPF9_MAGIC,
 };
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
 
@@ -21,6 +21,44 @@ pub struct Node {
     pub extent: Range<u64>,
     depth: usize,
     chain: Vec<u32>,
+    headers: BTreeMap<u32, Gta6EntryType>,
+}
+
+impl Node {
+    fn open(
+        file: &mut File,
+        extent: Range<u64>,
+        depth: usize,
+        chain: Vec<u32>,
+        keys: &GtaViKeys,
+        resolver: &NameResolver,
+    ) -> Result<Self, String> {
+        let mut archive = open_at_bounded(file, extent.clone(), keys).map_err(|e| e.to_string())?;
+        archive.resolve_names(resolver);
+        let mut headers = BTreeMap::new();
+        for entry in &archive.entries {
+            let Some(extra) = archive.entry_extra(entry.index as usize) else {
+                continue;
+            };
+            if Gta6EntryType::hint(entry, &extra) != Gta6EntryType::Unknown {
+                continue;
+            }
+            let header = Gta6EntryRead::from_table(&archive, extent.clone(), entry.index, u64::MAX)
+                .and_then(|read| read.read_header(file, keys));
+            if let Ok(Some(header)) = header {
+                if let Some(kind) = Gta6EntryType::from_header(&header) {
+                    headers.insert(entry.index, kind);
+                }
+            }
+        }
+        Ok(Self {
+            archive,
+            extent,
+            depth,
+            chain,
+            headers,
+        })
+    }
 }
 
 struct Pending {
@@ -42,6 +80,13 @@ pub struct Tree {
 impl Tree {
     pub fn entry_type(&self, base: u64, index: u32) -> (Gta6EntryType, bool) {
         if let Some(kind) = self.detected.get(&(base, index)) {
+            return (*kind, true);
+        }
+        if let Some(kind) = self
+            .nodes
+            .get(&base)
+            .and_then(|node| node.headers.get(&index))
+        {
             return (*kind, true);
         }
         let hint = self.nodes.get(&base).and_then(|node| {
@@ -121,19 +166,16 @@ impl Rpf9TableDocument {
         let keys = Arc::new(keys()?);
         let metadata = file.metadata().map_err(|e| e.to_string())?;
         let resolver = Arc::new(load_resolver());
-        let mut archive =
-            open_at_bounded(&mut file, 0..metadata.len(), &keys).map_err(|e| e.to_string())?;
-        archive.resolve_names(&resolver);
-        let mut tree = Tree::default();
-        tree.nodes.insert(
+        let node = Node::open(
+            &mut file,
+            0..metadata.len(),
             0,
-            Node {
-                archive,
-                extent: 0..metadata.len(),
-                depth: 0,
-                chain: Vec::new(),
-            },
-        );
+            Vec::new(),
+            &keys,
+            &resolver,
+        )?;
+        let mut tree = Tree::default();
+        tree.nodes.insert(0, node);
         Ok(Some(Self {
             path: path.to_path_buf(),
             keys,
@@ -238,16 +280,16 @@ impl Rpf9TableDocument {
                 Ok(())
             };
             check(&file)?;
-            let mut archive = open_at_bounded(&mut file, extent.clone(), &self.keys)
-                .map_err(|e| e.to_string())?;
-            check(&file)?;
-            archive.resolve_names(&self.resolver);
-            Ok(Node {
-                archive,
-                extent: extent.clone(),
+            let node = Node::open(
+                &mut file,
+                extent.clone(),
                 depth,
                 chain,
-            })
+                &self.keys,
+                &self.resolver,
+            )?;
+            check(&file)?;
+            Ok(node)
         })();
         let mut tree = self.tree();
         match loaded {
@@ -325,15 +367,7 @@ impl Rpf9TableDocument {
                             .to_string(),
                     );
                 }
-                let mut archive =
-                    open_at_bounded(&mut file, extent.clone(), &keys).map_err(|e| e.to_string())?;
-                archive.resolve_names(&resolver);
-                Ok(Node {
-                    archive,
-                    extent,
-                    depth,
-                    chain,
-                })
+                Node::open(&mut file, extent, depth, chain, &keys, &resolver)
             })();
             let _ = tx.send(loaded);
         });

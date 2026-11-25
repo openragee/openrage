@@ -156,6 +156,18 @@ impl Gta6EntryRead {
         self.real
     }
 
+    /// Decode only the first sixteen bytes with a 64 KiB input budget, without validating the tail.
+    pub fn read_header<R: Read + Seek>(
+        &self,
+        source: &mut R,
+        keys: &GtaViKeys,
+    ) -> Result<Option<[u8; 16]>> {
+        if self.real < 16 {
+            return Ok(None);
+        }
+        stream::header(self, source, keys).map(Some)
+    }
+
     /// Read the entry into memory using only its table's decoding instructions.
     pub fn read<R: Read + Seek>(&self, source: &mut R, keys: &GtaViKeys) -> Result<Vec<u8>> {
         usize::try_from(self.real).map_err(|_| bad("decoded size exceeds addressable memory"))?;
@@ -314,6 +326,98 @@ mod tests {
     }
 
     #[test]
+    fn header_reads_stay_at_the_table_start_and_do_not_read_the_body() {
+        let expected = *b"ADAT0123456789ab";
+        let mut src = source(&expected);
+        let read = plan(&entry(512, 512, 255), None).unwrap();
+        assert_eq!(read.read_header(&mut src, &keys()).unwrap(), Some(expected));
+        assert_eq!(src.reads, 1);
+        assert_eq!(
+            plan(&entry(16, 15, 255), None)
+                .unwrap()
+                .read_header(&mut src, &keys())
+                .unwrap(),
+            None
+        );
+        assert_eq!(src.reads, 1);
+        src.source.get_mut().truncate(256);
+        assert!(read.read_header(&mut src, &keys()).is_err());
+        assert_eq!(src.reads, 1);
+    }
+
+    #[test]
+    fn compressed_headers_follow_chunk_boundaries_without_decoding_the_tail() {
+        let expected = *b"PSIN0123456789ab";
+        let mut data = expected[4..].to_vec();
+        data.extend([0x55; 100]);
+        let (compressed, chunk) = zlib(&data);
+        let mut stored = expected[..4].to_vec();
+        stored.resize(16, 0);
+        stored.extend(compressed);
+        stored.extend([0xFF; 16]);
+        let chunks = [
+            Chunk {
+                stored: 4,
+                inflated: 4,
+                zlib: false,
+            },
+            chunk,
+            Chunk {
+                stored: 16,
+                inflated: 32,
+                zlib: true,
+            },
+        ];
+        let row = entry(stored.len() as u64, 4 + data.len() as u64 + 32, 255);
+        let read = plan(&row, Some(&chunks)).unwrap();
+        assert_eq!(
+            read.read_header(&mut source(&stored), &keys()).unwrap(),
+            Some(expected)
+        );
+        assert!(
+            read.read(&mut source(&stored), &keys()).is_err(),
+            "a readable header does not make a broken tail extractable"
+        );
+        stored[16..32].fill(0xFF);
+        assert!(read.read_header(&mut source(&stored), &keys()).is_err());
+
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&expected).unwrap();
+        let mut raw = encoder.finish().unwrap();
+        raw.resize(raw.len().next_multiple_of(16), 0);
+        let read = plan(&entry(raw.len() as u64, expected.len() as u64, 11), None).unwrap();
+        assert_eq!(
+            read.read_header(&mut source(&raw), &keys()).unwrap(),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn compressed_header_reads_stop_at_the_input_budget() {
+        // Empty non-final DEFLATE blocks consume input while producing no header bytes.
+        let body = [0, 0, 0, 0xFF, 0xFF].repeat(16000);
+        let mut data = vec![0; 128];
+        data.extend(&body);
+        let mut src = Bounded {
+            source: Cursor::new(data),
+            allowed: 128..128 + 65536,
+            reads: 0,
+        };
+        let read = Gta6EntryRead::plan(
+            &entry(body.len() as u64, 16, 11),
+            Gta6EntryExtra::default(),
+            None,
+            64,
+            0..128 + body.len() as u64,
+            u64::MAX,
+        )
+        .unwrap();
+        assert!(read.read_header(&mut src, &keys()).is_err());
+        assert_eq!(src.reads, 1);
+    }
+
+    #[test]
     fn table_zlib_streams_end_at_the_stated_size() {
         let (mut stored, first) = zlib(b"first chunk");
         let (second_body, second) = zlib(b"second chunk");
@@ -409,6 +513,11 @@ mod tests {
         let mut src = source(&[0; 16]);
         assert!(plan(&row, None).unwrap().read(&mut src, &keys()).is_err());
         assert_eq!(src.reads, 0);
+        assert!(plan(&row, None)
+            .unwrap()
+            .read_header(&mut src, &keys())
+            .is_err());
+        assert_eq!(src.reads, 0);
     }
 
     #[test]
@@ -449,6 +558,30 @@ mod tests {
                     .read(&mut source(&body), &keys)
                     .unwrap(),
                 expected
+            );
+        }
+        assert_eq!(
+            plan(&row, Some(&[chunk]))
+                .unwrap()
+                .read_header(&mut source(&body), &keys)
+                .unwrap(),
+            Some(expected[..16].try_into().unwrap())
+        );
+        let header = *b"ADAT0123456789ab";
+        let mut encrypted = header;
+        for (i, byte) in encrypted.iter_mut().enumerate() {
+            *byte ^= 0x80 + (i % 16) as u8;
+        }
+        let mut raw = entry(16, 16, 255);
+        raw.cipher = row.cipher;
+        for framing in [[0, 0x400, 0, 0, 4], [0x1000, 0x1000, 0, 0x1000, 4]] {
+            raw.cipher.as_mut().unwrap().framing = framing;
+            assert_eq!(
+                plan(&raw, None)
+                    .unwrap()
+                    .read_header(&mut source(&encrypted), &keys)
+                    .unwrap(),
+                Some(header)
             );
         }
         row.cipher.as_mut().unwrap().cipher_type = 19;

@@ -49,6 +49,8 @@ struct VsOut {
     @location(7) @interpolate(flat) slot: u32,
     // What moves the card's dither: the place of its record.
     @location(8) @interpolate(flat) seed: u32,
+    // Where the way the card is seen along falls on its grid.
+    @location(9) @interpolate(flat) grid: vec2<f32>,
 };
 
 fn byte_of(word: u32, at: u32) -> f32 {
@@ -121,6 +123,8 @@ fn frame_direction(cell: vec2<u32>) -> vec3<f32> {
 struct Frames {
     at: vec3<u32>,
     weights: vec3<f32>,
+    // Where the way falls on the grid, 0 to 7 along each side.
+    grid: vec2<f32>,
 };
 
 // The three frames of the cell of the grid the way `d` falls in, in the card's own frame, and their weights.
@@ -144,6 +148,39 @@ fn frames_of(d: vec3<f32>) -> Frames {
     var out: Frames;
     out.at = vec3<u32>(index_of(first), index_of(second), index_of(third));
     out.weights = weights;
+    out.grid = g;
+    return out;
+}
+
+// The stand-in block's distances, from which its weight scale runs from least to most, and those two scales: the defaults of the game's tunables.
+const WEIGHT_FADE: vec2<f32> = vec2<f32>(300.0, 2000.0);
+const WEIGHT_SCALE: vec2<f32> = vec2<f32>(1.0, 10.0);
+
+// The game's sharpening of the three frames' weights by the camera's distance `d` from the card: the heaviest gains (2/7)·k·(w − 1/3)·F, with k the weight scale at that distance and F how far the cell lies from the middle of the grid, the middle one loses half that and the lightest keeps what is left, each held in 0 to 1.
+fn sharpened(w: vec3<f32>, grid: vec2<f32>, d: f32) -> vec3<f32> {
+    let k = mix(WEIGHT_SCALE.x, WEIGHT_SCALE.y, saturate((d - WEIGHT_FADE.x) / (WEIGHT_FADE.y - WEIGHT_FADE.x)));
+    var ww = w;
+    var heavy = 0u;
+    if (ww.y > ww[heavy]) {
+        heavy = 1u;
+    }
+    if (ww.z > ww[heavy]) {
+        heavy = 2u;
+    }
+    var light = (heavy + 1u) % 3u;
+    let other = (heavy + 2u) % 3u;
+    if (ww[other] < ww[light]) {
+        light = other;
+    }
+    let middle = 3u - heavy - light;
+    let far = max(abs(grid.x - 3.5), abs(grid.y - 3.5));
+    let gain = (2.0 / 7.0) * k * (ww[heavy] - 1.0 / 3.0) * far;
+    let most = saturate(ww[heavy] + gain);
+    let mid = saturate(ww[middle] - 0.5 * gain);
+    var out = vec3<f32>(0.0);
+    out[heavy] = most;
+    out[middle] = mid;
+    out[light] = saturate(saturate(1.0 - most) - mid);
     return out;
 }
 
@@ -180,6 +217,7 @@ fn cornered(c: Card, vertex: u32, toward: vec3<f32>) -> VsOut {
     let frames = frames_of(vec3<f32>(dot(toward, c.east), dot(toward, c.north), dot(toward, c.up)));
     out.frames = frames.at;
     out.weights = frames.weights;
+    out.grid = frames.grid;
     return out;
 }
 
@@ -191,6 +229,7 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
         return hidden();
     }
     var out = cornered(c, vertex, normalize(eye - c.pivot));
+    out.weights = sharpened(out.weights, out.grid, distance(eye, c.pivot));
     out.seed = instance;
     out.clip_pos = camera.view_proj * vec4<f32>(out.world_pos, 1.0);
     return out;

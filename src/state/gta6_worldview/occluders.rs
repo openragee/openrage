@@ -24,7 +24,7 @@ const READERS: usize = 2;
 fn wanted(row: &MapRow, enabled: &Enabled, view: &View) -> bool {
     // ⚠ Holding nothing that draws, an occluder map is held back as empty (`held` 3).
     let on = enabled.allows(row) || (row.held == 3 && row.modes & u32::from(enabled.modes) != 0);
-    row.content_flags & OCCLUDERS != 0 && on && row.boxes().wanted(view, row.content_flags)
+    row.content_flags & OCCLUDERS != 0 && on && row.boxes().wants(view.eye)
 }
 
 /// The occluders of the map `name`, its archive opened through `files`.

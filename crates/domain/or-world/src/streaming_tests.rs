@@ -193,27 +193,19 @@ fn a_child_that_holds_its_parent_is_waited_for_though_its_own_children_draw_in_i
 }
 
 #[test]
-fn what_the_camera_s_velocity_brings_into_range_is_asked_for_before_it_is_in_range() {
+fn nothing_out_of_range_is_asked_for_however_fast_the_camera_closes_on_it() {
     let mut forest = parent_and_two_children();
     let waiting = [(1, 0), (2, 0)];
-    // 1,060 m from the parent, past its range and its band, closing at 100 m a second.
-    let mut view = along(1060.0);
-    let at_rest = forest.select(&view, &loading(&waiting));
-    assert!(at_rest.ahead.is_empty() && at_rest.wanted.is_empty());
+    // 1,021 m from the parent, a metre past its band, closing at 100 m a second: nothing yet.
+    let mut view = along(1021.0);
     view.velocity = Vec3::new(-100.0, 0.0, 0.0);
-    let closing = forest.select(&view, &loading(&waiting));
-    assert_eq!((closing.ahead, closing.wanted), (vec![(1, 0)], vec![]));
-    assert!(closing.drawn.is_empty());
-    // Flying away, nothing is asked for ahead; the lead is held to its most.
-    view.velocity = Vec3::new(100.0, 0.0, 0.0);
-    assert!(forest.select(&view, &loading(&waiting)).ahead.is_empty());
-    view.velocity = Vec3::new(-1.0e6, 0.0, 0.0);
-    assert!((view.lead().x - (1060.0 - MOST_AHEAD)).abs() < 0.01);
-    // 140 m from the parent and closing: the children's range of 100 m comes within the lead.
-    let mut near = along(140.0);
-    near.velocity = Vec3::new(-50.0, 0.0, 0.0);
-    let children = forest.select(&near, &loading(&waiting));
-    assert_eq!(children.ahead, vec![(2, 0)]);
+    assert!(forest.select(&view, &loading(&waiting)).wanted.is_empty());
+    // Inside the band it is asked for on the selection it is first in range at.
+    view.eye.x = 1019.0;
+    assert_eq!(
+        forest.select(&view, &loading(&waiting)).wanted,
+        vec![(1, 0)]
+    );
 }
 
 #[test]
@@ -244,10 +236,19 @@ fn a_parent_draws_beside_its_children_until_as_many_as_it_states_are_loaded() {
     forest.insert(3, vec![entity([0.0; 3], 40.0, 0.0, Some((1, 0)))]);
     let swapped = forest.select(&along(70.0), &all_ready);
     assert_eq!(ids(&swapped), vec![(2, 0), (2, 1), (3, 0)]);
-    // A parent that states none never fades out for the children that name it.
-    forest.insert(1, vec![entity([0.0; 3], 1000.0, 100.0, None)]);
-    let stated_none = forest.select(&along(70.0), &all_ready);
-    assert_eq!(ids(&stated_none), vec![(1, 0), (2, 0), (2, 1), (3, 0)]);
+    // What a parent states is raised to what is loaded: one that states fewer, or none, gives way.
+    for stated in [2, 0] {
+        forest.insert(
+            1,
+            vec![with_children(entity([0.0; 3], 1000.0, 100.0, None), stated)],
+        );
+        let raised = forest.select(&along(70.0), &all_ready);
+        assert_eq!(
+            ids(&raised),
+            vec![(2, 0), (2, 1), (3, 0)],
+            "stating {stated}"
+        );
+    }
 }
 
 #[test]
@@ -773,47 +774,29 @@ fn a_node_with_no_model_draws_nothing_and_holds_nothing_back() {
 }
 
 #[test]
-fn a_map_streams_in_within_fifty_metres_of_the_box_it_streams_by() {
+fn a_map_streams_in_within_its_streaming_box_s_sphere() {
+    // A box 200 m wide and 40 m high: its sphere is the 20 m half height plus 50, about its middle.
     let streamed = MapBox {
-        streaming: (Vec3::splat(-100.0), Vec3::splat(100.0)),
+        streaming: (
+            Vec3::new(-100.0, -100.0, -20.0),
+            Vec3::new(100.0, 100.0, 20.0),
+        ),
         entities: (Vec3::splat(-10.0), Vec3::splat(10.0)),
     };
-    assert!(streamed.wants(Vec3::new(149.0, 0.0, 0.0)));
-    assert!(!streamed.wants(Vec3::new(151.0, 0.0, 0.0)));
-    assert!(!streamed.wants(Vec3::new(0.0, 0.0, 151.0)));
-    // A camera at rest wants a map of any tier by the same test.
-    for flags in [0x1, 0x401, 0x2, 0x4] {
-        assert!(streamed.wanted(&along(149.0), flags));
-        assert!(!streamed.wanted(&along(151.0), flags));
-    }
-    // A streaming box that does not hold the entities' box is not the one streamed by.
-    let narrow = MapBox {
-        streaming: (Vec3::splat(-1.0), Vec3::splat(1.0)),
-        entities: (Vec3::splat(-200.0), Vec3::splat(200.0)),
+    assert!(streamed.wants(Vec3::new(69.0, 0.0, 0.0)));
+    assert!(!streamed.wants(Vec3::new(71.0, 0.0, 0.0)));
+    // Inside the box, but past the sphere.
+    assert!(!streamed.wants(Vec3::new(90.0, 0.0, 0.0)));
+    assert!(!streamed.wants(Vec3::new(50.0, 50.0, 0.0)));
+    // A box under a metre of half extent on one side streams in nowhere.
+    let thin = MapBox {
+        streaming: (
+            Vec3::new(-100.0, -100.0, -0.5),
+            Vec3::new(100.0, 100.0, 0.5),
+        ),
+        ..streamed
     };
-    assert!(narrow.wants(Vec3::new(240.0, 0.0, 0.0)));
-    assert!(!narrow.wants(Vec3::new(260.0, 0.0, 0.0)));
-}
-
-#[test]
-fn a_map_of_every_tier_is_asked_for_at_any_speed() {
-    assert_eq!(Tier::of(0x1), Tier::High);
-    assert_eq!(Tier::of(0x401), Tier::HighCritical);
-    assert_eq!(Tier::of(0x201), Tier::HighCritical);
-    assert_eq!(Tier::of(0x403), Tier::Medium);
-    assert_eq!(Tier::of(0x4), Tier::Low);
-    assert_eq!(Tier::of(0x80), Tier::Low);
-    let map = MapBox {
-        streaming: (Vec3::splat(-100.0), Vec3::splat(100.0)),
-        entities: (Vec3::splat(-10.0), Vec3::splat(10.0)),
-    };
-    let moving = |speed: f32| View {
-        velocity: Vec3::new(0.0, speed, 0.0),
-        ..along(0.0)
-    };
-    for flags in [0x1, 0x401, 0x2, 0x4] {
-        assert!(map.wanted(&moving(300.0), flags), "{flags:#x}");
-    }
+    assert!(!thin.wants(Vec3::ZERO));
 }
 
 #[test]
@@ -821,7 +804,8 @@ fn a_chain_of_parents_far_deeper_than_the_levels_is_selected_and_never_overflows
     // A map's own bytes name each node's parent: here each node names the one before it.
     const DEEP: u32 = 200_000;
     let nodes = (0..DEEP)
-        .map(|k| entity([0.0; 3], 1e9, 0.0, k.checked_sub(1).map(|p| (1, p))))
+        // ⚠ Not 1e9: past about 1e6 m a band of 20 m is lost in the distance's own rounding, and the fade is nought.
+        .map(|k| entity([0.0; 3], 1e5, 0.0, k.checked_sub(1).map(|p| (1, p))))
         .collect();
     let mut forest = Forest::new();
     forest.insert(1, nodes);

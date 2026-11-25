@@ -12,8 +12,8 @@ use std::collections::HashMap;
 
 use glam::Vec3;
 
-/// How far past its box a map streams in, in metres.
-pub const PRESTREAM: f32 = 50.0;
+use crate::streaming_rules::{distance_alpha, map_streaming_sphere};
+
 /// The band past its distance a level fades out over where the install states none, in metres.
 pub const FADE: f32 = 20.0;
 /// The band of an orphan that states 20 m or less, in metres.
@@ -116,19 +116,13 @@ impl Level {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct View {
     pub eye: Vec3,
-    /// Metres a second.
+    /// Metres a second: past [`FADE_MAX_SPEED`] nothing fades in time. Nothing is asked for ahead of it.
     pub velocity: Vec3,
     /// What the distances of each level are multiplied by, by `Level as usize`: the camera's scale times the level's own.
     pub scales: [f32; Level::COUNT],
     /// The band past its distance each level fades out over, by `Level as usize`, in metres.
     pub fade: [f32; Level::COUNT],
 }
-
-/// How far ahead in time a selection asks for what the camera's velocity brings into range, in
-/// seconds, and the most it takes the camera to move in that time, in metres.
-// ponytail: about what a model takes from asked to drawn on a machine at rest, not read from the game; the time each read takes if the flights show it short.
-pub const AHEAD: f32 = 1.0;
-pub const MOST_AHEAD: f32 = 150.0;
 
 impl View {
     /// A camera at rest at `eye`, every level scaled by `scale` and fading out over [`FADE`].
@@ -138,43 +132,6 @@ impl View {
             velocity: Vec3::ZERO,
             scales: [scale; Level::COUNT],
             fade: [FADE; Level::COUNT],
-        }
-    }
-
-    /// Where the camera is [`AHEAD`] seconds on at its velocity, at most [`MOST_AHEAD`] metres on.
-    pub fn lead(&self) -> Vec3 {
-        self.eye + (self.velocity * AHEAD).clamp_length_max(MOST_AHEAD)
-    }
-}
-
-/// The tier a map streams in by.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tier {
-    High,
-    HighCritical,
-    Medium,
-    Low,
-}
-
-/// How far past its box a map of each tier streams in, by `Tier as usize`, in metres.
-const TIER_PRESTREAM: [f32; 4] = [PRESTREAM; 4];
-
-impl Tier {
-    /// The tier a map's content flags put it in.
-    pub fn of(content_flags: u32) -> Self {
-        const LOD: u32 = 1 << 1;
-        // Container levels of detail, and the two kinds of distant lights.
-        const LOW: u32 = (1 << 2) | (1 << 7) | (1 << 8);
-        // Critical entities, and instance lists.
-        const CRITICAL: u32 = (1 << 9) | (1 << 10);
-        if content_flags & LOD != 0 {
-            Self::Medium
-        } else if content_flags & LOW != 0 {
-            Self::Low
-        } else if content_flags & CRITICAL != 0 {
-            Self::HighCritical
-        } else {
-            Self::High
         }
     }
 }
@@ -187,23 +144,11 @@ pub struct MapBox {
 }
 
 impl MapBox {
-    /// Whether a camera streams the map in, at any speed; `content_flags` are the map's own.
-    pub fn wanted(&self, view: &View, content_flags: u32) -> bool {
-        self.within(view.eye, TIER_PRESTREAM[Tier::of(content_flags) as usize])
-    }
-
-    /// Whether a camera at rest at `at` streams in a map of no stated tier.
+    /// Whether a camera at `at` streams the map in, at any speed: within its streaming box's sphere.
+    // ⚠ The sphere of the entities' box streams in almost nothing: a few dozen maps of thousands, at a city camera.
     pub fn wants(&self, at: Vec3) -> bool {
-        self.within(at, PRESTREAM)
-    }
-
-    fn within(&self, at: Vec3, grow: f32) -> bool {
-        let (s, e) = (self.streaming, self.entities);
-        // A streaming box that does not hold the entities is not the one the map streams by.
-        let holds = s.0.cmple(e.0).all() && s.1.cmpge(e.1).all();
-        let (min, max) = if holds { s } else { e };
-        let grow = Vec3::splat(grow);
-        at.cmpge(min - grow).all() && at.cmple(max + grow).all()
+        let (min, max) = self.streaming;
+        map_streaming_sphere(min, max).is_some_and(|sphere| sphere.contains(at))
     }
 }
 
@@ -326,8 +271,6 @@ pub struct Selection {
     pub skipped: Vec<u32>,
     /// The nodes in range whose model is loading, nearest ancestors first.
     pub wanted: Vec<NodeId>,
-    /// The nodes out of range whose model is loading that the camera's velocity brings into range at [`View::lead`].
-    pub ahead: Vec<NodeId>,
     /// Whether a fade in time is under way: the next selection differs though nothing moves.
     pub fading: bool,
 }
@@ -596,11 +539,9 @@ impl Forest {
         });
         let timed = steady && view.velocity.length() <= FADE_MAX_SPEED;
         self.last = Some((view.eye, view.scales));
-        let lead = view.lead();
         let mut pass = Pass {
             forest: self,
             view,
-            lead: (lead != view.eye).then_some(lead),
             timed,
             state,
             out: Selection::default(),
@@ -616,8 +557,6 @@ impl Forest {
 struct Pass<'a> {
     forest: &'a mut Forest,
     view: &'a View,
-    /// Where the camera will be, where it moves.
-    lead: Option<Vec3>,
     /// Whether anything fades in time this selection.
     timed: bool,
     state: &'a dyn Fn(NodeId) -> NodeState,
@@ -636,13 +575,6 @@ impl Pass<'_> {
         let node = self.node(at);
         let from_parent = parent != NONE && node.instance.is_none() && node.extent == Extent::Point;
         eye.distance(self.node(if from_parent { parent } else { at }).position)
-    }
-
-    /// Whether node `at` is loading and out of range now but in range where the camera will be.
-    fn ahead(&self, at: u32) -> bool {
-        self.lead
-            .is_some_and(|lead| self.by_distance_from(at, lead) > 0.0)
-            && (self.state)(self.forest.id_of(at)) == NodeState::Loading
     }
 
     /// How far node `at` draws whole, by its scale.
@@ -667,16 +599,10 @@ impl Pass<'_> {
 
     /// How opaque the distance alone makes node `at`: whole within the distance it draws to, and
     /// gone its band past it, in steps of 1/255.
+    // ⚠ The step is taken down from a fifth of a hundredth of a step above: a node just short of its band's end draws nothing.
     fn by_distance(&self, at: u32) -> f32 {
-        self.by_distance_from(at, self.view.eye)
-    }
-
-    /// [`Pass::by_distance`] for a camera at `eye`.
-    fn by_distance_from(&self, at: u32, eye: Vec3) -> f32 {
-        let band = self.band(at);
-        let share = ((self.reach(at) + band - self.judged(at, eye)) / band).clamp(0.0, 1.0);
-        // ⚠ The step is taken down from a fifth of a hundredth of a step above: a node just short of its band's end draws nothing.
-        (0.0255 + 255.0 * share).floor() / 255.0
+        let away = self.judged(at, self.view.eye);
+        f32::from(distance_alpha(away, self.reach(at), self.band(at))) / 255.0
     }
 
     fn first_child(&self, at: u32) -> u32 {
@@ -722,8 +648,6 @@ impl Pass<'_> {
             // ⚠ A child that holds its parent is waited for though its own children leave it nothing to draw.
             if alpha > 0.0 && loading {
                 self.out.wanted.push(id);
-            } else if alpha <= 0.0 && self.ahead(child) {
-                self.out.ahead.push(id);
             }
             (most, found, held) = (most.max(alpha), found + 1, held || (alpha > 0.0 && loading));
             child = self.next_sibling(child);
@@ -736,15 +660,17 @@ impl Pass<'_> {
         }
         let own = self.by_distance(at);
         if own <= 0.0 {
-            // A child was looked ahead for by its parent's pass.
-            if self.forest.links.parent[at as usize] == NONE && self.ahead(at) {
-                self.out.ahead.push(self.forest.id_of(at));
-            }
             return;
         }
         let node = self.node(at);
-        // ⚠ Only a parent the distance leaves whole fades out for its children.
-        let crosses = !node.batch && node.num_children > 0 && found == node.num_children;
+        // ⚠ Only a parent the distance leaves whole fades out for its children, and only once every
+        // child it states is loaded. What an entity states is raised to what is loaded, none
+        // included; a list's is not, as a list is no entity that a child attaches to (inferred).
+        let stated = match node.extent {
+            Extent::Point => node.num_children.max(found),
+            Extent::Box(..) => node.num_children,
+        };
+        let crosses = !node.batch && stated > 0 && found == stated;
         let yields = !held && crosses && own >= 1.0;
         let target = match () {
             _ if held => 1.0,

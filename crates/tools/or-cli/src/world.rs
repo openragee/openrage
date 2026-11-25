@@ -1278,7 +1278,7 @@ fn print_usage() {
     eprintln!("                           With no z, the highest ground of the column; with");
     eprintln!("                           one, from --rise <m> above it (1) down. --slope");
     eprintln!("                           <degrees> is the steepest ground (60). --level");
-    eprintln!("                           <pack> and --mode story|multiplayer mount as");
+    eprintln!("                           <pack> and --mode <story|multiplayer> mount as");
     eprintln!("                           `dlc-list` does. Static map collision only: an");
     eprintln!("                           interior's is named and not loaded, and a placed");
     eprintln!("                           prop's is not read.");

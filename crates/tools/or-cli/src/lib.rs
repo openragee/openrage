@@ -380,7 +380,7 @@ fn print_usage() {
         "  model      GTA VI models: replace a loose model's meshes from a glTF, as a new file"
     );
     eprintln!("  meta       Metadata (PSO/RBM/RBF0/XML): info, to-xml, from-xml, roundtrip");
-    eprintln!("  world      World data (.ymap/.ytyp): info, check, extents, states, create, delete, prefab, new-map, archetypes; index and at over an install");
+    eprintln!("  world      World data (.ymap/.ytyp): info, check, extents, states, create, delete, prefab, new-map, archetypes; index, at and ground over an install");
     eprintln!("  depends    What an asset needs and where a model is placed: of,");
     eprintln!("             placements, census, rules");
     eprintln!(

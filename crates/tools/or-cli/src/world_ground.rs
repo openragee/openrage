@@ -30,7 +30,7 @@ const RISE: f32 = 1.0;
 const SLOPE: f32 = 60.0;
 
 const USAGE: &str = "world ground --game <dir> <x> <y> [<z>] [--level <pack>] \
-                     [--mode story|multiplayer] [--rise <m>] [--slope <degrees>] [--kept <file>] \
+                     [--mode <story|multiplayer>] [--rise <m>] [--slope <degrees>] [--kept <file>] \
                      [--keys <file>] [--fresh] [--json]";
 
 /// The position a person asked about, and how the ground under it is looked for.

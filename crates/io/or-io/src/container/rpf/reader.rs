@@ -16,7 +16,6 @@ use super::entry::{
 };
 use super::header::{RpfEncryption, RpfHeader, RPF_HEADER_SIZE, RPF_MAX_RESOURCE_CONSUMED_SIZE};
 use super::layout::{self, Input, Toc};
-use super::rpf9::RPF9_MAGIC;
 use super::version::RpfVersion;
 
 const MAX_ENTRY_NAME_BYTES: usize = 256;
@@ -86,18 +85,26 @@ impl RpfArchive {
             name: name.as_deref(),
             crypto: keys.as_ref(),
         };
+        #[cfg(feature = "gta6")]
+        let mut rpf9 = None;
         let (version, toc) = match img1_directory {
             Some(directory) => (RpfVersion::Img1, layout::read_img1(&directory)?),
             None => {
                 let mut head = [0u8; 4];
                 read_at(&source, start_pos, &mut head)?;
                 let found = u32::from_le_bytes(head);
-                if found == RPF9_MAGIC {
-                    return Err(IoError::Rpf9TocEncrypted);
-                }
                 let version = RpfVersion::detect(head).ok_or(IoError::RpfBadMagic { found })?;
                 let toc = match version {
                     RpfVersion::Rpf7 => read_rpf7(&input)?,
+                    #[cfg(feature = "gta6")]
+                    RpfVersion::Rpf9 => {
+                        let (toc, state) = super::gta6_rpf::read(&input)?;
+                        rpf9 = Some(Arc::new(state));
+                        toc
+                    }
+                    // Its table is enciphered and this build holds no reader for it.
+                    #[cfg(not(feature = "gta6"))]
+                    RpfVersion::Rpf9 => return Err(IoError::Rpf9TocEncrypted),
                     other => layout::read(other, &input)?,
                 };
                 (version, toc)
@@ -130,6 +137,8 @@ impl RpfArchive {
             size,
             keys,
             paths: OnceLock::new(),
+            #[cfg(feature = "gta6")]
+            rpf9,
         })
     }
 }
@@ -364,7 +373,10 @@ pub(super) fn build_names(
     Ok(names)
 }
 
-fn build_tree(entries: &[RpfEntry], names: &[String]) -> Result<(Vec<RpfNode>, Vec<u32>)> {
+pub(super) fn build_tree(
+    entries: &[RpfEntry],
+    names: &[String],
+) -> Result<(Vec<RpfNode>, Vec<u32>)> {
     let mut nodes: Vec<RpfNode> = Vec::with_capacity(entries.len());
     let mut entry_to_node: Vec<u32> = vec![u32::MAX; entries.len()];
     if entries.is_empty() {
@@ -594,6 +606,10 @@ impl RpfArchive {
     /// on a `.ydr` gives a file of the right length that nothing, OpenRage
     /// included, can open.
     pub fn read_form(&self, entry_index: u32, form: BodyForm) -> Result<Vec<u8>> {
+        #[cfg(feature = "gta6")]
+        if self.version == RpfVersion::Rpf9 {
+            return self.rpf9_form(entry_index, form);
+        }
         match self.entries.get(entry_index as usize) {
             Some(RpfEntry::Resource(_)) => match form {
                 // Nothing inflates a resource, so these two are one answer.
@@ -817,6 +833,10 @@ impl RpfArchive {
 
     /// The archive stored, uncompressed, as file `entry_index` of this one, which reads through it and holds its keys.
     pub fn open_nested(self: &Arc<RpfArchive>, entry_index: u32) -> Result<RpfArchive> {
+        #[cfg(feature = "gta6")]
+        if self.version == RpfVersion::Rpf9 {
+            return self.rpf9_nested(entry_index);
+        }
         let bin = self
             .binary_entry(entry_index)
             .ok_or_else(|| IoError::RpfBadEntry {

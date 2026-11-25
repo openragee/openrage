@@ -97,6 +97,9 @@ pub struct RpfArchive {
     pub(super) keys: Arc<dyn RpfCryptoProvider>,
     /// Lower-case path to entry index, built by the first lookup by path.
     pub(super) paths: OnceLock<HashMap<String, u32>>,
+    /// An RPF9's decrypted table and keys, which its bodies and nested archives are read through.
+    #[cfg(feature = "gta6")]
+    pub(super) rpf9: Option<Arc<super::gta6_rpf::Rpf9State>>,
 }
 
 impl fmt::Debug for RpfArchive {
@@ -184,6 +187,12 @@ impl RpfArchive {
     /// Nothing is read until the builder writes: each file is carried from here as it is stored,
     /// or for RPF7 decoded and recompressed as it was.
     pub fn edit(&self) -> Result<RpfBuilder> {
+        if self.version == RpfVersion::Rpf9 {
+            return Err(IoError::Invalid {
+                what: "editing an RPF9 archive".into(),
+                why: "it is read-only here; the GTA VI archive writer writes a changed copy".into(),
+            });
+        }
         RpfBuilder::editing(self)
     }
 

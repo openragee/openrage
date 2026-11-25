@@ -256,6 +256,8 @@ not (
   | binary_id(=or-io::gta6_content_cipher)
   | binary_id(=or-io::gta6_content_extent)
   | binary_id(=or-io::gta6_mount_every_nested_table)
+  | binary_id(=or-io::gta6_rpf_archive)
+  | binary_id(=or-title::a_gta_vi_archive_mounts_like_any_other)
   | binary_id(=or-io::gta6_string_blobs)
   | binary_id(=or-io::gta6_string_hashes)
   | binary_id(=or-io::gta6_rpf9_toc_roundtrips_through_encrypt)

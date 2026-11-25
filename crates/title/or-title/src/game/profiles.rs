@@ -345,7 +345,7 @@ impl GameProfile for Gta6 {
     }
 
     fn description(&self) -> &'static str {
-        "GTA VI. Its RPF9 archives' tables are encrypted and OpenRage has no key for them, so no entry is listed by name: an archive opens as a scan of the bodies stored in the clear, and the install opens as a plain folder."
+        "GTA VI. Its RPF9 archives' tables are encrypted: with a key snapshot an archive is browsed as a folder of its entries, and with no key it opens as a scan of the bodies stored in the clear. The install opens as a plain folder."
     }
 
     fn container(&self) -> ContainerFamily {
@@ -376,9 +376,10 @@ impl GameProfile for Gta6 {
         Some("7952987A")
     }
 
-    // ⚠ Empty on purpose: `common.rpf` sits at the package root, but no
-    // archive's role in GTA VI is measured, and naming one here would read as a
-    // base archive the mount can open.
+    // ⚠ Empty on purpose: a GTA VI install is mounted by the archives and
+    // documents its registration documents name, never by a base archive and an
+    // update layered over it, so naming `common.rpf` here would give it a role
+    // it does not have.
     fn install_layout(&self) -> InstallLayout {
         InstallLayout {
             base_archive: "",

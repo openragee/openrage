@@ -1,12 +1,12 @@
 //! A geometry's +0x148 runs, (key index, primitive count) pairs of u16 that give its primitives in
 //! order an entry each of its +0x138 table of 8-byte keys, followed through a primitive added or
-//! deleted; a vertex edit leaves them. And a geometry child's record copied with every array it
-//! names laid out anew.
+//! deleted; a vertex edit leaves them. And a geometry child's record, type 5 or 4, copied with
+//! every array it names laid out anew.
 
 use crate::container::rpf::Rpf9Sections;
 
 use super::bound::{child_bound, BOUND_CHILD, GEOMETRY, PLAIN_GEOMETRY};
-use super::bytes::{sections, u64_at};
+use super::bytes::{sections, u64_at, Bytes};
 use super::write_bound_grow::{room, BoundGrowError};
 use super::write_bvh::NODE;
 use super::write_physics::{put, refuse};
@@ -24,9 +24,16 @@ const LONGEST: usize = 0xFFFF;
 const BVH_RECORD: usize = 0x70;
 /// The words of a geometry child's record that name an array a copy lays out anew.
 const NAMED: [usize; 7] = [0x88, 0xB0, 0xF0, 0x118, 0x130, 0x138, 0x148];
+/// A type-4 geometry child's record bytes: the bytes at +0x130 are the next object's.
+const PLAIN_RECORD: usize = 0x130;
+/// The same words of a type-4 geometry child's record.
+const PLAIN_NAMED: [usize; 8] = [0x78, 0x88, 0xB0, 0xC0, 0xC8, 0xF0, 0x108, 0x118];
 
 /// Why a child is not copied.
-pub(super) const NOT_COPIED: &str = "only a primitive child or a geometry with a BVH is copied: what a geometry with none holds at +0xF8 and +0x108 is not known";
+pub(super) const NOT_COPIED: &str = "a child that does not read is not copied";
+const F8_SET: &str = "a type-4 geometry whose +0xF8 is set is not copied: the record it names holds pair arrays whose element size is not known";
+const OCTANTS: &str = "a type-4 geometry's octants are not laid out as in every measured one: the 8 counts just before the 8 pointers, each pointer null exactly when its count is 0, the index arrays back to back after them";
+const SLOTS: &str = "a slot of a type-4 geometry's +0x108 block is not laid out as in every measured one: a count equal to its capacity, and a pointer set exactly when the count is not 0";
 const EXCESS: &str = "the geometry's runs give keys to more primitives than it holds, and which primitive the extra runs belong to is not known";
 const SHARED: &str =
     "a word of the geometry child aims at bytes no reader lays out, so a copy would share them";
@@ -221,19 +228,97 @@ pub(super) fn runs_after_add(s: &mut Rpf9Sections, at: usize) -> Grown<()> {
     runs_written(s, at, &held, &index)
 }
 
-/// What a geometry child's copy lays out: each array its record names, by the word that names it,
-/// and its BVH record with the nodes at the count it allocates.
-struct Parts {
-    record: Vec<u8>,
-    arrays: Vec<(usize, Vec<u8>)>,
-    bvh: Option<(Vec<u8>, Vec<u8>)>,
+/// Bytes a geometry child's copy lays out anew: the record's words that name them, each with where
+/// in them it aims, and their own words that aim into them, each with where.
+struct Piece {
+    bytes: Vec<u8>,
+    named_by: Vec<(usize, usize)>,
+    inner: Vec<(usize, usize)>,
 }
 
-fn parts(v: &[u8], at: usize) -> Result<Parts> {
+impl Piece {
+    fn named(word: usize, bytes: Vec<u8>) -> Self {
+        Piece {
+            bytes,
+            named_by: vec![(word, 0)],
+            inner: Vec::new(),
+        }
+    }
+}
+
+/// A type-4 geometry's octant counts, pointers and index arrays as one piece; `None` where its
+/// +0xC0 and +0xC8 are both null.
+fn octants(b: Bytes, at: usize) -> Result<Option<Piece>> {
+    let (counts, pointers) = match (
+        b.ptr("octant counts", at + 0xC0)?,
+        b.ptr("octants", at + 0xC8)?,
+    ) {
+        (None, None) => return Ok(None),
+        (Some(c), Some(p)) if p == c + 32 => (c, p),
+        _ => return Err(refuse(OCTANTS)),
+    };
+    let mut inner = Vec::new();
+    let mut next = 96;
+    for i in 0..8 {
+        let count = b.u32("octant count", counts + 4 * i)? as usize;
+        let to = b.ptr("octant indices", pointers + 8 * i)?;
+        if to != (count != 0).then_some(counts + next) {
+            return Err(refuse(OCTANTS));
+        }
+        if count != 0 {
+            inner.push((32 + 8 * i, next));
+            next += b.array("octant indices", counts + next, count, 4)?.len();
+        }
+    }
+    Ok(Some(Piece {
+        bytes: b.get("octants", counts, next)?.to_vec(),
+        named_by: vec![(0xC0, 0), (0xC8, 32)],
+        inner,
+    }))
+}
+
+/// A type-4 geometry's +0x108 block of three slots and each slot's u16 array as one piece; `None`
+/// where the word is null.
+fn displacements(b: Bytes, at: usize) -> Result<Option<Piece>> {
+    let Some(block) = b.ptr("+0x108 block", at + 0x108)? else {
+        return Ok(None);
+    };
+    let mut bytes = b.get("+0x108 block", block, 48)?.to_vec();
+    named_only(&bytes, &[8, 24, 40])?;
+    let mut inner = Vec::new();
+    for slot in (0..48).step_by(16) {
+        let count = b.u32("+0x108 slot count", block + slot)?;
+        let capacity = b.u32("+0x108 slot capacity", block + slot + 4)?;
+        let to = match b.ptr("+0x108 slot array", block + slot + 8)? {
+            None if count == 0 && capacity == 0 => continue,
+            Some(to) if count != 0 && count == capacity => to,
+            _ => return Err(refuse(SLOTS)),
+        };
+        let array = b.array("+0x108 slot array", to, count as usize, 2)?;
+        let rel = bytes.len().next_multiple_of(16);
+        bytes.resize(rel, 0);
+        bytes.extend_from_slice(array);
+        inner.push((slot + 8, rel));
+    }
+    Ok(Some(Piece {
+        bytes,
+        named_by: vec![(0x108, 0)],
+        inner,
+    }))
+}
+
+/// A geometry child's record of type `kind` and what its copy lays out: each array it names, and
+/// a type-5 child's BVH record with the nodes at the count it allocates.
+fn parts(v: &[u8], at: usize, kind: u8) -> Result<(Vec<u8>, Vec<Piece>)> {
     sections(v, Some(&[]), |b, _| {
-        let record = b.get("geometry child", at, BOUND_CHILD)?.to_vec();
+        let plain = kind == PLAIN_GEOMETRY;
+        let len = if plain { PLAIN_RECORD } else { BOUND_CHILD };
+        let mut record = b.get("geometry child", at, len)?.to_vec();
+        if plain && b.u64("+0xF8 record", at + 0xF8)? != 0 {
+            return Err(refuse(F8_SET));
+        }
         let primitives = b.u32("primitive count", at + 0xD4)? as usize;
-        let lists = [
+        let mut lists = vec![
             (0x88, "primitives", primitives, 16),
             (
                 0xB0,
@@ -248,53 +333,65 @@ fn parts(v: &[u8], at: usize) -> Result<Parts> {
                 8,
             ),
             (0x118, "per-primitive material indices", primitives, 1),
-            (
-                0x138,
-                "key table",
-                usize::from(b.u16("key count", at + 0x140)?),
-                8,
-            ),
-            (
-                0x148,
-                "key runs",
-                b.u32("run word count", at + 0x144)? as usize,
-                2,
-            ),
         ];
-        let mut arrays = Vec::new();
+        match plain {
+            true => lists.push((
+                0x78,
+                "shrunk vertices",
+                usize::from(b.u16("hull vertex count", at + 0x84)?),
+                6,
+            )),
+            false => lists.extend([
+                (
+                    0x138,
+                    "key table",
+                    usize::from(b.u16("key count", at + 0x140)?),
+                    8,
+                ),
+                (
+                    0x148,
+                    "key runs",
+                    b.u32("run word count", at + 0x144)? as usize,
+                    2,
+                ),
+            ]),
+        }
+        let mut pieces = Vec::new();
         for (word, what, count, stride) in lists {
             let Some(to) = b.ptr(what, at + word)? else {
                 continue;
             };
             let bytes = b.array(what, to, count, stride)?;
-            // An empty array names nothing a copy could share.
-            if !bytes.is_empty() {
-                arrays.push((word, bytes.to_vec()));
+            // An empty array names nothing a copy could share, so the copy's word is null rather
+            // than left aiming into the source.
+            match bytes.is_empty() {
+                true => record[word..word + 8].fill(0),
+                false => pieces.push(Piece::named(word, bytes.to_vec())),
             }
         }
-        let bvh = match b.ptr("BVH", at + 0x130)? {
-            Some(h) => {
-                let record = b.get("BVH", h, BVH_RECORD)?.to_vec();
-                let count = b.u32("BVH node count", h + 0x58)? as usize;
-                let held = count.max(b.u32("BVH allocated nodes", h + 0x5C)? as usize);
-                let mut nodes = b
-                    .array("BVH nodes", b.to("BVH nodes", h + 0x50)?, count, NODE)?
-                    .to_vec();
-                let len = (held.checked_mul(NODE))
-                    .filter(|l| *l <= b.len())
-                    .ok_or(refuse(
-                        "the geometry's BVH allocates more nodes than its section holds",
-                    ))?;
-                nodes.resize(len, 0);
-                Some((record, nodes))
-            }
-            None => None,
-        };
-        Ok(Parts {
-            record,
-            arrays,
-            bvh,
-        })
+        if plain {
+            pieces.extend(octants(b, at)?);
+            pieces.extend(displacements(b, at)?);
+        } else if let Some(h) = b.ptr("BVH", at + 0x130)? {
+            let mut bytes = b.get("BVH", h, BVH_RECORD)?.to_vec();
+            named_only(&bytes, &[0x50])?;
+            let count = b.u32("BVH node count", h + 0x58)? as usize;
+            let held = count.max(b.u32("BVH allocated nodes", h + 0x5C)? as usize);
+            let nodes = b.array("BVH nodes", b.to("BVH nodes", h + 0x50)?, count, NODE)?;
+            let len = (held.checked_mul(NODE))
+                .filter(|l| *l <= b.len())
+                .ok_or(refuse(
+                    "the geometry's BVH allocates more nodes than its section holds",
+                ))?;
+            bytes.extend_from_slice(nodes);
+            bytes.resize(BVH_RECORD + len, 0);
+            pieces.push(Piece {
+                bytes,
+                named_by: vec![(0x130, 0)],
+                inner: vec![(0x50, BVH_RECORD)],
+            });
+        }
+        Ok((record, pieces))
     })
 }
 
@@ -310,48 +407,38 @@ fn named_only(bytes: &[u8], known: &[usize]) -> Result<()> {
 }
 
 /// The record of a copy of the geometry child at `source`; `None` for a child that is no geometry.
-// Every array it names, its BVH record and nodes are laid out anew past the virtual section's end
-// and named by it. Its keys are copied as they are: a key may be named by several geometries of a
-// body.
+// Every array it names, a type-5 child's BVH record and nodes, a type-4 child's octants and +0x108
+// block are laid out anew past the virtual section's end and named by it. Its keys are copied as
+// they are: a key may be named by several geometries of a body.
 pub(super) fn geometry_copied(s: &mut Rpf9Sections, source: usize) -> Grown<Option<Vec<u8>>> {
     let v = &s.virtual_section;
-    match sections(v, Some(&[]), |b, _| b.u8("bound type", source + 0x10))? {
-        GEOMETRY => {}
-        PLAIN_GEOMETRY => return Err(refuse(NOT_COPIED).into()),
+    let kind = sections(v, Some(&[]), |b, _| b.u8("bound type", source + 0x10))?;
+    let named: &[usize] = match kind {
+        GEOMETRY => &NAMED,
+        PLAIN_GEOMETRY => &PLAIN_NAMED,
         _ => return Ok(None),
-    }
+    };
     sections(v, Some(&[]), |b, _| child_bound(b, source))?;
-    let Parts {
-        mut record,
-        arrays,
-        bvh,
-    } = parts(v, source)?;
-    named_only(&record, &NAMED)?;
-    let mut lens: Vec<usize> = arrays.iter().map(|(_, bytes)| bytes.len()).collect();
-    if let Some((r, nodes)) = &bvh {
-        named_only(r, &[0x50])?;
-        lens.extend([r.len(), nodes.len()]);
-    }
+    let (mut record, pieces) = parts(v, source, kind)?;
+    named_only(&record, named)?;
+    let lens: Vec<usize> = pieces.iter().map(|p| p.bytes.len()).collect();
     let places = room(s, &lens)?;
     let v = &mut s.virtual_section;
-    for ((word, bytes), &to) in arrays.iter().zip(&places) {
-        put(v, to, bytes)?;
-        put(&mut record, *word, &word_of(to))?;
-    }
-    if let Some((mut r, nodes)) = bvh {
-        let (to, nodes_to) = (places[arrays.len()], places[arrays.len() + 1]);
-        put(v, nodes_to, &nodes)?;
-        put(&mut r, 0x50, &word_of(nodes_to))?;
-        put(v, to, &r)?;
-        put(&mut record, 0x130, &word_of(to))?;
+    for (mut piece, to) in pieces.into_iter().zip(places) {
+        for (word, rel) in piece.inner {
+            put(&mut piece.bytes, word, &word_of(to + rel))?;
+        }
+        put(v, to, &piece.bytes)?;
+        for (word, rel) in piece.named_by {
+            put(&mut record, word, &word_of(to + rel))?;
+        }
     }
     Ok(Some(record))
 }
 
-/// A copy of geometry `g`; `None` for one with no BVH, which a body does not copy.
-pub(super) fn geometry_value_copied(g: &BoundGeometry) -> Option<ChildBound> {
-    g.bvh.as_ref()?;
-    Some(ChildBound::Geometry(BoundGeometry {
+/// A copy of geometry `g`.
+pub(super) fn geometry_value_copied(g: &BoundGeometry) -> ChildBound {
+    ChildBound::Geometry(BoundGeometry {
         box_min: g.box_min,
         box_max: g.box_max,
         vertices: g.vertices.clone(),
@@ -360,5 +447,5 @@ pub(super) fn geometry_value_copied(g: &BoundGeometry) -> Option<ChildBound> {
         primitive_materials: g.primitive_materials.clone(),
         bvh: g.bvh,
         unknown_shapes: g.unknown_shapes.clone(),
-    }))
+    })
 }

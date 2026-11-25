@@ -21,6 +21,7 @@ mod gfx;
 mod gta6_anim;
 mod gta6_anim_scene;
 mod gta6_bound_edits;
+mod gta6_dlc;
 mod gta6_embedded_texture;
 mod gta6_export;
 mod gta6_expression_tracks;

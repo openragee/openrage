@@ -324,10 +324,10 @@ pub fn delete_bound_child(b: &mut Bound, child: usize) -> Result<BoundChild> {
     Ok(taken)
 }
 
-/// A shape's copy; `None` for a geometry with no BVH.
-fn copied(shape: &ChildBound) -> Option<ChildBound> {
-    Some(match *shape {
-        ChildBound::Geometry(ref g) => return geometry_value_copied(g),
+/// A shape's copy.
+fn copied(shape: &ChildBound) -> ChildBound {
+    match *shape {
+        ChildBound::Geometry(ref g) => geometry_value_copied(g),
         ChildBound::Sphere { centre, radius } => ChildBound::Sphere { centre, radius },
         ChildBound::Capsule {
             box_min,
@@ -388,7 +388,7 @@ fn copied(shape: &ChildBound) -> Option<ChildBound> {
             height,
             margin,
         },
-    })
+    }
 }
 
 /// Child `child` of `b` copied as `b`'s last child at its place; where the copy is.
@@ -399,7 +399,7 @@ pub fn copy_bound_child(b: &mut Bound, child: usize) -> Result<usize> {
     }
     let shape = (c.bound.as_ref())
         .and_then(|s| s.as_ref().ok())
-        .and_then(copied)
+        .map(copied)
         .ok_or(refuse(NOT_COPIED))?;
     let copy = BoundChild {
         matrix: c.matrix,

@@ -1184,6 +1184,9 @@ pub use bits::{class_of_bit, ClassNamedBy};
 #[path = "particles_colour.rs"]
 mod colour_word;
 
+#[path = "particles_fields.rs"]
+mod fields_word;
+
 #[path = "particles_tables.rs"]
 mod tables;
 pub use tables::{

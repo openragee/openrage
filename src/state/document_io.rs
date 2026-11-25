@@ -213,8 +213,9 @@ pub(super) fn parse_payload_from_path(
             return Ok((tree, None));
         }
         // Else its scan lists it, and a toast says why.
-        if let Some(payload) = super::rpf9_scan::rpf9_table_document::archive_payload(path)? {
-            return Ok((payload, None));
+        super::rpf9_scan::rpf9_table::offer(path);
+        if let Some(scan) = super::rpf9_scan::Rpf9ScanDocument::open(path)? {
+            return Ok((DocPayload::Rpf9(Arc::new(scan)), None));
         }
     }
     // ⚠ Never read whole: a pack can be gigabytes, and a texture is read only when it is shown.
@@ -440,11 +441,15 @@ pub(super) fn serialize_payload(
         DocPayload::Gfx(movie) => movie.save().map_err(|e| e.to_string()),
         DocPayload::MoveNetwork(network) => network.save().map_err(|e| e.to_string()),
         DocPayload::Dds(texture) => super::dds_document::save(texture),
-        DocPayload::Rpf(v) => {
-            serialize_archive_records(v.session.file_records()?, rpf_mode, crypto)
-        }
+        DocPayload::Rpf(v) => match super::rpf_archive_open::tree_verbs::refused_tree(&v.session) {
+            Some(why) => Err(why),
+            None => serialize_archive_records(v.session.file_records()?, rpf_mode, crypto),
+        },
         DocPayload::Text(t) => Ok(t.encode()),
-        DocPayload::Meta(m) => m.to_bytes().map_err(|e| format!("meta serialize: {e}")),
+        DocPayload::Meta(m) => {
+            super::gta6_meta_save::meta_bytes(m, || super::rpf9_scan::rpf9_table::keys().ok())
+                .map_err(|e| format!("meta serialize: {e}"))
+        }
         DocPayload::Hex(_) => Err(READ_ONLY_HEX.to_string()),
         DocPayload::Ttpf(ttpf) => ttpf.save(),
         DocPayload::Rpf9(_) => Err(crate::i18n::tr(READ_ONLY_RPF9).to_string()),

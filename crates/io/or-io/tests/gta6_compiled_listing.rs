@@ -83,7 +83,7 @@ fn walk(file: &mut File, mount: &Gta6Mount, keys: &GtaViKeys, depth: usize, t: &
                             *t.unnamed.entry(ins.opcode).or_default() += 1;
                         }
                     }
-                    disasm::listing(&program).map_err(|e| e.to_string())
+                    disasm::listing(&program, None).map_err(|e| e.to_string())
                 });
             match read {
                 Ok(listing) => {
@@ -164,7 +164,7 @@ fn every_compiled_script_prints_as_a_listing() {
         t.programs
     );
     assert!(
-        share >= 95.0,
-        "the table names 98.85% of the instructions of 689 of the build's programs, here {share:.2}%"
+        share >= 99.9,
+        "the table names every instruction of 689 of the build's programs, here {share:.2}%"
     );
 }

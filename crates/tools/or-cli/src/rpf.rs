@@ -15,7 +15,6 @@ use or_io::container::rpf::{
     Rpf9ZlibRun, RpfArchive, RpfBuilder, RpfCryptoProvider, RpfEncryption, RpfEntry, RpfHeader,
     RpfNode, RpfVersion, RPF9_HEADER_SIZE, RPF9_MAGIC, RPF9_MISSING_RUN,
 };
-use or_io::IoError;
 
 use crate::project::Failure::{self, Run, Usage};
 
@@ -189,7 +188,7 @@ pub(crate) fn resolve_read_provider(
 ) -> Result<Arc<dyn RpfCryptoProvider>, String> {
     // Before any key is looked for: no provider opens RPF9, and its folder may hold a `common.rpf`.
     if describe_rpf9(archive_path)? {
-        return Err(IoError::Rpf9TocEncrypted.to_string());
+        return Err(rpf9_refusal());
     }
     if let Some(p) = keys_override {
         let cache = KeysCache::read_from(p)
@@ -212,6 +211,28 @@ pub(crate) fn resolve_read_provider(
         }
         _ => Ok(Arc::new(NoOpCryptoProvider::new())),
     }
+}
+
+/// How a GTA VI archive's entries are listed: with a key snapshot, and with none.
+fn rpf9_listing() -> String {
+    format!(
+        "its table is enciphered: with a key snapshot ({} set, or `rpf9 list <archive> --keys \
+         <snapshot>`) `rpf9 list` lists its entries, by name where a harvested vocabulary or \
+         --names folder holds the name and by hash otherwise, and with none `rpf list` lists the \
+         bodies a scan finds",
+        or_io::container::rpf::GTA6_SNAPSHOT_ENV
+    )
+}
+
+/// Why a verb that reads or writes GTA V's archive generations refuses a GTA VI one, and what to run.
+fn rpf9_refusal() -> String {
+    format!(
+        "This is an RPF9 archive (GTA VI), which this verb does not read or write, and {}. \
+         `rpf9 copy`, `replace`, `add`, `remove`, `rename` and `defrag` write a changed copy to a \
+         new file with the same key snapshot, and the game refuses that copy: only its maker can \
+         sign the table",
+        rpf9_listing()
+    )
 }
 
 fn find_install_root(archive_path: &Path) -> Option<PathBuf> {
@@ -273,7 +294,7 @@ fn cmd_info(args: &[String]) -> Result<(), String> {
         .ok_or_else(|| "missing <archive.rpf>".to_string())?;
     let path_buf = Path::new(path);
     if describe_rpf9(path_buf)? {
-        println!("  listing       {}", IoError::Rpf9TocEncrypted);
+        println!("  listing       {}", rpf9_listing());
         return Ok(());
     }
     let provider = resolve_read_provider(path_buf, keys_override.as_deref())?;
@@ -1583,6 +1604,7 @@ fn open_headerless(resource: &Rpf9Resource, bytes: &[u8], name: &str) -> Result<
     if let (instance, Some(layout), _) = &document {
         let stored = [virtual_section, physical].concat();
         super::meta::print_gta6_save(layout, instance, &stored);
+        super::gta6_meta_names::print_text_names(layout, instance);
     }
     if let Some(or_io::meta::binary::ContainerLayout::Rbm(rbm)) =
         document.1.as_ref().map(|l| &l.container)
@@ -2526,8 +2548,18 @@ mod tests {
         }
         assert_eq!(
             resolve_read_provider(&archive, None).err(),
-            Some(IoError::Rpf9TocEncrypted.to_string())
+            Some(rpf9_refusal())
         );
+        let said = rpf9_refusal();
+        for words in [
+            "rpf9 list",
+            "rpf9 copy",
+            "by hash",
+            or_io::container::rpf::GTA6_SNAPSHOT_ENV,
+            "the game refuses",
+        ] {
+            assert!(said.contains(words), "{said}");
+        }
     }
 
     /// Where the table of [`rpf9_with_a_body`]'s head ends, and so where its body starts.

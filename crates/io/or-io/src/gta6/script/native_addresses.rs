@@ -85,6 +85,13 @@ impl NativeAddresses {
         Ok(table)
     }
 
+    /// The table last cached in `config_dir`, whatever folder it was built from; `None` where there is none or it does not read.
+    pub fn cached(config_dir: &Path) -> Option<Self> {
+        let text = std::fs::read_to_string(config_dir.join(CACHE_FILE)).ok()?;
+        let (head, rows) = text.split_once('\n')?;
+        head.starts_with(CACHE_HEAD).then(|| from_cache(rows))?
+    }
+
     /// The table the listings at `paths` declare; a listing that does not open is refused by name.
     pub fn read(paths: &[PathBuf]) -> Result<Self, NativeAddressesError> {
         let mut table = Self::default();

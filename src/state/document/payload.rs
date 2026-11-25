@@ -45,8 +45,6 @@ pub enum DocPayload {
     Rpf(RpfDocument),
     /// A GTA VI archive, as a scan without its table finds it.
     Rpf9(std::sync::Arc<crate::state::rpf9_scan::Rpf9ScanDocument>),
-    /// A GTA VI archive, as its decrypted table lists it; no scan runs for it.
-    Rpf9Table(std::sync::Arc<crate::state::rpf9_scan::rpf9_table_document::Rpf9TableDocument>),
     /// A GTA VI animation resource a scan found, read only.
     Gta6Anim(std::sync::Arc<or_io::gta6::anim::AnimResource>),
     /// A GTA VI drawable, fragment, bound or dictionary of drawables, its edited materials saved as a loose resource.
@@ -96,7 +94,7 @@ impl DocPayload {
             DocPayload::Dds(_) => DocumentKind::Dds,
             DocPayload::Ttpf(_) => DocumentKind::Ttpf,
             DocPayload::Rpf(_) => DocumentKind::Rpf,
-            DocPayload::Rpf9(_) | DocPayload::Rpf9Table(_) => DocumentKind::Rpf9,
+            DocPayload::Rpf9(_) => DocumentKind::Rpf9,
             DocPayload::Gta6Anim(_) => DocumentKind::Gta6Anim,
             DocPayload::Gta6Drawable(_) => DocumentKind::Gta6Drawable,
             DocPayload::Gta6Text(_) => DocumentKind::Gta6Text,

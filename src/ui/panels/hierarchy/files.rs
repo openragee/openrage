@@ -12,13 +12,8 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
     super::rows::focus_on_drop(ui, state, ids::FILES);
     history_input(ui, state);
 
-    // A GTA VI archive a key opens lists its table: its tab, and the tab of a body opened from it.
-    if let Some(table) = state.table_listing_the_active_tab() {
-        rpf9_table_list::draw(ui, state, table);
-        return;
-    }
-    // One no key opens has no tree: its tab, and the tab of a body opened from it, list what its
-    // scan found.
+    // A GTA VI archive no key opens has no tree: its tab, and the tab of a body opened from it, list
+    // what its scan found.
     if let Some(scan) = state.scan_listing_the_active_tab() {
         crate::ui::panels::inspector::draw_scan_list(ui, state, scan);
         return;
@@ -219,6 +214,3 @@ fn draw_trees(ui: &mut egui::Ui, state: &mut AppState) {
     });
     outcome.apply(state, ui.ctx());
 }
-
-#[path = "rpf9_table_list.rs"]
-mod rpf9_table_list;

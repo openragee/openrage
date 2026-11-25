@@ -56,15 +56,19 @@ fn renumbered(
     Ok(set)
 }
 
-/// `set` writing group A's track `id` on the word of D's track `from` as well, in A's order: D's
-/// slots numbered anew and every slot of group O moved up by its components.
+/// `set` writing group A's track `id` on the word of D's track `from` as well, or as a facial
+/// translation where D is empty and `from` is 0, in A's order: D's slots numbered anew and every
+/// slot of group O moved up by its components.
 pub(super) fn add_facial_output(
     set: &Expressions,
     from: usize,
     id: u32,
 ) -> Result<Expressions, AnimError> {
-    let (_, word) = picked(set, ExpressionGroup::FacialOutputs, from)?;
     let d = &set.facial_outputs;
+    let word = match d.tracks.is_empty() && from == 0 {
+        true => FACIAL_TRANSLATION,
+        false => picked(set, ExpressionGroup::FacialOutputs, from)?.1,
+    };
     if d.tracks.contains(&(id, word)) {
         return Err(unwritten(
             "the group already states that id on that track word",

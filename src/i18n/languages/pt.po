@@ -16936,88 +16936,11 @@ msgstr "Gravar as edições do documento do GTA VI no lugar da sua entrada, numa
 msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
 msgstr "Sem chaves do GTA VI: defina a pasta de instalação do GTA VI em Configurações ▸ Jogos para que o executável dela possa desbloqueá-las."
 
-msgid "resource"
-msgstr "recurso"
-
-msgid "media"
-msgstr "mídia"
-
-msgid "other class"
-msgstr "outra classe"
-
 msgid "{file} is listed by a scan without its table: {why}"
 msgstr "{file} é listado por uma varredura sem a sua tabela: {why}"
 
-msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
-msgstr "Escolha a pasta do GTA VI nas Configurações, ou abra um dos arquivos dela, para listar os arquivos a partir das tabelas deles."
-
-msgid "Find by name, or by hash as 0x hex"
-msgstr "Procurar por nome, ou por hash em hexadecimal 0x"
-
-msgid "Only the archives expanded are searched."
-msgstr "Só os arquivos expandidos são pesquisados."
-
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} é um arquivo novo com a edição no lugar da sua entrada e a sua tabela como foi lida."
-
-msgid "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}."
-msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
-msgstr[0] "Listado a partir da sua tabela decifrada: {count} entrada, {named} delas com nome, sob a chave de tabela {key}."
-msgstr[1] "Listado a partir da sua tabela decifrada: {count} entradas, {named} delas com nome, sob a chave de tabela {key}."
-
-msgid "This entry's row states no start, so its body cannot be read."
-msgstr "A linha desta entrada não indica nenhum início, por isso o seu corpo não pode ser lido."
-
-msgid "Click to expand or collapse this nested archive, listed from its own table."
-msgstr "Clique para expandir ou recolher este archive aninhado, listado a partir da sua própria tabela."
-
-msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
-msgstr "Clique para abri-lo na aba de pré-visualização e clique duas vezes para mantê-lo numa aba própria; um corpo cifrado é decifrado primeiro."
-
-msgid "Extract to a file…"
-msgstr "Extrair para um arquivo…"
-
-msgid "Replace with a file…"
-msgstr "Substituir por um arquivo…"
-
-msgid "Writes a new copy of the archive with this entry replaced, which the game refuses: only its maker can sign the table."
-msgstr "Grava uma nova cópia do archive com esta entrada substituída, que o jogo recusa: só o seu criador pode assinar a tabela."
-
-msgid "Replace with a file"
-msgstr "Substituir por um arquivo"
-
-msgid "Save the new archive"
-msgstr "Salvar o novo archive"
-
-msgid "Wrote {entry} to {file}."
-msgstr "{entry} gravado em {file}."
-
-msgid "Cannot extract {entry}: {reason}"
-msgstr "Não é possível extrair {entry}: {reason}"
-
-msgid "{file} is a new archive with {entry} replaced, which the game refuses because only its maker can sign the table this changed."
-msgstr "{file} é um novo archive com {entry} substituído, que o jogo recusa porque só o seu criador pode assinar a tabela que isto alterou."
-
-msgid "{file} is a new archive the same as the one it was read from: the file holds the bytes {entry} holds."
-msgstr "{file} é um novo archive igual àquele de onde foi lido: o arquivo contém os bytes que {entry} contém."
-
-msgid "Cannot replace {entry}: {reason}"
-msgstr "Não é possível substituir {entry}: {reason}"
-
-msgid "the file written is a new one, and the archive it is read from is never written"
-msgstr "o arquivo gravado é um novo, e o archive de onde se lê nunca é gravado"
-
-msgid "entry {index} is not in its table"
-msgstr "a entrada {index} não está na sua tabela"
-
-msgid "the entry's row states no start, so its body is not known"
-msgstr "a linha da entrada não indica nenhum início, por isso o seu corpo não é conhecido"
-
-msgid "a nested archive whose row states no stored size"
-msgstr "um archive aninhado cuja linha não indica nenhum tamanho armazenado"
-
-msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
-msgstr "o archive termina a {copied} bytes dentro do archive aninhado de {stored} bytes"
 
 msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
 msgstr "Um corpo EDUP: a sua palavra de contagem em 0x04 é {count}, e {length} bytes de carga seguem o seu cabeçalho de 8 bytes."
@@ -17039,3 +16962,62 @@ msgstr "Em {place}"
 
 msgid "Look north over the square of 512 m where most maps of this place lie"
 msgstr "Olhar para norte sobre o quadrado de 512 m onde está a maioria dos mapas deste lugar"
+msgid "entry {entry} is not in this table"
+msgstr "a entrada {entry} não está nesta tabela"
+
+msgid "Real size"
+msgstr "Tamanho real"
+
+msgid "Enciphered"
+msgstr "Cifrado"
+
+msgid "24 bytes"
+msgstr "24 bytes"
+
+msgid "20 bytes, a headerless resource's"
+msgstr "20 bytes, os de um recurso sem cabeçalho"
+
+msgid "Row"
+msgstr "Linha"
+
+msgid "Name hash"
+msgstr "Hash do nome"
+
+msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
+msgstr "{file} é um archive do GTA VI, que nunca é gravado no lugar: Salvar como… grava as suas edições em um arquivo novo, que o jogo recusa porque a sua assinatura cobre a tabela."
+
+msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
+msgstr "{file} é um archive do GTA VI, que nunca é gravado no lugar: abra-o sozinho e Salvar como… grava as suas edições em um arquivo novo, que o jogo recusa porque a sua assinatura cobre a tabela."
+
+msgid "{file} is a new archive with the tree's edits, which the game refuses because only its maker can sign the table they changed."
+msgstr "{file} é um novo archive com as edições da árvore, que o jogo recusa porque só o seu criador pode assinar a tabela que elas alteraram."
+
+msgid "Save the edits to a new archive, which the game refuses because its signature covers the table"
+msgstr "Salvar as edições em um novo archive, que o jogo recusa porque a sua assinatura cobre a tabela"
+
+msgid "the tree is no GTA VI archive opened on its own"
+msgstr "a árvore não é um archive do GTA VI aberto sozinho"
+
+msgid "an archive of the tree is no longer open"
+msgstr "um archive da árvore não está mais aberto"
+
+msgid "entry {index} states no start"
+msgstr "a entrada {index} não indica nenhum início"
+
+msgid "{name} has no body of its own"
+msgstr "{name} não tem um corpo próprio"
+
+msgid "{name} is an archive moved in from another, which the GTA VI writer does not add"
+msgstr "{name} é um archive movido de outro, que o escritor do GTA VI não adiciona"
+
+msgid "{name} holds no bytes"
+msgstr "{name} não contém bytes"
+
+msgid "list {list}: {entries}"
+msgstr "lista {list}: {entries}"
+
+msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the scan is searched for them: a cell the scan holds no body of has no special link into this one. Try again once the search ends."
+msgstr "O polígono {polygon} não é alterado enquanto os corpos das células vizinhas {cells} não estiverem abertos e o scan estiver sendo pesquisado em busca deles: uma célula de que o scan não tem corpo não tem nenhuma ligação especial para esta. Tente novamente quando a pesquisa terminar."
+
+msgid "Add to the facial controls it writes"
+msgstr "Adicionar aos controles faciais que escreve"

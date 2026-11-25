@@ -1,18 +1,18 @@
 //! A GTA VI headerless RBM tree whose maps gained or lost pairs, such as an anim scene's entity
 //! or scene: the body is laid out anew, each table rebuilt from its pairs with an added one last
-//! and every region after it moved, where the unchanged tree lays out anew as the body stores it.
+//! and every region after it moved, where the unchanged tree's data blocks lay out anew as stored.
 //!
-//! ⚠ Where a body's blocks do not lay out again as stored, where a new pair's regions go and
-//! which order its blocks take are not known, so a pair is neither added nor removed there; a
-//! body whose re-lay differs only inside its hash tables' blocks, each block of its type, length
-//! and place, is an equally valid slot layout and takes one. A table is refilled in the order its pairs are read, slot order from slot 0; a table whose
-//! probe chain wraps was filled from the slot after its first empty slot (a slot map) or after
-//! its first group that is not full (a group map), so it comes back valid but differs from the
-//! stored table inside its own bytes.
+//! ⚠ Where a body's data blocks do not lay out again as stored, where a new pair's regions go and
+//! which order its blocks take are not known, so a pair is neither added nor removed there. The
+//! gate judges the data blocks alone: where the sections place them is not compared, since a
+//! pointer names a block and an offset in it, and a block of a hash table's type may differ
+//! inside, an equally valid slot layout. A changed table is refilled from the slot after its
+//! first empty slot (a slot map) or the group after its first that is not full (a group map),
+//! so a stored pair whose probe chain is unchanged keeps its slot.
 
 use std::collections::HashSet;
 
-use super::schema::{PsoType, RbmClass, RbmClassEntry, RbmDataBlock, RbmModel};
+use super::schema::{PsoType, RbmClass, RbmClassEntry, RbmModel};
 use crate::meta::binary::layout::RbmLayout;
 use crate::meta::binary::pso::table_form;
 use crate::meta::error::{MetaError, Result};
@@ -30,53 +30,34 @@ pub(super) fn pairs_changed(layout: &RbmLayout, instance: &MetaInstance) -> Resu
     if !instance_keys_differ(&stored, instance) {
         return Ok(false);
     }
-    let split = layout.virtual_page_size.min(layout.decompressed.len());
-    let (v, p) = layout.decompressed.split_at(split);
     let again = super::gta6_relayout::write(layout, &stored)?;
-    if (again.0 != v || again.1 != p) && !only_tables_differ(&layout.model, (v, p), &again) {
+    if !only_tables_differ(&layout.model, &again) {
         return Err(MetaError::Other(
-            "GTA VI RBM: a map's pairs changed, and this body's blocks do not lay out again as it stores them, so where an added or removed pair's regions go is not known".into(),
+            "GTA VI RBM: a map's pairs changed, and this body's data blocks do not lay out again as it stores them, so where an added or removed pair's regions go is not known".into(),
         ));
     }
     Ok(true)
 }
 
-/// Whether `again`, laid out anew from the unchanged tree of the body `stored` holds, differs
-/// from it only inside blocks of a hash table's type, every block of the same type, length and
-/// place as `model` states it.
-fn only_tables_differ(
-    model: &RbmModel,
-    stored: (&[u8], &[u8]),
-    again: &(Vec<u8>, Vec<u8>),
-) -> bool {
-    if stored.0.len() != again.0.len() || stored.1.len() != again.1.len() {
-        return false;
-    }
+/// Whether the sections `again`, laid out anew from the unchanged tree of `model`'s body, hold
+/// its classes, enums and root and its data blocks: as many, each of its type and length, its bytes
+/// the same or in a table's.
+fn only_tables_differ(model: &RbmModel, again: &(Vec<u8>, Vec<u8>)) -> bool {
     let Ok(laid) = super::gta6::read_model(&again.0, &again.1) else {
         return false;
     };
-    let (old, new) = (&model.data_blocks, &laid.data_blocks);
-    let same = |a: &RbmDataBlock, b: &RbmDataBlock| {
-        a.data_type == b.data_type && a.data_addr == b.data_addr && a.data.len() == b.data.len()
-    };
-    if old.len() != new.len() || !old.iter().zip(new).all(|(a, b)| same(a, b)) {
-        return false;
-    }
     let tables = table_types(model);
-    let in_a_table = |nibble: u64, at: usize| {
-        (old.iter()).any(|b| {
-            let from = (b.data_addr & 0x0FFF_FFFF) as usize;
-            b.data_addr >> 28 == nibble
-                && tables.contains(&b.data_type)
-                && (from..from + b.data.len()).contains(&at)
-        })
-    };
-    [(5, stored.0, &again.0), (6, stored.1, &again.1)]
-        .into_iter()
-        .all(|(nibble, s, a)| {
-            (s.iter().zip(a.iter()).enumerate())
-                .filter(|(_, (x, y))| x != y)
-                .all(|(at, _)| in_a_table(nibble, at))
+    let (old, new) = (&model.data_blocks, &laid.data_blocks);
+    laid.root_block_id == model.root_block_id
+        && laid.class_order == model.class_order
+        && laid.enum_order == model.enum_order
+        && laid.classes == model.classes
+        && laid.enums == model.enums
+        && old.len() == new.len()
+        && old.iter().zip(new).all(|(a, b)| {
+            a.data_type == b.data_type
+                && a.data.len() == b.data.len()
+                && (a.data == b.data || tables.contains(&a.data_type))
         })
 }
 
@@ -151,6 +132,7 @@ mod tests {
     use super::super::gta6::{open, read_model};
     use super::super::gta6_grow::tests::{body, member, pointer};
     use super::super::gta6_grow_tree::write_grown;
+    use super::super::schema::RbmDataBlock;
     use super::*;
     use crate::container::rpf::Rpf9Sections;
     use crate::meta::binary::hash_index::default_hash_index;
@@ -159,9 +141,11 @@ mod tests {
 
     const ROOT: u32 = 0x4848_0001;
     const PAIR: u32 = 0x4848_0002;
+    const GROUP: u32 = 0x4848_0003;
     const SCENES: u32 = 0x4848_0010;
     const ARRAY_INFO: u32 = 0x100;
     const SLOTS: usize = 32;
+    const GROUPS: usize = 64;
     /// Keys of home slots 5 and 19, and one more of home slot 5.
     const KEYS: [u32; 3] = [0x1234_0005, 0x1234_0013, 0x1234_0025];
 
@@ -169,13 +153,14 @@ mod tests {
         default_hash_index().name_or_literal(hash)
     }
 
-    /// A root whose one member is a slot map of `{hash, u32}` pairs holding the first two keys.
-    fn slot_map() -> Rpf9Sections {
+    /// A root whose one member is a hash map of type code `code` of `{hash, u32}` pairs, stating
+    /// `head` (its slot or group count, then its pair count) and its table, a block of `ty`.
+    fn map_body(code: u8, head: [u32; 2], ty: u32, table: Vec<u8>) -> Rpf9Sections {
         let root = (
             ROOT,
             0x10,
             vec![
-                member(SCENES, 0, 0x73, 0, 2 << 16 | 1),
+                member(SCENES, 0, code, 0, 2 << 16 | 1),
                 member(ARRAY_INFO, 0, 0x4A, 0, 0),
                 member(ARRAY_INFO, 0, 0x15, 0, 0),
             ],
@@ -188,16 +173,59 @@ mod tests {
                 member(0x4848_0021, 4, 0x15, 0, 0),
             ],
         );
-        let mut head = vec![0u8; 0x10];
-        head[..8].copy_from_slice(&[SLOTS as u8, 0, 0, 0, 2, 0, 0, 0]);
-        head[8..].copy_from_slice(&pointer(2, 0).to_le_bytes());
-        let mut table = vec![0u8; 8 * SLOTS];
-        for (key, value) in [(KEYS[0], 50u32), (KEYS[1], 60)] {
-            let at = 8 * (key as usize % SLOTS);
-            table[at..at + 4].copy_from_slice(&key.to_le_bytes());
-            table[at + 4..at + 8].copy_from_slice(&value.to_le_bytes());
+        let mut classes = vec![root, pair];
+        if code == GROUP_MAP {
+            // Sixteen control bytes, then sixteen pairs.
+            let group = vec![
+                member(ARRAY_INFO, 0, 0x11, 0, 0),
+                member(0x4848_0030, 0, 0x50, 0, 16),
+                member(ARRAY_INFO, 0, 0x05, 0, PAIR),
+                member(0x4848_0031, 16, 0x50, 2, 16),
+            ];
+            classes.push((GROUP, 16 + 16 * 8, group));
         }
-        body(&[root, pair], &[(ROOT, head), (PAIR, table)], 1)
+        let mut data: Vec<u8> = head.iter().flat_map(|w| w.to_le_bytes()).collect();
+        data.extend(pointer(2, 0).to_le_bytes());
+        body(&classes, &[(ROOT, data), (ty, table)], 1)
+    }
+
+    /// A slot map holding each `(key, value, slot)` of `held`.
+    fn slot_map_of(held: &[(u32, u32, usize)]) -> Rpf9Sections {
+        let mut table = vec![0u8; 8 * SLOTS];
+        for &(key, value, slot) in held {
+            table[8 * slot..8 * slot + 4].copy_from_slice(&key.to_le_bytes());
+            table[8 * slot + 4..8 * slot + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        let head = [SLOTS as u32, held.len() as u32];
+        map_body(SLOT_MAP, head, PAIR, table)
+    }
+
+    /// A slot map holding the first two keys at their home slots.
+    fn slot_map() -> Rpf9Sections {
+        slot_map_of(&[(KEYS[0], 50, 5), (KEYS[1], 60, 19)])
+    }
+
+    /// A group map of 447 pairs in 64 groups, where the rule gives 32: seven pairs in each group
+    /// but the last, which holds six, each key of its group's home.
+    fn group_map() -> Rpf9Sections {
+        let mut table = Vec::with_capacity(GROUPS * (16 + 16 * 8));
+        let mut n = 0u32;
+        for g in 0..GROUPS {
+            let mut controls = [0x80u8; 16];
+            let mut entries = [0u8; 16 * 8];
+            let held = if g + 1 == GROUPS { 6 } else { 7 };
+            for (j, control) in controls.iter_mut().enumerate().take(held) {
+                let key = 0x4900_0000 | (j as u32) << 16 | (g as u32) << 7 | (j as u32 + 1);
+                *control = (key & 0x7F) as u8;
+                entries[8 * j..8 * j + 4].copy_from_slice(&key.to_le_bytes());
+                entries[8 * j + 4..8 * j + 8].copy_from_slice(&n.to_le_bytes());
+                n += 1;
+            }
+            table.extend(controls);
+            table.extend(entries);
+        }
+        assert_eq!(n, 447);
+        map_body(GROUP_MAP, [GROUPS as u32, n], GROUP, table)
     }
 
     fn opened(v: &[u8], p: &[u8]) -> (MetaInstance, RbmLayout) {
@@ -234,6 +262,36 @@ mod tests {
         super::super::gta6_relayout::write(&layout, &tree).expect("laid out anew")
     }
 
+    fn table_block(model: &RbmModel) -> &RbmDataBlock {
+        (model.data_blocks.iter())
+            .find(|b| b.data_type == PAIR)
+            .expect("the table's block")
+    }
+
+    fn start(block: &RbmDataBlock) -> usize {
+        (block.data_addr & 0x0FFF_FFFF) as usize
+    }
+
+    /// Where the block table's record of `block` lies in the virtual section `v`.
+    fn record_of(v: &[u8], block: &RbmDataBlock) -> usize {
+        let record = [
+            block.data_type.to_le_bytes().as_slice(),
+            &(block.data.len() as u32).to_le_bytes(),
+            &block.data_addr.to_le_bytes(),
+        ]
+        .concat();
+        (v.windows(16))
+            .position(|w| w == record)
+            .expect("the block's record")
+    }
+
+    /// The slot or group count the root's map states in the sections `s`.
+    fn stated_units(s: &(Vec<u8>, Vec<u8>)) -> u32 {
+        let model = read_model(&s.0, &s.1).expect("it reads");
+        let root = model.block(model.root_block_id as i32).expect("the root");
+        u32::from_le_bytes(root.data[..4].try_into().expect("four bytes"))
+    }
+
     #[test]
     fn a_pair_added_last_takes_the_slot_after_its_home_and_one_removed_leaves_the_others() {
         let (v, p) = canonical();
@@ -254,9 +312,7 @@ mod tests {
         assert_eq!(saved, (v2.clone(), p2.clone()));
         // Home slot 5 is taken, so the probe goes on to slot 6.
         let model = read_model(&v2, &p2).expect("it reads");
-        let table = (model.data_blocks.iter())
-            .find(|b| b.data_type == PAIR)
-            .expect("the table's block");
+        let table = table_block(&model);
         assert_eq!(table.data[8 * 6..8 * 6 + 4], KEYS[2].to_le_bytes());
 
         let (mut tree, layout) = opened(&v, &p);
@@ -267,57 +323,98 @@ mod tests {
     }
 
     #[test]
-    fn a_re_lay_that_differs_only_inside_a_table_s_block_is_an_equally_valid_body() {
+    fn the_gate_takes_a_re_lay_whose_blocks_differ_only_inside_a_table_wherever_they_lie() {
         let (v, p) = canonical();
         let (_, layout) = opened(&v, &p);
         let model = read_model(&v, &p).expect("it reads");
-        let start = |ty: u32| {
-            let block = (model.data_blocks.iter())
-                .find(|b| b.data_type == ty)
-                .expect("the block");
-            (block.data_addr & 0x0FFF_FFFF) as usize
-        };
-        let (table, root) = (start(PAIR), start(ROOT));
-        let stored = (v.as_slice(), p.as_slice());
+        let table = table_block(&model);
+        let root = model.block(model.root_block_id as i32).expect("the root");
+        let (slots, root) = (start(table), start(root));
         // Two slots of the table traded, as a rebuild that moves a pair does.
         let mut moved = v.clone();
-        let (a, b) = (table + 8 * 5, table + 8 * 19);
+        let (a, b) = (slots + 8 * 5, slots + 8 * 19);
         let first = moved[a..a + 8].to_vec();
         moved.copy_within(b..b + 8, a);
         moved[b..b + 8].copy_from_slice(&first);
         assert_ne!(moved, v);
-        assert!(only_tables_differ(
-            &layout.model,
-            stored,
-            &(moved, p.clone())
-        ));
-        let mut outside = v.clone();
-        outside[root] ^= 1;
-        assert!(!only_tables_differ(
-            &layout.model,
-            stored,
-            &(outside, p.clone())
-        ));
+        assert!(only_tables_differ(&layout.model, &(moved, p.clone())));
+        // A longer section holds the same blocks.
         let mut longer = v.clone();
         longer.extend([0u8; 16]);
-        assert!(!only_tables_differ(
-            &layout.model,
-            stored,
-            &(longer, p.clone())
-        ));
+        assert!(only_tables_differ(&layout.model, &(longer, p.clone())));
+
+        // More than a table differs: a byte of the root's block, a table's block of another length.
+        let mut outside = v.clone();
+        outside[root] ^= 1;
+        assert!(!only_tables_differ(&layout.model, &(outside, p.clone())));
+        let mut shorter = v.clone();
+        let record = record_of(&v, table);
+        let len = 8 * SLOTS as u32 - 8;
+        shorter[record + 4..record + 8].copy_from_slice(&len.to_le_bytes());
+        assert!(!only_tables_differ(&layout.model, &(shorter, p.clone())));
     }
 
     #[test]
-    fn a_pair_is_not_added_to_a_body_whose_blocks_do_not_lay_out_again_as_stored() {
+    fn a_body_whose_table_lies_elsewhere_than_a_re_lay_puts_it_still_takes_a_pair() {
         let (mut v, p) = canonical();
-        v.extend([0u8; 16]);
+        let model = read_model(&v, &p).expect("it reads");
+        let table = table_block(&model);
+        let (record, from, len) = (record_of(&v, table), start(table), table.data.len());
+        // The table's block moved past the section's end, its record pointing there.
+        let to = v.len().next_multiple_of(16);
+        v.resize(to + len, 0);
+        v.copy_within(from..from + len, to);
+        let addr = (table.data_addr & !0x0FFF_FFFF) | to as u64;
+        v[record + 8..record + 16].copy_from_slice(&addr.to_le_bytes());
         let (mut tree, layout) = opened(&v, &p);
-        assert!(write_grown(&layout, &tree).is_ok(), "an unchanged save");
+        assert_eq!(held(&mut tree), [(KEYS[0], 50), (KEYS[1], 60)]);
+        let again = super::super::gta6_relayout::write(&layout, &tree).expect("laid out anew");
+        assert_ne!(again.0, v, "a re-lay places the block elsewhere");
+
         let key = Value::Hash(HashedString::from_hash(KEYS[2]));
         pairs(&mut tree).push((key, Value::UInt(70)));
-        let err = write_grown(&layout, &tree)
-            .expect_err("refused")
-            .to_string();
-        assert!(err.contains("is not known"), "{err}");
+        assert!(pairs_changed(&layout, &tree).expect("the gate takes it"));
+        let (v2, p2) = write_grown(&layout, &tree).expect("laid out anew");
+        let (mut again, _) = opened(&v2, &p2);
+        assert_eq!(
+            held(&mut again),
+            [(KEYS[0], 50), (KEYS[1], 60), (KEYS[2], 70)]
+        );
+    }
+
+    #[test]
+    fn a_changed_table_keeps_the_stored_slots_of_a_chain_that_wraps() {
+        // Two keys of home slot 31, the second wrapped to slot 0: filled in slot order from slot
+        // 0, they would trade places.
+        let wrapped = [0x1234_001F_u32, 0x1234_003F];
+        let s = slot_map_of(&[(wrapped[1], 60, 0), (wrapped[0], 50, 31)]);
+        let (mut tree, layout) = opened(&s.virtual_section, &s.physical);
+        let key = Value::Hash(HashedString::from_hash(KEYS[0]));
+        pairs(&mut tree).push((key, Value::UInt(70)));
+        let (v, p) = write_grown(&layout, &tree).expect("laid out anew");
+        let model = read_model(&v, &p).expect("it reads");
+        let table = &table_block(&model).data;
+        let key_at = |slot: usize| table[8 * slot..8 * slot + 4].to_vec();
+        assert_eq!(key_at(31), wrapped[0].to_le_bytes());
+        assert_eq!(key_at(0), wrapped[1].to_le_bytes());
+        assert_eq!(key_at(5), KEYS[0].to_le_bytes());
+    }
+
+    #[test]
+    fn a_table_of_64_groups_holding_447_pairs_lays_out_again_at_64_groups() {
+        let s = group_map();
+        let (mut tree, layout) = opened(&s.virtual_section, &s.physical);
+        assert_eq!(pairs(&mut tree).len(), 447);
+        let again = super::super::gta6_relayout::write(&layout, &tree).expect("laid out anew");
+        assert_eq!(stated_units(&again), 64, "the rule alone gives 32 groups");
+        assert!(only_tables_differ(&layout.model, &again));
+
+        // For the 446 pairs a removal leaves the rule gives 32 groups too.
+        pairs(&mut tree).remove(0);
+        assert!(pairs_changed(&layout, &tree).expect("the gate takes it"));
+        let removed = write_grown(&layout, &tree).expect("laid out anew");
+        assert_eq!(stated_units(&removed), 64);
+        let (mut back, _) = opened(&removed.0, &removed.1);
+        assert_eq!(pairs(&mut back).len(), 446);
     }
 }

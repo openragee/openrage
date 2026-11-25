@@ -17,7 +17,8 @@ use crate::project::Failure::{self, Run, Usage};
 const USAGE: &str = "usage: rpf scan-expressions <archive.rpf> <offset> [--limit <bytes>] \
      [--id <group> <track> <hash> --out <file> | --add <group> <track> <hash> --out <file> \
      | --remove <group> <track> --out <file>]   (group: inputs, bones, controls, facial-outputs \
-     or outputs)";
+     or outputs; --add facial-outputs writes the inputs' track of that hash, track 0 where the set \
+     writes none)";
 
 /// What an edit of the set does to track `track` of its group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,34 +111,13 @@ pub(crate) fn cmd_scan_expressions(args: &[String]) -> Result<(), Failure> {
     }
     let mut sections = Rpf9Sections::of(&find, &bytes)
         .ok_or_else(|| Run(format!("the body at {offset:#X} states no sections")))?;
-    let mut set = read_expressions(&sections.virtual_section)
+    let set = read_expressions(&sections.virtual_section)
         .map_err(|e| Run(format!("the expression reader does not read it: {e}")))?;
     print_tables(&set);
     let Some((group, track, change, out)) = edit else {
         return Ok(());
     };
-    let word = group_word(group);
-    if (group.of(&set)).is_none_or(|g| track >= g.tracks.len()) {
-        return Err(Run(format!(
-            "the set holds no track {track} among its {word}"
-        )));
-    }
-    let done = match change {
-        Change::Id(hash) => {
-            if let Some(held) = (group.of_mut(&mut set)).and_then(|g| g.tracks.get_mut(track)) {
-                held.0 = hash;
-            }
-            format!("track {track} of the {word} now names hash_{hash:08X}")
-        }
-        Change::Add(hash) => {
-            set = add_expression_track(&set, group, track, hash).map_err(|e| Run(e.to_string()))?;
-            format!("a copy of track {track} of the {word} is added under hash_{hash:08X}")
-        }
-        Change::Remove => {
-            set = remove_expression_track(&set, group, track).map_err(|e| Run(e.to_string()))?;
-            format!("track {track} of the {word} is removed")
-        }
-    };
+    let (set, done) = edited(set, group, track, change).map_err(Run)?;
     let physical = sections.physical.len();
     write_edited_expressions(&mut sections.virtual_section, physical, &set)
         .map_err(|e| Run(e.to_string()))?;
@@ -152,6 +132,41 @@ pub(crate) fn cmd_scan_expressions(args: &[String]) -> Result<(), Failure> {
         written.len()
     );
     Ok(())
+}
+
+/// `set` with the change made to track `track` of `group`, and what was done.
+// An add to an empty group D takes no track of it: group A's track of the hash is written there.
+fn edited(
+    mut set: Expressions,
+    group: ExpressionGroup,
+    track: usize,
+    change: Change,
+) -> Result<(Expressions, String), String> {
+    let word = group_word(group);
+    if matches!(change, Change::Id(_)) && (group.of(&set)).is_none_or(|g| track >= g.tracks.len()) {
+        return Err(format!("the set holds no track {track} among its {word}"));
+    }
+    let done = match change {
+        Change::Id(hash) => {
+            if let Some(held) = (group.of_mut(&mut set)).and_then(|g| g.tracks.get_mut(track)) {
+                held.0 = hash;
+            }
+            format!("track {track} of the {word} now names hash_{hash:08X}")
+        }
+        Change::Add(hash) if group == ExpressionGroup::FacialOutputs => {
+            set = add_expression_track(&set, group, track, hash).map_err(|e| e.to_string())?;
+            format!("the inputs' hash_{hash:08X} is added to the {word}")
+        }
+        Change::Add(hash) => {
+            set = add_expression_track(&set, group, track, hash).map_err(|e| e.to_string())?;
+            format!("a copy of track {track} of the {word} is added under hash_{hash:08X}")
+        }
+        Change::Remove => {
+            set = remove_expression_track(&set, group, track).map_err(|e| e.to_string())?;
+            format!("track {track} of the {word} is removed")
+        }
+    };
+    Ok((set, done))
 }
 
 /// Each group's tracks, a line each: its index, id, track word, components or byte or mask, and
@@ -243,6 +258,45 @@ mod tests {
             "a.rpf 0x10 --id inputs 0 7 o.rsc",
         ] {
             assert_eq!(change(refused), None, "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_set_that_writes_no_facial_control_takes_its_first_as_track_0_and_nothing_past_it() {
+        use or_io::gta6::anim::ExpressionTracks;
+        let none = || ExpressionTracks {
+            tracks: Vec::new(),
+            slots: Vec::new(),
+            components: Vec::new(),
+        };
+        let facial = or_io::gta6::hash::name_hash32(b"facialTranslation");
+        let set = Expressions {
+            key: 7,
+            inputs: ExpressionTracks {
+                tracks: vec![(0xA1, facial), (0xA2, facial)],
+                slots: vec![0, 1, 2],
+                components: vec![1, 2],
+            },
+            bones: none(),
+            bone_masks: Vec::new(),
+            controls: none(),
+            control_slots: Vec::new(),
+            control_words: Vec::new(),
+            facial_outputs: none(),
+            outputs: None,
+            output_masks: Vec::new(),
+        };
+        let d = ExpressionGroup::FacialOutputs;
+        let (added, done) = edited(set.clone(), d, 0, Change::Add(0xA2)).expect("added");
+        assert_eq!(added.facial_outputs.tracks, [(0xA2, facial)]);
+        assert_eq!(added.facial_outputs.slots, [0, 1]);
+        assert!(done.contains("hash_000000A2"), "{done}");
+        for (track, change) in [
+            (1, Change::Add(0xA1)),
+            (0, Change::Id(5)),
+            (0, Change::Remove),
+        ] {
+            assert!(edited(set.clone(), d, track, change).is_err(), "{change:?}");
         }
     }
 }

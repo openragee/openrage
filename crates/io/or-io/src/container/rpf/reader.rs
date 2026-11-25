@@ -102,7 +102,8 @@ impl RpfArchive {
                         rpf9 = Some(Arc::new(state));
                         toc
                     }
-                    // Its table is enciphered and this build holds no reader for it.
+                    // A build without the `gta6` feature has no reader for an RPF9's enciphered
+                    // table; with it, the arm above reads the table once a key is given.
                     #[cfg(not(feature = "gta6"))]
                     RpfVersion::Rpf9 => return Err(IoError::Rpf9TocEncrypted),
                     other => layout::read(other, &input)?,

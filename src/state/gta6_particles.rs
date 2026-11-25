@@ -582,6 +582,17 @@ pub(super) fn behaviour(b: &Behaviour, place: usize) -> Option<PtxBehaviourAny> 
     })
 }
 
+/// `held` given what its GTA V form `b` writes back: a sprite's flip chances, a ZCull's mode.
+pub(super) fn written_fields(b: &PtxBehaviourAny, held: &mut Behaviour) {
+    match (b, &mut held.fields) {
+        (PtxBehaviourAny::PtxdSprite(s), BehaviourFields::Sprite { flip_chance, .. }) => {
+            *flip_chance = [s.flip_chance_u, s.flip_chance_v];
+        }
+        (PtxBehaviourAny::PtxuZCull(z), BehaviourFields::ZCull { mode, .. }) => *mode = z.mode,
+        _ => {}
+    }
+}
+
 /// What the list states that its GTA V form has no place for, and what is not known.
 pub(super) fn lines(list: &ParticleEffects) -> Vec<String> {
     let mut lines = vec![

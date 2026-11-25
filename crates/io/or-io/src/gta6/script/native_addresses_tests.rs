@@ -150,6 +150,32 @@ fn the_cache_is_read_for_the_same_files_and_rebuilt_when_one_changes() {
 }
 
 #[test]
+fn the_last_cached_table_is_read_without_its_folder() {
+    let config = tempfile::tempdir().expect("a temp dir");
+    assert!(NativeAddresses::cached(config.path()).is_none(), "no cache");
+    let dir = folder();
+    NativeAddresses::load(dir.path(), Some(config.path())).expect("the folder reads");
+    drop(dir);
+    let cached = NativeAddresses::cached(config.path()).expect("the cache reads");
+    assert_eq!(
+        (cached.len(), cached.name_of(0x100)),
+        (2, Some("SET_THING"))
+    );
+
+    let cache = config.path().join(CACHE_FILE);
+    std::fs::write(&cache, "# another file\n00000100\t00000000000000aa\tX\n").expect("write");
+    assert!(
+        NativeAddresses::cached(config.path()).is_none(),
+        "a foreign head"
+    );
+    std::fs::write(&cache, format!("{CACHE_HEAD}0\nnot a row\n")).expect("write");
+    assert!(
+        NativeAddresses::cached(config.path()).is_none(),
+        "a bad row"
+    );
+}
+
+#[test]
 fn the_users_listings_declare_their_natives_by_address() {
     let Some(folder) = std::env::var_os("OPENRAGE_LIFTED_LISTINGS")
         .map(PathBuf::from)

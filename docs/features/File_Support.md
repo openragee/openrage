@@ -76,9 +76,9 @@ the editor lists none of these games as a title.
 The table of contents of an RPF9 archive is enciphered, and OpenRage ships no key: the keys are read
 from the user's own executable, and [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md) gives the steps.
 With them, `openrage-cli rpf9` lists an archive's entries from its table, nested archives included,
-extracts them, an enciphered one deciphered, and writes a new archive, and View ▸ Panels ▸ Archives
-lists the entries of the archives of the GTA VI folder set in Settings, and of an archive File ▸ Open
-opened, and opens them. An entry is named where a harvested vocabulary or a folder of names holds the
+extracts them, an enciphered one deciphered, and writes a new archive, and an archive the editor
+opens is a folder of the Files tree, as a GTA V one is: a nested archive is a folder in it, a
+double-click opens an entry, and the Inspector shows a selected entry's row. An entry is named where a harvested vocabulary or a folder of names holds the
 text of its hash, and by its hash otherwise. Without them, the editor and `openrage-cli rpf scan`
 find the bodies an archive stores in the clear, and an archive's own tab lists it that way, with
 or without keys. The install opens as a plain folder.

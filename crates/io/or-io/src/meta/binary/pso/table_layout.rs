@@ -1375,6 +1375,17 @@ impl<'m> Writer<'m, '_> {
             .map_or(0, |e| e.offset as usize);
         let stored_slots = read_le(bg, 0, 4).unwrap_or(0);
         let stored_table = stored.map(|s| bounded(s.bytes, unit_size, stored_slots));
+        // A table keeps a stored size larger than the rule's while it holds the table: one is
+        // stored at 64 groups for 447 pairs, and an added or removed pair keeps that size.
+        let slots = match stored_table {
+            Some(t)
+                if stored_slots.is_power_of_two()
+                    && stored_slots.checked_mul(unit_size) == Some(t.len()) =>
+            {
+                slots.max(stored_slots)
+            }
+            _ => slots,
+        };
         // The tree lists a table's entries in their stored slot order, so the i-th stored entry is
         // the i-th entry's background.
         let stored_starts = stored_table.map_or_else(Vec::new, |bytes| {
@@ -1397,28 +1408,53 @@ impl<'m> Writer<'m, '_> {
                 "its keys are 64-bit integers, whose places in a table no measured hash gives, so it is written only with the keys it held, in their slots",
             ));
         }
-        // Where each entry goes, in the order given: home is the hash's low bits, then linear.
-        let mut places = Vec::with_capacity(n);
+        // A changed table is filled from the stored unit after its first that is not full, round
+        // to the end and on from 0, its stored entries in stored slot order and a new one last:
+        // no probe chain crosses such a unit, so an entry whose chain is unchanged keeps its place.
+        let order: Vec<usize> = match kept {
+            true => (0..n).collect(),
+            false => {
+                let units = stored_table.map_or(0, |t| t.len() / unit_size);
+                let full = if grouped { 16 } else { 1 };
+                let mut held = vec![0usize; units];
+                let mut stored_at = HashMap::with_capacity(stored_starts.len());
+                for &s in &stored_starts {
+                    held[s / unit_size] += 1;
+                    if let Some(k) = read_le(stored_table, s + key_off, key_width) {
+                        stored_at.entry(k as u64).or_insert(s);
+                    }
+                }
+                let start = held.iter().position(|&h| h < full).map_or(0, |u| u + 1);
+                let mut order: Vec<usize> = (0..n).collect();
+                order.sort_by_key(|&i| match stored_at.get(&bits[i]) {
+                    Some(&s) => (0, (s / unit_size + units - start) % units, s),
+                    None => (1, 0, i),
+                });
+                order
+            }
+        };
+        // Where each entry goes, in the fill order: home is the hash's low bits, then linear.
+        let mut places = vec![(0usize, None); n];
         let mut used = vec![0usize; slots];
         let mut taken = vec![false; slots];
-        for (i, &bits) in bits.iter().enumerate() {
-            let h = key_hash(key.data_type, bits);
+        for &i in &order {
+            let h = key_hash(key.data_type, bits[i]);
             let control = (h & 0x7F) as u8;
             if kept {
                 let pos = stored_starts[i];
                 let g = pos / unit_size;
                 let control =
                     grouped.then(|| (g * unit_size + (pos - g * unit_size - 16) / width, control));
-                places.push((pos, control));
+                places[i] = (pos, control);
             } else if grouped {
                 let mut g = ((h >> 7) as usize) & (slots - 1);
                 while used[g] == 16 {
                     g = (g + 1) & (slots - 1);
                 }
-                places.push((
+                places[i] = (
                     g * unit_size + 16 + width * used[g],
                     Some((g * unit_size + used[g], control)),
-                ));
+                );
                 used[g] += 1;
             } else {
                 let mut s = (h as usize) & (slots - 1);
@@ -1426,7 +1462,7 @@ impl<'m> Writer<'m, '_> {
                     s = (s + 1) & (slots - 1);
                 }
                 taken[s] = true;
-                places.push((s * unit_size, None));
+                places[i] = (s * unit_size, None);
             }
         }
         let len = slots * unit_size;

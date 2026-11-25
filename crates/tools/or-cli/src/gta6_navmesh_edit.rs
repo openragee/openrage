@@ -4,12 +4,13 @@
 //! written beside it as `<offset>.rsc`.
 
 use std::fs::File;
-use std::io::Cursor;
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::process::ExitCode;
 
 use or_io::container::rpf::{
-    read_rpf9_body, write_rpf9_resource, Rpf9BodyKind, Rpf9Role, Rpf9Sections,
+    read_rpf9_body, write_rpf9_resource, Rpf9BodyKind, Rpf9Role, Rpf9Scan, Rpf9Sections,
+    Rpf9ZlibRun, RPF9_MAGIC,
 };
 use or_io::gta6::headerless::{
     cut_edges, delete_polygon, deletion, disable_polygon, disabling, links_into, polygon_cut,
@@ -160,9 +161,10 @@ fn edit_body(
         near.push(body);
         stored.push((at, s));
     }
+    let bodied = |missing: Vec<u32>| with_bodies(&file, missing, limit);
     let (mut lines, made) = match verb {
-        "disable" => disable(&mut sections, &cell, polygon, &near)?,
-        _ => delete(&mut sections, &cell, polygon, &near)?,
+        "disable" => disable(&mut sections, &cell, polygon, &near, &bodied)?,
+        _ => delete(&mut sections, &cell, polygon, &near, &bodied)?,
     };
     let saved = loose(&sections)?;
     let mut beside = Vec::new();
@@ -196,6 +198,50 @@ fn loose(s: &Rpf9Sections) -> Result<Vec<u8>, String> {
 /// What an edit said, and the cell it made again where it removed a record.
 type Said = (Vec<String>, Option<NavRebuild>);
 
+/// Which of the cells it is given the input holds a body of.
+type Bodied<'a> = &'a dyn Fn(Vec<u32>) -> Result<Vec<u32>, String>;
+
+/// The cells of `missing` the archive `file` holds a body of, by a read of each navigation body it
+/// holds, as no special link names a cell with no body; every one where `file` is no archive.
+fn with_bodies(file: &File, missing: Vec<u32>, limit: u64) -> Result<Vec<u32>, String> {
+    let mut head = [0u8; 4];
+    let mut f = file;
+    let read = f
+        .seek(SeekFrom::Start(0))
+        .and_then(|_| f.read_exact(&mut head));
+    if missing.is_empty() || read.is_err() || u32::from_le_bytes(head) != RPF9_MAGIC {
+        return Ok(missing);
+    }
+    let mut held = Vec::new();
+    for find in Rpf9Scan::new(file, 0..u64::MAX).map_err(|e| e.to_string())? {
+        let find = find.map_err(|e| e.to_string())?;
+        let cell = matches!(find.kind, Rpf9BodyKind::Zlib(Rpf9ZlibRun { signature: Some(s), .. })
+            if s.role() == Some(Rpf9Role::NavMesh));
+        if !cell {
+            continue;
+        }
+        let at = find.offset;
+        let (_, body) = cell_at(file, at, limit).map_err(|e| {
+            format!(
+                "the navigation body at {at:#X} does not read, so whether it is one of the cells {} is not known: {e}",
+                listed(&missing)
+            )
+        })?;
+        held.push(body.cell);
+    }
+    Ok(missing.into_iter().filter(|c| held.contains(c)).collect())
+}
+
+/// That the archive holds no body of the cells `none`, where there are any.
+fn bodiless_line(none: &[u32]) -> Option<String> {
+    (!none.is_empty()).then(|| {
+        format!(
+            "the archive holds no body of the neighbouring cells {}, so no special link of theirs ends in this cell",
+            listed(none)
+        )
+    })
+}
+
 /// Polygon proper `polygon` cut off as the editor cuts it: every edge into or out of it that names a
 /// polygon of this cell written as leading nowhere, and the side records naming it chained again.
 fn disable(
@@ -203,6 +249,7 @@ fn disable(
     cell: &NavMesh,
     polygon: usize,
     near: &[NavMesh],
+    bodied: Bodied<'_>,
 ) -> Result<Said, String> {
     let cut = polygon_cut(cell, polygon).map_err(|e| e.to_string())?;
     let others: Vec<&NavMesh> = near.iter().collect();
@@ -215,17 +262,21 @@ fn disable(
     // A side record that drops a corner moves the arrays after it.
     let rechained = made.filter(|m| m.mesh.indices.len() != cell.indices.len());
     let mut removed = None;
+    // Whether the archive was found to hold no body of each cell not given.
+    let mut bodiless = false;
     let cuts = if let Some(made) = rechained {
         let removes = made.records.len() < cell.polygons.len();
         if removes {
             let given: Vec<u32> = near.iter().map(|b| b.cell).collect();
             let missing: Vec<u32> = across(cell).filter(|c| !given.contains(c)).collect();
-            if !missing.is_empty() {
+            let held = bodied(missing)?;
+            if !held.is_empty() {
                 return Err(format!(
                     "polygon {polygon} is not disabled while the bodies of the neighbouring cells {} are not given with --neighbour <offset>: a side record it empties goes, and their special links may number the records after it",
-                    listed(&missing)
+                    listed(&held)
                 ));
             }
+            bodiless = true;
         }
         disable_polygon(sections, polygon, &others).map_err(|e| e.to_string())?;
         let cuts = reaching(cell).saturating_sub(reaching(&made.mesh));
@@ -261,7 +312,9 @@ fn disable(
     let read: Vec<u32> = near.iter().map(|b| b.cell).collect();
     let unread = across(cell).filter(|c| !read.contains(c));
     let unread: Vec<u32> = unread.collect();
-    if !unread.is_empty() {
+    if bodiless {
+        lines.extend(bodiless_line(&unread));
+    } else if !unread.is_empty() {
         lines.push(format!(
             "the bodies of the neighbouring cells {} were not given with --neighbour, so whether their special links end in it is not known",
             listed(&unread)
@@ -281,19 +334,22 @@ fn across(cell: &NavMesh) -> impl Iterator<Item = u32> {
 }
 
 /// Polygon proper `polygon` deleted as the editor deletes it, once every cell across a border or at
-/// a corner is given, since their special links number this cell's polygons.
+/// a corner that the archive holds a body of is given, since their special links number this
+/// cell's polygons.
 fn delete(
     sections: &mut Rpf9Sections,
     cell: &NavMesh,
     polygon: usize,
     near: &[NavMesh],
+    bodied: Bodied<'_>,
 ) -> Result<Said, String> {
     let given: Vec<u32> = near.iter().map(|b| b.cell).collect();
     let missing: Vec<u32> = across(cell).filter(|c| !given.contains(c)).collect();
-    if !missing.is_empty() {
+    let held = bodied(missing.clone())?;
+    if !held.is_empty() {
         return Err(format!(
             "polygon {polygon} is not deleted while the bodies of the neighbouring cells {} are not given with --neighbour <offset>: their special links may number this cell's polygons",
-            listed(&missing)
+            listed(&held)
         ));
     }
     let all: Vec<u32> = across(cell).collect();
@@ -319,6 +375,7 @@ fn delete(
             "{gone} special links of this cell ended in a record that went, and were deleted"
         ));
     }
+    lines.extend(bodiless_line(&missing));
     Ok((lines, Some(made)))
 }
 
@@ -531,5 +588,155 @@ mod tests {
         assert!(parse(&words)
             .expect_err("refused")
             .contains("polygon number"));
+    }
+
+    /// The virtual section of a cell at grid place `cell` of two water triangles over 128 m whose
+    /// edges lead nowhere, so either goes alone.
+    fn two_triangles(cell: u32) -> Vec<u8> {
+        let mut v = vec![0u8; 0x3B0];
+        // A split array at `at` of one chunk: header, chunk row, start, then the items.
+        let list = |v: &mut Vec<u8>, at: usize, items: &[u8], stride: usize| {
+            let count = (items.len() / stride) as u64;
+            put(v, at + 8, &count.to_le_bytes());
+            pointer(v, at + 0x10, at + 0x30);
+            pointer(v, at + 0x18, at + 0x40);
+            put(v, at + 0x20, &1u64.to_le_bytes());
+            pointer(v, at + 0x30, at + 0x50);
+            put(v, at + 0x38, &count.to_le_bytes());
+            put(v, at + 0x50, items);
+        };
+        pointer(&mut v, 0x08, 0xF0);
+        v[0xF8] = 1;
+        put(&mut v, 0x10, &9u32.to_le_bytes());
+        put(&mut v, 0x14, &0x0001_0015u32.to_le_bytes());
+        for at in [0x20, 0x34, 0x48] {
+            put(&mut v, at, &1.0f32.to_le_bytes());
+        }
+        let vertices: Vec<u8> = [0u16, 0, 0, 65535, 0, 0, 0, 65535, 0, 65535, 65535, 0]
+            .iter()
+            .flat_map(|q| q.to_le_bytes())
+            .collect();
+        list(&mut v, 0x100, &vertices, 6);
+        list(&mut v, 0x170, &[0, 0, 1, 0, 2, 0, 1, 0, 3, 0, 2, 0], 2);
+        let edges = [[0xFF; 4], [0; 4], [0; 4]].repeat(6).concat();
+        list(&mut v, 0x1D0, &edges, 12);
+        // The second triangle's corners start at index 3.
+        let mut polygons = [0u8; 88];
+        (polygons[4], polygons[8]) = (3, 0x80);
+        (polygons[44 + 4], polygons[44 + 8]) = (0x33, 0x80);
+        list(&mut v, 0x270, &polygons, 44);
+        for (slot, at) in [
+            (0x70, 0x100),
+            (0x80, 0x170),
+            (0x88, 0x1D0),
+            (0x98, 0x270),
+            (0xA0, 0x320),
+        ] {
+            pointer(&mut v, slot, at);
+        }
+        put(&mut v, 0x90, &6u32.to_le_bytes());
+        for (at, x) in [(0x330, 128.0f32), (0x334, 128.0), (0x338, 4.0)] {
+            put(&mut v, at, &x.to_le_bytes());
+        }
+        // The quadtree's one leaf names both triangles.
+        pointer(&mut v, 0x320 + 0x2C, 0x380);
+        pointer(&mut v, 0x380 + 0x08, 0x3A0);
+        v[0x380 + 0x18] = 2;
+        put(&mut v, 0x3A0, &[0, 0, 1, 0]);
+        for (at, word) in [
+            (0xC0, 4),
+            (0xC4, 2),
+            (0xC8, cell),
+            (0xCC, 6 * 4 + 14 * 6 + 44 * 2),
+        ] {
+            put(&mut v, at, &word.to_le_bytes());
+        }
+        v
+    }
+
+    /// `v`, a section of [`cell_section`], with one special link from its polygon 0 to polygon
+    /// `to` of cell `cell`, filed under its polygon 0.
+    fn with_link(mut v: Vec<u8>, to: u16, cell: u32) -> Vec<u8> {
+        let own = v[0xC8..0xCC].to_vec();
+        let at = v.len();
+        v.resize(at + 0x30, 0);
+        put(&mut v, at + 0x0E, &to.to_le_bytes());
+        put(&mut v, at + 0x10, &own);
+        put(&mut v, at + 0x14, &cell.to_le_bytes());
+        // The index list after the link, naming it once.
+        pointer(&mut v, 0xA8, at);
+        pointer(&mut v, 0xB0, at + 0x20);
+        put(&mut v, 0xD4, &1u32.to_le_bytes());
+        put(&mut v, 0xD8, &1u32.to_le_bytes());
+        put(&mut v, 0xCC, &(6 * 3 + 14 * 3 + 44 + 32u32).to_le_bytes());
+        // Polygon 0's run of the index list, at its record's +0x20: from 0, one entry.
+        put(&mut v, 0x2A0 + 0x20, &1u32.to_le_bytes());
+        v
+    }
+
+    /// An RPF9 head of one entry, its table 0x1A0 bytes in all.
+    fn archive_head() -> Vec<u8> {
+        let mut bytes = vec![0x5Au8; 0x1A0];
+        bytes[..0x40].fill(0);
+        bytes[..4].copy_from_slice(&RPF9_MAGIC.to_le_bytes());
+        for (at, word) in [(0x04, 0x1A0u32), (0x08, 0x190), (0x0C, 0x40), (0x1C, 0x150)] {
+            bytes[at..at + 4].copy_from_slice(&word.to_le_bytes());
+        }
+        bytes[0x22..0x24].copy_from_slice(&1u16.to_le_bytes());
+        bytes[0x24..0x28].copy_from_slice(&1u32.to_le_bytes());
+        bytes[0x30..0x34].copy_from_slice(&0x10u32.to_le_bytes());
+        bytes[0x2C] = 1;
+        (bytes[0x19], bytes[0x1A], bytes[0x20]) = (0x7A, 4, 5);
+        (bytes[0x2D], bytes[0x2E]) = (0x0F, 0x09);
+        bytes
+    }
+
+    #[test]
+    fn a_deletion_in_an_archive_takes_a_cell_it_holds_no_body_of_as_linking_nowhere() {
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let resource = |v: Vec<u8>| {
+            let s = Rpf9Sections {
+                form: Rpf9Form::BlockMapped,
+                virtual_section: v,
+                physical: Vec::new(),
+            };
+            write_rpf9_resource(&s).expect("written")
+        };
+        let east_body = with_link(cell_section(CELL + 1), 1, CELL);
+        let mut bytes = archive_head();
+        let mut offsets = Vec::new();
+        // Each body follows a zero 16-byte slot at the start of a 4 KiB page.
+        for body in [resource(two_triangles(CELL)), resource(east_body)] {
+            bytes.resize(bytes.len().next_multiple_of(0x1000) + 16, 0);
+            offsets.push(bytes.len() as u64);
+            bytes.extend(body);
+        }
+        let path = dir.path().join("cells.rpf");
+        std::fs::write(&path, &bytes).expect("saved");
+        let path = path.to_string_lossy().into_owned();
+        let (main, east) = (offsets[0], offsets[1]);
+
+        // The archive holds a body of the cell east, so it is still wanted.
+        let why = edit_body("delete", &path, main, 0, &[], u64::MAX).expect_err("refused");
+        let wanted = format!("neighbouring cells {} are not given", CELL + 1);
+        assert!(why.contains(&wanted), "{why}");
+
+        let (saved, lines, beside) =
+            edit_body("delete", &path, main, 0, &[east], u64::MAX).expect("deleted");
+        assert_eq!(lines[0], "polygon 0 deleted: 1 polygons remain");
+        for said in ["holds no body of the neighbouring cells", "renumbered"] {
+            assert!(lines.iter().any(|l| l.contains(said)), "{said}: {lines:?}");
+        }
+        let back = |bytes: &[u8]| {
+            let (find, read) = read_rpf9_body(Cursor::new(bytes), 0, u64::MAX).expect("it reads");
+            let s = Rpf9Sections::of(&find, &read).expect("a resource");
+            read_navmesh(&s.virtual_section).expect("the cell reads")
+        };
+        assert_eq!(back(&saved).polygons.len(), 1);
+        assert_eq!(beside.len(), 1);
+        assert_eq!(beside[0].0, east);
+        let m = back(&beside[0].1);
+        let l = &m.special_links[0];
+        assert_eq!((l.from_polygon, l.to_polygon, l.to_mesh), (0, 0, CELL));
     }
 }

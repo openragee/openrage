@@ -2,7 +2,7 @@
 //! writes and a row per track beneath it, as GTA V's expression dictionary lists its expressions;
 //! the status line of the row picked, and the set's facts in the centre.
 
-use or_io::gta6::anim::{track_label, ExpressionGroup, Expressions};
+use or_io::gta6::anim::{offered_facial_outputs, track_label, ExpressionGroup, Expressions};
 
 use super::*;
 use crate::state::capabilities::FormatCapabilities;
@@ -142,6 +142,9 @@ fn draw_facts(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId, selec
         if let Some((group, Some(track))) = row_of(sel) {
             draw_id(ui, state, (doc_id, sel), &set, group, track);
             draw_add_remove(ui, state, (doc_id, sel), group, track);
+            if group == ExpressionGroup::Inputs {
+                draw_write_as_output(ui, state, doc_id, &set, track);
+            }
         }
         ui.separator();
     }
@@ -220,6 +223,30 @@ fn draw_add_remove(
     }
     if remove {
         state.remove_gta6_expression_track(doc_id, group, track);
+    }
+}
+
+/// Beside a facial control the set reads and group D is known to take, a button that writes it
+/// too, the first of group D included.
+fn draw_write_as_output(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    doc_id: DocumentId,
+    set: &Expressions,
+    track: usize,
+) {
+    let Some(&(id, _)) = set.inputs.tracks.get(track) else {
+        return;
+    };
+    if !offered_facial_outputs(set).contains(&id) {
+        return;
+    }
+    if ui
+        .button(tr!("Add to the facial controls it writes"))
+        .clicked()
+    {
+        // Group D's track 0 gives the word; an empty group D takes the one word it is known to.
+        state.add_gta6_expression_track(doc_id, ExpressionGroup::FacialOutputs, 0, id);
     }
 }
 
@@ -355,5 +382,42 @@ mod tests {
         let centre = painted(&mut state, false);
         assert!(centre.contains("What it reads, in 4 slots"), "{centre}");
         assert!(centre.contains("(1 of 2)"), "{centre}");
+    }
+
+    #[test]
+    fn a_facial_translation_it_reads_is_offered_as_the_first_facial_control_it_writes() {
+        let _serial = crate::ui::theme::serial();
+        let facial = or_io::gta6::hash::name_hash32(b"facialTranslation");
+        let mut set = reading();
+        set.inputs.tracks = vec![(0xA1, facial), (0xA2, 0x11)];
+        let mut state = AppState::default();
+        let doc = state.new_empty_document(DocumentKind::Text);
+        let d = state.document_mut(doc).expect("the blank document");
+        d.payload = DocPayload::Gta6Expressions(Arc::new(set));
+        d.kind = DocumentKind::Gta6Expressions;
+        let offer = "Add to the facial controls it writes";
+        let centre = |state: &mut AppState, track: usize| {
+            let output = egui::Context::default().run_ui(Default::default(), |ui| {
+                draw_facts(ui, state, doc, Some(row_id(0, Some(track))));
+            });
+            format!("{:?}", output.shapes)
+        };
+        assert!(centre(&mut state, 0).contains(offer));
+        assert!(
+            !centre(&mut state, 1).contains(offer),
+            "another word is not offered"
+        );
+
+        // What the button does: the set that writes none gains its first facial control.
+        assert!(state.add_gta6_expression_track(doc, ExpressionGroup::FacialOutputs, 0, 0xA1));
+        let Some(DocPayload::Gta6Expressions(set)) = state.document(doc).map(|d| &d.payload) else {
+            panic!("an expression set");
+        };
+        assert_eq!(set.facial_outputs.tracks, [(0xA1, facial)]);
+        assert_eq!(set.facial_outputs.slots, [0]);
+        assert!(
+            !centre(&mut state, 0).contains(offer),
+            "a control written is not offered"
+        );
     }
 }

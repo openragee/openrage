@@ -5,10 +5,12 @@ use std::sync::{Arc, Mutex};
 
 use or_io::gta6::mission_other::{Declared, OtherElement};
 use or_io::gta6::mission_tables::StateRecord;
+use or_io::gta6::names::Vocabulary;
 use or_io::meta::binary::hash_index::default_hash_index;
 use or_io::meta::Value;
 
 use super::*;
+use crate::state::gta6_names;
 
 /// An element with its key label computed once, so the per-frame draw neither decodes nor looks a
 /// name up.
@@ -19,34 +21,52 @@ struct OtherRow {
 
 type Decoded = Arc<Result<Vec<OtherRow>, String>>;
 
-/// The one run last opened, decoded once with its key labels; re-decoded only when the open run or
-/// the document's form (its bytes) changes. One run is open at a time, so a single slot suffices.
-// ponytail: single-entry cache keyed by the form's bytes and the record; two runs open at once
-// re-decode by turns, as CURRENT does for the form.
+/// The one run last opened, decoded once with its key labels; re-decoded only when the open run,
+/// the document's form (its bytes) or the vocabulary served changes. One run is open at a time, so
+/// a single slot suffices.
+// ponytail: single-entry cache keyed by the form's bytes, the record and the vocabulary; two runs
+// open at once re-decode by turns, as CURRENT does for the form.
 #[allow(clippy::type_complexity)]
-static DECODED: Mutex<Option<((usize, usize, u32, Option<(usize, usize)>), Decoded)>> =
+static DECODED: Mutex<Option<((usize, usize, u32, Option<(usize, usize)>, usize), Decoded)>> =
     Mutex::new(None);
 
-/// `record`'s run decoded, from the cache where the form and the record are the ones last decoded.
+/// What an element's key is shown as: the name `vocabulary` holds for it, else the metadata names'
+/// for a narrow key, else its digits.
+fn key_label(vocabulary: &Vocabulary, wide: bool, key: u64) -> String {
+    if wide {
+        return vocabulary
+            .name64(key)
+            .map_or_else(|| format!("{key:016X}"), str::to_owned);
+    }
+    // A narrow key came from four bytes, so it is whole as a u32.
+    let narrow = key as u32;
+    let held = vocabulary.name32(narrow).map(str::to_owned);
+    held.unwrap_or_else(|| default_hash_index().name_or_literal(narrow))
+}
+
+/// `record`'s run decoded, from the cache where the form, the record and the vocabulary are the
+/// ones last decoded with.
 fn decoded(bytes: &[u8], body: &Body, record: &StateRecord) -> Decoded {
-    let key = (bytes.as_ptr() as usize, bytes.len(), record.key, record.run);
+    let vocabulary = gta6_names::vocabulary();
+    let key = (
+        bytes.as_ptr() as usize,
+        bytes.len(),
+        record.key,
+        record.run,
+        Arc::as_ptr(&vocabulary) as usize,
+    );
     let mut kept = DECODED.lock().unwrap_or_else(|p| p.into_inner());
     if let Some((cached_key, decoded)) = kept.as_ref() {
         if *cached_key == key {
             return decoded.clone();
         }
     }
-    let index = default_hash_index();
     let rows = Declared::open(bytes)
         .and_then(|declared| declared.elements(body, record))
         .map(|elements| {
             (elements.into_iter())
                 .map(|element| OtherRow {
-                    // A narrow key came from four bytes, so it is whole as a u32.
-                    key: match element.wide {
-                        true => format!("{:016X}", element.key),
-                        false => index.name_or_literal(element.key as u32),
-                    },
+                    key: key_label(&vocabulary, element.wide, element.key),
                     element,
                 })
                 .collect()
@@ -147,7 +167,7 @@ fn text(value: &Value) -> String {
         Value::UInt(n) => n.to_string(),
         Value::Float(f) => format!("{f:.3}"),
         Value::String(s) | Value::Raw(s) => s.clone(),
-        Value::Hash(h) if h.raw.is_empty() => default_hash_index().name_or_literal(h.hash),
+        Value::Hash(h) if h.raw.is_empty() => gta6_names::said32(h.hash),
         Value::Hash(h) => h.raw.clone(),
         Value::Vec2(v) => floats(v),
         Value::Vec3(v) => floats(v),
@@ -187,6 +207,22 @@ mod tests {
                 bits: 0x30
             }),
             "0x30"
+        );
+    }
+
+    #[test]
+    fn an_element_s_key_is_named_by_the_vocabulary_else_shown_by_its_digits() {
+        let mut vocabulary = Vocabulary::default();
+        assert!(vocabulary.add("zq_mission_marker", None));
+        let narrow = u64::from(or_io::gta6::hash::name_hash32(b"zq_mission_marker"));
+        let wide = or_io::gta6::hash::name_hash64(b"zq_mission_marker");
+        assert_eq!(key_label(&vocabulary, false, narrow), "zq_mission_marker");
+        assert_eq!(key_label(&vocabulary, true, wide), "zq_mission_marker");
+        let none = Vocabulary::default();
+        assert_eq!(key_label(&none, true, 0xAB), "00000000000000AB");
+        assert_eq!(
+            key_label(&none, false, narrow),
+            default_hash_index().name_or_literal(narrow as u32)
         );
     }
 }

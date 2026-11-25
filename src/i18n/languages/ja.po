@@ -16936,88 +16936,11 @@ msgstr "GTA VIドキュメントの編集を、読み込み元アーカイブの
 msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
 msgstr "GTA VIのキーがありません: 設定 ▸ ゲーム でGTA VIのインストールフォルダーを設定すると、その実行ファイルでキーを解除できます。"
 
-msgid "resource"
-msgstr "リソース"
-
-msgid "media"
-msgstr "メディア"
-
-msgid "other class"
-msgstr "その他のクラス"
-
 msgid "{file} is listed by a scan without its table: {why}"
 msgstr "{file} はテーブルなしでスキャンにより一覧表示されています: {why}"
 
-msgid "Choose the GTA VI folder in Settings, or open one of its archives, to list its archives from their tables."
-msgstr "設定でGTA VIフォルダーを選択するか、そのアーカイブを1つ開くと、テーブルからアーカイブを一覧表示します。"
-
-msgid "Find by name, or by hash as 0x hex"
-msgstr "名前、または0x 16進数のハッシュで検索"
-
-msgid "Only the archives expanded are searched."
-msgstr "展開したアーカイブだけが検索されます。"
-
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} はエントリの位置に編集を書き込み、テーブルは読み込んだときのままの新しいアーカイブです。"
-
-msgid "Listed from its decrypted table: {count} entry, {named} of them named, under the table key {key}."
-msgid_plural "Listed from its decrypted table: {count} entries, {named} of them named, under the table key {key}."
-msgstr[0] "復号したテーブルから一覧表示：{count} 件のエントリ、うち {named} 件に名前あり、テーブルキー {key}。"
-msgstr[1] "復号したテーブルから一覧表示：{count} 件のエントリ、うち {named} 件に名前あり、テーブルキー {key}。"
-
-msgid "This entry's row states no start, so its body cannot be read."
-msgstr "このエントリの行には開始位置が記されていないため、本体を読めません。"
-
-msgid "Click to expand or collapse this nested archive, listed from its own table."
-msgstr "クリックすると、自身のテーブルから一覧表示されるこの入れ子のアーカイブを展開または折りたたみます。"
-
-msgid "Click to open it in the preview tab, and double-click to keep it in a tab of its own; an enciphered body is deciphered first."
-msgstr "クリックでプレビュータブに開き、ダブルクリックで専用のタブに残します。暗号化された本体は先に復号されます。"
-
-msgid "Extract to a file…"
-msgstr "ファイルへ抽出…"
-
-msgid "Replace with a file…"
-msgstr "ファイルで置き換え…"
-
-msgid "Writes a new copy of the archive with this entry replaced, which the game refuses: only its maker can sign the table."
-msgstr "このエントリを置き換えたアーカイブの新しいコピーを書き出しますが、ゲームはそれを拒否します。テーブルに署名できるのは作成者だけです。"
-
-msgid "Replace with a file"
-msgstr "ファイルで置き換え"
-
-msgid "Save the new archive"
-msgstr "新しいアーカイブを保存"
-
-msgid "Wrote {entry} to {file}."
-msgstr "{entry} を {file} に書き出しました。"
-
-msgid "Cannot extract {entry}: {reason}"
-msgstr "{entry} を抽出できません：{reason}"
-
-msgid "{file} is a new archive with {entry} replaced, which the game refuses because only its maker can sign the table this changed."
-msgstr "{file} は {entry} を置き換えた新しいアーカイブですが、変更されたテーブルに署名できるのは作成者だけなので、ゲームはこれを拒否します。"
-
-msgid "{file} is a new archive the same as the one it was read from: the file holds the bytes {entry} holds."
-msgstr "{file} は読み込み元と同じ新しいアーカイブです：ファイルの内容は {entry} のバイトと同じです。"
-
-msgid "Cannot replace {entry}: {reason}"
-msgstr "{entry} を置き換えられません：{reason}"
-
-msgid "the file written is a new one, and the archive it is read from is never written"
-msgstr "書き出すファイルは新しいもので、読み込み元のアーカイブには決して書き込みません"
-
-msgid "entry {index} is not in its table"
-msgstr "エントリ {index} はそのテーブルにありません"
-
-msgid "the entry's row states no start, so its body is not known"
-msgstr "エントリの行に開始位置が記されていないため、本体が分かりません"
-
-msgid "a nested archive whose row states no stored size"
-msgstr "行に格納サイズが記されていない入れ子のアーカイブ"
-
-msgid "the archive ends {copied} bytes into the {stored}-byte nested archive"
-msgstr "アーカイブが {stored} バイトの入れ子のアーカイブの {copied} バイト目で終わっています"
 
 msgid "An EDUP body: its count word at 0x04 is {count}, and {length} payload bytes follow its 8-byte head."
 msgstr "EDUP 本体：0x04 のカウントワードは {count} で、8 バイトのヘッダーの後に {length} バイトのペイロードが続きます。"
@@ -17039,3 +16962,62 @@ msgstr "{place} にいます"
 
 msgid "Look north over the square of 512 m where most maps of this place lie"
 msgstr "この場所のマップの大半がある 512 m 四方を北向きに見下ろします"
+msgid "entry {entry} is not in this table"
+msgstr "エントリ {entry} はこのテーブルにありません"
+
+msgid "Real size"
+msgstr "実サイズ"
+
+msgid "Enciphered"
+msgstr "暗号化"
+
+msgid "24 bytes"
+msgstr "24 バイト"
+
+msgid "20 bytes, a headerless resource's"
+msgstr "20 バイト（ヘッダーなしリソースの行）"
+
+msgid "Row"
+msgstr "行"
+
+msgid "Name hash"
+msgstr "名前ハッシュ"
+
+msgid "{file} is a GTA VI archive, which is never written in place: Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
+msgstr "{file} は GTA VI のアーカイブで、その場では書き込まれません。「名前を付けて保存…」は編集を新しいファイルに書き込みますが、署名がテーブルを覆っているため、ゲームはそのファイルを拒否します。"
+
+msgid "{file} is a GTA VI archive, which is never written in place: open it on its own and Save as… writes its edits to a new file, which the game refuses because its signature covers the table."
+msgstr "{file} は GTA VI のアーカイブで、その場では書き込まれません。単独で開くと「名前を付けて保存…」が編集を新しいファイルに書き込みますが、署名がテーブルを覆っているため、ゲームはそのファイルを拒否します。"
+
+msgid "{file} is a new archive with the tree's edits, which the game refuses because only its maker can sign the table they changed."
+msgstr "{file} はツリーの編集を含む新しいアーカイブですが、変更されたテーブルに署名できるのは作成者だけなので、ゲームはこれを拒否します。"
+
+msgid "Save the edits to a new archive, which the game refuses because its signature covers the table"
+msgstr "編集を新しいアーカイブに保存（署名がテーブルを覆っているため、ゲームはこれを拒否します）"
+
+msgid "the tree is no GTA VI archive opened on its own"
+msgstr "このツリーは単独で開いた GTA VI のアーカイブではありません"
+
+msgid "an archive of the tree is no longer open"
+msgstr "ツリーのアーカイブの一つがもう開いていません"
+
+msgid "entry {index} states no start"
+msgstr "エントリ {index} は開始位置を示していません"
+
+msgid "{name} has no body of its own"
+msgstr "{name} には独自の本体がありません"
+
+msgid "{name} is an archive moved in from another, which the GTA VI writer does not add"
+msgstr "{name} は別のアーカイブから移されたアーカイブで、GTA VI の書き込み処理は追加しません"
+
+msgid "{name} holds no bytes"
+msgstr "{name} にはバイトがありません"
+
+msgid "list {list}: {entries}"
+msgstr "リスト {list}: {entries}"
+
+msgid "Polygon {polygon} is not changed while the bodies of the neighbouring cells {cells} are not open and the scan is searched for them: a cell the scan holds no body of has no special link into this one. Try again once the search ends."
+msgstr "隣接セル {cells} の本体が開かれておらず、スキャン内で検索中のため、ポリゴン {polygon} は変更されません。スキャンに本体がないセルは、このセルへの特殊リンクを持ちません。検索が終わったら再試行してください。"
+
+msgid "Add to the facial controls it writes"
+msgstr "書き込む顔の制御に追加"

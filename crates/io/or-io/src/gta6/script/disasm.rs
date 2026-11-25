@@ -8,6 +8,7 @@
 use std::fmt::Write;
 
 use super::{Compiled, CompiledError, Instruction};
+use crate::gta6::script::native_addresses::NativeAddresses;
 
 /// A listing and what it counts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +63,10 @@ pub enum Kind {
     Count,
     /// A switch's jump table, as an offset in the program's data.
     Table,
+    /// An offset in the program's data.
+    Data,
+    /// A builtin global, by its index.
+    Global,
     /// Bytes the handler does not read as a value here.
     Raw,
 }
@@ -124,12 +129,15 @@ const ARGS1_METHOD2_RAW1: &[Field] = &[f(Kind::Args, 1), f(Kind::Method, 2), f(K
 const ARGS1_METHOD4_RAW1: &[Field] = &[f(Kind::Args, 1), f(Kind::Method, 4), f(Kind::Raw, 1)];
 const ARGS1_METHOD4_RAW2: &[Field] = &[f(Kind::Args, 1), f(Kind::Method, 4), f(Kind::Raw, 2)];
 const BUILTIN2: &[Field] = &[f(Kind::Builtin, 2)];
+const BYTES1: &[Field] = &[f(Kind::Bytes, 1)];
 const BYTES2: &[Field] = &[f(Kind::Bytes, 2)];
 const COUNT4_TABLE4: &[Field] = &[f(Kind::Count, 4), f(Kind::Table, 4)];
+const DATA4: &[Field] = &[f(Kind::Data, 4)];
 const DISP1: &[Field] = &[f(Kind::Disp, 1)];
 const DISP4: &[Field] = &[f(Kind::Disp, 4)];
 const FRAME1: &[Field] = &[f(Kind::Frame, 1)];
 const FRAME1_ALIGN1: &[Field] = &[f(Kind::Frame, 1), f(Kind::Align, 1)];
+const GLOBAL1: &[Field] = &[f(Kind::Global, 1)];
 const IMM1: &[Field] = &[f(Kind::Imm, 1)];
 const IMM1_IMM1: &[Field] = &[f(Kind::Imm, 1), f(Kind::Imm, 1)];
 const IMM1_IMM1_IMM1_IMM1: &[Field] = &[
@@ -167,6 +175,7 @@ const NATIVE4_ARGS1_RESULTS1: &[Field] =
 const NONE: &[Field] = &[];
 const OFFSET1: &[Field] = &[f(Kind::Offset, 1)];
 const OFFSET1_BYTES1: &[Field] = &[f(Kind::Offset, 1), f(Kind::Bytes, 1)];
+const OFFSET1_SLOTS1: &[Field] = &[f(Kind::Offset, 1), f(Kind::Slots, 1)];
 const OFFSET2: &[Field] = &[f(Kind::Offset, 2)];
 const OFFSET2_BYTES2: &[Field] = &[f(Kind::Offset, 2), f(Kind::Bytes, 2)];
 const RAW1: &[Field] = &[f(Kind::Raw, 1)];
@@ -183,8 +192,12 @@ const SLOTS2_OFFSET2: &[Field] = &[f(Kind::Slots, 2), f(Kind::Offset, 2)];
 const SLOTS2_OFFSET2_BYTES2: &[Field] = &[f(Kind::Slots, 2), f(Kind::Offset, 2), f(Kind::Bytes, 2)];
 const SLOTS2_SLOTS1: &[Field] = &[f(Kind::Slots, 2), f(Kind::Slots, 1)];
 const TYPE1: &[Field] = &[f(Kind::Type, 1)];
+const TYPE1_RAW1: &[Field] = &[f(Kind::Type, 1), f(Kind::Raw, 1)];
 const TYPE1_SLOTS1: &[Field] = &[f(Kind::Type, 1), f(Kind::Slots, 1)];
 const TYPE4: &[Field] = &[f(Kind::Type, 4)];
+const TYPE4_METHOD1: &[Field] = &[f(Kind::Type, 4), f(Kind::Method, 1)];
+const TYPE4_METHOD2: &[Field] = &[f(Kind::Type, 4), f(Kind::Method, 2)];
+const TYPE4_RAW1: &[Field] = &[f(Kind::Type, 4), f(Kind::Raw, 1)];
 const TYPE4_SLOTS1: &[Field] = &[f(Kind::Type, 4), f(Kind::Slots, 1)];
 
 /// The table: what each opcode the interpreter's handlers were read for does.
@@ -214,6 +227,7 @@ pub fn op(opcode: u16) -> Option<Op> {
         0x31 => row("push_u8x4", IMM1_IMM1_IMM1_IMM1, "-- a b c d", 0),
         0x32 => row("push_u32x4", IMM4_IMM4_IMM4_IMM4, "-- a b c d", 0),
         0x33 => row("push_bit", IMM1, "-- 1<<n", 0),
+        0x34 => row("string_constant", DATA4, "-- ref", 0),
         0x35 => row("dup", NONE, "v -- v v", 0),
         0x36 => row("dup_n", SLOTS1, "v.. -- v.. v..", 0),
         0x37 => row("pick", SLOTS1, "-- v", 0),
@@ -259,12 +273,15 @@ pub fn op(opcode: u16) -> Option<Op> {
         0x5F => row("load_static_u64", IMPORT1_OFFSET1, "-- v", 0),
         0x60 => row("load_static_bytes", IMPORT1_OFFSET1_BYTES1, "-- v..", 0),
         0x61 => row("static_ref", IMPORT1_OFFSET1, "-- ptr", 0),
+        0x62 => row("load_builtin_global", GLOBAL1, "-- v..", 0),
         0x63 => row("store_u8", OFFSET1, "ref v --", 0x08),
         0x64 => row("store_u16", OFFSET1, "ref v --", 0x08),
         0x65 => row("store_i32", OFFSET1, "ref v --", 0x08),
         0x66 => row("store_u64", OFFSET1, "ref v --", 0x08),
         0x67 => row("store_ref", OFFSET1, "ref v --", 0x08),
         0x68 => row("store_bytes", OFFSET1_BYTES1, "ref v.. --", 0x08),
+        0x69 => row("store_i32_slots", OFFSET1_SLOTS1, "ref v.. --", 0x08),
+        0x6A => row("store_bytes", OFFSET1_SLOTS1, "ref v.. --", 0x08),
         0x6B => row("store_u8", OFFSET1, "ref v --", 0x18),
         0x6C => row("store_u16", OFFSET1, "ref v --", 0x18),
         0x6D => row("store_i32", OFFSET1, "ref v --", 0x18),
@@ -277,11 +294,15 @@ pub fn op(opcode: u16) -> Option<Op> {
         0x74 => row("store_u64", OFFSET1, "ptr v --", 0),
         0x75 => row("store_ref", OFFSET1, "ptr v --", 0),
         0x76 => row("store_bytes", OFFSET1_BYTES1, "ptr v.. --", 0),
+        0x77 => row("store_i32_slots", OFFSET1_SLOTS1, "ptr v.. --", 0),
+        0x78 => row("store_bytes", OFFSET1_SLOTS1, "ptr v.. --", 0),
         0x79 => row("store_static_u8", IMPORT1_OFFSET1, "v --", 0),
         0x7A => row("store_static_u16", IMPORT1_OFFSET1, "v --", 0),
         0x7B => row("store_static_i32", IMPORT1_OFFSET1, "v --", 0),
         0x7C => row("store_static_u64", IMPORT1_OFFSET1, "v --", 0),
         0x7D => row("store_static_bytes", IMPORT1_OFFSET1_BYTES1, "v.. --", 0),
+        0x7E => row("function_ref", IMPORT1_CODE4, "-- fn", 0),
+        0x7F => row("virtual_function_ref", TYPE4_METHOD1, "ref -- fn", 0),
         0x80 | 0x20C => row("drop", NONE, "v --", 0),
         0x81 => row("drop_n", SLOTS1, "v.. --", 0),
         0x82 => row("bury", SLOTS1, "a.. t -- t a..", 0),
@@ -295,10 +316,14 @@ pub fn op(opcode: u16) -> Option<Op> {
         0x8A => row("call_builtin", BUILTIN2, "args -- results", 0),
         0x8B => row("native", NATIVE4_ARGS1_RESULTS1, "args -- results", 0),
         0x8C => row("invoke_delegate", IMM2_IMM2, "delegate args -- results", 0),
+        0x8D => row("try_cast", TYPE4_RAW1, "ref -- ref", 0),
+        0x8E => row("try_cast", TYPE1_RAW1, "ref -- ref", 0),
+        0x8F => row("byte_offset_at", SLOTS1, "ref v.. -- ptr v..", 0),
         0x90 => row("return", NONE, "--", 0),
         0x91 => row("return_value", NONE, "v --", 0),
         0x92 => row("return_n", SLOTS1, "v.. --", 0),
         0x93 => row("new_array", TYPE1, "n -- arr", 0),
+        0x94 | 0x187 => row("array_set_value", NONE, "arr i v --", 0),
         0x95 => row("box", TYPE1, "v -- ref", 0),
         0x96 => row("box", TYPE4, "v.. -- ref", 0),
         0x97 => row("new_object", TYPE4_SLOTS1, "args -- ref args", 0),
@@ -398,6 +423,7 @@ pub fn op(opcode: u16) -> Option<Op> {
         0xF6 => row("store_i32", NONE, "ptr v --", 0),
         0xF7 => row("store_u64", NONE, "ptr v --", 0),
         0xF8 => row("store_ref", NONE, "ptr v --", 0),
+        0xF9 => row("load_u64_at", SLOTS1, "ptr v.. -- w v..", 0),
         0xFA => row("add_i32", NONE, "a b -- c", 0),
         0xFB => row("add_i64", NONE, "a b -- c", 0),
         0xFC => row("add_f32", NONE, "a b -- c", 0),
@@ -511,11 +537,21 @@ pub fn op(opcode: u16) -> Option<Op> {
         0x16E => row("f32_to_f64", NONE, "a -- b", 0),
         0x16F => row("new_object_builtin", BUILTIN2, "args -- ref", 0),
         0x170 => row("zero_slots", SLOTS1_SLOTS1, "v.. -- 0.. v..", 0),
+        0x171 => row("new_value_builtin", BUILTIN2, "args -- v..", 0),
         0x172 => row("load_bytes", TYPE1, "ref -- v..", 0),
+        0x173 => row("unbox", TYPE4, "ref -- v..", 0),
+        0x174 => Op {
+            implied: Some((Kind::Offset, 8)),
+            ..row("byte_offset", NONE, "ref -- ptr", 0)
+        },
         0x175 => row("typed_intrinsic", TYPE1_SLOTS1, "v.. -- ref", 0),
+        0x176 => row("box_at", TYPE4_SLOTS1, "ptr v.. -- ref v..", 0),
+        0x177 => row("store_bytes", TYPE4, "ptr v.. --", 0),
+        0x178 => row("store_bytes", TYPE1, "ptr v.. --", 0),
         0x179 => row("zero_bytes", BYTES2, "ptr --", 0),
         0x17A => row("bytes_equal", BYTES2, "p q -- bool", 0),
         0x17B => row("new_array", TYPE4, "n -- arr", 0),
+        0x17C => row("array_init_from_constant", NONE, "arr i --", 0),
         0x17D => row("array_length", NONE, "arr -- n", 0),
         0x17E => row("array_get_i8", NONE, "arr i -- v", 0),
         0x17F => row("array_get_u8", NONE, "arr i -- v", 0),
@@ -526,6 +562,7 @@ pub fn op(opcode: u16) -> Option<Op> {
         0x184 => row("array_set_u8", NONE, "arr i v --", 0),
         0x185 => row("array_set_u16", NONE, "arr i v --", 0),
         0x186 => row("array_set_u32", NONE, "arr i v --", 0),
+        0x188 => row("array_set_value", SLOTS1, "arr i v.. --", 0),
         0x189 => row("load_local", LOCAL2, "-- v", 0),
         0x18A => row("load_locals", LOCAL2_SLOTS2, "-- v..", 0),
         0x18B => row("local_ref", LOCAL2, "-- ptr", 0),
@@ -533,6 +570,7 @@ pub fn op(opcode: u16) -> Option<Op> {
         0x18D => row("store_locals", LOCAL2_SLOTS2, "v.. --", 0),
         0x18E => row("enter", ARGS1_LOCALS2_ALIGN1, "--", 0),
         0x18F => row("call_virtual", ARGS1_METHOD4_RAW2, "ref args -- results", 0),
+        0x190 => row("virtual_function_ref", TYPE4_METHOD2, "ref -- fn", 0),
         0x192 => row("zero_slots", SLOTS2_SLOTS1, "v.. -- 0.. v..", 0),
         0x193 => row("load_i8", OFFSET2, "ref -- v", 0x08),
         0x194 => row("load_u8", OFFSET2, "ref -- v", 0x08),
@@ -591,7 +629,23 @@ pub fn op(opcode: u16) -> Option<Op> {
         0x1C9 => row("load_global_bytes", IMPORT1_OFFSET4_BYTES2, "-- v..", 0),
         0x1CA => row("global_ref", IMPORT1_OFFSET4, "-- ptr", 0),
         0x1CB => row("store_global_bytes", IMPORT1_OFFSET4_BYTES2, "v.. --", 0),
+        0x1CD => row(
+            "replication_barrier",
+            OFFSET2_BYTES2,
+            "ref v.. -- ref v..",
+            0x08,
+        ),
+        0x1CE => row(
+            "replication_barrier",
+            OFFSET2_BYTES2,
+            "ptr v.. -- ptr v..",
+            0,
+        ),
+        0x1CF => row("replication_barrier", OFFSET2_BYTES2, "ref -- ref", 0x08),
+        0x1D0 => row("replication_barrier", OFFSET2_BYTES2, "ptr -- ptr", 0),
         0x1D6 => row("intrinsic", RAW1, "n -- ptr", 0),
+        0x1D7 => row("element_address", BYTES1, "ref i -- ptr", 0),
+        0x1D8 => row("stack_address", SLOTS1, "v.. -- v.. ptr", 0),
         0x1D9 => row("packed_vector_add", NONE, "a b -- c", 0),
         0x1DA => row("packed_vector_subtract", NONE, "a b -- c", 0),
         0x1DB => row("packed_vector_multiply", NONE, "a b -- c", 0),
@@ -681,8 +735,8 @@ fn condition(mnemonic: &str) -> Option<&'static str> {
 /// The local slots every frame has before its enter adds its own.
 const BASE_LOCALS: u64 = 4;
 
-/// An instruction's operands as text by the table's fields, or its decoded bytes where it has none.
-fn operands(ins: &Instruction) -> String {
+/// An instruction's operands as text by the table's fields, or its decoded bytes where it has none; a native by the name `natives` gives its address.
+fn operands(ins: &Instruction, natives: Option<&NativeAddresses>) -> String {
     let Some(op) = op(ins.opcode) else {
         let n = usize::from(ins.len)
             .saturating_sub(2)
@@ -693,6 +747,7 @@ fn operands(ins: &Instruction) -> String {
     match op.implied {
         Some((Kind::Arg, n)) => parts.push(format!("arg{n}")),
         Some((Kind::Local, n)) => parts.push(format!("local{n}")),
+        Some((Kind::Offset, n)) => parts.push(format!("+{n:#X}")),
         Some((_, n)) => parts.push(n.to_string()),
         None => {}
     }
@@ -720,10 +775,15 @@ fn operands(ins: &Instruction) -> String {
             Kind::Align => format!("align {}", 1u64.checked_shl(v as u32).unwrap_or(0)),
             Kind::Method => format!("method {v}"),
             Kind::Builtin => format!("type {} method {}", v >> 8, v & 0xFF),
-            Kind::Native => format!("{v:#010X}"),
+            Kind::Native => match natives.and_then(|t| t.name_of(v as u32)) {
+                Some(name) => name.to_owned(),
+                None => format!("{v:#010X}"),
+            },
             Kind::Type => format!("type {v:#X}"),
             Kind::Count => format!("cases {v}"),
             Kind::Table => format!("table {v:#X}"),
+            Kind::Data => format!("data {v:#X}"),
+            Kind::Global => format!("global {v}"),
             Kind::Raw => hex_bytes(bytes),
         });
     }
@@ -737,8 +797,11 @@ fn hex_bytes(bytes: &[u8]) -> String {
         .join(" ")
 }
 
-/// The whole code region as a listing; a decode that stops is the error.
-pub fn listing(program: &Compiled) -> Result<Listing, CompiledError> {
+/// The whole code region as a listing, each native named where `natives` maps its address; a decode that stops is the error.
+pub fn listing(
+    program: &Compiled,
+    natives: Option<&NativeAddresses>,
+) -> Result<Listing, CompiledError> {
     let mut body = String::new();
     let (mut functions, mut instructions, mut named) = (0, 0, 0);
     for ins in program.instructions() {
@@ -755,7 +818,7 @@ pub fn listing(program: &Compiled) -> Result<Listing, CompiledError> {
             "  {:06X}  {:03X}  {shown:<24} {}",
             ins.offset,
             ins.opcode,
-            operands(&ins)
+            operands(&ins, natives)
         );
         let _ = writeln!(body, "{}", line.trim_end());
     }
@@ -766,6 +829,17 @@ pub fn listing(program: &Compiled) -> Result<Listing, CompiledError> {
         program.header.hash
     );
     text.push_str("; an op_XXX opcode prints its decoded operand bytes; a and b are the deeper and the top operand\n");
+    let _ = match natives {
+        Some(table) => writeln!(
+            text,
+            "; a native prints its name where the {} natives of the lifted listings map its address, else its address",
+            table.len()
+        ),
+        None => writeln!(
+            text,
+            "; a native prints its address: no table of native names was given"
+        ),
+    };
     text.push_str(body.trim_end());
     text.push('\n');
     Ok(Listing {

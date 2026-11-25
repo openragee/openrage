@@ -7,7 +7,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::document::RpfNodeId;
+use super::rpf_node::{RpfNodeBacking, RpfSessionNode};
 use super::rpf_session::RpfEditSession;
+use or_io::container::rpf::Rpf9Kind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum SortKey {
@@ -373,6 +375,35 @@ pub fn escalated_glob(filter: &str) -> String {
     format!("**/*{filter}*")
 }
 
+/// What a GTA VI file row is, as its archive's table names it; `None` for any other row.
+pub fn gta6_kind(session: &RpfEditSession, node: &RpfSessionNode) -> Option<Rpf9Kind> {
+    let RpfNodeBacking::ArchiveFile {
+        archive_id,
+        entry_index,
+        ..
+    } = &node.backing
+    else {
+        return None;
+    };
+    session
+        .archive(*archive_id)?
+        .archive
+        .rpf9_kind(*entry_index)
+}
+
+/// Whether a file row holds the filter's lower-case `needle`: in its name, its hash as `0x` hex, or its kind's words or GTA V extension.
+pub fn row_matches(name: &str, kind: Option<Rpf9Kind>, needle: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    let by_hash = (needle.strip_prefix("0x"))
+        .is_some_and(|hex| name.strip_prefix("hash_").is_some_and(|h| h.contains(hex)));
+    by_hash
+        || name.contains(needle)
+        || kind.is_some_and(|kind| {
+            kind.label.to_ascii_lowercase().contains(needle)
+                || (kind.extension).is_some_and(|ext| format!(".{ext}").contains(needle))
+        })
+}
+
 /// How many loaded files a substring filter admits, out of how many there are.
 ///
 /// ⚠ **Loaded, not in the archive.** A nested archive nobody has expanded has
@@ -389,7 +420,7 @@ pub fn filter_counts(session: &RpfEditSession, filter: &str) -> (usize, usize) {
             continue;
         }
         total += 1;
-        if node.name.to_ascii_lowercase().contains(&needle) {
+        if row_matches(&node.name, gta6_kind(session, node), &needle) {
             shown += 1;
         }
     }

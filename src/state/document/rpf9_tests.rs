@@ -236,6 +236,13 @@ fn confirmed_media_extensions_survive_opening_without_changing_the_entry_address
     for (name, extension) in [
         ("force_empty_rpf.txt", "txt"),
         ("data/tessellation.dat", "dat"),
+        ("data/imposterextents.dat", "dat"),
+        ("shaders/sga_spsdb/presets.spsdb", "spsdb"),
+        ("shaders/v2/fxdb/sga_xbsx_final_init.fxdb", "fxdb"),
+        (
+            "shaders/v2/sga_xbsx_final_aco.d3d12pipelinecache",
+            "d3d12pipelinecache",
+        ),
         ("shaders/preload.list", "list"),
         ("config/audioconfig.dat26.rel.nametable", "nametable"),
     ] {

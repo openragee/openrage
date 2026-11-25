@@ -502,6 +502,14 @@ fn confirmed_media_names_identify_text_and_data_from_hashes_without_a_body() {
     for (name, extension) in [
         ("force_empty_rpf.txt", "txt"),
         ("data/tessellation.dat", "dat"),
+        ("data/imposterextents.dat", "dat"),
+        ("shaders/sga_spsdb/presets.spsdb", "spsdb"),
+        ("shaders/v2/fxdb/sga_xbsx_final.fxdb", "fxdb"),
+        ("shaders/v2/fxdb/sga_xbsx_final_init.fxdb", "fxdb"),
+        (
+            "shaders/v2/sga_xbsx_final_aco.d3d12pipelinecache",
+            "d3d12pipelinecache",
+        ),
         ("shaders/preload.list", "list"),
         ("config/minigame000_packlist.txt", "txt"),
         ("config/audioconfig.dat26.rel.nametable", "nametable"),

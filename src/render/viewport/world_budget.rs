@@ -158,9 +158,19 @@ pub(super) fn remember<K: Eq + std::hash::Hash>(gone: &mut std::collections::Has
     gone.insert(key);
 }
 
-/// Whether a frame that began putting things on the device at `since`, and has put `bytes` of this kind so far, puts another.
-pub(super) fn may_take(since: Instant, bytes: u64) -> bool {
-    bytes == 0 || since.elapsed() < TAKING
+/// The longest a frame spends putting what arrived on the device, however slow the frames are.
+const MOST_TAKING: Duration = Duration::from_millis(250);
+
+/// How long a frame after one of `last` spends putting what arrived on the device: [`TAKING`], or a quarter of the last frame where that is longer, and how many times the bytes a frame puts grow with it.
+// ⚠ A fixed 4 ms of frames that each took a second put a model and a texture a frame on the device: a street scene settled in tens of minutes, its readers idle.
+pub(super) fn taking(last: Option<Duration>) -> (Duration, u64) {
+    let time = last.map_or(TAKING, |last| (last / 4).clamp(TAKING, MOST_TAKING));
+    (time, (time.as_micros() / TAKING.as_micros()) as u64)
+}
+
+/// Whether a frame that began putting things on the device at `since`, and has put `bytes` of this kind so far, puts another within `time`.
+pub(super) fn may_take(since: Instant, bytes: u64, time: Duration) -> bool {
+    bytes == 0 || since.elapsed() < time
 }
 
 /// Something on the device that did not draw this frame.
@@ -281,12 +291,24 @@ mod tests {
     #[test]
     fn a_frame_takes_one_of_a_kind_whatever_the_time_and_more_only_within_it() {
         let now = Instant::now();
-        assert!(may_take(now, 0) && may_take(now, 1 << 20));
+        assert!(may_take(now, 0, TAKING) && may_take(now, 1 << 20, TAKING));
         let Some(long_ago) = now.checked_sub(TAKING * 2) else {
             return;
         };
-        assert!(may_take(long_ago, 0), "the first is always taken");
-        assert!(!may_take(long_ago, 1));
+        assert!(may_take(long_ago, 0, TAKING), "the first is always taken");
+        assert!(!may_take(long_ago, 1, TAKING));
+        assert!(may_take(long_ago, 1, TAKING * 3));
+    }
+
+    #[test]
+    fn a_slow_frame_takes_a_quarter_of_its_time_and_the_bytes_grow_with_it() {
+        // At sixty frames a second, and on the first frame, the fixed time.
+        assert_eq!(taking(None), (TAKING, 1));
+        assert_eq!(taking(Some(Duration::from_millis(16))), (TAKING, 1));
+        // A frame of 80 ms: 20 ms, five times the bytes.
+        assert_eq!(taking(Some(Duration::from_millis(80))), (TAKING * 5, 5));
+        // However slow, at most a quarter of a second.
+        assert_eq!(taking(Some(Duration::from_secs(9))), (MOST_TAKING, 62));
     }
 
     #[test]

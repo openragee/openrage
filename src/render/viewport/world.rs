@@ -262,11 +262,30 @@ impl RenderBridge {
         let lead = world.was.map_or(eye, |(then, was)| {
             ahead(eye, was, now.duration_since(then).as_secs_f32())
         });
+        let (time, more) = budget::taking(world.was.map(|(then, _)| now.duration_since(then)));
         world.was = Some((now, eye));
 
+        // The textures first, for half the time: one completes a model already on the device, where a model asks for more.
         let taking = Instant::now();
         let mut uploaded = 0u64;
-        while uploaded < budgets.models_a_frame && may_take(taking, uploaded) {
+        while uploaded < budgets.textures_a_frame * more && may_take(taking, uploaded, time / 2) {
+            let Some((key, pixels, read)) = viewer.take_texture() else {
+                break;
+            };
+            world.cost.reread.1 += u64::from(world.gone.1.remove(&key));
+            uploaded += world.textures.arrive(
+                &self.device,
+                &self.queue,
+                (key, pixels),
+                read.as_ref(),
+                (bc, budgets.most_side),
+                (frame, eye),
+            );
+            world.changes += 1;
+        }
+        world.cost.uploaded.1 = uploaded;
+        let mut uploaded = 0u64;
+        while uploaded < budgets.models_a_frame * more && may_take(taking, uploaded, time) {
             let Some((model, read)) = viewer.take_model() else {
                 break;
             };
@@ -290,23 +309,6 @@ impl RenderBridge {
             world.models.insert(model, slot);
         }
         world.cost.uploaded.0 = uploaded;
-        let mut uploaded = 0u64;
-        while uploaded < budgets.textures_a_frame && may_take(taking, uploaded) {
-            let Some((key, pixels, read)) = viewer.take_texture() else {
-                break;
-            };
-            world.cost.reread.1 += u64::from(world.gone.1.remove(&key));
-            uploaded += world.textures.arrive(
-                &self.device,
-                &self.queue,
-                (key, pixels),
-                read.as_ref(),
-                (bc, budgets.most_side),
-                (frame, eye),
-            );
-            world.changes += 1;
-        }
-        world.cost.uploaded.1 = uploaded;
         world.release_whole(viewer.reads_textures());
         world.cost.taking = taking.elapsed();
 

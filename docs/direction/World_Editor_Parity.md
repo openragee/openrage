@@ -260,7 +260,7 @@ The library of props and the doors a mapping enters by are R70j.
 |---|---|---|---|---|
 | A library of props shared by projects, with favourites | Links between projects exist today | A library would be a second kind of place beside the project | Adapt: a library is a project the others link | R70j |
 | The game's own props by category | Props are found without knowing a name | A shipped list of names is game content | Adapt: categories derived from the install by rule (ruling 11) | R70j |
-| A mapping imported from a folder, a zip or a package | Adopting a folder exists today | A zip and another tool's `.oiv` are new doors ([R50](Roadmap.md#r50-package-installation)) | Take the folder and the zip; the package comes with R50 | R70j |
+| A mapping imported from a folder, a zip or a package | Adopting a folder exists today, and `openrage-cli project adopt --into` takes a folder or a zip and reports it first | Another tool's `.oiv` is a new door ([R50](Roadmap.md#r50-package-installation)), and no screen shows the report | Take the folder and the zip; the package comes with R50 | R70j |
 | The XML a Blender add-on or CodeWalker writes, converted on import | How props and interiors leave Blender today; without it a prop arrives as glTF, with no collision and no type file | The ruling of 2026-09-22 that this XML is no compatibility target, which [Workbench_Plan.md](Workbench_Plan.md#held-back) holds back; a format with no specification | Waits (ruling 5): read on import, landing as sources, and never stored | R70j |
 | A watched folder that takes each new export | The loop a modeller works in; a file watcher exists today (`src/state/file_watcher.rs`) | It takes what the row above reads | Waits (ruling 5), with the row above | R70j |
 | A game file written out as that XML, with its textures as DDS, to open in Blender | How a mapper takes a game building into Blender with the add-on they have | Reading lands as sources and keeps no XML; writing makes the XML an output OpenRage must keep compatible, which reopens the ruling of 2026-09-22 more widely than reading does; `openrage-cli mesh export` writes glTF, which carries no collision and no type file | Leave | |
@@ -307,12 +307,12 @@ NodeRunner checks a project before it exports, each finding with a sentence and 
 | An occlusion box overlaps an interior | None | Take | R70o |
 | An occlusion box is too small to hide anything | None | Take | R70o |
 | An occlusion box lies mostly inside another | None | Take | R70o |
-| A road node has no link | None | Take | R70p |
-| A link goes to a node that does not exist | None | Take | R70p |
-| A link has no link back | None | Take | R70p |
-| A vehicle link has no lane either way | None | Take | R70p |
-| A road node is linked to a footpath node | None | Take | R70p |
-| A road node or a scenario point floats above the ground, or lies under a surface | None | Take | R70p, over R70g |
+| A road node has no link | `node-unreached`, in `or_maps::roads::rules`, a node no link reaches | Take | R70p |
+| A link goes to a node that does not exist | `link-node-missing`, in `or_maps::roads::rules` | Take | R70p |
+| A link has no link back | `link-one-way`, in `or_maps::roads::rules` | Take | R70p |
+| A vehicle link has no lane either way | `link-without-lane` is listed as not checked: a link's word names no lane | Take | R70p |
+| A road node is linked to a footpath node | `link-road-to-footpath`, in `or_maps::roads::rules` | Take | R70p |
+| A road node or a scenario point floats above the ground, or lies under a surface | `node-in-air` and `node-buried` for a road node, against a ground no caller hands them yet | Take | R70p, over R70g |
 | A scenario point is left on a deleted object | None | Take | R70p |
 | A building is added on walkable ground | None | Take | R70p |
 | A deleted building leaves its floors in the navmesh | None | Take | R70p |
@@ -391,8 +391,8 @@ Keys, hints, settings and the windows around the world. [World_Editor_UX_Design.
 
 | Capability | For | Against | Verdict | Row |
 |---|---|---|---|---|
-| Keys that can be changed | Built today: a binding is changed, cleared and reset in Settings and kept in the preferences (`src/ui/shortcuts.rs`) | A conflict is one key for two commands of the whole table, and a world tool needs a key that means something else on another screen | Have: R70v adds the place of a binding | R70v |
-| Presets of keys, with one that matches CodeWalker's | Presets were left open on 2026-10-03; a mapper who comes from CodeWalker keeps the same keys | None exists today | Take | R70v |
+| Keys that can be changed | Built today: a binding is changed, cleared and reset in Settings and kept in the preferences (`src/ui/shortcuts.rs`) | A world tool needs a key that means something else on another screen | Have: a conflict is one key for two commands read in one place (`Place` in `src/ui/commands/table.rs`) | R70v |
+| Presets of keys, with one that matches CodeWalker's | Presets were left open on 2026-10-03; a mapper who comes from CodeWalker keeps the same keys | Settings offers presets today (`src/ui/shortcuts/presets.rs`), and CodeWalker's holds one binding until its tools have commands | Take | R70v |
 | A bar that says at every moment what the pointer and the keys do for the tool in hand | How the keys are learnt | The status bar has a hint only for a window with nothing open today (`src/ui/panels/status_bar.rs`) | Take: the hints change while a handle is dragged and while the camera flies, and the bar gives the camera's position and the edition | R70i |
 | A right click on an object opens a short menu: go to, copy the position, delete, edit the model | A right click in the viewport opens a menu today, and every menu draws from the command registry (`every_context_menu_draws_from_the_registry`) | The right button also flies the camera | Take: a click released where it was pressed opens the menu, and held it flies | R70i |
 | A double click on an object opens its model, and on a door opens and closes it | | | Take | R70i, R70n, R70s |

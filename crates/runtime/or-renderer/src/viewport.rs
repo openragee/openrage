@@ -1355,6 +1355,7 @@ mod build;
 mod game_frame;
 mod meter;
 mod post;
+pub mod post_math;
 mod post_shaders;
 pub use meter::Metered;
 

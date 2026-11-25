@@ -79,6 +79,7 @@ mod inspect;
 mod jobs;
 mod keys;
 mod maps;
+mod maps_changes;
 mod mcp;
 mod mesh;
 mod meta;

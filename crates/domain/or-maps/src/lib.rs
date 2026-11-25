@@ -13,10 +13,14 @@
 //! The world model is `or-world`'s and the typed roots are `or_io::meta::typed`'s: this crate is the kind of content a project holds
 //! and the edits made to it, and holds no reader and no schema of its own.
 //!
+//! [`changes`] says what a map or a type file changed of the base its source keeps, by object and not by field: the entities and the
+//! archetypes added, deleted and changed, and the ones no guid and no place tells from a twin. `openrage-cli maps changes` prints it.
+//!
 //! ⚠ **Nothing here says a map loads in game.** A build says that every file it wrote reloads through the readers, which is all that
 //! can be measured without running GTA V.
 
 pub mod adopt;
+pub mod changes;
 pub mod edit;
 pub mod facts;
 pub mod gizmo;

@@ -401,6 +401,25 @@ pub fn compile(source: &Source) -> Result<Compiled, Vec<Problem>> {
     Inputs::read(source)?.compile()
 }
 
+/// What the base of the folder `source` names compiles to: the file the source compiles to until its XML is changed.
+pub fn compile_base(source: &Source) -> Result<Compiled, Vec<Problem>> {
+    let inputs = Inputs::read(source)?;
+    // ⚠ The canonical form of the base and not the base's bytes: compared with `compile`, the two files are written the same way, so what differs is what the XML changed.
+    let xml = with_public_names_only(|| canonical_xml(&inputs.base, &inputs.compile.extension))
+        .map_err(|mut found| {
+            let base = base_file(&inputs.compile.extension);
+            for p in &mut found {
+                p.file = Some(base.clone());
+            }
+            found
+        })?;
+    Inputs {
+        xml: xml.into_bytes(),
+        ..inputs
+    }
+    .compile()
+}
+
 /// What replacing the XML of a metadata source changed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Replaced {

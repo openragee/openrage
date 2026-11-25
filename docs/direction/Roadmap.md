@@ -10261,10 +10261,29 @@ one deleted building back as the base has it, with the far models a deletion too
 Discard changes to this map, after a question that counts them
 ([brief](World_Editor_Plan.md#what-a-project-changed-and-putting-it-back-r70y)).
 
-**Where it stands.** Not built. A metadata source keeps the game's file as its base
-([metadata](Source_Format_Design.md#metadata)), a file is compared with the original by record and
-field ([R49e](#r49e-compare-a-file-with-another-or-with-the-original)), and the check against the
-game runs only when asked of one source ([the edit loop](Source_Format_Design.md#the-edit-loop)).
+**Where it stands.** The comparison and the verb are built, on synthetic maps, with no screen.
+`crates/domain/or-maps/src/changes.rs` compares two typed roots of one map by object: the entities
+added, the entities deleted and each one both hold with what it states differently, named (moved,
+turned, scaled, another archetype, flags, parent, guid, the other typed members by the engine's
+names). `types_changes` says the same of the archetypes of a type file, with the entities of an
+interior, and what a file states of itself is compared member by member. An entity is found by its
+guid, else by its archetype at the same pose, else by the nearest; a twin that moved is listed as
+ambiguous, the data's word for the plan's undecided, and never as moved
+(`two_twins_with_one_archetype_and_one_guid_are_ambiguous_when_one_moved_and_never_a_move`), and
+the parent links are compared through the matching. `source_changes` cooks a source and the base
+it keeps (`compile_base` in `crates/domain/or-source/src/metadata.rs`), and
+`openrage-cli maps changes` prints it, as data with `--json`
+(`crates/domain/or-maps/tests/what_a_map_changed_of_its_base.rs`;
+[the matching in full](../reference/Crate_Reference.md#domain-crates)).
+
+⚠ Two readings are the owner's to rule on. The nearest match believes a place over a guid
+(`an_entity_taken_out_and_another_of_its_archetype_put_in_read_as_one_moved_with_another_guid`).
+And a new entity takes one more than the largest guid of its map (`free_guid` in
+`crates/domain/or-world/src/create.rs`), so one added after the entity with the largest guid was
+deleted takes that guid and compares as one entity changed, which no test holds. What no typed
+member names (a car generator, an occluder, a room, a portal, an extension) is said to differ and
+is not listed. Left: the panel, the outline, the operation that puts an object back, Discard, and
+a map of an install compared.
 
 **Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits) and
 [R70i](#r70i-selecting-and-moving-in-the-world).

@@ -18,6 +18,7 @@ use Failure::{Run, Usage};
 pub fn run(args: &[String]) -> ExitCode {
     let rest = args.get(1..).unwrap_or_default();
     let result = match args.first().map(String::as_str) {
+        Some("changes") => crate::maps_changes::run(rest),
         Some("list") => list(rest),
         Some("validate") => validate(rest),
         Some("verify") => verify(rest),
@@ -45,10 +46,18 @@ pub fn run(args: &[String]) -> ExitCode {
 fn print_usage() {
     eprintln!(
         "Usage:\n  \
+         openrage-cli maps changes  <project.openrage-proj> [--module <id>] [--json]\n  \
          openrage-cli maps list     <project.openrage-proj> [--module <id>]\n  \
          openrage-cli maps validate <project.openrage-proj> [--module <id>] [--json]\n  \
          openrage-cli maps verify   <project.openrage-proj> [--build <id>] [--out <folder>]\n  \
          openrage-cli maps apply    <project.openrage-proj> <operations.json> [--module <id>] [--dry-run]\n\n\
+         changes compares each map file and type file of the content with the base its source keeps,\n\
+         the file it was imported from, and says by object what the source changed: the entities and\n\
+         the archetypes added, deleted and changed, each with its index in the base and its index now,\n\
+         and the ones no guid and no place tells from a twin, which are named ambiguous and never\n\
+         moved. What a file states of itself differently, such as its flags and its extents, is a\n\
+         line of its own, and the entities of an interior are under the interior. With --json it\n\
+         prints the same changes as data. It exits 1 when a source cannot be compared.\n\
          list names the map sets of the content and, for each source, what it places (the entities of\n\
          a map file) or declares (the archetypes of a type file, and the rooms and portals of its\n\
          interiors).\n\
@@ -72,7 +81,7 @@ fn print_usage() {
     );
 }
 
-fn maps_of(
+pub(crate) fn maps_of(
     positional: &[String],
     flags: &HashMap<String, String>,
 ) -> Result<(Project, Vec<String>), Failure> {

@@ -282,6 +282,53 @@ fn a_file_that_is_no_metadata_document_is_refused_with_the_reason_and_leaves_no_
 }
 
 #[test]
+fn the_base_of_a_source_cooks_to_what_the_source_cooks_to_until_its_xml_is_changed() {
+    for (format, extension) in [(BinaryFormat::Rbm, "ymap"), (BinaryFormat::Pso, "ytyp")] {
+        let scratch = tempfile::tempdir().unwrap();
+        let dir = extract(scratch.path(), &synthetic(format), "cs1_02", extension);
+        let base = |dir: &Path| {
+            metadata::compile_base(&Source::open(dir).unwrap())
+                .unwrap_or_else(|problems| panic!("{format:?}: {problems:#?}"))
+        };
+        let untouched = compile(&dir);
+        assert_eq!(
+            base(&dir).bytes,
+            untouched,
+            "{format:?}: an untouched source"
+        );
+        assert_eq!(base(&dir).file_name, format!("cs1_02.{extension}"));
+
+        let xml = fs::read_to_string(dir.join("metadata.xml")).unwrap();
+        let edited = xml.replace("contentFlags value=\"65\"", "contentFlags value=\"66\"");
+        assert_ne!(xml, edited, "{xml}");
+        fs::write(dir.join("metadata.xml"), edited).unwrap();
+        assert_eq!(content_flags(&compile(&dir)), 66);
+        assert_eq!(
+            base(&dir).bytes,
+            untouched,
+            "{format:?}: the base does not follow an edit of the XML"
+        );
+    }
+
+    // A base that is not the file the XML was exported from is refused, as the compile refuses it.
+    let scratch = tempfile::tempdir().unwrap();
+    let dir = extract(
+        scratch.path(),
+        &synthetic(BinaryFormat::Rbm),
+        "cs1_02",
+        "ymap",
+    );
+    fs::write(dir.join("base.ymap"), synthetic(BinaryFormat::Pso)).unwrap();
+    assert!(metadata::compile_base(&Source::open(&dir).unwrap()).is_err());
+
+    // A base that is no metadata file is refused, and the refusal names the base and not the XML.
+    fs::write(dir.join("base.ymap"), b"not a map").unwrap();
+    let problems = metadata::compile_base(&Source::open(&dir).unwrap()).unwrap_err();
+    assert_eq!(problems.len(), 1, "{problems:#?}");
+    assert_eq!(problems[0].file.as_deref(), Some("base.ymap"));
+}
+
+#[test]
 fn a_changed_base_is_refused_as_not_the_file_the_xml_was_exported_from() {
     let scratch = tempfile::tempdir().unwrap();
     let dir = extract(

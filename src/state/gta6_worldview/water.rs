@@ -27,7 +27,7 @@ mod waves;
 pub use fog::{fog, WaterFog};
 pub use ground::ground;
 pub use mesh::{mesh, tint, Medium};
-pub use waves::presets;
+pub use waves::{cascades, presets};
 
 /// The archive of an install the water document is in, and the document's path in it.
 const ARCHIVE: &str = "levels.rpf";
@@ -91,6 +91,7 @@ impl super::Viewer {
                 || ground::ground_reading(root)
                 || fog::fog_reading(root)
                 || waves::presets_reading(root)
+                || waves::cascades_reading(root)
         })
     }
 }
@@ -105,6 +106,7 @@ pub struct Seen {
     pub ground: Option<Arc<WaterGround>>,
     pub fog: Option<Arc<WaterFog>>,
     pub presets: Option<Arc<or_io::gta6::water::waves::OceanPresets>>,
+    pub cascades: Option<Arc<waves::Cascades>>,
     day: Option<Arc<DayTables>>,
     hour: f32,
     /// The name of the day's cycle the weather stands for.
@@ -126,6 +128,7 @@ impl Seen {
         let fetch = moment.and_then(|m| m.own.get("water_ocean_fetch"));
         let preset = self.presets.as_ref().and_then(|p| p.nearest(x, y));
         waves::waves(
+            self.cascades.as_deref(),
             preset,
             beaufort.unwrap_or(0.0),
             fetch,
@@ -154,6 +157,7 @@ pub fn seen(root: &Path, hour: f32, weather: WeatherState, y: f32) -> Option<See
         ground: ground(root),
         fog: fog(root),
         presets: presets(root),
+        cascades: cascades(root),
         day: super::sky::tables(root),
         hour,
         weather: super::sky::weather_name(weather),

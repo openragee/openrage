@@ -204,10 +204,21 @@ pub struct Stage {
 const AT_REST: &[u32] = &[];
 
 /// Whether the developer's aid `unguarded` of `OPENRAGE_GTA6_SHADED` is given: a count to a number
-/// only the game fills is then let through, for a renderer that draws it on a software adapter alone.
+/// only the game fills, and a resource picked by one, are then let through, for a renderer that
+/// draws the stage on a software adapter alone.
 fn unguarded() -> bool {
     std::env::var("OPENRAGE_GTA6_SHADED")
         .is_ok_and(|aids| aids.split(',').any(|word| word.trim() == "unguarded"))
+}
+
+/// What fills a binding a stage picks by a number: what the heap gives it, or noughts where it
+/// is none of the heap's and the developer's aid `unguarded` lets the stage through.
+fn picked_feed(found: Option<Feed>, unguarded: bool) -> Result<Feed, Unbound> {
+    match (found, unguarded) {
+        (Some(feed), _) => Ok(feed),
+        (None, true) => Ok(Feed::Zero(None)),
+        (None, false) => Err(Unbound::Picked),
+    }
 }
 
 /// Why a stage that loops is not drawn, where one of its loops may never end.
@@ -718,7 +729,8 @@ pub fn feed(
                 false => Feed::Zero(None),
             },
             Join::Picked => {
-                heap(resource, kind, &native.records, material.buffer).ok_or(Unbound::Picked)?
+                let found = heap(resource, kind, &native.records, material.buffer);
+                picked_feed(found, unguarded())?
             }
             Join::NoRecord { root, offset } => {
                 return Err(Unbound::NoRecord { root, offset }.into())
@@ -992,6 +1004,14 @@ var x = 0.0;
 }}"
         );
         naga::front::wgsl::parse_str(&text).expect("the WGSL parses")
+    }
+
+    #[test]
+    fn a_picked_binding_the_heap_does_not_give_is_noughts_only_under_the_aid() {
+        assert_eq!(picked_feed(Some(Feed::Blank), false), Ok(Feed::Blank));
+        assert_eq!(picked_feed(Some(Feed::Blank), true), Ok(Feed::Blank));
+        assert_eq!(picked_feed(None, true), Ok(Feed::Zero(None)));
+        assert_eq!(picked_feed(None, false), Err(Unbound::Picked));
     }
 
     #[test]

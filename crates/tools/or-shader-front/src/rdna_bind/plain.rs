@@ -278,7 +278,7 @@ fn pick(site: &Site, expression: &E, textures: &[(u32, Handle<naga::GlobalVariab
 }
 
 /// Each block of `block`, itself first.
-fn each_block(block: &mut Block, f: &mut dyn FnMut(&mut Block)) {
+pub(super) fn each_block(block: &mut Block, f: &mut dyn FnMut(&mut Block)) {
     f(block);
     for statement in block.iter_mut() {
         match statement {
@@ -304,7 +304,7 @@ fn each_block(block: &mut Block, f: &mut dyn FnMut(&mut Block)) {
 }
 
 /// Put `call` where `block` emits `at`, which the call gives from now on; whether it was there.
-fn call_in_place(block: &mut Block, expressions: &Arena<E>, at: Ex, call: &S) -> bool {
+pub(super) fn call_in_place(block: &mut Block, expressions: &Arena<E>, at: Ex, call: &S) -> bool {
     let holds = |statement: &S| match statement {
         S::Emit(range) => range.index_range().contains(&(at.index() as u32)),
         _ => false,

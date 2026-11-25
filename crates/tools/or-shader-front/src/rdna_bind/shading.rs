@@ -8,6 +8,7 @@ use or_io::gta5::shaders::sgd5_pack::constant_buffers;
 use or_io::gta5::shaders::spirv_pack::{ConstantBuffer, SignatureElement};
 use or_io::hash::string_hash_str;
 
+use super::budget::{self, Budget, Fitted};
 use super::loops;
 use super::picks::{deferred_targets, material_textures, picks, Unsettled, TEXTURE_ARRAY};
 use super::plain::plain_textures;
@@ -354,39 +355,6 @@ fn places_instances(feeds: &[Fed]) -> bool {
     (feeds.iter()).any(|fed| fed.feed == Feed::Zero(Some(INSTANCE_RECORDS)))
 }
 
-/// The constant buffers a device with default limits gives a stage.
-const CONSTANT_BUFFERS: usize = 12;
-/// The most bytes of a constant buffer left at nought that a stage holds as its own variable.
-// ⚠ Each thread of a stage has its own copy: with one of 64 KiB, the size a buffer read at a
-// computed place is declared with, a Vulkan device was lost at the first draw.
-const OWN_NOUGHTS: u32 = 4096;
-
-/// Keep `module` to the constant buffers a device with default limits gives a stage: while it
-/// binds more, the smallest it binds at one of `noughts`, the bindings the editor leaves at
-/// nought, becomes the stage's own variable of noughts, which binds nothing and reads the same.
-// Only as many as it takes: a driver may fold what a program computes from noughts it can see,
-// a division by one say, otherwise than the device computes it from a buffer.
-fn within_constant_buffers(module: &mut naga::Module, noughts: &[(u32, u32)]) {
-    use naga::AddressSpace;
-    let bound = (module.global_variables.iter())
-        .filter(|(_, global)| global.space == AddressSpace::Uniform && global.binding.is_some())
-        .count();
-    let mut own: Vec<_> = (module.global_variables.iter())
-        .filter(|(_, global)| global.space == AddressSpace::Uniform)
-        .filter(|(_, global)| {
-            (global.binding.as_ref()).is_some_and(|b| noughts.contains(&(b.group, b.binding)))
-        })
-        .map(|(handle, global)| (module.types[global.ty].inner.size(module.to_ctx()), handle))
-        .filter(|(size, _)| *size <= OWN_NOUGHTS)
-        .collect();
-    own.sort();
-    for (_, handle) in own.into_iter().take(bound.saturating_sub(CONSTANT_BUFFERS)) {
-        let global = module.global_variables.get_mut(handle);
-        global.space = AddressSpace::Private;
-        global.binding = None;
-    }
-}
-
 /// The location a lowered stage gives the high halves of a parameter of 16-bit floats, past
 /// that of its low halves.
 const HIGH_HALVES: u32 = 32;
@@ -688,6 +656,41 @@ pub fn feed(
     table: &Sgd5Table,
     effect: &Sgd5Table,
 ) -> Result<Stage, Unfed> {
+    feed_noting(native, lowered, table, effect).map(|(stage, _)| stage)
+}
+
+/// [`feed`], with what it did to the stage's buffers to hold it to a device with default limits.
+pub fn feed_noting(
+    native: &Native,
+    lowered: Lowered,
+    table: &Sgd5Table,
+    effect: &Sgd5Table,
+) -> Result<(Stage, Fitted), Unfed> {
+    fed(native, lowered, table, effect, None)
+}
+
+/// [`feed`] for a device that gives a stage `budget`: where the bindings the editor leaves at
+/// nought are not enough, buffers of the stage are merged, and a renderer fills each merged
+/// buffer from the feeds of its parts, as [`Fitted::merged`] says.
+pub fn feed_within(
+    native: &Native,
+    lowered: Lowered,
+    table: &Sgd5Table,
+    effect: &Sgd5Table,
+    budget: &Budget,
+) -> Result<(Stage, Fitted), Unfed> {
+    fed(native, lowered, table, effect, Some(budget))
+}
+
+/// The stage and what was done to its buffers: held by its noughts to a device with default
+/// limits, or with `merging` to that budget by merges too.
+fn fed(
+    native: &Native,
+    lowered: Lowered,
+    table: &Sgd5Table,
+    effect: &Sgd5Table,
+    merging: Option<&Budget>,
+) -> Result<(Stage, Fitted), Unfed> {
     let kind = native.program.kind;
     let mesh = kind == ShaderKind::Mesh;
     let stage_group = u32::from(kind == ShaderKind::Pixel);
@@ -883,8 +886,6 @@ pub fn feed(
     }
     whole_tables(&mut module);
     first_levels_stated(&mut module);
-    // After the tables are bound whole, which takes constant buffers away.
-    within_constant_buffers(&mut module, &noughts);
     let mut streams = BTreeSet::new();
     let read = reads(&module);
     for fed in feeds.iter().filter(|fed| fed.feed == Feed::VertexData) {
@@ -892,7 +893,13 @@ pub fn feed(
         streams.extend(places.filter_map(|place| place.parse::<u32>().ok()));
     }
     streams.retain(|slot| *slot < STREAM_SLOTS);
-    Ok(Stage {
+    // After the tables are bound whole, which takes constant buffers away, and after the
+    // streams are read off the bindings, which a merge moves.
+    let fitted = match merging {
+        Some(budget) => budget::within(&mut module, &noughts, budget),
+        None => budget::noughts_within(&mut module, &noughts, &Budget::DEFAULT),
+    };
+    let stage = Stage {
         module: std::sync::Arc::new(module),
         feeds,
         streams,
@@ -901,7 +908,8 @@ pub fn feed(
         textures: (material.textures.iter())
             .map(|(number, texture)| (*number, texture.semantic_hash))
             .collect(),
-    })
+    };
+    Ok((stage, fitted))
 }
 
 /// `module` as WGSL, for a person to read what a program does with a binding.
@@ -1607,7 +1615,7 @@ struct Words { words: array<u32> }
             },
             naga::Span::UNDEFINED,
         );
-        for binding in (5..5 + CONSTANT_BUFFERS as u32 - 1).chain([3, 4]) {
+        for binding in (5..5 + Budget::DEFAULT.uniform - 1).chain([3, 4]) {
             let ty = if binding > 4 { matrix } else { row };
             module.global_variables.append(
                 naga::GlobalVariable {
@@ -1629,6 +1637,7 @@ struct Words { words: array<u32> }
             subgroups: false,
         };
         let stage = feed(&native, lowered(resources.clone()), &program(), &effect).unwrap();
+        const CONSTANT_BUFFERS: usize = Budget::DEFAULT.uniform as usize;
         let fed: Vec<_> = stage.feeds.iter().map(|f| (&f.feed, f.header)).collect();
         assert_eq!(fed[0], (&Feed::Meshlets, Some(1)));
         assert_eq!(fed[1], (&Feed::VertexData, None));
@@ -1657,7 +1666,7 @@ struct Words { words: array<u32> }
         let first = twelve.global_variables.iter().next().unwrap().0;
         twelve.global_variables.get_mut(first).space = naga::AddressSpace::Private;
         let before = format!("{twelve:?}");
-        within_constant_buffers(&mut twelve, &[(0, 4)]);
+        budget::noughts_within(&mut twelve, &[(0, 4)], &Budget::DEFAULT);
         assert_eq!(format!("{twelve:?}"), before);
         assert!(stage.textures.is_empty());
 
@@ -1670,5 +1679,65 @@ struct Words { words: array<u32> }
         named.resources[3].name_hash = INSTANCE_RECORDS;
         let refused = feed(&instanced, lowered(resources), &named, &effect).map(|_| ());
         assert_eq!(refused, Err(Unfed::Instanced));
+        // For a device that gives a stage five constant buffers, with each declared as rows, as
+        // a lowering declares them: the one at nought is the stage's own first, and the eight
+        // smallest of the others become one buffer, the view's among them.
+        let mut rows = naga::Module::default();
+        let row = rows
+            .types
+            .insert(module.types[row].clone(), naga::Span::UNDEFINED);
+        for binding in (5..5 + Budget::DEFAULT.uniform - 1).chain([3, 4]) {
+            let ty = rows.types.insert(
+                naga::Type {
+                    name: None,
+                    inner: naga::TypeInner::Array {
+                        base: row,
+                        size: naga::ArraySize::Constant(
+                            std::num::NonZeroU32::new(binding + 1).unwrap(),
+                        ),
+                        stride: 16,
+                    },
+                },
+                naga::Span::UNDEFINED,
+            );
+            rows.global_variables.append(
+                naga::GlobalVariable {
+                    name: None,
+                    space: naga::AddressSpace::Uniform,
+                    binding: Some(naga::ResourceBinding { group: 0, binding }),
+                    ty,
+                    init: None,
+                    memory_decorations: Default::default(),
+                },
+                naga::Span::UNDEFINED,
+            );
+        }
+        let lowered = Lowered {
+            module: rows,
+            resources,
+            approximations: Default::default(),
+            half_slots: Default::default(),
+            subgroups: false,
+        };
+        let five = Budget {
+            uniform: 5,
+            ..Budget::DEFAULT
+        };
+        let (stage, fitted) = feed_within(&native, lowered, &program(), &effect, &five).unwrap();
+        assert_eq!(fitted.own, [(0, 4)]);
+        assert!(five.holds(budget::Bound::of(&stage.module)));
+        let [merged] = fitted.merged.as_slice() else {
+            panic!("one buffer holds the merged ones: {:?}", fitted.merged);
+        };
+        assert_eq!((merged.at, merged.parts.len()), ((0, 3), 8));
+        let part = |was, offset, bytes| budget::Part { was, offset, bytes };
+        assert_eq!(
+            merged.parts[..2],
+            [part((0, 3), 0, 64), part((0, 5), 64, 96)]
+        );
+        // A part is still fed as its own binding says: the view's is the view.
+        let view = &stage.feeds[3];
+        assert!(matches!(view.feed, Feed::View(_)));
+        assert_eq!((view.group, view.binding), (0, 3));
     }
 }

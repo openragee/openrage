@@ -82,14 +82,17 @@ hours it states.
 
 `crates/domain/or-world/src/streaming.rs` holds the rules, with no file or device in them:
 
-- A map is wanted while the camera is within 50 m of the box it streams by. Its level-of-detail
-  parent maps are wanted with it. A map's body is read when it is wanted, on a worker.
-- Every tier of map streams in at any speed.
+- A map is wanted while the camera is within the sphere of the box it streams by: about the box's
+  middle, of the box's smallest half extent and 50 m; a box under a metre of half extent on any
+  side streams in nowhere. Its level-of-detail parent maps are wanted with it. A map's body is read
+  when it is wanted, on a worker.
+- Every tier of map streams in at any speed, and nothing is asked for ahead of a moving camera.
 - Every node draws by its own distance. An entity that stands in for the whole of its parent is
   judged by the distance to its **parent**, a list by its own box's centre, and the children of one
   parent draw as opaque as the most opaque of them.
-- A parent that states how many children it has fades out as they fade in, taking what the most
-  opaque of them leaves, once that many are loaded and while its own distance leaves it whole. It is
+- A parent fades out as its children fade in, taking what the most opaque of them leaves, once as
+  many as it states are loaded (an entity's count rises to those loaded) and while its own distance
+  leaves it whole. It is
   held whole while a child that draws has no model on the device yet, so no hole opens while models
   arrive; such a child is asked for even where its own children draw in its place. A parent fading
   out for its children keeps the pixels their dither leaves, so a cross-fade leaves none bare. A
@@ -122,8 +125,8 @@ forest draws.
 
 Streaming and selection run on a thread of the world's own, which selects again when the camera
 has moved, a map came or went, a model did, or a fade is still under way. A frame reads the last
-selection and never waits for one. A moving camera asks, after what is in range, for what its
-speed brings into range within a second. Models and textures get as many readers each, half the
+selection and never waits for one. What a selection waits for is asked for as soon as the forest
+is walked, before its instances are laid out. Models and textures get as many readers each, half the
 machine's threads up to twelve. What the readers answered goes on the device soonest needed first,
 textures before models, for 4 ms a frame or a quarter of the last frame where that is longer, and
 they read no more than 512 MiB ahead of what frames take.
@@ -169,7 +172,8 @@ does nothing.
   game shader pack is read, and the sun casts their shadow in four cascades about what the camera
   sees; with no pack they are lit by the plain pass. The World panel says which.
 
-Models are read on workers, the nearest first, and textures as the models that draw ask for
+Models are read on workers in the game's order: what waits for them in view first, then far
+levels, interiors and the rest, and the nearest first within each; textures as the models that draw ask for
 them; both are put on the device under a budget a frame, and the ones drawn longest ago go once the
 device holds more than its budget. A texture is read at the level the screen needs and every level
 under it, from the rows of its pack those levels lie in; block-compressed rows go to the device as

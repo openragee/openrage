@@ -175,8 +175,12 @@ mod tests {
         assert!(!wanted(&row(16, 3), &enabled, &near));
         let far = View::at(Vec3::splat(-200.0), 1.0);
         assert!(!wanted(&row(OCCLUDERS, 3), &enabled, &far));
-        // Within the 50 m every map streams in by.
-        assert!(wanted(
+        // Within the sphere every map streams in by: its half side and 50 m from its middle.
+        let at = |x: f32| View::at(Vec3::new(x, 50.0, 50.0), 1.0);
+        assert!(wanted(&row(OCCLUDERS, 3), &enabled, &at(-40.0)));
+        assert!(!wanted(&row(OCCLUDERS, 3), &enabled, &at(-60.0)));
+        // Past a corner of the box grown by 50 m, but outside the sphere.
+        assert!(!wanted(
             &row(OCCLUDERS, 3),
             &enabled,
             &View::at(Vec3::splat(-40.0), 1.0)

@@ -89,6 +89,7 @@ struct Constants {
 const STANDARD: u32 = 0u;
 const TWO_LAYER: u32 = 1u;
 const FOUR_LAYER: u32 = 2u;
+const GLASS: u32 = 4u;
 const EMISSIVE_FAMILY: u32 = 5u;
 const GRASS: u32 = 6u;
 const TERRAIN_LOD: u32 = 8u;
@@ -881,9 +882,17 @@ fn fs_gbuffer_decal(in: VsOut, @builtin(front_facing) front_facing: bool) -> GBu
     return out;
 }
 
-// The light the lamps give a surface at `world_pos`, by GTA VI's law: the window `(1 - (d²/R²)²)²` over the distance squared, and a spot's angular factor across its cones.
-fn lamps_lit(s: Surface, world_pos: vec3<f32>) -> vec3<f32> {
-    var sum = vec3<f32>(0.0);
+// The light the lamps give a surface: by GTA VI's law, the window `(1 - (d²/R²)²)²` and a spot's angular factor across its cones over the distance squared, by the cosine to its normal (`facing`); and as the glass program sums every light again, with no cosine and `I / 4π` at the most (`round`).
+struct LampLight {
+    facing: vec3<f32>,
+    round: vec3<f32>,
+}
+
+// ⚠ The glass program's second sum takes `s² / (d² + s²)` of a light by a source radius its record was read to hold; the record holds none, and a metre stands in for it.
+const LAMP_SOURCE_SQUARED: f32 = 1.0;
+
+fn lamps_lit(s: Surface, world_pos: vec3<f32>) -> LampLight {
+    var sum = LampLight(vec3<f32>(0.0), vec3<f32>(0.0));
     let count = u32(light.frame.z);
     for (var i = 0u; i < count; i = i + 1u) {
         let l = light.lamps[i];
@@ -908,7 +917,9 @@ fn lamps_lit(s: Surface, world_pos: vec3<f32>) -> vec3<f32> {
             let x = clamp((dot(l.way.xyz, -towards) - l.colour.w) * l.way.w, 0.0, 1.0);
             a = x * (x - x * x + x * x * x * x * (3.0 - 2.0 * x * x));
         }
-        sum = sum + l.colour.rgb * (w * w * a / d2) * max(dot(s.normal, towards), 0.0);
+        let lit = l.colour.rgb * (w * w * a);
+        sum.facing = sum.facing + lit / d2 * max(dot(s.normal, towards), 0.0);
+        sum.round = sum.round + lit * (LAMP_SOURCE_SQUARED / (d2 + LAMP_SOURCE_SQUARED) / (4.0 * PI));
     }
     return sum;
 }
@@ -939,7 +950,10 @@ fn fs_lit(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) 
     if (dropped(in, max(s.coverage, max3(surface)), BLEND_ALPHA)) {
         discard;
     }
-    let lit = (diffuse_of(s) * (sun + ambient + lamps_lit(s, in.world_pos)) + s.emissive) * s.coverage + surface;
+    // Glass takes its lamps' light all round, as the glass program mixes it in whole for a lens that states no share of its own.
+    let lamps = lamps_lit(s, in.world_pos);
+    let lamp = select(lamps.facing, lamps.round, m.family.x == GLASS);
+    let lit = (diffuse_of(s) * (sun + ambient + lamp) + s.emissive) * s.coverage + surface;
     return vec4<f32>(lit, s.coverage + share - s.coverage * share);
 }
 

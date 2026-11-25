@@ -103,6 +103,12 @@ fn the_nearest_are_kept_each_in_the_pass_of_its_kind() {
         (capsule.position.x, capsule.length, capsule.radius),
         (20.0, 4.0, 5.0)
     );
+    // What blends is lit by a capsule from its segment, half of it each way of its place
+    let tube = (two.lamps.iter()).find(|l| l.position.x == 20.0);
+    assert_eq!(
+        tube.map(|l| (l.direction, l.cone[1] < 0.0)),
+        Some((Vec3::new(0.0, 0.0, -2.0), true))
+    );
     let all = frame_lights(&lamps, Vec3::ZERO, 3.5, 1.0, 8);
     assert_eq!(all.lights, 4, "the hour-3 light is lit at 03:30");
     assert_eq!(all.points[0].position.x, 15.0, "the nearest point first");

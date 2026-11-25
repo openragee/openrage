@@ -308,7 +308,7 @@ pub fn cones_within(inner: f32, outer: f32) -> Vec<(f32, f32, f32, f32)> {
 /// The widest cone the spot pass draws, in degrees.
 const MOST_CONE: f32 = 89.0;
 
-/// `l` drawn as `kind` as a lamp that lights what blends, of `strength` (its colour times its intensity in the frame's units): a spot by its cones, an area light as one from a right angle in, anything else all round from its place.
+/// `l` drawn as `kind` as a lamp that lights what blends, of `strength` (its colour times its intensity in the frame's units): a spot by its cones, an area light as one from a right angle in, a capsule all round from the nearest point of its segment, anything else all round from its place.
 fn lamp_of(l: &Light, kind: LightKind, strength: Vec3, direction: Vec3) -> or_renderer::WorldLamp {
     let (inner, outer) = match kind {
         LightKind::Spot => (l.cone_inner, l.cone_outer),
@@ -316,18 +316,19 @@ fn lamp_of(l: &Light, kind: LightKind, strength: Vec3, direction: Vec3) -> or_re
         _ => (0.0, 180.0),
     };
     let (cos_in, cos_out) = (inner.to_radians().cos(), outer.to_radians().cos());
-    let shines_one_way = matches!(kind, LightKind::Spot | LightKind::Area);
-    or_renderer::WorldLamp {
+    let mut lamp = or_renderer::WorldLamp {
         position: Vec3::from(l.position),
         radius: l.radius,
         colour: strength,
-        direction: if shines_one_way {
-            direction
-        } else {
-            Vec3::ZERO
-        },
+        direction: Vec3::ZERO,
         cone: [cos_out, 1.0 / (cos_in - cos_out).max(1e-4)],
+    };
+    match kind {
+        LightKind::Spot | LightKind::Area => lamp.direction = direction,
+        LightKind::Capsule => lamp = lamp.capsule(direction * (0.5 * l.length)),
+        LightKind::Point => {}
     }
+    lamp
 }
 
 /// The volumes of `chosen` lit at `hour`, their intensity times `scale`.

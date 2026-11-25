@@ -159,6 +159,11 @@ fn map_name(index: &WorldIndex, hash: u32) -> String {
         .map_or_else(|| hex(hash), |m| m.name.clone())
 }
 
+/// The logical path of the map file whose stem hashes to `hash`, which is how `world find` and `maps edit-game` name a map file.
+fn map_logical(index: &WorldIndex, hash: u32) -> Option<&str> {
+    index.map(hash).map(|map| map.logical.as_str())
+}
+
 fn why_in_words(index: &WorldIndex, why: Why) -> String {
     match why {
         Why::Own => "the view is within its box".to_string(),
@@ -352,6 +357,7 @@ pub(super) fn select_json(
         json!({
             "archetype": hex(at.archetype),
             "map": map_name(index, at.map),
+            "logical": map_logical(index, at.map),
             "entity": at.entity,
             "why": why,
         })
@@ -371,6 +377,7 @@ pub(super) fn select_json(
             json!({
                 "archetype": hex(instance.archetype),
                 "map": map_name(index, instance.map),
+                "logical": map_logical(index, instance.map),
                 "entity": instance.entity,
                 "interior": instance.interior,
                 "placed": placed_in_words(index, instance),

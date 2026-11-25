@@ -516,8 +516,9 @@ pub fn held_to_its_mount(mount: &dyn Fn() -> MountedGame, root: &Path, file: &Pa
     let (again, report) = refresh(&counting, file);
     assert!(
         matches!(report.kept, KeptState::Current),
-        "{:?}",
-        report.kept
+        "{:?}: read again {:?}",
+        report.kept,
+        report.read
     );
     let (listed, opened) = counting.counts();
     assert!(

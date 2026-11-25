@@ -158,10 +158,14 @@ impl Standing {
     }
 
     /// Whether a place lies at `at`, within the room a far stand-in's place is allowed.
+    // ⚠ A selection asks this of every card of every list, over a million at a city camera: the
+    // nine cells around each took seconds of the selection, where the cells its room reaches are
+    // nearly always its own alone.
     fn stands_at(&self, at: Vec3) -> bool {
-        let (x, y) = cell_of(at);
-        (x - 1..=x + 1)
-            .flat_map(|cx| (y - 1..=y + 1).map(move |cy| (cx, cy)))
+        let room = Vec3::new(SAME_TREE, SAME_TREE, 0.0);
+        let ((x0, y0), (x1, y1)) = (cell_of(at - room), cell_of(at + room));
+        (x0..=x1)
+            .flat_map(|cx| (y0..=y1).map(move |cy| (cx, cy)))
             .filter_map(|c| self.cells.get(&c))
             .flatten()
             .any(|p| {

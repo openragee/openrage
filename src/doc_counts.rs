@@ -244,6 +244,7 @@ fn document_kind_names_these_formats_and_one_it_does_not() {
             "Gta6AudioData",
             "Gta6Expressions",
             "Gta6Save",
+            "Gta6Script",
             "GameRoot",
             "Folder",
             "Text",

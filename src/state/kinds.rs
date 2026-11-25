@@ -460,6 +460,16 @@ static KINDS: &[KindInfo] = &[
         own_extensions: &[],
     },
     KindInfo {
+        kind: DocumentKind::Gta6Script,
+        noun: tr_key!("GTA VI Script"),
+        tooltip: tr_key!("A compiled GTA VI script, read from the archive that holds it or from a deciphered file: the source it decompiles to and the classes and functions that source lists, read-only"),
+        glyph: ph::CODE,
+        color: theme::KIND_TEXT,
+        workspace: Workspace::Data,
+        keeps_source_extension: false,
+        own_extensions: &[],
+    },
+    KindInfo {
         kind: DocumentKind::GameRoot,
         noun: tr_key!("Game Install"),
         tooltip: tr_key!("Game install — the folder a game was installed to"),
@@ -744,6 +754,7 @@ mod tests {
                     | DocumentKind::Gta6AudioData
                     | DocumentKind::Gta6Expressions
                     | DocumentKind::Gta6Save
+                    | DocumentKind::Gta6Script
             );
             assert_eq!(
                 has,
@@ -799,7 +810,8 @@ mod tests {
         assert!(!offered.contains(&DocumentKind::Gta6AudioData));
         assert!(!offered.contains(&DocumentKind::Gta6Expressions));
         assert!(!offered.contains(&DocumentKind::Gta6Save));
-        assert_eq!(offered.len(), KINDS.len() - 11);
+        assert!(!offered.contains(&DocumentKind::Gta6Script));
+        assert_eq!(offered.len(), KINDS.len() - 12);
     }
 
     #[test]

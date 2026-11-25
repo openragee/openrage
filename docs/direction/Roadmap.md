@@ -502,13 +502,14 @@ would meet. The rows are listed in the order of the plan's stages
 nothing of this phase, R70g needs R70b only for the bounds at a position, and R70c, the GTA V map
 drawn with its models, is what most screen rows wait for. A row takes the default beside its
 question in [the rulings asked](World_Editor_Plan.md#rulings-asked-of-the-owner), except a part
-whose ruling says "It waits". Parts of R70a, R70b, R70d, R70e, R70g, R70h, R70q, R70r, R70w and
-R70y are built, with no screen, on installs and packs made by hand and on the staged corpus. No row
+whose ruling says "It waits". Parts of R70a, R70b, R70d, R70e, R70g, R70h, R70k, R70n, R70q, R70r,
+R70w and R70y are built, on installs and packs made by hand and on the staged corpus, with no
+screen but the Build tab's line of R70a and the Map screen's Undo of R70h. No row
 is closed, no install suite has run and nothing was loaded in a game: each row's Where it stands
 says what is built and what is left. R70 has no letter left: a finding that fits no row opens the
 next number.
 
-- [ ] [R70 The GTA V world editor](#r70-the-gta-v-world-editor) — the plan of 2026-11-25, in the parts below, begun in lanes the same day; parts of R70a, R70b, R70d, R70e, R70g, R70h, R70q, R70r, R70w and R70y are built and no row is closed, and the Map screen of wave P44 and the World screen of GTA VI are what it starts from
+- [ ] [R70 The GTA V world editor](#r70-the-gta-v-world-editor) — the plan of 2026-11-25, in the parts below, begun in lanes the same day; parts of R70a, R70b, R70d, R70e, R70g, R70h, R70k, R70n, R70q, R70r, R70w and R70y are built and no row is closed, and the Map screen of wave P44 and the World screen of GTA VI are what it starts from
   - [ ] [R70a What the game loads](#r70a-what-the-game-loads)
   - [ ] [R70b The GTA V world index](#r70b-the-gta-v-world-index)
   - [ ] [R70g Collision as a query](#r70g-collision-as-a-query)
@@ -9546,8 +9547,8 @@ together.
 
 A part's Done when is its check; its brief says what to read and what to build. A part that writes a
 kind of file adds it to the recipe and the sheet of R70a. Lanes began on 2026-11-25: parts of R70a,
-R70b, R70d, R70e, R70g, R70h, R70q, R70r, R70w and R70y are built, with no part closed, no install
-suite run and nothing loaded in a game. R70 has no letter left: a finding that fits no part opens
+R70b, R70d, R70e, R70g, R70h, R70k, R70n, R70q, R70r, R70w and R70y are built, with no part closed,
+no install suite run and nothing loaded in a game. R70 has no letter left: a finding that fits no part opens
 the next number.
 
 ### R70a What the game loads
@@ -9826,18 +9827,19 @@ or is refused; and the Map screen's Undo keeps the operation and its inverse
 (`a_session_of_map_edits_writes_once_what_each_edit_writes`). On a synthetic map of 20,000 entities
 a pose edit took 2.4 s one by one, and 0.83 ms with one flush of 2.2 s in a session
 (`one_pose_edit_is_timed_on_synthetic_maps_of_two_thousand_and_twenty_thousand_entities`, release,
-load average 70, 2026-11-25). And a map, a built entity, a type file and a base archetype made
+2026-11-25). And a map, a built entity, a type file and a base archetype made
 with no donor and no snapshot (`crates/domain/or-world/src/create.rs`), behind
 `openrage-cli world new-map` and `world archetypes`, which pass the rules of a pack
 (`a_map_and_a_type_file_made_from_nothing_enter_a_pack_and_break_none_of_its_rules`).
 
 ⚠ They are written as PSO, and RBM is refused (`rbm_is_refused_with_the_word_nothing_derives_named`,
-[R62](#r62-the-rbm-layout-synthesiser)); the game's own world files are RBM, so whether it loads
-one written as PSO is a line of [R70a](#r70a-what-the-game-loads)'s sheet, and none is made from an
-install's donor. The first entity or archetype of a file that holds none is built that way,
+[R62](#r62-the-rbm-layout-synthesiser)); whether the game, whose own world files are RBM, loads
+one is a line of [R70a](#r70a-what-the-game-loads)'s sheet, and none is made from an install's
+donor. The first entity or archetype of a file that holds none is built that way,
 the last one taken out is put back by the XML, and an entity of an archetype the pack does not
-declare is held by the extents where it stands, said in a note
-(`crates/domain/or-maps/tests/an_operation_where_the_pack_holds_too_little.rs`). A deletion
+declare is held by the extents where it stands, said in a note, in a session as one by one
+(`crates/domain/or-maps/tests/an_operation_where_the_pack_holds_too_little.rs`,
+`crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`). A deletion
 planned by [R70k](#r70k-removing-what-the-game-placed) renumbers the links of the child maps; one
 entity taken out alone leaves them, which the rule `parent-link-broken` names once one is past the
 end. Left: the Map screen on a session, a create across files, the import, a new map and a built
@@ -9937,7 +9939,9 @@ with no schema snapshot). Not run: `deleting_an_entity_of_the_install_keeps_ever
 needs an install; its body runs on maps built by hand
 (`the_checks_of_the_install_suite_hold_on_a_tree_of_maps_built_by_hand`). The plan renumbers the
 links of each child map among the sources and lowers the counts of the parents
-(`renumber_for_removed`, `set_num_children`); a map that is not among
+(`renumber_for_removed`, `set_num_children`), through a session as one by one
+(`crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`);
+a map that is not among
 the sources keeps its links, and the rule `parent-link-broken` names one left past the end of its
 parent map. Left: the rule for a door, the preview on a screen, and the import of the game's maps a
 deletion reaches ([or-maps](../reference/Crate_Reference.md#domain-crates)).

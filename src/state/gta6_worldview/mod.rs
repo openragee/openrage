@@ -113,6 +113,8 @@ pub struct Viewer {
     pub skipped: HashSet<u32>,
     /// The selection whose waited-for models the readers were last given.
     wanted_of: u64,
+    /// The selection under way whose waited-for models the readers were last given.
+    asked_of: u64,
     /// The models that selection waits for, and those the far stand-ins' atlas waits for.
     wanted: Vec<(f32, ModelRef)>,
     species_models: Vec<(f32, ModelRef)>,
@@ -169,6 +171,7 @@ impl Default for Viewer {
             unexplained: 0,
             skipped: HashSet::new(),
             wanted_of: 0,
+            asked_of: 0,
             wanted: Vec::new(),
             species_models: Vec::new(),
             bands: HashMap::new(),
@@ -485,10 +488,22 @@ impl Viewer {
         }
         world.tell(models);
         let latest = world.latest();
-        if told || self.wanted_of != latest.version {
+        let mut want = told;
+        if self.wanted_of != latest.version {
             self.wanted_of = latest.version;
             self.wanted.clone_from(&latest.wanted);
             self.bands.clone_from(&latest.bands);
+            want = true;
+        }
+        // What a selection under way waits for is asked for before it is whole, in place of the last whole one's.
+        let asked = world.asked();
+        if asked.version > latest.version && asked.version != self.asked_of {
+            self.asked_of = asked.version;
+            self.wanted.clone_from(&asked.wanted);
+            self.bands.clone_from(&asked.bands);
+            want = true;
+        }
+        if want {
             self.want_models();
         }
         Some(latest)

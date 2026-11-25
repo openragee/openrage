@@ -271,6 +271,15 @@ fn a_selection_draws_each_entity_and_each_instance_with_its_model_and_waits_for_
     models.sort_unstable();
     assert_eq!(models, vec![0x1000, 0x2000]);
 
+    // What is waited for is handed out before the selection is whole, each model at its band.
+    let mut asked = Vec::new();
+    let again = streamer.select_asking(&view, &|_| Some(false), &mut |wanted, bands| {
+        asked = wanted.keys().map(|m| (m.offset, bands[m])).collect();
+    });
+    asked.sort_by_key(|(offset, _)| *offset);
+    assert_eq!(asked.len(), again.wanted.len());
+    assert!(asked.iter().all(|(_, band)| *band >= BAND_OTHER));
+
     // With every model there: two trees in one chunk, and both lamps of the list in another.
     let all = streamer.select(&view, &|_| Some(true));
     assert!(all.wanted.is_empty());

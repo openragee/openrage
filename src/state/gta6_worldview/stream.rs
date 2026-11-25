@@ -95,6 +95,8 @@ pub struct Selected {
     pub eye: Vec3,
     /// How long the streaming and the selection that made it took on the world's thread.
     pub took: std::time::Duration,
+    /// How far into the selection what it waits for was asked for.
+    pub asked: std::time::Duration,
     pub models: Vec<ModelRef>,
     pub chunks: Vec<Chunk>,
     pub instances: Vec<Instance>,
@@ -396,11 +398,23 @@ impl Streamer {
 
     /// What draws for the camera of `view`; `ready` says whether a model is on the device, and
     /// `None` that it never will be.
+    #[cfg(test)]
     pub(super) fn select(
         &mut self,
         view: &View,
         ready: &dyn Fn(ModelRef) -> Option<bool>,
     ) -> Selected {
+        self.select_asking(view, ready, &mut |_, _| {})
+    }
+
+    /// [`Self::select`], handing `asking` what the maps' nodes wait for, by model with its distance and its band, as soon as it is known.
+    fn select_asking(
+        &mut self,
+        view: &View,
+        ready: &dyn Fn(ModelRef) -> Option<bool>,
+        asking: &mut dyn FnMut(&HashMap<ModelRef, f32>, &HashMap<ModelRef, f32>),
+    ) -> Selected {
+        let began = Instant::now();
         let (loaded, hour, eye) = (&self.loaded, self.hour, view.eye);
         let drawn_of = |id: NodeId| {
             let map = loaded.get(&(id.0 as u32))?;
@@ -438,6 +452,35 @@ impl Streamer {
             eye,
             ..Selected::default()
         };
+        // Each model waited for once, by the nearest node that waits for it, with the highest band of
+        // what waits for it as though out of view: a far level's, or the rest's.
+        let mut waited: HashMap<ModelRef, f32> = HashMap::new();
+        for id in &selection.wanted {
+            let (Some(model), Some(node)) = (model_of(*id), self.forest.node(*id)) else {
+                continue;
+            };
+            let away = eye.distance(node.position);
+            let nearest = waited.entry(model).or_insert(away);
+            *nearest = nearest.min(away);
+            let band = match node.level {
+                Level::Hd | Level::OrphanHd => BAND_OTHER,
+                _ => BAND_LOW_DETAIL,
+            };
+            raise(&mut out.bands, model, band);
+            let sphere = match node.extent {
+                Extent::Box(min, max) => Some(((min + max) / 2.0, (max - min).length() / 2.0)),
+                Extent::Point => drawn_of(*id).and_then(|(map, drawn)| {
+                    let rows = map.entities.get(id.1 as usize)?;
+                    Some((place(rows, drawn.centre), drawn.radius * stretch(rows)))
+                }),
+            };
+            if let Some(sphere) = sphere {
+                out.waiting_at.entry(model).or_default().push(sphere);
+            }
+        }
+        // ⚠ Asked for before the instances and the far stand-ins are laid out, which is most of a selection's time.
+        asking(&waited, &out.bands);
+        out.asked = began.elapsed();
         let mut models = Models::default();
         let instance = |model: u32, rows: Rows, drawn: &Drawn, fade: f32, tint| Instance {
             model,
@@ -567,32 +610,6 @@ impl Streamer {
             (out.cards).push(cards.seen(scale, fade, &cards.handed_off(&standing)));
         }
         let list_instances = out.instances.len() - listed;
-        // Each model waited for once, by the nearest node that waits for it, with the highest band of
-        // what waits for it as though out of view: a far level's, or the rest's.
-        let mut waited: HashMap<ModelRef, f32> = HashMap::new();
-        for id in &selection.wanted {
-            let (Some(model), Some(node)) = (model_of(*id), self.forest.node(*id)) else {
-                continue;
-            };
-            let away = eye.distance(node.position);
-            let nearest = waited.entry(model).or_insert(away);
-            *nearest = nearest.min(away);
-            let band = match node.level {
-                Level::Hd | Level::OrphanHd => BAND_OTHER,
-                _ => BAND_LOW_DETAIL,
-            };
-            raise(&mut out.bands, model, band);
-            let sphere = match node.extent {
-                Extent::Box(min, max) => Some(((min + max) / 2.0, (max - min).length() / 2.0)),
-                Extent::Point => drawn_of(*id).and_then(|(map, drawn)| {
-                    let rows = map.entities.get(id.1 as usize)?;
-                    Some((place(rows, drawn.centre), drawn.radius * stretch(rows)))
-                }),
-            };
-            if let Some(sphere) = sphere {
-                out.waiting_at.entry(model).or_default().push(sphere);
-            }
-        }
         // What the maps place inside an interior near the camera takes the interior's ambient light.
         // ponytail: every selection looks again at each instance near an interior in range; held
         // per map body if the selection's time shows it.
@@ -749,10 +766,20 @@ struct Told {
     stopped: bool,
 }
 
+/// What a selection waits for, handed out before the selection is whole.
+#[derive(Default)]
+pub(super) struct Asked {
+    pub version: u64,
+    pub wanted: Vec<(f32, ModelRef)>,
+    pub bands: HashMap<ModelRef, f32>,
+}
+
 struct Shared {
     told: Mutex<Told>,
     woken: Condvar,
     latest: Mutex<Arc<Selected>>,
+    /// What the selection under way waits for, as [`Selected::wanted`] and [`Selected::bands`], by the version it will have.
+    asked: Mutex<Arc<Asked>>,
     /// The maps the thread took in since its last whole selection.
     unproven: Arc<Mutex<Vec<u32>>>,
     /// Up to how many tellings the thread has taken and, where they called for one, selected after.
@@ -784,6 +811,7 @@ impl World {
             }),
             woken: Condvar::new(),
             latest: Mutex::default(),
+            asked: Mutex::default(),
             unproven: Arc::default(),
             done: Default::default(),
         });
@@ -894,6 +922,11 @@ impl World {
     pub(super) fn latest(&self) -> Arc<Selected> {
         Arc::clone(&self.shared.latest.lock().unwrap_or_else(|p| p.into_inner()))
     }
+
+    /// What the selection under way, or the last, waits for.
+    pub(super) fn asked(&self) -> Arc<Asked> {
+        Arc::clone(&self.shared.asked.lock().unwrap_or_else(|p| p.into_inner()))
+    }
 }
 
 impl Drop for World {
@@ -950,8 +983,16 @@ fn run(index: Arc<WorldIndex>, skipped: HashSet<u32>, shared: &Shared) {
         });
         if stale {
             let state = |model: ModelRef| ready.get(&model).copied().unwrap_or(Some(false));
-            let mut selected = streamer.select(&view, &state);
             version += 1;
+            let mut ask = |wanted: &HashMap<ModelRef, f32>, bands: &HashMap<ModelRef, f32>| {
+                let asked = Asked {
+                    version,
+                    wanted: wanted.iter().map(|(model, away)| (*away, *model)).collect(),
+                    bands: bands.clone(),
+                };
+                *shared.asked.lock().unwrap_or_else(|p| p.into_inner()) = Arc::new(asked);
+            };
+            let mut selected = streamer.select_asking(&view, &state, &mut ask);
             (selected.version, selected.took) = (version, began.elapsed());
             fading = selected.fading;
             selected_at = Some((eye, scale, fade));

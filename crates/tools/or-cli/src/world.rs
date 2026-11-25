@@ -1268,7 +1268,7 @@ fn print_usage() {
     eprintln!("                           kept one: every map, type file, archetype and bound,");
     eprintln!("                           and which archives were read again. --kept <file>");
     eprintln!("                           names the file it is kept in; --fresh reads it all.");
-    eprintln!("  at --game <dir> <x> <y> <z>");
+    eprintln!("  at --game <dir> <x> <y> <z>   (or one argument: x,y,z or \"vector3(x, y, z)\")");
     eprintln!("                           The maps whose streaming extents hold a position and");
     eprintln!("                           the bounds whose box does, from the world index.");
     eprintln!();

@@ -1704,3 +1704,60 @@ fn an_index_is_kept_as_one_file_and_one_that_cannot_be_kept_leaves_none() {
     assert_eq!(beside(&file), ["world.index"]);
     assert!(file.is_dir());
 }
+
+/// A source whose files do not open: an archive the game holds open, or a key not loaded yet.
+struct Shut<'a>(&'a dyn WorldSource);
+
+impl WorldSource for Shut<'_> {
+    fn identity(&self) -> String {
+        self.0.identity()
+    }
+    fn archives(&self) -> Vec<Archive> {
+        self.0.archives()
+    }
+    fn entries(&self, archive: usize, visit: &mut dyn FnMut(&or_title::vfs::EntryFacts)) {
+        self.0.entries(archive, visit);
+    }
+    fn open(&self, _: usize, _: &str) -> Option<Vec<u8>> {
+        None
+    }
+    fn open_head(&self, _: usize, _: &str, _: usize) -> Option<Vec<u8>> {
+        None
+    }
+}
+
+/// ⚠ A file that could not be opened once is not a file that does not read: an index kept from such a build is not trusted for that
+/// archive, whose size and time say nothing changed.
+#[test]
+fn a_file_that_did_not_open_is_read_again_by_the_next_build_though_its_archive_stands() {
+    let (scratch, root) = install();
+    let file = kept_file(&scratch);
+    let game = mount(&root);
+    let source = MountedWorld::new(&game, &root);
+
+    let (shut, _) = refresh(&Shut(&source), &file);
+    let unread = |index: &WorldIndex| index.maps().iter().filter(|map| !map.read).count();
+    assert!(unread(&shut) > 0 && unread(&shut) == shut.maps().len());
+    assert!(shut.maps_at(centre(north())).is_empty());
+
+    // A second start, on a mount whose files open.
+    let game = mount(&root);
+    let source = MountedWorld::new(&game, &root);
+    let (second, report) = refresh(&source, &file);
+    let afresh = built(&game, &root);
+    assert_eq!(unread(&second), unread(&afresh));
+    assert_eq!(answers(&second), answers(&afresh));
+    assert!(names(second.maps_at(centre(north()))).contains("m_north"));
+    assert!(report.opened > 0, "the files were opened again");
+
+    // And once every file opened, the archives are kept as before.
+    let game = mount(&root);
+    let source = MountedWorld::new(&game, &root);
+    let (_, report) = refresh(&source, &file);
+    assert!(
+        matches!(report.kept, KeptState::Current) && report.opened == 0,
+        "{:?}, {} opened",
+        report.kept,
+        report.opened
+    );
+}

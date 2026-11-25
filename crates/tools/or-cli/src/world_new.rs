@@ -47,6 +47,18 @@ fn triple(flag: &str, text: &str) -> Result<Vec3, String> {
     }
 }
 
+/// The place `--at` names: `x,y,z`, or any form of a place with a height that a script writes, as `world at` reads one.
+fn position(text: &str) -> Result<Vec3, String> {
+    use or_maps::place::{read_pasted, Pasted};
+    triple("--at", text).or_else(|refused| match read_pasted(text) {
+        Ok(Pasted::Place(place)) => match place.z {
+            Some(z) => Ok(Vec3::new(place.x, place.y, z)),
+            None => Err(refused),
+        },
+        _ => Err(refused),
+    })
+}
+
 /// A flag word as a decimal number or as `0x` and hexadecimal digits.
 fn word(flag: &str, text: &str) -> Result<u32, String> {
     let parsed = match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
@@ -86,7 +98,7 @@ fn entity(args: &[String]) -> Result<Option<Placed>, String> {
         .map_err(|_| format!("--lod-dist takes a number, and '{lod_dist}' is not one"))?;
     let mut placed = Placed::at(
         HashedString::from_xml_text(archetype),
-        triple("--at", at)?,
+        position(at)?,
         lod_dist,
     );
     if let Some(turn) = value("--turn") {

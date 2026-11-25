@@ -61,7 +61,11 @@ pub fn verify(model: &Maps, facts: &Facts, resource: &Path) -> Verification {
     }
     if maps_shipped {
         let line = format!("{} '{}'", MAP_LINE.0, MAP_LINE.1);
-        let problems = match manifest.contains(&line) {
+        // ⚠ Read as the statement `project check-resource` reads, never looked for as text: a line in a comment declares nothing.
+        let read = or_project::resource::manifest::Manifest::read(&manifest);
+        let stated =
+            (read.directives.iter()).any(|d| d.key == MAP_LINE.0 && d.values == [MAP_LINE.1]);
+        let problems = match stated {
             true => Vec::new(),
             false => vec![format!("the manifest does not state `{line}`")],
         };

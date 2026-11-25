@@ -1,7 +1,8 @@
 //! The acceptance sheet names rows the Roadmap has, its guide lists the same lines word for word, and a build is told which of
 //! the lines about its files nobody has seen load.
 //!
-//! ⚠ No test here writes a result into the sheet the tree ships: each lays one over a copy of its own.
+//! ⚠ No test here writes a result into the sheet the tree ships, and none depends on the results a person wrote into it: each lays
+//! its own over a copy with the results taken out.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -178,6 +179,15 @@ fn a_built_resource(dir: &Path, files: &[&str]) {
 }
 
 /// The ids of the lines about `kinds`, each with whether the sheet says the game loaded it for `edition`.
+/// The sheet the tree ships, as JSON with every result taken out: what a test lays its own results over, so that none depends on what a person has written into the sheet.
+fn the_sheet_with_no_result() -> Value {
+    let mut own: Value = serde_json::from_str(SHEET).unwrap();
+    for line in own["lines"].as_array_mut().unwrap() {
+        line["results"] = json!([]);
+    }
+    own
+}
+
 fn standing(sheet: &Sheet, kinds: &BTreeSet<String>, edition: Target) -> Vec<(String, bool)> {
     (sheet.about(kinds, edition).iter())
         .map(|concern| (concern.line.id.clone(), concern.loaded()))
@@ -206,7 +216,7 @@ fn a_build_that_wrote_a_map_and_a_type_file_is_told_their_lines_and_that_nobody_
     );
     let kinds: BTreeSet<String> = counted.into_keys().collect();
 
-    let sheet = Sheet::shipped().unwrap();
+    let sheet = Sheet::parse(&the_sheet_with_no_result().to_string()).unwrap();
     let unchecked = vec![
         ("map-object-moved".to_string(), false),
         ("map-object-added".to_string(), false),
@@ -219,7 +229,7 @@ fn a_build_that_wrote_a_map_and_a_type_file_is_told_their_lines_and_that_nobody_
     assert_eq!(sheet.without_a_line(&kinds), ["lua"]);
 
     // The test's own copy of the sheet, with one run written under one line.
-    let mut own: Value = serde_json::from_str(SHEET).unwrap();
+    let mut own = the_sheet_with_no_result();
     let line = (own["lines"].as_array_mut().unwrap().iter_mut())
         .find(|line| line["id"] == "map-object-moved")
         .unwrap();
@@ -247,11 +257,6 @@ fn a_build_that_wrote_a_map_and_a_type_file_is_told_their_lines_and_that_nobody_
         .newest
         .expect("the result is the newest");
     assert_eq!(seen.verdict, Verdict::Loaded);
-    assert_eq!(
-        Sheet::shipped().unwrap(),
-        sheet,
-        "the sheet the tree ships is as it was"
-    );
 }
 
 /// A pack of one shop file, which a build of `kind` writes for real.

@@ -213,7 +213,7 @@ pub(crate) fn register<'a>(
 }
 
 /// The line of a FiveM manifest that declares the resource a map.
-const MAP_LINE: &str = "this_is_a_map";
+const MAP_LINE: &str = crate::resource::manifest::MAP_KEY;
 
 fn is_map(path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(".ymap")

@@ -916,7 +916,12 @@ fn the_ignore_blocks_keep_game_content_out_and_a_persons_lines_in_and_are_idempo
     );
     assert_eq!(
         block(&ignore),
-        ["/build/", "/vfs/", "/sources/a.textures.src/"],
+        [
+            "/build/",
+            "/vfs/",
+            git::KEPT_MANIFESTS,
+            "/sources/a.textures.src/"
+        ],
         "the game's source is ignored and the person's own is not"
     );
     let attributes = fs::read_to_string(root.join(".gitattributes")).unwrap();

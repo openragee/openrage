@@ -375,7 +375,7 @@ fn print_usage() {
         "  model      GTA VI models: replace a loose model's meshes from a glTF, as a new file"
     );
     eprintln!("  meta       Metadata (PSO/RBM/RBF0/XML): info, to-xml, from-xml, roundtrip");
-    eprintln!("  world      World data (.ymap/.ytyp): info, check, extents, states, create, delete, prefab");
+    eprintln!("  world      World data (.ymap/.ytyp): info, check, extents, states, create, delete, prefab, new-map, archetypes; index and at over an install");
     eprintln!("  depends    What an asset needs and where a model is placed: of,");
     eprintln!("             placements, census, rules");
     eprintln!(
@@ -384,7 +384,7 @@ fn print_usage() {
     eprintln!("  wardrobe   Clothing packs: validate, plan, build, diff, import, fix and optimise textures");
     eprintln!("  addonped   Addon peds: validate and verify");
     eprintln!("  particles  Particles: list, validate and verify");
-    eprintln!("  maps       Maps: list, validate, verify, apply operations and keep a manifest of the game");
+    eprintln!("  maps       Maps: list, validate, verify, changes of a map from its base, apply operations and keep a manifest of the game");
     eprintln!("  weapons    Weapons: validate and verify");
     eprintln!("  photo      A WebP picture of each model in a folder or the game, with no window");
     eprintln!(

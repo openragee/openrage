@@ -57,6 +57,7 @@ fn what_the_owner_commits_is_written_in_the_block_and_kept_by_the_next_update() 
             git::BEGIN,
             "/build/",
             "/vfs/",
+            git::KEPT_MANIFESTS,
             "/sources/theirs.textures.src/",
             git::END
         ]

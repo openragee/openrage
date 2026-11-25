@@ -209,9 +209,18 @@ fn the_recipe_builds_a_resource_and_the_command_names_the_lines_about_its_files(
             line.id
         );
     }
+    // ⚠ The command prints the sheet the tree ships, which a person writes results into: a line is not checked for an edition
+    // while the sheet holds no run of it there.
+    let unchecked: usize = [Target::Legacy, Target::Enhanced]
+        .map(|edition| {
+            let about = sheet.about(&kinds, edition);
+            about.iter().filter(|c| c.newest.is_none()).count()
+        })
+        .iter()
+        .sum();
     assert_eq!(
         printed.matches("not checked in game").count(),
-        2 * about.len(),
+        unchecked,
         "{printed}"
     );
 

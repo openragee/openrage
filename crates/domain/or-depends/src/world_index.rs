@@ -348,9 +348,12 @@ fn read_archive(
             wanted.push((kind, facts.logical.clone()));
         }
     });
+    let unopened = Cell::new(false);
     let whole = |logical: &str| {
         opened.set(opened.get() + 1);
-        source.open(index, logical)
+        let bytes = source.open(index, logical);
+        unopened.set(unopened.get() || bytes.is_none());
+        bytes
     };
     let mut rows = ArchiveRows {
         archive,
@@ -390,6 +393,11 @@ fn read_archive(
                 rows.bounds.push(BoundRow { logical, span });
             }
         }
+    }
+    // ⚠ A file the mount lists and could not open is no fact about the file: an archive held open, a failed read, a key not yet
+    // loaded. Its rows say unread all the same, so the archive is kept with no stamp and the next build reads it again.
+    if unopened.get() {
+        rows.archive.stamp = None;
     }
     rows
 }

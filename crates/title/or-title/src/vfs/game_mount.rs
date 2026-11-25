@@ -764,8 +764,22 @@ fn mount_dlc(
             .position(|d| d.setup.name_hash.eq_ignore_ascii_case(target))
         {
             Some(idx) => {
-                for dropped in discovered.drain(idx + 1..) {
+                let dropped: Vec<Discovered> = discovered.drain(idx + 1..).collect();
+                for dropped in dropped {
                     listed[dropped.listed_at].state = ListedPackState::LeftOut;
+                    // ⚠ A pack named twice may still be mounted by its other entry, and its folders are then not the ones to skip.
+                    let kept = (discovered.iter()).any(|d| {
+                        d.setup
+                            .name_hash
+                            .eq_ignore_ascii_case(&dropped.setup.name_hash)
+                    });
+                    if !kept {
+                        folders_left_out.extend(folders_of_a_located_pack(
+                            &dropped.source,
+                            Some(&dropped.setup),
+                            update_mount.map(|update| (update, &etud)),
+                        ));
+                    }
                 }
             }
             None => diagnostics.warn(
@@ -936,6 +950,27 @@ fn folders_of_a_pack_left_out(
     let Some(located) = locate_dlc(install, roots, name, crypto, options, &mut unheard) else {
         return Vec::new();
     };
+    let setup =
+        (located.archive.read("setup2.xml").ok()).and_then(|bytes| SetupData::parse(&bytes).ok());
+    if setup.is_none() && title_update.is_some() {
+        diagnostics.push(
+            Diagnostic::warning(
+                keys::PATCH_OF_A_PACK_LEFT_OUT_UNKNOWN,
+                "setup2.xml did not read, so the folder of the title update that patches this \
+                 pack, if one does, is not kept from the walk",
+            )
+            .at(name.to_string()),
+        );
+    }
+    folders_of_a_located_pack(&located.source, setup.as_ref(), title_update)
+}
+
+/// The folders that hold or patch a pack found at `source` whose setup is `setup`, each with its archive's container: what either cutoff keeps from the walk.
+fn folders_of_a_located_pack(
+    source: &DlcSource,
+    setup: Option<&SetupData>,
+    title_update: Option<(&UpdateMount, &ExtraTitleUpdateData)>,
+) -> Vec<(String, String)> {
     let mut folders = Vec::new();
     let mut keep_out = |container: &str, folder: &str| {
         if !folder.is_empty() {
@@ -949,27 +984,14 @@ fn folders_of_a_pack_left_out(
         parent_container,
         dir,
         ..
-    } = &located.source
+    } = source
     {
         keep_out(parent_container, dir);
     }
-    let setup =
-        (located.archive.read("setup2.xml").ok()).and_then(|bytes| SetupData::parse(&bytes).ok());
-    match (setup, title_update) {
-        (Some(setup), Some((update, table))) => {
-            if let Some(folder) = table.mount_for(&device_of(&setup)).and_then(patch_folder) {
-                keep_out(&update.label, folder);
-            }
+    if let (Some(setup), Some((update, table))) = (setup, title_update) {
+        if let Some(folder) = table.mount_for(&device_of(setup)).and_then(patch_folder) {
+            keep_out(&update.label, folder);
         }
-        (None, Some(_)) => diagnostics.push(
-            Diagnostic::warning(
-                keys::PATCH_OF_A_PACK_LEFT_OUT_UNKNOWN,
-                "setup2.xml did not read, so the folder of the title update that patches this \
-                 pack, if one does, is not kept from the walk",
-            )
-            .at(name.to_string()),
-        ),
-        (_, None) => {}
     }
     folders
 }

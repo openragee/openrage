@@ -388,6 +388,62 @@ fn a_pack_past_the_level_that_the_title_update_holds_is_not_walked_through_it() 
     );
 }
 
+/// ⚠ The older cutoff, by a pack's name hash, reports the packs past it as left out too, so it keeps the same folders from the walk.
+#[test]
+fn a_pack_past_a_name_hash_is_left_out_of_the_walk_as_one_past_a_level_is() {
+    let by_hash = || DlcCutoff::NameHash(setup("beta", 0).name_hash);
+
+    let (_scratch, patched) = install("hash-patch", [10, 20, 30]);
+    write_title_update(&patched.root);
+    let game = mount(&patched, by_hash());
+    assert_eq!(mounted(&game), ["alpha", "beta"]);
+    assert_eq!(
+        listed(&game).last(),
+        Some(&("gamma", ListedPackState::LeftOut))
+    );
+    assert_eq!(
+        (game.vfs.open(&format!("{}:/{SHARED}", device("beta")))).as_deref(),
+        Some(&b"beta patch"[..]),
+        "the patch of a pack that is kept still lies over it"
+    );
+    assert_eq!(
+        resolve(&game, ONLY_GAMMA_PATCH),
+        None,
+        "a file only the left-out pack's patch holds does not resolve by name"
+    );
+    let walk = walked(&game);
+    assert!(
+        !walk
+            .iter()
+            .any(|l| l.starts_with("update:/dlc_patch/gamma/")),
+        "the walk skips the folder the table gives the left-out pack: {walk:?}"
+    );
+    assert!(walk
+        .iter()
+        .any(|l| l.starts_with("update:/dlc_patch/beta/")));
+
+    // The left-out pack held by the title update's archive is not walked through it either.
+    let (_scratch, nested) = install("hash-nested", [10, 20, 30]);
+    let install = nested;
+    let on_disk = install.root.join("x64/dlcpacks/gamma/dlc.rpf");
+    let gamma = std::fs::read(&on_disk).expect("gamma's archive");
+    std::fs::remove_file(&on_disk).expect("gamma leaves the disk");
+    write(
+        &install.root.join("update/update.rpf"),
+        &archive(&[("dlcpacks/gamma/dlc.rpf", &gamma)]),
+    );
+    let game = mount(&install, by_hash());
+    assert_eq!(mounted(&game), ["alpha", "beta"]);
+    assert_eq!(resolve(&game, ONLY_GAMMA), None);
+    let walk = walked(&game);
+    assert!(
+        !walk
+            .iter()
+            .any(|l| l.starts_with("update:/dlcpacks/gamma/")),
+        "{walk:?}"
+    );
+}
+
 /// ⚠ A folder is left out whole and by its own name: `dlc_patch/beta/` is not the front of
 /// `dlc_patch/beta2/`, the table may spell it in another case than the archive, and another
 /// archive's folder of the same path is not the patch.

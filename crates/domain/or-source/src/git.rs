@@ -15,6 +15,9 @@ pub const END: &str = "# <<< openrage managed block";
 /// The two files the blocks are written in.
 pub const IGNORE: &str = ".gitignore";
 pub const ATTRIBUTES: &str = ".gitattributes";
+/// The manifests of the game a maps content keeps whole in its `manifests` folder, wherever the content lies: game content with no
+/// `asset.json` to say so, which a repository ignores unless it holds the sources taken from the game.
+pub const KEPT_MANIFESTS: &str = "**/manifests/*.ymf";
 /// Files of a source that Git must not diff, merge or convert, whatever they hold.
 const BINARY: &[&str] = &[
     "*.dds",
@@ -207,6 +210,9 @@ fn ignore_block(root: &Path, commit: Commit) -> Vec<String> {
         lines.push("/build/".to_string());
     }
     lines.push("/vfs/".to_string());
+    if !commit.game_sources {
+        lines.push(KEPT_MANIFESTS.to_string());
+    }
     if !commit.sources {
         lines.push(format!("/{SOURCES_DIR}/"));
     } else if !commit.game_sources {

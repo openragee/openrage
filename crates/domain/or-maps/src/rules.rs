@@ -73,6 +73,12 @@ pub const RULES: &[Rule] = &[
         "an interior attaches an entity past its list, names a room it does not have, or holds an entity set whose two arrays differ",
     ),
     rule(
+        "parent-link-broken",
+        Warning,
+        true,
+        "an entity names a LOD parent in the map its own names as parent, past the entities that map holds in the pack",
+    ),
+    rule(
         "archetype-twice",
         Warning,
         true,
@@ -241,6 +247,12 @@ pub fn check(model: &Maps, facts: &Facts, known: Known<'_>) -> Vec<Finding> {
     }
     let mut named: BTreeMap<&str, Vec<&MapSet>> = BTreeMap::new();
     let mut cooked_to: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    // How many entities each map file of the pack holds, by the hash of its name: what a link into a parent map indexes.
+    let held: BTreeMap<u32, usize> = (model.maps.iter())
+        .flat_map(|set| &set.sources)
+        .filter_map(|path| facts.source(path)?.map())
+        .map(|map| (map.name.hash, map.entities.len()))
+        .collect();
     for set in &model.maps {
         let who = name_of(set);
         for path in &set.sources {
@@ -286,7 +298,7 @@ pub fn check(model: &Maps, facts: &Facts, known: Known<'_>) -> Vec<Finding> {
                 }
             }
         }
-        check_set(set, facts, known, &mut say);
+        check_set(set, facts, known, &held, &mut say);
     }
     for (path, held) in named.iter().filter(|(_, held)| held.len() > 1) {
         for set in held {
@@ -335,6 +347,7 @@ fn check_set(
     set: &MapSet,
     facts: &Facts,
     known: Known<'_>,
+    held: &BTreeMap<u32, usize>,
     say: &mut impl FnMut(&'static str, Option<&MapSet>, Place, String),
 ) {
     let who = name_of(set);
@@ -430,6 +443,32 @@ fn check_set(
                 format!("`{path}`: {problem}"),
             );
         }
+        // ⚠ An entity whose `flags` bit 3 is set indexes the entities of the parent map, so an entity taken out of that map leaves
+        // the link past its end or on another entity; only the first is something the files can show.
+        let parent_holds = held.get(&map.parent.hash).filter(|_| map.parent.hash != 0);
+        let past = parent_holds.and_then(|len| {
+            let past = |e: &crate::facts::EntityFact| {
+                e.flags & (1 << 3) != 0 && usize::try_from(e.parent_index).is_ok_and(|p| p >= *len)
+            };
+            let first = map.entities.iter().position(past)?;
+            Some((first, map.entities.iter().filter(|e| past(e)).count(), *len))
+        });
+        if let Some((first, count, len)) = past {
+            say(
+                "parent-link-broken",
+                Some(set),
+                Place {
+                    source: Some(path.to_string()),
+                    entity: Some(first),
+                    ..Place::default()
+                },
+                format!(
+                    "{count} entities of `{path}` name a LOD parent in the parent map `{}` past the {len} entities it holds, the first #{first} naming entity {}",
+                    map.parent.shown(),
+                    map.entities[first].parent_index
+                ),
+            );
+        }
         let mut guids: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
         let mut placements: BTreeMap<(u32, [u32; 3], [u32; 4]), Vec<usize>> = BTreeMap::new();
         let mut undeclared: BTreeMap<u32, (usize, String)> = BTreeMap::new();
@@ -501,13 +540,14 @@ fn check_set(
                 ),
             }
         }
-        if let Some(short) = extents_short(map, &declared) {
+        if let Some((short, at_least)) = extents_short(map, &declared) {
+            let at_least = if at_least { "at least " } else { "" };
             say(
                 "extents-short",
                 Some(set),
                 at_source(path),
                 format!(
-                    "the extents `{path}` states fall {short:.1} short of the entities it places"
+                    "the extents `{path}` states fall {at_least}{short:.1} short of the entities it places"
                 ),
             );
         }
@@ -574,19 +614,36 @@ fn numbers(held: &[usize]) -> String {
         .join(", ")
 }
 
-/// How far the extents a map states fall short of its entities, none when they hold them (or when an archetype is unknown, which makes the answer a lower bound).
+/// How far the extents a map states fall short of its entities, none when they hold them, and whether that is a lower bound.
 ///
-/// ⚠ Only entities whose archetype a type file of the set declares have a box to place, and a map that places any other has extents this
-/// cannot compare (`or_world::extents::Extents::is_complete`), so it says nothing of them.
+/// ⚠ Only an entity whose archetype a type file of the set declares has a box to place. Any other is judged by where it stands, which
+/// the box of its entities and the box the map streams by both have to hold whatever its box is, so a map that places one is short
+/// by at least what this says (`or_world::extents::Extents::is_complete`).
 fn extents_short(
     map: &crate::facts::MapInside,
     declared: &BTreeMap<u32, Vec<(&str, usize, &ArchetypeFact)>>,
-) -> Option<f32> {
+) -> Option<(f32, bool)> {
     let (min, max) = map.stored_entities?;
     let (min, max) = (glam::Vec3::from(min), glam::Vec3::from(max));
+    let streaming = map
+        .stored_streaming
+        .map(|(min, max)| (glam::Vec3::from(min), glam::Vec3::from(max)));
+    let outside = |(min, max): (glam::Vec3, glam::Vec3), point: glam::Vec3| {
+        (min - point).max_element().max((point - max).max_element())
+    };
     let mut over = 0.0_f32;
+    let mut at_least = false;
     for entity in &map.entities {
-        let (_, _, archetype) = declared.get(&entity.archetype.hash)?.first()?;
+        let position = glam::Vec3::from(entity.position);
+        let Some((_, _, archetype)) = declared.get(&entity.archetype.hash).and_then(|d| d.first())
+        else {
+            at_least = true;
+            over = over.max(outside((min, max), position));
+            if let Some(streaming) = streaming {
+                over = over.max(outside(streaming, position));
+            }
+            continue;
+        };
         let placement = if entity.interior {
             or_world::Placement::InteriorInstance
         } else {
@@ -597,15 +654,13 @@ fn extents_short(
             glam::Vec3::from(archetype.bb_min) * scale,
             glam::Vec3::from(archetype.bb_max) * scale,
             placement.rotation_of(entity.rotation),
-            glam::Vec3::from(entity.position),
+            position,
         );
         for corner in corners {
-            over = over
-                .max((min - corner).max_element())
-                .max((corner - max).max_element());
+            over = over.max(outside((min, max), corner));
         }
     }
-    (over > EXTENTS_SLACK).then_some(over)
+    (over > EXTENTS_SLACK).then_some((over, at_least))
 }
 
 /// Set aside the findings a waiver of the model names, and add the findings about the waivers.

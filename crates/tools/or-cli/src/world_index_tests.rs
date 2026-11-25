@@ -318,6 +318,21 @@ fn a_position_is_three_numbers_and_a_flags_value_is_not_one_of_them() {
         ExitCode::from(2)
     );
     assert_eq!(cmd_index(&strings(&[])), ExitCode::from(2));
+
+    // One argument is a position as a script or `world new-map --at` writes one, read by the reader of a pasted place.
+    for written in [
+        "100,200,30",
+        "vector3(100.0, 200.0, 30.0)",
+        "{ x = 100, y = 200, z = 30 }",
+    ] {
+        assert_eq!(
+            position_of(&strings(&["--game", "g", written, "--json"])),
+            Ok(Vec3::new(100.0, 200.0, 30.0)),
+            "{written}"
+        );
+    }
+    assert!(position_of(&strings(&["100,200"])).is_err(), "no height");
+    assert!(position_of(&strings(&["prop_bench_01a"])).is_err());
 }
 
 #[test]

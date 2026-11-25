@@ -331,7 +331,7 @@ NodeRunner runs these after every export and on any folder a person names. R70r 
 |---|---|---|---|
 | The resource has no manifest | A build writes `fxmanifest.lua` unless the project holds its own; a folder from elsewhere is not checked | Take | R70r |
 | The manifest has no version line, without which a server rejects the resource | None | Take | R70r |
-| The resource holds maps and no line that declares it a map | None | Take: R70q writes the line for a project's build | R70q, R70r |
+| The resource holds maps and no line that declares it a map | None | Take: R70q writes the line for the build of a Maps content, and a build of Files content that ships a map writes none, which R70r's check warns of | R70q, R70r |
 | A file that the manifest or one of its data lines names is absent | None | Take | R70r |
 | One file name is held more than once under the stream folders, of which the server loads one | `file-twice` is another case: two sources of one project that cook to one file | Take | R70r |
 | A file is of a kind the server does not stream | None | Take | R70r |

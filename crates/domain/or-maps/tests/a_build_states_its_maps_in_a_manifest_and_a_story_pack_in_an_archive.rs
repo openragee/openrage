@@ -428,6 +428,19 @@ fn a_built_resource_whose_manifest_lost_the_line_that_declares_a_map_fails_the_c
     std::fs::write(&at, without.join("\n")).unwrap();
     let said = verify(&model, &facts, &built.folder).problems().join("\n");
     assert!(said.contains("this_is_a_map 'yes'"), "{said}");
+
+    // ⚠ The line is read as the statement a server reads, never looked for as text: one in a comment declares nothing, and the
+    // quotes Lua takes either of do not matter. `project check-resource` reads the same statement.
+    let stated = |line: &str| {
+        std::fs::write(&at, text.replace("this_is_a_map 'yes'", line)).unwrap();
+        let declared =
+            or_project::resource::manifest::Manifest::read(&std::fs::read_to_string(&at).unwrap())
+                .is_map();
+        (verify(&model, &facts, &built.folder).is_clean(), declared)
+    };
+    assert_eq!(stated("-- this_is_a_map 'yes'"), (false, false));
+    assert_eq!(stated("this_is_a_map \"yes\""), (true, true));
+    assert_eq!(stated("this_is_a_map 'yes'"), (true, true));
 }
 
 #[test]

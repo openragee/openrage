@@ -17,6 +17,9 @@ const KEYWORDS: &[&str] = &[
     "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
 ];
 
+/// The key of the line of a FiveM manifest that declares the resource a map, which every reader and writer of that line spells from here.
+pub const MAP_KEY: &str = "this_is_a_map";
+
 /// One statement of a manifest: a key and the text after it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Directive {
@@ -149,7 +152,7 @@ impl Manifest {
 
     /// Whether a line declares the resource a map.
     pub fn is_map(&self) -> bool {
-        self.directives.iter().any(|d| d.key == "this_is_a_map")
+        self.directives.iter().any(|d| d.key == MAP_KEY)
     }
 }
 

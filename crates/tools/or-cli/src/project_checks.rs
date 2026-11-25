@@ -87,7 +87,7 @@ pub fn check_sharing(args: &[String]) -> Result<ExitCode, Failure> {
             .collect();
         crate::wardrobe_fix::print_json(vec![json!({ "project": project, "concerns": list })]);
     } else if found.is_empty() {
-        println!("nothing to take out: {project} holds no path of this machine and no source taken from the game");
+        println!("nothing to take out: {project} holds no path of this machine, no source taken from the game and no manifest of the game");
     } else {
         for concern in &found {
             println!("{}: {}", kind_word(concern.kind), concern.text);

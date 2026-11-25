@@ -130,6 +130,15 @@ mod tests {
         dir.to_str().expect("a scratch path is UTF-8").to_string()
     }
 
+    /// The sheet the tree ships, as JSON with every result taken out: what a test lays its own results over, so that none depends on what a person has written into the sheet.
+    fn the_sheet_with_no_result() -> Value {
+        let mut own: Value = serde_json::from_str(SHEET).unwrap();
+        for line in own["lines"].as_array_mut().unwrap() {
+            line["results"] = json!([]);
+        }
+        own
+    }
+
     fn printed(args: &[String], sheet: &Sheet) -> String {
         let mut out = Vec::new();
         let code = acceptance_to(args, sheet, &mut out);
@@ -141,7 +150,7 @@ mod tests {
     fn the_command_names_the_lines_the_sheet_holds_about_what_a_build_wrote() {
         let dir = tempfile::tempdir().unwrap();
         let built = a_built_resource(dir.path());
-        let sheet = Sheet::shipped().unwrap();
+        let sheet = Sheet::parse(&the_sheet_with_no_result().to_string()).unwrap();
         let text = printed(std::slice::from_ref(&built), &sheet);
         assert!(
             text.starts_with(&format!("{built}: 4 file(s) of 3 kind(s)\n")),
@@ -204,7 +213,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let built = a_built_resource(dir.path());
         // The test's own copy of the sheet: no result is written into the one the tree ships.
-        let mut own: Value = serde_json::from_str(SHEET).unwrap();
+        let mut own = the_sheet_with_no_result();
         let line = own["lines"]
             .as_array_mut()
             .unwrap()
@@ -236,7 +245,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let built = a_built_resource(dir.path());
         // The test's own copy of the sheet: no result is written into the one the tree ships.
-        let mut own: Value = serde_json::from_str(SHEET).unwrap();
+        let mut own = the_sheet_with_no_result();
         let run = |edition: &str, place: &str, verdict: &str| {
             json!([{
                 "edition": edition, "build": "3258", "where": place,

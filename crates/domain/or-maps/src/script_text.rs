@@ -24,6 +24,7 @@ pub const MOST_DECIMALS: usize = (f32::MANTISSA_DIGITS as i32 - f32::MIN_EXP) as
 
 const BUILT_IN: &str = include_str!("script_forms.json");
 
+/// Why a file of script forms was not read.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("the script forms are not read: {0}")]

@@ -1073,6 +1073,48 @@ fn a_triangle_added_outside_the_quantum_of_the_base_is_held_in_a_new_one() {
     );
 }
 
+/// ⚠ Far from the origin a float is wide: the middle of two of them is often no float, so one end of the new box is farther from
+/// the centre than the other, and a quantum of half the extent would store that end as a word past the last.
+#[test]
+fn a_bound_far_from_the_origin_that_grows_past_its_quantum_is_held_whatever_float_its_new_end_is() {
+    let at = [5000.5_f32, -3400.25, 31.0];
+    let mut mesh = slab();
+    for p in &mut mesh.positions {
+        *p = std::array::from_fn(|a| p[a] - AT[a] + at[a]);
+    }
+    let mut bound = PhBoundBVH {
+        base: build::geometry(&mesh).unwrap(),
+        ..Default::default()
+    };
+    bound.base.base.r#type = Open::new(BoundType::Bvh);
+    build::rebuild(&mut bound).unwrap();
+    let (file, _) = file_and_canonical(&PhBoundAny::PhBoundBVH(bound));
+
+    let mut refused = Vec::new();
+    let mut far = at[0] + 9.0;
+    for step in 0..40 {
+        let work = tempfile::tempdir().unwrap();
+        let dir = extract(work.path(), &file);
+        edit_glb(&dir, |scene| {
+            let primitive = &mut scene.objects[0].meshes[0].primitives[0];
+            let new = primitive.positions.len() as u32;
+            primitive.positions.push([far, at[1], at[2]]);
+            primitive.indices.extend([0, 1, new]);
+        });
+        match bounds::compile(&Source::open(&dir).unwrap()) {
+            Ok(made) => validate(&made.bytes),
+            Err(problems) => refused.push((step, far, problems[0].to_string())),
+        }
+        far = far.next_up();
+    }
+    assert!(
+        refused.is_empty(),
+        "{} of 40 ends are refused, the first {:?}",
+        refused.len(),
+        refused.first()
+    );
+}
+
 #[test]
 fn a_polygon_that_changed_in_one_thing_alone_is_a_changed_polygon() {
     let (file, canonical) = file_and_canonical(&PhBoundAny::PhBoundGeometry(geometry()));

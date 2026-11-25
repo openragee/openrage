@@ -1077,10 +1077,19 @@ fn rebuilt(
         }
         centre = std::array::from_fn(|a| (min[a] + max[a]) * 0.5);
         // A zero extent stores every vertex on that axis at zero.
+        // ⚠ Half the sum of two floats is often no float, so the centre is off the middle and one end is farther from it than half
+        // the extent: the quantum is of the farther end, and is stepped up until both ends are words.
         factor = std::array::from_fn(|a| {
-            let extent = max[a] - min[a];
-            if extent > 0.0 {
-                extent * 0.5 / QUANTIZED_LIMIT
+            let reach = (max[a] - centre[a]).max(centre[a] - min[a]);
+            if reach > 0.0 {
+                let mut factor = reach / QUANTIZED_LIMIT;
+                let past = |end: f32, factor: f32| {
+                    ((end - centre[a]) / factor).round().abs() > QUANTIZED_LIMIT
+                };
+                while factor.is_finite() && (past(min[a], factor) || past(max[a], factor)) {
+                    factor = factor.next_up();
+                }
+                factor
             } else {
                 1.0
             }

@@ -15,15 +15,19 @@
 //! rewrites whole, and a file whose links no renumbering restores, are put back that way.
 //!
 //! ⚠ **The boxes the extents grow to hold are the pack's own.** An operation that places an entity reads the type files of every map set
-//! that names its source, the first to declare a name winning, so what it writes does not depend on which set a screen shows.
+//! that names its source, the first to declare a name winning, so what it writes does not depend on which set a screen shows. An entity
+//! of an archetype none of them declares, as any prop of the game is, is held where it stands, and [`Applied::notes`] says so.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use glam::{Quat, Vec3};
 use or_io::decl::File;
 use or_io::meta::instance::HashedString;
-use or_io::meta::typed::{CBaseArchetypeDefAny, CEntityDefAny, CMapData, CMapTypes};
+use or_io::meta::typed::{
+    CBaseArchetypeDef, CBaseArchetypeDefAny, CEntityDefAny, CMapData, CMapTypes,
+};
 use or_io::meta::Value;
 use or_source::metadata::Inputs;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -37,6 +41,7 @@ pub const FORMAT: &str = "openrage-map-operations";
 /// The one schema of a list this build reads and writes.
 pub const SCHEMA: u32 = 1;
 
+/// Why a list of operations was not read, or an operation not applied.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0} is not a list of map operations: {1}")]
@@ -298,7 +303,7 @@ pub enum Operation {
         entity: usize,
         pose: PoseData,
     },
-    /// Add an entity that places `archetype` at `pose` to a map file, as a copy of `donor` (else of the map's first entity) with a guid of its own, and grow the extents.
+    /// Add an entity that places `archetype` at `pose` to a map file, as a copy of `donor` (else of the map's first entity) with a guid of its own, and grow the extents; the first of a map that holds none is built with what `donor` states and is no copy.
     AddEntity {
         source: String,
         /// The name of the archetype, or `hash_XXXXXXXX` for one known by its hash alone.
@@ -340,7 +345,7 @@ pub enum Operation {
     GrowExtents { source: String },
     /// State the extents of a map file.
     SetExtents { source: String, extents: Extents },
-    /// Add an archetype called `name` to a type file, as a copy of `donor` (else of the file's first plain archetype).
+    /// Add an archetype called `name` to a type file, as a copy of `donor` (else of the file's first plain archetype); the first of a file that holds none is built with what `donor` states and is no copy.
     AddArchetype {
         source: String,
         name: String,
@@ -457,6 +462,8 @@ pub struct Applied {
     pub edited: Edited,
     /// The index of the entity or the archetype it added, when it added one.
     pub added: Option<usize>,
+    /// What it could not read and went without, a sentence each: an archetype with no box in the pack, a type file that does not cook.
+    pub notes: Vec<String>,
 }
 
 /// The local box and the stream distance of an archetype, by the hash of its name.
@@ -470,6 +477,77 @@ struct Context {
     entity: Option<CEntityDefAny>,
     /// The archetype an added one is a copy of, when it is in another source.
     archetype: Option<CBaseArchetypeDefAny>,
+    /// What the operation went without, a sentence each, for [`Applied::notes`].
+    notes: RefCell<Vec<String>>,
+}
+
+/// The first entity of a map that holds none: `placed` at `pose`, built here with what `like` states of itself.
+///
+/// ⚠ Never a copy. A map with no entity states no class of one, and a copy keeps the tree of the file it was read from, which this
+/// file cannot lay out; a record built here is laid out as `or-io` declares its class, in a PSO, and refused by name in an RBM file.
+fn first_entity(
+    placed: Name,
+    pose: Pose,
+    like: Option<&CEntityDefAny>,
+) -> Result<CEntityDefAny, String> {
+    if like.is_some_and(|like| like.as_mlo_instance().is_some()) {
+        return Err(
+            "the first entity of a map is built here and not copied, and an interior instance cannot be built from nothing yet: name a `donor` that is no interior"
+                .to_string(),
+        );
+    }
+    let archetype = match placed.text {
+        Some(text) => HashedString::new(text),
+        None => HashedString::from_hash(placed.hash),
+    };
+    let chosen = or_world::create::Placed {
+        rotation: pose.rotation,
+        scale_xy: pose.scale_xy,
+        scale_z: pose.scale_z,
+        flags: like.map_or(0, |like| like.flags),
+        ..or_world::create::Placed::at(archetype, pose.position, 0.0)
+    };
+    let mut entity = or_world::create::entity(&chosen, 1).map_err(|e| e.to_string())?;
+    if let Some(like) = like {
+        entity.lod_dist = like.lod_dist;
+        entity.child_lod_dist = like.child_lod_dist;
+        entity.ambient_occlusion_multiplier = like.ambient_occlusion_multiplier;
+        entity.artificial_ambient_occlusion = like.artificial_ambient_occlusion;
+        entity.tint_value = like.tint_value;
+    }
+    Ok(entity)
+}
+
+/// The first archetype of a type file that holds none: what `like`, a plain archetype, states, built here and called `name`.
+///
+/// ⚠ Never a copy, for the reason [`first_entity`] is none.
+fn first_archetype(
+    like: &CBaseArchetypeDefAny,
+    name: &str,
+    asset: Option<&str>,
+) -> Result<CBaseArchetypeDefAny, String> {
+    let CBaseArchetypeDefAny::Base(like) = like else {
+        return Err(
+            "the first archetype of a type file is built here from a plain one, and the donor is an interior or a timed one"
+                .to_string(),
+        );
+    };
+    let mut built = CBaseArchetypeDef::default();
+    built.lod_dist = like.lod_dist;
+    built.flags = like.flags;
+    built.special_attribute = like.special_attribute;
+    built.bb_min = like.bb_min;
+    built.bb_max = like.bb_max;
+    built.bs_centre = like.bs_centre;
+    built.bs_radius = like.bs_radius;
+    built.hd_texture_dist = like.hd_texture_dist;
+    built.name = HashedString::new(name);
+    built.texture_dictionary = like.texture_dictionary.clone();
+    built.clip_dictionary = like.clip_dictionary.clone();
+    built.drawable_dictionary = like.drawable_dictionary.clone();
+    built.physics_dictionary = like.physics_dictionary.clone();
+    built.asset_name = HashedString::new(asset.unwrap_or(name));
+    Ok(CBaseArchetypeDefAny::Base(built))
 }
 
 /// The operation that takes a change back, and the index of what the change added.
@@ -508,7 +586,18 @@ fn change_map(
     let source = operation.source().to_string();
     let was = Extents::of(map);
     let grow = |map: &mut CMapData| {
-        edit::grow_extents(map, |hash| context.boxes.get(&hash).copied());
+        let without_box = edit::grow_extents(map, |hash| context.boxes.get(&hash).copied());
+        if !without_box.is_empty() {
+            let named: Vec<String> = (without_box.iter().take(3))
+                .map(|hash| format!("`{}`", HashedString::from_hash(*hash).to_xml_text()))
+                .collect();
+            context.notes.borrow_mut().push(format!(
+                "no type file of the pack declares {} archetype(s) the map places ({}{}), so the extents hold each such entity where it stands and as far as it states it is drawn, which is less than its box",
+                without_box.len(),
+                named.join(", "),
+                if without_box.len() > named.len() { ", ..." } else { "" }
+            ));
+        }
     };
     match operation {
         Operation::PlaceEntity { entity, pose, .. } => {
@@ -534,15 +623,21 @@ fn change_map(
             if placed.is_empty() {
                 return Err("an entity places an archetype, and none is named".to_string());
             }
-            let copied = match (&context.entity, donor) {
-                (Some(entity), _) => entity.clone(),
-                (None, Some(at)) => entity_at(map, at.index)?.clone(),
-                (None, None) => map.entities.first().cloned().ok_or_else(|| {
-                    "the map holds no entity to copy: name a `donor` in a map file that has one"
-                        .to_string()
-                })?,
+            let added = if map.entities.is_empty() {
+                if let (None, Some(at)) = (&context.entity, donor) {
+                    entity_at(map, at.index)?;
+                }
+                map.entities
+                    .push(first_entity(placed, pose, context.entity.as_ref())?);
+                0
+            } else {
+                let copied = match (&context.entity, donor) {
+                    (Some(entity), _) => entity.clone(),
+                    (None, Some(at)) => entity_at(map, at.index)?.clone(),
+                    (None, None) => map.entities[0].clone(),
+                };
+                edit::add_entity(map, &copied, placed, pose)?
             };
-            let added = edit::add_entity(map, &copied, placed, pose)?;
             grow(map);
             let inverse = Operation::RemoveEntity {
                 source,
@@ -709,7 +804,12 @@ fn change_types(
                 (None, Some(at)) => Some(archetype_at(types, at.index)?.clone()),
                 (None, None) => None,
             };
-            let added = edit::add_archetype(types, copied.as_ref(), name, asset.as_deref())?;
+            let added = match (types.archetypes.is_empty(), &copied) {
+                (true, Some(like)) => {
+                    edit::add_new_archetype(types, first_archetype(like, name, asset.as_deref())?)?
+                }
+                _ => edit::add_archetype(types, copied.as_ref(), name, asset.as_deref())?,
+            };
             let inverse = Operation::RemoveArchetype {
                 source,
                 archetype: added,
@@ -815,10 +915,25 @@ fn through<R: File + Clone>(
     let (inverse, added) = change(&mut root, operation, context)?;
     let bytes = root.to_bytes().map_err(|e| e.to_string())?;
     let xml = inputs.xml_of(&bytes).map_err(problems)?;
+    // ⚠ An inverse that carries a record is proven on the file the new XML cooks to, never on the root the change was made to: that
+    // root keeps the type table of the file it was read from, which states a class the cooked file loses with its last element.
+    let cooked_again = || {
+        let mut edited = inputs.clone();
+        edited.set_xml(xml.clone());
+        R::from_bytes(&edited.compile().ok()?.bytes).ok()
+    };
+    let keeps_every_record = matches!(
+        operation,
+        Operation::PlaceEntity { .. }
+            | Operation::GrowExtents { .. }
+            | Operation::SetExtents { .. }
+    );
     let inverse = match untouched
         .filter(|was| inputs.is_the_export_of(was))
-        .and_then(|was| proven(&root, &inverse, &was, change))
-    {
+        .and_then(|was| match keeps_every_record {
+            true => proven(&root, &inverse, &was, change),
+            false => proven(&cooked_again()?, &inverse, &was, change),
+        }) {
         Some(inverse) => inverse,
         None => Operation::RewriteSource {
             source: operation.source().to_string(),
@@ -904,17 +1019,30 @@ impl<'a> Work<'a> {
         R::from_bytes(&cooked).map_err(|e| e.to_string())
     }
 
-    /// The boxes of the archetypes that the type files of every set naming `source` declare; a source that does not read as a type file declares none.
-    fn boxes(&mut self, source: &str) -> Boxes {
+    /// The boxes of the archetypes that the type files of every set naming `source` declare, and a sentence for each type file that does not cook, which declares none.
+    fn boxes(&mut self, source: &str) -> (Boxes, Vec<String>) {
         let paths: Vec<String> = (self.model.maps.iter())
             .filter(|set| set.sources.iter().any(|s| s == source))
             .flat_map(|set| set.sources.iter().cloned())
             .collect();
         let corner = |v: or_io::decl::Vec3| Vec3::new(v.x, v.y, v.z);
         let mut boxes = Boxes::new();
+        let mut notes = Vec::new();
         for path in paths {
-            let Ok(types) = self.root::<CMapTypes>(&path) else {
+            // A source of another kind, a map file or a model, declares nothing and is no one's to mention.
+            let is_types = (self.hold(&path))
+                .is_ok_and(|held| held.inputs.extension() == CMapTypes::EXTENSION);
+            if !is_types {
                 continue;
+            }
+            let types = match self.root::<CMapTypes>(&path) {
+                Ok(types) => types,
+                Err(why) => {
+                    notes.push(format!(
+                        "the type file `{path}` does not cook, so the extents are grown without the boxes it declares: {why}"
+                    ));
+                    continue;
+                }
             };
             for archetype in &types.archetypes {
                 boxes.entry(archetype.name.hash).or_insert((
@@ -924,7 +1052,7 @@ impl<'a> Work<'a> {
                 ));
             }
         }
-        boxes
+        (boxes, notes)
     }
 
     /// What `operation` reads besides the file it edits.
@@ -934,10 +1062,14 @@ impl<'a> Work<'a> {
         let mut context = Context::default();
         match operation {
             Operation::PlaceEntity { .. } | Operation::GrowExtents { .. } => {
-                context.boxes = self.boxes(source);
+                let (boxes, notes) = self.boxes(source);
+                context.boxes = boxes;
+                context.notes = RefCell::new(notes);
             }
             Operation::AddEntity { donor, .. } => {
-                context.boxes = self.boxes(source);
+                let (boxes, notes) = self.boxes(source);
+                context.boxes = boxes;
+                context.notes = RefCell::new(notes);
                 if let Some(at) = elsewhere(donor) {
                     let copied = (self.root::<CMapData>(&at.source))
                         .and_then(|map| entity_at(&map, at.index).cloned())
@@ -969,6 +1101,7 @@ impl<'a> Work<'a> {
     fn apply(&mut self, operation: &Operation) -> Result<Applied, String> {
         let source = operation.source();
         let extension = self.hold(source)?.inputs.extension().to_string();
+        let mut notes = Vec::new();
         let (xml, inverse, added) = match (operation, extension.as_str()) {
             (Operation::RewriteSource { xml, .. }, _) => {
                 let held = self.hold(source)?;
@@ -985,7 +1118,10 @@ impl<'a> Work<'a> {
             }
             (_, CMapData::EXTENSION) => {
                 let context = self.context(operation)?;
-                through::<CMapData>(&self.hold(source)?.inputs, operation, &context, change_map)?
+                let inputs = &self.hold(source)?.inputs;
+                let done = through::<CMapData>(inputs, operation, &context, change_map)?;
+                notes = context.notes.into_inner();
+                done
             }
             (_, CMapTypes::EXTENSION) => {
                 let context = self.context(operation)?;
@@ -1009,6 +1145,7 @@ impl<'a> Work<'a> {
                 after: xml,
             },
             added,
+            notes,
         })
     }
 

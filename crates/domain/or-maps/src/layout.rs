@@ -24,7 +24,7 @@ pub fn stream_path(file: &str) -> String {
 pub const TYPE_FILE: &str = "DLC_ITYP_REQUEST";
 
 /// The line of a FiveM manifest that declares the resource a map, and its value.
-pub const MAP_LINE: (&str, &str) = ("this_is_a_map", "yes");
+pub const MAP_LINE: (&str, &str) = (or_project::resource::manifest::MAP_KEY, "yes");
 
 /// The folder of a singleplayer DLC the archive of a content's maps is written in: a choice, since nobody measured where the game's packs keep theirs.
 pub const PACK_FOLDER: &str = "x64/levels/gta5";

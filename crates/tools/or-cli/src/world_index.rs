@@ -191,10 +191,35 @@ pub(crate) fn cmd_index(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The three numbers of `args` that are neither a flag nor a flag's value: a position in metres.
+/// The position, in metres, that the arguments of `args` that are neither a flag nor a flag's value give: three numbers, or one argument that writes a place as a script does.
 fn position_of(args: &[String]) -> Result<Vec3, String> {
     let mut numbers = Vec::new();
     let mut skip = false;
+    let mut words = Vec::new();
+    for arg in args {
+        match skip || VALUED_FLAGS.contains(&arg.as_str()) {
+            true => skip = !skip,
+            false if !arg.starts_with("--") => words.push(arg.as_str()),
+            false => {}
+        }
+    }
+    // One argument that is no lone number is a place as `world new-map --at` and a script write one, read as a pasted place is.
+    if let [written] = words[..] {
+        use or_maps::place::{read_pasted, Pasted};
+        match read_pasted(written) {
+            Ok(Pasted::Place(place)) => {
+                return match place.z {
+                    Some(z) => Ok(Vec3::new(place.x, place.y, z)),
+                    None => Err(format!(
+                        "`{written}` gives no height, and a position is x, y and z"
+                    )),
+                }
+            }
+            Err(refused) => return Err(refused.to_string()),
+            Ok(_) => {}
+        }
+    }
+    skip = false;
     for arg in args {
         if skip {
             skip = false;

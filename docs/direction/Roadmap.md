@@ -9618,7 +9618,11 @@ archive's stamp (`the_world_index_of_a_mount`), behind `openrage-cli world index
 `DlcCutoff::Level` stops the mount at a pack of the DLC list and `MountOptions::mode` takes the map
 as story or multiplayer
 (`a_mount_stops_at_a_level_of_dlc_and_takes_the_map_as_story_or_multiplayer`), set only by
-`openrage-cli dlc-list`. Left: both in the index's key and from a screen; the group that requests a
+`openrage-cli dlc-list`. The older cutoff by a pack's name hash, which `--dlc` is, keeps the
+folders of the packs past it from the walk as a level does
+(`a_pack_past_a_name_hash_is_left_out_of_the_walk_as_one_past_a_level_is`), and an archive one of
+whose files did not open is kept with no stamp, so the next build reads it again
+(`a_file_that_did_not_open_is_read_again_by_the_next_build_though_its_archive_stands`). Left: both in the index's key and from a screen; the group that requests a
 map; the cost on an install.
 
 **Done when.** Over a mounted install the index names every map and type file the mount lists, and a
@@ -9819,9 +9823,17 @@ nothing derives the signature word of an RBM class ([R62](#r62-the-rbm-layout-sy
 game's own world files are RBM, so whether it loads one written as PSO is a line of
 [R70a](#r70a-what-the-game-loads)'s sheet, and no map is made from a donor of an install, which
 What asks for. An entity made so states only what the typed family names
-([what it leaves out](../reference/Crate_Reference.md#domain-crates)). Left: links across files, the
-import, a new map and an entity that is no copy as operations, the donor, Undo by inverses in
-History, the install measure.
+([what it leaves out](../reference/Crate_Reference.md#domain-crates)). The first entity of a map
+that holds none, and the first archetype of a type file that holds none, is built that way by
+`add_entity` and `add_archetype` with what the donor states, and the last one taken out is put back
+by the XML as it was (`crates/domain/or-maps/tests/an_operation_where_the_pack_holds_too_little.rs`).
+An entity of an archetype no type file of the pack declares is held by the extents where it
+stands, a lower bound the operation says in a note, since no operation is handed the boxes of the
+install ([R70b](#r70b-the-gta-v-world-index)). An entity taken out of a map that another map of
+the pack names as parent leaves that map's links as they were, which the rule
+`parent-link-broken` names once a link is past the end. Left: links across files, the
+import, a new map and an entity that is no copy as operations, the donor and the install's boxes,
+Undo by inverses in History, the install measure.
 
 **Depends on.** Nothing in R70; it does the part of
 [R69h](#r69h-one-undo-for-the-tab-on-screen) a Map tab needs below the screen.
@@ -10091,6 +10103,14 @@ none states, such as one made from nothing, gets no entry, and a note of the pla
 1,801 `.ymf` staged in the metadata corpus, 1,798 read as a manifest a build writes from, and the
 185 that state a map are written back stating what they state
 (`every_staged_manifest_of_the_game_is_written_back_stating_what_it_states`, 2026-11-25).
+
+⚠ A kept manifest is a compiled file of the game held whole in a project, which the ruling of
+2026-10-09 says a project never holds
+([rulings in force](Workbench_Plan.md#rulings-in-force)); whether it stays, or the
+flags and the layout it is kept for are held another way, is the owner's to rule on. Until then it
+is treated as a source taken from the game is: `openrage-cli project check-sharing` names each one
+and exits 1, and the managed block of the project's `.gitignore` leaves the folder out
+(`a_manifest_of_the_game_a_maps_content_keeps_fails_the_sharing_check_and_is_ignored_by_git`).
 
 For a story pack the content hands its files over inside one nested archive, registered as map
 data, each type file asked for by the `.ityp` name of the archive's folder
@@ -10362,7 +10382,9 @@ it keeps (`compile_base` in `crates/domain/or-source/src/metadata.rs`), and
 (`an_entity_taken_out_and_another_of_its_archetype_put_in_read_as_one_moved_with_another_guid`).
 And a new entity takes one more than the largest guid of its map (`free_guid` in
 `crates/domain/or-world/src/create.rs`), so one added after the entity with the largest guid was
-deleted takes that guid and compares as one entity changed, which no test holds. What no typed
+deleted takes that guid and compares as one entity changed, held as it stands through the
+operations
+(`an_entity_added_after_the_one_with_the_largest_guid_went_takes_its_guid_and_compares_as_that_entity_changed`). What no typed
 member names (a car generator, an occluder, a room, a portal, an extension) is said to differ and
 is not listed. Left: the panel, the outline, the operation that puts an object back, Discard, and
 a map of an install compared.

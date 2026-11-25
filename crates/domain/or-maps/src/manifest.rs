@@ -164,6 +164,18 @@ pub fn of(model: &Maps, facts: &Facts) -> Outcome {
             shown(&mut built.unstated.iter().copied(), &names)
         ));
     }
+    if !built.pairless.is_empty() {
+        outcome.notes.push(format!(
+            "`{FILE}` states nothing for {}: the manifests of the game kept in `{KEPT}` state it only by pairs of a map and a type file, and it needs no type file here, so there is no pair to write",
+            shown(&mut built.pairless.iter().copied(), &names)
+        ));
+    }
+    if !built.disagreeing.is_empty() {
+        outcome.notes.push(format!(
+            "the manifests of the game kept in `{KEPT}` state {} differently from one another, and nothing kept says which the game mounts last: the entry written is taken from them in the order of their file names, so check its flags and keep only the manifest the game reads last",
+            shown(&mut built.disagreeing.iter().copied(), &names)
+        ));
+    }
     for map in &wanted {
         if !built.kept.contains(&map.name) {
             continue;
@@ -209,6 +221,13 @@ fn refusal(error: &BuildError, facts: &Facts, names: &BTreeMap<u32, Name>) -> St
             let maps: Vec<String> = names.values().map(|name| format!("`{}`", name.shown())).collect();
             format!(
                 "no `{FILE}` is written: no manifest of the game kept in `{KEPT}` states {}, so nothing says what flags an entry for it takes",
+                maps.join(", ")
+            )
+        }
+        BuildError::NoPair(_) => {
+            let maps: Vec<String> = names.values().map(|name| format!("`{}`", name.shown())).collect();
+            format!(
+                "no `{FILE}` is written: the manifests of the game kept in `{KEPT}` state {} only by pairs of a map and a type file, and no map here needs a type file, so there is no pair to write",
                 maps.join(", ")
             )
         }

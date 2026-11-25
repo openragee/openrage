@@ -5,7 +5,7 @@
 //! `new Vector3(…)`), a table that names `x`, `y` and `z` as Lua, JSON or C# write one, with its braces or without, and bare
 //! numbers, with or without brackets around them. A call or brackets are read behind what a line of a script assigns them to
 //! (`coords = vector3(…)`, `"position": {…}`). Two numbers are `x` and `y` with no height; a fourth is the heading in degrees,
-//! which a table names `heading`, `h` or `w`. A hash is read from hexadecimal behind `0x`, from an unsigned decimal and from the
+//! which a table names `heading`, `h` or `w`, and a line may name behind a call of three (`vector3(…), heading = 90.0`). A hash is read from hexadecimal behind `0x`, from an unsigned decimal and from the
 //! signed decimal a script prints for the same 32 bits, and from `hash_` with its eight digits, as the tree shows a hash with no
 //! name.
 //!
@@ -122,16 +122,35 @@ fn place_of(text: &str) -> Option<Result<PastedPlace, Refused>> {
         .trim_end();
     let text = text.strip_suffix([',', ';']).map_or(text, str::trim_end);
     let text = assigned(text);
-    let numbers = match brackets(text) {
+    // A heading named behind a call of three numbers: `vector3(…), heading = 90.0`.
+    let (text, heading) = match text.rsplit_once(',') {
+        Some((call, named)) => match (brackets(call.trim_end()), heading_of(named)) {
+            (Some((Brackets::Call, _)), Some(heading)) => (call.trim_end(), Some(heading)),
+            _ => (text, None),
+        },
+        None => (text, None),
+    };
+    let mut numbers = match brackets(text) {
         Some((Brackets::Call | Brackets::Plain, inside)) => list(inside, true)?,
         Some((Brackets::Braces, inside)) if inside.contains(['=', ':']) => {
             return table(inside);
+        }
+        // The list semicolons separate, which is read with no braces too.
+        Some((Brackets::Braces, inside)) if inside.contains(';') => {
+            let inside = inside.trim();
+            french_list(inside.strip_suffix(';').unwrap_or(inside).trim_end())?
         }
         Some((Brackets::Braces, inside)) => list(inside, true)?,
         None if text.contains(['=', ':']) => return table(text),
         None if text.contains(';') => french_list(text)?,
         None => list(text, false)?,
     };
+    if let Some(heading) = heading {
+        if numbers.len() != 3 {
+            return None;
+        }
+        numbers.push(heading);
+    }
     // The count is judged before the numbers: what has not the shape of a place is text, whatever its numbers hold.
     if !(2..=4).contains(&numbers.len()) {
         return None;
@@ -249,6 +268,17 @@ fn french_list(text: &str) -> Option<Vec<Result<f32, Refused>>> {
             }
         })
         .collect()
+}
+
+/// The heading `text` names as a table does (`heading = 90.0`), behind a call that gave the position.
+fn heading_of(text: &str) -> Option<Result<f32, Refused>> {
+    let (key, value) = text.split_once(['=', ':'])?;
+    matches!(
+        key.trim().to_ascii_lowercase().as_str(),
+        "heading" | "h" | "w"
+    )
+    .then(|| number(value.trim()))
+    .flatten()
 }
 
 /// The place a table names: `x`, `y` and `z`, and a heading as `heading`, `h` or `w`, each once and nothing else.
@@ -618,6 +648,30 @@ mod tests {
                 Pasted::Text("x = 12,5; y = 3,25; z = 7".to_string()),
             ),
         ]);
+    }
+
+    #[test]
+    fn braces_around_a_list_of_semicolons_and_a_heading_named_behind_a_call_are_read() {
+        each_reads(&[
+            ("{1.0; 2.0; 3.0}", place(1.0, 2.0, 3.0)),
+            ("{12,5; -3,25; 7;}", place(12.5, -3.25, 7.0)),
+            (
+                "vector3(-1234.56, 789.01, 30.5), heading = 90.0",
+                facing(-1234.56, 789.01, 30.5, 90.0),
+            ),
+            (
+                "coords = vector3(-1234.56, 789.01, 30.5), h = 90.0,",
+                facing(-1234.56, 789.01, 30.5, 90.0),
+            ),
+        ]);
+        // A name that is no heading, and a call that states a heading of its own, stay text.
+        for text in [
+            "vector3(1, 2, 3), speed = 4",
+            "vector4(1, 2, 3, 4), heading = 5",
+            "(1, 2, 3), heading = 5",
+        ] {
+            assert_eq!(read_pasted(text), Ok(Pasted::Text(text.to_string())));
+        }
     }
 
     #[test]

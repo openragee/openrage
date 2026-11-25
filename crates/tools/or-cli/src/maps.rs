@@ -86,7 +86,9 @@ fn print_usage() {
          writes the manifest of its own maps from the ones kept: they say how that document is laid\n\
          out and what flags the entry of a map takes, which nothing else in a project says. Name the\n\
          files, or name an install with --game to keep every manifest of it that states a map of the\n\
-         content. With none kept a build writes no manifest and its plan says so.\n\n\
+         content. With none kept a build writes no manifest and its plan says so. A kept manifest\n\
+         is the game's own file, whole: `project check-sharing` names it and the project's .gitignore\n\
+         leaves it out.\n\n\
          A build checks the files. It does not test that GTA V loads them.\n"
     );
 }
@@ -169,6 +171,9 @@ fn apply(args: &[String]) -> Result<ExitCode, Failure> {
             operation.name(),
             operation.source()
         );
+        for note in &done.notes {
+            println!("     note: {note}");
+        }
         let file = (done.edited.file.strip_prefix(&folder))
             .unwrap_or(&done.edited.file)
             .to_string_lossy()
@@ -255,6 +260,13 @@ fn keep_manifest(args: &[String]) -> Result<ExitCode, Failure> {
             stated.len()
         );
     }
+    // ⚠ A kept manifest is the game's file: the project's ignore rules keep it out of a repository, as they do a source taken from the game.
+    if let Err(e) = or_source::git::update(&project.folder()) {
+        eprintln!("note: the ignore rules of the project are not updated: {e}");
+    }
+    println!(
+        "A kept manifest is the game's own file: `project check-sharing` names it, and it is not yours to send or commit."
+    );
     Ok(ExitCode::SUCCESS)
 }
 

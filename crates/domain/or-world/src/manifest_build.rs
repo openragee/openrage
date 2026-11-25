@@ -47,6 +47,10 @@ pub struct Built {
     pub kept: BTreeSet<u32>,
     /// The maps it states nothing for, since no manifest handed in states a map of that name.
     pub unstated: BTreeSet<u32>,
+    /// The maps it states nothing for though a manifest handed in states them: one stated by pairs of a map and a type file alone, that needs no type file to pair it with.
+    pub pairless: BTreeSet<u32>,
+    /// The maps two manifests handed in state differently. ⚠ Their entry is taken in the order the manifests are handed in, which is no order the game mounts them in.
+    pub disagreeing: BTreeSet<u32>,
 }
 
 /// Why no manifest was written.
@@ -63,6 +67,8 @@ pub enum BuildError {
     NotAManifest(usize, String),
     #[error("no manifest handed in states any of the {0} map(s), so there is no entry to write")]
     NoEntry(usize),
+    #[error("the manifests handed in state {0} map(s) only by pairs of a map and a type file, and none of those maps needs a type file, so there is no pair to write")]
+    NoPair(usize),
     #[error("the first manifest handed in has no list of the kind `{0}` to put an entry in")]
     NoList(&'static str),
     #[error(
@@ -110,6 +116,8 @@ fn build_named(kept: &[&[u8]], maps: &[Wanted]) -> Result<Built, BuildError> {
         stated,
         kept: tree.kept,
         unstated: tree.unstated,
+        pairless: tree.pairless,
+        disagreeing: tree.disagreeing,
     })
 }
 
@@ -154,6 +162,8 @@ pub struct Tree {
     pub root: MetaInstance,
     pub kept: BTreeSet<u32>,
     pub unstated: BTreeSet<u32>,
+    pub pairless: BTreeSet<u32>,
+    pub disagreeing: BTreeSet<u32>,
 }
 
 /// The tree of a manifest stating `maps`: the first of `kept` with every list emptied, then an entry for each map that one of `kept` states.
@@ -172,7 +182,8 @@ pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildErr
     // ⚠ One pass over what is kept, so the work is the entries and the maps and never their product. An entry a later manifest
     // states as an earlier one does is one entry: an update of the game restates the entries of the pack it patches, and both are
     // kept of one install. What one manifest states twice is kept twice, as it states it.
-    let stating = |key: u32| {
+    let mut disagreeing: BTreeSet<u32> = BTreeSet::new();
+    let mut stating = |key: u32| {
         let mut by_map: BTreeMap<u32, Vec<(usize, &MetaInstance)>> = BTreeMap::new();
         for (at, root) in kept.iter().enumerate() {
             for entry in field::structs_at(root, key) {
@@ -188,6 +199,12 @@ pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildErr
                 }
             }
         }
+        // What two manifests state of one map and not alike is a disagreement, whatever order they are handed in.
+        disagreeing.extend(
+            (by_map.iter())
+                .filter(|(_, held)| held.iter().any(|(from, _)| *from != held[0].0))
+                .map(|(name, _)| *name),
+        );
         by_map
             .into_iter()
             .map(|(name, held)| {
@@ -203,6 +220,7 @@ pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildErr
 
     let (mut grouped, mut flat) = (Vec::new(), Vec::new());
     let (mut kept_whole, mut unstated) = (BTreeSet::new(), BTreeSet::new());
+    let mut pairless = BTreeSet::new();
     for (&name, asked) in &wanted {
         let in_groups = groups.get(&name).map_or(&[][..], Vec::as_slice);
         let in_pairs = pairs.get(&name).map_or(&[][..], Vec::as_slice);
@@ -240,6 +258,10 @@ pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildErr
             }
             grouped.push(entry);
         } else if let Some(like) = in_pairs.first() {
+            // ⚠ A pair is a map and a type file, so a map that needs none has no pair to state it by.
+            if types.is_empty() {
+                pairless.insert(name);
+            }
             for hash in &types {
                 let mut pair = (*like).clone();
                 set_hash(&mut pair, keys::ITYP_NAME, *hash);
@@ -248,7 +270,10 @@ pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildErr
         }
     }
     if grouped.is_empty() && flat.is_empty() {
-        return Err(BuildError::NoEntry(wanted.len()));
+        return Err(match pairless.len() {
+            0 => BuildError::NoEntry(wanted.len()),
+            stated => BuildError::NoPair(stated),
+        });
     }
 
     let mut root = (*first).clone();
@@ -278,6 +303,8 @@ pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildErr
         root,
         kept: kept_whole,
         unstated,
+        pairless,
+        disagreeing,
     })
 }
 
@@ -602,6 +629,72 @@ mod tests {
             built.stated[&hash("harbour")],
             BTreeSet::from([hash("t_a"), hash("t_b")])
         );
+    }
+
+    #[test]
+    fn a_map_two_kept_manifests_state_differently_is_named_as_one_they_disagree_on() {
+        let base = encoded(&manifest(
+            Vec::new(),
+            vec![
+                grouped("harbour", 1, &["t_base"]),
+                grouped("quay", 4, &["t_quay"]),
+            ],
+        ));
+        let patch = encoded(&manifest(
+            Vec::new(),
+            vec![
+                grouped("harbour", 2, &["t_patch"]),
+                grouped("quay", 4, &["t_quay"]),
+            ],
+        ));
+        // Whichever is handed in first, and whether the entry is derived or kept whole.
+        for kept in [[&base[..], &patch[..]], [&patch[..], &base[..]]] {
+            for keep_stated in [false, true] {
+                let maps = [
+                    wanted("harbour", keep_stated, &["t_new"]),
+                    wanted("quay", keep_stated, &["t_quay"]),
+                ];
+                let built = build(&kept, &maps).unwrap();
+                assert_eq!(
+                    built.disagreeing,
+                    BTreeSet::from([hash("harbour")]),
+                    "the map stated two ways is named, and the one stated alike twice is not"
+                );
+            }
+        }
+        let built = build(&[&base], &[wanted("harbour", true, &[])]).unwrap();
+        assert!(built.disagreeing.is_empty());
+    }
+
+    #[test]
+    fn a_map_stated_by_pairs_alone_that_needs_no_type_file_is_named_and_never_said_to_be_unstated()
+    {
+        let donor = encoded(&manifest(
+            vec![pair("harbour", "t_game"), pair("quay", "t_game")],
+            Vec::new(),
+        ));
+        // Beside a map that has a pair to write: the manifest is written without it, and says which.
+        let built = build(
+            &[&donor],
+            &[
+                wanted("harbour", false, &[]),
+                wanted("quay", false, &["t_new"]),
+            ],
+        )
+        .unwrap();
+        assert_eq!(built.pairless, BTreeSet::from([hash("harbour")]));
+        assert!(built.unstated.is_empty(), "a manifest states it");
+        assert_eq!(pairs_of(&built.bytes, "harbour"), 0);
+        assert_eq!(pairs_of(&built.bytes, "quay"), 1);
+
+        // Alone: nothing is written, and the reason is not that no manifest states it.
+        let refused = build(&[&donor], &[wanted("harbour", false, &[])]).unwrap_err();
+        assert!(
+            matches!(refused, BuildError::NoPair(1)),
+            "{refused:?}: {refused}"
+        );
+        let unstated = build(&[&donor], &[wanted("nowhere", false, &[])]).unwrap_err();
+        assert!(matches!(unstated, BuildError::NoEntry(1)), "{unstated:?}");
     }
 
     #[test]

@@ -320,8 +320,12 @@ pub fn remove_archetype(types: &mut CMapTypes, index: usize) -> Result<(), Strin
     Ok(())
 }
 
-/// Grow the extents `map` states to hold the entity boxes `boxes` gives (a local box and the stream distance of each entity), never shrinking them: what else holds them up, a car generator or an occluder, is not the entities'.
-pub fn grow_extents(map: &mut CMapData, boxes: impl Fn(u32) -> Option<(Vec3, Vec3, f32)>) {
+/// Grow the extents `map` states to hold the entity boxes `boxes` gives (a local box and the stream distance of each entity), never shrinking them: what else holds them up, a car generator or an occluder, is not the entities'. The archetypes `boxes` has none for, each once.
+pub fn grow_extents(
+    map: &mut CMapData,
+    boxes: impl Fn(u32) -> Option<(Vec3, Vec3, f32)>,
+) -> Vec<u32> {
+    let mut without_box: Vec<u32> = Vec::new();
     let mut entities: Option<(Vec3, Vec3)> = None;
     let mut streaming: Option<(Vec3, Vec3)> = None;
     let add = |into: &mut Option<(Vec3, Vec3)>, point: Vec3| {
@@ -330,10 +334,22 @@ pub fn grow_extents(map: &mut CMapData, boxes: impl Fn(u32) -> Option<(Vec3, Vec
         *max = max.max(point);
     };
     for entity in &map.entities {
+        let pose = pose_of(entity);
         let Some((min, max, stream)) = boxes(entity.archetype_name.hash) else {
+            // ⚠ An entity with no box is held where it stands, and as far around as it states it streams from: a lower bound, where
+            // leaving it out would leave the game streaming the map by extents the entity stands outside.
+            if !without_box.contains(&entity.archetype_name.hash) {
+                without_box.push(entity.archetype_name.hash);
+            }
+            let reach = match entity.lod_dist.is_finite() && entity.lod_dist > 0.0 {
+                true => Vec3::splat(entity.lod_dist),
+                false => Vec3::ZERO,
+            };
+            add(&mut entities, pose.position);
+            add(&mut streaming, pose.position - reach);
+            add(&mut streaming, pose.position + reach);
             continue;
         };
-        let pose = pose_of(entity);
         let scale = Vec3::new(pose.scale_xy, pose.scale_xy, pose.scale_z);
         let reach = if entity.lod_dist > 0.0 {
             entity.lod_dist
@@ -383,4 +399,5 @@ pub fn grow_extents(map: &mut CMapData, boxes: impl Fn(u32) -> Option<(Vec3, Vec
         *min = from_vec(held_lo.min(lo));
         *max = from_vec(held_hi.max(hi));
     }
+    without_box
 }

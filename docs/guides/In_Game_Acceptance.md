@@ -81,11 +81,13 @@ You need your own GTA V install, `openrage-cli`, and a scratch folder outside ev
    openrage-cli project acceptance <scratch>/acceptance/build/or_acceptance
    ```
 
-   The build writes `stream/<map>.ymap`, `stream/<types>.ytyp` and `fxmanifest.lua` into `build/or_acceptance`, reads the map and the type file back and says so. The second command prints the lines above that are about those files, and for each edition its newest result or that it is not checked in game.
+   The build writes `stream/<map>.ymap`, `stream/<types>.ytyp` and `fxmanifest.lua` into `build/or_acceptance`, reads the map and the type file back and says so. The second command prints every line above whose kind is a kind of file the build wrote, and for each edition its newest result or that it is not checked in game. ⚠ A line is matched by the kind of file alone, so the command prints four lines for this build: the three about a changed map and a changed type file, and `map-made-from-nothing`, though the sample holds no such map.
 
 An edit made in the XML does not grow the extents the map states, and the game streams a map by them, so keep the object and its copy within a few metres of where the object stood. No verb of `openrage-cli` changes an entity of Files content, which the sample is; `openrage-cli maps apply` changes one of a Maps content ([R70h](../direction/Roadmap.md#r70h-one-vocabulary-of-world-edits)). The Map screen of a project with a Maps content makes the same two edits with its manipulator and grows the extents as it writes ([what the Map screen builds](../direction/Workbench_UX_Design.md#what-the-map-screen-builds)).
 
 A project made by these commands holds its sources as Files content, whose build writes no manifest line for a type file; a Maps content writes the line that registers it. Whether a server needs that line for a type file that replaces the game's own is one of the things a result of `type-file-read` tells.
+
+⚠ The resource these commands build does not declare itself a map: only the build of a Maps content writes `this_is_a_map 'yes'` into `fxmanifest.lua`, and `openrage-cli project check-resource <scratch>/acceptance/build/or_acceptance` warns of it as `map-not-declared`. A moved object that is not drawn may be that missing line and not the map file, so the commit that records a `not-loaded` from this sample says that the resource was not declared a map.
 
 ## Load it on a FiveM server
 
@@ -95,7 +97,7 @@ OpenRage does not start or change a server ([install on a server](Workbench_Guid
 2. Stop every other resource that ships a file of the same name: a server that runs two resources shipping one map loads one of them, and you would not know which you looked at.
 3. Add `ensure or_acceptance` to `server.cfg` and start the server, or type `refresh` and then `ensure or_acceptance` in the console of one that runs.
 4. Read the server's console, and the client's, while the resource starts. An error that names a file of the resource is a fault to write down in its words.
-5. Join, go to the position you kept, and do each line of the table that the command printed: look for the moved object, the copy, and an object of the archetype you changed.
+5. Join, go to the position you kept, and do the three lines the sample is about: look for the moved object, the copy, and an object of the archetype you changed. Write no result under `map-made-from-nothing`, which the command printed too: the sample holds no map made from nothing, and a result under a line is shown to every build that wrote a file of its kind.
 6. Type `stop or_acceptance` and look again. The object is back where the game puts it and the copy is gone, which says that what you saw came from the build.
 
 ## Load it in story mode
@@ -126,8 +128,8 @@ Open `crates/domain/or-project/src/acceptance.json`, find the line by its id and
 Add a result and leave the older ones as they are: the sheet is a record of runs. Then check the file and read it back, from the tree:
 
 ```
-cargo nextest run -p or-project acceptance
+cargo nextest run -p or-project -p or-cli -E 'test(/acceptance|sheet|recipe/) + binary(/acceptance/)'
 cargo run -p openrage --bin openrage-cli -- project acceptance <scratch>/acceptance/build/or_acceptance
 ```
 
-The first refuses a result with a verdict outside the three, a day that is no day of the calendar or a key it does not know, and names the line by its id. The second prints your result under the line, for its edition, and leaves the other edition not checked in game. ⚠ The command reads the sheet it was built with, so an `openrage-cli` built before your edit prints the sheet as it was; `cargo run` builds it again. Commit the file alone, with what you ran in the message; when a line answers the open clause of a row of the roadmap, say so in that row.
+The first runs every test that reads the sheet, in `or-project` and in `openrage-cli`, and refuses a result with a verdict outside the three, a day that is no day of the calendar or a key it does not know, naming the line by its id. The second prints your result under the line, for its edition, and leaves the other edition not checked in game. ⚠ The command reads the sheet it was built with, so an `openrage-cli` built before your edit prints the sheet as it was; `cargo run` builds it again. Commit the file alone, with what you ran in the message; when a line answers the open clause of a row of the roadmap, say so in that row.

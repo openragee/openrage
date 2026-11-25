@@ -345,6 +345,21 @@ fn a_cone_wider_than_a_right_angle_is_a_point_less_the_cone_behind_it() {
 }
 
 #[test]
+fn a_spot_is_drawn_within_the_cones_the_game_holds_it_to() {
+    let mut wide = placed(LightKind::Spot, 10.0, ALL_HOURS);
+    (wide.light.cone_inner, wide.light.cone_outer) = (0.5, 120.0);
+    let out = frame_lights(&[wide], Vec3::ZERO, 12.0, 1.0, 1);
+    assert!(out.points.is_empty(), "no part of it shines all round");
+    assert!(!out.spots.is_empty());
+    for spot in &out.spots {
+        assert!(
+            spot.outer_degrees <= 89.0 && spot.inner_degrees >= 1.0,
+            "{spot:?}"
+        );
+    }
+}
+
+#[test]
 fn an_area_light_shines_from_one_side_as_the_cosine_from_its_axis() {
     let mut area = placed(LightKind::Area, 10.0, ALL_HOURS);
     area.light.direction = [0.0, 0.0, -1.0];

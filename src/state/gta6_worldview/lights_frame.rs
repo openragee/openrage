@@ -6,7 +6,9 @@ use glam::Vec3;
 use or_io::gta5::data::visual_settings::VisualSettings;
 use or_io::gta6::map::light_ext::{Light, LightKind};
 use or_renderer::game_shaders::distant_lights::SpriteLook;
-use or_renderer::world::light_math::{lamp_hour_factor, ATTR_DAY_BIT, ATTR_NIGHT_BIT};
+use or_renderer::world::light_math::{
+    clamp_spot_cone, lamp_hour_factor, ATTR_DAY_BIT, ATTR_NIGHT_BIT,
+};
 use or_renderer::{CapsuleLight, DistantLight, PointLight, SpotLight};
 
 use super::lights_law::{spot_cones, SHELLS, SHELL_EXPONENT};
@@ -349,6 +351,18 @@ pub fn volumes_of(chosen: &[Chosen], hour: f32, scale: f32) -> FrameLights {
         ..FrameLights::default()
     };
     for &(l, reach) in chosen {
+        // The game's record holds a spot's outer cone within 89° and its inner one a degree inside it, and a degree at the least.
+        let l = match l.kind {
+            LightKind::Spot => {
+                let (cone_inner, cone_outer) = clamp_spot_cone(l.cone_inner, l.cone_outer);
+                Light {
+                    cone_inner,
+                    cone_outer,
+                    ..l
+                }
+            }
+            _ => l,
+        };
         let intensity = l.intensity * scale * hour_strength(l.hours, hour) * reach;
         let (position, colour) = (Vec3::from(l.position), Vec3::from(l.colour));
         let direction = Vec3::from(l.direction).normalize_or_zero();

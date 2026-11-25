@@ -1138,7 +1138,7 @@ impl Index {
 ///
 /// ⚠ A source is not entered, `build/`, `vfs/` and a hidden folder are left alone, and a link is not followed, so
 /// no walk loops and nothing OpenRage wrote is read back as a source.
-fn source_folders(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn source_folders(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut visited = 0;
     let mut stack = vec![(root.to_path_buf(), 0)];

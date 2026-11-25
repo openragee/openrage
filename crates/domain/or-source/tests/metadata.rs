@@ -255,6 +255,39 @@ fn an_edit_that_leaves_a_text_meta_no_xml_document_is_refused_by_the_compile_and
 }
 
 #[test]
+fn a_check_refuses_what_an_extraction_refuses_and_writes_nothing() {
+    let scratch = tempfile::tempdir().unwrap();
+    let mut answers = Vec::new();
+    for (bytes, name, extension) in [
+        (b"not metadata at all".to_vec(), "x", "ymap"),
+        (b"PSINbroken".to_vec(), "x", "ytyp"),
+        (RBF_XML.as_bytes().to_vec(), "x", "ydr"),
+        (synthetic(BinaryFormat::Rbm), "x", "ymap"),
+        (synthetic(BinaryFormat::Pso), "x", "ymap"),
+        // A name Windows takes for a device is no folder a source can be.
+        (synthetic(BinaryFormat::Rbm), "aux", "ymap"),
+    ] {
+        let checked = metadata::check(&bytes, name, extension);
+        let extracted = metadata::extract(&bytes, name, extension, scratch.path(), &how(name));
+        let said = |problems: &Vec<or_source::Problem>| {
+            (problems.iter().map(|p| p.message.clone())).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            checked.as_ref().err().map(said),
+            extracted.as_ref().err().map(said),
+            "{name}.{extension}"
+        );
+        answers.push(checked.is_ok());
+        if let Ok(dir) = extracted {
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+    assert_eq!(names(scratch.path()), Vec::<String>::new());
+    // The check was held to both answers.
+    assert_eq!(answers, [false, false, false, true, true, false]);
+}
+
+#[test]
 fn a_file_that_is_no_metadata_document_is_refused_with_the_reason_and_leaves_no_folder() {
     let scratch = tempfile::tempdir().unwrap();
     for (bytes, extension, why) in [

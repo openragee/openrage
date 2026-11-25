@@ -13,6 +13,8 @@
 //! ⚠ **A plan sees the sources of the pack and nothing else.** A map whose parent is one of these and that is not among the sources
 //! keeps the indexes it had, which then name other entities. What the sources themselves show of that is said as a [`Note`]: a link
 //! into a map that is not among them, and a count of children they do not hold. A parent that counts children no source holds stays.
+//! [`plan_reaching`] is the plan of a caller that holds more, the map files of a mounted install: it asks a [`Beyond`] for the parent
+//! map such a note names, and for the maps under a map that loses an entity, until the chain is whole.
 //!
 //! ⚠ **A plan is of the files as they were read.** Its operations name entities by index, so a plan applied after another edit of
 //! one of its sources may name other entities: plan again. The extents a file states are left as they are, since a box that still
@@ -61,6 +63,8 @@ pub enum Error {
     ContainerLods(String),
     #[error("{} each hold entities of one map, so an index into it does not say which file", .0.join(" and "))]
     SplitMap(Vec<String>),
+    #[error("{0}")]
+    Beyond(String),
 }
 
 /// One map file of a pack, as a deletion reads it.
@@ -139,6 +143,45 @@ pub enum Note {
         counted: u32,
         found: usize,
     },
+}
+
+impl std::fmt::Display for Note {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let named = |at: &At| format!("{} entity {}", at.source, at.index);
+        match self {
+            Self::ParentMapNotAmongSources { entity, parent } => write!(
+                f,
+                "{} names its far model in the map {}, which is not among the sources: the far model stays, and counts a child it lost",
+                named(entity),
+                parent.shown()
+            ),
+            Self::NoParentMap { entity } => write!(
+                f,
+                "{} names a far model in a parent map, and its map names none",
+                named(entity)
+            ),
+            Self::ParentMapSplit { entity, sources } => write!(
+                f,
+                "{} names its far model in a map that {} each hold entities of, so its link says none of them",
+                named(entity),
+                sources.join(" and ")
+            ),
+            Self::ParentPastTheEnd { entity, index, len } => write!(
+                f,
+                "{} names entity {index} of its parent map, which holds {len}",
+                named(entity)
+            ),
+            Self::ChildrenNotAmongSources {
+                entity,
+                counted,
+                found,
+            } => write!(
+                f,
+                "{} counts {counted} children and the sources hold {found}: the others are in a map that is not among the sources, and lose their parent",
+                named(entity)
+            ),
+        }
+    }
 }
 
 /// An entity whose count of children the deletion lowers, by its index before.
@@ -248,18 +291,55 @@ fn map_files(folder: &Path, model: &Maps) -> Result<Vec<MapFile>, Error> {
         let cooked = (inputs.compile())
             .map_err(|found| unread(problems(found)))?
             .bytes;
-        let map = CMapData::from_bytes(&cooked).map_err(|e| unread(e.to_string()))?;
-        let document = MetaDocument::parse(or_io::meta::default_library(), cooked)
-            .map_err(|e| unread(e.to_string()))?;
-        let container_lods =
-            MapData::new(&document.instance).map_or(0, |data| data.container_lod_count());
-        files.push(MapFile {
-            source: path.to_string(),
-            map,
-            container_lods,
-        });
+        files.push(MapFile::read(path, cooked).map_err(unread)?);
     }
     Ok(files)
+}
+
+impl MapFile {
+    /// The map file `bytes` hold, which the source `source` cooks to or is to be made of.
+    fn read(source: &str, bytes: Vec<u8>) -> Result<Self, String> {
+        let map = CMapData::from_bytes(&bytes).map_err(|e| e.to_string())?;
+        let document = MetaDocument::parse(or_io::meta::default_library(), bytes)
+            .map_err(|e| e.to_string())?;
+        let container_lods =
+            MapData::new(&document.instance).map_or(0, |data| data.container_lod_count());
+        Ok(Self {
+            source: source.to_string(),
+            map,
+            container_lods,
+        })
+    }
+}
+
+/// A map file the pack does not hold, which a plan reads beside the pack's own: a file of the game the chain of a deletion leads into.
+pub struct Reached(MapFile);
+
+impl Reached {
+    /// The map file `bytes` hold, under the name `source` its source is to have in the pack.
+    pub fn read(source: &str, bytes: Vec<u8>) -> Result<Self, String> {
+        MapFile::read(source, bytes).map(Self)
+    }
+
+    /// The name its source is to have in the pack.
+    pub fn source(&self) -> &str {
+        &self.0.source
+    }
+
+    pub fn map(&self) -> &CMapData {
+        &self.0.map
+    }
+}
+
+/// What lies beyond the pack, which a plan asks for the map files its links lead into: the caller that has the mount answers.
+///
+/// ⚠ An error stops the plan: a map file that is there and does not read may hold links a deletion would break.
+pub trait Beyond {
+    /// The map file of the map called `name`, by the hash of its name; none where there is no such map.
+    fn named(&mut self, name: u32) -> Result<Option<Reached>, String>;
+
+    /// The map files of the maps that name `parent` as their parent map.
+    fn under(&mut self, parent: u32) -> Result<Vec<Reached>, String>;
 }
 
 /// An entity of the files: the file by its place in the list, and the index.
@@ -665,6 +745,64 @@ pub fn plan(folder: &Path, chosen: &[At]) -> Result<Deletion, Error> {
     let model = Maps::read(folder)?;
     let files = map_files(folder, &model)?;
     plan_over(&files, chosen, &|hash| model.name_of(hash))
+}
+
+/// [`plan`] over the map files of the pack and the map files `reached` beside them, with every map file `beyond` holds that the chain leads into; the plan, and the map files read beside the pack's.
+///
+/// A map file is asked of `beyond` when an entity that goes names a parent in it, and when a file loses an entity, whose index the maps
+/// under it may name and whose children they may hold. A map the files already hold under its name is not taken again, so a source of
+/// the pack stands for the game's file it was made of.
+///
+/// ⚠ The operations name a map file read beside the pack's by the source it is to have: they apply once it is one.
+pub fn plan_reaching(
+    folder: &Path,
+    reached: Vec<Reached>,
+    chosen: &[At],
+    beyond: &mut dyn Beyond,
+) -> Result<(Deletion, Vec<Reached>), Error> {
+    let model = Maps::read(folder)?;
+    let mut files = map_files(folder, &model)?;
+    let own = files.len();
+    files.extend(reached.into_iter().map(|reached| reached.0));
+    let (mut named, mut under): (BTreeSet<u32>, BTreeSet<u32>) = Default::default();
+    let planned = loop {
+        let planned = plan_over(&files, chosen, &|hash| model.name_of(hash))?;
+        let map_of = |source: &str| {
+            (files.iter().find(|file| file.source == source)).map(|file| file.map.name.hash)
+        };
+        let mut found: Vec<Reached> = Vec::new();
+        for note in &planned.notes {
+            match note {
+                Note::ParentMapNotAmongSources { parent, .. } if named.insert(parent.hash) => {
+                    found.extend(beyond.named(parent.hash).map_err(Error::Beyond)?);
+                }
+                _ => {}
+            }
+        }
+        // ⚠ The maps that hold the children an entity that goes counts are among these: its file loses it.
+        for change in planned
+            .files
+            .iter()
+            .filter(|change| !change.removed.is_empty())
+        {
+            if let Some(map) = map_of(&change.source).filter(|map| under.insert(*map)) {
+                found.extend(beyond.under(map).map_err(Error::Beyond)?);
+            }
+        }
+        let before = files.len();
+        for reached in found {
+            let held = |file: &MapFile| {
+                file.map.name.hash == reached.0.map.name.hash || file.source == reached.0.source
+            };
+            if !files.iter().any(held) {
+                files.push(reached.0);
+            }
+        }
+        if files.len() == before {
+            break planned;
+        }
+    };
+    Ok((planned, files.drain(own..).map(Reached).collect()))
 }
 
 /// Do the deletion `planned` to the sources of the pack of maps in `folder`, whole or not at all; the inverses of what it did, the last first, put every file back.

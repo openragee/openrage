@@ -97,6 +97,20 @@ pub fn extract(
     publish(bytes, name, extension, parent, how, xml)
 }
 
+/// Whether `bytes`, a game file called `name` with `extension`, would become a source: what [`extract`] refuses it for, with nothing written.
+///
+/// ⚠ A folder of that name already in the way is not asked here: only the caller knows where the source would go.
+pub fn check(bytes: &[u8], name: &str, extension: &str) -> Result<(), Vec<Problem>> {
+    if !EXTENSIONS.contains(&extension) {
+        return Err(vec![unknown_extension(extension)]);
+    }
+    with_public_names_only(|| canonical_xml(bytes, extension))?;
+    match crate::asset::unsafe_file_name(name) {
+        Some(bad) => Err(vec![problem(format!("name: {bad}"), MANIFEST)]),
+        None => Ok(()),
+    }
+}
+
 /// The XML of `bytes`, when it compiles back to the canonical form with no value lost.
 fn canonical_xml(bytes: &[u8], extension: &str) -> Result<String, Vec<Problem>> {
     let empty = SchemaLibrary::default();

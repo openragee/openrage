@@ -1,7 +1,8 @@
 //! `openrage-cli maps`: list what a project's map sets place and declare, validate them and say what the rules find, read a build back
 //! against them, apply a list of operations to their sources, merge two copies of one map, propose and take out the collision of an
 //! object, plan or apply the deletion of entities with their chain of far models, keep a manifest of the game for the manifest of the
-//! maps to be written from, list their doors, and list and edit the path regions a folder holds as sources.
+//! maps to be written from, list their doors, list and edit the path regions a folder holds as sources, and move or delete an object
+//! the game placed, which imports its map (`maps_edit_game`).
 //!
 //! The plan and the build of maps are `openrage-cli project plan` and `build`:
 //! a maps content is content like any other, and goes through the one plan.
@@ -29,6 +30,7 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("apply") => apply(rest),
         Some("keep-manifest") => keep_manifest(rest),
         Some("delete") => delete(rest),
+        Some("edit-game") => crate::maps_edit_game::run(rest),
         Some("doors") => doors(rest),
         Some("roads") => crate::maps_roads::run(rest),
         Some("-h" | "--help" | "help") => {
@@ -69,6 +71,10 @@ fn print_usage() {
          openrage-cli maps keep-manifest <project.openrage-proj> --game <install root> [--keys <file>] [--module <id>]\n  \
          openrage-cli maps delete   <project.openrage-proj> <source>:<entity>... [--module <id>] [--apply]\n                             \
          [--script <form>] [--radius <metres>]\n  \
+         openrage-cli maps edit-game <project.openrage-proj> --game <install root> --map <logical path>\n                             \
+         --entity <index|guid:guid> (--move x,y,z | --delete) [--apply] [--record <file>] [--json]\n                             \
+         [--module <id>] [--keys <file>] [--kept <file>] [--fresh]\n  \
+         openrage-cli maps edit-game <project.openrage-proj> --take-back <record.json> [--module <id>]\n  \
          openrage-cli maps doors    <project.openrage-proj> [--module <id>] [--names <file>] [--json]\n  \
          openrage-cli maps roads    <folder> [--json]\n  \
          openrage-cli maps roads    <folder> --apply <operations.json> [--dry-run]\n\n\
@@ -152,6 +158,23 @@ fn print_usage() {
          It reads the map files of the content and no other: a map that is not among them keeps its links.\n\
          With --apply it writes the deletion, every file or none. It exits 1 when an entity named is not\n\
          there or the deletion is refused.\n\
+         edit-game moves or deletes an object the game placed, in the maps content. The object is an\n\
+         entity of a map file of the install --game names, said by the logical path of that file as\n\
+         `world index` and `world at` print it and by its index there, or by `guid:` and its guid when\n\
+         one entity of the file states it. It prints what the edit would import and do: each map file of\n\
+         the game that would become a source of the content with the game's file as its base (for a\n\
+         move the one map, for a deletion every map file its chain of far models changes), each\n\
+         operation, each note, what goes and stays for a deletion, and what the person is told, with\n\
+         what a source taken from the game is to a repository of the project. A map file that is a\n\
+         source of the content already is edited there and nothing is imported, and --map may name\n\
+         such a source as the content does (`city.metadata.src`). With --apply it does it, all or\n\
+         nothing: a map file that cannot become a source, one that does not read, and one of an install\n\
+         of the other edition than a build of the content targets refuse the whole edit by name, and\n\
+         nothing stays written. --record keeps the record of what was done in a file, and --take-back\n\
+         takes such a record back: the operations by their inverses, then the sources it imported and\n\
+         the files it rewrote, refused while a later edit of one of its sources stands. --json prints\n\
+         the record as data, with the lines of a deletion's plan. The world index is read from the\n\
+         file `world index` keeps (--kept, --fresh). It exits 1 when the edit is refused.\n\
          doors lists the doors of each map set: an entity whose archetype states the door extension, and\n\
          an entity whose model's name a door pattern matches, with how many entities have a model with\n\
          no name, since a door among them is missed. A model has a name when the content remembers it\n\
@@ -472,8 +495,8 @@ fn counted(count: usize, one: &str, many: &str) -> String {
 }
 
 /// The lines that say a plan of a deletion: what goes, what stays, what is left, what the sources do not reach, and each file with what changes in it.
-fn deletion_lines(planned: &or_maps::delete::Deletion, applied: bool) -> Vec<String> {
-    use or_maps::delete::{Note, Why};
+pub(crate) fn deletion_lines(planned: &or_maps::delete::Deletion, applied: bool) -> Vec<String> {
+    use or_maps::delete::Why;
     let mut lines = Vec::new();
     for going in &planned.goes {
         let why = match &going.why {
@@ -518,31 +541,7 @@ fn deletion_lines(planned: &or_maps::delete::Deletion, applied: bool) -> Vec<Str
         ));
     }
     for note in &planned.notes {
-        let named = |at: &or_maps::operation::At| format!("{} entity {}", at.source, at.index);
-        lines.push(format!("  note   {}", match note {
-            Note::ParentMapNotAmongSources { entity, parent } => format!(
-                "{} names its far model in the map {}, which is not among the sources: the far model stays, and counts a child it lost",
-                named(entity),
-                parent.shown()
-            ),
-            Note::NoParentMap { entity } => format!(
-                "{} names a far model in a parent map, and its map names none",
-                named(entity)
-            ),
-            Note::ParentMapSplit { entity, sources } => format!(
-                "{} names its far model in a map that {} each hold entities of, so its link says none of them",
-                named(entity),
-                sources.join(" and ")
-            ),
-            Note::ParentPastTheEnd { entity, index, len } => format!(
-                "{} names entity {index} of its parent map, which holds {len}",
-                named(entity)
-            ),
-            Note::ChildrenNotAmongSources { entity, counted, found } => format!(
-                "{} counts {counted} children and the sources hold {found}: the others are in a map that is not among the sources, and lose their parent",
-                named(entity)
-            ),
-        }));
+        lines.push(format!("  note   {note}"));
     }
     let verb = if applied { "changed" } else { "would change" };
     for file in &planned.files {

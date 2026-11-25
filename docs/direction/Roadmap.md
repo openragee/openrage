@@ -9836,10 +9836,8 @@ synthetic packs). A session holds the sources as typed roots and writes them onc
 or is refused (`a_session_of_map_edits_writes_once_what_each_edit_writes`); and the Map screen's
 Undo keeps the operation and its inverse
 (`an_undo_is_refused_once_its_source_was_edited_from_outside_and_goes_through_once_that_edit_is_taken_back`,
-slow tier). On a synthetic map of 20,000 entities
-a pose edit took 2.4 s one by one, and 0.83 ms with one flush of 2.2 s in a session
-(`one_pose_edit_is_timed_on_synthetic_maps_of_two_thousand_and_twenty_thousand_entities`, release,
-2026-11-25). And a map, a built entity, a type file and a base archetype made
+slow tier; [timings](../reference/Crate_Reference.md#domain-crates)). And a map, a built entity,
+a type file and a base archetype made
 with no donor and no snapshot (`crates/domain/or-world/src/create.rs`), behind
 `openrage-cli world new-map` and `world archetypes`, which pass the rules of a pack
 (`a_map_and_a_type_file_made_from_nothing_enter_a_pack_and_break_none_of_its_rules`).
@@ -9847,16 +9845,19 @@ with no donor and no snapshot (`crates/domain/or-world/src/create.rs`), behind
 ⚠ They are written as PSO, and RBM is refused (`rbm_is_refused_with_the_word_nothing_derives_named`,
 [R62](#r62-the-rbm-layout-synthesiser)); whether the game, whose own world files are RBM, loads
 one is a line of [R70a](#r70a-what-the-game-loads)'s sheet, and none is made from an install's
-donor. The first entity or archetype of a file that holds none is built that way,
-the last one taken out is put back by the XML, and an entity of an archetype the pack does not
-declare is held by the extents where it stands, said in a note, in a session as one by one
+donor. What a pack that holds too little takes, a first record built and a last one put back by
+the XML, holds in a session as one by one
 (`crates/domain/or-maps/tests/an_operation_where_the_pack_holds_too_little.rs`,
 `crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`). A deletion
 planned by [R70k](#r70k-removing-what-the-game-placed) renumbers the links of the child maps; one
 entity taken out alone leaves them, says so in a note, and the rule `parent-link-broken` or
 `lod-children-uncounted` reports it. A session that refused an operation writes nothing when
-dropped. Left: the Map screen on a session, a create across files, the import, a new map and a built
-entity as operations, the donor and the install's boxes, History, the install measure.
+dropped. The first edit: `crates/domain/or-maps/src/first_edit.rs` imports each map file an edit
+of a game object changes, with the game's file as its base, as one record taken back whole,
+behind `openrage-cli maps edit-game` (`the_first_edit_of_a_game_object_imports_its_map`, an
+install built by hand); its install census ran past 900 s on Legacy, 2026-11-25. Left: the Map screen on a session, a
+create across files, a new map and a built entity as operations, the donor and the install's
+boxes, History, the rule for a source of the other edition, the install measure.
 
 **Depends on.** Nothing in R70; it does the part of
 [R69h](#r69h-one-undo-for-the-tab-on-screen) a Map tab needs below the screen.

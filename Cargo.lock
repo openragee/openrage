@@ -3295,6 +3295,7 @@ name = "or-maps"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "or-depends",
  "or-io",
  "or-project",
  "or-source",

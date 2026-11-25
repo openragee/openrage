@@ -10,6 +10,10 @@
 //! before the next. The body is the `chain` module of this crate's shared test code, which
 //! `the_checks_of_the_install_suite_hold_on_a_tree_of_maps_built_by_hand` runs where no install is.
 //!
+//! The second test counts the map files of the install whose first edit is refused, each with its sentence
+//! (`common::census`): `OPENRAGE_FIRST_EDIT_STRIDE=N` asks every Nth map file, and the default asks every one. Its body is held on
+//! an install built by hand by `the_census_of_an_install_counts_the_map_files_a_first_edit_refuses_each_with_its_sentence`.
+//!
 //! ⚠ The install is opened read-only and nothing here writes into one.
 
 mod common;
@@ -70,4 +74,33 @@ fn deleting_an_entity_of_the_install_keeps_every_link() {
         report.across_files > 0,
         "no deletion reached a second file: {text}"
     );
+}
+
+#[test]
+fn the_map_files_of_the_install_a_first_edit_refuses_are_counted() {
+    const WHAT: &str = "the_map_files_of_the_install_a_first_edit_refuses_are_counted";
+    let Some(root) = game_roots().into_iter().next() else {
+        skip_install(WHAT, format!("{GAME_ROOT_ENV} names no install"));
+        return;
+    };
+    let stride: usize = std::env::var("OPENRAGE_FIRST_EDIT_STRIDE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(1);
+    let game = common::mount(&root).expect("the install mounts");
+    let census = common::census::census(&game, stride);
+    let text = census.text();
+    println!("{text}");
+    assert!(census.asked > 0, "no map file was asked: {text}");
+    assert!(
+        census.refused.len() + census.empty < census.asked,
+        "no map file of the install takes a first edit, so the census measured the harness: {text}"
+    );
+    for (file, why) in &census.refused {
+        assert!(
+            why.contains(file.as_str()),
+            "a refusal names its file: {why}"
+        );
+    }
 }

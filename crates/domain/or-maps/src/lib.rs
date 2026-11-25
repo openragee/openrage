@@ -8,7 +8,8 @@
 //! [`import`] makes sources of game files, and [`mapping`] reports and adopts a mapping that comes in as a folder or a zip. [`edit`]
 //! changes what an entity or an archetype says in its source, [`operation`] names each
 //! of those changes as data with an inverse and holds the sources of a pack open as a session that writes them once, [`delete`] plans
-//! the removal of an entity with its chain of far models across the map files of a pack as a list of them, [`scene`] says what a set
+//! the removal of an entity with its chain of far models across the map files of a pack as a list of them, [`first_edit`] is the edit
+//! of an object the game placed, which imports its map as a source and is taken back whole, [`scene`] says what a set
 //! places as boxes in the world, and [`gizmo`] is the manipulator
 //! that moves, turns and scales one. [`place`] reads what a person pastes into a search field as a position, a hash or text, and
 //! [`script_text`] writes a position as the text a script takes. [`doors`] finds the doors of a set, pairs them, opens each against
@@ -37,6 +38,7 @@ pub mod door_text;
 pub mod doors;
 pub mod edit;
 pub mod facts;
+pub mod first_edit;
 pub mod gizmo;
 pub mod import;
 pub mod layout;

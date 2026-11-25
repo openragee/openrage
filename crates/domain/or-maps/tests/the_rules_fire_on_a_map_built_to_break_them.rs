@@ -278,3 +278,7 @@ fn a_waiver_with_a_reason_sets_a_finding_aside_and_one_without_is_a_finding() {
         .any(|f| f.code == "waiver-without-reason" && f.blocks()));
     assert!(found.iter().any(|f| f.code == "waiver-unknown"));
 }
+
+/// The road rules and operations over the staged path regions: a corpus walk, held here because this binary is of the slow tier.
+#[path = "common/roads_over_the_corpus.rs"]
+mod roads_over_the_corpus;

@@ -1,6 +1,7 @@
 //! `openrage-cli maps`: list what a project's map sets place and declare, validate them and say what the rules find, read a build back
 //! against them, apply a list of operations to their sources, plan or apply the deletion of entities with their chain of far models,
-//! keep a manifest of the game for the manifest of the maps to be written from, and list their doors.
+//! keep a manifest of the game for the manifest of the maps to be written from, list their doors, and list and edit the path regions
+//! a folder holds as sources.
 //!
 //! The plan and the build of maps are `openrage-cli project plan` and `build`:
 //! a maps content is content like any other, and goes through the one plan.
@@ -27,6 +28,7 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("keep-manifest") => keep_manifest(rest),
         Some("delete") => delete(rest),
         Some("doors") => doors(rest),
+        Some("roads") => crate::maps_roads::run(rest),
         Some("-h" | "--help" | "help") => {
             print_usage();
             return ExitCode::SUCCESS;
@@ -59,7 +61,9 @@ fn print_usage() {
          openrage-cli maps keep-manifest <project.openrage-proj> --game <install root> [--keys <file>] [--module <id>]\n  \
          openrage-cli maps delete   <project.openrage-proj> <source>:<entity>... [--module <id>] [--apply]\n                             \
          [--script <form>] [--radius <metres>]\n  \
-         openrage-cli maps doors    <project.openrage-proj> [--module <id>] [--names <file>] [--json]\n\n\
+         openrage-cli maps doors    <project.openrage-proj> [--module <id>] [--names <file>] [--json]\n  \
+         openrage-cli maps roads    <folder> [--json]\n  \
+         openrage-cli maps roads    <folder> --apply <operations.json> [--dry-run]\n\n\
          changes compares each map file and type file of the content with the base its source keeps,\n\
          the file it was imported from, and says by object what the source changed: the entities and\n\
          the archetypes added, deleted and changed, each with its index in the base and its index now,\n\
@@ -117,7 +121,20 @@ fn print_usage() {
          width), the other leaf of its double door, how far it opens each way before the box of\n\
          another entity is in its arc, and what the door rules find. All of it is read from the\n\
          model's box: the game's door tuning and the collision of the map are not read. --json prints\n\
-         the same doors as JSON.\n\n\
+         the same doors as JSON.\n\
+         roads lists the path regions a folder holds as sources, each `<name>.paths.src` directly\n\
+         inside it, such as the `sources` folder of a project: the region each states, its nodes, links\n\
+         and junctions, and what the rules find over the set, each with a code and a severity. A rule\n\
+         that was not decided is listed as not checked, with the reason: the two that measure a node\n\
+         against the ground, and the lanes of a link, which the declaration of a link does not name.\n\
+         With --json it prints the same as data. It exits 1 when a finding is an error. With --apply\n\
+         it does the operations of a list, in order, to those sources: a node's values stated, a link's\n\
+         word stated, a link added or taken out with the link back, a node added or taken out with\n\
+         every link of the set that names a later node of its region renumbered. The list is JSON\n\
+         whose format is `openrage-road-operations` and whose schema is 1, each operation an object\n\
+         whose `op` names it, a node named `region:index`. It writes all of them or none, and with\n\
+         --dry-run nothing. A node another region of the set names is not taken out, and a request to\n\
+         disable a node is refused, since the file states no such thing.\n\n\
          A build checks the files. It does not test that GTA V loads them.\n"
     );
 }

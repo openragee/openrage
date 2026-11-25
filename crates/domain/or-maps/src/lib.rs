@@ -20,6 +20,9 @@
 //! [`changes`] says what a map or a type file changed of the base its source keeps, by object and not by field: the entities and the
 //! archetypes added, deleted and changed, and the ones no guid and no place tells from a twin. `openrage-cli maps changes` prints it.
 //!
+//! [`roads`] is the path regions a folder holds as sources: the operations that edit their nodes and links, each with its inverse, and
+//! the rules that say what is wrong in them. `openrage-cli maps roads` lists them and applies a list of operations.
+//!
 //! ⚠ **Nothing here says a map loads in game.** A build says that every file it wrote reloads through the readers, which is all that
 //! can be measured without running GTA V.
 
@@ -38,6 +41,7 @@ pub mod model;
 pub mod operation;
 pub mod place;
 pub mod plan;
+pub mod roads;
 pub mod rules;
 pub mod sample;
 pub mod scene;

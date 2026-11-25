@@ -10097,12 +10097,13 @@ a node, a link, a scenario point, a building added on walkable ground and a dele
 floors stay in the navmesh. No navmesh is authored
 ([brief](World_Editor_Plan.md#roads-scenario-points-and-the-navmesh-r70p)).
 
-**Where it stands.** Not built. A `.ynd` opens owned with an outline and a save
-([R33a](#r33a-path-nodes-ynd)), and a link names its far node by region and index
-(`crates/io/or-io/src/gta5/path_region.rs`). A scenario region is typed
-([R33d](#r33d-scenario-points)), a region made from nothing waits on
-[R62](#r62-the-rbm-layout-synthesiser), and a changed `.ynd` is held as a source, whose form awaits
-the owner's word ([R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources)).
+**Where it stands.** Part one is built, with no screen: operations with inverses on the road
+graph and rules over a set of regions, in `crates/domain/or-maps/src/roads/`, behind
+`openrage-cli maps roads` ([in full](../reference/Crate_Reference.md#domain-crates)). ⚠ The rule
+that a node another region names is disabled cannot be built: the file states no state that
+disables a node, so the request is refused, such a node is neither taken out nor disabled, and
+that Done-when clause awaits the owner. A link's lanes are not named either: its word is set
+whole. Left: scenario points, the navmesh rules, every screen and the install suite.
 
 **Depends on.** [R70f](#r70f-layers-of-what-the-game-hides),
 [R70i](#r70i-selecting-and-moving-in-the-world) and

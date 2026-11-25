@@ -26,7 +26,7 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::asset::{folder_name, sha256_hex, AssetManifest, How, Origin, Source, MANIFEST};
-use crate::document::{hash_text, list, member, root, stated, word, Fault, Trail};
+use crate::document::{hash_text, list, member, root, stated as stated_member, word, Fault, Trail};
 use crate::json::canonical;
 use crate::models::{problem, target_of, Compiled};
 use crate::textures::Extraction;
@@ -164,6 +164,89 @@ fn document_of(region: &CPathRegion) -> Result<Value, String> {
     }))
 }
 
+/// One node as a document states it: where it stands, and the node each of its links names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatedNode {
+    pub coors_x: i16,
+    pub coors_y: i16,
+    /// The height `as_integer1` holds.
+    pub coors_z: i16,
+    /// The (region, index) each link names, in the order the node holds them.
+    pub links: Vec<(u16, u16)>,
+}
+
+/// What a document states of its region, read with none of the checks of a compile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stated {
+    /// The region the first node's address states; none for a region with no node.
+    pub region: Option<u16>,
+    /// The nodes by their place, which is the index the game finds each by.
+    pub nodes: Vec<StatedNode>,
+    pub num_nodes_car_nodes: i32,
+    pub num_nodes_ped_nodes: i32,
+    /// How many junctions the document states.
+    pub virtual_junctions: usize,
+}
+
+/// What the document `rules` states of its nodes and links, for a rule to judge.
+///
+/// ⚠ Nothing a compile refuses is refused here: a link to a node its region does not hold and a node of more links than its word
+/// counts are read as they are stated, since those are what a rule reports.
+pub fn stated(rules: &[u8]) -> Result<Stated, Problem> {
+    let read = || -> Result<Stated, Fault> {
+        let doc = root(rules)?;
+        let at = &mut Trail::default();
+        let mut found = Stated {
+            region: None,
+            nodes: Vec::new(),
+            num_nodes_car_nodes: member(&doc, "num_nodes_car_nodes", at)?,
+            num_nodes_ped_nodes: member(&doc, "num_nodes_ped_nodes", at)?,
+            virtual_junctions: list(&doc, "virtual_junctions", at)?.len(),
+        };
+        let nodes = list(&doc, "nodes", at)?;
+        at.field("nodes", |at| -> Result<(), Fault> {
+            for (i, v) in nodes.iter().enumerate() {
+                at.index(i, |at| -> Result<(), Fault> {
+                    let o = at.object(v)?;
+                    if i == 0 {
+                        let (region, _) = at.field("address", |at| {
+                            address_of(stated_member(o, "address", at)?, at)
+                        })?;
+                        found.region = Some(region);
+                    }
+                    let height = CPathNode {
+                        as_integer1: word(o, "as_integer1", at)?,
+                        ..Default::default()
+                    };
+                    let links = list(o, "links", at)?;
+                    let links = at.field("links", |at| {
+                        (links.iter().enumerate())
+                            .map(|(k, v)| {
+                                at.index(k, |at| {
+                                    let o = at.object(v)?;
+                                    at.field("other_node", |at| {
+                                        address_of(stated_member(o, "other_node", at)?, at)
+                                    })
+                                })
+                            })
+                            .collect::<Result<Vec<_>, Fault>>()
+                    })?;
+                    found.nodes.push(StatedNode {
+                        coors_x: member(o, "coors_x", at)?,
+                        coors_y: member(o, "coors_y", at)?,
+                        coors_z: height.coors_z(),
+                        links,
+                    });
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?;
+        Ok(found)
+    };
+    read().map_err(|fault| problem(fault.to_string(), RULES))
+}
+
 /// The region the document `doc` states, laid over `base` so that what no document states stays the base's.
 fn region_of(doc: &Map<String, Value>, base: &CPathRegion) -> Result<CPathRegion, Fault> {
     let at = &mut Trail::default();
@@ -180,7 +263,7 @@ fn region_of(doc: &Map<String, Value>, base: &CPathRegion) -> Result<CPathRegion
     )?;
     let mut region = base.clone();
 
-    region.first_node = match stated(doc, "first_node", at)? {
+    region.first_node = match stated_member(doc, "first_node", at)? {
         Value::Null => None,
         v => Some(
             at.field("first_node", |at| -> Result<Box<PgBasePageMap>, Fault> {
@@ -222,7 +305,7 @@ fn region_of(doc: &Map<String, Value>, base: &CPathRegion) -> Result<CPathRegion
                 )?;
                 let mut node: CPathNode = base.nodes.get(i).cloned().unwrap_or_default();
                 let (area, index) = at.field("address", |at| -> Result<(u16, u16), Fault> {
-                    let (area, index) = address_of(stated(o, "address", at)?, at)?;
+                    let (area, index) = address_of(stated_member(o, "address", at)?, at)?;
                     // ⚠ A node is found by its place: `nodes[index]` of the file of its region.
                     if usize::from(index) != i {
                         return Err(at.fault(format!(
@@ -273,7 +356,7 @@ fn region_of(doc: &Map<String, Value>, base: &CPathRegion) -> Result<CPathRegion
                                 .unwrap_or_default();
                             let (area, index) =
                                 at.field("other_node", |at| -> Result<(u16, u16), Fault> {
-                                    let to = address_of(stated(o, "other_node", at)?, at)?;
+                                    let to = address_of(stated_member(o, "other_node", at)?, at)?;
                                     named.push((to, at.fault("")));
                                     Ok(to)
                                 })?;
@@ -337,7 +420,7 @@ fn region_of(doc: &Map<String, Value>, base: &CPathRegion) -> Result<CPathRegion
     })?;
 
     at.field("junction_map", |at| -> Result<(), Fault> {
-        let o = at.object(stated(doc, "junction_map", at)?)?;
+        let o = at.object(stated_member(doc, "junction_map", at)?)?;
         at.only(o, &["sorted", "data"])?;
         let map = &mut region.junction_map.junction_map;
         map.sorted = member(o, "sorted", at)?;
@@ -350,7 +433,7 @@ fn region_of(doc: &Map<String, Value>, base: &CPathRegion) -> Result<CPathRegion
                     at.only(o, &["key", "data"])?;
                     let mut pair: AtBinaryMapDataPair = was.get(i).cloned().unwrap_or_default();
                     let (area, index) = at.field("key", |at| -> Result<(u16, u16), Fault> {
-                        let to = address_of(stated(o, "key", at)?, at)?;
+                        let to = address_of(stated_member(o, "key", at)?, at)?;
                         named.push((to, at.fault("")));
                         Ok(to)
                     })?;
@@ -532,10 +615,64 @@ impl Inputs {
         })
     }
 
+    /// The document the inputs hold.
+    pub fn rules(&self) -> &[u8] {
+        &self.rules
+    }
+
+    /// Hold `rules` as the document, which nothing has checked.
+    pub fn set_rules(&mut self, rules: Vec<u8>) {
+        self.rules = rules;
+    }
+
+    /// The document that makes the inputs cook to `region`, with the region it cooks to; nothing is written.
+    ///
+    /// ⚠ Refused unless the region it cooks to states that document again: what a document cannot state of `region` would be lost.
+    pub fn rules_of(&self, region: &CPathRegion) -> Result<(Vec<u8>, CPathRegion), Vec<Problem>> {
+        let text = exported(region).map_err(|why| vec![problem(why, RULES)])?;
+        let candidate = Self {
+            rules: text.clone().into_bytes(),
+            ..self.clone()
+        };
+        let cooked = CPathRegion::from_bytes(&candidate.compile()?.bytes).map_err(|e| {
+            vec![problem(
+                format!("the compiled .ynd does not read back: {e}"),
+                RULES,
+            )]
+        })?;
+        if exported(&cooked).ok().as_ref() != Some(&text) {
+            return Err(vec![problem(
+                "the edit states what a document cannot: the region it cooks to does not state it again",
+                RULES,
+            )]);
+        }
+        Ok((text.into_bytes(), cooked))
+    }
+
     /// The name of the file the inputs compile to.
     pub fn output_name(&self) -> String {
         output_name(&self.manifest)
     }
+}
+
+/// The canonical text of the document `region` is written as, refused where its chains do not close.
+pub fn exported(region: &CPathRegion) -> Result<String, String> {
+    canonical(&document_of(region)?).map_err(|e| e.to_string())
+}
+
+/// Write `rules` as the document of the paths source in `dir`, to a part file first, so a failure leaves the document that was there.
+pub fn write_rules(dir: &Path, rules: &[u8]) -> Result<(), Vec<Problem>> {
+    let file = dir.join(RULES);
+    let held = dir.join(format!("{RULES}.part"));
+    std::fs::write(&held, rules)
+        .and_then(|()| std::fs::rename(&held, &file))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&held);
+            vec![Problem::new(format!(
+                "cannot write {}: {e}",
+                file.display()
+            ))]
+        })
 }
 
 /// What the folder `source` names compiles to.

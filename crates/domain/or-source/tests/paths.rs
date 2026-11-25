@@ -601,3 +601,105 @@ fn a_file_that_is_no_region_is_refused_and_nothing_is_left_behind() {
     assert!(paths::extract(b"nodes", NAME, work.path(), &how).is_err());
     assert_eq!(fs::read_dir(work.path()).unwrap().count(), 0);
 }
+
+#[test]
+fn what_a_document_states_is_read_with_none_of_the_checks_of_a_compile() {
+    let work = tempfile::tempdir().unwrap();
+    let built = region();
+    let dir = extract(work.path(), &file_and_canonical(&built).0);
+    let read = |dir: &Path| paths::stated(&fs::read(dir.join(RULES)).unwrap());
+
+    let found = read(&dir).unwrap();
+    assert_eq!(found.region, Some(REGION));
+    assert_eq!(
+        (found.num_nodes_car_nodes, found.num_nodes_ped_nodes),
+        (2, 1)
+    );
+    assert_eq!(found.virtual_junctions, built.virtual_junctions.len());
+    let coors: Vec<[i16; 3]> = (found.nodes.iter())
+        .map(|n| [n.coors_x, n.coors_y, n.coors_z])
+        .collect();
+    let built_coors: Vec<[i16; 3]> = (built.nodes.iter())
+        .map(|n| [n.coors_x, n.coors_y, n.coors_z()])
+        .collect();
+    assert_eq!(coors, built_coors);
+    assert!(coors.iter().any(|at| at[2] != 0), "a height is read");
+    let links: Vec<Vec<(u16, u16)>> = found.nodes.iter().map(|n| n.links.clone()).collect();
+    assert_eq!(
+        links,
+        [
+            vec![(REGION, 1), (REGION, 2)],
+            vec![],
+            vec![(REGION, 0), (REGION + 1, 40), (REGION, 1)]
+        ]
+    );
+
+    // What a compile refuses is still stated: a link to a node the region does not hold, and more links than a node counts.
+    edit_document(&dir, |doc| {
+        let links = doc["nodes"][1]["links"].as_array_mut().unwrap();
+        links.resize(
+            40,
+            json!({ "as_integer1": "0x00000001", "other_node": "7:9" }),
+        );
+    });
+    assert!(refusal(&dir).contains("40 links"), "{}", refusal(&dir));
+    let found = read(&dir).unwrap();
+    assert_eq!(found.nodes[1].links, vec![(REGION, 9); 40]);
+
+    // A document that is not one is refused with the place.
+    edit_document(&dir, |doc| {
+        doc["nodes"][2]["links"][0]["other_node"] = json!(7)
+    });
+    let why = read(&dir).unwrap_err().to_string();
+    assert!(why.contains("nodes[2].links[0].other_node"), "{why}");
+    assert!(why.starts_with("paths.json: "), "{why}");
+}
+
+#[test]
+fn the_document_of_an_edited_region_cooks_to_it_and_a_typed_document_cooks_to_the_same_export() {
+    let work = tempfile::tempdir().unwrap();
+    let built = region();
+    let dir = extract(work.path(), &file_and_canonical(&built).0);
+    let mut inputs = paths::Inputs::read(&Source::open(&dir).unwrap()).unwrap();
+    let cooked = CPathRegion::from_bytes(&inputs.compile().unwrap().bytes).unwrap();
+    assert_eq!(paths::exported(&cooked).unwrap().as_bytes(), inputs.rules());
+
+    // A node moved and a link taken out of the owned region: its document cooks to that region.
+    let mut edited = cooked.clone();
+    edited.nodes[1].coors_x = 4321;
+    edited.links.remove(0);
+    edited.nodes[0].set_num_links(1).unwrap();
+    let (text, back) = inputs
+        .rules_of(&edited)
+        .unwrap_or_else(|why| panic!("{why:?}"));
+    assert_eq!(stated(&back), stated(&edited));
+    paths::write_rules(&dir, &text).unwrap();
+    assert_eq!(
+        fs::read_dir(&dir).unwrap().count(),
+        3,
+        "no part file is left"
+    );
+    assert_eq!(
+        stated(&CPathRegion::from_bytes(&compiled(&dir)).unwrap()),
+        stated(&edited)
+    );
+    inputs.set_rules(text.clone());
+    assert_eq!(inputs.rules(), text);
+    assert_eq!(paths::exported(&edited).unwrap().as_bytes(), inputs.rules());
+
+    // A region whose links its nodes do not count has no document, and one that names a node it does not hold does not cook.
+    let mut broken = cooked.clone();
+    broken.links.pop();
+    assert!(inputs.rules_of(&broken).is_err());
+    let mut dangling = cooked.clone();
+    dangling.links[0].other_node.index = 9;
+    let why = inputs.rules_of(&dangling).unwrap_err();
+    assert!(why[0].to_string().contains("7:9"), "{why:?}");
+
+    // The same document typed otherwise cooks to the same region, whose export it is not.
+    edit_document(&dir, |_| {});
+    let typed = paths::Inputs::read(&Source::open(&dir).unwrap()).unwrap();
+    assert_ne!(typed.rules(), text);
+    let again = CPathRegion::from_bytes(&typed.compile().unwrap().bytes).unwrap();
+    assert_eq!(paths::exported(&again).unwrap().as_bytes(), text);
+}

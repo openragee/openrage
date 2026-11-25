@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use super::archive::{RpfArchive, RpfSource};
 use super::crypto::TocDecryptOutcome;
@@ -30,11 +30,31 @@ const MAX_NAME_BYTES: usize = 255;
 
 /// What reading a GTA VI archive needs beyond its bytes: the keys, and the names its hashes stand for.
 pub struct Gta6Context {
-    pub keys: GtaViKeys,
-    pub names: NameResolver,
+    pub keys: Arc<GtaViKeys>,
+    pub names: Arc<NameResolver>,
 }
 
+/// The context a caller gave the process, which archives opened after it are read with.
+static GIVEN: RwLock<Option<Arc<Gta6Context>>> = RwLock::new(None);
+
 impl Gta6Context {
+    /// Give the process the keys and names GTA VI archives are read with, in place of the environment's.
+    pub fn give(context: Gta6Context) {
+        *GIVEN.write().unwrap_or_else(|held| held.into_inner()) = Some(Arc::new(context));
+    }
+
+    /// The context a caller gave, else the environment's; `None` with no keys.
+    pub fn current() -> Result<Option<Arc<Self>>> {
+        let given = GIVEN
+            .read()
+            .unwrap_or_else(|held| held.into_inner())
+            .clone();
+        match given {
+            Some(context) => Ok(Some(context)),
+            None => Self::from_environment(),
+        }
+    }
+
     /// The keys and names the environment gives, read once for the process; `None` with no keys.
     pub fn from_environment() -> Result<Option<Arc<Self>>> {
         static CONTEXT: OnceLock<std::result::Result<Option<Arc<Gta6Context>>, String>> =
@@ -47,7 +67,10 @@ impl Gta6Context {
                         .map(PathBuf::from)
                         .filter(|dir| dir.is_dir())
                         .map_or_else(NameResolver::new, |dir| NameResolver::load(&dir));
-                    Arc::new(Gta6Context { keys, names })
+                    Arc::new(Gta6Context {
+                        keys: Arc::new(keys),
+                        names: Arc::new(names),
+                    })
                 }))
             })
             .clone()
@@ -82,7 +105,7 @@ pub(super) struct Rpf9State {
 
 /// Read an RPF9's table into a tree of entries, with the state its bodies are read through.
 pub(super) fn read(input: &Input) -> Result<(Toc, Rpf9State)> {
-    let context = Gta6Context::from_environment()?.ok_or(IoError::Rpf9TocEncrypted)?;
+    let context = Gta6Context::current()?.ok_or(IoError::Rpf9TocEncrypted)?;
     let mut src = bytes_of(input.source)?;
     let mut archive = open_at(&mut src, input.start, &context.keys)?;
     archive.resolve_names(&context.names);

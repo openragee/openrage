@@ -8,7 +8,7 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use common::chain::{delete_one, survey, Report};
+use common::chain::{delete_sampled, survey};
 use or_maps::sample::{child_map_file, map_file, Entity};
 
 const BOX: ([f32; 3], [f32; 3]) = ([0.0; 3], [100.0; 3]);
@@ -99,15 +99,12 @@ fn the_checks_of_the_install_suite_hold_on_a_tree_of_maps_built_by_hand() {
         "each file is a map of its own name"
     );
 
-    let mut report = Report {
-        maps: facts.len(),
-        ..Report::default()
-    };
-    for name in facts.keys() {
-        report.sampled += 1;
-        delete_one(&open, *name, &facts, &children, &mut report);
-    }
+    // Three of the four are of one tree, so they follow one another in one pack, each undone before the next.
+    let sampled: Vec<u32> = facts.keys().copied().collect();
+    let mut report = delete_sampled(&open, &sampled, &facts, &children);
+    report.maps = facts.len();
     let text = report.text(1);
+    assert_eq!(report.sampled, 4, "{text}");
     assert!(report.failures.is_empty(), "{text}");
     assert_eq!(report.not_made, BTreeMap::new(), "{text}");
     // Every entity of `town_lod` stands for another, so the suite finds none of it to delete.

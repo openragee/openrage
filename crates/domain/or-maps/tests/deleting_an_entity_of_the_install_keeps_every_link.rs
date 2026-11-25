@@ -5,9 +5,10 @@
 //! Point `OPENRAGE_GAME_ROOT` at an install root. Without one this skips, which is not a pass. `OPENRAGE_DELETE_STRIDE=N` takes every
 //! Nth map that holds entities; the default takes one in twenty-five.
 //!
-//! Each sample is a pack of its own in a scratch folder: the map, every map above it, and every map under the topmost of those, so
-//! that no link into a file that loses an entity is outside the pack. It is made, planned, applied, read back, undone and dropped
-//! before the next. The body is the `chain` module of this crate's shared test code, which
+//! Each sample is deleted in a pack in a scratch folder: the map, every map above it, and every map under the topmost of those, so
+//! that no link into a file that loses an entity is outside the pack. The samples of one tree share its pack, imported once: each
+//! is planned, applied, read back and undone, and the pack held to the bytes it was made with, before the next. The body is the
+//! `chain` module of this crate's shared test code, which
 //! `the_checks_of_the_install_suite_hold_on_a_tree_of_maps_built_by_hand` runs where no install is.
 //!
 //! The second test counts the map files of the install whose first edit is refused, each with its sentence
@@ -20,7 +21,7 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use common::chain::{delete_one, survey, Report};
+use common::chain::{delete_sampled, survey};
 use or_test_support::{game_roots, skip_install, GAME_ROOT_ENV};
 
 const WHAT: &str = "deleting_an_entity_of_the_install_keeps_every_link";
@@ -54,14 +55,9 @@ fn deleting_an_entity_of_the_install_keeps_every_link() {
         .filter(|(_, held)| held.entities > 0)
         .map(|(name, _)| *name)
         .collect();
-    let mut report = Report {
-        maps: with_entities.len(),
-        ..Report::default()
-    };
-    for name in with_entities.iter().step_by(stride) {
-        report.sampled += 1;
-        delete_one(&open, *name, &facts, &children, &mut report);
-    }
+    let sampled: Vec<u32> = with_entities.iter().step_by(stride).copied().collect();
+    let mut report = delete_sampled(&open, &sampled, &facts, &children);
+    report.maps = with_entities.len();
     let text = report.text(stride);
     println!("{text}");
     assert!(report.failures.is_empty(), "{text}");

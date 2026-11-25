@@ -2,6 +2,8 @@
 //! `the_first_edit_of_a_game_object_imports_its_map` holds on an install built by hand where no install is.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use or_maps::first_edit::{plan, Change, Edit, Game, Place, Refusal, Which};
 use or_project::{Container, Module, Project, Target};
@@ -64,7 +66,12 @@ impl Census {
     }
 }
 
+/// How many threads [`census`] spreads the map files over, as `what_the_rules_say_of_the_install` spreads the files of an install.
+const WORKERS: usize = 12;
+
 /// Plan the move of the first entity of every `stride`th map file `game` loads, over a maps content that holds nothing, and apply none.
+///
+/// ⚠ A plan reads its map file and takes it to its XML fixed point, as the import would, so the map files are asked several at once.
 pub fn census(game: &MountedGame, stride: usize) -> Census {
     let mut winners: BTreeMap<String, String> = BTreeMap::new();
     game.for_each_file(|logical, _, leaf| {
@@ -87,21 +94,43 @@ pub fn census(game: &MountedGame, stride: usize) -> Census {
         module: &container.modules[0],
     };
 
+    let asked: Vec<&String> = winners.values().step_by(stride.max(1)).collect();
+    // What each map file asked came to, by its place among them: none for one that takes the edit.
+    let answered: Mutex<Vec<(usize, Option<Refusal>)>> = Mutex::new(Vec::new());
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..WORKERS.min(asked.len()) {
+            scope.spawn(|| loop {
+                let at = next.fetch_add(1, Ordering::Relaxed);
+                let Some(logical) = asked.get(at) else { break };
+                let edit = Edit {
+                    map: (*logical).clone(),
+                    entity: Which::Index(0),
+                    change: Change::Move { position: [0.0; 3] },
+                };
+                let refused = plan(&place, &Files(game), &edit).err();
+                answered
+                    .lock()
+                    .expect("no worker panicked")
+                    .push((at, refused));
+            });
+        }
+    });
+    let mut answered = answered.into_inner().expect("no worker panicked");
+    answered.sort_by_key(|(at, _)| *at);
+
     let mut census = Census {
         maps: winners.len(),
+        asked: asked.len(),
         ..Census::default()
     };
-    for logical in winners.values().step_by(stride.max(1)) {
-        census.asked += 1;
-        let edit = Edit {
-            map: logical.clone(),
-            entity: Which::Index(0),
-            change: Change::Move { position: [0.0; 3] },
-        };
-        match plan(&place, &Files(game), &edit) {
-            Ok(_) => {}
-            Err(Refusal::NoSuchEntity { .. }) => census.empty += 1,
-            Err(refused) => census.refused.push((logical.clone(), refused.to_string())),
+    for (at, refused) in answered {
+        match refused {
+            None => {}
+            Some(Refusal::NoSuchEntity { .. }) => census.empty += 1,
+            Some(refused) => census
+                .refused
+                .push((asked[at].clone(), refused.to_string())),
         }
     }
     census

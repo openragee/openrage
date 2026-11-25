@@ -5,6 +5,7 @@
 use glam::Vec3;
 use or_io::gta5::data::visual_settings::VisualSettings;
 use or_io::gta6::map::light_ext::LightKind;
+use or_renderer::world::light_math::corona_cone;
 use or_renderer::{Corona, CoronaLook};
 
 use super::lights_frame::{hour_strength, Lamp};
@@ -105,15 +106,12 @@ pub fn coronas<'a>(
         if z <= 0.0 {
             continue;
         }
-        // A spot's corona shows as the eye stands within its cones, and grows with them.
+        // A spot's corona shows as the eye stands within its cones, and grows with them; the item's remap width is not known, and one leaves the cone weight as it is.
         let fade = match l.kind {
             LightKind::Spot => {
-                let facing = Vec3::from(l.direction).dot(-toward.normalize_or_zero());
-                let across = |degrees: f32| {
-                    let cos = degrees.to_radians().cos();
-                    ((facing - cos) / (1.0001 - cos)).clamp(0.0, 1.0)
-                };
-                (across(l.cone_inner) + across(l.cone_outer)).clamp(0.0, 1.0)
+                let to_eye = -toward.normalize_or_zero();
+                let cones = [l.cone_inner, l.cone_outer];
+                corona_cone(Vec3::from(l.direction), to_eye, cones, 1.0).1
             }
             _ => 1.0,
         };

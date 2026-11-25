@@ -58,3 +58,4 @@ How a subsystem works today and what it does not do.
 - [Dlc_Pack_Creation.md](features/Dlc_Pack_Creation.md): what a DLC pack states about itself and how OpenRage writes one.
 - [GTA_VI_Xbox_Build.md](features/GTA_VI_Xbox_Build.md): what OpenRage reads, edits, saves and refuses of a GTA VI Xbox build, and how far each part was checked.
 - [GTA_VI_World_Viewer.md](features/GTA_VI_World_Viewer.md): how the World screen mounts a GTA VI install, streams its maps and draws them.
+- [GTA_VI_Script_Decompiler.md](features/GTA_VI_Script_Decompiler.md): what is read of a compiled GTA VI script, the levels and passes of the source it decompiles to, the names lists, and what cannot be recovered.

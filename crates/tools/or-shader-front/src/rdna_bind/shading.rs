@@ -1677,7 +1677,7 @@ struct Words { words: array<u32> }
         instanced.records[1].stride = 128;
         let mut named = program();
         named.resources[3].name_hash = INSTANCE_RECORDS;
-        let refused = feed(&instanced, lowered(resources), &named, &effect).map(|_| ());
+        let refused = feed(&instanced, lowered(resources.clone()), &named, &effect).map(|_| ());
         assert_eq!(refused, Err(Unfed::Instanced));
         // For a device that gives a stage five constant buffers, with each declared as rows, as
         // a lowering declares them: the one at nought is the stage's own first, and the eight

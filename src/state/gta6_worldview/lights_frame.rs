@@ -6,6 +6,7 @@ use glam::Vec3;
 use or_io::gta5::data::visual_settings::VisualSettings;
 use or_io::gta6::map::light_ext::{Light, LightKind};
 use or_renderer::game_shaders::distant_lights::SpriteLook;
+use or_renderer::world::light_math::{lamp_hour_factor, ATTR_DAY_BIT, ATTR_NIGHT_BIT};
 use or_renderer::{CapsuleLight, DistantLight, PointLight, SpotLight};
 
 use super::lights_law::{spot_cones, SHELLS, SHELL_EXPONENT};
@@ -72,18 +73,17 @@ impl LodReach {
     }
 }
 
-/// How far a light lit in the hours `hours` is on at `hour` (0 to 24): it comes on, and goes off, over the last minute of an hour.
+/// How far a light lit in the hours `hours` is on at `hour` (0 to 24), by GTA VI's night window: a lamp lit at midnight and not at noon is on from 18:00 to 06:00, one lit at noon and not at midnight the other way, one lit at both always, one lit at neither never.
+// ⚠ The game picks the window by two bits and offsets it by two minute counts of its own light record, which no member of the file's light is known to carry: the hours the file states pick the bits here, and both counts are nought, so a lamp switches on the hour.
 pub fn hour_strength(hours: u32, hour: f32) -> f32 {
-    let hour = hour.rem_euclid(24.0);
-    let now = (hour as u32).min(23);
     let lit = |h: u32| hours >> h & 1 == 1;
-    let ramp = (hour.fract() * 60.0 - 59.0).clamp(0.0, 1.0);
-    match (lit(now), lit((now + 1) % 24)) {
-        (true, true) => 1.0,
-        (false, false) => 0.0,
-        (true, false) => 1.0 - ramp,
-        (false, true) => ramp,
-    }
+    let mode = match (lit(0), lit(12)) {
+        (true, false) => ATTR_NIGHT_BIT,
+        (false, true) => ATTR_DAY_BIT,
+        (true, true) => 0,
+        (false, false) => ATTR_NIGHT_BIT | ATTR_DAY_BIT,
+    };
+    lamp_hour_factor(mode, f64::from(hour.rem_euclid(24.0)), 0.0, 0.0)
 }
 
 fn reach_strength(reach: Option<[f32; 2]>, distance: f32) -> f32 {

@@ -26,21 +26,32 @@ fn placed(kind: LightKind, x: f32, hours: u32) -> Lamp {
 }
 
 #[test]
-fn a_light_comes_on_and_goes_off_over_the_last_minute_of_an_hour() {
+fn a_night_lamp_is_on_from_six_in_the_evening_to_six_in_the_morning_whatever_hours_it_states() {
     let night = 0x00E0_007F; // 21:00 to 06:59
-    assert_eq!(hour_strength(night, 3.5), 1.0);
-    assert_eq!(hour_strength(night, 12.0), 0.0);
-    assert_eq!(hour_strength(night, 6.5), 1.0, "on through its last hour");
-    assert!((hour_strength(night, 6.0 + 59.5 / 60.0) - 0.5).abs() < 1e-3);
-    assert_eq!(hour_strength(night, 7.0), 0.0);
-    assert!((hour_strength(night, 20.0 + 59.25 / 60.0) - 0.25).abs() < 1e-3);
+    for (hour, on) in [
+        (17.75, 0.0),
+        (18.25, 1.0),
+        (20.5, 1.0),
+        (23.0, 1.0),
+        (24.0, 1.0),
+        (3.5, 1.0),
+        (5.75, 1.0),
+        (6.25, 0.0),
+        (12.0, 0.0),
+    ] {
+        assert_eq!(hour_strength(night, hour), on, "{hour}");
+    }
+    let day = 0x000F_FFC0; // 06:00 to 19:59
     assert_eq!(
-        hour_strength(night, 20.5),
-        0.0,
-        "off until the last minute before"
+        (hour_strength(day, 12.0), hour_strength(day, 23.0)),
+        (1.0, 0.0)
     );
-    assert_eq!(hour_strength(night, 24.0), 1.0, "midnight is hour 0");
-    assert_eq!(hour_strength(ALL_HOURS, 23.999), 1.0);
+    assert_eq!(hour_strength(ALL_HOURS, 12.0), 1.0, "always on");
+    assert_eq!(
+        hour_strength(0x40, 6.5),
+        0.0,
+        "lit at neither midnight nor noon: never"
+    );
 }
 
 /// What the point volumes of `lights` give at `d` metres from `at`, as the pass fades each.
@@ -88,7 +99,7 @@ fn the_nearest_are_kept_each_in_the_pass_of_its_kind() {
         placed(LightKind::Point, 100.0, ALL_HOURS),
         placed(LightKind::Spot, 10.0, ALL_HOURS),
         placed(LightKind::Capsule, 20.0, ALL_HOURS),
-        placed(LightKind::Point, 15.0, 1 << 3),
+        placed(LightKind::Point, 15.0, 0x00E0_007F),
     ];
     let shells = SHELLS.len();
     let two = frame_lights(&lamps, Vec3::ZERO, 12.0, 0.5, 2);
@@ -120,7 +131,7 @@ fn the_nearest_are_kept_each_in_the_pass_of_its_kind() {
         Some((Vec3::new(0.0, 0.0, -2.0), true))
     );
     let all = frame_lights(&lamps, Vec3::ZERO, 3.5, 1.0, 8);
-    assert_eq!(all.lights, 4, "the hour-3 light is lit at 03:30");
+    assert_eq!(all.lights, 4, "the night light is lit at 03:30");
     assert_eq!(all.points[0].position.x, 15.0, "the nearest point first");
     let none = frame_lights(&lamps, Vec3::ZERO, 3.5, 1.0, 0);
     assert_eq!(none, FrameLights::default());

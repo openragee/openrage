@@ -219,6 +219,11 @@ pub(super) fn palette(
 pub(super) struct Palettes(HashMap<u64, (wgpu::TextureView, u32)>);
 
 impl Palettes {
+    /// How many palettes are on the device.
+    pub(super) fn len(&self) -> usize {
+        self.0.len()
+    }
+
     /// One more model holds the palette of `key`, of `colours`: on the device once, of no side longer than `most`.
     pub(super) fn hold(
         &mut self,

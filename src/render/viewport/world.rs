@@ -582,7 +582,7 @@ impl RenderBridge {
         };
         wanted.extend(world.ask_whole(
             &selected.wanted,
-            &seen,
+            seen,
             (eye, lod_scale),
             (per_metre, budgets.most_side),
             frame,

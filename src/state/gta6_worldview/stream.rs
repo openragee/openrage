@@ -203,6 +203,9 @@ fn signed(fade: f32, yields: bool) -> f32 {
     }
 }
 
+/// What a selection hands what it waits for to: by model, the distance and the band.
+type Asking<'a> = dyn FnMut(&HashMap<ModelRef, f32>, &HashMap<ModelRef, f32>) + 'a;
+
 /// Raise the band `model` is asked for in to `band`.
 fn raise(bands: &mut HashMap<ModelRef, f32>, model: ModelRef, band: f32) {
     let at = bands.entry(model).or_insert(band);
@@ -412,7 +415,7 @@ impl Streamer {
         &mut self,
         view: &View,
         ready: &dyn Fn(ModelRef) -> Option<bool>,
-        asking: &mut dyn FnMut(&HashMap<ModelRef, f32>, &HashMap<ModelRef, f32>),
+        asking: &mut Asking<'_>,
     ) -> Selected {
         let began = Instant::now();
         let (loaded, hour, eye) = (&self.loaded, self.hour, view.eye);

@@ -588,6 +588,136 @@ fn a_map_built_from_nothing_saves_and_reopens() {
     assert!(back.entities[0].archetype_name == "prop_bench_01a");
 }
 
+/// The name hash of each member `inst` states.
+fn stated(inst: &MetaInstance) -> Vec<u32> {
+    let mut stated: Vec<u32> = inst.fields.iter().map(|(n, _)| name_hash(n)).collect();
+    stated.sort_unstable();
+    stated
+}
+
+fn hashed(members: &[&str]) -> Vec<u32> {
+    let mut hashed: Vec<u32> = members.iter().map(|m| name_hash(m)).collect();
+    hashed.sort_unstable();
+    hashed
+}
+
+/// ⚠ A snapshot declares more of each class than the typed records name, so a root that took its classes from the snapshot
+/// would state those members too, and a machine with none could not write the same file.
+#[test]
+fn a_root_built_from_nothing_states_the_declared_members_whatever_snapshot_is_installed() {
+    const WHAT: &str =
+        "a_root_built_from_nothing_states_the_declared_members_whatever_snapshot_is_installed";
+    let Some(library) = support::schema_or_skip(WHAT) else {
+        return;
+    };
+    let declares_more = |class: &str, typed: &[&str]| {
+        library
+            .resolve_any(class)
+            .is_some_and(|resolved| resolved.fields.len() > typed.len())
+    };
+    assert!(
+        declares_more("CEntityDef", CEntityDef::MEMBERS)
+            && declares_more("CMapData", CMapData::MEMBERS),
+        "the installed snapshot declares members no record types, so this can fail"
+    );
+
+    let mut map = CMapData::default();
+    map.name = HashedString::new("hills");
+    let mut e = CEntityDef::default();
+    e.archetype_name = HashedString::new("prop_bench_01a");
+    e.parent_index = -1;
+    map.entities.push(CEntityDefAny::Base(e));
+    let saved = map.to_bytes().expect("saves");
+    assert_eq!(
+        or_io::meta::detect_binary_format(&saved),
+        Some(BinaryFormat::Pso)
+    );
+    let root = saved_tree(saved);
+    assert_eq!(stated(&root), hashed(CMapData::MEMBERS));
+    let Some(Value::Array(entities)) = root
+        .fields
+        .iter()
+        .find_map(|(n, v)| (name_hash(n) == name_hash("entities")).then_some(v))
+    else {
+        panic!("the map holds its entities");
+    };
+    let Some(Value::Struct(entity) | Value::Pointer(Some(entity))) = entities.first() else {
+        panic!("the map holds its entity");
+    };
+    assert_eq!(stated(entity), hashed(CEntityDef::MEMBERS));
+
+    let mut types = CMapTypes::default();
+    types.archetypes = vec![CBaseArchetypeDefAny::Base(CBaseArchetypeDef::default())];
+    let root = saved_tree(types.to_bytes().expect("saves"));
+    assert_eq!(stated(&root), hashed(CMapTypes::MEMBERS));
+}
+
+/// ⚠ A snapshot lays an interior instance out over the entity class a root built from nothing takes from the declaration, which
+/// has fewer members than the entity a shipped interior is, so a copy of one would be saved without them.
+#[test]
+fn a_copy_of_a_class_derived_from_a_declared_one_is_refused_rather_than_narrowed() {
+    const WHAT: &str =
+        "a_copy_of_a_class_derived_from_a_declared_one_is_refused_rather_than_narrowed";
+    let Some(donor) = opened_hills(WHAT) else {
+        return;
+    };
+    let interior = donor.entities[2].clone();
+    assert!(interior.as_mlo_instance().is_some());
+    let mut map = CMapData::default();
+    map.name = HashedString::new("hills");
+    map.entities.push(interior);
+    let refused = map
+        .to_bytes()
+        .expect_err("the copy holds members of the entity class to drop");
+    let why = refused.to_string();
+    assert!(
+        why.contains("would drop") && why.contains("CMloInstanceDef"),
+        "{why}"
+    );
+}
+
+/// Each member `or_io::meta::typed::world_types` declares, held to the class the installed snapshot resolves: the same type, the
+/// same init, and the same order among the members declared.
+#[test]
+fn every_declared_world_member_is_typed_as_the_engine_declares_it() {
+    const WHAT: &str = "every_declared_world_member_is_typed_as_the_engine_declares_it";
+    let Some(library) = support::schema_or_skip(WHAT) else {
+        return;
+    };
+    let declared = or_io::meta::typed::world_types::declared();
+    let mut checked = 0;
+    for (class, def) in &declared.structs {
+        let engine = library
+            .resolve_any(class)
+            .unwrap_or_else(|| panic!("the snapshot declares `{class}`"));
+        let mut last = None;
+        for member in &def.fields {
+            let at = engine
+                .fields
+                .iter()
+                .position(|f| name_hash(&f.name) == name_hash(&member.name))
+                .unwrap_or_else(|| panic!("the engine's `{class}` has a `{}`", member.name));
+            let stated = &engine.fields[at];
+            assert_eq!(member.ty, stated.ty, "`{class}::{}`", member.name);
+            assert_eq!(member.init, stated.init, "`{class}::{}`", member.name);
+            assert!(
+                last < Some(at),
+                "`{class}::{}` is declared in the engine's order",
+                member.name
+            );
+            last = Some(at);
+            checked += 1;
+        }
+    }
+    let typed = [
+        CEntityDef::MEMBERS,
+        CMapData::MEMBERS,
+        CBaseArchetypeDef::MEMBERS,
+        CMapTypes::MEMBERS,
+    ];
+    assert_eq!(checked, typed.iter().map(|m| m.len()).sum::<usize>());
+}
+
 #[test]
 fn a_map_whose_parent_was_removed_is_refused_at_save() {
     const WHAT: &str = "a_map_whose_parent_was_removed_is_refused_at_save";

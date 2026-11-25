@@ -84,6 +84,11 @@ pub fn typed_by<'a>(
     donor: Option<&MetaLayout>,
 ) -> Cow<'a, SchemaLibrary> {
     let mut tables = donor.map(type_tables::of_layout).unwrap_or_default();
+    // ⚠ Only behind a PSO, whose table states no signature: a world class the donor names without stating it (an empty `entities`)
+    // is typed as `typed::world_types` declares it, which is what a typed save of that donor lays the class out as.
+    if matches!(donor.map(|d| &d.container), Some(ContainerLayout::Pso(pso)) if !pso.is_gta6()) {
+        type_tables::fill(&mut tables, crate::meta::typed::world_types::declared());
+    }
     if let Some(install) = type_tables::installed() {
         type_tables::fill(&mut tables, install);
     }

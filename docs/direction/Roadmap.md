@@ -9761,10 +9761,25 @@ roots; the first edit of a game object importing its map as a source with its ba
 new entity made from a donor of the mounted install; and the Map screen's Undo moved into the
 project's History ([brief](World_Editor_Plan.md#one-vocabulary-of-world-edits-r70h)).
 
-**Where it stands.** Built for one pack: `Operation`, `apply` and `apply_all` in
-`crates/domain/or-maps/src/operation.rs`, which the Map screen's edits and `openrage-cli maps apply`
-call (`an_operation_and_its_inverse_leave_the_sources_as_they_were`, on synthetic packs). Left:
-links across files, the import, a new map, Undo by inverses in History, the install measure.
+**Where it stands.** Two parts are built. The vocabulary, for one pack: `Operation`, `apply` and
+`apply_all` in `crates/domain/or-maps/src/operation.rs`, which the Map screen's edits and
+`openrage-cli maps apply` call (`an_operation_and_its_inverse_leave_the_sources_as_they_were`, on
+synthetic packs). And a map, an entity that is no copy, a type file and a base archetype made with
+no donor and no schema snapshot in `crates/domain/or-world/src/create.rs`, saved against the four
+world classes `or-io` declares by hand (`crates/io/or-io/src/meta/typed/world_types.rs`), behind
+`openrage-cli world new-map`, `world archetypes` with no `--like`, and `add_new_entity` and
+`add_new_archetype` of `crates/domain/or-maps/src/edit.rs`. Such a map reads back as its root,
+breaks no check and passes the rules of a pack
+(`a_map_and_a_type_file_made_from_nothing_enter_a_pack_and_break_none_of_its_rules`).
+
+⚠ It is written as PSO, and RBM is refused (`rbm_is_refused_with_the_word_nothing_derives_named`):
+nothing derives the signature word of an RBM class ([R62](#r62-the-rbm-layout-synthesiser)). The
+game's own world files are RBM, so whether it loads one written as PSO is a line of
+[R70a](#r70a-what-the-game-loads)'s sheet, and no map is made from a donor of an install, which
+What asks for. An entity made so states only what the typed family names
+([what it leaves out](../reference/Crate_Reference.md#domain-crates)). Left: links across files, the
+import, a new map and an entity that is no copy as operations, the donor, Undo by inverses in
+History, the install measure.
 
 **Depends on.** Nothing in R70; it does the part of
 [R69h](#r69h-one-undo-for-the-tab-on-screen) a Map tab needs below the screen.

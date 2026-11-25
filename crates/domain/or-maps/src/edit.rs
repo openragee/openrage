@@ -6,9 +6,11 @@
 //! the source cooks to the file the value saves as. A value is refused at the save, by the typed root, when it would break an index
 //! the engine trusts, and the source is then as it was.
 //!
-//! ⚠ **An element is added by copying one the file holds.** A record built from nothing cannot be saved where no schema snapshot is
-//! installed, which is every user's machine, so a new entity is a copy of another entity of its map and a new archetype a copy of
-//! another archetype of its type file.
+//! ⚠ **An element is added by copying one the file holds, or built from nothing where the file can hold one that is.** A copy
+//! keeps every member of the record it copies ([`add_entity`], [`add_archetype`]). An entity or an archetype that is no copy
+//! ([`add_new_entity`], [`add_new_archetype`]) states the members the file's own class states, each one a person does not choose
+//! at its empty value; a file that states no such class takes it as `or-io` declares it when it is a PSO, and is refused when it
+//! is an RBM file, whose class would carry a signature word that nothing derives. No schema snapshot is read either way.
 
 use std::path::{Path, PathBuf};
 
@@ -164,15 +166,6 @@ pub fn place_entity(map: &mut CMapData, index: usize, pose: Pose) -> Result<(), 
     Ok(())
 }
 
-/// A guid no entity of `map` states: one more than the largest.
-fn free_guid(map: &CMapData) -> u32 {
-    map.entities
-        .iter()
-        .map(|e| e.guid)
-        .max()
-        .map_or(1, |g| g.wrapping_add(1).max(1))
-}
-
 /// The entity `index` of the map file the source in `dir` cooks to: the record a new entity is a copy of.
 pub fn read_entity(dir: &Path, index: usize) -> Result<CEntityDefAny, String> {
     let map = CMapData::from_bytes(&cooked(dir)?).map_err(|e| e.to_string())?;
@@ -195,7 +188,7 @@ pub fn add_entity(
         Some(text) => HashedString::new(text),
         None => HashedString::from_hash(archetype.hash),
     };
-    entity.guid = free_guid(map);
+    entity.guid = or_world::create::free_guid(map);
     entity.parent_index = -1;
     entity.num_children = 0;
     set_pose(&mut entity, pose);
@@ -206,6 +199,14 @@ pub fn add_entity(
 /// Whether an entity with these `flags` names its LOD parent in the parent map's array, which one file cannot see.
 pub(crate) fn in_parent_map(flags: u32) -> bool {
     flags & (1 << 3) != 0
+}
+
+/// Add an entity to `map` that is no copy: `placed`, with no parent, no children and a guid of its own; its index. The save refuses it in an RBM map that holds no entity.
+pub fn add_new_entity(
+    map: &mut CMapData,
+    placed: &or_world::create::Placed,
+) -> Result<usize, String> {
+    or_world::create::place(map, placed).map_err(|e| e.to_string())
 }
 
 /// Take the entity `index` out of `map`, with the LOD links renumbered: what named it as a parent has none now, a parent it named has one child fewer, and what named an entity after it names the one before.
@@ -288,6 +289,25 @@ pub fn add_archetype(
     Ok(types.archetypes.len() - 1)
 }
 
+/// Add `archetype` to `types`, a record that is no copy (`or_world::create::archetype`); its index. A name the type file declares is refused, and the save refuses it in an RBM type file that holds none.
+pub fn add_new_archetype(
+    types: &mut CMapTypes,
+    archetype: CBaseArchetypeDefAny,
+) -> Result<usize, String> {
+    if types
+        .archetypes
+        .iter()
+        .any(|a| a.name.hash == archetype.name.hash)
+    {
+        return Err(format!(
+            "the type file already declares `{}`, and the game resolves a name once",
+            archetype.name.to_xml_text()
+        ));
+    }
+    types.archetypes.push(archetype);
+    Ok(types.archetypes.len() - 1)
+}
+
 /// Take the archetype `index` out of `types`.
 pub fn remove_archetype(types: &mut CMapTypes, index: usize) -> Result<(), String> {
     if index >= types.archetypes.len() {
@@ -353,7 +373,14 @@ pub fn grow_extents(map: &mut CMapData, boxes: impl Fn(u32) -> Option<(Vec3, Vec
         let Some((lo, hi)) = found else {
             continue;
         };
-        *min = from_vec(to_vec(*min).min(lo));
-        *max = from_vec(to_vec(*max).max(hi));
+        // ⚠ Extents that are all zero are a map that states none yet, as one made from nothing does, and are set and not grown:
+        // grown, they would hold the origin of the world beside the entity, and the game would stream the map from there to it.
+        let stated_none = to_vec(*min) == Vec3::ZERO && to_vec(*max) == Vec3::ZERO;
+        let (held_lo, held_hi) = match stated_none {
+            true => (lo, hi),
+            false => (to_vec(*min), to_vec(*max)),
+        };
+        *min = from_vec(held_lo.min(lo));
+        *max = from_vec(held_hi.max(hi));
     }
 }

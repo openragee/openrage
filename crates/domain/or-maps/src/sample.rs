@@ -2,8 +2,8 @@
 //! of the classes written inline, a value tree, and the layout the writer derives from the two.
 //!
 //! The classes are the engine's, with the members the typed world family reads (`or_io::meta::typed`), so a file made here opens as
-//! `CMapData` or `CMapTypes`, saves, and cooks from a source. It is a test fixture and not a way to make a map: an installed schema is a
-//! developer's artifact, and a record made from nothing is refused where there is none.
+//! `CMapData` or `CMapTypes`, saves, and cooks from a source. It is a test fixture and not a way to make a map: its RBM classes carry
+//! a zero signature no shipped file has. `or_world::create` makes a map from nothing.
 
 use or_io::meta::instance::HashedString;
 use or_io::meta::{build_library, canonical, write_meta_binary, BinaryFormat, MetaInstance, Value};

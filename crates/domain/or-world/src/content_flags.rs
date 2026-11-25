@@ -50,21 +50,21 @@ impl ContentFlags {
         let mut content = 0u32;
 
         for entity in map.entities() {
-            match entity.lod_level().map(lod_depth) {
-                Some(LodDepth::Hd) => content |= content::HD,
-                Some(LodDepth::Lod) => {
+            // ⚠ An entity whose class states no `lodLevel` is read at the enum's zero, which is HD, as a variant with no name is.
+            match entity.lod_level().map_or(LodDepth::Hd, lod_depth) {
+                LodDepth::Hd => content |= content::HD,
+                LodDepth::Lod => {
                     content |= content::LOD;
                     flags |= map::SCRIPTED_OR_LOD;
                 }
-                Some(LodDepth::Slod1) => {
+                LodDepth::Slod1 => {
                     content |= content::SLOD;
                     flags |= map::SCRIPTED_OR_LOD;
                 }
-                Some(LodDepth::Slod2Plus) => {
+                LodDepth::Slod2Plus => {
                     content |= content::SLOD2_PLUS | content::SLOD;
                     flags |= map::SCRIPTED_OR_LOD;
                 }
-                None => {}
             }
             if entity.is_interior_instance() {
                 content |= content::INTERIOR;
@@ -215,6 +215,14 @@ mod tests {
     fn a_map_that_declares_exactly_what_it_holds_diverges_by_nothing() {
         let root = map_with(vec![entity("CEntityDef", "LODTYPES_DEPTH_HD")], content::HD);
         assert!(Divergence::of(&MapData::new(&root).unwrap()).is_exact());
+    }
+
+    #[test]
+    fn an_entity_that_states_no_lod_level_implies_the_hd_bit() {
+        let root = map_with(vec![MetaInstance::new("CEntityDef")], 0);
+        let f = ContentFlags::of(&MapData::new(&root).unwrap());
+        assert_eq!(f.content, content::HD);
+        assert_eq!(f.flags, 0);
     }
 
     #[test]

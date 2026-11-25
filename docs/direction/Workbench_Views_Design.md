@@ -297,7 +297,7 @@ What it contributes to a plan: the map files at `stream/` with the manifest line
 
 **The bar.** The repository names CodeWalker, CodeX and OpenIV as the tools OpenRage replaces and lists, for the world editor, picking, gizmos and snaps, markers, a thumbnail browser and pawn modes, and for interiors portals, room bounds and rooms rebuilt from shell geometry (R47); that list is an inventory kept on the owner's machine and not in a clone ([Roadmap.md](Roadmap.md#inputs-outside-the-tree)), so this draft cannot say which tool has which. The bar is that the first group stays a plugin that can be written against the Map view's overlay, and that OpenRage holds itself to what it can check from the files alone: every map of a project checked at once for what the engine trusts, a manifest derived and compared, a delete that keeps every link, `openrage-cli world check` in CI, and a build that reloads each file it wrote.
 
-**Not in the tree yet.** What [the subsection below](#what-wave-p44-built-for-maps) lists as left: the placed models of the 3D scene, a map made from nothing, an edit of a room or a portal, and a singleplayer DLC cell that says *Yes*.
+**Not in the tree yet.** What [the subsection below](#what-wave-p44-built-for-maps) lists as left: the placed models of the 3D scene, a map made from nothing on the Map screen (`crates/domain/or-world/src/create.rs` makes one for `openrage-cli world new-map`), an edit of a room or a portal, and a singleplayer DLC cell that says *Yes*.
 
 ### What wave P44 built for Maps
 

@@ -9,8 +9,10 @@
 //! as it arrived, and an untouched save is the tree's own save.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
+use std::rc::Rc;
 
 use crate::decl::{File, HasOrigin, Origin};
 use crate::decl::{Vec2, Vec3, Vec4};
@@ -405,7 +407,8 @@ fn member<T: Member>(inst: &MetaInstance, owner: &str, name: &str, init: T) -> R
 }
 
 /// Writes a typed member into `inst`; `arrived` says `inst` is the tree the
-/// record was read from, whose type table a member it lacked is not in.
+/// record was read from, or one conformed to the class its document states,
+/// whose type table a member it lacked is not in.
 fn put<T: Member + PartialEq>(
     inst: &mut MetaInstance,
     name: &str,
@@ -501,7 +504,8 @@ fn empty(library: &SchemaLibrary, ty: &FieldType, init: Option<&Literal>) -> Res
 ///
 /// ⚠ A user's machine has no snapshot, so a record built here is refused
 /// there: an array grows only by a copy of an element the file holds, which
-/// keeps the tree it was read from and is never conformed.
+/// keeps the tree it was read from and is never conformed. A record of a world
+/// document is the exception, conformed to what [`world_types::Saving`] gives.
 fn conform(library: &SchemaLibrary, inst: &mut MetaInstance) -> Result<(), String> {
     let resolved = library.resolve_any(&inst.type_name).ok_or_else(|| {
         if !crate::meta::has_default_library() {
@@ -547,6 +551,23 @@ struct Arrival {
     format: SourceFormat,
 }
 
+thread_local! {
+    /// The types of the world document this thread is saving, which a record built in it is conformed to.
+    static SAVING: RefCell<Option<Rc<world_types::Saving>>> = const { RefCell::new(None) };
+}
+
+/// Runs `write` with every record built here conformed to `saving`.
+fn while_saving<R>(saving: &Rc<world_types::Saving>, write: impl FnOnce() -> R) -> R {
+    struct Restore(Option<Rc<world_types::Saving>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SAVING.with(|saving| *saving.borrow_mut() = self.0.take());
+        }
+    }
+    let _restore = Restore(SAVING.with(|held| held.replace(Some(Rc::clone(saving)))));
+    write()
+}
+
 /// What a record holds besides its typed members: the tree it was read from,
 /// whether its array held it behind a pointer and, on a root, the arrival.
 #[derive(Clone, Default)]
@@ -579,11 +600,20 @@ impl Carry {
                     .cloned()
                     .unwrap_or_else(|| MetaInstance::new(type_name));
                 inst.type_name = type_name.to_string();
-                conform(
-                    &ped_types::library(crate::meta::default_library()),
-                    &mut inst,
-                )?;
-                Ok((inst, false))
+                match SAVING.with(|saving| saving.borrow().clone()) {
+                    // ⚠ The class is the document's own, so a member it lacks cannot be held, as in a record that arrived.
+                    Some(saving) => {
+                        saving.conform(&mut inst)?;
+                        Ok((inst, true))
+                    }
+                    None => {
+                        conform(
+                            &ped_types::library(crate::meta::default_library()),
+                            &mut inst,
+                        )?;
+                        Ok((inst, false))
+                    }
+                }
             }
         }
     }
@@ -1192,6 +1222,7 @@ fn encode(
     arrival: Option<&Arrival>,
     root: &MetaInstance,
     reshaped: bool,
+    types: Option<&SchemaLibrary>,
 ) -> Result<Vec<u8>, Error> {
     let save = |why: String| Error::Save { ext, why };
     let (format, layout) = match arrival {
@@ -1203,7 +1234,8 @@ fn encode(
                     .map_err(|e| save(e.to_string()))
             }
         },
-        // PSO synthesis has no encoding for a `CMapData`'s occluder vertices; RBM has.
+        // ⚠ A world root built here does not reach this arm: `save_world_root` writes it as PSO, whose synthesis has no encoding
+        // for a `CMapData`'s occluder vertices, which RBM has.
         None => (BinaryFormat::Rbm, None),
     };
     let arrival_layout = layout.filter(|_| !reshaped);
@@ -1226,9 +1258,11 @@ fn encode(
     // what the document's own tables state stands in for what it lacks.
     let own = layout.map(type_tables::of_layout);
     let family = ped_types::library(crate::meta::default_library());
-    let library = match &own {
-        Some(tables) => type_tables::extend(&family, tables),
-        None => Cow::Borrowed(&*family),
+    let library = match (types, &own) {
+        // The records built here were conformed to these, so the layout is made of the same.
+        (Some(types), _) => Cow::Borrowed(types),
+        (None, Some(tables)) => type_tables::extend(&family, tables),
+        (None, None) => Cow::Borrowed(&*family),
     };
     let library = &*library;
     let container = match layout.map(|l| &l.container) {
@@ -1236,6 +1270,9 @@ fn encode(
             let donor = ped_types::donor(Some(&donor.model));
             rbm_layout_for_instance(library, root, Some(&donor))
                 .map(|l| ContainerLayout::Rbm(Box::new(l)))
+        }
+        None if format == BinaryFormat::Pso => {
+            pso_layout_for_instance(library, root).map(ContainerLayout::Pso)
         }
         None => {
             let donor = ped_types::donor(None);
@@ -1285,7 +1322,51 @@ fn save_root_as(
         });
     }
     let root = root.map_err(|why| Error::Save { ext, why })?;
-    encode(ext, carry.arrival.as_deref().or(fallback), &root, reshaped)
+    encode(
+        ext,
+        carry.arrival.as_deref().or(fallback),
+        &root,
+        reshaped,
+        None,
+    )
+}
+
+/// [`save_root`] for a root of the world family, which saves a record built here where no snapshot is installed.
+///
+/// ⚠ A root built here is written as PSO: an RBM class carries a signature word that nothing derives ([`world_types`]).
+fn save_world_root(
+    ext: &'static str,
+    broken: Option<Broken>,
+    write: impl FnOnce() -> Result<MetaInstance, String>,
+    carry: &Carry,
+    reshaped: bool,
+) -> Result<Vec<u8>, Error> {
+    let arrival = carry.arrival.as_deref();
+    // Nothing was built here, so nothing is conformed and the arrival's own layout stands.
+    if arrival.is_some() && !reshaped {
+        return save_root(ext, broken, write(), carry, reshaped);
+    }
+    if let Some(reason) = broken {
+        return Err(Error::Refused {
+            ext,
+            reason: crate::error::Reason::new(reason),
+        });
+    }
+    let saving = Rc::new(world_types::Saving::of(arrival));
+    let root = while_saving(&saving, write)
+        .and_then(|root| saving.refuse_what_would_be_dropped(&root).map(|()| root))
+        .map_err(|why| Error::Save { ext, why })?;
+    let built = Arrival {
+        layout: None,
+        format: SourceFormat::Pso,
+    };
+    encode(
+        ext,
+        Some(arrival.unwrap_or(&built)),
+        &root,
+        reshaped,
+        Some(&saving.library),
+    )
 }
 
 /// An index into an array the same file states, which the engine trusts and this one misses.
@@ -1457,6 +1538,7 @@ mod weapon_blob;
 mod weapon_components;
 mod weapon_info;
 pub mod weapon_types;
+pub mod world_types;
 pub use alternate::*;
 pub use ped::*;
 
@@ -1472,7 +1554,8 @@ impl File for CMapData {
     fn to_bytes(&self) -> Result<Vec<u8>, Error> {
         let broken = broken_hierarchy(&self.entities);
         let reshaped = self.entities.iter().any(CEntityDefAny::reshaped);
-        save_root(Self::EXTENSION, broken, self.write(), &self.carry, reshaped)
+        let write = || self.write();
+        save_world_root(Self::EXTENSION, broken, write, &self.carry, reshaped)
     }
 }
 
@@ -1492,7 +1575,8 @@ impl File for CMapTypes {
                 || matches!(a, CBaseArchetypeDefAny::CMloArchetypeDef(mlo)
                     if mlo.entities.iter().any(CEntityDefAny::reshaped))
         });
-        save_root(Self::EXTENSION, broken, self.write(), &self.carry, reshaped)
+        let write = || self.write();
+        save_world_root(Self::EXTENSION, broken, write, &self.carry, reshaped)
     }
 }
 

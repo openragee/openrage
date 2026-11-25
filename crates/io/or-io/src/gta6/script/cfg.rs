@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::ir::{Expr, Head, Stmt};
+use super::ir::{Expr, Head, Stmt, TypeKey};
 use super::tree::{self, Label};
 
 /// A block's index in [`Cfg::blocks`].
@@ -266,6 +266,90 @@ pub enum LowerError {
     StrayContinue,
 }
 
+/// A run of blocks whose faults go to a handler, as a compiled program's tables state it.
+// ⚠ No terminator leads to a handler, so `successors` and all that is built on it see none: a
+// function that has regions is carried beside them and given to no pass.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Region {
+    pub kind: RegionKind,
+    /// The blocks the region protects.
+    pub blocks: Vec<BlockId>,
+    /// The block control goes to when one of them faults.
+    pub handler: BlockId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegionKind {
+    /// Takes faults of the type named, any fault for `None`.
+    Catch(Option<TypeKey>),
+    /// Runs however the region is left.
+    Finally,
+}
+
+/// The blocks in their order as labels and jumps, with no construct rebuilt: what a front end made, to print as it is.
+pub fn flat(f: Function) -> tree::Function {
+    let blocks = f.cfg.blocks;
+    let labels: Vec<Label> = blocks
+        .iter()
+        .enumerate()
+        .map(|(b, block)| match block.at {
+            Some(at) => Label::At(at),
+            None => Label::Block(b as u32),
+        })
+        .collect();
+    // A block is labelled where something jumps to it other than the block before running into it.
+    let mut named = vec![false; blocks.len()];
+    for (b, block) in blocks.iter().enumerate() {
+        for to in block.term.successors() {
+            let runs_in = matches!(block.term, Terminator::Jump(_)) && to == b + 1;
+            if let (false, Some(flag)) = (runs_in, named.get_mut(to)) {
+                *flag = true;
+            }
+        }
+    }
+    let go = |to: BlockId| {
+        let label = labels.get(to).copied().unwrap_or(Label::Block(to as u32));
+        vec![tree::Stmt::Goto(label)]
+    };
+    let mut body = Vec::new();
+    for (b, block) in blocks.into_iter().enumerate() {
+        if named[b] {
+            body.push(tree::Stmt::Label(labels[b]));
+        }
+        body.extend(block.stmts.into_iter().map(tree::Stmt::Simple));
+        match block.term {
+            Terminator::Jump(to) if to == b + 1 => {}
+            Terminator::Jump(to) => body.extend(go(to)),
+            Terminator::Branch { cond, then, els } => body.push(tree::Stmt::If {
+                cond,
+                then: go(then),
+                els: go(els),
+            }),
+            Terminator::Switch {
+                value,
+                cases,
+                default,
+            } => {
+                let mut all: Vec<tree::Case> = cases
+                    .into_iter()
+                    .map(|(at, to)| tree::Case {
+                        labels: vec![Some(at)],
+                        body: go(to),
+                    })
+                    .collect();
+                all.push(tree::Case {
+                    labels: vec![None],
+                    body: go(default),
+                });
+                body.push(tree::Stmt::Switch { value, cases: all });
+            }
+            Terminator::Return(value) => body.push(tree::Stmt::Return(value)),
+            Terminator::Unreachable => body.push(tree::Stmt::Unreachable),
+        }
+    }
+    tree::Function { head: f.head, body }
+}
+
 /// [`lower_body`] over a function, keeping its head.
 pub fn lower(f: tree::Function) -> Result<Function, LowerError> {
     Ok(Function {
@@ -359,6 +443,8 @@ impl Lowering {
         for stmt in stmts {
             match stmt {
                 tree::Stmt::Simple(s) => self.blocks[self.cur].stmts.push(s),
+                // A source construct lowers as the statements it stands for.
+                tree::Stmt::Sugar(sugar) => self.seq(sugar.desugar(), ctx)?,
                 tree::Stmt::Label(label) => {
                     if !self.defined.insert(label) {
                         return Err(LowerError::DuplicateLabel(label));

@@ -6,6 +6,11 @@ pub fn name_hash64(text: &[u8]) -> u64 {
     murmur3_x64_128_low(text, true)
 }
 
+/// The same 64-bit hash of `text` as it is spelled, no case folded: what names a script's types and fields.
+pub fn literal_hash64(text: &[u8]) -> u64 {
+    murmur3_x64_128_low(text, false)
+}
+
 /// The 32-bit hash of `text`: `atStringHash`, which folds case before it hashes.
 pub const fn name_hash32(text: &[u8]) -> u32 {
     crate::hash::string_hash(text)

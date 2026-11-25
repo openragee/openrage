@@ -1268,3 +1268,358 @@ fn the_samples_loops_come_out_as_loops() {
     // The last function is `return;` and nothing else.
     assert!(functions[4].body.is_empty());
 }
+
+// ---- the `gotos` rules --------------------------------------------------------------------
+
+/// The pass with the `gotos` rules on: the result must be the same flow, with no statement lost.
+fn untangled(blocks: Vec<Block>) -> Vec<Stmt> {
+    let before = Cfg {
+        blocks: blocks.clone(),
+    };
+    let names = Names::default();
+    let options = crate::gta6::script::Options::baseline().with(Pass::Gotos);
+    let cx = Context::new(&names, crate::gta6::script::Project::empty(), options);
+    let f = function(blocks, Returns::Cell);
+    let body = run_in(f, &cx, &mut Stats::default()).body;
+    let after = cfg::lower_body(body.clone()).expect("the body lowers");
+    if let Err(why) = same_flow(&before, &after) {
+        panic!("the flow changed: {why}\n{body:#?}");
+    }
+    assert!(tree::counts(&body).statements >= before.statements());
+    body
+}
+
+fn gotos(body: &[Stmt]) -> usize {
+    tree::counts(body).gotos
+}
+
+/// A then arm whose last block returns, and whose blocks 1 and 2 leave to `first` and `second`, past the code after the `if`.
+fn arm_that_leaves_to(first: BlockId, second: BlockId, last: &[u32]) -> Vec<Block> {
+    // 0: s0; p0 ? 1 : 4    1: s1; p1 ? first : 2    2: s2; p2 ? 3 : second    3: s3; return
+    // 4: s4 -> 5    5: s5 -> 6    6: last; return
+    vec![
+        branch(&[0], p(0), 1, 4),
+        branch(&[1], p(1), first, 2),
+        branch(&[2], p(2), 3, second),
+        ret(&[3]),
+        jump(&[4], 5),
+        jump(&[5], 6),
+        ret(last),
+    ]
+}
+
+#[test]
+fn the_one_place_a_then_arm_leaves_to_makes_what_is_in_between_its_else() {
+    // `if (p0) { s1; if (p1) goto L; s2; if (!p2) goto L; s3; return; } s4; s5; L: s6; return;`
+    let blocks = arm_that_leaves_to(6, 6, &[6]);
+    assert_eq!(gotos(&rebuilt(blocks.clone())), 2, "the rules ran unasked");
+    let inner = when(p(2), vec![s(3), returns()], Vec::new());
+    let then = vec![s(1), when(not(p(1)), vec![s(2), inner], Vec::new())];
+    assert_eq!(
+        untangled(blocks),
+        [s(0), when(p(0), then, vec![s(4), s(5)]), s(6), returns()]
+    );
+}
+
+#[test]
+fn a_then_arm_that_leaves_to_two_places_takes_no_else() {
+    // Blocks 1 and 2 leave to 5 and to 6: an else that ends at either leaves the other a jump into an arm.
+    let blocks = arm_that_leaves_to(5, 6, &[6, 7, 8]);
+    let plain = structured(blocks.clone());
+    assert_eq!(gotos(&plain), 2);
+    assert_eq!(untangled(blocks), plain);
+}
+
+/// `s1; switch (p1) { 0 -> 2, 1 -> 3, default -> 4 }`, as block 1.
+fn inner_switch() -> Block {
+    block(
+        &[1],
+        Terminator::Switch {
+            value: p(1),
+            cases: vec![(0, 2), (1, 3)],
+            default: 4,
+        },
+    )
+}
+
+#[test]
+fn bodies_that_leave_past_their_case_are_the_inner_switchs_breaks() {
+    // Each inner body leaves to what follows the outer switch: `break` out of the inner one, then out of the outer.
+    // 0: s0; switch (p0) { 0 -> 1, 1 -> 5, default -> 6 }    1: the inner switch
+    // 2: s2 -> 6    3: s3 -> 6    4: s4 -> 6    5: s5 -> 6    6: s6; s7; s8; return
+    let blocks = vec![
+        block(
+            &[0],
+            Terminator::Switch {
+                value: p(0),
+                cases: vec![(0, 1), (1, 5)],
+                default: 6,
+            },
+        ),
+        inner_switch(),
+        jump(&[2], 6),
+        jump(&[3], 6),
+        jump(&[4], 6),
+        jump(&[5], 6),
+        ret(&[6, 7, 8]),
+    ];
+    assert_eq!(gotos(&rebuilt(blocks.clone())), 2, "the rules ran unasked");
+    let inner = Stmt::Switch {
+        value: p(1),
+        cases: vec![
+            case(&[Some(0)], vec![s(2), Stmt::Break]),
+            case(&[Some(1)], vec![s(3), Stmt::Break]),
+            case(&[None], vec![s(4), Stmt::Break]),
+        ],
+    };
+    let outer = Stmt::Switch {
+        value: p(0),
+        cases: vec![
+            case(&[Some(0)], vec![s(1), inner, Stmt::Break]),
+            case(&[Some(1)], vec![s(5), Stmt::Break]),
+        ],
+    };
+    assert_eq!(
+        untangled(blocks),
+        [s(0), outer, s(6), s(7), s(8), returns()]
+    );
+}
+
+#[test]
+fn a_switch_one_body_of_which_leaves_to_what_follows_it_keeps_its_end() {
+    // The second body leaves to block 4, the code after the switch, which runs on to the join
+    // at 5: were the switch to end past its arm for the first body's sake, that code would be
+    // its last body and need a `goto` out of it.
+    // 0: s0; p0 ? 1 : 5    1: the switch    2: s2 -> 6    3: s3 -> 4    4: s4 -> 5    5: s5 -> 6
+    // 6: s6; s7; s8; return
+    let blocks = vec![
+        branch(&[0], p(0), 1, 5),
+        inner_switch(),
+        jump(&[2], 6),
+        jump(&[3], 4),
+        jump(&[4], 5),
+        jump(&[5], 6),
+        ret(&[6, 7, 8]),
+    ];
+    let plain = structured(blocks.clone());
+    assert_eq!(gotos(&plain), 1);
+    assert_eq!(untangled(blocks), plain);
+}
+
+#[test]
+fn a_loop_takes_in_the_tail_its_last_test_leaves_to() {
+    // `do { s1; if (p1) goto L; s2; } while (p2); s3; return; L: s4; s5; s6; return;`
+    // 0: s0 -> 1    1: s1; p1 ? 4 : 2    2: s2; p2 ? 1 : 3    3: s3; return    4: s4; s5; s6; return
+    let blocks = vec![
+        jump(&[0], 1),
+        branch(&[1], p(1), 4, 2),
+        branch(&[2], p(2), 1, 3),
+        ret(&[3]),
+        ret(&[4, 5, 6]),
+    ];
+    assert_eq!(gotos(&rebuilt(blocks.clone())), 1, "the rules ran unasked");
+    let lp = Stmt::While {
+        cond: forever(),
+        body: vec![
+            s(1),
+            when(p(1), vec![Stmt::Break], Vec::new()),
+            s(2),
+            when(not(p(2)), vec![s(3), returns()], Vec::new()),
+        ],
+    };
+    assert_eq!(untangled(blocks), [s(0), lp, s(4), s(5), s(6), returns()]);
+}
+
+#[test]
+fn a_tail_that_runs_on_to_where_the_loop_leaves_ends_in_a_break() {
+    // `while (true) { s1; if (p1) goto L; s2; if (p2) break; s3; } s4; L: s5; s6; s7; return;`
+    // 0: s0 -> 1    1: s1; p1 ? 5 : 2    2: s2; p2 ? 4 : 3    3: s3 -> 1    4: s4 -> 5    5: s5; s6; s7; return
+    let blocks = vec![
+        jump(&[0], 1),
+        branch(&[1], p(1), 5, 2),
+        branch(&[2], p(2), 4, 3),
+        jump(&[3], 1),
+        jump(&[4], 5),
+        ret(&[5, 6, 7]),
+    ];
+    assert_eq!(gotos(&rebuilt(blocks.clone())), 1, "the rules ran unasked");
+    let lp = Stmt::While {
+        cond: forever(),
+        body: vec![
+            s(1),
+            when(p(1), vec![Stmt::Break], Vec::new()),
+            s(2),
+            when(not(p(2)), vec![s(3)], vec![s(4), Stmt::Break]),
+        ],
+    };
+    assert_eq!(untangled(blocks), [s(0), lp, s(5), s(6), s(7), returns()]);
+}
+
+#[test]
+fn a_tail_two_blocks_of_a_loop_lead_to_stays_after_it() {
+    // Blocks 2 and 3 both leave to the tail at 4: inside the loop, the first of them would be a `goto`.
+    // 0: s0 -> 1    1: s1; p1 ? 5 : 2    2: s2; p2 ? 4 : 3    3: s3; p3 ? 1 : 4    4: s4; return    5: s5; s6; s7; return
+    let blocks = vec![
+        jump(&[0], 1),
+        branch(&[1], p(1), 5, 2),
+        branch(&[2], p(2), 4, 3),
+        branch(&[3], p(3), 1, 4),
+        ret(&[4]),
+        ret(&[5, 6, 7]),
+    ];
+    let plain = structured(blocks.clone());
+    assert_eq!(gotos(&plain), 1);
+    assert_eq!(untangled(blocks), plain);
+}
+
+#[test]
+fn a_goto_to_the_statement_after_it_goes() {
+    // The loop's test leaves to block 4, and the `return` at 3, written at the jump to it, stands in between.
+    // 0: s0 -> 1    1: p1 ? 2 : 4    2: s2; p2 ? 3 : 1    3: return    4: s4; return
+    let blocks = vec![
+        jump(&[0], 1),
+        branch(&[], p(1), 2, 4),
+        branch(&[2], p(2), 3, 1),
+        ret(&[]),
+        ret(&[4]),
+    ];
+    assert_eq!(gotos(&rebuilt(blocks.clone())), 1, "the rules ran unasked");
+    let lp = Stmt::While {
+        cond: p(1),
+        body: vec![s(2), when(p(2), vec![returns()], Vec::new())],
+    };
+    assert_eq!(untangled(blocks), [s(0), lp, s(4), returns()]);
+}
+
+fn named(label: Label, gotos: u32) -> HashMap<Label, u32> {
+    HashMap::from([(label, gotos)])
+}
+
+#[test]
+fn a_goto_with_a_statement_before_its_label_stays() {
+    let end = Label::Block(7);
+    let body = vec![Stmt::Goto(end), s(1), Stmt::Label(end), s(2)];
+    let mut left = body.clone();
+    assert!(!tails::next_gotos(&mut left, &mut named(end, 1)));
+    assert_eq!(left, body);
+    // Only labels between the jump and where it lands: it says nothing.
+    let mut bare = vec![
+        Stmt::Goto(end),
+        Stmt::Label(Label::Block(8)),
+        Stmt::Label(end),
+        s(2),
+    ];
+    let mut names = named(end, 1);
+    assert!(tails::next_gotos(&mut bare, &mut names));
+    assert_eq!(bare, [Stmt::Label(Label::Block(8)), Stmt::Label(end), s(2)]);
+    assert_eq!(names[&end], 0);
+}
+
+#[test]
+fn a_goto_to_a_short_tail_that_leaves_is_that_tail() {
+    let end = Label::Block(7);
+    let mut body = vec![
+        when(p(0), vec![Stmt::Goto(end)], Vec::new()),
+        s(1),
+        returns(),
+        Stmt::Label(end),
+        s(2),
+        returns(),
+    ];
+    let mut names = named(end, 1);
+    assert!(tails::copied(&mut body, &mut names));
+    // Nothing runs into the tail any more, so only its copy is left.
+    assert_eq!(
+        body,
+        [
+            when(p(0), vec![s(2), returns()], Vec::new()),
+            s(1),
+            returns()
+        ]
+    );
+    assert_eq!(names[&end], 0);
+}
+
+#[test]
+fn a_tail_of_more_statements_or_one_that_runs_on_is_not_copied() {
+    let end = Label::Block(7);
+    let jump_to = when(p(0), vec![Stmt::Goto(end)], Vec::new());
+    for tail in [
+        vec![s(2), s(3), s(4), returns()],
+        vec![s(2), s(3)],
+        vec![s(2), when(p(1), vec![s(3)], Vec::new()), returns()],
+    ] {
+        let mut body = vec![jump_to.clone(), s(1), returns(), Stmt::Label(end)];
+        body.extend(tail);
+        let was = body.clone();
+        assert!(!tails::copied(&mut body, &mut named(end, 1)));
+        assert_eq!(body, was);
+    }
+}
+
+#[test]
+fn a_tail_that_breaks_is_copied_only_inside_what_it_leaves() {
+    let end = Label::Block(7);
+    let jump_to = when(p(0), vec![Stmt::Goto(end)], Vec::new());
+    let mut inside = vec![Stmt::While {
+        cond: p(1),
+        body: vec![
+            jump_to.clone(),
+            s(1),
+            Stmt::Continue,
+            Stmt::Label(end),
+            s(2),
+            Stmt::Break,
+        ],
+    }];
+    assert!(tails::copied(&mut inside, &mut named(end, 1)));
+    assert_eq!(
+        inside,
+        [Stmt::While {
+            cond: p(1),
+            body: vec![
+                when(p(0), vec![s(2), Stmt::Break], Vec::new()),
+                s(1),
+                Stmt::Continue
+            ],
+        }]
+    );
+    // From outside the loop a `break` would leave something else, or nothing.
+    let mut outside = vec![
+        jump_to,
+        Stmt::While {
+            cond: p(1),
+            body: vec![s(1), Stmt::Label(end), s(2), Stmt::Break],
+        },
+    ];
+    let was = outside.clone();
+    assert!(!tails::copied(&mut outside, &mut named(end, 1)));
+    assert_eq!(outside, was);
+}
+
+#[test]
+fn a_tail_that_code_runs_into_stays_where_it_is() {
+    // Blocks 1 and 2 leave to 5 and to 6; `s6; return;` at 6 is short, and `s5` runs into it.
+    let body = untangled(arm_that_leaves_to(5, 6, &[6]));
+    let five = Label::Block(5);
+    let then = vec![
+        s(1),
+        when(p(1), vec![Stmt::Goto(five)], Vec::new()),
+        s(2),
+        when(not(p(2)), vec![s(6), returns()], Vec::new()),
+        s(3),
+        returns(),
+    ];
+    assert_eq!(
+        body,
+        [
+            s(0),
+            when(p(0), then, Vec::new()),
+            s(4),
+            Stmt::Label(five),
+            s(5),
+            s(6),
+            returns()
+        ]
+    );
+}

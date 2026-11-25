@@ -1,6 +1,7 @@
 use super::*;
 use crate::gta6::script::ir::{Callee, Expr, Kind, Stmt, Var, Width};
 use crate::gta6::script::listing::Listing;
+use crate::gta6::script::{Options, Project};
 
 /// A listing of one function of two parameters and eight locals, written by hand, with natives to call.
 const FRAME: &str = r#"[VmProgram(0x00000001U)]
@@ -605,4 +606,188 @@ fn the_function_declares_the_temporaries_it_still_mentions() {
     );
     let v = Var::Value { at: 0x10, index: 0 };
     assert!(kept.head.vars.contains_key(&v), "{:?}", kept.head.vars);
+}
+
+/// The blocks [`run_in`] makes of `body` with `passes` on beside the four first.
+fn ran_with(passes: &[Pass], decls: &str, body: &str) -> cfg::Function {
+    let mut f = read(decls, body);
+    let options = (passes.iter()).fold(Options::baseline(), |options, pass| options.with(*pass));
+    let names = Names::default();
+    let cx = Context::new(&names, Project::empty(), options);
+    run_in(&mut f, &cx, &mut Stats::default());
+    f
+}
+
+/// Asserts that the pass, with `passes` on, makes of `before` the blocks `after` reads as.
+fn becomes_with(passes: &[Pass], decls: &str, before: &str, after: &str) {
+    let (made, wanted) = (ran_with(passes, decls, before).cfg, read(decls, after).cfg);
+    assert_eq!(made, wanted, "from:\n{before}");
+}
+
+fn stays_with(passes: &[Pass], decls: &str, body: &str) {
+    let (made, wanted) = (ran_with(passes, decls, body).cfg, read(decls, body).cfg);
+    assert_eq!(made, wanted, "from:\n{body}");
+}
+
+/// A new object.
+const NEW: &str = "Vm.NewObject(new VmType(\"T\"))";
+
+#[test]
+fn a_load_moves_past_a_store_into_an_object_in_no_other_hands() {
+    // The arguments of an inlined constructor are loaded first, then stored one after another.
+    let filled = |first: &str, value: &str| {
+        format!(
+            "v_000010_0 = {NEW}; {first} store_i32(v_000010_0, 0x10, 5); store_i32(v_000010_0, 0x18, {value}); Native.DEMO.USE(v_000010_0); return;"
+        )
+    };
+    becomes_with(
+        &[Pass::Escape],
+        V2,
+        &filled("v_000018_1 = load_i32(p0, 0x8);", "v_000018_1"),
+        &filled("", "load_i32(p0, 0x8)"),
+    );
+    // Without the name a store is a store: the load stays before it.
+    stays(V2, &filled("v_000018_1 = load_i32(p0, 0x8);", "v_000018_1"));
+    // Stored where anything may find it, the object may be what `p0` points at.
+    stays_with(
+        &[Pass::Escape],
+        V2,
+        &format!(
+            "v_000010_0 = {NEW}; store_ref(p1, 0x0, v_000010_0); v_000018_1 = load_i32(p0, 0x8); store_i32(v_000010_0, 0x10, 5); store_i32(v_000010_0, 0x18, v_000018_1); return;"
+        ),
+    );
+}
+
+#[test]
+fn a_load_moves_past_a_store_to_other_bytes_through_the_same_pointer() {
+    becomes_with(
+        &[Pass::Escape],
+        V,
+        "v_000010_0 = load_i32(p0, 0x8); store_i32(p0, 0x10, 5); store_i32(p0, 0x18, v_000010_0); return;",
+        "store_i32(p0, 0x10, 5); store_i32(p0, 0x18, load_i32(p0, 0x8)); return;",
+    );
+    // The same bytes: the load reads what the store wrote.
+    stays_with(
+        &[Pass::Escape],
+        V,
+        "v_000010_0 = load_i32(p0, 0x10); store_i32(p0, 0x10, 5); store_i32(p0, 0x18, v_000010_0); return;",
+    );
+    // Another pointer may be the same pointer.
+    stays_with(
+        &[Pass::Escape],
+        V,
+        "v_000010_0 = load_i32(p0, 0x8); store_i32(p1, 0x10, 5); store_i32(p0, 0x18, v_000010_0); return;",
+    );
+}
+
+#[test]
+fn a_call_and_an_allocation_change_places() {
+    let before = format!(
+        "v_000010_0 = Native.DEMO.GET(p0); v_000018_1 = {NEW}; Native.DEMO.USE2(v_000018_1, v_000010_0); return;"
+    );
+    becomes_with(
+        &[Pass::Escape],
+        V2,
+        &before,
+        &format!("Native.DEMO.USE2({NEW}, Native.DEMO.GET(p0)); return;"),
+    );
+    // Without the name the call keeps its place before the allocation.
+    becomes(
+        V2,
+        &before,
+        &format!("v_000010_0 = Native.DEMO.GET(p0); Native.DEMO.USE2({NEW}, v_000010_0); return;"),
+    );
+    // A load is not an allocation: the call may write what it reads.
+    stays_with(
+        &[Pass::Escape],
+        V,
+        "v_000010_0 = Native.DEMO.GET(p0); Native.DEMO.USE2(load_i32(p1, 0x8), v_000010_0); return;",
+    );
+}
+
+#[test]
+fn a_test_of_order_between_constants_goes_one_way() {
+    let test = |cond: &str| {
+        format!("if ({cond}) {{ Native.DEMO.USE(1); }} else {{ Native.DEMO.USE(2); }} return;")
+    };
+    let (first, second) = ("Native.DEMO.USE(1); return;", "Native.DEMO.USE(2); return;");
+    let ordered = &[Pass::Constants];
+    becomes_with(ordered, "", &test("((as_i32(5) < as_i32(7)))"), first);
+    // As `int` the first is minus one; as `uint` it is the greatest there is.
+    becomes_with(
+        ordered,
+        "",
+        &test("((as_i32(0xFFFFFFFF) < as_i32(7)))"),
+        first,
+    );
+    becomes_with(
+        ordered,
+        "",
+        &test("((as_u32(0xFFFFFFFF) < as_u32(7)))"),
+        second,
+    );
+    becomes_with(
+        ordered,
+        "",
+        &test("((as_f32(1.5f) >= as_f32(0.5f)))"),
+        first,
+    );
+    // No number is below, above or equal to anything: `!(a < b)` holds where `a >= b` does not.
+    let nan = "as_f32(float_bits(2143289344))";
+    becomes_with(
+        ordered,
+        "",
+        &test(&format!("(({nan} >= as_f32(0.5f)))")),
+        second,
+    );
+    becomes_with(
+        ordered,
+        "",
+        &test(&format!("!(({nan} < as_f32(0.5f)))")),
+        first,
+    );
+    // One side a variable, the test is a test.
+    stays_with(ordered, "", &test("((as_i32(p0) < as_i32(7)))"));
+}
+
+#[test]
+fn a_switch_on_a_constant_goes_to_its_case() {
+    becomes_with(
+        &[Pass::Constants],
+        "",
+        "switch (as_i32(1)) { case 0: Native.DEMO.USE(1); break; case 1: Native.DEMO.USE(2); break; default: Native.DEMO.USE(3); break; } return;",
+        "Native.DEMO.USE(2); return;",
+    );
+    stays_with(
+        &[Pass::Constants],
+        "",
+        "switch (as_i32(p0)) { case 0: Native.DEMO.USE(1); break; case 1: Native.DEMO.USE(2); break; default: Native.DEMO.USE(3); break; } return;",
+    );
+}
+
+#[test]
+fn a_local_that_copies_a_temporary_across_blocks_keeps_its_name() {
+    let body = |first: &str, copy: &str, read: &str| {
+        format!(
+            "{first} = Native.DEMO.GET(p0); if (((as_u32(p1) == 0))) {{ Native.DEMO.USE({read}); }} else {{ }} {copy} Native.DEMO.USE2(local_1, local_1); return;"
+        )
+    };
+    let made = ran_with(
+        &[Pass::Coalesce],
+        V,
+        &body("v_000010_0", "local_1 = v_000010_0;", "p1"),
+    );
+    assert_eq!(made.cfg, read(V, &body("local_1", "", "p1")).cfg);
+    // Without the name the temporary stands in for the local.
+    let plain = ran(V, &body("v_000010_0", "local_1 = v_000010_0;", "p1"));
+    assert!(plain
+        .head
+        .vars
+        .contains_key(&Var::Value { at: 0x10, index: 0 }));
+    // Read before it takes the copy, the local still holds what it had: it cannot take the value any earlier.
+    stays_with(
+        &[Pass::Coalesce],
+        V,
+        &body("v_000010_0", "local_1 = v_000010_0;", "local_1"),
+    );
 }

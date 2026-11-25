@@ -10,7 +10,7 @@
 //! ⚠ **A listing is refused, never guessed at.** A name the runtime does not define, a call that
 //! nothing declares or a shape the reader was not written for is an error with its line.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 
 use super::ir::{
@@ -18,6 +18,13 @@ use super::ir::{
     VmType, Width,
 };
 use super::tree::{self, Case, Label};
+
+/// The deepest statements nest, and the deepest an expression does: every reader of the tree recurses.
+// The deepest of 746 listings nests 45 blocks and 36 parentheses.
+const MAX_NESTING: u32 = 256;
+
+/// The targets one tuple assignment may have; the widest of 746 listings has 43.
+const MAX_TUPLE: usize = 1024;
 
 /// Why a listing was refused.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -520,6 +527,10 @@ struct Parser<'a, 'd> {
     /// `None` while the declarations themselves are read.
     decls: Option<&'d Declarations>,
     program: u32,
+    /// The statements and expressions open around the token.
+    depth: u32,
+    /// The offsets of the functions read.
+    offsets: HashSet<u32>,
 }
 
 impl<'a, 'd> Parser<'a, 'd> {
@@ -531,7 +542,23 @@ impl<'a, 'd> Parser<'a, 'd> {
             line,
             decls,
             program: 0,
+            depth: 0,
+            offsets: HashSet::new(),
         }
+    }
+
+    /// Reads what nests one level deeper, refused past [`MAX_NESTING`].
+    fn nested<T>(
+        &mut self,
+        read: impl FnOnce(&mut Self) -> Result<T, ListingError>,
+    ) -> Result<T, ListingError> {
+        if self.depth >= MAX_NESTING {
+            return Err(self.refused(format!("nested more than {MAX_NESTING} deep")));
+        }
+        self.depth += 1;
+        let read = read(self);
+        self.depth -= 1;
+        read
     }
 
     fn refused(&self, what: impl Into<String>) -> ListingError {
@@ -823,10 +850,14 @@ impl<'a, 'd> Parser<'a, 'd> {
 
     /// `[VmFunction(0xOFFSET)]` and the method under it.
     fn function(&mut self) -> Result<tree::Function, ListingError> {
+        let first = self.line;
         self.expect("[")?;
         self.word("VmFunction")?;
         self.expect("(")?;
         let at = self.u32()?;
+        if !self.offsets.insert(at) {
+            return Err(self.refused(format!("a second function at offset {at:06X}")));
+        }
         self.expect(")")?;
         self.expect("]")?;
         self.words(&["public", "static"])?;
@@ -891,6 +922,10 @@ impl<'a, 'd> Parser<'a, 'd> {
             self.statement(&mut body)?;
         }
         self.bump()?;
+        if let Some(name) = undeclared(&head, &body) {
+            let what = format!("`{name}` is named and the function declares none");
+            return Err(ListingError::Syntax { line: first, what });
+        }
         Ok(tree::Function { head, body })
     }
 
@@ -996,6 +1031,10 @@ impl<'a, 'd> Parser<'a, 'd> {
 
     /// Reads one statement into `out`; `v = p++;` alone becomes two.
     fn statement(&mut self, out: &mut Vec<tree::Stmt>) -> Result<(), ListingError> {
+        self.nested(|parser| parser.one_statement(out))
+    }
+
+    fn one_statement(&mut self, out: &mut Vec<tree::Stmt>) -> Result<(), ListingError> {
         let word = match self.tok {
             Tok::Ident(word) => word,
             _ => "",
@@ -1033,8 +1072,13 @@ impl<'a, 'd> Parser<'a, 'd> {
                 self.expect(")")?;
                 self.expect("{")?;
                 let mut cases = Vec::new();
+                let mut labels = BTreeSet::new();
                 while !self.at("}") {
-                    cases.push(self.case()?);
+                    let case = self.case()?;
+                    if !case.labels.iter().all(|label| labels.insert(*label)) {
+                        return Err(self.refused("a case stated twice in one switch"));
+                    }
+                    cases.push(case);
                 }
                 self.bump()?;
                 out.push(tree::Stmt::Switch { value, cases });
@@ -1158,6 +1202,9 @@ impl<'a, 'd> Parser<'a, 'd> {
                 self.bump()?;
                 let mut targets = vec![self.variable()?];
                 while self.eat(",")? {
+                    if targets.len() >= MAX_TUPLE {
+                        return Err(self.refused(format!("a tuple of more than {MAX_TUPLE}")));
+                    }
                     targets.push(self.variable()?);
                 }
                 self.expect(")")?;
@@ -1303,7 +1350,12 @@ impl<'a, 'd> Parser<'a, 'd> {
         }
     }
 
+    // Every way an expression nests comes through here: a parenthesis, an argument, an operator in front.
     fn unary(&mut self) -> Result<Expr, ListingError> {
+        self.nested(Self::one_unary)
+    }
+
+    fn one_unary(&mut self) -> Result<Expr, ListingError> {
         if self.eat("!")? {
             let e = Box::new(self.unary()?);
             return Ok(Expr::Unary { op: UnOp::Not, e });
@@ -1660,6 +1712,40 @@ impl<'a, 'd> Parser<'a, 'd> {
             }),
         }
     }
+}
+
+/// The first name a body uses that its function does not declare: a parameter or a local past those there are, a temporary no declaration names, a cell of a temporary of one cell.
+fn undeclared(head: &Head, body: &[tree::Stmt]) -> Option<String> {
+    let known = |var: Var| match var {
+        Var::Param(n) => n < head.params,
+        Var::Local(n) => n < head.locals,
+        Var::Value { .. } | Var::Stack { .. } => head.vars.contains_key(&var),
+        Var::Global { .. } => true,
+    };
+    let mut found = None;
+    let mut note = |name: String| {
+        found.get_or_insert(name);
+    };
+    tree::each_simple(body, &mut |stmt| {
+        for target in stmt.targets().iter().filter(|target| !known(**target)) {
+            note(target.to_string());
+        }
+    });
+    tree::each_expr(body, &mut |top| {
+        top.walk(&mut |e| match e {
+            Expr::Var(var) | Expr::AddrOf { var, .. } if !known(*var) => note(var.to_string()),
+            Expr::Cell { base, index } => {
+                if let Expr::Var(var) = &**base {
+                    let one = head.vars.get(var).is_some_and(|v| v.width == Width::Cell);
+                    if one && *index > 0 {
+                        note(format!("{var}[{index}]"));
+                    }
+                }
+            }
+            _ => {}
+        });
+    });
+    found
 }
 
 /// `var++` or `var--`: the low 32 bits stepped by one and widened with their sign.

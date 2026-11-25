@@ -6,6 +6,11 @@
 //! and every jump out of it is stated: by falling to the block written next, by `break`,
 //! `continue` or `return`, or by a `goto`. A construct only ever changes which of those states a
 //! jump, so a shape nothing here knows still comes out as the jumps it is.
+//!
+//! The `gotos` rules choose three regions otherwise, each where the choice made without them
+//! leaves a `goto`: an else arm from the jumps inside a then arm, a switch that leaves past its
+//! region, a loop that takes in the tail one of its blocks leaves to. Being choices of region,
+//! they change how the result reads and never what runs.
 
 use std::collections::HashMap;
 
@@ -19,6 +24,9 @@ use super::graph::{predecessors, SCAN};
 /// Constructs open at once; past it a branch, a loop or a switch is written with jumps instead.
 // The printer and every walk of the tree go as deep as the tree nests.
 pub(super) const MAX_NEST: usize = 128;
+
+/// The places past a then arm its blocks may jump to before no else arm is looked for among them.
+const EXITS: usize = 8;
 
 /// One body of a switch being written: the blocks `[start, end)` and the labels that lead to it.
 struct Body {
@@ -51,6 +59,8 @@ struct Loop {
     closed: bool,
     /// Where the loop's test leaves to, where a jump must say so once the loop is written.
     exit: Option<BlockId>,
+    /// The first block of the tail the loop took in after its last block, where it took one.
+    tail: Option<BlockId>,
 }
 
 enum Kind {
@@ -73,6 +83,8 @@ enum Kind {
         cases: Vec<Case>,
         /// Cases that leave at once, written after the bodies.
         extra: Vec<Case>,
+        /// Where the switch leaves to past its region, which a jump states once it is written.
+        past: Option<BlockId>,
     },
     Loop(Loop),
 }
@@ -147,11 +159,13 @@ struct Machine {
     stack: Vec<Scope>,
     /// The block being written.
     b: BlockId,
+    /// Whether the `gotos` rules choose regions too.
+    gotos: bool,
 }
 
-/// The statements of blocks in their laid-out order, and how many `goto`s name each label.
+/// The statements of blocks in their laid-out order, and how many `goto`s name each label; `gotos` turns the `gotos` rules on.
 // Every block's label is in the result; the caller drops those nothing names.
-pub(super) fn structured(blocks: Vec<Block>) -> (Vec<Stmt>, HashMap<Label, u32>) {
+pub(super) fn structured(blocks: Vec<Block>, gotos: bool) -> (Vec<Stmt>, HashMap<Label, u32>) {
     let n = blocks.len();
     let labels: Vec<Label> = blocks
         .iter()
@@ -184,6 +198,7 @@ pub(super) fn structured(blocks: Vec<Block>) -> (Vec<Stmt>, HashMap<Label, u32>)
         returns,
         stack: vec![root],
         b: 0,
+        gotos,
     };
     machine.run();
     let body = machine.stack.pop().map(|root| root.out).unwrap_or_default();
@@ -291,6 +306,75 @@ impl Machine {
         latch - h > SCAN || (h..=latch).any(|p| leads_to(&self.blocks[p].term, after))
     }
 
+    /// Where the loop `[h, latch]` ends once it takes in its tail, if it has one.
+    // The tail is the blocks after the loop that one block of the loop leads to and nothing else,
+    // up to the one place further on that the loop leaves to. `if (found) { ..; break; }` or
+    // `if (done) { ..; return x; }` in a loop: the tail leaves, or runs on to where the loop's
+    // other exits go, so that with the tail inside the loop those exits are `break`.
+    fn loop_tail(&self, h: BlockId, latch: BlockId) -> Option<BlockId> {
+        let (to, ..) = self.ctx();
+        let first = latch + 1;
+        if first >= to || latch - h > SCAN {
+            return None;
+        }
+        // A loop whose head tests and leaves to what follows it reads as that loop already.
+        if let Block {
+            stmts,
+            term: Terminator::Branch { then, els, .. },
+            ..
+        } = &self.blocks[h]
+        {
+            let own = (*then == h + 1 && *els == first) || (*els == h + 1 && *then == first);
+            if stmts.is_empty() && h < latch && own {
+                return None;
+            }
+        }
+        // A second way into the tail would be a `goto`, and a tail that is only a `return` is
+        // written at the jump to it.
+        let entered = matches!(self.preds[first].as_slice(), [p] if (h..=latch).contains(p));
+        if !entered || self.returns[first] {
+            return None;
+        }
+        let mut end: Option<BlockId> = None;
+        for p in h..=latch {
+            for x in self.blocks[p].term.successors() {
+                if x > first && x <= to && !self.returns[x] {
+                    if end.is_some_and(|e| e != x) {
+                        return None;
+                    }
+                    end = Some(x);
+                }
+            }
+        }
+        let end = end?;
+        // A `break` must be what states a jump to `end`.
+        if self.fall_at(end) != Some(end) || end - first > SCAN {
+            return None;
+        }
+        let tail = first..end;
+        for x in tail.clone() {
+            if x > first && self.preds[x].iter().any(|q| !tail.contains(q)) {
+                return None;
+            }
+            let strays = |y: &BlockId| !tail.contains(y) && *y != end && !self.returns[*y];
+            if self.blocks[x].term.successors().iter().any(strays) {
+                return None;
+            }
+        }
+        match &self.blocks[end - 1].term {
+            Terminator::Return(_) | Terminator::Unreachable | Terminator::Jump(_) => Some(end),
+            Terminator::Branch { .. } | Terminator::Switch { .. } => None,
+        }
+    }
+
+    /// Whether the innermost construct is a loop that took in a tail starting at `x`.
+    fn tail_at(&self, x: BlockId) -> bool {
+        match self.stack.last().map(|scope| &scope.kind) {
+            Some(Kind::Loop(lp)) => lp.tail == Some(x),
+            _ => false,
+        }
+    }
+
     /// Opens the loop that starts at the block under the cursor, if one does.
     // The loop is the blocks from here to the last one in the region that jumps back here.
     fn open_loop(&mut self) -> Opened {
@@ -304,11 +388,18 @@ impl Machine {
                 last = Some(last.map_or(p, |l| l.max(p)));
             }
         }
-        let Some(latch) = last else {
+        let Some(mut latch) = last else {
             return Opened::No;
         };
         if self.stack.len() >= MAX_NEST {
             return Opened::No;
+        }
+        let mut tail_from = None;
+        if self.gotos {
+            if let Some(end) = self.loop_tail(h, latch) {
+                tail_from = Some(latch + 1);
+                latch = end - 1;
+            }
         }
         let after = if latch + 1 < to {
             Some(latch + 1)
@@ -371,6 +462,7 @@ impl Machine {
                     continues: 0,
                     closed,
                     exit: tail.then_some(out),
+                    tail: tail_from,
                 };
                 let (to, cont) = match counted {
                     true => (latch, latch),
@@ -430,6 +522,7 @@ impl Machine {
                     continues: 0,
                     closed,
                     exit: Some(exit),
+                    tail: tail_from,
                 };
                 // `continue` in a `do` goes to the test, which is the latch only while the latch holds nothing else.
                 let cont = self.blocks[latch].stmts.is_empty().then_some(latch);
@@ -454,6 +547,7 @@ impl Machine {
             continues: 0,
             closed,
             exit: None,
+            tail: tail_from,
         };
         self.push(label);
         self.stack.push(Scope {
@@ -525,6 +619,58 @@ impl Machine {
         }
     }
 
+    /// Where an else arm ends and what follows the `if`, when a then arm that ends before `far` leaves to `e`.
+    fn else_for(&self, far: BlockId, e: BlockId) -> Option<(BlockId, BlockId)> {
+        let (to, follow, brk, cont) = self.ctx();
+        if brk == Some(e) {
+            return None;
+        }
+        let between = e > far && e <= to;
+        let inside = e < to && cont != Some(e);
+        if between && (inside || (e == to && follow == Some(e))) {
+            // The then arm leaves over the blocks up to `e`: they are the else arm.
+            Some((e, e))
+        } else if follow == Some(e) && far < to && !between {
+            // It leaves to where the region does: the rest of the region is the else arm.
+            Some((to, e))
+        } else {
+            None
+        }
+    }
+
+    /// The else arm and the follow that the one place past the then arm `[near, far)` its blocks jump to makes, where one place makes them.
+    // The arm's last block says nothing here (it returns, say), but a block inside it leaves
+    // past `far`: with the blocks in between as the else arm, that jump runs off the then arm.
+    // ⚠ Only where one place does: with two, either choice leaves the other a `goto` into an arm.
+    fn inner_exit(&self, near: BlockId, far: BlockId) -> Option<(BlockId, BlockId)> {
+        if far - near > SCAN {
+            return None;
+        }
+        let (_, _, brk, cont) = self.ctx();
+        let mut seen: Vec<BlockId> = Vec::new();
+        let mut arms = None;
+        for p in near..far {
+            for x in self.blocks[p].term.successors() {
+                // A `break`, a `continue` or a `return` states the jump already.
+                let stated = self.returns[x] || brk == Some(x) || cont == Some(x);
+                if x <= far || stated || seen.contains(&x) {
+                    continue;
+                }
+                if seen.len() == EXITS {
+                    return None;
+                }
+                seen.push(x);
+                if let Some(made) = self.else_for(far, x) {
+                    if arms.is_some() {
+                        return None;
+                    }
+                    arms = Some(made);
+                }
+            }
+        }
+        arms
+    }
+
     fn branch(&mut self, b: BlockId, fall: Option<BlockId>) {
         let taken = std::mem::replace(&mut self.blocks[b].term, Terminator::Unreachable);
         let Terminator::Branch { cond, then, els } = taken else {
@@ -545,7 +691,10 @@ impl Machine {
         if let Some((far, on_failure)) = skips {
             let open = near < to && brk != Some(far) && self.stack.len() < MAX_NEST;
             let within = far > near && far <= to;
-            if open && !within && follow == Some(far) && cont != Some(far) {
+            // `if (c) continue;` reads better than nesting what follows it, but for the tail a
+            // loop took in: that is the arm of the test that leaves to it.
+            let nests = cont != Some(far) || self.tail_at(near);
+            if open && !within && follow == Some(far) && nests {
                 // The rest of the region runs or is skipped: the test leaves to where the region leaves.
                 let cond = if on_failure { cond::negate(cond) } else { cond };
                 self.stack.push(Scope {
@@ -567,21 +716,16 @@ impl Machine {
                 let mut after = far;
                 // An else is what nothing of the then arm reaches.
                 let apart = !self.preds[far].iter().any(|p| (near..far).contains(p));
-                let exit = self
+                let mut arms = self
                     .tail_exit(near, far)
-                    .filter(|e| apart && brk != Some(*e));
-                if let Some(e) = exit {
-                    let between = e > far && e <= to;
-                    let inside = e < to && cont != Some(e);
-                    if between && (inside || (e == to && follow == Some(e))) {
-                        // The then arm leaves over the blocks up to `e`: they are the else arm.
-                        else_end = Some(e);
-                        after = e;
-                    } else if follow == Some(e) && far < to && !between {
-                        // It leaves to where the region does: the rest of the region is the else arm.
-                        else_end = Some(to);
-                        after = e;
-                    }
+                    .filter(|_| apart)
+                    .and_then(|e| self.else_for(far, e));
+                if arms.is_none() && apart && self.gotos {
+                    arms = self.inner_exit(near, far);
+                }
+                if let Some((end, join)) = arms {
+                    else_end = Some(end);
+                    after = join;
                 }
                 let cond = if on_failure { cond::negate(cond) } else { cond };
                 self.stack.push(Scope {
@@ -690,11 +834,12 @@ impl Machine {
                 }
             }
             let last = inside[inside.len() - 1];
+            let said = exit.is_some();
             if exit.is_none() && inside.len() >= 2 && default == last {
                 // No body says, and the default is past every case: it is what follows the switch.
                 exit = Some(last);
             }
-            let exit = exit.unwrap_or_else(|| {
+            let mut exit = exit.unwrap_or_else(|| {
                 // The last body runs to the first block something before it also leads to.
                 let limit = to.min(last + 1 + SCAN);
                 let mut x = last + 1;
@@ -703,7 +848,39 @@ impl Machine {
                 }
                 x
             });
-            let after = if exit < to { Some(exit) } else { follow };
+            let mut after = if exit < to { Some(exit) } else { follow };
+            // No body says where the switch ends inside the region, and the bodies that say
+            // leave past it to one place: the switch runs to the region's end and leaves there,
+            // so that those jumps are its `break`.
+            let mut past: Option<BlockId> = None;
+            if !said && self.gotos && to - b <= SCAN {
+                let mut one = true;
+                for start in inside.iter().copied().skip(1) {
+                    if let Terminator::Jump(x) = &self.blocks[start - 1].term {
+                        // A `return` or a `continue` states the jump already.
+                        if *x > to && !self.returns[*x] && cont != Some(*x) {
+                            one &= past.is_none_or(|place| place == *x);
+                            past = Some(*x);
+                        }
+                    }
+                }
+                // ⚠ Not where anything of the switch leaves to where it would end otherwise:
+                // that jump would become a `goto`. A default taken for what follows becomes a
+                // body, so the switch's own jump to it is none.
+                let defaulted = exit == last && default == last;
+                let stays = after.filter(|nat| Some(*nat) != past).is_some_and(|nat| {
+                    let own = default == nat || cases.iter().any(|case| case.1 == nat);
+                    (own && !defaulted)
+                        || (b + 1..exit).any(|x| leads_to(&self.blocks[x].term, nat))
+                });
+                if !one || stays {
+                    past = None;
+                }
+            }
+            if let Some(place) = past {
+                exit = to;
+                after = Some(place);
+            }
             let starts: Vec<BlockId> = inside.into_iter().filter(|x| *x < exit).collect();
             let mut bodies: Vec<Body> = starts
                 .iter()
@@ -745,6 +922,7 @@ impl Machine {
                     current: 0,
                     cases: Vec::new(),
                     extra: extra.into_iter().map(|(_, case)| case).collect(),
+                    past,
                 },
                 to: first_end,
                 // A body that runs off its end runs into the next; the last has nowhere to run to.
@@ -815,6 +993,7 @@ impl Machine {
                 current,
                 mut cases,
                 extra,
+                past,
             } => {
                 let labels = bodies
                     .get_mut(current)
@@ -831,12 +1010,19 @@ impl Machine {
                             current: current + 1,
                             cases,
                             extra,
+                            past,
                         };
                         self.stack.push(scope);
                     }
                     None => {
                         cases.extend(extra);
                         self.push(Stmt::Switch { value, cases });
+                        // A `break` of the switch lands here, short of where it leaves to.
+                        if let Some(place) = past {
+                            let fall = self.fall_at(self.b);
+                            let tail = self.leave(place, fall);
+                            self.extend(tail);
+                        }
                     }
                 }
             }

@@ -7,28 +7,39 @@
 #[path = "values_cells.rs"]
 mod cells;
 #[path = "values_effects.rs"]
-mod effects;
+pub(super) mod effects;
 #[path = "values_fold.rs"]
-mod fold;
+pub(super) mod fold;
 #[path = "values_joins.rs"]
 mod joins;
 
 use crate::gta6::script::cfg::{self, Block, BlockId, Cfg, Terminator, ENTRY};
 use crate::gta6::script::ir::{BinOp, Expr, Kind, Scalar, Stmt, StoreKind, UnOp, Var};
 use crate::gta6::script::names::Names;
-use crate::gta6::script::Stats;
+use crate::gta6::script::{Context, Pass, Stats};
 
 /// The rounds of rewrites a function is given: each feeds the next, and few functions gain past the third.
 const ROUNDS: usize = 6;
 
 /// Folds each single-use temporary into its use, makes one variable of the values a join carries and one of the cells of a value, and removes what is dead.
+pub fn run(f: &mut cfg::Function, names: &Names, stats: &mut Stats) {
+    run_in(f, &Context::baseline(names), stats);
+}
+
+/// [`run`] as the pipeline calls it: `escape`, `constants` and `coalesce` each switch on a finer rule of this pass.
+// `escape`: two accesses are told apart by the variables their addresses are in, and an allocation
+// may change places with a call. `constants`: a test of constants is decided at every kind it is
+// taken at. `coalesce`: a local that copies a temporary keeps its name.
 // `Stats` counts temporaries on the trees either side of the passes, so nothing is counted here.
-pub fn run(f: &mut cfg::Function, _names: &Names, _stats: &mut Stats) {
+pub fn run_in(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
     if f.head.incomplete.is_some() || f.cfg.blocks.is_empty() {
         return;
     }
+    let finer = cx.options.on(Pass::Escape);
+    let ordered = cx.options.on(Pass::Constants);
+    let keep = cx.options.on(Pass::Coalesce);
     named_accesses(&mut f.cfg);
-    tidy(&mut f.cfg);
+    tidy(&mut f.cfg, ordered);
     joins::split_tuples(&mut f.cfg);
     for _ in 0..ROUNDS {
         let mut changed = fold::dead(f);
@@ -36,18 +47,22 @@ pub fn run(f: &mut cfg::Function, _names: &Names, _stats: &mut Stats) {
         changed |= super::types::narrowings(f);
         changed |= fold::zeroes(f);
         changed |= fold::mirror(f);
-        changed |= fold::fold(f);
-        changed |= fold::copies(f);
+        changed |= fold::fold(f, finer);
+        changed |= fold::copies(f, keep);
         changed |= joins::roots(f);
         changed |= joins::merge(f);
         changed |= cells::gather(f);
-        changed |= tidy(&mut f.cfg);
+        changed |= tidy(&mut f.cfg, ordered);
         if !changed {
             break;
         }
     }
     fold::steps(f);
-    // `head.vars` declares the temporaries the code still mentions and no other.
+    declared(f);
+}
+
+/// Leaves `head.vars` declaring the temporaries the code still mentions and no other.
+pub(super) fn declared(f: &mut cfg::Function) {
     let facts = effects::Facts::of(f);
     f.head
         .vars
@@ -111,15 +126,32 @@ fn named_accesses(cfg: &mut Cfg) {
     });
 }
 
+/// How two constant cells compare as operands of the kind `at`; `None` for a kind that orders nothing, `Some(None)` where one is no number.
+fn compared(at: &Kind, l: u64, r: u64) -> Option<Option<std::cmp::Ordering>> {
+    Some(match at {
+        Kind::I8 | Kind::U8 | Kind::I16 | Kind::U16 | Kind::I32 => {
+            Some((l as i32).cmp(&(r as i32)))
+        }
+        Kind::U32 => Some((l as u32).cmp(&(r as u32))),
+        Kind::I64 => Some((l as i64).cmp(&(r as i64))),
+        Kind::U64 => Some(l.cmp(&r)),
+        Kind::F32 => f32::from_bits(l as u32).partial_cmp(&f32::from_bits(r as u32)),
+        Kind::F64 => f64::from_bits(l).partial_cmp(&f64::from_bits(r)),
+        _ => return None,
+    })
+}
+
 /// The cell an expression of constants, integer readings and tests of equality comes to; `None` for any other.
-fn constant(e: &Expr, depth: u32) -> Option<u64> {
+// With `ordered`, the readings as floats and the tests of order too, each at the kind its operator
+// works at. ⚠ A test of a float that is no number is false whichever way it is asked, but for `!=`.
+fn constant(e: &Expr, depth: u32, ordered: bool) -> Option<u64> {
     let d = depth.checked_sub(1)?;
     Some(match e {
         Expr::Const(c) => c.bits,
-        Expr::Truth(e) => u64::from(constant(e, d)? != 0),
-        Expr::Unary { op: UnOp::Not, e } => u64::from(constant(e, d)? == 0),
+        Expr::Truth(e) => u64::from(constant(e, d, ordered)? != 0),
+        Expr::Unary { op: UnOp::Not, e } => u64::from(constant(e, d, ordered)? == 0),
         Expr::Cast { to, e } => {
-            let bits = constant(e, d)?;
+            let bits = constant(e, d, ordered)?;
             match to {
                 Scalar::I8 => bits as i8 as i64 as u64,
                 Scalar::U8 => u64::from(bits as u8),
@@ -128,6 +160,8 @@ fn constant(e: &Expr, depth: u32) -> Option<u64> {
                 Scalar::I32 => bits as i32 as i64 as u64,
                 Scalar::U32 => u64::from(bits as u32),
                 Scalar::I64 | Scalar::U64 => bits,
+                Scalar::F32 if ordered => u64::from(bits as u32),
+                Scalar::F64 if ordered => bits,
                 Scalar::F32 | Scalar::F64 => return None,
             }
         }
@@ -137,21 +171,39 @@ fn constant(e: &Expr, depth: u32) -> Option<u64> {
             l,
             r,
         } => {
-            let (l, r) = (constant(l, d)?, constant(r, d)?);
+            let (l, r) = (constant(l, d, ordered)?, constant(r, d, ordered)?);
             let equal = match at {
                 Kind::Bool => (l != 0) == (r != 0),
                 Kind::I32 | Kind::U32 => l as u32 == r as u32,
                 Kind::I64 | Kind::U64 | Kind::Unknown => l == r,
+                Kind::F32 | Kind::F64 if ordered => {
+                    compared(at, l, r)?.is_some_and(std::cmp::Ordering::is_eq)
+                }
                 _ => return None,
             };
             u64::from(equal == (*op == BinOp::Eq))
+        }
+        Expr::Binary {
+            op: op @ (BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge),
+            at,
+            l,
+            r,
+        } if ordered => {
+            let (l, r) = (constant(l, d, ordered)?, constant(r, d, ordered)?);
+            let order = compared(at, l, r)?;
+            u64::from(order.is_some_and(|order| match op {
+                BinOp::Lt => order.is_lt(),
+                BinOp::Le => order.is_le(),
+                BinOp::Gt => order.is_gt(),
+                _ => order.is_ge(),
+            }))
         }
         _ => return None,
     })
 }
 
-/// Removes the blocks nothing reaches and those that only jump on, and joins a block to the one block that leads to it.
-fn tidy(cfg: &mut Cfg) -> bool {
+/// Removes the blocks nothing reaches and those that only jump on, and joins a block to the one block that leads to it; `ordered` is [`constant`]'s.
+fn tidy(cfg: &mut Cfg, ordered: bool) -> bool {
     let n = cfg.blocks.len();
     let mut changed = false;
 
@@ -183,8 +235,18 @@ fn tidy(cfg: &mut Cfg) -> bool {
             }
             // A test of constants goes one way.
             Terminator::Branch { cond, then, els } => {
-                constant(cond, 16).map(|cell| if cell != 0 { *then } else { *els })
+                constant(cond, 16, ordered).map(|cell| if cell != 0 { *then } else { *els })
             }
+            // A switch on a constant goes to the case that is the constant as an `int`.
+            Terminator::Switch {
+                value,
+                cases,
+                default,
+            } if ordered => constant(value, 16, ordered).map(|cell| {
+                let wanted = i64::from(cell as i32);
+                let case = cases.iter().find(|case| case.0 == wanted);
+                case.map_or(*default, |case| case.1)
+            }),
             _ => None,
         };
         if let Some(target) = met {

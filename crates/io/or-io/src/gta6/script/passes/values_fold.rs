@@ -39,7 +39,10 @@ fn renamed(top: &mut Expr, var: Var, to: Var) {
 }
 
 /// What is left of a value nothing reads: nothing, the call it makes, or (`Err`) all of it.
-fn leftover(facts: &Facts, value: Expr) -> Result<Option<Expr>, Expr> {
+pub(in crate::gta6::script::passes) fn leftover(
+    facts: &Facts,
+    value: Expr,
+) -> Result<Option<Expr>, Expr> {
     // A global is read by its name and through no pointer: not reading it loses nothing either.
     if Effects::of_expr(facts, &value).free() || inert(&value) {
         return Ok(None);
@@ -503,13 +506,13 @@ fn guarded(top: &Expr, var: Var) -> bool {
     guarded
 }
 
-/// Moves the value statement `i` assigns to `var` into site `k`, the one place that reads it, where nothing between forbids.
+/// Moves the value statement `i` of block `b` assigns to `var` into site `k`, the one place that reads it, where nothing between forbids.
 fn moved(
     facts: &Facts,
     stmts: &mut [Option<Stmt>],
     term: &mut Terminator,
     effects: &mut [Option<Effects>],
-    (i, var, k): (usize, Var, usize),
+    (b, i, var, k): (BlockId, usize, Var, usize),
 ) -> bool {
     let Some(Some(Stmt::Assign { value, .. })) = stmts.get(i) else {
         return false;
@@ -524,7 +527,8 @@ fn moved(
         if passed > REACH {
             return false;
         }
-        let crossed = effects[j].get_or_insert_with(|| Effects::of_stmt(facts, stmt));
+        let crossed =
+            effects[j].get_or_insert_with(|| Effects::of_stmt(facts, stmt).placed((b, j)));
         if !moving.may_cross(crossed) {
             return false;
         }
@@ -574,7 +578,7 @@ fn moved(
     true
 }
 
-fn fold_block(facts: &Facts, block: &mut Block) -> bool {
+fn fold_block(facts: &Facts, b: BlockId, block: &mut Block) -> bool {
     let mut stmts: Vec<Option<Stmt>> = std::mem::take(&mut block.stmts)
         .into_iter()
         .map(Some)
@@ -602,7 +606,7 @@ fn fold_block(facts: &Facts, block: &mut Block) -> bool {
                 &mut stmts,
                 &mut block.term,
                 &mut effects,
-                (i, var, k),
+                (b, i, var, k),
             ) {
                 assigned.remove(&var);
                 changed = true;
@@ -627,12 +631,15 @@ fn fold_block(facts: &Facts, block: &mut Block) -> bool {
     changed
 }
 
-/// Moves the value of each temporary that is assigned once and read once into the expression that reads it.
-pub(super) fn fold(f: &mut cfg::Function) -> bool {
-    let facts = Facts::of(f);
+/// Moves the value of each temporary that is assigned once and read once into the expression that reads it; `finer` tells two accesses apart as [`Facts::finer`] does.
+pub(super) fn fold(f: &mut cfg::Function, finer: bool) -> bool {
+    let facts = match finer {
+        true => Facts::finer(f),
+        false => Facts::of(f),
+    };
     let mut changed = false;
-    for block in &mut f.cfg.blocks {
-        changed |= fold_block(&facts, block);
+    for (b, block) in f.cfg.blocks.iter_mut().enumerate() {
+        changed |= fold_block(&facts, b, block);
     }
     changed
 }
@@ -644,7 +651,9 @@ type Site = (BlockId, usize);
 // `t = s;` with `s` assigned at most once and reached by no address. Where that one assignment
 // comes before the copy on every path, and the copy before every read of `t`, no path leads from
 // the assignment to a read without passing the copy again: `t` and `s` are equal at every read.
-pub(super) fn copies(f: &mut cfg::Function) -> bool {
+// With `keep`, a local that copies a temporary keeps its name: by the same proof the
+// temporary's one assignment can assign the local, which nothing reads before the copy.
+pub(super) fn copies(f: &mut cfg::Function, keep: bool) -> bool {
     let facts = Facts::of(f);
     let uses = |var: Var| facts.uses.get(&var).copied().unwrap_or_default();
     let one_cell = |var: Var| {
@@ -743,18 +752,68 @@ pub(super) fn copies(f: &mut cfg::Function) -> bool {
     for target in late {
         held.remove(&target);
     }
-    if held.is_empty() {
+    // The temporaries that give their one assignment to the local they are copied into.
+    // In the order of the blocks, so that of two locals copied from one temporary the same one is chosen every time.
+    let mut renamed: HashMap<Var, Var> = HashMap::new();
+    if keep {
+        for stmt in f.cfg.blocks.iter().flat_map(|block| &block.stmts) {
+            let Stmt::Assign {
+                target: local @ Var::Local(_),
+                value: Expr::Var(source),
+            } = stmt
+            else {
+                continue;
+            };
+            let lone = source.is_temporary() && uses(*source).defs == 1;
+            let copied = held.get(local) == Some(&Expr::Var(*source));
+            if lone && copied && !renamed.contains_key(source) {
+                renamed.insert(*source, *local);
+            }
+        }
+        for local in renamed.values() {
+            held.remove(local);
+        }
+        // Every other copy of such a temporary is a copy of the local it became.
+        for source in held.values_mut() {
+            let local = match &*source {
+                Expr::Var(var) => renamed.get(var).copied(),
+                _ => None,
+            };
+            if let Some(local) = local {
+                *source = Expr::Var(local);
+            }
+        }
+    }
+    if held.is_empty() && renamed.is_empty() {
         return false;
     }
 
     for block in &mut f.cfg.blocks {
-        block.stmts.retain(
-            |stmt| !matches!(stmt, Stmt::Assign { target, .. } if held.contains_key(target)),
-        );
+        block.stmts.retain(|stmt| match stmt {
+            Stmt::Assign {
+                target,
+                value: Expr::Var(source),
+            } if renamed.get(source) == Some(target) => false,
+            Stmt::Assign { target, .. } => !held.contains_key(target),
+            _ => true,
+        });
+        for stmt in &mut block.stmts {
+            let targets: &mut [Var] = match stmt {
+                Stmt::Assign { target, .. } => std::slice::from_mut(target),
+                Stmt::AssignMany { targets, .. } => &mut targets[..],
+                _ => &mut [],
+            };
+            for target in targets {
+                if let Some(local) = renamed.get(target) {
+                    *target = *local;
+                }
+            }
+        }
         let mut rename = |top: &mut Expr| {
             top.walk_mut(&mut |e| {
                 let source = match &*e {
-                    Expr::Var(read) => held.get(read).cloned(),
+                    Expr::Var(read) => (held.get(read).cloned())
+                        .or_else(|| renamed.get(read).map(|local| Expr::Var(*local))),
                     _ => None,
                 };
                 if let Some(source) = source {

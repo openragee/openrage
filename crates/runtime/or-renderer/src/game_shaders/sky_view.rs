@@ -7,6 +7,7 @@ use glam::{Mat4, Vec3};
 
 use super::deferred::{DEPTH_STENCIL_FORMAT, HDR_FORMAT};
 use super::engine::EngineConstants;
+use super::sky_stars::{PointStars, StarsPass};
 
 /// How many texels the table has round the compass and from the horizon to the zenith.
 pub const AROUND: u32 = 128;
@@ -22,6 +23,8 @@ pub struct SkyView {
     /// What the night adds over the table: the glow of the air and the stars.
     pub night: Option<Night>,
     pub maps: Option<Arc<SkyMaps>>,
+    /// The catalogue's point stars.
+    pub stars: Option<Arc<PointStars>>,
 }
 
 /// One map of the night sky, every level as 8-bit RGBA, the largest first.
@@ -38,6 +41,8 @@ pub struct SkyMap {
 pub struct SkyMaps {
     pub stars: Option<SkyMap>,
     pub airglow: Option<SkyMap>,
+    /// The profile each point star is laid with.
+    pub star: Option<SkyMap>,
 }
 
 /// Maps are read once and held: two are the same only where they are one.
@@ -64,6 +69,8 @@ pub struct Night {
     /// The rows of the turn from the frame's axes (x east, y north, z up) to the star map's.
     pub turn: [[f32; 3]; 3],
     pub moon: [f32; 3],
+    /// The frame's scale of every point star's size and colour, the power its profile is raised to twice, and one where they are drawn.
+    pub point: [f32; 4],
 }
 
 /// A layer of clouds marched through over the table, its light in the frame's units.
@@ -115,6 +122,7 @@ impl SkyView {
             clouds: None,
             night: None,
             maps: None,
+            stars: None,
         }
     }
 
@@ -494,7 +502,11 @@ fn words(unproject: Mat4, eye: Vec3, view: &SkyView) -> Vec<f32> {
 }
 
 /// A texture of `map`'s levels, or one black texel where there is none.
-fn map_texture(device: &wgpu::Device, queue: &wgpu::Queue, map: Option<&SkyMap>) -> wgpu::Texture {
+pub(super) fn map_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    map: Option<&SkyMap>,
+) -> wgpu::Texture {
     let black = SkyMap {
         width: 1,
         height: 1,
@@ -556,6 +568,7 @@ pub struct SkyViewPass {
     written: Cell<Option<Arc<Vec<[f32; 3]>>>>,
     maps: RefCell<Option<Arc<SkyMaps>>>,
     shown: Cell<bool>,
+    stars: StarsPass,
 }
 
 /// A one-texel map left as the device made it, all zeros.
@@ -732,6 +745,7 @@ impl SkyViewPass {
             written: Cell::new(None),
             maps: RefCell::new(None),
             shown: Cell::new(false),
+            stars: StarsPass::new(device),
         }
     }
 
@@ -791,11 +805,20 @@ impl SkyViewPass {
             0,
             bytemuck::cast_slice(&words(unproject, eye, view)),
         );
+        let profile = view.maps.as_deref().and_then(|m| m.star.as_ref());
+        self.stars.write(
+            queue,
+            (engine.projection, engine.view),
+            view.night.as_ref(),
+            view.exposure,
+            (view.stars.as_ref(), profile),
+        );
     }
 
-    /// Add the sky into `pass`, where a frame was written with a table.
+    /// Add the sky into `pass`, where a frame was written with a table: the point stars first, so that the clouds in front of the sky hide them.
     pub fn record(&self, pass: &mut wgpu::RenderPass<'_>) {
         if self.shown.get() {
+            self.stars.record(pass);
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &*self.bind.borrow(), &[]);
             pass.draw(0..3, 0..1);

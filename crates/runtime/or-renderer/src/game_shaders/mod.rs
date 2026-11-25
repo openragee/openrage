@@ -31,6 +31,7 @@ pub mod samplers;
 pub mod screen;
 pub mod shadow;
 pub mod sky;
+pub mod sky_stars;
 pub mod sky_view;
 pub mod spot_lights;
 pub mod sprite;

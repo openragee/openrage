@@ -367,6 +367,7 @@ pub fn day_of_moment(
             tables.latitude(eye.y),
         )),
         maps: super::sky_night::maps(),
+        stars: None,
     };
     let post = post_of(&|name, default| visual.get_f32(name, default), &moment.own);
     Day {

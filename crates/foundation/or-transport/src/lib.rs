@@ -1,3 +1,5 @@
+pub mod clock;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimeRange {
     pub start: f32,

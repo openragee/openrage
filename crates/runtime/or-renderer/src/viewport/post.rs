@@ -424,7 +424,7 @@ impl Post {
             return;
         };
         let kept = self.kept.get();
-        let now = Instant::now();
+        let now = or_transport::clock::now();
         let seconds = kept
             .at
             .map_or(0.0, |at| now.duration_since(at).as_secs_f32());
@@ -471,6 +471,17 @@ impl Post {
             eye,
             at: Some(now),
             ..kept
+        });
+    }
+
+    /// Forget the history and start the camera's offsets from their first, so that a frame drawn a given number of frames later is one frame whatever came before.
+    pub(super) fn restart(&self) {
+        self.kept.set(Kept {
+            frame: 0,
+            written: 0,
+            valid: false,
+            at: None,
+            ..self.kept.get()
         });
     }
 

@@ -422,6 +422,11 @@ The script is one step per line, and `#` starts a comment. It is read whole
 before anything is drawn, so a wrong line fails at once with its number.
 Coordinates are points on a 1600×900 screen unless `size` changes it.
 
+A run draws on a fixed clock, `or_transport::clock`: each frame is a sixtieth
+of a second whatever it took, the game time moves a sixtieth a frame from
+where `world converge` last started it, and random draws start from one seed,
+so that what reads that clock draws the same frames in two runs.
+
 | Step | Does |
 |---|---|
 | `size W H` | sets the screen, in points |
@@ -454,7 +459,8 @@ Coordinates are points on a 1600×900 screen unless `size` changes it.
 | `world camera X Y Z YAW PITCH [FOV]` | puts the World screen's camera at a place in metres, with its yaw and pitch in degrees (a yaw of 0 looks along +Y and a growing yaw turns towards −X) and, where given, its vertical field of view in degrees; it waits for the install's index first, because the viewer moves its camera when it takes one; the World panel's Copy the camera writes this line. Every `world` step needs `game gta6 FOLDER` and `workspace World` before it |
 | `world hour H` | sets the hour, from 0 up to 24, of what the world places and of the light it is drawn in, and stops the day |
 | `world clean on`, `world clean off` | draws the world alone over the whole window, with no panel, line or toast over it, so that a `shot` is the frame at the size `size` gives; `off` puts the view back in the dock |
-| `world settle [SECONDS]` | draws frames until the viewer holds an index, waits for no map, model or texture, and nothing streamed in has changed for a second and a half; after `SECONDS`, 180 with no number, the run fails and says what was still arriving |
+| `world settle [SECONDS]` | draws frames until the viewer holds an index, waits for no map, model or texture, the exposure has arrived, and nothing streamed in has changed for two frames in a row; after `SECONDS`, 180 with no number, the run fails and says what was still arriving |
+| `world converge [SECONDS]` | over a settled world, twice in a row with nothing arriving, has the exposure taken whole from the camera's place and waits for it to arrive, then forgets the temporal history and draws 64 frames from the first camera offset with the game time started at nought, so that a `shot` after it is the same frame in any run; after `SECONDS`, 120 with no number, the run fails |
 | `world dump FILE` | writes, as JSON in the output folder, what the World screen's viewer wants and draws at its camera: the names of the maps wanted and loaded, the nodes of the loaded maps and those that draw by kind and level, the instances its lists draw, its far cards, the hour and the groups on, and each node that draws with how opaque; `FILE` is a name, not a path |
 | `world modes MODE…` | streams the game modes named, each `base`, `story` or `minigames`, in place of those on; the groups on follow them |
 | `world fly VX VY VZ SECONDS` | draws frames for `SECONDS`, moving the World screen's camera by the velocity given in metres a second as each frame is drawn, so that a `world dump` after it sees the world as a moving camera does |

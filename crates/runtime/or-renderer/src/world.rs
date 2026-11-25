@@ -271,8 +271,6 @@ pub(crate) struct World {
     pub(crate) terrain: Option<shadow_terrain::TerrainShadow>,
     /// What a material's own light is multiplied by: the exposure the day's light is given at, 1 where the frame keeps its own day.
     exposure: f32,
-    /// When the world was made: the wind moves by the seconds since.
-    started: std::time::Instant,
     /// The lamps that light what blends, nearest first.
     lamps: Vec<WorldLamp>,
     /// The wind the grass bends in.
@@ -517,7 +515,6 @@ impl World {
             focus: ShadowFocus::FREE,
             terrain: None,
             exposure: 1.0,
-            started: std::time::Instant::now(),
             lamps: Vec::new(),
             wind: WorldWind::default(),
             alike: RefCell::default(),
@@ -840,7 +837,7 @@ impl World {
             .to_vec();
         let lamps = self.lamps.len().min(WORLD_LAMPS) as f32;
         // ⚠ Seconds are kept under a day so that a float still holds a frame's step.
-        let seconds = self.started.elapsed().as_secs_f32() % 86_400.0;
+        let seconds = (or_transport::clock::game_seconds() % 86_400.0) as f32;
         light.push([night, self.exposure, lamps, seconds]);
         light.extend(lamps::rows(&self.lamps));
         light.extend(self.wind.rows());

@@ -77,7 +77,9 @@ without a target returns Gen8 files only, which matters because a Gen9 drawable
 read through a Gen8 reader returns plausible zeros rather than an error.
 Staging a corpus is `crates/io/or-io-verify/tests/fixtures/README.md`.
 
-**or-transport** is the previews' shared playback clock.
+**or-transport** is the previews' shared playback clock, and in `clock` the
+frame and game clock and the random source a shots run fixes, which the
+renderer reads.
 
 ## IO crates
 

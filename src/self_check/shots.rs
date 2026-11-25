@@ -41,6 +41,12 @@ const DISCOVERY_DEADLINE: Duration = Duration::from_secs(30);
 /// How long the `picker` step draws the start page before its shot.
 const LOGO_SETTLE: Duration = Duration::from_secs(1);
 
+/// How far the fixed clock of a run moves a frame, the step the shell hands egui too.
+const FRAME_STEP: Duration = Duration::from_nanos(16_666_667);
+
+/// What every run's random draws start from.
+const RANDOM_SEED: u64 = 0x5EED;
+
 /// The exit code.
 pub fn run(script: &Path, out: &Path) -> i32 {
     if let Some(limit) = watched::limit() {
@@ -62,6 +68,8 @@ fn run_script(script: &Path, out: &Path) -> Result<(), String> {
     // fails before a long run rather than after it.
     let steps = parse(&text)?;
     std::fs::create_dir_all(out).map_err(|e| format!("cannot create {}: {e}", out.display()))?;
+    // A frame is a sixtieth of a second and every run draws from one seed, so that two runs draw the same frames.
+    or_transport::clock::fix(FRAME_STEP, RANDOM_SEED);
 
     let mut state = AppState::new();
     let (device, queue) = super::headless_gpu()?;
@@ -413,6 +421,7 @@ impl Shell {
         capture: Option<&Path>,
     ) -> Result<(), String> {
         self.stop_once_lost(state)?;
+        or_transport::clock::tick();
         state.poll_load_result();
         state.poll_save_result();
         // No dialog opens in a script, so a document never saved stays unsaved and its close is called off.

@@ -52,6 +52,8 @@ image.workspace = true
 or-io.workspace = true
 # The day's floor on a light direction, which the shadow direction shares.
 or-title.workspace = true
+# The frame and game clock a shots run fixes, so that two runs draw the same frames.
+or-transport.workspace = true
 
 # Pre-flighting WGSL before wgpu sees it, since wgpu answers a bad module with
 # a panic rather than an error. Shared with the shader baker so both ends of

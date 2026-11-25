@@ -57,6 +57,16 @@ fn point_light_at(lights: &FrameLights, at: f32, d: f32) -> f32 {
 }
 
 #[test]
+fn where_the_placed_lights_stand_is_one_value_whatever_order_they_come_in() {
+    let a = placed(LightKind::Point, 1.0, ALL_HOURS);
+    let mut b = a;
+    b.light.position[2] = 0.001;
+    let c = placed(LightKind::Spot, 9.0, ALL_HOURS);
+    assert_eq!(Placed::of(&[a, b, c]), Placed::of(&[c, b, a]));
+    assert_ne!(Placed::of(&[a, c]), Placed::of(&[a]));
+}
+
+#[test]
 fn the_nearest_by_the_edge_of_their_reach_are_kept_however_bright_a_far_one_is() {
     let mut far = placed(LightKind::Point, 60.0, ALL_HOURS);
     far.light.intensity = 10_000.0;

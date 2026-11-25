@@ -133,7 +133,7 @@ pub fn lod_lamps(lod: &MapLod, parent: &MapLod, reach: &LodReach) -> Vec<Lamp> {
 }
 
 /// Where the placed lights stand, to find the level-of-detail lights they stand in for.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Placed {
     at: std::collections::HashMap<[i64; 3], Vec<Vec3>>,
     /// The box of them, [`SAME_PLACE`] wider each way.
@@ -158,6 +158,14 @@ impl Placed {
             (out.low, out.high) = (out.low.min(p), out.high.max(p));
         }
         (out.low, out.high) = (out.low - SAME_PLACE, out.high + SAME_PLACE);
+        // The same places in whatever order the maps gave them make an equal value
+        for cell in out.at.values_mut() {
+            cell.sort_unstable_by(|a, b| {
+                a.to_array()
+                    .partial_cmp(&b.to_array())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
         out
     }
 

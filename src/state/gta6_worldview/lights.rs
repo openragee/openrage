@@ -115,11 +115,12 @@ fn lights_of(model: &RbmModel, index: &WorldIndex) -> Option<MapLights> {
     Some(out)
 }
 
-/// Make `lists` the level-of-detail lamps of each map of `loaded` whose parent is loaded too, making again only those of a map or parent that came or went.
+/// Make `lists` the level-of-detail lamps of each map of `loaded` whose parent is loaded too, but for those a placed light of `near` stands in for, making again only those of a map or parent that came or went.
 fn relist(
     loaded: &HashMap<u32, MapLights>,
     reach: &LodReach,
     lists: &mut HashMap<u32, Option<LodList>>,
+    near: &Placed,
 ) {
     lists.retain(|name, list| {
         (loaded.get(name)).is_some_and(|m| list.is_some() == loaded.contains_key(&m.parent))
@@ -127,7 +128,9 @@ fn relist(
     for (name, m) in loaded {
         lists.entry(*name).or_insert_with(|| {
             let parent = &loaded.get(&m.parent)?.lod;
-            Some(LodList::of(lights_frame::lod_lamps(&m.lod, parent, reach)))
+            let mut lamps = lights_frame::lod_lamps(&m.lod, parent, reach);
+            lamps.retain(|lamp| !near.stands_at(lamp.light.position));
+            Some(LodList::of(lamps))
         });
     }
 }
@@ -169,19 +172,17 @@ fn digest(rooms: &RoomsSeen) -> u32 {
     }) as u32
 }
 
-/// The lamps the frame may draw seen from `eye`: the level-of-detail lights of each map in `lists` within reach, but for those a placed light stands in, then the placed lights.
+/// The lamps the frame may draw seen from `eye`: the level-of-detail lights of each map in `lists` within reach, which leave out those a placed light stands in for, then the placed lights.
 fn lamps_seen<'a>(
     loaded: &'a HashMap<u32, MapLights>,
     lists: &'a HashMap<u32, Option<LodList>>,
-    (placed, near): (&'a [Lamp], &'a Placed),
+    placed: &'a [Lamp],
     eye: Vec3,
 ) -> impl Iterator<Item = &'a Lamp> {
     let reached = (loaded.keys())
         .filter_map(|name| lists.get(name)?.as_ref())
         .filter(move |list| list.reaches(eye));
-    (reached.flat_map(|list| &list.lamps))
-        .filter(|lamp| !near.stands_at(lamp.light.position))
-        .chain(placed)
+    reached.flat_map(|list| &list.lamps).chain(placed)
 }
 
 /// Every lamp of `loaded` from anywhere, as [`lamps_seen`] gives them.
@@ -191,13 +192,11 @@ fn lamps_of(
     reach: &LodReach,
     lists: &mut HashMap<u32, Option<LodList>>,
 ) -> Vec<Lamp> {
-    relist(loaded, reach, lists);
     let placed = placed_of(loaded);
-    let near = Placed::of(&placed);
+    relist(loaded, reach, lists, &Placed::of(&placed));
     (loaded.keys())
         .filter_map(|name| lists.get(name)?.as_ref())
         .flat_map(|list| list.lamps.iter().copied())
-        .filter(|lamp| !near.stands_at(lamp.light.position))
         .chain(placed.iter().copied())
         .collect()
 }
@@ -314,7 +313,7 @@ impl Lights {
         if self.reach != reach {
             self.reach = reach;
             self.lists.clear();
-            relist(&self.loaded, &self.reach, &mut self.lists);
+            relist(&self.loaded, &self.reach, &mut self.lists, &self.near);
             self.chosen = None;
         }
     }
@@ -363,14 +362,19 @@ impl Lights {
 
     /// Make the lamps of the maps loaded again.
     fn relamp(&mut self) {
-        relist(&self.loaded, &self.reach, &mut self.lists);
         self.placed = placed_of(&self.loaded);
         self.inside = inside_of(&self.loaded);
         // A level-of-detail copy of an interior's lamp stays out whether its room is seen or not.
         let all: Vec<Lamp> = (self.placed.iter().copied())
             .chain(self.inside.iter().map(|(lamp, _)| *lamp))
             .collect();
-        self.near = Placed::of(&all);
+        let near = Placed::of(&all);
+        // ⚠ A list leaves out the lamps a placed light stands in for when it is made: where the placed lights stand changed, every list is made again.
+        if near != self.near {
+            self.lists.clear();
+        }
+        self.near = near;
+        relist(&self.loaded, &self.reach, &mut self.lists, &self.near);
         self.chosen = None;
         self.sprites = None;
     }
@@ -476,8 +480,8 @@ impl Lights {
             // Within a sphere about the axis of the cone that holds it, by the angle the sphere spans.
             d <= radius || toward.dot(forward) / d >= (wide + (radius / d).asin()).min(PI).cos()
         };
-        let near = (self.placed.as_slice(), &self.near);
-        let lamps = lamps_seen(&self.loaded, &self.lists, near, eye).chain(self.inside_lit(rooms));
+        let lamps =
+            lamps_seen(&self.loaded, &self.lists, &self.placed, eye).chain(self.inside_lit(rooms));
         Choice {
             eye,
             forward,

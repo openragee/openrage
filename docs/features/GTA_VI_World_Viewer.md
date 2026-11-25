@@ -123,8 +123,10 @@ forest draws.
 Streaming and selection run on a thread of the world's own, which selects again when the camera
 has moved, a map came or went, a model did, or a fade is still under way. A frame reads the last
 selection and never waits for one. A moving camera asks, after what is in range, for what its
-speed brings into range within a second. What the readers answered goes on the device soonest
-needed first, and they read no more than 512 MiB ahead of what frames take.
+speed brings into range within a second. Models and textures get as many readers each, half the
+machine's threads up to twelve. What the readers answered goes on the device soonest needed first,
+textures before models, for 4 ms a frame or a quarter of the last frame where that is longer, and
+they read no more than 512 MiB ahead of what frames take.
 
 ## Drawing
 
@@ -256,7 +258,8 @@ Each of these jumps, like **Go to** and a click on the overhead map, is a cut: t
 again at the new place rather than adapted from the old one.
 
 A shots script reads the same line, sets the hour, waits for the world to settle (in the plain pass,
-which meters no frame, without waiting for the exposure) and measures
+which meters no frame, without waiting for the exposure; and until the world's thread has selected on
+every model it was told of) and measures
 the frame against a reference image ([screenshots](../guides/Development_Workflow.md#screenshots)).
 
 ## Limits

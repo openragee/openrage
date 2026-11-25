@@ -5,6 +5,7 @@
 //! ⚠ Room 0 is the outside of every other room: a portal to it is a door or window of the shell.
 
 use glam::Vec3;
+use or_io::gta6::timecycle::ARTIFICIAL_AMBIENT_LUX;
 
 /// How near a portal's plane the camera may stand and still look through the whole of it, in metres.
 const DOORWAY: f32 = 0.1;
@@ -287,12 +288,19 @@ const REFLECTANCE: f32 = 0.5;
 
 /// How much of the natural and of the artificial ambient light what stands at `p` in room `room`
 /// of `rooms` takes: of the sky's, the room's average daylight factor over its openings to the
-/// outside, rising to the whole of it in an opening; none of the artificial.
+/// outside, rising to the whole of it in an opening; of the artificial, the light its lamps of
+/// `flux` lumens send round it.
 // ⚠ Inferred: the build states no ambient scale for a room (its light inside is traced through the
 // openings), so the architect's average daylight factor, `W θ / (A (1 − R²))` for openings of area
 // W in a room of surface A, stands for what its tracing brings in. It states no artificial ambient
 // light either, and the lighting keeps as much of the sky's reflection as the greater of the two.
-pub(super) fn ambient_of(rooms: &[RoomBox], portals: &[Opening], room: u32, p: Vec3) -> [f32; 2] {
+pub(super) fn ambient_of(
+    rooms: &[RoomBox],
+    portals: &[Opening],
+    room: u32,
+    p: Vec3,
+    flux: f32,
+) -> [f32; 2] {
     let Some(of) = rooms.get(room as usize).filter(|_| room != 0) else {
         return or_renderer::OUTDOORS;
     };
@@ -307,12 +315,18 @@ pub(super) fn ambient_of(rooms: &[RoomBox], portals: &[Opening], room: u32, p: V
     }
     let size = (of.max - of.min).max(Vec3::ZERO);
     let surface = 2.0 * (size.x * size.y + size.x * size.z + size.y * size.z);
-    let factor = match surface > 0.0 {
-        true => window * SKY_ANGLE / (100.0 * surface * (1.0 - REFLECTANCE * REFLECTANCE)),
-        false => 0.0,
-    };
+    if surface <= 0.0 {
+        return [near.clamp(0.0, 1.0), 0.0];
+    }
+    let factor = window * SKY_ANGLE / (100.0 * surface * (1.0 - REFLECTANCE * REFLECTANCE));
     let factor = factor.clamp(0.0, 1.0);
-    [factor + (1.0 - factor) * near.clamp(0.0, 1.0), 0.0]
+    // ⚠ Inferred: the build traces the light a room's lamps bounce off its surfaces and states none;
+    // the textbook interreflected illuminance `Φ R / (A (1 − R))` stands for it.
+    let bounced = flux * REFLECTANCE / (surface * (1.0 - REFLECTANCE));
+    [
+        factor + (1.0 - factor) * near.clamp(0.0, 1.0),
+        (bounced / ARTIFICIAL_AMBIENT_LUX).clamp(0.0, 1.0),
+    ]
 }
 
 /// What a camera at `eye` sees of an interior of `rooms` and `portals` whose box's middle is

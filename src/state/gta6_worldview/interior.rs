@@ -10,7 +10,7 @@ use std::fs::File;
 use glam::{Mat4, Quat, Vec3};
 use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9ZlibRun};
 use or_io::gta6::map::interior::{self, Interior, InteriorInstance};
-use or_io::gta6::map::light_ext::Light;
+use or_io::gta6::map::light_ext::{Light, LightKind};
 use or_io::gta6::map::lights::Pose;
 use or_io::gta6::map::links::EntitySetLocation;
 use or_io::gta6::map::stream::StreamMap;
@@ -112,6 +112,23 @@ pub(super) struct Placed {
     pub(super) rooms: Vec<RoomBox>,
     pub(super) names: Vec<RoomNames>,
     pub(super) portals: Vec<Opening>,
+    /// The luminous flux of each room's lamps, in lumens.
+    pub(super) flux: Vec<f32>,
+}
+
+/// The luminous flux of `light`, in lumens, its intensity taken in candelas: all round for a
+/// point or a capsule, within its outer cone for a spot, and one side's cosine for an area light.
+// ⚠ GTA VI's law lights `intensity / d²`, so the stated intensity is a luminous intensity.
+fn flux_of(light: &Light) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let solid = match light.kind {
+        LightKind::Spot => TAU * (1.0 - light.cone_outer.to_radians().cos()),
+        LightKind::Area => PI,
+        LightKind::Point | LightKind::Capsule => 2.0 * TAU,
+    };
+    let [r, g, b] = light.colour;
+    let lit = f32::from(u8::from(light.lights_around()));
+    lit * solid * light.intensity.max(0.0) * (0.2126 * r + 0.7152 * g + 0.0722 * b)
 }
 
 fn placing(scale_xy: f32, scale_z: f32, rotation: [f32; 4], position: [f32; 3]) -> Mat4 {
@@ -185,6 +202,13 @@ pub(super) fn place(
             max: Vec3::from(r.room.bb_max),
         })
         .collect();
+    // ponytail: every lamp of a room counts at every hour; by the hour if a room's lamps keep hours apart.
+    let mut flux = vec![0.0; rooms.len()];
+    for (light, room) in lights_of(index, instance, interior) {
+        if let Some(sum) = flux.get_mut(room as usize) {
+            *sum += flux_of(&light);
+        }
+    }
     let children = (interior.drawn(&instance.default_entity_sets))
         .filter_map(|(e, location)| {
             let archetype = index.archetype(e.archetype_word)?;
@@ -207,7 +231,13 @@ pub(super) fn place(
                 level: Level::from_raw(e.lod_level),
                 hours: archetype.hours,
                 location,
-                ambient: interior_rooms::ambient_of(&rooms, &portals, room, own.w_axis.truncate()),
+                ambient: interior_rooms::ambient_of(
+                    &rooms,
+                    &portals,
+                    room,
+                    own.w_axis.truncate(),
+                    flux.get(room as usize).copied().unwrap_or(0.0),
+                ),
             })
         })
         .collect();
@@ -235,6 +265,7 @@ pub(super) fn place(
             })
             .collect(),
         portals,
+        flux,
     }
 }
 
@@ -275,8 +306,14 @@ impl Placed {
                 let p = self.own.transform_point3(instance.centre);
                 let room = interior_rooms::room_around(&self.rooms, p, instance.radius * scale);
                 if let Some(room) = room {
-                    instance.ambient =
-                        interior_rooms::ambient_of(&self.rooms, &self.portals, room as u32, p);
+                    let flux = self.flux.get(room).copied().unwrap_or(0.0);
+                    instance.ambient = interior_rooms::ambient_of(
+                        &self.rooms,
+                        &self.portals,
+                        room as u32,
+                        p,
+                        flux,
+                    );
                 }
             }
         }

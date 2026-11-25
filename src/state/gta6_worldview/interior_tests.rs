@@ -323,3 +323,53 @@ fn a_sphere_reaches_into_a_room_where_it_touches_the_room_s_box() {
     assert!(!placed.reaches_a_room(far, 1.0));
     assert!(placed.reaches_a_room(far, 1000.0));
 }
+
+/// A lamp of 10 cd of `kind`, its spot's outer half angle `cone_outer`.
+fn ten_candelas(kind: LightKind, cone_outer: f32, colour: [f32; 3]) -> Light {
+    Light {
+        kind,
+        position: [0.0; 3],
+        direction: [0.0, 0.0, -1.0],
+        colour,
+        intensity: 10.0,
+        radius: 5.0,
+        falloff_exponent: 1.0,
+        hours: 0x00FF_FFFF,
+        flags: 0,
+        cone_inner: 0.0,
+        cone_outer,
+        length: 0.0,
+        corona: [0.0; 3],
+    }
+}
+
+#[test]
+fn a_lamp_s_flux_is_its_intensity_over_the_solid_angle_it_shines_into() {
+    use std::f32::consts::PI;
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-3 * b;
+    let white = [1.0; 3];
+    assert!(close(
+        flux_of(&ten_candelas(LightKind::Point, 0.0, white)),
+        40.0 * PI
+    ));
+    // A cone of 60° about its axis holds a quarter of the sphere.
+    assert!(close(
+        flux_of(&ten_candelas(LightKind::Spot, 60.0, white)),
+        10.0 * PI
+    ));
+    assert!(close(
+        flux_of(&ten_candelas(LightKind::Area, 0.0, white)),
+        10.0 * PI
+    ));
+    // Green weighs most in what an eye sees of it.
+    let green = flux_of(&ten_candelas(LightKind::Point, 0.0, [0.0, 1.0, 0.0]));
+    assert!(close(green, 40.0 * PI * 0.7152));
+}
+
+#[test]
+fn a_light_that_only_draws_a_corona_sends_no_light_round_its_room() {
+    let mut light = ten_candelas(LightKind::Point, 0.0, [1.0; 3]);
+    assert!(flux_of(&light) > 0.0);
+    light.flags = or_io::gta6::map::light_ext::CORONA_ONLY;
+    assert_eq!(flux_of(&light), 0.0);
+}

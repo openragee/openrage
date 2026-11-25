@@ -74,7 +74,7 @@ fn from_outside_the_camera_sees_in_through_the_shell_s_doors_alone() {
 #[test]
 fn inside_the_sky_s_ambient_light_comes_in_through_the_openings_to_the_outside_alone() {
     let (rooms, portals, _) = row();
-    let at = |room, p: [f32; 3]| ambient_of(&rooms, &portals, room, Vec3::from(p));
+    let at = |room, p: [f32; 3]| ambient_of(&rooms, &portals, room, Vec3::from(p), 0.0);
     // In the front door, the whole of the sky's.
     assert_eq!(at(1, [0.0, 0.0, 1.0]), [1.0, 0.0]);
     // A metre in, the room's daylight factor: a door of 2 m² in a room of 80 m² of surface.
@@ -99,10 +99,24 @@ fn inside_the_sky_s_ambient_light_comes_in_through_the_openings_to_the_outside_a
         let mut shut = portals.clone();
         shut[0].flags = flags;
         assert_eq!(
-            ambient_of(&rooms, &shut, 1, Vec3::new(0.0, 0.0, 1.0)),
+            ambient_of(&rooms, &shut, 1, Vec3::new(0.0, 0.0, 1.0), 0.0),
             [0.0, 0.0]
         );
     }
+}
+
+#[test]
+fn a_room_s_lamps_light_it_all_round_by_what_its_surfaces_send_back() {
+    let (rooms, portals, _) = row();
+    let at = |room, flux| ambient_of(&rooms, &portals, room, Vec3::new(5.0, 0.0, 1.0), flux)[1];
+    // Room 2, 80 m² of surface: 8,000 lm, half of it sent back again and again, are 100 lux.
+    let bounced = 8000.0 * 0.5 / (80.0 * 0.5);
+    assert!((at(2, 8000.0) - bounced / ARTIFICIAL_AMBIENT_LUX).abs() < 1e-6);
+    assert_eq!(at(2, 0.0), 0.0);
+    // The share is at most the whole of the frame's artificial light.
+    assert_eq!(at(2, 1e9), 1.0);
+    // What stands outdoors takes none.
+    assert_eq!(at(0, 8000.0), 0.0);
 }
 
 #[test]
@@ -138,7 +152,7 @@ fn a_shut_door_is_seen_and_lets_neither_the_eye_nor_the_sky_through() {
         [true, false, false, false]
     );
     assert_eq!(
-        ambient_of(&rooms, &portals, 1, Vec3::new(0.0, 0.0, 1.0)),
+        ambient_of(&rooms, &portals, 1, Vec3::new(0.0, 0.0, 1.0), 0.0),
         [0.0, 0.0]
     );
 }

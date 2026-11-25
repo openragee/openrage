@@ -265,6 +265,15 @@ fn every_light_the_frame_takes_is_physical_times_the_exposure_and_the_frames_own
         .expect("worked out");
     let reaching_r = 1.5 * 100_000.0 * 0.9 + 4000.0 * 1.25;
     assert!((up - 0.2 * 2.0 * reaching_r * lit).abs() < 1e-3, "{up}");
+    // The artificial light every surface takes a share of is white, an illuminance exposed like the rest.
+    for way in ["down", "up"] {
+        let intensity = frame.get(&format!("light_artificial_ext_{way}_intensity"));
+        assert_eq!(intensity, Some(ARTIFICIAL_AMBIENT_LUX * lit), "{way}");
+        assert_eq!(
+            frame.get(&format!("light_artificial_ext_{way}_col_g")),
+            Some(1.0)
+        );
+    }
 }
 
 #[test]

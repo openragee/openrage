@@ -50,6 +50,10 @@ const FRAME_HANDOVER: f32 = 1.75;
 // ⚠ GTA V's frame, assumed: a grey card under the noon sun should show about 1.4 before the tone
 // curve. If it shows about 4.5, this is 1.
 pub const FRAME_DIFFUSE: f32 = std::f32::consts::FRAC_1_PI;
+/// The illuminance, in lux, of the frame's artificial ambient light, which a surface takes the share its G-buffer states of.
+// ⚠ GTA VI states no exterior artificial ambient light: the frame's carries the light a room's
+// lamps bounce, worked out per room, and a share of one is this much of it.
+pub const ARTIFICIAL_AMBIENT_LUX: f32 = 1000.0;
 /// The albedo of the ground the light bounces off, for the frame's light from below and the air's multiple scattering.
 // ponytail: a grey ground in place of the game's traced bounce light, which the frame has no pass for.
 pub const GROUND_ALBEDO: f32 = 0.2;
@@ -387,6 +391,14 @@ const WORKED_OUT: &[&str] = &[
     "light_natural_amb_up_col_b",
     "light_natural_amb_up_intensity",
     "light_natural_amb_up_intensity_mult",
+    "light_artificial_ext_down_col_r",
+    "light_artificial_ext_down_col_g",
+    "light_artificial_ext_down_col_b",
+    "light_artificial_ext_down_intensity",
+    "light_artificial_ext_up_col_r",
+    "light_artificial_ext_up_col_g",
+    "light_artificial_ext_up_col_b",
+    "light_artificial_ext_up_intensity",
     "sky_zenith_col_r",
     "sky_zenith_col_g",
     "sky_zenith_col_b",
@@ -556,6 +568,16 @@ pub fn frame_keyframe(own: &Keyframe, light: &FrameLight) -> Keyframe {
     set_rgb(&mut frame, "light_natural_amb_up_col", colour);
     frame.set("light_natural_amb_up_intensity", intensity);
     frame.set("light_natural_amb_up_intensity_mult", 1.0);
+    // ⚠ The frame marks no surface as an interior's, so the exterior's artificial light is the one every surface takes.
+    for stem in ["ext_down", "ext_up"] {
+        set_rgb(
+            &mut frame,
+            &format!("light_artificial_{stem}_col"),
+            [1.0; 3],
+        );
+        let intensity = ARTIFICIAL_AMBIENT_LUX * lit;
+        frame.set(&format!("light_artificial_{stem}_intensity"), intensity);
+    }
 
     // The frame squares a sky colour, so the root of the colour is given.
     for (stem, radiance) in DOME.iter().zip(light.dome) {

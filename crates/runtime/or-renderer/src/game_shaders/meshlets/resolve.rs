@@ -44,9 +44,10 @@ pub(super) const RESOLVE: &str = r#"struct Light {
     // itself by, and the penumbra a unit of the tile's depth opens, as a share of that search.
     to_shadow: mat4x4<f32>,
     shadow: vec4<f32>,
-    // The clouds over the model: the share of the directional light they let through, how far
-    // its roughness is taken towards one under them, how far a light they hide is taken towards
-    // what the surroundings give along its way, and that light's strength.
+    // The clouds over the model: the share of the directional light they let through, which
+    // the mask's writer takes into the mask, how far the light's roughness is taken towards one
+    // under them, how far a light they hide is taken towards what the surroundings give along
+    // its way, and that light's strength.
     clouds: vec4<f32>,
     // The ground laid under the model: what it sends back of each colour and one where one is
     // laid, then the middle of its square, how high it lies and half its side.
@@ -343,11 +344,12 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
     var direct = vec3<f32>(0.0);
     if n_l > 0.0 {
         // A light the clouds hide goes towards what the surroundings give along its way, then
-        // the model's own shadow and the clouds' dim it.
+        // the mask dims it: by the model's own shadow and by the clouds', which the mask holds
+        // as one share, as the game's does.
         var from_light = light.sun.rgb;
         let hazed = select(surroundings(l) * PI, falls_on(l), probed) * light.clouds.w / max(open, 0.001);
         from_light += light.clouds.z * (1.0 - open) * (hazed - from_light);
-        from_light *= sun_share(vec2<i32>(pixel)) * open;
+        from_light *= sun_share(vec2<i32>(pixel));
         direct = (albedo * (1.0 - reflected) * matte + gloss) * from_light * n_l;
     }
     // From all around: the sky and the ground on the colour, and along the mirrored way on the
@@ -403,8 +405,10 @@ fn ground_at(clip: vec2<f32>) -> Met {
 }
 
 // The root of the share of the directional light that reaches what the pixel shows, the
-// model's surface or the ground laid under it, by the shadow map: what the mask's first writer
-// leaves in it. One where the pixel shows neither, and nought on what faces away from the light.
+// model's surface or the ground laid under it: what the shadow map leaves of it, times what the
+// clouds let through, as GTA VI's cascade resolve multiplies its clouds' shadow into the share
+// before it takes the root. One where the pixel shows neither, and nought on what faces away
+// from the light.
 @fragment fn masked(corner: Corner) -> @location(0) vec4<f32> {
     let texel = vec2<i32>(corner.at.xy);
     let far = textureLoad(depth, texel, 0);
@@ -426,7 +430,7 @@ fn ground_at(clip: vec2<f32>) -> Met {
     if n_l <= 0.0 {
         return vec4<f32>(0.0);
     }
-    return vec4<f32>(sqrt(sunlit(at, n_l, vec2<f32>(texel))));
+    return vec4<f32>(sqrt(sunlit(at, n_l, vec2<f32>(texel)) * light.clouds.x));
 }
 
 // What the frame shows of the light `seen`: exposed, toned and encoded.

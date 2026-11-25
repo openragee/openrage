@@ -74,7 +74,8 @@ pub fn falls_on(nine: &[Vec3; 9], n: Vec3) -> Vec3 {
 /// What a cycle states of the clouds over a model and of the directional light under them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Clouds {
-    /// The share of the directional light the clouds let through, from nought to one.
+    /// The share of the directional light the clouds let through, from nought to one: the
+    /// mask of that light holds it with the model's own shadow.
     pub open: f32,
     /// How far the light's roughness is taken towards one in a cloud's shadow.
     pub roughness_mod: f32,

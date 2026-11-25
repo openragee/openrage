@@ -40,7 +40,11 @@ impl Rpf9TableDocument {
             .archive
             .entry_extra(index as usize)
             .ok_or_else(|| tr!("The archive table could not be loaded.").to_string())?;
-        let name = file_name(entry);
+        let name = crate::state::files_view::rpf9_display_name(
+            &file_name(entry),
+            tree.entry_type(base, index).0,
+        )
+        .into_owned();
         let indices = node
             .chain
             .iter()
@@ -219,11 +223,12 @@ impl EntrySource {
                 .map_err(|e| e.to_string())?;
             let payload = if let Some(textures) = content.textures {
                 crate::state::ttpf_document::table_textures(textures)?
+            } else if let Some(payload) =
+                table_preview(&self.path, &self.entry, &self.extra, &bytes)?
+            {
+                payload
             } else if DocumentKind::from_path(&self.path) == Some(DocumentKind::Text) {
-                DocPayload::Text(
-                    super::super::TextDocument::open(&self.path, &bytes)
-                        .map_err(|e| e.to_string())?,
-                )
+                crate::state::document_io::text_payload(&self.path, bytes)
             } else {
                 DocPayload::Hex(super::super::HexDocument {
                     bytes,
@@ -245,6 +250,130 @@ impl EntrySource {
         }
         result.map(|(_, payload)| payload)
     }
+}
+
+fn preview_error(error: impl std::fmt::Display) -> String {
+    tr!(
+        "GTA VI's headerless resource reader does not read this body: {e}",
+        e = error
+    )
+}
+
+fn table_preview(
+    path: &Path,
+    entry: &Gta6Entry,
+    extra: &Gta6EntryExtra,
+    bytes: &[u8],
+) -> Result<Option<DocPayload>, String> {
+    use or_io::container::rpf::{Gta6EntryType, Rpf9Role, Rpf9Signature};
+    use or_io::gta6::{headerless, map};
+
+    let hint = Gta6EntryType::hint(entry, extra);
+    let supported = matches!(
+        hint,
+        Gta6EntryType::Resource(
+            Rpf9Role::Drawable
+                | Rpf9Role::DrawableWithBound
+                | Rpf9Role::Dictionary
+                | Rpf9Role::Bound
+        ) | Gta6EntryType::File("ymap" | "ytyp")
+    );
+    if !supported {
+        return Ok(None);
+    }
+    let Some(row) = extra.nested else {
+        return Ok(None);
+    };
+    // The low nibbles are not part of the section sizes; only an exact sum permits this flat section split.
+    let virtual_len = (row.virtual_size & !15) as usize;
+    let physical_len = (row.flags & !15) as usize;
+    if virtual_len.checked_add(physical_len) != Some(bytes.len()) {
+        return Err(preview_error(
+            "the table's section sizes do not match its decoded bytes",
+        ));
+    }
+    let (virtual_section, physical) = bytes.split_at(virtual_len);
+    if let Gta6EntryType::File(extension) = hint {
+        let expected = if extension == "ymap" {
+            map::C_MAP_DATA
+        } else {
+            map::C_MAP_TYPES
+        };
+        if map::root_type(virtual_section) != Some(expected) {
+            return Err(preview_error("the map root conflicts with its table type"));
+        }
+        let map = crate::state::gta6_map::keep(path, virtual_section, physical);
+        crate::state::gta6_world::keep(path, virtual_section, physical);
+        let document =
+            match super::super::MetaDocument::from_gta_vi_headerless(virtual_section, physical) {
+                Ok(document) => document,
+                Err(error) if map => {
+                    let mut document = super::super::MetaDocument::empty();
+                    document.parsed = None;
+                    document.parse_error = Some(preview_error(error));
+                    document.source_format = or_io::meta::SourceFormat::Rbm;
+                    document
+                }
+                Err(error) => return Err(preview_error(error)),
+            };
+        return Ok(Some(DocPayload::Meta(document)));
+    }
+    let signature = Rpf9Signature::of(virtual_section, virtual_len as u64)
+        .ok_or_else(|| preview_error("the resource has no complete root"))?;
+    if signature.role().map(Gta6EntryType::Resource) != Some(hint) {
+        return Err(preview_error(
+            "the resource root conflicts with its table type",
+        ));
+    }
+    let resource =
+        headerless::read(signature, virtual_section, Some(physical)).map_err(preview_error)?;
+    match &resource {
+        headerless::Resource::Drawable(drawable) => check_drawable(drawable)?,
+        headerless::Resource::DrawableWithBound(fragment) => {
+            check_drawable(&fragment.drawable)?;
+        }
+        headerless::Resource::Dictionary(dictionary) => {
+            for (_, entry) in &dictionary.entries {
+                match entry.as_ref().map_err(preview_error)? {
+                    headerless::Entry::Drawable(drawable) => check_drawable(drawable)?,
+                    _ => {
+                        return Err(preview_error(
+                            "a drawable dictionary entry is not a drawable",
+                        ))
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    let resource = Arc::new(resource);
+    let fragment = match signature.role() {
+        Some(Rpf9Role::Drawable) => Some(false),
+        Some(Rpf9Role::DrawableWithBound) => Some(true),
+        _ => None,
+    };
+    if let Some(fragment) = fragment {
+        crate::state::gta6_head::keep(path, &resource, virtual_section, physical, fragment);
+    }
+    Ok(Some(DocPayload::Gta6Drawable(resource)))
+}
+
+fn check_drawable(drawable: &or_io::gta6::headerless::Drawable) -> Result<(), String> {
+    for model in drawable.levels.iter().flatten().flatten() {
+        model.palette.as_ref().map_err(preview_error)?;
+        for geometry in &model.geometries {
+            geometry
+                .as_ref()
+                .map_err(preview_error)?
+                .positions
+                .as_ref()
+                .map_err(preview_error)?;
+        }
+    }
+    if let Some(embedded) = &drawable.embedded {
+        embedded.as_ref().as_ref().map_err(preview_error)?;
+    }
+    Ok(())
 }
 
 impl AppState {
@@ -403,3 +532,7 @@ mod texture_tests;
 #[cfg(test)]
 #[path = "rpf9_texture_read_only_tests.rs"]
 mod texture_read_only_tests;
+
+#[cfg(test)]
+#[path = "rpf9_preview_tests.rs"]
+mod preview_tests;

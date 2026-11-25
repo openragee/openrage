@@ -229,7 +229,10 @@ fn folders_and_installs_expand_rpf9_tables_and_nested_archives_lazily() {
         let file = session(&state, doc).node(files[0]).unwrap();
         assert_eq!(file.rpf9_type(), Some(Gta6EntryType::TextureDictionary));
         assert_eq!(file.display_name(), format!("{}.ytd", file.name));
-        assert_eq!(fixture.table.entry(0x1000, 0).unwrap().name, file.name);
+        assert_eq!(
+            fixture.table.entry(0x1000, 0).unwrap().name,
+            file.display_name()
+        );
         assert!(session(&state, doc).is_rpf9(file.id));
         let icon = crate::ui::icons::rpf_node_icon(file, false, false, true, false);
         let expected = crate::ui::icons::doc_kind_icon(DocumentKind::Ytd, false);
@@ -239,6 +242,26 @@ fn folders_and_installs_expand_rpf9_tables_and_nested_archives_lazily() {
         assert_eq!(facts.edition, Some("GTA VI"));
         assert_eq!(facts.version, None);
         assert_eq!(facts.rpf9_entry, file.rpf9_entry());
+        let expected_dialog = format!("Export {}", file.display_name());
+        let target = crate::ui::commands::Target::Rows {
+            doc,
+            rows: vec![file.id],
+            into: child,
+            centre: false,
+        };
+        let command =
+            crate::ui::commands::on(&state, crate::ui::commands::Action::ExportAs, target)
+                .expect("the file offers Export as");
+        assert!(command.enabled.is_ok());
+        crate::ui::commands::run(&mut state, &egui::Context::default(), &command);
+        assert_eq!(
+            crate::platform::file_dialogs::last_dialog(),
+            Some(expected_dialog)
+        );
+        assert!(
+            !state.extract_jobs.is_running(),
+            "the stand-in cancelled the dialog"
+        );
         fixture.unchanged();
     }
 }

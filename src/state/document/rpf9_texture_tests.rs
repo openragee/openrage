@@ -139,7 +139,8 @@ fn a_table_dictionary_opens_reloads_and_previews_in_memory() {
     let (dir, table, expected) = dictionary_archive(&sections(), 5);
     let source = table.entry(0x1000, 0).unwrap();
     assert!(source.name.starts_with("hash_"));
-    assert!(Path::new(&source.name).extension().is_none());
+    assert_eq!(Path::new(&source.name).extension().unwrap(), "ytd");
+    assert_eq!(source.path.file_name().unwrap(), source.name.as_str());
     assert!(!source.path.exists());
     assert_eq!(
         table.tree().entry_type(0x1000, 0),
@@ -209,6 +210,8 @@ fn a_table_dictionary_opens_reloads_and_previews_in_memory() {
         .active_document()
         .expect("worker opened the dictionary");
     assert_eq!(opened.read_only, Some(READ_ONLY));
+    assert_eq!(opened.file_name(), source.name);
+    assert!(state.tab_title(opened).starts_with(&source.name));
     assert_eq!(preview_count(&opened.payload), 4);
     let mut extracted = Vec::new();
     assert_eq!(
@@ -315,10 +318,12 @@ fn a_partly_unreadable_dictionary_is_an_error_without_a_scan_or_partial_preview(
 fn a_dictionary_signature_of_another_table_type_does_not_become_a_texture_preview() {
     let (_dir, table, expected) = dictionary_archive(&sections(), 4);
     let source = table.entry(0x1000, 0).unwrap();
-    let DocPayload::Hex(hex) = source.payload().unwrap() else {
-        panic!("a shared dictionary signature cannot override the table resource type");
-    };
-    assert_eq!(hex.bytes, expected);
+    let error = source
+        .payload()
+        .err()
+        .expect("the typed dictionary must be refused");
+    assert!(error.contains("a drawable dictionary entry is not a drawable"));
+    assert_eq!(source.bytes().unwrap(), expected);
 }
 
 #[test]

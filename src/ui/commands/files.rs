@@ -161,7 +161,7 @@ pub(super) const EXPORT_AS: Spec = Spec {
                 return;
             };
             let id = node.id;
-            if let Some(path) = file_dialogs::pick_export_path(&node.name) {
+            if let Some(path) = file_dialogs::pick_export_path(&node.display_name()) {
                 state.export_rpf_node_as(doc, id, path, None);
             }
         },

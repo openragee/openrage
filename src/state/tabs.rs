@@ -218,6 +218,15 @@ impl AppState {
                         Some(or_io::container::rpf::Gta6EntryType::TextureDictionary) => {
                             Some(DocumentKind::Ytd)
                         }
+                        Some(or_io::container::rpf::Gta6EntryType::Resource(
+                            or_io::container::rpf::Rpf9Role::Drawable
+                            | or_io::container::rpf::Rpf9Role::DrawableWithBound
+                            | or_io::container::rpf::Rpf9Role::Dictionary
+                            | or_io::container::rpf::Rpf9Role::Bound,
+                        )) => Some(DocumentKind::Gta6Drawable),
+                        Some(or_io::container::rpf::Gta6EntryType::File("ymap" | "ytyp")) => {
+                            Some(DocumentKind::Meta)
+                        }
                         Some(_) => Some(DocumentKind::Hex),
                         None => DocumentKind::from_path(Path::new(&n.name)),
                     })

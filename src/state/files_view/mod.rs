@@ -91,7 +91,7 @@ pub(crate) fn rpf9_file_kind(extension: &str) -> Option<DocumentKind> {
     }
 }
 
-/// Add a type suffix for display without changing a recovered name or a hash.
+/// Add a type suffix to a usable filename without changing the archive name or hash.
 pub(crate) fn rpf9_display_name(
     name: &str,
     kind: or_io::container::rpf::Gta6EntryType,

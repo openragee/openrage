@@ -44,8 +44,14 @@ pub fn picture_kind(name: &str) -> Option<PictureKind> {
 /// A row's picture family, with the RPF9 table taking precedence over a filename.
 pub fn picture_kind_for(node: &super::super::RpfSessionNode) -> Option<PictureKind> {
     if let Some(kind) = node.rpf9_type() {
-        return (kind == or_io::container::rpf::Gta6EntryType::TextureDictionary)
-            .then_some(PictureKind::Texture);
+        use or_io::container::rpf::{Gta6EntryType, Rpf9Role};
+        return match kind {
+            Gta6EntryType::TextureDictionary => Some(PictureKind::Texture),
+            Gta6EntryType::Resource(
+                Rpf9Role::Drawable | Rpf9Role::DrawableWithBound | Rpf9Role::Dictionary,
+            ) => Some(PictureKind::Model),
+            _ => None,
+        };
     }
     picture_kind(&node.name)
 }
@@ -257,6 +263,10 @@ impl Pictures {
             std::thread::spawn(move || {
                 let made = match job.source {
                     Source::Rpf9(source) => match source.payload_limited(PICTURE_LIMIT) {
+                        Ok(payload) if job.kind == PictureKind::Model => Made::Model {
+                            kind: payload.kind(),
+                            payload: Box::new(payload),
+                        },
                         Ok(payload) => first_texture(&payload, &job.name, job.key.side),
                         Err(error) => Made::Failed(error),
                     },

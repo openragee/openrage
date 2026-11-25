@@ -247,7 +247,11 @@ fn confirmed_media_extensions_survive_opening_without_changing_the_entry_address
         ("config/audioconfig.dat26.rel.nametable", "nametable"),
     ] {
         let hash = or_io::gta6::hash::name_hash64(name.as_bytes());
-        let body = b"synthetic bytes\n";
+        let body = if extension == "dat" {
+            b"\0synthetic body\n"
+        } else {
+            b"synthetic bytes\n"
+        };
         let bytes = encrypted(&[(hash, 0x1000, body.len() as u64, 255)]);
         let mut toc = Rpf9Toc::decrypt(&bytes, &keys()).unwrap();
         let name32 = toc
@@ -281,7 +285,12 @@ fn confirmed_media_extensions_survive_opening_without_changing_the_entry_address
                 || displayed == name.rsplit('/').next().unwrap(),
             "unexpected display name: {displayed}"
         );
-        source.payload().unwrap();
+        assert_eq!(source.name, displayed);
+        assert_eq!(source.path.extension().unwrap(), extension);
+        let payload = source.payload().unwrap();
+        if extension == "dat" {
+            assert!(matches!(payload, crate::state::DocPayload::Hex(_)));
+        }
         assert_eq!(table.tree().entry_type(0, 0), expected);
         assert_eq!(table.entry(0, 0).unwrap().name, original_name);
         assert_eq!(table.entry(0, 0).unwrap().path, original_path);

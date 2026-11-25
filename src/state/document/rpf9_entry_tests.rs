@@ -41,6 +41,8 @@ fn a_nested_file_opens_and_extracts_the_same_exact_bytes() {
     }
     let doc = state.active_document().unwrap();
     assert_eq!(doc.read_only, Some(READ_ONLY));
+    assert_eq!(doc.file_name(), source.name);
+    assert!(source.name.ends_with(".bin"));
     let DocPayload::Hex(hex) = &doc.payload else {
         panic!("entry was not opened as bytes")
     };
@@ -63,7 +65,11 @@ fn a_nested_file_opens_and_extracts_the_same_exact_bytes() {
     }
     assert_eq!(std::fs::read(dest.join(&source.name)).unwrap(), b"keep me");
     assert_eq!(
-        std::fs::read(dest.join(format!("{} (2)", source.name))).unwrap(),
+        std::fs::read(dest.join(format!(
+            "{} (2).bin",
+            Path::new(&source.name).file_stem().unwrap().to_string_lossy()
+        )))
+        .unwrap(),
         source.bytes().unwrap()
     );
 }
@@ -356,6 +362,68 @@ mod install {
     use super::*;
     use crate::state::extract_job::{run_extraction, ExtractItem, OnClash};
 
+    #[test]
+    fn model_and_map_table_previews_open_in_memory_with_extensions() {
+        use or_io::gta6::headerless::Resource;
+        let Some(root) = std::env::var_os("OPENRAGE_GTA6_BUILD") else {
+            or_test_support::skip_install(
+                "RPF9 model and map previews",
+                format_args!("set OPENRAGE_GTA6_BUILD and OPENRAGE_GTA6_KEYS"),
+            );
+            return;
+        };
+        for (archive, parent, index, extension) in [
+            ("data.rpf", 14, 0, "ydr"),
+            ("data.rpf", 7, 0, "ydd"),
+            ("data.rpf", 26, 0, "yft"),
+            ("levels.rpf", 2, 1, "ybn"),
+            ("levels.rpf", 19, 0, "ymap"),
+            ("levels.rpf", 0, 0, "ytyp"),
+        ] {
+            let path = Path::new(&root).join(archive);
+            let table = Rpf9TableDocument::open(&path).unwrap().unwrap();
+            let base = table.expand_table(0, parent).unwrap();
+            let source = table.entry(base, index).unwrap();
+            let raw_name = source.entry.display_name();
+            let hash = source.entry.name64;
+            let payload = source
+                .payload_limited(1 << 20)
+                .unwrap_or_else(|error| panic!("{archive}:{parent}/{index}: {error}"));
+            match (&payload, extension) {
+                (DocPayload::Gta6Drawable(resource), "ydr") => {
+                    assert!(matches!(&**resource, Resource::Drawable(_)));
+                }
+                (DocPayload::Gta6Drawable(resource), "ydd") => {
+                    assert!(matches!(&**resource, Resource::Dictionary(_)));
+                }
+                (DocPayload::Gta6Drawable(resource), "yft") => {
+                    assert!(matches!(&**resource, Resource::DrawableWithBound(_)));
+                }
+                (DocPayload::Gta6Drawable(resource), "ybn") => {
+                    assert!(matches!(&**resource, Resource::Bound(_)));
+                }
+                (DocPayload::Meta(_), "ymap" | "ytyp") => {
+                    let map = crate::state::gta6_map::opened_map(&source.path)
+                        .expect("the Map preview is available")
+                        .expect("the map reader succeeded");
+                    assert!(matches!(
+                        (&*map, extension),
+                        (or_io::gta6::map::MapBody::Data(_), "ymap")
+                            | (or_io::gta6::map::MapBody::Types(_), "ytyp")
+                    ));
+                }
+                _ => panic!("{archive}:{parent}/{index} has no {extension} preview"),
+            }
+            assert_eq!(source.path.extension().unwrap(), extension);
+            assert_eq!(address(&source.path).unwrap().1, [parent, index]);
+            let current = table.entry(base, index).unwrap();
+            assert_eq!(current.entry.name64, hash);
+            assert_eq!(current.entry.display_name(), raw_name);
+            assert_eq!(current.path, source.path);
+            assert!(!source.path.exists());
+        }
+    }
+
     fn walk(table: &Rpf9TableDocument, base: u64, output: &Path) -> usize {
         let entries = table.tree().nodes[&base].archive.entries.clone();
         let mut count = 0;
@@ -374,6 +442,8 @@ mod install {
                     {
                         DocPayload::Hex(hex) => hex.bytes,
                         DocPayload::Text(_)
+                        | DocPayload::Meta(_)
+                        | DocPayload::Gta6Drawable(_)
                         | DocPayload::Resource(or_io::Asset::TextureDict(_)) => {
                             source.bytes().unwrap()
                         }
@@ -493,7 +563,7 @@ mod install {
                     .kind,
                 kind
             );
-            assert_eq!(source.name, name);
+            assert_eq!(source.name, format!("{name}.awc"));
             assert_eq!(node.name, name);
             assert!(!source.path.exists());
         }
@@ -558,7 +628,7 @@ mod install {
                 .kind,
             kind
         );
-        assert_eq!(source.name, "hash_336373b5566693f1");
+        assert_eq!(source.name, "hash_336373b5566693f1.psin");
         assert!(!source.path.exists());
     }
 

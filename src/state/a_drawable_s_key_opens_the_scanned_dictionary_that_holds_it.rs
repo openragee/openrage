@@ -74,3 +74,40 @@ fn a_drawable_s_key_opens_the_scanned_dictionary_that_holds_it_beside_the_drawab
     let dictionaries = (state.documents.iter()).filter(|d| d.path.as_deref() == Some(&*body));
     assert_eq!(dictionaries.count(), 1);
 }
+
+#[test]
+fn a_table_drawable_never_opens_a_dictionary_from_a_scan_index() {
+    let dir = tempfile::tempdir().expect("scratch directory");
+    crate::state::prefs::keep_prefs_in(dir.path());
+    let key = name_hash64(b"table_texture");
+    let mut state = AppState::from_prefs(crate::state::Prefs::default());
+    let path = dir.path().join("data.rpf/.rpf9-table/0/hash_model.ydr");
+    let payload = DocPayload::Gta6Drawable(Arc::new(or_io::gta6::headerless::Resource::Drawable(
+        drawable_keyed(key),
+    )));
+    state.documents.push(Document::new(1, Some(path), payload));
+    state.active_document = Some(1);
+    let scanned = dir.path().join("textures.rpf/0x1000.rsc");
+    *state
+        .texture_packs
+        .dictionaries
+        .built
+        .lock()
+        .expect("unlocked") = Some(Built::of([(scanned.clone(), vec![key])]));
+    state.texture_report = texture_resolution::report(&state, None, [(None, texture_name(key))], 1);
+    assert!(!state.texture_report.missing().is_empty());
+    assert!(!state.try_open_texture_dictionary());
+    assert!(state.texture_packs.dictionaries.opening.is_none());
+    assert!(state.texture_packs.dictionaries.tried.is_empty());
+
+    let pending: Opening = Arc::new(Mutex::new(Some((
+        scanned,
+        Ok(DocPayload::Resource(or_io::Asset::TextureDict(
+            Default::default(),
+        ))),
+    ))));
+    state.texture_packs.dictionaries.opening = Some(Arc::clone(&pending));
+    assert!(!state.try_open_texture_dictionary());
+    assert_eq!(state.documents.len(), 1);
+    assert!(pending.lock().expect("unlocked").is_some());
+}

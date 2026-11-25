@@ -19,6 +19,7 @@ mod gta6_install;
 mod gta6_mission;
 pub(crate) mod gta6_save;
 mod gta6_save_text;
+pub(crate) mod gta6_script;
 mod navigation;
 mod outline_panel;
 pub(crate) mod pictures;

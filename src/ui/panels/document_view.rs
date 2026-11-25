@@ -32,6 +32,7 @@ fn view_of(kind: Option<DocumentKind>) -> View {
         Some(
             DocumentKind::Text
             | DocumentKind::NameTable
+            | DocumentKind::Gta6Script
             | DocumentKind::Registered(ResourceType::Ysc),
         ) => View::Text,
         Some(DocumentKind::Meta) => View::Metadata,

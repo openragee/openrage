@@ -12,6 +12,7 @@ mod mesh;
 mod particles;
 mod predicates;
 mod project;
+mod script;
 mod table;
 mod target;
 mod text_find;

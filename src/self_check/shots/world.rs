@@ -326,6 +326,7 @@ fn dump(path: &Path) -> Result<(), String> {
         },
         // ⚠ The world's thread selects a frame or more behind the camera: in flight this is not `camera`.
         "selected_eye": [selected.eye.x, selected.eye.y, selected.eye.z],
+        "selection_ms": selected.took.as_secs_f64() * 1000.0,
         "hour": viewer.hour,
         "ground": viewer.ground_under(pose.position.x, pose.position.y),
         "lod_scale": viewer.lod_scale,

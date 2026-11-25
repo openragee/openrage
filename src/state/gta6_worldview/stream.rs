@@ -90,6 +90,8 @@ pub struct Selected {
     pub version: u64,
     /// Where the camera stood when it was made: a frame or more behind a camera in flight.
     pub eye: Vec3,
+    /// How long the streaming and the selection that made it took on the world's thread.
+    pub took: std::time::Duration,
     pub models: Vec<ModelRef>,
     pub chunks: Vec<Chunk>,
     pub instances: Vec<Instance>,
@@ -540,10 +542,15 @@ impl Streamer {
             close(&mut out, from);
         }
         // A far stand-in yields to the model of its tree where one is drawn, and draws where none is.
+        // ⚠ Each instance once against a mark, not against every run of grass: a city camera's thousands of runs made this seconds of each selection.
+        let mut of_grass = vec![false; out.instances.len()];
+        for run in grass {
+            of_grass[run].fill(true);
+        }
         let standing = slod::Standing::of(
-            (out.instances.iter().enumerate())
-                .filter(|(at, _)| !grass.iter().any(|run| run.contains(at)))
-                .map(|(_, i)| Vec3::new(i.rows[0][3], i.rows[1][3], i.rows[2][3])),
+            (out.instances.iter().zip(&of_grass))
+                .filter(|(_, grass)| !**grass)
+                .map(|(i, _)| Vec3::new(i.rows[0][3], i.rows[1][3], i.rows[2][3])),
         );
         for (cards, scale, fade) in stand_ins {
             (out.cards).push(cards.seen(scale, fade, &cards.handed_off(&standing)));
@@ -902,7 +909,8 @@ fn run(index: Arc<WorldIndex>, skipped: HashSet<u32>, shared: &Shared) {
                 told.eye, told.scale, told.hour, told.fade, enabled, models, told.times,
             )
         };
-        velocity = velocity_at(&mut moved_at, velocity, eye, Instant::now());
+        let began = Instant::now();
+        velocity = velocity_at(&mut moved_at, velocity, eye, began);
         let mut stale = !models.is_empty() || fading;
         for (model, state) in models {
             match state {
@@ -924,7 +932,7 @@ fn run(index: Arc<WorldIndex>, skipped: HashSet<u32>, shared: &Shared) {
             let state = |model: ModelRef| ready.get(&model).copied().unwrap_or(Some(false));
             let mut selected = streamer.select(&view, &state);
             version += 1;
-            selected.version = version;
+            (selected.version, selected.took) = (version, began.elapsed());
             fading = selected.fading;
             selected_at = Some((eye, scale, fade));
             *shared.latest.lock().unwrap_or_else(|p| p.into_inner()) = Arc::new(selected);

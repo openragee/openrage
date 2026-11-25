@@ -11,6 +11,9 @@ use glam::Vec3;
 use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9ZlibRun};
 use or_io::gta5::data::visual_settings::VisualSettings;
 use or_world::streaming::{Extent, Forest, Kind, Level, NodeId, NodeState, View, FADE};
+use or_world::streaming_rules::{
+    BAND_INTERIOR_HIGH, BAND_INTERIOR_LOW, BAND_LOW_DETAIL, BAND_OTHER,
+};
 
 use super::index::{Enabled, ModelRef, WorldIndex};
 use super::pool::Pool;
@@ -101,6 +104,8 @@ pub struct Selected {
     pub species: Arc<[Species]>,
     /// Each model waited for, with how far the nearest thing that waits for it is.
     pub wanted: Vec<(f32, ModelRef)>,
+    /// The request band of each model waited for where nothing that waits for it is in view.
+    pub bands: HashMap<ModelRef, f32>,
     /// The sphere of each thing that waits for a model, by the model.
     pub waiting_at: HashMap<ModelRef, Vec<(Vec3, f32)>>,
     pub streaming: Streaming,
@@ -194,6 +199,12 @@ fn signed(fade: f32, yields: bool) -> f32 {
     } else {
         fade
     }
+}
+
+/// Raise the band `model` is asked for in to `band`.
+fn raise(bands: &mut HashMap<ModelRef, f32>, model: ModelRef, band: f32) {
+    let at = bands.entry(model).or_insert(band);
+    *at = at.max(band);
 }
 
 /// The hour of the day `hour` falls in, 0 to 23.
@@ -556,7 +567,8 @@ impl Streamer {
             (out.cards).push(cards.seen(scale, fade, &cards.handed_off(&standing)));
         }
         let list_instances = out.instances.len() - listed;
-        // Each model waited for once, by the nearest node that waits for it.
+        // Each model waited for once, by the nearest node that waits for it, with the highest band of
+        // what waits for it as though out of view: a far level's, or the rest's.
         let mut waited: HashMap<ModelRef, f32> = HashMap::new();
         for id in &selection.wanted {
             let (Some(model), Some(node)) = (model_of(*id), self.forest.node(*id)) else {
@@ -565,6 +577,11 @@ impl Streamer {
             let away = eye.distance(node.position);
             let nearest = waited.entry(model).or_insert(away);
             *nearest = nearest.min(away);
+            let band = match node.level {
+                Level::Hd | Level::OrphanHd => BAND_OTHER,
+                _ => BAND_LOW_DETAIL,
+            };
+            raise(&mut out.bands, model, band);
             let sphere = match node.extent {
                 Extent::Box(min, max) => Some(((min + max) / 2.0, (max - min).length() / 2.0)),
                 Extent::Point => drawn_of(*id).and_then(|(map, drawn)| {
@@ -615,6 +632,12 @@ impl Streamer {
                         Some(false) => {
                             let nearest = waited.entry(child.model).or_insert(away);
                             *nearest = nearest.min(away);
+                            // ponytail: the build picks 4, 3 or 2 by the interior and room the camera stands in, its mapping not read: 4 inside this interior, 2 outside it.
+                            let band = match inside {
+                                Some(_) => BAND_INTERIOR_HIGH,
+                                None => BAND_INTERIOR_LOW,
+                            };
+                            raise(&mut out.bands, child.model, band);
                             let at = out.waiting_at.entry(child.model).or_default();
                             at.push((child.centre, child.radius));
                         }

@@ -116,6 +116,9 @@ pub struct Viewer {
     /// The models that selection waits for, and those the far stand-ins' atlas waits for.
     wanted: Vec<(f32, ModelRef)>,
     species_models: Vec<(f32, ModelRef)>,
+    /// The band each model of that selection is asked for in out of view, and those a frame last saw something wait for.
+    bands: HashMap<ModelRef, f32>,
+    in_view: HashSet<ModelRef>,
     /// How soon each model and each texture asked for last is needed: what arrived is put on the device soonest first.
     soon: (HashMap<ModelRef, f32>, HashMap<u64, f32>),
     models: Option<Pool<ModelRef, Option<CpuModel>>>,
@@ -168,6 +171,8 @@ impl Default for Viewer {
             wanted_of: 0,
             wanted: Vec::new(),
             species_models: Vec::new(),
+            bands: HashMap::new(),
+            in_view: HashSet::new(),
             soon: Default::default(),
             models: None,
             textures: None,
@@ -483,6 +488,7 @@ impl Viewer {
         if told || self.wanted_of != latest.version {
             self.wanted_of = latest.version;
             self.wanted.clone_from(&latest.wanted);
+            self.bands.clone_from(&latest.bands);
             self.want_models();
         }
         Some(latest)
@@ -543,11 +549,33 @@ impl Viewer {
         }
     }
 
-    /// Give the readers every model waited for that is not on the device.
+    /// Say which models waited for a frame saw something wait for, in view: they are asked for first.
+    pub fn see_models(&mut self, in_view: HashSet<ModelRef>) {
+        if in_view != self.in_view {
+            self.in_view = in_view;
+            self.want_models();
+        }
+    }
+
+    /// Give the readers every model waited for that is not on the device, highest request priority first.
     fn want_models(&mut self) {
+        use or_world::streaming_rules::{
+            request_priority, BAND_LOW_DETAIL, BAND_OTHER, BAND_VISIBLE,
+        };
+        // ⚠ The readers serve the least first: a priority is handed them negated.
+        let selected = self.wanted.iter().map(|(away, model)| {
+            let band = match self.in_view.contains(model) {
+                // ponytail: in view is the frustum alone; the build's second test (band 6 when it fails) is not read, so nothing takes 6.
+                true => BAND_VISIBLE,
+                false => self.bands.get(model).copied().unwrap_or(BAND_OTHER),
+            };
+            (-request_priority(band, *away, None), *model)
+        });
+        // The far stand-ins' atlas waits for far levels' models.
+        let species = (self.species_models.iter())
+            .map(|(away, model)| (-request_priority(BAND_LOW_DETAIL, *away, None), *model));
         // ⚠ A selection made before a model arrived still waits for it: it is not read twice.
-        let wanted: Vec<(f32, ModelRef)> = (self.wanted.iter().chain(&self.species_models))
-            .copied()
+        let wanted: Vec<(f32, ModelRef)> = (selected.chain(species))
             .filter(|(_, model)| !self.have.contains_key(model))
             .collect();
         self.models_waiting = wanted.len();

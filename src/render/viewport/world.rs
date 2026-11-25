@@ -582,14 +582,19 @@ impl RenderBridge {
         };
         wanted.extend(world.ask_whole(
             &selected.wanted,
-            seen,
+            &seen,
             (eye, lod_scale),
             (per_metre, budgets.most_side),
             frame,
         ));
+        let in_view = (selected.wanted.iter())
+            .map(|(_, model)| *model)
+            .filter(|model| seen(model))
+            .collect();
         let mut wanted = merged(wanted);
         world.textures.hold(&mut wanted);
         let mut viewer = crate::state::gta6_world::worldview::viewer();
+        viewer.see_models(in_view);
         viewer.want_textures(wanted);
         viewer.want_species_models(asks.models);
         drop(viewer);

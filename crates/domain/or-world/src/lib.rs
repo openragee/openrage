@@ -29,6 +29,7 @@ pub mod generate;
 pub mod group;
 pub mod keys;
 pub mod manifest;
+pub mod manifest_build;
 pub mod map_data;
 pub mod map_types;
 pub mod partition;

@@ -197,6 +197,8 @@ pub struct MapInside {
     pub flags: u32,
     pub content_flags: u32,
     pub entities: Vec<EntityFact>,
+    /// The archetype each entity and each grass batch places, which is what the manifest's derivation reads (`or_world::manifest::placed`).
+    pub placed: Vec<u32>,
     /// The extents the file states, none where it states none.
     pub stored_entities: Option<([f32; 3], [f32; 3])>,
     pub stored_streaming: Option<([f32; 3], [f32; 3])>,
@@ -260,6 +262,8 @@ pub struct Facts {
     sources: BTreeMap<String, Fact>,
     /// The source folders of the module's own folder that no set names.
     pub unused: Vec<String>,
+    /// The manifests of the game the module keeps, from [`Depth::Open`] on: what its own manifest is typed by and takes its entries from.
+    pub manifests: Vec<crate::manifest::Kept>,
 }
 
 impl Facts {
@@ -309,6 +313,9 @@ pub fn inspect_named(folder: &Path, model: &Maps, depth: Depth, names: Names<'_>
         facts.insert(path, look(folder, path, depth, Some(&own)));
     }
     facts.unused = unused(folder, model);
+    if depth >= Depth::Open {
+        facts.manifests = crate::manifest::kept(folder);
+    }
     facts
 }
 
@@ -440,6 +447,7 @@ fn read_map(map: &MapData<'_>, names: Names<'_>) -> MapInside {
                 }
             })
             .collect(),
+        placed: or_world::manifest::placed(map),
         stored_entities: map
             .stored_entities_extents()
             .map(|(min, max)| (min.to_array(), max.to_array())),

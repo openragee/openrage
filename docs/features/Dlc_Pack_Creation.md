@@ -28,6 +28,25 @@ writes `<name>/dlc.rpf` from its plan through `build_pack`, takes each file's ty
 packs a path through a folder named `x.rpf` as that nested archive, and reads the pack and the
 archives inside it back against its plan
 ([what the targets build](../direction/Project_Model_Design.md#what-the-targets-build)).
+A content may state what such an archive holds, which the pack writes as the `contents` of its
+registration (`PackFile::with_contents`), and may register a name that is no file of the pack
+(`PackFile::asked`): the `.ityp` of a `.ytyp` inside a nested archive of that folder, which is how
+the install's packs register a type file.
+
+## Maps in a pack
+
+A Map content handed to a singleplayer DLC puts every file it ships, the manifest of its maps
+included, inside one nested archive, `x64/levels/gta5/<content>.rpf`. The pack registers that
+archive as `RPF_FILE` with `CONTENTS_DLC_MAP_DATA` and each type file as `DLC_ITYP_REQUEST` under
+`x64/levels/gta5/<name>.ityp`, which is what
+[the install's packs were measured to state](../direction/Workbench_Views_Design.md#what-wave-p44-built-for-maps).
+The pack is written and read back
+(`a_story_pack_holds_its_maps_in_the_nested_archive_its_content_document_registers`), and the plan
+of such a build is refused all the same, with one sentence, so the Builds window keeps the cell
+locked: the folder is a choice, since nobody measured which folder of a pack the game's packs keep
+that archive in, and neither what a pack states of an archive that holds type files nor the change
+set that turns map data on was measured
+([R70q](../direction/Roadmap.md#r70q-a-build-a-server-and-a-story-install-take)).
 
 ## A clothing pack in a pack
 
@@ -95,6 +114,8 @@ change sets or honours its mount order. What is checked:
 | An escaped value comes back as itself | `every_escaped_value_comes_back_as_itself` |
 | A project output writes a pack that reads back as its plan, with each file registered under the type it states, and the same pack twice | `a_dlc_output_writes_a_pack_that_reads_back_and_registers_each_file_with_its_type`, `two_builds_of_a_dlc_output_are_byte_identical` |
 | A path through an archive's name is packed as that nested archive, and the pack registers the archive alone | `a_path_through_an_archives_name_is_packed_as_that_nested_archive` |
+| A type file inside a nested archive is asked for by the `.ityp` name of the archive's folder and by no other, and an archive is said to hold something only when the plan puts a file in it | `a_type_file_in_a_nested_archive_is_asked_for_by_the_name_of_its_folder_and_by_no_other`, `an_archive_said_to_hold_something_is_one_the_plan_puts_a_file_in` |
+| Two contents that say one archive holds different things are named, a map file that would sit loose is refused once and not also as a file with no type, and a name a pack asks a type file by is registered only while that type file ships | `two_contents_that_say_one_archive_holds_different_things_are_named`, `a_map_file_that_would_sit_loose_is_refused_once_and_the_line_that_declares_a_map_is_passed_by`, `a_name_a_pack_asks_a_type_file_by_goes_with_that_type_file_and_stays_with_another` |
 | A file with no settled type, a type for a file the project lacks, a script and a name that is no device name are refused at planning | `a_file_whose_extension_settles_no_type_is_refused_at_planning_by_name`, `a_type_stated_for_a_file_the_project_does_not_hold_is_a_problem`, `a_script_cannot_ship_in_a_dlc`, `a_name_that_is_not_a_device_name_is_refused_at_planning` |
 | A pack that is not its plan is found, whatever it lacks | `verification_notices_a_pack_that_is_not_the_plan` |
 | A clothing pack is laid out as the game's own packs are, registers the shop files and each archive, reopens through the archives, and is the same bytes twice | `a_pack_is_laid_out_as_the_games_packs_are_and_registers_what_the_game_is_told_of`, `a_dlc_rpf_reopens_through_the_readers_and_the_clothing_engine_checks_what_was_read` |

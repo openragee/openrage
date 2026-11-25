@@ -1,7 +1,7 @@
 //! The readers a written file is reloaded through.
 //!
 //! A declared RSC7 format is read the way `openrage-cli search --verify` reads it, a DDS through its
-//! own reader, a `.ymt` as the metadata document it is, and a `.ymap` or `.ytyp` as the typed root it is. A name nothing here reads is a file with
+//! own reader, a `.ymt` or a `.ymf` as the metadata document it is, and a `.ymap` or `.ytyp` as the typed root it is. A name nothing here reads is a file with
 //! no reader to try.
 
 use or_io::gta5::formats::Format;
@@ -42,7 +42,7 @@ pub fn reload(name: &str, bytes: &[u8]) -> Option<Result<Reload, String>> {
         }
         // The world roots are read as the typed values the editor edits, which refuse a member of the wrong shape as the game would.
         "ymap" | "ytyp" => return Some(world_root(&ext, bytes)),
-        "ymt" => {
+        "ymt" | "ymf" => {
             return Some(
                 or_io::meta::MetaDocument::parse(or_io::meta::default_library(), bytes.to_vec())
                     .map(|doc| Reload {

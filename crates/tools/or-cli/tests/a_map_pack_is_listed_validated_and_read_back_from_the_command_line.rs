@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use or_maps::import::{add_files, Incoming};
-use or_maps::sample::{map_file, types_file, Archetype, Entity};
+use or_maps::sample::{manifest_file, map_file, types_file, Archetype, Entity, Stated};
 
 fn cli(group: &str, args: &[&str]) -> ExitCode {
     let mut all = vec![group.to_string()];
@@ -129,5 +129,445 @@ fn a_build_of_maps_is_read_back_against_the_sets_and_a_tampered_one_fails() {
         cli("maps", &["verify", text(&file)]),
         ExitCode::FAILURE,
         "the file the plan gave the source does not read as a map"
+    );
+}
+
+/// A manifest that states `harbour`, written to `dir` as a file a person took out of a game.
+fn a_manifest_of_a_game(dir: &Path) -> PathBuf {
+    let path = dir.join("_manifest.ymf");
+    std::fs::write(
+        &path,
+        manifest_file(&[Stated {
+            map: "harbour",
+            flags: 0,
+            types: &[],
+        }]),
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn a_kept_manifest_makes_a_build_write_the_manifest_of_its_maps_and_one_removed_fails_the_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = a_project_with_maps(dir.path());
+    let built = dir.path().join("build").join("harbour").join("stream");
+
+    // With none kept the build writes no manifest of the maps, and the check asks for none.
+    assert_eq!(cli("project", &["build", text(&file)]), ExitCode::SUCCESS);
+    assert!(!built.join("_manifest.ymf").exists());
+    assert_eq!(cli("maps", &["verify", text(&file)]), ExitCode::SUCCESS);
+
+    let donor = a_manifest_of_a_game(dir.path());
+    assert_eq!(
+        cli("maps", &["keep-manifest", text(&file), text(&donor)]),
+        ExitCode::SUCCESS
+    );
+    let kept: Vec<_> = std::fs::read_dir(dir.path().join("maps").join("manifests"))
+        .expect("the content keeps the manifest in a folder of its own")
+        .flatten()
+        .collect();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(
+        cli("maps", &["keep-manifest", text(&file), text(&donor)]),
+        ExitCode::SUCCESS,
+        "kept twice, it is kept once"
+    );
+    assert_eq!(
+        std::fs::read_dir(dir.path().join("maps").join("manifests"))
+            .unwrap()
+            .count(),
+        1
+    );
+
+    assert_eq!(cli("project", &["build", text(&file)]), ExitCode::SUCCESS);
+    let written = built.join("_manifest.ymf");
+    assert!(
+        written.is_file(),
+        "the build writes the manifest of its maps"
+    );
+    assert_eq!(cli("maps", &["verify", text(&file)]), ExitCode::SUCCESS);
+
+    std::fs::remove_file(&written).unwrap();
+    assert_eq!(
+        cli("maps", &["verify", text(&file)]),
+        ExitCode::FAILURE,
+        "a build whose manifest was removed does not hold what its maps need"
+    );
+}
+
+#[test]
+fn a_file_that_is_no_manifest_is_not_kept_and_the_command_says_what_it_takes() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = a_project_with_maps(dir.path());
+    let other = dir.path().join("not_one.ymf");
+    std::fs::write(&other, b"not a manifest").unwrap();
+    assert_eq!(
+        cli("maps", &["keep-manifest", text(&file), text(&other)]),
+        ExitCode::FAILURE
+    );
+    assert!(!dir.path().join("maps").join("manifests").exists());
+    assert_eq!(
+        cli("maps", &["keep-manifest", text(&file)]),
+        ExitCode::from(2),
+        "neither a file nor an install is named"
+    );
+    let donor = a_manifest_of_a_game(dir.path());
+    assert_eq!(
+        cli(
+            "maps",
+            &[
+                "keep-manifest",
+                text(&file),
+                text(&donor),
+                "--game",
+                text(dir.path())
+            ]
+        ),
+        ExitCode::from(2),
+        "both a file and an install are named"
+    );
+}
+
+/// The install mounted with every pack its content list names, none when it cannot be.
+fn mounted(root: &Path) -> Option<or_title::MountedGame> {
+    use or_io::container::rpf::crypto::{extract_keys, Gta5RetailCryptoProvider};
+    use std::sync::Arc;
+    let exe = or_title::game::Game::detect_from_root(root).find_executable(root)?;
+    let keys = extract_keys(&exe, &|_| {}).ok()?;
+    let crypto: Arc<dyn or_io::container::RpfCryptoProvider> =
+        Arc::new(Gta5RetailCryptoProvider::new(Arc::new(keys)));
+    or_title::build_mounted_game(
+        &or_title::GtaInstall::from_path(root)?,
+        crypto,
+        or_title::DlcCutoff::All,
+    )
+    .ok()
+}
+
+/// Point `OPENRAGE_GAME_ROOT` at an install root. Without one this skips, which is not a pass.
+///
+/// ⚠ The install is opened read-only: the map and the manifests are copied into a scratch project.
+#[test]
+fn a_map_taken_from_an_install_is_stated_as_the_install_states_it_from_the_manifests_kept_of_it() {
+    use std::collections::BTreeSet;
+
+    const WHAT: &str = "a_map_taken_from_an_install_is_stated_as_the_install_states_it";
+    let Some(root) = or_test_support::game_roots().into_iter().next() else {
+        or_test_support::skip_install(
+            WHAT,
+            format!("{} names no install", or_test_support::GAME_ROOT_ENV),
+        );
+        return;
+    };
+    let game = mounted(&root).expect("the install mounts");
+    let (mut manifests, mut maps) = (Vec::new(), Vec::new());
+    game.for_each_file(|logical, _, leaf| {
+        let leaf = leaf.to_ascii_lowercase();
+        if leaf.ends_with(".ymf") {
+            manifests.push(logical.to_string());
+        } else if let Some(stem) = leaf.strip_suffix(".ymap") {
+            maps.push((or_io::string_hash(stem.as_bytes()), logical.to_string()));
+        }
+    });
+    manifests.sort();
+    maps.sort();
+
+    // What every manifest of the install states of each map, joined, as the game joins them.
+    let mut stated: std::collections::BTreeMap<u32, BTreeSet<u32>> = Default::default();
+    for path in &manifests {
+        let Some(bytes) = game.vfs.open(path) else {
+            continue;
+        };
+        let Ok(said) = or_world::manifest_build::stated_in(&bytes) else {
+            continue;
+        };
+        for (map, types) in said {
+            stated.entry(map).or_default().extend(types);
+        }
+    }
+    assert!(!stated.is_empty(), "no manifest of the install reads");
+
+    // The first few stated maps whose file becomes a source: a file whose XML does not reach its fixed point is refused and passed by.
+    let mut checked = 0;
+    for (name, logical) in maps.iter().filter(|(name, _)| stated.contains_key(name)) {
+        if checked == 5 {
+            break;
+        }
+        let Some(bytes) = game.vfs.open(logical) else {
+            continue;
+        };
+        let leaf = logical.rsplit('/').next().unwrap_or(logical);
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("taken.openrage-proj");
+        std::fs::write(
+            &file,
+            r#"{ "documents": [], "game": "both", "modules": [{ "id": "maps", "path": "maps", "type": "maps" }], "open": [],
+  "outputs": [{ "id": "fivem", "kind": "fivem-resource", "name": "taken", "take": ["maps"] }], "schema": 4 }"#,
+        )
+        .unwrap();
+        let folder = dir.path().join("maps");
+        let added = add_files(
+            &folder,
+            &[Incoming {
+                name: leaf,
+                bytes: &bytes,
+                from_game: true,
+                virtual_path: Some(logical),
+            }],
+            None,
+        )
+        .unwrap();
+        if !added.refused.is_empty() {
+            continue;
+        }
+        assert_eq!(
+            cli(
+                "maps",
+                &["keep-manifest", text(&file), "--game", text(&root)]
+            ),
+            ExitCode::SUCCESS,
+            "{logical}"
+        );
+        let model = or_maps::Maps::read(&folder).unwrap();
+        let facts = or_maps::inspect(&folder, &model, or_maps::Depth::Open);
+        let written = or_maps::manifest::of(&model, &facts);
+        let bytes = written
+            .file
+            .unwrap_or_else(|| panic!("{logical}: no manifest is written: {:?}", written.notes));
+        let read = or_world::manifest_build::stated_in(&bytes).expect("the manifest reads back");
+        assert_eq!(
+            read.get(name),
+            stated.get(name),
+            "{logical}: the entry kept is what the install states"
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no stated map of the install became a source");
+    println!(
+        "{checked} map(s) of {} stated as the install states them",
+        root.display()
+    );
+}
+
+/// A value of an entry as the reader prints it, with a set of flags printed as its bits alone.
+///
+/// ⚠ The type table of a shipped manifest names an enum for the flags of an entry, and the one the tree's writer lays out names
+/// none, as for every PSO document it writes: the bits are the entry's statement, and the name is the table's.
+fn printed(value: &or_io::meta::Value) -> String {
+    match value {
+        or_io::meta::Value::Bitset { bits, .. } => format!("bits {bits:?}"),
+        other => format!("{other:?}"),
+    }
+}
+
+/// The entries of both pairings of the manifest in `bytes`, each as the reader prints it, in one order whatever order the file has them in.
+fn entries_of(bytes: &[u8]) -> Vec<String> {
+    use or_io::meta::binary::hash_index::with_public_names_only;
+    use or_io::meta::binary::parse_meta_binary_full;
+    use or_world::{field, keys};
+    with_public_names_only(|| {
+        let (root, _) = parse_meta_binary_full(
+            &or_io::meta::SchemaLibrary::default(),
+            bytes,
+            &mut or_io::meta::Diagnostics::lenient(),
+        )
+        .expect("the manifest reads");
+        let mut entries: Vec<String> = [keys::IMAP_DEPENDENCIES_2, keys::IMAP_DEPENDENCIES]
+            .into_iter()
+            .flat_map(|key| field::structs_at(&root, key))
+            .map(|entry| {
+                let members: Vec<String> = (entry.fields.iter())
+                    .map(|(name, value)| format!("{name}: {}", printed(value)))
+                    .collect();
+                format!("{} {{ {} }}", entry.type_name, members.join(", "))
+            })
+            .collect();
+        entries.sort();
+        entries
+    })
+}
+
+/// Every `_manifest.ymf` staged in the metadata corpus is one a manifest can be written from, and what is written from it states what
+/// it states: each entry kept whole as for a map taken from the game, and each entry rewritten with the type files it states already.
+///
+/// ⚠ The staged files stay where they are staged: none is copied into the tree, and a build keeps one only in a person's project.
+#[test]
+fn every_staged_manifest_of_the_game_is_written_back_stating_what_it_states() {
+    use or_world::manifest_build::{build, stated_in, BuildError, Wanted};
+
+    const WHAT: &str = "every_staged_manifest_of_the_game_is_written_back_stating_what_it_states";
+    let origin = or_test_support::owned_corpus_origin(
+        "or-meta",
+        env!("CARGO_MANIFEST_DIR"),
+        "OPENRAGE_META_CORPUS",
+        "binary",
+    );
+    if matches!(origin, or_test_support::CorpusOrigin::Absent(_)) {
+        or_test_support::skip_corpus(WHAT, "no metadata corpus is staged");
+        return;
+    }
+    let Some(files): Option<Vec<PathBuf>> =
+        or_test_support::Corpus::with_root(origin.path(), "ymf")
+            .all_targets()
+            .find_or_skip(WHAT)
+    else {
+        return;
+    };
+
+    // A manifest that states no map: its type table leaves out the class of an entry, which a shipped table declares only where a list holds one.
+    let bare = files.iter().find_map(|path| {
+        let bytes = std::fs::read(path).ok()?;
+        stated_in(&bytes).ok()?.is_empty().then_some(bytes)
+    });
+    let mut behind_a_bare_one = 0usize;
+    let (mut read, mut other_container, mut stating, mut entries) =
+        (0usize, 0usize, 0usize, 0usize);
+    // The entries that carry flags, and those of them that set no bit: what a derivation of the flags would have to tell apart.
+    let (mut flagged, mut flagless) = (0usize, 0usize);
+    let mut failures = Vec::new();
+    // Every manifest that states a map, to be kept at once as the manifests of one install are.
+    let mut every: Vec<Vec<u8>> = Vec::new();
+    for path in &files {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let bytes = std::fs::read(path).expect("a staged file reads");
+        let stated = match stated_in(&bytes) {
+            Ok(stated) => stated,
+            // The game ships a few manifests in another container, which a build does not write from.
+            Err(BuildError::NotPso(..)) => {
+                other_container += 1;
+                continue;
+            }
+            Err(e) => {
+                failures.push(format!("{name}: {e}"));
+                continue;
+            }
+        };
+        read += 1;
+        if stated.is_empty() {
+            continue;
+        }
+        stating += 1;
+        entries += stated.len();
+        let held = entries_of(&bytes);
+        flagged += held.iter().filter(|e| e.contains("bits ")).count();
+        flagless += held.iter().filter(|e| e.contains("bits 0,")).count();
+        // Kept behind a manifest that states nothing, the entries are typed by the table of the manifest they came from.
+        if let Some(bare) = &bare {
+            let wanted: Vec<Wanted> = (stated.iter())
+                .map(|(map, types)| Wanted {
+                    name: *map,
+                    keep_stated: true,
+                    needs: types.clone(),
+                    incomplete: false,
+                })
+                .collect();
+            match build(&[bare, &bytes], &wanted) {
+                Ok(built) if built.stated == stated => behind_a_bare_one += 1,
+                Ok(_) => failures.push(format!(
+                    "{name}: behind a manifest that states nothing it is written back stating something else"
+                )),
+                Err(e) => failures.push(format!(
+                    "{name}: behind a manifest that states nothing: {e}"
+                )),
+            }
+        }
+        // A derivation that resolved nothing takes nothing away from what the manifest states, in either pairing.
+        let short: Vec<Wanted> = (stated.keys())
+            .map(|map| Wanted {
+                name: *map,
+                keep_stated: false,
+                needs: Default::default(),
+                incomplete: true,
+            })
+            .collect();
+        match build(&[&bytes], &short) {
+            Ok(built) if built.stated == stated => {}
+            Ok(_) => failures.push(format!(
+                "{name}: rewritten from a derivation that resolved nothing it states something else"
+            )),
+            Err(e) => failures.push(format!(
+                "{name}: rewritten from a derivation that resolved nothing: {e}"
+            )),
+        }
+        for keep_stated in [true, false] {
+            let wanted: Vec<Wanted> = (stated.iter())
+                .map(|(map, types)| Wanted {
+                    name: *map,
+                    keep_stated,
+                    needs: types.clone(),
+                    incomplete: false,
+                })
+                .collect();
+            match build(&[&bytes], &wanted) {
+                // ⚠ Kept whole, an entry is every member the game states of it, its flags among them, and not only its type files.
+                Ok(built) if keep_stated && entries_of(&built.bytes) != entries_of(&bytes) => {
+                    failures.push(format!("{name}: an entry kept whole reads back changed"))
+                }
+                Ok(built) if built.stated == stated && built.unstated.is_empty() => {}
+                Ok(built) => failures.push(format!(
+                    "{name} (kept whole: {keep_stated}): written back it states {} map(s) and the file states {}",
+                    built.stated.len(),
+                    stated.len()
+                )),
+                Err(e) => failures.push(format!("{name} (kept whole: {keep_stated}): {e}")),
+            }
+        }
+        every.push(bytes);
+    }
+
+    // ⚠ An update of the game restates entries of the pack it patches, so the manifests of one install state many maps more than
+    // once: kept at once, an entry is written as the first manifest that states it states it, and none is written that they do not state.
+    let (mut once, mut seen, mut stated_in_all) =
+        (Vec::new(), std::collections::BTreeSet::new(), 0);
+    for bytes in &every {
+        let held = entries_of(bytes);
+        stated_in_all += held.len();
+        once.extend(held.iter().filter(|entry| !seen.contains(*entry)).cloned());
+        seen.extend(held);
+    }
+    once.sort();
+    let names: std::collections::BTreeSet<u32> = (every.iter())
+        .filter_map(|bytes| stated_in(bytes).ok())
+        .flat_map(|stated| stated.into_keys())
+        .collect();
+    let wanted: Vec<Wanted> = (names.iter())
+        .map(|map| Wanted {
+            name: *map,
+            keep_stated: true,
+            needs: Default::default(),
+            incomplete: false,
+        })
+        .collect();
+    let kept: Vec<&[u8]> = every.iter().map(Vec::as_slice).collect();
+    match build(&kept, &wanted) {
+        Ok(built) if entries_of(&built.bytes) == once => {}
+        Ok(built) => failures.push(format!(
+            "kept at once, the manifests state {} entries no earlier one states and {} are written",
+            once.len(),
+            entries_of(&built.bytes).len()
+        )),
+        Err(e) => failures.push(format!("kept at once: {e}")),
+    }
+    println!(
+        "{} staged .ymf: {read} read as a manifest a build writes from, {other_container} in another container, {stating} state {entries} map(s) in {flagged} entries with flags, {flagless} of which set none; {behind_a_bare_one} written back behind a manifest that states nothing; kept at once they state {} map name(s) in {stated_in_all} entries, {} of them stated by no earlier manifest",
+        files.len(),
+        names.len(),
+        once.len()
+    );
+    assert!(
+        failures.is_empty(),
+        "{} of {} staged manifests: {:#?}",
+        failures.len(),
+        files.len(),
+        &failures[..failures.len().min(10)]
+    );
+    assert!(
+        stating > 0,
+        "no staged manifest states a map, so nothing was written back"
+    );
+    assert_eq!(
+        behind_a_bare_one, stating,
+        "no staged manifest states nothing, so the join of two type tables went unexercised"
     );
 }

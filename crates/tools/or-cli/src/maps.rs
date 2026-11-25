@@ -1,5 +1,6 @@
 //! `openrage-cli maps`: list what a project's map sets place and declare, validate them and say what the rules find, read a build back
-//! against them, and apply a list of operations to their sources.
+//! against them, apply a list of operations to their sources, and keep a manifest of the game for the manifest of the maps to be
+//! written from.
 //!
 //! The plan and the build of maps are `openrage-cli project plan` and `build`:
 //! a maps content is content like any other, and goes through the one plan.
@@ -23,6 +24,7 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("validate") => validate(rest),
         Some("verify") => verify(rest),
         Some("apply") => apply(rest),
+        Some("keep-manifest") => keep_manifest(rest),
         Some("-h" | "--help" | "help") => {
             print_usage();
             return ExitCode::SUCCESS;
@@ -50,7 +52,9 @@ fn print_usage() {
          openrage-cli maps list     <project.openrage-proj> [--module <id>]\n  \
          openrage-cli maps validate <project.openrage-proj> [--module <id>] [--json]\n  \
          openrage-cli maps verify   <project.openrage-proj> [--build <id>] [--out <folder>]\n  \
-         openrage-cli maps apply    <project.openrage-proj> <operations.json> [--module <id>] [--dry-run]\n\n\
+         openrage-cli maps apply    <project.openrage-proj> <operations.json> [--module <id>] [--dry-run]\n  \
+         openrage-cli maps keep-manifest <project.openrage-proj> <_manifest.ymf>... [--module <id>]\n  \
+         openrage-cli maps keep-manifest <project.openrage-proj> --game <install root> [--keys <file>] [--module <id>]\n\n\
          changes compares each map file and type file of the content with the base its source keeps,\n\
          the file it was imported from, and says by object what the source changed: the entities and\n\
          the archetypes added, deleted and changed, each with its index in the base and its index now,\n\
@@ -66,9 +70,10 @@ fn print_usage() {
          exits 1 when a finding that is not waived is an error.\n\
          verify reads the resource a build wrote against the map sets it was made of: that each source\n\
          reached the place the plan gave it, that every map file and type file reloads with the\n\
-         entities and archetypes its source states, and that the manifest registers each type file.\n\
-         It exits 1 when a check fails. The plan and the build are `openrage-cli project plan` and\n\
-         `build`; maps go through them as any content does.\n\
+         entities and archetypes its source states, that the manifest registers each type file and\n\
+         declares the resource a map, and that the manifest of the maps is there and states what the\n\
+         sources come to. It exits 1 when a check fails. The plan and the build are\n\
+         `openrage-cli project plan` and `build`; maps go through them as any content does.\n\
          apply does the operations of a list, in order, to the sources of the maps content: an entity\n\
          placed, added as a copy or taken out with its LOD links renumbered, an archetype added or taken\n\
          out, the extents grown or stated, a record put back. The list is JSON whose format is\n\
@@ -76,7 +81,12 @@ fn print_usage() {
          and whose `source` is a source folder of the content. It writes all of them or none: an\n\
          operation that is refused is named by its place in the list, and no source changes. With\n\
          --dry-run it says what each operation would change and writes nothing. It exits 1 when an\n\
-         operation is refused.\n\n\
+         operation is refused.\n\
+         keep-manifest keeps a manifest of the game in the maps content, as the game ships it. A build\n\
+         writes the manifest of its own maps from the ones kept: they say how that document is laid\n\
+         out and what flags the entry of a map takes, which nothing else in a project says. Name the\n\
+         files, or name an install with --game to keep every manifest of it that states a map of the\n\
+         content. With none kept a build writes no manifest and its plan says so.\n\n\
          A build checks the files. It does not test that GTA V loads them.\n"
     );
 }
@@ -183,6 +193,104 @@ fn apply(args: &[String]) -> Result<ExitCode, Failure> {
         if dry_run { "; nothing was written" } else { "" }
     );
     Ok(ExitCode::SUCCESS)
+}
+
+/// Keep manifests of the game in a maps content: the files named, or those of an install that state a map of the content.
+fn keep_manifest(args: &[String]) -> Result<ExitCode, Failure> {
+    let (positional, flags) = parse(args, &["--module", "--game", "--keys"])?;
+    let Some((path, files)) = positional.split_first() else {
+        return Err(Usage("expected a <project.openrage-proj>".into()));
+    };
+    let (project, modules) = maps_of(std::slice::from_ref(path), &flags)?;
+    let [id] = modules.as_slice() else {
+        return Err(Usage(format!(
+            "{path} holds several maps contents ({}): name one with --module",
+            modules.join(", ")
+        )));
+    };
+    let module = project
+        .container
+        .module(id)
+        .expect("chosen from the container");
+    let folder = or_maps::module_folder_to_edit(Path::new(path), &project.container, module)
+        .map_err(|e| Run(format!("content `{id}`: {e}")))?;
+    let incoming: Vec<(String, Vec<u8>)> = match (flags.get("--game"), files) {
+        (Some(_), [_, ..]) => {
+            return Err(Usage(
+                "name the manifests to keep, or an install with --game, and not both".into(),
+            ))
+        }
+        (None, []) => {
+            return Err(Usage(
+                "expected the <_manifest.ymf> files to keep, or --game <install root>".into(),
+            ))
+        }
+        (None, files) => files
+            .iter()
+            .map(|file| {
+                std::fs::read(file)
+                    .map(|bytes| (file.clone(), bytes))
+                    .map_err(|e| Run(format!("{file}: {e}")))
+            })
+            .collect::<Result<_, _>>()?,
+        (Some(root), []) => {
+            let (_, facts, _) = planned(&project.folder(), module, Depth::Open, None)
+                .map_err(|e| Run(format!("content `{id}`: {e}")))?;
+            let wanted: Vec<u32> = (or_maps::facts::named_paths(
+                &or_maps::Maps::read(&folder).map_err(|e| Run(e.to_string()))?,
+            ))
+            .filter_map(|source| facts.source(source)?.map().map(|map| map.name.hash))
+            .collect();
+            stating(Path::new(root), flags.get("--keys").map(Path::new), &wanted)?
+        }
+    };
+    for (shown, bytes) in &incoming {
+        let stated =
+            or_world::manifest_build::stated_in(bytes).map_err(|e| Run(format!("{shown}: {e}")))?;
+        let kept =
+            or_maps::manifest::keep(&folder, bytes).map_err(|e| Run(format!("{shown}: {e}")))?;
+        println!(
+            "kept {shown} as {}: it states {} map(s)",
+            kept.display(),
+            stated.len()
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The manifests of the install at `root` that state one of the maps `wanted`, each with its path in the install.
+fn stating(
+    root: &Path,
+    keys: Option<&Path>,
+    wanted: &[u32],
+) -> Result<Vec<(String, Vec<u8>)>, Failure> {
+    let game = crate::keys::mount_all(root, keys).map_err(Run)?;
+    let mut paths: Vec<String> = Vec::new();
+    game.for_each_file(|logical, _container, leaf| {
+        if leaf.to_ascii_lowercase().ends_with(".ymf") {
+            paths.push(logical.to_string());
+        }
+    });
+    paths.sort();
+    let found: Vec<(String, Vec<u8>)> = paths
+        .into_iter()
+        .filter_map(|path| {
+            let bytes = game.vfs.open(&path)?;
+            // ⚠ A `.ymf` that is no manifest a build can write from is passed by: the install holds a few in another container.
+            let stated = or_world::manifest_build::stated_in(&bytes).ok()?;
+            wanted
+                .iter()
+                .any(|map| stated.contains_key(map))
+                .then(|| (path, bytes.to_vec()))
+        })
+        .collect();
+    if found.is_empty() {
+        return Err(Run(format!(
+            "no manifest of the install at {} states a map of the content, so there is none to keep",
+            root.display()
+        )));
+    }
+    Ok(found)
 }
 
 /// Read each resource the build of an output wrote against the maps content it holds.

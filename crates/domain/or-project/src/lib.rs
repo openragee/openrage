@@ -45,7 +45,9 @@ pub use build::{
 };
 pub use built::{built_files, BuiltFiles, Folder};
 pub use container::{Container, Module, ModuleKind, Output, OutputKind, Target};
-pub use contribution::{Claim, Contribution, Cooks, Figure, Item, ManifestEntry, SourceFolder};
+pub use contribution::{
+    ArchiveContents, Claim, Contribution, Cooks, Figure, Item, ManifestEntry, SourceFolder,
+};
 pub use diff::{diff, since_last_build, Diff, Moved};
 pub use paths::{
     build_root, find_sources, project_folder, relative_inside, resolve_member, shadow_root,

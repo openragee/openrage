@@ -1,4 +1,4 @@
-//! Small map files and type files for the suites that need some, made the way a synthetic file is made anywhere in the tree: a schema
+//! Small map files, type files and manifests for the suites that need some, made the way a synthetic file is made anywhere in the tree: a schema
 //! of the classes written inline, a value tree, and the layout the writer derives from the two.
 //!
 //! The classes are the engine's, with the members the typed world family reads (`or_io::meta::typed`), so a file made here opens as
@@ -60,6 +60,60 @@ const PSC: &str = r#"<?xml version="1.0"?>
     <array name="dependencies" type="atArray"><string type="atHashString"/></array>
   </structdef>
 </ParserSchema>"#;
+
+/// The classes of a manifest, with the members `or-world` reads of one.
+const MANIFEST_PSC: &str = r#"<?xml version="1.0"?>
+<ParserSchema>
+  <structdef type="CImapDependencies">
+    <string name="imapName" type="atHashString"/>
+    <u32 name="manifestFlags"/>
+    <array name="itypDepArray" type="atArray"><string type="atHashString"/></array>
+  </structdef>
+  <structdef type="CPackFileMetaData">
+    <array name="imapDependencies_2" type="atArray"><struct type="CImapDependencies"/></array>
+  </structdef>
+</ParserSchema>"#;
+
+/// What a sample manifest states of one map: the flags of its entry and the type files it is said to need.
+#[derive(Debug, Clone, Copy)]
+pub struct Stated<'a> {
+    pub map: &'a str,
+    pub flags: u32,
+    pub types: &'a [&'a str],
+}
+
+/// A `_manifest.ymf` that states `stated`, in the container the game ships its manifests in.
+pub fn manifest_file(stated: &[Stated<'_>]) -> Vec<u8> {
+    // ⚠ A member the public table of names lacks is spelled by its hash in a document, and the writer looks it up under that spelling.
+    let flags = format!("hash_{:08X}", or_world::field::name_hash("manifestFlags"));
+    let entries = stated
+        .iter()
+        .map(|said| {
+            let mut entry = MetaInstance::new("CImapDependencies");
+            entry.set("imapName", Value::Hash(HashedString::new(said.map)));
+            entry.set(&flags, Value::UInt(u64::from(said.flags)));
+            entry.set(
+                "itypDepArray",
+                Value::Array(
+                    (said.types.iter())
+                        .map(|name| Value::Hash(HashedString::new(*name)))
+                        .collect(),
+                ),
+            );
+            Value::Struct(Box::new(entry))
+        })
+        .collect();
+    let mut root = MetaInstance::new("CPackFileMetaData");
+    root.set("imapDependencies_2", Value::Array(entries));
+    let library =
+        build_library([("inline.psc", MANIFEST_PSC.as_bytes())]).expect("the schema parses");
+    // ⚠ Written with the public table of names alone, whatever schema the process installed, so the spelling above is the one looked for.
+    or_io::meta::binary::hash_index::with_public_names_only(|| {
+        let layout = canonical::layout_for(&library, &root, BinaryFormat::Pso, None)
+            .expect("the manifest lays out");
+        write_meta_binary(BinaryFormat::Pso, Some(&layout), &root).expect("the manifest encodes")
+    })
+}
 
 /// One entity of a sample map.
 #[derive(Debug, Clone, Copy)]

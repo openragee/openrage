@@ -11,8 +11,8 @@ use common::{declare, enhanced_ytd, layout_of, legacy_ytd, planned, snapshot};
 use or_io::container::rpf::RpfArchive;
 use or_io::Generation;
 use or_project::{
-    build, build_all, plan_with, verify, Container, Contribution, ManifestEntry, Origin, Output,
-    OutputKind, PlannedFile,
+    build, build_all, plan_with, verify, ArchiveContents, Container, Contribution, ManifestEntry,
+    Module, ModuleKind, Origin, Output, OutputKind, PlannedFile,
 };
 use or_title::dlc::{ContentXml, SetupData};
 use serde_json::{json, Value};
@@ -390,5 +390,181 @@ fn a_document_a_content_writes_ships_in_the_pack_beside_the_files_it_copies() {
     assert!(
         held.contains_key("setup2.xml") && held.contains_key("content.xml"),
         "the pack still writes its own two documents"
+    );
+}
+
+/// A content of a kind this crate has no code for, handing a pack one type file inside a nested archive.
+fn a_type_file_in_an_archive() -> (Container, Contribution) {
+    let container = Container {
+        modules: vec![Module {
+            id: "props".to_string(),
+            kind: ModuleKind::Unknown("widgets".into()),
+            extra: Default::default(),
+        }],
+        outputs: vec![Output::of(
+            OutputKind::SingleplayerDlc,
+            "dlc",
+            "mypack",
+            &["props"],
+        )],
+    };
+    let mut contribution = Contribution::of("props");
+    contribution.files.push(PlannedFile {
+        path: "x64/levels/props.rpf/a.ytyp".to_string(),
+        origin: Origin::Generated(vec![1, 2, 3]),
+    });
+    (container, contribution)
+}
+
+fn asking(contribution: &mut Contribution, path: &str) {
+    contribution.manifest.push(ManifestEntry {
+        key: "data_file".to_string(),
+        values: vec!["DLC_ITYP_REQUEST".to_string(), path.to_string()],
+    });
+}
+
+#[test]
+fn a_type_file_in_a_nested_archive_is_asked_for_by_the_name_of_its_folder_and_by_no_other() {
+    let (container, mut contribution) = a_type_file_in_an_archive();
+    asking(&mut contribution, "x64/levels/a.ityp");
+    contribution.archives.push(ArchiveContents {
+        path: "x64/levels/props.rpf".to_string(),
+        contents: "CONTENTS_PROPS".to_string(),
+    });
+    let plan = plan_with(&container, "dlc", Path::new("/p"), &[contribution]).unwrap();
+    let registered: Vec<(&str, &str, &str, bool)> = (plan.registrations.iter())
+        .map(|r| {
+            (
+                r.path.as_str(),
+                r.file_type.as_str(),
+                r.contents.as_str(),
+                r.asked,
+            )
+        })
+        .collect();
+    assert_eq!(
+        registered,
+        [
+            ("x64/levels/a.ityp", "DLC_ITYP_REQUEST", "", true),
+            ("x64/levels/props.rpf", "RPF_FILE", "CONTENTS_PROPS", false),
+        ]
+    );
+    assert!(
+        plan.files.iter().all(|f| f.path != "x64/levels/a.ityp"),
+        "the name is registered and is no file of the pack"
+    );
+    assert!(
+        !plan.problems.iter().any(|p| p.contains("does not hold")),
+        "{:?}",
+        plan.problems
+    );
+
+    // A name with no type file behind it, in that folder or in another, is a type stated for a file the build lacks.
+    for stray in ["x64/levels/b.ityp", "x64/a.ityp"] {
+        let (container, mut contribution) = a_type_file_in_an_archive();
+        asking(&mut contribution, stray);
+        let plan = plan_with(&container, "dlc", Path::new("/p"), &[contribution]).unwrap();
+        assert!(
+            plan.problems
+                .iter()
+                .any(|p| p.contains(stray) && p.contains("does not hold")),
+            "{stray}: {:?}",
+            plan.problems
+        );
+        assert!(plan.registrations.iter().all(|r| !r.asked));
+    }
+}
+
+#[test]
+fn an_archive_said_to_hold_something_is_one_the_plan_puts_a_file_in() {
+    let (container, mut contribution) = a_type_file_in_an_archive();
+    contribution.archives.push(ArchiveContents {
+        path: "x64/levels/elsewhere.rpf".to_string(),
+        contents: "CONTENTS_PROPS".to_string(),
+    });
+    let plan = plan_with(&container, "dlc", Path::new("/p"), &[contribution]).unwrap();
+    assert!(
+        plan.problems
+            .iter()
+            .any(|p| p.contains("x64/levels/elsewhere.rpf") && p.contains("no file")),
+        "{:?}",
+        plan.problems
+    );
+    assert!(plan.registrations.iter().all(|r| r.contents.is_empty()));
+}
+
+#[test]
+fn two_contents_that_say_one_archive_holds_different_things_are_named() {
+    let said = |first: &str, second: &str| {
+        let (mut container, props) = a_type_file_in_an_archive();
+        container.modules.push(Module {
+            id: "more".to_string(),
+            kind: ModuleKind::Unknown("widgets".into()),
+            extra: Default::default(),
+        });
+        container.outputs[0].take.push("more".to_string());
+        let mut more = Contribution::of("more");
+        more.files.push(PlannedFile {
+            path: "x64/levels/props.rpf/b.ytyp".to_string(),
+            origin: Origin::Generated(vec![4, 5, 6]),
+        });
+        let mut handed = [props, more];
+        for (contribution, contents) in handed.iter_mut().zip([first, second]) {
+            contribution.archives.push(ArchiveContents {
+                path: "x64/levels/props.rpf".to_string(),
+                contents: contents.to_string(),
+            });
+        }
+        let plan = plan_with(&container, "dlc", Path::new("/p"), &handed).unwrap();
+        let contents: Vec<String> = (plan.registrations.iter())
+            .filter(|r| r.path == "x64/levels/props.rpf")
+            .map(|r| r.contents.clone())
+            .collect();
+        let named: Vec<String> = (plan.problems.iter())
+            .filter(|p| p.contains("`props`") && p.contains("`more`"))
+            .cloned()
+            .collect();
+        (contents, named)
+    };
+
+    let (contents, named) = said("CONTENTS_PROPS", "CONTENTS_PROPS");
+    assert_eq!(contents, ["CONTENTS_PROPS"]);
+    assert_eq!(named, Vec::<String>::new(), "they agree");
+
+    let (contents, named) = said("CONTENTS_PROPS", "CONTENTS_MAP");
+    assert_eq!(contents, ["CONTENTS_PROPS"]);
+    let [problem] = named.as_slice() else {
+        panic!("one problem names both contents: {named:?}")
+    };
+    assert!(
+        problem.contains("CONTENTS_PROPS") && problem.contains("CONTENTS_MAP"),
+        "{problem}"
+    );
+}
+
+#[test]
+fn a_map_file_that_would_sit_loose_is_refused_once_and_the_line_that_declares_a_map_is_passed_by() {
+    let (container, mut contribution) = a_type_file_in_an_archive();
+    contribution.files = vec![PlannedFile {
+        path: "stream/harbour.ymap".to_string(),
+        origin: Origin::Generated(vec![1, 2, 3]),
+    }];
+    // What a content laid out for a FiveM resource hands over.
+    contribution.manifest.push(ManifestEntry {
+        key: "this_is_a_map".to_string(),
+        values: vec!["yes".to_string()],
+    });
+    let plan = plan_with(&container, "dlc", Path::new("/p"), &[contribution]).unwrap();
+    let of_the_map: Vec<&String> = (plan.problems.iter())
+        .filter(|p| p.contains("harbour.ymap"))
+        .collect();
+    let [problem] = of_the_map.as_slice() else {
+        panic!("one sentence names the map file: {:?}", plan.problems)
+    };
+    assert!(problem.contains("sit loose"), "{problem}");
+    assert!(
+        !plan.problems.iter().any(|p| p.contains("this_is_a_map")),
+        "{:?}",
+        plan.problems
     );
 }

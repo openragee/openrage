@@ -10034,12 +10034,32 @@ and a type file named inside that archive, and the cell unlocks (the plan's ruli
 its extents is split at the build, by area, its links carried across the parts
 ([brief](World_Editor_Plan.md#a-build-a-server-and-a-story-install-take-r70q)).
 
-**Where it stands.** Not merged; a lane began the manifest on 2026-11-25. A FiveM resource ships a
-map's files and no `_manifest.ymf`. A build packs a nested archive for a path through an archive's
-name (`a_path_through_an_archives_name_is_packed_as_that_nested_archive`), and the story pack is
-locked for maps, which the Map content hands over outside every archive
-([what wave P44 built for Maps](Workbench_Views_Design.md#what-wave-p44-built-for-maps)).
-`crates/domain/or-world/src/partition.rs` plans a split by level of detail and applies nothing.
+**Where it stands.** Part one is built; nothing ran against an install or a game. A Map content
+hands a build `stream/_manifest.ymf`, stating for each map the type files `or-world`'s derivation
+finds (`a_build_writes_a_manifest_that_reads_back_naming_the_type_file_its_map_needs`), and the
+line `this_is_a_map`. The manifest is not made from nothing:
+`crates/domain/or-world/src/manifest_build.rs` types it by the manifests of the game a content
+keeps in its `manifests` folder (`openrage-cli maps keep-manifest`) and copies each entry from the
+one they state for a map of that name, since nothing derives the flags of an entry. A map taken from the game keeps the entry the game states
+(`a_map_taken_from_the_game_keeps_the_entry_the_game_states_where_the_derived_one_differs`); a map
+none states, such as one made from nothing, gets no entry, and a note of the plan names it.
+`openrage-cli maps verify` fails a build whose manifest is gone or is another document. Of the
+1,801 `.ymf` staged in the metadata corpus, 1,798 read as a manifest a build writes from, and the
+185 that state a map are written back stating what they state
+(`every_staged_manifest_of_the_game_is_written_back_stating_what_it_states`, 2026-11-25).
+
+For a story pack the content hands its files over inside one nested archive, registered as map
+data, each type file asked for by the `.ityp` name of the archive's folder
+(`a_story_pack_holds_its_maps_in_the_nested_archive_its_content_document_registers`). The cell
+stays locked: the folder of that archive, what a pack states of an archive of type files and the
+change set that turns map data on are unmeasured
+([maps in a pack](../features/Dlc_Pack_Creation.md#maps-in-a-pack)).
+
+Left: the line for the server's configuration; the split, which
+`crates/domain/or-world/src/partition.rs` plans by level of detail and does not apply; the lists a
+derivation does not give, written empty; one manifest for two Map contents of a build, refused
+today as one path; keeping a manifest from the editor; the three measurements; and the install
+suite, written and never run ([the writer in full](../reference/Crate_Reference.md#domain-crates)).
 
 **Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits).
 

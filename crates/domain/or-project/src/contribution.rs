@@ -32,6 +32,16 @@ pub struct Contribution {
     pub notes: Vec<String>,
     /// Whether its paths are those of a singleplayer DLC pack, which an `.oiv` installs inside the `dlc.rpf` it adds.
     pub pack: bool,
+    /// What a singleplayer DLC states that an archive its files go into holds, where the game's packs state it.
+    pub archives: Vec<ArchiveContents>,
+}
+
+/// What a pack states a nested archive holds, such as `CONTENTS_DLC_MAP_DATA` for the archive of its maps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveContents {
+    /// The archive, by its path in the pack.
+    pub path: String,
+    pub contents: String,
 }
 
 /// One line of the manifest: `key 'value' 'value'`.

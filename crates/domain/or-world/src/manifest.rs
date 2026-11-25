@@ -68,7 +68,7 @@ impl<'a> Manifest<'a> {
     }
 }
 
-fn hashes(inst: &MetaInstance, key: u32) -> BTreeSet<u32> {
+pub(crate) fn hashes(inst: &MetaInstance, key: u32) -> BTreeSet<u32> {
     field::array_at(inst, key)
         .iter()
         .filter_map(|v| match v {
@@ -105,6 +105,17 @@ pub struct Dependencies {
     pub unresolved: usize,
 }
 
+/// The archetype each entity and each grass batch of a map places, the empty name left out.
+pub fn placed(map: &MapData<'_>) -> Vec<u32> {
+    // ⚠ A grass batch places an archetype too, and a map whose only content
+    // is grass still needs the type file that declares it.
+    map.entities()
+        .map(|entity| entity.archetype())
+        .chain(map.grass_batches().map(|batch| batch.archetype()))
+        .filter(|archetype| *archetype != 0)
+        .collect()
+}
+
 /// Derive a map's type-file dependencies from what it places.
 ///
 /// ⚠ **Unresolved archetypes are counted, not dropped.** A derived list
@@ -112,27 +123,17 @@ pub struct Dependencies {
 /// caller comparing against a stated list has to know the derivation was
 /// incomplete rather than smaller.
 pub fn dependencies_of(map: &MapData<'_>, index: &ArchetypeIndex) -> Dependencies {
+    dependencies_of_placed(&placed(map), |archetype| index.owner_of(archetype))
+}
+
+/// [`dependencies_of`] for a caller that holds what a map places ([`placed`]) and not the map.
+pub fn dependencies_of_placed(
+    placed: &[u32],
+    owner_of: impl Fn(u32) -> Option<u32>,
+) -> Dependencies {
     let mut out = Dependencies::default();
-    for entity in map.entities() {
-        let archetype = entity.archetype();
-        if archetype == 0 {
-            continue;
-        }
-        match index.owner_of(archetype) {
-            Some(owner) => {
-                out.types.insert(owner);
-            }
-            None => out.unresolved += 1,
-        }
-    }
-    // A grass batch places an archetype too, and a map whose only content is
-    // grass still needs the type file that declares it.
-    for batch in map.grass_batches() {
-        let archetype = batch.archetype();
-        if archetype == 0 {
-            continue;
-        }
-        match index.owner_of(archetype) {
+    for archetype in placed {
+        match owner_of(*archetype) {
             Some(owner) => {
                 out.types.insert(owner);
             }

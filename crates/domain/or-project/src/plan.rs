@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use or_io::gta5::retarget::CONVERTED;
 
 use crate::container::{Container, ModuleKind, Output, OutputKind, Target};
-use crate::contribution::{Contribution, Item, ManifestEntry, SourceFolder};
+use crate::contribution::{ArchiveContents, Contribution, Item, ManifestEntry, SourceFolder};
 use crate::paths::{folded, is_under, is_within};
 use crate::{dlc, merge, oiv};
 
@@ -106,6 +106,10 @@ pub enum Origin {
 pub struct Registration {
     pub path: String,
     pub file_type: String,
+    /// What the pack states an archive holds; empty where it states nothing.
+    pub contents: String,
+    /// Whether the path is a name the game asks by and no file of the pack: the `.ityp` of a `.ytyp` inside a nested archive.
+    pub asked: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -410,9 +414,13 @@ pub(crate) fn assemble(
         .filter(|c| c.pack)
         .map(|c| c.module.as_str())
         .collect();
+    let archives: Vec<(&str, &ArchiveContents)> = taken
+        .iter()
+        .flat_map(|c| c.archives.iter().map(move |held| (c.module.as_str(), held)))
+        .collect();
     match &declared.kind {
         OutputKind::FivemResource => manifest_of(&mut owned, &entries, declared, &mut plan),
-        OutputKind::SingleplayerDlc => dlc::finish(&mut owned, &entries, &mut plan),
+        OutputKind::SingleplayerDlc => dlc::finish(&mut owned, &entries, &archives, &mut plan),
         OutputKind::OivPackage => oiv::finish(&mut owned, (&entries, &packs), declared, &mut plan),
         OutputKind::Unknown(_) => unreachable!("an unknown kind returned above"),
     }

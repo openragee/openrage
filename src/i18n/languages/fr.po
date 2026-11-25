@@ -16953,3 +16953,6 @@ msgstr "Seules les archives dépliées sont parcourues."
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} est une nouvelle archive avec la modification à la place de son entrée et sa table telle qu'elle a été lue."
+
+msgid "Preparing video… {percent}%"
+msgstr "Préparation de la vidéo… {percent}%"

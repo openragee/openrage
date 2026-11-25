@@ -17099,3 +17099,6 @@ msgstr "Поиск идёт только по развёрнутым архив�
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} — новый архив с правкой на месте его записи и с таблицей в том виде, в каком она прочитана."
+
+msgid "Preparing video… {percent}%"
+msgstr "Подготовка видео… {percent}%"

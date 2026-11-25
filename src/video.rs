@@ -5,7 +5,10 @@
 use std::sync::mpsc::{sync_channel, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use or_media::{Decoders, Frame, MediaError, VideoStream};
+use or_media::{Decoders, Frame};
+
+mod buffer;
+use buffer::Decoder;
 
 use crate::bink;
 use crate::state::{AppState, DocPayload, DocumentId};
@@ -16,7 +19,7 @@ pub const PREVIEW_HEIGHT: u32 = 360;
 pub const PREVIEW_FPS: f64 = 30.0;
 const FRAME_BYTES: usize = (PREVIEW_WIDTH * PREVIEW_HEIGHT * 4) as usize;
 
-/// A Bink video document: the file's bytes, decoded afresh on every seek, and its header.
+/// A Bink video document with its source bytes, header and buffered preview.
 #[derive(Clone)]
 pub struct BikDocument {
     pub bytes: Arc<[u8]>,
@@ -68,34 +71,7 @@ impl AppState {
 /// What decodes a movie, as the preview names it.
 pub const ROUTE: &str = "OpenRage's Bink decoder";
 
-/// One decoding thread, from a start frame to the end of the movie.
-struct Decoder {
-    /// What decodes, as the preview names it.
-    name: &'static str,
-    frames: Receiver<Result<Vec<u8>, MediaError>>,
-}
-
-impl Decoder {
-    fn start(name: &'static str, mut stream: Box<dyn VideoStream>) -> Self {
-        let (sender, frames) = sync_channel(4);
-        std::thread::spawn(move || loop {
-            let sent = match stream.next_frame() {
-                Ok(Some(frame)) => sender.send(Ok(sized(frame))).is_ok(),
-                Ok(None) => false,
-                Err(why) => {
-                    let _ = sender.send(Err(why));
-                    false
-                }
-            };
-            if !sent {
-                break;
-            }
-        });
-        Self { name, frames }
-    }
-}
-
-/// A frame as RGBA at the preview size, scaled only when it is not that size already.
+/// An RGBA frame at the preview size.
 fn sized(frame: Frame) -> Vec<u8> {
     if (frame.width, frame.height) == (PREVIEW_WIDTH, PREVIEW_HEIGHT) {
         frame.rgba
@@ -183,7 +159,6 @@ fn decode_sound(bytes: &Arc<[u8]>) -> Option<Receiver<Result<Sound, String>>> {
 }
 
 /// The preview's playback: the frame shown, the clock, and the decoder feeding it.
-#[derive(Default)]
 pub struct Preview {
     /// Whether the preview has started: the sound is decoding and the first frame is asked for.
     prepared: bool,
@@ -194,7 +169,10 @@ pub struct Preview {
     /// Frames per second of the frames the decoder hands over.
     fps: f64,
     decoder: Option<Decoder>,
-    frame: Option<Vec<u8>>,
+    frame: Option<Arc<[u8]>>,
+    next_frame: u64,
+    buffering: bool,
+    finished: bool,
     frames_since_seek: u64,
     shown: u64,
     texture: Option<(u64, egui::TextureHandle)>,
@@ -212,18 +190,48 @@ pub struct Preview {
     sound_problem: Option<String>,
 }
 
+impl Default for Preview {
+    fn default() -> Self {
+        Self {
+            prepared: false,
+            decoders: Decoders::default(),
+            route: None,
+            fps: PREVIEW_FPS,
+            decoder: None,
+            frame: None,
+            next_frame: 0,
+            buffering: false,
+            finished: false,
+            frames_since_seek: 0,
+            shown: 0,
+            texture: None,
+            clock: 0.0,
+            next_at: 0.0,
+            position: 0.0,
+            duration: None,
+            playing: false,
+            problem: None,
+            sound: Track::None,
+            cue: None,
+            sound_problem: None,
+        }
+    }
+}
+
 impl Preview {
     fn prepare(&mut self, bytes: &Arc<[u8]>) {
         if self.prepared {
             return;
         }
-        *self = Self {
-            prepared: true,
-            fps: PREVIEW_FPS,
-            sound: decode_sound(bytes).map_or(Track::None, Track::Decoding),
-            ..Self::default()
-        };
+        self.prepared = true;
+        self.sound = decode_sound(bytes).map_or(Track::None, Track::Decoding);
         self.seek(bytes, 0.0);
+    }
+
+    /// The fraction of the starting reserve decoded, while that reserve is still filling.
+    pub fn buffer_progress(&self) -> Option<f32> {
+        let progress = self.decoder.as_ref()?.progress(self.next_frame);
+        (progress < 1.0).then_some(progress)
     }
 
     pub fn problem(&self) -> Option<&str> {
@@ -250,112 +258,167 @@ impl Preview {
         self.route
     }
 
-    /// Restart decoding at `seconds`; the frame there shows once it is decoded.
+    /// Show `seconds` from the cache or ask a worker to decode from there.
     pub fn seek(&mut self, bytes: &Arc<[u8]>, seconds: f64) {
-        self.decoder = None;
-        let opened = or_media::open(Arc::clone(bytes)).and_then(|source| {
-            let info = *source.info();
-            source.video(&self.decoders).map(|stream| (info, stream))
-        });
-        let (info, mut stream) = match opened {
-            Ok(opened) => opened,
-            Err(why) => {
-                self.problem = Some(why.to_string());
-                return;
-            }
-        };
-        self.fps = match stream.frame_rate() {
-            (numerator @ 1.., denominator @ 1..) => f64::from(numerator) / f64::from(denominator),
-            _ => PREVIEW_FPS,
-        };
         let mut first = (seconds * self.fps).round() as u64;
-        if let Some(last) = info.video.and_then(|video| video.frames.checked_sub(1)) {
+        if let Some(last) = self.decoder.as_ref().and_then(Decoder::last_frame) {
             first = first.min(last);
         }
-        let seconds = first as f64 / self.fps;
-        if first > 0 {
-            if let Err(why) = stream.seek(first) {
-                self.problem = Some(why.to_string());
-                return;
+        let reuse = self
+            .decoder
+            .as_ref()
+            .is_some_and(|d| d.can_seek(bytes, first));
+        if !reuse {
+            self.decoder = None;
+            self.route = None;
+            let opened = or_media::open(Arc::clone(bytes)).and_then(|source| {
+                let info = *source.info();
+                source.video(&self.decoders).map(|stream| (info, stream))
+            });
+            let (info, stream) = match opened {
+                Ok(opened) => opened,
+                Err(why) => {
+                    self.fail(why.to_string());
+                    return;
+                }
+            };
+            self.fps = match stream.frame_rate() {
+                (numerator @ 1.., denominator @ 1..) => {
+                    f64::from(numerator) / f64::from(denominator)
+                }
+                _ => PREVIEW_FPS,
+            };
+            first = (seconds * self.fps).round() as u64;
+            let total = info.video.map_or(0, |v| v.frames);
+            if total > 0 {
+                first = first.min(total - 1);
             }
+            self.duration = info.duration().map(|d| d.as_secs_f64());
+            self.decoder = Some(Decoder::start(
+                Arc::clone(bytes),
+                stream,
+                first,
+                total,
+                self.fps,
+            ));
         }
         self.route = Some(ROUTE);
-        self.decoder = Some(Decoder::start(ROUTE, stream));
-        self.duration = self
-            .duration
-            .or_else(|| info.duration().map(|d| d.as_secs_f64()));
         self.problem = None;
         self.frames_since_seek = 0;
-        self.position = seconds;
-        self.clock = seconds;
-        self.next_at = seconds;
-        // A seek while playing moves the sound with the picture.
+        self.finished = false;
+        self.next_frame = first;
+        self.position = first as f64 / self.fps;
+        self.clock = self.position;
+        self.next_at = self.position;
+        self.buffering = self.playing;
         if self.playing {
-            self.cue = Some(true);
+            self.cue = Some(false);
         }
+        self.tick(0.0);
     }
 
     /// Play from where the preview stands, or from the start once the movie has ended.
     pub fn play(&mut self, bytes: &Arc<[u8]>) {
-        if self.decoder.is_none() {
+        if self.decoder.is_none() || self.finished {
             self.seek(bytes, 0.0);
         }
         self.playing = self.decoder.is_some();
         if self.playing {
+            self.buffering =
+                self.buffer_progress().is_some() || matches!(self.sound, Track::Decoding(_));
             self.cue = Some(true);
         }
     }
 
     pub fn pause(&mut self) {
         self.playing = false;
+        self.buffering = false;
         self.cue = Some(false);
     }
 
-    /// Advance the clock by `dt` seconds while playing, and show each decoded frame now due.
+    fn fail(&mut self, why: String) {
+        self.problem = Some(why);
+        self.decoder = None;
+        self.playing = false;
+        self.buffering = false;
+        self.frames_since_seek = 0;
+        self.cue = Some(false);
+    }
+
+    fn show_next(&mut self) -> bool {
+        let Some(frame) = self.decoder.as_mut().and_then(|d| d.frame(self.next_frame)) else {
+            return false;
+        };
+        self.frame = Some(frame);
+        self.shown += 1;
+        self.frames_since_seek += 1;
+        self.position = self.next_frame as f64 / self.fps;
+        self.next_frame += 1;
+        self.next_at = self.next_frame as f64 / self.fps;
+        true
+    }
+
+    /// Fill the reserve, advance the clock and hold both tracks during a refill.
     pub fn tick(&mut self, dt: f64) {
-        if self.playing {
-            self.clock += dt;
+        if let Some(decoder) = &mut self.decoder {
+            if let Err(why) = decoder.pump() {
+                self.fail(why.to_string());
+                return;
+            }
+        }
+        self.sound();
+        if self.frames_since_seek == 0
+            && !self.show_next()
+            && self
+                .decoder
+                .as_ref()
+                .is_some_and(|d| d.finished(self.next_frame))
+        {
+            self.fail(format!("{ROUTE} decoded no frame"));
+            return;
+        }
+        if !self.playing {
+            return;
+        }
+        if self.buffering {
+            if self.buffer_progress().is_some() || matches!(self.sound, Track::Decoding(_)) {
+                return;
+            }
+            self.buffering = false;
+            self.clock = self.position;
+            self.cue = Some(true);
+            return;
+        }
+        if dt.is_finite() {
+            self.clock += dt.max(0.0);
         }
         while self.next_at <= self.clock {
-            let Some(decoder) = &self.decoder else {
-                break;
-            };
-            match decoder.frames.try_recv() {
-                Ok(Ok(frame)) => {
-                    self.frame = Some(frame);
-                    self.shown += 1;
-                    self.frames_since_seek += 1;
-                    self.position = self.next_at;
-                    self.next_at += 1.0 / self.fps;
-                }
-                Ok(Err(why)) => {
-                    self.problem = Some(why.to_string());
-                    self.playing = false;
-                    self.decoder = None;
-                    break;
-                }
-                // The decoder is behind: hold the clock rather than skip frames.
-                Err(TryRecvError::Empty) => {
-                    self.clock = self.next_at;
-                    break;
-                }
-                Err(TryRecvError::Disconnected) => {
-                    if self.frames_since_seek == 0 {
-                        self.problem = Some(format!("{} decoded no frame", decoder.name));
-                    }
-                    self.playing = false;
-                    self.decoder = None;
-                    break;
-                }
+            if self.show_next() {
+                continue;
             }
+            if self
+                .decoder
+                .as_ref()
+                .is_some_and(|d| d.finished(self.next_frame))
+            {
+                self.finished = true;
+                self.playing = false;
+            } else {
+                self.buffering = true;
+            }
+            self.clock = self.position;
+            self.cue = Some(false);
+            break;
         }
     }
 
-    /// Whether the decoder is still decoding, or the sound still decoding for a start, so the UI
-    /// keeps asking for frames.
+    /// Whether picture or sound preparation, or playback, needs another UI frame.
     pub fn busy(&self) -> bool {
-        let sound_due = self.cue == Some(true) && matches!(self.sound, Track::Decoding(_));
-        sound_due || self.decoder.is_some() && (self.playing || self.frames_since_seek == 0)
+        matches!(self.sound, Track::Decoding(_))
+            || self
+                .decoder
+                .as_ref()
+                .is_some_and(|d| d.filling() || self.playing || self.frames_since_seek == 0)
     }
 
     /// The sound, once its decoding thread has finished with it.
@@ -379,8 +442,12 @@ impl Preview {
 
     /// What the speaker is owed, taken once; a start waits for the sound to finish decoding.
     pub fn take_cue(&mut self) -> Option<SoundCue> {
+        self.tick(0.0);
         if self.cue? {
             let sound = self.sound();
+            if self.buffering {
+                return None;
+            }
             if sound.is_some() || !matches!(self.sound, Track::Decoding(_)) {
                 self.cue = None;
             }
@@ -425,6 +492,27 @@ impl Preview {
             }
         }
         self.texture.as_ref().map(|(_, handle)| handle)
+    }
+
+    #[cfg(test)]
+    pub fn wait_for_buffer(&mut self, timeout: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            self.tick(0.0);
+            if self.problem.is_some() {
+                return false;
+            }
+            if self.buffer_progress().is_none()
+                && self.frames_since_seek > 0
+                && !matches!(self.sound, Track::Decoding(_))
+            {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 
     #[cfg(test)]
@@ -518,6 +606,62 @@ mod tests {
     }
 
     #[test]
+    fn a_short_movie_decodes_ahead_while_paused() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Counted {
+            shades: Shades,
+            decoded: Arc<AtomicUsize>,
+        }
+        impl VideoStream for Counted {
+            fn next_frame(&mut self) -> Result<Option<Frame>, MediaError> {
+                let frame = self.shades.next_frame()?;
+                if frame.is_some() {
+                    self.decoded.fetch_add(1, Ordering::SeqCst);
+                }
+                Ok(frame)
+            }
+            fn frame_rate(&self) -> (u32, u32) {
+                (30, 1)
+            }
+            fn seek(&mut self, frame: u64) -> Result<(), MediaError> {
+                self.shades.seek(frame)
+            }
+        }
+        let decoded = Arc::new(AtomicUsize::new(0));
+        let worker_count = Arc::clone(&decoded);
+        let mut preview = Preview {
+            decoders: Decoders::empty().with(
+                Codec::Bink2,
+                or_media::Decoder::video(move |_, _| {
+                    Ok(Box::new(Counted {
+                        shades: Shades {
+                            next: 0,
+                            count: 12,
+                            fail_at: None,
+                        },
+                        decoded: Arc::clone(&worker_count),
+                    }))
+                }),
+            ),
+            fps: PREVIEW_FPS,
+            ..Preview::default()
+        };
+        preview.seek(&bink2_head(12), 0.0);
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while decoded.load(Ordering::SeqCst) < 12 && std::time::Instant::now() < deadline {
+            preview.tick(0.0);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(
+            decoded.load(Ordering::SeqCst),
+            12,
+            "the whole short movie is prepared before play"
+        );
+        assert!(!preview.playing);
+        assert_eq!(preview.position, 0.0);
+    }
+
+    #[test]
     fn a_preview_plays_a_movie_to_its_end_through_whatever_row_decodes_it() {
         let movie = bink2_head(6);
         let mut preview = preview_of_shades(6, None);
@@ -548,6 +692,94 @@ mod tests {
             "{}",
             preview.position
         );
+    }
+
+    #[test]
+    fn a_cached_short_movie_seeks_and_replays_without_decoding_again() {
+        let movie = bink2_head(12);
+        let mut preview = preview_of_shades(12, None);
+        preview.seek(&movie, 0.0);
+        assert!(preview.wait_for_buffer(Duration::from_secs(5)));
+        let first = Arc::clone(preview.frame.as_ref().expect("the first picture"));
+        preview.seek(&movie, 11.0 / 30.0);
+        assert_eq!(preview.frame().map(|p| p[0]), Some(11));
+        preview.play(&movie);
+        preview.tick(1.0);
+        assert!(!preview.playing);
+        preview.play(&movie);
+        assert!(Arc::ptr_eq(
+            &first,
+            preview.frame.as_ref().expect("the cached first picture")
+        ));
+        assert!(preview.playing);
+        assert_eq!(preview.position, 0.0);
+        assert_eq!(preview.buffer_progress(), None);
+    }
+
+    #[test]
+    fn a_long_movie_holds_picture_and_sound_until_its_reserve_is_refilled() {
+        struct Gated {
+            shades: Shades,
+            permits: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+        }
+        impl VideoStream for Gated {
+            fn next_frame(&mut self) -> Result<Option<Frame>, MediaError> {
+                if self.permits.lock().expect("permits").recv().is_err() {
+                    return Ok(None);
+                }
+                self.shades.next_frame()
+            }
+            fn frame_rate(&self) -> (u32, u32) {
+                (30, 1)
+            }
+            fn seek(&mut self, frame: u64) -> Result<(), MediaError> {
+                self.shades.seek(frame)
+            }
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let permits = Arc::new(std::sync::Mutex::new(receiver));
+        let mut preview = Preview {
+            decoders: Decoders::empty().with(
+                Codec::Bink2,
+                or_media::Decoder::video(move |_, _| {
+                    Ok(Box::new(Gated {
+                        shades: Shades {
+                            next: 0,
+                            count: 200,
+                            fail_at: None,
+                        },
+                        permits: Arc::clone(&permits),
+                    }))
+                }),
+            ),
+            sound: Track::Ready(Arc::new(two_seconds_of_stereo_at_4_hz())),
+            ..Preview::default()
+        };
+        let movie = bink2_head(200);
+        preview.seek(&movie, 0.0);
+        preview.play(&movie);
+        preview.tick(10.0);
+        assert_eq!(preview.position, 0.0);
+        assert!(preview.buffering);
+        assert!(preview.take_cue().is_none(), "sound waits with picture");
+        for _ in 0..31 {
+            sender.send(()).expect("decoder listens");
+        }
+        assert!(preview.wait_for_buffer(Duration::from_secs(5)));
+        assert!(matches!(preview.take_cue(), Some(SoundCue::Play(_))));
+        preview.tick(3.0);
+        assert_eq!(preview.position, 1.0);
+        assert!(preview.buffering);
+        assert!(matches!(preview.take_cue(), Some(SoundCue::Stop)));
+        preview.tick(10.0);
+        assert_eq!(preview.position, 1.0, "the refill holds the clock");
+        for _ in 0..30 {
+            sender.send(()).expect("decoder listens");
+        }
+        assert!(preview.wait_for_buffer(Duration::from_secs(5)));
+        assert!(matches!(preview.take_cue(), Some(SoundCue::Play(_))));
+        preview.tick(0.1);
+        assert!(preview.position > 1.0);
     }
 
     #[test]
@@ -659,6 +891,7 @@ mod tests {
             "nothing is owed before it plays"
         );
 
+        assert!(preview.wait_for_buffer(Duration::from_secs(5)));
         preview.play(&movie);
         let Some(SoundCue::Play(sound)) = preview.take_cue() else {
             panic!("playing owes the speaker a start");
@@ -693,6 +926,7 @@ mod tests {
         sender
             .send(Ok(two_seconds_of_stereo_at_4_hz()))
             .expect("the preview listens");
+        assert!(preview.wait_for_buffer(Duration::from_secs(5)));
         assert!(matches!(preview.take_cue(), Some(SoundCue::Play(_))));
         assert_eq!(preview.sound_note(), "Sound: stereo, 4 Hz.");
 

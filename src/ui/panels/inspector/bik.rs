@@ -72,6 +72,16 @@ fn draw_preview(
             preview.seek(bytes, at);
         }
     });
+    if let Some(progress) = preview.buffer_progress() {
+        ui.add(
+            egui::ProgressBar::new(progress)
+                .desired_width(180.0)
+                .text(tr!(
+                    "Preparing video… {percent}%",
+                    percent = format!("{:.0}", progress * 100.0)
+                )),
+        );
+    }
     ui.label(
         egui::RichText::new(preview.sound_note())
             .small()

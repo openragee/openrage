@@ -146,3 +146,77 @@ fn a_texture_dictionary_is_drawn_as_its_first_texture_and_a_drawable_as_its_geom
         "{ydr:?}: the drawable gave the thumbnail renderer nothing to draw"
     );
 }
+
+#[test]
+fn a_bk2_from_the_archive_device_plays_from_its_complete_memory_cache() {
+    use or_io::container::rpf::{Gta6Context, GtaViKeys, NameResolver, RpfArchive};
+    use or_io::gta6::names::Vocabulary;
+    use or_title::vfs::{ArchiveDevice, FileDevice};
+    use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+    let Some(build) = std::env::var_os("OPENRAGE_GTA6_BUILD").map(PathBuf::from) else {
+        or_test_support::skip_install(
+            "a buffered BK2 preview from the archive device",
+            format_args!("set OPENRAGE_GTA6_BUILD and OPENRAGE_GTA6_KEYS"),
+        );
+        return;
+    };
+    let movie = "movies/arcadegames/bfyb_idle_screen_bink.bk2";
+    let keys = GtaViKeys::for_install(None)
+        .expect("keys load")
+        .expect("keys are supplied");
+    let mut names = Vocabulary::default();
+    names.add(movie, None);
+    Gta6Context::give(Gta6Context {
+        keys: Arc::new(keys),
+        names: Arc::new(NameResolver::from_vocabulary(names)),
+    });
+    let path = build.join("movies.rpf");
+    let archive = RpfArchive::open(&path).expect("the archive table opens");
+    let device = ArchiveDevice::new(Arc::new(archive));
+    let bytes = device
+        .open(movie)
+        .expect("the archive device reads the named movie");
+    assert!(bytes.starts_with(b"KB2"));
+    let mut state = AppState {
+        audio: crate::audio::AudioOut::new(Box::new(crate::audio::NullSink::default())),
+        ..AppState::default()
+    };
+    state.open_bytes(path.join(movie), DocumentKind::Bik, bytes);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while state.load_receiver.is_some() && Instant::now() < deadline {
+        state.poll_load_result();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let doc = state.active_document.expect("the video opens");
+    let Some(DocPayload::Bik(bik)) = state.document(doc).map(|d| d.payload.clone()) else {
+        panic!("a video payload");
+    };
+    let mut preview = state.video_preview(doc).expect("the video preview");
+    assert!(
+        preview.wait_for_buffer(Duration::from_secs(60)),
+        "{:?}",
+        preview.problem()
+    );
+    let first = preview.frame().expect("the first frame").to_vec();
+    let duration = preview.duration.expect("the duration");
+    preview.seek(&bik.bytes, duration);
+    assert!(preview.wait_for_frame(Duration::from_secs(1)));
+    let header = bik.header.as_ref().expect("the header");
+    let last = f64::from(header.frames - 1) / header.fps().expect("the frame rate");
+    assert_eq!(preview.position, last);
+    preview.seek(&bik.bytes, 0.0);
+    assert_eq!(preview.frame(), Some(first.as_slice()));
+    preview.play(&bik.bytes);
+    for _ in 0..(duration * 120.0).ceil() as usize + 2 {
+        preview.tick(1.0 / 120.0);
+        assert_eq!(
+            preview.buffer_progress(),
+            None,
+            "the complete cache never stalls"
+        );
+    }
+    assert!(!preview.playing);
+    assert_eq!(preview.position, last);
+    assert_eq!(preview.problem(), None);
+}

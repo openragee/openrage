@@ -16953,3 +16953,6 @@ msgstr "展開したアーカイブだけが検索されます。"
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} はエントリの位置に編集を書き込み、テーブルは読み込んだときのままの新しいアーカイブです。"
+
+msgid "Preparing video… {percent}%"
+msgstr "動画を準備中… {percent}%"

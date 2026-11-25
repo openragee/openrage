@@ -16953,3 +16953,6 @@ msgstr "펼친 아카이브만 검색합니다."
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file}은(는) 항목 위치에 편집을 넣고 테이블은 읽은 그대로인 새 아카이브입니다."
+
+msgid "Preparing video… {percent}%"
+msgstr "동영상 준비 중… {percent}%"

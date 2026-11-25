@@ -16953,3 +16953,6 @@ msgstr "Vengono cercati solo gli archivi espansi."
 
 msgid "{file} is a new archive with the edit in its entry's place and its table as it was read."
 msgstr "{file} è un nuovo archivio con la modifica al posto della sua voce e la sua tabella così come è stata letta."
+
+msgid "Preparing video… {percent}%"
+msgstr "Preparazione del video… {percent}%"

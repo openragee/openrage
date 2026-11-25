@@ -268,7 +268,7 @@ pub fn run_names(args: &[String]) -> ExitCode {
     let resolved = resolve_crypto(&game_root, keys.as_deref());
     let mut warnings = resolved.notes;
 
-    let mut index = NameIndex::with_bundled(title.asset_slug());
+    let mut index = NameIndex::new(title.asset_slug());
     let mut census = Census::default();
     let mut table_warnings: Vec<String> = Vec::new();
     eprintln!(

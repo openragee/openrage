@@ -372,17 +372,6 @@ pub struct Rpf9Place {
 }
 
 impl RpfArchive {
-    /// Persists names confirmed by this RPF9's table; other archive versions add nothing.
-    pub fn cache_rpf9_names(&self, directory: &Path) -> io::Result<usize> {
-        match self.rpf9.as_deref() {
-            Some(state) => state
-                .context
-                .names
-                .cache_entries(&state.mount.archive.entries, directory),
-            None => Ok(0),
-        }
-    }
-
     /// Where file `entry_index` of an RPF9 read from disk sits; `None` for a folder, a nested archive, bytes held in memory or any other generation.
     pub fn rpf9_place(&self, entry_index: u32) -> Option<Rpf9Place> {
         let (_, leaf, entry) = self.rpf9_leaf(entry_index).ok()?;

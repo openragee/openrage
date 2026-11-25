@@ -3,7 +3,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
-use super::{parse_hash, Gta6Entry, NameResolver};
+use super::{parse_hash, NameResolver};
 use crate::gta6::hash::name_hash64;
 
 fn valid(hash: u64, name: &str) -> bool {
@@ -30,12 +30,10 @@ pub(super) fn read_cache(directory: &Path) -> io::Result<BTreeMap<u64, String>> 
                 std::collections::btree_map::Entry::Vacant(slot) => {
                     slot.insert(name.to_string());
                 }
+                // The first name stays; a second name for the same hash is one more rejected row.
                 std::collections::btree_map::Entry::Occupied(slot) => {
                     if !slot.get().eq_ignore_ascii_case(name) {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "conflicting cached names",
-                        ));
+                        rejected += 1;
                     }
                 }
             },
@@ -122,31 +120,5 @@ impl NameResolver {
         }
         result?;
         Ok(added)
-    }
-
-    /// Caches only names whose computed hash equals the entry's table hash.
-    pub fn cache_entries(&self, entries: &[Gta6Entry], directory: &Path) -> io::Result<usize> {
-        Self::cache_names(
-            directory,
-            entries
-                .iter()
-                .filter(|entry| {
-                    self.cache_directory.as_deref() != Some(directory)
-                        || !self.cached.contains(&entry.name64)
-                })
-                .filter_map(|entry| {
-                    self.lookup(entry.name64)
-                        .filter(|name| valid(entry.name64, name))
-                        .map(|name| (entry.name64, name))
-                }),
-        )
-    }
-
-    /// Caches matches only when a caller explicitly supplied a local cache directory.
-    pub fn cache_local_entries(&self, entries: &[Gta6Entry]) -> io::Result<usize> {
-        match self.cache_directory.as_deref() {
-            Some(directory) => self.cache_entries(entries, directory),
-            None => Ok(0),
-        }
     }
 }

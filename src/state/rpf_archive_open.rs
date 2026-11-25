@@ -9,24 +9,16 @@ pub fn open_archive_from_disk(
 ) -> Result<Arc<RpfArchive>, String> {
     use std::io::Read;
     let mut magic = [0; 4];
+    // A GTA VI archive is read with the keys and names this app holds, given before the open: keys
+    // the environment names would open it too, with names that lack the local ones.
     if std::fs::File::open(path)
         .and_then(|mut file| file.read_exact(&mut magic))
         .is_ok()
-        && magic == *b"9FPR"
+        && u32::from_le_bytes(magic) == or_io::container::rpf::RPF9_MAGIC
     {
         give_gta6_keys();
     }
-    let open = || RpfArchive::open_with(path, Arc::clone(&crypto));
-    let opened = match open() {
-        // A GTA VI archive is read with the keys this app holds for the game folder that is set.
-        Err(or_io::IoError::Rpf9TocEncrypted) if give_gta6_keys() => open(),
-        other => other,
-    };
-    if let (Ok(archive), Some(config)) = (&opened, super::prefs::config_root()) {
-        if let Err(error) = archive.cache_rpf9_names(&config.join("gta6_names")) {
-            tracing::warn!(%error, "could not update the local GTA VI names cache");
-        }
-    }
+    let opened = RpfArchive::open_with(path, crypto);
     opened.map(Arc::new).map_err(|e| match e {
         or_io::IoError::Rpf9TocEncrypted => super::gta_vi::rpf9_refusal_at(path)
             .unwrap_or_else(|| format!("open '{}': {e}", path.display())),
@@ -34,19 +26,15 @@ pub fn open_archive_from_disk(
     })
 }
 
-/// Hands the archive reader the GTA VI keys and names the app holds; `false` when it holds no keys.
-fn give_gta6_keys() -> bool {
+/// Hands the archive reader the GTA VI keys and names the app holds, where it holds keys.
+fn give_gta6_keys() {
     use or_io::container::rpf::Gta6Context;
-    let Ok(keys) = super::rpf9_scan::rpf9_table::keys() else {
-        return false;
-    };
-    // ponytail: given once per refusal, so keys of a game folder changed later are picked up only
-    // by the next archive that is refused. Give them where the folder is set if that shows.
-    Gta6Context::give(Gta6Context {
-        keys,
-        names: super::rpf9_scan::rpf9_table::resolver(),
-    });
-    true
+    if let Ok(keys) = super::rpf9_scan::rpf9_table::keys() {
+        Gta6Context::give(Gta6Context {
+            keys,
+            names: super::rpf9_scan::rpf9_table::resolver(),
+        });
+    }
 }
 
 impl super::AppState {

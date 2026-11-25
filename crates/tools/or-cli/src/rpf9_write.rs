@@ -339,7 +339,7 @@ fn walk(
     resolver: &NameResolver,
 ) -> Result<(Gta6Mount, Vec<u32>), String> {
     let mut mount = Gta6Mount::open_root(file, keys).map_err(|e| e.to_string())?;
-    crate::gta6_name_sources::resolve(&mut mount.archive, resolver);
+    mount.archive.resolve_names(resolver);
     let mut path = Vec::with_capacity(inner.len() + 1);
     for component in inner {
         let entry = find_entry(&mount, component)
@@ -354,7 +354,7 @@ fn walk(
         mount = mount
             .open_nested(file, &entry, keys)
             .map_err(|e| e.to_string())?;
-        crate::gta6_name_sources::resolve(&mut mount.archive, resolver);
+        mount.archive.resolve_names(resolver);
     }
     Ok((mount, path))
 }

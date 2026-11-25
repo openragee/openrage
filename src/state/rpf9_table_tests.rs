@@ -480,17 +480,11 @@ fn files_tree_resolves_shared_words_and_cached_paths_without_a_scan() {
         .any(|node| !node.is_dir() && node.path() == path_name));
     assert!(opened.nodes.iter().any(|node| !node.is_dir()
         && node.name() == format!("hash_{:016x}", name_hash64(unknown.as_bytes()))));
-    assert_eq!(
-        opened
-            .cache_rpf9_names(&local)
-            .expect("persist table matches"),
-        1
-    );
+    // Opening the archive is a read: the local cache holds what it held before.
     let cached = NameResolver::load(&local);
-    assert_eq!(cached.lookup(name_hash64(b"diffuse")), Some("DIFFUSE"));
+    assert_eq!(cached.lookup(name_hash64(b"diffuse")), None);
     assert_eq!(
         cached.lookup(name_hash64(path_name.as_bytes())),
         Some(path_name)
     );
-    assert_eq!(cached.lookup(name_hash64(unknown.as_bytes())), None);
 }

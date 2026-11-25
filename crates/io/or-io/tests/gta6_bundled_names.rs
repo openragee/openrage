@@ -1,6 +1,6 @@
 #![cfg(feature = "gta6")]
 
-use or_io::container::rpf::{Gta6Entry, NameResolver, GTA6_NAMES_ENV};
+use or_io::container::rpf::{NameResolver, GTA6_NAMES_ENV};
 use or_io::gta6::hash::{name_hash32, name_hash64};
 use std::{fs, path::Path, process::Command};
 
@@ -148,34 +148,6 @@ fn concurrent_cache_writers_keep_each_others_matches() {
 }
 
 #[test]
-fn only_table_matches_are_cached_not_every_candidate() {
-    let dir = tempfile::tempdir().expect("scratch");
-    let names = NameResolver::load_with_defaults(Some(dir.path()));
-    let entry = Gta6Entry {
-        index: 0,
-        name64: name_hash64(b"diffuse"),
-        name32: None,
-        name: None,
-        start: None,
-        stored: None,
-        real: None,
-        class: None,
-        cipher: None,
-    };
-    assert_eq!(
-        names
-            .cache_entries(&[entry], dir.path())
-            .expect("cache entries"),
-        1
-    );
-    let text = fs::read_to_string(dir.path().join("resolved-names.tsv")).expect("read");
-    assert_eq!(
-        text,
-        format!("0x{:016x}\tdiffuse\n", name_hash64(b"diffuse"))
-    );
-}
-
-#[test]
 fn environment_names_are_loaded_only_when_no_directory_is_explicit() {
     const CHILD: &str = "OPENRAGE_SHARED_WORDS_TEST_CHILD";
     if std::env::var_os(CHILD).is_some() {
@@ -206,10 +178,4 @@ fn environment_names_are_loaded_only_when_no_directory_is_explicit() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-}
-
-#[test]
-fn resolvers_without_a_local_directory_do_not_persist_names() {
-    let names = NameResolver::new();
-    assert_eq!(names.cache_local_entries(&[]).expect("no cache"), 0);
 }

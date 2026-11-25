@@ -20,8 +20,8 @@
 //! and, as a shortcut, the per-build name tables; nested archive mounting lives in
 //! [`super::gta6_mount`].
 
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::path::Path;
 
 use byteorder::{ByteOrder, LE};
 
@@ -516,8 +516,6 @@ fn read_cipher(row: &[u8]) -> Gta6Cipher {
 pub struct NameResolver {
     vocabulary: Vocabulary,
     shortcut: HashMap<u64, String>,
-    cached: HashSet<u64>,
-    cache_directory: Option<PathBuf>,
 }
 
 impl NameResolver {
@@ -531,8 +529,6 @@ impl NameResolver {
         Self {
             vocabulary,
             shortcut: HashMap::new(),
-            cached: HashSet::new(),
-            cache_directory: None,
         }
     }
 
@@ -568,11 +564,9 @@ impl NameResolver {
             .or_else(|| std::env::var_os(super::GTA6_NAMES_ENV).map(Into::into));
         let mut names = external.as_deref().map(Self::load).unwrap_or_default();
         if let Some(local) = local {
-            names.cache_directory = Some(local.to_path_buf());
             match cache::read_cache(local) {
                 Ok(cached) => {
                     for (hash, name) in cached {
-                        names.cached.insert(hash);
                         if names.lookup(hash).is_none() {
                             names.insert(hash, name);
                         }

@@ -195,8 +195,8 @@ pub(crate) fn diff_archives<A: Read + Seek, B: Read + Seek>(
 ) -> Result<Vec<Change>, String> {
     let mut ma = Gta6Mount::open_root(a, keys).map_err(|e| format!("the first archive: {e}"))?;
     let mut mb = Gta6Mount::open_root(b, keys).map_err(|e| format!("the second archive: {e}"))?;
-    crate::gta6_name_sources::resolve(&mut ma.archive, resolver);
-    crate::gta6_name_sources::resolve(&mut mb.archive, resolver);
+    ma.archive.resolve_names(resolver);
+    mb.archive.resolve_names(resolver);
     let mut ctx = Ctx {
         a,
         b,

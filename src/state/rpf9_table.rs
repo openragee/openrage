@@ -109,9 +109,6 @@ pub(crate) fn mount<R: Read + Seek>(
 ) -> Result<TableNode, String> {
     let mut archive = open_at(src, base, keys).map_err(|e| e.to_string())?;
     archive.resolve_names(resolver);
-    if let Err(error) = resolver.cache_local_entries(&archive.entries) {
-        tracing::warn!(%error, "could not update the local GTA VI names cache");
-    }
     let extras = archive.entry_extras();
     let rows = (archive.entries.iter().enumerate())
         .map(|(at, e)| {

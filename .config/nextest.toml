@@ -336,6 +336,7 @@ not (
   | binary_id(=or-io::what_a_reencoded_clip_drops)
   | binary_id(=or-io::what_still_names_the_envelope)
   | binary_id(=or-io::ycd_encode)
+  | binary_id(=or-maps::a_merge_is_right_refused_or_a_conflict_and_never_a_guess)
   | binary_id(=or-maps::deleting_an_entity_of_the_install_keeps_every_link)
   | binary_id(=or-maps::the_rules_fire_on_a_map_built_to_break_them)
   | binary_id(=or-maps::what_the_rules_say_of_the_install)
@@ -510,11 +511,17 @@ slow-timeout = { period = "60s", terminate-after = 45 }
 priority = 100
 
 # The install suites of a deletion and of a first edit make sources of an install's map files: the census plans an edit of every
-# one, and the deletion suite imports the whole tree of each map it samples. The census took eleven minutes on the Legacy install
-# beside building lanes, so both are held to forty-five, and start first.
+# one, and the deletion suite imports the whole tree of each map it samples. Beside building lanes the census took eleven minutes
+# on the Legacy install and the deletion suite sixty-nine, of which ninety-eight minutes of processor time on twelve threads, so
+# the census is held to forty-five and the deletion suite to two hours, and both start first.
 [[profile.all.overrides]]
-filter = 'test(deleting_an_entity_of_the_install_keeps_every_link) | test(the_map_files_of_the_install_a_first_edit_refuses_are_counted)'
+filter = 'test(the_map_files_of_the_install_a_first_edit_refuses_are_counted)'
 slow-timeout = { period = "60s", terminate-after = 45 }
+priority = 100
+
+[[profile.all.overrides]]
+filter = 'test(deleting_an_entity_of_the_install_keeps_every_link)'
+slow-timeout = { period = "60s", terminate-after = 120 }
 priority = 100
 
 # The install suite of the level-of-detail forest streams the maps about two dozen places of an install and selects from each.

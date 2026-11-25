@@ -511,13 +511,7 @@ fn read_cipher(row: &[u8]) -> Gta6Cipher {
     }
 }
 
-/// A map from an entry's name64 to its path.
-///
-/// Names are game-derived and never committed; a session supplies them at run time. The primary
-/// source is the recovered-names [`Vocabulary`], which hashes each name with `name_hash64` as it
-/// loads, so it resolves any build and reaches the nested tables. The per-build name tables
-/// (`toc-entries-resolved.tsv`, `resolved-names.tsv`) stay an optional shortcut. With neither, the
-/// resolver names nothing and every entry shows as its hash.
+/// Resolves shared word candidates and user-only name tables; build paths and file extensions stay local.
 #[derive(Debug, Default, Clone)]
 pub struct NameResolver {
     vocabulary: Vocabulary,
@@ -558,6 +552,39 @@ impl NameResolver {
         resolver
     }
 
+    /// Shared words supplemented by `dir`, or the folder [`super::GTA6_NAMES_ENV`] names.
+    pub fn load_with_defaults(dir: Option<&Path>) -> Self {
+        Self::load_with_sources(dir, None)
+    }
+
+    /// Loads external names, then the local cache and vocabulary, then the shared word candidates.
+    pub fn load_with_sources(dir: Option<&Path>, local: Option<&Path>) -> Self {
+        let external = dir
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::var_os(super::GTA6_NAMES_ENV).map(Into::into));
+        let mut names = external.as_deref().map(Self::load).unwrap_or_default();
+        if let Some(local) = local {
+            match cache::read_cache(local) {
+                Ok(cached) => {
+                    for (hash, name) in cached {
+                        if names.lookup(hash).is_none() {
+                            names.insert(hash, name);
+                        }
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "could not read the local GTA VI names cache"),
+            }
+            names.merge_vocabulary(&read_vocabulary(&local.join("vocabulary.txt")));
+        }
+        names.merge_vocabulary(&Vocabulary::bundled());
+        names
+    }
+
+    /// The vocabulary including verified cache names, for metadata and texture hash lookups.
+    pub fn vocabulary(&self) -> &Vocabulary {
+        &self.vocabulary
+    }
+
     /// Fold `other` into this resolver's vocabulary, so names a caller harvested elsewhere (its own
     /// config-dir vocabulary) resolve alongside the ones loaded from a folder.
     pub fn merge_vocabulary(&mut self, other: &Vocabulary) {
@@ -571,7 +598,12 @@ impl NameResolver {
 
     /// How many names the resolver holds across both sources.
     pub fn len(&self) -> usize {
-        self.vocabulary.len() + self.shortcut.len()
+        self.vocabulary.len()
+            + self
+                .shortcut
+                .keys()
+                .filter(|hash| self.vocabulary.name64(**hash).is_none())
+                .count()
     }
 
     /// The path whose name64 is `hash`: the shortcut first, then the vocabulary.
@@ -598,7 +630,11 @@ impl NameResolver {
 
     /// Record a `hash -> name` shortcut, keeping the first name seen for a hash.
     pub fn insert(&mut self, hash: u64, name: impl Into<String>) {
-        self.shortcut.entry(hash).or_insert_with(|| name.into());
+        let name = name.into();
+        if crate::gta6::hash::name_hash64(name.as_bytes()) == hash {
+            self.vocabulary.add(&name, None);
+        }
+        self.shortcut.entry(hash).or_insert(name);
     }
 
     /// Add the entries of a `hash<TAB>name` table, as `resolved-names.tsv` holds them: the first
@@ -672,3 +708,6 @@ fn parse_hash(field: &str) -> Option<u64> {
 #[cfg(test)]
 #[path = "gta6_archive_tests.rs"]
 mod tests;
+
+#[path = "gta6_name_cache.rs"]
+mod cache;

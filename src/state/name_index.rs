@@ -170,7 +170,6 @@ where
         .collect()
 }
 
-#[derive(Default)]
 pub struct NameIndex {
     models: HashSet<String>,
     textures: HashSet<String>,
@@ -189,6 +188,24 @@ pub struct NameIndex {
     /// it: one game's name answering another's hash looks exactly like a
     /// correct answer.
     hashes: HashNames,
+}
+
+impl Default for NameIndex {
+    fn default() -> Self {
+        Self {
+            models: HashSet::new(),
+            textures: HashSet::new(),
+            clip_sets: HashSet::new(),
+            effects: HashSet::new(),
+            cached_snapshot: None,
+            bg_rx: None,
+            bg_handle: None,
+            bg_cancel: None,
+            scanned_root: None,
+            scan_found: 0,
+            hashes: HashNames::with_bundled(""),
+        }
+    }
 }
 
 impl NameIndex {
@@ -246,7 +263,7 @@ impl NameIndex {
     /// put in it.
     pub fn retarget(&mut self, title: &str) {
         if self.hashes.title() != title {
-            self.hashes = HashNames::new(title);
+            self.hashes = HashNames::with_bundled(title);
         }
     }
 
@@ -549,5 +566,13 @@ mod tests {
         assert!(cancel.load(Ordering::Relaxed), "the worker is told to stop");
         assert!(index.bg_rx.is_none());
         assert!(index.scanned_root.is_none());
+    }
+    #[test]
+    fn shared_words_resolve_before_an_install_or_document_is_opened() {
+        let mut names = NameIndex::new();
+        let hash = or_io::hash::string_hash(b"diffuse");
+        assert_eq!(names.name_of(hash), Some("diffuse"));
+        names.retarget("gta5");
+        assert_eq!(names.name_of(hash), Some("diffuse"));
     }
 }

@@ -7,12 +7,18 @@ pub fn open_archive_from_disk(
     path: &Path,
     crypto: Arc<dyn RpfCryptoProvider>,
 ) -> Result<Arc<RpfArchive>, String> {
-    let open = || RpfArchive::open_with(path, Arc::clone(&crypto));
-    let opened = match open() {
-        // A GTA VI archive is read with the keys this app holds for the game folder that is set.
-        Err(or_io::IoError::Rpf9TocEncrypted) if give_gta6_keys() => open(),
-        other => other,
-    };
+    use std::io::Read;
+    let mut magic = [0; 4];
+    // A GTA VI archive is read with the keys and names this app holds, given before the open: keys
+    // the environment names would open it too, with names that lack the local ones.
+    if std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .is_ok()
+        && u32::from_le_bytes(magic) == or_io::container::rpf::RPF9_MAGIC
+    {
+        give_gta6_keys();
+    }
+    let opened = RpfArchive::open_with(path, crypto);
     opened.map(Arc::new).map_err(|e| match e {
         or_io::IoError::Rpf9TocEncrypted => super::gta_vi::rpf9_refusal_at(path)
             .unwrap_or_else(|| format!("open '{}': {e}", path.display())),
@@ -46,8 +52,6 @@ fn give_gta6_keys() -> bool {
     let Ok(keys) = super::rpf9_scan::rpf9_table::keys() else {
         return false;
     };
-    // ponytail: given once per refusal, so keys of a game folder changed later are picked up only
-    // by the next archive that is refused. Give them where the folder is set if that shows.
     Gta6Context::give(Gta6Context {
         keys,
         names: super::rpf9_scan::rpf9_table::resolver(),

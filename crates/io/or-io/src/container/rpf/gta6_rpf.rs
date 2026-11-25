@@ -70,10 +70,7 @@ impl Gta6Context {
             .get_or_init(|| {
                 let keys = GtaViKeys::for_install(None).map_err(|e| e.to_string())?;
                 Ok(keys.map(|keys| {
-                    let names = std::env::var_os(GTA6_NAMES_ENV)
-                        .map(PathBuf::from)
-                        .filter(|dir| dir.is_dir())
-                        .map_or_else(NameResolver::new, |dir| NameResolver::load(&dir));
+                    let names = NameResolver::load_with_defaults(None);
                     Arc::new(Gta6Context {
                         keys: Arc::new(keys),
                         names: Arc::new(names),

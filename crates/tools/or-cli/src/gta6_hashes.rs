@@ -16,7 +16,6 @@ use or_io::container::rpf::{
     read_rpf9_body, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver, RpfArchive, RPF9_MAGIC,
 };
 use or_io::gta6::hash::name_hash32;
-use or_io::gta6::names::{vocabulary_file, Vocabulary};
 use or_io::gta6::script::compiled::{Compiled, NATIVE};
 use or_io::gta6::script::native_addresses::NativeAddresses;
 use or_io::meta::binary::hash_index::spelled_hash;
@@ -54,8 +53,6 @@ install through its RPF7 archives, whose entry names are text, and its metadata 
 `hashes mine` writes names found for the unresolved hashes, from the install's strings, the
 executable's and rules over the names known, to <file>; `hashes mine --help` says more.";
 
-/// The environment variable naming a recovered-names folder, as `rpf9` reads it.
-const NAMES_ENV: &str = "OPENRAGE_GTA6_NAMES";
 /// The environment variable naming a folder of lifted listings, as the decompiler's tests read it.
 const LISTINGS_ENV: &str = "OPENRAGE_LIFTED_LISTINGS";
 /// The content cipher type the mount deciphers.
@@ -826,16 +823,9 @@ fn load_natives(dir: Option<&Path>) -> Result<Option<NativeAddresses>, String> {
     Ok(Some(table))
 }
 
-/// The recovered names `--names` (or [`NAMES_ENV`]) points at, with the vocabulary the app keeps.
+/// The recovered names `--names` (or `OPENRAGE_GTA6_NAMES`) points at, with the vocabulary the app keeps.
 fn load_resolver(dir: Option<&Path>) -> NameResolver {
-    let folder = dir
-        .map(Path::to_path_buf)
-        .or_else(|| std::env::var_os(NAMES_ENV).map(PathBuf::from));
-    let mut resolver = folder.map_or_else(NameResolver::new, |d| NameResolver::load(&d));
-    if let Some(config) = or_title::config::config_dir() {
-        resolver.merge_vocabulary(&Vocabulary::load(&vocabulary_file(&config)));
-    }
-    resolver
+    crate::gta6_name_sources::load(dir)
 }
 
 #[cfg(test)]

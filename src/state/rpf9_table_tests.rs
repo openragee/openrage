@@ -282,3 +282,77 @@ fn the_open_of_an_archive_no_held_key_opens_is_a_scan_and_a_toast_says_why() {
     });
     assert!(said, "no toast said the scan lists the archive");
 }
+
+#[test]
+fn files_tree_resolves_shared_words_and_cached_paths_without_a_scan() {
+    use or_io::container::rpf::{Gta6Context, RpfArchive};
+    use std::sync::Arc;
+    const CHILD: &str = "OPENRAGE_TEST_FILES_WORDS_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let test = format!(
+            "{}::files_tree_resolves_shared_words_and_cached_paths_without_a_scan",
+            module_path!()
+        );
+        let (_, test) = test.split_once("::").expect("crate prefix");
+        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--exact", test, "--nocapture"])
+            .env(CHILD, "1")
+            .output()
+            .expect("child");
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return;
+    }
+    let directory = tempfile::tempdir().expect("scratch");
+    let local = directory.path().join("names");
+    let external = directory.path().join("external");
+    std::fs::create_dir(&external).expect("external folder");
+    let path_name = "local/models/verified_model.ydr";
+    NameResolver::cache_names(&local, [(name_hash64(path_name.as_bytes()), path_name)])
+        .expect("cache");
+    std::fs::write(
+        external.join("resolved-names.tsv"),
+        format!("0x{:016x}\tDIFFUSE\n", name_hash64(b"diffuse")),
+    )
+    .expect("override");
+    let names = NameResolver::load_with_sources(Some(&external), Some(&local));
+    let path = directory.path().join("words.rpf");
+    let unknown = "unresolved_synthetic_tree_entry";
+    std::fs::write(
+        &path,
+        archive(&[
+            ("diffuse", MEDIA, b"a".to_vec()),
+            (path_name, MEDIA, b"b".to_vec()),
+            (unknown, MEDIA, b"c".to_vec()),
+        ]),
+    )
+    .expect("synthetic archive");
+    Gta6Context::give(Gta6Context {
+        keys: Arc::new(synthetic_keys()),
+        names: Arc::new(names),
+    });
+    let opened = RpfArchive::open(&path).expect("Files archive reader");
+    assert_eq!(opened.file_count(), 3);
+    assert!(opened
+        .nodes
+        .iter()
+        .any(|node| !node.is_dir() && node.path() == "DIFFUSE"));
+    assert!(opened
+        .nodes
+        .iter()
+        .any(|node| !node.is_dir() && node.path() == path_name));
+    assert!(opened.nodes.iter().any(|node| !node.is_dir()
+        && node.name() == format!("hash_{:016x}", name_hash64(unknown.as_bytes()))));
+    // Opening the archive is a read: the local cache holds what it held before.
+    let cached = NameResolver::load(&local);
+    assert_eq!(cached.lookup(name_hash64(b"diffuse")), None);
+    assert_eq!(
+        cached.lookup(name_hash64(path_name.as_bytes())),
+        Some(path_name)
+    );
+}

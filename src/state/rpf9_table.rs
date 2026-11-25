@@ -7,13 +7,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use or_io::container::rpf::{open_at, GtaViKeys, NameResolver, RPF9_MAGIC};
+use or_io::container::rpf::{open_at, GtaViKeys, NameResolver, GTA6_NAMES_ENV, RPF9_MAGIC};
 
 use crate::state::jobs::file_name;
 use crate::state::DocPayload;
-
-/// A folder of recovered names, folded into the names the app harvested.
-const NAMES_ENV: &str = "OPENRAGE_GTA6_NAMES";
 
 /// Whether the table of the archive at `path` opens with `keys`, else the sentence that says a scan lists it.
 pub(crate) fn table_opens(path: &Path, keys: Result<&GtaViKeys, String>) -> Result<(), String> {
@@ -57,16 +54,24 @@ pub(crate) fn keys() -> Result<Arc<GtaViKeys>, String> {
     keys
 }
 
-/// The names of the [`NAMES_ENV`] folder and of the config dir's harvest, built once a run.
+/// The names of the [`GTA6_NAMES_ENV`] folder and of the config dir's harvest, then the local
+/// resolved names and the bundled words, built once a run.
 ///
 /// ⚠ The first call reads millions of names and every other caller waits on it, so it runs only on
 /// a worker; [`warm_names`] starts it there as soon as a GTA VI folder or key is met.
 pub(crate) fn resolver() -> Arc<NameResolver> {
     static RESOLVER: OnceLock<Arc<NameResolver>> = OnceLock::new();
     let load = || {
-        let dir = std::env::var_os(NAMES_ENV).map(PathBuf::from);
+        let dir = std::env::var_os(GTA6_NAMES_ENV).map(PathBuf::from);
         let config = crate::state::prefs::config_root();
-        Arc::new(names_cache::load(dir.as_deref(), config.as_deref()))
+        let mut names = names_cache::load(dir.as_deref(), config.as_deref());
+        // A hash keeps the first name given it, so the folder's and the harvest's names stand.
+        let local = config.map(|root| root.join("gta6_names").join("resolved-names.tsv"));
+        if let Some(text) = local.and_then(|file| std::fs::read_to_string(file).ok()) {
+            names.add_hash_name_tsv(&text);
+        }
+        names.merge_vocabulary(&or_io::gta6::names::Vocabulary::bundled());
+        Arc::new(names)
     };
     Arc::clone(RESOLVER.get_or_init(load))
 }

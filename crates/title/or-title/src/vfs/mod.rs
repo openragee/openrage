@@ -25,8 +25,8 @@ pub use archive_device::{ArchiveDevice, ArchiveEntry, ArchiveEntryKind};
 pub use device::FileDevice;
 pub use folder_device::FolderDevice;
 pub use game_mount::{
-    build_mounted_game, build_mounted_game_with, DlcCutoff, EntryFacts, FileStamp, MountRoot,
-    MountedGame, MountedPack,
+    build_mounted_game, build_mounted_game_with, DlcCutoff, EntryFacts, FileStamp, ListedPack,
+    ListedPackState, MountRoot, MountedGame, MountedPack,
 };
 pub use glob::Pattern;
 pub use install::{build_vfs_for_install, build_vfs_for_install_with, VfsBuildError};

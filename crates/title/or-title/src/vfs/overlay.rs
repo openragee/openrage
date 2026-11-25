@@ -10,6 +10,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::dlc::MapMode;
+
 /// The directory inside an install that a user is *expected* to write.
 ///
 /// OpenIV's convention, and the one the game-side loader redirects reads to.
@@ -49,6 +51,8 @@ impl ArchiveOrigin {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MountOptions {
     pub overlay: OverlayResolution,
+    /// The map as story or as multiplayer; `None` applies every change set of every pack.
+    pub mode: Option<MapMode>,
 }
 
 impl MountOptions {
@@ -56,6 +60,7 @@ impl MountOptions {
     pub fn install_only() -> Self {
         Self {
             overlay: OverlayResolution::InstallOnly,
+            ..Self::default()
         }
     }
 

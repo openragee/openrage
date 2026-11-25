@@ -9583,13 +9583,15 @@ and the choice, kept on disk and rebuilt only where the install changed. It adds
 `openrage-cli world at` and `openrage-cli world index`
 ([brief](World_Editor_Plan.md#the-gta-v-world-index-r70b)).
 
-**Where it stands.** The index is built, on an install made by hand; its install suite has not run.
-`crates/domain/or-depends/src/world_index.rs` reads every map, type file, manifest and bound a root
-archive at a time, answers the maps and the carried bounds at a position, and is kept on disk by
-each archive's stamp (`the_world_index_of_a_mount`); `openrage-cli world index` and `world at` run
-it. Left: the level of DLC and story or multiplayer, on the mount and in the key (the mount stops at
-a name hash); the group that requests a map; the cost on an install; the game's cache files, which
-no index reads.
+**Where it stands.** Two parts are built on installs made by hand; no install suite has run.
+`crates/domain/or-depends/src/world_index.rs` reads every map, type file, manifest and bound an
+archive at a time, answers the maps and carried bounds at a position and is kept on disk by each
+archive's stamp (`the_world_index_of_a_mount`), behind `openrage-cli world index` and `world at`.
+`DlcCutoff::Level` stops the mount at a pack of the DLC list and `MountOptions::mode` takes the map
+as story or multiplayer
+(`a_mount_stops_at_a_level_of_dlc_and_takes_the_map_as_story_or_multiplayer`), set only by
+`openrage-cli dlc-list`. Left: both in the index's key and from a screen; the group that requests a
+map; the cost on an install.
 
 **Done when.** Over a mounted install the index names every map and type file the mount lists, and a
 position inside a known map's extents answers that map, in an install suite of the slow tier, named

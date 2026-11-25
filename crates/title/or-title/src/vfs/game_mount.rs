@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::dlc::{ContentXml, DataFileEntry, DlcList, ExtraTitleUpdateData, ListItem, SetupData};
+use crate::dlc::{
+    ChangeSetsInMode, ContentChangeSet, ContentXml, DataFileEntry, DlcList, ExtraTitleUpdateData,
+    ListItem, MapMode, SetupData,
+};
 use crate::game::Game;
 use crate::install::materials::GtaInstall;
 use or_io::{Diagnostic, Diagnostics};
@@ -19,7 +22,27 @@ use super::overlay::{overlay_root, resolve_archive, ArchiveOrigin, MountOptions}
 pub enum DlcCutoff {
     All,
     BaseGame,
+    /// Stop after the pack whose setup states this name, in mount order; a name no pack states mounts every pack with a warning.
     NameHash(String),
+    /// Stop at this pack of the DLC list, by the name the list gives it: the packs listed after it are left out, and a name the list lacks is refused.
+    Level(String),
+}
+
+/// What a mount did with one pack of the DLC list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListedPackState {
+    Mounted,
+    /// Past the pack the mount stops at.
+    LeftOut,
+    /// Not mounted for the reason a diagnostic states: the edition does not load it, or its archive or setup did not read.
+    Skipped,
+}
+
+/// A pack of the DLC list, by the name the list gives it, and what the mount did with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedPack {
+    pub name: String,
+    pub state: ListedPackState,
 }
 
 /// The size and modification time of a file on disk, which tell a changed archive from the one a mount opened.
@@ -59,6 +82,8 @@ pub struct MountRoot {
     /// ⚠ Taken before the archive is opened: a file written after its mount was made has another
     /// stamp than the mount, so what is read through an old mount is never kept under the new file.
     pub stamp: Option<FileStamp>,
+    /// The folders of this archive that hold or patch a pack a level leaves out, lowercase and ending in `/`: the walk skips them, and a path written into one still opens.
+    pub left_out: Vec<String>,
 }
 
 pub struct MountedPack {
@@ -67,11 +92,17 @@ pub struct MountedPack {
     pub setup: SetupData,
     pub data_files: Vec<DataFileEntry>,
     pub source_path: PathBuf,
+    /// The change sets the mount's mode left out, each stated for the other mode by every group that names it.
+    pub change_sets_left_out: Vec<String>,
+    /// The change sets no group states a mode for, applied as with no mode; empty when the mount has no mode.
+    pub change_sets_unstated: Vec<String>,
 }
 
 pub struct MountedGame {
     pub vfs: Vfs,
     pub packs: Vec<MountedPack>,
+    /// Every pack the DLC list names, in the list's order; empty when the mount stops at the base game or the install has no list that reads.
+    pub listed: Vec<ListedPack>,
     pub roots: Vec<MountRoot>,
     pub diagnostics: Diagnostics,
     pub game: Game,
@@ -158,6 +189,7 @@ impl MountRoot {
             "",
             &self.container,
             0,
+            &self.left_out,
             &mut visit,
         );
     }
@@ -212,6 +244,7 @@ fn walk_archive<F: FnMut(&EntryFacts)>(
     path_prefix: &str,
     container: &str,
     depth: u32,
+    left_out: &[String],
     visit: &mut F,
 ) {
     for node in &archive.nodes {
@@ -219,6 +252,12 @@ fn walk_archive<F: FnMut(&EntryFacts)>(
             continue;
         }
         let path = node.path();
+        if !left_out.is_empty() {
+            let lower = path.to_ascii_lowercase();
+            if left_out.iter().any(|folder| lower.starts_with(folder)) {
+                continue;
+            }
+        }
         let leaf = node.name();
         let logical = format!("{device}:/{path_prefix}{path}");
 
@@ -237,6 +276,7 @@ fn walk_archive<F: FnMut(&EntryFacts)>(
                     &nested_prefix,
                     &nested_container,
                     depth + 1,
+                    &[],
                     visit,
                 );
             }
@@ -293,6 +333,7 @@ pub fn build_mounted_game_with(
         container: opened.label,
         origin: opened.origin,
         stamp: opened.stamp,
+        left_out: Vec::new(),
     });
 
     for path in glob_platform_packs(&install.root) {
@@ -310,6 +351,7 @@ pub fn build_mounted_game_with(
                     container: opened.label,
                     origin: opened.origin,
                     stamp: opened.stamp,
+                    left_out: Vec::new(),
                 });
             }
             Err(e) => diagnostics.push(
@@ -354,6 +396,7 @@ pub fn build_mounted_game_with(
             container: opened.label.clone(),
             origin: opened.origin,
             stamp: opened.stamp,
+            left_out: Vec::new(),
         });
         Some(UpdateMount {
             archive: update,
@@ -400,6 +443,7 @@ pub fn build_mounted_game_with(
             container: opened.label,
             origin: opened.origin,
             stamp: opened.stamp,
+            left_out: Vec::new(),
         });
     }
 
@@ -419,10 +463,12 @@ pub fn build_mounted_game_with(
     let mut packs: Vec<MountedPack> = Vec::new();
 
     if update_path.exists() {
-        register_title_update(&vfs, &mut packs, &mut diagnostics);
+        register_title_update(&vfs, options.mode, &mut packs, &mut diagnostics);
     }
 
-    if cutoff != DlcCutoff::BaseGame {
+    let listed = if cutoff == DlcCutoff::BaseGame {
+        Vec::new()
+    } else {
         mount_dlc(
             install,
             &crypto,
@@ -434,14 +480,15 @@ pub fn build_mounted_game_with(
             &mut roots,
             &mut packs,
             &mut diagnostics,
-        );
-    }
+        )?
+    };
 
     report_overlay(&install.root, options, &roots, &mut diagnostics);
 
     Ok(MountedGame {
         vfs,
         packs,
+        listed,
         roots,
         diagnostics,
         game,
@@ -564,14 +611,22 @@ fn mount_dlc(
     roots: &mut Vec<MountRoot>,
     packs: &mut Vec<MountedPack>,
     diagnostics: &mut Diagnostics,
-) {
+) -> Result<Vec<ListedPack>, VfsBuildError> {
+    // A list that is not there names no pack, so a level cannot be one of its packs.
+    let no_list = || match cutoff {
+        DlcCutoff::Level(level) => Err(VfsBuildError::LevelNotListed {
+            level: level.clone(),
+            listed: 0,
+        }),
+        _ => Ok(Vec::new()),
+    };
     let dlclist_bytes = vfs.open("common:/data/dlclist.xml");
     let Some(bytes) = dlclist_bytes else {
         diagnostics.warn(
             keys::DLCLIST_MISSING,
             "common:/data/dlclist.xml not found; no DLC was mounted",
         );
-        return;
+        return no_list();
     };
     let list = match DlcList::parse(&bytes) {
         Ok(l) => l,
@@ -580,8 +635,24 @@ fn mount_dlc(
                 keys::DLCLIST_PARSE_FAILED,
                 format!("dlclist.xml did not parse; no DLC was mounted: {e}"),
             );
-            return;
+            return no_list();
         }
+    };
+
+    // ⚠ The level is a place in the list, taken before any pack is opened, so it
+    // holds whatever order the packs' setups mount them in and whether or not
+    // the pack it names mounts.
+    let stop = match cutoff {
+        DlcCutoff::Level(level) => {
+            let names = || list.paths.iter().map(|entry| dlc_pack_name(entry));
+            let wanted = level.trim();
+            let at = names().position(|name| !name.is_empty() && name.eq_ignore_ascii_case(wanted));
+            Some(at.ok_or_else(|| VfsBuildError::LevelNotListed {
+                level: level.clone(),
+                listed: names().filter(|name| !name.is_empty()).count(),
+            })?)
+        }
+        _ => None,
     };
 
     let etud = vfs
@@ -597,14 +668,46 @@ fn mount_dlc(
         source: DlcSource,
         origin: ArchiveOrigin,
         stamp: Option<FileStamp>,
+        /// Its place in `listed`.
+        listed_at: usize,
     }
     let mut discovered: Vec<Discovered> = Vec::new();
+    let mut listed: Vec<ListedPack> = Vec::new();
+    // Each a root's container and a folder of that root.
+    let mut folders_left_out: Vec<(String, String)> = Vec::new();
     let mut skipped_gen9 = 0usize;
-    for entry in &list.paths {
+    for (at, entry) in list.paths.iter().enumerate() {
         let name = dlc_pack_name(entry);
         if name.is_empty() {
             continue;
         }
+        if let Some(stop) = stop.filter(|stop| at > *stop) {
+            // ⚠ A list can name a pack twice: one named at or before the level is
+            // mounted, and its folders are not the ones to skip.
+            let kept = (list.paths[..=stop].iter())
+                .any(|entry| dlc_pack_name(entry).eq_ignore_ascii_case(&name));
+            if !kept {
+                folders_left_out.extend(folders_of_a_pack_left_out(
+                    install,
+                    roots,
+                    &name,
+                    crypto,
+                    options,
+                    update_mount.map(|update| (update, &etud)),
+                    diagnostics,
+                ));
+            }
+            listed.push(ListedPack {
+                name,
+                state: ListedPackState::LeftOut,
+            });
+            continue;
+        }
+        let listed_at = listed.len();
+        listed.push(ListedPack {
+            name: name.clone(),
+            state: ListedPackState::Skipped,
+        });
         if !game.accepts_dlc_pack(&name) {
             skipped_gen9 += 1;
             continue;
@@ -640,6 +743,7 @@ fn mount_dlc(
             source: located.source,
             origin: located.origin,
             stamp: located.stamp,
+            listed_at,
         });
     }
 
@@ -659,7 +763,11 @@ fn mount_dlc(
             .iter()
             .position(|d| d.setup.name_hash.eq_ignore_ascii_case(target))
         {
-            Some(idx) => discovered.truncate(idx + 1),
+            Some(idx) => {
+                for dropped in discovered.drain(idx + 1..) {
+                    listed[dropped.listed_at].state = ListedPackState::LeftOut;
+                }
+            }
             None => diagnostics.warn(
                 keys::DLC_TARGET_NOT_FOUND,
                 format!("--dlc target '{target}' is not in dlclist; including all DLC"),
@@ -668,22 +776,14 @@ fn mount_dlc(
     }
 
     for d in discovered {
-        let device = if d.setup.device_name.is_empty() {
-            format!("dlc_{}", d.setup.name_hash)
-        } else {
-            d.setup.device_name.clone()
-        };
+        let device = device_of(&d.setup);
         let base_dev =
             Arc::new(ArchiveDevice::new(Arc::clone(&d.archive)).with_label(d.container.clone()));
         vfs.mount(&format!("{device}:"), base_dev.clone());
         vfs.mount(&format!("{device}CRC:"), base_dev);
 
         if let (Some(update), Some(patch_path)) = (update_mount, etud.mount_for(&device)) {
-            if let Some(sub_root) = patch_path
-                .strip_prefix("update:/")
-                .or_else(|| patch_path.strip_prefix("update:"))
-            {
-                let sub_root = sub_root.trim_matches('/');
+            if let Some(sub_root) = patch_folder(patch_path) {
                 let patch = Arc::new(
                     ArchiveDevice::with_sub_root(Arc::clone(&update.archive), sub_root)
                         .with_label(update.label.clone()),
@@ -712,11 +812,13 @@ fn mount_dlc(
                 .map(|b| (b, format!("{device}:/{dat}"))),
         };
         let mut data_files = Vec::new();
+        let mut in_mode = ChangeSetsInMode::default();
         match content_bytes {
             Some((cbytes, from)) => match ContentXml::parse(&cbytes) {
                 Ok(content) => {
-                    let (mut files, fte) = merge_registry(vfs, content, diagnostics);
-                    apply_effective_disabled(&mut files, &fte);
+                    let (mut files, change_sets) = merge_registry(vfs, content, diagnostics);
+                    in_mode = d.setup.change_sets_in(&change_sets, options.mode);
+                    apply_effective_disabled(&mut files, &in_mode.files_to_enable);
                     data_files = files;
                 }
                 Err(e) => diagnostics.push(
@@ -739,6 +841,7 @@ fn mount_dlc(
             container: d.container.clone(),
             origin: d.origin,
             stamp: d.stamp,
+            left_out: Vec::new(),
         });
 
         for n in 1..=d.setup.sub_pack_count {
@@ -763,6 +866,7 @@ fn mount_dlc(
                         container: sub_container,
                         origin: sub_origin,
                         stamp: sub_stamp,
+                        left_out: Vec::new(),
                     });
                 }
                 None => diagnostics.push(
@@ -775,17 +879,107 @@ fn mount_dlc(
             }
         }
 
+        listed[d.listed_at].state = ListedPackState::Mounted;
         packs.push(MountedPack {
             name_hash: d.setup.name_hash.clone(),
             device_name: device,
             setup: d.setup,
             data_files,
             source_path: d.source_path,
+            change_sets_left_out: in_mode.left_out,
+            change_sets_unstated: in_mode.unstated,
         });
+    }
+
+    for (container, folder) in folders_left_out {
+        for root in roots.iter_mut().filter(|r| r.container == container) {
+            root.left_out.push(folder.clone());
+        }
+    }
+    Ok(listed)
+}
+
+/// The device a pack mounts on: the one its setup names, else one made from its name.
+fn device_of(setup: &SetupData) -> String {
+    if setup.device_name.is_empty() {
+        format!("dlc_{}", setup.name_hash)
+    } else {
+        setup.device_name.clone()
     }
 }
 
-fn register_title_update(vfs: &Vfs, packs: &mut Vec<MountedPack>, diagnostics: &mut Diagnostics) {
+/// The folder of the title update a patch path names, with no slash at either end; `None` for a path outside it.
+fn patch_folder(patch_path: &str) -> Option<&str> {
+    patch_path
+        .strip_prefix("update:/")
+        .or_else(|| patch_path.strip_prefix("update:"))
+        .map(|folder| folder.trim_matches('/'))
+}
+
+/// The folders of mounted archives that hold or patch a pack a level leaves out, each with its archive's container.
+///
+/// ⚠ The pack's setup says its device and the title update's table says the
+/// folder that patches a device, so a pack whose setup does not read keeps no
+/// patch from the walk, which `diagnostics` is told, and one whose archive is
+/// not found keeps nothing.
+fn folders_of_a_pack_left_out(
+    install: &GtaInstall,
+    roots: &[MountRoot],
+    name: &str,
+    crypto: &Arc<dyn RpfCryptoProvider>,
+    options: MountOptions,
+    title_update: Option<(&UpdateMount, &ExtraTitleUpdateData)>,
+    diagnostics: &mut Diagnostics,
+) -> Vec<(String, String)> {
+    // A pack that is not mounted says nothing of how it failed to.
+    let mut unheard = Diagnostics::new();
+    let Some(located) = locate_dlc(install, roots, name, crypto, options, &mut unheard) else {
+        return Vec::new();
+    };
+    let mut folders = Vec::new();
+    let mut keep_out = |container: &str, folder: &str| {
+        if !folder.is_empty() {
+            folders.push((
+                container.to_string(),
+                format!("{}/", folder.to_ascii_lowercase()),
+            ));
+        }
+    };
+    if let DlcSource::Nested {
+        parent_container,
+        dir,
+        ..
+    } = &located.source
+    {
+        keep_out(parent_container, dir);
+    }
+    let setup =
+        (located.archive.read("setup2.xml").ok()).and_then(|bytes| SetupData::parse(&bytes).ok());
+    match (setup, title_update) {
+        (Some(setup), Some((update, table))) => {
+            if let Some(folder) = table.mount_for(&device_of(&setup)).and_then(patch_folder) {
+                keep_out(&update.label, folder);
+            }
+        }
+        (None, Some(_)) => diagnostics.push(
+            Diagnostic::warning(
+                keys::PATCH_OF_A_PACK_LEFT_OUT_UNKNOWN,
+                "setup2.xml did not read, so the folder of the title update that patches this \
+                 pack, if one does, is not kept from the walk",
+            )
+            .at(name.to_string()),
+        ),
+        (_, None) => {}
+    }
+    folders
+}
+
+fn register_title_update(
+    vfs: &Vfs,
+    mode: Option<MapMode>,
+    packs: &mut Vec<MountedPack>,
+    diagnostics: &mut Diagnostics,
+) {
     let Some(bytes) = vfs.open("update:/content.xml") else {
         return;
     };
@@ -802,21 +996,27 @@ fn register_title_update(vfs: &Vfs, packs: &mut Vec<MountedPack>, diagnostics: &
             return;
         }
     };
-    let (mut data_files, fte) = merge_registry(vfs, content, diagnostics);
-    apply_effective_disabled(&mut data_files, &fte);
+    let (mut data_files, change_sets) = merge_registry(vfs, content, diagnostics);
+    // ⚠ The title update's own setup is not read, so this one names no group
+    // and a mode leaves none of its change sets out.
+    let setup = SetupData {
+        name_hash: "TitleUpdate".to_string(),
+        device_name: "update".to_string(),
+        ..Default::default()
+    };
+    let in_mode = setup.change_sets_in(&change_sets, mode);
+    apply_effective_disabled(&mut data_files, &in_mode.files_to_enable);
     for df in &mut data_files {
         df.filename = expand_platform(&df.filename);
     }
     packs.push(MountedPack {
         name_hash: "TitleUpdate".to_string(),
         device_name: "update".to_string(),
-        setup: SetupData {
-            name_hash: "TitleUpdate".to_string(),
-            device_name: "update".to_string(),
-            ..Default::default()
-        },
+        setup,
         data_files,
         source_path: PathBuf::from("update/update.rpf"),
+        change_sets_left_out: in_mode.left_out,
+        change_sets_unstated: in_mode.unstated,
     });
 }
 
@@ -837,8 +1037,8 @@ fn merge_registry(
     vfs: &Vfs,
     content: ContentXml,
     diagnostics: &mut Diagnostics,
-) -> (Vec<DataFileEntry>, Vec<ListItem>) {
-    let mut files_to_enable = content.files_to_enable();
+) -> (Vec<DataFileEntry>, Vec<ContentChangeSet>) {
+    let mut change_sets = content.content_change_sets;
     let mut data = content.data_files;
     let included: Vec<String> = content
         .included_data_files
@@ -856,7 +1056,7 @@ fn merge_registry(
         };
         match ContentXml::parse(&bytes) {
             Ok(inner) => {
-                files_to_enable.extend(inner.files_to_enable());
+                change_sets.extend(inner.content_change_sets);
                 data.extend(inner.data_files);
             }
             Err(e) => diagnostics.push(
@@ -868,7 +1068,7 @@ fn merge_registry(
             ),
         }
     }
-    (data, files_to_enable)
+    (data, change_sets)
 }
 
 pub(crate) fn apply_effective_disabled(
@@ -1202,7 +1402,8 @@ mod tests {
             &mut Vec::new(),
             &mut Vec::new(),
             &mut diagnostics,
-        );
+        )
+        .expect("no level is asked for, so none is refused");
         diagnostics
             .messages()
             .iter()

@@ -432,7 +432,8 @@ fn print_usage() {
     eprintln!("  navmesh    Census navmesh polygon flags, adjacency bits and cell references;");
     eprintln!("             disable or delete one polygon of a .ynv");
     eprintln!("  dlc        Build a DLC pack from a folder, or read one back");
-    eprintln!("  dlc-list   List the DLC packs in engine mount order (with --dlc cutoff)");
+    eprintln!("  dlc-list   List the DLC packs in engine mount order, up to a cutoff (--dlc) or a");
+    eprintln!("             pack of the DLC list (--level), as story or multiplayer (--mode)");
     eprintln!();
     eprintln!("Run `openrage-cli <command> --help` for command-specific usage.");
     eprintln!("`openrage-cli --version` prints the version.");

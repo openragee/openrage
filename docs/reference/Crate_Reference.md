@@ -237,13 +237,21 @@ alone, and `or-io` never depends on it.
 | Module | Answers |
 |---|---|
 | `game/` | which title and edition this is: profiles, the registry, `Game`, and what its game needs beside the executable to read the `mods` overlay |
-| `vfs/` | which bytes a `common:/…` path names |
-| `dlc/` | which packs exist, their override order, and writing one ([Dlc_Pack_Creation.md](../features/Dlc_Pack_Creation.md)) |
+| `vfs/` | which bytes a `common:/…` path names; a GTA V mount stops at a pack of the DLC list when given `DlcCutoff::Level`, reports every listed pack with the ones left out (`MountedGame::listed`) and keeps its walk out of the folders that hold or patch them, and takes the map as story or as multiplayer from `MountOptions::mode` |
+| `dlc/` | which packs exist, their override order, which of a pack's change sets apply to the map as story and as multiplayer (`mode.rs`), and writing one ([Dlc_Pack_Creation.md](../features/Dlc_Pack_Creation.md)) |
 | `gta6_mount.rs` | which maps a GTA VI install registers, from the registration documents a scan finds, with no table to read ([GTA_VI_World_Viewer.md](../features/GTA_VI_World_Viewer.md)) |
 | `mods/` | which mods an install holds, as `mods` and `mods_` hold them and in the game folder, what each writes, and which of two mods writing one path the load order resolves to |
 | `oiv.rs` | an `.oiv` package: the `assembly.xml` a build writes and reads back, and the stored zip it sits in |
 | `install/` | a table fetched from an install: clip regions, the materials palette, the shader archive, the names `install::names` indexes, and the file at a path the explorer writes (`virtual_file`, which reads archives as folders and goes into a nested archive) |
 | `archives.rs` | stock archive names and their NG key indices |
+
+⚠ A level cuts a pack's device, its patch layer and the walk, and nothing else:
+a path written into a folder of a left-out pack (`update:/dlc_patch/<pack>/…`,
+or the pack's archive under `dlcpacks:`) still opens and a glob still lists it.
+`--dlc`, the older cutoff by name hash in mount order, still mounts every pack
+when its name is unknown. The versions a map change set carries in an overlay
+information file are not read, so the highest one is not chosen, and the title
+update's own setup is not read, so its change sets have no mode.
 
 Adding a title has [its own section](#adding-a-title).
 

@@ -162,7 +162,15 @@ No parameters; needs a mount. The result is `count` and `packs`, in engine
 mount order, each with `nameHash`, `deviceName`, `contentType` (`title-update`,
 `level`, `compat`, `paid` or `unknown`), `order`, `minorOrder`, `isLevelPack`,
 `subPackCount`, `dataFiles` (its registry entry count) and `source`. The
-one-shot equivalent is `openrage-cli dlc-list [--dlc <X>] [--json]`.
+one-shot equivalent is `openrage-cli dlc-list [--dlc <X>] [--json]`, which also
+takes what the server does not: `--level <pack>`, which stops at a pack of the
+DLC list by the name the list gives it, leaves out the packs listed after it
+and refuses a name the list lacks, and `--mode <story|multiplayer>`, which
+applies the change sets a pack's setup groups for that mode. It names the packs
+left out, the change sets left out and the ones no group states a mode for:
+below the table as text, and with `--json` as `leftOut` beside `packs`, and
+under `--mode` as `mode` and `changeSets`, each entry a `pack` with its
+`leftOut` and `unstated` change sets.
 
 ```
 -> {"cmd":"packs"}

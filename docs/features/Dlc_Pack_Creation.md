@@ -49,6 +49,16 @@ shipped pack is `disabled="true"`: a `contentChangeSet` naming the file in
 file disabled, one `<NAME>_AUTOGEN` change set enabling them all, and a
 `GROUP_STARTUP` group running it.
 
+- **A map change set runs in one mode.** A change set a setup names under
+  `GROUP_MAP_SP` and no other group is the story's, one under `GROUP_MAP` alone
+  is multiplayer's, and `GROUP_STARTUP` runs in both. A mount that is given a
+  mode (`MountOptions::mode`, `openrage-cli dlc-list --mode`) enables the files
+  of the change sets that apply and names the ones it left out; a change set no
+  group states a mode for applies as it does with no mode, and is named too
+  (`a_change_set_stated_for_multiplayer_applies_there_and_not_in_story_and_the_reverse`).
+  No document of a pack says that `GROUP_MAP` is multiplayer's: its name says
+  only that it is the map group that is not the story's. No install was at hand
+  to count the packs that use either group.
 - **The device follows `minorOrder`.** `content.xml` paths use `dlc_<name>CRC:`
   when `minorOrder` is 0 or less and `dlc_<name>:` otherwise, and a pack using
   the other mounts with paths that never resolve (`SetupData::content_device`).

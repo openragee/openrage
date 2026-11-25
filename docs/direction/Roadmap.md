@@ -9666,10 +9666,13 @@ box, each with a key to go to it; Copy for script in Lua, JSON and C#, as templa
 button keeping the form used last; and `openrage-cli world find`
 ([brief](World_Editor_Plan.md#find-anything-and-go-there-r70e)).
 
-**Where it stands.** Not merged; a lane began the parse of a place and the forms a script takes on
-2026-11-25. The palette, Go to File and the name index exist ([R59j](#r59j-one-command-registry),
-[R24b](#r24b-go-to-file), [R23](#r23-names-and-hashes)). The key of Go to File goes to the field of
-Files while a file is open, and the GTA VI viewer's places are computed from its index.
+**Where it stands.** Two modules are built in `or-maps`, which nothing calls yet:
+`crates/domain/or-maps/src/place.rs` reads a pasted position, a hash in each spelling or text, and
+`crates/domain/or-maps/src/script_text.rs` writes a position in Lua, JSON and C# from
+`crates/domain/or-maps/src/script_forms.json`, each held by its own tests
+(`just test-crate or-maps`). Left: every part on screen and `openrage-cli world find`. The palette,
+Go to File and the name index exist ([R59j](#r59j-one-command-registry), [R24b](#r24b-go-to-file),
+[R23](#r23-names-and-hashes)).
 
 **Depends on.** [R70b](#r70b-the-gta-v-world-index);
 [R70c](#r70c-the-gta-v-world-streamed-and-drawn) to go there; [R70g](#r70g-collision-as-a-query) for

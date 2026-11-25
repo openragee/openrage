@@ -499,3 +499,53 @@ fn a_bound_keeps_its_reference_count_beside_its_min_corner() {
     assert_eq!(sphere.base.bounding_box_min(), [-1.0, -2.0, -3.0]);
     assert_eq!(min_of(&bound.to_bytes().unwrap()), ([-1.0, -2.0, -3.0], 1));
 }
+
+/// The length a saved geometry at the root states for its shrunk hull, and whether it holds that hull.
+fn hull_stated(file: &[u8]) -> (u16, bool) {
+    let o = Rsc7::open(file).unwrap();
+    let data = Aligned::from_bytes(&o.data);
+    let img = Image::new(data.bytes(), o.virtual_size as usize);
+    let root = View::<Raw<PhBound>>::at_offset(img, 0).unwrap();
+    let g = View::variant::<Raw<PhBoundGeometry>>(&root)
+        .unwrap()
+        .unwrap();
+    (
+        g.num_convex_hull_vertices,
+        !{ g.compressed_shrunk_vertices }.is_null(),
+    )
+}
+
+#[test]
+fn a_hull_length_stated_beside_no_hull_is_set_by_name_and_kept_by_a_save() {
+    use or_io::gta5::bounds::build::{self, BoundMesh};
+    let mesh = BoundMesh::new(
+        vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+        vec![[0, 1, 2], [0, 2, 3]],
+    );
+    let mut built = build::geometry(&mesh).unwrap();
+    assert_eq!(built.num_convex_hull_vertices(), None);
+    let vertices = built.compressed_vertices.len() as u16;
+    built.set_num_convex_hull_vertices(vertices);
+    let saved = PhBoundAny::PhBoundGeometry(built).to_bytes().unwrap();
+    assert_eq!(hull_stated(&saved), (vertices, false));
+
+    let PhBoundAny::PhBoundGeometry(mut opened) = PhBoundAny::from_bytes(&saved).unwrap() else {
+        panic!("not a geometry");
+    };
+    assert_eq!(opened.num_convex_hull_vertices(), Some(vertices));
+    // ⚠ A save keeps the length as stated: one more vertex leaves it behind until it is set.
+    let again = opened.compressed_vertices[0].clone();
+    opened.compressed_vertices.push(again);
+    let stale = PhBoundAny::PhBoundGeometry(opened.clone())
+        .to_bytes()
+        .unwrap();
+    assert_eq!(hull_stated(&stale), (vertices, false));
+    opened.set_num_convex_hull_vertices(vertices + 1);
+    let followed = PhBoundAny::PhBoundGeometry(opened).to_bytes().unwrap();
+    assert_eq!(hull_stated(&followed), (vertices + 1, false));
+}

@@ -1,6 +1,6 @@
 //! The folders an asset is edited as and compiled back from: [`asset`] holds `asset.json`,
 //! [`textures`] the source of a `.ytd`, [`models`] that of a `.ydr` or a `.ydd` (and [`drawable_values`] what its `drawable.json` states of the base), [`fragment`] that of a `.yft`, [`metadata`] that of a `.ymt`, `.ymap`
-//! or `.ytyp`, [`create`] the start of a source that is not a game file's, and [`cook`] the recook of one saved asset, [`optimise`] the format, mips and size of a textures source's pictures, [`game_import`] a game file's way into a project as a source and
+//! or `.ytyp`, [`bounds`] that of a `.ybn`, [`paths`] that of a `.ynd`, [`create`] the start of a source that is not a game file's, and [`cook`] the recook of one saved asset, [`optimise`] the format, mips and size of a textures source's pictures, [`game_import`] a game file's way into a project as a source and
 //! [`git`] the ignore rules that keep game content out of a repository, and [`origin_check`] whether
 //! the game's file a source was taken from has changed. Nothing here draws or watches a folder.
 
@@ -9,10 +9,12 @@ use std::fmt;
 use serde::Serialize;
 
 pub mod asset;
+pub mod bounds;
 pub mod budget;
 pub mod cook;
 pub mod create;
 pub mod crop;
+mod document;
 pub mod drawable_values;
 pub mod fragment;
 pub mod game_import;
@@ -25,6 +27,7 @@ pub mod models;
 pub mod optimise;
 pub mod origin_check;
 pub mod particles;
+pub mod paths;
 mod reencode;
 pub mod sample;
 pub mod schemas;

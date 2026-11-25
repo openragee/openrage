@@ -330,6 +330,20 @@ pub struct PhBoundGeometry {
 }
 
 impl PhBoundGeometry {
+    /// How many vertices the shrunk hull is stated at beside a null run; `None` for a value built from scratch.
+    pub fn num_convex_hull_vertices(&self) -> Option<u16> {
+        let at = std::mem::offset_of!(Raw<Self>, num_convex_hull_vertices);
+        self.__carry.hidden::<u16>(at).copied()
+    }
+
+    /// States the shrunk hull's length beside a null run, which a save keeps as stated; a run that is there is counted instead.
+    ///
+    /// ⚠ A `.ybn` geometry states its vertex count here, so a bound whose vertices change in number states the new count.
+    pub fn set_num_convex_hull_vertices(&mut self, vertices: u16) {
+        let at = std::mem::offset_of!(Raw<Self>, num_convex_hull_vertices);
+        self.__carry.hide(at, vertices);
+    }
+
     /// ⚠ `vertex_attribs` is read as one colour word per vertex: a live run
     /// states a width of 1, and a carried width above 1 beside one is refused.
     fn attribs_width(

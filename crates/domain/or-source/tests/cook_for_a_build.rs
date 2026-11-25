@@ -74,10 +74,13 @@ fn a_platform_but_win64_and_a_kind_nobody_cooks_are_each_refused_in_one_sentence
 
     edit_manifest(&dir, |m| {
         m["platform"] = "win64".into();
-        m["kind"] = "bounds".into();
+        m["kind"] = "cloth".into();
     });
     let why = describe(&dir).unwrap_err();
-    assert!(why.contains("bounds"), "{why}");
+    assert!(why.contains("this is a cloth source"), "{why}");
+    for cooked in ["bounds", "paths"] {
+        assert!(why.contains(cooked), "{cooked}: {why}");
+    }
 }
 
 #[test]
@@ -232,5 +235,348 @@ fn a_corpus_file_taken_from_the_game_is_the_games_file_to_a_build_until_it_is_ed
     assert!(
         untouched == 0 || edited > 0,
         "no corpus file could be edited"
+    );
+}
+
+/// Makes a source of a game file's bytes, under a name, in a folder.
+type Extract = fn(&[u8], &str, &Path) -> Result<std::path::PathBuf, Vec<or_source::Problem>>;
+
+/// Every staged file of `extension` made a source by `extract`, and what each source cooks to against `canonical`.
+fn every_corpus_file_becomes_a_source_that_cooks_to_its_canonical_save(
+    extension: &str,
+    what: &str,
+    extract: Extract,
+    canonical: fn(&[u8]) -> Option<Vec<u8>>,
+) {
+    let Some(files) =
+        or_test_support::Corpus::new(env!("CARGO_MANIFEST_DIR"), extension).find_or_skip(what)
+    else {
+        return;
+    };
+    let (mut made, mut refused) = (0usize, Vec::new());
+    for path in &files {
+        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        let bytes = fs::read(path).unwrap();
+        let Some(canonical) = canonical(&bytes) else {
+            refused.push(format!("{file}: the file does not open and save"));
+            continue;
+        };
+        let work = tempfile::tempdir().unwrap();
+        match extract(&bytes, "subject", work.path()) {
+            Ok(folder) => {
+                let cooked = cooked(&folder, &work.path().join("scratch"));
+                assert!(
+                    cooked == canonical,
+                    "{file}: the cook of its source is not the canonical save of the file"
+                );
+                made += 1;
+            }
+            Err(why) => refused.push(format!("{file}: {why:?}")),
+        }
+    }
+    eprintln!(
+        "{made} of {} staged .{extension} became a source that cooks to its canonical save; {} refused",
+        files.len(),
+        refused.len()
+    );
+    assert!(refused.is_empty(), "{refused:#?}");
+}
+
+#[test]
+fn every_corpus_ybn_becomes_a_source_that_cooks_to_its_canonical_save() {
+    use or_io::decl::File;
+    use or_io::gta5::bounds::PhBoundAny;
+    every_corpus_file_becomes_a_source_that_cooks_to_its_canonical_save(
+        "ybn",
+        "every corpus .ybn becomes a source that cooks to its canonical save",
+        |bytes, name, parent| {
+            let how = or_source::textures::Extraction {
+                from_game: true,
+                virtual_path: None,
+            };
+            or_source::bounds::extract(bytes, name, parent, &how)
+        },
+        |bytes| PhBoundAny::from_bytes(bytes).ok()?.to_bytes().ok(),
+    );
+}
+
+#[test]
+fn every_corpus_ynd_becomes_a_source_that_cooks_to_its_canonical_save() {
+    use or_io::decl::File;
+    use or_io::gta5::CPathRegion;
+    every_corpus_file_becomes_a_source_that_cooks_to_its_canonical_save(
+        "ynd",
+        "every corpus .ynd becomes a source that cooks to its canonical save",
+        |bytes, name, parent| {
+            let how = or_source::textures::Extraction {
+                from_game: true,
+                virtual_path: None,
+            };
+            or_source::paths::extract(bytes, name, parent, &how)
+        },
+        |bytes| CPathRegion::from_bytes(bytes).ok()?.to_bytes().ok(),
+    );
+}
+
+#[test]
+fn every_node_of_a_corpus_ynd_is_addressed_by_its_place_in_one_region() {
+    use or_io::decl::File;
+    use or_io::gta5::CPathRegion;
+    let Some(files) = or_test_support::Corpus::new(env!("CARGO_MANIFEST_DIR"), "ynd")
+        .find_or_skip("every node of a corpus .ynd is addressed by its place")
+    else {
+        return;
+    };
+    let (mut nodes, mut elsewhere) = (0usize, Vec::new());
+    for path in &files {
+        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        let region = CPathRegion::from_bytes(&fs::read(path).unwrap())
+            .unwrap_or_else(|why| panic!("{file}: {why}"));
+        let own = region.nodes.first().map(|node| node.address.region);
+        for (place, node) in region.nodes.iter().enumerate() {
+            nodes += 1;
+            if usize::from(node.address.index) != place || Some(node.address.region) != own {
+                elsewhere.push(format!(
+                    "{file}: node {place} is {}:{}",
+                    node.address.region, node.address.index
+                ));
+            }
+        }
+    }
+    eprintln!(
+        "{nodes} nodes of {} staged .ynd are each addressed by their place in the region of their file",
+        files.len()
+    );
+    assert!(
+        elsewhere.is_empty(),
+        "a source refuses an address that is not the place of its node, and these files hold one: {elsewhere:#?}"
+    );
+}
+
+/// What a polygon's record holds apart from where its vertices and its neighbours sit: its kind, its material by
+/// the game's value, the words of the vertices it stands on, its sixteen bytes with each index left as the bit
+/// above it, and what the bound holds for each of those vertices.
+type Polygon = (u32, u64, Vec<[i16; 3]>, Vec<u8>, Vec<u32>);
+
+/// The polygon of a triangle across each of its edges.
+type Across = [Option<Polygon>; 3];
+
+/// Every soup under `bound` by the address a source gives it.
+fn soups_under<'a>(
+    bound: &'a or_io::gta5::bounds::PhBoundAny,
+    address: String,
+    out: &mut Vec<(String, &'a or_io::gta5::bounds::PhBoundGeometry)>,
+) {
+    use or_io::gta5::bounds::PhBoundAny;
+    match bound {
+        PhBoundAny::PhBoundGeometry(g) => out.push((address, g)),
+        PhBoundAny::PhBoundBVH(b) => out.push((address, &b.base)),
+        PhBoundAny::PhBoundComposite(c) => {
+            for (i, child) in c.bounds.iter().enumerate() {
+                if let Some(child) = child {
+                    soups_under(child, format!("{address}_child{i}"), out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// How often each polygon is held by `g`, a triangle with the polygons across its edges.
+fn polygons_of(
+    g: &or_io::gta5::bounds::PhBoundGeometry,
+) -> std::collections::BTreeMap<(Polygon, Option<Across>), usize> {
+    use or_io::gta5::bounds::{NO_NEIGHBOUR, VERTEX_INDEX_MASK};
+    let polygon = |at: usize| -> Polygon {
+        let p = &g.polygons[at];
+        let (stands_on, _) = g.polygon_vertices(p).expect("a polygon of a kind");
+        let above = !VERTEX_INDEX_MASK;
+        let mut indices = p.vertex_indices;
+        let mut neighbours = p.neighboring_polygons;
+        // Where each kind keeps the vertices it stands on: a triangle and a box in the words after the first four bytes.
+        match p.primitive() {
+            0 => {
+                indices = indices.map(|v| v & above);
+                neighbours = [0; 3];
+            }
+            3 => {
+                indices = indices.map(|v| v & above);
+                neighbours[0] &= above;
+            }
+            _ => indices[2] = 0,
+        }
+        let mut area = p.area.to_bits();
+        if matches!(p.primitive(), 1 | 2 | 4) {
+            area &= 0xffff;
+        }
+        let mut bytes = area.to_le_bytes().to_vec();
+        bytes.extend(indices.iter().flat_map(|v| v.to_le_bytes()));
+        bytes.extend(neighbours.iter().flat_map(|v| v.to_le_bytes()));
+        let material = g
+            .poly_mat_index_list
+            .get(at)
+            .map_or(u64::MAX, |slot| g.material_ids[usize::from(*slot)].id);
+        let words = stands_on
+            .iter()
+            .map(|v| {
+                let v = &g.compressed_vertices[*v];
+                [v.x, v.y, v.z]
+            })
+            .collect();
+        let held = stands_on
+            .iter()
+            .filter_map(|v| g.vertex_attribs.get(*v).map(|c| c.color))
+            .collect();
+        (p.primitive(), material, words, bytes, held)
+    };
+    let mut out = std::collections::BTreeMap::new();
+    for (at, p) in g.polygons.iter().enumerate() {
+        let across = (p.primitive() == 0).then(|| {
+            p.neighboring_polygons
+                .map(|n| (n != NO_NEIGHBOUR).then(|| polygon(usize::from(n))))
+        });
+        *out.entry((polygon(at), across)).or_insert(0) += 1;
+    }
+    out
+}
+
+/// The game's own check of a saved bound, over the file's image.
+fn validate(file: &[u8]) -> Result<(), String> {
+    use or_io::container::resource::{ResourceEnvelope, Rsc7};
+    let opened = Rsc7::open(file).map_err(|e| e.to_string())?;
+    let aligned = or_io::decl::Aligned::from_bytes(&opened.data);
+    let image = or_io::desc::Image::new(aligned.bytes(), opened.virtual_size as usize);
+    or_io::gta5::bounds::validate(image, 0).map_err(|e| e.to_string())
+}
+
+#[test]
+fn a_triangle_taken_out_of_a_corpus_ybn_cooks_to_a_bound_that_holds_one_fewer_or_is_refused_by_name(
+) {
+    use or_io::decl::File;
+    use or_io::gta5::bounds::PhBoundAny;
+    let Some(files) = or_test_support::Corpus::new(env!("CARGO_MANIFEST_DIR"), "ybn")
+        .find_or_skip("a triangle taken out of a corpus .ybn")
+    else {
+        return;
+    };
+    let (mut cooked, mut no_triangle, mut by_name) = (0usize, 0usize, Vec::new());
+    let (mut soups_edited, mut holding_attributes) = (0usize, 0usize);
+    for path in &files {
+        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        let bytes = fs::read(path).unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let how = or_source::textures::Extraction {
+            from_game: true,
+            virtual_path: None,
+        };
+        let folder = or_source::bounds::extract(&bytes, "subject", work.path(), &how)
+            .unwrap_or_else(|why| panic!("{file}: {why:?}"));
+        if !folder.join(or_source::bounds::MODEL).is_file() {
+            no_triangle += 1;
+            continue;
+        }
+        // The last triangle of every node goes, where the primitive it is in holds another.
+        let mut edited: Vec<String> = Vec::new();
+        edit_bounds_glb(&folder, "subject", |scene| {
+            for mesh in &mut scene.objects[0].meshes {
+                let Some(primitive) = mesh.primitives.last_mut() else {
+                    continue;
+                };
+                if primitive.indices.len() > 3 {
+                    primitive.indices.truncate(primitive.indices.len() - 3);
+                    edited.push(mesh.name.clone());
+                }
+            }
+        });
+        let made = match or_source::bounds::compile(&Source::open(&folder).unwrap()) {
+            Ok(made) => made,
+            Err(why) => {
+                let why = why
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                assert!(
+                    why.contains("which follows its vertices one for one")
+                        || why.contains("two vertices that differ in their"),
+                    "{file}: refused for a reason that names nothing it holds: {why}"
+                );
+                by_name.push(format!("{file}: {why}"));
+                continue;
+            }
+        };
+        validate(&made.bytes).unwrap_or_else(|why| panic!("{file}: {why}"));
+        let (base, bound) = (
+            PhBoundAny::from_bytes(&bytes).unwrap(),
+            PhBoundAny::from_bytes(&made.bytes).unwrap(),
+        );
+        let (mut was, mut is) = (Vec::new(), Vec::new());
+        soups_under(&base, "bound".to_string(), &mut was);
+        soups_under(&bound, "bound".to_string(), &mut is);
+        assert_eq!(was.len(), is.len(), "{file}");
+        for ((address, was), (_, is)) in was.iter().zip(&is) {
+            let (held, holds) = (polygons_of(was), polygons_of(is));
+            let more =
+                |a: &std::collections::BTreeMap<(Polygon, Option<Across>), usize>,
+                 b: &std::collections::BTreeMap<(Polygon, Option<Across>), usize>| {
+                    let mut out: Vec<(Polygon, Option<Across>)> = Vec::new();
+                    for (polygon, count) in a {
+                        let other = b.get(polygon).copied().unwrap_or(0);
+                        out.extend(std::iter::repeat_n(
+                            polygon.clone(),
+                            count.saturating_sub(other),
+                        ));
+                    }
+                    out
+                };
+            let (gone, come) = (more(&held, &holds), more(&holds, &held));
+            if !edited.contains(address) {
+                assert!(
+                    gone.is_empty() && come.is_empty(),
+                    "{file} {address}: nothing of its node changed and its polygons did"
+                );
+                continue;
+            }
+            soups_edited += 1;
+            holding_attributes += usize::from(!was.vertex_attribs.is_empty());
+            // What is gone and has not come back with other neighbours is the triangle that was taken out.
+            let mut taken: Vec<&Polygon> = gone.iter().map(|(polygon, _)| polygon).collect();
+            for (polygon, _) in &come {
+                let at = taken
+                    .iter()
+                    .position(|gone| *gone == polygon)
+                    .unwrap_or_else(|| {
+                        panic!("{file} {address}: a polygon the base does not hold: {polygon:?}")
+                    });
+                taken.swap_remove(at);
+            }
+            assert_eq!(
+                taken.len(),
+                1,
+                "{file} {address}: {} polygons went with one triangle",
+                taken.len()
+            );
+            assert_eq!(taken[0].0, 0, "{file} {address}: what went is no triangle");
+            // Every other polygon that changed is a triangle that stated the taken one across an edge.
+            for (polygon, across) in &gone {
+                let beside = across
+                    .as_ref()
+                    .is_some_and(|across| across.iter().flatten().any(|n| n == taken[0]));
+                assert!(
+                    polygon == taken[0] || beside,
+                    "{file} {address}: a triangle away from the one taken out changed: {polygon:?}"
+                );
+            }
+        }
+        cooked += 1;
+    }
+    eprintln!(
+        "{cooked} of {} staged .ybn cook with a triangle taken out of each of their nodes, {soups_edited} nodes in all, {holding_attributes} of them holding vertex attributes; {no_triangle} hold no triangle; {} refused by name: {by_name:#?}",
+        files.len(),
+        by_name.len()
+    );
+    assert!(
+        cooked > 0 || files.len() == no_triangle,
+        "no staged .ybn took the edit"
     );
 }

@@ -339,7 +339,7 @@ mod tests {
         let added = add_files(
             dir.path(),
             &[Incoming {
-                name: "hull.ybn",
+                name: "hull.yld",
                 bytes: b"x",
                 from_game: false,
                 virtual_path: None,

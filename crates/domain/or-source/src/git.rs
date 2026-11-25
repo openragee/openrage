@@ -26,6 +26,8 @@ const BINARY: &[&str] = &[
     "base.ymap",
     "base.ytyp",
     "base.meta",
+    "base.ybn",
+    "base.ynd",
 ];
 /// Images beside a DDS: binary, or Git LFS when the person asked for it.
 const IMAGES: &[&str] = &[

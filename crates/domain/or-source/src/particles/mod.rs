@@ -17,7 +17,7 @@
 
 mod list;
 mod records;
-mod text;
+pub(crate) mod text;
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};

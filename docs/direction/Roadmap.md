@@ -10199,10 +10199,28 @@ of `crates/domain/or-source/src/game_import.rs`. A project holds no compiled gam
 this form. It draws nothing
 ([brief](World_Editor_Plan.md#a-changed-bound-and-a-changed-path-region-as-sources-r70w)).
 
-**Where it stands.** Not merged; a lane began it on 2026-11-25. The source of a `.ybn` is designed
-and left for later, and a `.ynd` has no row
-([layout per format](Source_Format_Design.md#layout-per-format)); an import keeps both whole, as
-compiled files ([how an import writes](Source_Format_Design.md#how-an-import-writes)).
+**Where it stands.** The source, the base and the cook are built in `or-source`, with no content
+kind and no screen; the compare against the base is not. `crates/domain/or-source/src/bounds.rs`
+makes `<name>.bounds.src` of a `.ybn`, its triangles as a glb and what a glb cannot say as
+`bounds.json`, and `crates/domain/or-source/src/paths.rs` makes `<name>.paths.src` of a `.ynd`, one
+`paths.json` of its nodes, links and junctions. Each keeps the game's file as its base, is a row of
+`or_source::game_import::KINDS`, cooks to the canonical save of its file while untouched and is left
+out of a build until it changes
+(`a_bound_taken_from_the_game_is_left_out_of_a_build_until_a_polygon_changes`,
+`a_path_region_taken_from_the_game_is_left_out_of_a_build_until_its_document_is_edited`).
+[Source_Format_Design.md](Source_Format_Design.md#bounds-and-path-regions) states both forms, what
+each refuses and what a rebuilt bound keeps of its file.
+
+On the staged corpus, with no install: 21 of 21 `.ybn` and 259 of 259 `.ynd` became a source that
+cooks to its canonical save (`every_corpus_ybn_becomes_a_source_that_cooks_to_its_canonical_save`,
+`every_corpus_ynd_becomes_a_source_that_cooks_to_its_canonical_save`, 2026-11-25), and each of the
+77991 nodes is addressed by its place in the one region of its file
+(`every_node_of_a_corpus_ynd_is_addressed_by_its_place_in_one_region`, 2026-11-25).
+
+Left: the compare of a source against its base, as the polygon removed or the field changed; the
+round trip over an install, which no suite walks; the form of a path region, which awaits the
+owner's word; a child added to or removed from a composite, and the changed meshes the source
+refuses by name; and nothing was run in the game.
 
 **Done when.** Every `.ybn` and `.ynd` of an install becomes a source and cooks back to the
 canonical save of its file, in the slow tier and named in the skip ledger without an install; an

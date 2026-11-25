@@ -582,3 +582,153 @@ fn a_metadata_file_taken_from_the_game_is_left_out_until_its_xml_is_edited(targe
     let (ok, said) = cli(&["project", "verify", text(&file)]);
     assert!(ok, "{said}");
 }
+
+/// Imports `bytes` as the game's file `name` into a new project, and returns the project file and the source folder.
+fn import_from_the_game(work: &Path, name: &str, kind: &str, bytes: &[u8]) -> (PathBuf, PathBuf) {
+    let file = create_project(work, None);
+    let incoming = work.join("incoming").join(name);
+    std::fs::create_dir_all(incoming.parent().unwrap()).unwrap();
+    std::fs::write(&incoming, bytes).unwrap();
+    let (ok, said) = cli(&[
+        "project",
+        "import",
+        text(&file),
+        text(&incoming),
+        "--from-game",
+    ]);
+    assert!(ok, "{said}");
+    let stem = name.rsplit_once('.').unwrap().0;
+    let source = file
+        .parent()
+        .unwrap()
+        .join("sources")
+        .join(format!("{stem}.{kind}.src"));
+    assert!(source.join("asset.json").is_file(), "{said}");
+    (file, source)
+}
+
+/// Builds the project and says whether `shipped` is in the build, with what the build printed.
+fn built_with(file: &Path, shipped: &str) -> (Option<Vec<u8>>, String) {
+    let (ok, said) = cli(&["project", "build", text(file)]);
+    assert!(ok, "{said}");
+    let built = file.parent().unwrap().join("build").join("harbor");
+    (snapshot(&built).remove(shipped), said)
+}
+
+#[test]
+fn a_bound_taken_from_the_game_is_left_out_of_a_build_until_a_polygon_changes() {
+    use or_interchange::gltf::read::load;
+    use or_interchange::gltf::{write, Container as Glb};
+    use or_io::gta5::bounds::build::{self, BoundMesh};
+    use or_io::gta5::bounds::PhBoundAny;
+
+    let corners = vec![
+        [10.0, 20.0, 3.0],
+        [14.0, 20.0, 3.0],
+        [14.0, 24.0, 3.0],
+        [10.0, 24.0, 5.0],
+    ];
+    let mesh = BoundMesh::new(corners.clone(), vec![[0, 1, 2], [0, 2, 3]]);
+    let original = PhBoundAny::PhBoundBVH(build::bvh(&mesh).unwrap())
+        .to_bytes()
+        .unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let (file, source) = import_from_the_game(work.path(), "hull.ybn", "bounds", &original);
+    let glb = source.join("bounds.glb");
+    assert!(glb.is_file() && source.join("bounds.json").is_file());
+
+    let (shipped, said) = built_with(&file, "stream/hull.ybn");
+    assert!(shipped.is_none(), "the game's own bound shipped");
+    assert!(
+        said.contains("stream/hull.ybn is unchanged from the game"),
+        "{said}"
+    );
+
+    // One corner of one triangle moves inside the bound's box: a changed polygon.
+    let mut scene = load(&glb, &std::fs::read(&glb).unwrap()).unwrap();
+    scene.objects[0].name = "hull".to_string();
+    let mesh = &mut scene.objects[0].meshes[0];
+    mesh.name = mesh.name.strip_prefix("hull_").unwrap().to_string();
+    let moved = mesh.primitives[0]
+        .positions
+        .iter_mut()
+        .find(|p| p[2] > 4.0)
+        .expect("the raised corner");
+    moved[2] = 4.0;
+    std::fs::write(&glb, write(&scene, "hull", Glb::Glb).primary).unwrap();
+
+    let (shipped, said) = built_with(&file, "stream/hull.ybn");
+    let shipped = shipped.unwrap_or_else(|| panic!("a changed bound ships: {said}"));
+    assert!(!said.contains("unchanged from the game"), "{said}");
+    let PhBoundAny::PhBoundBVH(bound) = PhBoundAny::from_bytes(&shipped).unwrap() else {
+        panic!("the shipped file is not the tree bound it was");
+    };
+    let heights: Vec<f32> = (0..bound.base.compressed_vertices.len())
+        .map(|i| bound.base.vertex_position(i).unwrap()[2])
+        .collect();
+    let quantum = bound.base.un_quantize_factor.z;
+    assert!(
+        heights.iter().any(|z| (z - 4.0).abs() <= quantum) && heights.iter().all(|z| *z < 4.5),
+        "{heights:?}"
+    );
+    let (ok, said) = cli(&["project", "verify", text(&file)]);
+    assert!(ok, "{said}");
+}
+
+#[test]
+fn a_path_region_taken_from_the_game_is_left_out_of_a_build_until_its_document_is_edited() {
+    use or_io::gta5::{CNodeAddress, CPathNode, CPathNodeLink, CPathRegion};
+
+    let node = |index: u16, links: usize| {
+        let mut node = CPathNode {
+            address: CNodeAddress {
+                region: 7,
+                index,
+                ..Default::default()
+            },
+            coors_x: 100 * index as i16,
+            ..Default::default()
+        };
+        node.set_num_links(links).unwrap();
+        node
+    };
+    let link = |index: u16| CPathNodeLink {
+        other_node: CNodeAddress {
+            region: 7,
+            index,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let original = CPathRegion {
+        nodes: vec![node(0, 1), node(1, 1)],
+        num_nodes_car_nodes: 2,
+        links: vec![link(1), link(0)],
+        ..Default::default()
+    }
+    .to_bytes()
+    .unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let (file, source) = import_from_the_game(work.path(), "nodes7.ynd", "paths", &original);
+
+    let (shipped, said) = built_with(&file, "stream/nodes7.ynd");
+    assert!(shipped.is_none(), "the game's own region shipped");
+    assert!(
+        said.contains("stream/nodes7.ynd is unchanged from the game"),
+        "{said}"
+    );
+
+    let document = source.join("paths.json");
+    let mut stated: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&document).unwrap()).unwrap();
+    stated["nodes"][1]["coors_x"] = 250.into();
+    std::fs::write(&document, serde_json::to_string_pretty(&stated).unwrap()).unwrap();
+
+    let (shipped, said) = built_with(&file, "stream/nodes7.ynd");
+    let shipped = shipped.unwrap_or_else(|| panic!("an edited region ships: {said}"));
+    let region = CPathRegion::from_bytes(&shipped).unwrap();
+    assert_eq!(region.nodes[1].coors_x, 250);
+    assert_eq!(region.links.len(), 2);
+    let (ok, said) = cli(&["project", "verify", text(&file)]);
+    assert!(ok, "{said}");
+}

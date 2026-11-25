@@ -295,6 +295,8 @@ fn fixed_file(kind: &str) -> Option<&'static str> {
         .then_some(crate::textures::RULES)
         .or_else(|| (kind == crate::metadata::KIND).then_some(crate::metadata::XML))
         .or_else(|| (kind == crate::particles::KIND).then_some(crate::particles::RULES))
+        .or_else(|| (kind == crate::bounds::KIND).then_some(crate::bounds::RULES))
+        .or_else(|| (kind == crate::paths::KIND).then_some(crate::paths::RULES))
         .or_else(|| crate::models::fixed_file(kind))
 }
 

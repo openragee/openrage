@@ -12,7 +12,7 @@ use or_project::{
     Diff, ModuleKind, Plan, Presence, Source as Held,
 };
 use or_source::asset::{parse_folder_name, Source};
-use or_source::{metadata, models, particles, textures};
+use or_source::{bounds, metadata, models, particles, paths, textures};
 use or_wardrobe::Garment;
 
 use super::build_cooker::describe_all;
@@ -385,14 +385,20 @@ fn source_row(folder: &Path, shadow: &Path, content: &str) -> AssetRow {
         Err(problem) => return unreadable(problem.message),
     };
     let manifest = &source.manifest;
-    // ⚠ The cook's own naming: a drawable source compiles to a .ydr, a drawables source to a .ydd, a fragment to a .yft, and a metadata source to the extension its manifest states.
+    // ⚠ The cook's own naming: a drawable source compiles to a .ydr, a drawables source to a .ydd, a fragment to a .yft, a bounds source to a .ybn, a paths source to a .ynd, and a metadata source to the extension its manifest states.
     let is_model = models::fixed_file(&manifest.kind).is_some();
     let is_metadata = manifest.kind == metadata::KIND;
     let is_particles = manifest.kind == particles::KIND;
+    let is_bounds = manifest.kind == bounds::KIND;
+    let is_paths = manifest.kind == paths::KIND;
     let cooked = if is_model {
         models::output_name(manifest)
     } else if is_particles {
         particles::output_name(manifest)
+    } else if is_bounds {
+        bounds::output_name(manifest)
+    } else if is_paths {
+        paths::output_name(manifest)
     } else {
         metadata::cooked_name(manifest)
             .ok()
@@ -401,7 +407,8 @@ fn source_row(folder: &Path, shadow: &Path, content: &str) -> AssetRow {
     };
     let output = shadow.join(&manifest.id).join(&cooked);
     let (bytes, listed) = textures_of(folder);
-    let bytes = (!is_model && !is_metadata && !is_particles).then_some(bytes);
+    let of_pictures = !(is_model || is_metadata || is_particles || is_bounds || is_paths);
+    let bytes = of_pictures.then_some(bytes);
     let target = Generation::from_slug(&manifest.target).map(Generation::edition_label);
     // ⚠ No target and no platform among the facts: the layout a source compiles to is its manifest's and nothing a person chooses, and a build compiles it for the platforms the build states.
     let mut facts = vec![
@@ -410,7 +417,7 @@ fn source_row(folder: &Path, shadow: &Path, content: &str) -> AssetRow {
         (tr!("Stable id"), manifest.id.clone()),
         (tr!("Created with"), manifest.created_with.clone()),
     ];
-    if !is_model && !is_metadata && !is_particles {
+    if of_pictures {
         if let Some(from) = compiles_from(folder, &listed) {
             facts.push((tr!("Compiles from"), from));
         }
@@ -744,7 +751,7 @@ mod tests {
     #[test]
     fn a_source_shows_the_output_its_cook_makes_whatever_its_kind() {
         use or_source::asset::{folder_name, AssetManifest, How, Origin, MANIFEST};
-        use or_source::{fragment, metadata};
+        use or_source::{bounds, fragment, metadata, paths};
 
         let dir = tempfile::tempdir().unwrap();
         let folder = dir.path().join("proj");
@@ -753,6 +760,8 @@ mod tests {
             (models::DRAWABLES, "props"),
             (fragment::KIND, "van"),
             (metadata::KIND, "cs1_02"),
+            (bounds::KIND, "cs1_02_0"),
+            (paths::KIND, "nodes7"),
         ] {
             let source = folder.join("sources").join(folder_name(name, kind));
             std::fs::create_dir_all(&source).unwrap();
@@ -773,7 +782,11 @@ mod tests {
                 );
             }
             std::fs::write(source.join(MANIFEST), manifest.to_text()).unwrap();
-            let fixed = models::fixed_file(kind).unwrap_or(metadata::XML);
+            let fixed = match kind {
+                bounds::KIND => bounds::RULES,
+                paths::KIND => paths::RULES,
+                kind => models::fixed_file(kind).unwrap_or(metadata::XML),
+            };
             std::fs::create_dir_all(source.join(fixed).parent().unwrap()).unwrap();
             std::fs::write(source.join(fixed), "{}").unwrap();
         }
@@ -805,6 +818,12 @@ mod tests {
         assert_eq!(map.kind, "Metadata source");
         assert_eq!(extension(van).as_deref(), Some("yft"));
         assert_eq!(extension(map).as_deref(), Some("ymap"));
+        let (collision, roads) = (named("cs1_02_0"), named("nodes7"));
+        assert_eq!(collision.kind, "Bounds source");
+        assert_eq!(roads.kind, "Paths source");
+        assert_eq!(extension(collision).as_deref(), Some("ybn"));
+        assert_eq!(extension(roads).as_deref(), Some("ynd"));
+        assert_eq!((collision.bytes, roads.bytes), (None, None));
     }
 }
 

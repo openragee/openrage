@@ -126,6 +126,17 @@ pub struct SourceFact {
     pub inside: Option<Result<Inside, String>>,
 }
 
+/// What a source of `kind` that cooks to a file of `extension` is for in a set; none for a kind a maps module does not hold.
+pub(crate) fn role_of(kind: &str, extension: &str) -> Option<Role> {
+    match (kind, extension) {
+        ("metadata", "ymap") => Some(Role::Map),
+        ("metadata", "ytyp") => Some(Role::Types),
+        ("drawable" | "drawables" | "fragment", _) => Some(Role::Model),
+        ("textures", _) => Some(Role::Textures),
+        _ => None,
+    }
+}
+
 impl SourceFact {
     /// The file the source cooks to, such as `harbour.ymap`.
     pub fn file_name(&self) -> String {
@@ -134,13 +145,7 @@ impl SourceFact {
 
     /// What the source is for in a set.
     pub fn role(&self) -> Option<Role> {
-        match (self.kind.as_str(), self.extension.as_str()) {
-            ("metadata", "ymap") => Some(Role::Map),
-            ("metadata", "ytyp") => Some(Role::Types),
-            ("drawable" | "drawables" | "fragment", _) => Some(Role::Model),
-            ("textures", _) => Some(Role::Textures),
-            _ => None,
-        }
+        role_of(&self.kind, &self.extension)
     }
 
     pub fn map(&self) -> Option<&MapInside> {

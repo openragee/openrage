@@ -31,6 +31,10 @@ pub mod slot {
     pub const TINT: usize = 13;
     /// The four-layer tint normal map, or the dirt or second colour map.
     pub const SECOND: usize = 14;
+    /// The interior effect's cube of the room's colour and its cube of the room's light, each six faces stacked down one image in the order a pack stores them, and its back plane: the third layer's slots, which a two-layer material leaves free.
+    pub const ROOM: usize = 6;
+    pub const ROOM_LIGHT: usize = 7;
+    pub const BACK_PLANE: usize = 8;
 }
 
 /// What each slot samples where the material names no map: white, a flat normal, no metal and fully rough at mid height, no detail at mid cavity, white, black, the first layer alone, white, and a flat normal with no dirt.
@@ -104,6 +108,14 @@ pub struct WorldConstants {
     pub uv_sets: [f32; 4],
     /// The set the weights map is sampled by (1, 2 or 3), nought, and the second layer's scale of a two-layer material.
     pub uv_extra: [f32; 4],
+    /// The interior effect's room where its vertices state none: its depth, its width, its height as a share of its width, and the rooms of a panel up.
+    pub interior_room: [f32; 4],
+    /// The rooms of a panel across a stated room, the back plane's depth as a share of a room's, the back plane's alpha scale, and the depth over which a room darkens.
+    pub interior_plane: [f32; 4],
+    /// The glass's absorption per channel, and its thickness.
+    pub interior_glass: [f32; 4],
+    /// The most the glass is thick seen aslant, how much of that slant it takes, and how much light the back plane gives.
+    pub interior_slant: [f32; 4],
     pub flags: u32,
     /// The row of the palette, which the instance's own tint states where it states one.
     pub palette_row: f32,
@@ -147,6 +159,10 @@ impl WorldConstants {
     pub const VERTEX_OVER_TINT: u32 = 512;
     /// With [`Self::GROUND_BLEND`], the tint blend is masked by material A's alpha.
     pub const TINT_MASKED: u32 = 1024;
+    /// The two-layer interior effect: a room behind the glass by the program's box test, its vertices packed by [`interior`].
+    pub const INTERIOR: u32 = 2048;
+    /// With [`Self::INTERIOR`], the room's size is its vertices' rather than the constants'.
+    pub const ROOM_BY_VERTEX: u32 = 4096;
 }
 
 impl Default for WorldConstants {
@@ -169,6 +185,10 @@ impl Default for WorldConstants {
             uv1_transform: [1.0, 1.0, 0.0, 0.0],
             uv_sets: [1.0; 4],
             uv_extra: [1.0, 0.0, 1.0, 1.0],
+            interior_room: [1.0; 4],
+            interior_plane: [1.0, 0.0, 0.0, 1.0],
+            interior_glass: [0.0, 0.0, 0.0, 0.0],
+            interior_slant: [0.0, 0.0, 0.0, 0.0],
             flags: Self::VERTEX_TINT | Self::MASK_FROM_ALPHA,
             palette_row: 0.0,
             translucency_as_tint_mask: 0.0,
@@ -227,6 +247,84 @@ pub fn coloured(
             u32::from(or_io::half::f32_to_half(u2)) | u32::from(or_io::half::f32_to_half(v2)) << 16;
         vertex.colour = [u1, v1, colour1(at(first, index)), f32::from_bits(halves)];
         vertex.depth_bias = colour1(at(second, index));
+    }
+}
+
+/// The normal as two signed 16-bit halves of an octahedron, as the bits of one float.
+fn octahedral(normal: [f32; 3]) -> f32 {
+    let [x, y, z] = normal;
+    let sum = (x.abs() + y.abs() + z.abs()).max(1e-12);
+    let (mut a, mut b) = (x / sum, y / sum);
+    if z < 0.0 {
+        let sign = |v: f32| if v >= 0.0 { 1.0 } else { -1.0 };
+        (a, b) = ((1.0 - b.abs()) * sign(a), (1.0 - a.abs()) * sign(b));
+    }
+    let snorm = |v: f32| u32::from((v.clamp(-1.0, 1.0) * 32767.0).round() as i16 as u16);
+    f32::from_bits(snorm(a) | snorm(b) << 16)
+}
+
+/// Give each of `vertices` of an interior effect's mesh, already [`coloured`], its third colour and its fourth texture coordinate, nought where the mesh has none.
+pub fn interior(vertices: &mut [MeshVertex], third: Colours, uv3: Coordinates) {
+    // ⚠ Such a vertex keeps its normal in the bits of the first float of its normal, its third colour in the second and its fourth coordinate as two halves in the third, as a material of [`WorldConstants::INTERIOR`] reads it.
+    for (index, vertex) in vertices.iter_mut().enumerate() {
+        let colour = (third.and_then(|c| c.get(index)).copied())
+            .unwrap_or([0.0; 4])
+            .map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+        let [u, v] = uv3.and_then(|s| s.get(index)).copied().unwrap_or([0.0; 2]);
+        let halves =
+            u32::from(or_io::half::f32_to_half(u)) | u32::from(or_io::half::f32_to_half(v)) << 16;
+        vertex.normal = [
+            octahedral(vertex.normal),
+            colour1(colour),
+            f32::from_bits(halves),
+        ];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The normal back from its bits as the shader's `unpacked_normal` reads them.
+    fn unpacked(bits: u32) -> [f32; 3] {
+        let snorm = |v: u32| (f32::from(v as u16 as i16) / 32767.0).max(-1.0);
+        let (x, y) = (snorm(bits & 0xFFFF), snorm(bits >> 16));
+        let mut n = [x, y, 1.0 - x.abs() - y.abs()];
+        if n[2] < 0.0 {
+            let sign = |v: f32| if v >= 0.0 { 1.0 } else { -1.0 };
+            n = [(1.0 - y.abs()) * sign(x), (1.0 - x.abs()) * sign(y), n[2]];
+        }
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        n.map(|c| c / len)
+    }
+
+    #[test]
+    fn an_interior_vertex_keeps_its_normal_third_colour_and_fourth_coordinate_where_the_shader_reads_them(
+    ) {
+        let normals = [
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+            [0.6, -0.8, 0.0],
+            [-0.48, 0.6, -0.64],
+        ];
+        let mut vertices: Vec<MeshVertex> = (normals.iter())
+            .map(|n| MeshVertex::new([0.0; 3], *n, [0.0; 2]))
+            .collect();
+        let third = vec![[0.0, 0.2, 1.0, 0.702]; 4];
+        let fourth = vec![[1.0, -3.05]; 4];
+        interior(&mut vertices, Some(&third), Some(&fourth));
+        for (vertex, normal) in vertices.iter().zip(normals) {
+            let back = unpacked(vertex.normal[0].to_bits());
+            let off = (0..3)
+                .map(|k| (back[k] - normal[k]).abs())
+                .fold(0.0, f32::max);
+            assert!(off < 1e-3, "{normal:?} came back as {back:?}");
+            assert_eq!(vertex.normal[1].to_bits().to_le_bytes(), [0, 51, 255, 179]);
+            let halves = vertex.normal[2].to_bits();
+            let half = |h: u32| or_io::half::half_to_f32(h as u16);
+            let stored = half(u32::from(or_io::half::f32_to_half(-3.05)));
+            assert_eq!((half(halves & 0xFFFF), half(halves >> 16)), (1.0, stored));
+        }
     }
 }
 

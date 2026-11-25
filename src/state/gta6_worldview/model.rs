@@ -17,7 +17,7 @@ use super::texture::Places;
 mod material;
 use material::{material_of, GLOW, PALETTE};
 #[cfg(test)]
-pub use material::{Constants, Emissive, Layer};
+pub use material::{Constants, Emissive, Interior, Layer};
 pub use material::{CpuMaterial, Family, RegionTint};
 
 /// The bytes a model's body is read to.
@@ -151,6 +151,10 @@ pub(super) fn model_of(
                     false => (colour(24), colour(25)),
                 };
                 or_renderer::world::coloured(&mut mesh.vertices, colours, (uvs(29), uvs(30)));
+                // The interior effect sizes its rooms by the third colour and the fourth coordinate
+                if material.interior.is_some() {
+                    or_renderer::world::interior(&mut mesh.vertices, colour(26), uvs(31));
+                }
                 Some(CpuMesh {
                     vertices: mesh.vertices,
                     indices: mesh.indices,

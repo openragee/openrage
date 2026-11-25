@@ -53,6 +53,25 @@ pub struct Emissive {
     pub diffuse: f32,
 }
 
+/// What the two-layer interior effect adds: the room behind its glass.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Interior {
+    /// The cube of the room's colour, the cube of its light, and the back plane.
+    pub room: Option<u64>,
+    pub light: Option<u64>,
+    pub plane: Option<u64>,
+    /// The room's size is its vertices' rather than these constants'.
+    pub by_vertex: bool,
+    /// The room's depth, width and height as a share of its width, and the rooms of a panel up.
+    pub size: [f32; 4],
+    /// The rooms of a panel across a stated room, the back plane's depth as a share of a room's, the scale of its alpha, and the depth over which a room darkens.
+    pub plane_of: [f32; 4],
+    /// The glass's absorption per channel, and its thickness.
+    pub glass: [f32; 4],
+    /// The most the glass is thick seen aslant, how much of that slant it takes, and how much light the back plane gives.
+    pub slant: [f32; 3],
+}
+
 /// The constants a material's arithmetic reads: its own, or where it states none the default.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Constants {
@@ -171,6 +190,7 @@ pub struct CpuMaterial {
     /// A colour over the layers by its alpha.
     pub dirt: Option<u64>,
     pub emissive: Option<Emissive>,
+    pub interior: Option<Interior>,
     pub constants: Constants,
 }
 
@@ -185,6 +205,9 @@ impl Hash for CpuMaterial {
         (self.lookup, self.palette, self.tint).hash(state);
         (self.tint_normal, self.dirt).hash(state);
         self.emissive.map(|e| e.map).hash(state);
+        self.interior
+            .map(|i| (i.room, i.light, i.plane))
+            .hash(state);
     }
 }
 
@@ -201,8 +224,9 @@ impl CpuMaterial {
             self.dirt,
         ];
         let emissive = self.emissive.map(|e| e.map);
+        let room = (self.interior).map_or([None; 3], |i| [i.room, i.light, i.plane]);
         let mut keys = Vec::new();
-        for key in layers.chain(beside).chain([emissive]).flatten() {
+        for key in layers.chain(beside).chain([emissive]).chain(room).flatten() {
             if !keys.contains(&key) {
                 keys.push(key);
             }
@@ -331,6 +355,30 @@ const TINT_MULTIPLIES: u32 = 0x40D6_CCD6;
 const TINT_MASKED: u32 = 0x236B_91CA;
 /// A constant every tree effect states and no other: the wind's thresholds of its branches.
 const TREE_WIND: u32 = name_hash32(b"WindMinMaxThreshholds0");
+/// The interior effect's records, by the annotation hash its drawables state: the cube of the room's colour, the cube of its light and the back plane.
+const ROOM_CUBE: u32 = 0x17D3_B5C2;
+const ROOM_LIGHT: u32 = 0x633A_EF4D;
+const BACK_PLANE: u32 = 0x6994_EF3F;
+/// Whether the room's size is its vertices', then the room's depth, width, height as a share of its width, rooms up and rooms across a stated room.
+const ROOM_BY_VERTEX: u32 = 0x6AD7_14D8;
+const ROOM_SIZE: [u32; 5] = [
+    0x423C_65A2,
+    0x2881_A0FF,
+    0x6E91_0098,
+    0xA51F_CCCB,
+    0x818A_8599,
+];
+/// The back plane's depth as a share of a room's and what its alpha is divided by, and the depth over which a room darkens.
+const PLANE_DEPTH: u32 = 0xEB3B_E113;
+const PLANE_CUT: u32 = 0xC096_32A5;
+const ROOM_DARKENS: u32 = 0xA1C8_E7E6;
+/// The glass's absorption per channel, its thickness, the most it is thick seen aslant, and how much of the slant it takes.
+const GLASS_ABSORPTION: u32 = 0x1C25_0A16;
+const GLASS_THICKNESS: u32 = 0x0F2E_7960;
+const GLASS_MOST: u32 = 0x5775_351A;
+const GLASS_SLANT: u32 = 0x4C84_4830;
+/// How much light the back plane gives.
+const PLANE_GLOW: u32 = 0xE71D_FB5F;
 
 /// A shader's records and constants, by the hash its drawable states for each.
 struct Records<'a>(&'a Shader);
@@ -488,6 +536,35 @@ fn emissive_of(r: &Records) -> Option<Emissive> {
     })
 }
 
+/// The room behind the glass, for a shader that states the interior effect's cube of a room's colour.
+fn interior_of(r: &Records) -> Option<Interior> {
+    if !r.states(ROOM_CUBE) {
+        return None;
+    }
+    let [depth, width, height, up, across] = ROOM_SIZE.map(|hash| r.float(hash, 1.0));
+    let [k_r, k_g, k_b] = r.floats(GLASS_ABSORPTION, [0.0; 3]);
+    Some(Interior {
+        room: r.key(ROOM_CUBE),
+        light: r.key(ROOM_LIGHT),
+        plane: r.key(BACK_PLANE),
+        // The program rounds the word before it compares it with one.
+        by_vertex: r.float(ROOM_BY_VERTEX, 0.0).round() == 1.0,
+        size: [depth, width, height, up],
+        plane_of: [
+            across,
+            r.float(PLANE_DEPTH, 0.0),
+            r.float(PLANE_CUT, 1.0).abs().max(1e-6).recip(),
+            r.float(ROOM_DARKENS, 1.0).abs().max(1e-6),
+        ],
+        glass: [k_r, k_g, k_b, r.float(GLASS_THICKNESS, 0.0)],
+        slant: [
+            r.float(GLASS_MOST, 0.0),
+            r.float(GLASS_SLANT, 0.0).abs(),
+            r.float(PLANE_GLOW, 0.0),
+        ],
+    })
+}
+
 /// The material `shader` states, drawn in the draw bucket of `byte`; for a colour map its records
 /// do not name, the first key `srgb` holds, else the first it knows nothing of.
 ///
@@ -518,6 +595,7 @@ pub(super) fn material_of(
         tint_normal: r.key(TINT_NORMAL),
         dirt: r.first_key(&DIRT),
         emissive: emissive_of(&r),
+        interior: interior_of(&r),
         constants: constants_of(&r),
     };
     if material.layers[0].colour.is_none() {

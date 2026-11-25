@@ -27,7 +27,7 @@ mod water_shader;
 
 pub use lamps::{WorldLamp, WORLD_LAMPS};
 pub use material::{
-    colour1, coloured, slot, WorldConstants, WorldFamily, WorldSurface, WORLD_MAPS,
+    colour1, coloured, interior, slot, WorldConstants, WorldFamily, WorldSurface, WORLD_MAPS,
 };
 use material::{uniform_bytes, STAND_INS};
 use pipelines::{ByBucket, Pipelines};

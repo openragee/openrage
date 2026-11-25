@@ -40,6 +40,11 @@ pub(super) fn slots_of(material: &CpuMaterial) -> [Option<u64>; WORLD_MAPS] {
         (slots[slot::TINT], slots[slot::SECOND]) = (material.palette, material.dirt);
         slots[slot::EMISSIVE] = material.emissive.map(|emissive| emissive.map);
     }
+    if let Some(interior) = &material.interior {
+        slots[slot::ROOM] = interior.room;
+        slots[slot::ROOM_LIGHT] = interior.light;
+        slots[slot::BACK_PLANE] = interior.plane;
+    }
     slots
 }
 
@@ -125,13 +130,22 @@ pub(super) fn constants_of(material: &CpuMaterial) -> WorldConstants {
         constants.emissive_view_power = emissive.facing;
         constants.emissive_diffuse_tint = emissive.diffuse;
     }
+    if let Some(interior) = &material.interior {
+        constants.flags |=
+            WorldConstants::INTERIOR | flag(interior.by_vertex, WorldConstants::ROOM_BY_VERTEX);
+        constants.interior_room = interior.size;
+        constants.interior_plane = interior.plane_of;
+        constants.interior_glass = interior.glass;
+        let [most, slant, glow] = interior.slant;
+        constants.interior_slant = [most, slant, glow, 0.0];
+    }
     constants
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::gta6_world::worldview::{Constants, Emissive, Layer};
+    use crate::state::gta6_world::worldview::{Constants, Emissive, Interior, Layer};
 
     fn layer(base: u64) -> Layer {
         Layer {
@@ -216,6 +230,45 @@ mod tests {
             | WorldConstants::HARD_LIGHT
             | WorldConstants::MODEL_VERTEX;
         assert_eq!(constants.flags, wanted);
+    }
+
+    #[test]
+    fn an_interior_window_puts_its_room_cubes_and_back_plane_in_the_third_layers_slots_and_its_room_in_its_constants(
+    ) {
+        let interior = Interior {
+            room: Some(61),
+            light: Some(62),
+            plane: Some(63),
+            by_vertex: true,
+            size: [1.0, 2.5, 0.8, 1.0],
+            plane_of: [1.0, 0.2, 2.0, 7.0],
+            glass: [15.0, 12.5, 12.5, 0.02],
+            slant: [0.04, 0.5, 1.0],
+        };
+        let material = CpuMaterial {
+            family: Family::TwoLayer,
+            layers: vec![layer(10), layer(20)],
+            interior: Some(interior),
+            ..CpuMaterial::default()
+        };
+        let slots = slots_of(&material);
+        assert_eq!(
+            [slot::ROOM, slot::ROOM_LIGHT, slot::BACK_PLANE].map(|at| slots[at]),
+            [Some(61), Some(62), Some(63)]
+        );
+        let constants = constants_of(&material);
+        let both = WorldConstants::INTERIOR | WorldConstants::ROOM_BY_VERTEX;
+        assert_eq!(constants.flags & both, both);
+        assert_eq!(constants.interior_room, interior.size);
+        assert_eq!(constants.interior_glass, interior.glass);
+        assert_eq!(constants.interior_slant, [0.04, 0.5, 1.0, 0.0]);
+        // A two-layer material with no room leaves those slots to no map and sets neither flag
+        let plain = CpuMaterial {
+            interior: None,
+            ..material
+        };
+        assert_eq!(slots_of(&plain)[slot::ROOM], None);
+        assert_eq!(constants_of(&plain).flags & both, 0);
     }
 
     #[test]

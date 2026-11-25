@@ -44,6 +44,10 @@ struct Constants {
     uv1_transform: vec4<f32>,
     uv_sets: vec4<f32>,
     uv_extra: vec4<f32>,
+    interior_room: vec4<f32>,
+    interior_plane: vec4<f32>,
+    interior_glass: vec4<f32>,
+    interior_slant: vec4<f32>,
     flags: u32,
     palette_row: f32,
     translucency_as_tint_mask: f32,
@@ -100,6 +104,8 @@ const TINT_MULTIPLY: u32 = 128u;
 const FOLIAGE: u32 = 256u;
 const VERTEX_OVER_TINT: u32 = 512u;
 const TINT_MASKED: u32 = 1024u;
+const INTERIOR: u32 = 2048u;
+const ROOM_BY_VERTEX: u32 = 4096u;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -132,7 +138,21 @@ struct VsOut {
     @location(8) uv2: vec2<f32>,
     // How much of the natural and of the artificial ambient light the instance takes.
     @location(9) @interpolate(flat) ambient: vec2<f32>,
+    // An interior effect's third colour and fourth texture coordinate, which size its rooms.
+    @location(10) colour2: vec4<f32>,
+    @location(11) uv3: vec2<f32>,
 };
+
+// A normal stored as two signed halves of an octahedron.
+fn unpacked_normal(bits: u32) -> vec3<f32> {
+    let e = unpack2x16snorm(bits);
+    var n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) {
+        let sign = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));
+        n = vec3<f32>((1.0 - abs(n.yx)) * sign, n.z);
+    }
+    return normalize(n);
+}
 
 fn placed(in: VsIn) -> vec3<f32> {
     let local = vec4<f32>(in.position, 1.0);
@@ -142,11 +162,19 @@ fn placed(in: VsIn) -> vec3<f32> {
 // What both vertex stages hand on, but for where the vertex is drawn.
 fn handed_on(in: VsIn, world: vec3<f32>) -> VsOut {
     var out: VsOut;
+    var normal = in.normal;
+    out.colour2 = vec4<f32>(0.0);
+    out.uv3 = vec2<f32>(0.0);
+    if ((m.flags & INTERIOR) != 0u) {
+        normal = unpacked_normal(bitcast<u32>(in.normal.x));
+        out.colour2 = unpack4x8unorm(bitcast<u32>(in.normal.y));
+        out.uv3 = unpack2x16float(bitcast<u32>(in.normal.z));
+    }
     // The rows turn the normal as they turn the surface, which is right for a uniform scale; a non-uniform one shears it slightly.
     out.world_normal = normalize(vec3<f32>(
-        dot(in.row0.xyz, in.normal),
-        dot(in.row1.xyz, in.normal),
-        dot(in.row2.xyz, in.normal),
+        dot(in.row0.xyz, normal),
+        dot(in.row1.xyz, normal),
+        dot(in.row2.xyz, normal),
     ));
     out.uv = in.uv;
     if ((m.flags & MODEL_VERTEX) != 0u) {
@@ -427,6 +455,119 @@ fn one_layer(s: ptr<function, Surface>, maps: Maps, in: VsOut, tint: vec3<f32>) 
     return leaning(maps.n0, m.bumpiness.x);
 }
 
+// The texel a way picks of a cube whose six faces lie stacked down one image in the order a pack stores them, at the level `rooms` rooms to a pixel ask for.
+fn cube_stacked(t: texture_2d<f32>, dir: vec3<f32>, rooms: f32) -> vec4<f32> {
+    let a = abs(dir);
+    var face = 0.0;
+    var st = vec2<f32>(0.0);
+    var ma = a.x;
+    if (a.x >= a.y && a.x >= a.z) {
+        face = select(1.0, 0.0, dir.x >= 0.0);
+        st = vec2<f32>(select(dir.z, -dir.z, dir.x >= 0.0), -dir.y);
+    } else if (a.y >= a.z) {
+        ma = a.y;
+        face = select(3.0, 2.0, dir.y >= 0.0);
+        st = vec2<f32>(dir.x, select(-dir.z, dir.z, dir.y >= 0.0));
+    } else {
+        ma = a.z;
+        face = select(5.0, 4.0, dir.z >= 0.0);
+        st = vec2<f32>(select(-dir.x, dir.x, dir.z >= 0.0), -dir.y);
+    }
+    // A face of the cube is the wall of one room
+    let side = f32(textureDimensions(t, 0).x);
+    let lod = log2(max(rooms * side, 1.0));
+    // ⚠ A texel at a face's edge would be filtered with the next face down the image: the coordinate is held half a texel of the level inside its face.
+    let half = 0.5 / max(side * exp2(-lod), 1.0);
+    let uv = clamp(st / max(ma, 1e-6) * 0.5 + 0.5, vec2<f32>(half), vec2<f32>(1.0 - half));
+    return textureSampleLevel(t, map_smp, vec2<f32>(uv.x, (face + uv.y) / 6.0), lod);
+}
+
+// Where `x`, along an axis from the middle of `n` rooms each `size` long, lies in its room, from -1 to 1.
+fn in_room(x: f32, size: f32, n: f32) -> f32 {
+    let odd = (u32(n) & 1u) == 1u;
+    return 2.0 * fract(x / size + select(0.0, 0.5, odd)) - 1.0;
+}
+
+// What the interior effect sees through a window: the colour behind the glass, darkened by how deep it is seen, and the room's colour and light undarkened.
+struct Room {
+    seen: vec3<f32>,
+    colour: vec3<f32>,
+    light: vec3<f32>,
+};
+
+// The darkest a room is seen, at the depth past which it darkens no more.
+const ROOM_DARK: f32 = 0.025;
+
+// The room behind the glass by the interior effect's program: the panel the vertex's third coordinate spans is a box of rooms behind it, sized by the vertex's third colour and fourth coordinate or by the constants; the view leaves the box through the wall of a room, whose cube, turned by the vertex's quarter turns, gives that room's colour and light; and a back plane hangs a share of a room's depth behind the glass. `across` and `up` are the frame of the panel's coordinate, `rooms` how many rooms a pixel spans.
+fn room_behind(in: VsOut, across: vec3<f32>, up: vec3<f32>, rooms: f32) -> Room {
+    var room: Room;
+    let n = normalize(in.world_normal);
+    let by_vertex = (m.flags & ROOM_BY_VERTEX) != 0u;
+    let packed = u32(round(255.0 * in.colour2.x));
+    let depth = select(m.interior_room.x, 5.0 * in.colour2.y, by_vertex);
+    let width = select(m.interior_room.y, 1.0 - in.uv3.y, by_vertex);
+    let height = select(m.interior_room.y * m.interior_room.z, width * in.uv3.x, by_vertex);
+    let deep = select(1.0 + round(31.875 * in.colour2.x), f32((packed >> 2u) + 1u), by_vertex);
+    let turns = select(round(3.0 * in.colour2.y), f32(packed & 3u), by_vertex);
+    let wide = max(round(20.0 * in.colour2.w), 1.0);
+    let tall = max(round(m.interior_room.w), 1.0);
+    let each = round(m.interior_plane.x);
+    let cells = select(max(1.0, each + wide - 1.0), wide * each, each >= 1.0);
+    // The box of the panel's rooms, along the normal, across and up, its middle behind the middle of the panel.
+    let dims = vec3<f32>(depth * width * deep, width * wide, tall * height);
+    let uv = in.uv2;
+    let middle = in.world_pos + (0.5 - uv.x) * dims.y * across + (0.5 - uv.y) * width * up - 0.5 * dims.x * n;
+    let off = in.world_pos - middle;
+    let o = vec3<f32>(dot(n, off), dot(across, off), dot(up, off)) / dims;
+    let ray = normalize(in.world_pos - camera.camera_pos_ws.xyz);
+    let d = vec3<f32>(dot(n, ray), dot(across, ray), dot(up, ray)) / dims;
+    // Seen from inside the box, nothing is behind the glass.
+    if (d.x >= 0.0) {
+        return room;
+    }
+    // The way out is the nearest of the far faces along each axis.
+    let way = select(vec3<f32>(-1.0), vec3<f32>(1.0), d >= vec3<f32>(0.0));
+    let safe = select(d, way * 1e-6, abs(d) < vec3<f32>(1e-6));
+    let far = (0.5 * way - o) / safe;
+    let t = min(far.x, min(far.y, far.z));
+    let q = o + t * d;
+    let x = q * dims;
+    var p = vec3<f32>(in_room(x.x, dims.x / deep, deep), in_room(x.y, dims.y / cells, cells), in_room(x.z, height, tall));
+    if (t == far.x) {
+        p.x = way.x;
+    } else if (t == far.y) {
+        p.y = way.y;
+    } else {
+        p.z = way.z;
+    }
+    // A quarter turn of the cube about the up axis for each of the vertex's turns.
+    let angle = turns * 0.5 * PI;
+    let c = cos(angle);
+    let s = sin(angle);
+    let dir = vec3<f32>(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
+    let colour = cube_stacked(layer2_colour, dir, rooms).rgb;
+    let light = cube_stacked(layer2_normal, dir, rooms).rgb;
+    let exit = middle + x.x * n + x.y * across + x.z * up;
+    let near = clamp(1.0 - distance(exit, in.world_pos) / m.interior_plane.w, 0.0, 1.0);
+    // The back plane, where the view meets it inside the panel and the vertex's third colour states one.
+    let behind = m.interior_plane.y * depth * width;
+    let hit = in.world_pos + ray * (behind / max(-dot(n, ray), 1e-4)) - (middle + (0.5 * dims.x - behind) * n);
+    let at = vec2<f32>(dot(across, hit) / dims.y, dot(up, hit) / dims.z);
+    let inside = all(abs(at) < vec2<f32>(0.5)) && round(255.0 * in.colour2.z) != 255.0;
+    let plane_uv = vec2<f32>(fract(cells * (0.5 + at.x)), fract(tall * (0.5 - at.y)));
+    let plane_side = f32(textureDimensions(layer2_a, 0).x);
+    let plane = textureSampleLevel(layer2_a, map_smp, plane_uv, log2(max(rooms * plane_side, 1.0)));
+    let shown = clamp(m.interior_plane.z * select(0.0, plane.a, inside), 0.0, 1.0);
+    let plane_near = clamp(1.0 - m.interior_plane.y * width / m.interior_plane.w, 0.0, 1.0);
+    room.seen = (1.0 - shown) * colour * mix(ROOM_DARK, 1.0, near * near) + shown * plane.rgb * mix(ROOM_DARK, 1.0, plane_near * plane_near);
+    room.colour = (1.0 - shown) * colour + shown * plane.rgb;
+    // ⚠ The back plane gives light of its own as its alpha nears one: about its share where its alpha is low, steeply more past nine tenths.
+    let alpha = select(0.0, plane.a, inside);
+    let glows = (1.156e-5 * exp2(22.96 * alpha) + 0.96616) * shown;
+    room.light = (1.0 - shown) * light + m.interior_slant.z * glows;
+    return room;
+}
+
 // The strength of a material's own light at this hour: its night value where it states one, by how far the night emissives are on, at the day's exposure.
 fn emissive_strength() -> f32 {
     return light.frame.y * select(mix(m.emissive_multiplier, m.emissive_night, light.frame.x), m.emissive_multiplier, m.emissive_night < 0.0);
@@ -484,6 +625,12 @@ fn surface_of(in: VsOut, front_facing: bool) -> Surface {
     let bitangent = (dp2perp * duv1.y + dp1perp * duv2.y) * handed;
     let longest = max(dot(tangent, tangent), dot(bitangent, bitangent));
     let scale = inverseSqrt(max(longest, 1e-30));
+    // The interior effect's panel runs along the third coordinate, which has a frame of its own.
+    let dst1 = dpdx(in.uv2);
+    let dst2 = dpdy(in.uv2);
+    let across = (dp2perp * dst1.x + dp1perp * dst2.x) * handed;
+    let up = (dp2perp * dst1.y + dp1perp * dst2.y) * handed;
+    let panel_step = max(length(dst1), length(dst2));
 
     let family = m.family.x;
     var s: Surface;
@@ -526,7 +673,26 @@ fn surface_of(in: VsOut, front_facing: bool) -> Surface {
         }
         s.emissive = e * (1.0 + m.emissive_diffuse_tint * (s.albedo - 1.0));
     }
+    if ((m.flags & INTERIOR) != 0u) {
+        let wide = max(round(20.0 * in.colour2.w), 1.0);
+        behind_glass(&s, maps, in, normalize(across), normalize(up), panel_step * wide);
+    }
     return s;
+}
+
+// The interior effect's window: how much of the room the two layers' alphas let be seen, the glass's absorption by how far the view crosses it, the room through it over the layers as the glass's open share, and the room's light through the glass by its emissive map at this hour.
+fn behind_glass(s: ptr<function, Surface>, maps: Maps, in: VsOut, across: vec3<f32>, up: vec3<f32>, rooms: f32) {
+    let room = room_behind(in, across, up, rooms);
+    let shows = clamp(1.0 - maps.c0.a, 0.0, 1.0) * pow(clamp(1.0 - 1.186 * (maps.c1.a - 0.15686), 0.0, 1.0), 3.0);
+    let n = normalize(in.world_normal);
+    let facing = max(abs(dot(n, normalize(camera.camera_pos_ws.xyz - in.world_pos))), 1e-4);
+    let thin = m.interior_glass.w;
+    let thick = max(0.0, m.interior_slant.y * (min(m.interior_slant.x, thin / facing) - thin) + thin);
+    let through = exp(-2.0 * m.interior_glass.rgb * thick);
+    let layer = (*s).albedo;
+    (*s).albedo = mix(layer, through * mix(layer, room.seen, shows), 1.0 - maps.c1.a);
+    let own = clamp(1.2439 * (maps.c0.a - 0.19607), 0.0, 1.0);
+    (*s).emissive = emissive_strength() * maps.a3.rgb * through * room.light * mix(room.colour, layer, own) * shows;
 }
 
 // The colour the diffuse light multiplies: the albedo less what its metal turns to reflection.

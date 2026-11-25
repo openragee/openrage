@@ -203,8 +203,12 @@ fn the_world_program_is_valid_and_reads_a_materials_constants_where_the_renderer
         at("uv_extra"),
         16 + std::mem::offset_of!(WorldConstants, uv_extra) as u32
     );
-    // The family, seventeen vectors and fifteen scalars
-    assert_eq!(members.len(), 33);
+    assert_eq!(
+        at("interior_slant"),
+        16 + std::mem::offset_of!(WorldConstants, interior_slant) as u32
+    );
+    // The family, twenty-one vectors and fifteen scalars
+    assert_eq!(members.len(), 37);
     // The frame's light: four vectors, the night's, then the lamps' rows
     assert_eq!(declared("Light").1 as usize, lamps::LIGHT_FLOATS * 4);
 }

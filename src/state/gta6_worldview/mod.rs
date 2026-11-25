@@ -40,7 +40,7 @@ pub(crate) mod water;
 pub use interior::Inside;
 pub use model::{Bucket, CpuMaterial, CpuModel, Family, RegionTint};
 #[cfg(test)]
-pub use model::{Constants, Emissive, Layer};
+pub use model::{Constants, Emissive, Interior, Layer};
 pub use texture::CpuTexture;
 
 use index::{Enabled, ModelRef, WorldIndex};

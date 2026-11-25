@@ -541,3 +541,37 @@ fn materials_equal_in_all_but_a_constant_are_two_keys_and_equal_ones_one() {
     assert_eq!(kept[&colour(7)], 0);
     assert_eq!(kept[&bumpier], 1);
 }
+
+#[test]
+fn an_interior_window_names_its_room_cubes_and_back_plane_and_reads_its_room_from_its_constants() {
+    let mut records = two_layer();
+    records.extend([
+        (0x17D3_B5C2, Some(0x5A)),
+        (0x633A_EF4D, Some(0x5B)),
+        (0x6994_EF3F, Some(0x5C)),
+    ]);
+    let constants: &[(u32, &[f32])] = &[
+        (0x6AD7_14D8, &[1.0]),
+        (0x2881_A0FF, &[2.5]),
+        (0xC096_32A5, &[0.5]),
+        (0x1C25_0A16, &[15.0, 12.5, 12.5, 0.0]),
+        (0x0F2E_7960, &[0.02]),
+    ];
+    let material = of(&shader(&records, constants), 0);
+    let interior = material
+        .interior
+        .expect("the room cube's record makes it an interior window");
+    assert_eq!(
+        (interior.room, interior.light, interior.plane),
+        (Some(0x5A), Some(0x5B), Some(0x5C))
+    );
+    assert!(interior.by_vertex);
+    assert_eq!(interior.size[1], 2.5);
+    // The back plane's alpha is divided by its cut, as a scale
+    assert_eq!(interior.plane_of[2], 2.0);
+    assert_eq!(interior.glass, [15.0, 12.5, 12.5, 0.02]);
+    let keys = material.keys();
+    assert!([0x5A, 0x5B, 0x5C].iter().all(|k| keys.contains(k)));
+    // A two-layer material that states no room cube has no room behind it
+    assert_eq!(of(&shader(&two_layer(), &[]), 0).interior, None);
+}

@@ -47,6 +47,12 @@ impl AppState {
         make: impl FnOnce(&AnimResource) -> Result<AnimResource, AnimError>,
     ) -> Result<Arc<AnimResource>, String> {
         let gone = || crate::i18n::tr(super::edit_history::GONE).to_string();
+        if self
+            .document(doc)
+            .is_some_and(super::Document::is_from_rpf9_table)
+        {
+            return Err(crate::i18n::tr(super::document::rpf9::entry::READ_ONLY).to_string());
+        }
         let held =
             resource(&mut self.document_mut(doc).ok_or_else(gone)?.payload).ok_or_else(gone)?;
         let edited = make(held).map_err(|e| e.to_string())?;

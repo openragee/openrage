@@ -60,14 +60,23 @@ pub(super) fn opened(
         return None;
     }
     let (virtual_section, physical) = resource.sections(bytes);
-    let list = read_particle_effects(virtual_section, Some(physical)).ok()?;
+    from_sections(path, virtual_section, physical).ok()
+}
+
+/// The particle preview and its caches, read only from the two supplied sections.
+pub(super) fn from_sections(
+    path: &Path,
+    virtual_section: &[u8],
+    physical: &[u8],
+) -> Result<DocPayload, or_io::gta6::headerless::HeaderlessError> {
+    let list = read_particle_effects(virtual_section, Some(physical))?;
     let mut ypt = as_ypt(&list);
     or_particle::list::canonical(&mut ypt);
     scanned().insert(path.to_path_buf(), Arc::new(lines(&list)));
     sprites::keep(path, &list);
     spawners::keep(path, &list);
     super::gta6_particle_models::keep(path, &list);
-    Some(DocPayload::Resource(or_io::Asset::Particles(ypt)))
+    Ok(DocPayload::Resource(or_io::Asset::Particles(ypt)))
 }
 
 /// The lines of the GTA VI list the document at `path` opened from; `None` for any other.

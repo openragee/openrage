@@ -633,6 +633,103 @@ mod install {
     }
 
     #[test]
+    fn supported_media_metadata_and_navigation_open_from_real_tables_in_memory() {
+        let Some(root) = std::env::var_os("OPENRAGE_GTA6_BUILD") else {
+            or_test_support::skip_install(
+                "RPF9 specialised previews",
+                format_args!("set OPENRAGE_GTA6_BUILD and OPENRAGE_GTA6_KEYS"),
+            );
+            return;
+        };
+        let root = Path::new(&root);
+        type Case = (&'static str, &'static [(&'static [u32], DocumentKind)]);
+        let cases: &[Case] = &[
+            (
+                "audio.rpf",
+                &[
+                    (&[102, 5], DocumentKind::Awc),
+                    (&[102, 62], DocumentKind::Awc),
+                    (&[14, 0], DocumentKind::Gta6AudioData),
+                    (&[14, 2], DocumentKind::Gta6AudioData),
+                    (&[14, 4], DocumentKind::Gta6AudioData),
+                ],
+            ),
+            (
+                "navmeshes.rpf",
+                &[(&[0, 0], DocumentKind::Ynv), (&[0, 1], DocumentKind::Ynv)],
+            ),
+            (
+                "data.rpf",
+                &[
+                    (&[8, 0], DocumentKind::Meta),
+                    (&[8, 1], DocumentKind::Meta),
+                    (&[29, 0], DocumentKind::Ypt),
+                    (&[29, 1], DocumentKind::Ypt),
+                ],
+            ),
+            (
+                "anim.rpf",
+                &[
+                    (&[5, 0], DocumentKind::Gta6Anim),
+                    (&[5, 1], DocumentKind::Gta6Anim),
+                    (&[5, 2], DocumentKind::Gta6Anim),
+                    (&[111, 0], DocumentKind::Meta),
+                ],
+            ),
+            (
+                "appdata0.rpf",
+                &[(&[0], DocumentKind::Meta), (&[1], DocumentKind::Meta)],
+            ),
+            (
+                "movies.rpf",
+                &[(&[0], DocumentKind::Bik), (&[1], DocumentKind::Bik)],
+            ),
+        ];
+        let mut count = 0;
+        let mut streams = 0;
+        for (name, entries) in cases {
+            let table = Rpf9TableDocument::open(&root.join(name)).unwrap().unwrap();
+            for (chain, kind) in *entries {
+                let source = read_chain(&table, chain).unwrap();
+                let payload = source
+                    .payload()
+                    .unwrap_or_else(|e| panic!("{name}:{chain:?}: {e}"));
+                let doc = Document::new(1, Some(source.path.clone()), payload);
+                assert_eq!(doc.kind, *kind, "{name}:{chain:?}");
+                assert_eq!(doc.read_only, Some(READ_ONLY));
+                assert!(doc.is_from_rpf9_table());
+                match doc.payload {
+                    DocPayload::Meta(meta) => {
+                        assert!(!meta.parsed.unwrap().instance.fields.is_empty())
+                    }
+                    DocPayload::Resource(or_io::Asset::NavMesh(mesh)) => {
+                        assert!(mesh.polys_array.is_some())
+                    }
+                    DocPayload::Awc(mut audio) => {
+                        let key = or_io::awc::AwcKey::default();
+                        let file = audio.file(key).unwrap();
+                        for row in or_media::awc::streams(file) {
+                            let stream = or_media::awc::open(file, key, row.stream).unwrap();
+                            let samples = stream
+                                .audio(&or_media::Decoders::new())
+                                .unwrap()
+                                .read_all_i16()
+                                .unwrap();
+                            assert!(!samples.is_empty());
+                            streams += 1;
+                        }
+                    }
+                    _ => {}
+                }
+                assert!(!source.path.exists());
+                count += 1;
+            }
+        }
+        assert_eq!(count, 19);
+        assert_eq!(streams, 106);
+    }
+
+    #[test]
     fn every_entry_in_the_selected_archive_opens_and_extracts_from_tables() {
         let Some(archive) = std::env::var_os("OPENRAGE_GTA6_ARCHIVE") else {
             or_test_support::skip_install(
@@ -654,4 +751,130 @@ mod install {
             table.tree().nodes.len()
         );
     }
+}
+
+fn media_table_fixture(body: &[u8]) -> (tempfile::TempDir, Rpf9TableDocument) {
+    let mut body = body.to_vec();
+    body.resize(body.len().next_multiple_of(16), 0);
+    use or_io::container::rpf::{Rpf9Builder, Rpf9Toc};
+    let mut bytes = Rpf9Builder::serialize(
+        &Rpf9Toc {
+            bytes: or_test_support::rpf9::table(&[(0, 0x1000, body.len() as u64, 0xff)]),
+            key_id: 0,
+            registry_id: 0,
+            entry_count: 0,
+            groups: Vec::new(),
+        },
+        &keys(),
+    )
+    .unwrap();
+    bytes.resize(0x1000, 0);
+    bytes.extend(body);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audio.rpf");
+    std::fs::write(&path, bytes).unwrap();
+    let table = Rpf9TableDocument::open_using(&path, || Ok(keys()))
+        .unwrap()
+        .unwrap();
+    (dir, table)
+}
+
+fn table_pcm_awc() -> Vec<u8> {
+    let mut record = vec![0u8; 32];
+    record[..4].copy_from_slice(&2u32.to_le_bytes());
+    record[4..8].copy_from_slice(&(-1i32).to_le_bytes());
+    record[8..10].copy_from_slice(&48000u16.to_le_bytes());
+    record[12..16].copy_from_slice(&2u32.to_le_bytes());
+    record[29] = 1;
+    let data = [-1234i16, 2345]
+        .into_iter()
+        .flat_map(i16::to_le_bytes)
+        .collect::<Vec<_>>();
+    let chunks = [(0x76u64, record), (0x55, data)];
+    let table_len = 16 + 4 + 8 * chunks.len();
+    let mut bytes = b"ADAT".to_vec();
+    bytes.extend(1u16.to_le_bytes());
+    bytes.extend(0xff02u16.to_le_bytes());
+    bytes.extend(1u32.to_le_bytes());
+    bytes.extend((table_len as u32).to_le_bytes());
+    bytes.extend(((chunks.len() as u32) << 29 | 1).to_le_bytes());
+    let mut offset = table_len;
+    for (kind, data) in &chunks {
+        bytes.extend(((kind << 56) | ((data.len() as u64) << 28) | offset as u64).to_le_bytes());
+        offset += data.len();
+    }
+    for (_, data) in chunks {
+        bytes.extend(data);
+    }
+    bytes.resize(bytes.len().next_multiple_of(16), 0);
+    bytes
+}
+
+#[test]
+fn awc_table_entries_open_and_decode_from_memory_despite_their_suffix() {
+    let (dir, table) = media_table_fixture(&table_pcm_awc());
+    table.tree().nodes.get_mut(&0).unwrap().archive.entries[0].name = Some("sound.txt".into());
+    let source = table.entry(0, 0).unwrap();
+    assert!(!source.path.exists());
+    let DocPayload::Awc(mut audio) = source.payload().unwrap() else {
+        panic!("the confirmed audio header must select the audio preview");
+    };
+    let key = or_io::awc::AwcKey::default();
+    let file = audio.file(key).unwrap();
+    let rows = or_media::awc::streams(file);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].info.codec, or_media::Codec::Pcm16);
+    let stream = or_media::awc::open(file, key, rows[0].stream).unwrap();
+    let samples = stream
+        .audio(&or_media::Decoders::new())
+        .unwrap()
+        .read_all_i16()
+        .unwrap();
+    assert_eq!(samples, [-1234, 2345]);
+    assert!(!source.path.exists());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn malformed_awc_and_unsupported_endianness_are_errors_not_hex() {
+    let mut malformed = table_pcm_awc();
+    malformed[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+    let mut big_endian = table_pcm_awc();
+    big_endian[..4].copy_from_slice(b"TADA");
+    for body in [malformed, big_endian] {
+        let (_dir, table) = media_table_fixture(&body);
+        assert!(table.entry(0, 0).unwrap().payload().is_err());
+        assert!(table.tree().errors.contains_key(&(0, 0)));
+    }
+}
+
+#[test]
+fn table_metadata_and_movies_select_their_content_reader() {
+    use crate::state::opening_an_rpf9_archive::{kb2n, table_form_pso};
+    let (_dir, table) = media_table_fixture(&table_form_pso());
+    let source = table.entry(0, 0).unwrap();
+    let DocPayload::Meta(meta) = source.payload().unwrap() else {
+        panic!("PSIN metadata view")
+    };
+    assert_eq!(
+        meta.parsed.unwrap().instance.fields[0].1,
+        or_io::meta::Value::UInt(77)
+    );
+    assert!(!source.path.exists());
+    let (_dir, table) = media_table_fixture(&kb2n());
+    let source = table.entry(0, 0).unwrap();
+    let DocPayload::Bik(movie) = source.payload().unwrap() else {
+        panic!("Bink movie view")
+    };
+    assert!(movie.header.is_some());
+    assert!(!source.path.exists());
+}
+
+#[test]
+fn a_malformed_confirmed_metadata_body_is_reported_as_an_error() {
+    let mut bytes = crate::state::opening_an_rpf9_archive::table_form_pso();
+    bytes.truncate(16);
+    let (_dir, table) = media_table_fixture(&bytes);
+    assert!(table.entry(0, 0).unwrap().payload().is_err());
+    assert!(table.tree().errors.contains_key(&(0, 0)));
 }

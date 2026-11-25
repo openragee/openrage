@@ -102,3 +102,20 @@ fn a_clip_a_motion_names_is_found_among_the_clip_dictionaries_of_the_open_scans_
         state.error_dialog_message
     );
 }
+
+#[test]
+fn a_table_motion_dictionary_never_starts_a_clip_scan() {
+    let _serial = crate::ui::theme::serial();
+    let mut state = AppState::new();
+    let path = "animations.rpf/.rpf9-table/0/hash_motion.ycd".into();
+    state.documents.push(super::super::Document::new(
+        1,
+        Some(path),
+        DocPayload::Gta6Anim(Arc::new(naming(&[0x1010_2020_3030_4040]))),
+    ));
+    assert!(state.document(1).unwrap().is_from_rpf9_table());
+    state
+        .find_gta6_clips(1)
+        .expect("table previews never request a scan");
+    assert!(state.clip_finding.is_none());
+}

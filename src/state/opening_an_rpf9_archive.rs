@@ -81,7 +81,7 @@ fn member() -> [u8; 16] {
 }
 
 /// A PSO document in GTA VI's table form whose root holds one u32.
-fn table_form_pso() -> Vec<u8> {
+pub(super) fn table_form_pso() -> Vec<u8> {
     let mut psin = Vec::new();
     psin.extend(le32(ROOT));
     psin.extend(le32(4));
@@ -137,7 +137,7 @@ pub(super) fn headerless_rbm(block: u64) -> Vec<u8> {
 }
 
 /// A `KB2n` movie of one 64x48 frame and no sound track.
-fn kb2n() -> Vec<u8> {
+pub(super) fn kb2n() -> Vec<u8> {
     let start = 44 + 4;
     let body = b"picture".to_vec();
     let total = (start + body.len()) as u32;

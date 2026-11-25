@@ -44,6 +44,7 @@ pub struct YptTimelineSource {
     duration: f32,
     summary: String,
     no_playback: Option<&'static str>,
+    read_only: Option<&'static str>,
 }
 
 impl YptTimelineSource {
@@ -84,6 +85,7 @@ impl YptTimelineSource {
             duration,
             summary,
             no_playback: None,
+            read_only: None,
         }
     }
 
@@ -135,7 +137,11 @@ impl TimelineSource for YptTimelineSource {
     }
 
     fn editable(&self) -> bool {
-        true
+        self.read_only.is_none()
+    }
+
+    fn read_only_reason(&self) -> Option<&str> {
+        self.read_only.map(crate::i18n::tr)
     }
 
     fn playback_unavailable(&self) -> Option<&str> {
@@ -220,6 +226,10 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
 
     let mut source = YptTimelineSource::new(track_rows, curve_series, duration, summary);
     source.no_playback = (!simulates).then_some(crate::i18n::tr(NOT_SIMULATED));
+    source.read_only = state
+        .active_document()
+        .filter(|doc| doc.is_from_rpf9_table())
+        .map(|_| crate::state::rpf9::entry::READ_ONLY);
 
     ui.vertical(|ui| {
         draw_drivers_rail(ui, state, simulates);
@@ -774,6 +784,12 @@ fn apply_kfp_edits_to<T: ParticleTarget>(
     doc_id: DocumentId,
     edits: &[KfpEdit],
 ) -> bool {
+    if state
+        .document(doc_id)
+        .is_some_and(crate::state::Document::is_from_rpf9_table)
+    {
+        return false;
+    }
     let mut before = Vec::new();
     if let Some(asset) = (state.document_mut(doc_id)).and_then(|d| T::list_mut(&mut d.payload)) {
         for edit in edits {
@@ -999,6 +1015,38 @@ mod tests {
         state.documents.push(doc);
         state.active_document = Some(id);
         (state, id)
+    }
+
+    #[test]
+    fn a_table_particle_timeline_refuses_curve_edits_and_keeps_playback() {
+        let _serial = crate::ui::theme::serial();
+        let (mut state, id) = build_state_with_anim_kfp();
+        let reason = crate::state::rpf9::entry::READ_ONLY;
+        state.document_mut(id).unwrap().read_only = Some(reason);
+        let shown = |state: &AppState| {
+            let asset = or_io::decl::Gen8::list(&state.document(id).unwrap().payload).unwrap();
+            format!("{:?}", or_particle::list::particle_rules(asset).next())
+        };
+        let before = shown(&state);
+        let edit = KfpEdit {
+            source: KfpCurveSource {
+                particle_name: "p".into(),
+                behaviour_index: 0,
+                slot: ParticleKfpSlot::AnimateTextureRate,
+            },
+            entry_idx: 0,
+            channel: 0,
+            new_time: 0.25,
+            new_value: 5.5,
+        };
+        assert!(!apply_kfp_edits(&mut state, &[edit]));
+        assert_eq!(shown(&state), before);
+        assert!(!state.document(id).unwrap().history.can_undo());
+        let mut source = source_with_one_of_each();
+        source.read_only = Some(reason);
+        assert!(!source.editable());
+        assert_eq!(source.read_only_reason(), Some(crate::i18n::tr(reason)));
+        assert!(source.playback_unavailable().is_none());
     }
 
     #[test]

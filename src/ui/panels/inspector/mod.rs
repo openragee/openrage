@@ -355,7 +355,10 @@ pub(crate) mod rows {
         doc_id: crate::state::DocumentId,
         selection: Option<u64>,
     ) {
-        draw_ypt(ui, state, doc_id, selection);
+        let table_entry = state
+            .document(doc_id)
+            .is_some_and(crate::state::Document::is_from_rpf9_table);
+        ui.add_enabled_ui(!table_entry, |ui| draw_ypt(ui, state, doc_id, selection));
         if let Some(sel) = selection {
             // ⚠ The live sliders drive the preview, which plays the active document's effect.
             if ypt_tag_of(sel) == YPT_EFFECT && state.active_document == Some(doc_id) {

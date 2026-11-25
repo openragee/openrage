@@ -329,3 +329,27 @@ fn a_track_added_held_over_the_clip_and_removed_is_each_a_step_that_undoes() {
     assert_eq!(dofs(&state), read);
     assert!(!held(&state, doc).edited);
 }
+
+#[test]
+fn a_table_animation_refuses_edits_before_the_transform_runs() {
+    let _serial = crate::ui::theme::serial();
+    let mut state = AppState::new();
+    let resource = std::sync::Arc::new(or_io::gta6::anim::read(&dictionary()).unwrap());
+    let path = "animations.rpf/.rpf9-table/0/hash_animation.ycd".into();
+    state.documents.push(super::super::Document::new(
+        1,
+        Some(path),
+        DocPayload::Gta6Anim(resource.clone()),
+    ));
+    let called = std::cell::Cell::new(false);
+    let changed = state.replace_gta6_anim(1, |original| {
+        called.set(true);
+        let mut edited = original.clone();
+        edited.name = "changed".into();
+        Ok(edited)
+    });
+    assert!(changed.is_err());
+    assert!(!called.get());
+    assert!(std::sync::Arc::ptr_eq(&resource, &held(&state, 1)));
+    assert!(!state.document(1).unwrap().history.can_undo());
+}

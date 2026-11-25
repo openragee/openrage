@@ -240,6 +240,12 @@ impl AppState {
     /// Look for the drawables the scanned GTA VI list `doc` names that no earlier search found,
     /// among the dictionaries the open archives' whole scans found.
     pub(crate) fn find_gta6_particle_models(&mut self, doc: DocumentId) -> Result<(), String> {
+        if self
+            .document(doc)
+            .is_some_and(super::Document::is_from_rpf9_table)
+        {
+            return Ok(());
+        }
         let path = self.document(doc).and_then(|d| d.path.as_deref());
         let Some(named) = path.and_then(kept) else {
             return Ok(());
@@ -375,6 +381,31 @@ mod tests {
 
     use super::*;
     use crate::state::{DocPayload, Document};
+
+    #[test]
+    fn a_table_particle_list_never_starts_a_model_scan() {
+        let _serial = crate::ui::theme::serial();
+        let mut state = AppState::new();
+        let path = Path::new("particles.rpf/.rpf9-table/0/hash_models.ypt");
+        named_for_tests(
+            path,
+            Named {
+                wanted: BTreeSet::from([name_hash32(b"table_missing_particle_model")]),
+                domains: BTreeMap::new(),
+            },
+        );
+        state.documents.push(Document::new(
+            1,
+            Some(path.to_path_buf()),
+            DocPayload::Resource(or_io::Asset::Particles(Default::default())),
+        ));
+        assert!(state.document(1).unwrap().is_from_rpf9_table());
+        assert!(names_drawables(path));
+        state
+            .find_gta6_particle_models(1)
+            .expect("table previews never request a scan");
+        assert!(state.particle_model_finding.is_none());
+    }
 
     #[test]
     fn a_surface_is_the_triangles_of_the_first_level_that_holds_models() {

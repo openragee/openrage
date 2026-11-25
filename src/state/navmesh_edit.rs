@@ -38,6 +38,12 @@ impl AppState {
         doc: DocumentId,
         polygon: usize,
     ) -> Result<String, String> {
+        if self
+            .document(doc)
+            .is_some_and(super::Document::is_from_rpf9_table)
+        {
+            return Err(crate::i18n::tr(super::document::rpf9::entry::READ_ONLY).to_string());
+        }
         if let Some(said) = self.disable_gta6_polygon(doc, polygon) {
             return said;
         }
@@ -64,6 +70,12 @@ impl AppState {
         doc: DocumentId,
         polygon: usize,
     ) -> Result<String, String> {
+        if self
+            .document(doc)
+            .is_some_and(super::Document::is_from_rpf9_table)
+        {
+            return Err(crate::i18n::tr(super::document::rpf9::entry::READ_ONLY).to_string());
+        }
         if let Some(said) = self.delete_gta6_polygon(doc, polygon) {
             return said;
         }
@@ -148,6 +160,41 @@ mod tests {
     fn mesh(state: &mut AppState, doc: DocumentId) -> &mut CNavMesh {
         let payload = &mut state.document_mut(doc).expect("open").payload;
         navmesh_of(payload).expect("a navmesh")
+    }
+
+    #[test]
+    fn a_table_navigation_cell_refuses_edits_before_the_cached_gta6_route() {
+        let _serial = crate::ui::theme::serial();
+        let bytes = crate::state::opening_an_rpf9_archive::navmesh_cell();
+        let mut cell = or_io::gta6::headerless::read_navmesh(&bytes).unwrap();
+        cell.edges[0].mesh = cell.cell;
+        cell.edges[0].polygon = 0;
+        let view = crate::state::gta6_resource::cell_view(&cell).unwrap();
+        let path = PathBuf::from("navigation.rpf/.rpf9-table/0/hash_cell.ynv");
+        crate::state::gta6_navmesh::remember(&path, cell);
+        let cached = crate::state::gta6_navmesh::scanned_cell(&path).unwrap();
+        let mut state = AppState::new();
+        state.documents.push(Document::new(
+            1,
+            Some(path.clone()),
+            DocPayload::Resource(or_io::Asset::NavMesh(view)),
+        ));
+        let before = crate::state::gta6_navmesh_edit::open_edges(mesh(&mut state, 1));
+        assert!(
+            before[0],
+            "the cached cell has an edge the old route would cut"
+        );
+        let reason = crate::i18n::tr(crate::state::document::rpf9::entry::READ_ONLY);
+        assert_eq!(state.disable_navmesh_polygon(1, 0).unwrap_err(), reason);
+        assert_eq!(state.delete_navmesh_polygon(1, 0).unwrap_err(), reason);
+        assert_eq!(
+            crate::state::gta6_navmesh_edit::open_edges(mesh(&mut state, 1)),
+            before
+        );
+        let after = crate::state::gta6_navmesh::scanned_cell(&path).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&cached, &after));
+        assert!(!state.document(1).unwrap().history.can_undo());
+        assert!(!path.exists());
     }
 
     #[test]

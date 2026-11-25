@@ -140,8 +140,13 @@ fn draw_facts(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId, selec
     if let Some((sel, said)) = selection.and_then(|sel| Some((sel, picked(&set, sel)?))) {
         ui.strong(said);
         if let Some((group, Some(track))) = row_of(sel) {
-            draw_id(ui, state, (doc_id, sel), &set, group, track);
-            draw_add_remove(ui, state, (doc_id, sel), group, track);
+            let writable = !state
+                .document(doc_id)
+                .is_some_and(crate::state::Document::is_from_rpf9_table);
+            ui.add_enabled_ui(writable, |ui| {
+                draw_id(ui, state, (doc_id, sel), &set, group, track);
+                draw_add_remove(ui, state, (doc_id, sel), group, track);
+            });
         }
         ui.separator();
     }

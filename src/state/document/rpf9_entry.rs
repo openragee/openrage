@@ -6,6 +6,11 @@ use crate::state::{
 };
 use or_io::container::rpf::{Gta6EntryContent, Gta6EntryExtra, Gta6EntryRead};
 
+#[path = "rpf9_media_preview.rs"]
+mod media_preview;
+#[path = "rpf9_resource_preview.rs"]
+mod resource_preview;
+
 const MARKER: &str = ".rpf9-table";
 const LIMIT: u64 = 1 << 30;
 pub const READ_ONLY: &str = tr_key!(
@@ -359,6 +364,9 @@ fn table_preview(
     use or_io::container::rpf::{Gta6EntryType, Rpf9Role, Rpf9Signature};
     use or_io::gta6::{headerless, map};
 
+    if let Some(payload) = media_preview::payload(path, bytes)? {
+        return Ok(Some(payload));
+    }
     let hint = Gta6EntryType::hint(entry, extra);
     let supported = matches!(
         hint,
@@ -367,7 +375,9 @@ fn table_preview(
                 | Rpf9Role::DrawableWithBound
                 | Rpf9Role::Dictionary
                 | Rpf9Role::Bound
-        ) | Gta6EntryType::File("ymap" | "ytyp")
+                | Rpf9Role::NavMesh
+                | Rpf9Role::ParticleEffects
+        ) | Gta6EntryType::File("ymap" | "ytyp" | "ymt" | "ycd" | "yed")
     );
     if !supported {
         return Ok(None);
@@ -384,30 +394,24 @@ fn table_preview(
         ));
     }
     let (virtual_section, physical) = bytes.split_at(virtual_len);
+    if hint == Gta6EntryType::File("ycd") {
+        return resource_preview::animation(path, virtual_section, physical).map(Some);
+    }
+    if hint == Gta6EntryType::File("yed") {
+        return resource_preview::expressions(path, virtual_section, physical).map(Some);
+    }
     if let Gta6EntryType::File(extension) = hint {
-        let expected = if extension == "ymap" {
-            map::C_MAP_DATA
-        } else {
-            map::C_MAP_TYPES
-        };
-        if map::root_type(virtual_section) != Some(expected) {
-            return Err(preview_error("the map root conflicts with its table type"));
-        }
-        let map = crate::state::gta6_map::keep(path, virtual_section, physical);
-        crate::state::gta6_world::keep(path, virtual_section, physical);
-        let document =
-            match super::super::MetaDocument::from_gta_vi_headerless(virtual_section, physical) {
-                Ok(document) => document,
-                Err(error) if map => {
-                    let mut document = super::super::MetaDocument::empty();
-                    document.parsed = None;
-                    document.parse_error = Some(preview_error(error));
-                    document.source_format = or_io::meta::SourceFormat::Rbm;
-                    document
-                }
-                Err(error) => return Err(preview_error(error)),
+        if extension != "ymt" {
+            let expected = if extension == "ymap" {
+                map::C_MAP_DATA
+            } else {
+                map::C_MAP_TYPES
             };
-        return Ok(Some(DocPayload::Meta(document)));
+            if map::root_type(virtual_section) != Some(expected) {
+                return Err(preview_error("the map root conflicts with its table type"));
+            }
+        }
+        return resource_preview::metadata(path, virtual_section, physical).map(Some);
     }
     let signature = Rpf9Signature::of(virtual_section, virtual_len as u64)
         .ok_or_else(|| preview_error("the resource has no complete root"))?;
@@ -415,6 +419,12 @@ fn table_preview(
         return Err(preview_error(
             "the resource root conflicts with its table type",
         ));
+    }
+    if hint == Gta6EntryType::Resource(Rpf9Role::NavMesh) {
+        return resource_preview::navmesh(path, virtual_section, physical).map(Some);
+    }
+    if hint == Gta6EntryType::Resource(Rpf9Role::ParticleEffects) {
+        return resource_preview::particles(path, virtual_section, physical).map(Some);
     }
     let resource =
         headerless::read(signature, virtual_section, Some(physical)).map_err(preview_error)?;

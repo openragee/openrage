@@ -14,7 +14,10 @@ fn empty_drawable() -> Vec<u8> {
     bytes
 }
 
-fn preview_archive(bytes: &[u8], resource_type: u32) -> (tempfile::TempDir, Rpf9TableDocument) {
+pub(super) fn preview_archive(
+    bytes: &[u8],
+    resource_type: u32,
+) -> (tempfile::TempDir, Rpf9TableDocument) {
     let count = u32::try_from(bytes.len()).unwrap();
     let encrypted = Rpf9Builder::serialize(
         &Rpf9Toc {

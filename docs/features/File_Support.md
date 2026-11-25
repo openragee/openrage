@@ -97,8 +97,8 @@ separate that hint from a type detected in its decoded contents. Texture diction
 the texture preview, in memory and read-only, after their sections, every entry and every texture's
 pixels have been validated. A partly unreadable dictionary is an error, not a partial preview.
 Names stay as hashes where the vocabulary has no match; a detected type does not invent a filename.
-Text files open as text and other decoded contents as read-only bytes; a resource extension never
-selects a GTA V reader. Reopening an entry follows its archive indices through the tables again.
+Text files open as text and unsupported decoded contents as read-only bytes; a resource extension
+never selects a GTA V reader. Reopening an entry follows its archive indices through the tables again.
 Neither type detection nor preview creates an extracted file or searches for content outside the entry.
 
 Recognised `.ydr`, `.ydd` and `.yft` entries open with the GTA VI model reader. Their shader
@@ -108,6 +108,39 @@ the dictionaries' virtual sections and opens matching dictionaries in memory
 (`src/state/rpf9_texture_resolver.rs`). This resolution uses table addresses throughout, with
 no content scan or extraction to disk. Textures that cannot be located or decoded remain
 unavailable; opening a model does not imply that every texture or material is supported.
+
+The table entry dispatcher also selects the existing specialised readers below. Complete headers
+select AWC, PSO, RBF, audio game data and Bink; headerless resources take their exact virtual and
+physical sizes from the table. A recognised body whose reader fails reports the error rather than
+silently changing to an octet view. These previews remain read-only and work in memory.
+
+| Extension | Contents | Table preview |
+|---|---|---|
+| `.awc` | Audio streams | Stream list and playback through the supported codec; the ADAT container may also have an `.adat` name |
+| `.ymt`, `.psin`, `.rbf` | Structured metadata in RBM, PSO or RBF envelopes | Metadata tree; the bytes select the envelope |
+| `.ynv` | Navigation cells | Cell facts and navigation geometry |
+| `.ycd` | Animation dictionaries | Clips, tracks and timeline; external sets and clips are not searched through scans |
+| `.yed` | Expression tracks | Expression inspector; no table-backed animation selector integration |
+| `.ypt` | Particle effects | Effects and supported preview data; external particle models are not searched through scans |
+| `.rel` | Audio configuration and references | Items and known fields; bank-reference resolution from tables is not implemented |
+| `.bk2` | Bink movies | Video preview with the existing decoder |
+| `.gfx` | Scaleform interface movies | Existing Scaleform inspector |
+| `.mrf` | MoVE networks | Partial structural outline, not a full execution model |
+| `.dat` and unnamed bodies | Confirmed height maps, grids and object trees | Existing height view or structural facts when the leading structure identifies the body |
+
+An extension in the Files tree is not a promise of an implemented preview. In particular, `.ysc`,
+`.yld` and the other unconnected resource categories still open as bytes through this table path,
+even where another entry point has a reader. `.bin` means no extension was confirmed; EDUP bodies
+remain bytes. Textual `.xml`, `.txt` and `.list` entries keep the text view. Unknown field and file
+names remain hashes. The neighbouring-cell loader, audio bank links, animation searches and
+particle-model searches do not fall back to scans for table-backed documents.
+
+The install test `supported_media_metadata_and_navigation_open_from_real_tables_in_memory`
+uses `OPENRAGE_GTA6_BUILD` and the key settings above to check selected entries from audio,
+navigation, metadata, animation and movie archives, including decoding the audio streams. It runs
+with the `all` test profile and writes no game contents to disk. Its synthetic companions check
+malformed bodies, section bounds and read-only previews. Expression and RBF integration lack a
+real GTA VI sample in this install; their availability does not imply full corpus validation.
 
 A flat, headerless GTA VI `.ydr` opened manually is recognised from its root and internal name,
 then confirmed against a byte-identical entry in a mounted or configured RPF9 archive

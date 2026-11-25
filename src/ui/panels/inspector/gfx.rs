@@ -15,6 +15,9 @@ pub(super) fn draw_gfx(ui: &mut egui::Ui, state: &mut AppState, doc_id: Document
             return;
         }
     };
+    let writable = !state
+        .document(doc_id)
+        .is_some_and(crate::state::Document::is_from_rpf9_table);
     let mut action = None;
     ui.label(format!(
         "SWF version {}, {}, {} tags",
@@ -35,7 +38,10 @@ pub(super) fn draw_gfx(ui: &mut egui::Ui, state: &mut AppState, doc_id: Document
             action = Some(Action::Export);
         }
         if ui
-            .button(format!("{} Replace from SWF", ph::SWAP))
+            .add_enabled(
+                writable,
+                egui::Button::new(format!("{} Replace from SWF", ph::SWAP)),
+            )
             .on_hover_text("Replace the movie with an SWF saved from an editor")
             .clicked()
         {

@@ -173,6 +173,12 @@ impl AppState {
     /// Look for the clips the motions of the GTA VI motion dictionary `doc` name that no open clip
     /// dictionary or earlier search holds, among the animation bodies every open scan found.
     pub(crate) fn find_gta6_clips(&mut self, doc: DocumentId) -> Result<(), String> {
+        if self
+            .document(doc)
+            .is_some_and(super::Document::is_from_rpf9_table)
+        {
+            return Ok(());
+        }
         let Some(DocPayload::Gta6Anim(resource)) = self.document(doc).map(|d| &d.payload) else {
             return Ok(());
         };

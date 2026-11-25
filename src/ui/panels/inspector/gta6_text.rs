@@ -64,7 +64,12 @@ enum Asked {
 }
 
 pub(super) fn draw_audio_data(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId) {
-    super::gta6_dialogue::draw_radio(ui, state, doc_id);
+    if !state
+        .document(doc_id)
+        .is_some_and(crate::state::Document::is_from_rpf9_table)
+    {
+        super::gta6_dialogue::draw_radio(ui, state, doc_id);
+    }
     let Some(asked) = draw_audio_items(ui, state, doc_id) else {
         return;
     };
@@ -211,7 +216,12 @@ fn draw_audio_items(ui: &mut egui::Ui, state: &AppState, doc_id: DocumentId) -> 
         doc.data.kind,
         AudioDataKind::Sounds | AudioDataKind::AudioConfig
     );
-    if linkable && draw_links(ui, linked, doc.linking.is_some() && linked.is_none()) {
+    if linkable
+        && !state
+            .document(doc_id)
+            .is_some_and(crate::state::Document::is_from_rpf9_table)
+        && draw_links(ui, linked, doc.linking.is_some() && linked.is_none())
+    {
         asked = Some(Asked::Link);
     }
     let pool = pool_names();

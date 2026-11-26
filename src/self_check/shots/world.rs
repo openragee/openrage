@@ -534,6 +534,7 @@ impl Shell {
             }
             self.bridge.restart_temporal();
             or_transport::clock::restart_game();
+            viewer().restart_wind();
             let first = self.found_lit()?;
             for _ in 0..CONVERGE_FRAMES {
                 self.idle(state, 1)?;

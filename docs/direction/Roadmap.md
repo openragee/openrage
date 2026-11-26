@@ -10532,31 +10532,34 @@ one deleted building back as the base has it, with the far models a deletion too
 Discard changes to this map, after a question that counts them
 ([brief](World_Editor_Plan.md#what-a-project-changed-and-putting-it-back-r70y)).
 
-**Where it stands.** The comparison and the verb are built, on synthetic maps, with no screen.
-`crates/domain/or-maps/src/changes.rs` compares two typed roots of one map by object: the entities
-added, the entities deleted and each one both hold with what it states differently, named (moved,
-turned, scaled, another archetype, flags, parent, guid, the other typed members by the engine's
-names). `types_changes` says the same of the archetypes of a type file, with the entities of an
-interior, and what a file states of itself is compared member by member. An entity is found by its
-guid, else by its archetype at the same pose, else by the nearest; a twin that moved is listed as
-ambiguous, the data's word for the plan's undecided, and never as moved
-(`two_twins_with_one_archetype_and_one_guid_are_ambiguous_when_one_moved_and_never_a_move`), and
-the parent links are compared through the matching. `source_changes` cooks a source and the base
-it keeps (`compile_base` in `crates/domain/or-source/src/metadata.rs`), and
-`openrage-cli maps changes` prints it, as data with `--json`
-(`crates/domain/or-maps/tests/what_a_map_changed_of_its_base.rs`;
-[the matching in full](../reference/Crate_Reference.md#domain-crates)).
+**Where it stands.** The comparison, the way back and their verbs are built, with no screen
+([in full](../reference/Crate_Reference.md#domain-crates)).
+`crates/domain/or-maps/src/changes.rs` compares two typed roots of one map by object: entities
+added, deleted and changed, each change named, and a twin that moved as ambiguous, the data's
+word for the plan's undecided, and never as moved
+(`two_twins_with_one_archetype_and_one_guid_are_ambiguous_when_one_moved_and_never_a_move`).
+`openrage-cli maps changes` prints it
+(`crates/domain/or-maps/tests/what_a_map_changed_of_its_base.rs`).
+`crates/domain/or-maps/src/put_back.rs` plans what puts one entity back as the base has it, as a
+list of the operations of [R70h](#r70h-one-vocabulary-of-world-edits) done whole or not at all:
+one both files hold by one record, a deleted one with the far models its deletion took, the
+links, counts and extents restored; a twin, an added entity and an unchanged one are refused
+(`crates/domain/or-maps/tests/an_entity_is_put_back_as_the_base_has_it.rs`, on packs built by
+hand). A map is the file its source cooks to, and the parked vehicles a source changed stay as
+it states them
+(`an_entity_put_back_leaves_the_parked_vehicle_the_source_changed_as_the_source_states_it`).
+`openrage-cli maps put-back` runs a plan, and `MapChanges::count` is what a discard asks. On the
+installs each sampled entity, moved and then deleted with its chain, was put back to the bytes
+its pack was imported with, 19 of 19 on Legacy and 17 of 17 on Enhanced
+(`an_entity_deleted_from_a_map_of_the_install_is_put_back_as_the_game_has_it`, 2026-11-26, at
+138338896).
 
-⚠ Two readings are the owner's to rule on. The nearest match believes a place over a guid
-(`an_entity_taken_out_and_another_of_its_archetype_put_in_read_as_one_moved_with_another_guid`).
-And a new entity takes one more than the largest guid of its map (`free_guid` in
-`crates/domain/or-world/src/create.rs`), so one added after the entity with the largest guid was
-deleted takes that guid and compares as one entity changed, held as it stands through the
-operations
-(`an_entity_added_after_the_one_with_the_largest_guid_went_takes_its_guid_and_compares_as_that_entity_changed`). What no typed
-member names (a car generator, an occluder, a room, a portal, an extension) is said to differ and
-is not listed. Left: the panel, the outline, the operation that puts an object back, Discard, and
-a map of an install compared.
+⚠ Three readings are the owner's to rule on: the nearest match believes a place over a guid; an
+entity added after the one with the largest guid went takes that guid and is put back as that
+entity; and a far model whose count a deletion under it lowered is listed as changed and refused
+as nothing to put back. Left: the panel, the outline, Discard, a plan of what a session holds
+unwritten, an archetype and an interior's entity put back, the Enhanced deletions a schema
+snapshot refuses, and trees of more than 80 map files.
 
 **Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits) and
 [R70i](#r70i-selecting-and-moving-in-the-world).

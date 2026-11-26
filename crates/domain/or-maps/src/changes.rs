@@ -214,6 +214,17 @@ impl MapChanges {
     pub fn rest_differs(&self) -> bool {
         self.other || !self.records.is_empty()
     }
+
+    /// How many changes putting the map back as its base would lose: each entity added, deleted or changed, each group nothing tells apart, each member the map states of itself differently, each family of records that differs, and one for what no typed member names.
+    pub fn count(&self) -> usize {
+        self.added.len()
+            + self.deleted.len()
+            + self.changed.len()
+            + self.ambiguous.len()
+            + self.root.len()
+            + self.records.len()
+            + usize::from(self.other)
+    }
 }
 
 /// How the file stores the rotation of this entity.
@@ -1011,6 +1022,20 @@ impl TypesChanges {
             && self.root.is_empty()
             && !self.other
     }
+
+    /// How many changes putting the type file back as its base would lose, counted as [`MapChanges::count`] counts a map: an archetype both hold counts once for its own members and once for each change of the entities of its interior.
+    pub fn count(&self) -> usize {
+        let kept = |kept: &ArchetypeKept| {
+            usize::from(!kept.changes.is_empty() || kept.other)
+                + kept.entities.as_ref().map_or(0, MapChanges::count)
+        };
+        self.added.len()
+            + self.deleted.len()
+            + self.changed.iter().map(kept).sum::<usize>()
+            + self.ambiguous.len()
+            + self.root.len()
+            + usize::from(self.other)
+    }
 }
 
 fn type_of(archetype: &CBaseArchetypeDefAny) -> &'static str {
@@ -1189,6 +1214,14 @@ impl SourceChanges {
         match self {
             Self::Map(changes) => changes.is_empty(),
             Self::Types(changes) => changes.is_empty(),
+        }
+    }
+
+    /// How many changes a discard of the source would lose: what the question before a discard counts.
+    pub fn count(&self) -> usize {
+        match self {
+            Self::Map(changes) => changes.count(),
+            Self::Types(changes) => changes.count(),
         }
     }
 }

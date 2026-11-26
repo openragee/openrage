@@ -1,5 +1,6 @@
 //! The body of `deleting_an_entity_of_the_install_keeps_every_link`, run where no install is: over map files built by hand and
-//! read by path, as the suite reads the files of a mount.
+//! read by path, as the suite reads the files of a mount. The second test runs the body of
+//! `an_entity_deleted_from_a_map_of_the_install_is_put_back_as_the_game_has_it` the same way.
 //!
 //! ⚠ This is the run that says the install suite's own checks can pass and can fail. It says nothing of a shipped map, which only
 //! the install suite reads.
@@ -8,7 +9,7 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use common::chain::{delete_sampled, survey};
+use common::chain::{delete_sampled, put_back_sampled, survey};
 use or_maps::sample::{child_map_file, map_file, Entity};
 
 const BOX: ([f32; 3], [f32; 3]) = ([0.0; 3], [100.0; 3]);
@@ -124,4 +125,44 @@ fn the_checks_of_the_install_suite_hold_on_a_tree_of_maps_built_by_hand() {
     // The block counts the hall's far model no more, and the far hedge counts one length fewer.
     assert_eq!(report.lowered, 2, "{text}");
     assert_eq!((report.notes, report.rewritten), (0, 0), "{text}");
+}
+
+#[test]
+fn the_checks_of_the_put_back_suite_hold_on_a_tree_of_maps_built_by_hand() {
+    let mut tree = tree();
+    // A map whose entity to delete stands last, after its far model and a shed: put back, each stands where the base has it and
+    // not first.
+    let yard = map_file(
+        "yard",
+        &[
+            Entity {
+                children: 1,
+                ..Entity::at("gate_far", [80.0, 80.0, 0.0], 500)
+            },
+            Entity::at("shed", [70.0, 80.0, 0.0], 501),
+            Entity {
+                parent: 0,
+                ..Entity::at("gate", [80.0, 80.0, 0.0], 502)
+            },
+        ],
+        BOX,
+    );
+    tree.insert("x64/levels/yard.ymap".to_string(), yard);
+    let open = |path: &str| tree.get(path).cloned();
+    let paths: Vec<String> = tree.keys().cloned().collect();
+    let (facts, children) = survey(&paths, &open);
+    let sampled: Vec<u32> = facts.keys().copied().collect();
+    let mut report = put_back_sampled(&open, &sampled, &facts, &children);
+    report.maps = facts.len();
+    let text = report.text(1);
+    assert!(report.failures.is_empty(), "{text}");
+    // Each of the four deletions is put back: the hall with its far model, the sign, a length of hedge, and the gate with its own.
+    assert_eq!((report.deleted, report.put_back), (4, 4), "{text}");
+    assert_eq!(report.came_back, report.entities_gone, "{text}");
+    assert_eq!(report.came_back, 6, "{text}");
+    assert_eq!(report.not_put_back, BTreeMap::new(), "{text}");
+    assert_eq!(report.put_back_whole, 0, "{text}");
+    // Each of the four was first moved and flagged where it stood, and put back by one record.
+    assert_eq!((report.moved, report.moved_back), (4, 4), "{text}");
+    assert_eq!(report.not_moved_back, BTreeMap::new(), "{text}");
 }

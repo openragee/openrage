@@ -904,17 +904,19 @@ impl World {
     /// Write the light of the game's frame, which [`Self::draw_lit`] lights what blends by, and how far the night emissives are on, which every material's own light is blended by.
     pub(crate) fn write_light(&self, queue: &wgpu::Queue, engine: &EngineConstants) {
         let sun = Sun::of(engine);
-        let ([down, up], night) = match &engine.lighting {
+        let ([down, up], night, wet) = match &engine.lighting {
             Some(lighting) => (
                 lighting.natural_ambient.map(|ambient| ambient.truncate()),
                 lighting.night_emissive,
+                lighting.dynamic_bakes.z,
             ),
             // With no day the emissives are on, as the game's own scalars have them
-            None => ([engine.ambient; 2], 1.0),
+            None => ([engine.ambient; 2], 1.0, 0.0),
         };
         let mut light = [sun.travel.normalize_or_zero(), sun.colour, down, up]
             .map(|vector| vector.extend(0.0).to_array())
             .to_vec();
+        light[2][3] = wet;
         let lamps = self.lamps.len().min(WORLD_LAMPS) as f32;
         // ⚠ Seconds are kept under a day so that a float still holds a frame's step.
         let seconds = (or_transport::clock::game_seconds() % 86_400.0) as f32;

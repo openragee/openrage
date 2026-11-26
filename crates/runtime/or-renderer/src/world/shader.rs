@@ -15,7 +15,7 @@ struct Lamp {
     colour: vec4<f32>,
     way: vec4<f32>,
 };
-// The light of the game's frame, in the units its lighting passes sum, in `frame.x` how far the night emissives are on, in `frame.y` the exposure a material's own light is multiplied by, in `frame.z` how many lamps light what blends and in `frame.w` the seconds the world has run, which the wind moves by.
+// The light of the game's frame, in the units its lighting passes sum, in `ambient_down.w` how wet the world is (0 to 1), in `frame.x` how far the night emissives are on, in `frame.y` the exposure a material's own light is multiplied by, in `frame.z` how many lamps light what blends and in `frame.w` the seconds the world has run, which the wind moves by.
 struct Light {
     sun_travel: vec4<f32>,
     sun_colour: vec4<f32>,
@@ -900,11 +900,22 @@ fn forward_scattered(amount: f32, cos_t: f32) -> f32 {
     return through * (1.0 - 0.82838 * lean) * max(phase - 1.0, 0.0);
 }
 
+// A surface the weather has wetted `wet` (0 to 1): water in its pores darkens what it scatters and its film smooths it, the more where it faces up and water lies.
+// ⚠ Stand-in: the build's answer to its wetness is in programs not read; GTA V's wet surfaces darken and shine this way.
+fn wetted(s: Surface, wet: f32) -> Surface {
+    var out = s;
+    let w = clamp(wet, 0.0, 1.0) * mix(0.5, 1.0, clamp(s.normal.z, 0.0, 1.0));
+    out.albedo = s.albedo * (1.0 - 0.5 * w * (1.0 - s.metal));
+    out.smoothness = mix(s.smoothness, max(s.smoothness, 0.85), w);
+    return out;
+}
+
 fn gbuffer(in: VsOut, front_facing: bool, cut: f32) -> GBufferOut {
     var s = surface_of(in, front_facing);
     if (dropped(in, select(s.coverage, cut_coverage(in), cut >= CUTOUT_ALPHA), cut)) {
         discard;
     }
+    s = wetted(s, light.ambient_down.w);
     // Its own light is added over the lit frame by `glow`, whole.
     if ((m.flags & GLOWS) != 0u) {
         s.emissive = vec3<f32>(0.0);

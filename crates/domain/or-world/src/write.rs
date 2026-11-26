@@ -31,6 +31,8 @@ pub enum WriteError {
     NotAMap,
     #[error("{0} entity archetype(s) unresolved, so the extents would be a lower bound")]
     IncompleteExtents(usize),
+    #[error("the box the map streams by comes out holding nothing or not finite, as it does where an entity states a scale that is not above nought, so no extents are written")]
+    NoStreamingExtents,
     #[error("`{0}` is not a CMapData or a CMapTypes")]
     NotAWorldFile(String),
     #[error("{0}")]
@@ -159,6 +161,11 @@ pub fn apply_extents(root: &mut MetaInstance, index: &ArchetypeIndex) -> Result<
     }
     if computed.entities.is_empty() {
         return Ok(false);
+    }
+    // ⚠ A scale of nought or below leaves an entity out of the streaming box with no word, and a box that holds nothing streams nothing.
+    let streaming = computed.streaming;
+    if streaming.is_empty() || !(streaming.min.is_finite() && streaming.max.is_finite()) {
+        return Err(WriteError::NoStreamingExtents);
     }
 
     let mut changed = set_vec3(root, keys::ENTITIES_EXTENTS_MIN, computed.entities.min);

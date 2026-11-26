@@ -63,6 +63,9 @@ fn measure(game: &MountedGame) -> Figures {
             type_files.push(facts.logical.clone());
         }
     });
+    // ⚠ Each logical path once: a mount lists some paths twice, and a type file listed twice is one file read twice.
+    type_files.sort();
+    type_files.dedup();
     let mut figures = Figures {
         type_files: type_files.len(),
         dictionaries_held: catalogue.count_of(Kind::TextureDict),
@@ -165,4 +168,10 @@ fn the_rule_for_a_texture_dictionary_nothing_holds_is_a_note_while_it_fires_on_a
             f.firing
         ),
     }
+    // The rule's own sentence gives the share, which a person reads: it is held here for as long as the sentence says it.
+    assert!(
+        !rule.summary.contains("more than half") || share > 0.5,
+        "the rule says more than half the type files of the game do it, and {} of {read} do",
+        f.firing
+    );
 }

@@ -205,7 +205,7 @@ pub enum Did {
 /// A member, and the side its value is from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MemberBy {
-    /// The engine's name of the member, or the words for what no typed member names.
+    /// The engine's name of the member, or of each family of records taken whole, or the words for what no typed member names.
     pub member: String,
     pub by: By,
 }
@@ -397,9 +397,10 @@ fn three_way(
 
 /// The findings of the rules that judge `bytes`, a map file or a type file, by itself; an error among them is the refusal.
 fn judged(bytes: &[u8], extension: &str) -> Result<Vec<Found>, Error> {
-    const ALONE: [&str; 8] = [
+    const ALONE: [&str; 9] = [
         "file-unreadable",
         "hierarchy-broken",
+        "records-broken",
         "interior-broken",
         "guid-twice",
         "entity-twice",
@@ -461,14 +462,15 @@ fn container_of<T: File>(root: &T) -> Option<BinaryFormat> {
     detect_binary_format(&root.to_bytes().ok()?)
 }
 
-/// The side whose root the merged file is made of, which is the side whose copy of what no typed member of the file names is
-/// taken, and the refusal of a side that is in another container than the base.
+/// The side whose root the merged file is made of, which is the side whose copy of what is taken whole of the file (`rest`
+/// are the words for it) is taken, and the refusal of a side that is in another container than the base.
 ///
 /// ⚠ What no typed member names cannot be put into another root, so the merged file is saved in the container of the root it
 /// came with. Where both sides state the same of it, the side in the container of the base is the one taken, so that the two
 /// orders of a merge give one file.
 fn root_from<T: File>(
     other: Option<(Side, Option<By>)>,
+    rest: &str,
     base: &T,
     sides: [&T; 2],
 ) -> Result<Option<(Side, Option<By>)>, Error> {
@@ -487,7 +489,7 @@ fn root_from<T: File>(
     Err(Error::Input {
         which: side.word(),
         why: format!(
-            "it changed {OTHER} of the file and is a {} file where the base is a {} file: the merged file would be saved as {} states it, and not in the container of the base",
+            "it changed {rest} of the file and is a {} file where the base is a {} file: the merged file would be saved as {} states it, and not in the container of the base",
             named(container_of(sides[side as usize])),
             named(of_base),
             side.word()
@@ -496,9 +498,14 @@ fn root_from<T: File>(
 }
 
 fn not_compared(entities: bool) -> Vec<String> {
-    let mut said = vec![format!(
-        "{OTHER} of the file, such as a car generator, an occluder or an extension, is taken whole from the side that changed it and is not merged inside"
-    )];
+    let mut said = vec![match entities {
+        true => format!(
+            "the parked vehicles, the occluders, the time cycle modifiers and the far lights of the file, and {OTHER} of it, such as a grass batch or an extension, are taken whole and together from the side that changed any of them, and are not merged inside"
+        ),
+        false => format!(
+            "{OTHER} of the file, such as an extension, is taken whole from the side that changed it and is not merged inside"
+        ),
+    }];
     if entities {
         said.push(format!(
             "{OTHER} of an entity is taken whole from the side that changed it"
@@ -564,16 +571,18 @@ fn merge_file_members(
 fn file_said(
     members: &[(&'static str, Side, Option<By>)],
     other: Option<(Side, Option<By>)>,
+    rest: &str,
 ) -> Vec<MemberBy> {
     (members.iter())
         .map(|(member, _, by)| (member.to_string(), *by))
-        .chain(other.map(|(_, by)| (OTHER.to_string(), by)))
+        .chain(other.map(|(_, by)| (rest.to_string(), by)))
         .filter_map(|(member, by)| Some(MemberBy { member, by: by? }))
         .collect()
 }
 
-/// The side whose copy of what no typed member of the file names is taken, none when neither changed it.
+/// The side whose copy of what is taken whole of the file is taken, none when neither changed it; `rest` are the words for it.
 fn other_from(
+    rest: &str,
     ours: bool,
     theirs: bool,
     same: impl FnOnce() -> bool,
@@ -581,7 +590,7 @@ fn other_from(
 ) -> Option<(Side, Option<By>)> {
     three_way(ours, theirs, same, || {
         let what = Disagreement::File {
-            member: OTHER.to_string(),
+            member: rest.to_string(),
             ours: "changed".to_string(),
             theirs: "changed".to_string(),
         };

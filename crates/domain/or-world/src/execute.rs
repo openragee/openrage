@@ -55,7 +55,7 @@ pub enum ExecError {
     NoSuchDocument(String),
     #[error("`{0}` is not a manifest")]
     NotAManifest(String),
-    #[error("no manifest in the set states the donor map {0:#010X}, so nothing says what manifestFlags a map like it takes")]
+    #[error("no manifest in the set states the donor map {0:#010X}, and the entry of a new map is a copy of the entry of its donor")]
     DonorUnstated(u32),
     #[error("the donor names parent {donor:#010X} and carries cross-file LOD links into it; as a child of {asked:#010X} they would name other entities")]
     ForeignLinks { donor: u32, asked: u32 },
@@ -512,9 +512,11 @@ impl WorkingSet {
     /// Add a map cloned from a donor, and state it in a manifest.
     ///
     /// ⚠ **A map is a file and an entry.** The entry is cloned from the one
-    /// stating the donor, because `manifestFlags` is the donor's to say and
-    /// not something a derivation produces; the types are what the new map
-    /// places, which the caller derives.
+    /// stating the donor, `manifestFlags` and all: the new map places what its
+    /// donor places, so the flags that follow what a map places
+    /// ([`crate::manifest_build::interior_flags`]) are the donor's. They are
+    /// not derived again when a later operation changes what the map places.
+    /// The types are what the new map places, which the caller derives.
     #[allow(clippy::too_many_arguments)]
     pub fn create_map(
         &mut self,

@@ -293,9 +293,11 @@ pub fn files_contributions_with(
 ///
 /// The cell of a content and a build that a screen locks: a singleplayer DLC has no manifest and runs no script,
 /// so a content that adds a manifest line, or files whose type the game is not told (a script among them), cannot ship in one.
+/// An `.oiv` installs a content laid out as a pack inside such a pack, so the same holds of that content there.
 pub fn cannot_ship(contribution: &Contribution, kind: &OutputKind) -> Option<String> {
     match kind {
         OutputKind::SingleplayerDlc => dlc::refuses(contribution),
+        OutputKind::OivPackage if contribution.pack => dlc::refuses(contribution),
         _ => None,
     }
 }
@@ -428,7 +430,12 @@ pub(crate) fn assemble(
     match &declared.kind {
         OutputKind::FivemResource => manifest_of(&mut owned, &entries, declared, &mut plan),
         OutputKind::SingleplayerDlc => dlc::finish(&mut owned, &entries, &archives, &mut plan),
-        OutputKind::OivPackage => oiv::finish(&mut owned, (&entries, &packs), declared, &mut plan),
+        OutputKind::OivPackage => oiv::finish(
+            &mut owned,
+            (&entries, &archives, &packs),
+            declared,
+            &mut plan,
+        ),
         OutputKind::Unknown(_) => unreachable!("an unknown kind returned above"),
     }
     owned.sort_by(|a, b| a.1.path.cmp(&b.1.path));

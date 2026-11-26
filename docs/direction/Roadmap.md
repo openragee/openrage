@@ -9817,7 +9817,9 @@ node's scale (`the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_t
 [figures](../reference/Crate_Reference.md#domain-crates)). A ray's slack past a triangle's edges
 grows with how far its origin is from the triangle over the triangle's size, so a slanted ray from
 hundreds of metres no longer passes through a seam
-(`a_slanted_ray_from_hundreds_of_metres_meets_the_corner_and_the_edge_it_is_aimed_at`). Of the staged corpus, 948
+(`a_slanted_ray_from_hundreds_of_metres_meets_the_corner_and_the_edge_it_is_aimed_at`), and the
+ground asked at a height the query itself answered, with no rise, is the same ground
+(`the_ground_asked_at_the_height_it_answered_with_no_rise_is_the_same_ground`). Of the staged corpus, 948
 bounds become colliders with none refused
 (`every_staged_bound_becomes_a_collider_whose_ray_and_swept_sphere_agree`, 2026-11-25), and 897 of
 971 geometries stop 40 mm short of the box they state
@@ -9857,7 +9859,10 @@ slow tier; [timings](../reference/Crate_Reference.md#domain-crates)). And a map,
 a type file and a base archetype made
 with no donor and no snapshot (`crates/domain/or-world/src/create.rs`), behind
 `openrage-cli world new-map` and `world archetypes`, which pass the rules of a pack
-(`a_map_and_a_type_file_made_from_nothing_enter_a_pack_and_break_none_of_its_rules`).
+(`a_map_and_a_type_file_made_from_nothing_enter_a_pack_and_break_none_of_its_rules`). A placement
+whose scale is not above nought is refused, there and by the operation that stands an entity
+somewhere, since a map streams by a box spread from each entity by its scale
+(`a_scale_that_is_not_above_nought_is_refused_before_anything_is_placed`).
 
 ⚠ They are written as PSO, and RBM is refused (`rbm_is_refused_with_the_word_nothing_derives_named`,
 [R62](#r62-the-rbm-layout-synthesiser)); whether the game, whose own world files are RBM, loads
@@ -9981,7 +9986,14 @@ and a session does it whole or not at all
 Both installs keep every link over the deletions sampled and undone: 40 of 47 maps sampled on
 Legacy and 39 of 47 on Enhanced, one map in two hundred of the 9,243 and 9,210 that hold entities,
 the rest holding no entity that stands for no other
-(`deleting_an_entity_of_the_install_keeps_every_link`, 2026-11-25). A map that is not
+(`deleting_an_entity_of_the_install_keeps_every_link`, 2026-11-25). A map is the file its source
+cooks to, found by the name of that file whatever name it states: found by the stated name, a link
+led into a file that states its parent's name, and a deletion took an unrelated entity out or left
+the maps under the file with their old indexes
+(`a_link_into_a_parent_map_leads_into_the_file_called_so_and_never_into_one_that_states_its_name`,
+`a_deletion_in_a_map_file_that_states_another_maps_name_takes_the_maps_under_the_file`); the
+Legacy install gives the same figures with it (2026-11-26), and the rule `map-named-otherwise`
+names such a file. A map that is not
 among the sources keeps its links, and the rules `parent-link-broken` and `lod-children-uncounted` name
 what a removal alone leaves. Left: the rule for a door, the preview on a screen and the Map
 screen's Delete through the plan; the game's maps a deletion reaches come in by
@@ -10080,8 +10092,9 @@ the search, the pairing, the arc, the rules `doors-overlap` and `door-blocked`, 
 `openrage-cli maps doors` (`crates/domain/or-world/tests/the_doors_of_a_map.rs`,
 `crates/domain/or-maps/tests/the_doors_of_a_pack.rs`;
 [what each reads, and the counts](../reference/Crate_Reference.md#domain-crates)). On each
-install 470 state the extension, on the entity and on no archetype, so the entity is asked
-first (`the_doors_of_the_install_are_counted_by_their_extension_and_by_their_name`, 2026-11-25).
+install 470 doors are found by the extension, which 220 entities state (56 of the maps and 164
+of the interiors) and no archetype, so the entity is asked first
+(`the_doors_of_the_install_are_counted_by_their_extension_and_by_their_name`, 2026-11-25).
 
 Left: the door tuning and its zone; a door that opens in the view; the fitted replacement; an
 interior's entity sets; the two rules that need the game; an arc held against the game's
@@ -10115,8 +10128,14 @@ drawn on a selected parking spot
 these records as members of `CMapData` with save refusals, `crates/domain/or-world/src/map_data.rs` reads them as views,
 and the install suite passes on both installs
 (`every_map_of_an_install_reads_its_records_typed_states_the_members_typed_and_saves_to_its_fixed_point`,
-2026-11-25; [the census and what is left](../reference/Crate_Reference.md#io-crates)). Nothing
-after it is built, and a map made from nothing takes none.
+2026-11-25; [the census and what is left](../reference/Crate_Reference.md#io-crates)). What the
+census judges is held in the default tier on records built by hand
+(`the_census_of_a_maps_records_names_one_typed_and_never_stated_and_one_stated_and_not_typed`). A
+comparison names each family of records that differs by the member that holds it, a merge takes the
+families whole and together from one side under those names, and the rules report what a save
+refuses of a record (`records-broken`) and a map of far lights out of step with its parent in the
+pack (`far-lights-out-of-step`). Nothing after it is built, a map made from nothing takes none, and
+neither a comparison nor a merge looks inside a family record by record.
 
 **Depends on.** Nothing for the data part; [R70f](#r70f-layers-of-what-the-game-hides),
 [R70i](#r70i-selecting-and-moving-in-the-world), [R70k](#r70k-removing-what-the-game-placed) and
@@ -10197,6 +10216,11 @@ back stating it (`every_staged_manifest_of_the_game_is_written_back_stating_what
 2026-11-25). On each
 install five maps taken as sources are stated as the install states them
 (`a_map_taken_from_an_install_is_stated_as_the_install_states_it_from_the_manifests_kept_of_it`).
+A map is stated by the name of its file, as the build ships it, whatever name it states
+(`a_map_is_stated_in_the_manifest_by_the_name_of_its_file_whatever_name_it_states`), and a map a
+kept manifest states keeps its flags, with a note where the interior bit no longer follows what the
+map places
+(`a_map_a_kept_manifest_states_as_an_interiors_map_is_named_where_it_places_what_is_no_interior`).
 
 ⚠ A kept manifest is a compiled file of the game held whole in a project, which the ruling of
 2026-10-09 says a project never holds
@@ -10215,7 +10239,9 @@ file that declares an interior is refused for a pack and locks the cell by the s
 (`a_type_file_that_declares_an_interior_is_asked_for_by_nothing_and_refused_for_a_pack_by_name`).
 The cell says yes to type files and models and no to a map
 (`the_cell_of_a_singleplayer_dlc_says_yes_to_type_files_and_models_and_no_to_a_map_for_what_turns_it_on`):
-no pack of either install turns maps on from the group the writer uses.
+no pack of either install turns maps on from the group the writer uses. An `.oiv` installs the same
+pack and is locked by the same sentence
+(`an_oiv_of_a_maps_content_installs_the_pack_a_singleplayer_dlc_is_and_is_locked_as_one`).
 
 Left: the change set that turns the maps of a story pack on, for a pack loaded in the game to
 answer ([R70a](#r70a-what-the-game-loads)); the entry of a manifest an interior's type file is

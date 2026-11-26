@@ -356,7 +356,8 @@ pub fn grow_extents(
         } else {
             stream
         };
-        let spread = reach / scale.max_element().max(f32::MIN_POSITIVE);
+        // ⚠ By the size of the scale: an entity mirrored by a scale below nought is drawn as far as one that is not.
+        let spread = reach / scale.abs().max_element().max(f32::MIN_POSITIVE);
         for (into, grow) in [(&mut entities, 0.0), (&mut streaming, spread)] {
             for corner in or_world::transform::placed_corners(
                 (min - Vec3::splat(grow)) * scale,

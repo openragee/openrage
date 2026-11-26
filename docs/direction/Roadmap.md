@@ -539,6 +539,37 @@ number.
   - [ ] [R70x The audio of an interior](#r70x-the-audio-of-an-interior)
   - [ ] [R70z A browser of models and vehicles](#r70z-a-browser-of-models-and-vehicles)
 
+### Phase 12 — One world for every title
+
+The owner decided on 2026-11-26 that the world viewer and the world editor become one title-neutral
+core with one adapter crate for each game, that this programme lifts the GTA VI viewer out of the
+app, and that each game draws its world with its own shader programs in one shared frame host ([the
+shape](Project_Context.md#the-world-viewer-and-editor-become-one-core-and-an-adapter-crate-for-each-game-2026-11-26),
+[the
+lift](Project_Context.md#this-programme-lifts-the-gta-vi-viewer-out-of-the-app-and-the-other-gta-vi-sessions-pause-2026-11-26),
+[the
+drawing](Project_Context.md#each-game-draws-its-world-with-its-own-shader-programs-in-one-shared-frame-host-2026-11-26)).
+[Unified_World_Plan.md](Unified_World_Plan.md) says what the tree holds, the contract, how a game
+differs, how a world is drawn and the order, and gives each row below its brief. The rows are listed
+in the order of [the plan](Unified_World_Plan.md#the-order-of-work): R71a stands on nothing, R71b
+and R71d run together after it, and R71k's measures wait for R71a alone. A row takes the default
+beside its question in [the rulings asked](Unified_World_Plan.md#asked-of-the-owner). Nothing is
+built.
+
+- [ ] [R71 One world for every title](#r71-one-world-for-every-title) — the plan of 2026-11-26, in the parts below; no part is started, and the GTA VI World screen and the headless GTA V world of R70 are what it starts from
+  - [ ] [R71a The world contract the conformance kit and the fake title](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title)
+  - [ ] [R71b The GTA VI world behind the contract](#r71b-the-gta-vi-world-behind-the-contract)
+  - [ ] [R71c One world session one frame host and panels by capability](#r71c-one-world-session-one-frame-host-and-panels-by-capability)
+  - [ ] [R71d The GTA V world behind the contract and one kept file](#r71d-the-gta-v-world-behind-the-contract-and-one-kept-file)
+  - [ ] [R71e The GTA V world drawn in the fallback pass](#r71e-the-gta-v-world-drawn-in-the-fallback-pass)
+  - [ ] [R71f The render profile and the programs of GTA V Legacy](#r71f-the-render-profile-and-the-programs-of-gta-v-legacy)
+  - [ ] [R71g The programs of GTA V Enhanced](#r71g-the-programs-of-gta-v-enhanced)
+  - [ ] [R71h The programs of GTA VI over a world](#r71h-the-programs-of-gta-vi-over-a-world)
+  - [ ] [R71i One edit stack for every title](#r71i-one-edit-stack-for-every-title)
+  - [ ] [R71j The world tools built once](#r71j-the-world-tools-built-once)
+  - [ ] [R71k Red Dead Redemption 2](#r71k-red-dead-redemption-2)
+  - [ ] [R71l Leftovers and the ledger of what was deleted](#r71l-leftovers-and-the-ledger-of-what-was-deleted)
+
 ---
 
 ## Inputs outside the tree
@@ -9553,6 +9584,13 @@ R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70l, R70m, R70n, R70p, R7
 and R70y are built, with no part closed, install suites run for R70m's data part and for R70b,
 R70c, R70e, R70g, R70h and R70k, and nothing loaded in a game.
 
+Since the owner's decisions of 2026-11-26 the world is one core with an adapter crate for each game
+([R71](#r71-one-world-for-every-title), [what it
+changes](Unified_World_Plan.md#what-it-changes-for-r70)): what is built of this programme lands as
+it is, its headless code moves crate in
+[R71d](#r71d-the-gta-v-world-behind-the-contract-and-one-kept-file) and
+[R71i](#r71i-one-edit-stack-for-every-title), and its screens are built once on that core.
+
 ### R70a What the game loads
 
 [↑ checklist](#phase-11--the-gta-v-world-editor)
@@ -9640,7 +9678,8 @@ keeps each group's gate and each archetype's files for
 [R70c](#r70c-the-gta-v-world-streamed-and-drawn)
 (`an_instance_names_the_files_its_archetype_states_and_a_kept_index_names_them_too`). Left:
 the mode in the index's key; a level and a mode for `world index` and `world at`, and from a
-screen; an archive read at every build, for the folders a level leaves out of it.
+screen; an archive read at every build, for the folders a level leaves out of it. The index moves
+to the GTA V adapter and onto the core's kept file in [R71d](#r71d-the-gta-v-world-behind-the-contract-and-one-kept-file).
 
 **Done when.** Over a mounted install the index names every map and type file the mount lists, and a
 position inside a known map's extents answers that map, in an install suite of the slow tier, named
@@ -9668,7 +9707,12 @@ by the shared rules, behind `openrage-cli world select`, on both installs
 2026-11-25). Nothing draws it.
 
 **Depends on.** [R70b](#r70b-the-gta-v-world-index); its room, tab and bar edit what
-[R69f](#r69f-a-rail-of-rooms-and-one-primary-action-a-tab) builds.
+[R69f](#r69f-a-rail-of-rooms-and-one-primary-action-a-tab) builds. Its seam, its viewer for each tab
+and its feed are built for every title as
+[R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability),
+[R71d](#r71d-the-gta-v-world-behind-the-contract-and-one-kept-file) and
+[R71e](#r71e-the-gta-v-world-drawn-in-the-fallback-pass), which replace the seam this row's brief
+places in the app.
 
 **Done when.** A synthetic world of parent and child levels draws the level the rules select at each
 distance, in real frames with no window; an install's tab and a project's tab draw two stacks in one
@@ -9714,7 +9758,8 @@ one model from the install's timecycle
 feed of GTA V's timecycle and weather into the world's lighting, the shadow cascades and the sky,
 the distance shadows reach as a setting, and the measure of the game's own shaders.
 
-**Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn).
+**Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn). The day reaches the world through
+GTA V's render profile, in [R71f](#r71f-the-render-profile-and-the-programs-of-gta-v-legacy).
 
 **Done when.** The reader opens the water file of both installs and saves its fixed point; the same
 hour and weather give the same sun on a model in Shaded and in the world; a GTA VI day draws the
@@ -9747,7 +9792,9 @@ own models to their maps
 
 **Depends on.** [R70b](#r70b-the-gta-v-world-index);
 [R70c](#r70c-the-gta-v-world-streamed-and-drawn) to go there; [R70g](#r70g-collision-as-a-query) for
-the height of two numbers.
+the height of two numbers. Its screen is built on the world session of
+[R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability), for any title that has
+placement rows.
 
 **Done when.** Each form of a position parses to the same point; a hash typed three ways finds one
 model; a copy in each form parses back to the position and the heading it came from; two numbers
@@ -9777,7 +9824,8 @@ far lights are present. The GTA VI World panel lists the script-managed groups, 
 **Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn) and
 [R70g](#r70g-collision-as-a-query); the data part of
 [R70o](#r70o-parked-vehicles-zones-lights-and-occluders) for parked vehicles, timecycle zones and
-far lights.
+far lights. Each layer is a slot a title fills, on the registry of
+[R71j](#r71j-the-world-tools-built-once).
 
 **Done when.** Each layer draws a synthetic file's records at their places in real frames; a preset
 shows the layers it names and no other; a layer off costs no draw; a click where two layers overlap
@@ -9823,7 +9871,8 @@ unchanged because it makes triangles of the curved shapes the query meets exactl
 owner's to rule on.
 
 **Depends on.** Nothing for the primitives; [R70b](#r70b-the-gta-v-world-index) for the bounds near
-a position.
+a position. The geometry stays in the core of [R71](#r71-one-world-for-every-title), where the query
+is a capability a title has.
 
 **Done when.** Each primitive of a bound is hit where arithmetic says, on bounds built by hand; the
 ground under a point beside a wall is the floor and not the wall's top, on bounds built by hand;
@@ -9881,8 +9930,9 @@ boxes, History, the rule for a source of the other edition, the install measure;
 deletes, applied over an install through the index, which no install suite does; and a deletion's
 refusal where the index holds a map file it could not read, whose parent is unknown.
 
-**Depends on.** Nothing in R70; it does the part of
-[R69h](#r69h-one-undo-for-the-tab-on-screen) a Map tab needs below the screen.
+**Depends on.** Nothing in R70; it does the part of [R69h](#r69h-one-undo-for-the-tab-on-screen) a
+Map tab needs below the screen. Its envelope, session order and undo become the core's in
+[R71i](#r71i-one-edit-stack-for-every-title), and the vocabulary stays GTA V's store.
 
 **Done when.** Every operation followed by its inverse leaves the sources byte for byte, and a test
 fails when an operation has no inverse; a list applied by the CLI and by the screen gives the same
@@ -9912,7 +9962,8 @@ tool's hints; an object's right-click menu and double click; and the safe fix of
 
 **Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn), [R70g](#r70g-collision-as-a-query)
 and [R70h](#r70h-one-vocabulary-of-world-edits); it draws in [R69g](#r69g-one-details-panel)'s
-Details and [R69h](#r69h-one-undo-for-the-tab-on-screen)'s Undo.
+Details and [R69h](#r69h-one-undo-for-the-tab-on-screen)'s Undo. Its pick, outline and manipulator
+are built once for every title in [R71j](#r71j-the-world-tools-built-once).
 
 **Done when.** `the_maps_screen_on_screen` extended to a drag in the world on a model, as one step
 of Undo; a pick through a hole in a fence takes what is behind it, and a wall stops it; a rectangle
@@ -9945,7 +9996,7 @@ by surface is built. The ruling of 2026-09-22 keeps that XML out
 ([R37](#r37-metadata-and-xml-at-parity)).
 
 **Depends on.** [R70i](#r70i-selecting-and-moving-in-the-world); rulings 2 and 5 for the parts that
-wait.
+wait. Its screen is built on the world tools of [R71j](#r71j-the-world-tools-built-once).
 
 **Done when.** The Library lists a linked project's props and a synthetic install's by derived
 category; a ghost lands on the surface under the pointer, on bounds built by hand; a prop dragged
@@ -9985,7 +10036,8 @@ screen's Delete through the plan; the game's maps a deletion reaches come in by
 ([or-maps](../reference/Crate_Reference.md#domain-crates)).
 
 **Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits) and
-[R70i](#r70i-selecting-and-moving-in-the-world).
+[R70i](#r70i-selecting-and-moving-in-the-world). Its screen is built on the world tools of
+[R71j](#r71j-the-world-tools-built-once), its operation registered through GTA V's slot.
 
 **Done when.** Over an install, deleting any object with its chain leaves every link and count
 valid, as `executing_a_plan_keeps_every_link` holds for a map; the preview names every file the step
@@ -10015,7 +10067,8 @@ awaits the owner. Left: the tool, its screen and the proposal inside a deletion 
 
 **Depends on.** [R70f](#r70f-layers-of-what-the-game-hides),
 [R70i](#r70i-selecting-and-moving-in-the-world), [R70k](#r70k-removing-what-the-game-placed) and
-[R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources).
+[R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources). Its screen is built on the world
+tools of [R71j](#r71j-the-world-tools-built-once), its operations registered through GTA V's slot.
 
 **Done when.** An edited bound passes the validation that refuses what the game would misread, and
 reads back with the polygons expected; a polygon moved takes the corners it shares; the three
@@ -10048,7 +10101,9 @@ their fixed point with 0 problems; of the Enhanced install, 556 interiors in 2,8
 439 saved, with 0 problems (at `8853987c8` with this change). Nothing after the data part is built.
 
 **Depends on.** Nothing for the data part; [R70f](#r70f-layers-of-what-the-game-hides) and
-[R70i](#r70i-selecting-and-moving-in-the-world) for the rest; ruling 2 for the builder.
+[R70i](#r70i-selecting-and-moving-in-the-world) for the rest; ruling 2 for the builder. Its screens
+are built on the world tools of [R71j](#r71j-the-world-tools-built-once), its operations registered
+through GTA V's slot.
 
 **Done when.** The declared members are the ones the install states, held by the install suite;
 every interior of an install reads typed and saves to its fixed point; each health rule fires on an
@@ -10084,7 +10139,8 @@ the other entities alone; a verb that writes a door form or reads a person's pat
 name patterns, the cuts of the swept box and the least turn, which are judgements to measure.
 
 **Depends on.** [R70g](#r70g-collision-as-a-query) and
-[R70i](#r70i-selecting-and-moving-in-the-world).
+[R70i](#r70i-selecting-and-moving-in-the-world). Its screen is built on the world tools of
+[R71j](#r71j-the-world-tools-built-once).
 
 **Done when.** Over an install the search counts the doors found by their extension, those found by
 name and the models with no name, in the slow tier; two leaves that face each other pair and two
@@ -10113,7 +10169,8 @@ members an install states for them is unmeasured.
 
 **Depends on.** Nothing for the data part; [R70f](#r70f-layers-of-what-the-game-hides),
 [R70i](#r70i-selecting-and-moving-in-the-world), [R70k](#r70k-removing-what-the-game-placed) and
-[R70l](#r70l-editing-collision) for the rest.
+[R70l](#r70l-editing-collision) for the rest. Its screens are built on the world tools of
+[R71j](#r71j-the-world-tools-built-once), its operations registered through GTA V's slot.
 
 **Done when.** The declared members are the ones the install states, held by the install suite;
 every record of an install reads typed and saves to its fixed point; a record placed, moved and
@@ -10152,7 +10209,9 @@ refusal for a node placed outside the cell of its region, which no rule compares
 
 **Depends on.** [R70f](#r70f-layers-of-what-the-game-hides),
 [R70i](#r70i-selecting-and-moving-in-the-world) and
-[R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources).
+[R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources). Its screens are built on the
+world tools of [R71j](#r71j-the-world-tools-built-once), its operations registered through GTA V's
+slot.
 
 **Done when.** An edited region and every region that names one of its nodes read back with every
 link resolving; a deleted node leaves no link to it in any region; a node another region names is
@@ -10316,7 +10375,8 @@ collision query, labelled on screen as a check of the path and not as the game's
 dresses one, and a `.cut` opens as metadata ([R35](#r35-the-remaining-formats)).
 
 **Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn) and
-[R70g](#r70g-collision-as-a-query); ruling 2 for the walk.
+[R70g](#r70g-collision-as-a-query); ruling 2 for the walk. What it draws in the world is drawn in
+the session of [R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability).
 
 **Done when.** The browser lists the peds of a synthetic install, and the copied lines name the clip
 shown; a cutscene's cuts fall at the times its file states; and a point lists what its type and
@@ -10377,7 +10437,8 @@ default, which the entry of 2026-10-03 left to the owner
 Left: a mapper's settings page, a panel title's hover, the map rules' catalog sentences,
 the tour, the guide's chapter and the template.
 
-**Depends on.** [R70i](#r70i-selecting-and-moving-in-the-world).
+**Depends on.** [R70i](#r70i-selecting-and-moving-in-the-world). The settings of a world follow the
+capabilities of [R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability).
 
 **Done when.** No preset binds one key to two commands of one place; every step of the tour points
 at a control that is drawn; each setting of the page changes what it names in a frame drawn with no
@@ -10485,7 +10546,9 @@ is not listed. Left: the panel, the outline, the operation that puts an object b
 a map of an install compared.
 
 **Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits) and
-[R70i](#r70i-selecting-and-moving-in-the-world).
+[R70i](#r70i-selecting-and-moving-in-the-world). The comparison's skeleton becomes the core's in
+[R71i](#r71i-one-edit-stack-for-every-title), and its panel is built once on
+[R71j](#r71j-the-world-tools-built-once).
 
 **Done when.** A source whose map moves one entity, deletes one and adds one compares to exactly
 those three, and two twins swapped compare as undecided; `openrage-cli maps changes` prints the
@@ -10511,7 +10574,9 @@ answers which maps place a model, and nothing in the tree interprets the install
 and variations.
 
 **Depends on.** [R70e](#r70e-find-anything-and-go-there) and
-[R70j](#r70j-a-library-of-props-and-what-comes-in); ruling 2 for the thumbnails.
+[R70j](#r70j-a-library-of-props-and-what-comes-in); ruling 2 for the thumbnails. Its browser is
+built on the world session of
+[R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability).
 
 **Done when.** A filter by class lists the vehicles a synthetic install's data puts in that class
 and no other; a favourite and the models opened last are there after a restart; the placements of a
@@ -10519,6 +10584,313 @@ model are listed nearest first; a saved picture has the size asked and is transp
 is drawn; a synthetic install's vehicle draws in each combination its data lists, the copied lines
 name the colours shown, and its sheet states what that data states. Once ruling 2 is answered yes,
 the grid draws a thumbnail for each model listed; a no closes that part in one line.
+
+### R71 One world for every title
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+A programme that rebuilds the world viewer and the world editor as one title-neutral core,
+`or-world`, with one adapter crate for each of GTA V, GTA VI and Red Dead Redemption 2, so that
+nothing is written twice and each game states only where it differs. The owner decided the shape,
+who lifts the GTA VI viewer out of the app, and how a world is drawn, on 2026-11-26 ([the
+shape](Project_Context.md#the-world-viewer-and-editor-become-one-core-and-an-adapter-crate-for-each-game-2026-11-26),
+[the
+lift](Project_Context.md#this-programme-lifts-the-gta-vi-viewer-out-of-the-app-and-the-other-gta-vi-sessions-pause-2026-11-26),
+[the
+drawing](Project_Context.md#each-game-draws-its-world-with-its-own-shader-programs-in-one-shared-frame-host-2026-11-26)).
+[Unified_World_Plan.md](Unified_World_Plan.md) owns what the tree holds, the shape, the contract,
+how a game differs, the drawing, the order, each part's brief, the risks and the rulings asked.
+
+A game differs by capabilities stated as data, by policies whose defaults it overrides, and by
+extensions in slots; shared code holds no test of which game it serves, and architecture tests with
+ledgers fail when the core, the frame host or the app's world modules name one. A world is drawn by
+one host in `or-renderer`, in which a game's render profile runs its own programs and what cannot
+be translated falls back to a plain pass, named with its reason.
+
+[R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title) stands on nothing.
+[R71b](#r71b-the-gta-vi-world-behind-the-contract), the GTA VI world, and
+[R71d](#r71d-the-gta-v-world-behind-the-contract-and-one-kept-file), the GTA V world, follow it and
+share no file; [R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability) makes the app
+one world; [R71e](#r71e-the-gta-v-world-drawn-in-the-fallback-pass) draws GTA V in the fallback, and
+[R71f](#r71f-the-render-profile-and-the-programs-of-gta-v-legacy),
+[R71g](#r71g-the-programs-of-gta-v-enhanced) and [R71h](#r71h-the-programs-of-gta-vi-over-a-world)
+run each game's own programs; [R71i](#r71i-one-edit-stack-for-every-title) is the one edit stack and
+[R71j](#r71j-the-world-tools-built-once) the tools the screen rows of
+[R70](#r70-the-gta-v-world-editor) are built on; [R71k](#r71k-red-dead-redemption-2) is RDR2, and
+[R71l](#r71l-leftovers-and-the-ledger-of-what-was-deleted) ends with every ledger empty. A part's
+Done when is its check, and its brief says what to read, what it moves from where, what it deletes
+and what it must not touch. No part is started.
+
+### R71a The world contract the conformance kit and the fake title
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+**What.** In `or-world`: the contract a title answers and the neutral read model; the stream policy,
+with the forest's flag and the two stream-in rules as fields with defaults; one driver around the
+forest; one kept-file mechanism; the conformance kit, a macro in the manner of `declared_gates!`
+that writes the same tests for every adapter; a fake title, so that the core is proven with no
+game; and architecture tests with ledgers
+([brief](Unified_World_Plan.md#the-contract-the-kit-and-the-fake-title-r71a)).
+
+**Where it stands.** Not started. At `9fdf0fee` the forest of
+`crates/domain/or-world/src/streaming.rs` is what both titles' drivers share, its one switch
+between them is `with_exact_children`, GTA V's stream-in rule is `streams_in` in
+`crates/domain/or-depends/src/world_forest.rs`, and the rest of the crate is GTA V's model.
+
+**Depends on.** Nothing.
+
+**Done when.** The fake title streams and selects through the kit, a parent drawing until its
+children are loaded; the kit fails by a rule's name on a fake built to break that rule; a line that
+names a game in a core module outside the ledger fails the architecture test; and the GTA V forest's
+suites and the tests of `src/state/gta6_worldview/stream_tests.rs` pass with no body changed.
+
+### R71b The GTA VI world behind the contract
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+**What.** The GTA VI viewer lifted out of the app into an adapter crate of the domain layer, in four
+parts: a World shots script and its reference; the files that name neither the renderer nor the app,
+moved unchanged; the selecting half, with the function that selects a frame split into the mechanics
+every title shares and GTA VI's rules; and the model, texture and look readers, whose output types
+are rewritten on the core's
+([brief](Unified_World_Plan.md#the-gta-vi-world-behind-the-contract-r71b)).
+
+**Where it stands.** Not started. At `9fdf0fee` `src/state/gta6_worldview/` is 55 files and 189
+tests, none of which reads an install; 20 of its 39 source files name neither the renderer, the
+graphics library nor the app, and the other 19 cannot enter a domain crate as they are. No World
+shots script is in the tree, and whether two runs of one agree on this machine is unchecked.
+
+**Depends on.** [R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title). Until
+[R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability) merges no other lane edits
+the viewer, its bridge or its panels, by the owner's word of 2026-11-26.
+
+**Done when.** The shots and the dumps of the script match after each part; none of the 189 tests
+is deleted, those of the moved files change in their imports alone, and each restated test is
+listed; one caller of the forest's `select` is left for GTA VI outside tests; the kit's first tier
+passes for GTA VI; and whether `or-io` can write a scannable archive for the second tier is
+measured and recorded.
+
+### R71c One world session one frame host and panels by capability
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+**What.** The app made generic: one world session in `src/state/` keyed by game and install, with no
+static; the frame host's mechanics (pages, the texture pool, layout, occlusion, budgets) moved from
+the bridge into `or-renderer` and typed on the core's model; a selection whose instances carry
+their node; panels whose sections follow the capabilities and the slots; preferences that name no
+game; and the fake title drawn by the self-check
+([brief](Unified_World_Plan.md#one-session-one-host-panels-by-capability-r71c)).
+
+**Where it stands.** Not started. At `9fdf0fee` the viewer is one static that 23 call sites reach,
+the viewer's folder holds 15 statics of which three are single-valued for the process, the host is
+the world files of `src/render/viewport/`, typed on GTA VI, and the World panel and the status bar
+name GTA VI.
+
+**Depends on.** [R71b](#r71b-the-gta-vi-world-behind-the-contract).
+
+**Done when.** The World shots and dumps of [R71b](#r71b-the-gta-vi-world-behind-the-contract)
+match; `just self-check` with its viewport draws the fake title's world and fails when it paints
+nothing; two sessions in one process share no exposure and no night map, in a test that fails on a
+static; the architecture test's ledgers for the bridge and the panels are empty; and the French
+screens of the world hold at the smallest window.
+
+### R71d The GTA V world behind the contract and one kept file
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+**What.** The GTA V adapter crate: the GTA V modules of `or-world` and the world half of
+`or-depends`, moved; its title over the index and the forest [R70](#r70-the-gta-v-world-editor)
+built; the core's kept file in place of GTA V's, keeping the refresh that reads only what changed;
+the place parser, the manipulator, the box scene and the pose moved to the core; a registry crate
+that lists each title once, as `or-content` lists the kinds of content; and
+`openrage-cli world index`, `at`, `find` and `select` for any registered title
+([brief](Unified_World_Plan.md#the-gta-v-world-behind-the-contract-and-one-kept-file-r71d)).
+
+**Where it stands.** Not started. At `9fdf0fee`, 40 local branches of R70 hold commits `main`
+lacks and edit the three crates the move touches.
+
+**Depends on.** [R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title), and the
+finished branches of R70 landed: the move is one commit on `main` between waves.
+
+**Done when.** The kit passes for GTA V in both tiers; the install suites of R70b, R70c, R70e and
+R70g pass with no body changed, and a second start opens no archive that did not change; the world
+verbs answer over the fake title and, in the slow tier, over a GTA VI install, where `ground`
+refuses by name; one world kept-file format is left in the tree; and no adapter's manifest lists
+another.
+
+### R71e The GTA V world drawn in the fallback pass
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+**What.** GTA V's model reader (a drawable, an entry of a drawable dictionary and a fragment, for
+both targets, each by its file's own RSC7 version), its textures as the blocks a file stores, a
+material's fallback surface by its sampler names, and the World room for a GTA V install, read only
+([brief](Unified_World_Plan.md#the-gta-v-world-drawn-in-the-fallback-pass-r71e)).
+
+**Where it stands.** Not started. Nothing draws the GTA V world: its forest selects with no screen,
+and the game's passes draw one drawable. The cost of a frame over the city and the memory of its
+textures are unmeasured.
+
+**Depends on.** [R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability) and
+[R71d](#r71d-the-gta-v-world-behind-the-contract-and-one-kept-file).
+
+**Done when.** A synthetic world of parent and child levels draws the level the rules select at
+each distance, in real frames with no window; over each install, at fixed cameras, the instances
+drawn are those `openrage-cli world select` lists there, and each model not drawn has a named
+reason; a frame over the city is measured on the owner's machine and its budget recorded; and the
+contract is frozen, a later change leaving every adapter's kit passing.
+
+### R71f The render profile and the programs of GTA V Legacy
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+**What.** The render profile, in three parts: the one frame function restated as named targets and
+a list of passes of kinds the host knows, with the pack keyed by game and install and every cache's
+extensions in the provenance lint; an instance of a game's program, by whichever of a draw for each
+instance and a lowering that reads the transform the measure favours; and the GTA V world drawn
+through Legacy's programs, fed its day from the install's timecycle
+([brief](Unified_World_Plan.md#the-render-profile-and-the-programs-of-gta-v-legacy-r71f)).
+
+**Where it stands.** Not started. The frame is `render_deferred` in
+`crates/runtime/or-renderer/src/viewport/game_frame.rs`, the pack is one folder for the machine, a
+pass of its manifest carries no render state, and the game's instanced variants bind a stage wgpu
+lacks. How many pass kinds and named passes the frame needs is unmeasured.
+
+**Depends on.** [R71e](#r71e-the-gta-v-world-drawn-in-the-fallback-pass).
+
+**Done when.** The frame drawn from the list equals the frame the function drew, for a drawable and
+for the GTA VI world, before the function is deleted; the count of kinds and named passes is
+recorded; a drawable in Shaded and the same drawable alone in the world agree within a recorded
+tolerance; with no pack the world draws in the fallback and says so, and the panel lists each
+material that fell back with its reason; and a translated module staged in a commit fails the hook.
+
+### R71g The programs of GTA V Enhanced
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+**What.** A bake that drives the Rust front end of `crates/tools/or-shader-front/src/dxil/` over
+Enhanced's two containers into a pack of the same manifest, and Enhanced's profile over it
+([brief](Unified_World_Plan.md#the-programs-of-gta-v-enhanced-r71g)).
+
+**Where it stands.** Not started, and nothing is measured: no bake has translated an Enhanced
+program, the bake reads Legacy's effect files alone, and an Enhanced install draws in the fallback
+until this row closes.
+
+**Depends on.** [R71f](#r71f-the-render-profile-and-the-programs-of-gta-v-legacy), and the Enhanced
+inventory [R58f](#r58f-shader-baking-off-windows) leaves open.
+
+**Done when.** The inventory is recorded; the share of Enhanced's programs that lower, and that
+each backend's writer takes, is measured and recorded with its revision; and over an Enhanced
+install the world draws through its own programs, each material that does not listed with its
+reason.
+
+### R71h The programs of GTA VI over a world
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+**What.** First three measures: the share of the install's programs that translate and bind,
+whether a Metal device builds a pass, and why the build's lighting programs are not run. Then GTA
+VI's profile: its surface pass over the host's pages, a transform for each instance, the bindings
+only the game fills, and its lighting by its own programs where the measures allow
+([brief](Unified_World_Plan.md#the-programs-of-gta-vi-over-a-world-r71h)).
+
+**Where it stands.** Not started. The GTA VI world is drawn by OpenRage's own shader in families and
+lit by GTA V Legacy's passes; GTA VI's programs run for one model's surface pass, on Vulkan and
+Direct3D, and no Metal device has built one
+([GTA_VI_Xbox_Build.md](../features/GTA_VI_Xbox_Build.md)). That picture is the fallback and gains
+no family.
+
+**Depends on.** [R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability);
+[R71f](#r71f-the-render-profile-and-the-programs-of-gta-v-legacy) for the pass kinds.
+
+**Done when.** Each measure is recorded with its command and revision; a model alone in Shaded and
+alone in the world agree within a recorded tolerance; a map's materials draw through their own
+programs, each that falls back listed with its reason; and the borrowed GTA V pack is gone from the
+architecture test's ledger, or the owner has said it stays.
+
+### R71i One edit stack for every title
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+**What.** In the core, the envelope of an operation (its name, address, guard and inverse), the
+session's order, undo and redo, and the skeleton of comparison, put-back and merge over an entity's
+identity. GTA V's store stays `or-maps`, bound to the project; GTA VI's store is written in its
+adapter, over the sections of a body, in place of the edits the app makes as steps of a document;
+the Map screen keeps one history ([brief](Unified_World_Plan.md#one-edit-stack-r71i)).
+
+**Where it stands.** Not started. At `9fdf0fee` the vocabulary of
+`crates/domain/or-maps/src/operation.rs` addresses a project's source and carries GTA V's records,
+and GTA VI's entity edits are three files of `src/state/` whose tests build an `AppState`, with no
+named operation, guard or base.
+
+**Depends on.** [R71b](#r71b-the-gta-vi-world-behind-the-contract) and
+[R71d](#r71d-the-gta-v-world-behind-the-contract-and-one-kept-file).
+
+**Done when.** The kit's edit tests pass for both titles and the fake: every operation followed by
+its inverse leaves the store byte for byte, a stale guard refuses, and an operation with no inverse
+fails a test; the tests of `or-maps` pass with no body changed; GTA VI's edit tests are restated
+with no `AppState` and none is deleted; and the Map screen has one history. GTA VI's navmesh and
+collision edits stay document steps, and its capability says it has no base to compare with.
+
+### R71j The world tools built once
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+**What.** The surface the screen rows of [R70](#r70-the-gta-v-world-editor) stand on, for every
+title: the pick by an id pass, the selection outline and the manipulator in the overlay pass after
+the game's frame, the registries of layers and of panel sections, a command's capability in the
+command table, and placement rows as a capability, GTA VI's in place of the Map screen's world store
+([brief](Unified_World_Plan.md#the-world-tools-built-once-r71j)).
+
+**Where it stands.** Not started. Nothing picks in a world; the overlay pass after the frame exists
+and draws lines and plain meshes; the Map screen's GTA VI store is a second index with its own kept
+file. Whether an overlay drawn after GTA VI's temporal pass carries the frame's jitter is unchecked.
+
+**Depends on.** [R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability),
+[R71e](#r71e-the-gta-v-world-drawn-in-the-fallback-pass) and
+[R71i](#r71i-one-edit-stack-for-every-title).
+
+**Done when.** On the fake title a click returns the node under the pixel, a drag moves it as one
+operation and Undo takes it back, in real frames with no window; a tool whose capability a title
+lacks is greyed and says why; the plan overlay of a GTA VI archive draws the same shots as before;
+and `src/state/gta6_world.rs` and `src/state/gta6_world_fill.rs` are gone.
+
+### R71k Red Dead Redemption 2
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+**What.** In four parts: the measures (what its map, type, model and bound files are, how its
+archives are ordered, what its shader containers hold); a mount in `or-title`; its formats in
+`or-io`; and the adapter, view only, in the fallback pass
+([brief](Unified_World_Plan.md#red-dead-redemption-2-r71k)).
+
+**Where it stands.** Not started, and no figure is given: the archives open, one format is declared,
+there is no mount, a tagged archive lists its files by hash, and neither its world files nor its
+shader containers are measured ([R56](#r56-rdr2-the-second-container)).
+
+**Depends on.** [R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title) for the
+measures; R56 for the formats.
+
+**Done when.** Each measure is recorded with its command and revision; the adapter passes the kit's
+first tier; an install draws, each model not drawn named; and a need the contract could not state
+is a change to the contract that leaves every adapter's kit passing.
+
+### R71l Leftovers and the ledger of what was deleted
+
+[↑ checklist](#phase-12--one-world-for-every-title)
+
+**What.** What the other parts leave: the two GTA V deletions with renumbering settled, a title's
+conversions in the renderer moved into its feed where a profile now serves them, and every document
+that states the old shape corrected ([brief](Unified_World_Plan.md#leftovers-and-the-ledger-r71l)).
+
+**Where it stands.** Not started.
+
+**Depends on.** Every other part of [R71](#r71-one-world-for-every-title).
+
+**Done when.** Every ledger of the architecture tests is empty and an entry added to one fails; and
+the lines each duplicate of [what is written twice](Unified_World_Plan.md#what-is-written-twice)
+lost are published as a table measured with `git diff --shortstat` between `9fdf0fee` and the
+closing revision.
 
 ---
 

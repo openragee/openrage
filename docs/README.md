@@ -16,6 +16,7 @@ Records, plans and specifications: what is decided, what comes next, and the des
 - [World_Editor_Plan.md](direction/World_Editor_Plan.md): what OpenRage takes from NodeRunner Studio for GTA V, what that rests on, how it fits the tree, and the order and the briefs of the rows that build it.
 - [World_Editor_Parity.md](direction/World_Editor_Parity.md): what NodeRunner Studio does for a GTA V map, capability by capability, and what OpenRage has, takes, adapts, defers, holds for a ruling or leaves out.
 - [World_Editor_UX_Design.md](direction/World_Editor_UX_Design.md): what a mapper would meet in the GTA V world editor, flow by flow, each part tagged with the row that builds it.
+- [Unified_World_Plan.md](direction/Unified_World_Plan.md): how the world viewer and editor become one title-neutral core with an adapter crate for each game, the contract between them, how a world is drawn, and the order and the briefs of the rows that build it.
 - [Source_Format_Design.md](direction/Source_Format_Design.md): how a game file becomes an editable source and compiles back.
 - [Clothing_Tool_Design.md](direction/Clothing_Tool_Design.md): where a clothing and ped-component tool lives.
 - [Wardrobe_Parity.md](direction/Wardrobe_Parity.md): what each clothing tool does that the Wardrobe does, will do or leaves out, and what a project costs a clothing creator.

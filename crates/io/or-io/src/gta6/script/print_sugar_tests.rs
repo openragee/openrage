@@ -2,7 +2,7 @@ use super::*;
 use crate::gta6::script::class::{Method, Role};
 use crate::gta6::script::ir::{FunctionKey, Head, StoreKind, VarInfo, VmType, Width};
 use crate::gta6::script::print::tests::{
-    address, assign, constant_of, function_of, head, high, int, intrinsic, kinds, load, local,
+    address, assign, at, constant_of, function_of, head, high, int, intrinsic, kinds, load, local,
     native, not, param, simple, written_in,
 };
 use crate::gta6::script::print::{bound_in_place, method, method_in, Lambdas};
@@ -1113,4 +1113,76 @@ fn a_lambda_keeps_its_name_where_its_body_in_place_would_read_another_object() {
     );
     // No body is written in place for a function the map does not hold.
     assert!(bound_in_place(&binder(), &Lambdas::new(), &cx).is_empty());
+}
+
+#[test]
+fn a_constant_stored_whole_to_a_field_of_a_byte_or_a_truth_is_that_kinds_literal() {
+    let owner = TypeKey(0xAB);
+    let mut project = Project::default();
+    let field = |offset: u32, bytes: u32, kind: Kind| FieldFacts {
+        offset,
+        bytes,
+        kind,
+    };
+    let fields = vec![
+        field(0x10, 1, Kind::U8),
+        field(0x11, 1, Kind::Bool),
+        field(0x12, 2, Kind::I16),
+        field(0x14, 4, Kind::Unknown),
+    ];
+    project.fields.insert(owner, fields);
+    let byte = |offset: u32, value: i32| {
+        let stored = store(StoreKind::U8, param(0), offset, int(value));
+        group(Group::Field { owner }, vec![stored])
+    };
+    let body = vec![
+        byte(0x10, 255),
+        byte(0x11, 1),
+        byte(0x11, 0),
+        group(
+            Group::Field { owner },
+            vec![store(StoreKind::U16, param(0), 0x12, int(-2))],
+        ),
+        // A field of no proved kind, and a store narrower than its field, keep the width said.
+        byte(0x14, 0),
+    ];
+    let names = Names::default();
+    let cx = Context::new(&names, &project, Options::default());
+    let text = written_in(&function_of(head(), body), &cx);
+    for line in [
+        "p0.f_10 = 255;",
+        "p0.f_11 = true;",
+        "p0.f_11 = false;",
+        "p0.f_12 = -2;",
+        "p0.f_14 = (byte)0;",
+    ] {
+        assert!(text.contains(line), "no `{line}` in:\n{text}");
+    }
+}
+
+#[test]
+fn a_field_the_project_proves_a_bool_is_read_and_tested_as_one() {
+    let owner = TypeKey(0xAB);
+    let mut project = Project::default();
+    let truth = FieldFacts {
+        offset: 0x10,
+        bytes: 1,
+        kind: Kind::Bool,
+    };
+    project.fields.insert(owner, vec![truth]);
+    let read = || Expr::sugar(ExprSugar::Field { owner }, load(Scalar::U8, param(0), 0x10));
+    let test = Expr::binary(BinOp::Ne, read(), int(0));
+    let body = vec![tree::Stmt::If {
+        cond: test,
+        then: vec![used(vec![read()])],
+        els: Vec::new(),
+    }];
+    let names = Names::default();
+    let cx = Context::new(&names, &project, Options::default());
+    let text = written_in(&function_of(head(), body.clone()), &cx);
+    assert!(text.contains("if (p0.f_10)"), "{text}");
+    assert!(text.contains("USE(p0.f_10)"), "{text}");
+    // A byte of no proved kind is read as the byte it is.
+    let text = written_in(&function_of(head(), body), &at(&names, Level::Source));
+    assert!(text.contains("(byte)p0.f_10 != 0"), "{text}");
 }

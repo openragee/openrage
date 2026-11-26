@@ -12,8 +12,8 @@ use crate::gta6::script::tree::{self, Group};
 use crate::gta6::script::{Context, Pass};
 
 use super::{
-    assigned_receiver, bits, bound_lambda, falls, is_zero, receiver, takes, underneath, unread,
-    wrap, Labels, Work, Writer, POSTFIX,
+    assigned_receiver, bits, bound_lambda, falls, is_zero, receiver, spell, takes, underneath,
+    unread, wrap, Labels, Work, Writer, POSTFIX,
 };
 
 /// The most elements a collection is written in one statement with.
@@ -319,7 +319,10 @@ impl Writer<'_> {
         }
         // What follows the place is what the field takes.
         let text = self.simple(store);
-        let value = assigned(&text, &self.var(object), *offset)?;
+        let value = match self.constant_for(owner, store) {
+            Some(value) => value,
+            None => assigned(&text, &self.var(object), *offset)?.to_owned(),
+        };
         Some(format!("{} = {value}", self.field_name(owner, *offset)))
     }
 
@@ -503,9 +506,41 @@ impl Writer<'_> {
             _ => return None,
         };
         let text = self.simple(store);
-        let value = assigned(&text, &base, *offset)?;
+        let value = match self.constant_for(Some(owner), store) {
+            Some(value) => value,
+            None => assigned(&text, &base, *offset)?.to_owned(),
+        };
         let name = self.field_name(Some(owner), *offset);
         Some((format!("{base}.{name} = {value}"), 1))
+    }
+
+    /// A constant a store writes to a field the project gives a kind as wide as the store, as that kind's literal: `0` to a `byte`, `false` to a `bool`.
+    // ⚠ Only a store as wide as the field: a narrower one leaves the field's other bytes.
+    fn constant_for(&self, owner: Option<TypeKey>, store: &Stmt) -> Option<String> {
+        let Stmt::Store {
+            kind,
+            offset,
+            value,
+            ..
+        } = store
+        else {
+            return None;
+        };
+        let field = self.project.field(owner?, *offset)?;
+        let bytes = kind.bytes();
+        if field.bytes != bytes || bytes > 2 {
+            return None;
+        }
+        let c = spell::folded(bits(value))?;
+        let low = c.bits & ((1u64 << (bytes * 8)) - 1);
+        match (&field.kind, bytes) {
+            (Kind::Bool, 1) if low <= 1 => Some((low == 1).to_string()),
+            (Kind::U8, 1) => Some(low.to_string()),
+            (Kind::I8, 1) => Some((low as u8 as i8).to_string()),
+            (Kind::U16, 2) => Some(low.to_string()),
+            (Kind::I16, 2) => Some((low as u16 as i16).to_string()),
+            _ => None,
+        }
     }
 
     /// `F(out T x)`: the call that fills the variables the statements before it only made zero.

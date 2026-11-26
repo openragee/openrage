@@ -77,10 +77,11 @@ pub enum Pass {
     RefOut,
     Nullable,
     Tuples,
+    Boxing,
 }
 
 impl Pass {
-    pub const ALL: [Pass; 43] = [
+    pub const ALL: [Pass; 44] = [
         Pass::Values,
         Pass::Escape,
         Pass::Forward,
@@ -124,6 +125,7 @@ impl Pass {
         Pass::RefOut,
         Pass::Nullable,
         Pass::Tuples,
+        Pass::Boxing,
     ];
 
     /// The four passes `decompile` has always run.
@@ -175,6 +177,7 @@ impl Pass {
             Pass::RefOut => "ref-out",
             Pass::Nullable => "nullable",
             Pass::Tuples => "tuples",
+            Pass::Boxing => "boxing",
         }
     }
 

@@ -39,6 +39,8 @@ use super::listing::{Import, Listing, Target, Wrapper};
 use super::names::{declared_natives, Names};
 use super::passes::closures;
 use super::passes::types::yielded_shape;
+use super::project::signatures::native_key;
+use super::project::TypeFacts;
 use super::tree;
 use super::{Context, Level, Options, Pass, Project, Stats};
 
@@ -48,12 +50,14 @@ const UNARY: u8 = 12;
 const POSTFIX: u8 = 13;
 
 /// What every header of true C# says of the words no C# has.
-const WORDS: [&str; 5] = [
+const WORDS: [&str; 7] = [
     "Cell is one 64-bit cell of no proved kind, Cells2 two of them",
+    "Handle is a value of two cells the code only takes from the engine, compares and hands back to it",
     "f_10 is the field at byte 0x10",
     "as_f32(x) is the bits of x read as a float",
     "p->f_10++ steps the int at f_10",
     "a local declared without a value starts as zero",
+    "0x3F800000 /* 1.0f */ is a number of no proved kind whose bits are those of the float beside it",
 ];
 
 /// What a header says of a constant written without the cast C# would ask for, where `signs` is on.
@@ -100,6 +104,16 @@ fn words(options: &Options) -> String {
 
 /// The runtime's method that makes a `Type` of a type's token, by the path a user's list of the runtime's methods gives it: what C# writes `typeof` for.
 const TYPE_OF: &str = "System.Type.GetTypeFromHandle";
+
+/// The runtime's comparison of two objects, which compares two boxed values by value.
+const OBJECT_EQUALS: &str = "System.Object.Equals";
+
+/// The runtime's conversion of an object to an `int`, which throws where the value is past an `int`'s range.
+const CONVERT_TO_INT32: &str = "System.Convert.ToInt32";
+
+/// The flags of a value type that say it is a struct, and that the compiler made it: neither is an enum.
+const STRUCT: u32 = 0x04;
+const GENERATED: u32 = 0x10_0000;
 
 /// What a header says of text read from a lifted listing.
 pub(super) const LISTING: &str =
@@ -915,7 +929,7 @@ impl<'a> Writer<'a> {
 
     /// Writes a body `indent` levels in, under the variables it declares at its top.
     fn block(&mut self, body: &[tree::Stmt], indent: usize) {
-        let placement = placement(body, self.old);
+        let placement = placement(body, self.old, self.sharp.then_some(self.head));
         self.sites = placement.sites;
         let mut hoisted: Vec<(String, Vec<String>)> = Vec::new();
         for var in &placement.hoisted {
@@ -1423,6 +1437,7 @@ impl<'a> Writer<'a> {
                 // as anything else is said here, as it is of any place.
                 let declared = self.project.field(owner, *offset);
                 let own = declared.is_some_and(|field| field.kind == ty.kind());
+                let own = own || self.truth_field(owner, e);
                 return match own {
                     true => (place, POSTFIX),
                     false => self.read_as(*ty, place, POSTFIX),
@@ -1594,9 +1609,14 @@ impl<'a> Writer<'a> {
     /// A simple statement without its semicolon, declaring its target where this is the place to.
     fn statement(&mut self, s: &Stmt) -> String {
         let text = self.simple(s);
-        match s {
-            Stmt::Assign { target, .. } if self.sites.contains(&std::ptr::from_ref(s)) => {
-                format!("{} {text}", self.declared_type(*target))
+        let declared = match s {
+            Stmt::Assign { target, .. } => Some(*target),
+            Stmt::ZeroBytes { .. } => whole_clear(s, self.head),
+            _ => None,
+        };
+        match declared {
+            Some(var) if self.sites.contains(&std::ptr::from_ref(s)) => {
+                format!("{} {text}", self.declared_type(var))
             }
             _ => text,
         }
@@ -1744,8 +1764,12 @@ impl<'a> Writer<'a> {
                 self.expr(addr, 0),
                 self.expr(value, 0)
             ),
+            // ⚠ In true C# only: the readable form is read back, where a clear is no assignment.
             Stmt::ZeroBytes { addr, bytes } => {
-                format!("zero_bytes({}, {bytes})", self.expr(addr, 0))
+                match whole_clear(stmt, self.head).filter(|_| self.sharp) {
+                    Some(var) => format!("{} = default", self.var(var)),
+                    None => format!("zero_bytes({}, {bytes})", self.expr(addr, 0)),
+                }
             }
             Stmt::StepI32 { addr, offset, down } if self.plain => {
                 let helper = if *down {
@@ -1945,13 +1969,45 @@ impl<'a> Writer<'a> {
             Expr::Const(c) => c.kind.clone(),
             // A type's own `==` yields a truth, whatever its call is listed to.
             Expr::Sugar { .. } if self.equated(e).is_some() => Kind::Bool,
+            Expr::Sugar {
+                kind: ExprSugar::Field { owner },
+                e: inner,
+            } if self.truth_field(*owner, inner) => Kind::Bool,
             Expr::Sugar { e: inner, .. } => self.kind_of(inner),
+            // A global that the project states, or every access of which agrees, holds a reference.
+            Expr::Var(Var::Global {
+                program,
+                offset,
+                statics,
+            }) if self.sharp => {
+                let info = self.project.programs.get(program);
+                let stated = info.and_then(|info| match statics {
+                    true => info.statics.get(offset),
+                    false => info.globals.get(offset),
+                });
+                let cell = self.project.cell(*program, *offset, *statics);
+                let seen = cell.filter(|cell| cell.bytes == 8).map(|cell| &cell.kind);
+                match stated.or(seen) {
+                    Some(kind) if reference(kind) => kind.clone(),
+                    _ => Kind::Unknown,
+                }
+            }
             Expr::Var(var) => (self.head.vars.get(var)).map_or(Kind::Unknown, |i| i.kind.clone()),
             Expr::Cast { to, .. } | Expr::Load { ty: to, .. } => to.kind(),
             Expr::Truth(_) | Expr::Unary { op: UnOp::Not, .. } => Kind::Bool,
             Expr::Binary { op, .. } if op.is_logical() => Kind::Bool,
             Expr::Binary { at, .. } => at.clone(),
             Expr::Vector3(_) => Kind::Vector,
+            Expr::Call { callee, args, .. } if self.boxed_equality(callee, args).is_some() => {
+                Kind::Bool
+            }
+            // A native every program only ever tests the result of for zero yields a truth to C#.
+            Expr::Call { callee, .. } if self.tested_native(callee) => Kind::Bool,
+            Expr::Call {
+                callee: Callee::Intrinsic { name, .. },
+                args,
+                ..
+            } if self.whole_equality(name, args).is_some() => Kind::Bool,
             Expr::Call {
                 callee,
                 args,
@@ -1974,6 +2030,20 @@ impl<'a> Writer<'a> {
 
     fn is_truth(&self, e: &Expr) -> bool {
         self.kind_of(e) == Kind::Bool
+    }
+
+    /// Whether `load` reads the one byte of a field of `owner` the project proves a `bool`, as the byte it is.
+    fn truth_field(&self, owner: TypeKey, load: &Expr) -> bool {
+        let Expr::Load {
+            ty: Scalar::U8,
+            offset,
+            ..
+        } = load
+        else {
+            return false;
+        };
+        let field = self.project.field(owner, *offset);
+        field.is_some_and(|field| field.kind == Kind::Bool && field.bytes == 1)
     }
 
     /// `e` as the condition of an `if` or a loop, in parentheses where it binds less tightly than `min`.
@@ -2451,6 +2521,13 @@ impl<'a> Writer<'a> {
             },
             _ => {}
         }
+        if let Some((l, r)) = self.boxed_equality(callee, args) {
+            let text = format!("{} == {}", self.expr(l, 8), self.expr(r, 8));
+            return (text, 7);
+        }
+        if let Some((to, value)) = self.boxed_conversion(callee, args) {
+            return (format!("({to}){}", self.expr(value, UNARY)), UNARY);
+        }
         let equality = match self.sharp {
             true => None,
             false => self.equality(callee, args),
@@ -2465,6 +2542,108 @@ impl<'a> Writer<'a> {
             format!("{name}({})", self.arguments(callee, args, 0)),
             POSTFIX,
         )
+    }
+
+    /// Whether `callee` is a native whose result every program only ever tests for zero.
+    fn tested_native(&self, callee: &Callee) -> bool {
+        let tested =
+            || native_key(callee).is_some_and(|key| self.project.native_truths.contains(&key));
+        self.sharp && self.options.on(Pass::Interproc) && tested()
+    }
+
+    /// The two variables a comparison of bytes compares whole: `bytes_equal_16(&a, &b)` of two variables of 16 bytes, which C# compares with `==`.
+    fn whole_equality(&self, name: &str, args: &[Expr]) -> Option<(Var, Var)> {
+        let bytes: u32 = name.strip_prefix("bytes_equal_")?.parse().ok()?;
+        let [Expr::AddrOf { var: l, cell: 0 }, Expr::AddrOf { var: r, cell: 0 }] = args else {
+            return None;
+        };
+        // Three floats fill twelve bytes of their two cells.
+        let whole = |var: &Var| {
+            let vector = (self.head.vars.get(var)).is_some_and(|info| info.kind == Kind::Vector);
+            let cells = flat_cells(&Expr::Var(*var), self.head).filter(|cells| *cells >= 2);
+            let held = cells.map(|cells| if vector { 12 } else { cells * 8 });
+            held == Some(bytes)
+        };
+        let on = self.sharp && self.options.on(Pass::Operators);
+        (on && whole(l) && whole(r)).then_some((*l, *r))
+    }
+
+    /// The value `e` boxes and the type it boxes it as, where `e` is a `box<T>` of one value.
+    fn boxed<'e>(&self, e: &'e Expr) -> Option<(&'e str, &'e Expr)> {
+        let Expr::Call {
+            callee: Callee::Intrinsic { name, .. },
+            args,
+            ..
+        } = bits(e)
+        else {
+            return None;
+        };
+        let ty = name.strip_prefix("box<")?.strip_suffix('>')?;
+        match args.as_slice() {
+            [value] => Some((ty, value)),
+            _ => None,
+        }
+    }
+
+    /// Whether a value of the type named `ty` is equal to another exactly where its bits are: a number of no fraction, a `bool`, a `char`, or an enum of a script.
+    // ⚠ Never a float: `Equals` holds of two NaNs, which `==` does not.
+    fn equal_by_bits(&self, ty: &str) -> bool {
+        let keyword = self.type_name(ty);
+        let plain = [
+            "bool", "byte", "sbyte", "short", "ushort", "int", "uint", "long", "ulong", "char",
+        ];
+        plain.contains(&keyword.as_str()) || self.enumeration(ty).is_some()
+    }
+
+    /// The facts of the enum of a script the type named `ty` is.
+    fn enumeration(&self, ty: &str) -> Option<&TypeFacts> {
+        let facts = self.project.types.get(&TypeKey::of_name(ty)?)?;
+        (facts.is_value() && facts.flags & (STRUCT | GENERATED) == 0).then_some(facts)
+    }
+
+    /// The two values `object.Equals(box<T>(a), box<T>(b))` holds equal: one type's two values, which C# compares with `==`.
+    fn boxed_equality<'e>(
+        &self,
+        callee: &Callee,
+        args: &'e [Expr],
+    ) -> Option<(&'e Expr, &'e Expr)> {
+        if !(self.sharp && self.options.on(Pass::Boxing)) {
+            return None;
+        }
+        let (Callee::Builtin { path, .. }, [l, r]) = (callee, args) else {
+            return None;
+        };
+        let ((a, l), (b, r)) = (self.boxed(l)?, self.boxed(r)?);
+        let same = path == OBJECT_EQUALS && a == b && self.equal_by_bits(a);
+        same.then_some((l, r))
+    }
+
+    /// `Convert.ToInt32(box<T>(x))` as the cast it is: the keyword of the type and the value, where no value of `T` is past an `int`'s range.
+    // ⚠ A value past it throws where a cast would not: only a type of fewer than four bytes, or
+    // an enum of four whose constants hold one below zero, which only a signed one can.
+    fn boxed_conversion<'e>(
+        &self,
+        callee: &Callee,
+        args: &'e [Expr],
+    ) -> Option<(&'static str, &'e Expr)> {
+        if !(self.sharp && self.options.on(Pass::Boxing)) {
+            return None;
+        }
+        let (Callee::Builtin { path, .. }, [boxed]) = (callee, args) else {
+            return None;
+        };
+        if path != CONVERT_TO_INT32 {
+            return None;
+        }
+        let (ty, value) = self.boxed(boxed)?;
+        let keyword = self.type_name(ty);
+        let small = ["byte", "sbyte", "short", "ushort", "int", "char"];
+        let fits = small.contains(&keyword.as_str())
+            || self.enumeration(ty).is_some_and(|facts| {
+                facts.byte_size <= 2
+                    || (facts.byte_size == 4 && facts.constants.iter().any(|c| *c < 0))
+            });
+        fits.then_some(("int", value))
     }
 
     /// The two values a type's own `==` or `!=` compares, and whether it is `==`.
@@ -2571,6 +2750,10 @@ impl<'a> Writer<'a> {
 
     /// An intrinsic C# has an operator for, as that operator; `None` for one that stays a call.
     fn intrinsic(&mut self, name: &str, args: &[Expr]) -> Option<(String, u8)> {
+        if let Some((l, r)) = self.whole_equality(name, args) {
+            let text = format!("{} == {}", self.var(l), self.var(r));
+            return Some((text, 7));
+        }
         match args {
             [target, passed @ ..] if name == "invoke_delegate" => {
                 let target = self.expr(target, POSTFIX);
@@ -3015,6 +3198,24 @@ fn flat_cells(e: &Expr, head: &Head) -> Option<u32> {
     }
 }
 
+/// Whether a value of `kind` is a reference: to an object, a string or an array.
+fn reference(kind: &Kind) -> bool {
+    matches!(kind, Kind::Object(_) | Kind::String | Kind::Array(_))
+}
+
+/// The variable a clear empties whole: `zero_bytes(&x, n)` where `n` is every byte of `x`.
+fn whole_clear(s: &Stmt, head: &Head) -> Option<Var> {
+    let Stmt::ZeroBytes {
+        addr: Expr::AddrOf { var, cell: 0 },
+        bytes,
+    } = s
+    else {
+        return None;
+    };
+    let cells = flat_cells(&Expr::Var(*var), head)?;
+    (u64::from(*bytes) == u64::from(cells) * 8).then_some(*var)
+}
+
 /// Where the readable form declares the variables of a body.
 struct Placement {
     /// The assignments that declare their target: its first mention, in the block that holds every other.
@@ -3045,7 +3246,9 @@ enum Visit<'b> {
 }
 
 #[derive(Default)]
-struct Placer {
+struct Placer<'h> {
+    /// The function's head, where a clear of a whole variable is written as its assignment.
+    head: Option<&'h Head>,
     /// The parent and the depth of each block; block 0 is the function's.
     blocks: Vec<(u32, u32)>,
     seen: BTreeMap<Var, Seen>,
@@ -3055,7 +3258,7 @@ struct Placer {
     at: u32,
 }
 
-impl Placer {
+impl Placer<'_> {
     fn child(&mut self, parent: u32) -> u32 {
         let depth = self.blocks[parent as usize].1 + 1;
         self.blocks.push((parent, depth));
@@ -3113,6 +3316,12 @@ impl Placer {
 
     /// A simple statement: what it reads, then what it assigns; `declares` where an assignment standing here may declare its target.
     fn simple(&mut self, s: &Stmt, block: u32, declares: bool) {
+        // A clear of a whole variable is written as its assignment, which may declare it.
+        if let Some(var) = self.head.and_then(|head| whole_clear(s, head)) {
+            let site = declares.then(|| std::ptr::from_ref(s));
+            self.mention(var, block, site, false);
+            return;
+        }
         s.each_expr(&mut |e| self.reads(e, block));
         let site = match s {
             Stmt::Assign { .. } if declares => Some(std::ptr::from_ref(s)),
@@ -3129,8 +3338,9 @@ impl Placer {
 // stands in holds every other; else at the top, where a read before any assignment finds zero.
 // ⚠ `old` is the form that writes a construct's statements from a copy: there every variable a
 // construct mentions is declared at the top.
-fn placement(body: &[tree::Stmt], old: bool) -> Placement {
+fn placement(body: &[tree::Stmt], old: bool, head: Option<&Head>) -> Placement {
     let mut placer = Placer {
+        head,
         blocks: vec![(0, 0)],
         ..Placer::default()
     };
@@ -3266,7 +3476,7 @@ fn placement(body: &[tree::Stmt], old: bool) -> Placement {
     placement
 }
 
-impl Placer {
+impl Placer<'_> {
     /// What a construct holds, none of it a place to declare: every variable it mentions is declared at the top.
     fn construct(&mut self, sugar: &tree::Sugar, block: u32) {
         let parts = sugar.parts();

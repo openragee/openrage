@@ -1843,7 +1843,11 @@ fn a_shift_of_64_bits_says_so_on_a_bare_number() {
 #[test]
 fn a_reference_is_compared_with_null() {
     let class = Kind::Object("type_00000000000000AA".to_owned());
-    let object = kinds(&[(Var::Local(0), class), (Var::Local(2), Kind::String)]);
+    let object = kinds(&[
+        (Var::Local(0), class),
+        (Var::Local(2), Kind::String),
+        (Var::Local(3), Kind::Pointer),
+    ]);
     let names = Names::default();
     let cx = at(&names, Level::Structured);
     let as_cast = || intrinsic("try_cast<type_00000000000000DD>", vec![local(1)]);
@@ -1864,6 +1868,8 @@ fn a_reference_is_compared_with_null() {
         ),
         (Expr::binary(BinOp::Ne, local(0), int(0)), "local_0 != null"),
         (Expr::binary(BinOp::Eq, local(2), int(0)), "local_2 == null"),
+        // A pointer is compared with `null` as C# compares one.
+        (Expr::binary(BinOp::Ne, local(3), int(0)), "local_3 != null"),
         // A cell of no known kind is compared with the number, and a signed order is no null test.
         (Expr::binary(BinOp::Eq, local(1), int(0)), "local_1 == 0"),
         (signed, "local_0 > 0"),
@@ -2577,4 +2583,212 @@ fn the_first_cells_of_a_variable_of_several_are_its_first_field_and_not_the_vari
     assert_eq!(sharp_in(&head, &cx, &load(Scalar::U64, one, 0)), "local_1");
     // The form of old is as it was.
     assert_eq!(text_in(&head, &names, &first, false), "local_0");
+}
+
+#[test]
+fn a_clear_of_every_byte_of_a_variable_is_its_default_and_may_declare_it() {
+    let clear = |var: Var, bytes: u32| Stmt::ZeroBytes {
+        addr: address(var, 0),
+        bytes,
+    };
+    let mut head = head();
+    let mut pair = VarInfo::new(Width::Cells);
+    pair.kind = Kind::Aggregate(2);
+    head.vars.insert(Var::Local(0), pair);
+    head.vars.insert(Var::Local(1), VarInfo::new(Width::Cell));
+    let use_both = Stmt::Eval(native("USE2", vec![local(0), local(1)]));
+    let body = vec![
+        simple(clear(Var::Local(0), 16)),
+        simple(clear(Var::Local(1), 8)),
+        simple(use_both.clone()),
+        // Fewer bytes than the variable holds leave the rest of it.
+        simple(clear(Var::Local(1), 4)),
+        simple(use_both),
+    ];
+    let f = function_of(head, body);
+    let text = written_sharp(&f);
+    assert!(text.contains("Cells2 local_0 = default;"), "{text}");
+    // A local whose address is taken elsewhere is declared at the top, as any such local is.
+    assert!(text.contains("    local_1 = default;"), "{text}");
+    assert!(text.contains("zero_bytes(&local_1, 4);"), "{text}");
+    // The readable form is read back, and keeps the clear as it is.
+    let names = Names::default();
+    let plain = written(&f, &names);
+    assert!(plain.contains("zero_bytes(&local_0, 16)"), "{plain}");
+}
+
+#[test]
+fn values_of_one_type_boxed_to_be_compared_or_converted_read_as_the_operator_and_the_cast() {
+    let (small, wide) = (
+        TypeKey(0x0000_0001_0000_0E01),
+        TypeKey(0x0000_0001_0000_0E02),
+    );
+    let mut project = Project::default();
+    let enumeration =
+        |byte_size: u32, constants: Vec<i64>| crate::gta6::script::project::TypeFacts {
+            flags: 0x08,
+            byte_size,
+            constants,
+            ..Default::default()
+        };
+    project.types.insert(small, enumeration(2, vec![0, 1]));
+    project.types.insert(wide, enumeration(4, vec![0, 1]));
+    let boxed = |ty: TypeKey, v: Expr| intrinsic(&format!("box<{ty}>"), vec![v]);
+    let builtin = |path: &str, args: Vec<Expr>| Expr::Call {
+        callee: Callee::Builtin {
+            path: path.to_owned(),
+            ty: 0,
+            method: 0,
+        },
+        args,
+        returns: Some(1),
+    };
+    let equals = |a: TypeKey, b: TypeKey| {
+        let args = vec![boxed(a, local(0)), boxed(b, local(1))];
+        builtin("System.Object.Equals", args)
+    };
+    let converted = |ty: TypeKey| builtin("System.Convert.ToInt32", vec![boxed(ty, local(0))]);
+    let names = Names::default();
+    let written = |e: &Expr, options: Options, cond: bool| {
+        let cx = Context::new(&names, &project, options);
+        let head = head();
+        let mut out = String::new();
+        let mut writer = Writer::in_context(&mut out, &cx, &head);
+        match cond {
+            true => writer.cond(e, 0),
+            false => writer.expr(e, 0),
+        }
+    };
+    let on = Options::default();
+    let tested = Expr::binary(
+        BinOp::Ne,
+        Expr::cast(Scalar::U32, equals(small, small)),
+        int(0),
+    );
+    assert_eq!(written(&tested, on, true), "local_0 == local_1");
+    assert_eq!(written(&converted(small), on, false), "(int)local_0");
+    // Two types, an enum of four bytes that may hold a value past an `int`'s, and the name off.
+    let apart = equals(small, wide);
+    assert!(
+        written(&apart, on, false).contains("Equals("),
+        "{}",
+        written(&apart, on, false)
+    );
+    assert!(written(&converted(wide), on, false).contains("ToInt32("));
+    let off = on.without(Pass::Boxing);
+    assert!(written(&equals(small, small), off, false).contains("Equals("));
+}
+
+#[test]
+fn a_global_every_access_of_which_holds_a_reference_is_compared_with_null() {
+    let global = Var::Global {
+        program: 0x1122_3344,
+        offset: 0x10,
+        statics: false,
+    };
+    let mut project = Project::default();
+    let info = crate::gta6::script::project::ProgramInfo {
+        global_cells: vec![crate::gta6::script::project::FieldFacts {
+            offset: 0x10,
+            bytes: 8,
+            kind: Kind::Object("type_00000000000000AA".to_owned()),
+        }],
+        ..Default::default()
+    };
+    project.programs.insert(0x1122_3344, info);
+    let names = Names::default();
+    let tested = Expr::binary(BinOp::Eq, Expr::Var(global), int(0));
+    let written = |project: &Project| {
+        let cx = Context::new(&names, project, Options::at(Level::Structured));
+        let head = head();
+        let mut out = String::new();
+        Writer::in_context(&mut out, &cx, &head).cond(&tested, 0)
+    };
+    assert!(
+        written(&project).ends_with(" == null"),
+        "{}",
+        written(&project)
+    );
+    assert!(
+        written(Project::empty()).ends_with(" == 0"),
+        "{}",
+        written(Project::empty())
+    );
+}
+
+#[test]
+fn a_native_every_program_only_tests_the_result_of_is_tested_as_a_truth() {
+    let asked = || {
+        let mut call = native("ASK", vec![local(0)]);
+        if let Expr::Call { returns, .. } = &mut call {
+            *returns = Some(1);
+        }
+        call
+    };
+    let tested = Expr::binary(BinOp::Ne, Expr::cast(Scalar::U32, asked()), int(0));
+    let unset = Expr::binary(BinOp::Eq, Expr::cast(Scalar::U32, asked()), int(0));
+    let mut project = Project::default();
+    project.native_truths.insert(0xA1);
+    let names = Names::default();
+    let written = |project: &Project, options: Options, e: &Expr| {
+        let cx = Context::new(&names, project, options);
+        let head = head();
+        let mut out = String::new();
+        Writer::in_context(&mut out, &cx, &head).cond(e, 0)
+    };
+    let on = Options::at(Level::Structured);
+    assert_eq!(written(&project, on, &tested), "DEMO.ASK(local_0)");
+    assert_eq!(written(&project, on, &unset), "!DEMO.ASK(local_0)");
+    // Of no such project, or with the name off, the test stays.
+    let kept = written(Project::empty(), on, &tested);
+    assert!(kept.ends_with(" != 0"), "{kept}");
+    let off = written(&project, on.without(Pass::Interproc), &tested);
+    assert!(off.ends_with(" != 0"), "{off}");
+}
+
+#[test]
+fn the_bits_of_a_round_float_in_a_constant_of_no_proved_kind_are_said_beside_it() {
+    assert_eq!(sharp(&int(0x3F80_0000)), "0x3F800000 /* 1.0f */");
+    assert_eq!(
+        sharp(&int(0xBF80_0000u32 as i32)),
+        "(int)0xBF800000 /* -1.0f */"
+    );
+    // Bits of no round float, a float, and a hash say nothing more.
+    assert_eq!(sharp(&high()), "(int)0x9A3B5C7D");
+    assert!(!sharp(&constant_of(0x3F80_0000, Kind::F32)).contains("/*"));
+    assert!(!sharp(&constant_of(0x3F80_0000, Kind::Hash)).contains("/*"));
+}
+
+#[test]
+fn two_whole_variables_compared_byte_by_byte_are_compared_with_equals_signs() {
+    let mut head = head();
+    for (n, kind) in [
+        (0, Kind::Aggregate(2)),
+        (2, Kind::Aggregate(2)),
+        (4, Kind::Vector),
+        (6, Kind::Vector),
+    ] {
+        let mut info = VarInfo::new(Width::Cells);
+        info.kind = kind;
+        head.vars.insert(Var::Local(n), info);
+    }
+    let compared = |name: &str, a: u32, b: u32| {
+        let args = vec![address(Var::Local(a), 0), address(Var::Local(b), 0)];
+        intrinsic(name, args)
+    };
+    let names = Names::default();
+    let cx = at(&names, Level::Source);
+    let tested = Expr::binary(BinOp::Ne, compared("bytes_equal_16", 0, 2), int(0));
+    let mut out = String::new();
+    assert_eq!(
+        Writer::in_context(&mut out, &cx, &head).cond(&tested, 0),
+        "local_0 == local_2"
+    );
+    assert_eq!(
+        sharp_in(&head, &cx, &compared("bytes_equal_12", 4, 6)),
+        "local_4 == local_6"
+    );
+    // Fewer bytes than the variables hold are a part of each.
+    let part = sharp_in(&head, &cx, &compared("bytes_equal_8", 0, 2));
+    assert!(part.starts_with("bytes_equal_8("), "{part}");
 }

@@ -100,7 +100,7 @@ impl Writer<'_> {
         // local declares it, and so keeps its block.
         let only = match (value, body) {
             (None, [tree::Stmt::Return(Some(yielded))])
-                if placement(body, false).hoisted.is_empty() =>
+                if placement(body, false, None).hoisted.is_empty() =>
             {
                 Some(yielded)
             }

@@ -113,6 +113,19 @@ pub(super) fn narrow_literal(c: &Const) -> Option<String> {
     cast.then(|| format!("0x{:08X}", value as u32))
 }
 
+/// The float whose bits a 32-bit integer constant is, where that float is a round one: of few digits and of a size a script states.
+// ⚠ Said beside the constant and never in its place: the bits alone prove no kind.
+pub(super) fn round_float(c: &Const) -> Option<f32> {
+    let low = c.bits as u32;
+    let half = c.bits >> 32;
+    let widened = half == 0 || (half == 0xFFFF_FFFF && low >> 31 == 1);
+    let exponent = (low >> 23) & 0xFF;
+    let round = (100..=150).contains(&exponent) && low & 0x7FF == 0;
+    (c.kind.is_integer() || c.kind == Kind::Unknown)
+        .then_some(f32::from_bits(low))
+        .filter(|_| widened && round)
+}
+
 /// Whether a value of `kind` fills 32 bits and no more, so that the sign a constant is widened with says nothing to what holds it.
 pub(super) fn narrow_kind(kind: &Kind) -> bool {
     matches!(kind, Kind::I32 | Kind::U32 | Kind::Hash | Kind::F32)
@@ -197,6 +210,12 @@ impl Writer<'_> {
             Some(text) => format!("Hash({})", string(text)),
             None => literal(c),
         };
+        // ⚠ Never a kind: the bits of a round float a constant of no proved kind holds are said beside it.
+        let text =
+            match round_float(c).filter(|_| text.ends_with(&format!("0x{:08X}", c.bits as u32))) {
+                Some(float) => format!("{text} /* {float:?}f */"),
+                None => text,
+            };
         let binds = match text.starts_with('-') || text.starts_with('(') {
             true => UNARY,
             false => POSTFIX,
@@ -309,7 +328,7 @@ impl Writer<'_> {
         }
     }
 
-    /// Whether `e` is proved to hold a reference: a value of such a kind, or what an `as` yields.
+    /// Whether `e` is proved to hold a reference or a pointer: a value of such a kind, or what an `as` yields.
     pub(super) fn reference(&self, e: &Expr) -> bool {
         let mut inner = e;
         while let Expr::Sugar { e: under, .. } = inner {
@@ -322,7 +341,7 @@ impl Writer<'_> {
         );
         cast || matches!(
             self.kind_of(e),
-            Kind::Object(_) | Kind::String | Kind::Array(_)
+            Kind::Object(_) | Kind::String | Kind::Array(_) | Kind::Pointer
         )
     }
 

@@ -173,8 +173,8 @@ pub struct MeshletSurface {
     pub feeds: BTreeMap<(u32, u32), Feed>,
     /// The meshlets of the geometry: an instance draws one.
     pub meshlets: u32,
-    /// The primitives of the largest of them: an instance runs three vertices for each, since
-    /// the thread of a vertex is its primitive's and a meshlet makes none on a thread past its own.
+    /// The primitives of the largest of them: an instance runs three vertices for each.
+    // The thread of a vertex is its primitive's, and a meshlet makes none on a thread past its own.
     pub primitives: u32,
 }
 
@@ -298,8 +298,9 @@ pub struct MeshletScene {
     /// The surfaces it was prepared from that the device has no pass for, each by its place
     /// among them, and why.
     pub refused: Vec<(usize, String)>,
-    /// Those whose pass a worker still builds, each by its place among them: the caller draws
-    /// them as it draws `rest`, and prepares again once [`MeshletPipelines::waiting`] counts fewer.
+    /// Those whose pass a worker still builds, each by its place among them.
+    // The caller draws them as it draws `rest`, and prepares again once
+    // `MeshletPipelines::waiting` counts fewer.
     pub waiting: Vec<usize>,
 }
 
@@ -728,9 +729,10 @@ impl MeshletPipelines {
         surfaces.iter().filter(waits).count()
     }
 
-    /// Take `surface`'s pass as one a worker still builds and start none, or with `held` false
-    /// let the next ask start one: how a test sees a frame drawn while a pass builds.
-    #[doc(hidden)]
+    /// Take `surface`'s pass as one a worker still builds, or with `held` false let the next ask start one.
+    // How a test, of this crate or of one that asks for `test-support`, sees a frame drawn while
+    // a pass builds: no worker is started for a pass that is held.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn hold(&mut self, surface: &MeshletSurface, held: bool) {
         let key = Self::key(surface);
         match held {
@@ -1488,8 +1490,7 @@ impl MeshletScene {
         (self.draws.iter().flat_map(|draw| &draw.views)).any(|(_, at)| at % 4 != 0)
     }
 
-    /// Write what moved of this frame's view and of what the last draw lights by, and take in
-    /// what [`MeshletScene::record_targets`] has to draw again for it.
+    /// Write what moved of this frame's view and light, and take in what a recording draws again for it.
     pub fn update(&self, queue: &wgpu::Queue, lighting: &Lighting) {
         self.calls.set(MeshletCalls::default());
         let cast = sun_shadow::cast_of(&lighting.sky).filter(|_| !self.casts_no_shadow());
@@ -1549,9 +1550,9 @@ impl MeshletScene {
         self.count(|calls| calls.copies += 2 * views().count() as u32);
     }
 
-    /// Draw what the last [`MeshletScene::update`] left stale: the surfaces into the shadow's
-    /// tile, the surfaces into the targets, the mask and what they meter to, each in a pass of
-    /// its own; `mark` is told where each of the three ends, drawn or not.
+    /// Draw what the last [`MeshletScene::update`] left stale, and tell `mark` where each stage ends.
+    // The surfaces into the shadow's tile, the surfaces into the targets, then the mask and what
+    // they meter to, each in a pass of its own; a stage is marked whether it drew or not.
     pub fn record_targets(
         &self,
         encoder: &mut wgpu::CommandEncoder,

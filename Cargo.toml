@@ -403,6 +403,8 @@ tempfile.workspace = true
 or-test-support.workspace = true
 # The made-up tables file and coded bodies the texture pack's labels are tested on.
 or-io = { workspace = true, features = ["made-up"] }
+# A GTA VI model's pass taken as still being built, for the tests of a frame drawn meanwhile.
+or-renderer = { workspace = true, features = ["test-support"] }
 # A project folder zipped and opened elsewhere, as a person sends one.
 zip = { version = "8", default-features = false }
 

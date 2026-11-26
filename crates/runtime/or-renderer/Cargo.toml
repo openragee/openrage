@@ -26,6 +26,9 @@ description = "GPU rendering for GTA V particle effects preview"
 #
 #     cargo test -p or-renderer --features gpu-tests
 gpu-tests = []
+# What a test of another crate needs of this one that no build of the app does: a pass of a GTA VI
+# model taken as still being built. A crate turns it on from its dev-dependencies alone.
+test-support = []
 
 [dependencies]
 # `ShaderSource::Naga` takes the game's modules as they are, with no WGSL between.

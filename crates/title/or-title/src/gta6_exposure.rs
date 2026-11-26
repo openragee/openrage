@@ -240,7 +240,10 @@ pub fn light(
     let up = lit.towards[2];
     let body_transmittance = clear.map(|t| t * clouds.direct_through(up));
     let scattered = clouds.diffuse_through(up) * lit.fade * lit.illuminance * up;
-    let sky = [0, 1, 2].map(|c| clear_sky[c] * (1.0 - clouds.cover) + scattered * clear[c]);
+    // The clouds take the body's light in their own colour and strength, as the frame's block hands the local atmosphere it.
+    let cloud_light = clouds.light;
+    let sky = [0, 1, 2]
+        .map(|c| clear_sky[c] * (1.0 - clouds.cover) + scattered * clear[c] * cloud_light[c]);
 
     let tint = rgb("light_dir_col");
     let direct = get("light_dir_mult", 1.0) * lit.fade * lit.illuminance;

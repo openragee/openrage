@@ -526,7 +526,7 @@ fn clouds_of(moment: &Moment, radiance: &[[f32; 3]]) -> Option<Clouds> {
         // ponytail: the clouds stand still; the wind's drift waits for a speed the build states.
         shape: [layer.sphere, EXTINCTION, layer.anisotropy, 0.0],
         towards: lit.body,
-        light: through.map(|t| t * strength),
+        light: [0, 1, 2].map(|c| through[c] * strength * layer.light[c]),
         sky: hemisphere_radiance(radiance).map(|c| c * exposure),
         haze: moment.light.haze,
         planet: moment.own.get_or("sky_new_planet_radius", 6360.0) * 1000.0,

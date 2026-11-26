@@ -24,6 +24,8 @@ pub struct CloudLayer {
     pub anisotropy: f32,
     /// The radius of the shell the layer is curved on, in metres.
     pub sphere: f32,
+    /// What the layer is lit by of the leading body's light, per channel: the local atmosphere's direct light colour times its intensity.
+    pub light: [f32; 3],
 }
 
 /// The share of a cloud's density at `along` (0 at the base, 1 at the top) of the layer for a cloud of kind `kind`: rising over the first few hundredths, and gone where the tops end.
@@ -53,6 +55,10 @@ impl CloudLayer {
             sphere: get("sky_new_planet_radius", PLANET / 1000.0)
                 * 1000.0
                 * get("local_atmosphere_cloud_sphere_radius_scale", 0.05),
+            light: ["r", "g", "b"].map(|c| {
+                get(&format!("local_atmosphere_direct_light_color_{c}"), 1.0)
+                    * get("local_atmosphere_direct_light_intensity", 1.0)
+            }),
         }
     }
 
@@ -111,6 +117,23 @@ mod tests {
         let half = layer(0.5, 0.5);
         assert!((half.direct_through(0.9) - 0.5).abs() < 1e-3);
         assert!(layer(1.0, 1.0).optical_depth() > layer(1.0, 0.2).optical_depth());
+    }
+
+    #[test]
+    fn the_layer_is_lit_by_the_local_atmospheres_direct_light_colour_times_its_intensity() {
+        assert_eq!(
+            layer(0.5, 0.5).light,
+            [1.0; 3],
+            "unstated, the body's light whole"
+        );
+        let mut k = Keyframe::default();
+        k.set("local_atmosphere_direct_light_intensity", 0.3);
+        k.set("local_atmosphere_direct_light_color_b", 0.5);
+        let light = CloudLayer::of(&k).light;
+        assert!(
+            (light[0] - 0.3).abs() < 1e-6 && (light[2] - 0.15).abs() < 1e-6,
+            "{light:?}"
+        );
     }
 
     #[test]

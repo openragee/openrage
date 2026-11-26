@@ -2120,6 +2120,36 @@ impl<'a> Writer<'a> {
                 offset,
                 bytes,
             } => format!("load_bytes({}, 0x{offset:X}, {bytes})", self.expr(addr, 0)),
+            // Bytes taken out of a variable are its field, read as the unsigned number they make
+            // up: the cell they come to is zero above them.
+            Expr::ExtractBytes {
+                value,
+                offset,
+                bytes,
+            } if self.sharp
+                && matches!(bits(value), Expr::Var(_))
+                && matches!(bytes, 1 | 2 | 4 | 8) =>
+            {
+                let owner = match self.kind_of(bits(value)) {
+                    Kind::Value { ty, .. } => TypeKey::of_name(&ty),
+                    _ => None,
+                };
+                let place = format!(
+                    "{}.{}",
+                    self.expr(bits(value), POSTFIX),
+                    self.field_name(owner, *offset)
+                );
+                let unsigned = match bytes {
+                    1 => Some("byte"),
+                    2 => Some("ushort"),
+                    4 => Some("uint"),
+                    _ => None,
+                };
+                return match unsigned {
+                    Some(ty) => (format!("({ty}){place}"), UNARY),
+                    None => (place, POSTFIX),
+                };
+            }
             Expr::ExtractBytes {
                 value,
                 offset,

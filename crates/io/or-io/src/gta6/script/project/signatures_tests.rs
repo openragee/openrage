@@ -612,3 +612,39 @@ fn a_native_whose_result_every_function_only_tests_for_zero_is_a_truth() {
     assert_eq!(project.native_truths, BTreeSet::from([5]));
     assert!(project.native_uses.is_empty());
 }
+
+#[test]
+fn a_parameter_every_call_passes_an_int_widened_by_its_sign_is_proved_one() {
+    let functions = [
+        function(
+            "void",
+            0x10,
+            2,
+            "Native.DEMO.USE(p0); Native.DEMO.USE(p1); return;",
+        ),
+        // A constant of an `int`'s range, a 32-bit reading, and the caller's own such parameter.
+        function("void", 0x20, 1, "func_000010(-5, as_i32(p0)); return;"),
+        function("void", 0x30, 1, "func_000010(7, p0); return;"),
+        function(
+            "void",
+            0x40,
+            0,
+            "func_000030(load_i32(local_0, 0x8)); return;",
+        ),
+        // A variable, of which nothing here says how it widened.
+        function(
+            "void",
+            0x50,
+            1,
+            "func_000060(p0); func_000060(local_1); return;",
+        ),
+        function("void", 0x60, 1, "Native.DEMO.USE(p0); return;"),
+    ];
+    let project = project_of(&[listing(1, &functions)]);
+    let cells = |at: u32| project.widened.get(&key(at)).cloned().unwrap_or_default();
+    assert_eq!(cells(0x10), BTreeSet::from([0, 1]));
+    assert_eq!(cells(0x30), BTreeSet::from([0]));
+    assert!(cells(0x60).is_empty());
+    // No call names the function at 0x20 or 0x50: their callers are not known.
+    assert!(cells(0x20).is_empty() && cells(0x50).is_empty());
+}

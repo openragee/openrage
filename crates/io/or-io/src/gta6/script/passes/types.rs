@@ -4,7 +4,7 @@
 //! goes, a constant takes the kind of what reads it and an access through an address is typed.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::gta6::script::cfg::{self, Terminator};
 use crate::gta6::script::ir::{
@@ -86,6 +86,8 @@ struct Around<'a> {
     interproc: bool,
     /// What the function's own signature says the one cell it returns is.
     returned: Lat,
+    /// The parameter cells every call of the function passes an `int` widened by its sign, where `interproc` is on.
+    widened: Option<&'a BTreeSet<u32>>,
 }
 
 impl<'a> Around<'a> {
@@ -98,7 +100,12 @@ impl<'a> Around<'a> {
             signs: cx.options.on(Pass::Signs),
             interproc: cx.options.on(Pass::Interproc),
             returned: Lat::None,
+            widened: None,
         };
+        if around.interproc {
+            let own = FunctionKey::new(head.program, head.at);
+            around.widened = cx.project.widened.get(&own);
+        }
         let own = around.held(FunctionKey::new(head.program, head.at));
         if let Some(own) = own.filter(|own| own.returns == 1 && head.returns == Returns::Cell) {
             around.returned = kinds::stated(&own.result);
@@ -1335,7 +1342,10 @@ impl Typing<'_> {
         for (var, (only, zero, one)) in given {
             let (reads, tests) = self.facts.tested.get(&var).copied().unwrap_or((0, 0));
             let tested = tests > 0 && tests == reads;
-            let free = self.typed(var) && self.sealed(var) && kinds::takes_truth(&self.lat(var));
+            // ⚠ A parameter holds what its caller passed before any assignment here.
+            let own = !matches!(var, Var::Param(_));
+            let free =
+                own && self.typed(var) && self.sealed(var) && kinds::takes_truth(&self.lat(var));
             if only && zero && one && tested && free {
                 self.known.insert(var, Lat::Is(Kind::Bool));
             }
@@ -1625,7 +1635,11 @@ impl Typing<'_> {
         let normal: HashSet<Var> = self
             .known
             .iter()
-            .filter(|(var, lat)| self.sealed(**var) && kinds::narrow(&lat.kind()))
+            // ⚠ What the project proves of a parameter is an `int` widened by its sign, and no other kind.
+            .filter(|(var, lat)| {
+                let int = !matches!(var, Var::Param(_)) || lat.kind() == Kind::I32;
+                self.sealed(**var) && kinds::narrow(&lat.kind()) && int
+            })
             .map(|(var, _)| *var)
             .collect();
         self.normal = normal;
@@ -1704,8 +1718,12 @@ impl Typing<'_> {
         match var {
             Var::Local(n) => self.facts.lowest_local.is_none_or(|lowest| n < lowest),
             Var::Value { .. } | Var::Stack { .. } => !self.facts.addressed.contains(&var),
-            // A caller sets a parameter, and nothing here says how it widened the cell.
-            Var::Param(_) | Var::Global { .. } => false,
+            // A caller sets a parameter: only where the project proves every caller widens it.
+            Var::Param(n) => {
+                let widened = self.around.widened.is_some_and(|cells| cells.contains(&n));
+                widened && !self.facts.addressed.contains(&var)
+            }
+            Var::Global { .. } => false,
         }
     }
 
@@ -2316,6 +2334,17 @@ impl Typing<'_> {
                 *known = Kind::Unknown;
             }
         }
+        // A value of several cells an instruction names the type of is a value of that type.
+        if self.around.kinds {
+            for (var, ty) in values(&f.cfg, f.head.program, &self.wide, self.around.project) {
+                let held = found
+                    .get(&var)
+                    .or_else(|| f.head.vars.get(&var).map(|info| &info.kind));
+                if let Some(Kind::Aggregate(cells)) = held.cloned() {
+                    found.insert(var, Kind::Value { ty, cells });
+                }
+            }
+        }
         // ⚠ Not over a kind a list gives the value: a vector natives make and take is a vector.
         if self.around.kinds {
             for var in handles(&f.cfg, &self.wide) {
@@ -2389,6 +2418,69 @@ impl Typing<'_> {
             _ => Kind::Unknown,
         }
     }
+}
+
+/// The value type each variable of several cells is an instance of, by what names its type: a `box<T>` of the whole variable, or a call of a method of a value type `T` handed the variable's address as its receiver; none where two types are named.
+fn values(
+    cfg: &cfg::Cfg,
+    program: u32,
+    wide: &HashSet<Var>,
+    project: &Project,
+) -> Vec<(Var, String)> {
+    let mut named: HashMap<Var, Option<String>> = HashMap::new();
+    let mut name = |var: Var, ty: String| {
+        let held = named.entry(var).or_insert_with(|| Some(ty.clone()));
+        if held.as_deref() != Some(ty.as_str()) {
+            *held = None;
+        }
+    };
+    let member_of = |callee: &Callee| {
+        let key = signatures::key_of(program, callee)?;
+        let member = project
+            .members
+            .get(&key)
+            .filter(|member| !member.is_static)?;
+        let facts = project.types.get(&member.owner)?;
+        facts.is_value().then(|| member.owner.to_string())
+    };
+    for block in &cfg.blocks {
+        let mut note = |top: &Expr| {
+            top.walk(&mut |e| {
+                let Expr::Call { callee, args, .. } = e else {
+                    return;
+                };
+                match (callee, args.as_slice()) {
+                    (Callee::Intrinsic { name: boxed, .. }, [Expr::Var(var)])
+                        if wide.contains(var) =>
+                    {
+                        let ty = boxed
+                            .strip_prefix("box<")
+                            .and_then(|ty| ty.strip_suffix('>'));
+                        if let Some(ty) = ty {
+                            name(*var, ty.to_owned());
+                        }
+                    }
+                    (_, [Expr::AddrOf { var, cell: 0 }, ..]) if wide.contains(var) => {
+                        if let Some(ty) = member_of(callee) {
+                            name(*var, ty);
+                        }
+                    }
+                    _ => {}
+                }
+            });
+        };
+        for stmt in &block.stmts {
+            stmt.each_expr(&mut note);
+        }
+        if let Some(e) = block.term.expr() {
+            note(e);
+        }
+    }
+    let mut values: Vec<(Var, String)> = (named.into_iter())
+        .filter_map(|(var, ty)| Some((var, ty?)))
+        .collect();
+    values.sort();
+    values
 }
 
 /// The values of two cells that only natives make, compare and take: each is assigned only what a native yields in two cells, no value or another such variable, and is read only whole, as an argument or as one side of a comparison of its sixteen bytes.

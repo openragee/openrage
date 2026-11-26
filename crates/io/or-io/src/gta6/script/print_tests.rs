@@ -2792,3 +2792,26 @@ fn two_whole_variables_compared_byte_by_byte_are_compared_with_equals_signs() {
     let part = sharp_in(&head, &cx, &compared("bytes_equal_8", 0, 2));
     assert!(part.starts_with("bytes_equal_8("), "{part}");
 }
+
+#[test]
+fn bytes_taken_out_of_a_variable_are_its_field_read_as_the_unsigned_number_they_make() {
+    let mut head = head();
+    let mut pair = VarInfo::new(Width::Cells);
+    pair.kind = Kind::Aggregate(2);
+    head.vars.insert(Var::Local(0), pair);
+    let taken = |offset: u32, bytes: u32| Expr::ExtractBytes {
+        value: Box::new(local(0)),
+        offset,
+        bytes,
+    };
+    let names = Names::default();
+    let cx = at(&names, Level::Structured);
+    assert_eq!(sharp_in(&head, &cx, &taken(8, 4)), "(uint)local_0.f_8");
+    assert_eq!(sharp_in(&head, &cx, &taken(9, 1)), "(byte)local_0.f_9");
+    assert_eq!(sharp_in(&head, &cx, &taken(8, 8)), "local_0.f_8");
+    // Bytes no number is as wide as stay what they are.
+    assert_eq!(
+        sharp_in(&head, &cx, &taken(0, 12)),
+        "extract_bytes(local_0, 0, 12)"
+    );
+}

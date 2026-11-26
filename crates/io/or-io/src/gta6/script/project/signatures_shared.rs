@@ -97,6 +97,54 @@ pub(super) fn slot_results(project: &mut Project, shared: &Shared) {
     }
 }
 
+/// Notes for each function the parameter cells every call of it passes an `int` widened by its sign: an argument so by its form, or a parameter cell of the caller so proved.
+// ⚠ Only where every call names the function: one a slot or a delegate reaches has callers no
+// code names. A cell no call passes anything to is proved nothing.
+pub(super) fn widened(project: &mut Project, open: &BTreeMap<FunctionKey, Open>, shared: &Shared) {
+    let mut cells: BTreeMap<(FunctionKey, u32), bool> = BTreeMap::new();
+    let mut killed: BTreeSet<FunctionKey> = BTreeSet::new();
+    for waits in open.values() {
+        for (to, cell, narrow) in &waits.narrow {
+            match *cell {
+                u32::MAX => {
+                    killed.insert(*to);
+                }
+                cell => *cells.entry((*to, cell)).or_insert(true) &= *narrow,
+            }
+        }
+    }
+    // A caller whose calls were not read says nothing of what it passes.
+    for (caller, callees) in &project.calls {
+        if !open.contains_key(caller) {
+            killed.extend(callees.iter().copied());
+        }
+    }
+    // A parameter passed on is so where the caller's cell is.
+    let mut edges: Vec<((FunctionKey, u32), (FunctionKey, u32))> = Vec::new();
+    for (key, waits) in open {
+        for (cell, callee, at) in &waits.passes {
+            cells.entry((*callee, *at)).or_insert(true);
+            edges.push(((*key, *cell), (*callee, *at)));
+        }
+    }
+    cells
+        .retain(|(key, _), narrow| *narrow && !killed.contains(key) && !shared.blind.contains(key));
+    loop {
+        let before = cells.len();
+        for (from, to) in &edges {
+            if cells.contains_key(to) && !cells.contains_key(from) {
+                cells.remove(to);
+            }
+        }
+        if cells.len() == before {
+            break;
+        }
+    }
+    for (key, cell) in cells.into_keys() {
+        project.widened.entry(key).or_default().insert(cell);
+    }
+}
+
 /// The function `at` stands under, where that is a lesser one.
 fn above(lines: &BTreeMap<FunctionKey, FunctionKey>, at: FunctionKey) -> Option<FunctionKey> {
     lines.get(&at).copied().filter(|up| *up < at)

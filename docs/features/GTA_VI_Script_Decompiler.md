@@ -68,7 +68,10 @@ was.
   for zero is a `bool`. A pointer, like a reference, is compared with `null`. A variable every
   assignment of which makes an array is an array of that element type. A value of two cells that
   the code only takes from natives, compares and hands back to them is declared `Handle`, a word
-  the header explains. A
+  the header explains. A value of several cells that a `box<T>` of it, or a method of the value
+  type `T` called on its address, names is of type `T`, and bytes taken out of a whole variable
+  are its field, read as the unsigned number they make up. A parameter every call of which, from
+  functions that every call names, passes an `int` widened by its sign is read as an `int`. A
   constant of no proved kind whose bits are those of a round float keeps its bits and has the
   float written beside it as a comment, `0x3F800000 /* 1.0f */`: the bits alone prove no kind.
 - **Statements**: `structure`, `gotos`, `switch-on`, `for`.
@@ -153,7 +156,9 @@ folder where none lies beside the script.
   address handed to a call to reach the variable it is the address of and no local the code
   proves to be another variable: both runs are made on that premise, so the check does not test
   it. A temporary handed out is known in the events by the order it was first handed out, as an
-  object is, so two forms that name their temporaries apart compare alike.
+  object is, so two forms that name their temporaries apart compare alike. A parameter the
+  project proves an `int` is made up as one, and a call that hands such a parameter another cell
+  fails the check.
 - `exec_corpus_tests.rs` (slow tier) runs that check over every function of the folder of
   listings `OPENRAGE_LIFTED_LISTINGS` names, and lifts every compiled program of the folder
   `OPENRAGE_GTA6_SCRIPTS` names and holds each function to what its listing does; it also counts

@@ -162,6 +162,7 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
     open.handed = sites.handed;
     open.taken = sites.taken;
     open.gives = sites.gives;
+    open.narrow = sites.narrow;
 
     let mut signature = Signature {
         params,
@@ -204,6 +205,7 @@ pub fn settle(project: &mut Project) {
     shared::passed(project, &open, &shared);
     shared::overridden(project, &shared);
     shared::slot_results(project, &shared);
+    shared::widened(project, &open, &shared);
     let uses = std::mem::take(&mut project.native_uses);
     project.native_truths = uses
         .into_iter()
@@ -283,6 +285,9 @@ struct Open {
     /// What the function passes for each parameter cell of the functions it calls, where an argument says anything.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     gives: Vec<Given>,
+    /// For each parameter cell of each function it calls, whether every argument of one cell it passes there is an `int` widened by its sign.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    narrow: Vec<(FunctionKey, u32, bool)>,
 }
 
 /// Puts what a signature waits on at its end, as a parameter of no cells; `false` where it cannot be written.

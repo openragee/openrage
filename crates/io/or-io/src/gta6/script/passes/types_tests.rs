@@ -1673,3 +1673,105 @@ fn a_value_of_two_cells_only_natives_make_compare_and_take_is_a_handle() {
     assert_eq!(kind_of(&f, Var::Local(2)), Kind::Handle);
     assert_eq!(kind_of(&f, Var::Local(4)), Kind::Aggregate(2));
 }
+
+#[test]
+fn a_value_of_several_cells_an_instruction_names_the_type_of_is_a_value_of_that_type() {
+    use crate::gta6::script::class::Role;
+    use crate::gta6::script::project::Member;
+    let (boxed, method) = ("type_00000000000000AA", TypeKey(0xBB));
+    let call = |callee: Callee, args: Vec<Expr>| Expr::Call {
+        callee,
+        args,
+        returns: Some(1),
+    };
+    let address = |n: u32| Expr::AddrOf {
+        var: Var::Local(n),
+        cell: 0,
+    };
+    let boxing = |n: u32, ty: &str| {
+        let callee = Callee::Intrinsic {
+            name: format!("box<{ty}>"),
+            ty: None,
+            wrapper: None,
+        };
+        call(callee, vec![local(n)])
+    };
+    let local_call = |at: u32| Callee::Local {
+        at,
+        name: format!("func_{at:06X}"),
+    };
+    let stmts = vec![
+        set(6, boxing(0, boxed)),
+        set(6, call(local_call(0x40), vec![address(2), int(1)])),
+        // Two types named of one variable name neither.
+        set(6, boxing(4, boxed)),
+        set(6, call(local_call(0x40), vec![address(4)])),
+    ];
+    let mut f = function(stmts);
+    for n in [0, 2, 4] {
+        let mut info = VarInfo::new(Width::Cells);
+        info.kind = Kind::Aggregate(3);
+        f.head.vars.insert(Var::Local(n), info);
+    }
+    let mut project = Project::default();
+    let value = TypeFacts {
+        flags: 0x04,
+        byte_size: 24,
+        ..TypeFacts::default()
+    };
+    project.types.insert(method, value);
+    let member = Member {
+        owner: method,
+        role: Role::Method,
+        is_static: false,
+        slot: None,
+    };
+    project
+        .members
+        .insert(FunctionKey::new(0x1122_3344, 0x40), member);
+    let names = Names::default();
+    run_in(&mut f, &kinded(&names, &project), &mut Stats::default());
+    let of = |ty: &str| Kind::Value {
+        ty: ty.to_owned(),
+        cells: 3,
+    };
+    assert_eq!(kind_of(&f, Var::Local(0)), of(boxed));
+    assert_eq!(kind_of(&f, Var::Local(2)), of(&method.to_string()));
+    assert_eq!(kind_of(&f, Var::Local(4)), Kind::Aggregate(3));
+}
+
+#[test]
+fn a_parameter_the_project_proves_an_int_widened_by_its_sign_is_read_as_one_without_a_cast() {
+    let reads = || {
+        vec![
+            set(0, at(Kind::I32, BinOp::Add, as_i32(param(1)), int(1))),
+            set(1, as_i32(param(1))),
+        ]
+    };
+    let mut project = Project::default();
+    let own = FunctionKey::new(0x1122_3344, 0);
+    project
+        .widened
+        .insert(own, std::collections::BTreeSet::from([1]));
+    let names = Names::default();
+    let options = Options::baseline()
+        .with(Pass::Kinds)
+        .with(Pass::Signs)
+        .with(Pass::Interproc);
+    let typed = |project: &Project| {
+        let mut f = function(reads());
+        run_in(
+            &mut f,
+            &Context::new(&names, project, options),
+            &mut Stats::default(),
+        );
+        f
+    };
+    let f = typed(&project);
+    assert_eq!(kind_of(&f, Var::Param(1)), Kind::I32);
+    let stmts = &f.cfg.blocks[0].stmts;
+    assert_eq!(stmts[1], set(1, param(1)), "{stmts:?}");
+    // Of no such proof the reading stays.
+    let f = typed(Project::empty());
+    assert_eq!(f.cfg.blocks[0].stmts[1], set(1, as_i32(param(1))));
+}

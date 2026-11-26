@@ -109,6 +109,8 @@ pub(super) struct Sites {
     pub(super) uses: Vec<(FunctionKey, Usage)>,
     /// How the result of each native is read, by [`native_key`], where a read says.
     pub(super) natives: Vec<(u64, Usage)>,
+    /// For each parameter cell of a callee one argument of one cell lands in, whether every such argument here is an `int` widened by its sign; the cell `u32::MAX` where a call's cells are not all known.
+    pub(super) narrow: Vec<(FunctionKey, u32, bool)>,
     pub(super) handed: Vec<FunctionKey>,
     pub(super) taken: Vec<FunctionKey>,
     pub(super) gives: Vec<Given>,
@@ -124,6 +126,7 @@ impl Sites {
             natives: BTreeMap::new(),
             kept_natives: Vec::new(),
             stands: BTreeMap::new(),
+            narrow: BTreeMap::new(),
             vars: HashMap::new(),
             kept: Vec::new(),
             handed: BTreeSet::new(),
@@ -167,6 +170,8 @@ struct Scan<'a, 'r> {
     kept_natives: Vec<(Var, u64)>,
     /// How often each native's result stands, and how often a read above says what it is read as.
     stands: BTreeMap<u64, (u64, u64)>,
+    /// Whether every argument of one cell for each parameter cell of each callee is an `int` widened by its sign.
+    narrow: BTreeMap<(FunctionKey, u32), bool>,
     /// How each variable is read.
     vars: HashMap<Var, Usage>,
     /// The variables assigned the result of a call, each with the function called.
@@ -364,6 +369,8 @@ impl Scan<'_, '_> {
         let mut at = Some(0u32);
         for arg in args {
             let Some(cell) = at else {
+                // Where the cells do not say, no argument after says which parameter it is.
+                self.narrow.insert((key, u32::MAX), false);
                 break;
             };
             let cells = cells_of(arg, self.head);
@@ -372,6 +379,7 @@ impl Scan<'_, '_> {
             if cells != Some(1) || matches!(arg, Expr::Var(Var::Param(_))) {
                 continue;
             }
+            *self.narrow.entry((key, cell)).or_insert(true) &= widened_i32(arg);
             let found = self.reader.given(arg, 0);
             if found != Found::default() {
                 self.given.entry((key, cell)).or_default().join(&found);
@@ -436,7 +444,12 @@ impl Scan<'_, '_> {
             from: found.from.into_iter().collect(),
         });
         let natives = self.natives.into_iter();
+        let narrow = self
+            .narrow
+            .into_iter()
+            .map(|((to, cell), narrow)| (to, cell, narrow));
         Sites {
+            narrow: narrow.collect(),
             uses: said.filter(|(_, usage)| *usage != Usage::Unsaid).collect(),
             natives: natives
                 .filter(|(_, usage)| *usage != Usage::Unsaid)
@@ -445,6 +458,31 @@ impl Scan<'_, '_> {
             taken: self.taken.into_iter().collect(),
             gives: gives.collect(),
         }
+    }
+}
+
+/// Whether `e`, by its own form, is an `int` widened by its sign to its cell: a constant of that range, a reading or a load of 32 bits or fewer that widens so, an operator that works at such a width, a truth.
+// ⚠ Not a variable, nor a result: what a variable holds is not said here.
+fn widened_i32(e: &Expr) -> bool {
+    let small = |ty: &Scalar| {
+        matches!(
+            ty,
+            Scalar::I8 | Scalar::U8 | Scalar::I16 | Scalar::U16 | Scalar::I32
+        )
+    };
+    match e {
+        Expr::Const(c) => c.bits as i64 == i64::from(c.bits as i32),
+        Expr::Sugar { e, .. } => widened_i32(e),
+        Expr::Cast { to, .. } | Expr::Load { ty: to, .. } => small(to),
+        Expr::Binary { op, at, .. } => {
+            op.is_logical()
+                || matches!(
+                    at,
+                    Kind::Bool | Kind::I8 | Kind::U8 | Kind::I16 | Kind::U16 | Kind::I32
+                )
+        }
+        Expr::Truth(_) | Expr::Unary { op: UnOp::Not, .. } => true,
+        _ => false,
     }
 }
 

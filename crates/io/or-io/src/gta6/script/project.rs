@@ -183,6 +183,9 @@ pub struct Project {
     /// How each native's result is read so far, by key: `true` while every read is a test; empty in a settled project.
     #[serde(skip)]
     pub native_uses: BTreeMap<u64, bool>,
+    /// The parameter cells of each function every call of which passes an `int` widened by its sign to its cell.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub widened: BTreeMap<FunctionKey, BTreeSet<u32>>,
     /// What each parameter cell of a function reaches as an address, by function and cell.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub reach: BTreeMap<FunctionKey, BTreeMap<u32, reach::Reach>>,

@@ -403,6 +403,7 @@ pub fn view(project: &Project, program: u32) -> Project {
         members: cut(&project.members, reads),
         slot_results: cut(&project.slot_results, reads),
         reach: cut(&project.reach, reads),
+        widened: cut(&project.widened, reads),
         native_truths: project.native_truths.clone(),
         native_uses: BTreeMap::new(),
         implemented: BTreeMap::new(),

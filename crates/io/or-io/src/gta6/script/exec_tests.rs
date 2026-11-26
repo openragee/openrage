@@ -170,6 +170,8 @@ pub(crate) struct Run {
     pub unsupported: Option<String>,
     /// The blocks the run entered, by `BlockId`.
     pub reached: Vec<bool>,
+    /// A cell handed to a parameter the project proves an `int` widened by its sign that is none.
+    pub unwidened: bool,
     /// The cells handed back by script functions whose result the project gives no kind.
     // Such a function may return constants alone, whose range no table keeps: a function that
     // hands its result on is then proved of a kind the made-up cell need not be.
@@ -440,7 +442,15 @@ impl<'f> Machine<'f> {
         }
         match addr >> 56 {
             0xA1 | 0xA3 => 0,
-            0xA2 => self.draw(mix2(self.seed, addr)),
+            // ⚠ A parameter the project proves every caller hands an `int` widened by its sign is
+            // one: each caller is held to that where its own run is checked.
+            0xA2 => {
+                let cell = self.draw(mix2(self.seed, addr));
+                match self.widened_param(addr) {
+                    true => cast(Scalar::I32, cell),
+                    false => cell,
+                }
+            }
             // A new object is zeroes until a callee has had it.
             0xA6 => match self.shown.get(&(addr & !0xFFFF)) {
                 Some(id) => self.draw(mix2(
@@ -451,6 +461,14 @@ impl<'f> Machine<'f> {
             },
             _ => self.draw(mix2(mix2(self.seed, addr), self.calls)),
         }
+    }
+
+    /// Whether `addr` is the cell of a parameter the project proves every caller hands an `int` widened by its sign.
+    fn widened_param(&self, addr: u64) -> bool {
+        let own = FunctionKey::new(self.f.head.program, self.f.head.at);
+        let cell = u32::try_from((addr - PARAMS) / 8).ok();
+        let widened = self.project.widened.get(&own);
+        addr & 7 == 0 && cell.is_some_and(|cell| widened.is_some_and(|cells| cells.contains(&cell)))
     }
 
     /// A cell as an event states it: an object, or a temporary's address, by the order it was first shown in.
@@ -686,6 +704,17 @@ impl<'f> Machine<'f> {
             if framed(*cell) {
                 self.escape(*cell);
             }
+        }
+        let key = match callee {
+            Callee::Local { at, .. } => Some(FunctionKey::new(self.f.head.program, *at)),
+            Callee::Import { program, at, .. } => Some(FunctionKey::new(*program, *at)),
+            _ => None,
+        };
+        if let Some(widened) = key.and_then(|key| self.project.widened.get(&key)) {
+            let off = |cell: &u32| {
+                (cells.get(*cell as usize)).is_some_and(|v| cast(Scalar::I32, *v) != *v)
+            };
+            self.run.unwidened |= widened.iter().any(off);
         }
         let cells: Vec<u64> = cells.into_iter().map(|cell| self.stated(cell)).collect();
         let mut exposed: Vec<(u64, u64)> = (self.exposed().into_iter())
@@ -1657,6 +1686,13 @@ pub(crate) fn check_blocks(
     };
     if checked.skipped {
         return Ok(checked);
+    }
+    // ⚠ A parameter the project proves an `int` is made up as one, so each call of such a
+    // function is held to what its arguments are: a proof that is wrong is found here.
+    if let Some((input, _)) = was.iter().find(|(_, run)| run.unwidened) {
+        return Err(format!(
+            "signature, {input}: a parameter the project proves an int is handed another cell"
+        ));
     }
     // ⚠ A callee's result is made up as its signature says it widens, so the signature of this
     // function is held to what its own code returned: a proof that is wrong is found here.

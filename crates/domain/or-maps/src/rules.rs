@@ -183,11 +183,12 @@ pub const RULES: &[Rule] = &[
     rule("waiver-unknown", Warning, false, "a waiver names no rule"),
 ];
 
-/// The rule `code` names, the door rules of [`crate::doors::DOOR_RULES`] among them.
+/// The rule `code` names, the door rules of [`crate::doors::DOOR_RULES`] and the rules of an interior of [`crate::interior::INTERIOR_RULES`] among them.
 pub fn rule_of(code: &str) -> Option<&'static Rule> {
     RULES
         .iter()
         .chain(crate::doors::DOOR_RULES)
+        .chain(crate::interior::INTERIOR_RULES)
         .find(|r| r.code == code)
 }
 
@@ -480,9 +481,11 @@ fn check_set(
                 );
             }
             if let Some(interior) = &archetype.interior {
-                for problem in &interior.problems {
+                let broken = (interior.problems.iter()).map(|problem| ("interior-broken", problem));
+                let found = (interior.findings.iter()).map(|found| (found.code, &found.message));
+                for (code, said) in broken.chain(found) {
                     say(
-                        "interior-broken",
+                        code,
                         Some(set),
                         Place {
                             source: Some(path.to_string()),
@@ -490,7 +493,7 @@ fn check_set(
                             ..Place::default()
                         },
                         format!(
-                            "the interior `{}` of `{path}`: {problem}",
+                            "the interior `{}` of `{path}`: {said}",
                             archetype.name.shown()
                         ),
                     );

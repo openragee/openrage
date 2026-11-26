@@ -146,12 +146,12 @@ The rooms, portals, entity sets and objects of an interior, and its sound. [R47]
 | Rooms and portals drawn, named on hover | Read today | | Take | R70f |
 | Entity sets shown and hidden, with the script line that turns one on | A server turns sets on by script; the sets are read today | A set the name index lacks has only a hash | Take: a set with no name is written as a comment | R70m |
 | The records of an interior typed: rooms, portals, entity sets and its timecycle modifiers | Every edit below needs them, and R70f draws them | Typed by the data part of R70m, by the plan's default (ruling 14): declaring them was put to the owner on the sheet of 2026-10-21 and not answered ([rulings in force](Workbench_Plan.md#rulings-in-force)). Its install suite passes on the Legacy and the Enhanced install ([R70m](Roadmap.md#r70m-interiors)) | Add: the data part of R70m, with its install suite, which waits for no screen row | R70m |
-| A room's box, name and settings, with the portals on a moved wall following | | It is the interior builder | Waits (ruling 2) | R70m |
-| A portal's corners, rooms and flags; a portal fitted to the nearest wall, its corners put in the order the game expects, its two rooms swapped | | The same | Waits (ruling 2) | R70m |
-| A room or a portal added and removed, with the objects and the other portals renumbered | | The same | Waits (ruling 2) | R70m |
+| A room's box, name and settings, with the portals on a moved wall following | | It is the interior builder. The operation that states a room's members is built with no screen ([R70m](Roadmap.md#r70m-interiors)); nothing moves a portal with a wall | Waits (ruling 2) | R70m |
+| A portal's corners, rooms and flags; a portal fitted to the nearest wall, its corners put in the order the game expects, its two rooms swapped | | The same. The operation that states a portal's rooms, corners and flags is built with no screen; nothing fits a portal or orders its corners | Waits (ruling 2) | R70m |
+| A room or a portal added and removed, with the objects and the other portals renumbered | | The same. The operations are built with no screen, with every index renumbered | Waits (ruling 2) | R70m |
 | A new interior, a copy under a new name, a second instance | Where an interior starts | The same; and a record made from nothing takes its layout from a donor, as a new map does | Waits (ruling 2) | R70m |
 | An object placed in an interior and put in a room, the room chosen automatically | The objects of an interior are entries of its archetype, in its own frame, each attached to a room | The map that receives new objects is not where it goes, and the first edit of a game interior imports its type file | Take: a prop joins the room under the pointer, and builds into the type file and into no map | R70m |
-| An object attached to a portal, or filed in an entity set and taken out; an entity set made and renamed | A door closes its portal with it | The plan counts these with the builder | Waits (ruling 2) | R70m |
+| An object attached to a portal, or filed in an entity set and taken out; an entity set made and renamed | A door closes its portal with it | The plan counts these with the builder. The operations are built with no screen, but for the renaming of a set | Waits (ruling 2) | R70m |
 | The health of an interior | The shape of `or_maps::RULES` today | | Take, as rules, [listed below](#the-health-checks-of-an-interior) | R70m |
 | The sound passages and room audio of an interior shown, with a notice on a game interior that was moved or copied | A moved interior lets sound through its walls until its occlusion is written | How the game finds an interior's occlusion file is measured on the install before the notice is written | Take, read only | R70m |
 | The audio of an interior written at build: the game data of the interior and its rooms, then the occlusion file, then the manifest's lines | Without it sound passes through walls | The game data of an interior and its rooms is added, edited and removed in `or-io`, with no verb and no screen ([R70x](Roadmap.md#r70x-the-audio-of-an-interior)); the members of the occlusion metadata are hashes without a schema snapshot | Take, in that order, the occlusion file through a donor's type table | R70x |
@@ -159,7 +159,7 @@ The rooms, portals, entity sets and objects of an interior, and its sound. [R47]
 
 ### The health checks of an interior
 
-Each check is a rule of the Problems panel in R70m. The second column says what `crates/domain/or-maps/src/rules.rs` holds today.
+Each check is a rule of the Problems panel in R70m. The second column says what `crates/domain/or-maps/src/rules.rs` and `crates/domain/or-maps/src/interior.rs` hold today. Four rules of the second file are no row here: a portal with one room on both sides, a room that counts other portals than name it, an entity of a set in a room the interior does not hold, and an entity attached to two rooms.
 
 | Check | In `or-maps` today | Verdict | Row |
 |---|---|---|---|
@@ -168,10 +168,10 @@ Each check is a rule of the Problems panel in R70m. The second column says what 
 | A portal has no area, is not flat or is twisted | None | Take | R70m |
 | Two portals are alike | None | Take | R70m |
 | A room or a portal attaches an object past the interior's list | `interior-broken` | Have | |
-| An object is in no room | None | Take | R70m |
+| An object is in no room | `interior-entity-unattached`, for one in no room and on no portal: an object the installs attach to a portal is in no room | Have | |
 | An object's model is held by nothing | `archetype-missing`, for an entity a map places | Take, for the objects of an interior | R70m |
-| A room has no portal | None | Take | R70m |
-| An interior has no portal to the outside | None | Take | R70m |
+| A room has no portal | `interior-room-unreachable`, for a room no chain of portals joins to the outside, asked of an interior that has a portal to the outside | Have | |
+| An interior has no portal to the outside | `interior-sealed`, a note: the installs hold such interiors | Have | |
 | A room's box is empty, or far larger than its objects | None | Take | R70m |
 | An entity set is empty, or two sets have one name | None | Take | R70m |
 | The two arrays of an entity set differ in length | `interior-broken` | Have | |

@@ -385,6 +385,7 @@ not (
   | binary_id(=or-maps::how_the_packs_of_an_install_carry_their_maps)
   | binary_id(=or-maps::the_doors_bounds_and_path_regions_of_the_install)
   | binary_id(=or-maps::the_rules_fire_on_a_map_built_to_break_them)
+  | binary_id(=or-maps::what_the_interior_rules_say_of_the_install)
   | binary_id(=or-maps::what_the_rules_say_of_the_install)
   | binary_id(=or-media::bink_audio_matches_ffmpeg)
   | binary_id(=or-particle::a_particle_list_edit_saves_and_reopens)

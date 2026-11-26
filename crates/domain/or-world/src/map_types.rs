@@ -299,6 +299,11 @@ impl<'a> Room<'a> {
         field::hash_at(self.inst, keys::TIMECYCLE_NAME).unwrap_or(0)
     }
 
+    /// How many portals the room states lead into or out of it, which the file states apart from its portals.
+    pub fn portal_count(&self) -> u32 {
+        field::u32_at(self.inst, keys::PORTAL_COUNT).unwrap_or(0)
+    }
+
     pub fn attached_objects(&self) -> impl Iterator<Item = u32> + 'a {
         indices(self.inst, keys::ATTACHED_OBJECTS)
     }
@@ -425,6 +430,7 @@ pub(crate) mod tests {
         room.set("blend", Value::Float(0.75));
         room.set("timecycleName", Value::String("int_hall".into()));
         room.set("flags", Value::UInt(96));
+        room.set("portalCount", Value::UInt(1));
         room.set("floorId", Value::Int(floor));
         room.set("attachedObjects", indexes(attached));
         room
@@ -504,6 +510,7 @@ pub(crate) mod tests {
             );
             assert_eq!(room.flags(), typed.flags);
             assert_eq!(room.floor_id(), typed.floor_id);
+            assert_eq!((room.portal_count(), typed.portal_count), (1, 1));
             assert_eq!(room.blend(), typed.blend);
             assert_eq!(room.timecycle(), typed.timecycle_name.hash);
             assert_eq!(

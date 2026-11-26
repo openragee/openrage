@@ -1,8 +1,9 @@
 //! `openrage-cli maps`: list what a project's map sets place and declare, validate them and say what the rules find, read a build back
 //! against them, apply a list of operations to their sources, merge two copies of one map, propose and take out the collision of an
 //! object, plan or apply the deletion of entities with their chain of far models, keep a manifest of the game for the manifest of the
-//! maps to be written from, list their doors, list and edit the path regions a folder holds as sources, and move or delete an object
-//! the game placed, which imports its map (`maps_edit_game`).
+//! maps to be written from, list their doors, list and edit the interiors their type files declare (`maps_interior`), list and edit
+//! the path regions a folder holds as sources, and move or delete an object the game placed, which imports its map
+//! (`maps_edit_game`).
 //!
 //! The plan and the build of maps are `openrage-cli project plan` and `build`:
 //! a maps content is content like any other, and goes through the one plan.
@@ -33,6 +34,7 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("put-back") => crate::maps_put_back::run(rest),
         Some("edit-game") => crate::maps_edit_game::run(rest),
         Some("doors") => doors(rest),
+        Some("interior") => crate::maps_interior::run(rest),
         Some("roads") => crate::maps_roads::run(rest),
         Some("-h" | "--help" | "help") => {
             print_usage();
@@ -82,6 +84,8 @@ fn print_usage() {
          openrage-cli maps doors    <project.openrage-proj> [--module <id>] [--names <file>] [--json]\n  \
          openrage-cli maps doors    --game <install root> --map <logical path> [--names <file>] [--json]\n                             \
          [--keys <file>] [--kept <file>] [--fresh]\n  \
+         openrage-cli maps interior <project.openrage-proj> [<source>[:<archetype>]]... [--module <id>] [--json]\n  \
+         openrage-cli maps interior <project.openrage-proj> --apply <operations.json> [--dry-run] [--module <id>]\n  \
          openrage-cli maps roads    <folder> [--json]\n  \
          openrage-cli maps roads    <folder> --apply <operations.json> [--dry-run] [--inverse <file>]\n\n\
          changes compares each map file and type file of the content with the base its source keeps,\n\
@@ -137,7 +141,8 @@ fn print_usage() {
          `openrage-cli project plan` and `build`; maps go through them as any content does.\n\
          apply does the operations of a list, in order, to the sources of the maps content: an entity\n\
          placed, added as a copy or taken out with its LOD links renumbered, an archetype added or taken\n\
-         out, the extents grown or stated, a record put back. The list is JSON whose format is\n\
+         out, the extents grown or stated, a record put back, and the operations of an interior that\n\
+         `interior` names. The list is JSON whose format is\n\
          `openrage-map-operations` and whose schema is 1, each operation an object whose `op` names it\n\
          and whose `source` is a source folder of the content. An operation that states `expects`,\n\
          the SHA-256 of the XML its source is to hold, is refused when the source holds another. It\n\
@@ -222,6 +227,22 @@ fn print_usage() {
          interiors hold. A model has the name of a file the install lists, or one --names gives.\n\
          It writes nothing to the install; the world index is read from the file `world index`\n\
          keeps (--kept, --fresh).\n\
+         interior lists the interiors the type files of the content declare, or the ones named: a type\n\
+         file by its source folder, and one interior of it by the index of its archetype there\n\
+         (`villa_types.metadata.src:3`). For each it says its rooms, with the box, the flags, the count\n\
+         of portals and the entities each attaches, its portals, with their two rooms, their flags as\n\
+         one word, their corners and what they attach, its entity sets, with the room each entity\n\
+         stands in, and what the rules of an interior find: an error for what a save refuses, a\n\
+         warning for a portal with one room on both sides, a room that counts other portals than name\n\
+         it, an entity of a set in a room the interior does not hold, an entity attached to two rooms\n\
+         or to nothing, and a room no chain of portals joins to the outside, and a note for an interior\n\
+         no portal leads into. Room 0 is the outside. --json prints the same as data. It exits 1 when\n\
+         an interior holds what a save refuses. With --apply it does the operations of a list as\n\
+         `maps apply` does, all or none, to rooms, portals, entity sets, time cycle modifiers and the\n\
+         entities of an interior: a room or a portal added, taken out or stated, an entity attached to\n\
+         a room or a portal or taken out of one, added, taken out or moved into or out of an entity\n\
+         set, each with every index that names a room or an entity renumbered. A room is taken out once\n\
+         no portal and no entity set names it, and --dry-run writes nothing.\n\
          roads lists the path regions a folder holds as sources, each `<name>.paths.src` directly\n\
          inside it, such as the `sources` folder of a project: the region each states, its nodes, links\n\
          and junctions, and what the rules find over the set, each with a code and a severity. A rule\n\
@@ -346,7 +367,19 @@ fn apply(args: &[String]) -> Result<ExitCode, Failure> {
             "expected <project.openrage-proj> <operations.json>".into(),
         ));
     };
-    let (project, modules) = maps_of(std::slice::from_ref(path), &flags)?;
+    print!("{}", applied(path, list, &flags, dry_run)?);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// What `maps apply` prints once the operations of the list `list` are done to the sources of one maps content of the project `path`, all of them or none.
+pub(crate) fn applied(
+    path: &str,
+    list: &str,
+    flags: &HashMap<String, String>,
+    dry_run: bool,
+) -> Result<String, Failure> {
+    use std::fmt::Write as _;
+    let (project, modules) = maps_of(&[path.to_string()], flags)?;
     let [id] = modules.as_slice() else {
         return Err(Run(format!(
             "{path} holds {} maps contents ({}): say which with --module",
@@ -388,6 +421,7 @@ fn apply(args: &[String]) -> Result<ExitCode, Failure> {
         }
     }
 
+    let mut text = String::new();
     // Each file with the XML it held before the list and the XML it holds after: an operation taken back later in the list changes nothing.
     let mut files: Vec<(String, &[u8], &[u8])> = Vec::new();
     for (at, (operation, done)) in operations.iter().zip(&applied).enumerate() {
@@ -396,14 +430,15 @@ fn apply(args: &[String]) -> Result<ExitCode, Failure> {
             (true, Some(index)) => format!(": added at {index}"),
             (true, None) => String::new(),
         };
-        println!(
+        let _ = writeln!(
+            text,
             "  {}. {} of {}{said}",
             at + 1,
             operation.name(),
             operation.source()
         );
         for note in &done.notes {
-            println!("     note: {note}");
+            let _ = writeln!(text, "     note: {note}");
         }
         let file = (done.edited.file.strip_prefix(&folder))
             .unwrap_or(&done.edited.file)
@@ -420,15 +455,16 @@ fn apply(args: &[String]) -> Result<ExitCode, Failure> {
         .collect();
     let verb = if dry_run { "would change" } else { "changed" };
     for file in &changed {
-        println!("{verb} {file}");
+        let _ = writeln!(text, "{verb} {file}");
     }
-    println!(
+    let _ = writeln!(
+        text,
         "content {id}: {} operation(s) {verb} {} source(s){}",
         operations.len(),
         changed.len(),
         if dry_run { "; nothing was written" } else { "" }
     );
-    Ok(ExitCode::SUCCESS)
+    Ok(text)
 }
 
 /// Keep manifests of the game in a maps content: the files named, or those of an install that state a map of the content.

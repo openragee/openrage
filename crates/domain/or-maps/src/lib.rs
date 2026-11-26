@@ -29,6 +29,10 @@
 //! [`roads`] is the path regions a folder holds as sources: the operations that edit their nodes and links, each with its inverse, and
 //! the rules that say what is wrong in them. `openrage-cli maps roads` lists them and applies a list of operations.
 //!
+//! [`interior`] is the rules of an interior a type file declares and what it holds as a listing; the operations that edit its rooms,
+//! portals, entity sets, time cycle modifiers and entities are operations of [`operation`] like the others, with the same `expects`
+//! and the same session. `openrage-cli maps interior` lists one and applies a list.
+//!
 //! ⚠ **Nothing here says a map loads in game.** A build says that every file it wrote reloads through the readers, which is all that
 //! can be measured without running GTA V.
 
@@ -43,6 +47,7 @@ pub mod facts;
 pub mod first_edit;
 pub mod gizmo;
 pub mod import;
+pub mod interior;
 pub mod layout;
 pub mod manifest;
 pub mod mapping;

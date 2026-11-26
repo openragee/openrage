@@ -172,7 +172,7 @@ pub struct Entity<'a> {
 }
 
 impl<'a> Entity<'a> {
-    pub fn at(archetype: &'a str, position: [f32; 3], guid: u32) -> Self {
+    pub const fn at(archetype: &'a str, position: [f32; 3], guid: u32) -> Self {
         Self {
             archetype,
             position,
@@ -396,6 +396,309 @@ pub fn types_file(name: &str, archetypes: &[Archetype<'_>]) -> Vec<u8> {
     );
     root.set("dependencies", Value::Array(Vec::new()));
     encode(&root, doors)
+}
+
+/// What the schema gains for a type file that declares an interior: its class and the four records it holds, each with the members
+/// the typed world family reads of it and no other.
+const INTERIOR_CLASSES: &str = r#"  <structdef type="CMloRoomDef">
+    <string name="name" type="atString"/>
+    <Vector3 name="bbMin"/>
+    <Vector3 name="bbMax"/>
+    <float name="blend"/>
+    <string name="timecycleName" type="atHashString"/>
+    <string name="secondaryTimecycleName" type="atHashString"/>
+    <u32 name="flags"/>
+    <u32 name="portalCount"/>
+    <s32 name="floorId"/>
+    <s32 name="exteriorVisibiltyDepth" init="-1"/>
+    <array name="attachedObjects" type="atArray"><u32/></array>
+  </structdef>
+  <structdef type="CMloPortalDef">
+    <u32 name="roomFrom"/>
+    <u32 name="roomTo"/>
+    <u32 name="flags"/>
+    <u32 name="mirrorPriority"/>
+    <u32 name="opacity"/>
+    <u32 name="audioOcclusion"/>
+    <array name="corners" type="atArray"><Vector3/></array>
+    <array name="attachedObjects" type="atArray"><u32/></array>
+  </structdef>
+  <structdef type="CMloEntitySet">
+    <string name="name" type="atHashString"/>
+    <array name="locations" type="atArray"><u32/></array>
+    <array name="entities" type="atArray"><pointer type="CEntityDef" policy="owner"/></array>
+  </structdef>
+  <structdef type="CMloTimeCycleModifier">
+    <string name="name" type="atHashString"/>
+    <Vector4 name="sphere"/>
+    <float name="percentage"/>
+    <float name="range"/>
+    <u32 name="startHour"/>
+    <u32 name="endHour"/>
+  </structdef>
+  <structdef type="CMloArchetypeDef" base="CBaseArchetypeDef">
+    <u32 name="mloFlags"/>
+    <array name="entities" type="atArray"><pointer type="CEntityDef" policy="owner"/></array>
+    <array name="rooms" type="atArray"><struct type="CMloRoomDef"/></array>
+    <array name="portals" type="atArray"><struct type="CMloPortalDef"/></array>
+    <array name="entitySets" type="atArray"><struct type="CMloEntitySet"/></array>
+    <array name="timeCycleModifiers" type="atArray"><struct type="CMloTimeCycleModifier"/></array>
+  </structdef>
+</ParserSchema>"#;
+
+/// One room of a sample interior, with the entities of the interior it attaches by their index.
+#[derive(Debug, Clone, Copy)]
+pub struct Room<'a> {
+    pub name: &'a str,
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+    pub attached: &'a [u32],
+    /// The portals the room states it counts: the ones that name it, as a room of the game counts them, when none is stated.
+    pub portal_count: Option<u32>,
+}
+
+/// One portal of a sample interior: the two rooms it joins by their index, its four corners, and the entities it attaches.
+#[derive(Debug, Clone, Copy)]
+pub struct Portal<'a> {
+    pub from: u32,
+    pub to: u32,
+    pub corners: [[f32; 3]; 4],
+    pub flags: u32,
+    pub attached: &'a [u32],
+}
+
+/// One entity set of a sample interior: each entity with the room it stands in.
+#[derive(Debug, Clone, Copy)]
+pub struct EntitySet<'a> {
+    pub name: &'a str,
+    pub entities: &'a [(u32, Entity<'a>)],
+}
+
+/// One time cycle modifier of a sample interior, applied inside `sphere` (a centre and a radius).
+#[derive(Debug, Clone, Copy)]
+pub struct Modifier<'a> {
+    pub name: &'a str,
+    pub sphere: [f32; 4],
+}
+
+/// One interior of a sample type file.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Interior<'a> {
+    pub name: &'a str,
+    pub entities: &'a [Entity<'a>],
+    pub rooms: &'a [Room<'a>],
+    pub portals: &'a [Portal<'a>],
+    pub entity_sets: &'a [EntitySet<'a>],
+    pub modifiers: &'a [Modifier<'a>],
+}
+
+/// The quad of a sample portal: a door two metres wide and a little over two high, in the wall at `y`, between `x` and `x + 2`, from the floor `z`.
+const fn door(x: f32, y: f32, z: f32) -> [[f32; 3]; 4] {
+    [
+        [x, y, z],
+        [x + 2.0, y, z],
+        [x + 2.0, y, z + 2.25],
+        [x, y, z + 2.25],
+    ]
+}
+
+/// A sound interior for the suites: the outside and three rooms in a row, the hall opening to the outside and each room to the next, six entities each attached once (one of them to the front door's portal and one to the outside), two entity sets and two time cycle modifiers.
+pub const VILLA: Interior<'static> = Interior {
+    name: "villa",
+    entities: &[
+        Entity::at("villa_shell", [0.0, 0.0, 0.0], 1),
+        Entity::at("prop_chair", [-2.0, 1.0, 0.0], 2),
+        Entity::at("prop_table", [8.0, 1.0, 0.0], 3),
+        Entity::at("prop_lamp", [8.0, -2.0, -3.0], 4),
+        Entity::at("villa_front_door", [-1.0, -5.0, 0.0], 5),
+        Entity::at("villa_porch", [0.0, -7.0, 0.0], 6),
+    ],
+    rooms: &[
+        Room {
+            name: "limbo",
+            min: [-5.0, -8.0, -3.0],
+            max: [12.0, 5.0, 3.0],
+            attached: &[5],
+            portal_count: None,
+        },
+        Room {
+            name: "hall",
+            min: [-5.0, -5.0, 0.0],
+            max: [5.0, 5.0, 3.0],
+            attached: &[0, 1],
+            portal_count: None,
+        },
+        Room {
+            name: "kitchen",
+            min: [5.0, -5.0, 0.0],
+            max: [12.0, 5.0, 3.0],
+            attached: &[2],
+            portal_count: None,
+        },
+        Room {
+            name: "cellar",
+            min: [5.0, -5.0, -3.0],
+            max: [12.0, 5.0, 0.0],
+            attached: &[3],
+            portal_count: None,
+        },
+    ],
+    portals: &[
+        Portal {
+            from: 1,
+            to: 0,
+            corners: door(-1.0, -5.0, 0.0),
+            flags: 0,
+            attached: &[4],
+        },
+        Portal {
+            from: 1,
+            to: 2,
+            corners: door(5.0, 0.0, 0.0),
+            flags: 0,
+            attached: &[],
+        },
+        Portal {
+            from: 2,
+            to: 3,
+            corners: door(8.0, 3.0, 0.0),
+            flags: 0,
+            attached: &[],
+        },
+    ],
+    entity_sets: &[
+        EntitySet {
+            name: "villa_party",
+            entities: &[
+                (2, Entity::at("prop_balloon", [9.0, 2.0, 1.0], 20)),
+                (3, Entity::at("prop_crate", [9.0, -2.0, -3.0], 21)),
+            ],
+        },
+        EntitySet {
+            name: "villa_night",
+            entities: &[(1, Entity::at("prop_candle", [-2.0, 1.0, 1.0], 22))],
+        },
+    ],
+    modifiers: &[
+        Modifier {
+            name: "villa_warm",
+            sphere: [0.0, 0.0, 1.5, 6.0],
+        },
+        Modifier {
+            name: "villa_cold",
+            sphere: [8.0, 0.0, -1.5, 4.0],
+        },
+    ],
+};
+
+fn indexes(of: &[u32]) -> Value {
+    Value::Array(of.iter().map(|i| Value::UInt(u64::from(*i))).collect())
+}
+
+fn structs(of: impl Iterator<Item = MetaInstance>) -> Value {
+    Value::Array(of.map(|inst| Value::Struct(Box::new(inst))).collect())
+}
+
+fn pointers(of: impl Iterator<Item = MetaInstance>) -> Value {
+    Value::Array(
+        of.map(|inst| Value::Pointer(Some(Box::new(inst))))
+            .collect(),
+    )
+}
+
+fn interior(i: &Interior<'_>) -> MetaInstance {
+    // The box of an interior holds its rooms; one with no room states a box of nothing.
+    let corners = |pick: fn(f32, f32) -> f32, of: fn(&Room<'_>) -> [f32; 3]| {
+        let rooms = i.rooms.iter().map(of);
+        rooms
+            .reduce(|held, room| [0, 1, 2].map(|axis| pick(held[axis], room[axis])))
+            .unwrap_or([0.0; 3])
+    };
+    let (min, max) = (corners(f32::min, |r| r.min), corners(f32::max, |r| r.max));
+    let mut inst = archetype(&Archetype::new(i.name, min, max), false);
+    inst.type_name = "CMloArchetypeDef".to_string();
+    inst.set("mloFlags", Value::UInt(0));
+    inst.set("entities", pointers(i.entities.iter().map(entity)));
+    let rooms = i.rooms.iter().enumerate().map(|(at, room)| {
+        let named = (i.portals.iter())
+            .filter(|p| p.from as usize == at || p.to as usize == at)
+            .count();
+        let portals = room.portal_count.map_or(named as u64, u64::from);
+        let mut inst = MetaInstance::new("CMloRoomDef");
+        inst.set("name", Value::String(room.name.to_string()));
+        inst.set("bbMin", Value::Vec3(room.min));
+        inst.set("bbMax", Value::Vec3(room.max));
+        inst.set("blend", Value::Float(1.0));
+        inst.set("timecycleName", Value::Hash(HashedString::from_hash(0)));
+        inst.set(
+            "secondaryTimecycleName",
+            Value::Hash(HashedString::from_hash(0)),
+        );
+        inst.set("flags", Value::UInt(0));
+        inst.set("portalCount", Value::UInt(portals));
+        inst.set("floorId", Value::Int(0));
+        inst.set("exteriorVisibiltyDepth", Value::Int(-1));
+        inst.set("attachedObjects", indexes(room.attached));
+        inst
+    });
+    inst.set("rooms", structs(rooms));
+    let portals = i.portals.iter().map(|portal| {
+        let mut inst = MetaInstance::new("CMloPortalDef");
+        inst.set("roomFrom", Value::UInt(u64::from(portal.from)));
+        inst.set("roomTo", Value::UInt(u64::from(portal.to)));
+        inst.set("flags", Value::UInt(u64::from(portal.flags)));
+        inst.set("mirrorPriority", Value::UInt(0));
+        inst.set("opacity", Value::UInt(0));
+        inst.set("audioOcclusion", Value::UInt(0));
+        inst.set(
+            "corners",
+            Value::Array(portal.corners.iter().map(|c| Value::Vec3(*c)).collect()),
+        );
+        inst.set("attachedObjects", indexes(portal.attached));
+        inst
+    });
+    inst.set("portals", structs(portals));
+    let sets = i.entity_sets.iter().map(|set| {
+        let locations: Vec<u32> = set.entities.iter().map(|(room, _)| *room).collect();
+        let mut inst = MetaInstance::new("CMloEntitySet");
+        inst.set("name", Value::Hash(HashedString::new(set.name)));
+        inst.set("locations", indexes(&locations));
+        inst.set(
+            "entities",
+            pointers(set.entities.iter().map(|(_, e)| entity(e))),
+        );
+        inst
+    });
+    inst.set("entitySets", structs(sets));
+    let modifiers = i.modifiers.iter().map(|modifier| {
+        let mut inst = MetaInstance::new("CMloTimeCycleModifier");
+        inst.set("name", Value::Hash(HashedString::new(modifier.name)));
+        inst.set("sphere", Value::Vec4(modifier.sphere));
+        inst.set("percentage", Value::Float(100.0));
+        inst.set("range", Value::Float(1.0));
+        inst.set("startHour", Value::UInt(0));
+        inst.set("endHour", Value::UInt(23));
+        inst
+    });
+    inst.set("timeCycleModifiers", structs(modifiers));
+    inst
+}
+
+/// A `.ytyp` called `name` that declares `archetypes`, then `interiors`, each with its rooms, portals, entity sets and modifiers.
+pub fn types_file_with_interiors(
+    name: &str,
+    archetypes: &[Archetype<'_>],
+    interiors: &[Interior<'_>],
+) -> Vec<u8> {
+    let plain = archetypes.iter().map(|a| archetype(a, false));
+    let mut root = MetaInstance::new("CMapTypes");
+    root.set("name", Value::Hash(HashedString::new(name)));
+    root.set(
+        "archetypes",
+        pointers(plain.chain(interiors.iter().map(interior))),
+    );
+    root.set("dependencies", Value::Array(Vec::new()));
+    encode_with(&root, &PSC.replace("</ParserSchema>", INTERIOR_CLASSES))
 }
 
 #[cfg(test)]

@@ -92,7 +92,7 @@ fn name_of(value: Option<&Value>, names: Names<'_>) -> Name {
     }
 }
 
-fn name_at(inst: &MetaInstance, key: u32, names: Names<'_>) -> Name {
+pub(crate) fn name_at(inst: &MetaInstance, key: u32, names: Names<'_>) -> Name {
     name_of(field::get(inst, key), names)
 }
 
@@ -242,6 +242,8 @@ pub struct InteriorFact {
     pub entity_sets: usize,
     pub entities: usize,
     pub problems: Vec<String>,
+    /// What the rules of an interior find in it (`crate::interior::check`).
+    pub findings: Vec<crate::interior::Found>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -565,6 +567,7 @@ fn read_interior(interior: &or_world::Interior<'_>) -> InteriorFact {
             .iter()
             .map(ToString::to_string)
             .collect(),
+        findings: crate::interior::check(interior),
     }
 }
 

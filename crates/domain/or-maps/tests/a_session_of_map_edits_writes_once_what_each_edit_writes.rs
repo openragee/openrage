@@ -13,14 +13,19 @@ use or_io::meta::{MetaInstance, Value};
 use or_maps::edit::{read_archetype, read_entity};
 use or_maps::import::{add_files, Incoming};
 use or_maps::operation::{
-    apply, apply_all, digest_of, At, Error, Extents, Inserted, Operation, PoseData, Record, Session,
+    apply, apply_all, digest_of, At, Attached, Error, Extents, Inserted, Operation, PortalMembers,
+    PoseData, Record, RoomMembers, Session,
 };
-use or_maps::sample::{child_map_file, map_file, types_file, Archetype, Entity};
+use or_maps::sample::{
+    child_map_file, map_file, types_file, types_file_with_interiors, Archetype, Entity, VILLA,
+};
 
 const HARBOUR: &str = "harbour.metadata.src";
 const YARD: &str = "yard.metadata.src";
 const PIER: &str = "pier.metadata.src";
 const TYPES: &str = "harbour_types.metadata.src";
+/// The type file whose one archetype is the interior `or_maps::sample::VILLA`.
+const VILLA_TYPES: &str = "villa_types.metadata.src";
 
 fn incoming(name: &'static str, bytes: Vec<u8>) -> Incoming<'static> {
     Incoming {
@@ -40,7 +45,7 @@ fn pack_of(dir: &Path, files: Vec<Incoming<'static>>) -> PathBuf {
 }
 
 /// A pack of one set: `harbour`, whose entity 0 is the LOD parent of 1 and 2 and whose 3 stands alone past the extents it states,
-/// `yard` with one entity, and a type file of two crates.
+/// `yard` with one entity, a type file of two crates, and a type file of one interior.
 fn pack(dir: &Path) -> PathBuf {
     let harbour = map_file(
         "harbour",
@@ -83,6 +88,10 @@ fn pack(dir: &Path) -> PathBuf {
             incoming("harbour.ymap", harbour),
             incoming("yard.ymap", yard),
             incoming("harbour_types.ytyp", types),
+            incoming(
+                "villa_types.ytyp",
+                types_file_with_interiors("villa_types", &[], &[VILLA]),
+            ),
         ],
     )
 }
@@ -387,7 +396,222 @@ const STEPS: &[Step] = &[
         inserted: vec![0],
         expects: None,
     },
+    // The operations of an interior, each on the villa as the steps before it left it. The first four are held to be sure.
+    |_| Operation::SetRoom {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        room: 2,
+        members: RoomMembers {
+            name: Some("scullery".into()),
+            bb_max: Some([13.5, 5.0, 3.0]),
+            timecycle_name: Some("villa_steam".into()),
+            ..RoomMembers::default()
+        },
+    },
+    |_| Operation::SetPortal {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        portal: 2,
+        members: PortalMembers {
+            flags: Some(0x2000),
+            corners: Some(vec![
+                [8.5, 3.0, 0.0],
+                [10.5, 3.0, 0.0],
+                [10.5, 3.0, 2.5],
+                [8.5, 3.0, 2.5],
+            ]),
+            ..PortalMembers::default()
+        },
+    },
+    |_| Operation::AttachEntity {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        entity: 1,
+        room: None,
+        portal: Some(1),
+        at: Some(0),
+    },
+    |_| Operation::DetachEntity {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        entity: 1,
+        room: Some(1),
+        portal: None,
+    },
+    // An attic between the hall and the scullery, which with the cellar is named one later.
+    |_| Operation::AddRoom {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        room: Some(2),
+        members: RoomMembers {
+            name: Some("attic".into()),
+            bb_min: Some([-5.0, -5.0, 3.0]),
+            bb_max: Some([5.0, 5.0, 5.5]),
+            ..RoomMembers::default()
+        },
+        attached_objects: vec![1],
+    },
+    |_| Operation::AddPortal {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        portal: None,
+        members: PortalMembers {
+            room_from: Some(2),
+            room_to: Some(1),
+            corners: Some(vec![
+                [0.0, 0.0, 3.0],
+                [2.0, 0.0, 3.0],
+                [2.0, 2.0, 3.0],
+                [0.0, 2.0, 3.0],
+            ]),
+            ..PortalMembers::default()
+        },
+        attached_objects: Vec::new(),
+    },
+    // The portal of the cellar leads from the attic: the scullery counts one fewer and the attic one more.
+    |_| Operation::SetPortal {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        portal: 2,
+        members: PortalMembers {
+            room_from: Some(2),
+            ..PortalMembers::default()
+        },
+    },
+    |_| Operation::RemovePortal {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        portal: 1,
+    },
+    // The scullery, which no portal names now and whose one entity of a set the step before it moves out.
+    |_| Operation::MoveEntityOutOfSet {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        set: 0,
+        entity: 0,
+        to: Some(2),
+        attached: vec![Attached {
+            room: Some(4),
+            portal: None,
+            at: Some(0),
+        }],
+    },
+    |_| Operation::RemoveRoom {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        room: 3,
+    },
+    |_| Operation::AddInteriorEntity {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        archetype_name: "prop_stool".into(),
+        pose: pose([9.0, 1.0, -3.0]),
+        donor: None,
+        room: Some(3),
+    },
+    |_| Operation::RemoveInteriorEntity {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        entity: 0,
+    },
+    // A copy of the entity the villa holds first now, put in before it and into the hall.
+    |folder| {
+        let villa = read_archetype(&folder.join(VILLA_TYPES), 0).unwrap();
+        let or_io::meta::typed::CBaseArchetypeDefAny::CMloArchetypeDef(villa) = villa else {
+            panic!("the villa is an interior");
+        };
+        Operation::InsertInteriorEntity {
+            source: VILLA_TYPES.into(),
+            expects: None,
+            archetype: 0,
+            entity: 0,
+            record: Record::entity(&villa.entities[0]).unwrap(),
+            attached: vec![Attached {
+                room: Some(1),
+                portal: None,
+                at: None,
+            }],
+        }
+    },
+    |_| Operation::AddEntitySet {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        set: None,
+        name: "villa_dawn".into(),
+        entities: Vec::new(),
+    },
+    |_| Operation::MoveEntityIntoSet {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        entity: 3,
+        set: 2,
+        location: 1,
+        at: None,
+    },
+    |_| Operation::RemoveEntitySet {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        set: 1,
+    },
+    |_| Operation::AddTimeCycleModifier {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        modifier: None,
+        name: "villa_noon".into(),
+        sphere: [2.5, -1.0, 1.5, 3.25],
+        percentage: 60.0,
+        range: 2.5,
+        start_hour: 11,
+        end_hour: 14,
+    },
+    |_| Operation::RemoveTimeCycleModifier {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        modifier: 0,
+    },
 ];
+
+/// The operations of an interior a session holds to be sure, and does with no save: members of a room, members of a portal that
+/// leave its two rooms as they are, and an entity put into or taken out of one list. Every other one renumbers or counts, and is
+/// done as `apply` does it.
+fn of_an_interior_and_proven_at_once(operation: &Operation) -> bool {
+    let rooms_stay =
+        |members: &PortalMembers| members.room_from.is_none() && members.room_to.is_none();
+    match operation {
+        Operation::SetPortal { members, .. } => !rooms_stay(members),
+        Operation::AddRoom { .. }
+        | Operation::RemoveRoom { .. }
+        | Operation::AddPortal { .. }
+        | Operation::RemovePortal { .. }
+        | Operation::AddInteriorEntity { .. }
+        | Operation::RemoveInteriorEntity { .. }
+        | Operation::InsertInteriorEntity { .. }
+        | Operation::AddEntitySet { .. }
+        | Operation::RemoveEntitySet { .. }
+        | Operation::MoveEntityIntoSet { .. }
+        | Operation::MoveEntityOutOfSet { .. }
+        | Operation::AddTimeCycleModifier { .. }
+        | Operation::RemoveTimeCycleModifier { .. } => true,
+        _ => false,
+    }
+}
 
 /// The names of the operations, as the type itself lists them when it refuses a name.
 fn variants() -> BTreeSet<String> {
@@ -442,8 +666,12 @@ fn a_list_done_through_a_session_and_flushed_once_leaves_what_doing_it_one_by_on
                     .expects()
                     .map(|d| d == applied.inverse.expects().unwrap()),
                 // What a rewrite leaves is an XML, which has its digest, and so has what several entities put in at once leave, an
-                // operation no session holds to be sure and does as `apply` does it; a root an operation changed has none yet.
-                Some(matches!(name, "rewrite_source" | "insert_entities")),
+                // operation no session holds to be sure and does as `apply` does it, as it does the operations of an interior that
+                // renumber or count; a root an operation changed has none yet.
+                Some(
+                    matches!(name, "rewrite_source" | "insert_entities")
+                        || of_an_interior_and_proven_at_once(&operation)
+                ),
                 "step {number} ({name}), {way}"
             );
         }
@@ -485,7 +713,7 @@ fn a_list_done_through_a_session_and_flushed_once_leaves_what_doing_it_one_by_on
             .iter()
             .map(|w| w.source.as_str())
             .collect::<Vec<_>>(),
-        [HARBOUR, TYPES, PIER, YARD]
+        [HARBOUR, TYPES, PIER, VILLA_TYPES, YARD]
     );
     for source in &written {
         assert_eq!(

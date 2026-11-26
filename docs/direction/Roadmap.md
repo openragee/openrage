@@ -10072,7 +10072,25 @@ interior ([in full, with what is left](../reference/Crate_Reference.md#io-crates
 `every_interior_of_an_install_reads_typed_states_the_members_typed_and_saves_to_its_fixed_point`
 reads 541 interiors in 2,763 type files of the Legacy install, and saves 424 of those type files to
 their fixed point with 0 problems; of the Enhanced install, 556 interiors in 2,876 type files and
-439 saved, with 0 problems (at `8853987c8` with this change). Nothing after the data part is built.
+439 saved, with 0 problems (at `8853987c8` with this change).
+
+The operations and the rules of an interior are built with no screen
+([in full, with what is left](../reference/Crate_Reference.md#domain-crates)). The operations are
+those of `or_maps::operation`, with its `expects`, its session and its list
+(`crates/domain/or-maps/src/operation/interior.rs`): a room, a portal, an entity set, a time cycle
+modifier and an entity of an interior added, taken out, stated, attached or moved into a set, each
+renumbering every index it moves and giving its inverse
+(`every_operation_followed_by_its_inverse_leaves_every_source_byte_for_byte_as_it_was`). Seven
+rules of `or_maps::interior` stand beside `interior-broken`
+(`each_rule_fires_on_an_interior_built_to_break_it_and_on_no_other`), and
+`openrage-cli maps interior` lists an interior and applies a list. On the installs
+(`what_the_interior_rules_say_of_the_install`, slow tier, on top of `94f8a639b`, 2026-11-26): room 0
+is the outside in 541 of 541 interiors of Legacy and 556 of 556 of Enhanced; no rule that warns
+fires; and 45 of the 48 type files sampled on each took a room with a portal and were put back, the
+other 3 holding no portal. With the staged schema snapshot installed, as the app installs it, the 48
+of the Enhanced sample are each refused unchanged, which is `or-io`'s to answer. Left: every screen,
+with the builder, which waits for ruling 2; the entity set switches and their script lines; the
+first edit of an interior of the game; the sound passages; and the rules of the brief not built.
 
 **Depends on.** Nothing for the data part; [R70f](#r70f-layers-of-what-the-game-hides) and
 [R70i](#r70i-selecting-and-moving-in-the-world) for the rest; ruling 2 for the builder.

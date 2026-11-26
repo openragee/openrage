@@ -364,8 +364,17 @@ pub struct Temporal {
     /// Seconds to converge at the camera while it moves forward, and the speeds along the view, in metres a second, the move starts and ends at.
     pub forward: f32,
     pub forward_speed: [f32; 2],
-    /// How many deviations of the pixels about it the history is held within.
+    /// How many deviations of the pixels about it the history is held within: moving `velocity` screens a frame or faster, at rest, and where the frame responds fast.
     pub gamma: f32,
+    pub gamma_still: f32,
+    pub velocity: f32,
+    pub gamma_responsive: f32,
+    /// How many deviations a flicker adds at rest, and the relative flicker of the luminance it starts and is whole at.
+    pub flicker_gamma: f32,
+    pub flicker: [f32; 2],
+    /// Seconds to converge where the frame responds fast, and whether a tree's pixels do.
+    pub responsive: f32,
+    pub responsive_trees: bool,
 }
 
 #[cfg(test)]

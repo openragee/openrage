@@ -12,6 +12,7 @@ use super::post_math::{
 use super::post_shaders::{module, Part};
 use crate::game_shaders::deferred::HDR_FORMAT;
 use crate::game_shaders::grade::Scotopic;
+use crate::game_shaders::mesh::scene::{MATERIAL_TREE, MATERIAL_TYPE_MASK};
 use crate::game_shaders::tone::{Gta6Post, Temporal, BLOOM_SIZES, COMPENSATION_SAMPLES};
 
 /// The longest a frame counts for when the history takes its share, in seconds: a slow frame converges by frames, not by time.
@@ -300,7 +301,7 @@ impl Post {
             ),
             sampler: crate::game_shaders::samplers::linear(device),
             composite_values: uniform(device, 16 * (4 + COMPENSATION_SAMPLES as u64 / 4)),
-            temporal_values: uniform(device, 64 * 3 + 16 * 6),
+            temporal_values: uniform(device, 64 * 3 + 16 * 8),
             sharpen_values: uniform(device, 48),
             targets: None,
             bound: None,
@@ -316,12 +317,12 @@ impl Post {
         }
     }
 
-    /// Make the targets for a frame of `size` where they are of another, bind this frame's `hdr`, `depth` and `ldr`, and step the camera's offset on.
+    /// Make the targets for a frame of `size` where they are of another, bind this frame's `hdr`, `depth`, `stencil` and `ldr`, and step the camera's offset on.
     pub(super) fn prepare(
         &mut self,
         device: &wgpu::Device,
         hdr: &wgpu::TextureView,
-        depth: &wgpu::TextureView,
+        (depth, stencil): (&wgpu::TextureView, &wgpu::TextureView),
         ldr: &wgpu::TextureView,
     ) {
         let size = hdr.texture().size();
@@ -387,7 +388,7 @@ impl Post {
         let temporal = [0, 1].map(|read| {
             group(
                 &self.temporal,
-                &[(0, hdr), (2, &t.history[read]), (3, depth)],
+                &[(0, hdr), (2, &t.history[read]), (3, depth), (5, stencil)],
                 Some((4, &self.temporal_values)),
             )
         });
@@ -452,11 +453,28 @@ impl Post {
             near_share(seconds, speed, &temporal),
             share(seconds, temporal.far),
             temporal.far_depth,
+            share(seconds, temporal.responsive),
+        ]);
+        values.extend([
+            f32::from(u8::from(valid)),
+            f32::from(u8::from(temporal.responsive_trees)),
+            MATERIAL_TYPE_MASK as f32,
+            MATERIAL_TREE as f32,
+        ]);
+        values.extend([
             temporal.gamma,
+            temporal.gamma_still,
+            temporal.velocity,
+            temporal.gamma_responsive,
         ]);
         // The history is brought to this frame's exposure: the frame holds its light times the exposure, which moves as it adapts.
         let rescale = exposure / kept.exposure.max(f32::MIN_POSITIVE);
-        values.extend([f32::from(u8::from(valid)), rescale, 0.0, 0.0]);
+        values.extend([
+            temporal.flicker_gamma,
+            temporal.flicker[0],
+            temporal.flicker[1],
+            rescale,
+        ]);
         values.extend(resolve_weights(kept.frame));
         values.extend([0.0; 3]);
         queue.write_buffer(&self.temporal_values, 0, bytemuck::cast_slice(&values));
@@ -671,6 +689,13 @@ mod tests {
             forward: 0.2,
             forward_speed: [0.0, 0.1],
             gamma: 1.25,
+            gamma_still: 1.25,
+            velocity: 0.003,
+            gamma_responsive: 0.9,
+            flicker_gamma: 0.5,
+            flicker: [0.3, 0.4],
+            responsive: 0.1,
+            responsive_trees: true,
         };
         let dt = 1.0 / 60.0;
         let still = near_share(dt, 0.0, &temporal);

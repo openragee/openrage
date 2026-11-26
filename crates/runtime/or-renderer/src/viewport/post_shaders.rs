@@ -161,7 +161,7 @@ fn fs_composite(v: Out) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// The frame laid over its history where the surface stood the frame before, the history held within the pixels about it.
+/// The frame laid over its history where the surface stood the frame before, the history clipped toward the pixels about it as the build's resolve does.
 const TEMPORAL: &str = r#"
 struct Temporal {
     // From a pixel and its depth to the world, as the frame was drawn this time
@@ -170,26 +170,22 @@ struct Temporal {
     now: mat4x4<f32>,
     before: mat4x4<f32>,
     eye: vec4<f32>,
-    // share taken near, share taken far, the distance far starts at, the deviations the history is held within
+    // share taken near, share taken far, the distance far starts at, share taken where the frame responds fast
     shares: vec4<f32>,
-    // whether there is a history to read, and the factor that brings it to this frame's exposure
+    // whether there is a history to read, whether a tree's pixels respond fast, the stencil's material mask and a tree's material
     flags: vec4<f32>,
-    // the nine tent weights of the 3x3 about the pixel, row by row, that put this frame back on the pixel's middle
+    // the deviations the history is held within: least, most, the speed in screens a frame the least is reached at, where the frame responds fast
+    variance: vec4<f32>,
+    // what a flicker adds to the deviations, the relative flicker of the luminance it starts and is whole at, and the factor that brings the history to this frame's exposure
+    flicker: vec4<f32>,
+    // the nine weights of the 3x3 about the pixel, row by row, that put this frame back on the pixel's middle
     weights: array<vec4<f32>, 3>,
 }
 
 @group(0) @binding(2) var history: texture_2d<f32>;
 @group(0) @binding(3) var depth: texture_depth_2d;
 @group(0) @binding(4) var<uniform> temporal: Temporal;
-
-// A colour weighed down by its brightness, so that one bright texel neither sets the history's bounds nor flickers
-fn tamed(c: vec3<f32>) -> vec3<f32> {
-    return c / (1.0 + max(c.r, max(c.g, c.b)));
-}
-
-fn untamed(c: vec3<f32>) -> vec3<f32> {
-    return c / max(1.0 - max(c.r, max(c.g, c.b)), 1e-4);
-}
+@group(0) @binding(5) var stencil: texture_2d<u32>;
 
 fn screen_of(m: mat4x4<f32>, world: vec4<f32>) -> vec2<f32> {
     let clip = m * world;
@@ -197,31 +193,71 @@ fn screen_of(m: mat4x4<f32>, world: vec4<f32>) -> vec2<f32> {
     return vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
 }
 
+fn ycocg(c: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(0.25 * (c.r + c.b) + 0.5 * c.g, 0.5 * (c.r - c.b), 0.5 * c.g - 0.25 * (c.r + c.b));
+}
+
+fn rgb_of(c: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z);
+}
+
+// The history at `uv` through five taps of a Catmull-Rom spline, the corners left out and the rest made to sum one
+fn history_at(uv: vec2<f32>) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(history));
+    let p = uv * size;
+    let c = floor(p - 0.5) + 0.5;
+    let f = p - c;
+    let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    let w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    let w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    let w3 = f * f * (-0.5 + 0.5 * f);
+    let w12 = w1 + w2;
+    let t0 = (c - 1.0) / size;
+    let t3 = (c + 2.0) / size;
+    let t12 = (c + w2 / w12) / size;
+    let a = w12.x * w0.y;
+    let b = w0.x * w12.y;
+    let m = w12.x * w12.y;
+    let d = w3.x * w12.y;
+    let e = w12.x * w3.y;
+    let sum = textureSampleLevel(history, linear_clamp, vec2<f32>(t12.x, t0.y), 0.0).rgb * a
+        + textureSampleLevel(history, linear_clamp, vec2<f32>(t0.x, t12.y), 0.0).rgb * b
+        + textureSampleLevel(history, linear_clamp, t12, 0.0).rgb * m
+        + textureSampleLevel(history, linear_clamp, vec2<f32>(t3.x, t12.y), 0.0).rgb * d
+        + textureSampleLevel(history, linear_clamp, vec2<f32>(t12.x, t3.y), 0.0).rgb * e;
+    return sum / (a + b + m + d + e);
+}
+
 @fragment
 fn fs_temporal(v: Out) -> @location(0) vec4<f32> {
     let size = vec2<i32>(textureDimensions(source));
     let at = vec2<i32>(v.position.xy);
+    // This frame on the pixel's middle, each texel weighed down by its brightness so that one bright texel does not flicker
+    var resolved = vec3<f32>(0.0);
+    var weight = 0.0;
     var mean = vec3<f32>(0.0);
     var square = vec3<f32>(0.0);
-    var resolved = vec3<f32>(0.0);
+    var least = 1e30;
+    var most = -1e30;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
             let raw = textureLoad(source, clamp(at + vec2<i32>(x, y), vec2<i32>(0), size - 1), 0).rgb;
             let k = u32((y + 1) * 3 + x + 1);
-            resolved += raw * temporal.weights[k / 4u][k % 4u];
-            let c = tamed(raw);
+            let w = temporal.weights[k / 4u][k % 4u] / (1.0 + dot(raw, vec3<f32>(0.2125, 0.7154, 0.0721)));
+            resolved += raw * w;
+            weight += w;
+            let c = ycocg(raw);
             mean += c;
             square += c * c;
+            least = min(least, c.x);
+            most = max(most, c.x);
         }
     }
-    let here = vec4<f32>(resolved, textureLoad(source, at, 0).a);
+    let alpha = textureLoad(source, at, 0).a;
+    let here = resolved / max(weight, 1e-30);
     if (temporal.flags.x < 0.5) {
-        return here;
+        return vec4<f32>(here, alpha);
     }
-    mean /= 9.0;
-    let deviation = sqrt(max(square / 9.0 - mean * mean, vec3<f32>(0.0)));
-    let low = mean - deviation * temporal.shares.w;
-    let high = mean + deviation * temporal.shares.w;
     // Where the surface at this pixel stood on the screen the frame before: the sky lies on the far plane
     let z = textureLoad(depth, at, 0);
     let ndc = vec2<f32>(v.uv.x * 2.0 - 1.0, 1.0 - v.uv.y * 2.0);
@@ -229,13 +265,46 @@ fn fs_temporal(v: Out) -> @location(0) vec4<f32> {
     let world = vec4<f32>(unprojected.xyz / unprojected.w, 1.0);
     let back = v.uv + screen_of(temporal.before, world) - screen_of(temporal.now, world);
     if (any(back < vec2<f32>(0.0)) || any(back > vec2<f32>(1.0))) {
-        return here;
+        return vec4<f32>(here, alpha);
     }
-    let before = textureSampleLevel(history, linear_clamp, back, 0.0).rgb * temporal.flags.y;
-    let held = clamp(tamed(before), low, high);
+    var held = history_at(back) * temporal.flicker.w;
+    if (any(held < vec3<f32>(0.0))) {
+        held = here;
+    }
+    let now = ycocg(here);
+    var then = ycocg(held);
+    // A flicker: how far the history's luminance, held within the 3x3's, is from this frame's, against the brighter
+    let kept = clamp(then.x, least, most);
+    let flicker = abs(kept - now.x) / max(max(kept, now.x), 0.2);
+    let t = saturate((flicker - temporal.flicker.y) / max(temporal.flicker.z - temporal.flicker.y, 1e-6));
+    let flickers = t * t * (3.0 - 2.0 * t);
+    let moved = (back - v.uv) * vec2<f32>(size);
+    let still = saturate(1.0 - 2.0 * length(moved));
+    let speed = saturate(length(moved) / f32(size.x) / max(temporal.variance.z, 1e-6));
+    var gamma = mix(temporal.variance.y + temporal.flicker.x * flickers * still, temporal.variance.x, speed);
+    let material = textureLoad(stencil, at, 0).r & u32(temporal.flags.z);
+    let responsive = temporal.flags.y > 0.5 && material == u32(temporal.flags.w);
+    if (responsive) {
+        gamma = min(temporal.variance.w, gamma);
+    }
+    // The history clipped toward the 3x3's mean where it lies outside the deviations gamma allows
+    mean /= 9.0;
+    let deviation = sqrt(abs(square / 9.0 - mean * mean));
+    let off = then - mean;
+    let reach = max3(abs(off) / (gamma * deviation + 1e-8));
+    if (reach > 1.0) {
+        then = mean + off / reach;
+    }
     let far = clamp(distance(world.xyz, temporal.eye.xyz) / max(temporal.shares.z, 1e-3), 0.0, 1.0);
-    let share = mix(temporal.shares.x, temporal.shares.y, far);
-    return vec4<f32>(untamed(mix(held, tamed(here.rgb), share)), here.a);
+    var share = mix(select(temporal.shares.x, temporal.shares.w, responsive), temporal.shares.y, far);
+    // A flickering pixel keeps at least nine tenths of its history, one that responds fast the history of one that does not
+    let calm = select(min(share, 0.1), temporal.shares.x, responsive);
+    share = mix(share, calm, flickers);
+    return vec4<f32>(max(rgb_of(mix(then, now, share)), vec3<f32>(0.0)), alpha);
+}
+
+fn max3(v: vec3<f32>) -> f32 {
+    return max(v.x, max(v.y, v.z));
 }
 "#;
 

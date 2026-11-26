@@ -266,7 +266,8 @@ impl ViewportRenderer {
         frame.meter.bind(device, &frame.hdr);
         match self.day.as_ref().is_some_and(|day| day.post.is_some()) {
             true => {
-                (frame.post).prepare(device, &frame.hdr, &frame.depth.depth, &frame.ldr);
+                let depth = (&frame.depth.depth, &frame.depth.stencil);
+                (frame.post).prepare(device, &frame.hdr, depth, &frame.ldr);
                 frame.grade.prepare(device, &frame.hdr);
             }
             false => frame.post.forget(),

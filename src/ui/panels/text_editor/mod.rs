@@ -45,6 +45,8 @@ pub struct TextHistory {
     /// Whether the editor was painted in this frame, and in the one before: a command reads the frame before, since the menus are drawn first.
     seen: bool,
     live: bool,
+    /// The document in front, and the workspace it was in front in, when the tabs last were fitted to it.
+    fitted: Option<(crate::state::DocumentId, crate::ui::dock::Workspace)>,
 }
 
 impl crate::ui::panel_state::PanelState for TextHistory {
@@ -55,6 +57,44 @@ impl crate::ui::panel_state::PanelState for TextHistory {
 pub fn new_frame(state: &mut AppState) {
     let history = state.panels.get::<TextHistory>();
     history.live = std::mem::take(&mut history.seen);
+    front_the_document_tab(state);
+}
+
+/// ⚠ A leaf keeps the tab last in front: a document the Text panel has no view of would open on its empty tab, so the Document tab beside it comes forward, once per document and workspace.
+fn front_the_document_tab(state: &mut AppState) {
+    use crate::ui::panels::registry::ids;
+    let ws = state.active_workspace;
+    let now = state.active_document.map(|doc| (doc, ws));
+    let fitted = &mut state.panels.get::<TextHistory>().fitted;
+    if now.is_none() || std::mem::replace(fitted, now) == now {
+        return;
+    }
+    if (state.active_document()).is_none_or(|doc| has_text_view(&doc.payload)) {
+        return;
+    }
+    let docks = &mut state.workspace_docks;
+    let text_in_front_of_document = docks.maximized(ws).is_none()
+        && (docks.peek(ws)).is_some_and(|dock| {
+            dock.iter_leaves().any(|(_, leaf)| {
+                let front = leaf.tabs.get(leaf.active.0).map(|tab| tab.id());
+                front == Some(ids::TEXT_EDITOR) && leaf.tabs.iter().any(|t| t.id() == ids::DOCUMENT)
+            })
+        });
+    if text_in_front_of_document {
+        crate::ui::dock_commands::reveal(docks.get_mut(ws), ids::DOCUMENT);
+    }
+}
+
+/// Whether the Text panel shows `payload`, rather than the line that asks for a text-form file.
+fn has_text_view(payload: &DocPayload) -> bool {
+    matches!(
+        payload,
+        DocPayload::Text(_)
+            | DocPayload::NameTable(_)
+            | DocPayload::Meta(_)
+            | DocPayload::Gta6Script(_)
+            | DocPayload::Gxt2(_)
+    ) || crate::state::ScriptDocument::in_payload(payload).is_some()
 }
 
 /// Whether Edit ▸ Undo (or Redo, with `undo` false) is the text editor's: it shows the document in front and has a step to take.
@@ -133,7 +173,7 @@ fn draw_script_doc(ui: &mut egui::Ui, app_state: &AppState, doc_id: crate::state
     let editor_id = ui.id().with(("virtual_text_editor_v3", doc_id));
     let state_handle = load_state(ui.ctx(), doc_id);
     let mut state = state_handle.lock().expect("editor state poisoned");
-    draw_footer(ui, doc, &script.source, "UTF-8", "LF", &state.caret);
+    draw_footer(ui, doc, &script.source, "UTF-8", "LF", &state.caret, true);
     let body_rect = ui.available_rect_before_wrap();
     // A rope clone shares its nodes, and a read-only paint never edits it.
     let mut source = script.source.clone();
@@ -158,6 +198,8 @@ fn draw_script_doc(ui: &mut egui::Ui, app_state: &AppState, doc_id: crate::state
 fn draw_text_doc(ui: &mut egui::Ui, app_state: &mut AppState, doc_id: crate::state::DocumentId) {
     let editor_id = ui.id().with(("virtual_text_editor_v3", doc_id));
     let state_handle = load_state(ui.ctx(), doc_id);
+    let read_only =
+        (app_state.document(doc_id)).is_some_and(crate::state::rpf9_scan::text_takes_no_edit);
     if let Some(doc) = app_state.document(doc_id) {
         if let DocPayload::Text(t) | DocPayload::NameTable(t) = &doc.payload {
             let state = state_handle.lock().expect("editor state poisoned");
@@ -168,6 +210,7 @@ fn draw_text_doc(ui: &mut egui::Ui, app_state: &mut AppState, doc_id: crate::sta
                 t.encoding.label(),
                 t.line_ending.label(),
                 &state.caret,
+                read_only,
             );
         }
     }
@@ -176,8 +219,6 @@ fn draw_text_doc(ui: &mut egui::Ui, app_state: &mut AppState, doc_id: crate::sta
     let language_from_path =
         Language::from_path(app_state.document(doc_id).and_then(|d| d.path.as_deref()));
     let keys = find_keys(ui, &app_state.prefs);
-    let read_only =
-        (app_state.document(doc_id)).is_some_and(crate::state::rpf9_scan::text_takes_no_edit);
 
     let asked = app_state.panels.get::<TextHistory>().asked.take();
     let edited = {
@@ -238,6 +279,10 @@ fn draw_meta_doc(ui: &mut egui::Ui, app_state: &mut AppState, doc_id: crate::sta
 
     let editor_id = ui.id().with(("virtual_text_editor_v3", doc_id));
     let state_handle = load_state(ui.ctx(), doc_id);
+    // A scanned GTA VI metadata body saves its typed XML as a copy, as its form's edits.
+    let read_only = (app_state.document(doc_id)).is_some_and(|d| {
+        (d.read_only).is_some_and(|why| why != crate::state::rpf9_scan::READ_ONLY_BODY)
+    });
     if let Some(doc) = app_state.document(doc_id) {
         if let DocPayload::Meta(meta) = &doc.payload {
             let state = state_handle.lock().expect("editor state poisoned");
@@ -248,6 +293,7 @@ fn draw_meta_doc(ui: &mut egui::Ui, app_state: &mut AppState, doc_id: crate::sta
                 meta.text.encoding.label(),
                 meta.text.line_ending.label(),
                 &state.caret,
+                read_only,
             );
         }
     }
@@ -260,10 +306,6 @@ fn draw_meta_doc(ui: &mut egui::Ui, app_state: &mut AppState, doc_id: crate::sta
         ui.data_mut(|d| d.insert_temp(rev_marker_id, meta_revision));
     }
     let keys = find_keys(ui, &app_state.prefs);
-    // A scanned GTA VI metadata body saves its typed XML as a copy, as its form's edits.
-    let read_only = (app_state.document(doc_id)).is_some_and(|d| {
-        (d.read_only).is_some_and(|why| why != crate::state::rpf9_scan::READ_ONLY_BODY)
-    });
 
     let asked = app_state.panels.get::<TextHistory>().asked.take();
     let edited = {
@@ -364,7 +406,6 @@ fn paint_editor(
         .ctx()
         .fonts_mut(|f| (f.row_height(&font), f.glyph_width(&font, ' ')));
     let total_source_lines = rope.len_lines().max(1);
-    let visual_lines = fold_map.visual_line_count() as usize;
 
     let response = ui.interact(rect, id, Sense::click_and_drag());
     // ⚠ The editor paints its own text: without this a screen reader finds no text field here.
@@ -423,6 +464,9 @@ fn paint_editor(
     }
 
     let fold_map = current_fold_map(state, rope);
+    // ⚠ Counted after the edit: one that removed lines leaves the counts before it past the rope's end.
+    let total_source_lines = rope.len_lines().max(1);
+    let visual_lines = fold_map.visual_line_count() as usize;
 
     drive_find(ui.ctx(), state, rope, find_keys, read_only);
 
@@ -1661,6 +1705,7 @@ fn draw_footer(
     encoding_label: &str,
     line_ending_label: &str,
     caret: &CaretState,
+    read_only: bool,
 ) {
     let total_chars = rope.len_chars();
     let cursor_line = rope.char_to_line(caret.cursor.min(total_chars));
@@ -1692,7 +1737,8 @@ fn draw_footer(
                         )
                         .on_hover_text("Unsaved changes");
                     }
-                    if let Some(why) = doc.read_only {
+                    // ⚠ The editor's own answer: a document read-only for its view can still take its text.
+                    if let Some(why) = doc.read_only.filter(|_| read_only) {
                         let mark = egui::RichText::new(tr!("read-only")).small().strong();
                         ui.label(mark.color(theme::WARNING))
                             .on_hover_text(crate::i18n::tr(why));
@@ -1758,14 +1804,23 @@ mod tests {
 
     impl Editing {
         fn new(text: &str) -> Self {
+            Self::with(
+                DocPayload::Text(TextDocument::decode(text.as_bytes())),
+                None,
+            )
+        }
+
+        fn with(payload: DocPayload, read_only: Option<&'static str>) -> Self {
             let mut state = AppState::from_prefs(Prefs::default());
             state.documents.clear();
             let doc = 4243;
-            state.documents.push(Document::new(
+            let mut document = Document::new(
                 doc,
                 Some(std::path::PathBuf::from("C:/mods/notes.txt")),
-                DocPayload::Text(TextDocument::decode(text.as_bytes())),
-            ));
+                payload,
+            );
+            document.read_only = read_only;
+            state.documents.push(document);
             state.active_document = Some(doc);
             state.active_workspace = Workspace::Data;
             let mut editing = Self {
@@ -1791,7 +1846,8 @@ mod tests {
             editing
         }
 
-        fn frame(&mut self, events: Vec<egui::Event>, modifiers: egui::Modifiers) {
+        /// One frame drawn; the texts it painted.
+        fn frame(&mut self, events: Vec<egui::Event>, modifiers: egui::Modifiers) -> Vec<String> {
             self.time += 1.0 / 30.0;
             let input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -1804,7 +1860,13 @@ mod tests {
                 ..Default::default()
             };
             let state = &mut self.state;
-            let _ = self.ctx.run_ui(input, |ui| draw(ui, state));
+            let output = self.ctx.run_ui(input, |ui| draw(ui, state));
+            (output.shapes.iter())
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_string()),
+                    _ => None,
+                })
+                .collect()
         }
 
         fn key(&mut self, key: egui::Key, modifiers: egui::Modifiers) {
@@ -1917,5 +1979,89 @@ mod tests {
             ))
         );
         assert!(!with_ctrl(egui::Key::H, &prefs).replace);
+    }
+
+    #[test]
+    fn typing_over_every_line_selected_paints_the_one_line_left() {
+        let lines: Vec<String> = (1..=47).map(|n| format!("line {n}")).collect();
+        let mut editing = Editing::new(&lines.join("\n"));
+        editing.key(egui::Key::A, crate::ui::shortcuts::PRIMARY_EGUI);
+        assert_eq!(editing.caret().selection(), Some(0..editing.text().len()));
+        editing.frame(vec![egui::Event::Text("x".into())], egui::Modifiers::NONE);
+        editing.frame(Vec::new(), egui::Modifiers::NONE);
+        assert_eq!(
+            editing.text(),
+            "x",
+            "the typing did not replace the selection"
+        );
+    }
+
+    #[test]
+    fn a_scanned_metadata_body_s_text_says_read_only_only_when_it_takes_no_typing() {
+        let painted = |why| {
+            let meta = DocPayload::Meta(crate::state::MetaDocument::empty());
+            let mut editing = Editing::with(meta, Some(why));
+            editing.frame(Vec::new(), egui::Modifiers::NONE)
+        };
+        let mark = tr!("read-only").to_string();
+        let body = painted(crate::state::rpf9_scan::READ_ONLY_BODY);
+        assert!(
+            !body.contains(&mark),
+            "a body whose text takes typing is marked read-only"
+        );
+        let kept = painted("read-only for another reason");
+        assert!(kept.contains(&mark), "a read-only document lost its mark");
+    }
+
+    #[test]
+    fn a_document_with_no_text_view_opens_on_its_document_tab() {
+        use crate::ui::panels::registry::ids;
+        let mut state = AppState::from_prefs(Prefs::default());
+        state.documents.clear();
+        state.active_workspace = Workspace::Data;
+        let text_tab = |state: &mut AppState| {
+            crate::ui::dock_commands::reveal(
+                state.workspace_docks.get_mut(Workspace::Data),
+                ids::TEXT_EDITOR,
+            );
+        };
+        let in_front = |state: &AppState| {
+            let dock = state
+                .workspace_docks
+                .peek(Workspace::Data)
+                .expect("a layout");
+            (dock.iter_leaves())
+                .find(|(_, leaf)| leaf.tabs.iter().any(|t| t.id() == ids::DOCUMENT))
+                .and_then(|(_, leaf)| leaf.tabs.get(leaf.active.0).map(|t| t.id()))
+        };
+        let open = |state: &mut AppState, doc: DocumentId, payload| {
+            state.documents.push(Document::new(doc, None, payload));
+            state.active_document = Some(doc);
+            new_frame(state);
+        };
+        text_tab(&mut state);
+        open(&mut state, 1, DocPayload::Text(TextDocument::decode(b"a")));
+        assert_eq!(
+            in_front(&state),
+            Some(ids::TEXT_EDITOR),
+            "a text document left Text"
+        );
+        let bytes = crate::state::HexDocument {
+            bytes: vec![0; 4],
+            banner: String::new(),
+        };
+        open(&mut state, 2, DocPayload::Hex(bytes));
+        assert_eq!(
+            in_front(&state),
+            Some(ids::DOCUMENT),
+            "a document with no text view opened on the empty Text tab"
+        );
+        text_tab(&mut state);
+        new_frame(&mut state);
+        assert_eq!(
+            in_front(&state),
+            Some(ids::TEXT_EDITOR),
+            "the Text tab, clicked again, was taken away"
+        );
     }
 }

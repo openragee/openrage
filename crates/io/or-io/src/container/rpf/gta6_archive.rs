@@ -22,11 +22,13 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, OnceLock};
 
 use byteorder::{ByteOrder, LE};
 
 use super::rpf9_toc::{GtaViKeys, Rpf9Group, Rpf9Toc};
 use crate::error::Result;
+use crate::gta6::hash::name_hash64;
 use crate::gta6::names::Vocabulary;
 
 /// The name64 column: 8-byte records, the Murmur3 x64_128 low-64 hash of each entry's lower-case
@@ -514,8 +516,13 @@ fn read_cipher(row: &[u8]) -> Gta6Cipher {
 /// Resolves shared word candidates and user-only name tables; build paths and file extensions stay local.
 #[derive(Debug, Default, Clone)]
 pub struct NameResolver {
+    /// What a kept names cache holds, searched where it lies; every name it holds was named first.
+    kept: Arc<cache::Kept>,
+    /// The names held beyond `kept`, and the names of hashes neither holds.
     vocabulary: Vocabulary,
     shortcut: HashMap<u64, String>,
+    /// `kept`'s held names and `vocabulary` together, built the first time they are asked for.
+    whole: OnceLock<Vocabulary>,
 }
 
 impl NameResolver {
@@ -528,7 +535,7 @@ impl NameResolver {
     pub fn from_vocabulary(vocabulary: Vocabulary) -> Self {
         Self {
             vocabulary,
-            shortcut: HashMap::new(),
+            ..Self::default()
         }
     }
 
@@ -581,33 +588,50 @@ impl NameResolver {
     }
 
     /// The vocabulary including verified cache names, for metadata and texture hash lookups.
+    // ⚠ Over a kept cache this copies every name it holds, once: the lookups never need it.
     pub fn vocabulary(&self) -> &Vocabulary {
-        &self.vocabulary
+        if self.kept.is_empty() {
+            return &self.vocabulary;
+        }
+        self.whole.get_or_init(|| {
+            let mut whole = self.kept.vocabulary();
+            whole.merge(&self.vocabulary);
+            whole
+        })
     }
 
     /// Fold `other` into this resolver's vocabulary, so names a caller harvested elsewhere (its own
     /// config-dir vocabulary) resolve alongside the ones loaded from a folder.
     pub fn merge_vocabulary(&mut self, other: &Vocabulary) {
+        self.whole = OnceLock::new();
         self.vocabulary.merge(other);
     }
 
     /// Whether the resolver knows no names.
     pub fn is_empty(&self) -> bool {
-        self.vocabulary.is_empty() && self.shortcut.is_empty()
+        self.kept.is_empty() && self.vocabulary.is_empty() && self.shortcut.is_empty()
     }
 
     /// How many names the resolver holds across both sources.
     pub fn len(&self) -> usize {
-        self.vocabulary.len()
-            + self
-                .shortcut
-                .keys()
-                .filter(|hash| self.vocabulary.name64(**hash).is_none())
+        // `vocabulary` may hold again a word `kept` holds; `shortcut` holds none `kept` names.
+        let words = if self.kept.is_empty() {
+            self.vocabulary.len()
+        } else {
+            (self.vocabulary.names())
+                .filter(|name| self.kept.get(name_hash64(name.as_bytes())).is_none())
                 .count()
+        };
+        let shortcut =
+            (self.shortcut.keys()).filter(|hash| self.vocabulary.name64(**hash).is_none());
+        self.kept.len() + words + shortcut.count()
     }
 
     /// The path whose name64 is `hash`: the shortcut first, then the vocabulary.
     pub fn lookup(&self, hash: u64) -> Option<&str> {
+        if let Some((name, _)) = self.kept.get(hash) {
+            return Some(name);
+        }
         if let Some(name) = self.shortcut.get(&hash) {
             return Some(name);
         }
@@ -616,7 +640,7 @@ impl NameResolver {
 
     /// The path whose name32 is `hash`, from the vocabulary; `None` where two held names share it.
     pub fn lookup_name32(&self, hash: u32) -> Option<&str> {
-        self.vocabulary.name32(hash)
+        self.vocabulary().name32(hash)
     }
 
     /// How many of `entries` the resolver names, and how many there are: a coverage report.
@@ -631,13 +655,15 @@ impl NameResolver {
     /// Record a `hash -> name` shortcut, keeping the first name seen for a hash.
     pub fn insert(&mut self, hash: u64, name: impl Into<String>) {
         let name = name.into();
-        // ⚠ A hash the vocabulary already names keeps that name: a warm load holds a lower-case name
-        // there with no shortcut, and the first name a hash is given wins either way.
-        let held = self.vocabulary.name64(hash).is_some();
-        if crate::gta6::hash::name_hash64(name.as_bytes()) == hash {
+        self.whole = OnceLock::new();
+        // ⚠ A hash the vocabulary already names keeps that name, and a hash the kept cache names
+        // keeps its name: the first name a hash is given wins either way.
+        let kept = self.kept.get(hash).map(|(_, held)| held);
+        let held = kept == Some(true) || self.vocabulary.name64(hash).is_some();
+        if kept != Some(true) && name_hash64(name.as_bytes()) == hash {
             self.vocabulary.add(&name, None);
         }
-        if !held {
+        if !held && kept.is_none() {
             self.shortcut.entry(hash).or_insert(name);
         }
     }

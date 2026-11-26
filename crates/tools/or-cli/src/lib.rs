@@ -54,6 +54,7 @@ mod gta6_name_pool;
 mod gta6_name_sources;
 mod gta6_names;
 mod gta6_names_mine;
+pub use gta6_names_mine::read_mined_parser_names;
 mod gta6_navmesh;
 mod gta6_navmesh_edit;
 mod gta6_other_bodies;

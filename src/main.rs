@@ -61,6 +61,8 @@ fn main() {
     }
 
     tracing::info!("Starting OpenRage");
+    // ⚠ Before any panel builds the hash index, which reads the user's mined names only once.
+    state::read_the_mined_names();
 
     if let Err(e) = app::run(state::command_line_paths(std::env::args_os().skip(1))) {
         tracing::error!("Application error: {}", e);

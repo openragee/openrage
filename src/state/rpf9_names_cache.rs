@@ -7,6 +7,7 @@ mod tests {
     use std::time::Instant;
 
     use or_io::container::rpf::NameResolver;
+    use or_io::gta6::hash::name_hash64;
 
     #[test]
     fn the_resolver_is_built_once_a_run() {
@@ -22,8 +23,8 @@ mod tests {
     }
 
     /// Env-gated: the names folder `OPENRAGE_GTA6_NAMES` names, loaded cold into an empty
-    /// configuration and then warm from the cache that kept, which reads no source and hashes no
-    /// name; prints both times.
+    /// configuration and then warm from the cache that kept, which reads no source, hashes no
+    /// name and copies none out; prints both times and answers alike for every name.
     #[test]
     fn the_names_load_warm_from_the_cache_faster_than_cold() {
         let Some(dir) = std::env::var_os(or_io::container::rpf::GTA6_NAMES_ENV) else {
@@ -39,6 +40,7 @@ mod tests {
         let cold_took = started.elapsed();
         let read = NameResolver::sources_read_on_this_thread();
         let hashed = NameResolver::names_hashed_on_this_thread();
+        let owned = NameResolver::names_owned_on_this_thread();
         let started = Instant::now();
         let warm = NameResolver::load_cached(Some(&dir), Some(config.path()));
         let warm_took = started.elapsed();
@@ -49,6 +51,14 @@ mod tests {
         assert_eq!(NameResolver::sources_read_on_this_thread(), read);
         assert_eq!(NameResolver::names_hashed_on_this_thread(), hashed);
         assert_eq!(warm.len(), cold.len());
+        assert_eq!(NameResolver::names_owned_on_this_thread(), owned);
+        let words = cold
+            .vocabulary()
+            .names()
+            .map(|name| name_hash64(name.as_bytes()));
+        for word in words {
+            assert_eq!(warm.lookup(word), cold.lookup(word), "{word:#x}");
+        }
         assert_eq!(warm.vocabulary().counts(), cold.vocabulary().counts());
         assert!(
             warm_took < cold_took,

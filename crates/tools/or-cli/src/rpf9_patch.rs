@@ -517,9 +517,10 @@ mod tests {
         assert_eq!(replace_note(&mut file, &[1], &longer, &keys), "");
     }
 
-    /// Over the smallest archive at a real build's root, a clear chunk-tabled row given its own body
-    /// fits with every chunk unchanged, and patched with it writes a copy equal to the source.
-    /// Install-gated: it needs the key snapshot and the build; it reads at most 256 rows.
+    /// Over the smallest archive at a real build's root that holds one, a clear chunk-tabled row
+    /// given its own body fits with every chunk unchanged, and patched with it writes a copy equal
+    /// to the source. Install-gated: it needs the key snapshot and the build, and fails where no
+    /// root archive of at most 64 MiB holds such a row.
     #[test]
     fn a_gta6_build_row_given_its_own_body_fits_unchanged_and_patches_to_an_equal_copy() {
         const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
@@ -536,29 +537,36 @@ mod tests {
         };
         let exe = env(or_io::container::rpf::GTA6_EXE_ENV);
         let keys = crate::gta6_keys::load(Some(&snapshot), exe.as_deref()).expect("the keys open");
-        let source = crate::rpf9::build_archives(&build)
+        // ⚠ The smallest root archives of the build hold no such row: every row of the smallest is
+        // content-ciphered and the next holds only rows with no chunk table. Their root tables are
+        // read in size order, which is cheap, and the first archive holding one is taken.
+        let mut archives: Vec<(u64, PathBuf)> = crate::rpf9::build_archives(&build)
             .into_iter()
             .filter(|p| p.parent() == Some(build.as_path()))
-            .min_by_key(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(u64::MAX))
-            .expect("the build root holds an archive");
-        let mut file = File::open(&source).unwrap();
-        let mount = Gta6Mount::open_root(&mut file, &keys).expect("the archive opens");
-        let row = mount.archive.entries.iter().take(256).find_map(|entry| {
-            let small = entry.real.is_some_and(|n| n <= 4 << 20);
-            let chunked = or_io::container::rpf::gta6_chunk_table::entry_chunks(
-                &mount.archive,
-                entry.index as usize,
-            )
-            .is_ok_and(|t| t.is_some());
-            if !small || !chunked || entry.cipher.is_some() {
-                return None;
-            }
-            let body = mount.read_entry(&mut file, entry).ok()?;
-            Some((entry.index, body))
+            .filter_map(|p| Some((std::fs::metadata(&p).ok()?.len(), p)))
+            .filter(|(len, _)| *len <= 64 << 20)
+            .collect();
+        archives.sort();
+        let found = archives.into_iter().find_map(|(_, source)| {
+            let mut file = File::open(&source).ok()?;
+            let mount = Gta6Mount::open_root(&mut file, &keys).ok()?;
+            let row = mount.archive.entries.iter().find_map(|entry| {
+                let small = entry.real.is_some_and(|n| n <= 4 << 20);
+                let chunked = or_io::container::rpf::gta6_chunk_table::entry_chunks(
+                    &mount.archive,
+                    entry.index as usize,
+                )
+                .is_ok_and(|t| t.is_some());
+                if !small || !chunked || entry.cipher.is_some() {
+                    return None;
+                }
+                let body = mount.read_entry(&mut file, entry).ok()?;
+                Some((entry.index, body))
+            });
+            row.map(|(index, body)| (source, index, body))
         });
-        let Some((index, body)) = row else {
-            or_test_support::skip_install(what, "no clear chunk-tabled row in the first 256");
-            return;
+        let Some((source, index, body)) = found else {
+            panic!("{what}: no root archive of at most 64 MiB holds a clear chunk-tabled row");
         };
         let dir = tempfile::tempdir().expect("a temp dir");
         let with = dir.path().join("body.bin");
@@ -572,11 +580,9 @@ mod tests {
             "a chunk changed: {report}"
         );
 
-        if std::fs::metadata(&source).unwrap().len() <= 64 << 20 {
-            let out = dir.path().join("copy.rpf");
-            patch(&source, &pairs, Some(&out), &keys, &resolver).expect("it patches");
-            assert!(std::fs::read(&out).unwrap() == std::fs::read(&source).unwrap());
-        }
+        let out = dir.path().join("copy.rpf");
+        patch(&source, &pairs, Some(&out), &keys, &resolver).expect("it patches");
+        assert!(std::fs::read(&out).unwrap() == std::fs::read(&source).unwrap());
     }
 
     #[test]

@@ -283,9 +283,13 @@ mod ciphered_open {
     }
 }
 
-/// Opening a flagged GTA VI texture entry of a real build yields a texture dictionary, not hex: its
-/// deciphered STORED bytes go through the same table-free resource reader a clear resource takes.
-/// Install-gated — it needs the key snapshot and the build, and skips cleanly without them.
+/// Opening a flagged entry of a real build's root tables yields the view its deciphered head names,
+/// never hex: a PSO or RBF as metadata, text as text. Install-gated — it needs the key snapshot and
+/// the build, and skips cleanly without them.
+// ⚠ The build holds no flagged texture, nor any flagged headerless resource: of its 1,398 flagged
+// rows, 443 are PSO, 59 RBF, 149 text, 746 compiled scripts and one other, so the deciphered door's
+// resource arm is covered only by the made bodies of
+// `a_stored_headerless_body_opens_alike_through_both_doors`.
 #[cfg(test)]
 mod ciphered_texture_open {
     use super::*;
@@ -294,9 +298,9 @@ mod ciphered_texture_open {
     const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
     /// A flagged leaf larger than this is left alone: a big body would decipher and inflate for seconds.
     const SAMPLE_CAP: u64 = 0x80000;
-    /// How deep the walk mounts nested archives, and how many flagged leaves it opens, before it skips.
-    const MAX_DEPTH: usize = 4;
-    const MAX_TRIES: usize = 250;
+    /// How many flagged leaves the walk opens, and how long it may take, before it stops.
+    const MAX_TRIES: usize = 16;
+    const TIME_BOUND: std::time::Duration = std::time::Duration::from_secs(120);
 
     fn build_root() -> Option<PathBuf> {
         std::env::var_os(BUILD_ENV)
@@ -305,7 +309,7 @@ mod ciphered_texture_open {
     }
 
     #[test]
-    fn a_flagged_texture_entry_opens_as_a_texture() {
+    fn a_flagged_entry_of_the_build_opens_as_its_deciphered_head_names() {
         let keys_set = std::env::var_os("OPENRAGE_GTA6_KEYS")
             .map(PathBuf::from)
             .is_some_and(|p| p.exists());
@@ -321,70 +325,63 @@ mod ciphered_texture_open {
             return;
         };
         let root = build_root().expect("the build root was present above");
-        let archives = std::fs::read_dir(&root)
+        // The smallest root archives first: on the build the smallest holds only flagged PSO and
+        // the next flagged text, so both arms open within a few tries and no nested table is read.
+        let mut archives: Vec<(u64, PathBuf)> = std::fs::read_dir(&root)
             .into_iter()
             .flatten()
             .flatten()
             .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("rpf"));
-        let mut tries = 0usize;
-        for disk in archives {
-            if tries >= MAX_TRIES {
-                break;
-            }
+            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("rpf"))
+            .filter_map(|p| Some((std::fs::metadata(&p).ok()?.len(), p)))
+            .collect();
+        archives.sort();
+        let deadline = std::time::Instant::now() + TIME_BOUND;
+        let (mut metadata, mut text) = (0usize, 0usize);
+        'walk: for (_, disk) in archives {
             let Ok(mut file) = File::open(&disk) else {
                 continue;
             };
-            let Ok(root_mount) = Gta6Mount::open_root(&mut file, &keys) else {
+            let Ok(mount) = Gta6Mount::open_root(&mut file, &keys) else {
                 continue;
             };
-            let mut stack = vec![(root_mount, 0usize)];
-            while let Some((mount, depth)) = stack.pop() {
-                for entry in &mount.archive.entries {
-                    if tries >= MAX_TRIES {
-                        break;
-                    }
-                    if mount
-                        .entry_begins_archive(&mut file, entry)
-                        .unwrap_or(false)
-                    {
-                        if depth + 1 < MAX_DEPTH {
-                            if let Ok(child) = mount.open_nested(&mut file, entry, &keys) {
-                                stack.push((child, depth + 1));
-                            }
-                        }
-                        continue;
-                    }
-                    let small = entry.cipher.is_some()
-                        && entry
-                            .real
-                            .or(entry.stored)
-                            .is_some_and(|s| s > 0 && s <= SAMPLE_CAP);
-                    let Some(start) = mount.absolute_start(entry).filter(|_| small) else {
-                        continue;
-                    };
-                    tries += 1;
-                    let path = body_path(&disk, start, View::Bytes);
-                    remember_ciphered(&path, mount.base, entry.index);
-                    let Ok(DocPayload::Resource(or_io::Asset::TextureDict(dict))) =
-                        read_body(&path, &disk, start)
-                    else {
-                        continue;
-                    };
-                    assert!(
-                        dict.entries
-                            .iter()
-                            .flatten()
-                            .any(|t| t.width > 0 && t.height > 0),
-                        "a ciphered texture dictionary opened with no sane texture dimensions"
-                    );
-                    return;
+            for entry in &mount.archive.entries {
+                if metadata + text >= MAX_TRIES || std::time::Instant::now() > deadline {
+                    break 'walk;
+                }
+                let small = entry.cipher.is_some()
+                    && entry
+                        .real
+                        .or(entry.stored)
+                        .is_some_and(|s| s > 0 && s <= SAMPLE_CAP);
+                let Some(start) = mount.absolute_start(entry).filter(|_| small) else {
+                    continue;
+                };
+                let at = format!("{} row {}", disk.display(), entry.index);
+                let plain = decipher_entry(&disk, mount.base, entry.index)
+                    .unwrap_or_else(|e| panic!("{at} deciphers: {e}"));
+                let path = body_path(&disk, start, View::Bytes);
+                remember_ciphered(&path, mount.base, entry.index);
+                let opened =
+                    read_body(&path, &disk, start).unwrap_or_else(|e| panic!("{at} opens: {e}"));
+                assert!(!matches!(opened, DocPayload::Hex(_)), "{at} opened as hex");
+                if plain.starts_with(b"PSIN") || plain.starts_with(b"RBF0") {
+                    assert!(matches!(opened, DocPayload::Meta(_)), "{at} is no metadata");
+                    metadata += 1;
+                } else {
+                    let is_text = crate::state::document_io::is_text(&plain);
+                    assert!(is_text, "{at} is neither metadata nor text");
+                    // An XML text opens in the metadata editor; any other text as text.
+                    let shown = matches!(opened, DocPayload::Text(_) | DocPayload::Meta(_));
+                    assert!(shown, "{at} is text but opened as neither text nor its XML");
+                    text += 1;
                 }
             }
         }
-        or_test_support::skip_install(
-            "gta6 ciphered texture open",
-            format_args!("no flagged texture entry opened within {MAX_TRIES} tries"),
+        assert!(
+            metadata > 0 && text > 0,
+            "within {MAX_TRIES} tries and {TIME_BOUND:?}, {metadata} flagged metadata and {text} \
+             flagged text rows of the build's root tables opened; both should"
         );
     }
 }

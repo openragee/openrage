@@ -255,10 +255,28 @@ fn disk_item_name(item: &DiskScanItem) -> &str {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static ARCHIVE_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts, in tests, an archive opened or listed on the calling thread.
+fn note_archive_work() {
+    #[cfg(test)]
+    ARCHIVE_WORK.with(|n| n.set(n.get() + 1));
+}
+
+/// How many archives this thread has opened or listed for the tree.
+#[cfg(test)]
+fn archive_work_on_this_thread() -> usize {
+    ARCHIVE_WORK.with(std::cell::Cell::get)
+}
+
 pub(super) fn open_archive(
     source: WorkerArchiveSource,
     crypto: Arc<dyn RpfCryptoProvider>,
 ) -> Result<ResolvedArchive, String> {
+    note_archive_work();
     let (archive, fs_path) = match source {
         WorkerArchiveSource::Disk(path) => (open_archive_from_disk(&path, crypto)?, Some(path)),
         WorkerArchiveSource::Opened(archive) => (archive, None),
@@ -293,6 +311,7 @@ pub struct ListedEntry {
 /// so a disk-backed archive is listed off the UI thread. Nested archives are
 /// opened and not listed: the tree lists one when a user expands it.
 pub fn list_archive(archive: Arc<RpfArchive>) -> Result<Vec<ListedEntry>, String> {
+    note_archive_work();
     let device = ArchiveDevice::new(archive);
     let root = device
         .entries("")
@@ -319,3 +338,7 @@ fn list_folder(device: &ArchiveDevice, dir: &str, entries: Vec<ArchiveEntry>) ->
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "entering_a_folder_waits_on_no_worker.rs"]
+mod entering_a_folder_waits_on_no_worker;

@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufWriter, Read, Seek, Write};
+use std::io::{BufWriter, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -30,8 +30,13 @@ use crate::state::{AppState, DocPayload};
 type Keys = fn() -> Result<Arc<GtaViKeys>, String>;
 
 /// How a save of a tree ended: its document, the edit it was at, the new file, and how it was
-/// written, or why it was refused.
-type Ended = (DocumentId, u64, PathBuf, Result<Saved, String>);
+/// written with the file read back as an archive where it reopens, or why it was refused.
+type Ended = (
+    DocumentId,
+    u64,
+    PathBuf,
+    Result<(Saved, Option<adopt::Reopened>), String>,
+);
 
 /// How a copy of a GTA VI archive was written.
 #[derive(Debug, PartialEq)]
@@ -204,18 +209,26 @@ pub(crate) fn plan_save(
     let mut file = File::open(source).map_err(|e| format!("{}: {e}", source.display()))?;
     let mut patches = Vec::new();
     for row in replaced {
-        let entry = match (row.at.headerless, row.at.chain.last()) {
-            (false, Some(&entry)) => entry,
-            _ => {
-                kept.push(tr!(
-                    "{name} is a headerless resource, whose loose form is stored under a new row",
-                    name = row.name
-                ));
-                continue;
-            }
+        let Some(&entry) = row.at.chain.last() else {
+            kept.push(tr!("{name} has no body of its own", name = row.name));
+            continue;
         };
-        let size = row.body.len() as u64;
-        if row.at.real != Some(size) {
+        // A headerless row states no real size, so its length is left to the plan's chunks.
+        let body = if row.at.headerless {
+            let Some(body) = stored_body(&row.body) else {
+                let why = tr!(
+                    "{name} does not read as a resource from its start",
+                    name = row.name
+                );
+                kept.push(why);
+                continue;
+            };
+            body
+        } else {
+            row.body.clone()
+        };
+        let size = body.len() as u64;
+        if !row.at.headerless && row.at.real != Some(size) {
             let real = (row.at.real).map_or_else(|| "?".to_owned(), |real| real.to_string());
             let why = tr!(
                 "{name} is {size} bytes, not the {real} its row states",
@@ -231,7 +244,7 @@ pub(crate) fn plan_save(
         let patch = BodyPatch {
             base: row.at.base,
             entry,
-            body: row.body.clone(),
+            body,
         };
         match plan_patch_with(&mut file, keys, &patch, SAVE_OPTIMAL_CAP, &mut |_, _| true) {
             Ok(plan) => patches.push(plan),
@@ -246,6 +259,7 @@ pub(crate) fn plan_save(
                         let best = (*deflated).min(*optimal) as u64;
                         format!(", {}", off_by(best, u64::from(*ceiling)))
                     }
+                    PatchRefusal::Length { got, want, .. } => format!(", {}", off_by(*got, *want)),
                     _ => String::new(),
                 };
                 kept.push(format!("{}: {why}{by}", row.name));
@@ -344,6 +358,13 @@ pub(in crate::state) fn loose_body(
     let file = File::open(&place.file).ok()?;
     let (find, body) = read_rpf9_body(file, place.offset, u64::MAX).ok()?;
     write_rpf9_resource(&Rpf9Sections::of(&find, &body)?).ok()
+}
+
+/// The inflated body a headerless resource's row stores, its sections end to end, of its loose form
+/// `loose`; `None` where `loose` reads as no resource from its start.
+fn stored_body(loose: &[u8]) -> Option<Vec<u8>> {
+    let (find, bytes) = read_rpf9_body(Cursor::new(loose), 0, u64::MAX).ok()?;
+    Rpf9Sections::of(&find, &bytes).map(|_| bytes)
 }
 
 /// The top archive of a tree opened from a GTA VI archive on its own.
@@ -774,6 +795,8 @@ impl AppState {
             return None;
         };
         let source = top_rpf9(&rpf.session)?.path()?.to_path_buf();
+        let crypto = Arc::clone(&rpf.session.crypto);
+        let listed = adopt::listed(&rpf.session);
         let at = doc.history.at();
         let refused = if crate::state::reload_open_file::same_file(out, &source) {
             Err(refused_tree(&rpf.session).unwrap_or_default())
@@ -796,6 +819,7 @@ impl AppState {
                 Some(plan) => write_planned(&source, &out, &plan.keys, &plan.planned),
                 None => keys().and_then(|keys| write_tree(&source, &edits, &out, &keys)),
             };
+            let said = said.map(|saved| (saved, adopt::reopened(&out, crypto, &listed)));
             lock(&ENDED).push((doc_id, at, out, said));
         });
         Some(true)
@@ -921,7 +945,7 @@ impl AppState {
         };
         for (doc_id, at, out, said) in done {
             let file = crate::state::jobs::file_name(&out);
-            let saved = match said {
+            let (saved, copy) = match said {
                 Ok(saved) => saved,
                 Err(why) => {
                     self.show_error_toast(tr!(
@@ -931,9 +955,13 @@ impl AppState {
                     continue;
                 }
             };
-            // The edits are in the new file, so closing the tree loses nothing.
+            // The tree becomes the new file, which holds its edits; one that cannot keeps every edit
+            // marked, and one edited since the save began stays unsaved.
             if let Some(doc) = self.document_mut(doc_id) {
-                doc.saved_as_of(at);
+                let current = doc.history.at() == at;
+                if !current || copy.is_some_and(|copy| adopt::become_copy(doc, copy, &out)) {
+                    doc.saved_as_of(at);
+                }
             }
             self.file_replaced(&out);
             let (tables, bodies, kept) = match saved {
@@ -970,6 +998,13 @@ impl AppState {
     }
 }
 
+#[path = "rpf9_tree_adopt.rs"]
+mod adopt;
+
 #[cfg(test)]
 #[path = "rpf9_tree_verbs_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "rpf9_tree_headerless_tests.rs"]
+mod headerless_tests;

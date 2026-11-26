@@ -881,6 +881,88 @@ const _: fn() = || {
     let _ = ArrayKind::AtArray;
 };
 
+/// An element of XML text with the byte span of each attribute's value and of what it holds.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpannedElement {
+    pub tag: String,
+    /// Each attribute's name and the span of its value as written, escapes included.
+    pub attrs: Vec<(String, std::ops::Range<usize>)>,
+    /// The bytes between its start and end tags; `None` for an element written as one empty tag.
+    pub content: Option<std::ops::Range<usize>>,
+    pub children: Vec<SpannedElement>,
+}
+
+/// The root element of XML `bytes`, with the byte span of every attribute value and element body.
+pub fn spanned_root(bytes: &[u8]) -> Result<SpannedElement> {
+    let mut reader = Reader::from_reader(bytes);
+    reader.config_mut().trim_text(false);
+    loop {
+        match reader.read_event()? {
+            Event::Eof => {
+                return Err(MetaError::Other(
+                    "no root element found in XML document".into(),
+                ))
+            }
+            Event::Start(e) => {
+                let mut root = spanned(bytes, &e)?;
+                spanned_body(&mut reader, bytes, &mut root)?;
+                return Ok(root);
+            }
+            Event::Empty(e) => return spanned(bytes, &e),
+            _ => {}
+        }
+    }
+}
+
+fn spanned(bytes: &[u8], start: &quick_xml::events::BytesStart<'_>) -> Result<SpannedElement> {
+    let mut element = SpannedElement {
+        tag: local_name(start.name()),
+        ..SpannedElement::default()
+    };
+    for a in start.attributes() {
+        let a = a?;
+        // A slice reader borrows every value from `bytes`, so its address is its offset.
+        let at = (a.value.as_ptr() as usize)
+            .checked_sub(bytes.as_ptr() as usize)
+            .filter(|&at| at <= bytes.len() && a.value.len() <= bytes.len() - at)
+            .ok_or_else(|| MetaError::Other("an attribute value is not in the text".into()))?;
+        element
+            .attrs
+            .push((local_name(a.key), at..at + a.value.len()));
+    }
+    Ok(element)
+}
+
+fn spanned_body<'a>(
+    reader: &mut Reader<&'a [u8]>,
+    bytes: &'a [u8],
+    element: &mut SpannedElement,
+) -> Result<()> {
+    let start = reader.buffer_position() as usize;
+    loop {
+        let before = reader.buffer_position() as usize;
+        match reader.read_event()? {
+            Event::Eof => {
+                return Err(MetaError::Other(format!(
+                    "the XML document ends inside <{}>",
+                    element.tag
+                )))
+            }
+            Event::End(_) => {
+                element.content = Some(start..before);
+                return Ok(());
+            }
+            Event::Start(e) => {
+                let mut child = spanned(bytes, &e)?;
+                spanned_body(reader, bytes, &mut child)?;
+                element.children.push(child);
+            }
+            Event::Empty(e) => element.children.push(spanned(bytes, &e)?),
+            _ => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1124,5 +1206,22 @@ mod tests {
         assert_eq!(untyped.as_deref(), Some("zq_cycle_data"));
         assert_eq!(member_counts(&inst), (0, 1));
         assert_eq!(crate::meta::write_meta(&inst).expect("writes"), xml);
+    }
+
+    #[test]
+    fn every_attribute_value_and_element_body_is_spanned_as_written() {
+        let xml = "<?xml version=\"1.0\"?>\r\n<!-- c -->\r\n<zqRoot a=\"1&amp;2\">\r\n  <id>zq_one</id>\r\n  <n value=\"12\"/>\r\n  <e></e>\r\n</zqRoot>\r\n";
+        let root = spanned_root(xml.as_bytes()).expect("spans");
+        let text = |span: &std::ops::Range<usize>| &xml[span.clone()];
+        assert_eq!(root.tag, "zqRoot");
+        assert_eq!(text(&root.attrs[0].1), "1&amp;2");
+        let [id, n, e] = root.children.as_slice() else {
+            panic!("three children: {:?}", root.children);
+        };
+        assert_eq!(id.content.as_ref().map(text), Some("zq_one"));
+        assert_eq!((n.content.as_ref(), text(&n.attrs[0].1)), (None, "12"));
+        assert_eq!(e.content.as_ref().map(text), Some(""));
+        assert!(text(root.content.as_ref().expect("a body")).ends_with("<e></e>\r\n"));
+        assert!(spanned_root(b"<zqRoot><id>").is_err());
     }
 }

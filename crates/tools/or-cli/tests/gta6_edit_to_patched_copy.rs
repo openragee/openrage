@@ -10,12 +10,19 @@
 //! (`write_meta_binary`) and of a headerless metadata document (`write_sections`); a texture
 //! dictionary's texture replaced by itself re-encoded (`write_dictionary_textures`, as
 //! `rpf scan-texture` writes it), zlib rows only; a drawable's vertex moved onto another vertex at
-//! the same vertex count (`write_geometry`, as `mesh import` writes it). A panic, a read that is
-//! not the edit, or no edit of any kind reaching the patch writer fails the test.
+//! the same vertex count (`write_geometry`, as `mesh import` writes it). A text table's row is also
+//! saved as the app saves it (`to_section_over` into a block-mapped virtual section with no
+//! physical one), and that plan must be a patch, not a rebuild. A panic, a read that is not the
+//! edit, a kind with no row found, or no edit of any kind reaching the patch writer fails the test.
+//! A metadata XML document is not tried: its splice of an edited value lives in the app, which
+//! this test cannot reach.
 //!
 //! Bounded: the walk stops at 120 s or once each kind has 4 rows; a row holds at most 512 KiB
 //! inflated and its stored bytes end in the first 64 MiB of its file, which is what is copied; each
-//! kind tries its rows in turn until its editor makes an edit. The optimal parse runs only on a
+//! kind tries its rows in turn until its editor makes an edit. On the Xbox build 1.0.2.1 every
+//! P-form row (57, by a node mirror of every table) is a root row of class 0x0B whose stored bytes
+//! end past 400 MiB, so the P-form rows are sought first, in root tables only, within 512 MiB, and
+//! a P-form attempt copies up to that much twice. The optimal parse runs only on a
 //! changed chunk no level of the tree's deflater fits. Install-gated; it skips without:
 //!   `OPENRAGE_GTA6_KEYS`   the `gtavi_magic.dat` key snapshot (never committed)
 //!   `OPENRAGE_GTA6_BUILD`  the build root holding `*.rpf` and `pack/*/*.rpf`
@@ -32,9 +39,10 @@ use or_io::codec::texture::decode_level;
 use or_io::container::rpf::gta6_chunk_table::entry_chunks;
 use or_io::container::rpf::gta6_kinds::{kind_label, PLAIN_FILE};
 use or_io::container::rpf::{
-    open_at, plan_patch, read_rpf9_body, write_planned_copy, BodyPatch, Gta6Class, Gta6Context,
-    Gta6Entry, Gta6Mount, GtaViKeys, NameResolver, PatchRefusal, Rpf9BodyKind, Rpf9Role,
-    Rpf9Sections, RpfArchive, GTA6_SNAPSHOT_ENV, RPF9_SLOT,
+    gta6_patch::{plan_patch_with, OPTIMAL_CAP},
+    open_at, plan_patch, read_rpf9_body, write_planned_copy, write_rpf9_resource, BodyPatch,
+    Gta6Class, Gta6Context, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver, PatchRefusal,
+    Rpf9BodyKind, Rpf9Form, Rpf9Role, Rpf9Sections, RpfArchive, GTA6_SNAPSHOT_ENV, RPF9_SLOT,
 };
 use or_io::gta6::headerless::{
     read_dictionary, read_drawable, read_drawable_with_bound, write_dictionary_textures,
@@ -42,7 +50,7 @@ use or_io::gta6::headerless::{
 };
 use or_io::gta6::script::compiled::{disasm, Compiled};
 use or_io::gta6::script::compiled_write::set_int;
-use or_io::gta6::text::{read as read_text, TextItem};
+use or_io::gta6::text::{read as read_text, TextItem, TextTable};
 use or_io::meta::binary::hash_index::title_names;
 use or_io::meta::binary::pso::table_strings::write_adding_strings;
 use or_io::meta::binary::rbm::gta6 as headerless_meta;
@@ -53,6 +61,8 @@ use or_test_support::skip_install;
 const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
 /// A sampled row's stored bytes end within this many bytes of its file's start: the span copied.
 const PREFIX_CAP: u64 = 64 << 20;
+/// The span a P-form row, sought in root tables only, is copied within.
+const P_FORM_PREFIX_CAP: u64 = 512 << 20;
 /// The most a sampled row holds inflated.
 const ROW_CAP: u64 = 512 << 10;
 const CANDIDATES: usize = 4;
@@ -67,6 +77,10 @@ const TEXTURES: &str = "texture dictionary";
 const DRAWABLE: &str = "drawable";
 const PSO_TABLE: &str = "PSO table form";
 const PSO_P: &str = "PSO P-form";
+/// A text table's row saved as the app saves it, tried on the text table's rows.
+const APP_TEXT: &str = "text table, the app's save";
+/// The optimal-parse cap the app's save plans with.
+const APP_OPTIMAL_CAP: usize = 256 << 10;
 /// The 20-byte rows' kinds, as the type table labels them.
 const HEADERLESS: [&str; 5] = [TEXT_TABLE, SCRIPT, HEADERLESS_META, TEXTURES, DRAWABLE];
 const KINDS: [&str; 7] = [
@@ -162,13 +176,17 @@ fn pso_form(body: &[u8]) -> Option<&'static str> {
     }
 }
 
+/// What `e`'s chunk table states it holds inflated, `None` where it has no table.
+fn inflated(mount: &Gta6Mount, e: &Gta6Entry) -> Option<u64> {
+    match entry_chunks(&mount.archive, e.index as usize) {
+        Ok(Some(table)) => Some(table.iter().map(|c| u64::from(c.inflated)).sum()),
+        _ => None,
+    }
+}
+
 /// The kind of edit `e` is sampled for, `None` where it is none of them or too large.
 fn kind_of(w: &Walk, file: &mut File, mount: &Gta6Mount, e: &Gta6Entry) -> Option<&'static str> {
-    let inflated = match entry_chunks(&mount.archive, e.index as usize) {
-        Ok(Some(table)) => table.iter().map(|c| u64::from(c.inflated)).sum::<u64>(),
-        _ => return None,
-    };
-    if inflated > ROW_CAP {
+    if inflated(mount, e)? > ROW_CAP {
         return None;
     }
     let row = mount.archive.entry_extra(e.index as usize)?.nested;
@@ -185,6 +203,40 @@ fn kind_of(w: &Walk, file: &mut File, mount: &Gta6Mount, e: &Gta6Entry) -> Optio
     }
     let body = mount.read_entry_decrypted(&mut *file, e, w.keys).ok()?;
     pso_form(&body).filter(|k| w.wants(k))
+}
+
+/// The P-form rows of the root archive `mount` whose stored bytes end within
+/// [`P_FORM_PREFIX_CAP`], whatever their class byte.
+fn walk_p_form(w: &mut Walk, file: &mut File, mount: &Gta6Mount) {
+    for e in &mount.archive.entries {
+        if !w.wants(PSO_P) || w.began.elapsed() > WALK_BUDGET {
+            return;
+        }
+        let row20 =
+            (mount.archive.entry_extra(e.index as usize)).is_some_and(|x| x.nested.is_some());
+        if row20 || e.kind() == Some(Gta6Class::NestedArchive) {
+            continue;
+        }
+        let Some(end) = stored_end(mount, e).filter(|&end| end <= P_FORM_PREFIX_CAP) else {
+            continue;
+        };
+        if inflated(mount, e).is_none_or(|n| n > ROW_CAP) {
+            continue;
+        }
+        let Ok(body) = mount.read_entry_decrypted(&mut *file, e, w.keys) else {
+            continue;
+        };
+        if pso_form(&body) == Some(PSO_P) {
+            let candidate = Candidate {
+                file: w.file.clone(),
+                chain: Vec::new(),
+                base: mount.base,
+                entry: e.index,
+                end,
+            };
+            w.found.entry(PSO_P).or_default().push(candidate);
+        }
+    }
 }
 
 fn walk(w: &mut Walk, file: &mut File, mount: &Gta6Mount, chain: &[u64], depth: usize) {
@@ -333,8 +385,10 @@ fn nudge_value(value: &mut Value) -> Option<String> {
 
 type Edits = Vec<(String, Result<Vec<u8>, String>)>;
 
-fn text_edits(original: &[u8], s: &Rpf9Sections) -> Result<Edits, String> {
-    let (mut table, _) = read_text(&s.virtual_section).map_err(|e| e.to_string())?;
+/// The text table `section` holds with one plain text's first ASCII letter's case changed, and
+/// that text's key.
+fn flipped(section: &[u8]) -> Result<(TextTable, u32), String> {
+    let (mut table, _) = read_text(section).map_err(|e| e.to_string())?;
     let changed = (table.entries.iter_mut()).find_map(|e| match &mut e.item {
         TextItem::Text(text) => {
             let at = text.bytes().position(|b| b.is_ascii_alphabetic())?;
@@ -347,6 +401,11 @@ fn text_edits(original: &[u8], s: &Rpf9Sections) -> Result<Edits, String> {
         TextItem::Variants(_) => None,
     });
     let key = changed.ok_or("no plain text of it holds an ASCII letter")?;
+    Ok((table, key))
+}
+
+fn text_edits(original: &[u8], s: &Rpf9Sections) -> Result<Edits, String> {
+    let (table, key) = flipped(&s.virtual_section)?;
     let laid = |v: Result<Vec<u8>, String>| {
         v.map(|v| {
             let after = Rpf9Sections {
@@ -369,6 +428,31 @@ fn text_edits(original: &[u8], s: &Rpf9Sections) -> Result<Edits, String> {
             laid(over),
         ),
     ])
+}
+
+/// The edit of [`text_edits`] saved as the app's text table document saves it: over its own section,
+/// as a block-mapped virtual section with no physical one (`Gta6TextDocument::written`,
+/// `edited_sections`).
+fn app_text_edit(s: &Rpf9Sections) -> Result<Edits, String> {
+    let (table, key) = flipped(&s.virtual_section)?;
+    // The app holds the loose form and plans the body that form reads back to.
+    let written = (table.to_section_over(&s.virtual_section))
+        .map_err(|e| e.to_string())
+        .and_then(|virtual_section| {
+            let after = Rpf9Sections {
+                form: Rpf9Form::BlockMapped,
+                virtual_section,
+                physical: Vec::new(),
+            };
+            let loose = write_rpf9_resource(&after).map_err(|e| e.to_string())?;
+            let (find, bytes) =
+                read_rpf9_body(Cursor::new(&loose), 0, u64::MAX).map_err(|e| e.to_string())?;
+            Rpf9Sections::of(&find, &bytes)
+                .map(|_| bytes)
+                .ok_or_else(|| "the loose form reads as no resource".to_owned())
+        });
+    let how = format!("a letter's case of text {key:#010X}, saved as the app saves a text table");
+    Ok(vec![(how, written)])
 }
 
 fn script_edit(original: &[u8]) -> Result<Edits, String> {
@@ -572,8 +656,16 @@ fn read_back(copy: &Path, chain: &[u64], base: u64, entry: u32) -> Vec<u8> {
     archive.read_entry(file).expect("the patched row reads")
 }
 
-/// `body` planned into the span `prefix` holds and, where it fits, written to `copy` and read back.
-fn land(prefix: &Path, copy: &Path, keys: &GtaViKeys, c: &Candidate, body: &[u8]) -> String {
+/// `body` planned into the span `prefix` holds and, where it fits, written to `copy` and read back;
+/// the refusal said as the error.
+fn land(
+    prefix: &Path,
+    copy: &Path,
+    keys: &GtaViKeys,
+    c: &Candidate,
+    body: &[u8],
+    cap: usize,
+) -> Result<String, (String, bool)> {
     let mut src = File::open(prefix).expect("the span opens");
     let patch = BodyPatch {
         base: c.base,
@@ -581,9 +673,15 @@ fn land(prefix: &Path, copy: &Path, keys: &GtaViKeys, c: &Candidate, body: &[u8]
         body: body.to_vec(),
     };
     let began = Instant::now();
-    let plan = match plan_patch(&mut src, keys, &patch) {
+    let plan = match plan_patch_with(&mut src, keys, &patch, cap, &mut |_, _| true) {
         Ok(plan) => plan,
-        Err(r) => return format!("refused, {}{}: {r}", refusal_name(&r), over(&r)),
+        Err(r) => {
+            let length = matches!(r, PatchRefusal::Length { .. });
+            return Err((
+                format!("refused, {}{}: {r}", refusal_name(&r), over(&r)),
+                length,
+            ));
+        }
     };
     let took = began.elapsed().as_millis();
     let chunks = plan.chunks.len();
@@ -597,11 +695,11 @@ fn land(prefix: &Path, copy: &Path, keys: &GtaViKeys, c: &Candidate, body: &[u8]
         "the patched copy reads back otherwise than the edit"
     );
     std::fs::remove_file(copy).expect("the copy is removed");
-    format!(
+    Ok(format!(
         "fitted in place: {changed} of {chunks} chunk(s) changed, {optimal} by the optimal parse, \
          {} bytes written, planned in {took} ms; read back through RpfArchive, it is the edit",
         report.bytes_written
-    )
+    ))
 }
 
 /// Try `c` for `kind`: its span copied, its own body planned unchanged, its editor's edits landed;
@@ -649,6 +747,7 @@ fn attempt(
             let (s, role, zlib) = sections_of(&mount, &mut src, keys, e, &original)?;
             match kind {
                 TEXT_TABLE => text_edits(&original, &s)?,
+                APP_TEXT => app_text_edit(&s)?,
                 HEADERLESS_META => meta_edit(&original, &s)?,
                 TEXTURES if !zlib => {
                     return Err("it is no zlib row; BCPack rows are not tried here".into())
@@ -682,11 +781,27 @@ fn attempt(
         c.base,
         original.len()
     )];
+    // The app plans with its own optimal-parse cap, the CLI with the patch writer's.
+    let cap = if kind == APP_TEXT {
+        APP_OPTIMAL_CAP
+    } else {
+        OPTIMAL_CAP
+    };
     for (how, body) in edits {
         let said = match body {
             Err(why) => format!("the editor refuses it: {why}"),
             Ok(body) if body == original => "the edit changed no byte".to_owned(),
-            Ok(body) => land(&prefix, &copy, keys, c, &body),
+            Ok(body) => match land(&prefix, &copy, keys, c, &body, cap) {
+                Ok(said) => said,
+                // Only a body of another length is the app's save shape gone wrong; a chunk that
+                // does not fit is the deflater's outcome, counted as any other kind's.
+                Err((refused, true)) if kind == APP_TEXT => panic!(
+                    "the app's save of row {} at {:#x} plans a rebuilt archive, not a patch: \
+                     {refused}",
+                    c.entry, c.base
+                ),
+                Err((refused, _)) => refused,
+            },
         };
         lines.push(format!("  {how}: {said}"));
     }
@@ -722,6 +837,17 @@ fn an_edit_made_by_openrages_editors_lands_in_a_patched_copy_or_is_refused_by_na
         found: BTreeMap::new(),
     };
     for path in &archives {
+        if !w.wants(PSO_P) || w.began.elapsed() > WALK_BUDGET {
+            break;
+        }
+        let mut file = File::open(path).expect("open the archive");
+        let Ok(root) = Gta6Mount::open_root(&mut file, &keys) else {
+            continue;
+        };
+        w.file = path.clone();
+        walk_p_form(&mut w, &mut file, &root);
+    }
+    for path in &archives {
         if w.done() {
             break;
         }
@@ -733,15 +859,20 @@ fn an_edit_made_by_openrages_editors_lands_in_a_patched_copy_or_is_refused_by_na
         walk(&mut w, &mut file, &root, &[], 0);
     }
     let walked = began.elapsed();
-    let mut found = w.found;
+    let found = w.found;
 
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let mut reached = 0;
-    for kind in KINDS {
-        let candidates = found.remove(kind).unwrap_or_default();
+    let mut none_found = Vec::new();
+    for kind in KINDS.into_iter().chain([APP_TEXT]) {
+        let rows = if kind == APP_TEXT { TEXT_TABLE } else { kind };
+        let candidates = found.get(rows).map_or(&[][..], Vec::as_slice);
+        if candidates.is_empty() {
+            none_found.push(kind);
+        }
         let mut notes = Vec::new();
         let mut done = false;
-        for c in &candidates {
+        for c in candidates {
             match attempt(kind, c, &keys, &library, scratch.path()) {
                 Ok((lines, made)) => {
                     reached += made;
@@ -764,6 +895,11 @@ fn an_edit_made_by_openrages_editors_lands_in_a_patched_copy_or_is_refused_by_na
         "walked in {} s, {} s in all",
         walked.as_secs(),
         began.elapsed().as_secs()
+    );
+    assert!(
+        none_found.is_empty(),
+        "no row found within the walk's bounds for: {}",
+        none_found.join(", ")
     );
     assert!(reached > 0, "no edit of any kind reached the patch writer");
 }

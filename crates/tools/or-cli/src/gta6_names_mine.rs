@@ -21,25 +21,29 @@ use super::gta6_hashes::{read_row, row_size};
 use or_io::gta6::hash::{name_hash32, name_hash64, NameHasher};
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
 use or_io::gta6::script::native_addresses::LISTING_SUFFIX;
-use or_io::meta::binary::layout::ContainerLayout;
+use or_io::meta::binary::layout::{ContainerLayout, MetaLayout};
 use or_io::meta::binary::pso::schema::{PsoSchemaItem, ARRAY_INFO_NAME_HASH};
 use or_io::meta::binary::pso::string_names::document_strings;
 use or_io::meta::binary::ragepar_names::{self, ParserNames};
 use or_io::meta::binary::{detect_binary_format, parse_meta_binary_full, BinaryFormat};
 use or_io::meta::diagnostics::Diagnostics;
 use or_io::meta::schema::SchemaLibrary;
+use or_io::meta::Value;
 use or_io::{literal_string_hash, string_hash};
 
 const USAGE: &str = "\
-usage: openrage-cli hashes mine <install-folder | archive.rpf> --out <file> [--names <dir>] [--keys <snapshot>] [--exe <exe>] [--listings <dir>] [--range <count>] [--max-bodies <n>|unlimited] [--max-total <n>|unlimited]
+usage: openrage-cli hashes mine <install-folder | archive.rpf> --out <file> [--names <dir>] [--keys <snapshot>] [--exe <exe>] [--listings <dir>] [--range <count>] [--max-bodies <n>|unlimited] [--max-total <n>|unlimited] [--archive <n>]...
   Writes the names it finds to <file> as 0xHASH<TAB>name rows, after each archive as it goes;
-  rows already in <file> are kept. Name the file resolved-names.tsv in the folder --names or
-  OPENRAGE_GTA6_NAMES reads, and the explorer and the metadata reader take its names. No archive
-  is written.
+  rows already in <file> are kept. At the end it also merges them into the names table of the
+  configuration folder, which every verb, the explorer and the metadata reader read with no
+  setting. No archive is written.
   --listings <dir>   also try the string literals of the lifted script listings in <dir>
                      (else OPENRAGE_LIFTED_LISTINGS)
   --max-bodies <n>   read at most <n> bodies of each archive in each walk (default 50000)
-  --max-total <n>    read at most <n> bodies of the whole install in each walk (default unlimited)";
+  --max-total <n>    read at most <n> bodies of the whole install in each walk (default unlimited)
+  --archive <n>      read the bodies of the n-th archive only, as the report numbers them; give it
+                     again for more. Every archive's table is still read for its unnamed rows
+  -h, --help         print this text";
 
 const MIN_CANDIDATE: usize = 3;
 const MAX_CANDIDATE: usize = 160;
@@ -82,6 +86,11 @@ const SHORT_ENDING: usize = 3;
 const NESTED_CAP: usize = 1 << 17;
 /// The longest ending a named archive adds to a stem of its rows.
 const MAX_ENDING: usize = 24;
+/// The stem-and-ending candidates the sibling rule hashes in one table at most.
+// ponytail: a table past this tries only the stems met first, alphabetically; the report counts
+// the tables cut short.
+const SIBLING_CAP: usize = 1 << 22;
+const ARCHIVE_FLAG: &str = "--archive";
 
 /// A table the first walk met: the table above it, the 64-bit name of the row it was opened from
 /// there, and its rows' 64-bit names.
@@ -164,6 +173,8 @@ struct Miner {
     named64: HashMap<u64, String>,
     /// The unnamed nested archives whose candidates ran past [`NESTED_CAP`].
     nested_capped: HashSet<u64>,
+    /// The tables whose sibling candidates ran past [`SIBLING_CAP`].
+    siblings_capped: usize,
     /// Each archive walked, in walk order.
     archives: Vec<ArchiveRead>,
 }
@@ -218,6 +229,7 @@ impl Miner {
 
     /// Records the table met at `place` of the walk.
     fn place(&mut self, (depth, from): Place, entries: &[Gta6Entry]) {
+        self.tables += 1;
         self.path.truncate(depth);
         let parent = self.path.last().copied();
         self.path.push(self.tree.len());
@@ -333,10 +345,55 @@ impl Miner {
         self.source = was;
     }
 
-    /// Joins each directory of `dirs` with each of `basenames`, whole and without its extension,
-    /// through one hash state per directory; a join is spelled out only where its hash is an
-    /// unresolved entry's.
-    fn join(&mut self, dirs: &BTreeSet<String>, basenames: &BTreeSet<String>) {
+    /// Tries each unresolved row of a table as a stem that named rows of one of its directories
+    /// share, with each ending those rows add to such a stem, its last run of digits renumbered
+    /// below `range`; a candidate is spelled out only where its hash is an unresolved entry's.
+    fn sibling_rules(&mut self, range: u32) {
+        let was = std::mem::replace(&mut self.source, Source::Rules);
+        for at in 0..self.tree.len() {
+            let rows = &self.tree[at].rows;
+            if !rows.iter().any(|&row| self.unresolved(row)) {
+                continue;
+            }
+            let mut dirs: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for name in rows.iter().filter_map(|&row| self.name64(row)) {
+                let name = name.to_ascii_lowercase();
+                let (dir, last) = name.split_at(name.rfind('/').map_or(0, |cut| cut + 1));
+                dirs.entry(dir.to_string())
+                    .or_default()
+                    .push(last.to_string());
+            }
+            let mut budget = SIBLING_CAP;
+            'table: for (dir, lasts) in dirs {
+                let (stems, endings) = sibling_parts(&lasts, range);
+                let at_dir = NameHasher::default().with(dir.as_bytes());
+                for stem in &stems {
+                    let at_stem = at_dir.with(stem.as_bytes());
+                    for end in &endings {
+                        if budget == 0 {
+                            self.siblings_capped += 1;
+                            break 'table;
+                        }
+                        budget -= 1;
+                        if self.unresolved(at_stem.with(end.as_bytes()).finish()) {
+                            self.try_entry(&format!("{dir}{stem}{end}"));
+                        }
+                    }
+                }
+            }
+        }
+        self.source = was;
+    }
+
+    /// Whether `hash` is an unresolved entry's that this run has not named.
+    fn unresolved(&self, hash: u64) -> bool {
+        self.entry.contains_key(&hash) && !self.found64.contains_key(&hash)
+    }
+
+    /// Joins each directory of `dirs` with each of `basenames`, whole, without its extension and
+    /// with each of `exts` in place of it, through one hash state per directory; a join is spelled
+    /// out only where its hash is an unresolved entry's.
+    fn join(&mut self, dirs: &BTreeSet<String>, basenames: &BTreeSet<String>, exts: &[String]) {
         let was = std::mem::replace(&mut self.source, Source::Rules);
         let mut budget = JOIN_CAP;
         for dir in dirs {
@@ -354,46 +411,90 @@ impl Miner {
                     let whole = at_stem.with(&base.as_bytes()[stem.len()..]);
                     self.try_joined(dir, base, whole.finish());
                 }
+                for ext in exts {
+                    if self.unresolved(at_stem.with(ext.as_bytes()).finish()) {
+                        self.try_entry(&format!("{dir}{stem}{ext}"));
+                    }
+                }
             }
         }
         self.source = was;
     }
 
     fn try_joined(&mut self, dir: &str, base: &str, hash: u64) {
-        if self.entry.contains_key(&hash) && !self.found64.contains_key(&hash) {
+        if self.unresolved(hash) {
             self.try_entry(&format!("{dir}{base}"));
         }
     }
 
     /// Mines the bodies of one table, then joins the directories its names hold with the last
-    /// component of each string they state.
+    /// component of each string they state, and of each string member their documents read to
+    /// with the extensions its named rows carry too.
     fn mine_table<B: AsRef<[u8]>>(
         &mut self,
         named: &[String],
         bodies: impl IntoIterator<Item = B>,
         keys: Option<&GtaViKeys>,
     ) {
-        self.tables += 1;
         let mark = self.order.len();
-        let mut basenames = BTreeSet::new();
+        let (mut basenames, mut values) = (BTreeSet::new(), BTreeSet::new());
         // Each body is dropped before the next is read.
         for body in bodies {
             self.bodies += 1;
-            self.body(body.as_ref(), keys, &mut basenames);
+            self.body(body.as_ref(), keys, &mut basenames, &mut values);
         }
         let found = self.order[mark..].to_vec();
-        let dirs: BTreeSet<String> = (named.iter().chain(&found))
-            .filter_map(|name| name.rfind('/').map(|at| name[..=at].to_ascii_lowercase()))
+        let names: Vec<String> = (named.iter().chain(&found))
+            .map(|name| name.to_ascii_lowercase())
             .collect();
-        self.join(&dirs, &basenames);
+        let dirs: BTreeSet<String> = (names.iter())
+            .filter_map(|name| name.rfind('/').map(|at| name[..=at].to_string()))
+            .collect();
+        let exts: BTreeSet<&str> = (names.iter())
+            .map(|name| &name[stem_of(name).len()..])
+            .filter(|ext| !ext.is_empty())
+            .collect();
+        let exts: Vec<String> = exts.into_iter().map(str::to_owned).collect();
+        self.join(&dirs, &basenames, &[]);
+        self.join(&dirs, &values, &exts);
     }
 
-    fn body(&mut self, bytes: &[u8], keys: Option<&GtaViKeys>, basenames: &mut BTreeSet<String>) {
-        if detect_binary_format(bytes) == Some(BinaryFormat::Pso) {
+    /// Tries the strings of one body; the last component of each goes into `basenames`, and of
+    /// each string member the metadata reader reads of it into `values` as well.
+    fn body(
+        &mut self,
+        bytes: &[u8],
+        keys: Option<&GtaViKeys>,
+        basenames: &mut BTreeSet<String>,
+        values: &mut BTreeSet<String>,
+    ) {
+        let format = detect_binary_format(bytes);
+        if let Some(format) = format {
             // The first walk took the schema of every body up to this size.
-            if bytes.len() as u64 > SCHEMA_BODY {
-                self.schema_targets(bytes);
+            let schema = format == BinaryFormat::Pso && bytes.len() as u64 > SCHEMA_BODY;
+            let library = SchemaLibrary::default();
+            match parse_meta_binary_full(&library, bytes, &mut Diagnostics::lenient()) {
+                Ok((instance, layout)) => {
+                    if schema {
+                        self.schema_of(&layout);
+                    }
+                    let mut texts = Vec::new();
+                    for (_, value) in &instance.fields {
+                        value_strings(value, &mut |text| texts.push(text.to_string()));
+                    }
+                    for text in texts {
+                        candidates(text.as_bytes(), &mut |piece, last| {
+                            if last && values.len() < BASENAME_CAP {
+                                values.insert(piece.to_ascii_lowercase());
+                            }
+                        });
+                        self.consider(text.as_bytes(), Some(basenames));
+                    }
+                }
+                Err(_) => self.schemas_unread += usize::from(schema),
             }
+        }
+        if format == Some(BinaryFormat::Pso) {
             for text in document_strings(bytes, keys).unwrap_or_default() {
                 self.consider(text.as_bytes(), Some(basenames));
             }
@@ -404,12 +505,15 @@ impl Miner {
     /// Takes the structure, enum, member and value hashes of a PSO body's schema no table names.
     fn schema_targets(&mut self, bytes: &[u8]) {
         let library = SchemaLibrary::default();
-        let Ok((_, layout)) = parse_meta_binary_full(&library, bytes, &mut Diagnostics::lenient())
-        else {
-            self.schemas_unread += 1;
-            return;
-        };
-        let ContainerLayout::Pso(pso) = layout.container else {
+        match parse_meta_binary_full(&library, bytes, &mut Diagnostics::lenient()) {
+            Ok((_, layout)) => self.schema_of(&layout),
+            Err(_) => self.schemas_unread += 1,
+        }
+    }
+
+    /// Takes the hashes of a PSO `layout`'s schema no table names.
+    fn schema_of(&mut self, layout: &MetaLayout) {
+        let ContainerLayout::Pso(pso) = &layout.container else {
             return;
         };
         let unnamed = |hash: &u32| *hash != 0 && !self.known32.contains(hash);
@@ -579,6 +683,8 @@ impl Miner {
 
     /// The rules over the names resolved, `extra` and those found, then over what each round found.
     fn rules(&mut self, extra: impl IntoIterator<Item = String>, range: u32) {
+        // Once, before the rounds, which take what it finds as work.
+        self.sibling_rules(range);
         self.source = Source::Rules;
         let mut work: Vec<String> = self.resolved.clone();
         work.extend(extra);
@@ -666,6 +772,12 @@ impl Miner {
                 self.basenames_dropped
             ));
         }
+        if self.siblings_capped > 0 {
+            lines.push(format!(
+                "  siblings      {} tables not tried past {SIBLING_CAP} candidates",
+                self.siblings_capped
+            ));
+        }
         if !self.nested_capped.is_empty() {
             lines.push(format!(
                 "  nested        {} unnamed archives not tried past {NESTED_CAP} candidates",
@@ -681,17 +793,31 @@ impl Miner {
         lines
     }
 
-    /// A line per archive of `paths`, named from `install`, with what each walk read of it, then
-    /// a line for each walk that one of `bounds`' ceilings stopped short.
+    /// A line per archive of `paths`, numbered in walk order and named from `install`, with what
+    /// each walk read of it and the names found per 1000 bodies, then a line for each walk that
+    /// one of `bounds`' ceilings stopped short.
     fn walk_lines(&self, paths: &[PathBuf], install: &Path, bounds: &Bounds<'_>) -> Vec<String> {
         let mut lines = Vec::new();
-        for (path, read) in paths.iter().zip(&self.archives) {
+        for (at, (path, read)) in paths.iter().zip(&self.archives).enumerate() {
             let name = path.strip_prefix(install).unwrap_or(path);
+            let head = format!("  archive {:<6}{}", at + 1, name.display());
+            if !bounds.reads(at) {
+                lines.push(format!(
+                    "{head}: table read, no body (not given to {ARCHIVE_FLAG})"
+                ));
+                continue;
+            }
+            let rate = match read.string_bodies {
+                0 => String::new(),
+                n => format!(
+                    ", {:.1} per 1000 bodies",
+                    read.rows as f64 * 1000.0 / n as f64
+                ),
+            };
             let short = read.schema_short || read.string_short;
             lines.push(format!(
-                "  archive       {}: {} bodies read for their schemas, {} for their strings, {} \
-                 names found{}",
-                name.display(),
+                "{head}: {} bodies read for their schemas, {} for their strings, {} names \
+                 found{rate}{}",
                 read.schema_bodies,
                 read.string_bodies,
                 read.rows,
@@ -889,6 +1015,50 @@ fn shared_stems<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
         .collect();
     stems.sort_unstable();
     stems
+}
+
+/// The stems the last components `lasts` of one directory share, and the bare stem then each
+/// ending those components add to a stem, the commonest first, with each renumbering of its last
+/// run of digits below `range`.
+fn sibling_parts(lasts: &[String], range: u32) -> (Vec<String>, Vec<String>) {
+    let stems = shared_stems(lasts.iter().map(String::as_str));
+    let seen = lasts.iter().flat_map(|last| {
+        (stems.iter())
+            .filter_map(move |stem| last.strip_prefix(stem.as_str()))
+            .filter(|end| end.len() <= MAX_ENDING && end.starts_with(['_', '.']))
+            .map(str::to_owned)
+    });
+    let (mut endings, mut held) = (vec![String::new()], HashSet::from([String::new()]));
+    for end in ranked(counted(seen), 1) {
+        if held.insert(end.clone()) {
+            endings.push(end.clone());
+        }
+        // The rules' numbering of a name, given the ending alone.
+        rule_candidates(&end, &[], &[], range, &mut |each| {
+            if held.insert(each.to_string()) {
+                endings.push(each.to_string());
+            }
+        });
+    }
+    (stems, endings)
+}
+
+/// Each text `value` holds: its strings, the names its hashes were read by, and those of every
+/// value inside it.
+fn value_strings(value: &Value, each: &mut impl FnMut(&str)) {
+    match value {
+        Value::String(text) => each(text),
+        Value::Hash(hashed) if !hashed.raw.is_empty() => each(&hashed.raw),
+        Value::Struct(inner) | Value::Pointer(Some(inner)) => {
+            (inner.fields.iter()).for_each(|(_, value)| value_strings(value, each))
+        }
+        Value::Array(items) => items.iter().for_each(|value| value_strings(value, each)),
+        Value::Map(pairs) => pairs.iter().for_each(|(key, value)| {
+            value_strings(key, each);
+            value_strings(value, each);
+        }),
+        _ => {}
+    }
 }
 
 /// The last component of `dir`, a directory that ends in `/`.
@@ -1122,9 +1292,11 @@ fn write_rows(out: &Path, kept: &str, rows: &str) -> std::io::Result<()> {
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
-    let mut present: HashSet<String> = text.lines().map(str::to_owned).collect();
+    // A hash already named keeps its name, in whichever case its digits are written.
+    let hash_of = |row: &str| row.split('\t').next().unwrap_or(row).to_ascii_lowercase();
+    let mut present: HashSet<String> = text.lines().map(hash_of).collect();
     for row in rows.lines() {
-        if present.insert(row.to_string()) {
+        if present.insert(hash_of(row)) {
             text.push_str(row);
             text.push('\n');
         }
@@ -1141,6 +1313,43 @@ fn write_rows(out: &Path, kept: &str, rows: &str) -> std::io::Result<()> {
         let _ = std::fs::remove_file(&temporary);
     }
     result
+}
+
+/// The class and member rows `miner` found, in eight lower-case digits as the names cache writes them.
+fn rows32(miner: &Miner) -> String {
+    let mut rows = BTreeMap::new();
+    for (&hash, name) in miner.found_class.iter().chain(&miner.found_member) {
+        rows.entry(hash).or_insert(name.as_str());
+    }
+    (rows.iter())
+        .map(|(hash, name)| format!("0x{hash:08x}\t{name}\n"))
+        .collect()
+}
+
+/// Merges the entry names `miner` found into the table under `config` that every verb's names
+/// cache reads, then its class and member names, which the metadata reader reads from there.
+fn merge_into_config(miner: &Miner, config: &Path) {
+    let table = ragepar_names::mined_table(config);
+    let folder = table.parent().unwrap_or(config);
+    let found = (miner.found64.iter()).map(|(&hash, name)| (hash, name.as_str()));
+    // The names cache rewrites the table with the 32-bit rows it holds, so they go in after it.
+    if let Err(error) = NameResolver::cache_names(folder, found) {
+        tracing::warn!(%error, "could not update the local GTA VI names cache");
+    }
+    let rows = rows32(miner);
+    if rows.is_empty() {
+        return;
+    }
+    if let Err(error) = write_rows(&table, "", &rows) {
+        tracing::warn!(%error, "could not add the class and member names to the local GTA VI names");
+    }
+}
+
+/// Has the metadata reader read the class and member names `hashes mine` merged into the configuration folder.
+pub fn read_mined_parser_names() {
+    if let Some(config) = or_title::config::config_dir() {
+        ragepar_names::use_config_dir(&config);
+    }
 }
 
 /// The file `out`, written anew with the rows `kept` held before, which the rows found follow.
@@ -1173,6 +1382,8 @@ struct Options {
     range: u32,
     bodies: Cap,
     total: Cap,
+    /// The archives whose bodies are read, by their place in walk order from 1; every one where empty.
+    chosen: BTreeSet<usize>,
 }
 
 fn parse(args: &[String]) -> Result<Options, String> {
@@ -1181,6 +1392,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
     let mut range = DEFAULT_RANGE;
     let mut bodies = Cap::new(DEFAULT_BODIES, CapUnit::Count("bodies"));
     let mut total = Cap::new(0, CapUnit::Count("bodies")).lifted();
+    let mut chosen = BTreeSet::new();
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         if let Some(v) = arg.strip_prefix("--max-bodies=") {
@@ -1203,6 +1415,13 @@ fn parse(args: &[String]) -> Result<Options, String> {
             BODIES_FLAG => {
                 let v = value("a count")?;
                 bodies = bodies.parse(BODIES_FLAG, &v.to_string_lossy())?;
+            }
+            ARCHIVE_FLAG => {
+                let place = value("a place in walk order")?;
+                let place = (place.to_str().and_then(|p| p.parse().ok()))
+                    .filter(|n: &usize| *n > 0)
+                    .ok_or("--archive needs a place in walk order, from 1")?;
+                chosen.insert(place);
             }
             TOTAL_FLAG => {
                 let v = value("a count")?;
@@ -1231,6 +1450,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         range,
         bodies,
         total,
+        chosen,
     })
 }
 
@@ -1241,6 +1461,8 @@ struct Bounds<'a> {
     total: Cap,
     cancel: &'a Cancel,
     holding: Holding,
+    /// The archives whose bodies are read, by their place from 1; every one where empty.
+    chosen: BTreeSet<usize>,
 }
 
 impl<'a> Bounds<'a> {
@@ -1250,7 +1472,13 @@ impl<'a> Bounds<'a> {
             total: Cap::new(0, CapUnit::Count("bodies")).lifted(),
             cancel,
             holding: Holding::default(),
+            chosen: BTreeSet::new(),
         }
+    }
+
+    /// Whether the bodies of the archive at `at` of the walk, from 0, are read.
+    fn reads(&self, at: usize) -> bool {
+        self.chosen.is_empty() || self.chosen.contains(&(at + 1))
     }
 
     /// Whether a walk that has read `read` bodies, `since` of them before this archive, stops.
@@ -1277,11 +1505,13 @@ fn mine_archives(
         eprintln!("  schemas [{}/{total}] {}", i + 1, path.display());
         let since = miner.schema_bodies;
         let mut short = false;
+        // An archive not chosen gives its tables' unnamed rows as targets, and no body.
+        let reads = bounds.reads(i);
         walk_archive(path, keys, &mut refused, &mut |file, mount, leaves, at| {
             let entries = &mount.archive.entries;
             miner.place(at, entries);
             miner.add_table(entries, resolver);
-            for &at in leaves {
+            for &at in leaves.iter().filter(|_| reads) {
                 let entry = &entries[at];
                 if bounds.stops(miner.schema_bodies, since) {
                     short |= bounds.bodies.reached(miner.schema_bodies - since);
@@ -1308,6 +1538,9 @@ fn mine_archives(
         eprintln!("  schemas [{}/{total}] {read} bodies read", i + 1);
     }
     for (i, path) in archives.iter().enumerate() {
+        if !bounds.reads(i) {
+            continue;
+        }
         eprintln!("  strings [{}/{total}] {}", i + 1, path.display());
         let (since, rows) = (miner.bodies as u64, miner.rows);
         let mut short = false;
@@ -1362,6 +1595,13 @@ fn mine(options: &Options) -> Result<Vec<String>, String> {
     if archives.is_empty() {
         return Err(format!("no .rpf in {}", options.install.display()));
     }
+    if let Some(past) = options.chosen.iter().find(|&&n| n > archives.len()) {
+        return Err(format!(
+            "{ARCHIVE_FLAG} {past}: {} holds {} archives",
+            options.install.display(),
+            archives.len()
+        ));
+    }
     let mut miner = Miner::new();
     miner.keep_rows(&kept);
     let mut seeds32 = Vec::new();
@@ -1377,6 +1617,7 @@ fn mine(options: &Options) -> Result<Vec<String>, String> {
     let cancel = super::jobs::on_interrupt();
     let mut bounds = Bounds::new(options.bodies, &cancel);
     bounds.total = options.total;
+    bounds.chosen = options.chosen.clone();
     let unwritten = |e: std::io::Error| format!("{}: {e}", options.out.display());
     // The rows are written beside the output as they are found, so a run that stops keeps them
     // there and leaves the output whole; they are joined to it under its lock at the end.
@@ -1411,16 +1652,9 @@ fn mine(options: &Options) -> Result<Vec<String>, String> {
     let rows = std::fs::read_to_string(&mining).map_err(unwritten)?;
     write_rows(&options.out, &kept, &rows).map_err(unwritten)?;
     let _ = std::fs::remove_file(&mining);
-    if let Some(config) = or_title::config::config_dir() {
-        if let Err(error) = NameResolver::cache_names(
-            &config.join("gta6_names"),
-            miner
-                .found64
-                .iter()
-                .map(|(&hash, name)| (hash, name.as_str())),
-        ) {
-            tracing::warn!(%error, "could not update the local GTA VI names cache");
-        }
+    let config = or_title::config::config_dir();
+    if let Some(config) = &config {
+        merge_into_config(&miner, config);
     }
     let mut lines = miner.lines(refused);
     if exe.is_none() {
@@ -1439,6 +1673,12 @@ fn mine(options: &Options) -> Result<Vec<String>, String> {
         "  written       {}: {found} rows found, after the rows it held; no archive is written",
         options.out.display()
     ));
+    if let Some(config) = &config {
+        lines.push(format!(
+            "  merged        {}: what every verb and the metadata reader read with no setting",
+            ragepar_names::mined_table(config).display()
+        ));
+    }
     if cancel.is_set() {
         lines.push(
             "  CANCELLED     the walk stopped short; the rows found before it are written"
@@ -1453,6 +1693,10 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
     };
+    if rest.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
     let options = match parse(rest) {
         Ok(options) => options,
         Err(e) => {
@@ -2097,7 +2341,7 @@ mod tests {
             "each body read names itself"
         );
         assert_eq!(lines.len(), 5, "{lines:?}");
-        assert_eq!(lines[0], "  archive       a.rpf: 2 bodies read for their schemas, 2 for their strings, 2 names found; stopped at the ceiling");
+        assert_eq!(lines[0], "  archive 1     a.rpf: 2 bodies read for their schemas, 2 for their strings, 2 names found, 1000.0 per 1000 bodies; stopped at the ceiling");
         assert!(
             lines[3].starts_with("  schema walk   3 of 3 archives: STOPPED SHORT at 2 bodies"),
             "{lines:?}"
@@ -2157,6 +2401,244 @@ mod tests {
         assert!(options.bodies.is_unlimited());
         assert_eq!(options.listings, Some(PathBuf::from("l")));
         assert!(args(&["--max-total", "0"]).is_err(), "zero is no ceiling");
+        assert!(
+            options.chosen.is_empty(),
+            "every archive is read by default"
+        );
+
+        let options = args(&["--archive", "3", "--archive", "1"]).expect("two archives parse");
+        assert_eq!(options.chosen, BTreeSet::from([1, 3]));
+        assert_eq!(
+            options.bodies.limit(),
+            Some(DEFAULT_BODIES),
+            "chosen archives keep the ceiling"
+        );
+        let options = args(&["--archive", "3", "--max-bodies=7"]).expect("a ceiling given");
+        assert_eq!(options.bodies.limit(), Some(7), "unless one is asked for");
+        assert!(args(&["--archive", "0"]).is_err(), "places start at 1");
+        assert!(args(&["--archive", "two"]).is_err());
+        assert!(args(&["--archive"]).is_err());
+    }
+
+    #[test]
+    fn help_is_asked_for_with_either_flag_and_is_no_error() {
+        let code = |flag: &str| format!("{:?}", run(&["mine".to_string(), flag.to_string()]));
+        let success = format!("{:?}", ExitCode::SUCCESS);
+        assert_eq!(code("--help"), success);
+        assert_eq!(code("-h"), success);
+        assert_eq!(code("--nonsense"), format!("{:?}", ExitCode::from(2)));
+    }
+
+    /// Three archives of four bodies each, each body stating its own path, and the second given to
+    /// `--archive`: it is read whole, the others give their tables' rows as targets and no body,
+    /// and the report says so of each; with a ceiling asked for, the ceiling holds.
+    #[test]
+    fn an_archive_given_to_archive_is_read_past_the_ceiling_and_the_others_give_their_tables_only()
+    {
+        let keys = fixture::keys();
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        for archive in ["a", "b", "c"] {
+            let paths: Vec<String> = (0..4).map(|i| format!("zq/{archive}/body_{i}")).collect();
+            let entries: Vec<(&str, Body)> = (paths.iter())
+                .map(|path| (path.as_str(), Body::Zlib(fixture::pso(path))))
+                .collect();
+            let bytes = fixture::archive(&entries);
+            std::fs::write(dir.path().join(format!("{archive}.rpf")), bytes).expect("written");
+        }
+        let paths = archives(dir.path());
+        let read = |ceiling: &[&str]| {
+            let args: Vec<String> = (["install", "--out", "o.tsv", "--archive", "2"].iter())
+                .chain(ceiling)
+                .map(|a| a.to_string())
+                .collect();
+            let options = parse(&args).expect("the options parse");
+            let (mut miner, cancel) = (Miner::new(), Cancel::new());
+            let mut bounds = Bounds::new(options.bodies, &cancel);
+            bounds.chosen = options.chosen;
+            let resolver = NameResolver::new();
+            mine_archives(
+                &mut miner,
+                &paths,
+                &keys,
+                &resolver,
+                &bounds,
+                &mut std::io::sink(),
+            )
+            .expect("the rows are written");
+            let lines = miner.walk_lines(&paths, dir.path(), &bounds);
+            (miner, lines)
+        };
+        let (miner, lines) = read(&[]);
+        let each: Vec<(u64, u64, usize)> = (miner.archives.iter())
+            .map(|a| (a.schema_bodies, a.string_bodies, a.rows))
+            .collect();
+        assert_eq!(each, [(0, 0, 0), (4, 4, 4), (0, 0, 0)]);
+        assert_eq!(miner.entry.len(), 12, "every table's rows are targets");
+        assert_eq!(
+            lines,
+            [
+                "  archive 1     a.rpf: table read, no body (not given to --archive)",
+                "  archive 2     b.rpf: 4 bodies read for their schemas, 4 for their strings, 4 names found, 1000.0 per 1000 bodies",
+                "  archive 3     c.rpf: table read, no body (not given to --archive)",
+            ]
+        );
+
+        let (miner, lines) = read(&["--max-bodies", "2"]);
+        assert_eq!(
+            (miner.archives[1].string_bodies, miner.bodies),
+            (2, 2),
+            "a ceiling asked for holds"
+        );
+        assert!(lines[1].ends_with("; stopped at the ceiling"), "{lines:?}");
+    }
+
+    /// One directory of named rows that share two stems, one row with a `_lod` ending: the unnamed
+    /// row that is the other stem with that ending renumbered is named by the sibling rule, and a
+    /// row no stem and ending make is not.
+    #[test]
+    fn an_unnamed_row_takes_a_stem_its_named_siblings_share_with_an_ending_seen_beside_it() {
+        let keys = fixture::keys();
+        let named = [
+            "zq/props/zq_lamp_01",
+            "zq/props/zq_lamp_01_lod",
+            "zq/props/zq_bench_02",
+            "zq/props/zq_bench_05",
+        ];
+        let unnamed = ["zq/props/zq_bench_03_lod", "zq/props/zq_never_9"];
+        let rows: Vec<(&str, Body)> = (named.iter().chain(&unnamed))
+            .map(|path| (*path, Body::Zlib(fixture::pso("zq"))))
+            .collect();
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        std::fs::write(dir.path().join("parent.rpf"), fixture::archive(&rows)).expect("written");
+        let mut resolver = NameResolver::new();
+        for name in named {
+            resolver.insert(name_hash64(name.as_bytes()), name);
+        }
+        let (mut miner, cancel) = (Miner::new(), Cancel::new());
+        let bounds = Bounds::new(Cap::new(DEFAULT_BODIES, CapUnit::Count("bodies")), &cancel);
+        let sink = &mut std::io::sink();
+        mine_archives(
+            &mut miner,
+            &archives(dir.path()),
+            &keys,
+            &resolver,
+            &bounds,
+            sink,
+        )
+        .expect("the rows are written");
+        assert_eq!(miner.entry.len(), 2);
+        assert_eq!(found(&miner, unnamed[0]), None, "no string names it");
+
+        miner.sibling_rules(DEFAULT_RANGE);
+        assert_eq!(found(&miner, unnamed[0]), Some(unnamed[0]));
+        assert_eq!(found(&miner, unnamed[1]), None);
+        assert_eq!(miner.by.get(&(Space::Entry, Source::Rules)), Some(&1));
+        assert_eq!(miner.source, Source::Install, "the source is put back");
+        let (stems, endings) = sibling_parts(&["zq_a_01".into(), "zq_a_02_lod".into()], 3);
+        assert_eq!(stems, ["zq", "zq_a"]);
+        assert_eq!(endings[0], "", "the bare stem first");
+        assert!(
+            endings.contains(&"_02_lod".to_string()) && endings.contains(&"_00_lod".to_string())
+        );
+        assert!(
+            !endings.contains(&"_03_lod".to_string()),
+            "the range ends below 3"
+        );
+        // An ending keeps its extension, and one numbered past the range or past four digits is
+        // still tried as it was seen.
+        let lasts = [
+            "zq_lamp.ydr",
+            "zq_lamp_lod.ydr",
+            "zq_lamp_0150.ydr",
+            "zq_lamp_123456.ydr",
+        ];
+        let lasts: Vec<String> = lasts.map(String::from).into();
+        let (_, endings) = sibling_parts(&lasts, 100);
+        for seen in ["_lod.ydr", "_0150.ydr", "_123456.ydr", "_0099.ydr"] {
+            assert!(endings.contains(&seen.to_string()), "{seen}: {endings:?}");
+        }
+    }
+
+    /// A document whose one string member is a sound's name, beside a named file of the same
+    /// directory: the name joined with that file's extension names the unnamed file; the same
+    /// string outside a document is joined without it, and names nothing.
+    #[test]
+    fn a_string_member_a_document_reads_to_is_joined_with_the_extensions_its_named_siblings_carry()
+    {
+        let paths = ["zq/sfx/zq_horn.awc", "zq/sfx/zq_siren.awc"];
+        let entries: Vec<Gta6Entry> = (paths.iter().zip(0..))
+            .map(|(path, at)| entry(at, path, Some(name_hash32(path.as_bytes()))))
+            .collect();
+        let mut resolver = NameResolver::new();
+        resolver.insert(entries[0].name64, paths[0]);
+        let mut document = or_io::meta::MetaInstance::new("CZqSounds");
+        document.set("Sound", Value::String("zq_siren".into()));
+        let rbf = or_io::meta::write_meta_binary(BinaryFormat::Rbf, None, &document)
+            .expect("the document encodes");
+        let mine = |body: Vec<u8>| {
+            let mut miner = Miner::new();
+            let named = miner.add_table(&entries, &resolver);
+            miner.mine_table(&named, vec![body], None);
+            miner
+        };
+        let miner = mine(rbf);
+        assert_eq!(found(&miner, paths[1]), Some(paths[1]));
+        assert_eq!(miner.by.get(&(Space::Entry, Source::Rules)), Some(&1));
+        assert_eq!(found(&mine(b"\0zq_siren\0".to_vec()), paths[1]), None);
+    }
+
+    #[test]
+    fn the_strings_of_a_value_are_its_own_its_hashes_names_and_those_inside_it() {
+        use or_io::meta::instance::HashedString;
+        let mut inner = or_io::meta::MetaInstance::new("CZqInner");
+        inner.set("Name", Value::String("zq_inner".into()));
+        let value = Value::Array(vec![
+            Value::Struct(Box::new(inner)),
+            Value::Hash(HashedString::new("zq_hashed")),
+            Value::Hash(HashedString::from_hash(7)),
+            Value::Map(vec![(Value::String("zq_key".into()), Value::UInt(1))]),
+            Value::Pointer(None),
+        ]);
+        let mut got = Vec::new();
+        value_strings(&value, &mut |text| got.push(text.to_string()));
+        assert_eq!(got, ["zq_inner", "zq_hashed", "zq_key"]);
+    }
+
+    /// The class and member names a run found go to the configuration folder's table, where the
+    /// metadata reader reads them with no setting, and a later merge of entry names keeps them.
+    #[test]
+    fn the_class_and_member_names_reach_the_metadata_reader_from_the_configuration_folder() {
+        let config = tempfile::tempdir().expect("a configuration folder");
+        let mut miner = Miner::new();
+        let class = literal_string_hash(b"ZqWidgetMeta");
+        let member = string_hash(b"zqIntensity");
+        miner.class.insert(class);
+        miner.member.insert(member);
+        miner.consider(b"\0ZqWidgetMeta\0zqIntensity\0", None);
+        miner
+            .found64
+            .insert(name_hash64(b"zq/a/one"), "zq/a/one".to_string());
+        merge_into_config(&miner, config.path());
+
+        let table = ragepar_names::mined_table(config.path());
+        let cached = vocabulary_file(config.path()).with_file_name("resolved-names.tsv");
+        assert_eq!(table, cached, "the names cache reads the same table");
+        let two = [(name_hash64(b"zq/b/two"), "zq/b/two")];
+        NameResolver::cache_names(table.parent().expect("a folder"), two).expect("merged");
+        let names = ragepar_names::load_from(None, Some(config.path())).expect("the table reads");
+        assert_eq!(names.name(class), Some("ZqWidgetMeta"));
+        assert_eq!(names.name(member), Some("zqIntensity"));
+        let resolver = NameResolver::load_cached(None, Some(config.path()));
+        assert_eq!(resolver.lookup(name_hash64(b"zq/a/one")), Some("zq/a/one"));
+        assert_eq!(resolver.lookup(name_hash64(b"zq/b/two")), Some("zq/b/two"));
+        // A class or member row names no entry.
+        assert_eq!(resolver.lookup(u64::from(class)), None);
+        assert_eq!(resolver.lookup(u64::from(member)), None);
+
+        let before = std::fs::read_to_string(&table).expect("read");
+        merge_into_config(&miner, config.path());
+        let after = std::fs::read_to_string(&table).expect("read");
+        assert_eq!(after, before, "a second run of the same names adds no row");
     }
 
     /// Two directories joined with three basenames: each join whose hash is an unresolved entry's
@@ -2171,7 +2653,7 @@ mod tests {
         miner.add_table(&entries, &NameResolver::new());
         let dirs: BTreeSet<String> = ["zq/a/", "zq/b/"].map(String::from).into();
         let basenames: BTreeSet<String> = ["lamp.xml", "crate", "never"].map(String::from).into();
-        miner.join(&dirs, &basenames);
+        miner.join(&dirs, &basenames, &[]);
         for path in targets {
             assert_eq!(found(&miner, path), Some(path));
         }
@@ -2343,5 +2825,93 @@ mod tests {
             "{named} twins named, {refused} tables refused"
         );
         assert!(miner.found64.keys().all(|hash| unresolved.contains(hash)));
+    }
+
+    /// The build's key snapshot and folder, or `None` after the skip is said.
+    fn the_build(what: &str) -> Option<(GtaViKeys, PathBuf)> {
+        let present = |var: &str| {
+            std::env::var_os(var)
+                .map(PathBuf::from)
+                .filter(|p| p.exists())
+        };
+        let snapshot = present(or_io::container::rpf::GTA6_SNAPSHOT_ENV);
+        let (Some(snapshot), Some(build)) = (snapshot, present("OPENRAGE_GTA6_BUILD")) else {
+            or_test_support::skip_install(
+                what,
+                format_args!(
+                    "set {} and OPENRAGE_GTA6_BUILD",
+                    or_io::container::rpf::GTA6_SNAPSHOT_ENV
+                ),
+            );
+            return None;
+        };
+        let keys = GtaViKeys::from_file(&snapshot).expect("the key snapshot parses");
+        Some((keys, build))
+    }
+
+    /// The three smallest archives of the build with the second alone given to `--archive`: the
+    /// others give their tables and no body, and it is read whole. Install-gated.
+    #[test]
+    fn the_miner_runs_on_the_build_within_its_ceiling_on_the_chosen_archive_alone() {
+        let Some((keys, build)) = the_build("hashes mine --archive over a GTA VI build") else {
+            return;
+        };
+        let size = |p: &PathBuf| std::fs::metadata(p).map_or(u64::MAX, |m| m.len());
+        let mut smallest = archives(&build);
+        smallest.sort_by_key(size);
+        smallest.truncate(3);
+        let cancel = Cancel::new();
+        let mut bounds = Bounds::new(Cap::at(1, CapUnit::Count("bodies")).lifted(), &cancel);
+        bounds.chosen = BTreeSet::from([2]);
+        let mut miner = Miner::new();
+        let sink = &mut std::io::sink();
+        let resolver = NameResolver::new();
+        let refused = mine_archives(&mut miner, &smallest, &keys, &resolver, &bounds, sink)
+            .expect("the rows are written");
+        let read: Vec<(u64, u64)> = (miner.archives.iter())
+            .map(|a| (a.schema_bodies, a.string_bodies))
+            .collect();
+        assert_eq!(
+            (read[0], read[2]),
+            ((0, 0), (0, 0)),
+            "{refused} tables refused"
+        );
+        assert!(read[1].1 > 0, "the chosen archive's bodies are read");
+        assert!(!miner.archives[1].string_short, "and read whole");
+        assert!(miner.tables >= 3, "every archive's table is read");
+    }
+
+    /// Every table of the build placed with the user's names, then the sibling rule: whatever it
+    /// names was unresolved, one row each. Install-gated, and needs the user's names folder,
+    /// without which no row has a named sibling.
+    #[test]
+    fn the_miner_runs_on_the_build_within_its_ceiling_and_names_siblings_that_were_unresolved() {
+        let names = std::env::var_os(or_io::container::rpf::GTA6_NAMES_ENV)
+            .filter(|dir| Path::new(dir).exists());
+        if names.is_none() {
+            or_test_support::skip_install(
+                "the sibling rule over a GTA VI build",
+                format_args!("set {}", or_io::container::rpf::GTA6_NAMES_ENV),
+            );
+            return;
+        }
+        let Some((keys, build)) = the_build("the sibling rule over a GTA VI build") else {
+            return;
+        };
+        let resolver = load_resolver(None);
+        let mut miner = Miner::new();
+        let mut refused = 0;
+        for path in archives(&build) {
+            walk_archive(&path, &keys, &mut refused, &mut |_, mount, _, at| {
+                miner.place(at, &mount.archive.entries);
+                miner.add_table(&mount.archive.entries, &resolver);
+            });
+        }
+        let unresolved: HashSet<u64> = miner.entry.keys().copied().collect();
+        miner.sibling_rules(DEFAULT_RANGE);
+        let named = miner.found64.len();
+        println!("{named} rows named by their siblings, {refused} tables refused");
+        assert!(miner.found64.keys().all(|hash| unresolved.contains(hash)));
+        assert_eq!(miner.rows, named, "one row per name");
     }
 }

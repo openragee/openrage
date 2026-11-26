@@ -12155,9 +12155,6 @@ msgstr "{name}には{kind}コンテンツがあります。"
 msgid "{name} is a folder, and the Files content holds files"
 msgstr "{name}はフォルダーですが、ファイルコンテンツが保持するのはファイルです"
 
-msgid "{name} is a headerless resource, whose loose form is stored under a new row"
-msgstr "{name} はヘッダーなしのリソースで、そのルーズ形式は新しい行に保存されます"
-
 msgid "{name} is a name Windows keeps for itself: choose another"
 msgstr "{name}はWindowsが予約している名前です：別の名前を選択してください"
 
@@ -17055,9 +17052,6 @@ msgstr "GTA VIアーカイブから開いたドキュメントだけが、その
 msgid "Cannot save into a copy of the archive: {reason}"
 msgstr "アーカイブのコピーに保存できません: {reason}"
 
-msgid "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale."
-msgstr "{file} はエントリの位置に編集を書き込んだ新しいアーカイブです。テーブルの署名が古いため、ゲームはこれを拒否します。"
-
 msgid "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds."
 msgstr "{file} は読み込み元と同じ新しいアーカイブです。編集はエントリが保持するバイトを書き込みます。"
 
@@ -17383,3 +17377,15 @@ msgstr "GTA VI ドキュメントの編集を、読み込み元のアーカイ�
 
 msgid "The text table is laid out again at another length ({reason}), so a save into its archive writes a rebuilt archive, which the game refuses because only its maker can sign the table."
 msgstr "テキストテーブルは別の長さで配置し直されます ({reason})。そのため、そのアーカイブに保存すると再構築されたアーカイブが書き込まれ、テーブルに署名できるのは作成者だけなので、ゲームはそれを拒否します。"
+
+msgid "{name} does not read as a resource from its start"
+msgstr "{name} は先頭からリソースとして読めません"
+
+msgid "{file} is a rebuilt archive with the document's edit, which the game refuses because only its maker can sign the table it changed."
+msgstr "{file} はドキュメントの編集を含む再構築されたアーカイブです。変更したテーブルに署名できるのは作成者だけなので、ゲームはそれを拒否します。"
+
+msgid "In a GTA VI archive"
+msgstr "GTA VIのアーカイブ内"
+
+msgid "This key changes the length of its clip's data, so its archive will be saved rebuilt, which the game refuses because only its maker can sign the table."
+msgstr "このキーはクリップのデータの長さを変えるため、そのアーカイブは再構築して保存されます。テーブルに署名できるのは作成者だけなので、ゲームはそれを拒否します。"

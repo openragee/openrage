@@ -36,7 +36,7 @@ pub use gta6_script::Gta6ScriptDocument;
 #[allow(clippy::large_enum_variant)]
 mod meta;
 
-pub use meta::{meta_schema, MetaDocument};
+pub use meta::{meta_schema, read_the_mined_names, MetaDocument};
 
 mod gta6_meta_names;
 

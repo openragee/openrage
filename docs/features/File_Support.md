@@ -136,21 +136,23 @@ folder's view offers the scan and the name harvest.
   write. A new archive is of one of two kinds, and each write says which. A patched copy puts each
   changed body in its entry's place, chunk by chunk, and keeps the table byte-identical, so its
   signature still matches and no check read in the game's code rejects it; the game has not been run
-  with one. `openrage-cli rpf9 patch` writes one, `rpf9 fits` says whether a replacement fits, and
-  the tree's Save as… and File ▸ Save into a copy of the archive… write one when every change fits.
-  A change fits only at the body's own length, and a changed chunk is deflated again with zlib's
-  levels and then, on a chunk within a size cap, an optimal parse, which must fit the stored size
-  the table states. On the one build measured most unchanged chunks of up to 256 KiB fit again
-  (measured at `57eece64`), and
-  a larger chunk fits only where zlib fits it. A model or another headerless resource saves
-  from the app as a rebuilt archive, and `rpf9 patch` takes its inflated body instead.
-  [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md#one-value-from-the-files-tree-to-a-patched-copy)
+  with one. In the app, a document opened from a row of an archive's tree saves into that row,
+  and the tree's Save as… and File ▸ Save into a copy of the archive… write a patched copy when
+  every change fits, a headerless resource's as well as any other row's; `openrage-cli rpf9 patch`
+  writes one, and `rpf9 fits` says whether a replacement fits. A change fits only at the body's own
+  length, and a changed chunk is deflated again with zlib's levels and then, on a chunk within a
+  size cap, an optimal parse, which must fit the stored size the table states. On the one build
+  measured, most unchanged chunks fit again, and an edit made by each of the text table, script,
+  metadata, texture and model writers fitted and read back (`gta6_edit_to_patched_copy`, on the
+  code of `e4d30d553`); a chunk past the cap fits only where zlib fits it.
+  [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md#an-edit-in-the-app-from-the-files-tree-to-a-patched-copy)
   walks one edit from the tree to a patched copy, gives the CLI's steps and a script's, and says
   [what fits today](../guides/GTA_VI_Modding.md#what-fits-today) with the measured figures.
   A rebuilt archive lays a table out again, which the game refuses because only its maker can sign
   one: `rpf9 replace`, `remove`, `rename`, `defrag`, `add` and `build`, `dlc create-gta6`, and the
-  app's saves when a change does not fit, whose message names the rows that kept it from being
-  patched. A plain replace of an entry whose row describes a paged resource is refused by name, and
+  app's saves when a change does not fit: a row renamed, removed or added, a body whose length
+  changes, a chunk whose new stream outgrows its stored size, or a row the patch writer refuses,
+  each named in the message with why it kept the copy from being patched. A plain replace of an entry whose row describes a paged resource is refused by name, and
   `replace --resource` replaces it by its loose form.
 - **Not done.** The game refuses every rebuilt archive, and no file OpenRage saved, a patched copy
   included, has been tried in the game. A compiled script,

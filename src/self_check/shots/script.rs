@@ -234,10 +234,18 @@ fn parse_step(line: &str) -> Result<Step, String> {
         "type" => Ok(Step::Type(non_empty(rest, "text")?.to_string())),
         "key" => {
             let (name, held) = args.split_first().ok_or("needs a key name")?;
+            // `ctrl+s` is `s ctrl`; with nothing before its last `+` the name is the key, so `+` is Plus.
+            let (joined, name) = match name.rsplit_once('+') {
+                Some((joined, key)) if !joined.is_empty() => (joined, key),
+                _ => ("", *name),
+            };
+            let held: Vec<&str> = (joined.split('+').filter(|word| !word.is_empty()))
+                .chain(held.iter().copied())
+                .collect();
             let key = egui::Key::from_name(name).ok_or_else(|| format!("no key `{name}`"))?;
             Ok(Step::Key {
                 key,
-                modifiers: modifiers(held)?,
+                modifiers: modifiers(&held)?,
             })
         }
         "palette" => no_args(Step::Palette),
@@ -687,5 +695,17 @@ mod tests {
         );
         let wrong = parse("shot a\nworld hour 24").expect_err("no such hour");
         assert!(wrong.starts_with("line 2:"), "{wrong}");
+    }
+
+    #[test]
+    fn a_key_joined_to_its_modifiers_is_the_key_with_them_held() {
+        assert_eq!(one("key ctrl+shift+s"), one("key s ctrl shift"));
+        assert_eq!(one("key ctrl+s alt"), one("key S ctrl alt"));
+        let Ok(Step::Key { key, modifiers }) = one("key +") else {
+            panic!("`+` alone is a key");
+        };
+        assert_eq!((key, modifiers), (egui::Key::Plus, egui::Modifiers::NONE));
+        assert!(one("key ctrl+nothing").is_err());
+        assert!(one("key meta+s").is_err());
     }
 }

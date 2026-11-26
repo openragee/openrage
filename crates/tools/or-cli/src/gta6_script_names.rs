@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use or_io::gta6::script::cfg::Terminator;
 use or_io::gta6::script::ir::{Callee, Const, Expr, Kind};
@@ -19,6 +20,7 @@ use or_io::gta6::script::lift;
 use or_io::gta6::script::names::search::{self, Budget, Search, Targets};
 use or_io::gta6::script::names::words;
 use or_io::gta6::script::program::Program;
+use or_io::gta6::script::{Names, Project};
 use serde_json::json;
 
 /// The rounds a search runs where none is asked for: each feeds the words of what the last found to the next.
@@ -33,7 +35,7 @@ const TOP: usize = 200;
 const USAGE: &str = "usage: openrage-cli script names-search <program|folder>... [--words <file>]... \
      [--names <file>]... [--join <n>] [--candidates <n>] [--rounds <n>] [--threads <n>] [-o <file>]\n       \
      openrage-cli script natives --unnamed <program|folder>... [--names <file>]... \
-     [--natives-db <file>]... [--json] [-o <file>]";
+     [--natives-db <file>]... [--project <file>] [--threads <n>] [--json] [-o <file>]";
 
 /// What the arguments after the verb ask.
 #[derive(Default)]
@@ -42,6 +44,7 @@ struct Asked {
     words: Vec<PathBuf>,
     names: Vec<PathBuf>,
     natives: Vec<PathBuf>,
+    project: Option<PathBuf>,
     out: Option<PathBuf>,
     join: usize,
     candidates: u64,
@@ -101,6 +104,7 @@ fn asked(args: &[String]) -> Result<Asked, String> {
             "--words" => asked.words.push(PathBuf::from(value(arg)?)),
             "--names" => asked.names.push(PathBuf::from(value(arg)?)),
             "--natives-db" => asked.natives.push(PathBuf::from(value(arg)?)),
+            "--project" => asked.project = Some(PathBuf::from(value(arg)?)),
             "-o" | "--out" => asked.out = Some(PathBuf::from(value(arg)?)),
             "--join" => asked.join = number(arg, value(arg)?)? as usize,
             "--candidates" => asked.candidates = number(arg, value(arg)?)?,
@@ -270,66 +274,120 @@ fn const_kind(c: &Const) -> &'static str {
     }
     let low = c.bits as u32;
     // A small value, or one widened from a small negative.
-    if low < 0x1_0000 || low >= 0xFFFF_0000 {
+    if !(0x1_0000..0xFFFF_0000).contains(&low) {
         "small int"
     } else {
         "large int"
     }
 }
 
+/// What one program's calls of unnamed natives are, with its count of named calls, of unnamed ones and of functions that did not lift.
+fn tally(program: &Program, project: &Project, names: &Names) -> Tally {
+    let mut t = Tally::default();
+    for row in &program.functions {
+        let Ok(lifted) = lift::function_in(program, project, row) else {
+            t.failed += 1;
+            continue;
+        };
+        let mut seen = |e: &Expr| {
+            let Expr::Call {
+                callee: Callee::Native { rva, .. },
+                args,
+                returns,
+            } = e
+            else {
+                return;
+            };
+            let hash = names.native_at(*rva);
+            if hash.is_some_and(|h| names.native(h).is_some()) {
+                t.named += 1;
+                return;
+            }
+            t.unnamed += 1;
+            // A handler no list gives a hash of is kept by its address, under the top bit.
+            let key = hash.unwrap_or(u64::from(*rva) | 1 << 63);
+            let calls = t.by.entry(key).or_default();
+            calls.rva = *rva;
+            calls.args = args.len() as u64;
+            calls.returns = u64::from(returns.unwrap_or(0));
+            calls.sites += 1;
+            calls.programs.insert(program.program);
+            for (n, arg) in args.iter().enumerate() {
+                let kinds = calls.kinds.entry(n).or_default();
+                *kinds.entry(kind_of(arg)).or_default() += 1;
+            }
+        };
+        for block in &lifted.function.cfg.blocks {
+            for stmt in &block.stmts {
+                stmt.each_expr(&mut |e: &Expr| e.walk(&mut seen));
+            }
+            match &block.term {
+                Terminator::Branch { cond: e, .. }
+                | Terminator::Switch { value: e, .. }
+                | Terminator::Return(Some(e)) => e.walk(&mut seen),
+                _ => {}
+            }
+        }
+    }
+    t
+}
+
+#[derive(Default)]
+struct Tally {
+    by: BTreeMap<u64, Calls>,
+    named: usize,
+    unnamed: usize,
+    failed: usize,
+}
+
 fn unnamed(asked: &Asked) -> Result<String, String> {
     let supplied = super::lists::supplied(&asked.names, &asked.natives, None)?;
     let names = supplied.names;
+    let loaded = match &asked.project {
+        Some(path) => Some(super::project_at(path)?.1),
+        None => None,
+    };
+    let project = loaded.as_ref().unwrap_or(Project::empty());
     let (read, refused) = programs(&asked.paths);
+    let next = AtomicUsize::new(0);
+    let tallies: Vec<Tally> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..asked.threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let n = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((_, program)) = read.get(n) else {
+                            break;
+                        };
+                        mine.push(tally(program, project, &names));
+                    }
+                    mine
+                })
+            })
+            .collect();
+        // A thread that panicked carries its panic on.
+        (handles.into_iter())
+            .flat_map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    });
     let mut by: BTreeMap<u64, Calls> = BTreeMap::new();
     let (mut named_calls, mut unnamed_calls, mut failed) = (0usize, 0usize, 0usize);
-    for (_, program) in &read {
-        for row in &program.functions {
-            let Ok(lifted) = lift::function(program, row) else {
-                failed += 1;
-                continue;
-            };
-            let mut seen = |e: &Expr| {
-                let Expr::Call {
-                    callee: Callee::Native { rva, .. },
-                    args,
-                    returns,
-                } = e
-                else {
-                    return;
-                };
-                let hash = names.native_at(*rva);
-                if hash.is_some_and(|h| names.native(h).is_some()) {
-                    named_calls += 1;
-                    return;
-                }
-                unnamed_calls += 1;
-                // A handler no list gives a hash of is kept by its address, under the top bit.
-                let key = hash.unwrap_or(u64::from(*rva) | 1 << 63);
-                let calls = by.entry(key).or_default();
-                calls.rva = *rva;
-                calls.args = args.len() as u64;
-                calls.returns = u64::from(returns.unwrap_or(0));
-                calls.sites += 1;
-                calls.programs.insert(program.program);
-                for (n, arg) in args.iter().enumerate() {
-                    *calls
-                        .kinds
-                        .entry(n)
-                        .or_default()
-                        .entry(kind_of(arg))
-                        .or_default() += 1;
-                }
-            };
-            for block in &lifted.function.cfg.blocks {
-                for stmt in &block.stmts {
-                    stmt.each_expr(&mut |e: &Expr| e.walk(&mut seen));
-                }
-                match &block.term {
-                    Terminator::Branch { cond: e, .. }
-                    | Terminator::Switch { value: e, .. }
-                    | Terminator::Return(Some(e)) => e.walk(&mut seen),
-                    _ => {}
+    for t in tallies {
+        named_calls += t.named;
+        unnamed_calls += t.unnamed;
+        failed += t.failed;
+        for (key, c) in t.by {
+            let held = by.entry(key).or_default();
+            held.rva = c.rva;
+            held.args = c.args;
+            held.returns = c.returns;
+            held.sites += c.sites;
+            held.programs.extend(c.programs);
+            for (n, kinds) in c.kinds {
+                let place = held.kinds.entry(n).or_default();
+                for (kind, count) in kinds {
+                    *place.entry(kind).or_default() += count;
                 }
             }
         }

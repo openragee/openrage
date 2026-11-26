@@ -182,6 +182,8 @@ pub struct MeshletSurface {
 type ViewWrite = (wgpu::Buffer, usize);
 
 struct Draw {
+    /// Its surface's place among those the scene was prepared from: the draws are in that order.
+    at: usize,
     pipeline: wgpu::RenderPipeline,
     caster: wgpu::RenderPipeline,
     /// By group number.
@@ -327,8 +329,8 @@ pub struct MeshletScene {
     /// among them, and why.
     pub refused: Vec<(usize, String)>,
     /// Those whose pass a worker still builds, each by its place among them.
-    // The caller draws them as it draws `rest`, and prepares again once
-    // `MeshletPipelines::waiting` counts fewer.
+    // The caller draws them as it draws `rest`, and has [`MeshletScene::build_on`] take on those
+    // a worker has built the pass of since.
     pub waiting: Vec<usize>,
 }
 
@@ -749,12 +751,6 @@ impl MeshletPipelines {
             // What a pass comes to is asked when its surface is drawn.
             let _ = self.of(device, surface);
         }
-    }
-
-    /// How many of `surfaces` a worker still builds the pass of.
-    pub fn waiting(&mut self, device: &wgpu::Device, surfaces: &[MeshletSurface]) -> usize {
-        let waits = |surface: &&MeshletSurface| matches!(self.of(device, surface), Ok(None));
-        surfaces.iter().filter(waits).count()
     }
 
     /// Take `surface`'s pass as one a worker still builds, or with `held` false let the next ask start one.
@@ -1178,6 +1174,41 @@ fn light_bytes(lighting: &Lighting, casts: bool) -> [u8; LIGHT_BYTES] {
     bytemuck::cast(words)
 }
 
+/// Why no scene draws two surfaces whose passes do not write the same targets.
+const SHAPES: &str = "two pixel programs write targets of different shapes";
+
+/// What draws `surface`, the one at `at`, by its pass `built`: each group bound to its feeds.
+fn draw_of(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    at: usize,
+    surface: &MeshletSurface,
+    built: &Built,
+) -> Result<Draw, String> {
+    let mut draw = Draw {
+        at,
+        pipeline: built.pipeline.clone(),
+        caster: built.caster.clone(),
+        groups: Vec::new(),
+        meshlets: surface.meshlets,
+        vertices: 3 * surface.primitives.min(VERTICES / 3),
+        views: Vec::new(),
+    };
+    for (group, layout) in (0..).zip(&built.layouts) {
+        let Some(layout) = layout else {
+            continue;
+        };
+        let module = match group % 2 {
+            0 => &built.vertex,
+            _ => &built.fragment,
+        };
+        let bound = bind(device, queue, module, group, layout, &surface.feeds)?;
+        draw.groups.push((group, bound.group));
+        draw.views.extend(bound.views);
+    }
+    Ok(draw)
+}
+
 impl MeshletScene {
     /// Prepare `surfaces` for targets of `size`, lit onto a frame of `frame`'s formats.
     /// `None` while no pass of theirs is built and a worker builds one: the caller asks again.
@@ -1200,7 +1231,7 @@ impl MeshletScene {
         let (mut passes, mut waiting, mut refused) = (Vec::new(), Vec::new(), Vec::new());
         for (at, surface) in surfaces.iter().enumerate() {
             match pipelines.of(device, surface) {
-                Ok(Some(pass)) => passes.push((surface, pass)),
+                Ok(Some(pass)) => passes.push((at, surface, pass)),
                 Ok(None) => waiting.push(at),
                 Err(why) => refused.push((at, why)),
             }
@@ -1211,33 +1242,13 @@ impl MeshletScene {
                 false => Ok(None),
             };
         }
-        let formats = passes[0].1.formats.clone();
+        let formats = passes[0].2.formats.clone();
         let mut draws = Vec::with_capacity(surfaces.len());
-        for (surface, built) in passes {
+        for (at, surface, built) in passes {
             if built.formats != formats {
-                return Err("two pixel programs write targets of different shapes".to_string());
+                return Err(SHAPES.to_string());
             }
-            let mut draw = Draw {
-                pipeline: built.pipeline.clone(),
-                caster: built.caster.clone(),
-                groups: Vec::new(),
-                meshlets: surface.meshlets,
-                vertices: 3 * surface.primitives.min(VERTICES / 3),
-                views: Vec::new(),
-            };
-            for (group, layout) in (0..).zip(&built.layouts) {
-                let Some(layout) = layout else {
-                    continue;
-                };
-                let module = match group % 2 {
-                    0 => &built.vertex,
-                    _ => &built.fragment,
-                };
-                let bound = bind(device, queue, module, group, layout, &surface.feeds)?;
-                draw.groups.push((group, bound.group));
-                draw.views.extend(bound.views);
-            }
-            draws.push(draw);
+            draws.push(draw_of(device, queue, at, surface, &built)?);
         }
 
         let (targets, depth) = targets_of(device, &formats, size);
@@ -1407,6 +1418,42 @@ impl MeshletScene {
             refused,
             waiting,
         }))
+    }
+
+    /// Draw as well each surface waited for whose pass a worker has built since; whether fewer wait.
+    // `surfaces` are those the scene was prepared from. A surface taken on is bound alone, where a
+    // prepare makes every buffer and texture of every surface anew, and is drawn in its place
+    // among the others, so that the scene ends as one prepared with every pass built.
+    pub fn build_on(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pipelines: &mut MeshletPipelines,
+        surfaces: &[MeshletSurface],
+    ) -> Result<bool, String> {
+        let waited = std::mem::take(&mut self.waiting);
+        for at in &waited {
+            let Some(surface) = surfaces.get(*at) else {
+                continue;
+            };
+            match pipelines.of(device, surface) {
+                Ok(Some(built)) if built.formats != self.formats => return Err(SHAPES.to_string()),
+                Ok(Some(built)) => {
+                    let draw = draw_of(device, queue, *at, surface, &built)?;
+                    let place = self.draws.partition_point(|drawn| drawn.at < *at);
+                    self.draws.insert(place, draw);
+                }
+                Ok(None) => self.waiting.push(*at),
+                Err(why) => self.refused.push((*at, why)),
+            }
+        }
+        let fewer = self.waiting.len() < waited.len();
+        if fewer {
+            self.refused.sort_by_key(|(at, _)| *at);
+            // The buffers of a surface taken on hold no view yet, and the targets lack it.
+            self.forget();
+        }
+        Ok(fewer)
     }
 
     /// Make the targets anew for a frame of `size`.

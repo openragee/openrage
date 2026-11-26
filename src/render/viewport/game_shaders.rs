@@ -362,21 +362,7 @@ impl RenderBridge {
         let (drawn, left_out) = match kept {
             // A worker was building a pass of its own programs: once it has, they draw it
             Some(kept) if building => {
-                let drew = matches!(self.gta6_own, Some(Ok(_)));
-                self.gta6_own = self.prepare_gta6_meshlets(state);
-                match self.gta6_own {
-                    Some(Ok(_)) => {
-                        self.renderer.set_game_scene(None);
-                        (0, Vec::new())
-                    }
-                    // What some of its passes drew and none does now is prepared from nothing
-                    // by the next frame, as a drawable they never drew is
-                    _ if drew => {
-                        self.game_scene_key = None;
-                        kept
-                    }
-                    _ => kept,
-                }
+                self.ask_again(|| crate::render::gta6_meshlets::meshlets(state), kept)
             }
             Some(kept) => kept,
             None => {
@@ -427,6 +413,30 @@ impl RenderBridge {
         });
     }
 
+    /// Ask again about the drawable a worker was building for, which `read` gives where none
+    /// builds for one any more: what the pack's passes draw of it, `kept` where its own draw none.
+    fn ask_again(
+        &mut self,
+        read: impl FnOnce() -> Option<Result<crate::render::gta6_meshlets::Meshlets, String>>,
+        kept: (usize, Vec<(String, String)>),
+    ) -> (usize, Vec<(String, String)>) {
+        let drew = matches!(self.gta6_own, Some(Ok(_)));
+        self.gta6_own = self.prepare_gta6_meshlets_of(read);
+        match self.gta6_own {
+            Some(Ok(_)) => {
+                self.renderer.set_game_scene(None);
+                (0, Vec::new())
+            }
+            // What some of its passes drew and none does now is prepared from nothing by the
+            // next frame, as a drawable they never drew is
+            _ if drew => {
+                self.game_scene_key = None;
+                kept
+            }
+            _ => kept,
+        }
+    }
+
     /// Prepare the active GTA VI drawable for its own mesh and pixel programs: the surfaces they
     /// draw and the bindings left at nought, or why it draws without them; `None` where the
     /// document shows no such drawable.
@@ -461,32 +471,40 @@ impl RenderBridge {
             return Some(Err(tr!("a worker is still decoding its maps").to_string()));
         }
         self.gta6_decoding = false;
-        // What some of its passes draw is prepared again only once a worker has built another:
-        // a prepare makes every buffer and texture of every surface anew
-        let waiting = (self.gta6_pipelines).waiting(&self.device, &meshlets.surfaces);
-        let shown = self.renderer.gta6_scene().map(|scene| scene.waiting.len());
-        if let (true, Some(Ok(own))) = (shown == Some(waiting), &self.gta6_own) {
-            let own = own.clone();
-            self.gta6_building = Some(meshlets);
-            return Some(Ok(own));
-        }
+        // What some of its passes draw takes on the surfaces a worker has built the pass of
+        // since, each alone: a prepare makes every buffer and texture of every surface anew, on
+        // this thread
+        let live = match self.gta6_own {
+            Some(Ok(_)) => self.renderer.take_gta6_scene(),
+            _ => None,
+        };
         // What the device refuses is reported by its error scope and not by a panic: a stage
         // its shader compiler does not take is an internal error, not a validation one
         let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
         let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let started = std::time::Instant::now();
         let built = self.gta6_pipelines.len();
-        let scene = MeshletScene::prepare(
-            &self.device,
-            &self.queue,
-            &mut self.gta6_pipelines,
-            &meshlets.surfaces,
-            self.renderer.size(),
-            &self.renderer.game_target(),
-        );
+        let (device, queue, pipelines) = (&self.device, &self.queue, &mut self.gta6_pipelines);
+        let mut more = true;
+        let scene = match live {
+            Some(mut scene) => {
+                (scene.build_on(device, queue, pipelines, &meshlets.surfaces)).map(|fewer| {
+                    more = fewer;
+                    Some(scene)
+                })
+            }
+            None => MeshletScene::prepare(
+                device,
+                queue,
+                pipelines,
+                &meshlets.surfaces,
+                self.renderer.size(),
+                &self.renderer.game_target(),
+            ),
+        };
         let refused = pollster::block_on(validation.pop());
         let refused = refused.or(pollster::block_on(internal.pop()));
-        if !matches!(scene, Ok(None)) {
+        if more && !matches!(scene, Ok(None)) {
             tracing::info!(
                 elapsed = ?started.elapsed(),
                 surfaces = meshlets.surfaces.len(),

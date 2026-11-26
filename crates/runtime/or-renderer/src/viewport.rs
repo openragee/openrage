@@ -640,6 +640,11 @@ impl ViewportRenderer {
         self.gta6_scene.as_ref()
     }
 
+    /// Take the GTA VI model away, for [`ViewportRenderer::set_gta6_scene`] to hand back or another.
+    pub fn take_gta6_scene(&mut self) -> Option<crate::game_shaders::meshlets::MeshletScene> {
+        self.gta6_scene.take()
+    }
+
     /// The sun and the sky a GTA VI drawable's own passes are lit by.
     pub fn set_gta6_sky(&mut self, sky: crate::game_shaders::meshlets::Sky) {
         self.gta6_sky = sky;

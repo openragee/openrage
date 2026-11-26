@@ -225,7 +225,12 @@ fn a_frame_draws_a_surface_again_only_where_the_camera_or_the_sun_moved() {
 fn a_surface_draws_by_its_own_pass_while_a_worker_builds_another_s_and_both_as_before_once_built() {
     let test = "a_surface_draws_by_its_own_pass_while_a_worker_builds_another_s";
     // The floor across the frame, and a sliver of one: the frame shows which of the two drew.
-    let surfaces = [two_levels(true), two_levels(false)];
+    // The second is dimmer, and both hold the triangle over the floor at one depth: the frame
+    // shows which of the two drew last as well.
+    let mut dim = two_levels(false);
+    let half = bytemuck::cast_slice(&[0.5f32, 0.5, 0.5, 1.0]).to_vec();
+    dim.feeds.insert((1, 0), Feed::Bytes(half));
+    let surfaces = [two_levels(true), dim];
     let Some((device, queue, mut renderer)) = shown(test, &surfaces) else {
         return;
     };
@@ -253,14 +258,32 @@ fn a_surface_draws_by_its_own_pass_while_a_worker_builds_another_s_and_both_as_b
     assert_eq!((calls.passes, calls.surface_draws), (4, 2));
     let ahead = seen(gpu, &renderer);
     assert!(ahead[1] != whole.1[1] && ahead[1].iter().any(|byte| *byte != 0));
-    // Asked again, the held pass is still the only one waited for, and no third is started.
-    assert_eq!(pipelines.waiting(&device, &surfaces), 1);
+    // Asked to build on, the held pass is still the only one waited for, no third is started,
+    // and the next frame draws no surface again.
+    let mut scene = renderer.take_gta6_scene().expect("a model is set");
+    let more = scene.build_on(&device, &queue, &mut pipelines, &surfaces);
+    assert_eq!((more, scene.waiting.as_slice()), (Ok(false), &[0][..]));
     assert_eq!(pipelines.len(), 2);
+    renderer.set_gta6_scene(Some(scene));
+    let calls = frame(gpu, &mut renderer, &camera, casting());
+    assert_eq!(calls.surface_draws, 0);
 
+    // Once its pass is built the scene takes the surface on, in its place before the other,
+    // and is the scene prepared with every pass built.
     pipelines.hold(&surfaces[0], false);
-    let both = prepared(gpu, &mut pipelines, &surfaces, &target, 0);
-    assert_eq!((both.drawn(), both.waiting.len()), (2, 0));
-    renderer.set_gta6_scene(Some(both));
+    let mut scene = renderer.take_gta6_scene().expect("a model is set");
+    for _ in 0..4000 {
+        match scene.build_on(&device, &queue, &mut pipelines, &surfaces) {
+            Ok(false) => std::thread::sleep(std::time::Duration::from_millis(5)),
+            more => {
+                assert_eq!(more, Ok(true));
+                break;
+            }
+        }
+    }
+    assert_eq!((scene.drawn(), scene.waiting.len()), (2, 0));
+    assert_eq!(scene.fitted().collect::<Vec<_>>(), [(2, 3), (2, 3)]);
+    renderer.set_gta6_scene(Some(scene));
     assert_eq!(frame(gpu, &mut renderer, &camera, casting()), whole.0);
     for (part, (now, before)) in seen(gpu, &renderer).iter().zip(&whole.1).enumerate() {
         let differ = now.iter().zip(before).filter(|(a, b)| a != b).count();

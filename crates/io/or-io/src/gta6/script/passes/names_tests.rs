@@ -1,7 +1,9 @@
 use super::*;
 use crate::gta5::script::natives::NativeDb;
-use crate::gta6::script::ir::{Const, Returns, Scalar};
+use crate::gta6::script::ir::{BinOp, Returns, Scalar, VmType};
+use crate::gta6::script::project::{Member, TypeFacts};
 use crate::gta6::script::tree::Function;
+use crate::gta6::script::{Options, Project};
 
 fn head(params: u32, locals: u32) -> Head {
     Head {
@@ -84,6 +86,7 @@ fn handle() -> VarInfo {
         width: Width::Cells,
         kind: Kind::Handle,
         name: None,
+        single: false,
     }
 }
 
@@ -335,4 +338,640 @@ fn a_natives_name_and_a_parameters_become_a_role_by_one_rule() {
     ] {
         assert_eq!(parameter_role(parameter).as_deref(), role, "{parameter}");
     }
+}
+
+/// The baseline's passes and `passes`, over an empty project.
+fn with<'a>(names: &'a Names, passes: &[Pass]) -> Context<'a> {
+    let options = passes
+        .iter()
+        .fold(Options::baseline(), |o, pass| o.with(*pass));
+    Context::new(names, Project::empty(), options)
+}
+
+fn applied(head: Head, body: Vec<tree::Stmt>, cx: &Context<'_>) -> (Function, Did) {
+    let mut f = Function { head, body };
+    let did = apply(&mut f, cx);
+    (f, did)
+}
+
+fn object(ty: &str) -> Expr {
+    Expr::NewObject(VmType {
+        name: ty.to_owned(),
+        byte_size: 16,
+        id: 3,
+        flags: 0,
+    })
+}
+
+/// A call handed the address of `local_n`: a write through it, for all its caller knows.
+fn fill(local: u32) -> tree::Stmt {
+    let address = Expr::AddrOf {
+        var: Var::Local(local),
+        cell: 0,
+    };
+    eval(native("FILL", 0xA4, vec![address]))
+}
+
+#[test]
+fn a_variable_takes_the_role_of_the_named_type_whose_new_object_it_holds() {
+    let mut names = Names::default();
+    names.types.insert(0xAA, "Lantern".to_owned());
+    names.types.insert(0xBB, "<Private>".to_owned());
+    let safe = || object("type_00000000000000AA");
+    let locals: Vec<Var> = (0..5).map(Var::Local).collect();
+    let body = vec![
+        assign(locals[0], safe()),
+        assign(locals[1], object("Demo.Collections.Dictionary_2")),
+        // The role of a delegate would be a word of C#.
+        assign(locals[2], object("Demo.Delegate")),
+        // No list names this type, and the next one's name is no identifier.
+        assign(locals[3], object("type_00000000000000CC")),
+        assign(locals[4], object("type_00000000000000BB")),
+    ];
+    let cx = with(&names, &[Pass::RoleNames]);
+    let (f, did) = applied(head(0, 5), body, &cx);
+    let roles: Vec<Option<&str>> = locals.iter().map(|v| name_of(&f, *v)).collect();
+    assert_eq!(
+        roles,
+        [Some("lantern"), Some("dictionary"), None, None, None]
+    );
+    assert_eq!(did.roles, 2);
+
+    let first = locals[0];
+    // Another value, and a write through its address, are each another thing it holds.
+    let twice = vec![assign(first, safe()), assign(first, int(0))];
+    assert_eq!(name_of(&applied(head(0, 1), twice, &cx).0, first), None);
+    let addressed = vec![assign(first, safe()), fill(0)];
+    assert_eq!(name_of(&applied(head(0, 1), addressed, &cx).0, first), None);
+
+    // With `role-names` off the variable keeps its slot name.
+    let off = named(head(0, 1), vec![assign(first, safe())], &names);
+    assert_eq!(name_of(&off, first), None);
+}
+
+#[test]
+fn a_variable_takes_the_role_of_what_the_getter_it_holds_the_result_of_gets() {
+    let builtin = |path: &str| Expr::Call {
+        callee: Callee::Builtin {
+            path: path.to_owned(),
+            ty: 4,
+            method: 2,
+        },
+        args: vec![var(Var::Param(0))],
+        returns: Some(1),
+    };
+    let method = |ty: u64, slot: u32| Expr::Call {
+        callee: Callee::Virtual {
+            class: format!("type_{ty:016X}"),
+            method: format!("Method_{slot}"),
+            ty: format!("type_{ty:016X}"),
+            slot,
+        },
+        args: vec![var(Var::Param(0))],
+        returns: Some(1),
+    };
+    // 0xA1 derives from 0xA0, which declares the slots; 0xA2 is no relation of either.
+    let mut names = Names::default();
+    for (slot, name) in [(3, "GetOwner"), (4, "IsMoored"), (5, "Start")] {
+        names.methods.insert((TypeKey(0xA0), slot), name.to_owned());
+    }
+    let mut project = Project::default();
+    let derived = TypeFacts {
+        base: Some(TypeKey(0xA0)),
+        ..TypeFacts::default()
+    };
+    project.types.insert(TypeKey(0xA1), derived);
+    project.types.insert(TypeKey(0xA2), TypeFacts::default());
+    let options = Options::baseline().with(Pass::RoleNames);
+    let cx = Context::new(&names, &project, options);
+
+    let locals: Vec<Var> = (0..7).map(Var::Local).collect();
+    let values = vec![
+        builtin("Demo.List_1.get_Count"),
+        Expr::cast(
+            Scalar::I32,
+            builtin("Demo.IEnumerable.GetEnumerator__7_1_1"),
+        ),
+        method(0xA1, 3),
+        method(0xA0, 4),
+        // Neither a getter nor a test.
+        method(0xA0, 5),
+        builtin("Demo.IEnumerator.MoveNext"),
+        // The same slot of a type that is no relation.
+        method(0xA2, 3),
+    ];
+    let body = || -> Vec<tree::Stmt> {
+        let held = locals.iter().zip(&values);
+        held.map(|(local, value)| assign(*local, value.clone()))
+            .collect()
+    };
+    let (f, did) = applied(head(1, 7), body(), &cx);
+    let roles: Vec<Option<&str>> = locals.iter().map(|v| name_of(&f, *v)).collect();
+    let got = ["count", "enumerator", "owner", "isMoored"].map(Some);
+    assert_eq!(roles[..4], got);
+    assert_eq!(roles[4..], [None::<&str>; 3]);
+    assert_eq!(did.roles, 4);
+
+    // With `role-names` off none of them is named.
+    let off = named(head(1, 7), body(), &names);
+    assert!(locals.iter().all(|v| name_of(&off, *v).is_none()));
+}
+
+#[test]
+fn a_variable_takes_the_role_of_the_named_field_it_is_read_from() {
+    let owner = TypeKey(0xA0);
+    let load = |offset: u32| Expr::Load {
+        ty: Scalar::I32,
+        addr: Box::new(var(Var::Param(0))),
+        offset,
+    };
+    let field = |offset: u32| Expr::sugar(ExprSugar::Field { owner }, load(offset));
+    let mut names = Names::default();
+    names.fields.insert((owner, 0x10), "_tint".to_owned());
+    let (a, b, c) = (Var::Local(0), Var::Local(1), Var::Local(2));
+    let body = vec![
+        assign(a, field(0x10)),
+        // A field no list names, and a load no pass proved a field of that type.
+        assign(b, field(0x18)),
+        assign(c, load(0x10)),
+    ];
+    let (f, did) = applied(head(1, 3), body, &with(&names, &[Pass::RoleNames]));
+    assert_eq!(
+        (name_of(&f, a), name_of(&f, b), name_of(&f, c)),
+        (Some("tint"), None, None)
+    );
+    assert_eq!(did.roles, 1);
+}
+
+#[test]
+fn a_variable_a_native_fills_through_a_named_pointer_takes_that_parameters_name() {
+    let names = list(vec![
+        (
+            0xC1,
+            listed("GET_DEMO_HEIGHT", &[("int", "index"), ("float*", "height")]),
+        ),
+        (0xC2, listed("GET_DEMO_NAME", &[("char*", "buffer")])),
+        (0xC3, listed("GET_DEMO_PLACE", &[("Vector3*", "place")])),
+    ]);
+    let cx = with(&names, &[Pass::NativeParams]);
+    let address = || Expr::AddrOf {
+        var: Var::Local(0),
+        cell: 0,
+    };
+    let height = || eval(native("GET_DEMO_HEIGHT", 0xC1, vec![int(0), address()]));
+    let read = || eval(native("USE", 0xA3, vec![var(Var::Local(0))]));
+    let filled = Var::Local(0);
+
+    let (f, did) = applied(head(0, 1), vec![height(), read()], &cx);
+    assert_eq!(name_of(&f, filled), Some("height"));
+    assert_eq!(did.roles, 1);
+
+    // An assignment, and a second use of its address, are each another value.
+    let assigned = vec![assign(filled, int(1)), height()];
+    assert_eq!(name_of(&applied(head(0, 1), assigned, &cx).0, filled), None);
+    let twice = vec![height(), height()];
+    assert_eq!(name_of(&applied(head(0, 1), twice, &cx).0, filled), None);
+
+    // A pointer to text or to a vector fills more than the one cell.
+    for (name, hash) in [("GET_DEMO_NAME", 0xC2), ("GET_DEMO_PLACE", 0xC3)] {
+        let other = vec![eval(native(name, hash, vec![address()]))];
+        let f = applied(head(0, 1), other, &cx).0;
+        assert_eq!(name_of(&f, filled), None, "{name}");
+    }
+
+    // A variable of several cells is not the one the pointer fills.
+    let mut wide = head(0, 1);
+    wide.vars.insert(filled, handle());
+    assert_eq!(name_of(&applied(wide, vec![height()], &cx).0, filled), None);
+
+    // With `native-params` off the variable keeps its slot name.
+    let off = named(head(0, 1), vec![height(), read()], &names);
+    assert_eq!(name_of(&off, filled), None);
+}
+
+#[test]
+fn a_constant_keeps_the_kind_hash_only_in_a_cell_a_table_says_holds_hashes() {
+    const NAMED: u32 = 0x1A2B_3C4D;
+    const NEGATIVE: u32 = 0x8A2B_3C4D;
+    let mut names = Names::default();
+    names.texts.insert(NAMED, "demo_name".to_owned());
+    names.texts.insert(NEGATIVE, "demo_other".to_owned());
+    names.texts.insert(0xCAFE, "small".to_owned());
+    names.hash_slots.insert((0xD1, 2));
+    let cx = with(&names, &[Pass::HashText]);
+
+    let constant = |bits: u64, kind: Kind| Expr::Const(Const { bits, kind });
+    let hash = |kind: Kind| constant(u64::from(NAMED), kind);
+    // The handle in front takes cells 0 and 1, so the value is cell 2.
+    let set = |value: Expr| eval(native("SET_THING", 0xD1, vec![var(Var::Param(0)), value]));
+    let other = |value: Expr| eval(native("SET_OTHER", 0xD2, vec![var(Var::Param(0)), value]));
+    let product = Expr::binary(BinOp::Mul, var(Var::Local(0)), hash(Kind::Hash));
+    let body = vec![
+        set(hash(Kind::I32)),
+        set(Expr::cast(Scalar::U32, hash(Kind::Hash))),
+        set(constant(
+            0xFFFF_FFFF_0000_0000 | u64::from(NEGATIVE),
+            Kind::I32,
+        )),
+        // A float literal is its bits where the vocabulary knows them, and a float where it does not.
+        set(constant(u64::from(NAMED), Kind::F32)),
+        set(Expr::Const(Const::f32(10.0))),
+        // A hash the vocabulary has no text for is still a hash.
+        set(constant(0x5566_7788, Kind::U32)),
+        // Too small to be a hash: an enum's value passed where a hash goes.
+        set(constant(0xCAFE, Kind::I32)),
+        // A parameter typed as a hash that no table vouches for, and an operand of arithmetic.
+        other(hash(Kind::Hash)),
+        assign(Var::Local(0), product),
+    ];
+    let kinds = |f: &Function| {
+        let mut kinds = Vec::new();
+        tree::each_expr(&f.body, &mut |top| {
+            top.walk(&mut |e| {
+                if let Expr::Const(c) = e {
+                    kinds.push(c.kind.clone());
+                }
+            });
+        });
+        kinds
+    };
+    let wide = || {
+        let mut wide = head(1, 1);
+        wide.vars.insert(Var::Param(0), handle());
+        wide
+    };
+
+    let (f, did) = applied(wide(), body.clone(), &cx);
+    let expected = [
+        Kind::Hash,
+        Kind::Hash,
+        Kind::Hash,
+        Kind::Hash,
+        Kind::F32,
+        Kind::Hash,
+        Kind::I32,
+        Kind::U32,
+        Kind::U32,
+    ];
+    assert_eq!(kinds(&f), expected);
+    assert_eq!(did.texts, 4);
+
+    // Where the handle is one cell the value is cell 1, which no table names.
+    let (narrow, did) = applied(head(1, 1), vec![set(hash(Kind::Hash))], &cx);
+    assert_eq!(kinds(&narrow), [Kind::U32]);
+    assert_eq!(did.texts, 0);
+
+    // With `hash-text` off every constant is as it was.
+    let off = named(wide(), body.clone(), &names);
+    assert_eq!(off.body, body);
+}
+
+#[test]
+fn what_a_handler_catches_is_an_assignment_too() {
+    let caught = Var::Local(0);
+    let get = || assign(caught, native("GET_DEMO_THING", 0xA1, vec![]));
+    let handler = tree::Catch {
+        ty: None,
+        var: Some(caught),
+        body: Vec::new(),
+    };
+    let guarded = tree::Stmt::Sugar(Box::new(tree::Sugar::Try {
+        body: vec![get()],
+        catches: vec![handler],
+        finally: Vec::new(),
+    }));
+    let none = Names::default();
+    assert_eq!(
+        name_of(&named(head(0, 1), vec![guarded], &none), caught),
+        None
+    );
+    let alone = named(head(0, 1), vec![get()], &none);
+    assert_eq!(name_of(&alone, caught), Some("demoThing"));
+}
+
+#[test]
+fn no_variable_of_a_setter_is_named_value() {
+    let names = list(vec![(0xE1, listed("SET_DEMO", &[("int", "value")]))]);
+    let body = || vec![eval(native("SET_DEMO", 0xE1, vec![var(Var::Local(0))]))];
+    let free = named(head(0, 1), body(), &names);
+    assert_eq!(name_of(&free, Var::Local(0)), Some("value"));
+
+    let setter = Member {
+        owner: TypeKey(0xA0),
+        role: Role::Setter,
+        is_static: false,
+        slot: None,
+    };
+    let mut project = Project::default();
+    let key = FunctionKey::new(0x1122_3344, 0x40);
+    project.members.insert(key, setter);
+    let cx = Context::new(&names, &project, Options::baseline());
+    let (f, _) = applied(head(0, 1), body(), &cx);
+    assert_eq!(name_of(&f, Var::Local(0)), Some("value_2"));
+}
+
+#[test]
+fn a_types_name_a_methods_and_a_fields_become_a_role_by_one_rule() {
+    for (name, role) in [
+        ("Lantern", Some("lantern")),
+        ("AnimScene", Some("animScene")),
+        ("UIState", Some("uiState")),
+        ("IEnumerator", Some("iEnumerator")),
+        ("EVENT_DONE", Some("eventDone")),
+        ("ID", Some("id")),
+        ("_tint", Some("tint")),
+        ("Delegate", None),
+        ("P12", None),
+        ("<>c", None),
+        ("", None),
+    ] {
+        assert_eq!(camel(name).as_deref(), role, "{name}");
+    }
+    for (name, role) in [
+        ("Lantern", Some("lantern")),
+        ("Demo.Collections.Dictionary_2", Some("dictionary")),
+        ("Vector3", Some("vector3")),
+        ("Demo.String", None),
+        ("type_0123456789ABCDEF", None),
+    ] {
+        assert_eq!(type_role(name).as_deref(), role, "{name}");
+    }
+    for (name, role) in [
+        ("GetKite", Some("kite")),
+        ("get_Count", Some("count")),
+        ("get_IsCompleted", Some("isCompleted")),
+        ("get_Item__5_2_1", Some("item")),
+        ("CreateVehicle", Some("vehicle")),
+        ("FindIndex", Some("index")),
+        ("IsMoored", Some("isMoored")),
+        ("HasEntity", Some("hasEntity")),
+        ("Getter", None),
+        ("Get", None),
+        ("Island", None),
+        ("Start", None),
+        ("MoveNext", None),
+        ("get_Default", None),
+    ] {
+        assert_eq!(method_role(name).as_deref(), role, "{name}");
+    }
+}
+
+fn intrinsic(name: &str, args: Vec<Expr>) -> Expr {
+    Expr::Call {
+        callee: Callee::Intrinsic {
+            name: name.to_owned(),
+            ty: None,
+            wrapper: None,
+        },
+        args,
+        returns: Some(1),
+    }
+}
+
+/// `for (index = 0; index < below; index = index + 1) { body }`.
+fn counted(index: Var, below: Expr, body: Vec<tree::Stmt>) -> tree::Stmt {
+    let start = Stmt::Assign {
+        target: index,
+        value: int(0),
+    };
+    let step = Stmt::Assign {
+        target: index,
+        value: Expr::binary(BinOp::Add, var(index), int(1)),
+    };
+    tree::Stmt::For {
+        init: Some(Box::new(start)),
+        cond: Some(Expr::binary(BinOp::Lt, var(index), below)),
+        step: Some(Box::new(step)),
+        body,
+    }
+}
+
+/// The element of the array `p0` at `index`, read and dropped.
+fn element(index: Var) -> tree::Stmt {
+    let read = vec![var(Var::Param(0)), var(index)];
+    eval(intrinsic("array_get_u64", read))
+}
+
+/// A head whose first `locals` locals are each proved an `int`.
+fn counting(locals: u32) -> Head {
+    let mut head = head(2, locals);
+    for n in 0..locals {
+        let info = VarInfo {
+            kind: Kind::I32,
+            ..VarInfo::new(Width::Cell)
+        };
+        head.vars.insert(Var::Local(n), info);
+    }
+    head
+}
+
+#[test]
+fn the_index_a_for_counts_and_indexes_with_is_i_and_the_one_of_a_loop_inside_it_j() {
+    let locals: Vec<Var> = (0..4).map(Var::Local).collect();
+    // Four loops, each in the one before and each reading the element at its own index.
+    let nest = || {
+        let mut inside: Vec<tree::Stmt> = Vec::new();
+        for index in locals.iter().rev() {
+            let mut body = vec![element(*index)];
+            body.append(&mut inside);
+            inside = vec![counted(*index, int(8), body)];
+        }
+        inside
+    };
+    let names = Names::default();
+    let cx = with(&names, &[Pass::RoleNames]);
+    let (f, did) = applied(counting(4), nest(), &cx);
+    let roles: Vec<Option<&str>> = locals.iter().map(|v| name_of(&f, *v)).collect();
+    assert_eq!(
+        roles,
+        [Some("i"), Some("j"), Some("k"), None],
+        "the letters go three loops deep"
+    );
+    assert_eq!(did.roles, 3);
+
+    // With `role-names` off every index keeps its slot name.
+    let off = named(counting(4), nest(), &names);
+    assert!(locals.iter().all(|v| name_of(&off, *v).is_none()));
+
+    // An element written at the index, its address, and a list's indexer are each an index.
+    let (array, index) = (var(Var::Param(0)), locals[0]);
+    let list = Expr::Call {
+        callee: Callee::Builtin {
+            path: "Demo.List_1.get_Item__5_2_1".to_owned(),
+            ty: 4,
+            method: 2,
+        },
+        args: vec![array.clone(), var(index)],
+        returns: Some(1),
+    };
+    let stored = vec![array.clone(), Expr::cast(Scalar::I32, var(index)), int(7)];
+    for indexed in [
+        intrinsic("array_set_u32", stored),
+        intrinsic("array_element_address", vec![array.clone(), var(index)]),
+        list,
+    ] {
+        let body = vec![counted(index, int(8), vec![eval(indexed.clone())])];
+        let (f, _) = applied(counting(1), body, &cx);
+        assert_eq!(name_of(&f, index), Some("i"), "{indexed:?}");
+    }
+}
+
+#[test]
+fn an_index_that_is_anything_more_than_a_count_keeps_its_slot_name() {
+    let names = Names::default();
+    let cx = with(&names, &[Pass::RoleNames]);
+    let index = Var::Local(0);
+    let kept = |head: Head, body: Vec<tree::Stmt>| {
+        let (f, did) = applied(head, body, &cx);
+        name_of(&f, index).is_none() && did.roles == 0
+    };
+    let plain = || counted(index, int(8), vec![element(index)]);
+    assert!(
+        !kept(counting(1), vec![plain()]),
+        "the whole pattern is named"
+    );
+
+    // Not proved an integer.
+    assert!(kept(head(2, 1), vec![plain()]));
+    // Never the index of an element: passed to a call, and one more than the index.
+    let passed = eval(native("USE", 0xA3, vec![var(index)]));
+    assert!(kept(
+        counting(1),
+        vec![counted(index, int(8), vec![passed])]
+    ));
+    let next = Expr::binary(BinOp::Add, var(index), int(1));
+    let beside = eval(intrinsic("array_get_u64", vec![var(Var::Param(0)), next]));
+    assert!(kept(
+        counting(1),
+        vec![counted(index, int(8), vec![beside])]
+    ));
+    // Written by something other than the head of a `for`.
+    let skipped = vec![element(index), assign(index, int(5))];
+    assert!(kept(counting(1), vec![counted(index, int(8), skipped)]));
+    assert!(kept(counting(1), vec![assign(index, int(2)), plain()]));
+    // Its address taken.
+    assert!(kept(counting(1), vec![plain(), fill(0)]));
+
+    // A head that is not the whole of a count: no start, a step by what a variable holds, a
+    // step of another variable, a test that does not read the index.
+    let part = |init: bool, by: Expr, stepped: Var, tested: Var| {
+        let start = Stmt::Assign {
+            target: index,
+            value: int(0),
+        };
+        let step = Stmt::Assign {
+            target: stepped,
+            value: Expr::binary(BinOp::Add, var(index), by),
+        };
+        tree::Stmt::For {
+            init: init.then(|| Box::new(start)),
+            cond: Some(Expr::binary(BinOp::Lt, var(tested), int(8))),
+            step: Some(Box::new(step)),
+            body: vec![element(index)],
+        }
+    };
+    let other = Var::Local(1);
+    assert!(!kept(counting(2), vec![part(true, int(2), index, index)]));
+    assert!(kept(counting(2), vec![part(false, int(1), index, index)]));
+    assert!(kept(
+        counting(2),
+        vec![part(true, var(other), index, index)]
+    ));
+    assert!(kept(counting(2), vec![part(true, int(1), other, index)]));
+    assert!(kept(counting(2), vec![part(true, int(1), index, other)]));
+
+    // A parameter holds what its caller passed before it counts.
+    let param = Var::Param(1);
+    let mut head = counting(0);
+    let info = VarInfo {
+        kind: Kind::I32,
+        ..VarInfo::new(Width::Cell)
+    };
+    head.vars.insert(param, info);
+    let (f, _) = applied(
+        head,
+        vec![counted(param, int(8), vec![element(param)])],
+        &cx,
+    );
+    assert_eq!(name_of(&f, param), None);
+}
+
+#[test]
+fn two_indices_never_share_a_letter_and_one_that_counts_at_two_depths_takes_none() {
+    let names = Names::default();
+    let cx = with(&names, &[Pass::RoleNames]);
+    let (a, b) = (Var::Local(0), Var::Local(1));
+    let over = |index: Var| counted(index, int(8), vec![element(index)]);
+
+    // One loop after another: the second index is a second `i`, and one index of both is one.
+    let (f, _) = applied(counting(2), vec![over(a), over(b)], &cx);
+    assert_eq!((name_of(&f, a), name_of(&f, b)), (Some("i"), Some("i_2")));
+    let (f, did) = applied(counting(2), vec![over(a), over(a)], &cx);
+    assert_eq!((name_of(&f, a), did.roles), (Some("i"), 1));
+
+    // A name the function has already is not taken again.
+    let mut head = counting(2);
+    if let Some(info) = head.vars.get_mut(&b) {
+        info.name = Some("i".to_owned());
+    }
+    let (f, _) = applied(head, vec![over(a)], &cx);
+    assert_eq!((name_of(&f, a), name_of(&f, b)), (Some("i_2"), Some("i")));
+
+    // `b` counts inside the loop of `a` and again outside it: neither letter is its own.
+    let nested = counted(a, int(8), vec![element(a), over(b)]);
+    let (f, _) = applied(counting(2), vec![nested, over(b)], &cx);
+    assert_eq!((name_of(&f, a), name_of(&f, b)), (Some("i"), None));
+
+    // A loop that counts nothing a letter names does not deepen the loops in it.
+    let unindexed = counted(a, int(8), vec![over(b)]);
+    let (f, _) = applied(counting(2), vec![unindexed], &cx);
+    assert_eq!((name_of(&f, a), name_of(&f, b)), (None, Some("i")));
+}
+
+#[test]
+fn a_variable_takes_the_role_of_what_a_function_a_list_names_as_a_getter_gets() {
+    let mut names = Names::default();
+    let own = FunctionKey::new(0x1122_3344, 0x80);
+    names.functions.insert(own, "GetOwner".to_owned());
+    let other = FunctionKey::new(0x55, 0x10);
+    names.functions.insert(other, "FindKite".to_owned());
+    names
+        .functions
+        .insert(FunctionKey::new(0x1122_3344, 0xA0), "Start".to_owned());
+    let local = |at: u32| Expr::Call {
+        callee: Callee::Local {
+            at,
+            name: format!("func_{at:06X}"),
+        },
+        args: Vec::new(),
+        returns: Some(1),
+    };
+    let imported = Expr::Call {
+        callee: Callee::Import {
+            module: "module_0x00000000000000CC".to_owned(),
+            name: "func_000010".to_owned(),
+            program: 0x55,
+            at: 0x10,
+        },
+        args: Vec::new(),
+        returns: Some(1),
+    };
+    let locals: Vec<Var> = (0..4).map(Var::Local).collect();
+    let body = || {
+        vec![
+            assign(locals[0], local(0x80)),
+            assign(locals[1], imported.clone()),
+            // No getter by its name, and a function no list names.
+            assign(locals[2], local(0xA0)),
+            assign(locals[3], local(0x90)),
+        ]
+    };
+    let cx = with(&names, &[Pass::RoleNames]);
+    let (f, did) = applied(head(0, 4), body(), &cx);
+    let roles: Vec<Option<&str>> = locals.iter().map(|v| name_of(&f, *v)).collect();
+    assert_eq!(roles, [Some("owner"), Some("kite"), None, None]);
+    assert_eq!(did.roles, 2);
+
+    let off = named(head(0, 4), body(), &names);
+    assert!(locals.iter().all(|v| name_of(&off, *v).is_none()));
 }

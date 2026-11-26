@@ -1,47 +1,185 @@
-//! Names: a role name for a variable that one fact names.
+//! Names: a role name for a variable that one fact names, and the hash constants a text may show for.
 //!
 //! A variable is named from the native it holds the only result of, `playerPed` from
-//! `PLAYER_PED_ID`, or from the parameter of a native it is passed as on every use. Natives,
-//! types and programs take their names where the printer writes them, from [`Names`].
+//! `PLAYER_PED_ID`, or from the parameter of a native it is passed as on every use. Under
+//! `role-names` the type of a new object, what a getter gets and a named field name the variable
+//! that holds them, and the index a `for` counts with is `i`, `j` or `k`; under `native-params`
+//! the pointer parameter a native fills a variable through names it. Natives, types and programs
+//! take their names where the printer writes them, from [`Names`].
 //!
 //! ⚠ A name is a label and changes no code, but a wrong one misleads: a variable assigned twice,
 //! one whose address is taken, or one two parameters name differently keeps its slot name.
+//!
+//! ⚠ Under `hash-text` a constant keeps the kind `Hash`, which the printer shows a text for, only
+//! as the whole argument of a native in a cell a supplied table says holds hashes. Anywhere else
+//! a text of the vocabulary may be another name's by accident, and the constant stays a number.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gta5::script::natives::{NativeName, NativeParam};
-use crate::gta6::script::ir::{Callee, Expr, Head, Kind, Stmt, Var, VarInfo, Width};
+use crate::gta6::script::class::Role;
+use crate::gta6::script::ir::{
+    BinOp, Callee, Const, Expr, ExprSugar, FunctionKey, Head, Kind, Stmt, TypeKey, Var, VarInfo,
+    Width,
+};
 use crate::gta6::script::names::Names;
 use crate::gta6::script::print;
 use crate::gta6::script::tree;
-use crate::gta6::script::Stats;
+use crate::gta6::script::{Context, Pass, Stats};
+
+/// The base types a method's name is looked for on: no hierarchy is that deep, and a ring of bases must end.
+const MAX_BASES: usize = 64;
+
+/// The names of the index a `for` counts with, by how many counted loops it is nested in.
+const COUNTERS: [&str; 3] = ["i", "j", "k"];
 
 /// Names each variable of `f` that one fact names: the named native it holds the result of, or the named parameter it is always passed as.
-pub fn run(f: &mut tree::Function, names: &Names, _stats: &mut Stats) {
+pub fn run(f: &mut tree::Function, names: &Names, stats: &mut Stats) {
+    run_in(f, &Context::baseline(names), stats);
+}
+
+/// [`run`] with the project and the options at hand: `role-names`, `native-params` and `hash-text` each add their part.
+// ⚠ `Stats` holds no count of names, so what was done is traced and counted nowhere.
+pub fn run_in(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
+    let did = apply(f, cx);
+    tracing::trace!(function = %f.head.name, roles = did.roles, texts = did.texts, "named");
+}
+
+/// What one run did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Did {
+    /// Variables given a role name.
+    roles: usize,
+    /// Hash constants left to show as their text.
+    texts: usize,
+}
+
+fn apply(f: &mut tree::Function, cx: &Context<'_>) -> Did {
+    let mut did = Did::default();
     if f.head.incomplete.is_some() {
-        return;
+        return did;
     }
-    let Gathered { facts, mut taken } = gather(&f.body, &f.head, names);
+    if cx.options.on(Pass::HashText) {
+        did.texts = hash_text(f, cx.names);
+    }
+    let Gathered {
+        facts,
+        mut taken,
+        loops,
+    } = gather(&f.body, &f.head, cx);
     taken.insert(f.head.name.clone());
     taken.extend(f.head.vars.values().filter_map(|info| info.name.clone()));
+    // A setter's one parameter is written `value`.
+    let member = (cx.project.members).get(&FunctionKey::new(f.head.program, f.head.at));
+    if member.is_some_and(|member| member.role == Role::Setter) {
+        taken.insert("value".to_owned());
+    }
     let exposed: Vec<u32> = facts
         .iter()
         .filter_map(|(var, facts)| match var {
-            Var::Local(n) if facts.addressed => Some(*n),
+            Var::Local(n) if facts.addresses > 0 => Some(*n),
             _ => None,
         })
         .collect();
 
+    let counters = match cx.options.on(Pass::RoleNames) {
+        true => counters(&facts, &loops, &exposed, &f.head),
+        false => BTreeMap::new(),
+    };
+
     // In the order of the variables, so that which of two takes the bare name never changes.
     for (var, facts) in &facts {
         let named = (f.head.vars.get(var)).is_some_and(|info| info.name.is_some());
-        let Some(role) = role(*var, facts, &exposed, &f.head).filter(|_| !named) else {
+        let role = role(*var, facts, &exposed, &f.head);
+        let role = role.or_else(|| counters.get(var).map(|letter| (*letter).to_owned()));
+        let Some(role) = role.filter(|_| !named) else {
             continue;
         };
         let name = unique(&role, &mut taken);
         let info = f.head.vars.entry(*var);
         info.or_insert_with(|| VarInfo::new(Width::Cell)).name = Some(name);
+        did.roles += 1;
     }
+    did
+}
+
+/// Settles which constants keep the kind `Hash`, and so may show as a text; returns how many do with a text to show.
+// A constant is visited before the call it is an argument of, so one that has a text loses the
+// kind first and the call that vouches for it gives it back.
+fn hash_text(f: &mut tree::Function, names: &Names) -> usize {
+    if names.hash_slots.is_empty() && names.texts.is_empty() && names.words.is_empty() {
+        return 0;
+    }
+    let head = &f.head;
+    let mut shown = 0;
+    // An explicit stack: a body nests as deep as its listing does.
+    let mut work: Vec<&mut Vec<tree::Stmt>> = vec![&mut f.body];
+    while let Some(list) = work.pop() {
+        for stmt in list {
+            tree::own_exprs_mut(stmt, &mut |top| {
+                top.walk_mut(&mut |e| match e {
+                    Expr::Const(c)
+                        if c.kind == Kind::Hash && names.text(c.bits as u32).is_some() =>
+                    {
+                        c.kind = Kind::U32;
+                    }
+                    Expr::Call {
+                        callee: Callee::Native { hash, .. },
+                        args,
+                        ..
+                    } => shown += vouched(*hash, args, head, names),
+                    _ => {}
+                });
+            });
+            work.extend(tree::nested_mut(stmt));
+        }
+    }
+    shown
+}
+
+/// Gives the kind `Hash` to each constant that is the whole of an argument cell of the native `hash` which holds hashes; returns how many of them have a text.
+fn vouched(hash: u64, args: &mut [Expr], head: &Head, names: &Names) -> usize {
+    let (mut cell, mut shown) = (0u32, 0);
+    for arg in args {
+        // Past an argument of cells nothing counts, no later argument's cell is known.
+        let Some(cells) = print::cells_of(arg, head) else {
+            break;
+        };
+        if names.hash_slots.contains(&(hash, cell)) {
+            let hashed = constant(arg).is_some_and(|c| vouch(c, names));
+            shown += usize::from(hashed);
+        }
+        cell = cell.saturating_add(cells);
+    }
+    shown
+}
+
+/// The constant `e` is, under any reading of it.
+// No deeper than `Expr::walk_mut`, which has been down the same readings.
+fn constant(e: &mut Expr) -> Option<&mut Const> {
+    match e {
+        Expr::Cast { e, .. } | Expr::Sugar { e, .. } => constant(e),
+        Expr::Const(c) => Some(c),
+        _ => None,
+    }
+}
+
+/// Makes `c`, the whole of a cell that holds hashes, the hash it is; `true` where the vocabulary has its text.
+// ⚠ A value below 65,536 or near -1 is an enum's or a flag passed where a hash goes. A float
+// literal is its bits only where the vocabulary knows them: the cell takes a float in another
+// build's signature.
+fn vouch(c: &mut Const, names: &Names) -> bool {
+    let (half, low) = (c.bits >> 32, c.bits as u32);
+    // An `int` widened with its sign is its low half.
+    let narrow = half == 0 || (half == 0xFFFF_FFFF && low >> 31 == 1);
+    let text = names.text(low).is_some();
+    let integer = c.kind.is_integer() || matches!(c.kind, Kind::Unknown | Kind::Hash);
+    let reads = integer || (c.kind == Kind::F32 && text);
+    let hash = narrow && (0x1_0000..0xFFFF_0000).contains(&low) && reads;
+    if hash {
+        c.kind = Kind::Hash;
+    }
+    hash && text
 }
 
 /// What a function's body says of one variable.
@@ -51,15 +189,31 @@ struct Facts {
     assigned: u32,
     /// The role of the native an assignment holds the result of.
     result_of: Option<String>,
+    /// The role of what else an assignment holds: a new object, what a getter gets, a named field.
+    holds: Option<String>,
     /// Every read, the taking of its address included.
     read: u32,
-    addressed: bool,
+    /// How often its address is taken.
+    addresses: u32,
+    /// The name of the pointer parameter a native is handed its address as, to fill.
+    filled_as: Option<String>,
     /// The reads that pass it as the whole of a named parameter of a named native.
     passed: u32,
     /// The name of those parameters.
     parameter: Option<String>,
     /// Two of those parameters have different names.
     disagree: bool,
+    /// The assignments that are the start or the step of a `for` it is the index of.
+    counted: u32,
+    /// The reads that are the whole index of an array's element.
+    indexes: u32,
+}
+
+/// One `for` that counts with a variable.
+struct Counted {
+    index: Var,
+    /// The place in the list of the nearest such loop this one is nested in.
+    outer: Option<usize>,
 }
 
 #[derive(Default)]
@@ -67,24 +221,27 @@ struct Gathered {
     facts: BTreeMap<Var, Facts>,
     /// The names the printer writes in front of a call's first dot, which a variable must not share.
     taken: BTreeSet<String>,
+    /// Every `for` whose head counts with one variable, an outer loop before the loops in it.
+    loops: Vec<Counted>,
 }
 
 // An explicit stack: a body nests as deep as its listing does.
-fn gather(body: &[tree::Stmt], head: &Head, names: &Names) -> Gathered {
+fn gather(body: &[tree::Stmt], head: &Head, cx: &Context<'_>) -> Gathered {
     let mut gathered = Gathered::default();
-    let mut work: Vec<&[tree::Stmt]> = vec![body];
-    while let Some(stmts) = work.pop() {
+    // Each body with the nearest counted loop it is in.
+    let mut work: Vec<(&[tree::Stmt], Option<usize>)> = vec![(body, None)];
+    while let Some((stmts, outer)) = work.pop() {
         for stmt in stmts {
             match stmt {
-                tree::Stmt::Simple(s) => gathered.simple(s, head, names),
+                tree::Stmt::Simple(s) => gathered.simple(s, head, cx),
                 tree::Stmt::If { cond, then, els } => {
-                    gathered.expr(cond, head, names);
-                    work.push(then);
-                    work.push(els);
+                    gathered.expr(cond, head, cx);
+                    work.push((then.as_slice(), outer));
+                    work.push((els.as_slice(), outer));
                 }
                 tree::Stmt::While { cond, body } | tree::Stmt::DoWhile { body, cond } => {
-                    gathered.expr(cond, head, names);
-                    work.push(body);
+                    gathered.expr(cond, head, cx);
+                    work.push((body.as_slice(), outer));
                 }
                 tree::Stmt::For {
                     init,
@@ -93,18 +250,42 @@ fn gather(body: &[tree::Stmt], head: &Head, names: &Names) -> Gathered {
                     body,
                 } => {
                     for s in [init, step].into_iter().flatten() {
-                        gathered.simple(s, head, names);
+                        gathered.simple(s, head, cx);
                     }
                     if let Some(cond) = cond {
-                        gathered.expr(cond, head, names);
+                        gathered.expr(cond, head, cx);
                     }
-                    work.push(body);
+                    let inner = match counter(init.as_deref(), cond.as_ref(), step.as_deref()) {
+                        Some(index) => {
+                            gathered.facts.entry(index).or_default().counted += 2;
+                            gathered.loops.push(Counted { index, outer });
+                            Some(gathered.loops.len() - 1)
+                        }
+                        None => outer,
+                    };
+                    work.push((body.as_slice(), inner));
                 }
                 tree::Stmt::Switch { value, cases } => {
-                    gathered.expr(value, head, names);
-                    work.extend(cases.iter().map(|case| case.body.as_slice()));
+                    gathered.expr(value, head, cx);
+                    work.extend(cases.iter().map(|case| (case.body.as_slice(), outer)));
                 }
-                tree::Stmt::Return(Some(value)) => gathered.expr(value, head, names),
+                tree::Stmt::Return(Some(value)) => gathered.expr(value, head, cx),
+                tree::Stmt::Sugar(sugar) => {
+                    // What a handler catches is bound by the fault: an assignment no statement shows.
+                    if let tree::Sugar::Try { catches, .. } = &**sugar {
+                        for var in catches.iter().filter_map(|catch| catch.var) {
+                            gathered.facts.entry(var).or_default().assigned += 1;
+                        }
+                    }
+                    let parts = sugar.parts();
+                    for s in parts.simples {
+                        gathered.simple(s, head, cx);
+                    }
+                    for e in parts.exprs {
+                        gathered.expr(e, head, cx);
+                    }
+                    work.extend(parts.bodies.into_iter().map(|body| (body, outer)));
+                }
                 tree::Stmt::Return(None)
                 | tree::Stmt::Break
                 | tree::Stmt::Continue
@@ -118,63 +299,79 @@ fn gather(body: &[tree::Stmt], head: &Head, names: &Names) -> Gathered {
 }
 
 impl Gathered {
-    fn simple(&mut self, s: &Stmt, head: &Head, names: &Names) {
-        s.each_expr(&mut |e| self.expr(e, head, names));
+    fn simple(&mut self, s: &Stmt, head: &Head, cx: &Context<'_>) {
+        s.each_expr(&mut |e| self.expr(e, head, cx));
         for target in s.targets() {
             self.facts.entry(*target).or_default().assigned += 1;
         }
-        let held = match s {
-            Stmt::Assign { target, value } => result_role(value, names).map(|role| (*target, role)),
-            _ => None,
+        let Stmt::Assign { target, value } = s else {
+            return;
         };
-        if let Some((target, role)) = held {
-            self.facts.entry(target).or_default().result_of = Some(role);
+        if let Some(role) = result_role(value, cx.names) {
+            self.facts.entry(*target).or_default().result_of = Some(role);
+        } else if cx.options.on(Pass::RoleNames) {
+            if let Some(role) = held_role(value, head, cx) {
+                self.facts.entry(*target).or_default().holds = Some(role);
+            }
         }
     }
 
-    fn expr(&mut self, top: &Expr, head: &Head, names: &Names) {
+    fn expr(&mut self, top: &Expr, head: &Head, cx: &Context<'_>) {
         top.walk(&mut |e| match e {
             Expr::Var(var) => self.facts.entry(*var).or_default().read += 1,
             Expr::AddrOf { var, .. } => {
                 let facts = self.facts.entry(*var).or_default();
                 facts.read += 1;
-                facts.addressed = true;
+                facts.addresses += 1;
             }
             Expr::Call { callee, args, .. } => {
-                let printed = print::callee_name(callee, names);
+                if let Some(Expr::Var(var)) = index_of(callee, args).map(bare) {
+                    self.facts.entry(*var).or_default().indexes += 1;
+                }
+                let printed = print::callee_name(callee, cx.names);
                 let front = printed.split('.').next().unwrap_or_default();
                 self.taken.insert(front.to_owned());
                 let listed = match callee {
-                    Callee::Native { hash, .. } => names.native(*hash),
+                    Callee::Native { hash, .. } => cx.names.native(*hash),
                     _ => None,
                 };
                 if let Some(native) = listed {
-                    self.passed(native, args, head);
+                    self.passed(native, args, head, cx.options.on(Pass::NativeParams));
                 }
             }
             _ => {}
         });
     }
 
-    /// Counts each argument that is a variable passed as the whole of a named parameter of `native`.
-    fn passed(&mut self, native: &NativeName, args: &[Expr], head: &Head) {
+    /// Counts each argument that is a variable passed as the whole of a named parameter of `native`, and where `fills`, notes each whose address is passed for the native to fill.
+    fn passed(&mut self, native: &NativeName, args: &[Expr], head: &Head, fills: bool) {
         for (arg, param) in args.iter().zip(whole_params(native, args, head)) {
-            let role = param.and_then(|param| parameter_role(&param.name));
-            let (Expr::Var(var), Some(role)) = (uncast(arg), role) else {
+            let Some(param) = param else {
                 continue;
             };
-            let facts = self.facts.entry(*var).or_default();
-            facts.passed += 1;
-            facts.disagree |= (facts.parameter.as_ref()).is_some_and(|held| *held != role);
-            facts.parameter = Some(role);
+            let Some(role) = parameter_role(&param.name) else {
+                continue;
+            };
+            match bare(arg) {
+                Expr::Var(var) => {
+                    let facts = self.facts.entry(*var).or_default();
+                    facts.passed += 1;
+                    facts.disagree |= (facts.parameter.as_ref()).is_some_and(|held| *held != role);
+                    facts.parameter = Some(role);
+                }
+                Expr::AddrOf { var, cell: 0 } if fills && scalar_pointer(&param.ty) => {
+                    self.facts.entry(*var).or_default().filled_as = Some(role);
+                }
+                _ => {}
+            }
         }
     }
 }
 
-/// `e` without the casts around it: a reading of a value's low bits is still that value's role.
-fn uncast(e: &Expr) -> &Expr {
+/// `e` without the casts and the source readings around it: a reading of a value's low bits is still that value's role.
+fn bare(e: &Expr) -> &Expr {
     let mut e = e;
-    while let Expr::Cast { e: inner, .. } = e {
+    while let Expr::Cast { e: inner, .. } | Expr::Sugar { e: inner, .. } = e {
         e = &**inner;
     }
     e
@@ -185,7 +382,7 @@ fn result_role(value: &Expr, names: &Names) -> Option<String> {
     let Expr::Call {
         callee: Callee::Native { name, hash, .. },
         ..
-    } = uncast(value)
+    } = bare(value)
     else {
         return None;
     };
@@ -193,19 +390,174 @@ fn result_role(value: &Expr, names: &Names) -> Option<String> {
     role_of_native(name)
 }
 
-/// The role one fact gives `var`: the result of a native before the parameter of one.
+/// The start, the test and the step of a `for`, where they are those of a loop that counts with one variable: the variable.
+// ⚠ The whole head: the variable is set, then tested, then moved by a constant. A head with a
+// part missing, or one that steps to what a call or a load says, walks something other than a count.
+fn counter(init: Option<&Stmt>, cond: Option<&Expr>, step: Option<&Stmt>) -> Option<Var> {
+    let (Some(Stmt::Assign { target, .. }), Some(cond), Some(step)) = (init, cond, step) else {
+        return None;
+    };
+    let Stmt::Assign {
+        target: stepped,
+        value,
+    } = step
+    else {
+        return None;
+    };
+    let Expr::Binary {
+        op: BinOp::Add | BinOp::Sub,
+        l,
+        r,
+        ..
+    } = bare(value)
+    else {
+        return None;
+    };
+    let by_constant = *bare(l) == Expr::Var(*target) && matches!(bare(r), Expr::Const(_));
+    let mut tested = false;
+    cond.walk(&mut |e| tested |= *e == Expr::Var(*target));
+    (stepped == target && by_constant && tested).then_some(*target)
+}
+
+/// The argument of a call that is the index of the element the call reads, writes or takes the address of.
+fn index_of<'a>(callee: &Callee, args: &'a [Expr]) -> Option<&'a Expr> {
+    let indexed = match callee {
+        Callee::Intrinsic { name, .. } => {
+            let element = name.starts_with("array_get_") || name.starts_with("array_set_");
+            element || name == "array_element_address"
+        }
+        // The lifter tells two overloads of one builtin apart after `__`.
+        Callee::Builtin { path, .. } => {
+            let member = path.rsplit('.').next().unwrap_or(path);
+            matches!(member.split("__").next(), Some("get_Item" | "set_Item"))
+        }
+        _ => false,
+    };
+    args.get(1).filter(|_| indexed)
+}
+
+/// The letter each variable takes that is nothing but the index of counted loops: `i`, then `j` and `k` for a loop inside one counted with a letter.
+// ⚠ A letter says "this counts a loop and indexes with the count", so every part must hold: a
+// local proved an integer, written by the starts and steps of `for` heads alone, its address
+// never taken and under no earlier local's, and read at least once as the whole index of an
+// element. A variable that counts at two depths, or deeper than the letters go, keeps its slot name.
+fn counters(
+    facts: &BTreeMap<Var, Facts>,
+    loops: &[Counted],
+    exposed: &[u32],
+    head: &Head,
+) -> BTreeMap<Var, &'static str> {
+    let counts = |var: Var| {
+        let integer = (head.vars.get(&var))
+            .is_some_and(|info| info.width == Width::Cell && info.kind.is_integer());
+        let alone = facts.get(&var).is_some_and(|facts| {
+            facts.assigned == facts.counted && facts.addresses == 0 && facts.indexes > 0
+        });
+        matches!(var, Var::Local(_)) && integer && alone && !covered(var, exposed, head)
+    };
+    // An outer loop is listed before the loops in it, so its depth is known when theirs is asked.
+    let mut depths: Vec<usize> = Vec::with_capacity(loops.len());
+    let mut depth_of: BTreeMap<Var, Option<usize>> = BTreeMap::new();
+    for counted in loops {
+        let outer = counted
+            .outer
+            .and_then(|n| Some((loops.get(n)?, *depths.get(n)?)));
+        let depth = match outer {
+            Some((outer, depth)) => depth.saturating_add(usize::from(counts(outer.index))),
+            None => 0,
+        };
+        depths.push(depth);
+        if counts(counted.index) {
+            let held = depth_of.entry(counted.index).or_insert(Some(depth));
+            if *held != Some(depth) {
+                *held = None;
+            }
+        }
+    }
+    let lettered = depth_of.into_iter().filter_map(|(var, depth)| {
+        let letter = *COUNTERS.get(depth?)?;
+        Some((var, letter))
+    });
+    lettered.collect()
+}
+
+/// The role the one value a variable holds gives it: the type of a new object, what a getter gets, or the named field it is read from.
+fn held_role(value: &Expr, head: &Head, cx: &Context<'_>) -> Option<String> {
+    let mut value = value;
+    loop {
+        match value {
+            Expr::Cast { e, .. } => value = &**e,
+            Expr::Sugar {
+                kind: ExprSugar::Field { owner },
+                e,
+            } => {
+                let Expr::Load { offset, .. } = &**e else {
+                    return None;
+                };
+                return camel(cx.names.field(*owner, *offset)?);
+            }
+            Expr::Sugar { e, .. } => value = &**e,
+            Expr::NewObject(ty) => {
+                // A type nothing names is no role, whatever its hash spells.
+                let name = match TypeKey::of_name(&ty.name) {
+                    Some(key) => cx.names.type_name(key.0)?,
+                    None => ty.name.as_str(),
+                };
+                return type_role(name);
+            }
+            Expr::Call { callee, .. } => return method_role(method_name(callee, head, cx)?),
+            _ => return None,
+        }
+    }
+}
+
+/// The name of the method a call reaches, where the program or a list names it.
+// ⚠ A slot's name is the declaring type's: it names the slot of a type only where that type's own
+// base chain reaches the declaring one, never the same slot of an unrelated type.
+fn method_name<'a>(callee: &'a Callee, head: &Head, cx: &Context<'a>) -> Option<&'a str> {
+    match callee {
+        // A function is a method here only under a name a list gave it.
+        Callee::Local { at, .. } => cx.names.function(FunctionKey::new(head.program, *at)),
+        Callee::Import { program, at, .. } => cx.names.function(FunctionKey::new(*program, *at)),
+        Callee::Builtin { path, .. } => path.rsplit('.').next(),
+        Callee::Virtual { ty, slot, .. } => {
+            let mut key = TypeKey::of_name(ty)?;
+            for _ in 0..MAX_BASES {
+                if let Some(name) = cx.names.method(key, *slot) {
+                    return Some(name);
+                }
+                key = cx.project.types.get(&key)?.base?;
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// The role one fact gives `var`: the result of a native, then the parameter of one, then what else it holds, or the parameter it is filled through.
 fn role(var: Var, facts: &Facts, exposed: &[u32], head: &Head) -> Option<String> {
-    if facts.addressed || matches!(var, Var::Global { .. }) {
+    if matches!(var, Var::Global { .. }) {
         return None;
     }
+    let apart = !covered(var, exposed, head);
+    if facts.addresses > 0 {
+        // ⚠ One address, handed to the native that fills the one cell: any other write, and any
+        // other use of the address, is another value.
+        let one_cell = (head.vars.get(&var)).is_none_or(|info| info.width == Width::Cell);
+        let local = matches!(var, Var::Local(_)) && one_cell && apart;
+        let filled = facts.addresses == 1 && facts.assigned == 0 && local;
+        return facts.filled_as.clone().filter(|_| filled);
+    }
     // ⚠ A parameter also holds what its caller passed: no assignment is its only value.
-    let holds_one =
-        facts.assigned == 1 && !matches!(var, Var::Param(_)) && !covered(var, exposed, head);
+    let holds_one = facts.assigned == 1 && !matches!(var, Var::Param(_)) && apart;
     if let Some(role) = facts.result_of.as_ref().filter(|_| holds_one) {
         return Some(role.clone());
     }
     let always = facts.read > 0 && facts.read == facts.passed && !facts.disagree;
-    facts.parameter.clone().filter(|_| always)
+    if let Some(role) = facts.parameter.as_ref().filter(|_| always) {
+        return Some(role.clone());
+    }
+    facts.holds.clone().filter(|_| holds_one)
 }
 
 /// Whether a write through the address of an earlier local reaches `var`.
@@ -276,6 +628,12 @@ fn param_cells(ty: &str) -> u32 {
     }
 }
 
+/// Whether a list's parameter type is a pointer to one scalar cell, which a native fills.
+// A pointer to text, to a handle or a vector, or to a value of no stated size fills what no list sizes.
+fn scalar_pointer(ty: &str) -> bool {
+    matches!(ty, "int*" | "float*" | "BOOL*" | "Hash*")
+}
+
 /// `playerPed` for `PLAYER_PED_ID`: a native's name in camel case, without a leading `GET_` or `CREATE_` and a trailing `_ID`.
 fn role_of_native(name: &str) -> Option<String> {
     let name = name.trim_start_matches('_');
@@ -284,6 +642,11 @@ fn role_of_native(name: &str) -> Option<String> {
         .find_map(|verb| name.strip_prefix(*verb))
         .unwrap_or(name);
     let name = name.strip_suffix("_ID").unwrap_or(name);
+    spelled(&words(name)?)
+}
+
+/// The words `name` joins with `_`, as one word in camel case; `None` where one is no letters and digits.
+fn words(name: &str) -> Option<String> {
     let mut role = String::new();
     for word in name.split('_').filter(|word| !word.is_empty()) {
         if !word.bytes().all(|b| b.is_ascii_alphanumeric()) {
@@ -296,7 +659,47 @@ fn role_of_native(name: &str) -> Option<String> {
         }
         role.push_str(&rest.to_ascii_lowercase());
     }
-    spelled(&role)
+    Some(role)
+}
+
+/// `animScene` for `AnimScene`, `uiState` for `UIState`, `tint` for `_tint`, `eventDone` for `EVENT_DONE`: a type's, a member's or a field's name as a variable's.
+// A name that is a word of C# names nothing here: `@delegate` on every delegate says less than `local_3`.
+fn camel(name: &str) -> Option<String> {
+    let name = name.strip_prefix('_').unwrap_or(name);
+    let role = match name.bytes().any(|b| b.is_ascii_lowercase()) {
+        false => words(name)?,
+        true => {
+            // The capitals a name opens with are one word, less the last where a word follows it.
+            let opening = match name.bytes().take_while(u8::is_ascii_uppercase).count() {
+                capitals @ (0 | 1) => capitals,
+                capitals => capitals - 1,
+            };
+            let (opening, rest) = name.split_at(opening);
+            format!("{}{rest}", opening.to_ascii_lowercase())
+        }
+    };
+    spelled(&role).filter(|role| !role.starts_with('@'))
+}
+
+/// `lantern` for `Lantern` and `dictionary` for `System.Collections.Generic.Dictionary_2`: a type's short name as a variable's.
+fn type_role(name: &str) -> Option<String> {
+    let short = name.rsplit('.').next().unwrap_or(name);
+    // A generic type's name ends in the count of its parameters.
+    let (stem, count) = short.rsplit_once('_').unwrap_or((short, ""));
+    let generic = !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit());
+    camel(if generic { stem } else { short })
+}
+
+/// `kite` for `GetKite`, `count` for `get_Count` and `isMoored` for `IsMoored`: what a getter, a maker or a test hands back; `None` for any other method.
+fn method_role(name: &str) -> Option<String> {
+    // The lifter tells two overloads of one builtin apart after `__`.
+    let name = name.split("__").next().unwrap_or(name);
+    let word = |rest: &&str| rest.starts_with(|c: char| c.is_ascii_uppercase());
+    let after = |verbs: &[&str]| verbs.iter().find_map(|verb| name.strip_prefix(*verb));
+    let got =
+        (name.strip_prefix("get_")).or_else(|| after(&["Get", "Create", "Find"]).filter(word));
+    let tested = after(&["Is", "Has"]).filter(word).map(|_| name);
+    camel(got.or(tested)?)
 }
 
 /// A list's name for a parameter as a variable's, where it is a name and no placeholder.

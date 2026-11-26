@@ -596,7 +596,7 @@ rival reading puts 49 of 1,223 or fewer there.
 
 What the files of an install state where the index takes one reading of them is
 counted by `what_the_files_of_a_real_install_state_where_the_index_takes_one_reading`
-(`stated_by_the_files`, each install alone, 2026-11-25). The box of an
+(`stated_by_the_files`, 2026-11-25 and again on 2026-11-26). The box of an
 interior's bound is about the interior: each of the 626 such bounds of Legacy
 and of the 629 of Enhanced has its centre nearer the origin than any place a map
 puts its interior, the type file of each states a box of no size for that
@@ -616,11 +616,30 @@ leaves out the folders a level leaves out
 (`a_pack_past_a_name_hash_is_left_out_of_the_walk_as_one_past_a_level_is`), and
 an archive one of whose files did not open is kept with no stamp and read again
 (`a_file_that_did_not_open_is_read_again_by_the_next_build_though_its_archive_stands`).
-The first build of the index took 30 s on Legacy and 36 s on Enhanced and kept
-11.3 MB and 12.1 MB, and a second start read them in 52 ms and 219 ms, in the
-test profile on thirty cores at a load of twenty (2026-11-25, before the index
-took its second version); beside building lanes the same machine took 934 s and
-1.7 s on Legacy, so a time here says more of the machine than of the index.
+At its second version the index keeps 12.9 MB on Legacy and 13.7 MB on Enhanced,
+built first in 150 s and 151 s and read by a second start in 368 ms and 454 ms,
+in the test profile on thirty cores, each install beside the other's suite at a
+load of thirty to a hundred (the same suite, 2026-11-26). Alone at a load of
+twenty the first version took 30 s and 36 s and was read in 52 ms and 219 ms
+(2026-11-25), and beside building lanes 934 s and 1.7 s on Legacy, so a time
+here says more of the machine than of the index.
+
+The install suites of the world editor ran again on 2026-11-26, each on both
+installs, on the tree that holds the map records, the story pack and the mends
+of the install suites together, and each printed the figures stated for it
+here, in [Source_Format_Design.md](../direction/Source_Format_Design.md) and
+in [Dlc_Pack_Creation.md](../features/Dlc_Pack_Creation.md): the index with
+what its files state, the ground, the models found and the forest; the doors,
+the bounds and the path regions; the water files; the census of a map's
+records; the typed world family; the first edit; how the packs carry their
+maps, the flags of a manifest entry, the groups of the change sets and the
+texture dictionaries no file holds; a map stated from the manifests kept of
+an install; a resource checked against one; and a mount stopped at a level.
+The deletion suite ran on Legacy alone that day, with the figures of its
+earlier run. Every world file of each install re-encodes untouched to the bytes
+it came as on that tree, 22,155 of 22,155 on Legacy and 22,810 of 22,810 on
+Enhanced (`every_untouched_world_file_reencodes`, 2026-11-26), where an RBM
+table now states a run of bytes another member counts.
 
 `find` answers what a person typed from the indexes of a mounted install
 ([R70e](../direction/Roadmap.md#r70e-find-anything-and-go-there)). `find::find`

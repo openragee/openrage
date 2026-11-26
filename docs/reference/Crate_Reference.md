@@ -208,9 +208,8 @@ in `crates/domain/or-world/tests/naming_every_scenario_point.rs`: it skips witho
 files, 424 of the type files saved to their fixed point, 0 problems) and on the Enhanced one (556
 interiors in 2,876, 439 saved, 0 problems), at `8853987c8` with this change. The staged corpus holds
 no map or type file, so the census of `meta_census::` judges no world root and that run is what
-holds them. It measures nothing of which members an
-install states for a parked vehicle, an occluder or the far lights, which
-[R70o](../direction/Roadmap.md#r70o-parked-vehicles-zones-lights-and-occluders) opens with. Left in
+holds them. What an install states for a parked vehicle, an occluder or the far lights is measured
+by the suite of the records of a map, below. Left in
 the interior records: whether a shipped interior with no room states the room class is not measured
 (the refusal above is tested on a layout a test took the class out of); a portal that has not four
 corners is left to the rule `interior-broken` and is not refused at the save; and the read views of
@@ -219,6 +218,91 @@ corners is left to the rule `interior-broken` and is not refused at the save; an
 entity of an empty map and the first archetype of an empty type file and copies neither, and where
 the donor was made from nothing the record built is to the byte the copy
 (`the_first_record_an_operation_builds_is_to_the_byte_the_one_a_copy_of_another_files_gives`).
+`crates/io/or-io/src/meta/typed/map_records.rs` types what a map holds besides entities, as members
+of `CMapData`, for the data part of
+[R70o](../direction/Roadmap.md#r70o-parked-vehicles-zones-lights-and-occluders). Each record has
+the members every RBM map of both installs states for it and no other
+(`each_record_types_the_members_the_installs_state_and_no_other`), with the type the file's own
+table states:
+
+| Member of the map | Record | Its members |
+|---|---|---|
+| `car_generators` | `CCarGen`, a parked vehicle | `position` (a vector); `orientX`, `orientY` and `perpendicularLength` (floats); `carModel` and `popGroup` (hashes); `flags` (an unsigned 32-bit word, stated whole); `bodyColorRemap1` to `bodyColorRemap4` (signed 32-bit); `livery` (signed 8-bit, `-1` where a class lacks it) |
+| `box_occluders` | `BoxOccluder` | `iCenterX`, `iCenterY`, `iCenterZ`, `iCosZ`, `iLength`, `iWidth`, `iHeight` and `iSinZ`, each signed 16-bit |
+| `occlude_models` | `OccludeModel` | `bmin` and `bmax` (vectors); `dataSize` (unsigned 32-bit); `verts` (a run of bytes behind a bare pointer, which the table states as counted by `dataSize` and aligned to 16); `numVertsInBytes` and `numTris` (unsigned 16-bit, stated whole); `flags` (unsigned 32-bit) |
+| `time_cycle_modifiers` | `CTimeCycleModifier` | `name` (a hash); `minExtents` and `maxExtents` (vectors); `percentage` and `range` (floats); `startHour` and `endHour` (unsigned 32-bit) |
+| `lod_lights_soa` | `CLODLight`, the far lights of a map | eight arrays under one subscript: `direction` (of `FloatXYZ`, three floats `x`, `y` and `z`), `falloff` and `falloffExponent` (of floats), `timeAndStateFlags` and `hash` (of unsigned 32-bit words), `coneInnerAngle`, `coneOuterAngleOrCapExt` and `coronaIntensity` (of bytes) |
+| `distant_lod_lights_soa` | `CDistantLODLight`, where those lights stand | two arrays under the same subscript, `position` (of `FloatXYZ`) and `RGBI` (of unsigned 32-bit words), with `numStreetLights` and `category` (unsigned 16-bit) |
+
+⚠ The far lights are two families in two maps: a map holds `LODLightsSOA` alone and names as its
+`parent` a map of its own folder that holds `DistantLODLightsSOA` alone, with as many lights, and
+light `i` has its `position` and `RGBI` in the parent and its eight other members in the child. A
+save refuses a family whose arrays differ in length, in the sentence `or_world::validate::check`
+gives (`far_lights_whose_arrays_differ_are_refused_at_the_save_with_the_sentence_the_check_gives`),
+and `save_far_lights` saves the two maps together and refuses a parent that is not the one named or
+that holds another count (`a_pair_of_far_light_maps_out_of_step_is_refused_at_the_save_with_its_sentence`);
+the save of one map alone cannot see the other. A save also refuses an occlude model whose
+`dataSize` is not the count of its bytes. What a file states beyond the typed members is carried
+(`a_parked_vehicle_moved_and_given_another_model_saves_reads_back_and_keeps_what_no_record_types`),
+and a member a file's own class lacks reads as the engine's `init` and refuses a change
+(`a_member_a_files_own_class_lacks_reads_as_the_engines_init_and_refuses_a_change`). No class of
+the seven is declared for a file that states none: a record is added as a copy of one the file
+holds, one built here takes the members the file's own class states
+(`each_kind_of_record_built_here_takes_the_members_the_files_own_class_states`), and a map made from
+nothing, whose declared `CMapData` states none of the six members, refuses one by the member's name
+(`a_map_made_from_nothing_refuses_a_record_its_class_has_no_member_for`). ⚠ An RBM table states a
+run of bytes that another member counts, and `type_tables::of_rbm` now states it so, where it gave
+a type no layout could be made of: a map that holds an occlude model is laid out again by its own
+table when it outgrows the layout it arrived with
+(`an_occlude_models_bytes_are_changed_and_resized_and_a_count_that_misses_them_is_refused`).
+⚠ That layout sizes a block for each run of bytes and a run is read back as its block to the block's
+end, so the RBM writer (`crates/io/or-io/src/meta/binary/rbm/writer.rs`) refuses, as a layout
+outgrown, a run of another length than its block: two occlude models of other lengths that change
+places, or one put where another was, are laid out again and neither is written over the other
+(`occlude_models_of_other_lengths_that_change_places_save_and_read_back`). Read with no schema, a
+record that is an element holding nothing, `<LODLightsSOA/>` or an `<Item/>`, is a record that
+states no member
+(`a_text_map_whose_record_is_an_element_that_holds_nothing_opens_and_saves_as_it_came`).
+On maps built by hand, as PSO and as RBM, each record reads to the values built and an untouched
+save is the file (`each_record_of_a_map_reads_to_the_values_built_and_saves_to_the_same_bytes`); a
+parked vehicle moved and given another model, a box occluder resized, a time cycle modifier's hours
+changed and a far light changed in both families each save, read back equal and save again to the
+same bytes (`a_box_occluder_resized_saves_and_reads_back`,
+`a_time_cycle_modifier_whose_hours_change_saves_and_reads_back`,
+`a_far_light_moved_in_both_families_saves_both_maps_and_reads_back`); and each typed member reads
+the slot the engine's class declares, where a schema snapshot is staged
+(`every_typed_member_of_a_maps_records_reads_the_slot_the_engine_declares_for_it`).
+
+The install suite is
+`every_map_of_an_install_reads_its_records_typed_states_the_members_typed_and_saves_to_its_fixed_point`
+in `crates/domain/or-world/tests/what_a_map_holds_besides_entities.rs`, in the slow tier: it skips
+without `OPENRAGE_GAME_ROOT`, and with it set it prints the census, holds the typed members to the
+ones the records state, reads every map typed against the read views of `or-world`, saves every
+map that holds such a record, and saves again, with the two in each other's place, each map whose
+first two occlude models hold other counts of bytes. Run on 2026-11-25 it passes on both installs.
+It reads 19,392 maps of the Legacy install (19,388 RBM, 4 PSO): 47,946 parked vehicles in 1,845
+maps, 30,106 box occluders in 299, 3,101 occlude models in 345, 13,062 time cycle modifiers in 1,063
+and 363,775 far lights in 737 pairs of maps, and each of the 4,728 maps that hold such a record
+saves untouched to the bytes it was read from, with 0 problems. Of the Enhanced install it reads
+19,956 maps, all RBM: 48,600 parked vehicles in 1,900 maps, 29,391 box occluders in 295, 3,062
+occlude models in 341, 13,347 time cycle modifiers in 1,089 and 363,768 far lights in 743 pairs, and
+each of the 4,817 maps with such a record saves to the bytes it was read from, with 0 problems.
+Every RBM file of both installs states the same members. Of the maps whose first two occlude models hold other counts of bytes, 322
+of 322 of the Legacy install and 318 of 318 of the Enhanced one read back what was saved with the
+two in each other's place and save again to the same bytes. An occlude model's `dataSize` is the count of the bytes read behind `verts`
+in every model of both installs. No map holds both families of far lights, each map that holds
+`LODLightsSOA` has one parent in its folder, and no parent is named twice. The four PSO maps of the
+Legacy install hold none of these records, and state older classes where they state one: two a
+`CCarGen` with two members no name is known for and with neither `popGroup` nor `livery`, two an
+`OccludeModel` without `flags`, and two a `LODLights` array of a `CLODLight` of another shape in
+place of the two families. A map carries untyped besides: `containerLods`, of which no map of
+either install holds an element;
+`instancedData`, whose `GrassInstanceList` holds 88,267 batches in 515 maps of Legacy and 88,331 in
+515 of Enhanced and whose `PropInstanceList` holds none; and `block`, six members about the export.
+Left: a map made from nothing, and a file that holds no record of a kind, takes none, since an RBM
+states no signature for a class it does not hold; `numStreetLights` is no more than the lights of
+its map in every map of both installs and no save holds it to that; no bit of a word stated whole
+is named; and `or_maps::changes` says that a map differs in these records and names no member.
 `meta::typed::weapon` declares the weapon family, the roots `CWeaponInfoBlob`, `CWeaponComponentInfoBlob` and
 `CWeaponModelInfo__InitDataList`, whose files the installs ship as XML text: its types are `typed::weapon_types`, a record keeps
 the value tree it was read from so that a member no type names (a `ref` to a named item, a null pointer, a shape that differs from
@@ -1117,7 +1201,10 @@ no renderer or UI.
 `MapTypes`, `Archetype`, `ArchetypeIndex`, `MapGroup`, `WorkingSet` and the
 rest), each a view over the reader's `MetaInstance`: it borrows and never
 copies, reads fields by name hash, and `write` edits the tree against the
-document's own layout. `scenario` is the exception: it names a scenario
+document's own layout. `MapData` reads a map's parked vehicles, time cycle
+modifiers and far lights as views too (`CarGenerator`, `TimeCycleModifier`,
+`LodLights` and `DistantLodLights`), held to the typed records of `or-io` by
+`the_read_views_of_a_maps_records_read_what_the_typed_records_read`. `scenario` is the exception: it names a scenario
 region's points over the typed `CScenarioPointRegion`. `streaming` is the
 other: the rules of which maps a camera streams in and which nodes of their
 level-of-detail forest draw, over plain values, for any title. `collision`

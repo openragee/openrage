@@ -411,8 +411,27 @@ impl RbmEncoder<'_> {
                         .iter()
                         .map(|v| as_uint(v).map(|n| n as u8))
                         .collect::<Result<Vec<u8>>>()?,
+                    Value::Null => Vec::new(),
                     _ => return Ok(()),
                 };
+                // ⚠ A run is read back as its block from the pointer to the block's end, and nothing here checks a
+                // write against that end: a run of another length would be cut short or keep the end of the run it
+                // replaces, and a longer one would write into the block that follows.
+                let allocated = match ptr.block_id {
+                    0 => 0,
+                    id => {
+                        let block = self.layout.model.block(id as i32);
+                        let block = block
+                            .ok_or_else(|| MetaError::Other(format!("rbm: block {id} missing")))?;
+                        block.data.len().saturating_sub(ptr.data_offset as usize)
+                    }
+                };
+                if bytes.len() != allocated {
+                    return Err(MetaError::OutgrewItsLayout(format!(
+                        "a run of {} bytes where {allocated} are allocated",
+                        bytes.len()
+                    )));
+                }
                 if ptr.block_id == 0 {
                     return Ok(());
                 }

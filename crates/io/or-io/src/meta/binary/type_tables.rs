@@ -357,10 +357,29 @@ fn rbm_type(owner: &RbmClass, entry: &RbmClassEntry) -> FieldType {
             key: Box::new(sidecar(entry.map_key_index(), "map key")),
             value: Box::new(sidecar(entry.map_value_index(), "map value")),
         },
-        PsoType::ArrayPointer32
-        | PsoType::ArrayPointer64
-        | PsoType::ArrayPointer32WithCount
-        | PsoType::ArrayPointer64WithCount => FieldType::Unknown("raw array pointer".into()),
+        // ⚠ A run another member counts is stated as the table states it, so a document typed by its own table lays
+        // its occluder vertices out again; a run nothing counts has no length to state.
+        PsoType::ArrayPointer32WithCount | PsoType::ArrayPointer64WithCount => {
+            let counted_by = u16::try_from(entry.array_count())
+                .ok()
+                .and_then(|index| owner.entry(index));
+            match counted_by {
+                Some(count) => FieldType::Array {
+                    elem: Box::new(sidecar(entry.contents_index(), "array element")),
+                    kind: ArrayKind::Pointer {
+                        size_var: Some(named(count.name_hash)),
+                        align: match entry.array_align_power() {
+                            0 => 0,
+                            power => 1 << power,
+                        },
+                    },
+                },
+                None => FieldType::Unknown("raw array pointer".into()),
+            }
+        }
+        PsoType::ArrayPointer32 | PsoType::ArrayPointer64 => {
+            FieldType::Unknown("raw array pointer".into())
+        }
         PsoType::Invalid => FieldType::Unknown("invalid".into()),
         PsoType::Unknown(b) => FieldType::Unknown(format!("rbm type {b:#04X}")),
     }

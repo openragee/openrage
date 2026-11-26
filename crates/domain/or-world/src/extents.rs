@@ -125,7 +125,11 @@ pub fn compute(map: &MapData<'_>, index: &ArchetypeIndex) -> Extents {
         }
     }
 
-    for (position, length) in map.car_generators() {
+    for generator in map.car_generators() {
+        let Some(position) = generator.position() else {
+            continue;
+        };
+        let length = generator.perpendicular_length();
         entities.add_box(position - length, position + length);
         streaming.add_box(position - length * 2.0, position + length * 2.0);
     }

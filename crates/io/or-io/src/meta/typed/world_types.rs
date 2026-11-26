@@ -5,7 +5,9 @@
 //! the engine's order and with the engine's types, and
 //! `every_declared_world_class_states_the_members_its_record_types` holds the two together. A class
 //! the engine derives from another (`CMloInstanceDef`, `CTimeArchetypeDef`, `CMloArchetypeDef`) is
-//! not declared: the members that make one are not typed yet.
+//! not declared: the members that make one are not typed yet. Nor are the six members of a map that
+//! hold its parked vehicles, occluders, time cycle modifiers and far lights, or the classes of those
+//! records (`map_records`): a map built from nothing states none of them and refuses a record.
 //!
 //! ⚠ **A document these types lay out is a PSO, never an RBM.** An RBM class carries a `signature`
 //! word that nothing in this tree derives, and a PSO type table states none, so a root built here
@@ -392,11 +394,25 @@ mod tests {
         names
     }
 
+    /// The members a map's record types but the ones that hold the records no class is declared for.
+    fn map_members_declared() -> Vec<&'static str> {
+        let undeclared = crate::meta::typed::map_records::ROOT_MEMBERS;
+        let declared = |member: &&str| !undeclared.contains(member);
+        (CMapData::MEMBERS.iter().copied())
+            .filter(declared)
+            .collect()
+    }
+
     #[test]
     fn every_declared_world_class_states_the_members_its_record_types() {
+        let of_a_map = map_members_declared();
+        assert_eq!(
+            of_a_map.len() + crate::meta::typed::map_records::ROOT_MEMBERS.len(),
+            CMapData::MEMBERS.len()
+        );
         for (class, typed) in [
             ("CEntityDef", CEntityDef::MEMBERS),
-            ("CMapData", CMapData::MEMBERS),
+            ("CMapData", &of_a_map[..]),
             ("CBaseArchetypeDef", CBaseArchetypeDef::MEMBERS),
             ("CMapTypes", CMapTypes::MEMBERS),
         ] {
@@ -506,7 +522,7 @@ mod tests {
         let root = tree(&saved);
         assert_eq!(
             sorted_hashes(stated(&root)),
-            sorted_hashes(hashes(CMapData::MEMBERS))
+            sorted_hashes(hashes(&map_members_declared()))
         );
         let entities = elements(&root, "entities");
         assert_eq!(entities.len(), 1);

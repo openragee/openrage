@@ -4,10 +4,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::gta6::script::cfg::{self, dominates, Block, BlockId, Terminator};
 use crate::gta6::script::ir::{
-    BinOp, Const, Expr, Head, Kind, Scalar, Stmt, StoreKind, Var, Width,
+    BinOp, Callee, Const, Expr, Head, Kind, Scalar, Stmt, StoreKind, Var, Width,
 };
 
-use super::effects::{depth, evaluated, inert, Effects, Facts};
+use super::effects::{cells_of, depth, evaluated, inert, one_cell, Effects, Facts};
 
 /// How many statements may stand between a value's assignment and the place it moves to.
 // ponytail: a fixed reach keeps a block of thousands of statements linear; a running summary of
@@ -16,6 +16,39 @@ const REACH: usize = 256;
 
 /// The deepest an expression is let grow, so that walking one never runs out of stack.
 const DEPTH: usize = 48;
+
+/// The most nodes of an expression of constants that is written wherever its variable was read.
+const CONSTANT: usize = 8;
+
+/// Whether `e` works one cell out of constants alone, by operators that cannot fault: it is the same wherever it is evaluated.
+pub(in crate::gta6::script::passes) fn constant(e: &Expr) -> bool {
+    let mut nodes = 0usize;
+    let mut plain = true;
+    e.walk(&mut |node| {
+        nodes += 1;
+        plain &= match node {
+            Expr::Const(_) | Expr::Cast { .. } | Expr::Truth(_) | Expr::Unary { .. } => true,
+            Expr::Binary { op, .. } => !matches!(op, BinOp::Div | BinOp::Rem),
+            _ => false,
+        };
+    });
+    plain && nodes <= CONSTANT
+}
+
+/// Whether `e` compares the bytes of variables through their own addresses, which are always there to read.
+fn compares_variables(e: &Expr) -> bool {
+    match e {
+        Expr::Call {
+            callee: Callee::Intrinsic { name, .. },
+            args,
+            ..
+        } => {
+            name.starts_with("bytes_equal_")
+                && args.iter().all(|arg| matches!(arg, Expr::AddrOf { .. }))
+        }
+        _ => false,
+    }
+}
 
 fn reads_in(e: &Expr, var: Var) -> u32 {
     let mut reads = 0;
@@ -39,7 +72,10 @@ fn renamed(top: &mut Expr, var: Var, to: Var) {
 }
 
 /// What is left of a value nothing reads: nothing, the call it makes, or (`Err`) all of it.
-fn leftover(facts: &Facts, value: Expr) -> Result<Option<Expr>, Expr> {
+pub(in crate::gta6::script::passes) fn leftover(
+    facts: &Facts,
+    value: Expr,
+) -> Result<Option<Expr>, Expr> {
     // A global is read by its name and through no pointer: not reading it loses nothing either.
     if Effects::of_expr(facts, &value).free() || inert(&value) {
         return Ok(None);
@@ -49,6 +85,9 @@ fn leftover(facts: &Facts, value: Expr) -> Result<Option<Expr>, Expr> {
     while let Expr::Cast { e: next, .. } | Expr::Truth(next) | Expr::Cell { base: next, .. } = inner
     {
         inner = &**next;
+    }
+    if compares_variables(inner) {
+        return Ok(None);
     }
     let call = matches!(inner, Expr::Call { .. }).then(|| inner.clone());
     match call {
@@ -503,31 +542,154 @@ fn guarded(top: &Expr, var: Var) -> bool {
     guarded
 }
 
-/// Moves the value statement `i` assigns to `var` into site `k`, the one place that reads it, where nothing between forbids.
-fn moved(
+/// Whether a value that does `moving`, assigned by statement `i` of block `b`, may be evaluated at site `k` instead: past every statement between the two.
+fn crosses(
     facts: &Facts,
-    stmts: &mut [Option<Stmt>],
-    term: &mut Terminator,
+    stmts: &[Option<Stmt>],
     effects: &mut [Option<Effects>],
-    (i, var, k): (usize, Var, usize),
+    moving: &Effects,
+    (b, i, k): (BlockId, usize, usize),
 ) -> bool {
-    let Some(Some(Stmt::Assign { value, .. })) = stmts.get(i) else {
-        return false;
-    };
-    let moving = Effects::of_expr(facts, value);
     let mut passed = 0;
     for j in i + 1..k {
-        let Some(stmt) = &stmts[j] else {
+        let Some(Some(stmt)) = stmts.get(j) else {
             continue;
         };
         passed += 1;
         if passed > REACH {
             return false;
         }
-        let crossed = effects[j].get_or_insert_with(|| Effects::of_stmt(facts, stmt));
+        let Some(slot) = effects.get_mut(j) else {
+            return false;
+        };
+        let crossed = slot.get_or_insert_with(|| Effects::of_stmt(facts, stmt).placed((b, j)));
         if !moving.may_cross(crossed) {
             return false;
         }
+    }
+    true
+}
+
+/// Whether evaluating `e` calls or allocates, and whether it reads memory.
+fn weight(e: &Expr) -> (bool, bool) {
+    let (mut calls, mut loads) = (false, false);
+    e.walk(&mut |node| match node {
+        Expr::Call { .. } | Expr::NewObject(_) | Expr::NewArray { .. } => calls = true,
+        Expr::Load { .. }
+        | Expr::LoadBytes { .. }
+        | Expr::VirtualFunctionRef { .. }
+        | Expr::BuiltinGlobal(_)
+        | Expr::Var(Var::Global { .. }) => loads = true,
+        _ => {}
+    });
+    (calls, loads)
+}
+
+/// The variable a store goes through and its value first loads through, at one offset: `store(l, o, load(l, o) op r)` with no other read of `l`.
+fn worked(stmt: &Stmt) -> Option<Var> {
+    let Stmt::Store {
+        addr: Expr::Var(var),
+        offset,
+        value: Expr::Binary { l, r, .. },
+        ..
+    } = stmt
+    else {
+        return None;
+    };
+    let mut read = &**l;
+    while let Expr::Cast { e, .. } = read {
+        read = &**e;
+    }
+    let Expr::Load {
+        addr, offset: at, ..
+    } = read
+    else {
+        return None;
+    };
+    let back = **addr == Expr::Var(*var) && at == offset;
+    (back && reads_in(r, *var) == 0).then_some(*var)
+}
+
+/// Moves the address statement `i` of block `b` assigns to `var` into both places statement `k` goes through it, where evaluating it twice there gives what evaluating it once gave.
+// `l = &x->f; store(l, 0, load(l, 0) | m);` is `store(&x->f, 0, load(&x->f, 0) | m);`: the
+// address is evaluated first, and again at once for the load, with nothing between the two.
+// ⚠ Only what `x->f |= m` evaluates once in C# is written twice: no call and no allocation in
+// the address, and none in `m` where the address reads memory.
+fn moved_twice(
+    facts: &Facts,
+    stmts: &mut [Option<Stmt>],
+    effects: &mut [Option<Effects>],
+    (b, i, var, k): (BlockId, usize, Var, usize),
+) -> bool {
+    let Some(Some(Stmt::Assign { value, .. })) = stmts.get(i) else {
+        return false;
+    };
+    let Some(Some(Stmt::Store {
+        value: stored @ Expr::Binary { r, .. },
+        ..
+    })) = stmts.get(k)
+    else {
+        return false;
+    };
+    let (calls, loads) = weight(value);
+    let steady = !calls && !(loads && weight(r).0);
+    let fits = depth(stored) + depth(value) <= DEPTH;
+    let moving = Effects::of_expr(facts, value);
+    let pure = !moving.call && !moving.alloc && !moving.store;
+    if !steady || !fits || !pure || !crosses(facts, stmts, effects, &moving, (b, i, k)) {
+        return false;
+    }
+
+    let Some(Stmt::Assign { value, .. }) = stmts[i].take() else {
+        return false;
+    };
+    if let Some(Some(stmt)) = stmts.get_mut(k) {
+        stmt.each_expr_mut(&mut |top| {
+            top.walk_mut(&mut |e| {
+                if matches!(e, Expr::Var(read) if *read == var) {
+                    *e = value.clone();
+                }
+            });
+        });
+    }
+    if let Some(stale) = effects.get_mut(k) {
+        *stale = None;
+    }
+    true
+}
+
+/// The cells a value yields, where its own form states them.
+fn stated(facts: &Facts, head: &Head, value: &Expr) -> Option<u32> {
+    match value {
+        Expr::Cells(items) if items.iter().all(|item| one_cell(head, item)) => {
+            u32::try_from(items.len()).ok()
+        }
+        other => cells_of(other, &facts.widths),
+    }
+}
+
+/// Whether the local `target` is one cell, or as many cells as `value` states it yields: read in its place, the value is what the local held.
+fn fills(facts: &Facts, head: &Head, target: Var, value: &Expr) -> bool {
+    match facts.widths.get(&target) {
+        Some(cells) => stated(facts, head, value) == Some(*cells),
+        None => (head.vars.get(&target)).is_none_or(|info| info.width != Width::Cells),
+    }
+}
+
+/// Moves the value statement `i` of block `b` assigns to `var` into site `k`, the one place that reads it, where nothing between forbids.
+fn moved(
+    facts: &Facts,
+    stmts: &mut [Option<Stmt>],
+    term: &mut Terminator,
+    effects: &mut [Option<Effects>],
+    (b, i, var, k): (BlockId, usize, Var, usize),
+) -> bool {
+    let Some(Some(Stmt::Assign { value, .. })) = stmts.get(i) else {
+        return false;
+    };
+    let moving = Effects::of_expr(facts, value);
+    if !crosses(facts, stmts, effects, &moving, (b, i, k)) {
+        return false;
     }
 
     // What the reading statement evaluates before it comes to the temporary is passed over too.
@@ -574,7 +736,14 @@ fn moved(
     true
 }
 
-fn fold_block(facts: &Facts, block: &mut Block) -> bool {
+/// Folds one block; `emptied` takes each local of several cells whose one assignment and one read are gone.
+fn fold_block(
+    facts: &Facts,
+    head: &Head,
+    b: BlockId,
+    block: &mut Block,
+    emptied: &mut Vec<Var>,
+) -> bool {
     let mut stmts: Vec<Option<Stmt>> = std::mem::take(&mut block.stmts)
         .into_iter()
         .map(Some)
@@ -582,6 +751,8 @@ fn fold_block(facts: &Facts, block: &mut Block) -> bool {
     let mut effects: Vec<Option<Effects>> = stmts.iter().map(|_| None).collect();
     // Where this block assigns each temporary, and each local kept like one, that is assigned once and read once.
     let mut assigned: HashMap<Var, usize> = HashMap::new();
+    // Where it assigns each such variable of one cell that is read twice: by one statement, where [`worked`] finds both reads.
+    let mut pointers: HashMap<Var, usize> = HashMap::new();
     let mut changed = false;
     for k in 0..=stmts.len() {
         let mut wanted: Vec<(usize, Var)> = Vec::new();
@@ -602,24 +773,47 @@ fn fold_block(facts: &Facts, block: &mut Block) -> bool {
                 &mut stmts,
                 &mut block.term,
                 &mut effects,
-                (i, var, k),
+                (b, i, var, k),
             ) {
                 assigned.remove(&var);
+                if matches!(var, Var::Local(_)) && facts.widths.contains_key(&var) {
+                    emptied.push(var);
+                }
                 changed = true;
             }
         }
-        if let Some(Some(Stmt::Assign { target, .. })) = stmts.get(k) {
-            let once = facts
-                .uses
-                .get(target)
-                .is_some_and(|uses| uses.defs == 1 && uses.reads == 1 && uses.addrs == 0);
-            // A local of one cell that no address reaches is a temporary the compiler kept in the
-            // frame: its one read, found later in this block, takes its value the same way.
+        let through = match stmts.get(k) {
+            Some(Some(stmt)) => worked(stmt),
+            _ => None,
+        };
+        let held = through.and_then(|var| pointers.get(&var).map(|i| (*i, var)));
+        if let Some((i, var)) = held {
+            if moved_twice(facts, &mut stmts, &mut effects, (b, i, var, k)) {
+                pointers.remove(&var);
+                changed = true;
+            }
+        }
+        if let Some(Some(Stmt::Assign { target, value })) = stmts.get(k) {
+            let uses = facts.uses.get(target).copied().unwrap_or_default();
+            let lone = uses.defs == 1 && uses.addrs == 0;
+            // A local that no address reaches is a temporary the compiler kept in the frame: its
+            // one read, found later in this block, takes its value the same way. One of several
+            // cells is such a local where its value is those cells and no fewer.
             let kept = matches!(target, Var::Local(_))
                 && facts.named_only(*target)
-                && !facts.widths.contains_key(target);
-            if (target.is_temporary() || kept) && once {
-                assigned.insert(*target, k);
+                && fills(facts, head, *target, value);
+            let narrow = !facts.widths.contains_key(target)
+                && (head.vars.get(target)).is_none_or(|info| info.width != Width::Cells);
+            if (target.is_temporary() || kept) && lone {
+                match uses.reads {
+                    1 => {
+                        assigned.insert(*target, k);
+                    }
+                    2 if narrow => {
+                        pointers.insert(*target, k);
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -627,12 +821,96 @@ fn fold_block(facts: &Facts, block: &mut Block) -> bool {
     changed
 }
 
-/// Moves the value of each temporary that is assigned once and read once into the expression that reads it.
-pub(super) fn fold(f: &mut cfg::Function) -> bool {
+/// Moves the value of each temporary that is assigned once and read once into the expression that reads it; `finer` tells two accesses apart as [`Facts::finer`] does.
+pub(super) fn fold(f: &mut cfg::Function, finer: bool) -> bool {
+    let facts = match finer {
+        true => Facts::finer(f),
+        false => Facts::of(f),
+    };
+    let head = &f.head;
+    let mut emptied = Vec::new();
+    let mut changed = false;
+    for (b, block) in f.cfg.blocks.iter_mut().enumerate() {
+        changed |= fold_block(&facts, head, b, block, &mut emptied);
+    }
+    // A local of several cells that nothing names any more is no variable of the function.
+    for var in emptied {
+        f.head.vars.remove(&var);
+    }
+    changed
+}
+
+/// How deep the expressions of site `k` of a block nest, where the first thing the site evaluates is a read of `var`.
+fn led_by(block: &Block, k: usize, var: Var) -> Option<usize> {
+    let mut tops: Vec<&Expr> = Vec::new();
+    match block.stmts.get(k) {
+        Some(stmt) => stmt.each_expr(&mut |top| tops.push(top)),
+        None => {
+            if let Some(e) = block.term.expr() {
+                tops.push(e);
+            }
+        }
+    }
+    let mut order = Vec::new();
+    evaluated(tops.first().copied()?, &mut order);
+    let first = order.first().copied();
+    let leads = matches!(first, Some(Expr::Var(read)) if *read == var);
+    leads.then(|| tops.iter().copied().map(depth).max().unwrap_or(0))
+}
+
+/// Lets the site after `v = E;` evaluate `E` itself, where reading the temporary `v` is the first thing it does and nothing else reads `v`.
+// Nothing is weighed: `E` is evaluated after all that ran before it and before all that runs
+// after it, as it was. For the pairs left by a pass that makes one variable of several cells
+// once the last fold is over, when no effect is known of a variable such a pass made.
+pub(in crate::gta6::script::passes) fn adjacent(f: &mut cfg::Function) -> bool {
     let facts = Facts::of(f);
     let mut changed = false;
     for block in &mut f.cfg.blocks {
-        changed |= fold_block(&facts, block);
+        let mut i = 0;
+        while i < block.stmts.len() {
+            let lone = match &block.stmts[i] {
+                Stmt::Assign { target, value } if target.is_temporary() => {
+                    let once = (facts.uses.get(target))
+                        .is_some_and(|uses| uses.defs == 1 && uses.reads == 1 && uses.addrs == 0);
+                    (once && reads_in(value, *target) == 0).then(|| (*target, depth(value)))
+                }
+                _ => None,
+            };
+            let fits = match lone {
+                Some((var, deep)) => {
+                    led_by(block, i + 1, var).is_some_and(|reader| reader + deep <= DEPTH)
+                }
+                None => false,
+            };
+            if !fits {
+                i += 1;
+                continue;
+            }
+            let Stmt::Assign { target: var, value } = block.stmts.remove(i) else {
+                i += 1;
+                continue;
+            };
+            // With statement `i` gone, its reader stands at `i`, or is the terminator.
+            let mut value = Some(value);
+            let mut put = |top: &mut Expr| {
+                top.walk_mut(&mut |e| {
+                    if matches!(e, Expr::Var(read) if *read == var) {
+                        if let Some(value) = value.take() {
+                            *e = value;
+                        }
+                    }
+                });
+            };
+            match block.stmts.get_mut(i) {
+                Some(stmt) => stmt.each_expr_mut(&mut put),
+                None => {
+                    if let Some(e) = block.term.expr_mut() {
+                        put(e);
+                    }
+                }
+            }
+            changed = true;
+        }
     }
     changed
 }
@@ -644,7 +922,9 @@ type Site = (BlockId, usize);
 // `t = s;` with `s` assigned at most once and reached by no address. Where that one assignment
 // comes before the copy on every path, and the copy before every read of `t`, no path leads from
 // the assignment to a read without passing the copy again: `t` and `s` are equal at every read.
-pub(super) fn copies(f: &mut cfg::Function) -> bool {
+// With `keep`, a local that copies a temporary keeps its name: by the same proof the
+// temporary's one assignment can assign the local, which nothing reads before the copy.
+pub(super) fn copies(f: &mut cfg::Function, keep: bool) -> bool {
     let facts = Facts::of(f);
     let uses = |var: Var| facts.uses.get(&var).copied().unwrap_or_default();
     let one_cell = |var: Var| {
@@ -674,13 +954,14 @@ pub(super) fn copies(f: &mut cfg::Function) -> bool {
             let kept = matches!(target, Var::Local(_)) && facts.named_only(*target);
             let lone = (target.is_temporary() || kept) && copy.defs == 1 && copy.addrs == 0;
             let fixed = match value {
-                // A constant is the same wherever it is read, and so is the address of a variable.
-                Expr::Const(_) | Expr::AddrOf { .. } => one_cell(*target),
+                // The address of a variable is the same wherever it is read.
+                Expr::AddrOf { .. } => one_cell(*target),
                 Expr::Var(source) => {
                     let named = !matches!(source, Var::Global { .. }) && facts.named_only(*source);
                     named && uses(*source).defs <= 1 && alike(*target, *source)
                 }
-                _ => false,
+                // So is a constant, and what operators make of constants.
+                other => constant(other) && one_cell(*target),
             };
             if lone && fixed {
                 held.insert(*target, value.clone());
@@ -743,18 +1024,68 @@ pub(super) fn copies(f: &mut cfg::Function) -> bool {
     for target in late {
         held.remove(&target);
     }
-    if held.is_empty() {
+    // The temporaries that give their one assignment to the local they are copied into.
+    // In the order of the blocks, so that of two locals copied from one temporary the same one is chosen every time.
+    let mut renamed: HashMap<Var, Var> = HashMap::new();
+    if keep {
+        for stmt in f.cfg.blocks.iter().flat_map(|block| &block.stmts) {
+            let Stmt::Assign {
+                target: local @ Var::Local(_),
+                value: Expr::Var(source),
+            } = stmt
+            else {
+                continue;
+            };
+            let lone = source.is_temporary() && uses(*source).defs == 1;
+            let copied = held.get(local) == Some(&Expr::Var(*source));
+            if lone && copied && !renamed.contains_key(source) {
+                renamed.insert(*source, *local);
+            }
+        }
+        for local in renamed.values() {
+            held.remove(local);
+        }
+        // Every other copy of such a temporary is a copy of the local it became.
+        for source in held.values_mut() {
+            let local = match &*source {
+                Expr::Var(var) => renamed.get(var).copied(),
+                _ => None,
+            };
+            if let Some(local) = local {
+                *source = Expr::Var(local);
+            }
+        }
+    }
+    if held.is_empty() && renamed.is_empty() {
         return false;
     }
 
     for block in &mut f.cfg.blocks {
-        block.stmts.retain(
-            |stmt| !matches!(stmt, Stmt::Assign { target, .. } if held.contains_key(target)),
-        );
+        block.stmts.retain(|stmt| match stmt {
+            Stmt::Assign {
+                target,
+                value: Expr::Var(source),
+            } if renamed.get(source) == Some(target) => false,
+            Stmt::Assign { target, .. } => !held.contains_key(target),
+            _ => true,
+        });
+        for stmt in &mut block.stmts {
+            let targets: &mut [Var] = match stmt {
+                Stmt::Assign { target, .. } => std::slice::from_mut(target),
+                Stmt::AssignMany { targets, .. } => &mut targets[..],
+                _ => &mut [],
+            };
+            for target in targets {
+                if let Some(local) = renamed.get(target) {
+                    *target = *local;
+                }
+            }
+        }
         let mut rename = |top: &mut Expr| {
             top.walk_mut(&mut |e| {
                 let source = match &*e {
-                    Expr::Var(read) => held.get(read).cloned(),
+                    Expr::Var(read) => (held.get(read).cloned())
+                        .or_else(|| renamed.get(read).map(|local| Expr::Var(*local))),
                     _ => None,
                 };
                 if let Some(source) = source {
@@ -855,3 +1186,7 @@ pub(super) fn steps(f: &mut cfg::Function) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "values_fold_tests.rs"]
+mod tests;

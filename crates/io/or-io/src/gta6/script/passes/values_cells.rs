@@ -6,7 +6,7 @@ use std::ops::Range;
 use crate::gta6::script::cfg;
 use crate::gta6::script::ir::{Const, Expr, Head, Kind, Scalar, Stmt, Var, VarInfo, Width};
 
-use super::effects::{cells_of, each_top, each_top_mut, inert, one_cell, Facts};
+use super::effects::{cells_of, declared_single, each_top, each_top_mut, inert, one_cell, Facts};
 
 /// How many times copies are followed from one run of locals to the next.
 const HOPS: usize = 8;
@@ -473,7 +473,11 @@ fn locals(f: &mut cfg::Function) -> bool {
         let taken = made.iter().any(|(other, cells)| {
             start < end(*other, *cells) && u64::from(*other) < end(*first, *width)
         });
-        if taken {
+        // A local proved one cell wide is a variable of its own, which no run holds.
+        let top = first.saturating_add(width.saturating_sub(1));
+        let within = Var::Local(*first)..=Var::Local(top);
+        let single = (f.head.vars.range(within)).any(|(_, info)| declared_single(info));
+        if taken || single {
             refused.insert(*first);
         }
         let mine = end(*first, *width);
@@ -539,11 +543,15 @@ fn locals(f: &mut cfg::Function) -> bool {
         let reads = whole_reads.get(first).copied().unwrap_or(0);
         let writes = whole_writes.get(first).copied().unwrap_or(0);
         let top = first.saturating_add(*width - 1);
+        // ⚠ The width is one the code states, a clear's count of bytes among them: a run that
+        // passes the frame's end is no variable, and is not walked cell by cell.
+        let framed = (first.checked_add(*width)).is_some_and(|end| end <= f.head.locals);
         // Each local is read and written only with the others, and no address points into the run.
-        let together = (0..*width).all(|i| {
-            let uses = used(first.saturating_add(i));
-            uses.reads == reads && uses.defs == writes && (i == 0 || uses.addrs == 0)
-        });
+        let together = framed
+            && (0..*width).all(|i| {
+                let uses = used(first.saturating_add(i));
+                uses.reads == reads && uses.defs == writes && (i == 0 || uses.addrs == 0)
+            });
         // A load or a store through an address reaches all inside the run or all outside it.
         let unsplit = facts
             .direct_locals
@@ -636,6 +644,7 @@ fn locals(f: &mut cfg::Function) -> bool {
             width: Width::Cells,
             kind: Kind::Aggregate(*width),
             name: None,
+            single: false,
         };
         f.head.vars.insert(Var::Local(*first), info);
     }

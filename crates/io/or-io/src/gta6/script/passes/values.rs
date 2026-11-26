@@ -7,47 +7,102 @@
 #[path = "values_cells.rs"]
 mod cells;
 #[path = "values_effects.rs"]
-mod effects;
+pub(super) mod effects;
 #[path = "values_fold.rs"]
-mod fold;
+pub(super) mod fold;
 #[path = "values_joins.rs"]
 mod joins;
 
+use std::collections::BTreeSet;
+
 use crate::gta6::script::cfg::{self, Block, BlockId, Cfg, Terminator, ENTRY};
-use crate::gta6::script::ir::{BinOp, Expr, Kind, Scalar, Stmt, StoreKind, UnOp, Var};
+use crate::gta6::script::ir::{
+    BinOp, Expr, Head, Kind, Scalar, Stmt, StoreKind, UnOp, Var, VarInfo, Width,
+};
 use crate::gta6::script::names::Names;
-use crate::gta6::script::Stats;
+use crate::gta6::script::{Context, Pass, Stats};
 
 /// The rounds of rewrites a function is given: each feeds the next, and few functions gain past the third.
 const ROUNDS: usize = 6;
 
+/// How many times the rounds are given again after branches were written as choices: a choice may leave the arm of another.
+const CHOICES: usize = 3;
+
 /// Folds each single-use temporary into its use, makes one variable of the values a join carries and one of the cells of a value, and removes what is dead.
+pub fn run(f: &mut cfg::Function, names: &Names, stats: &mut Stats) {
+    run_in(f, &Context::baseline(names), stats);
+}
+
+/// [`run`] as the pipeline calls it: `escape`, `constants` and `coalesce` each switch on a finer rule of this pass.
+// `escape`: two accesses are told apart by the variables their addresses are in, and an allocation
+// may change places with a call. `constants`: a test of constants is decided at every kind it is
+// taken at, and so is a test of the variable the statement straight before it gave a constant.
+// `coalesce`: a local that copies a temporary keeps its name, and two arms that only choose a
+// value for one variable are the one assignment of the choice.
 // `Stats` counts temporaries on the trees either side of the passes, so nothing is counted here.
-pub fn run(f: &mut cfg::Function, _names: &Names, _stats: &mut Stats) {
+pub fn run_in(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
     if f.head.incomplete.is_some() || f.cfg.blocks.is_empty() {
         return;
     }
-    named_accesses(&mut f.cfg);
-    tidy(&mut f.cfg);
+    let finer = cx.options.on(Pass::Escape);
+    let ordered = cx.options.on(Pass::Constants);
+    let keep = cx.options.on(Pass::Coalesce);
+    named_accesses(&f.head, &mut f.cfg);
+    tidy(&f.head, &mut f.cfg, ordered);
     joins::split_tuples(&mut f.cfg);
-    for _ in 0..ROUNDS {
-        let mut changed = fold::dead(f);
-        // A cell zeroed, filled by one narrow store and read back is a value: as one it folds like any other.
-        changed |= super::types::narrowings(f);
-        changed |= fold::zeroes(f);
-        changed |= fold::mirror(f);
-        changed |= fold::fold(f);
-        changed |= fold::copies(f);
-        changed |= joins::roots(f);
-        changed |= joins::merge(f);
-        changed |= cells::gather(f);
-        changed |= tidy(&mut f.cfg);
-        if !changed {
+    for choices in 0..=CHOICES {
+        let mut settled = false;
+        for _ in 0..ROUNDS {
+            // An address a round before put where a load or a store goes through it is the variable's own.
+            named_accesses(&f.head, &mut f.cfg);
+            let mut changed = fold::dead(f);
+            // A cell zeroed, filled by one narrow store and read back is a value: as one it folds like any other.
+            changed |= super::types::narrowings(f);
+            changed |= fold::zeroes(f);
+            changed |= fold::mirror(f);
+            changed |= fold::fold(f, finer);
+            changed |= fold::copies(f, keep);
+            changed |= joins::roots(f);
+            changed |= joins::merge(f);
+            changed |= cells::gather(f);
+            changed |= tidy(&f.head, &mut f.cfg, ordered);
+            if !changed {
+                settled = true;
+                break;
+            }
+        }
+        // ⚠ Only once nothing else moves: a join that a later round leaves as a bare test of what
+        // its arms hand it is a condition, and must not have been written as a value before.
+        if choices == CHOICES || !(keep && settled && joins::selects(f)) {
             break;
         }
+        tidy(&f.head, &mut f.cfg, ordered);
     }
     fold::steps(f);
-    // `head.vars` declares the temporaries the code still mentions and no other.
+    declared(f);
+}
+
+/// Declares one cell wide each local that the form a front end made proves to be: an address handed out then reaches the variable it is the address of, and not the locals after it.
+// ⚠ Once, on the form a front end made, before any pass: [`effects::single_cells`] proves
+// nothing of blocks a pass has rewritten. The proof is `VarInfo::single`, which no other pass sets.
+pub fn widths(f: &mut cfg::Function) {
+    if f.head.incomplete.is_some() {
+        return;
+    }
+    for cell in effects::single_cells(f) {
+        let info = f.head.vars.entry(Var::Local(cell));
+        let info = info.or_insert_with(|| VarInfo::new(Width::Cell));
+        info.single = info.width == Width::Cell;
+    }
+}
+
+/// The locals [`widths`] declares one cell wide, for a check that runs the form a front end made beside what the passes make of it.
+pub fn single_locals(f: &cfg::Function) -> BTreeSet<u32> {
+    effects::single_cells(f)
+}
+
+/// Leaves `head.vars` declaring the temporaries the code still mentions and no other.
+pub(super) fn declared(f: &mut cfg::Function) {
     let facts = effects::Facts::of(f);
     f.head
         .vars
@@ -70,7 +125,12 @@ fn frame_cell(addr: &Expr) -> Option<Var> {
 // field of it. The low bytes of the cell are the same read either way, and with no address
 // taken the variable is one only its name changes.
 // ⚠ A store of fewer than eight bytes leaves the rest of the cell, so it stays a store.
-fn named_accesses(cfg: &mut Cfg) {
+// ⚠ Never of a variable of several cells: its name is all of them, and the access one cell.
+fn named_accesses(head: &Head, cfg: &mut Cfg) {
+    let narrow = |addr: &Expr| {
+        let wide = |var: &Var| (head.vars.get(var)).is_some_and(|info| info.width == Width::Cells);
+        frame_cell(addr).filter(|var| !wide(var))
+    };
     for block in &mut cfg.blocks {
         for stmt in &mut block.stmts {
             let whole = match &*stmt {
@@ -79,7 +139,7 @@ fn named_accesses(cfg: &mut Cfg) {
                     addr,
                     offset: 0,
                     ..
-                } => frame_cell(addr),
+                } => narrow(addr),
                 _ => None,
             };
             let Some(target) = whole else {
@@ -98,7 +158,7 @@ fn named_accesses(cfg: &mut Cfg) {
                     ty,
                     addr,
                     offset: 0,
-                } => frame_cell(addr).map(|var| (*ty, var)),
+                } => narrow(addr).map(|var| (*ty, var)),
                 _ => None,
             };
             if let Some((ty, var)) = read {
@@ -111,15 +171,34 @@ fn named_accesses(cfg: &mut Cfg) {
     });
 }
 
+/// How two constant cells compare as operands of the kind `at`; `None` for a kind that orders nothing, `Some(None)` where one is no number.
+fn compared(at: &Kind, l: u64, r: u64) -> Option<Option<std::cmp::Ordering>> {
+    Some(match at {
+        Kind::I8 | Kind::U8 | Kind::I16 | Kind::U16 | Kind::I32 => {
+            Some((l as i32).cmp(&(r as i32)))
+        }
+        Kind::U32 => Some((l as u32).cmp(&(r as u32))),
+        Kind::I64 => Some((l as i64).cmp(&(r as i64))),
+        Kind::U64 => Some(l.cmp(&r)),
+        Kind::F32 => f32::from_bits(l as u32).partial_cmp(&f32::from_bits(r as u32)),
+        Kind::F64 => f64::from_bits(l).partial_cmp(&f64::from_bits(r)),
+        _ => return None,
+    })
+}
+
 /// The cell an expression of constants, integer readings and tests of equality comes to; `None` for any other.
-fn constant(e: &Expr, depth: u32) -> Option<u64> {
+// With `ordered`, the readings as floats and the tests of order too, each at the kind its operator
+// works at. ⚠ A test of a float that is no number is false whichever way it is asked, but for `!=`.
+// `known` is a variable and the cell it holds where the expression is evaluated: a read of it is that cell.
+fn constant(e: &Expr, depth: u32, ordered: bool, known: Option<(Var, u64)>) -> Option<u64> {
     let d = depth.checked_sub(1)?;
     Some(match e {
         Expr::Const(c) => c.bits,
-        Expr::Truth(e) => u64::from(constant(e, d)? != 0),
-        Expr::Unary { op: UnOp::Not, e } => u64::from(constant(e, d)? == 0),
+        Expr::Var(var) => known.filter(|(held, _)| held == var)?.1,
+        Expr::Truth(e) => u64::from(constant(e, d, ordered, known)? != 0),
+        Expr::Unary { op: UnOp::Not, e } => u64::from(constant(e, d, ordered, known)? == 0),
         Expr::Cast { to, e } => {
-            let bits = constant(e, d)?;
+            let bits = constant(e, d, ordered, known)?;
             match to {
                 Scalar::I8 => bits as i8 as i64 as u64,
                 Scalar::U8 => u64::from(bits as u8),
@@ -128,6 +207,8 @@ fn constant(e: &Expr, depth: u32) -> Option<u64> {
                 Scalar::I32 => bits as i32 as i64 as u64,
                 Scalar::U32 => u64::from(bits as u32),
                 Scalar::I64 | Scalar::U64 => bits,
+                Scalar::F32 if ordered => u64::from(bits as u32),
+                Scalar::F64 if ordered => bits,
                 Scalar::F32 | Scalar::F64 => return None,
             }
         }
@@ -137,21 +218,45 @@ fn constant(e: &Expr, depth: u32) -> Option<u64> {
             l,
             r,
         } => {
-            let (l, r) = (constant(l, d)?, constant(r, d)?);
+            let (l, r) = (
+                constant(l, d, ordered, known)?,
+                constant(r, d, ordered, known)?,
+            );
             let equal = match at {
                 Kind::Bool => (l != 0) == (r != 0),
                 Kind::I32 | Kind::U32 => l as u32 == r as u32,
                 Kind::I64 | Kind::U64 | Kind::Unknown => l == r,
+                Kind::F32 | Kind::F64 if ordered => {
+                    compared(at, l, r)?.is_some_and(std::cmp::Ordering::is_eq)
+                }
                 _ => return None,
             };
             u64::from(equal == (*op == BinOp::Eq))
+        }
+        Expr::Binary {
+            op: op @ (BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge),
+            at,
+            l,
+            r,
+        } if ordered => {
+            let (l, r) = (
+                constant(l, d, ordered, known)?,
+                constant(r, d, ordered, known)?,
+            );
+            let order = compared(at, l, r)?;
+            u64::from(order.is_some_and(|order| match op {
+                BinOp::Lt => order.is_lt(),
+                BinOp::Le => order.is_le(),
+                BinOp::Gt => order.is_gt(),
+                _ => order.is_ge(),
+            }))
         }
         _ => return None,
     })
 }
 
-/// Removes the blocks nothing reaches and those that only jump on, and joins a block to the one block that leads to it.
-fn tidy(cfg: &mut Cfg) -> bool {
+/// Removes the blocks nothing reaches and those that only jump on, and joins a block to the one block that leads to it; `ordered` is [`constant`]'s.
+fn tidy(head: &Head, cfg: &mut Cfg, ordered: bool) -> bool {
     let n = cfg.blocks.len();
     let mut changed = false;
 
@@ -176,6 +281,18 @@ fn tidy(cfg: &mut Cfg) -> bool {
         .collect();
     for block in &mut cfg.blocks {
         block.term.retarget(|target| forward[target]);
+        // The variable the statement straight before the terminator gave a constant holds it
+        // where the terminator reads it: nothing stands between the two, whatever else reaches
+        // the variable. ⚠ One cell, read by its name: a global is read from memory.
+        let known = match block.stmts.last() {
+            Some(Stmt::Assign { target, value }) if ordered => {
+                let many = (head.vars.get(target)).is_some_and(|info| info.width == Width::Cells);
+                let cell = constant(value, 16, ordered, None);
+                let named = !matches!(target, Var::Global { .. }) && !many;
+                cell.filter(|_| named).map(|cell| (*target, cell))
+            }
+            _ => None,
+        };
         // A branch whose arms meet decides nothing, and goes where evaluating its condition does nothing either.
         let met = match &block.term {
             Terminator::Branch { cond, then, els } if then == els && effects::inert(cond) => {
@@ -183,8 +300,18 @@ fn tidy(cfg: &mut Cfg) -> bool {
             }
             // A test of constants goes one way.
             Terminator::Branch { cond, then, els } => {
-                constant(cond, 16).map(|cell| if cell != 0 { *then } else { *els })
+                constant(cond, 16, ordered, known).map(|cell| if cell != 0 { *then } else { *els })
             }
+            // A switch on a constant goes to the case that is the constant as an `int`.
+            Terminator::Switch {
+                value,
+                cases,
+                default,
+            } if ordered => constant(value, 16, ordered, known).map(|cell| {
+                let wanted = i64::from(cell as i32);
+                let case = cases.iter().find(|case| case.0 == wanted);
+                case.map_or(*default, |case| case.1)
+            }),
             _ => None,
         };
         if let Some(target) = met {

@@ -1,19 +1,26 @@
 //! The values a lifter carries across a join in `stack_` variables: tuples taken apart, each
-//! variable that only renames another value replaced by that value, and a join that is only
-//! copied into the next one merged with it.
+//! variable that only renames another value replaced by that value, a join that is only
+//! copied into the next one merged with it, and two arms that only choose a value written as
+//! the choice.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::gta6::script::cfg::{self, BlockId, Cfg, ENTRY};
-use crate::gta6::script::ir::{Expr, Head, Stmt, Var, Width};
+use crate::gta6::script::cfg::{self, Block, BlockId, Cfg, Terminator, ENTRY};
+use crate::gta6::script::ir::{Expr, Head, Stmt, UnOp, Var, Width};
 
-use super::effects::{each_top_mut, Facts};
+use super::effects::{depth, each_top_mut, one_cell, Effects, Facts};
 
 /// The sweeps given to settling what each stack variable carries; a chain of renames longer than this that runs against the order of the blocks is left alone.
 const SWEEPS: usize = 32;
 
 /// The sweeps given to merging joins: each merges one more link of a chain of them.
 const MERGES: usize = 16;
+
+/// The deepest a test or a value may nest and still be written into a choice between two values.
+const CHOICE_DEPTH: usize = 24;
+
+/// The statements of a join that are looked at for copies of the value two arms hand it.
+const JOIN_COPIES: usize = 64;
 
 /// The statements a function's walks along its paths may look at before the rest is left as it is.
 fn allowance(cfg: &Cfg) -> usize {
@@ -468,6 +475,136 @@ pub(super) fn merge(f: &mut cfg::Function) -> bool {
             }
         }
         changed = true;
+    }
+    changed
+}
+
+/// The one assignment of a block that assigns one variable and jumps on: the variable, the value and where the block goes.
+fn lone_assign(block: &Block) -> Option<(Var, &Expr, BlockId)> {
+    match (block.stmts.as_slice(), &block.term) {
+        ([Stmt::Assign { target, value }], Terminator::Jump(to)) => Some((*target, value, *to)),
+        _ => None,
+    }
+}
+
+/// Whether `e` yields 0 or 1 by its form: a test, or one of those two constants.
+fn truth(e: &Expr) -> bool {
+    match e {
+        Expr::Truth(_) | Expr::Unary { op: UnOp::Not, .. } => true,
+        Expr::Binary { op, .. } => op.is_logical(),
+        Expr::Const(c) => c.bits <= 1 && !c.kind.is_float(),
+        _ => false,
+    }
+}
+
+/// Whether `value` may stand as an arm of a choice: one cell that no call, store or allocation makes, and no choice itself.
+fn chosen(facts: &Facts, head: &Head, value: &Expr) -> bool {
+    let effects = Effects::of_expr(facts, value);
+    let quiet = !(effects.call || effects.store || effects.alloc);
+    quiet && one_cell(head, value) && !matches!(value, Expr::Select { .. })
+}
+
+/// Whether the block two arms meet in only tests what they hand it in `var`, at once or through copies of it.
+// The test may still compare the value with constants and join such comparisons: that is the
+// test of a condition whose parts the arms hold. One that reads anything else uses a value.
+fn only_tested(join: &Block, var: Var) -> bool {
+    let Terminator::Branch { cond, .. } = &join.term else {
+        return false;
+    };
+    if join.stmts.len() > JOIN_COPIES {
+        return false;
+    }
+    let mut carried = vec![var];
+    for stmt in &join.stmts {
+        if let Stmt::Assign {
+            target,
+            value: Expr::Var(from),
+        } = stmt
+        {
+            if carried.contains(from) {
+                carried.push(*target);
+            }
+        }
+    }
+    let (mut read, mut plain) = (false, true);
+    cond.walk(&mut |e| match e {
+        Expr::Var(named) => {
+            let ours = carried.contains(named);
+            read |= ours;
+            plain &= ours;
+        }
+        Expr::Const(_) | Expr::Truth(_) | Expr::Cast { .. } | Expr::Unary { op: UnOp::Not, .. } => {
+        }
+        Expr::Binary { op, .. } => plain &= op.is_logical(),
+        _ => plain = false,
+    });
+    read && plain
+}
+
+/// The variable block `b` chooses a value for, the choice, and the block its two arms meet in, where `b` branches to two arms that each only assign that variable.
+fn choice(
+    facts: &Facts,
+    head: &Head,
+    cfg: &Cfg,
+    preds: &[Vec<BlockId>],
+    b: BlockId,
+) -> Option<(Var, Expr, BlockId)> {
+    let Terminator::Branch { cond, then, els } = &cfg.blocks.get(b)?.term else {
+        return None;
+    };
+    let (then, els) = (*then, *els);
+    // An arm is entered by this branch alone, so that nothing else needs what it assigns there.
+    let entered = |arm: BlockId| {
+        let only = preds.get(arm).is_some_and(|from| from.as_slice() == [b]);
+        arm != b && arm != ENTRY && only
+    };
+    if then == els || !entered(then) || !entered(els) {
+        return None;
+    }
+    let (target, yes, join) = lone_assign(cfg.blocks.get(then)?)?;
+    let (other, no, meet) = lone_assign(cfg.blocks.get(els)?)?;
+    let one = !matches!(target, Var::Global { .. })
+        && (head.vars.get(&target)).is_none_or(|info| info.width != Width::Cells)
+        && !facts.widths.contains_key(&target);
+    let apart = join != then && join != els;
+    if target != other || join != meet || !one || !apart {
+        return None;
+    }
+    let values = chosen(facts, head, yes) && chosen(facts, head, no);
+    if !values || (truth(yes) && truth(no)) || only_tested(cfg.blocks.get(join)?, target) {
+        return None;
+    }
+    let shallow = [cond, yes, no].into_iter().all(|e| depth(e) < CHOICE_DEPTH);
+    shallow.then(|| {
+        let value = Expr::Select {
+            cond: Box::new(cond.clone()),
+            then: Box::new(yes.clone()),
+            els: Box::new(no.clone()),
+        };
+        (target, value, join)
+    })
+}
+
+/// Writes a branch whose two arms each give one variable one value, and do nothing else, as the one assignment of a choice between the two values.
+// `if (c) { s = a; } else { s = b; }` is `s = c ? a : b;`: the test is evaluated where it was,
+// and of the two values only the one whose arm ran. The arms are left with nothing that leads
+// to them, for `tidy` to remove.
+// ⚠ Not where the two values are truths, nor where the block the arms meet in only tests the
+// variable: those are the value and the test of an `&&` or an `||`, which the structure pass
+// reads from the arms as they stand.
+pub(super) fn selects(f: &mut cfg::Function) -> bool {
+    let facts = Facts::of(f);
+    let preds = f.cfg.predecessors();
+    // Every choice is found on the blocks as they stand: a branch written as a choice no longer
+    // shows whether it tested what other arms hand it. No two share a block that changes.
+    let found: Vec<(BlockId, (Var, Expr, BlockId))> = (0..f.cfg.blocks.len())
+        .filter_map(|b| Some((b, choice(&facts, &f.head, &f.cfg, &preds, b)?)))
+        .collect();
+    let changed = !found.is_empty();
+    for (b, (target, value, join)) in found {
+        let block = &mut f.cfg.blocks[b];
+        block.stmts.push(Stmt::Assign { target, value });
+        block.term = Terminator::Jump(join);
     }
     changed
 }

@@ -859,14 +859,15 @@ impl ViewportRenderer {
         self.gpu_mark(encoder, "fog volumes");
         // GTA VI's frame is laid over its history before it is metered and bloomed
         let post = self.gta6_post();
+        let exposure = (self.day.as_ref().and_then(|d| d.stated)).map_or(1.0, |s| s.exposure);
         if let Some(post) = post {
             let unjittered = camera.view_proj(aspect);
             let jittered = engine.projection * engine.view;
             let views = (unjittered, jittered, camera.eye());
-            (deferred.post).record_temporal(encoder, queue, &deferred.hdr, post, views);
+            let at = (post, exposure);
+            (deferred.post).record_temporal(encoder, queue, &deferred.hdr, at, views);
             self.gpu_mark(encoder, "temporal");
         }
-        let exposure = (self.day.as_ref().and_then(|d| d.stated)).map_or(1.0, |s| s.exposure);
         (deferred.meter).record(encoder, queue, (self.day_revision, exposure));
         match post {
             Some(post) => {

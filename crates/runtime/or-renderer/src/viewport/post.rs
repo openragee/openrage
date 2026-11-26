@@ -140,6 +140,8 @@ struct Kept {
     before: Mat4,
     eye: Vec3,
     at: Option<Instant>,
+    /// The linear exposure the history holds its light at.
+    exposure: f32,
 }
 
 /// GTA VI's passes after the frame is lit.
@@ -309,6 +311,7 @@ impl Post {
                 before: Mat4::IDENTITY,
                 eye: Vec3::ZERO,
                 at: None,
+                exposure: 1.0,
             }),
         }
     }
@@ -412,13 +415,13 @@ impl Post {
         jitter(self.kept.get().frame, size)
     }
 
-    /// Lay the lit frame `hdr` over its history and leave the result in `hdr`; `unjittered` is this frame's view and projection without the offset, `jittered` with it, and `eye` the camera.
+    /// Lay the lit frame `hdr`, drawn at the linear `exposure`, over its history and leave the result in `hdr`; `unjittered` is this frame's view and projection without the offset, `jittered` with it, and `eye` the camera.
     pub(super) fn record_temporal(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         queue: &wgpu::Queue,
         hdr: &wgpu::TextureView,
-        settings: &Gta6Post,
+        (settings, exposure): (&Gta6Post, f32),
         (unjittered, jittered, eye): (Mat4, Mat4, Vec3),
     ) {
         let (Some(t), Some(bound)) = (&self.targets, &self.bound) else {
@@ -451,7 +454,9 @@ impl Post {
             temporal.far_depth,
             temporal.gamma,
         ]);
-        values.extend([f32::from(u8::from(valid)), 0.0, 0.0, 0.0]);
+        // The history is brought to this frame's exposure: the frame holds its light times the exposure, which moves as it adapts.
+        let rescale = exposure / kept.exposure.max(f32::MIN_POSITIVE);
+        values.extend([f32::from(u8::from(valid)), rescale, 0.0, 0.0]);
         values.extend(resolve_weights(kept.frame));
         values.extend([0.0; 3]);
         queue.write_buffer(&self.temporal_values, 0, bytemuck::cast_slice(&values));
@@ -471,6 +476,7 @@ impl Post {
             before: unjittered,
             eye,
             at: Some(now),
+            exposure,
             ..kept
         });
     }

@@ -172,7 +172,7 @@ struct Temporal {
     eye: vec4<f32>,
     // share taken near, share taken far, the distance far starts at, the deviations the history is held within
     shares: vec4<f32>,
-    // whether there is a history to read
+    // whether there is a history to read, and the factor that brings it to this frame's exposure
     flags: vec4<f32>,
     // the nine tent weights of the 3x3 about the pixel, row by row, that put this frame back on the pixel's middle
     weights: array<vec4<f32>, 3>,
@@ -231,7 +231,8 @@ fn fs_temporal(v: Out) -> @location(0) vec4<f32> {
     if (any(back < vec2<f32>(0.0)) || any(back > vec2<f32>(1.0))) {
         return here;
     }
-    let held = clamp(tamed(textureSampleLevel(history, linear_clamp, back, 0.0).rgb), low, high);
+    let before = textureSampleLevel(history, linear_clamp, back, 0.0).rgb * temporal.flags.y;
+    let held = clamp(tamed(before), low, high);
     let far = clamp(distance(world.xyz, temporal.eye.xyz) / max(temporal.shares.z, 1e-3), 0.0, 1.0);
     let share = mix(temporal.shares.x, temporal.shares.y, far);
     return vec4<f32>(untamed(mix(held, tamed(here.rgb), share)), here.a);

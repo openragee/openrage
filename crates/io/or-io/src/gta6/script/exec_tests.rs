@@ -5,17 +5,46 @@
 //! is returned. A call yields made-up cells, changes all memory a pointer reaches and every frame
 //! cell from one whose address was handed out on, which is the most a pass may assume of it.
 //! ⚠ A load is no event: two loads may change places, and one nothing reads may go.
+//!
+//! A source construct is run as the statements `desugar` gives for it, and a reading of an
+//! expression as the expression read. ⚠ So of what the passes make, the check does not see:
+//! - which construct statements were made into, nor the role a part was given: it runs the
+//!   parts in their order and nesting, and only the printer reads the roles;
+//! - the handlers of a `try` and what a `throw` raises: no fault is raised, the handlers are
+//!   dropped and a `throw` is its statement and an end;
+//! - what a `Hidden` hides: its statements run, and the readable form writes none of them;
+//! - an `await` or a `yield` as the source means it: the state machine's dispatch is put back
+//!   and run as the jumps it is;
+//! - a reading of an expression: a method on its receiver, a field or a property by name, an
+//!   operator, a lambda, `??`, `?.`, a concatenation, a conversion, `typeof`, `out`, `ref`, a tuple;
+//! - a kind, a name, a parameter's place in a signature or the class a function is put under,
+//!   where it changes no operator's width and no count of cells;
+//! - a function with exception regions, one a front end left incomplete, and one that holds
+//!   what the oracle does not run;
+//! - a block no input enters, and what follows the place a run was cut at;
+//! - the text the printer writes, which `reparse.rs` holds against the tree.
 
+use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
-use super::cfg::{self, Terminator};
-use super::ir::{BinOp, Callee, Expr, Kind, Returns, Scalar, Stmt, UnOp, Var, Width};
+use super::cfg::{self, BlockId, Terminator};
+use super::ir::{
+    BinOp, Callee, Expr, FunctionKey, Kind, Returns, Scalar, Stmt, UnOp, Var, VarInfo, Width,
+};
 use super::listing::Listing;
 use super::passes;
+use super::project::Signature;
 use super::tree;
-use super::{Names, Stats};
+use super::{Context, Level, Names, Options, Pass, Project, Stats};
+
+#[path = "exec_corpus_tests.rs"]
+mod corpus;
+#[path = "exec_inputs_tests.rs"]
+mod inputs;
+
+use inputs::{Input, Origin, Side, Turn, Turned};
 
 const LOCALS: u64 = 0xA1 << 56;
 const PARAMS: u64 = 0xA2 << 56;
@@ -24,9 +53,39 @@ const GLOBALS: u64 = 0xA4 << 56;
 const STATICS: u64 = 0xA5 << 56;
 const HEAP: u64 = 0xA6 << 56;
 
-/// The statements and jumps one run may take, and the events it may record.
-const STEPS: usize = 3000;
-const EVENTS: usize = 200;
+/// What a run may take: statements and jumps, events, the seeds past the first [`SEEDS`] that are tried for blocks none has entered, and the inputs then tried that are chosen to turn a test towards such a block.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Limits {
+    pub steps: usize,
+    pub events: usize,
+    pub more: u64,
+    pub turns: u64,
+}
+
+impl Limits {
+    /// What a test written by hand runs at.
+    pub(crate) const DEFAULT: Limits = Limits {
+        steps: 3000,
+        events: 200,
+        more: 0,
+        turns: 0,
+    };
+    /// What the suite over a folder runs at: a function there may hold more statements than a test written by hand is given.
+    pub(crate) const CORPUS: Limits = Limits {
+        steps: 20_000,
+        events: 2000,
+        more: 60,
+        turns: 200,
+    };
+}
+
+/// The seeds in a row that enter no new block before no more are tried.
+const STALE: u64 = 8;
+
+/// The most cells one value is made of, and the most a frame holds.
+// ⚠ A count is what the input states: past these a run is recorded as not made, never sized.
+const CELLS: u32 = 4096;
+const FRAME_CELLS: u32 = 1 << 16;
 
 fn mix(x: u64) -> u64 {
     let x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -106,6 +165,14 @@ pub(crate) struct Run {
     pub cut: bool,
     /// What the oracle could not run, where it met such a thing.
     pub unsupported: Option<String>,
+    /// The blocks the run entered, by `BlockId`.
+    pub reached: Vec<bool>,
+    /// The cells handed back by script functions whose result the project gives no kind.
+    // Such a function may return constants alone, whose range no table keeps: a function that
+    // hands its result on is then proved of a kind the made-up cell need not be.
+    pub unstated: HashSet<u64>,
+    /// The cells that would have turned a test of the run towards a block it was asked to note.
+    pub turns: Vec<Turn>,
 }
 
 enum Val {
@@ -279,6 +346,8 @@ fn var_addr(var: Var) -> u64 {
 
 struct Machine<'f> {
     f: &'f cfg::Function,
+    /// What states the cells a script function returns where a call of it does not.
+    project: &'f Project,
     seed: u64,
     /// The cells written, by address; one never written reads as its default.
     cells: HashMap<u64, u64>,
@@ -290,19 +359,72 @@ struct Machine<'f> {
     /// The objects an event has shown, numbered as they were first shown.
     // ⚠ Two allocations may change places, so an object is known by where it first went, not by when it was made.
     shown: HashMap<u64, u64>,
-    /// The lowest local and parameter whose address was handed out, and the lowest cell of each temporary.
-    low_local: Option<u64>,
+    /// The locals whose address was handed out, the lowest such parameter, and the lowest cell of each temporary.
+    out_locals: BTreeSet<u64>,
+    /// The locals proved one cell wide on the form read: an address handed out stops before the next of them.
+    // ⚠ The same set for the run before and the run after, as `passes::values::widths` declares it
+    // on the form a front end made; empty, a handed-out local reaches every local after it.
+    singles: &'f BTreeSet<u32>,
     low_param: Option<u64>,
     low_temps: BTreeMap<u64, u64>,
     run: Run,
     steps: usize,
+    limits: Limits,
+    /// The draws that are given a chosen cell in place of the one made up.
+    forced: &'f HashMap<u64, u64>,
+    /// The blocks a test is noted for, by `BlockId`: empty where the run notes none.
+    wanted: &'f [bool],
+    /// The draw the value last evaluated is, where it is one, and what was added to it.
+    // ⚠ Kept only while the run notes tests: with none wanted it is whatever was last set.
+    from: Cell<Option<Origin>>,
+    /// The draw each frame cell holds, by the cell's address.
+    origins: HashMap<u64, Origin>,
+    /// The cells that would turn the test being evaluated, until the way it went is known.
+    tests: Vec<(u64, u64, Turned)>,
+    noting: bool,
+    /// How often each block's test was noted in this run.
+    noted: Vec<u8>,
 }
 
-impl Machine<'_> {
+impl<'f> Machine<'f> {
     fn unsupported(&mut self, what: &str) {
         if self.run.unsupported.is_none() {
             self.run.unsupported = Some(what.to_owned());
         }
+    }
+
+    /// The cell made up for draw `h`: the one chosen for it, where one is.
+    // ⚠ A chosen cell is as much an input as a made-up one: every form is run on the same.
+    fn draw(&self, h: u64) -> u64 {
+        self.from.set(Some((h, 0)));
+        match self.forced.get(&h) {
+            Some(cell) => *cell,
+            None => made(h),
+        }
+    }
+
+    /// Whether the run notes the cells that would turn its tests.
+    fn tracks(&self) -> bool {
+        !self.wanted.is_empty()
+    }
+
+    /// Says that frame cell `addr` now holds `from`, or nothing a draw made.
+    fn holds_draw(&mut self, addr: u64, from: Option<Origin>) {
+        if !self.tracks() {
+            return;
+        }
+        match from {
+            Some(from) => self.origins.insert(addr, from),
+            None => self.origins.remove(&addr),
+        };
+    }
+
+    /// Whether a value of `cells` cells is made; one of more than [`CELLS`] is what the oracle does not run.
+    fn sized(&mut self, cells: u32) -> bool {
+        if cells > CELLS {
+            self.unsupported("a value of more cells than the oracle makes");
+        }
+        cells <= CELLS
     }
 
     fn cell(&self, addr: u64) -> u64 {
@@ -311,16 +433,16 @@ impl Machine<'_> {
         }
         match addr >> 56 {
             0xA1 | 0xA3 => 0,
-            0xA2 => made(mix2(self.seed, addr)),
+            0xA2 => self.draw(mix2(self.seed, addr)),
             // A new object is zeroes until a callee has had it.
             0xA6 => match self.shown.get(&(addr & !0xFFFF)) {
-                Some(id) => made(mix2(
+                Some(id) => self.draw(mix2(
                     mix2(self.seed, HEAP | (id << 16) | (addr & 0xFFFF)),
                     self.calls,
                 )),
                 None => 0,
             },
-            _ => made(mix2(mix2(self.seed, addr), self.calls)),
+            _ => self.draw(mix2(mix2(self.seed, addr), self.calls)),
         }
     }
 
@@ -354,6 +476,11 @@ impl Machine<'_> {
     /// Writes the low `bytes` bytes of `value`; a write outside the frame is an event.
     fn write(&mut self, addr: u64, value: u64, bytes: u32) {
         let bytes = bytes.min(8);
+        if framed(addr) && self.tracks() {
+            self.origins.remove(&(addr & !7));
+            let last = addr.wrapping_add(u64::from(bytes.max(1)) - 1);
+            self.origins.remove(&(last & !7));
+        }
         if !framed(addr) {
             let value = match bytes {
                 8 => value,
@@ -382,7 +509,9 @@ impl Machine<'_> {
     fn escape(&mut self, addr: u64) {
         let lower = |low: &mut Option<u64>, n: u64| *low = Some(low.map_or(n, |old| old.min(n)));
         match addr >> 56 {
-            0xA1 => lower(&mut self.low_local, (addr - LOCALS) / 8),
+            0xA1 => {
+                self.out_locals.insert((addr - LOCALS) / 8);
+            }
             0xA2 => lower(&mut self.low_param, (addr - PARAMS) / 8),
             0xA3 => {
                 let base = addr & !0xF_FFFF;
@@ -397,8 +526,20 @@ impl Machine<'_> {
     /// The frame cells a callee can reach.
     fn exposed(&self) -> Vec<u64> {
         let mut cells = Vec::new();
-        if let Some(low) = self.low_local {
-            cells.extend((low..u64::from(self.f.head.locals)).map(|n| LOCALS + 8 * n));
+        let frame = u64::from(self.f.head.locals);
+        let mut reached = 0;
+        for out in &self.out_locals {
+            // A local proved one cell wide is reached alone; any other up to the next such local.
+            let single = u32::try_from(*out).is_ok_and(|n| self.singles.contains(&n));
+            let above = u32::try_from(*out + 1).ok();
+            let next = above.and_then(|above| self.singles.range(above..).next().copied());
+            let end = match (single, next) {
+                (true, _) => *out + 1,
+                (false, Some(next)) => u64::from(next).min(frame),
+                (false, None) => frame,
+            };
+            cells.extend(((*out).max(reached)..end).map(|n| LOCALS + 8 * n));
+            reached = reached.max(end);
         }
         if let Some(low) = self.low_param {
             cells.extend((low..u64::from(self.f.head.params)).map(|n| PARAMS + 8 * n));
@@ -417,13 +558,16 @@ impl Machine<'_> {
             (_, Width::Cells) if temporary => {
                 Some(self.widths.get(&var_addr(var)).copied().unwrap_or(1))
             }
-            (Kind::Aggregate(cells), _) => Some(*cells as usize),
+            (Kind::Aggregate(cells), _) => Some((*cells).min(CELLS) as usize),
+            // A struct held in place, a parameter as much as a local.
+            (Kind::Value { cells, .. }, Width::Cells) => Some((*cells).min(CELLS) as usize),
             (Kind::Vector | Kind::Handle, Width::Cells) => Some(2),
             _ => None,
         }
     }
 
-    fn assign(&mut self, target: Var, value: Val) {
+    /// Gives `target` the value `value`, which is the draw `from` where it is one.
+    fn assign(&mut self, target: Var, value: Val, from: Option<Origin>) {
         let addr = var_addr(target);
         if matches!(target, Var::Global { .. }) {
             self.write(addr, value.one(), 8);
@@ -431,6 +575,7 @@ impl Machine<'_> {
         }
         if self.width(target).is_none() {
             self.cells.insert(addr, value.one());
+            self.holds_draw(addr, from);
             return;
         }
         let cells = match value {
@@ -442,6 +587,7 @@ impl Machine<'_> {
         }
         for (n, cell) in cells.into_iter().enumerate() {
             self.cells.insert(addr + 8 * n as u64, cell);
+            self.holds_draw(addr + 8 * n as u64, None);
         }
     }
 
@@ -451,7 +597,25 @@ impl Machine<'_> {
         HEAP | ((what & 0xFF_FFFF) << 32) | ((*count & 0xFFFF) << 16)
     }
 
+    /// What the project states of the script function a call reaches.
+    fn signature(&self, callee: &Callee) -> Option<&'f Signature> {
+        let key = match callee {
+            Callee::Local { at, .. } => FunctionKey::new(self.f.head.program, *at),
+            Callee::Import { program, at, .. } => FunctionKey::new(*program, *at),
+            _ => return None,
+        };
+        self.project.signatures.get(&key)
+    }
+
     fn call(&mut self, callee: &Callee, args: &[Expr], returns: Option<u32>) -> Val {
+        // ⚠ A call that states no cells yields those its callee's signature states: a pass that
+        // writes them into the call must find the run it is held against made of the same cells.
+        let stated = self.signature(callee);
+        let returns = returns.or_else(|| stated.map(|held| held.returns));
+        self.from.set(None);
+        if returns.is_some_and(|cells| !self.sized(cells)) {
+            return Val::One(0);
+        }
         let mut cells = Vec::with_capacity(args.len());
         for arg in args {
             match (arg, self.eval(arg)) {
@@ -460,6 +624,8 @@ impl Machine<'_> {
                 (_, value) => value.push_to(&mut cells),
             }
         }
+        // What the call yields is its own draw, or none: never the last of its arguments'.
+        self.from.set(None);
         let id = callee_id(callee);
         if let Callee::Intrinsic { name, .. } = callee {
             // An intrinsic sees of each cell what the runtime reads of it, whatever it then does.
@@ -467,6 +633,10 @@ impl Machine<'_> {
                 if let Some(ty) = read_as(name, n) {
                     *cell = cast(ty, *cell);
                 }
+            }
+            // A conversion between integers is what the runtime computes of the cell, and nothing made up.
+            if let Some(exact) = converted(name, cells.first().copied()) {
+                return Val::One(exact);
             }
             let of_args = cells.iter().fold(id, |h, cell| mix2(h, typed(*cell)));
             // What the runtime computes comes out as the type it computed at.
@@ -514,18 +684,38 @@ impl Machine<'_> {
             framed(*addr) || (addr >> 56 == 0xA6 && !shown.contains_key(&(addr & !0xFFFF)))
         });
         for addr in exposed {
-            let new = made(mix2(mix2(self.seed ^ 0xC10B, addr), n));
+            let h = mix2(mix2(self.seed ^ 0xC10B, addr), n);
+            let new = self.draw(h);
             self.cells.insert(addr, new);
+            self.holds_draw(addr, Some((h, 0)));
         }
-        self.yielded(mix2(mix2(self.seed, id), n), returns)
+        // ⚠ A function whose own code proves what its one cell is returns a cell widened as
+        // that: a pass may read `f() != 0` as `f()`, or `as_u32(f())` as `f()`, on that proof,
+        // which a made-up cell of any bits would deny. `check_blocks` holds the proof to the code.
+        match (stated, self.yielded(mix2(mix2(self.seed, id), n), returns)) {
+            (Some(stated), Val::One(cell)) if stated.result != Kind::Unknown => {
+                Val::One(widened(&stated.result, cell))
+            }
+            (_, Val::One(cell)) => {
+                if matches!(callee, Callee::Local { .. } | Callee::Import { .. }) {
+                    self.run.unstated.insert(cell);
+                }
+                Val::One(cell)
+            }
+            (_, made) => made,
+        }
     }
 
     /// The cells something yields: as many as it states, four where it states none.
     fn yielded(&self, h: u64, returns: Option<u32>) -> Val {
         match returns {
-            Some(1) => Val::One(made(mix2(h, 0))),
-            Some(cells) => Val::Many((0..u64::from(cells)).map(|k| made(mix2(h, k))).collect()),
-            None => Val::Many((0..4).map(|k| made(mix2(h, k))).collect()),
+            Some(1) => Val::One(self.draw(mix2(h, 0))),
+            Some(cells) => Val::Many(
+                (0..u64::from(cells))
+                    .map(|k| self.draw(mix2(h, k)))
+                    .collect(),
+            ),
+            None => Val::Many((0..4).map(|k| self.draw(mix2(h, k))).collect()),
         }
     }
 
@@ -533,7 +723,40 @@ impl Machine<'_> {
         self.eval(e).one() != 0
     }
 
+    /// The value of `e`; a run that notes tests is left knowing which draw the value is, where it is one.
     fn eval(&mut self, e: &Expr) -> Val {
+        if !self.tracks() {
+            return self.value(e);
+        }
+        let held = match e {
+            Expr::Var(Var::Global { .. }) => None,
+            Expr::Var(var) => self.origins.get(&var_addr(*var)).copied(),
+            _ => None,
+        };
+        if matches!(e, Expr::Var(_)) {
+            self.from.set(None);
+        }
+        let value = self.value(e);
+        let from = match (e, &value) {
+            (_, Val::Many(_)) => None,
+            (Expr::Var(_), _) => held.or(self.from.get()),
+            // A reading, a load, the one cell of a call and a sum over a draw hand the draw on.
+            (
+                Expr::Cast { .. }
+                | Expr::Sugar { .. }
+                | Expr::Load { .. }
+                | Expr::Call { .. }
+                | Expr::Binary { .. }
+                | Expr::Select { .. },
+                _,
+            ) => self.from.get(),
+            _ => None,
+        };
+        self.from.set(from);
+        value
+    }
+
+    fn value(&mut self, e: &Expr) -> Val {
         Val::One(match e {
             Expr::Const(c) => c.bits,
             Expr::Var(var) => match (self.width(*var), var) {
@@ -545,6 +768,8 @@ impl Machine<'_> {
                 (None, _) => self.cell(var_addr(*var)),
             },
             Expr::GuidEmpty => return Val::Many(vec![0, 0]),
+            // A source reading changes nothing of what is evaluated.
+            Expr::Sugar { e, .. } => return self.eval(e),
             Expr::Cell { base, index } => match self.eval(base) {
                 Val::One(cell) if *index == 0 => cell,
                 Val::One(_) => 0,
@@ -596,7 +821,14 @@ impl Machine<'_> {
             } => return self.call(callee, args, *returns),
             Expr::Load { ty, addr, offset } => {
                 let addr = self.eval(addr).one().wrapping_add(u64::from(*offset));
+                // A load hands on the draw of the cell it reads from the cell's first byte, and no other.
+                self.from.set(None);
                 let raw = self.read(addr, ty.bytes());
+                if addr & 7 != 0 {
+                    self.from.set(None);
+                } else if framed(addr) && self.from.get().is_none() {
+                    self.from.set(self.origins.get(&addr).copied());
+                }
                 match ty {
                     Scalar::I8 => raw as i8 as i64 as u64,
                     Scalar::I16 => raw as i16 as i64 as u64,
@@ -611,6 +843,9 @@ impl Machine<'_> {
             } => {
                 let addr = self.eval(addr).one().wrapping_add(u64::from(*offset));
                 let cells = bytes.div_ceil(8);
+                if !self.sized(cells) {
+                    return Val::One(0);
+                }
                 let load = |n: u32| {
                     self.read(addr.wrapping_add(8 * u64::from(n)), (*bytes - 8 * n).min(8))
                 };
@@ -621,6 +856,9 @@ impl Machine<'_> {
                 offset,
                 bytes,
             } => {
+                if !self.sized(bytes.div_ceil(8)) {
+                    return Val::One(0);
+                }
                 let mut cells = Vec::new();
                 self.eval(value).push_to(&mut cells);
                 let byte = |at: u32| -> u64 {
@@ -640,7 +878,12 @@ impl Machine<'_> {
                 base.wrapping_add(self.eval(offset).one())
             }
             Expr::AddrOf { var, cell } => var_addr(*var).wrapping_add(8 * u64::from(*cell)),
-            Expr::ZeroSlots(cells) => return Val::Many(vec![0; *cells as usize]),
+            Expr::ZeroSlots(cells) => {
+                return match self.sized(*cells) {
+                    true => Val::Many(vec![0; *cells as usize]),
+                    false => Val::One(0),
+                }
+            }
             Expr::Vector3(parts) => {
                 let x = self.eval(&parts[0]).one() & 0xFFFF_FFFF;
                 let y = self.eval(&parts[1]).one() & 0xFFFF_FFFF;
@@ -677,143 +920,44 @@ impl Machine<'_> {
 
     fn binary(&mut self, op: BinOp, at: &Kind, l: &Expr, r: &Expr) -> u64 {
         match op {
-            BinOp::LogicalAnd => return u64::from(self.truth(l) && self.truth(r)),
-            BinOp::LogicalOr => return u64::from(self.truth(l) || self.truth(r)),
+            BinOp::LogicalAnd => {
+                let both = self.truth(l) && self.truth(r);
+                self.from.set(None);
+                return u64::from(both);
+            }
+            BinOp::LogicalOr => {
+                let either = self.truth(l) || self.truth(r);
+                self.from.set(None);
+                return u64::from(either);
+            }
             _ => {}
         }
-        let (a, b) = (self.eval(l).one(), self.eval(r).one());
-        let ordered = |o: Option<std::cmp::Ordering>| match (op, o) {
-            (BinOp::Eq, o) => Some(o.is_some_and(std::cmp::Ordering::is_eq)),
-            (BinOp::Ne, o) => Some(!o.is_some_and(std::cmp::Ordering::is_eq)),
-            (BinOp::Lt, o) => Some(o.is_some_and(std::cmp::Ordering::is_lt)),
-            (BinOp::Le, o) => Some(o.is_some_and(std::cmp::Ordering::is_le)),
-            (BinOp::Gt, o) => Some(o.is_some_and(std::cmp::Ordering::is_gt)),
-            (BinOp::Ge, o) => Some(o.is_some_and(std::cmp::Ordering::is_ge)),
+        let a = self.eval(l).one();
+        let from_l = self.from.get();
+        let b = self.eval(r).one();
+        let from_r = self.from.get();
+        let done = operated(op, at, a, b);
+        // A sum of a draw and another cell is that draw with the cell added.
+        let sums = done.is_some() && inputs::sums(at);
+        self.from.set(match (op, from_l, from_r) {
+            (BinOp::Add, Some((h, add)), _) if sums => Some((h, add.wrapping_add(b))),
+            (BinOp::Sub, Some((h, add)), _) if sums => Some((h, add.wrapping_sub(b))),
+            (BinOp::Add, None, Some((h, add))) if sums => Some((h, add.wrapping_add(a))),
             _ => None,
-        };
-        let done = match at {
-            Kind::Bool => {
-                let (a, b) = (a != 0, b != 0);
-                match op {
-                    BinOp::And => Some(u64::from(a & b)),
-                    BinOp::Or => Some(u64::from(a | b)),
-                    BinOp::Xor => Some(u64::from(a ^ b)),
-                    _ => ordered(Some(a.cmp(&b))).map(u64::from),
-                }
-            }
-            Kind::I8 | Kind::U8 | Kind::I16 | Kind::U16 | Kind::I32 => {
-                let (a, b) = (a as i32, b as i32);
-                let value = match op {
-                    BinOp::Add => Some(a.wrapping_add(b)),
-                    BinOp::Sub => Some(a.wrapping_sub(b)),
-                    BinOp::Mul => Some(a.wrapping_mul(b)),
-                    BinOp::Div => Some(if b == 0 { 0 } else { a.wrapping_div(b) }),
-                    BinOp::Rem => Some(if b == 0 { 0 } else { a.wrapping_rem(b) }),
-                    BinOp::And => Some(a & b),
-                    BinOp::Or => Some(a | b),
-                    BinOp::Xor => Some(a ^ b),
-                    BinOp::Shl => Some(a.wrapping_shl(b as u32)),
-                    BinOp::Shr => Some(a.wrapping_shr(b as u32)),
-                    _ => None,
-                };
-                match value {
-                    Some(value) => Some(value as i64 as u64),
-                    None => ordered(Some(a.cmp(&b))).map(u64::from),
-                }
-            }
-            Kind::U32 | Kind::Hash => {
-                let (a, c) = (a as u32, b as u32);
-                let value = match op {
-                    BinOp::Add => Some(a.wrapping_add(c)),
-                    BinOp::Sub => Some(a.wrapping_sub(c)),
-                    BinOp::Mul => Some(a.wrapping_mul(c)),
-                    BinOp::Div => Some(a.checked_div(c).unwrap_or(0)),
-                    BinOp::Rem => Some(a.checked_rem(c).unwrap_or(0)),
-                    BinOp::And => Some(a & c),
-                    BinOp::Or => Some(a | c),
-                    BinOp::Xor => Some(a ^ c),
-                    BinOp::Shl => Some(a.wrapping_shl(b as u32)),
-                    BinOp::Shr => Some(a.wrapping_shr(b as u32)),
-                    _ => None,
-                };
-                match value {
-                    Some(value) => Some(u64::from(value)),
-                    None => ordered(Some(a.cmp(&c))).map(u64::from),
-                }
-            }
-            Kind::I64 => {
-                let (a, c) = (a as i64, b as i64);
-                let value = match op {
-                    BinOp::Add => Some(a.wrapping_add(c)),
-                    BinOp::Sub => Some(a.wrapping_sub(c)),
-                    BinOp::Mul => Some(a.wrapping_mul(c)),
-                    BinOp::Div => Some(if c == 0 { 0 } else { a.wrapping_div(c) }),
-                    BinOp::Rem => Some(if c == 0 { 0 } else { a.wrapping_rem(c) }),
-                    BinOp::And => Some(a & c),
-                    BinOp::Or => Some(a | c),
-                    BinOp::Xor => Some(a ^ c),
-                    BinOp::Shl => Some(a.wrapping_shl(b as u32)),
-                    BinOp::Shr => Some(a.wrapping_shr(b as u32)),
-                    _ => None,
-                };
-                match value {
-                    Some(value) => Some(value as u64),
-                    None => ordered(Some(a.cmp(&c))).map(u64::from),
-                }
-            }
-            Kind::U64 => {
-                let value = match op {
-                    BinOp::Add => Some(a.wrapping_add(b)),
-                    BinOp::Sub => Some(a.wrapping_sub(b)),
-                    BinOp::Mul => Some(a.wrapping_mul(b)),
-                    BinOp::Div => Some(a.checked_div(b).unwrap_or(0)),
-                    BinOp::Rem => Some(a.checked_rem(b).unwrap_or(0)),
-                    BinOp::And => Some(a & b),
-                    BinOp::Or => Some(a | b),
-                    BinOp::Xor => Some(a ^ b),
-                    BinOp::Shl => Some(a.wrapping_shl(b as u32)),
-                    BinOp::Shr => Some(a.wrapping_shr(b as u32)),
-                    _ => None,
-                };
-                value.or_else(|| ordered(Some(a.cmp(&b))).map(u64::from))
-            }
-            Kind::F32 => {
-                let (a, b) = (f32::from_bits(a as u32), f32::from_bits(b as u32));
-                let value = match op {
-                    BinOp::Add => Some(a + b),
-                    BinOp::Sub => Some(a - b),
-                    BinOp::Mul => Some(a * b),
-                    BinOp::Div => Some(a / b),
-                    BinOp::Rem => Some(a % b),
-                    _ => None,
-                };
-                match value {
-                    Some(value) => Some(u64::from(value.to_bits())),
-                    None => ordered(a.partial_cmp(&b)).map(u64::from),
-                }
-            }
-            Kind::F64 => {
-                let (a, b) = (f64::from_bits(a), f64::from_bits(b));
-                let value = match op {
-                    BinOp::Add => Some(a + b),
-                    BinOp::Sub => Some(a - b),
-                    BinOp::Mul => Some(a * b),
-                    BinOp::Div => Some(a / b),
-                    BinOp::Rem => Some(a % b),
-                    _ => None,
-                };
-                match value {
-                    Some(value) => Some(value.to_bits()),
-                    None => ordered(a.partial_cmp(&b)).map(u64::from),
-                }
-            }
-            // Whole cells, which only equality compares.
-            _ => match op {
-                BinOp::Eq => Some(u64::from(a == b)),
-                BinOp::Ne => Some(u64::from(a != b)),
-                _ => None,
-            },
-        };
+        });
+        if self.noting && op.is_comparison() && self.tests.len() < inputs::NOTED {
+            let left = Side {
+                cell: a,
+                from: from_l,
+                constant: inputs::constant(l),
+            };
+            let right = Side {
+                cell: b,
+                from: from_r,
+                constant: inputs::constant(r),
+            };
+            self.tests.extend(inputs::turning(op, at, left, right));
+        }
         match done {
             Some(cell) => cell,
             None => {
@@ -827,12 +971,17 @@ impl Machine<'_> {
         match stmt {
             Stmt::Assign { target, value } => {
                 let value = self.eval(value);
-                self.assign(*target, value);
+                let from = self.from.get();
+                self.assign(*target, value, from);
             }
             Stmt::AssignMany { targets, values } => {
-                let values: Vec<Val> = values.iter().map(|value| self.eval(value)).collect();
-                for (target, value) in targets.iter().zip(values) {
-                    self.assign(*target, value);
+                let mut held = Vec::with_capacity(values.len());
+                for value in values {
+                    let value = self.eval(value);
+                    held.push((value, self.from.get()));
+                }
+                for (target, (value, from)) in targets.iter().zip(held) {
+                    self.assign(*target, value, from);
                 }
             }
             Stmt::Store {
@@ -843,7 +992,12 @@ impl Machine<'_> {
             } => {
                 let addr = self.eval(addr).one().wrapping_add(u64::from(*offset));
                 let value = self.eval(value).one();
+                let from = self.from.get();
                 self.write(addr, value, kind.bytes());
+                // A frame cell stored to from its first byte holds the draw stored.
+                if framed(addr) && addr & 7 == 0 {
+                    self.holds_draw(addr, from);
+                }
             }
             Stmt::StoreBytes {
                 addr,
@@ -851,6 +1005,9 @@ impl Machine<'_> {
                 bytes,
                 value,
             } => {
+                if !self.sized(bytes.div_ceil(8)) {
+                    return;
+                }
                 let addr = self.eval(addr).one().wrapping_add(u64::from(*offset));
                 let mut cells = Vec::new();
                 self.eval(value).push_to(&mut cells);
@@ -876,6 +1033,9 @@ impl Machine<'_> {
                 }
             }
             Stmt::ZeroBytes { addr, bytes } => {
+                if !self.sized(bytes.div_ceil(8)) {
+                    return;
+                }
                 let addr = self.eval(addr).one();
                 for n in 0..bytes.div_ceil(8) {
                     self.write(
@@ -901,6 +1061,118 @@ impl Machine<'_> {
         }
     }
 
+    /// Whether the test a block ends in holds; a run that notes tests is left with the cells that would turn this one.
+    fn tested(&mut self, cond: &Expr) -> bool {
+        self.tests.clear();
+        if !self.tracks() {
+            return self.truth(cond);
+        }
+        // The truth of a truth is that of what it tests, and the truth of a `!` its opposite.
+        let (mut e, mut not) = (cond, false);
+        loop {
+            match e {
+                Expr::Truth(inner) | Expr::Sugar { e: inner, .. } => e = &**inner,
+                Expr::Unary {
+                    op: UnOp::Not,
+                    e: inner,
+                } => {
+                    not = !not;
+                    e = &**inner;
+                }
+                _ => break,
+            }
+        }
+        self.noting = true;
+        let cell = self.eval(e).one();
+        self.noting = false;
+        // A draw tested as it is: zero turns it one way and one the other.
+        if let Some((h, add)) = self.from.get() {
+            let turned = u64::from(cell == 0);
+            let chosen = plain(turned.wrapping_sub(add));
+            self.tests.push((h, chosen, Turned::Zero));
+        }
+        (cell != 0) != not
+    }
+
+    /// Whether a turn towards `block` is one to note: a block that is wanted and that this run has not entered.
+    fn open(&self, block: BlockId) -> bool {
+        let wanted = self.wanted.get(block) == Some(&true);
+        wanted && self.run.reached.get(block) == Some(&false)
+    }
+
+    /// Whether the test of block `b` may be noted once more in this run, which is then counted.
+    fn notes(&mut self, b: BlockId) -> bool {
+        match self.noted.get_mut(b) {
+            Some(noted) if *noted < inputs::NOTES => {
+                *noted += 1;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Keeps the cells noted for the test of block `b`, where the way it did not go is to a block wanted.
+    fn turns_to(&mut self, b: BlockId, other: BlockId) {
+        let tests = std::mem::take(&mut self.tests);
+        if tests.is_empty() || !self.open(other) || !self.notes(b) {
+            return;
+        }
+        for (draw, cell, by) in tests {
+            if self.run.turns.len() < inputs::TURNS {
+                self.run.turns.push(Turn {
+                    to: other,
+                    draw,
+                    cell,
+                    by,
+                });
+            }
+        }
+    }
+
+    /// Notes, for a switch on the draw `from` that went to `to`, the cell that chooses each other case that is wanted.
+    // ⚠ Every case is read each time: `notes` holds that to a few times a block a run.
+    fn cases_to(
+        &mut self,
+        b: BlockId,
+        from: Origin,
+        cases: &[(i64, BlockId)],
+        default: BlockId,
+        to: BlockId,
+    ) {
+        if !self.notes(b) {
+            return;
+        }
+        let (draw, add) = from;
+        let mut last = to;
+        for (value, block) in cases {
+            if self.run.turns.len() >= inputs::TURNS {
+                return;
+            }
+            // Cases side by side that go to one block are one turn.
+            if *block != last && self.open(*block) {
+                last = *block;
+                self.run.turns.push(Turn {
+                    to: *block,
+                    draw,
+                    cell: plain((*value as u64).wrapping_sub(add)),
+                    by: Turned::Case,
+                });
+            }
+        }
+        // The default is chosen by a value past the greatest case.
+        let past = cases.iter().map(|case| case.0).max();
+        let past = past.map_or(0, |most| most.wrapping_add(1));
+        let free = i64::from(past as i32) == past && cases.iter().all(|case| case.0 != past);
+        if default != to && free && self.open(default) && self.run.turns.len() < inputs::TURNS {
+            self.run.turns.push(Turn {
+                to: default,
+                draw,
+                cell: plain((past as u64).wrapping_sub(add)),
+                by: Turned::Case,
+            });
+        }
+    }
+
     fn go(&mut self) {
         let blocks = &self.f.cfg.blocks;
         let mut b = cfg::ENTRY;
@@ -909,12 +1181,16 @@ impl Machine<'_> {
                 self.unsupported("a jump to no block");
                 return;
             };
+            if let Some(entered) = self.run.reached.get_mut(b) {
+                *entered = true;
+            }
             for stmt in &block.stmts {
                 self.stmt(stmt);
                 self.steps += 1;
             }
             self.steps += 1;
-            let over = self.steps > STEPS || self.run.events.len() > EVENTS;
+            let limits = self.limits;
+            let over = self.steps > limits.steps || self.run.events.len() > limits.events;
             if over || self.run.unsupported.is_some() {
                 self.run.cut = true;
                 return;
@@ -922,16 +1198,27 @@ impl Machine<'_> {
             match &block.term {
                 Terminator::Jump(to) => b = *to,
                 Terminator::Branch { cond, then, els } => {
-                    b = if self.truth(cond) { *then } else { *els };
+                    let (to, other) = match self.tested(cond) {
+                        true => (*then, *els),
+                        false => (*els, *then),
+                    };
+                    self.turns_to(b, other);
+                    b = to;
                 }
                 Terminator::Switch {
                     value,
                     cases,
                     default,
                 } => {
-                    let value = i64::from(self.eval(value).one() as i32);
+                    let value = self.eval(value).one();
+                    let from = self.from.get().filter(|_| self.tracks());
+                    let value = i64::from(value as i32);
                     let case = cases.iter().find(|case| case.0 == value);
-                    b = case.map_or(*default, |case| case.1);
+                    let to = case.map_or(*default, |case| case.1);
+                    if let Some(from) = from {
+                        self.cases_to(b, from, cases, *default, to);
+                    }
+                    b = to;
                 }
                 Terminator::Return(value) => {
                     let mut cells = Vec::new();
@@ -954,6 +1241,142 @@ impl Machine<'_> {
     }
 }
 
+/// What `op` at the kind `at` makes of two cells; `None` for an operator the oracle does not work at that kind.
+fn operated(op: BinOp, at: &Kind, a: u64, b: u64) -> Option<u64> {
+    let ordered = |o: Option<std::cmp::Ordering>| match (op, o) {
+        (BinOp::Eq, o) => Some(o.is_some_and(std::cmp::Ordering::is_eq)),
+        (BinOp::Ne, o) => Some(!o.is_some_and(std::cmp::Ordering::is_eq)),
+        (BinOp::Lt, o) => Some(o.is_some_and(std::cmp::Ordering::is_lt)),
+        (BinOp::Le, o) => Some(o.is_some_and(std::cmp::Ordering::is_le)),
+        (BinOp::Gt, o) => Some(o.is_some_and(std::cmp::Ordering::is_gt)),
+        (BinOp::Ge, o) => Some(o.is_some_and(std::cmp::Ordering::is_ge)),
+        _ => None,
+    };
+    match at {
+        Kind::Bool => {
+            let (a, b) = (a != 0, b != 0);
+            match op {
+                BinOp::And => Some(u64::from(a & b)),
+                BinOp::Or => Some(u64::from(a | b)),
+                BinOp::Xor => Some(u64::from(a ^ b)),
+                _ => ordered(Some(a.cmp(&b))).map(u64::from),
+            }
+        }
+        Kind::I8 | Kind::U8 | Kind::I16 | Kind::U16 | Kind::I32 => {
+            let (a, b) = (a as i32, b as i32);
+            let value = match op {
+                BinOp::Add => Some(a.wrapping_add(b)),
+                BinOp::Sub => Some(a.wrapping_sub(b)),
+                BinOp::Mul => Some(a.wrapping_mul(b)),
+                BinOp::Div => Some(if b == 0 { 0 } else { a.wrapping_div(b) }),
+                BinOp::Rem => Some(if b == 0 { 0 } else { a.wrapping_rem(b) }),
+                BinOp::And => Some(a & b),
+                BinOp::Or => Some(a | b),
+                BinOp::Xor => Some(a ^ b),
+                BinOp::Shl => Some(a.wrapping_shl(b as u32)),
+                BinOp::Shr => Some(a.wrapping_shr(b as u32)),
+                _ => None,
+            };
+            match value {
+                Some(value) => Some(value as i64 as u64),
+                None => ordered(Some(a.cmp(&b))).map(u64::from),
+            }
+        }
+        Kind::U32 | Kind::Hash => {
+            let (a, c) = (a as u32, b as u32);
+            let value = match op {
+                BinOp::Add => Some(a.wrapping_add(c)),
+                BinOp::Sub => Some(a.wrapping_sub(c)),
+                BinOp::Mul => Some(a.wrapping_mul(c)),
+                BinOp::Div => Some(a.checked_div(c).unwrap_or(0)),
+                BinOp::Rem => Some(a.checked_rem(c).unwrap_or(0)),
+                BinOp::And => Some(a & c),
+                BinOp::Or => Some(a | c),
+                BinOp::Xor => Some(a ^ c),
+                BinOp::Shl => Some(a.wrapping_shl(b as u32)),
+                BinOp::Shr => Some(a.wrapping_shr(b as u32)),
+                _ => None,
+            };
+            match value {
+                Some(value) => Some(u64::from(value)),
+                None => ordered(Some(a.cmp(&c))).map(u64::from),
+            }
+        }
+        Kind::I64 => {
+            let (a, c) = (a as i64, b as i64);
+            let value = match op {
+                BinOp::Add => Some(a.wrapping_add(c)),
+                BinOp::Sub => Some(a.wrapping_sub(c)),
+                BinOp::Mul => Some(a.wrapping_mul(c)),
+                BinOp::Div => Some(if c == 0 { 0 } else { a.wrapping_div(c) }),
+                BinOp::Rem => Some(if c == 0 { 0 } else { a.wrapping_rem(c) }),
+                BinOp::And => Some(a & c),
+                BinOp::Or => Some(a | c),
+                BinOp::Xor => Some(a ^ c),
+                BinOp::Shl => Some(a.wrapping_shl(b as u32)),
+                BinOp::Shr => Some(a.wrapping_shr(b as u32)),
+                _ => None,
+            };
+            match value {
+                Some(value) => Some(value as u64),
+                None => ordered(Some(a.cmp(&c))).map(u64::from),
+            }
+        }
+        Kind::U64 => {
+            let value = match op {
+                BinOp::Add => Some(a.wrapping_add(b)),
+                BinOp::Sub => Some(a.wrapping_sub(b)),
+                BinOp::Mul => Some(a.wrapping_mul(b)),
+                BinOp::Div => Some(a.checked_div(b).unwrap_or(0)),
+                BinOp::Rem => Some(a.checked_rem(b).unwrap_or(0)),
+                BinOp::And => Some(a & b),
+                BinOp::Or => Some(a | b),
+                BinOp::Xor => Some(a ^ b),
+                BinOp::Shl => Some(a.wrapping_shl(b as u32)),
+                BinOp::Shr => Some(a.wrapping_shr(b as u32)),
+                _ => None,
+            };
+            value.or_else(|| ordered(Some(a.cmp(&b))).map(u64::from))
+        }
+        Kind::F32 => {
+            let (a, b) = (f32::from_bits(a as u32), f32::from_bits(b as u32));
+            let value = match op {
+                BinOp::Add => Some(a + b),
+                BinOp::Sub => Some(a - b),
+                BinOp::Mul => Some(a * b),
+                BinOp::Div => Some(a / b),
+                BinOp::Rem => Some(a % b),
+                _ => None,
+            };
+            match value {
+                Some(value) => Some(u64::from(value.to_bits())),
+                None => ordered(a.partial_cmp(&b)).map(u64::from),
+            }
+        }
+        Kind::F64 => {
+            let (a, b) = (f64::from_bits(a), f64::from_bits(b));
+            let value = match op {
+                BinOp::Add => Some(a + b),
+                BinOp::Sub => Some(a - b),
+                BinOp::Mul => Some(a * b),
+                BinOp::Div => Some(a / b),
+                BinOp::Rem => Some(a % b),
+                _ => None,
+            };
+            match value {
+                Some(value) => Some(value.to_bits()),
+                None => ordered(a.partial_cmp(&b)).map(u64::from),
+            }
+        }
+        // Whole cells, which only equality compares.
+        _ => match op {
+            BinOp::Eq => Some(u64::from(a == b)),
+            BinOp::Ne => Some(u64::from(a != b)),
+            _ => None,
+        },
+    }
+}
+
 fn cast(to: Scalar, bits: u64) -> u64 {
     match to {
         Scalar::I8 => bits as i8 as i64 as u64,
@@ -968,24 +1391,127 @@ fn cast(to: Scalar, bits: u64) -> u64 {
 
 /// Runs a function's blocks on the inputs `seed` makes up.
 pub(crate) fn run(f: &cfg::Function, seed: u64) -> Run {
+    run_within(f, seed, Limits::DEFAULT)
+}
+
+/// [`run`], within `limits`.
+pub(crate) fn run_within(f: &cfg::Function, seed: u64, limits: Limits) -> Run {
+    run_in(f, seed, limits, Project::empty())
+}
+
+/// [`run_within`], with the signatures of `project` for the cells of a call that states none.
+pub(crate) fn run_in(f: &cfg::Function, seed: u64, limits: Limits, project: &Project) -> Run {
+    run_on(f, &Input::of(seed), &[], limits, project, &BTreeSet::new())
+}
+
+/// Runs a function's blocks on `input`, noting the cells that would turn a test towards a block `wanted` marks; `wanted` is empty, or as long as the blocks.
+pub(crate) fn run_on(
+    f: &cfg::Function,
+    input: &Input,
+    wanted: &[bool],
+    limits: Limits,
+    project: &Project,
+    singles: &BTreeSet<u32>,
+) -> Run {
     let mut machine = Machine {
         f,
-        seed: mix(seed),
+        project,
+        seed: mix(input.seed),
         cells: HashMap::new(),
         widths: HashMap::new(),
         calls: 0,
         allocs: HashMap::new(),
         shown: HashMap::new(),
-        low_local: None,
+        out_locals: BTreeSet::new(),
+        singles,
         low_param: None,
         low_temps: BTreeMap::new(),
-        run: Run::default(),
+        run: Run {
+            reached: vec![false; f.cfg.blocks.len()],
+            ..Run::default()
+        },
         steps: 0,
+        limits,
+        forced: &input.chosen,
+        wanted,
+        from: Cell::new(None),
+        origins: HashMap::new(),
+        tests: Vec::new(),
+        noting: false,
+        noted: vec![0; wanted.len()],
     };
-    if !f.cfg.blocks.is_empty() {
+    if f.head.locals > FRAME_CELLS || f.head.params > FRAME_CELLS {
+        machine.unsupported("a frame of more cells than the oracle makes");
+    } else if !f.cfg.blocks.is_empty() {
         machine.go();
     }
     machine.run
+}
+
+/// What the conversion `name` from one integer to another makes of a cell: the cell read as the one and widened as the other.
+fn converted(name: &str, cell: Option<u64>) -> Option<u64> {
+    let (from, to) = name.split_once("_to_")?;
+    let (from, to) = (Scalar::from_name(from)?, Scalar::from_name(to)?);
+    let integer = |ty: Scalar| !matches!(ty, Scalar::F32 | Scalar::F64);
+    (integer(from) && integer(to)).then_some(cast(to, cast(from, cell?)))
+}
+
+/// A cell as a value of `kind` widens to it; any cell for a kind that fills one or says nothing of its bits.
+fn widened(kind: &Kind, cell: u64) -> u64 {
+    match kind {
+        Kind::Bool => cell & 1,
+        Kind::I8 => cast(Scalar::I8, cell),
+        Kind::U8 => cast(Scalar::U8, cell),
+        Kind::I16 => cast(Scalar::I16, cell),
+        Kind::U16 => cast(Scalar::U16, cell),
+        Kind::I32 => cast(Scalar::I32, cell),
+        Kind::U32 | Kind::Hash | Kind::F32 => cast(Scalar::U32, cell),
+        _ => cell,
+    }
+}
+
+/// How two events differ, in words a tally can count.
+fn differing(was: &Event, is: &Event) -> &'static str {
+    let low = |a: &u64, b: &u64| *a as u32 == *b as u32;
+    match (was, is) {
+        (
+            Event::Call {
+                callee: a, args: x, ..
+            },
+            Event::Call {
+                callee: b, args: y, ..
+            },
+        ) => match x.iter().zip(y).find(|(p, q)| p != q) {
+            _ if a != b => "another callee",
+            _ if x.len() != y.len() => "a call of other cells",
+            Some((p, q)) if low(p, q) => "the upper half of an argument",
+            Some(_) => "an argument",
+            None => "what a callee can see of the frame",
+        },
+        (
+            Event::Store {
+                addr: a,
+                bytes: m,
+                value: v,
+            },
+            Event::Store {
+                addr: b,
+                bytes: n,
+                value: w,
+            },
+        ) => match (a == b, m == n) {
+            (false, _) => "a store elsewhere",
+            (true, false) => "a store of other bytes",
+            (true, true) if low(v, w) => "the upper half of a stored value",
+            (true, true) => "a stored value",
+        },
+        (Event::Return(x), Event::Return(y)) if x.len() != y.len() => "a return of other cells",
+        (Event::Return(x), Event::Return(y)) => match x.iter().zip(y).all(|(p, q)| low(p, q)) {
+            true => "the upper half of a returned value",
+            false => "a returned value",
+        },
+        _ => "another kind of event",
+    }
 }
 
 /// Whether two runs did the same, as far as both went.
@@ -994,8 +1520,10 @@ pub(crate) fn same(was: &Run, is: &Run) -> Result<(), String> {
     for n in 0..shared {
         if was.events[n] != is.events[n] {
             return Err(format!(
-                "event {n}: {:X?} became {:X?}",
-                was.events[n], is.events[n]
+                "event {n}, {}: {:X?} became {:X?}",
+                differing(&was.events[n], &is.events[n]),
+                was.events[n],
+                is.events[n]
             ));
         }
     }
@@ -1015,45 +1543,175 @@ pub(crate) const SEEDS: u64 = 4;
 /// What checking one function came to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Checked {
-    /// The function held something the oracle does not run.
+    /// The function held something the oracle does not run: nothing was compared.
     pub skipped: bool,
+    /// The inputs every form of the function was run on: the seeds, and those chosen to turn a test.
+    pub seeds: u32,
+    /// The blocks of the form read that an input entered, and the blocks it has.
+    // ⚠ A statement no input reaches is compared by nothing.
+    pub reached: u32,
+    pub blocks: u32,
+    /// The blocks entered first by an input of each kind, at the place of the kind in [`Turned::ALL`].
+    pub entered: [u32; Turned::ALL.len()],
+    /// The blocks no input entered, by what stands before each, at its place in [`inputs::LEFT`].
+    pub left: [u32; inputs::LEFT.len()],
 }
 
-/// Runs a function before the passes and after each of them; `Err` names the first pass whose result does otherwise.
+/// Runs a function as it was read and after the passes, by the four first and then by every one; `Err` names the pass whose result does otherwise.
 pub(crate) fn check(f: tree::Function, names: &Names) -> Result<Checked, String> {
+    let done = check_in(f.clone(), &Context::baseline(names), Limits::DEFAULT)?;
+    let every = Context::new(names, Project::empty(), Options::default());
+    check_in(f, &every, Limits::DEFAULT)?;
+    Ok(done)
+}
+
+/// [`check_blocks`] of a function in the structured form, as a listing reads.
+pub(crate) fn check_in(
+    f: tree::Function,
+    cx: &Context<'_>,
+    limits: Limits,
+) -> Result<Checked, String> {
     if f.head.incomplete.is_some() {
-        return Ok(Checked { skipped: true });
+        return Ok(Checked {
+            skipped: true,
+            ..Checked::default()
+        });
     }
     let read = cfg::lower(f).map_err(|e| format!("does not lower: {e}"))?;
-    let was: Vec<Run> = (0..SEEDS).map(|seed| run(&read, seed)).collect();
-    if was.iter().any(|run| run.unsupported.is_some()) {
-        return Ok(Checked { skipped: true });
+    check_blocks(&read, cx, limits)
+}
+
+/// Runs a function's blocks as a front end made them and after the passes `cx` asks; `Err` names the pass that makes the runs differ once it is switched on after those before it.
+// ⚠ The way back from a source construct is `cfg::lower`, which writes each as the statements
+// it holds: a construct made wrongly differs here like any other rewrite.
+pub(crate) fn check_blocks(
+    read: &cfg::Function,
+    cx: &Context<'_>,
+    limits: Limits,
+) -> Result<Checked, String> {
+    // The inputs are chosen on the form read, once: every other form is run on exactly those.
+    // ⚠ The passes take an address handed out to stop before a local the form read proves one
+    // cell wide (`escape`), so both runs are made on that reach: the passes are never narrower.
+    let singles = match cx.options.on(Pass::Escape) && read.head.incomplete.is_none() {
+        true => passes::values::single_locals(read),
+        false => BTreeSet::new(),
+    };
+    let singles = &singles;
+    let chosen = inputs::choose(&[read], limits, cx.project, singles, None)?;
+    let Some(chosen) = chosen else {
+        return Ok(Checked {
+            skipped: true,
+            ..Checked::default()
+        });
+    };
+    let reached = chosen.reached.first().cloned().unwrap_or_default();
+    let (entered, left) = (chosen.entered, inputs::left(read, &reached));
+    let runs = chosen.kept.into_iter();
+    let was: Vec<(Input, Run)> = runs
+        .filter_map(|(input, mut runs)| Some((input, runs.pop()?)))
+        .collect();
+    let mut checked = Checked {
+        skipped: was.iter().any(|(_, run)| run.unsupported.is_some()),
+        seeds: was.len() as u32,
+        reached: reached.iter().filter(|entered| **entered).count() as u32,
+        blocks: reached.len() as u32,
+        entered,
+        left,
+    };
+    if checked.skipped {
+        return Ok(checked);
     }
-    let compare = |pass: &str, f: &cfg::Function| -> Result<bool, String> {
-        for (seed, was) in (0..SEEDS).zip(&was) {
-            let is = run(f, seed);
+    // ⚠ A callee's result is made up as its signature says it widens, so the signature of this
+    // function is held to what its own code returned: a proof that is wrong is found here.
+    let own = FunctionKey::new(read.head.program, read.head.at);
+    if let Some(stated) = cx.project.signatures.get(&own) {
+        for (input, run) in &was {
+            let one = run.events.iter().find_map(|event| match event {
+                Event::Return(cells) if cells.len() == 1 => cells.first().copied(),
+                _ => None,
+            });
+            let told = |cell: &u64| widened(&stated.result, *cell) == *cell;
+            if let Some(cell) = one.filter(|cell| !told(cell) && !run.unstated.contains(cell)) {
+                let kind = &stated.result;
+                return Err(format!(
+                    "signature, {input}: {cell:X} is returned, and is no {kind:?}"
+                ));
+            }
+        }
+    }
+    // `Err` where a run differs, `Ok(false)` where the passes left what the oracle does not run.
+    let holds = |options: Options| -> Result<bool, String> {
+        let cx = Context::new(cx.names, cx.project, options);
+        let mut done = super::blocks_in(read.clone(), &cx, &mut Stats::default());
+        // A void function returns by running off its end, which the blocks must say.
+        if done.head.returns == Returns::Void {
+            done.body.push(tree::Stmt::Return(None));
+        }
+        let back = cfg::lower(done).map_err(|e| format!("does not lower: {e}"))?;
+        for (input, was) in &was {
+            let is = run_on(&back, input, &[], limits, cx.project, singles);
+            // A chosen input enters what no seed did: where the oracle does not run what the
+            // passes left there, the seeds still say what they said.
+            if is.unsupported.is_some() && !input.chosen.is_empty() {
+                continue;
+            }
             if is.unsupported.is_some() {
                 return Ok(false);
             }
-            same(was, &is).map_err(|why| format!("{pass}, seed {seed}: {why}"))?;
+            same(was, &is).map_err(|why| format!("{input}: {why}"))?;
         }
         Ok(true)
     };
-    let mut stats = Stats::default();
-    let mut f = read.clone();
-    passes::values::run(&mut f, names, &mut stats);
-    let mut ran = compare("values", &f)?;
-    passes::types::run(&mut f, names, &mut stats);
-    ran &= compare("types", &f)?;
-    let mut done = passes::structure::run(f, names, &mut stats);
-    passes::names::run(&mut done, names, &mut stats);
-    // A void function returns by running off its end, which the blocks must say.
-    if done.head.returns == Returns::Void {
-        done.body.push(tree::Stmt::Return(None));
+    if let Ok(ran) = holds(cx.options) {
+        checked.skipped = !ran;
+        return Ok(checked);
     }
-    let back = cfg::lower(done).map_err(|e| format!("structure: does not lower: {e}"))?;
-    ran &= compare("structure", &back)?;
-    Ok(Checked { skipped: !ran })
+    // The passes switched on one after another, in their order: the first set that differs
+    // ends in the pass to read. With none on, the blocks only go to labels and jumps and back.
+    let mut some = Options {
+        level: cx.options.level,
+        ..Options::at(Level::Lifted)
+    };
+    holds(some).map_err(|why| format!("no pass, {why}"))?;
+    for pass in cx.options.passes.iter() {
+        some = some.with(pass);
+        holds(some).map_err(|why| format!("{}, {why}", pass.name()))?;
+    }
+    Err("the passes do not give the same result twice".to_owned())
+}
+
+/// What holding two forms of one function against each other came to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Agreed {
+    /// Either form holds what the oracle does not run: nothing was compared.
+    pub skipped: bool,
+    /// Every block of both forms was entered by an input.
+    // ⚠ Without it the two do the same only as far as the inputs went: a block none entered is compared by nothing.
+    pub whole: bool,
+}
+
+/// Whether two forms of one function do the same on every input, with the signatures of `project`; more seeds are tried while one enters a block of either form that none had, and then inputs chosen to turn a test of either.
+pub(crate) fn agree(
+    a: &cfg::Function,
+    b: &cfg::Function,
+    limits: Limits,
+    project: &Project,
+) -> Result<Agreed, String> {
+    let mut held = |input: &Input, runs: &[Run]| match runs {
+        [was, is] => same(was, is).map_err(|why| format!("{input}: {why}")),
+        _ => Ok(()),
+    };
+    let chosen = inputs::choose(&[a, b], limits, project, &BTreeSet::new(), Some(&mut held))?;
+    Ok(match chosen {
+        Some(chosen) => Agreed {
+            skipped: false,
+            whole: chosen.reached.iter().flatten().all(|entered| *entered),
+        },
+        None => Agreed {
+            skipped: true,
+            whole: false,
+        },
+    })
 }
 
 /// Checks every function of a listing written by hand.
@@ -1471,92 +2129,57 @@ fn a_copy_of_a_whole_value_reads_as_the_value_it_copies() {
 }
 
 #[test]
-#[ignore = "needs a folder of lifted listings in OPENRAGE_LIFTED_LISTINGS; run by name"]
-fn every_function_of_a_folder_of_listings_does_what_it_did() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
+fn a_value_of_a_billion_cells_is_not_made() {
+    // The count is the listing's word: the oracle records that it did not run, and sizes nothing.
+    let f = function("v_000028_3 = zero_slots(4000000000); return 0;");
+    assert!(run(&f, 0).unsupported.is_some());
+    let small = function("v_000028_3 = zero_slots(2); return 0;");
+    assert!(run(&small, 0).unsupported.is_none());
+}
 
-    let folder = std::env::var("OPENRAGE_LIFTED_LISTINGS").expect("the folder is named");
-    let only = std::env::var("OPENRAGE_LIFTED_ONLY").ok();
-    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(&folder)
-        .expect("the folder reads")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            let name = path.to_string_lossy();
-            name.ends_with(".ysc.cs") && only.as_ref().is_none_or(|only| name.contains(only))
-        })
-        .collect();
-    // The small listings first, so that a first failure shows soon.
-    paths.sort_by_key(|path| std::fs::metadata(path).map_or(0, |meta| meta.len()));
-    let next = AtomicUsize::new(0);
-    let ran = AtomicUsize::new(0);
-    let skipped = AtomicUsize::new(0);
-    let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
-    let names = Names::default();
-    std::thread::scope(|scope| {
-        for _ in 0..8 {
-            let worker = std::thread::Builder::new().stack_size(256 << 20);
-            let spawned = worker.spawn_scoped(scope, || loop {
-                let n = next.fetch_add(1, Ordering::Relaxed);
-                let Some(path) = paths.get(n) else {
-                    break;
-                };
-                let text = std::fs::read_to_string(path).expect("the listing is text");
-                let listing = Listing::open(&text).expect("the listing opens");
-                let stem = path.file_name().map(|n| n.to_string_lossy().into_owned());
-                let stem = stem.unwrap_or_default();
-                let mut bad = Vec::new();
-                for f in listing.functions() {
-                    let f = f.expect("the function reads");
-                    let name = f.head.name.clone();
-                    let caught =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(f, &names)));
-                    let checked = caught.unwrap_or_else(|_| Err("a panic".to_owned()));
-                    match checked {
-                        Ok(done) if done.skipped => skipped.fetch_add(1, Ordering::Relaxed),
-                        Ok(_) => ran.fetch_add(1, Ordering::Relaxed),
-                        Err(why) => {
-                            let why: String = why.chars().take(600).collect();
-                            bad.push(format!("{stem}: {name}: {why}"));
-                            0
-                        }
-                    };
-                }
-                failures.lock().expect("no worker panicked").extend(bad);
-            });
-            spawned.expect("a worker starts");
-        }
-    });
-    let failures = failures.into_inner().expect("no worker panicked");
-    eprintln!(
-        "ORACLE: {} listing(s), {} function(s) run, {} not run, {} differ",
-        paths.len(),
-        ran.load(Ordering::Relaxed),
-        skipped.load(Ordering::Relaxed),
-        failures.len()
+#[test]
+fn a_run_marks_the_blocks_it_enters() {
+    let f = function(
+        "if (((as_u32(p0) == 0))) { Native.DEMO.USE(1); } else { Native.DEMO.USE(2); } return 0;",
     );
-    let mut by_pass: BTreeMap<&str, usize> = BTreeMap::new();
-    for failure in &failures {
-        let pass = ["values", "types", "structure"]
-            .into_iter()
-            .find(|pass| failure.contains(&format!(": {pass}")))
-            .unwrap_or("other");
-        *by_pass.entry(pass).or_default() += 1;
-    }
-    eprintln!("ORACLE BY PASS: {by_pass:?}");
-    for pass in ["values", "types", "structure", "other"] {
-        let of_pass = failures.iter().filter(|f| match pass {
-            "other" => !["values", "types", "structure"]
-                .iter()
-                .any(|p| f.contains(&format!(": {p}"))),
-            pass => f.contains(&format!(": {pass}")),
-        });
-        for failure in of_pass.take(40) {
-            eprintln!("ORACLE FAILURE: {failure}");
-        }
-    }
-    assert!(failures.is_empty());
+    // One arm of the two is left out by any one run, and so by what that run compares.
+    let entered = |seed| run(&f, seed).reached.iter().filter(|e| **e).count();
+    assert_eq!(entered(0) + 1, f.cfg.blocks.len());
+    let checked = check_blocks(&f, &Context::baseline(&Names::default()), Limits::DEFAULT);
+    let checked = checked.expect("the passes keep it");
+    assert_eq!(checked.blocks as usize, f.cfg.blocks.len());
+    assert!(checked.reached >= entered(0) as u32 && checked.reached <= checked.blocks);
+    assert_eq!(u64::from(checked.seeds), SEEDS);
+}
+
+#[test]
+fn a_parameter_that_is_one_value_of_two_cells_is_passed_whole() {
+    let mut f = function("Native.DEMO.USE(p0); return 0;");
+    let passed = |f: &cfg::Function| match run(f, 0).events.first() {
+        Some(Event::Call { args, .. }) => args.len(),
+        other => panic!("no call: {other:?}"),
+    };
+    assert_eq!(passed(&f), 1);
+    let mut pair = VarInfo::new(Width::Cells);
+    pair.kind = Kind::Value {
+        ty: "type_0000000000000001".to_owned(),
+        cells: 2,
+    };
+    f.head.vars.insert(Var::Param(0), pair);
+    assert_eq!(passed(&f), 2);
+}
+
+#[test]
+fn two_forms_that_differ_do_not_agree() {
+    let was = function("v_000010_0 = Native.DEMO.GET(p0); Native.DEMO.USE(p1); return v_000010_0;");
+    let is = function("Native.DEMO.USE(p1); v_000010_0 = Native.DEMO.GET(p0); return v_000010_0;");
+    let none = Project::empty();
+    let all = Agreed {
+        skipped: false,
+        whole: true,
+    };
+    assert_eq!(agree(&was, &was.clone(), Limits::DEFAULT, none), Ok(all));
+    assert!(agree(&was, &is, Limits::DEFAULT, none).is_err());
 }
 
 /// The blocks as a body of labels and jumps, one label a block, for reading them.
@@ -1614,7 +2237,7 @@ fn shows_the_blocks_of_one_function_after_each_pass() {
         if f.head.name != wanted {
             continue;
         }
-        let show = |stage: &str, f: &cfg::Function| {
+        let shown = |f: &cfg::Function| {
             let mut writer = super::print::ListingWriter::new(f.head.program, &[]);
             writer.function(&flat(f));
             let text = writer.finish();
@@ -1625,8 +2248,10 @@ fn shows_the_blocks_of_one_function_after_each_pass() {
                 .skip(3)
                 .take_while(|line| !line.contains("    public static class "))
                 .collect();
-            eprintln!("======== {stage} ========\n{}", body.join("\n"));
+            body.join("\n")
         };
+        let show =
+            |stage: &str, f: &cfg::Function| eprintln!("======== {stage} ========\n{}", shown(f));
         let mut stats = Stats::default();
         let mut f = cfg::lower(f).expect("the function lowers");
         let read = f.clone();
@@ -1651,6 +2276,70 @@ fn shows_the_blocks_of_one_function_after_each_pass() {
                             was.events.get(n),
                             now.events.get(n)
                         );
+                    }
+                    break;
+                }
+            }
+        }
+        // Every pass switched on after those before it, as `check_blocks` does, with the project
+        // the corpus suites are given: the blocks each leaves where it changes them, and the
+        // event its result first parts from the function read at.
+        let whole = corpus::whole_project();
+        let project = whole.as_ref().unwrap_or(Project::empty());
+        let mut some = Options {
+            level: Level::Source,
+            ..Options::at(Level::Lifted)
+        };
+        let mut last = String::new();
+        let mut before = read.clone();
+        for pass in Options::default().passes.iter() {
+            some = some.with(pass);
+            let cx = Context::new(&names, project, some);
+            let mut done = super::blocks_in(read.clone(), &cx, &mut Stats::default());
+            if done.head.returns == Returns::Void {
+                done.body.push(tree::Stmt::Return(None));
+            }
+            let back = cfg::lower(done).expect("the function lowers back");
+            let text = shown(&back);
+            if text != last {
+                eprintln!("======== with {} ========\n{text}", pass.name());
+                last = text;
+            }
+            // What the listing's syntax does not write: the statements whose debug form the pass changed.
+            let stmts = |f: &cfg::Function| -> Vec<String> {
+                let all = f.cfg.blocks.iter().flat_map(|block| {
+                    let term = format!("{:?}", block.term);
+                    (block.stmts.iter().map(|stmt| format!("{stmt:?}"))).chain([term])
+                });
+                all.collect()
+            };
+            let (old, new) = (stmts(&before), stmts(&back));
+            if old.len() == new.len() {
+                let changed = old.iter().zip(&new).filter(|(a, b)| a != b);
+                for (a, b) in changed.take(12) {
+                    let (a, b): (String, String) =
+                        (a.chars().take(900).collect(), b.chars().take(900).collect());
+                    eprintln!(
+                        "---- {}: a statement was\n{a}\n---- and is\n{b}",
+                        pass.name()
+                    );
+                }
+            }
+            before = back.clone();
+            // Every seed the corpus suites may run a function on.
+            for seed in 0..SEEDS + Limits::CORPUS.more {
+                let was = run_in(&read, seed, Limits::CORPUS, project);
+                let now = run_in(&back, seed, Limits::CORPUS, project);
+                if same(&was, &now).is_err() {
+                    let shared = was.events.iter().zip(&now.events);
+                    let parted = shared.take_while(|(a, b)| a == b).count();
+                    eprintln!(
+                        "======== with {}, seed {seed}: parts at event {parted} ========",
+                        pass.name()
+                    );
+                    for n in parted.saturating_sub(3)..=parted {
+                        let (a, b) = (was.events.get(n), now.events.get(n));
+                        eprintln!("{n}: {a:X?}\n   {b:X?}");
                     }
                     break;
                 }

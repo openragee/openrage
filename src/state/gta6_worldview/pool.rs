@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Instant;
 
 /// The soonest each key of `asks` is needed by, where a key is asked for more than once.
 pub(super) fn soonest<K: Eq + Hash>(asks: impl Iterator<Item = (K, f32)>) -> HashMap<K, f32> {
@@ -36,9 +37,11 @@ struct Shared<Q> {
 /// A pool of workers, each answering one request at a time.
 pub(super) struct Pool<Q, A> {
     shared: Arc<Shared<Q>>,
-    answers: Receiver<(Q, A, u64)>,
-    /// Answers drawn from the workers that [`Pool::take_soonest`] has not taken yet, each with its weight.
-    arrived: Mutex<Vec<(Q, A, u64)>>,
+    answers: Receiver<(Q, A, u64, Instant)>,
+    /// Answers drawn from the workers that [`Pool::take_soonest`] has not taken yet, each with its weight and when it was answered.
+    arrived: Mutex<Vec<(Q, A, u64, Instant)>>,
+    /// The answers taken soonest first, the seconds they waited from answered to taken in all, and the most.
+    waited: Mutex<(usize, f64, f32)>,
 }
 
 /// What `work` gives, or `failed` where it panics: a worker whose read panics answers that one
@@ -116,7 +119,10 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
                     let mut queue = shared.queue.lock().unwrap_or_else(|p| p.into_inner());
                     queue.waiting = queue.waiting.saturating_add(weight);
                     drop(queue);
-                    if send.send((request, answered, weight)).is_err() {
+                    if send
+                        .send((request, answered, weight, Instant::now()))
+                        .is_err()
+                    {
                         return;
                     }
                 }
@@ -126,6 +132,7 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
             shared,
             answers,
             arrived: Mutex::new(Vec::new()),
+            waited: Mutex::default(),
         }
     }
 
@@ -137,14 +144,27 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
         let first = (arrived.iter().enumerate())
             .min_by(|a, b| soon(&a.1 .0).total_cmp(&soon(&b.1 .0)))
             .map(|(at, _)| at)?;
-        let (request, answer, weight) = arrived.swap_remove(first);
+        let (request, answer, weight, answered) = arrived.swap_remove(first);
         drop(arrived);
+        let waited = answered.elapsed().as_secs_f32();
+        let mut stats = self.waited.lock().unwrap_or_else(|p| p.into_inner());
+        *stats = (
+            stats.0 + 1,
+            stats.1 + f64::from(waited),
+            stats.2.max(waited),
+        );
+        drop(stats);
         let mut queue = self.shared.queue.lock().unwrap_or_else(|p| p.into_inner());
         queue.held.remove(&request);
         queue.waiting = queue.waiting.saturating_sub(weight);
         drop(queue);
         self.shared.woken.notify_all();
         Some((request, answer))
+    }
+
+    /// The answers taken soonest first, the seconds they waited from answered to taken in all, and the most.
+    pub(super) fn waited(&self) -> (usize, f64, f32) {
+        *self.waited.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     /// Ask for `wanted`, each with its distance, in place of what was asked before.
@@ -168,7 +188,7 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
             return Vec::new();
         }
         let mut queue = self.shared.queue.lock().unwrap_or_else(|p| p.into_inner());
-        for (request, _, weight) in &taken {
+        for (request, _, weight, _) in &taken {
             queue.held.remove(request);
             queue.waiting = queue.waiting.saturating_sub(*weight);
         }
@@ -176,7 +196,7 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
         self.shared.woken.notify_all();
         taken
             .into_iter()
-            .map(|(request, answer, _)| (request, answer))
+            .map(|(request, answer, ..)| (request, answer))
             .collect()
     }
 }

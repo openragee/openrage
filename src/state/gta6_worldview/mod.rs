@@ -635,6 +635,18 @@ impl Viewer {
         self.have.entry(model).or_insert(Some(false));
     }
 
+    /// The models and the textures read and taken, the seconds they waited from read to taken in all, and the most.
+    pub fn reads_waited(&self) -> [(usize, f64, f32); 2] {
+        [
+            self.models
+                .as_ref()
+                .map_or_else(Default::default, Pool::waited),
+            self.textures
+                .as_ref()
+                .map_or_else(Default::default, Pool::waited),
+        ]
+    }
+
     /// Whether any texture is read: with no pack indexed none is.
     pub fn reads_textures(&self) -> bool {
         self.textures.is_some()

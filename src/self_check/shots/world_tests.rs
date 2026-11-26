@@ -52,6 +52,10 @@ fn the_steps_of_the_world_are_read() {
         Ok(WorldStep::Fly(glam::Vec3::new(30.0, 0.0, -1.5), at(2000)))
     );
     assert_eq!(
+        parse("glide 30 0 -1.5 2"),
+        Ok(WorldStep::Glide(glam::Vec3::new(30.0, 0.0, -1.5), at(2000)))
+    );
+    assert_eq!(
         parse("perf cost-01.json 30"),
         Ok(WorldStep::Perf("cost-01.json".into(), 30))
     );

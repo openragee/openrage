@@ -175,8 +175,10 @@ pub(super) struct WorldGpu {
     changes: u64,
     /// The models that came, will never come (`None`) or left (`false`), not yet told to the world's thread.
     told: Vec<(ModelRef, Option<bool>)>,
-    /// The models on the device not yet told, for the maps they sample are not all there.
-    pending: HashSet<ModelRef>,
+    /// The models on the device not yet told, for the maps they sample are not all there, with when each was put there.
+    pending: HashMap<ModelRef, Instant>,
+    /// The models told once whole since the world began, the seconds they waited on the device for their maps in all, and the most.
+    whole: (usize, f64, f32),
     laid_for: Option<LaidFor>,
     layout: Layout,
     /// When the last frame was and where the camera stood in it.
@@ -240,6 +242,11 @@ impl RenderBridge {
             self.world.textures.residency(),
             self.world.cards.residency(),
         )
+    }
+
+    /// The models told once whole, the seconds they waited on the device for their maps in all, and the most.
+    pub fn world_whole(&self) -> (usize, f64, f32) {
+        self.world.whole
     }
 
     /// Forget the lit frame's temporal history and start its camera offsets from their first.
@@ -322,7 +329,7 @@ impl RenderBridge {
                     let before = world.model_bytes;
                     let slot = world.put(&self.device, &self.queue, &budgets, &read, (frame, eye));
                     uploaded += world.model_bytes - before;
-                    world.pending.insert(model);
+                    world.pending.insert(model, Instant::now());
                     viewer.on_device(model);
                     slot
                 }

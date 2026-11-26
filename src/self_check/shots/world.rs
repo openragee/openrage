@@ -53,6 +53,8 @@ pub(super) enum WorldStep {
     Modes(u8),
     /// The camera moved at this velocity, in metres a second, for this long, a frame at a time.
     Fly(glam::Vec3, Duration),
+    /// [`Self::Fly`] by the frame clock: a fixed clock puts every run's frames at the same places.
+    Glide(glam::Vec3, Duration),
     /// What this many frames cost at rest and laid out again, written as JSON to this file beside the shots.
     Perf(String, usize),
     /// The camera moved to a pose over a time, and what its frames cost written as JSON to this file.
@@ -104,17 +106,18 @@ pub(super) fn parse(rest: &str) -> Result<WorldStep, String> {
                 Ok(bits | bit)
             })
             .map(WorldStep::Modes),
-        "fly" => {
+        "fly" | "glide" => {
             let [x, y, z, seconds] = numbers::<4>(&args)?;
             if seconds <= 0.0 || seconds > MOST_SECONDS {
                 return Err(format!(
                     "a flight lasts a number of seconds above 0, {MOST_SECONDS} at most"
                 ));
             }
-            Ok(WorldStep::Fly(
-                glam::Vec3::new(x, y, z),
-                Duration::from_secs_f32(seconds),
-            ))
+            let (velocity, seconds) = (glam::Vec3::new(x, y, z), Duration::from_secs_f32(seconds));
+            Ok(match word {
+                "fly" => WorldStep::Fly(velocity, seconds),
+                _ => WorldStep::Glide(velocity, seconds),
+            })
         }
         "perf" => {
             let [name, frames] = args[..] else {
@@ -159,7 +162,7 @@ pub(super) fn parse(rest: &str) -> Result<WorldStep, String> {
                 "no weather `{rest}`; use clear, cloudy, rain, storm or fog"
             )),
         other => Err(format!(
-            "no world step `{other}`; use camera, hour, clean, settle, converge, dump, modes, fly, perf, move, group or weather"
+            "no world step `{other}`; use camera, hour, clean, settle, converge, dump, modes, fly, glide, perf, move, group or weather"
         )),
     }
 }
@@ -336,14 +339,19 @@ fn hex(names: &[u32]) -> Vec<String> {
     out
 }
 
-/// Write what the viewer wants and draws at its camera, and what the device holds of it (`textures`, `stand_ins`), to `path` as JSON.
-fn dump(path: &Path, (textures, stand_ins): (Vec<String>, Vec<String>)) -> Result<(), String> {
+/// Write what the viewer wants and draws at its camera, and what the device holds of it (`textures`, `stand_ins`), to `path` as JSON; `whole` is the models told once whole, the seconds they waited on the device for their maps in all, and the most.
+fn dump(
+    path: &Path,
+    (textures, stand_ins): (Vec<String>, Vec<String>),
+    whole: (usize, f64, f32),
+) -> Result<(), String> {
     let mut viewer = viewer();
     let selected = (viewer.selected(&mut Vec::new()))
         .ok_or("no world streams yet: put `world settle` before `world dump`")?;
     let pose = Pose::of(&viewer.camera);
     let (census, s) = (&selected.census, selected.streaming);
     let records: usize = selected.cards.iter().map(|list| list.records.len()).sum();
+    let taken = viewer.reads_waited();
     // ⚠ A node's fade is written as `MAP:INDEX:FADE`, so a fade in time can be judged against the distance's.
     let mut drawn_nodes: Vec<String> = (census.drawn_nodes.iter())
         .map(|(map, at, fade)| format!("{map:08X}:{at}:{fade:.3}"))
@@ -360,6 +368,7 @@ fn dump(path: &Path, (textures, stand_ins): (Vec<String>, Vec<String>)) -> Resul
         "selected_eye": [selected.eye.x, selected.eye.y, selected.eye.z],
         "selection_ms": selected.took.as_secs_f64() * 1000.0,
         "asked_ms": selected.asked.as_secs_f64() * 1000.0,
+        "handed_ms": selected.handed.as_secs_f64() * 1000.0,
         "hour": viewer.hour,
         "ground": viewer.ground_under(pose.position.x, pose.position.y),
         "lod_scale": viewer.lod_scale,
@@ -371,6 +380,10 @@ fn dump(path: &Path, (textures, stand_ins): (Vec<String>, Vec<String>)) -> Resul
             "maps_waiting": s.maps_waiting,
             "nodes": s.nodes,
             "drawn": s.drawn,
+            "maps_read": s.maps_read,
+            "map_waits_s": s.map_waits,
+            "map_wait_most_s": s.map_wait_most,
+            "map_oldest_s": s.map_oldest,
         },
         "wanted_map_names": hex(&census.wanted),
         "loaded_map_names": hex(&census.loaded),
@@ -382,6 +395,9 @@ fn dump(path: &Path, (textures, stand_ins): (Vec<String>, Vec<String>)) -> Resul
         // ⚠ A texture is `KEY:ASKED:WIDTHxHEIGHT` and a stand-in `ID:SLOT:LEVEL`: two runs of one scene should hold the same.
         "device_textures": textures,
         "device_stand_ins": stand_ins,
+        "models_whole": { "count": whole.0, "waits_s": whole.1, "most_s": whole.2 },
+        "models_taken": { "count": taken[0].0, "waits_s": taken[0].1, "most_s": taken[0].2 },
+        "textures_taken": { "count": taken[1].0, "waits_s": taken[1].1, "most_s": taken[1].2 },
     });
     drop(viewer);
     let text = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
@@ -435,10 +451,15 @@ impl Shell {
                     self.failed.push(why);
                 }
             }
-            WorldStep::Dump(name) => dump(&out.join(name), self.bridge.world_residency())?,
+            WorldStep::Dump(name) => dump(
+                &out.join(name),
+                self.bridge.world_residency(),
+                self.bridge.world_whole(),
+            )?,
             // The groups follow the modes, as they do on the screen until a group is ticked.
             WorldStep::Modes(modes) => viewer().enabled.modes = *modes,
-            WorldStep::Fly(velocity, seconds) => self.fly(state, *velocity, *seconds)?,
+            WorldStep::Fly(velocity, seconds) => self.fly(state, *velocity, *seconds, false)?,
+            WorldStep::Glide(velocity, seconds) => self.fly(state, *velocity, *seconds, true)?,
             WorldStep::Perf(name, frames) => self.perf(state, *frames, &out.join(name))?,
             WorldStep::Move(to, over, name) => self.walk(state, to, *over, &out.join(name))?,
             WorldStep::Group(id, on) => {
@@ -457,18 +478,23 @@ impl Shell {
         Ok(())
     }
 
-    /// Draw frames for `seconds`, the camera moved at `velocity` by the time each is drawn.
+    /// Draw frames for `seconds`, the camera moved at `velocity` by the time each is drawn: the frame clock's `by_frames`, else the wall's.
     fn fly(
         &mut self,
         state: &mut AppState,
         velocity: glam::Vec3,
         seconds: Duration,
+        by_frames: bool,
     ) -> Result<(), String> {
-        let (started, from) = (Instant::now(), viewer().camera.position);
+        let clock = || match by_frames {
+            true => or_transport::clock::now(),
+            false => Instant::now(),
+        };
+        let (started, from) = (clock(), viewer().camera.position);
         // ⚠ The last frame is not cut short at `seconds`: a short last step would read as a camera
         // slowing to a stop, and a dump after the flight is to see it still flying.
         loop {
-            let flown = started.elapsed();
+            let flown = clock().duration_since(started);
             viewer().camera.position = from + velocity * flown.as_secs_f32();
             self.idle(state, 1)?;
             if flown >= seconds {

@@ -84,6 +84,11 @@ pub struct Streaming {
     pub maps_waiting: usize,
     pub nodes: usize,
     pub drawn: usize,
+    /// The map bodies read since the world began, the seconds they waited from first asked to read in all and at most, and how long the one waiting longest now has waited.
+    pub maps_read: usize,
+    pub map_waits: f64,
+    pub map_wait_most: f32,
+    pub map_oldest: f32,
 }
 
 /// What draws for one place of the camera: every instance, in chunks, and the models they draw with.
@@ -97,6 +102,8 @@ pub struct Selected {
     pub took: std::time::Duration,
     /// How far into the selection what it waits for was asked for.
     pub asked: std::time::Duration,
+    /// How long the far stand-ins took to yield to the models drawn where their trees stand.
+    pub handed: std::time::Duration,
     pub models: Vec<ModelRef>,
     pub chunks: Vec<Chunk>,
     pub instances: Vec<Instance>,
@@ -167,6 +174,8 @@ pub(super) struct Streamer {
     /// The occluder maps, streamed by a tier of their own: they hold nothing the forest draws.
     occluders: super::occluders::Occluders,
     pub(super) streaming: Streaming,
+    /// When each map body waited for was first asked for.
+    asked_at: HashMap<u32, Instant>,
     /// The maps taken in since the last selection that was made whole: what a thread that dies is taken to have died on.
     unproven: Arc<Mutex<Vec<u32>>>,
 }
@@ -275,6 +284,7 @@ impl Streamer {
             readers,
             occluders,
             streaming: Streaming::default(),
+            asked_at: HashMap::new(),
             unproven,
         }
     }
@@ -302,7 +312,14 @@ impl Streamer {
     /// rest; whether a map came or went.
     pub(super) fn stream(&mut self, view: &View) -> bool {
         let mut changed = false;
+        let now = Instant::now();
         for (name, read) in self.readers.take(|| true) {
+            if let Some(asked) = self.asked_at.remove(&name) {
+                let waited = now.duration_since(asked).as_secs_f32();
+                self.streaming.maps_read += 1;
+                self.streaming.map_waits += f64::from(waited);
+                self.streaming.map_wait_most = self.streaming.map_wait_most.max(waited);
+            }
             match read {
                 Some(read) => {
                     // ⚠ Said before it is taken in: what it holds may stop the thread on its way in.
@@ -333,6 +350,15 @@ impl Streamer {
             .filter(|(name, _)| !self.loaded.contains_key(name) && !self.failed.contains(name))
             .map(|(name, away)| (*away, *name))
             .collect();
+        // What is no longer asked for has stopped waiting.
+        let mut still = HashMap::with_capacity(asked.len());
+        for (_, name) in &asked {
+            still.insert(*name, *self.asked_at.get(name).unwrap_or(&now));
+        }
+        self.asked_at = still;
+        self.streaming.map_oldest = (self.asked_at.values())
+            .map(|at| now.duration_since(*at).as_secs_f32())
+            .fold(0.0, f32::max);
         self.streaming.maps_wanted = self.wanted.len();
         self.streaming.maps_loaded = self.loaded.len();
         self.streaming.maps_waiting = asked.len();
@@ -600,6 +626,7 @@ impl Streamer {
         }
         // A far stand-in yields to the model of its tree where one is drawn, and draws where none is.
         // ⚠ Each instance once against a mark, not against every run of grass: a city camera's thousands of runs made this seconds of each selection.
+        let handing = Instant::now();
         let mut of_grass = vec![false; out.instances.len()];
         for run in grass {
             of_grass[run].fill(true);
@@ -612,6 +639,7 @@ impl Streamer {
         for (cards, scale, fade) in stand_ins {
             (out.cards).push(cards.seen(scale, fade, &cards.handed_off(&standing)));
         }
+        out.handed = handing.elapsed();
         let list_instances = out.instances.len() - listed;
         // What the maps place inside an interior near the camera takes the interior's ambient light.
         // ponytail: every selection looks again at each instance near an interior in range; held

@@ -35,7 +35,7 @@ impl WorldGpu {
     /// textures nothing is waited for.
     pub(super) fn release_whole(&mut self, reads_textures: bool) {
         let mut released = Vec::new();
-        for model in &self.pending {
+        for model in self.pending.keys() {
             let whole = match self.models.get(model) {
                 Some(Slot::Ready { lods, .. }) => {
                     !reads_textures
@@ -52,10 +52,16 @@ impl WorldGpu {
                 released.push((*model, true));
             }
         }
+        let now = std::time::Instant::now();
         for (model, tell) in released {
-            self.pending.remove(&model);
+            let put = self.pending.remove(&model);
             if tell {
                 self.told.push((model, Some(true)));
+            }
+            if let (true, Some(put)) = (tell, put) {
+                let waited = now.duration_since(put).as_secs_f32();
+                let (count, all, most) = &mut self.whole;
+                (*count, *all, *most) = (*count + 1, *all + f64::from(waited), most.max(waited));
             }
         }
     }
@@ -72,7 +78,7 @@ impl WorldGpu {
         (per_metre, most_side): (f32, u32),
         frame: u64,
     ) -> Vec<(f32, u64, u32)> {
-        let unseen: Vec<ModelRef> = self.pending.iter().filter(|m| !seen(m)).copied().collect();
+        let unseen: Vec<ModelRef> = self.pending.keys().filter(|m| !seen(m)).copied().collect();
         for model in unseen {
             self.pending.remove(&model);
             if matches!(self.models.get(&model), Some(Slot::Ready { .. })) {
@@ -86,7 +92,7 @@ impl WorldGpu {
         }
         let mut asks = Vec::new();
         let mut kept = Vec::new();
-        for model in &self.pending {
+        for model in self.pending.keys() {
             let Some(Slot::Ready { lods, at, .. }) = self.models.get(model) else {
                 continue;
             };
@@ -116,7 +122,7 @@ impl WorldGpu {
             }
         }
         // ⚠ A model held back has not drawn: kept last of what is let go for room.
-        for model in &self.pending {
+        for model in self.pending.keys() {
             if let Some(Slot::Ready { held, .. }) = self.models.get_mut(model) {
                 *held = frame;
             }

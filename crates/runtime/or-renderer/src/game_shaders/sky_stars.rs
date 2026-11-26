@@ -593,7 +593,7 @@ mod tests {
             uv_scale: 1.0,
         })[2]
             .position;
-        assert!((step.z.atan2(step.x) - 0.071399833).abs() < 1e-6);
+        assert!((step.z.atan2(step.x) - std::f32::consts::TAU / 88.0).abs() < 1e-6);
         assert_eq!(
             FAN_TRIANGLES as usize + 2,
             crate::world::sky_dome::FAN_VERTICES

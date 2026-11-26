@@ -231,7 +231,7 @@ NodeRunner's model viewer is a browser of every object type and every vehicle of
 
 | Capability | For | Against | Verdict | Row |
 |---|---|---|---|---|
-| Every object type and every vehicle browsed in one place | How a mapper and a script developer find a model | A vehicle's class and pack come from the install's vehicle data, which no crate interprets today | Take | R70z |
+| Every object type and every vehicle browsed in one place | How a mapper and a script developer find a model | A vehicle's class and pack come from the install's vehicle data, which `crates/title/or-title/src/install/vehicles.rs` reads as the file's text states them, and the two lists are paged with no screen ([R70z](Roadmap.md#r70z-a-browser-of-models-and-vehicles)) | Take | R70z |
 | Thumbnails of what is browsed | The thumbnail cache exists today (`src/render/thumbnails.rs`) | R47 files a thumbnail browser as a plugin | Waits (ruling 2) | R70j, R70z |
 | Filters and order by class, by pack and by size | | The class and the pack are read from the same vehicle data | Take | R70z |
 | Favourites, the models opened last, and back and forward | | | Take | R70z |

@@ -40,6 +40,9 @@ msgstr "무기 팩: 무기 모델, 텍스처, 무기 파일을 놓아 무기를 
 msgid "Add .ymap and .ytyp files: OpenRage shows what they place, lets you move each thing with a manipulator, checks the pack and builds a FiveM resource."
 msgstr ".ymap 및 .ytyp 파일 추가: OpenRage가 배치되는 항목을 보여 주고, 매니퓰레이터로 각 항목을 이동할 수 있게 하며, 팩을 검사하고 FiveM 리소스를 빌드합니다."
 
+msgid "Add a game folder…"
+msgstr "게임 폴더 추가…"
+
 msgid "Add a map pack…"
 msgstr "맵 팩 추가…"
 
@@ -5701,6 +5704,9 @@ msgstr "켜진 필터 없음"
 msgid "No game"
 msgstr "게임 없음"
 
+msgid "No game OpenRage knows is in {folder}"
+msgstr "{folder}에 OpenRage가 아는 게임이 없습니다"
+
 msgid "No game install is chosen, so the preview shows the garment alone"
 msgstr "선택된 게임 설치가 없으므로 미리 보기에는 의상만 표시됩니다"
 
@@ -7969,6 +7975,9 @@ msgstr "먼저 파일 또는 가운데 영역에서 가져올 파일을 선택�
 
 msgid "Select the first source this import made, in the Project workspace"
 msgstr "프로젝트 작업 영역에서 이 가져오기가 만든 첫 번째 소스를 선택하십시오"
+
+msgid "Select the folder of a game"
+msgstr "게임의 폴더 선택"
 
 msgid "Select the folder to add to in Files or in the centre first"
 msgstr "먼저 파일 또는 가운데 영역에서 추가할 대상 폴더를 선택하십시오"

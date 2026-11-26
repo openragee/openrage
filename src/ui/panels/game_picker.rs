@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use egui_phosphor::regular as icon;
+use or_title::game::Platform;
 
 use crate::platform::file_dialogs;
 use crate::state::{AppState, Game, RecentFile};
@@ -67,9 +68,11 @@ fn heading(ui: &mut egui::Ui, text: &str) {
 fn draw_installs(ui: &mut egui::Ui, state: &mut AppState) {
     let mut chosen: Option<(Game, PathBuf)> = None;
     let mut key_details = false;
-    for game in Game::all() {
+    for game in builds_by_title() {
         let found = found_install(state, game);
-        if found.is_none() && !game.profile().is_supported() {
+        // ⚠ A store can find a PC build, so its row stands while it is missing; a console build is a folder the user adds, and has a row once it was.
+        let profile = game.profile();
+        if found.is_none() && !(profile.is_supported() && profile.platform() == Platform::Pc) {
             continue;
         }
         // The keys are read from the executable of the install in use, so its row is the one that says how that went.
@@ -81,6 +84,19 @@ fn draw_installs(ui: &mut egui::Ui, state: &mut AppState) {
     }
     if key_details {
         open_settings_at(state, SettingsCategory::Games);
+    }
+    if ui.button(tr!("Add a game folder…")).clicked() {
+        if let Some(dir) =
+            file_dialogs::pick_game_install_folder(tr!("Select the folder of a game"))
+        {
+            match or_title::game::registry::detect(&dir).and_then(|p| Game::by_id(p.id())) {
+                Some(game) => chosen = Some((game, dir)),
+                None => state.show_error_toast(tr!(
+                    "No game OpenRage knows is in {folder}",
+                    folder = dir.display()
+                )),
+            }
+        }
     }
     if state.discovery.is_running() {
         ui.horizontal(|ui| {
@@ -103,6 +119,15 @@ fn draw_installs(ui: &mut egui::Ui, state: &mut AppState) {
     }
 }
 
+/// Every build, those of one title together, titles in the order the registry first names them.
+fn builds_by_title() -> Vec<Game> {
+    let mut builds: Vec<Game> = Game::all().collect();
+    let titles: Vec<&str> = builds.iter().map(|g| g.profile().title()).collect();
+    let first = |game: &Game| titles.iter().position(|t| *t == game.profile().title());
+    builds.sort_by_key(first);
+    builds
+}
+
 /// One install with its button and, for the install in use, what `keys` says; whether Key details… was asked for.
 fn draw_game_row(
     ui: &mut egui::Ui,
@@ -123,7 +148,10 @@ fn draw_game_row(
                 ui.label(egui::RichText::new(game.label()).strong().size(15.0));
                 let detail = found.as_deref().map_or_else(
                     || tr!("Not found on this machine").to_string(),
-                    |dir| dir.display().to_string(),
+                    |dir| match profile.platform() {
+                        Platform::Pc => dir.display().to_string(),
+                        console => format!("{} · {}", console.label(), dir.display()),
+                    },
                 );
                 ui.label(
                     egui::RichText::new(detail)

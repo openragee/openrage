@@ -42,6 +42,53 @@ impl ContainerFamily {
     }
 }
 
+/// The machine a build of a title was made for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Platform {
+    Pc,
+    Ps4,
+    XboxOne,
+    Ps5,
+    XboxSeries,
+}
+
+impl Platform {
+    pub fn label(self) -> &'static str {
+        match self {
+            Platform::Pc => "PC",
+            Platform::Ps4 => "PlayStation 4",
+            Platform::XboxOne => "Xbox One",
+            Platform::Ps5 => "PlayStation 5",
+            Platform::XboxSeries => "Xbox Series",
+        }
+    }
+}
+
+/// Where a PlayStation package states its title id: an SFO on a PlayStation 4, JSON on a PlayStation 5.
+pub const PLAYSTATION_PARAMS: &[&str] = &["sce_sys/param.sfo", "sce_sys/param.json"];
+
+/// Whether a parameter file of `root` holds one of `title_ids`, which both forms store as plain ASCII.
+pub(crate) fn playstation_params_name(root: &Path, title_ids: &[&str]) -> bool {
+    use std::io::Read;
+
+    PLAYSTATION_PARAMS.iter().any(|name| {
+        let Ok(file) = std::fs::File::open(root.join(name)) else {
+            return false;
+        };
+        let mut bytes = Vec::new();
+        if file
+            .take(GDK_CONFIG_MAX_BYTES)
+            .read_to_end(&mut bytes)
+            .is_err()
+        {
+            return false;
+        }
+        title_ids
+            .iter()
+            .any(|id| !id.is_empty() && bytes.windows(id.len()).any(|w| w == id.as_bytes()))
+    })
+}
+
 /// The GDK title configuration an Xbox package carries at its root.
 pub const GDK_CONFIG: &str = "MicrosoftGame.Config";
 
@@ -133,6 +180,15 @@ pub trait GameProfile: Send + Sync + 'static {
 
     fn description(&self) -> &'static str;
 
+    /// The game this is a build of, which every build of it names alike.
+    fn title(&self) -> &'static str {
+        self.label()
+    }
+
+    fn platform(&self) -> Platform {
+        Platform::Pc
+    }
+
     fn container(&self) -> ContainerFamily;
 
     fn native_target(&self) -> Generation;
@@ -188,6 +244,11 @@ pub trait GameProfile: Send + Sync + 'static {
         None
     }
 
+    /// The title ids a PlayStation package of this build states, one per region.
+    fn playstation_title_ids(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     fn matches_install(&self, root: &Path) -> bool {
         self.executable_candidates()
             .iter()
@@ -195,6 +256,7 @@ pub trait GameProfile: Send + Sync + 'static {
             || self
                 .gdk_title_id()
                 .is_some_and(|id| gdk_config_names(root, id))
+            || playstation_params_name(root, self.playstation_title_ids())
     }
 
     fn is_supported(&self) -> bool {

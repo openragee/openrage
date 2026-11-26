@@ -150,7 +150,7 @@ pub struct DoorRow {
     /// The model's name, or `hash_XXXXXXXX` where none is known.
     pub model: String,
     pub hash: u32,
-    /// `extension` where its archetype states the door extension, `name` where a pattern matched its model's name.
+    /// `extension` where it or its archetype states the door extension, `name` where a pattern matched its model's name.
     pub found_by: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
@@ -186,7 +186,7 @@ pub struct SetDoors {
     pub name: String,
     /// How many entities were looked at, those the set's interiors place among them.
     pub entities: usize,
-    /// The entities whose archetype states no door extension and whose model has no name: a door among them is a door missed.
+    /// The entities that state no door extension, whose archetype states none and whose model has no name: a door among them is a door missed.
     pub unnamed: usize,
     /// How many bounds of the map's collision the arcs were held against; with none, an arc meets the boxes of other entities alone.
     pub colliders: usize,

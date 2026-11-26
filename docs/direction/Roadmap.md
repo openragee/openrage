@@ -9623,24 +9623,23 @@ and the choice, kept on disk and rebuilt only where the install changed. It adds
 (`the_world_index_names_everything_a_real_install_lists`, 2026-11-26;
 [figures](../reference/Crate_Reference.md#domain-crates)): it failed on Enhanced while an archive
 the mount lists twice was read again at each start, and the index now names the copy of a file the
-title update patches, which is the one the mount opens.
+title update patches, which is the one the mount opens. An interior's bound states its box about
+the interior, so the index answers one at no position
+(`an_interiors_bound_whose_box_is_about_the_interior_is_answered_at_no_position_and_named_by_its_map`,
+measured by `what_the_files_of_a_real_install_state_where_the_index_takes_one_reading`).
 `crates/domain/or-depends/src/world_index.rs` reads every map, type file, manifest and bound an
 archive at a time, answers the maps and carried bounds at a position and is kept on disk by each
 archive's stamp (`the_world_index_of_a_mount`), behind `openrage-cli world index` and `world at`.
 `DlcCutoff::Level` stops the mount at a pack of the DLC list and `MountOptions::mode` takes the map
 as story or multiplayer
-(`a_mount_stops_at_a_level_of_dlc_and_takes_the_map_as_story_or_multiplayer`), set by
-`openrage-cli dlc-list` and by `world ground` ([R70g](#r70g-collision-as-a-query)), which keeps
-the index of a level in a file of its own. The cutoff by a pack's name hash (`--dlc`) keeps the
-folders of packs past it from the walk as a level does
-(`a_pack_past_a_name_hash_is_left_out_of_the_walk_as_one_past_a_level_is`), and an archive one of
-whose files did not open is kept with no stamp and read again
-(`a_file_that_did_not_open_is_read_again_by_the_next_build_though_its_archive_stands`). The index
+(`a_mount_stops_at_a_level_of_dlc_and_takes_the_map_as_story_or_multiplayer`, and on both installs
+`a_real_install_at_a_level_of_dlc_walks_nothing_of_the_packs_listed_after_it`), set by
+`openrage-cli dlc-list` and by `world ground` ([R70g](#r70g-collision-as-a-query)). The index
 keeps each group's gate and each archetype's files for
-[R70c](#r70c-the-gta-v-world-streamed-and-drawn)
-(`an_instance_names_the_files_its_archetype_states_and_a_kept_index_names_them_too`). Left:
-the mode in the index's key; a level and a mode for `world index` and `world at`, and from a
-screen; an archive read at every build, for the folders a level leaves out of it.
+[R70c](#r70c-the-gta-v-world-streamed-and-drawn). Left: the mode in the index's key; a level and a
+mode for `world index` and `world at`, and from a screen; an archive read at every build, for the
+folders a level leaves out of it; the group that requests a map; an interior's bounds said at a
+position by `world at`; and whether a pack the list names twice is mounted twice.
 
 **Done when.** Over a mounted install the index names every map and type file the mount lists, and a
 position inside a known map's extents answers that map, in an install suite of the slow tier, named
@@ -9703,10 +9702,12 @@ Documents written by hand hold it, in `crates/io/or-io/src/gta5/data/water/tests
 `a_document_reads_to_its_quads_and_saves_to_its_fixed_point`,
 `an_element_and_an_attribute_the_reader_does_not_name_survive_a_read_and_a_save`,
 `the_height_at_a_point_inside_a_quad_on_its_edge_and_outside_every_quad` and
-`each_refusal_names_its_element` among them. ⚠ No install's water file has been read: the list of
-what the reader types awaits one, `crates/title/or-title/tests/the_water_file_of_an_install.rs`
-holds the reader on a mount built by hand, and its test over a real install is in the slow tier and
-has not run. For a GTA VI install the world has the install's day, the sun's shadow in cascades
+`each_refusal_names_its_element` among them. The three water files of each install read whole and
+save to the bytes they came as (`every_water_file_is_typed_whole_and_saves_to_its_fixed_point`,
+2026-11-25; [their quads](../reference/Crate_Reference.md#io-crates)), once an item that states
+no corner read as a quad at zero, as a stripped level's does
+(`an_item_that_states_no_corner_is_a_quad_at_zero_and_saves_as_it_came`). For a GTA VI install the
+world has the install's day, the sun's shadow in cascades
 (`crates/runtime/or-renderer/src/world/shadow.rs`), the game's lighting passes, lamps, a sky and
 water ([the day](../features/GTA_VI_World_Viewer.md#the-day)). For GTA V the Shaded viewport lights
 one model from the install's timecycle
@@ -9807,8 +9808,8 @@ bounds the index names for a column, held under a budget of bytes, behind
 `openrage-cli world ground`, on mounts built by hand
 (`crates/domain/or-depends/tests/the_ground_under_a_place_of_a_mount.rs`). Named and not loaded:
 the collision of an interior and of a placed prop, which needs the entity's placement and is next;
-`WorldCollision::place` is its seam. The install check holds on both installs
-(`the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them`, 2026-11-26;
+`WorldCollision::place` is its seam. The install check holds on both installs and settles a
+node's scale (`the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them`, 2026-11-26;
 [figures](../reference/Crate_Reference.md#domain-crates)). A ray's slack past a triangle's edges
 grows with how far its origin is from the triangle over the triangle's size, so a slanted ray from
 hundreds of metres no longer passes through a seam
@@ -9817,8 +9818,7 @@ bounds become colliders with none refused
 (`every_staged_bound_becomes_a_collider_whose_ray_and_swept_sphere_agree`, 2026-11-25), and 897 of
 971 geometries stop 40 mm short of the box they state
 (`every_staged_geometry_lies_in_the_box_it_states`, 2026-11-25), so whether the game's surface is
-the polygons is open. Left: the collision of interiors and placed props;
-and the particle collider, `BvhCollider` in `crates/runtime/or-simulation/src/collision.rs`,
+the polygons is open. Left: that collision, and the particle collider, `BvhCollider` in `crates/runtime/or-simulation/src/collision.rs`,
 unchanged because it makes triangles of the curved shapes the query meets exactly, which is the
 owner's to rule on.
 
@@ -10075,13 +10075,14 @@ doors carry, a game door moved or deleted, two doors at one place, and a door wh
 the search, the pairing, the arc, the rules `doors-overlap` and `door-blocked`, the copy forms and
 `openrage-cli maps doors` (`crates/domain/or-world/tests/the_doors_of_a_map.rs`,
 `crates/domain/or-maps/tests/the_doors_of_a_pack.rs`;
-[what each reads](../reference/Crate_Reference.md#domain-crates)).
+[what each reads, and the counts](../reference/Crate_Reference.md#domain-crates)). On each
+install 470 state the extension, on the entity and on no archetype, so the entity is asked
+first (`the_doors_of_the_install_are_counted_by_their_extension_and_by_their_name`, 2026-11-25).
 
-Left: the count over an install; the door tuning with its entry, its line and its zone; a door
-that opens in the view; the fitted replacement; an interior's entity sets; the two rules that need
-the game; an arc held against the game's collision, where the verb holds it against the boxes of
-the other entities alone; a verb that writes a door form or reads a person's patterns; and the
-name patterns, the cuts of the swept box and the least turn, which are judgements to measure.
+Left: the door tuning and its zone; a door that opens in the view; the fitted replacement; an
+interior's entity sets; the two rules that need the game; an arc held against the game's
+collision; a verb that writes a door form or reads a person's patterns; and the name patterns, the
+cuts of the swept box and the least turn, judgements to measure.
 
 **Depends on.** [R70g](#r70g-collision-as-a-query) and
 [R70i](#r70i-selecting-and-moving-in-the-world).
@@ -10174,19 +10175,20 @@ and a type file named inside that archive, and the cell unlocks (the plan's ruli
 its extents is split at the build, by area, its links carried across the parts
 ([brief](World_Editor_Plan.md#a-build-a-server-and-a-story-install-take-r70q)).
 
-**Where it stands.** Part one is built; nothing ran against an install or a game. A Map content
+**Where it stands.** Part one is built; nothing ran in a game. A Map content
 hands a build `stream/_manifest.ymf`, stating for each map the type files `or-world`'s derivation
 finds (`a_build_writes_a_manifest_that_reads_back_naming_the_type_file_its_map_needs`), and the
-line `this_is_a_map`. The manifest is not made from nothing:
-`crates/domain/or-world/src/manifest_build.rs` types it by the manifests of the game a content
+line `this_is_a_map`. `crates/domain/or-world/src/manifest_build.rs` types it by the manifests of the game a content
 keeps in its `manifests` folder (`openrage-cli maps keep-manifest`) and copies each entry from the
 one they state for a map of that name, since nothing derives the flags of an entry. A map taken from the game keeps the entry the game states
 (`a_map_taken_from_the_game_keeps_the_entry_the_game_states_where_the_derived_one_differs`); a map
 none states, such as one made from nothing, gets no entry, and a note of the plan names it.
 `openrage-cli maps verify` fails a build whose manifest is gone or is another document. Of the
-1,801 `.ymf` staged in the metadata corpus, 1,798 read as a manifest a build writes from, and the
-185 that state a map are written back stating what they state
-(`every_staged_manifest_of_the_game_is_written_back_stating_what_it_states`, 2026-11-25).
+1,801 `.ymf` staged, 1,798 read as a manifest a build writes from, and the 185 that state a map
+are written back stating it
+(`every_staged_manifest_of_the_game_is_written_back_stating_what_it_states`, 2026-11-25). On each
+install five maps taken as sources are stated as the install states them
+(`a_map_taken_from_an_install_is_stated_as_the_install_states_it_from_the_manifests_kept_of_it`).
 
 ⚠ A kept manifest is a compiled file of the game held whole in a project, which the ruling of
 2026-10-09 says a project never holds
@@ -10206,8 +10208,9 @@ change set that turns map data on are unmeasured
 Left: the line for the server's configuration; the split, which
 `crates/domain/or-world/src/partition.rs` plans by level of detail and does not apply; the lists a
 derivation does not give, written empty; one manifest for two Map contents of a build, refused
-today as one path; keeping a manifest from the editor; the three measurements; and the install
-suite, written and never run ([the writer in full](../reference/Crate_Reference.md#domain-crates)).
+today as one path; keeping a manifest from the editor; the three measurements; and every stated map
+of an install
+([the writer in full](../reference/Crate_Reference.md#domain-crates)).
 
 **Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits).
 
@@ -10238,8 +10241,9 @@ three-way merge of a map are built
 ([each in full, with what is open](../reference/Crate_Reference.md#domain-crates)).
 `crates/domain/or-project/src/resource.rs` reads any resource folder as a server will: the manifest
 is never run, and each row of `RULES` fires on a folder built to break it and on no other (`each_rule_fires_on_the_folder_built_to_break_it_and_on_no_other`).
-`openrage-cli project check-resource` prints the findings and exits 1 on an error; `--game` ran
-on no install.
+`openrage-cli project check-resource` prints the findings and exits 1 on an error; `--game` holds
+on both
+(`a_resource_checked_with_an_install_asks_the_game_about_what_it_places_and_does_not_declare`).
 
 `crates/domain/or-project/src/server.rs` reads a server's resources folder, each file once
 (`a_scan_opens_each_file_once_and_a_second_scan_gives_the_same_findings_in_the_same_order`). Its
@@ -10405,19 +10409,21 @@ makes `<name>.bounds.src` of a `.ybn`, its triangles as a glb and what a glb can
 out of a build until it changes
 (`a_bound_taken_from_the_game_is_left_out_of_a_build_until_a_polygon_changes`,
 `a_path_region_taken_from_the_game_is_left_out_of_a_build_until_its_document_is_edited`).
-[Source_Format_Design.md](Source_Format_Design.md#bounds-and-path-regions) states both forms, what
-each refuses and what a rebuilt bound keeps of its file.
+[Source_Format_Design.md](Source_Format_Design.md#bounds-and-path-regions) states both
+forms.
 
-On the staged corpus, with no install: 21 of 21 `.ybn` and 259 of 259 `.ynd` became a source that
-cooks to its canonical save (`every_corpus_ybn_becomes_a_source_that_cooks_to_its_canonical_save`,
+On the staged corpus, 21 of 21 `.ybn` and 259 of 259 `.ynd` became a source that cooks to its canonical save (`every_corpus_ybn_becomes_a_source_that_cooks_to_its_canonical_save`,
 `every_corpus_ynd_becomes_a_source_that_cooks_to_its_canonical_save`, 2026-11-25), and each of the
 77991 nodes is addressed by its place in the one region of its file
-(`every_node_of_a_corpus_ynd_is_addressed_by_its_place_in_one_region`, 2026-11-25).
+(`every_node_of_a_corpus_ynd_is_addressed_by_its_place_in_one_region`, 2026-11-25). So did every
+copy the mount of each install lists, 15,130 `.ybn` and 1,521 `.ynd` on Legacy and 14,695 and
+1,027 on Enhanced
+(`every_bound_and_path_region_of_the_install_becomes_a_source_that_cooks_to_its_canonical_save`,
+2026-11-25).
 
 Left: the compare of a source against its base, as the polygon removed or the field changed; the
-round trip over an install, which no suite walks; the form of a path region, which awaits the
-owner's word; a child added to or removed from a composite, and the changed meshes the source
-refuses by name; and nothing was run in the game.
+form of a path region, which awaits the owner's word; a child added to or removed from a
+composite, and the changed meshes the source refuses by name; and nothing was run in the game.
 
 **Done when.** Every `.ybn` and `.ynd` of an install becomes a source and cooks back to the
 canonical save of its file, in the slow tier and named in the skip ledger without an install; an

@@ -41,6 +41,7 @@ const ALWAYS_DEFAULT: &[&str] = &[
 const ALWAYS_SLOW: &[&str] = &[
     "or-maps::what_the_rules_say_of_the_install",
     "or-maps::deleting_an_entity_of_the_install_keeps_every_link",
+    "or-maps::the_doors_bounds_and_path_regions_of_the_install",
     "or-depends::the_world_index_of_a_real_install",
 ];
 

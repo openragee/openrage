@@ -722,12 +722,17 @@ impl WorldIndex {
             let (min, max) = map.streaming?;
             Some((min, max, at as u32))
         }));
-        // ⚠ Only a bound something carries is asked by position. A `.ybn` that is an archetype's
-        // own collision states its box about the model's origin, not a place in the world.
+        // ⚠ Only a bound a map group or a map's stem carries is asked by position. A `.ybn` that
+        // is an archetype's own collision states its box about the model's origin, and one an
+        // interior alone carries about the interior's: neither box is a place in the world.
+        let in_the_world = |bound: &Bound| {
+            let mut carriers = self.carriers.get(&bound.hash).into_iter().flatten();
+            carriers.any(|by| by.via != Via::ManifestInterior)
+        };
         self.bound_tree =
             BoxTree::build(self.bounds.iter().enumerate().filter_map(|(at, bound)| {
                 let (min, max) = bound.span?;
-                (self.carriers.contains_key(&bound.hash)).then_some((min, max, at as u32))
+                in_the_world(bound).then_some((min, max, at as u32))
             }));
         // ⚠ A carried bound with no box the tree takes is in no column by its own word, so it is
         // kept under each map that carries it and asked where that map streams.
@@ -891,7 +896,7 @@ impl WorldIndex {
         found.iter().map(|&at| &self.maps[at as usize]).collect()
     }
 
-    /// The bounds something carries whose box holds `at`, in the mount's order.
+    /// The bounds a map group or a map's stem carries whose box holds `at`, in the mount's order.
     pub fn bounds_at(&self, at: Vec3) -> Vec<BoundAt<'_>> {
         self.carried(&self.bound_tree.holding(at))
     }
@@ -907,12 +912,12 @@ impl WorldIndex {
         found.iter().map(|&at| &self.maps[at as usize]).collect()
     }
 
-    /// The bounds something carries whose box holds `x` and `y` at any height, in the mount's order.
+    /// The bounds a map group or a map's stem carries whose box holds `x` and `y` at any height, in the mount's order.
     pub fn bounds_in_column(&self, x: f32, y: f32) -> Vec<BoundAt<'_>> {
         self.bounds_near_column(x, y, 0.0)
     }
 
-    /// The bounds something carries whose box comes within `radius` metres of the upright line through `x` and `y`, in the mount's order.
+    /// The bounds a map group or a map's stem carries whose box comes within `radius` metres of the upright line through `x` and `y`, in the mount's order.
     pub fn bounds_near_column(&self, x: f32, y: f32, radius: f32) -> Vec<BoundAt<'_>> {
         self.carried(&self.bound_tree.in_column(x, y, radius))
     }

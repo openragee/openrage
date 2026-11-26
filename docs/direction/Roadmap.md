@@ -505,9 +505,9 @@ question in [the rulings asked](World_Editor_Plan.md#rulings-asked-of-the-owner)
 whose ruling says "It waits". Parts of R70a, R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k,
 R70l, R70m, R70n, R70o, R70p, R70q, R70r, R70v, R70w and R70y are built, on installs and packs made
 by hand and on the staged corpus, with no screen but the Build tab's line of R70a, the Map screen's
-Undo of R70h and the presets of keys in Settings of R70v. No row is closed, the install suites
-that have run on the two installs are those of R70b, R70c, R70d, R70e, R70g, R70h, R70k, R70n,
-R70q, R70r and R70w and of the data parts of R70m and R70o
+session of R70h and its Delete of R70k, and the presets of keys in Settings of R70v. No row is
+closed, the install suites that have run on the two installs are those of R70b, R70c, R70d, R70e,
+R70g, R70h, R70k, R70n, R70q, R70r, R70w and R70y and of the data parts of R70m and R70o
 ([how a lane runs one](../guides/Development_Workflow.md#install-suites)), and nothing was loaded
 in a game: each row's Where it stands says what is built and what is left. R70 has no letter left:
 a finding that fits no row opens the next number.
@@ -9552,7 +9552,7 @@ A part's Done when is its check; its brief says what to read and build. A part t
 kind of file adds it to the recipe and the sheet of R70a. Lanes began on 2026-11-25: parts of R70a,
 R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70l, R70m, R70n, R70o, R70p, R70q, R70r, R70v,
 R70w and R70y are built, none closed, install suites run for R70b, R70c, R70d, R70e, R70g,
-R70h, R70k, R70m, R70n, R70o, R70q, R70r and R70w, and nothing loaded in a game.
+R70h, R70k, R70m, R70n, R70o, R70q, R70r, R70w and R70y, and nothing loaded in a game.
 
 ### R70a What the game loads
 
@@ -10553,9 +10553,9 @@ it states them
 (`an_entity_put_back_leaves_the_parked_vehicle_the_source_changed_as_the_source_states_it`).
 `openrage-cli maps put-back` runs a plan, and `MapChanges::count` is what a discard asks. On the
 installs each sampled entity, moved and then deleted with its chain, was put back to the bytes
-its pack was imported with, 19 of 19 on Legacy and 17 of 17 on Enhanced
-(`an_entity_deleted_from_a_map_of_the_install_is_put_back_as_the_game_has_it`, 2026-11-26, at
-138338896).
+its pack was imported with, 19 of 19 on Legacy at fb434693e and 17 of 17 on Enhanced at
+138338896 (`an_entity_deleted_from_a_map_of_the_install_is_put_back_as_the_game_has_it`,
+2026-11-26).
 
 ⚠ Three readings are the owner's to rule on: the nearest match believes a place over a guid; an
 entity added after the one with the largest guid went takes that guid and is put back as that

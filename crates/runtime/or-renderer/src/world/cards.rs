@@ -51,6 +51,44 @@ pub struct CardMesh<'a> {
     pub material: super::WorldMaterial,
 }
 
+/// What the stand-ins' pixel stage takes of the visual settings: the scale its G-buffer's diffuse colour is taken to with distance, and the distance that scaling starts at and the span it takes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CardLook {
+    pub diffuse_scale: [f32; 3],
+    pub scale_start: f32,
+    pub scale_range: f32,
+}
+
+impl Default for CardLook {
+    /// The executable's own values, which leave the colour as it is.
+    fn default() -> Self {
+        Self {
+            diffuse_scale: [1.0; 3],
+            scale_start: 100.0,
+            scale_range: 100.0,
+        }
+    }
+}
+
+/// The look as the pixel stage reads it: the diffuse scale, then the start and one over the span.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct GpuLook {
+    diffuse: [f32; 4],
+    ramp: [f32; 4],
+}
+
+impl GpuLook {
+    fn of(look: &CardLook) -> Self {
+        let [r, g, b] = look.diffuse_scale;
+        Self {
+            diffuse: [r, g, b, 0.0],
+            // A span of nought scales the colour whole at the start.
+            ramp: [look.scale_start, 1.0 / look.scale_range.max(1e-4), 0.0, 0.0],
+        }
+    }
+}
+
 /// The frames of a species' grid along each side.
 pub const CARD_FRAMES: u32 = 8;
 
@@ -125,9 +163,10 @@ pub(crate) struct Cards {
     cast: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    /// The records, the list of each record, the lists and the species, and the bytes of each that are bound.
-    buffers: [Option<wgpu::Buffer>; 4],
-    bound: [u64; 4],
+    /// The records, the list of each record, the lists, the species and the look, and the bytes of each that are bound.
+    buffers: [Option<wgpu::Buffer>; 5],
+    bound: [u64; 5],
+    look: Option<CardLook>,
     group: Option<wgpu::BindGroup>,
     /// The records of each list last set, by its place, and the records last uploaded.
     spans: Vec<Range<u32>>,
@@ -141,6 +180,9 @@ const RECORDS: usize = 0;
 const LIST_OF: usize = 1;
 const LISTS: usize = 2;
 const SPECIES: usize = 3;
+const LOOK: usize = 4;
+/// The binding each buffer is bound at.
+const BINDINGS: [u32; 5] = [0, 1, 2, 3, 6];
 
 impl Cards {
     pub(crate) fn new(
@@ -182,6 +224,10 @@ impl Cards {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ..storage(BINDINGS[LOOK])
                 },
             ],
         });
@@ -277,8 +323,9 @@ impl Cards {
             cast,
             layout,
             sampler,
-            buffers: [None, None, None, None],
-            bound: [0; 4],
+            buffers: [None, None, None, None, None],
+            bound: [0; 5],
+            look: None,
             group: None,
             spans: Vec::new(),
             uploaded: Vec::new(),
@@ -294,8 +341,18 @@ impl Cards {
         for at in [RECORDS, LIST_OF, LISTS] {
             cards.write(device, queue, at, &[0; 64]);
         }
-        cards.regroup(device);
+        cards.set_look(device, queue, CardLook::default());
         cards
+    }
+
+    /// Hand the pixel stage `look` where it differs from the one it holds.
+    fn set_look(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, look: CardLook) {
+        if self.look == Some(look) {
+            return;
+        }
+        self.look = Some(look);
+        self.write(device, queue, LOOK, bytemuck::bytes_of(&GpuLook::of(&look)));
+        self.regroup(device);
     }
 
     /// Write `bytes` to buffer `at`, which is bound at their length.
@@ -305,6 +362,7 @@ impl Cards {
             "cards-list-of",
             "cards-lists",
             "cards-species",
+            "cards-look",
         ][at];
         super::fill(
             device,
@@ -318,13 +376,13 @@ impl Cards {
     }
 
     fn regroup(&mut self, device: &wgpu::Device) {
-        let mut entries = Vec::with_capacity(6);
+        let mut entries = Vec::with_capacity(7);
         for (at, (buffer, bound)) in self.buffers.iter().zip(self.bound).enumerate() {
             let (Some(buffer), Some(size)) = (buffer, NonZeroU64::new(bound)) else {
                 return;
             };
             entries.push(wgpu::BindGroupEntry {
-                binding: at as u32,
+                binding: BINDINGS[at],
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer,
                     offset: 0,
@@ -505,6 +563,11 @@ impl ViewportRenderer {
         species: &[CardSpecies],
     ) {
         self.world.cards.set_species(device, queue, species);
+    }
+
+    /// What the stand-ins take of the visual settings.
+    pub fn set_card_look(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, look: CardLook) {
+        self.world.cards.set_look(device, queue, look);
     }
 
     /// Which of the lists last set draw this frame, by their place in that list.

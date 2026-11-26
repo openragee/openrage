@@ -30,6 +30,12 @@ struct Species {
 @group(1) @binding(3) var<storage, read> species: array<Species>;
 @group(1) @binding(4) var atlas: texture_2d_array<f32>;
 @group(1) @binding(5) var atlas_smp: sampler;
+// What the visual settings give the pixel stage: the diffuse scale, then the distance its scaling starts at and one over the span it takes.
+struct Look {
+    diffuse: vec4<f32>,
+    ramp: vec4<f32>,
+};
+@group(1) @binding(6) var<storage, read> look: Look;
 
 const NO_SLOT: u32 = 0xffffffffu;
 // A grid of 8 by 8 frames a species, and 2 by 2 species a layer.
@@ -408,8 +414,11 @@ fn fs_gbuffer(in: VsOut) -> GBufferOut {
     }
     let n = normal_of(in);
     var out: GBufferOut;
-    // The lighting pass squares the colour it reads here, so the target holds the square root of the linear colour.
-    out.albedo = vec4<f32>(sqrt(max(s.rgb, vec3<f32>(0.0))), 1.0);
+    // The lighting pass squares the colour it reads here, so the target holds the square root of the linear colour, which the game's stand-in takes towards its diffuse scale by the pixel's depth in the view.
+    let m = camera.view_proj;
+    let depth = dot(vec4<f32>(in.world_pos, 1.0), vec4<f32>(m[0][3], m[1][3], m[2][3], m[3][3]));
+    let scaled = mix(vec3<f32>(1.0), look.diffuse.rgb, saturate((depth - look.ramp.x) * look.ramp.y));
+    out.albedo = vec4<f32>(sqrt(max(s.rgb, vec3<f32>(0.0))) * scaled, 1.0);
     out.normal = vec4<f32>(n * 0.5 + 0.5, 0.0);
     out.specular = specular_words(b.words, n, in.world_pos);
     // Outdoors, no light of its own, and the backlit pass's flag of the leaves most of the pixel is

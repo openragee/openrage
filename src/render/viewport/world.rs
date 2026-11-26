@@ -358,6 +358,7 @@ impl RenderBridge {
         self.renderer.set_world_lamps(lights.lamps);
         self.renderer.set_world_exposure(exposure);
         self.renderer.set_world_wind(viewer.wind(weathers));
+        (self.renderer).set_card_look(&self.device, &self.queue, viewer.card_look());
         world.cost.lights = lighting.elapsed();
         // ⚠ The game stretches its cascades by what its camera rides; the viewer's rides nothing, so its cascades are the free camera's, and past them the terrain alone shades, as the game's does.
         if let Some(terrain) = viewer.terrain() {

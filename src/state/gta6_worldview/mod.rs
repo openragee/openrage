@@ -34,6 +34,7 @@ mod pool;
 pub(crate) mod sky;
 mod sky_night;
 mod sky_weather;
+mod slod_look;
 pub(crate) mod stream;
 pub(crate) mod terrain;
 mod texture;

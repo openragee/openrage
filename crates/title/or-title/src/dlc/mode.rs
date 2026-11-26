@@ -1,5 +1,15 @@
 //! Which of a pack's change sets apply to the map as story and as multiplayer,
 //! by the group its `setup2.xml` names each under.
+//!
+//! ⚠ The rule reads three group names, and what the setup documents of two
+//! installs state bounds it (`which_groups_the_change_sets_of_an_install_belong_to`).
+//! Every setup that names a change set under the multiplayer map group is a
+//! compat pack, all but one of them named as a multiplayer pack, and every
+//! list of a map is under that group or under none. No setup states the
+//! story's map group, so nothing shipped shows that branch at work, and no
+//! document says in words that either group is one mode's: it is how the
+//! mount reads the two names. Nine more group names are stated, which say no
+//! mode, and no change set is named by two groups.
 
 use super::model::{ContentChangeSet, ListItem, SetupData};
 
@@ -73,7 +83,7 @@ impl SetupData {
                     .iter()
                     .any(|item| item.trim().eq_ignore_ascii_case(change_set.name.trim()))
             };
-            // A setup's own `contentChangeSets` run with `GROUP_STARTUP`.
+            // A setup's own `contentChangeSets` run with `GROUP_STARTUP`; no setup of the installs measured names one.
             let mut runs = mode.is_none() || named(&self.content_change_sets);
             let mut other_mode = false;
             let mut says_nothing = false;
@@ -180,6 +190,49 @@ mod tests {
         assert_eq!(verdict.files_to_enable, ["MIXED.rpf"]);
         assert_eq!(verdict.unstated, ["MIXED"]);
         assert!(verdict.left_out.is_empty());
+    }
+
+    /// The group names the setup documents of two installs state beside the three the rule reads
+    /// (`which_groups_the_change_sets_of_an_install_belong_to`).
+    const STATED_BESIDE: [&str; 9] = [
+        "GROUP_EARLY_ON",
+        "GROUP_ON_DEMAND",
+        "GROUP_POST_DLC_PATCH",
+        "GROUP_TITLEUPDATE_STARTUP",
+        "GROUP_UPDATE_DLC_METADATA",
+        "GROUP_UPDATE_DLC_PATCH",
+        "GROUP_UPDATE_STREAMING",
+        "GROUP_UPDATE_TEXT",
+        "GROUP_UPDATE_WEAPON_PATCH",
+    ];
+
+    /// ⚠ A setup as the installs state them: one group for each change set, the story's map group stated by none. The story loses
+    /// what the multiplayer map group names and nothing else, and multiplayer loses nothing.
+    #[test]
+    fn of_the_groups_an_install_states_the_story_leaves_out_the_multiplayer_map_group_alone() {
+        let mut groups: Vec<(&str, &[&str])> =
+            vec![("GROUP_STARTUP", &["START"]), ("GROUP_MAP", &["MAPS"])];
+        let named: Vec<[&str; 1]> = STATED_BESIDE.map(|group| [group]).to_vec();
+        for (group, sets) in STATED_BESIDE.iter().zip(&named) {
+            groups.push((group, sets));
+        }
+        let setup = setup(&groups);
+        let mut sets = vec![change_set("START"), change_set("MAPS")];
+        sets.extend(STATED_BESIDE.iter().map(|group| change_set(group)));
+        sets.push(change_set("IN_NO_GROUP"));
+        let mut says_no_mode: Vec<&str> = STATED_BESIDE.to_vec();
+        says_no_mode.push("IN_NO_GROUP");
+
+        let story = setup.change_sets_in(&sets, Some(MapMode::Story));
+        assert_eq!(story.left_out, ["MAPS"]);
+        assert_eq!(story.unstated, says_no_mode);
+        assert_eq!(story.files_to_enable.len(), sets.len() - 1);
+        assert!(story.files_to_enable.iter().all(|file| *file != "MAPS.rpf"));
+
+        let multiplayer = setup.change_sets_in(&sets, Some(MapMode::Multiplayer));
+        assert!(multiplayer.left_out.is_empty());
+        assert_eq!(multiplayer.unstated, says_no_mode);
+        assert_eq!(multiplayer.files_to_enable.len(), sets.len());
     }
 
     #[test]

@@ -44,6 +44,10 @@ const ALWAYS_SLOW: &[&str] = &[
     "or-maps::the_doors_bounds_and_path_regions_of_the_install",
     "or-depends::the_world_index_of_a_real_install",
     "or-world::what_a_map_holds_besides_entities",
+    "or-cli::how_many_texture_dictionaries_the_type_files_of_an_install_name_and_no_file_holds",
+    "or-maps::how_the_packs_of_an_install_carry_their_maps",
+    "or-title::which_groups_the_change_sets_of_an_install_belong_to",
+    "or-world::what_the_flags_of_a_manifest_entry_follow",
 ];
 
 const BEGIN: &str = "# slow-tier:begin";

@@ -9621,9 +9621,8 @@ and the choice, kept on disk and rebuilt only where the install changed. It adds
 
 **Where it stands.** The install suite holds on both installs
 (`the_world_index_names_everything_a_real_install_lists`, 2026-11-26;
-[figures](../reference/Crate_Reference.md#domain-crates)): it failed on Enhanced while an archive
-the mount lists twice was read again at each start, and the index now names the copy of a file the
-title update patches, which is the one the mount opens. An interior's bound states its box about
+[figures](../reference/Crate_Reference.md#domain-crates)), and the index names the copy of a file
+the title update patches, which is the one the mount opens. An interior's bound states its box about
 the interior, so the index answers one at no position
 (`an_interiors_bound_whose_box_is_about_the_interior_is_answered_at_no_position_and_named_by_its_map`,
 measured by `what_the_files_of_a_real_install_state_where_the_index_takes_one_reading`).
@@ -9634,12 +9633,15 @@ archive's stamp (`the_world_index_of_a_mount`), behind `openrage-cli world index
 as story or multiplayer
 (`a_mount_stops_at_a_level_of_dlc_and_takes_the_map_as_story_or_multiplayer`, and on both installs
 `a_real_install_at_a_level_of_dlc_walks_nothing_of_the_packs_listed_after_it`), set by
-`openrage-cli dlc-list` and by `world ground` ([R70g](#r70g-collision-as-a-query)). The index
+`openrage-cli dlc-list` and by `world ground` ([R70g](#r70g-collision-as-a-query)). No setup of either
+install states the story's group (`which_groups_the_change_sets_of_an_install_belong_to`;
+[counts](../features/Dlc_Pack_Creation.md#traps)). The index
 keeps each group's gate and each archetype's files for
 [R70c](#r70c-the-gta-v-world-streamed-and-drawn). Left: the mode in the index's key; a level and a
 mode for `world index` and `world at`, and from a screen; an archive read at every build, for the
 folders a level leaves out of it; the group that requests a map; an interior's bounds said at a
-position by `world at`; and whether a pack the list names twice is mounted twice.
+position by `world at`; whether a pack the list names twice is mounted twice; and what the game
+does with either map group.
 
 **Done when.** Over a mounted install the index names every map and type file the mount lists, and a
 position inside a known map's extents answers that map, in an install suite of the slow tier, named
@@ -10178,41 +10180,48 @@ and a type file named inside that archive, and the cell unlocks (the plan's ruli
 its extents is split at the build, by area, its links carried across the parts
 ([brief](World_Editor_Plan.md#a-build-a-server-and-a-story-install-take-r70q)).
 
-**Where it stands.** Part one is built; nothing ran in a game. A Map content
-hands a build `stream/_manifest.ymf`, stating for each map the type files `or-world`'s derivation
-finds (`a_build_writes_a_manifest_that_reads_back_naming_the_type_file_its_map_needs`), and the
-line `this_is_a_map`. `crates/domain/or-world/src/manifest_build.rs` types it by the manifests of the game a content
-keeps in its `manifests` folder (`openrage-cli maps keep-manifest`) and copies each entry from the
-one they state for a map of that name, since nothing derives the flags of an entry. A map taken from the game keeps the entry the game states
-(`a_map_taken_from_the_game_keeps_the_entry_the_game_states_where_the_derived_one_differs`); a map
-none states, such as one made from nothing, gets no entry, and a note of the plan names it.
-`openrage-cli maps verify` fails a build whose manifest is gone or is another document. Of the
-1,801 `.ymf` staged, 1,798 read as a manifest a build writes from, and the 185 that state a map
-are written back stating it
-(`every_staged_manifest_of_the_game_is_written_back_stating_what_it_states`, 2026-11-25). On each
+**Where it stands.** The manifest and the layout of a story pack are built, and measured on both
+installs; nothing ran in a game. A Map content hands a build `stream/_manifest.ymf`,
+stating for each map the type files `or-world`'s derivation finds
+(`a_build_writes_a_manifest_that_reads_back_naming_the_type_file_its_map_needs`), and the line
+`this_is_a_map`. `crates/domain/or-world/src/manifest_build.rs` types it by the manifests of the
+game a content keeps (`openrage-cli maps keep-manifest`): a map one of
+them states keeps that entry
+(`a_map_taken_from_the_game_keeps_the_entry_the_game_states_where_the_derived_one_differs`), and a
+map none states takes a derived one, with the interior flag where it places interiors alone
+(`a_map_no_kept_manifest_states_takes_an_entry_with_the_type_file_it_needs_and_the_flags_derived`),
+a rule that gives the flags stated by all 15,126 entries of Legacy and 15,095 of Enhanced
+(`what_the_flags_of_a_manifest_entry_follow`). The 185 staged manifests that state a map are written
+back stating it (`every_staged_manifest_of_the_game_is_written_back_stating_what_it_states`,
+2026-11-25). On each
 install five maps taken as sources are stated as the install states them
 (`a_map_taken_from_an_install_is_stated_as_the_install_states_it_from_the_manifests_kept_of_it`).
 
 ⚠ A kept manifest is a compiled file of the game held whole in a project, which the ruling of
 2026-10-09 says a project never holds
-([rulings in force](Workbench_Plan.md#rulings-in-force)); whether it stays, or the
-flags and the layout it is kept for are held another way, is the owner's to rule on. Until then it
-is treated as a source taken from the game is: `openrage-cli project check-sharing` names each one
-and exits 1, and the managed block of the project's `.gitignore` leaves the folder out
+([rulings in force](Workbench_Plan.md#rulings-in-force)); whether it stays, or what it is kept for
+is held another way, is the owner's to rule on. Until then `openrage-cli project check-sharing`
+names each one and exits 1, and git ignores the folder
 (`a_manifest_of_the_game_a_maps_content_keeps_fails_the_sharing_check_and_is_ignored_by_git`).
 
-For a story pack the content hands its files over inside one nested archive, registered as map
-data, each type file asked for by the `.ityp` name of the archive's folder
-(`a_story_pack_holds_its_maps_in_the_nested_archive_its_content_document_registers`). The cell
-stays locked: the folder of that archive, what a pack states of an archive of type files and the
-change set that turns map data on are unmeasured
-([maps in a pack](../features/Dlc_Pack_Creation.md#maps-in-a-pack)).
+A story pack is laid out as the packs of both installs lay theirs out
+(`how_the_packs_of_an_install_carry_their_maps`;
+[every figure](../features/Dlc_Pack_Creation.md#maps-in-a-pack)): the maps and their manifest in
+`x64/levels/gta5/<content>.rpf`, and each type file with the models its
+archetypes name in `x64/levels/gta5/props/<type file>.rpf`, asked for as a type-file request
+(`a_story_pack_reads_back_as_the_packs_of_an_install_read_but_for_what_turns_its_maps_on`). A type
+file that declares an interior is refused for a pack and locks the cell by the same sentence
+(`a_type_file_that_declares_an_interior_is_asked_for_by_nothing_and_refused_for_a_pack_by_name`).
+The cell says yes to type files and models and no to a map
+(`the_cell_of_a_singleplayer_dlc_says_yes_to_type_files_and_models_and_no_to_a_map_for_what_turns_it_on`):
+no pack of either install turns maps on from the group the writer uses.
 
-Left: the line for the server's configuration; the split, which
-`crates/domain/or-world/src/partition.rs` plans by level of detail and does not apply; the lists a
-derivation does not give, written empty; one manifest for two Map contents of a build, refused
-today as one path; keeping a manifest from the editor; the three measurements; and every stated map
-of an install
+Left: the change set that turns the maps of a story pack on, for a pack loaded in the game to
+answer ([R70a](#r70a-what-the-game-loads)); the entry of a manifest an interior's type file is
+stated by; the line for the server's configuration; the split, which
+`crates/domain/or-world/src/partition.rs` plans by level of detail and does not apply; one manifest
+for two Map contents of a build, refused today as one path; keeping a manifest from the editor; and
+every stated map of an install
 ([the writer in full](../reference/Crate_Reference.md#domain-crates)).
 
 **Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits).
@@ -10243,10 +10252,13 @@ folder the server does not look in
 three-way merge of a map are built
 ([each in full, with what is open](../reference/Crate_Reference.md#domain-crates)).
 `crates/domain/or-project/src/resource.rs` reads any resource folder as a server will: the manifest
-is never run, and each row of `RULES` fires on a folder built to break it and on no other (`each_rule_fires_on_the_folder_built_to_break_it_and_on_no_other`).
+is never run, and each row of `RULES` fires on a folder built to break it
+(`each_rule_fires_on_the_folder_built_to_break_it_and_on_no_other`).
 `openrage-cli project check-resource` prints the findings and exits 1 on an error; `--game` holds
 on both
-(`a_resource_checked_with_an_install_asks_the_game_about_what_it_places_and_does_not_declare`).
+(`a_resource_checked_with_an_install_asks_the_game_about_what_it_places_and_does_not_declare`), and
+`texture-dictionary-missing` is a note, as the game's own files raise it
+(`how_many_texture_dictionaries_the_type_files_of_an_install_name_and_no_file_holds`, 2026-11-25).
 
 `crates/domain/or-project/src/server.rs` reads a server's resources folder, each file once
 (`a_scan_opens_each_file_once_and_a_second_scan_gives_the_same_findings_in_the_same_order`). Its
@@ -10264,9 +10276,9 @@ merged map the rules find in error is refused. `openrage-cli maps merge` runs it
 is the owner's, as are three readings the reference lists. A link into the parent map is merged as
 the number it is, and no map of an install was merged.
 
-Open: which of two copies a server loads is never said, and what a category and the configuration
-commands are was read from no server. Left: the server as a layer of the mount, the Problems
-panel's rule raised by the edit that imports a file, and the finding for a base that is no longer the install's. Nothing here says the game loads a file.
+Open: which of two copies a server loads, and what a category and the configuration commands are,
+read from no server. Left: the server as a layer of the mount, the Problems
+panel's rule raised by the edit that imports a file, and the finding for a base that is no longer the install's.
 
 **Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn),
 [R70h](#r70h-one-vocabulary-of-world-edits) and

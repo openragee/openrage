@@ -271,9 +271,11 @@ fn types_only(dir: &Path) -> PathBuf {
 }
 
 /// The install registers a type file by an `.ityp` name from a nested archive (684 of 685, `where_the_install_keeps_its_map_files`), so a
-/// type file that would sit loose in the pack is a placement nobody measured, with a map file or without one.
+/// type file that would sit loose in the pack, as a FiveM resource has it, is a placement no pack of the game shows, with a map file or
+/// without one. Handed over for the pack it sits in an archive and ships
+/// (`a_content_of_type_files_and_models_plans_and_builds_as_a_singleplayer_dlc`).
 #[test]
-fn a_pack_of_type_files_only_is_locked_for_a_singleplayer_dlc_too() {
+fn a_type_file_that_would_sit_loose_locks_a_singleplayer_dlc() {
     let dir = tempfile::tempdir().unwrap();
     types_only(dir.path());
     let handed = contributions(&container(OutputKind::FivemResource), dir.path());

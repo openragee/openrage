@@ -155,15 +155,31 @@ pub struct Thread {
     /// nought and writes nothing, where a test's own run stops.
     pub bounded: Option<u64>,
     pub registers: HashMap<String, u32>,
+    /// The registers the same thread left of the module after the optimiser, those of
+    /// [`READ`] kept: what [`Thread::reg`] holds a register to.
+    pub passed: Option<HashMap<String, u32>>,
     pub killed: bool,
     /// The barriers it came to.
     pub barriers: u64,
 }
 
+/// The registers the tests read by name. The optimiser drops the last store to any other.
+pub const READ: [&str; 39] = [
+    "exec_hi", "exec_lo", "s13", "s14", "s15", "s16", "s17", "s18", "s20", "s21", "s22", "s23",
+    "s24", "s25", "s26", "s27", "s28", "s29", "s30", "s8_place", "v1", "v2", "v3", "v4", "v5",
+    "v6", "v7", "v8", "v9", "v11", "v12", "v20", "v21", "v22", "v23", "v24", "v25", "v30", "v31",
+];
+
 impl Thread {
-    /// A register the body never declared was never written: it holds nothing.
+    /// A register the body never declared was never written: it holds nothing. The module
+    /// after the optimiser must have left the same in it.
     pub fn reg(&self, name: &str) -> u32 {
-        self.registers.get(name).copied().unwrap_or(0)
+        let held = self.registers.get(name).copied().unwrap_or(0);
+        assert!(READ.contains(&name), "{name} is read and not in READ");
+        let passed = (self.passed.as_ref()).expect("a register read of a module not optimised");
+        let after = passed.get(name).copied().unwrap_or(0);
+        assert_eq!(after, held, "{name} after the optimiser");
+        held
     }
 }
 
@@ -238,14 +254,27 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// What a local holds, which starts as its initialiser, or as nought where it has none.
+    fn local<'f>(
+        &mut self,
+        frame: &'f mut Frame<'a>,
+        local: Handle<LocalVariable>,
+    ) -> &'f mut Value {
+        if !frame.locals.contains_key(&local) {
+            let variable = &frame.fun.local_variables[local];
+            let starts = match variable.init {
+                Some(init) => self.value(frame, init),
+                None => zero(self.module, variable.ty),
+            };
+            frame.locals.insert(local, starts);
+        }
+        frame.locals.get_mut(&local).expect("a local just started")
+    }
+
     fn read(&mut self, frame: &mut Frame<'a>, place: &Place) -> Value {
         match place {
             Place::Nowhere(nought) => nought.clone(),
-            Place::Local(local, path) => {
-                let ty = frame.fun.local_variables[*local].ty;
-                let whole = (frame.locals.entry(*local)).or_insert_with(|| zero(self.module, ty));
-                whole.at(path).clone()
-            }
+            Place::Local(local, path) => self.local(frame, *local).at(path).clone(),
             Place::Global(global, path) => {
                 let variable = &self.module.global_variables[*global];
                 let bound = matches!(
@@ -269,11 +298,7 @@ impl<'a> Machine<'a> {
     fn write(&mut self, frame: &mut Frame<'a>, place: &Place, value: Value) {
         match place {
             Place::Nowhere(_) => {}
-            Place::Local(local, path) => {
-                let ty = frame.fun.local_variables[*local].ty;
-                let whole = (frame.locals.entry(*local)).or_insert_with(|| zero(self.module, ty));
-                *whole.at(path) = value;
-            }
+            Place::Local(local, path) => *self.local(frame, *local).at(path) = value,
             Place::Global(global, path) => self.memory(*global, |whole| *whole.at(path) = value),
         }
     }
@@ -297,11 +322,7 @@ impl<'a> Machine<'a> {
     fn extent(&mut self, frame: &mut Frame<'a>, place: &Place) -> (usize, Value) {
         match place {
             Place::Nowhere(nought) => span(nought),
-            Place::Local(local, path) => {
-                let ty = frame.fun.local_variables[*local].ty;
-                let whole = (frame.locals.entry(*local)).or_insert_with(|| zero(self.module, ty));
-                span(whole.at(path))
-            }
+            Place::Local(local, path) => span(self.local(frame, *local).at(path)),
             Place::Global(global, path) => self.memory(*global, |whole| span(whole.at(path))),
         }
     }
@@ -489,6 +510,7 @@ impl<'a> Machine<'a> {
                 other => panic!("the slope of {other:?} is not run"),
             },
             E::ZeroValue(ty) => zero(self.module, ty),
+            E::Splat { size, value } => Value::List(vec![self.value(frame, value); size as usize]),
             E::Relational { fun, argument } => match (fun, self.value(frame, argument)) {
                 (naga::RelationalFunction::Any, Value::List(parts)) => {
                     B(parts.iter().any(Value::flag))
@@ -541,17 +563,25 @@ impl<'a> Machine<'a> {
                     ref cases,
                 } => {
                     let chosen = self.value(frame, selector).word();
-                    let case = (cases.iter())
-                        .find(|case| match case.value {
-                            naga::SwitchValue::U32(value) => value == chosen,
-                            naga::SwitchValue::I32(value) => value as u32 == chosen,
-                            naga::SwitchValue::Default => true,
-                        })
+                    // The case of the value wherever it stands, and the default only without one.
+                    let of_value = |case: &naga::SwitchCase| match case.value {
+                        naga::SwitchValue::U32(value) => value == chosen,
+                        naga::SwitchValue::I32(value) => value as u32 == chosen,
+                        naga::SwitchValue::Default => false,
+                    };
+                    let default =
+                        |case: &naga::SwitchCase| matches!(case.value, naga::SwitchValue::Default);
+                    let first = (cases.iter().position(of_value))
+                        .or_else(|| cases.iter().position(default))
                         .expect("a switch with no default");
-                    match self.run(frame, &case.body) {
-                        // A break inside a case leaves the switch, not the loop around it.
-                        Flow::Next | Flow::Break => {}
-                        flow => return flow,
+                    for case in &cases[first..] {
+                        match self.run(frame, &case.body) {
+                            // A case that falls through runs the one after it.
+                            Flow::Next if case.fall_through => {}
+                            // A break inside a case leaves the switch, not the loop around it.
+                            Flow::Next | Flow::Break => break,
+                            flow => return flow,
+                        }
                     }
                 }
                 S::Loop {
@@ -861,6 +891,8 @@ impl<'a> Calls<'a> {
 
 /// Runs the module's entry point once for each thread of a group of `threads`, all at once;
 /// `given` is an argument's value by its binding, where the stage's own numbers do not say it.
+/// The module is run again after the optimiser, the registers of [`READ`] kept, for
+/// [`Thread::reg`] to hold each register read to.
 pub fn run(
     module: &naga::Module,
     threads: [u32; 3],
@@ -882,6 +914,29 @@ pub fn run_bound(
 /// [`run_bound`] with the threads run one at a time where `order` names them all: each from
 /// one barrier to its next in that order, round after round.
 pub fn run_in_order(
+    module: &naga::Module,
+    threads: [u32; 3],
+    given: &(dyn Fn(u32, &naga::Binding) -> Option<Value> + Sync),
+    buffers: &[Bound],
+    order: Option<&[u32]>,
+) -> (Vec<Thread>, Vec<Vec<u32>>) {
+    let (mut ran, held) = run_as_it_is(module, threads, given, buffers, order);
+    // The optimiser takes what the validator took: a module made by hand that it refuses is
+    // run as it is alone, and no register of it is read.
+    if crate::rdna::check(module).is_err() {
+        return (ran, held);
+    }
+    let mut passed = module.clone();
+    crate::rdna::opt::optimise(&mut passed, &READ);
+    crate::rdna::check(&passed).expect("the module after the optimiser");
+    let (again, _) = run_as_it_is(&passed, threads, given, buffers, order);
+    for (thread, again) in ran.iter_mut().zip(again) {
+        thread.passed = Some(again.registers);
+    }
+    (ran, held)
+}
+
+fn run_as_it_is(
     module: &naga::Module,
     threads: [u32; 3],
     given: &(dyn Fn(u32, &naga::Binding) -> Option<Value> + Sync),
@@ -1120,7 +1175,7 @@ fn meets(block: &naga::Block) -> bool {
 pub struct Whole {
     pub threads: Vec<Thread>,
     /// At the end, the memory the group shares and each bound buffer the module may store
-    /// to, in the module's order: the variable and its dwords.
+    /// to, in the module's order: the variable's place among them and its name, and its dwords.
     pub memory: Vec<(String, Vec<u32>)>,
 }
 
@@ -1157,8 +1212,12 @@ pub fn run_whole(module: &naga::Module, seed: u64, most: u64) -> Whole {
             )
         })
         .map(|(global, variable)| {
-            let stream = mix(seed ^ mix(global.index() as u64));
-            (global, filled_by(stream, variable.ty))
+            // By where it is bound, which stays as it is when the variables before it go.
+            let place = match &variable.binding {
+                Some(bound) => u64::from(bound.group) << 32 | u64::from(bound.binding),
+                None => u64::MAX - global.index() as u64,
+            };
+            (global, filled_by(mix(seed ^ mix(place)), variable.ty))
         })
         .collect();
     let group = Group {
@@ -1210,11 +1269,12 @@ pub fn run_whole(module: &naga::Module, seed: u64, most: u64) -> Whole {
             Space::Storage { access } => access.contains(naga::StorageAccess::STORE),
             _ => false,
         })
-        .filter_map(|(global, variable)| {
+        .enumerate()
+        .filter_map(|(place, (global, variable))| {
             let mut words = Vec::new();
             left.get(&global)?.words(&mut words);
             let name = variable.name.clone().unwrap_or_default();
-            Some((format!("{} {name}", global.index()), words))
+            Some((format!("{place} {name}"), words))
         })
         .collect();
     Whole {

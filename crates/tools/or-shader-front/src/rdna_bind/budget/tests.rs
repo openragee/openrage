@@ -9,6 +9,53 @@ mod interp;
 /// What fills a buffer of a stage, in dwords, by its binding.
 type Filled = BTreeMap<At, Vec<u32>>;
 
+/// What `fit` did to `module`, and the same of a copy of the stage after the optimiser, its
+/// registers kept for whoever reads them: the copy is fitted the same way, to a stage the
+/// validator takes.
+fn fitted_both_ways(module: &mut Module, fit: impl Fn(&mut Module) -> Fitted) -> Fitted {
+    let mut passed = module.clone();
+    let names: Vec<String> = (functions(&passed))
+        .flat_map(|function| function.local_variables.iter())
+        .filter_map(|(_, local)| local.name.clone())
+        .collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    crate::rdna::opt::optimise(&mut passed, &names);
+    let (optimised, lowered) = (fit(&mut passed), fit(module));
+    // The calls a merge writes are counted by the reads left, which the optimiser joins.
+    let parts = |fitted: &Fitted| -> Vec<(At, Vec<Part>)> {
+        (fitted.merged.iter())
+            .map(|merged| (merged.at, merged.parts.clone()))
+            .collect()
+    };
+    assert_eq!(
+        (&optimised.own, &optimised.shared, parts(&optimised)),
+        (&lowered.own, &lowered.shared, parts(&lowered))
+    );
+    assert_eq!(bindings(&passed), bindings(module));
+    validated(&passed).expect("the optimised stage as fitted");
+    // And reads the same: the registers each leaves, its buffers filled alike by a seed.
+    for seed in 0..6 {
+        let left = |stage: &Module| -> BTreeMap<String, u32> {
+            let mut ran = interp::run_whole(stage, seed, 1 << 20);
+            ran.threads.remove(0).registers.into_iter().collect()
+        };
+        assert_eq!(left(&passed), left(module), "seed {seed}");
+    }
+    lowered
+}
+
+/// [`super::within`], [`fitted_both_ways`].
+fn within(module: &mut Module, noughts: &[At], budget: &Budget) -> Fitted {
+    fitted_both_ways(module, |module| super::within(module, noughts, budget))
+}
+
+/// [`super::noughts_within`], [`fitted_both_ways`].
+fn noughts_within(module: &mut Module, noughts: &[At], budget: &Budget) -> Fitted {
+    fitted_both_ways(module, |module| {
+        super::noughts_within(module, noughts, budget)
+    })
+}
+
 fn wgsl(text: &str) -> Module {
     let module = naga::front::wgsl::parse_str(text).expect("the WGSL parses");
     validated(&module).expect("the stage is valid");

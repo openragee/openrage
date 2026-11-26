@@ -7,6 +7,7 @@ use super::*;
 
 mod equal;
 mod exact;
+mod hand;
 mod interp;
 mod link;
 mod pass_aa;

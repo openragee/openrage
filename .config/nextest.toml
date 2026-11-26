@@ -408,6 +408,7 @@ not (
   | (binary_id(=or-shader-front) & (
       test(/^rdna::tests::pass_rt_walk::/)
       | test(/^rdna::tests::pass_rt_wave_walk::a_walk_a_wave_takes_together/)
+      | test(/^rdna::tests::equal::sample::/)
     ))
   | binary_id(=or-shader-tool::rdna_trace_device)
   | binary_id(=or-simulation::camera_facing_check)

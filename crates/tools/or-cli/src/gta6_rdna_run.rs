@@ -80,6 +80,10 @@ pub(crate) struct Record {
     /// A digest of the module as it was lowered: two runs differ in it where the lowered code does.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub module: String,
+    /// With `--optimise`: the expressions the module computes as lowered and after the
+    /// optimiser, and the microseconds the optimiser took.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optimised: Option<[u64; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wgsl: Option<String>,
     /// With `--arena`, each instruction that tests a ray against a node, in the code's order.
@@ -152,6 +156,8 @@ pub(crate) enum Said {
 pub(crate) struct Want {
     pub backends: bool,
     pub wgsl: bool,
+    /// The module is validated, written and printed as the optimiser leaves it.
+    pub optimise: bool,
 }
 
 /// A block's stage as the report names it.
@@ -226,15 +232,38 @@ fn judge(
         record.wave = wave_of(lowered).to_owned();
         record.intersections = sites(lowered.intersections.clone());
     }
-    let module = &lowered.module;
-    record.module = digest(module);
-    let started = Instant::now();
+    record.module = digest(&lowered.module);
+    let mut started = Instant::now();
     backends::set_doing("validating");
-    match Validator::new(ValidationFlags::all(), Capabilities::all()).validate(module) {
+    let mut checked =
+        Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&lowered.module);
+    let passed;
+    // The optimiser takes what the validator took.
+    let module = match want.optimise && checked.is_ok() {
+        true => {
+            backends::set_doing("optimising");
+            let mut module = lowered.module.clone();
+            let before = rdna::opt::emitted(&module) as u64;
+            started = Instant::now();
+            rdna::opt::optimise(&mut module, &[]);
+            let took = started.elapsed().as_micros() as u64;
+            record.optimised = Some([before, rdna::opt::emitted(&module) as u64, took]);
+            started = Instant::now();
+            backends::set_doing("validating");
+            checked = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module);
+            passed = module;
+            &passed
+        }
+        false => &lowered.module,
+    };
+    match checked {
         Err(why) => {
-            let causes = chain(&why.into_inner());
+            let mut causes = chain(&why.into_inner());
             record.outcome = INVALID.to_owned();
             record.reason = causes.last().map(|cause| fold(cause));
+            if record.optimised.is_some() {
+                causes.insert(0, "after the optimiser".to_owned());
+            }
             record.detail = Some(causes.join(": "));
         }
         Ok(info) => {
@@ -334,27 +363,98 @@ fn say(said: &Said) {
 /// The exit status of a worker that stopped on a program past its budget.
 const EXIT_TIMED_OUT: i32 = 3;
 
-/// `rpf scan-rdna-worker <corpus> <start> <end> <first block> <budget ms> <backends> <wgsl> <cache | -> <memo | -> <memory MB> <arena>`:
-/// the programs `start..end` of a corpus, from `first block` of the first, a [`Said`] a line.
+/// What a worker is run over and with: the words after `scan-rdna-worker`, which the scan
+/// writes and its worker reads here and nowhere else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Asked {
+    pub corpus: String,
+    /// The programs `start..end`, from block `first` of the first.
+    pub start: usize,
+    pub end: usize,
+    pub first: usize,
+    pub budget: Duration,
+    pub want: Want,
+    /// The directory translations are kept in, and the one of [`Plan::memo`]; `-` for none.
+    pub cache: String,
+    pub memo: String,
+    pub memory_mb: u64,
+    /// Whether a program that traces rays is lowered with its structures as memory.
+    pub arena: bool,
+}
+
+impl Asked {
+    /// `<corpus> <start> <end> <first block> <budget ms> <backends> <wgsl> <optimise> <cache | -> <memo | -> <memory MB> <arena>`.
+    pub(crate) fn words(&self) -> Vec<String> {
+        let flag = |on: bool| if on { "1" } else { "0" }.to_owned();
+        // Named one by one: a thing wanted that is given no word here does not compile.
+        let Want {
+            backends,
+            wgsl,
+            optimise,
+        } = self.want;
+        vec![
+            self.corpus.clone(),
+            self.start.to_string(),
+            self.end.to_string(),
+            self.first.to_string(),
+            self.budget.as_millis().to_string(),
+            flag(backends),
+            flag(wgsl),
+            flag(optimise),
+            self.cache.clone(),
+            self.memo.clone(),
+            self.memory_mb.to_string(),
+            flag(self.arena),
+        ]
+    }
+
+    pub(crate) fn read(words: &[String]) -> Result<Self, String> {
+        let [corpus, start, end, first, budget, backends, wgsl, optimise, cache, memo, memory, arena] =
+            words
+        else {
+            return Err("scan-rdna-worker is run by scan-rdna".to_owned());
+        };
+        let number = |word: &String| (word.parse::<u64>()).map_err(|e| format!("{word}: {e}"));
+        Ok(Self {
+            corpus: corpus.clone(),
+            start: number(start)? as usize,
+            end: number(end)? as usize,
+            first: number(first)? as usize,
+            budget: Duration::from_millis(number(budget)?),
+            want: Want {
+                backends: backends == "1",
+                wgsl: wgsl == "1",
+                optimise: optimise == "1",
+            },
+            cache: cache.clone(),
+            memo: memo.clone(),
+            memory_mb: number(memory)?,
+            arena: arena == "1",
+        })
+    }
+}
+
+/// `rpf scan-rdna-worker` and the words of [`Asked`]: the programs `start..end` of a corpus,
+/// from `first block` of the first, a [`Said`] a line.
 pub(crate) fn cmd_worker(args: &[String]) -> Result<(), String> {
-    let [corpus, start, end, first, budget, with_backends, with_wgsl, cache, memo, memory, arena] =
-        args
-    else {
-        return Err("scan-rdna-worker is run by scan-rdna".to_owned());
-    };
-    let number = |word: &String| (word.parse::<usize>()).map_err(|e| format!("{word}: {e}"));
-    let (start, end, first) = (number(start)?, number(end)?, number(first)?);
-    let budget = Duration::from_millis(number(budget)? as u64);
-    let want = Want {
-        backends: with_backends == "1",
-        wgsl: with_wgsl == "1",
-    };
+    let Asked {
+        corpus,
+        start,
+        end,
+        first,
+        budget,
+        want,
+        cache,
+        memo,
+        memory_mb,
+        arena,
+    } = Asked::read(args)?;
     // Before anything is read: an allocation past the ceiling ends this process, and the scan
     // counts the block it was on as out of memory.
-    limits::limit_memory(number(memory)? as u64);
-    let memo = (memo != "-").then(|| Path::new(memo));
-    let pairs = super::gta6_rdna_pairs::read(&super::gta6_rdna_pairs::beside(Path::new(corpus)));
-    let mut corpus = Corpus::open(Path::new(corpus)).map_err(|e| format!("{corpus}: {e}"))?;
+    limits::limit_memory(memory_mb);
+    let memo = (memo != "-").then(|| Path::new(&memo));
+    let pairs = super::gta6_rdna_pairs::read(&super::gta6_rdna_pairs::beside(Path::new(&corpus)));
+    let mut corpus = Corpus::open(Path::new(&corpus)).map_err(|e| format!("{corpus}: {e}"))?;
     // A panic is an outcome here. Where the build cannot unwind it ends the worker, so its one
     // line is the worker's last word: what panicked, doing what, and where.
     std::panic::set_hook(Box::new(|info| {
@@ -390,7 +490,7 @@ pub(crate) fn cmd_worker(args: &[String]) -> Result<(), String> {
         };
         for (block, program) in blocks.into_iter().enumerate().skip(first) {
             let mut options = super::gta6_rdna_pairs::options(&mut corpus, &pairs, index, &program);
-            options.arena = arena == "1";
+            options.arena = arena;
             let stub = Record {
                 index,
                 block,
@@ -585,20 +685,31 @@ pub(crate) struct Plan<'a> {
 }
 
 impl Plan<'_> {
+    /// What a worker over `from..end` is asked.
+    pub(crate) fn asks(&self, from: Place, end: usize) -> Asked {
+        let path = |path: Option<&Path>| {
+            path.map_or("-".to_owned(), |path| path.to_string_lossy().into_owned())
+        };
+        Asked {
+            corpus: path(Some(self.corpus)),
+            start: from.0,
+            end,
+            first: from.1,
+            budget: self.budget,
+            want: self.want,
+            cache: path(self.cache),
+            memo: path(self.memo),
+            memory_mb: self.memory_mb,
+            arena: self.arena,
+        }
+    }
+
     /// A child of this tool over `from..end`, each line it prints handed to `heard`.
     pub(crate) fn worker(&self, from: Place, end: usize, heard: &mut dyn FnMut(Said)) {
-        let flag = |on: bool| if on { "1" } else { "0" };
         let child = std::env::current_exe().and_then(|exe| {
             Command::new(exe)
                 .args(["rpf", "scan-rdna-worker"])
-                .arg(self.corpus)
-                .args([from.0, end, from.1].map(|n| n.to_string()))
-                .arg(self.budget.as_millis().to_string())
-                .args([flag(self.want.backends), flag(self.want.wgsl)])
-                .arg(self.cache.unwrap_or(Path::new("-")))
-                .arg(self.memo.unwrap_or(Path::new("-")))
-                .arg(self.memory_mb.to_string())
-                .arg(flag(self.arena))
+                .args(self.asks(from, end).words())
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 // A worker is silent but for its last words, which are few: read once it is dead.
@@ -967,8 +1078,9 @@ mod tests {
         let want = Want {
             backends: true,
             wgsl: true,
+            optimise: false,
         };
-        let judged = |program: &Program| {
+        let judged_for = |program: &Program, want| {
             judge(
                 program,
                 &Options::default(),
@@ -978,6 +1090,7 @@ mod tests {
                 |_| {},
             )
         };
+        let judged = |program: &Program| judged_for(program, want);
         // A pixel program that only ends translates; a word of no family gives no graph.
         let ends = judged(&program(ShaderKind::Pixel, vec![S_ENDPGM]));
         assert_eq!((ends.outcome.as_str(), ends.graph), (TRANSLATED, true));
@@ -988,6 +1101,89 @@ mod tests {
         assert_eq!(stray.reason.as_deref(), Some("graph"));
         // The same program again is answered from the cache.
         assert!(judged(&program(ShaderKind::Pixel, vec![S_ENDPGM])).cached);
+        // `v_add_f32 v0, v1, v1`, whose sum nothing reads: the optimiser leaves fewer
+        // expressions, and what is validated, written and printed is what it left.
+        let adds = program(ShaderKind::Pixel, vec![0x0600_0301, S_ENDPGM]);
+        let lowered = judged(&adds);
+        assert_eq!(lowered.optimised, None);
+        let optimise = Want {
+            optimise: true,
+            ..want
+        };
+        let optimised = judged_for(&adds, optimise);
+        let [before, after, _] = optimised
+            .optimised
+            .unwrap_or_else(|| panic!("{optimised:?}"));
+        assert!(after < before, "{after} of {before}");
+        assert_eq!(optimised.outcome, TRANSLATED);
+        assert_eq!(optimised.backends, BTreeMap::new());
+        let text = |record: &Record| record.wgsl.clone().unwrap_or_default();
+        assert!(text(&optimised).len() < text(&lowered).len());
+        // The digest is of the module as lowered either way.
+        assert_eq!(optimised.module, lowered.module);
+    }
+
+    #[test]
+    fn what_a_scan_s_flags_ask_for_is_what_its_worker_judges_by() {
+        use or_shader_front::dxil::ShaderKind;
+        // `v_add_f32 v0, v1, v1`, then the end: a module the optimiser leaves smaller.
+        let adds = Program {
+            kind: ShaderKind::Pixel,
+            slot: 0,
+            words: vec![0x0600_0301, 0xBF81_0000],
+            wave32: false,
+            inputs: Vec::new(),
+            vertex_inputs: Vec::new(),
+            position_read: 0,
+            front_face: false,
+            launch: None,
+        };
+        let flags = |flags: &[&str]| -> Vec<String> {
+            flags.iter().map(|flag| (*flag).to_owned()).collect()
+        };
+        // Each flag alone, so that one read in another's place is seen.
+        for (given, printed, wanted) in [
+            (&["--optimise"][..], false, [false, false, true]),
+            (&["--backends"][..], false, [true, false, false]),
+            (&[][..], true, [false, true, false]),
+        ] {
+            let mut args = flags(given);
+            let want = crate::gta6_rdna::wanted(&mut args, printed);
+            assert!(args.is_empty(), "{args:?}");
+            let plan = Plan {
+                corpus: Path::new("made-up.corpus"),
+                budget: Duration::from_millis(250),
+                want,
+                cache: None,
+                memo: Some(Path::new("made-up-memo")),
+                memory_mb: 64,
+                arena: false,
+            };
+            // The words the scan starts its worker with, read as the worker reads them.
+            let asked = Asked::read(&plan.asks((3, 1), 9).words()).unwrap();
+            assert_eq!(asked, plan.asks((3, 1), 9));
+            assert_eq!((asked.start, asked.first, asked.end), (3, 1, 9));
+            let dirs = (asked.cache.as_str(), asked.memo.as_str());
+            assert_eq!(dirs, ("-", "made-up-memo"));
+            let [backends, wgsl, optimise] = wanted;
+            let stated = Want {
+                backends,
+                wgsl,
+                optimise,
+            };
+            assert_eq!(asked.want, stated);
+            let judged = judge(
+                &adds,
+                &Options::default(),
+                &Cache::in_memory(),
+                asked.want,
+                Record::default(),
+                |_| {},
+            );
+            assert_eq!(judged.optimised.is_some(), optimise, "{given:?}");
+            assert_eq!(judged.wgsl.is_some(), wgsl, "{given:?}");
+        }
+        assert!(Asked::read(&flags(&["made-up.corpus", "0", "1"])).is_err());
     }
 
     #[test]

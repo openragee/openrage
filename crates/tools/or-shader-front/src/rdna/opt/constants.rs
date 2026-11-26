@@ -248,6 +248,13 @@ pub(super) fn plan(module: &naga::Module, registers: &Registers) -> Vec<Plan> {
 // changes lifts this; until then such a module's functions are each walked alone.
 const WALKED_IN_PLACE: usize = 2048;
 
+/// The most expressions a module may compute for a function called under a loop to be walked
+/// where it is called.
+// ponytail: the start of a turn is found by walking copies of the loop, and a function under
+// it is copied and walked with each: minutes in a module of some hundred thousand
+// expressions. What a function does to the registers, kept for each start, lifts this.
+const WALKED_UNDER_A_LOOP: usize = 1 << 16;
+
 /// A loop or a `switch` being walked, and what holds where a statement under it leaves it.
 struct Around {
     turns: bool,
@@ -1051,6 +1058,29 @@ impl Walk<'_> {
     }
 }
 
+/// Calls `f` with each function a statement under `block` calls, and whether the call stands
+/// under a loop, `under` for the block itself.
+fn called(block: &Block, under: bool, f: &mut impl FnMut(usize, bool)) {
+    for statement in block.iter() {
+        match statement {
+            S::Call { function, .. } => f(function.index(), under),
+            S::Block(inner) => called(inner, under, f),
+            S::If { accept, reject, .. } => {
+                called(accept, under, f);
+                called(reject, under, f);
+            }
+            S::Switch { cases, .. } => cases.iter().for_each(|case| called(&case.body, under, f)),
+            S::Loop {
+                body, continuing, ..
+            } => {
+                called(body, true, f);
+                called(continuing, true, f);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Runs the pass over every function of `module`: how many literals it made, selects and idle
 /// operators it read past, branches it took, and guarded writes it met with a known condition.
 pub(super) fn fold(module: &mut naga::Module, registers: &Registers) -> [usize; 5] {
@@ -1059,13 +1089,18 @@ pub(super) fn fold(module: &mut naga::Module, registers: &Registers) -> [usize; 
         return [0; 5];
     };
     let mut calls = vec![0u32; plans.len()];
-    for function in super::functions(module) {
-        super::statements(&function.body, &mut |statement| {
-            if let S::Call { function, .. } = *statement {
-                calls[function.index()] += 1;
-            }
+    // By function: whether a call to it, or to a function that calls it, stands under a loop.
+    let mut looped = vec![false; plans.len()];
+    let all: Vec<_> = super::functions(module).collect();
+    // A function is declared before the functions that call it.
+    for (index, function) in all.iter().enumerate().rev() {
+        let under = looped[index];
+        called(&function.body, under, &mut |function, under| {
+            calls[function] += 1;
+            looped[function] |= under;
         });
     }
+    let small = super::emitted(module) <= WALKED_UNDER_A_LOOP;
     let parts = super::functions_mut(module)
         .map(|function| {
             let expressions = std::mem::take(&mut function.expressions);
@@ -1076,8 +1111,10 @@ pub(super) fn fold(module: &mut naga::Module, registers: &Registers) -> [usize; 
         registers,
         plans: &plans,
         parts,
-        once: (calls.iter())
-            .map(|&calls| calls == 1 && registers.globals.len() <= WALKED_IN_PLACE)
+        once: (calls.iter().zip(&looped))
+            .map(|(&calls, &looped)| {
+                calls == 1 && (!looped || small) && registers.globals.len() <= WALKED_IN_PLACE
+            })
             .collect(),
         of: Of::new(0, first, Arena::new()),
         finding: Vec::new(),

@@ -1,11 +1,13 @@
 //! Passes over a lowered module that leave every value it computes as it is, bit for bit: a bare
 //! block joined to its parent, a constant followed through the registers and the branches on the
-//! lane mask, a load read from what was stored, an expression computed once, and a bit cast of a
-//! bit cast read from what was first cast. No float operation is added, reordered or fused, and
-//! none whose result is read is removed.
+//! lane mask, a load read from what was stored, an expression computed once, a bit cast of a
+//! bit cast read from what was first cast, and a store nothing reads dropped with the register
+//! nothing names any more. No float operation is added, reordered or fused, and none whose
+//! result is read is removed.
 
 mod casts;
 mod constants;
+mod dead;
 mod forward;
 mod splice;
 
@@ -30,6 +32,31 @@ pub struct Changed {
     pub forwarded: usize,
     /// Bit casts replaced by what an earlier bit cast read, or that now read it themselves.
     pub casts: usize,
+    /// Stores to a register that nothing reads before the next store to it, dropped.
+    pub stores: usize,
+    /// `if`s left with nothing to do in either arm, dropped.
+    pub empty: usize,
+    /// Variables of a thread's own that nothing names any more, dropped.
+    pub registers: usize,
+    /// The rounds of the passes that changed something.
+    pub rounds: usize,
+}
+
+impl Changed {
+    fn add(&mut self, other: Self) {
+        self.blocks += other.blocks;
+        self.literals += other.literals;
+        self.selects += other.selects;
+        self.idle += other.idle;
+        self.branches += other.branches;
+        self.guards += other.guards;
+        self.forwarded += other.forwarded;
+        self.casts += other.casts;
+        self.stores += other.stores;
+        self.empty += other.empty;
+        self.registers += other.registers;
+        self.rounds += other.rounds;
+    }
 }
 
 fn functions(module: &naga::Module) -> impl Iterator<Item = &Function> {
@@ -215,8 +242,28 @@ pub fn guarded(module: &naga::Module) -> usize {
         .sum()
 }
 
-/// Runs every pass over `module`, which the validator must have taken, and drops what nothing reads.
-pub fn optimise(module: &mut naga::Module) -> Changed {
+/// The rounds of the passes run at most: a round reads what the one before it left.
+const ROUNDS: usize = 32;
+
+/// Runs the passes over `module`, which the validator must have taken, until a round of them changes nothing. `keep` names the registers read from outside the module once it has run: the last store to each stays.
+pub fn optimise(module: &mut naga::Module, keep: &[&str]) -> Changed {
+    // A round that finds nothing must leave the module as it was, so what nothing reads goes
+    // before the first as it does after each.
+    unread(module);
+    let mut all = Changed::default();
+    for _ in 0..ROUNDS {
+        let changed = round(module, keep);
+        if changed == Changed::default() {
+            break;
+        }
+        all.add(changed);
+        all.rounds += 1;
+    }
+    all
+}
+
+/// Every pass once, then what nothing reads dropped.
+fn round(module: &mut naga::Module, keep: &[&str]) -> Changed {
     let mut changed = Changed::default();
     for function in functions_mut(module) {
         changed.blocks += splice::splice(&mut function.body);
@@ -241,9 +288,32 @@ pub fn optimise(module: &mut naga::Module) -> Changed {
     for (function, plan) in functions_mut(module).zip(plans) {
         changed.casts += plan.apply(function);
     }
-    // Every function, global and named type stays: only what no statement reads goes.
-    naga::compact::compact(module, naga::compact::KeepUnused::Yes);
+    [changed.stores, changed.empty] = dead::stores(module, &registers, keep);
+    unread(module);
+    changed.registers = dead::registers(module);
     changed
+}
+
+/// Drops the expressions of `module` that no statement reads, itself or through another. Every
+/// function, bound global and named type stays.
+fn unread(module: &mut naga::Module) {
+    // The compaction keeps an expression for its name alone, and a pass would meet it again
+    // in every round: a name goes with the last reader.
+    for function in functions_mut(module) {
+        if function.named_expressions.is_empty() {
+            continue;
+        }
+        let mut read = vec![false; function.expressions.len()];
+        reads(&mut function.body, &mut |at| read[at.index()] = true);
+        // An expression comes after everything it reads.
+        for (at, expression) in function.expressions.iter_mut().rev() {
+            if read[at.index()] {
+                operands(expression, &mut |at| read[at.index()] = true);
+            }
+        }
+        (function.named_expressions).retain(|at, _| read[at.index()]);
+    }
+    naga::compact::compact(module, naga::compact::KeepUnused::Yes);
 }
 
 /// Calls `f` on each expression `expression` reads.

@@ -4,10 +4,10 @@
 //! pass removes.
 //!
 //! Nothing of a build is in the tree. `OPENRAGE_RDNA_SAMPLE` names a folder of modules kept as
-//! the translation cache keeps one, each in a file named `.module`; without it the last test
-//! checks nothing and says so. `OPENRAGE_RDNA_SEEDS` is how many seeds each is run on. With a
-//! folder named the test takes minutes: run it under `--profile all`, since a default run of
-//! nextest ends a test at 30 s.
+//! the translation cache keeps one, each in a file named `.module`; without it the test of
+//! `sample` is a skip in the ledger. `OPENRAGE_RDNA_SEEDS` is how many seeds each is run on.
+//! With a folder named the test takes minutes, so its module is of the slow tier, which
+//! `--profile all` runs.
 
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
@@ -64,9 +64,9 @@ fn whole(module: &naga::Module, seed: u64) -> (Outcome, u64, HashSet<(usize, usi
 
 /// How two modules compared over some seeds.
 #[derive(Debug, Default)]
-struct Compared {
+pub(super) struct Compared {
     /// The seeds both ran to their end on, with the same outcome.
-    equal: u32,
+    pub(super) equal: u32,
     /// Of those, the seeds a thread was discarded on.
     discarded: u32,
     /// The expressions each computed.
@@ -126,7 +126,7 @@ fn compare_noting(
     Ok(compared)
 }
 
-fn compare(
+pub(super) fn compare(
     lowered: &naga::Module,
     passed: &naga::Module,
     seeds: Range<u64>,
@@ -178,8 +178,14 @@ fn casts_of_casts(module: &naga::Module) -> usize {
 /// round, `v0 = v0 * v1 + v0`; the lane stays on where `limit` > `v0`; the target takes `v0`,
 /// the last product and `v1`. `product` is the operation of the product.
 fn looped(product: u32, limit: u32) -> naga::Module {
+    looped_after(&[], product, limit)
+}
+
+/// [`looped`] with the instructions `first` before its loop.
+fn looped_after(first: &[u32], product: u32, limit: u32) -> naga::Module {
     let target = exp(0, [0, 2, 1, 1]);
-    let words = vec![
+    let mut words = first.to_vec();
+    words.extend([
         vintrp(1, 0, 0, 0, 1),
         vintrp(1, 1, 0, 1, 1),
         sopk(S_MOVK, 0, 3),
@@ -187,24 +193,24 @@ fn looped(product: u32, limit: u32) -> naga::Module {
         vop2(V_ADD_F32, 0, V + 2, 0),
         sop2(S_ADD_I32, 0, 0, I_MINUS_ONE),
         sopc(S_CMP_LG_U32, 0, I_ZERO),
-        // Back to the product at word 3.
+        // Back to the product, five words up.
         sopp(S_CBRANCH_SCC1, 0xFFFB),
         vopc(V_CMPX_GT_F32, limit, 0),
         target[0],
         target[1],
         S_ENDPGM,
-    ];
+    ]);
     lowered(ShaderKind::Pixel, words).module
 }
 
-const SEEDS: Range<u64> = 0..24;
+pub(super) const SEEDS: Range<u64> = 0..24;
 
 #[test]
 fn a_program_computes_the_same_with_its_bare_blocks_joined() {
     let module = looped(V_MUL_F32, F_ONE);
     assert!(functions(&module).any(|function| bare_blocks(&function.body) > 0));
     let mut passed = module.clone();
-    let changed = opt::optimise(&mut passed);
+    let changed = opt::optimise(&mut passed, &[]);
     assert!(changed.blocks > 0, "{changed:?}");
     assert_eq!(
         functions(&passed)
@@ -222,7 +228,7 @@ fn a_program_computes_the_same_with_its_bare_blocks_joined() {
     );
     // A second run finds nothing left to do.
     let again = passed.clone();
-    assert_eq!(opt::optimise(&mut passed), opt::Changed::default());
+    assert_eq!(opt::optimise(&mut passed, &[]), opt::Changed::default());
     assert_eq!(format!("{passed:?}"), format!("{again:?}"));
 }
 
@@ -389,7 +395,7 @@ fn a_bit_cast_of_a_bit_cast_reads_what_was_first_cast() {
     let module = by_hand(Fault::None);
     assert_eq!(casts_of_casts(&module), 3);
     let mut passed = module.clone();
-    let changed = opt::optimise(&mut passed);
+    let changed = opt::optimise(&mut passed, &[]);
     validate(&passed);
     let compared = compare(&module, &passed, SEEDS).unwrap();
     assert_eq!(compared.equal, 24);
@@ -402,7 +408,7 @@ fn a_bit_cast_of_a_bit_cast_reads_what_was_first_cast() {
     // Gone: the float and its way back, the float between the integers, the cast to its own
     // type. The signed cast stays, for the shift that reads it as signed.
     assert_eq!(opt::emitted(&module) - opt::emitted(&passed), 4);
-    assert_eq!(opt::optimise(&mut passed), opt::Changed::default());
+    assert_eq!(opt::optimise(&mut passed, &[]), opt::Changed::default());
 }
 
 #[test]
@@ -411,11 +417,11 @@ fn the_comparison_sees_a_module_that_computes_something_else() {
     let right = by_hand(Fault::None);
     let wrong = by_hand(Fault::CastOfAnotherType);
     let said = compare(&right, &wrong, SEEDS).unwrap_err();
-    assert!(said.contains("dword 1 of 1 out"), "{said}");
+    assert!(said.contains("dword 1 of 0 out"), "{said}");
     // A texel is the texture's own, at the place sampled.
     for fault in [Fault::CoordinatesSwapped, Fault::OtherTexture] {
         let said = compare(&right, &by_hand(fault), SEEDS).unwrap_err();
-        assert!(said.contains("dword 2 of 1 out"), "{said}");
+        assert!(said.contains("dword 2 of 0 out"), "{said}");
     }
     // What the entry point returns, and the discard.
     let right = looped(V_MUL_F32, F_ONE);
@@ -462,18 +468,29 @@ fn a_write_keeps_its_guard_unless_a_branch_or_a_constant_decides_the_mask() {
     // The two attributes, then `v2` to `v5`.
     assert_eq!(opt::guarded(&module), 6);
     let mut passed = module.clone();
-    let changed = opt::optimise(&mut passed);
+    let changed = opt::optimise(&mut passed, &[]);
     validate(&passed);
     let compared = compare(&module, &passed, SEEDS).unwrap();
     assert_eq!(compared.equal, 24);
     assert!(compared.computed[1] < compared.computed[0], "{compared:?}");
     // Decided: the attributes and `v5`, where the mask is the constant it started as, and
     // `v3`, inside the branch on it. `v2` and `v4` are written by a lane that may not run.
-    assert_eq!(
-        (changed.guards, opt::guarded(&passed)),
-        (4, 2),
-        "{changed:?}"
-    );
+    assert_eq!(changed.guards, 4, "{changed:?}");
+    // Neither is a register any more: where each is read stands what was computed where the
+    // lane runs and the nought the register held where it does not. The third `select` is
+    // the comparison's own.
+    let selects = |module: &naga::Module| {
+        (functions(module).flat_map(|function| function.expressions.iter()))
+            .filter(|(_, expression)| matches!(expression, E::Select { .. }))
+            .count()
+    };
+    assert_eq!((opt::guarded(&passed), selects(&passed)), (0, 3));
+    // With the registers the target takes kept, the two writes stand as they were, guarded.
+    let mut kept = module.clone();
+    opt::optimise(&mut kept, &["v2", "v3", "v4", "v5"]);
+    validate(&kept);
+    assert_eq!(opt::guarded(&kept), 2);
+    assert_eq!(compare(&module, &kept, SEEDS).unwrap().equal, 24);
     // Some seed's lane does not run: with the mask left whole the target holds other numbers.
     let said = compare(&module, &narrowed(false), SEEDS).unwrap_err();
     assert!(said.contains("returned"), "{said}");
@@ -484,12 +501,47 @@ fn a_load_reads_what_the_last_store_left_and_an_expression_is_computed_once() {
     // Three turns of a loop that reads `v0` and `v1`, writes `v2` and `v0`, and counts down.
     let module = looped(V_MUL_F32, F_ONE);
     let mut passed = module.clone();
-    let changed = opt::optimise(&mut passed);
+    let changed = opt::optimise(&mut passed, &[]);
     validate(&passed);
     assert!(changed.forwarded > 0, "{changed:?}");
     let compared = compare(&module, &passed, SEEDS).unwrap();
     assert_eq!(compared.equal, 24);
     assert!(compared.computed[1] < compared.computed[0], "{compared:?}");
+}
+
+#[test]
+fn a_store_nothing_reads_is_dropped_and_one_the_next_turn_reads_stays() {
+    // `s5` = 9 before the loop, and nothing reads it. The count of turns in `s0` is read by
+    // the turn after it and by nothing else once the comparison reads what was stored.
+    let module = looped_after(&[sopk(S_MOVK, 5, 9)], V_MUL_F32, F_ONE);
+    let left = |module: &naga::Module| {
+        let thread = interp::run(module, [1, 1, 1], &|_, _| None).remove(0);
+        thread.registers.get("s5").copied()
+    };
+    assert_eq!(left(&module), Some(9));
+    let mut passed = module.clone();
+    let changed = opt::optimise(&mut passed, &[]);
+    validate(&passed);
+    assert!(changed.stores > 0 && changed.registers > 0, "{changed:?}");
+    assert_eq!(left(&passed), None);
+    let compared = compare(&module, &passed, SEEDS).unwrap();
+    assert_eq!(compared.equal, 24);
+    assert!(compared.computed[1] < compared.computed[0], "{compared:?}");
+    // A second run finds nothing left to do.
+    let again = passed.clone();
+    assert_eq!(opt::optimise(&mut passed, &[]), opt::Changed::default());
+    assert_eq!(format!("{passed:?}"), format!("{again:?}"));
+    // Kept, the register holds what the program left in it, and the rest still goes.
+    let mut kept = module.clone();
+    let with = opt::optimise(&mut kept, &["s5"]);
+    validate(&kept);
+    assert_eq!(left(&kept), Some(9));
+    assert_eq!(
+        (with.stores, with.registers),
+        (changed.stores - 1, changed.registers - 1),
+        "{with:?}"
+    );
+    assert_eq!(compare(&module, &kept, SEEDS).unwrap().equal, 24);
 }
 
 /// A compute program of a group of 128 threads, two waves of 64, that shares `shared_dwords`.
@@ -550,7 +602,12 @@ fn a_mask_another_lane_s_vote_or_the_wave_s_turn_decides_stays_guarded() {
     for (between, waits) in [(&[][..], false), (&[barrier][..], true)] {
         let module = two_waves(0, odd_lanes(between));
         let mut passed = module.clone();
-        let changed = opt::optimise(&mut passed);
+        // Every register is compared below, so every one is kept.
+        let names: Vec<&str> = (functions(&module))
+            .flat_map(|function| function.local_variables.iter())
+            .filter_map(|(_, local)| local.name.as_deref())
+            .collect();
+        let changed = opt::optimise(&mut passed, &names);
         validate(&passed);
         let (before, after) = (opt::guarded(&module), opt::guarded(&passed));
         let (lowered, optimised) = (left_by_two_waves(&module), left_by_two_waves(&passed));
@@ -566,12 +623,18 @@ fn a_mask_another_lane_s_vote_or_the_wave_s_turn_decides_stays_guarded() {
                 assert_eq!(held(was, name), held(is, name), "{name} of thread {thread}");
             }
         }
-        // No write lost its guard to a condition: the four gone wrote nought over the nought
-        // that `exec_hi` (twice), `vcc_hi` and `s25` always hold. The one `select` decided is
-        // on a count of waiting waves that a group with no barrier of its own never sets.
+        // No write lost its guard to a condition: four of those gone wrote nought over the
+        // nought that `exec_hi` (twice), `vcc_hi` and `s25` always hold, and the rest went
+        // with a store nothing reads before the next to its register, as `v3`'s first. The
+        // one `select` decided is on a count of waiting waves that a group with no barrier
+        // of its own never sets.
         let decided = (changed.guards, changed.branches, changed.selects);
         assert_eq!(decided, (0, 0, usize::from(!waits)), "{changed:?}");
-        assert_eq!(before - after, 4, "{changed:?}");
+        let gone = before - after;
+        assert!(
+            (4..=4 + changed.stores).contains(&gone),
+            "{gone}, {changed:?}"
+        );
     }
 }
 
@@ -593,9 +656,12 @@ fn one_kept_module(file: &Path, seeds: Range<u64>) {
     println!("valid");
     let mut passed = lowered.clone();
     let started = std::time::Instant::now();
-    let changed = opt::optimise(&mut passed);
+    let changed = opt::optimise(&mut passed, &[]);
     let took = started.elapsed();
     check(&passed).unwrap_or_else(|why| panic!("{name} after the passes: {why}"));
+    // A second run finds nothing left to do.
+    let again = opt::optimise(&mut passed.clone(), &[]);
+    assert_eq!(again, opt::Changed::default(), "{name}: a second run");
     let entry = &lowered.entry_points[0];
     println!(
         "module {:?} of {:?} threads, {} expressions, {} after the passes in {took:?}, \
@@ -651,7 +717,7 @@ fn kept_module(file: &Path, seeds: u64) -> Kept {
     let mut from = 0;
     while from < seeds {
         let this = std::env::current_exe().unwrap();
-        let test = "rdna::tests::equal::the_kept_sample_computes_the_same_after_the_passes";
+        let test = "rdna::tests::equal::sample::the_kept_sample_computes_the_same_after_the_passes";
         let ran = (std::process::Command::new(this))
             .args([test, "--exact", "--nocapture", "--test-threads=1"])
             .env("OPENRAGE_RDNA_ONE", file)
@@ -727,8 +793,15 @@ fn kept_module(file: &Path, seeds: u64) -> Kept {
     kept
 }
 
-#[test]
-fn the_kept_sample_computes_the_same_after_the_passes() {
+/// A module of its own, which the slow tier names: with a folder of kept modules it takes minutes.
+mod sample {
+    #[test]
+    fn the_kept_sample_computes_the_same_after_the_passes() {
+        super::kept_sample();
+    }
+}
+
+fn kept_sample() {
     let seeds = std::env::var("OPENRAGE_RDNA_SEEDS").map_or(12, |seeds| seeds.parse().unwrap());
     if let Some(file) = std::env::var_os("OPENRAGE_RDNA_ONE") {
         let from = std::env::var("OPENRAGE_RDNA_FROM")
@@ -742,7 +815,10 @@ fn the_kept_sample_computes_the_same_after_the_passes() {
         return;
     }
     let Some(folder) = std::env::var_os("OPENRAGE_RDNA_SAMPLE") else {
-        eprintln!("skipped: OPENRAGE_RDNA_SAMPLE names no folder of kept modules");
+        or_test_support::skip_corpus(
+            "kept GTA VI modules computing the same after the optimiser",
+            "OPENRAGE_RDNA_SAMPLE names no folder of kept modules",
+        );
         return;
     };
     let mut files: Vec<_> = (std::fs::read_dir(&folder).expect("the folder of kept modules"))

@@ -79,12 +79,18 @@ fn loaded(function: &naga::Function, expression: Handle<E>) -> Option<Handle<nag
     }
 }
 
+/// What a loop counts with.
+#[derive(Default)]
+struct Counters {
+    locals: BTreeSet<Handle<naga::LocalVariable>>,
+    /// What the loop stores to them, under its casts.
+    // After the optimiser a count is compared as the value stored to it: no load of it is left.
+    stored: BTreeSet<Handle<E>>,
+}
+
 /// The locals a loop of `body` and `continuing` counts with: one it stores as itself and a
 /// stated number more or less, or as another local so moved that it then stores from this one.
-fn counters(
-    function: &naga::Function,
-    blocks: [&naga::Block; 2],
-) -> BTreeSet<Handle<naga::LocalVariable>> {
+fn counters(function: &naga::Function, blocks: [&naga::Block; 2]) -> Counters {
     let (mut moved, mut copied) = (Vec::new(), Vec::new());
     for block in blocks {
         each_statement(block, &mut |statement| {
@@ -114,14 +120,15 @@ fn counters(
                 _ => None,
             };
             if let Some(from) = from {
-                moved.push((to, from));
+                moved.push((to, from, uncast(function, *value)));
             }
         });
     }
-    let mut counters = BTreeSet::new();
-    for (to, from) in moved {
+    let mut counters = Counters::default();
+    for (to, from, value) in moved {
         if to == from || copied.contains(&(from, to)) {
-            counters.extend([to, from]);
+            counters.locals.extend([to, from]);
+            counters.stored.insert(value);
         }
     }
     counters
@@ -137,7 +144,7 @@ struct Flow<'m> {
     values: Vec<Taint>,
     locals: BTreeMap<Handle<naga::LocalVariable>, Taint>,
     /// The counters of each loop the walk is inside of.
-    inside: Vec<BTreeSet<Handle<naga::LocalVariable>>>,
+    inside: Vec<Counters>,
     /// The buffers a counter was compared with.
     hit: Taint,
 }
@@ -169,8 +176,11 @@ impl Flow<'_> {
             return 0;
         }
         let counts = |e| {
-            loaded(self.function, e)
-                .is_some_and(|local| self.inside.iter().any(|c| c.contains(&local)))
+            let (local, value) = (loaded(self.function, e), uncast(self.function, e));
+            (self.inside.iter()).any(|counters| {
+                local.is_some_and(|local| counters.locals.contains(&local))
+                    || counters.stored.contains(&value)
+            })
         };
         let with = |counter, other| if counts(counter) { self.of(other) } else { 0 };
         with(left, right) | with(right, left)
@@ -459,5 +469,25 @@ mod tests {
         assert_eq!(counted_to(&counting(None, 1), &game), None);
         // The number is the model's own.
         assert_eq!(counted_to(&hit, &game[..1]), None);
+    }
+
+    #[test]
+    fn a_count_is_told_of_a_module_the_optimiser_has_run_over() {
+        // The count is then compared as the value stored to it, and the number as the load
+        // of the buffer itself: no load of either register is left.
+        let game = [((0, 7), 0xAAAA_0001), ((0, 3), 0x1948_E9AA)];
+        for exit in [B::Equal, B::GreaterEqual] {
+            let mut module = counting(Some(exit), 1);
+            let changed = crate::rdna::opt::optimise(&mut module, &[]);
+            assert!(
+                changed.forwarded > 0 && changed.registers > 0,
+                "{changed:?}"
+            );
+            assert_eq!(loops(&module), 1);
+            assert_eq!(counted_to(&module, &game), Some(0x1948_E9AA));
+        }
+        let mut stated = counting(None, 1);
+        crate::rdna::opt::optimise(&mut stated, &[]);
+        assert_eq!(counted_to(&stated, &game), None);
     }
 }

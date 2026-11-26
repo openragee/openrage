@@ -1,6 +1,7 @@
 //! `rpf scan-rdna`: every program of a GTA VI effect container through the native-code front end,
 //! as counts by stage and by refusal, a record a block for `--json`, the blocks of a refusal class,
-//! and on request one program's disassembly and its lowered WGSL. The programs are kept inflated
+//! and on request one program's disassembly and its lowered WGSL; `--optimise` runs the optimiser
+//! over each lowered module and counts what it leaves. The programs are kept inflated
 //! under the configuration directory and translated by workers ([`super::gta6_rdna_run`]).
 
 use std::collections::BTreeMap;
@@ -64,6 +65,15 @@ fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
     let before = args.len();
     args.retain(|a| a != flag);
     args.len() != before
+}
+
+/// What the flags of a scan ask of its workers. The lowered text is wanted of one program printed.
+pub(crate) fn wanted(args: &mut Vec<String>, printed: bool) -> Want {
+    Want {
+        backends: take_flag(args, "--backends"),
+        wgsl: printed,
+        optimise: take_flag(args, "--optimise"),
+    }
 }
 
 /// Where the scan keeps what it need not make twice.
@@ -169,6 +179,22 @@ struct Run {
     worker_mb: u64,
     wall: Duration,
     backends: bool,
+}
+
+/// The line of what the optimiser left of the modules it ran over; nothing where it ran over none.
+fn optimised(records: &[Record]) -> String {
+    let counted: Vec<[u64; 3]> = records.iter().filter_map(|r| r.optimised).collect();
+    if counted.is_empty() {
+        return String::new();
+    }
+    let sum = |at: usize| counted.iter().map(|counts| counts[at]).sum::<u64>();
+    let (before, after) = (sum(0), sum(1));
+    format!(
+        "  optimiser     {} module(s): {after} of {before} expressions left ({:.1}%), in {} ms summed\n",
+        counted.len(),
+        after as f64 * 100.0 / before.max(1) as f64,
+        sum(2) / 1000
+    )
 }
 
 /// The run as the lines printed: the stages, what stopped a worker, the cache and the back ends.
@@ -315,6 +341,7 @@ fn report(records: &[Record], run: Run) -> String {
                 .count()
         );
     }
+    out.push_str(&optimised(records));
     if run.backends {
         let _ = writeln!(
             out,
@@ -416,14 +443,20 @@ fn show(corpus: &Path, index: usize, records: &[Record]) -> Result<(), String> {
             println!("  {pc:6}  {inst}");
         }
         if let Some(wgsl) = record.and_then(|r| r.wgsl.as_ref()) {
-            println!("program {index}, block {block}, lowered:\n{wgsl}");
+            let how = match record.and_then(|r| r.optimised) {
+                Some([before, after, _]) => {
+                    format!("lowered and optimised, {after} of {before} expressions left")
+                }
+                None => "lowered".to_owned(),
+            };
+            println!("program {index}, block {block}, {how}:\n{wgsl}");
         }
     }
     Ok(())
 }
 
 const USAGE: &str = "usage: rpf scan-rdna <archive.rpf> <offset> [--program <n>] [--json <file>] \
-    [--stage <text>] [--reason <text>] [--sample <n>] [--backends] [--arena] [--cache] [--fresh] \
+    [--stage <text>] [--reason <text>] [--sample <n>] [--backends] [--arena] [--optimise] [--cache] [--fresh] \
     [--jobs <n>] [--worker-memory <MB>] [--memory <MB>] [--batch <n>] [--budget <ms>] \
     [--limit <bytes>]";
 
@@ -448,10 +481,7 @@ pub(crate) fn cmd_scan_rdna(args: &[String]) -> Result<(), String> {
     );
     let batch = take_number(&mut args, "--batch")?.unwrap_or(BATCH);
     let budget = take_number(&mut args, "--budget")?.map_or(BUDGET_MS, |ms| ms as u64);
-    let want = Want {
-        backends: take_flag(&mut args, "--backends"),
-        wgsl: program.is_some(),
-    };
+    let want = wanted(&mut args, program.is_some());
     let (cached, fresh) = (
         take_flag(&mut args, "--cache"),
         take_flag(&mut args, "--fresh"),
@@ -628,6 +658,15 @@ mod tests {
         assert!(report(&traced, Run::default()).contains(
             "  ray tracers   2 block(s) test a ray against a node at 5 place(s); 1 of them lowered"
         ));
+        // The line of the optimiser is of the modules it ran over, and is not printed for none.
+        assert!(!text.contains("optimiser"));
+        let mut records = sample();
+        records[0].optimised = Some([400, 100, 3_000]);
+        records[1].optimised = Some([600, 200, 4_000]);
+        let text = report(&records, run);
+        let line =
+            "  optimiser     2 module(s): 300 of 1000 expressions left (30.0%), in 7 ms summed\n";
+        assert!(text.contains(line), "{text}");
     }
 
     #[test]

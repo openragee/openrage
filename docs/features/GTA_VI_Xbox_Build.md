@@ -250,7 +250,7 @@ Every command is `openrage-cli` and a row below; `openrage-cli rpf9`, `openrage-
 | `rpf scan-radio` | the radio stations, their track lists and the streams they play |
 | `rpf scan-dialogue` | the dialogue lines with their audio streams and texts, as a table `awc export --dialogue` reads |
 | `rpf scan-shaders` | how every program of an effect container translates, by outcome and refusal |
-| `rpf scan-rdna` | the same through the native front end alone, by stage, run by worker processes held to a memory ceiling, so a program that crashes, runs out of time or of memory is an outcome; `--json` writes a record a block, `--backends` writes each valid module with every shader writer, `--stage` and `--reason` list a class of blocks, `--program` prints one disassembly and its WGSL |
+| `rpf scan-rdna` | the same through the native front end alone, by stage, run by worker processes held to a memory ceiling, so a program that crashes, runs out of time or of memory is an outcome; `--json` writes a record a block, `--backends` writes each valid module with every shader writer, `--optimise` runs the optimiser over each lowered module first and counts the expressions it leaves, `--stage` and `--reason` list a class of blocks, `--program` prints one disassembly and its WGSL |
 | `rpf scan-rdna-diff` | what changed between two `--json` runs: the outcomes that moved, the reasons that shifted by stage, the translations that got slower |
 | `rpf scan-rdna-bind` | how many passes translate in both stages, join every resource and bind |
 | `rpf scan-effect-use` | the drawables of an archive by the effects they name: how many each effect's own passes draw in Shaded, and why the rest draw as Material |

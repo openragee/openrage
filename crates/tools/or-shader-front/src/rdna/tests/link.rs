@@ -2,8 +2,67 @@
 
 use naga::{Binding, BuiltIn, Expression as E, Interpolation, Statement, TypeInner};
 
-use super::super::link::{link, pack, Carried, Options as LinkOptions};
+use super::super::link::{self, Carried, LinkError, Linked, Options as LinkOptions};
 use super::*;
+use crate::rdna::opt;
+
+/// Holds a join of the stages after the optimiser to the join of them as lowered: it is taken,
+/// the validator and the writers take what it leaves, the two stages cross at the same
+/// locations, and nothing is carried that the stages as lowered do not carry the same way.
+fn held(lowered: &Linked, optimised: &Linked, stages: &[&naga::Module]) {
+    let what = |carried: &Carried| {
+        let Carried {
+            slot,
+            high,
+            component,
+            flat,
+            fed,
+            ..
+        } = *carried;
+        (slot, high, component, flat, fed)
+    };
+    for carried in &optimised.carried {
+        let as_lowered = lowered.carried.iter().any(|one| what(one) == what(carried));
+        assert!(as_lowered, "{carried:?} of {:?}", lowered.carried);
+    }
+    assert!(optimised.locations <= lowered.locations);
+    assert_eq!(optimised.clip.is_some(), lowered.clip.is_some());
+    stages.iter().for_each(|stage| validate(stage));
+    if let [geometry, fragment] = stages {
+        assert_eq!(locations(geometry), locations(fragment));
+    }
+}
+
+/// [`link::link`], and the same join of a copy of each stage after the optimiser, [`held`] to it.
+fn link(
+    producer: &mut naga::Module,
+    pixel: &mut naga::Module,
+    options: &LinkOptions,
+) -> Result<Linked, LinkError> {
+    let (mut geometry, mut fragment) = (producer.clone(), pixel.clone());
+    opt::optimise(&mut geometry, &[]);
+    opt::optimise(&mut fragment, &[]);
+    let optimised = link::link(&mut geometry, &mut fragment, options);
+    let lowered = link::link(producer, pixel, options);
+    if let Ok(lowered) = &lowered {
+        let optimised = optimised.expect("the stages join after the optimiser");
+        held(lowered, &optimised, &[&geometry, &fragment]);
+    }
+    lowered
+}
+
+/// [`link::pack`], and the same of a copy of the stage after the optimiser, [`held`] to it.
+fn pack(pixel: &mut naga::Module) -> Result<Linked, LinkError> {
+    let mut fragment = pixel.clone();
+    opt::optimise(&mut fragment, &[]);
+    let optimised = link::pack(&mut fragment);
+    let lowered = link::pack(pixel);
+    if let Ok(lowered) = &lowered {
+        let optimised = optimised.expect("the stage packs after the optimiser");
+        held(lowered, &optimised, &[&fragment]);
+    }
+    lowered
+}
 
 /// The 16-bit interpolation of attribute `attr`'s component `chan`, its high half or its low, into `dst`.
 fn interp_half(dst: u32, attr: u32, chan: u32, high: bool) -> [u32; 2] {
@@ -142,6 +201,50 @@ fn twenty_parameters_read_one_component_each_cross_in_five_locations() {
     assert_eq!(pack(&mut alone).unwrap().locations, 5);
     validate(&alone);
     assert_eq!(locations(&alone), locations(&fragment));
+}
+
+#[test]
+fn an_input_that_reaches_no_output_is_not_carried_once_the_optimiser_has_run() {
+    // Twenty parameters each written to the one register the target takes: the last is read.
+    let stages = || {
+        let mut words: Vec<u32> = (0..20).map(|attr| vintrp(1, 4, attr, 0, 1)).collect();
+        words.extend(exp(0, [4, 4, 4, 4]));
+        words.push(S_ENDPGM);
+        let parameters: Vec<u32> = (1..=20).collect();
+        let (mut geometry, mut fragment) = (vertex(&parameters, &[]), pixel(20, words));
+        opt::optimise(&mut geometry, &[]);
+        opt::optimise(&mut fragment, &[]);
+        (geometry, fragment)
+    };
+    let last = Carried {
+        slot: 20,
+        high: false,
+        component: 0,
+        flat: false,
+        location: 0,
+        at: 0,
+        fed: true,
+    };
+    let (mut geometry, mut fragment) = stages();
+    // The stage still takes its twenty inputs: the join is what drops one nothing reads.
+    assert_eq!(locations(&fragment).len(), 20);
+    let linked = link::link(&mut geometry, &mut fragment, &LinkOptions::default()).unwrap();
+    assert_eq!(
+        (linked.carried.as_slice(), linked.locations),
+        (&[last][..], 1)
+    );
+    validate(&geometry);
+    validate(&fragment);
+    let one = [(0, Some(Interpolation::Perspective))];
+    assert_eq!(
+        (locations(&geometry), locations(&fragment)),
+        (one.to_vec(), one.to_vec())
+    );
+    // Alone, the pixel stage packs the same way.
+    let (_, mut alone) = stages();
+    let packed = link::pack(&mut alone).unwrap();
+    assert_eq!((packed.carried.len(), packed.locations), (1, 1));
+    validate(&alone);
 }
 
 #[test]

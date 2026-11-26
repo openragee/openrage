@@ -299,7 +299,7 @@ impl<'a> WorldForest<'a> {
             index,
             source,
             budget,
-            forest: Forest::new(),
+            forest: Forest::with_exact_children(),
             held: HashMap::new(),
             held_bytes: 0,
             streamed: BTreeSet::new(),

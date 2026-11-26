@@ -349,11 +349,21 @@ pub struct Forest {
     stale: bool,
     /// Where the camera stood at the last selection, and the scales it had.
     last: Option<(Vec3, [f32; Level::COUNT])>,
+    /// A parent waits for exactly the children it states, never raised to those loaded.
+    exact_children: bool,
 }
 
 impl Forest {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A forest whose parents wait for exactly the children they state: GTA V's rule.
+    pub fn with_exact_children() -> Self {
+        Self {
+            exact_children: true,
+            ..Self::default()
+        }
     }
 
     /// Whether the map `key` is loaded.
@@ -667,8 +677,8 @@ impl Pass<'_> {
         // child it states is loaded. What an entity states is raised to what is loaded, none
         // included; a list's is not, as a list is no entity that a child attaches to (inferred).
         let stated = match node.extent {
-            Extent::Point => node.num_children.max(found),
-            Extent::Box(..) => node.num_children,
+            Extent::Point if !self.forest.exact_children => node.num_children.max(found),
+            _ => node.num_children,
         };
         let crosses = !node.batch && stated > 0 && found == stated;
         let yields = !held && crosses && own >= 1.0;

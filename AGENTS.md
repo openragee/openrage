@@ -533,10 +533,8 @@ The module table and the app's traps are in
   supports per game, shading modes, glTF out and back, and generating a DLC pack.
 - [GTA_VI_Xbox_Build.md](docs/features/GTA_VI_Xbox_Build.md): what is read, saved and
   refused of a GTA VI Xbox build, and its commands.
-- [GTA_VI_World_Viewer.md](docs/features/GTA_VI_World_Viewer.md): the World screen, how a
-  GTA VI install is mounted with no table to read, and the streaming rules.
-- [Unified_World_Plan.md](docs/direction/Unified_World_Plan.md): one world core and an
-  adapter crate for each game, the contract between them, and the rows of R71.
+- [GTA_VI_World_Viewer.md](docs/features/GTA_VI_World_Viewer.md): the World screen, how a GTA VI install is mounted, and the streaming rules.
+- [Unified_World_Plan.md](docs/direction/Unified_World_Plan.md): one world core and an adapter crate for each game, and the rows of R71.
 - [GTA_VI_Script_Decompiler.md](docs/features/GTA_VI_Script_Decompiler.md): what is read of
   a compiled GTA VI script, the levels, the passes, the names lists, and its commands.
 - [CLI_Server_Protocol.md](docs/reference/CLI_Server_Protocol.md), with

@@ -147,10 +147,11 @@ pub struct Modifier {
     pub vars: BTreeMap<String, [f32; 2]>,
 }
 
-/// Every modifier a `timecycle_modifier_data` text holds; a variable that does not state two numbers is left out.
+/// Every modifier a `timecycle_modifier_data` text holds; a variable that does not state two numbers is left out, but for a keyed modifier, whose variables state a value a key, a variable of one value at every key is that value, laid whole.
+// ⚠ What drives a keyed modifier's axis is not read, so a variable whose keys differ is left out.
 pub fn modifiers(text: &str) -> Vec<Modifier> {
     let mut out: Vec<Modifier> = Vec::new();
-    let (mut inside, mut open) = (false, None);
+    let (mut inside, mut keyed, mut open) = (false, false, None);
     for token in tokens(text) {
         match token {
             Token::Open {
@@ -165,6 +166,7 @@ pub fn modifiers(text: &str) -> Vec<Modifier> {
                     vars: BTreeMap::new(),
                 });
                 inside = !empty;
+                keyed = attr(attrs, "numKeyframes").is_some();
             }
             Token::Close("modifier") => inside = false,
             Token::Open { name, empty, .. } if inside && !empty => open = Some(name),
@@ -172,8 +174,19 @@ pub fn modifiers(text: &str) -> Vec<Modifier> {
                 let values: Vec<f32> = (text.split_whitespace())
                     .filter_map(|v| v.parse().ok())
                     .collect();
-                if let (Some(name), Some(modifier), &[a, b]) = (open, out.last_mut(), &values[..]) {
-                    modifier.vars.insert(name.to_string(), [a, b]);
+                let (Some(name), Some(modifier)) = (open, out.last_mut()) else {
+                    continue;
+                };
+                match (keyed, &values[..]) {
+                    (false, &[a, b]) => {
+                        modifier.vars.insert(name.to_string(), [a, b]);
+                    }
+                    (true, [first, rest @ ..])
+                        if name != "keyframe_t_value" && rest.iter().all(|v| v == first) =>
+                    {
+                        modifier.vars.insert(name.to_string(), [*first, 1.0]);
+                    }
+                    _ => {}
                 }
             }
             _ => open = None,

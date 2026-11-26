@@ -76,6 +76,29 @@ fn the_values_before_a_cycle_and_the_modifiers_of_a_file_are_read() {
     assert!(mods[1].vars.is_empty());
 }
 
+#[test]
+fn a_keyed_modifiers_variable_of_one_value_at_every_key_is_that_value_laid_whole() {
+    let mods = modifiers(
+        r#"<timecycle_modifier_data version="1.0">
+  <modifier name="k" userFlags="0" numAxes="1" numKeyframes="3">
+    <submodifiers><item alpha="0.5">other</item></submodifiers>
+    <axis controlValue="season_adjusted_time">
+      <keyframe_t_value>0.0 0.5 1.0</keyframe_t_value>
+      <wind_gust_speed_min_kmh>5.0 5.0 5.0</wind_gust_speed_min_kmh>
+      <water_ocean_beaufort_scale>4.0 1.0 4.0</water_ocean_beaufort_scale>
+    </axis>
+  </modifier>
+  <modifier name="plain" userFlags="0"><fog>1.0 1.0 1.0</fog></modifier>
+</timecycle_modifier_data>"#,
+    );
+    assert_eq!(mods[0].vars.len(), 1, "{:?}", mods[0].vars);
+    assert_eq!(mods[0].vars["wind_gust_speed_min_kmh"], [5.0, 1.0]);
+    assert!(
+        mods[1].vars.is_empty(),
+        "three numbers in a plain modifier are left out"
+    );
+}
+
 fn own(pairs: &[(&str, f32)]) -> Keyframe {
     let mut frame = Keyframe::default();
     for (name, value) in pairs {

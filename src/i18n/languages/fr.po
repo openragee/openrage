@@ -12155,9 +12155,6 @@ msgstr "{name} contient du contenu {kind}."
 msgid "{name} is a folder, and the Files content holds files"
 msgstr "{name} est un dossier, et le contenu Fichiers contient des fichiers"
 
-msgid "{name} is a headerless resource, whose loose form is stored under a new row"
-msgstr "{name} est une ressource sans en-tête, dont la forme libre est enregistrée sous une nouvelle ligne"
-
 msgid "{name} is a name Windows keeps for itself: choose another"
 msgstr "{name} est un nom que Windows garde pour lui : choisissez-en un autre"
 
@@ -17055,9 +17052,6 @@ msgstr "Seul un document ouvert depuis une archive de GTA VI est enregistré dan
 msgid "Cannot save into a copy of the archive: {reason}"
 msgstr "Impossible d'enregistrer dans une copie de l'archive : {reason}"
 
-msgid "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale."
-msgstr "{file} est une nouvelle archive avec la modification à la place de son entrée, que le jeu refuse parce que la signature de sa table est périmée."
-
 msgid "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds."
 msgstr "{file} est une nouvelle archive identique à celle dont elle est lue : la modification écrit les octets que l'entrée contient."
 
@@ -17383,3 +17377,15 @@ msgstr "Écrire les modifications du document GTA VI à la place de son entrée,
 
 msgid "The text table is laid out again at another length ({reason}), so a save into its archive writes a rebuilt archive, which the game refuses because only its maker can sign the table."
 msgstr "La table de textes est disposée de nouveau à une autre longueur ({reason}), donc un enregistrement dans son archive écrit une archive reconstruite, que le jeu refuse car seul son auteur peut signer la table."
+
+msgid "{name} does not read as a resource from its start"
+msgstr "{name} ne se lit pas comme une ressource depuis son début"
+
+msgid "{file} is a rebuilt archive with the document's edit, which the game refuses because only its maker can sign the table it changed."
+msgstr "{file} est une archive reconstruite avec la modification du document, que le jeu refuse car seul son auteur peut signer la table qu'elle a changée."
+
+msgid "In a GTA VI archive"
+msgstr "Dans une archive de GTA VI"
+
+msgid "This key changes the length of its clip's data, so its archive will be saved rebuilt, which the game refuses because only its maker can sign the table."
+msgstr "Cette clé change la longueur des données de son clip, donc son archive sera enregistrée reconstruite, ce que le jeu refuse car seul son auteur peut signer la table."

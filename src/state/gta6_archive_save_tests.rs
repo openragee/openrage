@@ -4,7 +4,10 @@
 use std::io::Cursor;
 use std::time::{Duration, Instant};
 
-use or_io::container::rpf::{read_rpf9_body, Gta6Mount, Rpf9Sections, RPF9_SLOT};
+use or_io::container::rpf::{
+    read_rpf9_body, Gta6Context, Gta6Mount, NameResolver, Rpf9Sections, RPF9_SLOT,
+};
+use or_io::container::{NoOpCryptoProvider, RpfArchive};
 use or_io::gta6::hash::name_hash64;
 use or_io::meta::Value;
 
@@ -14,6 +17,7 @@ use crate::state::rpf9_scan::{body_path, View};
 use crate::state::rpf_archive_open::tree_verbs::tests::{
     rbm_section, source, synthetic_keys, table_form_pso, PSO, RESOURCE,
 };
+use crate::state::rpf_session::RpfDocument;
 use crate::state::{MetaDocument, ToastType};
 
 /// The mount of `bytes` and the start of its entry `name`.
@@ -170,6 +174,89 @@ fn the_command_asks_where_the_copy_goes_under_a_short_title_and_writes_it_there(
 }
 
 #[test]
+fn a_document_with_nothing_edited_is_refused_before_any_dialog_is_asked() {
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let source = source(dir.path());
+    let (_, start) = start_of(&std::fs::read(&source).expect("the source"), PSO);
+    let meta = MetaDocument::from_bytes(table_form_pso());
+    let mut state = showing(
+        body_path(&source, start, View::Bytes),
+        DocPayload::Meta(meta),
+    );
+    // A pick the dialog would take, so a dialog asked would write the copy.
+    let out = dir.path().join("copy.rpf");
+    file_dialogs::answer_next(out.clone());
+    assert!(!state.ask_and_save_with(synthetic_keys));
+    assert_eq!(file_dialogs::last_dialog(), None, "no dialog was asked");
+    assert!(
+        said(
+            &state,
+            ToastType::Error,
+            &[
+                "Cannot save into a copy of the archive",
+                "nothing this view holds is edited"
+            ]
+        ),
+        "{:?}",
+        state.toasts.iter().map(|t| &t.message).collect::<Vec<_>>()
+    );
+    state.poll_archive_saves();
+    assert!(!out.exists(), "nothing is written");
+}
+
+/// Archives opened while this is held are read with the keys and names it was made with.
+struct Reading(Option<Arc<Gta6Context>>);
+
+impl Drop for Reading {
+    fn drop(&mut self) {
+        Gta6Context::swap_given(self.0.take());
+    }
+}
+
+#[test]
+fn a_document_opened_from_a_tree_row_names_its_archive_and_row_and_a_scanned_one_does_not() {
+    const TREE: crate::state::document::DocumentId = 9_001;
+    let _serial = crate::ui::theme::serial();
+    let keys = synthetic_keys().expect("the synthetic snapshot parses");
+    let mut names = NameResolver::new();
+    for name in [PSO, RESOURCE] {
+        names.insert(name_hash64(name.as_bytes()), name);
+    }
+    let context = Gta6Context {
+        keys,
+        names: Arc::new(names),
+    };
+    let _reading = Reading(Gta6Context::swap_given(Some(Arc::new(context))));
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let source = source(dir.path());
+    let (_, start) = start_of(&std::fs::read(&source).expect("the source"), PSO);
+    let path = body_path(&source, start, View::Bytes);
+    let meta = MetaDocument::from_bytes(table_form_pso());
+    let mut state = showing(path.clone(), DocPayload::Meta(meta));
+    assert_eq!(
+        state.tree_row_origin(9_000),
+        None,
+        "a scan's body has no row"
+    );
+
+    let crypto = Arc::new(NoOpCryptoProvider::new());
+    let archive = RpfArchive::open_with(&source, crypto).expect("the archive opens as a tree");
+    let tree = RpfDocument::new(archive).expect("the tree lists");
+    let node = (tree.session.all_nodes().into_iter())
+        .find(|&id| tree.session.path_of(id).as_deref() == Some(PSO))
+        .expect("the row");
+    let doc = Document::new(TREE, Some(source.clone()), DocPayload::Rpf(tree));
+    state.documents.push(doc);
+    crate::state::rpf_archive_open::tree_open::name(&state, &path, TREE, node);
+    assert_eq!(
+        state.tree_row_origin(9_000),
+        Some((source, PSO.to_owned())),
+        "the inspector names the archive and the row's path"
+    );
+}
+
+#[test]
 fn an_edited_headerless_body_saved_into_a_copy_reopens_with_the_edit() {
     let _serial = crate::ui::theme::serial();
     let dir = tempfile::tempdir().expect("a scratch directory");
@@ -186,20 +273,17 @@ fn an_edited_headerless_body_saved_into_a_copy_reopens_with_the_edit() {
     assert!(state.save_into_archive_copy_with(out.clone(), synthetic_keys));
     finished(&mut state);
     let toasts: Vec<&str> = state.toasts.iter().map(|t| t.message.as_str()).collect();
-    // A headerless resource's loose form is stored under a new row, so the copy is rebuilt.
-    let named = format!("{:#X} is a headerless resource", start + RPF9_SLOT);
+    // A headerless resource edited at its length is planned against the body its row stores, so
+    // the copy is patched.
     assert!(
         said(
             &state,
             ToastType::Success,
-            &[
-                "with the edit in its entry's place",
-                "kept it from being patched in place",
-                &named
-            ]
+            &["copy.rpf", "is a patched copy", "has not been run"]
         ),
         "{toasts:?}"
     );
+    assert!(!toasts.iter().any(|t| t.contains("rebuilt")), "{toasts:?}");
     let copy = std::fs::read(&out).expect("the copy");
     let sections = resource(&copy, RESOURCE);
     let (instance, _) =

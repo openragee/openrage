@@ -483,15 +483,17 @@ pub(super) fn draw_scan_origin(ui: &mut egui::Ui, state: &AppState, doc_id: Docu
     let Some((find, loose)) = crate::state::rpf9_scan::scan_origin(path) else {
         return;
     };
-    let heading = match loose {
-        true => tr!("A GTA VI resource in a file of its own"),
-        false => tr!("Found by a scan of a GTA VI archive"),
-    };
+    // A body opened from a tree's row names the row; only one a scan with no key found says scan.
+    let tree_row = state.tree_row_origin(doc_id).filter(|_| !loose);
     ui.separator();
-    ui.label(egui::RichText::new(heading).strong());
+    ui.label(egui::RichText::new(origin_heading(loose, tree_row.is_some())).strong());
     grid(ui, "scan_origin", |ui| {
         if loose {
             row(ui, tr!("File"), &path.display().to_string());
+        } else if let Some((archive, inner)) = &tree_row {
+            row(ui, tr!("Archive"), &archive.display().to_string());
+            row(ui, tr!("Path"), inner);
+            row(ui, tr!("Offset"), &format!("{:#X}", find.offset));
         } else {
             let archive = path.parent().unwrap_or(path).display().to_string();
             row(ui, tr!("Archive"), &archive);
@@ -516,6 +518,15 @@ pub(super) fn draw_scan_origin(ui: &mut egui::Ui, state: &AppState, doc_id: Docu
             row(ui, tr!("Strict tree"), &note);
         }
     });
+}
+
+/// The title of where a body came from: a file of its own, a tree's row, or a scan with no key.
+fn origin_heading(loose: bool, tree_row: bool) -> &'static str {
+    match (loose, tree_row) {
+        (true, _) => tr!("A GTA VI resource in a file of its own"),
+        (false, true) => tr!("In a GTA VI archive"),
+        (false, false) => tr!("Found by a scan of a GTA VI archive"),
+    }
 }
 
 fn block_map(resource: &Rpf9Resource) -> String {
@@ -646,5 +657,13 @@ mod tests {
         };
         assert!(named_words(&row, Some("a_made_up_model.#dr")).ends_with("a_made_up_model.#dr"));
         assert_eq!(named_words(&row, None), row_words(&row));
+    }
+
+    #[test]
+    fn only_a_body_with_no_tree_row_is_titled_as_found_by_a_scan() {
+        let scan = tr!("Found by a scan of a GTA VI archive");
+        assert_eq!(origin_heading(false, false), scan);
+        assert_eq!(origin_heading(false, true), tr!("In a GTA VI archive"));
+        assert_ne!(origin_heading(true, false), scan);
     }
 }

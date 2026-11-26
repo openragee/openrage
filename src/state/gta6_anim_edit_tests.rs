@@ -69,9 +69,22 @@ fn channel() -> Vec<u32> {
     words
 }
 
+/// The section-10 channel of the steps `[0, 65535]`: its one code 131,070 is 17 bits wide, its
+/// unary one at bit 145, so an edit to `[65535, 0]` adds 16 initial bits and a header word.
+fn wide_channel() -> Vec<u32> {
+    let mut words = vec![13, 1 << 16, SCALE.to_bits(), OFFSET.to_bits(), 1 << 17];
+    words.extend([131_070, 0, 0, 0, 0, 0, 0, 0]);
+    words
+}
+
 /// A clip dictionary `dict_a` of one clip of one animation of 2 frames, whose one DOF's channel
 /// is in section 10.
 pub(crate) fn dictionary() -> Vec<u8> {
+    dictionary_with(channel())
+}
+
+/// [`dictionary`] with its channel's words `channel`, 13 of them.
+fn dictionary_with(channel: Vec<u32>) -> Vec<u8> {
     let mut b = Bytes::default();
     let root = b.alloc(0xB0);
     let block_map = b.alloc(0x18);
@@ -105,7 +118,7 @@ pub(crate) fn dictionary() -> Vec<u8> {
     b.u32(dof + 4, hash("facialTranslation"));
     b.u32(dof + 8, 4);
     b.array(animation + 0x60, dof, 1);
-    let mut data: Vec<u8> = channel().iter().flat_map(|w| w.to_le_bytes()).collect();
+    let mut data: Vec<u8> = channel.iter().flat_map(|w| w.to_le_bytes()).collect();
     let constant_size = data.len() as u32;
     let mut directory = vec![0u16; 11];
     directory[10] = 1;
@@ -258,6 +271,54 @@ fn a_gta_vi_animation_s_key_and_clip_window_edit_undo_and_save_as_a_loose_resour
     assert!(
         matches!(read.clips[0].play, ClipPlay::One { start, rate, .. } if start == 0.01 && rate == 2.0)
     );
+}
+
+#[test]
+fn a_key_edit_that_grows_its_block_says_at_once_that_its_archive_will_be_rebuilt() {
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let path = dir.path().join("dict_a.rsc");
+    let sections = Rpf9Sections {
+        form: Rpf9Form::BlockMapped,
+        virtual_section: dictionary_with(wide_channel()),
+        physical: Vec::new(),
+    };
+    std::fs::write(&path, write_rpf9_resource(&sections).expect("writes")).expect("written");
+    let mut state = AppState::new();
+    state.load_file(path);
+    settle(&mut state);
+    let doc = state
+        .active_document
+        .unwrap_or_else(|| panic!("opened: {}", state.error_dialog_message));
+    let length = |state: &AppState| {
+        let resource = held(state, doc);
+        resource
+            .sections
+            .as_deref()
+            .expect("sections")
+            .virtual_section
+            .len()
+    };
+    let told = |state: &AppState| {
+        (state.toasts.iter())
+            .filter(|t| t.toast_type == ToastType::Warning && t.message.contains("rebuilt"))
+            .count()
+    };
+    let read = length(&state);
+    state.toasts.clear();
+
+    // Frame 1 halfway up the range: the steps span 0 to 65,535 again, in the same words.
+    assert!(state.edit_gta6_key(doc, key(1, OFFSET + SCALE * 30_000.0)));
+    assert_eq!(length(&state), read);
+    assert_eq!(told(&state), 0);
+
+    // Frame 0 above the range: the steps become [65535, 0], and the block outgrows its extent.
+    assert!(state.edit_gta6_key(doc, key(0, 40_000.0)));
+    assert!(length(&state) > read, "the block grew");
+    assert_eq!(told(&state), 1);
+    assert!(state.undo().is_some());
+    assert!(state.edit_gta6_key(doc, key(0, 40_000.0)));
+    assert_eq!(told(&state), 1, "the sentence stands once");
 }
 
 #[test]

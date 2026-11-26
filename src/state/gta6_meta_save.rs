@@ -17,6 +17,9 @@ use super::{AppState, DocumentId};
 #[path = "../../crates/tools/or-cli/src/gta6_string_fixture.rs"]
 mod string_fixture;
 
+#[path = "gta6_data_xml_splice.rs"]
+mod splice;
+
 /// The bytes `meta` saves as, a table-form PSO's new texts enciphered with the keys `keys` loads.
 // `keys` is called only when the write needs to encipher a text, which only the writer knows.
 pub(crate) fn meta_bytes(
@@ -28,7 +31,8 @@ pub(crate) fn meta_bytes(
         _ => false,
     });
     let Some(layout) = layout else {
-        return meta.to_bytes();
+        // A GTA VI data XML edited only in its values keeps every other byte it was read with.
+        return splice::spliced(meta).map_or_else(|| meta.to_bytes(), Ok);
     };
     let instance = if meta.parsed_at_text_revision < meta.text_revision {
         let xml = meta.text.text.to_string().into_bytes();
@@ -544,6 +548,70 @@ mod tests {
         let reopened = crate::state::MetaDocument::from_bytes(saved);
         let parsed = reopened.parsed.expect("the saved document reads");
         assert_eq!(hash_of(root_value(&parsed.instance)), Some(hash));
+    }
+
+    /// A data XML no library types, with a comment, a standalone declaration and CRLF.
+    const DATA_XML: &str = concat!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\r\n",
+        "<!-- zq hand edit -->\r\n",
+        "<OrZqChangeSetDef>\r\n",
+        "  <id>zq_core</id>\r\n",
+        "  <flags>ZqPersistent</flags>\r\n",
+        "  <count value=\"12\"/>\r\n",
+        "  <group></group>\r\n",
+        "</OrZqChangeSetDef>\r\n",
+    );
+
+    /// `DATA_XML` opened as a GTA VI archive's data XML is, or as GTA V's, edited in its form and
+    /// its text brought up to date, as a save into a tree row does.
+    fn edited_in_the_form(
+        gta6: bool,
+        edit: impl FnOnce(&mut or_io::meta::MetaInstance),
+    ) -> crate::state::MetaDocument {
+        let bytes = DATA_XML.as_bytes().to_vec();
+        let mut meta = if gta6 {
+            let default = crate::state::meta_schema();
+            let library = or_io::meta::names_library().unwrap_or(default);
+            let (instance, untyped) =
+                or_io::meta::instance::parser::parse_typed_or_tree(library, &bytes)
+                    .expect("it reads");
+            crate::state::MetaDocument::from_gta_vi_xml(bytes, instance, untyped)
+        } else {
+            crate::state::MetaDocument::from_bytes(bytes)
+        };
+        edit(&mut meta.parsed.as_mut().expect("it parsed").instance);
+        meta.after_visual_edit_in_place();
+        meta.ensure_text_current();
+        meta
+    }
+
+    #[test]
+    fn a_gta_vi_data_xml_edited_in_its_form_saves_with_only_the_values_bytes_changed() {
+        let meta = edited_in_the_form(true, |i| i.set("count", Value::Int(34)));
+        let saved = super::meta_bytes(&meta, || None).expect("it saves");
+        assert_eq!(saved, DATA_XML.replace("\"12\"", "\"34\"").into_bytes());
+        let meta = edited_in_the_form(true, |i| i.set("group", Value::String("zq".into())));
+        let saved = super::meta_bytes(&meta, || None).expect("it saves");
+        assert_eq!(
+            saved,
+            DATA_XML
+                .replace("<group></group>", "<group>zq</group>")
+                .into_bytes()
+        );
+    }
+
+    #[test]
+    fn a_structural_edit_or_a_gta_v_xml_is_written_again_from_its_fields_as_before() {
+        let removed = edited_in_the_form(true, |i| {
+            i.fields.pop();
+        });
+        let gta5 = edited_in_the_form(false, |i| i.set("count", Value::Int(34)));
+        for meta in [removed, gta5] {
+            let saved = super::meta_bytes(&meta, || None).expect("it saves");
+            assert_eq!(Ok(saved.clone()), meta.to_bytes());
+            let saved = String::from_utf8(saved).expect("text");
+            assert!(!saved.contains("zq hand edit"), "written again: {saved}");
+        }
     }
 
     #[test]

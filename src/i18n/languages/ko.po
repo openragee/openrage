@@ -12128,9 +12128,6 @@ msgstr "{name}에는 {kind} 콘텐츠가 있습니다."
 msgid "{name} is a folder, and the Files content holds files"
 msgstr "{name}은(는) 폴더이며, 파일 콘텐츠에는 파일만 넣을 수 있습니다"
 
-msgid "{name} is a headerless resource, whose loose form is stored under a new row"
-msgstr "{name}은(는) 헤더 없는 리소스이며, 그 느슨한 형식은 새 행에 저장됩니다"
-
 msgid "{name} is a name Windows keeps for itself: choose another"
 msgstr "{name}은(는) Windows가 자체적으로 예약한 이름입니다: 다른 이름을 선택하십시오"
 
@@ -17055,9 +17052,6 @@ msgstr "GTA VI 아카이브에서 연 문서만 그 아카이브의 사본에 �
 msgid "Cannot save into a copy of the archive: {reason}"
 msgstr "아카이브의 사본에 저장할 수 없습니다: {reason}"
 
-msgid "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale."
-msgstr "{file}은(는) 항목 위치에 편집을 넣은 새 아카이브이며, 테이블의 서명이 오래되어 게임이 이를 거부합니다."
-
 msgid "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds."
 msgstr "{file}은(는) 읽어 온 아카이브와 같은 새 아카이브입니다: 편집이 항목이 가진 바이트를 씁니다."
 
@@ -17383,3 +17377,15 @@ msgstr "GTA VI 문서의 편집을 읽어 온 아카이브의 새 사본에 항�
 
 msgid "The text table is laid out again at another length ({reason}), so a save into its archive writes a rebuilt archive, which the game refuses because only its maker can sign the table."
 msgstr "텍스트 테이블이 다른 길이로 다시 배치되므로({reason}) 그 아카이브에 저장하면 재구성된 아카이브가 쓰이며, 테이블에는 만든 사람만 서명할 수 있으므로 게임은 그것을 거부합니다."
+
+msgid "{name} does not read as a resource from its start"
+msgstr "{name}은(는) 시작 부분부터 리소스로 읽히지 않습니다"
+
+msgid "{file} is a rebuilt archive with the document's edit, which the game refuses because only its maker can sign the table it changed."
+msgstr "{file}은(는) 문서의 편집이 담긴 재구성된 아카이브이며, 바뀐 테이블에는 만든 사람만 서명할 수 있으므로 게임은 그것을 거부합니다."
+
+msgid "In a GTA VI archive"
+msgstr "GTA VI 아카이브 안"
+
+msgid "This key changes the length of its clip's data, so its archive will be saved rebuilt, which the game refuses because only its maker can sign the table."
+msgstr "이 키는 클립 데이터의 길이를 바꾸므로 그 아카이브는 재구성되어 저장되며, 테이블에는 만든 사람만 서명할 수 있으므로 게임은 그것을 거부합니다."

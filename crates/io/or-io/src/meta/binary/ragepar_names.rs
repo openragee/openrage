@@ -17,8 +17,10 @@
 //!   row, each already keyed by the on-disk hash the row resolved.
 //!
 //! Neither file is ours to redistribute: both are gitignored, a clean clone has
-//! neither, and nothing is compiled in. [`installed`] finds them only through
-//! [`CORPUS_DIR_ENV`]; without it this resolves nothing and the hashes show as
+//! neither, and nothing is compiled in. [`installed`] finds them through
+//! [`CORPUS_DIR_ENV`], then takes the 32-bit rows of the table `hashes mine`
+//! keeps in the configuration folder a host named with [`use_config_dir`];
+//! without either this resolves nothing and the hashes show as
 //! `hash_XXXXXXXX`, exactly as a clean checkout does.
 //!
 //! ⚠ A member or enum-value clear name carries no numeric hash in the file, and
@@ -257,8 +259,21 @@ impl ParserNames {
     }
 }
 
-/// The recovered names the host made available through [`CORPUS_DIR_ENV`], or
-/// `None` when it is unset or names nothing — the clean-checkout case.
+/// The configuration folder [`installed`] reads the mined table of.
+static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Has [`installed`] read the class and member rows of [`mined_table`] under `config`; only the first call before the first read counts.
+pub fn use_config_dir(config: &Path) {
+    let _ = CONFIG_DIR.set(config.to_path_buf());
+}
+
+/// The table `hashes mine` merges its rows into under the configuration folder `config`, which the GTA VI names cache reads too.
+pub fn mined_table(config: &Path) -> PathBuf {
+    config.join("gta6_names").join(RESOLVED_NAMES_FILE)
+}
+
+/// The recovered names of [`CORPUS_DIR_ENV`] and of the configuration folder's
+/// mined table, or `None` when neither names anything — the clean-checkout case.
 ///
 /// ⚠ Resolved once: the hash index caches what this returns.
 pub fn installed() -> Option<&'static ParserNames> {
@@ -267,15 +282,42 @@ pub fn installed() -> Option<&'static ParserNames> {
 }
 
 fn discover() -> Option<ParserNames> {
-    let dir = PathBuf::from(std::env::var_os(CORPUS_DIR_ENV)?);
-    match ParserNames::load_dir(&dir) {
+    let corpus = std::env::var_os(CORPUS_DIR_ENV).map(PathBuf::from);
+    match load_from(corpus.as_deref(), CONFIG_DIR.get().map(PathBuf::as_path)) {
         Ok(names) if !names.is_empty() => Some(names),
         Ok(_) => None,
         Err(error) => {
-            tracing::warn!("{CORPUS_DIR_ENV} names nothing usable: {error}");
+            tracing::warn!("the recovered parser names are unusable: {error}");
             None
         }
     }
+}
+
+/// The names of the corpus folder `corpus`, then the 32-bit rows of [`mined_table`] under `config` for the hashes it leaves unnamed.
+pub fn load_from(corpus: Option<&Path>, config: Option<&Path>) -> Result<ParserNames, LoadError> {
+    let mut names = match corpus {
+        Some(dir) => ParserNames::load_dir(dir)?,
+        None => ParserNames::default(),
+    };
+    // Its 64-bit rows are entry names, which `parse_hash` reads as no hash; a 32-bit row is taken
+    // only where its name hashes to it, so a stale or foreign row names nothing.
+    if let Some(config) = config {
+        if let Some(bytes) = read_optional(&mined_table(config))? {
+            let text = String::from_utf8_lossy(&bytes);
+            let hashed = |line: &&str| {
+                let mut cols = line.splitn(2, '\t');
+                let hash = cols.next().and_then(|h| parse_hash(h.trim()));
+                let name = cols.next().unwrap_or_default().trim_end_matches('\r');
+                hash.is_some_and(|h| {
+                    crate::hash::string_hash(name.as_bytes()) == h
+                        || crate::hash::literal_string_hash(name.as_bytes()) == h
+                })
+            };
+            let rows: Vec<&str> = text.lines().filter(hashed).collect();
+            names.load_resolved(&rows.join("\n"));
+        }
+    }
+    Ok(names)
 }
 
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, LoadError> {
@@ -461,6 +503,44 @@ mod tests {
         assert!(only_tsv.struct_schema(0x1111_2222).is_none());
 
         assert!(ParserNames::parse(None, None).expect("neither").is_empty());
+    }
+
+    /// The configuration folder's mined table: its eight-digit rows are read after the corpus's,
+    /// which win, and its sixteen-digit entry rows are not.
+    #[test]
+    fn the_mined_table_of_the_configuration_folder_names_what_the_corpus_leaves_unnamed() {
+        let corpus = tempfile::tempdir().expect("a corpus folder");
+        let config = tempfile::tempdir().expect("a configuration folder");
+        std::fs::write(corpus.path().join(RESOLVED_NAMES_FILE), RESOLVED).expect("written");
+        let table = mined_table(config.path());
+        std::fs::create_dir_all(table.parent().expect("a folder")).expect("made");
+        let class = crate::hash::literal_string_hash(b"ZqWidgetMeta");
+        let member = crate::hash::string_hash(b"zq_member");
+        let mined = format!(
+            "0x00000000000000AB\tzq/entry/name\n0x1a2b3c4d\tmined_other\n0x0000ABCD\tmined_member\n\
+             0x{class:08x}\tZqWidgetMeta\n0x{member:08x}\tzq_member\n"
+        );
+        std::fs::write(&table, mined).expect("written");
+
+        let names = load_from(Some(corpus.path()), Some(config.path())).expect("both load");
+        assert_eq!(names.name(class), Some("ZqWidgetMeta"));
+        assert_eq!(names.name(member), Some("zq_member"));
+        assert_eq!(
+            names.name(0x0000_ABCD),
+            None,
+            "a row its name does not hash to"
+        );
+        assert_eq!(
+            names.name(0x1A2B_3C4D),
+            Some("widget_param"),
+            "the corpus wins"
+        );
+        assert_eq!(names.len(), 4, "an entry row is no 32-bit name");
+        let alone = load_from(None, Some(config.path())).expect("the table alone");
+        assert_eq!(alone.name(class), Some("ZqWidgetMeta"));
+        assert_eq!(alone.len(), 2);
+        let none = load_from(None, Some(&config.path().join("absent"))).expect("no table");
+        assert!(none.is_empty());
     }
 
     #[test]

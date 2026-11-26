@@ -129,7 +129,7 @@ pub(super) fn draw(ui: &mut egui::Ui, app_state: &mut AppState, doc_id: Document
             .request_repaint_after(std::time::Duration::from_millis(150));
     }
     if let Some(doc) = app_state.document(doc_id) {
-        draw_footer(ui, doc, &script.source, "UTF-8", "LF", &state.caret);
+        draw_footer(ui, doc, &script.source, "UTF-8", "LF", &state.caret, true);
     }
     let body_rect = ui.available_rect_before_wrap();
     // A rope clone shares its nodes, and a read-only paint never edits it.

@@ -104,8 +104,7 @@ impl From<egui::Modifiers> for ShortcutMods {
     }
 }
 
-/// The primary modifier as winit holds it while a test presses a shortcut: Command on a Mac.
-#[cfg(test)]
+/// The primary modifier as winit holds it for a press made outside the window: Command on a Mac.
 pub(crate) const PRIMARY_STATE: ModifiersState = if cfg!(target_os = "macos") {
     ModifiersState::SUPER
 } else {

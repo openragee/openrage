@@ -6,10 +6,11 @@ pub mod pictures;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use or_io::container::resource::{ResourceEnvelope, Rsc7};
-use or_io::container::rpf::{RpfEncryption, RpfEntry};
+use or_io::container::rpf::{read_rpf9_body, Rpf9Sections, RpfEncryption, RpfEntry};
+use or_io::container::RpfArchive;
 
 use super::document::{DocumentId, RpfNodeId};
 use super::explorer::{ColumnValue, SortKey};
@@ -89,15 +90,51 @@ fn compression_label(rpf9_deflated: Option<bool>, compressed: bool) -> &'static 
     }
 }
 
-/// The bytes row `id` adds to its folder's total: a file's size, an archive's own, a folder's none.
+/// The bytes row `id` adds to its folder's total: the Size it shows for a file or an archive, a folder's none.
 pub fn listed_bytes(session: &RpfEditSession, id: RpfNodeId) -> u64 {
-    match session.node(id).map(|node| (&node.backing, node.is_dir())) {
-        Some((RpfNodeBacking::Archive { .. }, _)) => {
-            row_facts(session, id).and_then(|f| f.size).unwrap_or(0)
-        }
-        Some((_, false)) => session.size_for(id).unwrap_or(0),
-        _ => 0,
+    let Some(node) = session.node(id) else {
+        return 0;
+    };
+    match &node.backing {
+        RpfNodeBacking::Archive { .. } => row_facts(session, id).and_then(|f| f.size).unwrap_or(0),
+        RpfNodeBacking::ArchiveFile {
+            archive_id,
+            entry_index,
+            override_bytes: Some(held),
+        } => match session.archive(*archive_id) {
+            Some(slot) => held_size(&slot.archive, *entry_index, held),
+            None => held.len() as u64,
+        },
+        _ if node.is_dir() => 0,
+        _ => session.size_for(id).unwrap_or(0),
     }
+}
+
+/// The bytes a row's held body stands for: a headerless resource's sections, which the loose form it holds deflates, else its length.
+fn held_size(archive: &RpfArchive, entry_index: u32, held: &Arc<Vec<u8>>) -> u64 {
+    let headerless = (archive.rpf9_row(entry_index)).is_some_and(|row| row.row_bytes == Some(20));
+    if !headerless {
+        return held.len() as u64;
+    }
+    // ponytail: the loose form is inflated once, on the UI thread at its first look, and kept while
+    // the row holds it; have the save into the row measure it on its worker if a large body stutters.
+    static MEMO: Mutex<Vec<(Weak<Vec<u8>>, u64)>> = Mutex::new(Vec::new());
+    let mut memo = MEMO.lock().unwrap_or_else(PoisonError::into_inner);
+    memo.retain(|(body, _)| body.strong_count() > 0);
+    let held_at = Arc::as_ptr(held);
+    if let Some((_, len)) = memo.iter().find(|(body, _)| body.as_ptr() == held_at) {
+        return *len;
+    }
+    let len = sections_len(held).unwrap_or(held.len() as u64);
+    memo.push((Arc::downgrade(held), len));
+    len
+}
+
+/// The inflated length of the sections a loose GTA VI resource holds; `None` for bytes that are no such file.
+fn sections_len(loose: &[u8]) -> Option<u64> {
+    let (find, body) = read_rpf9_body(std::io::Cursor::new(loose), 0, u64::MAX).ok()?;
+    let sections = Rpf9Sections::of(&find, &body)?;
+    Some((sections.virtual_section.len() + sections.physical.len()) as u64)
 }
 
 fn encryption_label(encryption: RpfEncryption) -> &'static str {
@@ -210,7 +247,7 @@ pub fn row_facts(session: &RpfEditSession, id: RpfNodeId) -> Option<RowFacts> {
                 RpfEntry::Directory(_) => {}
             }
             if let Some(edited) = override_bytes {
-                facts.size = Some(edited.len() as u64);
+                facts.size = Some(held_size(archive, *entry_index, edited));
                 facts.version = rsc7_version(edited);
                 facts.edition = facts.version.and_then(|v| edition_of(&node.name, v));
             }
@@ -246,8 +283,13 @@ pub fn row_facts(session: &RpfEditSession, id: RpfNodeId) -> Option<RowFacts> {
                     if let Some(RpfEntry::Binary(b)) =
                         parent.entries.get(*parent_entry_index as usize)
                     {
-                        facts.size = Some(u64::from(b.uncompressed_size));
-                        facts.stored = Some(u64::from(b.read_size()));
+                        // ⚠ An entry's sizes are 32-bit, so a GTA VI archive past 4 GiB takes its row's.
+                        let (size, stored) = match parent.rpf9_row(*parent_entry_index) {
+                            Some(row) => (row.stored, row.stored),
+                            None => (u64::from(b.uncompressed_size), u64::from(b.read_size())),
+                        };
+                        facts.size = Some(size);
+                        facts.stored = Some(stored);
                         facts.compression = Some(compression_label(
                             parent.rpf9_deflated(*parent_entry_index),
                             b.is_compressed(),
@@ -551,6 +593,189 @@ mod tests {
         let rows = session.children_of(session.root_id());
         let total: u64 = rows.iter().map(|&id| listed_bytes(&session, id)).sum();
         assert_eq!(total, inner.len() as u64 + 3);
+    }
+
+    mod gta6 {
+        use std::io::Cursor;
+        use std::sync::Arc;
+
+        use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
+        use or_io::container::rpf::{
+            write_rpf9_resource, Gta6Context, NameResolver, Rpf9Form, Rpf9Sections,
+        };
+        use or_io::container::{NoOpCryptoProvider, RpfArchive};
+        use or_io::gta6::hash::name_hash64;
+
+        use super::super::*;
+        use crate::state::rpf_archive_open::tree_verbs::tests::{rbm_section, synthetic_keys};
+
+        /// Archives opened while this is held are read with the synthetic keys and `names`.
+        struct Reading(Option<Arc<Gta6Context>>);
+
+        impl Drop for Reading {
+            fn drop(&mut self) {
+                Gta6Context::swap_given(self.0.take());
+            }
+        }
+
+        fn reading(names: &[&str]) -> Reading {
+            let mut resolver = NameResolver::new();
+            for &name in names {
+                resolver.insert(name_hash64(name.as_bytes()), name);
+            }
+            let context = Gta6Context {
+                keys: synthetic_keys().expect("the synthetic snapshot parses"),
+                names: Arc::new(resolver),
+            };
+            Reading(Gta6Context::swap_given(Some(Arc::new(context))))
+        }
+
+        fn built(entries: &[(String, Rpf9NewBody)]) -> Vec<u8> {
+            let key = Rpf9IndexKey {
+                key_id: 0xDEAD_BEEF,
+                iv: [0x33; 16],
+            };
+            let keys = synthetic_keys().expect("the synthetic snapshot parses");
+            let plan = build(entries, &key, &keys).expect("the archive builds");
+            let mut bytes = Vec::new();
+            (plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut bytes))
+                .expect("the archive is laid out");
+            bytes
+        }
+
+        fn chunked(name: &str) -> (String, Rpf9NewBody) {
+            let body = format!("the body of {name}, which deflates. ").repeat(40);
+            (name.to_owned(), Rpf9NewBody::Chunked(body.into_bytes()))
+        }
+
+        fn loose(virtual_section: Vec<u8>) -> Vec<u8> {
+            write_rpf9_resource(&Rpf9Sections {
+                form: Rpf9Form::BlockMapped,
+                virtual_section,
+                physical: Vec::new(),
+            })
+            .expect("a loose resource")
+        }
+
+        /// The tree of the GTA VI archive `bytes`, read from a file in `dir`.
+        fn tree(dir: &Path, bytes: Vec<u8>) -> RpfEditSession {
+            let path = dir.join("source.rpf");
+            std::fs::write(&path, bytes).expect("the archive is written");
+            let archive = RpfArchive::open_with(&path, Arc::new(NoOpCryptoProvider::new()))
+                .expect("the archive opens");
+            RpfEditSession::from_archive(archive).expect("the tree lists")
+        }
+
+        fn row(session: &RpfEditSession, name: &str) -> RpfNodeId {
+            (session.all_nodes().into_iter())
+                .find(|&id| session.node(id).is_some_and(|n| n.name == name))
+                .unwrap_or_else(|| panic!("no row {name}"))
+        }
+
+        fn size(session: &RpfEditSession, id: RpfNodeId) -> Option<u64> {
+            row_facts(session, id).and_then(|facts| facts.size)
+        }
+
+        #[test]
+        fn a_headerless_row_holding_its_loose_form_shows_the_sections_it_inflates_to() {
+            let _serial = crate::ui::theme::serial();
+            let _reading = reading(&["data/model.ydr", "data/named.bin"]);
+            let dir = tempfile::tempdir().expect("a scratch directory");
+            let resource = Rpf9NewBody::Resource {
+                type_code: 0x02,
+                loose: loose(rbm_section()),
+            };
+            let entries = [
+                ("data/model.ydr".to_owned(), resource),
+                chunked("data/named.bin"),
+            ];
+            let mut session = tree(dir.path(), built(&entries));
+            let model = row(&session, "model.ydr");
+            assert_eq!(size(&session, model), Some(rbm_section().len() as u64));
+
+            // An edit that grows the virtual section with zeros, which deflate to little.
+            let mut grown = rbm_section();
+            grown.resize(0x200, 0);
+            let held = loose(grown);
+            assert!(
+                held.len() < 0x200,
+                "the loose form is shorter than its sections"
+            );
+            session.set_bytes_for(model, held).expect("held");
+            assert_eq!(size(&session, model), Some(0x200));
+            assert_eq!(listed_bytes(&session, model), 0x200);
+
+            // A 24-byte row's held body is its own length.
+            let named = row(&session, "named.bin");
+            session
+                .set_bytes_for(named, b"plain".to_vec())
+                .expect("held");
+            assert_eq!(size(&session, named), Some(5));
+            assert_eq!(listed_bytes(&session, named), 5);
+        }
+
+        #[test]
+        fn a_folder_of_two_nested_gta_vi_archives_totals_their_two_sizes_once() {
+            let _serial = crate::ui::theme::serial();
+            let _reading = reading(&["a.rpf", "b.rpf"]);
+            let dir = tempfile::tempdir().expect("a scratch directory");
+            let (a, b) = (
+                built(&[chunked("x/one.bin")]),
+                built(&[chunked("x/two.bin")]),
+            );
+            let stored = |len: usize| len.next_multiple_of(16) as u64;
+            let expected = stored(a.len()) + stored(b.len());
+            let entries = [
+                ("a.rpf".to_owned(), Rpf9NewBody::Archive(a)),
+                ("b.rpf".to_owned(), Rpf9NewBody::Archive(b)),
+            ];
+            let session = tree(dir.path(), built(&entries));
+            let rows = session.children_of(session.root_id());
+            assert_eq!(rows.len(), 2, "two rows, each a nested archive");
+            let shown: u64 = rows.iter().filter_map(|&id| size(&session, id)).sum();
+            let total: u64 = rows.iter().map(|&id| listed_bytes(&session, id)).sum();
+            assert_eq!((shown, total), (expected, expected));
+        }
+
+        /// A build root's top-level archive whose root holds a nested archive past 4 GiB: the
+        /// largest under 64 GiB, so its root's nested archives are each opened once.
+        #[test]
+        fn a_nested_gta_vi_archive_past_4_gib_counts_its_whole_size() {
+            const WHAT: &str = "a GTA VI root's total counts a nested archive past 4 GiB whole";
+            let _serial = crate::ui::theme::serial();
+            let build_root = std::env::var_os("OPENRAGE_GTA6_BUILD").map(PathBuf::from);
+            let (Some(build_root), Some(_)) = (build_root, std::env::var_os("OPENRAGE_GTA6_KEYS"))
+            else {
+                or_test_support::skip_install(
+                    WHAT,
+                    "set OPENRAGE_GTA6_BUILD and OPENRAGE_GTA6_KEYS",
+                );
+                return;
+            };
+            let largest = std::fs::read_dir(&build_root)
+                .expect("the build root lists")
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("rpf")))
+                .filter_map(|p| Some((std::fs::metadata(&p).ok()?.len(), p)))
+                .filter(|(len, _)| *len < 64 << 30)
+                .max()
+                .map(|(_, p)| p)
+                .expect("a top-level archive");
+            let archive = RpfArchive::open_with(&largest, Arc::new(NoOpCryptoProvider::new()))
+                .expect("the archive opens");
+            let session = RpfEditSession::from_archive(archive).expect("the tree lists");
+            let rows = session.children_of(session.root_id());
+            let sizes: Vec<u64> = rows.iter().filter_map(|&id| size(&session, id)).collect();
+            assert!(
+                sizes.iter().any(|&s| s > u64::from(u32::MAX)),
+                "a row past 4 GiB"
+            );
+            let total: u64 = rows.iter().map(|&id| listed_bytes(&session, id)).sum();
+            assert_eq!(total, sizes.iter().sum::<u64>());
+            // Measured on the build 1.0.2.1: 103 rows, whose tables state these stored sizes.
+            assert_eq!((rows.len(), total), (103, 28_543_219_104));
+        }
     }
 
     #[test]

@@ -198,7 +198,7 @@ fn three(dir: &Path) -> PathBuf {
 
 /// Archives opened while this is held are read with the keys it was made with; the context held
 /// before comes back once it is dropped.
-struct Reading(Option<Arc<Gta6Context>>);
+pub(crate) struct Reading(Option<Arc<Gta6Context>>);
 
 impl Drop for Reading {
     fn drop(&mut self) {
@@ -206,21 +206,21 @@ impl Drop for Reading {
     }
 }
 
-fn reading_with(keys: Arc<GtaViKeys>) -> Reading {
+pub(crate) fn reading_with(keys: Arc<GtaViKeys>) -> Reading {
     let names = Arc::new(NameResolver::new());
     let context = Gta6Context { keys, names };
     Reading(Gta6Context::swap_given(Some(Arc::new(context))))
 }
 
 /// The archive at `path` as the tree every archive opens as.
-fn tree(path: &Path) -> RpfDocument {
+pub(crate) fn tree(path: &Path) -> RpfDocument {
     let crypto = Arc::new(NoOpCryptoProvider::new());
     let archive = RpfArchive::open_with(path, crypto).expect("the archive opens as a tree");
     RpfDocument::new(archive).expect("the tree lists")
 }
 
 /// Every file row of the tree.
-fn files(session: &RpfEditSession) -> Vec<RpfNodeId> {
+pub(crate) fn files(session: &RpfEditSession) -> Vec<RpfNodeId> {
     (session.all_nodes().into_iter())
         .filter(|&id| session.node(id).is_some_and(|n| !n.is_dir()))
         .collect()
@@ -242,26 +242,26 @@ fn contents(dir: &Path) -> Vec<Vec<u8>> {
     out
 }
 
-fn mount_of(bytes: &[u8]) -> Gta6Mount {
+pub(crate) fn mount_of(bytes: &[u8]) -> Gta6Mount {
     let keys = synthetic_keys().expect("the synthetic snapshot parses");
     Gta6Mount::open_root(&mut Cursor::new(bytes), &keys).expect("the archive opens")
 }
 
 /// The top-level entry `name` of `mount`.
-fn entry_named<'m>(mount: &'m Gta6Mount, name: &str) -> &'m Gta6Entry {
+pub(crate) fn entry_named<'m>(mount: &'m Gta6Mount, name: &str) -> &'m Gta6Entry {
     (mount.archive.entries.iter())
         .find(|e| e.name64 == name_hash64(name.as_bytes()))
         .unwrap_or_else(|| panic!("no entry {name}"))
 }
 
 /// The body of entry `name` of the archive `bytes`.
-fn body_of(bytes: &[u8], name: &str) -> Vec<u8> {
+pub(crate) fn body_of(bytes: &[u8], name: &str) -> Vec<u8> {
     let mount = mount_of(bytes);
     (mount.read_entry(Cursor::new(bytes), entry_named(&mount, name))).expect("the body reads")
 }
 
 /// The sections of the headerless resource `name` of the archive `bytes`, read past its slot.
-fn stored_sections(bytes: &[u8], name: &str) -> Rpf9Sections {
+pub(crate) fn stored_sections(bytes: &[u8], name: &str) -> Rpf9Sections {
     let mount = mount_of(bytes);
     let start = (mount.absolute_start(entry_named(&mount, name))).expect("a start");
     let (find, body) = read_rpf9_body(Cursor::new(bytes), start + RPF9_SLOT, u64::MAX)
@@ -269,10 +269,10 @@ fn stored_sections(bytes: &[u8], name: &str) -> Rpf9Sections {
     Rpf9Sections::of(&find, &body).expect("a resource")
 }
 
-const DOC: DocumentId = 9_100;
+pub(crate) const DOC: DocumentId = 9_100;
 
 /// An app showing `tree` as the archive at `path` opened on its own.
-fn showing(path: PathBuf, tree: RpfDocument) -> AppState {
+pub(crate) fn showing(path: PathBuf, tree: RpfDocument) -> AppState {
     let mut state = AppState::new();
     let doc = Document::new(DOC, Some(path), DocPayload::Rpf(tree));
     state.documents.push(doc);
@@ -282,7 +282,7 @@ fn showing(path: PathBuf, tree: RpfDocument) -> AppState {
 }
 
 /// Poll until the save says how it ended.
-fn finished(state: &mut AppState) {
+pub(crate) fn finished(state: &mut AppState) {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         state.poll_archive_saves();
@@ -296,7 +296,7 @@ fn finished(state: &mut AppState) {
     }
 }
 
-fn toasts(state: &AppState) -> Vec<&str> {
+pub(crate) fn toasts(state: &AppState) -> Vec<&str> {
     state.toasts.iter().map(|t| t.message.as_str()).collect()
 }
 

@@ -2,8 +2,8 @@
 //! script of one step per line; `docs/guides/Development_Workflow.md` lists the steps.
 //!
 //! ⚠ A frame is `render_editor`'s frame: the same polls, `ui::draw`, overlays
-//! and render bridge. App shortcuts are dispatched from winit, so no step
-//! reaches them.
+//! and render bridge. A `key` step runs the app shortcut it names as the
+//! window's winit dispatcher does, `keys::press`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 mod compare;
 mod drag;
+mod keys;
 mod lost_device;
 mod perf;
 mod png;
@@ -259,7 +260,10 @@ impl Shell {
             }
             Step::Type(text) => self.frame(state, vec![egui::Event::Text(text.clone())], None)?,
             Step::Key { key, modifiers } => {
-                for pressed in [true, false] {
+                // The window takes from egui the press of a key whose command it ran, and egui still sees the release.
+                let ran = keys::press(state, &self.ctx, *key, *modifiers);
+                let presses: &[bool] = if ran { &[false] } else { &[true, false] };
+                for &pressed in presses {
                     let event = egui::Event::Key {
                         key: *key,
                         physical_key: Some(*key),

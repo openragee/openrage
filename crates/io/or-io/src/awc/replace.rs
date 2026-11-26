@@ -5,7 +5,10 @@ use super::opus::{is_measured_toc, OpusStream, OPUS_FRAME};
 use super::{crypto, AwcChunkKind, AwcFile, AwcKey, MULTI_CHANNEL_PACKET};
 
 mod gta6_records;
+mod in_extent;
 mod opus_blocks;
+
+pub use in_extent::NotInExtent;
 
 /// Samples in one 2,048-byte PCM16 packet.
 const PCM16_PACKET_SAMPLES: usize = MULTI_CHANNEL_PACKET / 2;

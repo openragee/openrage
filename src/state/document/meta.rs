@@ -11,11 +11,21 @@ pub struct ParsedMeta {
     pub revision: u64,
 }
 
+/// Has the metadata reader read the user's mined names; ⚠ called before any panel builds the hash index, which reads them once.
+pub fn read_the_mined_names() {
+    if let Some(config) = crate::state::prefs::config_root() {
+        or_io::meta::binary::ragepar_names::use_config_dir(&config);
+    }
+}
+
 /// The metadata schema, installed on first use from where `or_title::schema` finds it.
 pub fn meta_schema() -> &'static or_io::meta::SchemaLibrary {
     static FOUND: std::sync::Once = std::sync::Once::new();
     FOUND.call_once(|| {
         let config = crate::state::prefs::config_root();
+        if let Some(config) = config.as_deref() {
+            or_io::meta::binary::ragepar_names::use_config_dir(config);
+        }
         if let Some(path) = or_title::schema::find_gta6_snapshot(config.as_deref()) {
             if let Err(error) = or_io::meta::install_names_snapshot(&path) {
                 tracing::warn!(path = %path.display(), %error, "GTA VI's schema snapshot is unusable");

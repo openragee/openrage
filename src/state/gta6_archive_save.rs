@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use or_io::container::rpf::{BodyForm, GtaViKeys, Rpf9ArchiveWriter};
 
 use crate::platform::file_dialogs;
+use crate::state::document::DocumentId;
 use crate::state::extract_job::ExtractItem;
 use crate::state::gta6_resource_save::EditedSave;
 use crate::state::rpf_archive_open::tree_verbs::{
@@ -19,10 +20,20 @@ use crate::state::{AppState, DocPayload, Document};
 
 /// How a save into a copy of a document's archive ended: the document, and the copy written and
 /// how, or why it was refused.
-type Ended = (
-    crate::state::document::DocumentId,
-    Result<(PathBuf, Saved), String>,
-);
+type Ended = (DocumentId, Result<(PathBuf, Saved), String>);
+
+/// What makes the body a save into a copy writes, on the save's worker.
+type Body = Box<dyn FnOnce() -> Result<Vec<u8>, String> + Send>;
+
+/// A save into a copy checked before its file is picked: the document, the archive it was read
+/// out of, the body's offset there, the row's name and what makes the body.
+struct Pending {
+    id: DocumentId,
+    archive: PathBuf,
+    offset: u64,
+    name: Option<String>,
+    body: Body,
+}
 
 // ponytail: one list for the process; a poll takes the saves of the documents its app holds, so a
 // save of a document closed before it ended stays in the list unsaid.
@@ -76,53 +87,93 @@ impl AppState {
         let Some(name) = self.archive_copy_name() else {
             return false;
         };
+        // Nothing to save is said before a dialog asks where a copy goes.
+        let pending = match self.pending_copy() {
+            Ok(pending) => pending,
+            Err(why) => return self.refused_copy(why),
+        };
         // Which copy is written is planned once the file is picked, so the title names neither.
         let Some(out) = file_dialogs::save_gta6_archive_copy(&name, tr!("Save a copy")) else {
             return false;
         };
-        self.save_into_archive_copy_with(out, keys)
+        self.write_copy_on_worker(pending, out, keys)
     }
 
+    #[cfg(test)]
     fn save_into_archive_copy_with(&mut self, out: PathBuf, keys: Keys) -> bool {
-        let Some(id) = self.active_document else {
-            return false;
-        };
+        match self.pending_copy() {
+            Ok(pending) => self.write_copy_on_worker(pending, out, keys),
+            Err(why) => self.refused_copy(why),
+        }
+    }
+
+    /// The active document's save into a copy of its archive, its body still to be made; refused
+    /// where it is no archive's or nothing in it is to be saved.
+    fn pending_copy(&mut self) -> Result<Pending, String> {
+        let refused =
+            || tr!("Only a document opened from a GTA VI archive is saved into a copy of it");
+        let id = self.active_document.ok_or_else(|| refused().to_string())?;
         // A form edit reaches the text only as the Text panel draws; the save reads the text.
         if let Some(DocPayload::Meta(meta)) = self.document_mut(id).map(|d| &mut d.payload) {
             meta.ensure_text_current();
         }
-        let Some(doc) = self.document(id) else {
-            return false;
-        };
-        let origin = doc.path.as_deref().and_then(archive_origin);
+        let doc = self.document(id).ok_or_else(|| refused().to_string())?;
+        let (archive, offset) = (doc.path.as_deref())
+            .and_then(archive_origin)
+            .ok_or_else(|| refused().to_string())?;
         // The row's name as the tree shows it, where the document was opened from a tree's row.
         let name = (doc.path.as_deref())
             .and_then(crate::state::rpf_archive_open::tree_open::shown)
             .and_then(|shown| Some(shown.file_name()?.to_string_lossy().into_owned()));
-        let item = archive_item(doc);
-        let refused = match (origin, item) {
-            (Some((archive, offset)), Ok(item)) => {
-                self.say_the_checksum_is_kept(id);
-                std::thread::spawn(move || {
-                    let said = keys().and_then(|keys| {
-                        let body = item.read(BodyForm::Decoded)?;
-                        write_copy(&archive, offset, name, body, &out, &keys)
-                    });
-                    ended().push((id, said.map(|saved| (out, saved))));
-                });
-                return true;
-            }
-            (None, _) => {
-                tr!("Only a document opened from a GTA VI archive is saved into a copy of it")
-                    .to_string()
-            }
-            (_, Err(why)) => why,
-        };
+        Ok(Pending {
+            id,
+            archive,
+            offset,
+            name,
+            body: archive_body(doc)?,
+        })
+    }
+
+    fn write_copy_on_worker(&mut self, pending: Pending, out: PathBuf, keys: Keys) -> bool {
+        let Pending {
+            id,
+            archive,
+            offset,
+            name,
+            body,
+        } = pending;
+        self.say_the_checksum_is_kept(id);
+        std::thread::spawn(move || {
+            let said = keys().and_then(|keys| {
+                let body = body()?;
+                write_copy(&archive, offset, name, body, &out, &keys)
+            });
+            ended().push((id, said.map(|saved| (out, saved))));
+        });
+        true
+    }
+
+    fn refused_copy(&mut self, why: String) -> bool {
         self.show_error_toast(tr!(
             "Cannot save into a copy of the archive: {reason}",
-            reason = refused
+            reason = why
         ));
         false
+    }
+
+    /// The archive the document `doc_id` was opened from a GTA VI tree's row of, and the row's
+    /// path there; `None` for a document opened any other way.
+    pub(crate) fn tree_row_origin(&self, doc_id: DocumentId) -> Option<(PathBuf, String)> {
+        let path = self.document(doc_id)?.path.as_deref()?;
+        let shown = crate::state::rpf_archive_open::tree_open::shown(path)?;
+        let (archive, _) = crate::state::rpf9_scan::scanned_body(path)?;
+        let inner = match shown.strip_prefix(archive) {
+            Ok(inner) => (inner.iter().map(|p| p.to_string_lossy()))
+                .collect::<Vec<_>>()
+                .join("/"),
+            Err(_) => shown.display().to_string(),
+        };
+        Some((archive.to_path_buf(), inner))
     }
 
     /// Say how each save into a copy of an archive ended.
@@ -165,7 +216,7 @@ impl AppState {
             };
             let said = match (tables, bodies) {
                 (true, _) => tr!(
-                    "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale.",
+                    "{file} is a rebuilt archive with the document's edit, which the game refuses because only its maker can sign the table it changed.",
                     file = file
                 ),
                 (false, true) => tr!(
@@ -182,16 +233,28 @@ impl AppState {
     }
 }
 
-/// The item the loose save writes of `doc`'s edits, refused where it writes none.
+/// What the loose save writes of `doc`'s edits, made on the save's worker; refused where it
+/// writes none.
+fn archive_body(doc: &Document) -> Result<Body, String> {
+    if let DocPayload::Meta(meta) = &doc.payload {
+        if meta.is_edited() && meta.headerless_sections().is_none() {
+            // A metadata body's text is parsed and written on the worker, never on the UI thread.
+            let meta = meta.clone();
+            return Ok(Box::new(move || {
+                let keys = || crate::state::rpf9_scan::rpf9_table::keys().ok();
+                crate::state::gta6_meta_save::meta_bytes(&meta, keys)
+            }));
+        }
+    }
+    let item = archive_item(doc)?;
+    Ok(Box::new(move || item.read(BodyForm::Decoded)))
+}
+
+/// The item the loose save writes of `doc`'s edits other than a metadata body's, refused where it
+/// writes none.
 fn archive_item(doc: &Document) -> Result<ExtractItem, String> {
     let name = String::new();
     match &doc.payload {
-        DocPayload::Meta(meta) if meta.is_edited() && meta.headerless_sections().is_none() => {
-            return crate::state::gta6_meta_save::meta_bytes(meta, || {
-                crate::state::rpf9_scan::rpf9_table::keys().ok()
-            })
-            .map(|bytes| ExtractItem::bytes(name, bytes));
-        }
         // An edited text body is written in the encoding and line endings it was read with.
         DocPayload::Text(text)
             if doc.dirty

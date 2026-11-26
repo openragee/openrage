@@ -33,8 +33,16 @@ fn held(name: &str) -> Row<'_> {
         hash64: name_hash64(name.as_bytes()),
         hash32: name_hash32(name.as_bytes()),
         held: true,
+        spelled: false,
         name,
     }
+}
+
+/// `bytes` with the checksum at `crc_at` made right for what follows it again.
+fn rechecked(mut bytes: Vec<u8>, crc_at: usize) -> Vec<u8> {
+    let crc = checksum(&bytes[crc_at + 4..]);
+    bytes[crc_at..crc_at + 4].copy_from_slice(&crc.to_le_bytes());
+    bytes
 }
 
 #[test]
@@ -45,11 +53,9 @@ fn a_kept_cache_reads_back_what_was_gathered() {
 
     let (file, stamp) = kept(Some(names.path()), config.path());
     let warm = read(&file, &stamp).expect("the cache reads back");
-    let gathered = gather(Some(names.path()), Some(config.path()));
-    assert_eq!(gathered.len(), NAMES.len());
-    assert_eq!(warm.len(), gathered.len());
-    for (hash, name) in gathered {
-        assert_eq!(warm.lookup(hash), Some(name.as_str()));
+    assert_eq!(warm.len(), NAMES.len());
+    for name in NAMES {
+        assert_eq!(warm.lookup(name_hash64(name.as_bytes())), Some(name));
     }
 }
 
@@ -88,6 +94,177 @@ fn a_warm_load_names_what_the_cold_one_did() {
     assert_eq!(warm.lookup(hash), cold.lookup(hash));
 }
 
+/// Every hash a cold load, a warm one and a resolver given the same names one at a time, first
+/// name first, are asked about, with the names of the 64-bit and 32-bit hashes they answer.
+fn answers(resolver: &NameResolver, words: &[u64], hashes32: &[u32]) -> String {
+    let mut out = String::new();
+    for word in words {
+        out += &format!("{word:016x} {:?}\n", resolver.lookup(*word));
+    }
+    for hash in hashes32 {
+        out += &format!("{hash:08x} {:?}\n", resolver.lookup_name32(*hash));
+    }
+    out + &format!("{} {:?}", resolver.len(), resolver.vocabulary().counts())
+}
+
+#[test]
+fn a_warm_and_a_cold_load_answer_alike_as_names_given_one_at_a_time() {
+    // Two pairs of names that share a 32-bit hash and not a 64-bit one.
+    let clashes = [
+        ["c/n213241.ydr", "c/n221100.ydr"],
+        ["c/n213242.ydr", "c/n221101.ydr"],
+    ];
+    for [one, other] in clashes {
+        assert_eq!(name_hash32(one.as_bytes()), name_hash32(other.as_bytes()));
+        assert_ne!(name_hash64(one.as_bytes()), name_hash64(other.as_bytes()));
+    }
+    let names = tempfile::tempdir().expect("a names folder");
+    let config = tempfile::tempdir().expect("a config folder");
+    let too_long = format!("l/{}", "a".repeat(MAX_NAME));
+    let toc = format!(
+        "archive\tentry\tname64\tname32\tname\tsource\na\t0\t{:#018x}\t0x0\tT/Upper.YDR\tt\n",
+        name_hash64(b"t/upper.ydr")
+    );
+    let listed = format!(
+        "0x{:016x}\tX/Mixed.YDR\n0x2a\tfrom/list\n0x{:016x}\twith space\n0x2b\t{}\n",
+        name_hash64(b"x/mixed.ydr"),
+        name_hash64(b"with space"),
+        clashes[1][1],
+    );
+    let vocabulary = [
+        "x/mixed.ydr",
+        clashes[0][0],
+        clashes[0][1],
+        clashes[1][0],
+        clashes[1][1],
+        "Y/Case.YTD",
+        "y/case.ytd",
+        "// a comment",
+        "has space",
+        too_long.as_str(),
+        "  t/upper.ydr  ",
+    ];
+    fs::write(names.path().join("toc-entries-resolved.tsv"), &toc).expect("write a table");
+    fs::write(names.path().join("resolved-names.tsv"), &listed).expect("write a list");
+    fs::write(names.path().join("vocabulary.txt"), vocabulary.join("\n")).expect("write names");
+    let mut harvest = Vocabulary::default();
+    harvest.add("H/Harvested.ydr", Some(*b"dr"));
+    harvest.add("y/case.ytd", None);
+    (harvest.save(&vocabulary_file(config.path()))).expect("keep a vocabulary");
+
+    // The lines the vocabulary refuses, as `Vocabulary::add` judges them.
+    for refused in ["has space", too_long.as_str()] {
+        assert!(!Vocabulary::default().add(refused, None), "{refused}");
+    }
+    // The sources' names in the order a hash is first named from them, each as it is gathered: a
+    // table's as written under the hash it states, a vocabulary's lower-cased under its own.
+    let mut given = vec![(name_hash64(b"t/upper.ydr"), "T/Upper.YDR".to_owned())];
+    given.extend(table_rows(&listed).map(|(hash, name)| (hash, name.to_owned())));
+    let spelled = [
+        "x/mixed.ydr",
+        clashes[0][0],
+        clashes[0][1],
+        clashes[1][0],
+        clashes[1][1],
+        "y/case.ytd",
+        "t/upper.ydr",
+        "h/harvested.ydr",
+    ];
+    given.extend(spelled.map(|name| (name_hash64(name.as_bytes()), name.to_owned())));
+    let mut one_at_a_time = NameResolver::new();
+    for (hash, name) in &given {
+        if one_at_a_time.lookup(*hash).is_none() {
+            one_at_a_time.insert(*hash, name.clone());
+        }
+    }
+
+    let cold = load(Some(names.path()), Some(config.path()));
+    let hashed = NameResolver::names_hashed_on_this_thread();
+    let warm = load(Some(names.path()), Some(config.path()));
+    assert_eq!(
+        NameResolver::names_hashed_on_this_thread(),
+        hashed,
+        "hashed warm"
+    );
+    assert!(warm.lookup(name_hash64(too_long.as_bytes())).is_none());
+    assert!(warm.lookup(name_hash64(b"has space")).is_none());
+    assert_eq!(warm.lookup(0x2b), Some(clashes[1][1]), "a stated hash");
+    assert_eq!(
+        warm.lookup(name_hash64(b"t/upper.ydr")),
+        Some("T/Upper.YDR")
+    );
+    assert_eq!(warm.lookup(name_hash64(b"y/case.ytd")), Some("y/case.ytd"));
+    for [one, _] in clashes {
+        assert_eq!(warm.lookup_name32(name_hash32(one.as_bytes())), None);
+    }
+
+    let mut words: Vec<u64> = given.iter().map(|(hash, _)| *hash).collect();
+    let mut hashes32: Vec<u32> = given
+        .iter()
+        .map(|(_, n)| name_hash32(n.as_bytes()))
+        .collect();
+    let more = ["n/new.ydr", "diffuse", "x/MIXED.ydr", "z/clash"];
+    words.extend(
+        more.map(|name| name_hash64(name.as_bytes()))
+            .into_iter()
+            .chain([7]),
+    );
+    hashes32.extend(
+        more.map(|name| name_hash32(name.as_bytes()))
+            .into_iter()
+            .chain([7]),
+    );
+    let mut all = [one_at_a_time, cold, warm];
+    let [reference, cold, warm] = all.each_ref().map(|r| answers(r, &words, &hashes32));
+    assert_eq!(cold, reference, "cold");
+    assert_eq!(warm, reference, "warm");
+
+    // What the app and the CLI add after a load is answered alike too: another spelling of a held
+    // name, a second name for a hash the cache names, a new name, and the bundled words.
+    let mut later = Vocabulary::bundled();
+    later.add("n/merged.ydr", None);
+    for resolver in &mut all {
+        resolver.insert(name_hash64(b"x/mixed.ydr"), "x/MIXED.ydr");
+        resolver.insert(0x2a, "other/name");
+        resolver.insert(name_hash64(b"n/new.ydr"), "n/new.ydr");
+        resolver.insert(name_hash64(b"from/list"), "from/list");
+        resolver.merge_vocabulary(&later);
+    }
+    words.push(name_hash64(b"n/merged.ydr"));
+    words.push(name_hash64(b"from/list"));
+    let [reference, cold, warm] = all.each_ref().map(|r| answers(r, &words, &hashes32));
+    assert_eq!(cold, reference, "cold, later");
+    assert_eq!(warm, reference, "warm, later");
+    assert_eq!(
+        all[2].lookup(name_hash64(b"x/mixed.ydr")),
+        Some("X/Mixed.YDR")
+    );
+    assert_eq!(all[2].lookup(name_hash64(b"diffuse")), Some("diffuse"));
+}
+
+#[test]
+fn a_warm_load_owns_no_name_until_its_vocabulary_is_asked_for() {
+    let (names, config) = folders();
+    load(Some(names.path()), Some(config.path()));
+    let owned = NameResolver::names_owned_on_this_thread();
+    let warm = load(Some(names.path()), Some(config.path()));
+    assert_eq!(names_in(&warm, &NAMES), [true; 3]);
+    assert_eq!(warm.len(), NAMES.len());
+    assert!(!warm.is_empty());
+    assert_eq!(NameResolver::names_owned_on_this_thread(), owned);
+    assert_eq!(warm.vocabulary().len(), NAMES.len());
+    assert_eq!(
+        NameResolver::names_owned_on_this_thread(),
+        owned + NAMES.len()
+    );
+    // Built once: asked again, it copies nothing more.
+    warm.vocabulary();
+    assert_eq!(
+        NameResolver::names_owned_on_this_thread(),
+        owned + NAMES.len()
+    );
+}
+
 #[test]
 fn a_warm_load_hashes_no_name() {
     let (names, config) = folders();
@@ -104,9 +281,10 @@ fn a_warm_load_hashes_no_name() {
         hash64: 0x1234,
         hash32: 0x5678,
         held: true,
+        spelled: false,
         name: "z/stated",
     };
-    write(&file, &stamp, &[stated]).expect("keep a cache");
+    write(&file, &encode(VERSION, &stamp, &[stated])).expect("keep a cache");
     let resolver = load(Some(names.path()), Some(config.path()));
     assert_eq!(NameResolver::names_hashed_on_this_thread(), after_cold);
     assert_eq!(resolver.vocabulary().name64(0x1234), Some("z/stated"));
@@ -117,7 +295,7 @@ fn a_warm_load_hashes_no_name() {
 fn a_cache_whose_key_holds_is_read_and_the_sources_are_not() {
     let (names, config) = folders();
     let (file, stamp) = kept(Some(names.path()), config.path());
-    write(&file, &stamp, &[held("z/cached")]).expect("keep a cache");
+    write(&file, &encode(VERSION, &stamp, &[held("z/cached")])).expect("keep a cache");
 
     let before = NameResolver::sources_read_on_this_thread();
     let resolver = load(Some(names.path()), Some(config.path()));
@@ -187,7 +365,7 @@ fn a_harvested_vocabulary_is_named_beside_the_folder() {
 }
 
 #[test]
-fn a_truncated_bit_flipped_or_older_cache_is_rebuilt_and_not_trusted() {
+fn a_truncated_bit_flipped_disordered_or_older_cache_is_rebuilt_and_not_trusted() {
     let (names, config) = folders();
     let (file, stamp) = kept(Some(names.path()), config.path());
     let fake = [held("z/fake")];
@@ -198,23 +376,45 @@ fn a_truncated_bit_flipped_or_older_cache_is_rebuilt_and_not_trusted() {
         bytes
     };
     let name_at = whole.len() - "z/fake".len();
-    let crc_at = whole.len() - ROW_HEAD - "z/fake".len() - 4;
+    let crc_at = name_at - ROW - 4;
+    let row_at = crc_at + 4;
+    // Damage the checksum is made right for, which the rows themselves must refuse.
+    let set = |at: usize, value: &[u8]| {
+        let mut bytes = whole.clone();
+        bytes[at..at + value.len()].copy_from_slice(value);
+        rechecked(bytes, crc_at)
+    };
     let mut huge = encode(VERSION, &stamp, &[]);
     let count_at = huge.len() - 4 - 8;
     huge[count_at..count_at + 8].copy_from_slice(&u64::MAX.to_le_bytes());
     let mut past = whole.clone();
     past.push(0);
+    let mut descending = [held("z/fake"), held("z/other")];
+    descending.sort_by_key(|row| std::cmp::Reverse(row.hash64));
     let cases = [
         ("older", encode(VERSION - 1, &stamp, &fake)),
         ("cut short", whole[..whole.len() - 1].to_vec()),
         ("cut in its rows", whole[..crc_at + 6].to_vec()),
-        ("past its end", past),
+        ("past its end", past.clone()),
+        ("past its end, rechecked", rechecked(past, crc_at)),
         ("a count past its bytes", huge),
         ("a name bit flipped", flipped(name_at)),
-        ("a 64-bit hash bit flipped", flipped(crc_at + 4)),
-        ("a 32-bit hash bit flipped", flipped(crc_at + 4 + 8)),
-        ("its form flipped", flipped(crc_at + 4 + 12)),
+        ("a 64-bit hash bit flipped", flipped(row_at)),
+        ("a 32-bit hash bit flipped", flipped(row_at + 8)),
+        ("its end flipped", flipped(row_at + 12)),
+        ("its form flipped", flipped(row_at + 20)),
         ("its checksum flipped", flipped(crc_at)),
+        ("rows out of order", encode(VERSION, &stamp, &descending)),
+        (
+            "an end past its names",
+            set(row_at + 12, &7u64.to_le_bytes()),
+        ),
+        (
+            "an end short of its names",
+            set(row_at + 12, &5u64.to_le_bytes()),
+        ),
+        ("a form unknown", set(row_at + 20, &[2])),
+        ("a name not text", set(name_at, &[0xFF])),
         ("not a cache", b"garbage".to_vec()),
     ];
     for (what, bytes) in cases {

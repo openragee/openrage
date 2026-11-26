@@ -12128,9 +12128,6 @@ msgstr "{name} 包含 {kind} 内容。"
 msgid "{name} is a folder, and the Files content holds files"
 msgstr "{name} 是文件夹，而“文件”内容只包含文件"
 
-msgid "{name} is a headerless resource, whose loose form is stored under a new row"
-msgstr "{name} 是无文件头资源，其松散形式存储在新行下"
-
 msgid "{name} is a name Windows keeps for itself: choose another"
 msgstr "{name} 是 Windows 保留的名称：选择其他名称"
 
@@ -17055,9 +17052,6 @@ msgstr "只有从 GTA VI 归档打开的文档才会保存到该归档的副本�
 msgid "Cannot save into a copy of the archive: {reason}"
 msgstr "无法保存到归档的副本：{reason}"
 
-msgid "{file} is a new archive with the edit in its entry's place, which the game refuses because its table's signature is stale."
-msgstr "{file} 是一个新归档，其条目位置已写入修改；游戏会拒绝它，因为其表的签名已过期。"
-
 msgid "{file} is a new archive the same as the one it was read from: the edit writes the bytes the entry holds."
 msgstr "{file} 是一个与读取来源相同的新归档：修改写入的是条目原有的字节。"
 
@@ -17383,3 +17377,15 @@ msgstr "将 GTA VI 文档的编辑写在其条目的位置，写入读取它的�
 
 msgid "The text table is laid out again at another length ({reason}), so a save into its archive writes a rebuilt archive, which the game refuses because only its maker can sign the table."
 msgstr "文本表以另一长度重新排布（{reason}），因此保存到其归档会写出重建的归档，游戏会拒绝它，因为只有其制作者能签名该表。"
+
+msgid "{name} does not read as a resource from its start"
+msgstr "{name} 从其开头读不出资源"
+
+msgid "{file} is a rebuilt archive with the document's edit, which the game refuses because only its maker can sign the table it changed."
+msgstr "{file} 是带有该文档编辑的重建归档，游戏会拒绝它，因为只有其制作者能签名它所更改的表。"
+
+msgid "In a GTA VI archive"
+msgstr "在 GTA VI 归档中"
+
+msgid "This key changes the length of its clip's data, so its archive will be saved rebuilt, which the game refuses because only its maker can sign the table."
+msgstr "此关键帧会改变其剪辑数据的长度，因此其归档将以重建方式保存，游戏会拒绝它，因为只有其制作者能签名该表。"

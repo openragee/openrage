@@ -65,13 +65,35 @@ impl AppState {
         else {
             return false;
         };
-        match self.edit_gta6_anim(doc, &edit) {
+        // A key that grows its block is still made; only a rebuilt archive can hold it.
+        let mut grows = false;
+        let made = self.replace_gta6_anim(doc, |held| {
+            let length =
+                |r: &AnimResource| (r.sections.as_deref()).map(|s| s.virtual_section.len());
+            let edited = or_io::gta6::anim::edit(held, &edit)?;
+            grows = length(held) != length(&edited);
+            Ok(edited)
+        });
+        match made {
             Ok(before) => {
                 let key = format!(
                     "gta6 key {}.{}.{dof}.{component}.{frame}",
                     animation.set, animation.animation
                 );
+                let top = |state: &Self| {
+                    let history = state.document(doc).map(|d| &d.history);
+                    history
+                        .and_then(|h| h.next(super::EditDirection::Undo))
+                        .map(|s| s.id)
+                };
+                let was = top(self);
                 self.record(doc, tr!("Edit a key"), Change::part(key, before, resource));
+                let said = tr!("This key changes the length of its clip's data, so its archive will be saved rebuilt, which the game refuses because only its maker can sign the table.");
+                // A drag folds each frame's value into one step: the sentence is said as it opens.
+                let opened = top(self) != was;
+                if grows && opened && !self.toasts.iter().any(|t| t.message == said) {
+                    self.show_warning_toast(said);
+                }
                 true
             }
             Err(e) => {

@@ -9,16 +9,20 @@
 //! row's table was 64 KiB cuts of its body; that is what is asserted, the rest is printed.
 //! (3) Beside (1), up to 40 deflated chunks per kind are re-deflated by the patch writer's optimal
 //! parse, counted against the same ceilings and inflated back; that every stream inflates to its
-//! chunk is asserted, the fits and the time per 64 KiB are printed, and so are the deflated chunks
+//! chunk, and that every kind with a deflated chunk within the census's parse cap had one parsed,
+//! is asserted; the fits and the time per 64 KiB are printed, and so are the deflated chunks
 //! past the patch writer's cap (`OPTIMAL_CAP` of `gta6_patch`), which it is never given there; the
 //! census itself parses only chunks of at most 256 KiB, to keep its own time bounded.
 //! (4) Which kinds the build holds where the census samples is asserted against a node mirror's
 //! listing of every chunk table of the build (`MIRRORED`).
+//! (5) Frame filter dictionaries and expression sets are named by their heads, as the app opens
+//! them, never by a type code; an AWC row, which is stored whole with no chunk table, is taken as
+//! the one stored chunk the patch writer reads it as.
 //!
 //! Bounded: 40 bodies per kind, 8 per kind from each archive file, bodies of at most 4 MiB stored,
-//! and 300 s of walking, after which it reports what it reached; the census's optimal parse takes
-//! chunks of at most 256 KiB inflated, and 300 s more in all, which the walk's bound does not count: at most
-//! about ten minutes in all.
+//! and 300 s of walking, shared out among the archive files, after which it reports what it reached;
+//! the census's optimal parse takes chunks of at most 256 KiB inflated, and 300 s more in all, an
+//! equal share per kind, which the walk's bound does not count: at most about ten minutes in all.
 //!
 //! Install-gated, game-derived and slow (it walks nested archives); it skips without:
 //!   `OPENRAGE_GTA6_KEYS`   the `gtavi_magic.dat` key snapshot (never committed)
@@ -38,13 +42,15 @@ use or_io::container::rpf::gta6_patch::{optimal_deflate, OPTIMAL_CAP as WRITER_C
 use or_io::container::rpf::rpf9_write::write_rpf9_resource_chunks;
 use or_io::container::rpf::{
     read_rpf9_body, Gta6Class, Gta6Entry, Gta6Mount, Gta6NestedRow, GtaViKeys, Rpf9BodyKind,
-    Rpf9Form, Rpf9Role, Rpf9Sections, GTA6_SNAPSHOT_ENV,
+    Rpf9Form, Rpf9Role, Rpf9Sections, Rpf9Signature, GTA6_SNAPSHOT_ENV,
 };
+use or_io::gta6::anim::{read_expressions, write_edited_expressions, EXPRESSIONS_SIGNATURE};
 use or_io::gta6::audio_data::{stamped, AudioData};
 use or_io::gta6::headerless::{
     cut_edges, read_bound, read_dictionary, read_dictionary_model, read_drawable,
     read_drawable_with_bound, read_navmesh, read_particle_effects, write_bound_vertices,
-    write_dictionary, write_fragment_level, write_particle_effects, write_shaders, Entry,
+    write_dictionary, write_filter_weights, write_fragment_level, write_particle_effects,
+    write_record_values, write_shaders, Entry, HeaderlessError,
 };
 use or_io::gta6::mission_tables::Body as MissionBody;
 use or_io::gta6::other_bodies::{Gta6HeightGrid, Gta6HeightMap, OtherBody};
@@ -76,6 +82,14 @@ const OPTIMAL_PER_KIND: usize = 40;
 const SAMPLE_PARSE_CAP: usize = 256 << 10;
 /// The optimal parse's time in all, beside the walk's.
 const OPTIMAL_BUDGET: Duration = Duration::from_secs(300);
+/// Each kind's share of the optimal parse's time, so a kind sampled late is parsed as one sampled early.
+const PARSE_SHARE: Duration = Duration::from_secs(
+    OPTIMAL_BUDGET.as_secs() / (HEADERLESS.len() + BY_HEAD.len() + ROW24.len()) as u64,
+);
+/// Stored bytes of a headerless row's first chunk read to name its kind by its head.
+const PEEK: usize = 4096;
+/// The head bytes a signature reads: its first eight u64 slots.
+const HEAD_SLOTS: usize = 0x40;
 
 const TEXTURE_DICTIONARY: &str = "texture dictionary";
 const DRAWABLE_DICTIONARY: &str = "drawable dictionary";
@@ -99,6 +113,8 @@ const TEXT: &str = "plain text";
 const AUDIO_DATA: &str = "audio game data";
 const HEIGHT_MAP: &str = "height map";
 const AWC: &str = "AWC";
+const FILTERS: &str = "frame filter dictionary";
+const EXPRESSIONS: &str = "expression set";
 
 /// The headerless kinds and their type codes, as the measured table of rows lists them.
 const HEADERLESS: [(&str, &[u32]); 13] = [
@@ -116,6 +132,9 @@ const HEADERLESS: [(&str, &[u32]); 13] = [
     (PARTICLES, &[0x48]),
     (SCRIPT, &[0x59]),
 ];
+/// The headerless kinds named by the head of a body of a code none of [`HEADERLESS`] lists: a
+/// dictionary of frame filters or animation records, and an expression set.
+const BY_HEAD: [&str; 2] = [FILTERS, EXPRESSIONS];
 const PSO: [&str; 3] = [PSO_TABLE, PSO_P, MISSION];
 /// The 24-byte-row kinds, named by the head of a body's first chunk.
 const ROW24: [&str; 9] = [
@@ -125,8 +144,10 @@ const ROW24: [&str; 9] = [
 const HEAD: usize = 512;
 /// Per kind this census added in round 36, the bodies a node mirror of its sampling (a chunk table,
 /// at most 4 MiB stored, deciphered, walked by its table, 40 per kind and 8 per archive file) takes
-/// over every table of the Xbox build 1.0.2.1. The mirror finds no chunk-tabled `ADAT` body.
-const MIRRORED: [(&str, usize); 12] = [
+/// over every table of the Xbox build 1.0.2.1, and the four added in round 37: no `ADAT` body has a
+/// chunk table, every one is stored whole; the frame filter dictionaries and the expression sets each
+/// lie in one archive file, so 8 of their 14 and 98 are taken.
+const MIRRORED: [(&str, usize); 15] = [
     (TEXTURE_DICTIONARY, 40),
     (DRAWABLE_DICTIONARY, 40),
     (FRAGMENT, 40),
@@ -138,7 +159,10 @@ const MIRRORED: [(&str, usize); 12] = [
     (TEXT, 35),
     (AUDIO_DATA, 27),
     (HEIGHT_MAP, 11),
-    (AWC, 0),
+    (AWC, 32),
+    (SCRIPT, 9),
+    (FILTERS, 8),
+    (EXPRESSIONS, 8),
 ];
 
 /// The bodies of `kind` that fill its sample: [`PER_KIND`], or fewer where the mirror found fewer.
@@ -280,6 +304,72 @@ fn stored_of(
     Ok(body)
 }
 
+/// `len` bytes of `src` at `at`; `None` where they are not all there.
+fn read_at(src: &mut File, at: u64, len: usize) -> Option<Vec<u8>> {
+    let mut bytes = vec![0u8; len];
+    src.seek(SeekFrom::Start(at)).ok()?;
+    src.read_exact(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// The first [`HEAD_SLOTS`] bytes `bytes` inflate to as one stream (zlib, or raw DEFLATE), which may
+/// run past them.
+fn inflated_head(bytes: &[u8], zlib: bool) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(HEAD_SLOTS);
+    let mut d = Decompress::new(zlib);
+    d.decompress_vec(bytes, &mut out, FlushDecompress::None)
+        .ok()?;
+    (out.len() >= HEAD_SLOTS).then_some(out)
+}
+
+/// The kind of [`BY_HEAD`] the head of a headerless body whose first chunk `first` starts at `at`
+/// names, from at most [`PEEK`] stored bytes. Every 0x5 pointer counts as within the section, so it
+/// names every body the whole body's signature does, and some it does not, which [`by_head`] drops.
+fn peeked_kind(src: &mut File, at: u64, first: &Chunk) -> Option<&'static str> {
+    let bytes = read_at(src, at, (first.stored as usize).min(PEEK))?;
+    let head = match first.zlib {
+        false => bytes,
+        true => [true, false]
+            .into_iter()
+            .find_map(|zlib| inflated_head(&bytes, zlib))?,
+    };
+    let signature = Rpf9Signature::of(&head, u64::MAX)?;
+    if signature.to_string() == EXPRESSIONS_SIGNATURE {
+        return Some(EXPRESSIONS);
+    }
+    (signature.role() == Some(Rpf9Role::Dictionary)).then_some(FILTERS)
+}
+
+/// The one chunk a 24-byte row with no chunk table is read as by the patch writer: one stream
+/// inflating to exactly its real size; its real size stored as it is only where neither framing
+/// parses at all; none where a stream parses to another size or runs past the stored bytes.
+fn lone_chunk(stored: &[u8], real: u64) -> Option<Chunk> {
+    let inflated = u32::try_from(real).ok()?;
+    let n = inflated as usize;
+    let head = |zlib: bool| {
+        let mut d = Decompress::new(zlib);
+        let mut out = Vec::with_capacity(n + 1);
+        let status = d.decompress_vec(stored, &mut out, FlushDecompress::Finish);
+        status.map(|s| (s == Status::StreamEnd).then(|| (d.total_in() as usize, out)))
+    };
+    let (zlib, raw) = (head(true), head(false));
+    for parsed in [&zlib, &raw] {
+        if let Ok(Some((used, out))) = parsed {
+            let stored = u32::try_from(*used).ok()?;
+            return (out.len() == n).then_some(Chunk {
+                inflated,
+                stored,
+                zlib: true,
+            });
+        }
+    }
+    (zlib.is_err() && raw.is_err() && n <= stored.len()).then_some(Chunk {
+        inflated,
+        stored: inflated,
+        zlib: false,
+    })
+}
+
 /// What a kind's writer makes of a body read and written back unchanged.
 enum Rewrite {
     /// The sections (virtual, physical), or a 24-byte row's body and nothing.
@@ -395,6 +485,34 @@ fn rewrite_headerless(kind: &str, s: &Rpf9Sections, role: Option<Rpf9Role>) -> R
                 },
                 _ => Rewrite::Unread("it opens as no RBM layout".into()),
             },
+        },
+        // The app writes each filter's tracks and each record's bones over the section they came from.
+        FILTERS => match read_dictionary(v, Some(p.as_slice())) {
+            Err(e) => Rewrite::Unread(masked(e)),
+            Ok(dictionary) => in_place(s, |v| {
+                for (code, entry) in &dictionary.entries {
+                    match entry {
+                        Ok(Entry::FrameFilter { tracks, .. }) => {
+                            write_filter_weights(v, *code, tracks)?
+                        }
+                        Ok(Entry::AnimationRecord { bones, .. }) => {
+                            write_record_values(v, *code, bones)?
+                        }
+                        _ => {}
+                    }
+                }
+                Ok::<(), HeaderlessError>(())
+            }),
+        },
+        EXPRESSIONS => match read_expressions(v) {
+            Err(e) => Rewrite::Unread(masked(e)),
+            Ok(set) => {
+                let mut out = v.clone();
+                match write_edited_expressions(&mut out, p.len(), &set) {
+                    Ok(()) => Rewrite::Wrote(out, p.clone()),
+                    Err(e) => Rewrite::Refused(masked(e)),
+                }
+            }
         },
         _ => Rewrite::NoWriter,
     }
@@ -517,6 +635,8 @@ struct Tally {
     fit: usize,
     /// Deflated chunks past the patch writer's cap inflated, which its optimal parse is never given.
     past_cap: usize,
+    /// Deflated chunks within the census's own parse cap.
+    parseable: usize,
     /// Stored size less the size re-deflated, per deflated chunk.
     slack: Vec<i64>,
     /// Bodies every deflated chunk of which fits.
@@ -540,9 +660,21 @@ struct State {
     here: BTreeMap<&'static str, usize>,
     walk_failed: Vec<String>,
     started: Option<Instant>,
-    timed_out: bool,
+    /// The walking time at which the current archive file's share ends.
+    until: Duration,
+    /// Whether the current archive file was left at the end of its share.
+    cut_here: bool,
+    /// Archive files left at the end of their share.
+    cut: usize,
     /// The optimal parse's time so far, which the walk's bound leaves out.
     optimal_spent: Duration,
+}
+
+/// Every kind the census samples.
+fn all_kinds() -> impl Iterator<Item = &'static str> {
+    (HEADERLESS.into_iter().map(|(k, _)| k))
+        .chain(BY_HEAD)
+        .chain(ROW24)
 }
 
 impl State {
@@ -551,17 +683,22 @@ impl State {
             && self.here.get(kind).copied().unwrap_or(0) < PER_ARCHIVE
     }
 
+    /// The walk's time so far: what has passed less the optimal parse's.
+    fn walked(&self) -> Duration {
+        (self.started.map_or(Duration::ZERO, |t| t.elapsed())).saturating_sub(self.optimal_spent)
+    }
+
+    /// Whether every kind's sample is full.
+    fn full(&self) -> bool {
+        all_kinds().all(|k| self.kinds.get(k).map_or(0, |t| t.bodies) >= full_at(k))
+    }
+
     fn done(&mut self) -> bool {
-        if (self.started).is_some_and(|t| t.elapsed().saturating_sub(self.optimal_spent) > DEADLINE)
-        {
-            self.timed_out = true;
+        if self.walked() > self.until {
+            self.cut_here = true;
             return true;
         }
-        HEADERLESS
-            .iter()
-            .map(|(k, _)| *k)
-            .chain(ROW24)
-            .all(|k| self.kinds.get(k).map_or(0, |t| t.bodies) >= full_at(k))
+        self.full()
     }
 }
 
@@ -577,12 +714,12 @@ fn headroom(t: &mut Tally, spent: &mut Duration, table: &[Chunk], pieces: &[Piec
         }
         t.deflated += 1;
         t.past_cap += usize::from(piece.data.len() > WRITER_CAP);
+        let parseable = piece.data.len() <= SAMPLE_PARSE_CAP;
+        t.parseable += usize::from(parseable);
         let tree = deflated_len(&piece.data, piece.raw) as i64;
         let slack = i64::from(c.stored) - tree;
-        if t.optimal.len() < OPTIMAL_PER_KIND
-            && piece.data.len() <= SAMPLE_PARSE_CAP
-            && *spent < OPTIMAL_BUDGET
-        {
+        // A kind's share is checked before a parse, so each kind with a chunk to parse gets one.
+        if t.optimal.len() < OPTIMAL_PER_KIND && parseable && t.optimal_time < PARSE_SHARE {
             let began = Instant::now();
             let stream =
                 optimal_deflate(&piece.data, !piece.raw).expect("the optimal parse deflates");
@@ -656,7 +793,36 @@ fn row24_archive_leg(body: &[u8], table: &[Chunk]) -> String {
     }
 }
 
-/// Measure one body of `kind` (a 24-byte row's PSO kind is named here, from its body).
+/// A headerless body's sections, and the signature its head has, as the resource reader reads them.
+fn sections_of(stored: &[u8], table: &[Chunk]) -> Option<(Rpf9Sections, Option<Rpf9Signature>)> {
+    let limit = table.iter().map(|c| u64::from(c.inflated)).sum();
+    let (find, bytes) = read_rpf9_body(Cursor::new(stored), 0, limit).ok()?;
+    let sections = Rpf9Sections::of(&find, &bytes)?;
+    let signature = match find.kind {
+        Rpf9BodyKind::Zlib(run) => run.signature,
+        _ => None,
+    };
+    Some((sections, signature))
+}
+
+/// The kind of [`BY_HEAD`] a headerless body is, as the app opens it: an expression set by its
+/// signature, a dictionary by its role and an entry that is a frame filter or an animation record.
+fn by_head(s: &Rpf9Sections, signature: Rpf9Signature) -> Option<&'static str> {
+    if signature.to_string() == EXPRESSIONS_SIGNATURE {
+        return Some(EXPRESSIONS);
+    }
+    if signature.role() != Some(Rpf9Role::Dictionary) {
+        return None;
+    }
+    let filter = |e: &Entry| matches!(e, Entry::FrameFilter { .. } | Entry::AnimationRecord { .. });
+    let dictionary = read_dictionary(&s.virtual_section, Some(s.physical.as_slice())).ok()?;
+    (dictionary.entries.iter())
+        .any(|(_, e)| e.as_ref().is_ok_and(filter))
+        .then_some(FILTERS)
+}
+
+/// Measure one body of `kind` (a 24-byte row's PSO kind, and a kind of [`BY_HEAD`], are named here,
+/// from its body).
 #[allow(clippy::too_many_arguments)]
 fn measure(
     st: &mut State,
@@ -676,10 +842,24 @@ fn measure(
         }
     };
     let body: Vec<u8> = pieces.iter().flat_map(|p| p.data.iter().copied()).collect();
-    let kind = if kind == PSO_TABLE {
-        pso_kind(&body)
-    } else {
-        kind
+    let read = match row {
+        Some(_) if kind != SCRIPT => Some(sections_of(stored, table)),
+        _ => None,
+    };
+    let kind = match kind {
+        PSO_TABLE => pso_kind(&body),
+        // A head the peek named is no such body unless the whole body's head and entries say so.
+        k if BY_HEAD.contains(&k) => {
+            let named = read.as_ref().and_then(|read| {
+                let (s, signature) = read.as_ref()?;
+                by_head(s, (*signature)?)
+            });
+            let Some(named) = named else {
+                return;
+            };
+            named
+        }
+        k => k,
     };
     if !st.wants(kind) {
         return;
@@ -704,30 +884,17 @@ fn measure(
             Ok(_) => (Rewrite::NoWriter, (body.clone(), Vec::new())),
             Err(e) => (Rewrite::Unread(masked(e)), (body.clone(), Vec::new())),
         },
-        Some(_) => {
-            let limit = table.iter().map(|c| u64::from(c.inflated)).sum();
-            let read =
-                read_rpf9_body(Cursor::new(stored), 0, limit)
-                    .ok()
-                    .and_then(|(find, bytes)| {
-                        let sections = Rpf9Sections::of(&find, &bytes)?;
-                        let role = match find.kind {
-                            Rpf9BodyKind::Zlib(run) => run.signature.and_then(|s| s.role()),
-                            _ => None,
-                        };
-                        Some((sections, role))
-                    });
-            match read {
-                None => (
-                    Rewrite::Unread("the resource reader finds no sections".into()),
-                    (Vec::new(), Vec::new()),
-                ),
-                Some((s, role)) => {
-                    let before = (s.virtual_section.clone(), s.physical.clone());
-                    (rewrite_headerless(kind, &s, role), before)
-                }
+        Some(_) => match read.flatten() {
+            None => (
+                Rewrite::Unread("the resource reader finds no sections".into()),
+                (Vec::new(), Vec::new()),
+            ),
+            Some((s, signature)) => {
+                let before = (s.virtual_section.clone(), s.physical.clone());
+                let role = signature.and_then(Rpf9Signature::role);
+                (rewrite_headerless(kind, &s, role), before)
             }
-        }
+        },
     };
     let (label, archive) = match write {
         Rewrite::NoWriter => ("no writer".to_string(), None),
@@ -775,30 +942,66 @@ fn walk(
             }
             continue;
         }
-        // A 24-byte row's kind is named from its body's head below.
+        // A 24-byte row's kind is named from its body's head below, and so is a headerless row's of
+        // a code no kind lists.
         let row24 = extra.nested.is_none();
+        let mut by_code = true;
         let kind = match extra.nested {
-            Some(row) => HEADERLESS
+            Some(row) => match HEADERLESS
                 .iter()
                 .find(|(_, codes)| codes.contains(&row.resource_type))
-                .map(|(kind, _)| *kind),
+            {
+                Some((kind, _)) => Some(*kind),
+                // ponytail: an enciphered row is not peeked, since that deciphers its whole body;
+                // the build's filter dictionaries and expression sets are clear.
+                None if entry.cipher.is_none() && BY_HEAD.iter().any(|k| st.wants(k)) => {
+                    by_code = false;
+                    Some(EXPRESSIONS)
+                }
+                None => None,
+            },
             None if ROW24.iter().any(|k| st.wants(k)) => Some(PSO_TABLE),
             None => None,
         };
-        let Some(mut kind) = kind.filter(|k| row24 || st.wants(k)) else {
+        let Some(mut kind) = kind.filter(|k| row24 || !by_code || st.wants(k)) else {
             continue;
         };
         let stored_len = extra.nested.map_or(entry.stored, |r| Some(r.stored_size()));
         if stored_len.is_none_or(|n| n > CAP) {
             continue;
         }
-        let Ok(Some(table)) = entry_chunks(&mount.archive, entry.index as usize) else {
-            continue;
+        let chunks = match entry_chunks(&mount.archive, entry.index as usize) {
+            Ok(Some(table)) => Some(table),
+            // An AWC row is stored whole, with no chunk table.
+            Ok(None) if row24 && entry.cipher.is_none() && st.wants(AWC) => {
+                let at = mount.absolute_start(entry);
+                if at.and_then(|at| read_at(file, at, 4)).as_deref() != Some(&b"ADAT"[..]) {
+                    continue;
+                }
+                None
+            }
+            _ => continue,
         };
+        if !by_code {
+            let first = chunks.as_ref().and_then(|t| t.first());
+            let start = mount.absolute_start(entry);
+            let named = (start.zip(first)).and_then(|(at, c)| peeked_kind(file, at + SLOT, c));
+            match named {
+                Some(named) if st.wants(named) => kind = named,
+                _ => continue,
+            }
+        }
         let what = format!("{label}, entry {} at depth {depth}", entry.index);
         // A body whose content key the snapshot lacks is not sampled.
         let Ok(stored) = stored_of(mount, file, keys, entry, extra.nested) else {
             continue;
+        };
+        let table = match chunks {
+            Some(table) => table,
+            None => match entry.real.and_then(|real| lone_chunk(&stored, real)) {
+                Some(chunk) => vec![chunk],
+                None => continue,
+            },
         };
         if row24 {
             let real =
@@ -912,21 +1115,33 @@ fn which_edits_fit_in_place_is_measured_per_kind() {
         started: Some(Instant::now()),
         ..State::default()
     };
-    for path in &archives {
-        if st.done() {
+    for (i, path) in archives.iter().enumerate() {
+        if st.full() {
             break;
         }
+        // Each archive file walks for an equal share of the time left, so one early in the order
+        // that holds more than its share does not keep the walk from those after it.
+        let left = DEADLINE.saturating_sub(st.walked());
+        st.until = st.walked() + left / (archives.len() - i) as u32;
         st.here.clear();
+        st.cut_here = false;
         let label = (path.file_name()).map_or_else(String::new, |n| n.to_string_lossy().into());
         let mut file = File::open(path).expect("open the archive");
         let mount = Gta6Mount::open_root(&mut file, &keys).expect("the archive opens");
         walk(&mut file, &keys, &library, (&mount, &label, 0), &mut st);
+        st.cut += usize::from(st.cut_here);
     }
 
-    if st.timed_out {
-        println!("the walk stopped at its {} s bound", DEADLINE.as_secs());
+    let timed_out = st.cut > 0;
+    if timed_out {
+        println!(
+            "the walk stopped at the end of its share of its {} s bound in {} of {} archive files",
+            DEADLINE.as_secs(),
+            st.cut,
+            archives.len()
+        );
     }
-    for kind in HEADERLESS.iter().map(|(k, _)| *k).chain(ROW24) {
+    for kind in all_kinds() {
         print(kind, st.kinds.get(kind).unwrap_or(&Tally::default()));
     }
     let kinds = || st.kinds.values();
@@ -940,9 +1155,10 @@ fn which_edits_fit_in_place_is_measured_per_kind() {
     let inflated = kinds().map(|t| t.optimal_inflated).sum();
     println!(
         "optimal parse in all: {fit_optimal} of {measured} chunks fit, against {fit_tree} at the \
-         tree's best level; {:.1} s spent of the {} s budget, {:.0} ms per 64 KiB",
+         tree's best level; {:.1} s spent of the {} s budget, {} s a kind, {:.0} ms per 64 KiB",
         st.optimal_spent.as_secs_f64(),
         OPTIMAL_BUDGET.as_secs(),
+        PARSE_SHARE.as_secs(),
         per_64k(st.optimal_spent, inflated),
     );
     for failure in st.walk_failed.iter().take(20) {
@@ -954,6 +1170,16 @@ fn which_edits_fit_in_place_is_measured_per_kind() {
         "{wrong} optimal-parse streams do not inflate back to their chunk"
     );
     assert!(measured > 0, "the optimal parse measured no chunk");
+    let unparsed: Vec<&str> = (st.kinds.iter())
+        .filter(|(_, t)| t.parseable > 0 && t.optimal.is_empty())
+        .map(|(k, _)| *k)
+        .collect();
+    assert!(
+        unparsed.is_empty(),
+        "kinds with a deflated chunk within the {} KiB parse cap that got no optimal parse: \
+         {unparsed:?}",
+        SAMPLE_PARSE_CAP >> 10
+    );
     assert!(
         st.walk_failed.is_empty(),
         "{} bodies do not walk by their chunk tables",
@@ -979,22 +1205,18 @@ fn which_edits_fit_in_place_is_measured_per_kind() {
         "a text table written over its own section is not byte-identical: {texts:?}"
     );
     let bodies = |kind: &str| st.kinds.get(kind).map_or(0, |t| t.bodies);
-    for (kind, mirrored) in MIRRORED {
-        if mirrored == 0 {
-            assert_eq!(
-                bodies(kind),
-                0,
-                "a {kind} body the node mirror does not list"
-            );
-        } else if !st.timed_out {
+    // The kinds round 36's walk reached none of, which each archive file's share now reaches.
+    for kind in [SCRIPT, AWC, FILTERS, EXPRESSIONS] {
+        assert!(bodies(kind) > 0, "the walk sampled no {kind} body");
+    }
+    if !timed_out {
+        for (kind, mirrored) in MIRRORED {
             assert!(
                 bodies(kind) >= mirrored,
                 "{} {kind} bodies sampled, where the node mirror samples {mirrored}",
                 bodies(kind)
             );
         }
-    }
-    if !st.timed_out {
         for (kind, _) in HEADERLESS {
             assert!(
                 st.kinds.get(kind).is_some_and(|t| t.bodies > 0),
@@ -1006,4 +1228,52 @@ fn which_edits_fit_in_place_is_measured_per_kind() {
             "the build holds no sampled table-form PSO"
         );
     }
+}
+
+#[test]
+fn a_row_with_no_chunk_table_is_one_stream_or_its_real_size_stored() {
+    let body: Vec<u8> = (0..3000u32).map(|i| (i * 31 % 251) as u8).collect();
+    let mut z = ZlibEncoder::new(Vec::new(), Compression::best());
+    z.write_all(&body).expect("deflated");
+    let mut stream = z.finish().expect("finished");
+    let used = stream.len() as u32;
+    // The pad after a stream is not part of it.
+    stream.extend_from_slice(&[0; 9]);
+    assert_eq!(
+        lone_chunk(&stream, body.len() as u64),
+        Some(Chunk {
+            inflated: 3000,
+            stored: used,
+            zlib: true
+        })
+    );
+    // A stream that inflates to another size is refused, as the writer refuses it.
+    assert_eq!(
+        lone_chunk(&stream, 20),
+        None,
+        "a stream of 3000 bytes read as a row of 20"
+    );
+    let mut stored = b"ADAT".to_vec();
+    stored.resize(40, 0x11);
+    assert_eq!(
+        lone_chunk(&stored, 36),
+        Some(Chunk {
+            inflated: 36,
+            stored: 36,
+            zlib: false
+        })
+    );
+    assert_eq!(
+        lone_chunk(&stored, 41),
+        None,
+        "a real size past the stored bytes"
+    );
+
+    // A head is read from a stream cut short of its end, and refused short of a signature's slots.
+    let head = inflated_head(&stream[..used as usize - 8], true);
+    assert_eq!(
+        head.as_deref().map(|h| &h[..HEAD_SLOTS]),
+        Some(&body[..HEAD_SLOTS])
+    );
+    assert_eq!(inflated_head(&stream[..4], true), None);
 }

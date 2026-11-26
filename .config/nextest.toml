@@ -115,6 +115,10 @@ not (
       | test(/^state::rpf_archive_open::tree_verbs::tests::a_small_clear_row_of_a_real_archive_replaced_into_a_copy_reads_back$/)
       | test(/^state::rpf_archive_open::tree_verbs::tests::a_small_clear_row_of_a_real_archive_changed_at_its_size_saves_as_a_patched_copy$/)
       | test(/^state::rpf_archive_open::tree_open::bind::tests::a_text_row_of_the_build_saved_from_its_document_reads_back_from_a_patched_copy$/)
+      | test(/^state::rpf_archive_open::tree_verbs::headerless_tests::a_real_text_tables_first_text_changed_at_its_length_saves_as_a_patched_copy$/)
+      | test(/^state::files_view::tests::gta6::a_nested_gta_vi_archive_past_4_gib_counts_its_whole_size$/)
+      | test(/^state::gta6_meta_save::splice::tests::a_data_xml_of_the_build_edited_at_its_length_changes_one_byte$/)
+      | test(/^state::rpf9_scan::ciphered::ciphered_texture_open::/)
       | test(/^state::rpf9_scan::rpf9_tree_actions::tests::copy_hash_gives_the_table_hash_of_every_row_of_the_builds_smallest_archives$/)
       | test(/^state::uses_and_used_by_in_the_app::/)
       | test(/^state::uses_reaches_every_pack::/)
@@ -286,6 +290,7 @@ not (
   | binary_id(=or-io::gta6_rpf_archive)
   | binary_id(=or-io::gta6_rows_with_no_kind)
   | binary_id(=or-io::gta6_rows_stored_or_deflated)
+  | binary_id(=or-io::gta6_awc_in_extent)
   | binary_id(=or-title::a_gta_vi_archive_mounts_like_any_other)
   | (binary_id(=or-title::the_water_file_of_an_install) & (
       test(/^a_real_install::/)

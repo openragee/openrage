@@ -30,6 +30,7 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("apply") => apply(rest),
         Some("keep-manifest") => keep_manifest(rest),
         Some("delete") => delete(rest),
+        Some("put-back") => crate::maps_put_back::run(rest),
         Some("edit-game") => crate::maps_edit_game::run(rest),
         Some("doors") => doors(rest),
         Some("roads") => crate::maps_roads::run(rest),
@@ -71,6 +72,8 @@ fn print_usage() {
          openrage-cli maps keep-manifest <project.openrage-proj> --game <install root> [--keys <file>] [--module <id>]\n  \
          openrage-cli maps delete   <project.openrage-proj> <source>:<entity>... [--module <id>] [--apply]\n                             \
          [--script <form>] [--radius <metres>]\n  \
+         openrage-cli maps put-back <project.openrage-proj> <source>:<entity> | <source>:base:<entity> [--module <id>]\n                             \
+         [--apply] [--inverse <file>] [--json]\n  \
          openrage-cli maps edit-game <project.openrage-proj> --game <install root> --map <logical path>\n                             \
          --entity <index|guid:guid> (--move x,y,z | --delete) [--apply] [--record <file>] [--json]\n                             \
          [--module <id>] [--level <pack>] [--mode <story|multiplayer>] [--keys <file>] [--kept <file>]\n                             \
@@ -161,6 +164,24 @@ fn print_usage() {
          It reads the map files of the content and no other: a map that is not among them keeps its links.\n\
          With --apply it writes the deletion, every file or none. It exits 1 when an entity named is not\n\
          there or the deletion is refused.\n\
+         put-back plans what makes one entity of a map file of the content state what the base of its\n\
+         source states again, the file the source was imported from, and prints the plan. The entity\n\
+         is named as `changes` lists it: one the map file holds by its source folder and its index there\n\
+         (`city.metadata.src:12`), one the map file lacks by its index in the base\n\
+         (`city.metadata.src:base:7`). An entity the file holds is put back by one record in its place,\n\
+         with the far model the base names for it. One it lacks comes back where the order of the base\n\
+         puts it, with what a deletion took: each far model above it that the content lacks too, in\n\
+         its file or in the map it names as parent, and each entity the base places under it. A far\n\
+         model counts the children that stand under it afterwards, and the file states the extents of\n\
+         its base, grown to hold what still stands otherwise. It writes nothing unless asked: --apply\n\
+         writes it, every file or none, and --inverse keeps the list that takes it back, which\n\
+         `maps apply` does, before a source is written. The last line says how many changes of its base\n\
+         the source holds, which is what a discard of the map would lose. --json prints the plan as\n\
+         data, with its operations as a list `maps apply` takes. It is refused with the reason, and\n\
+         exits 1, for an entity that cannot be told from a twin, which is never guessed, for one the\n\
+         base does not hold, which the source added and `delete` takes out, for one that states what\n\
+         the base states, and where a base does not cook. A plan is of the sources as they were read:\n\
+         each source it writes is held to the XML it was planned from.\n\
          edit-game moves or deletes an object the game placed, in the maps content. The object is an\n\
          entity of a map file of the install --game names, said by the logical path of that file as\n\
          `world find` and `world select` print it and by its index there, or by `guid:` and its guid\n\
@@ -527,7 +548,7 @@ fn entity_text(entity: &or_maps::delete::Entity) -> String {
 }
 
 /// `count` of a thing, with the plural its noun takes.
-fn counted(count: usize, one: &str, many: &str) -> String {
+pub(crate) fn counted(count: usize, one: &str, many: &str) -> String {
     format!("{count} {}", if count == 1 { one } else { many })
 }
 

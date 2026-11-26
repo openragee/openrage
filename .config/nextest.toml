@@ -581,6 +581,15 @@ priority = 100
 filter = 'test(the_doors_of_maps_of_an_install_are_listed_from_the_command_line)'
 slow-timeout = { period = "60s", terminate-after = 45 }
 
+# The install suite of putting an entity back is the deletion suite's body over the maps it samples whose tree holds few map files,
+# with the entity put back and that taken back before the deletion is undone. Beside building lanes it took three and a half minutes
+# on the Legacy install and two and a half on the Enhanced one, and with trees of up to eighty map files thirty-five, so it is
+# held to forty-five.
+[[profile.all.overrides]]
+filter = 'test(an_entity_deleted_from_a_map_of_the_install_is_put_back_as_the_game_has_it)'
+slow-timeout = { period = "60s", terminate-after = 45 }
+priority = 100
+
 # The install suites of the world index each read every map, type file and bound of an install, and the suite of the index reads
 # each again through the mount. Beside building lanes the forest took sixteen minutes on the Legacy install and the suite of the
 # index twenty-three on each install, so every test of the binary is held to forty-five.

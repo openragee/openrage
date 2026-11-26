@@ -226,7 +226,7 @@ impl Extents {
     }
 
     /// State these as the extents of `map`; a number that is not finite is refused.
-    fn state(&self, map: &mut CMapData) -> Result<(), String> {
+    pub(crate) fn state(&self, map: &mut CMapData) -> Result<(), String> {
         self.finite()?;
         let corner = |[x, y, z]: [f32; 3]| or_io::decl::Vec3 { x, y, z };
         map.entities_extents_min = corner(self.entities_extents_min);
@@ -239,7 +239,7 @@ impl Extents {
     /// These, when `map` no longer states them bit for bit: what an inverse carries to put them back.
     ///
     /// ⚠ By the bits and not by `==`, under which a zero that changed its sign is unchanged and the file is not.
-    fn unless_stated_by(self, map: &CMapData) -> Option<Self> {
+    pub(crate) fn unless_stated_by(self, map: &CMapData) -> Option<Self> {
         let bits = |e: &Self| e.corners().map(|c| c.map(f32::to_bits));
         (bits(&Self::of(map)) != bits(&self)).then_some(self)
     }
@@ -715,7 +715,7 @@ pub struct Applied {
 }
 
 /// The local box and the stream distance of an archetype, by the hash of its name.
-type Boxes = BTreeMap<u32, (Vec3, Vec3, f32)>;
+pub(crate) type Boxes = BTreeMap<u32, (Vec3, Vec3, f32)>;
 
 /// What an operation reads besides the file it edits.
 #[derive(Default)]
@@ -2160,6 +2160,11 @@ impl Pack for Work<'_> {
         self.linked.insert(source.to_string(), linked.clone());
         linked
     }
+}
+
+/// The boxes of the archetypes that the type files of every set of the pack in `folder` naming `source` declare, and a sentence for each type file that does not cook.
+pub(crate) fn boxes_of(folder: &Path, source: &str) -> Result<(Boxes, Vec<String>), Error> {
+    Ok(Work::open(folder)?.boxes(source))
 }
 
 /// Every source `model` names, once each.

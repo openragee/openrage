@@ -706,7 +706,7 @@ fn ctrl_shift_s_runs_save_as_on_a_gta_vi_tree_whatever_holds_the_keyboard() {
     let save_as = spec(Action::SaveAs).expect("Save as… is a command");
     assert_eq!((save_as.enabled)(&state), Ok(()));
     // The window never runs a panel's own key.
-    assert!(!save_as.panel_key);
+    assert!(!save_as.panel_key());
 }
 
 #[test]

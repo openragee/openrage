@@ -375,7 +375,7 @@ fn script_edit(original: &[u8]) -> Result<Edits, String> {
     let program = Compiled::open(original).map_err(|e| e.to_string())?;
     for ins in program.instructions() {
         let Ok(ins) = ins else { break };
-        if !disasm::op(ins.opcode).is_some_and(|op| op.mnemonic == "push") {
+        if !disasm::mnemonic(ins.opcode).is_some_and(|name| name.starts_with("push")) {
             continue;
         }
         for value in [1, 0] {

@@ -260,7 +260,7 @@ fn project(ui: &mut egui::Ui, state: &mut AppState) {
     .and_then(|name| name.as_str())
     .map(str::to_string);
     let opens_on = state.project_carried.workspace.label();
-    let unsaved = if state.project_carried.changed {
+    let unsaved = if state.project_unsaved() {
         tr!("Yes: Save project writes them")
     } else {
         tr!("No")

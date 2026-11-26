@@ -9858,11 +9858,12 @@ in `crates/domain/or-maps/src/operation.rs`, which the Map screen's edits and
 `openrage-cli maps apply` call (`an_operation_and_its_inverse_leave_the_sources_as_they_were`, on
 synthetic packs). A session holds the sources as typed roots and writes them once at a flush; an
 inverse states the digest or the session token it applies to,
-or is refused (`a_session_of_map_edits_writes_once_what_each_edit_writes`); and the Map screen's
-Undo keeps the operation and its inverse
-(`an_undo_is_refused_once_its_source_was_edited_from_outside_and_goes_through_once_that_edit_is_taken_back`,
-slow tier; [timings](../reference/Crate_Reference.md#domain-crates)). And a map, a built entity,
-a type file and a base archetype made
+or is refused (`a_session_of_map_edits_writes_once_what_each_edit_writes`). The Map screen holds
+a session for each pack it edits, written when the project is saved
+(`src/state/the_map_screen_holds_a_session.rs`;
+[on screen](Workbench_UX_Design.md#what-the-map-screen-builds),
+[timings](../reference/Crate_Reference.md#domain-crates)). And a map, a
+built entity, a type file and a base archetype made
 with no donor and no snapshot (`crates/domain/or-world/src/create.rs`), behind
 `openrage-cli world new-map` and `world archetypes`, which pass the rules of a pack
 (`a_map_and_a_type_file_made_from_nothing_enter_a_pack_and_break_none_of_its_rules`). A placement
@@ -9878,9 +9879,7 @@ the XML, holds in a session as one by one
 (`crates/domain/or-maps/tests/an_operation_where_the_pack_holds_too_little.rs`,
 `crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`). A deletion
 planned by [R70k](#r70k-removing-what-the-game-placed) renumbers the links of the child maps, and
-one entity taken out alone leaves them, with a note. A session that refused an operation writes
-nothing when
-dropped. The first edit: `crates/domain/or-maps/src/first_edit.rs` imports each map file an edit
+one entity taken out alone leaves them, with a note. The first edit: `crates/domain/or-maps/src/first_edit.rs` imports each map file an edit
 of a game object changes, with the game's file as its base, as one record taken back whole,
 behind `openrage-cli maps edit-game` (`the_first_edit_of_a_game_object_imports_its_map`, an
 install built by hand); on both installs no map file that holds an entity refuses the plan of a
@@ -9890,7 +9889,7 @@ given with the game's path is a place in the game's file, carried to the source 
 of it, and a copy of a map a later archive replaces is refused with the copy the install loads
 ([or-maps](../reference/Crate_Reference.md#domain-crates)). ⚠ A new entity's
 guid is one more than its map's largest, the owner's to rule
-([R70y](#r70y-what-a-project-changed-and-putting-it-back)). Left: the Map screen on a session, a
+([R70y](#r70y-what-a-project-changed-and-putting-it-back)). Left: a
 create across files, a new map and a built entity as operations, the donor and the install's
 boxes, History, the rule for a source of the other edition, the install measure; a first edit that
 deletes, applied over an install through the index, which no install suite does; and a deletion's
@@ -10001,8 +10000,12 @@ the maps under the file with their old indexes
 Legacy install gives the same figures with it (2026-11-26), and the rule `map-named-otherwise`
 names such a file. A map that is not
 among the sources keeps its links, and the rules `parent-link-broken` and `lod-children-uncounted` name
-what a removal alone leaves. Left: the rule for a door, the preview on a screen and the Map
-screen's Delete through the plan; the game's maps a deletion reaches come in by
+what a removal alone leaves. The Map screen's Delete is the plan, made over the pack as its
+session holds it (`plan_in`) and done as one step of Undo, with a warning that says how many far
+models went with the object
+(`a_deletion_takes_the_far_models_as_one_step_and_one_undo_puts_the_chain_back`, on packs built
+by hand). Left: the rule for a door and the preview on a screen, where the Map screen says what
+went only after the step; the game's maps a deletion reaches come in by
 [R70h](#r70h-one-vocabulary-of-world-edits)'s first edit
 ([or-maps](../reference/Crate_Reference.md#domain-crates)).
 

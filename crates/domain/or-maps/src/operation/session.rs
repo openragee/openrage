@@ -198,6 +198,11 @@ struct Held {
 }
 
 impl Held {
+    /// Whether an operation was done to the source that no flush has written.
+    fn holds_unwritten(&self) -> bool {
+        !self.pending.is_empty() || self.inputs.xml() != self.on_disk.as_slice()
+    }
+
     /// Whether an operation that states `expects` applies to the state held.
     fn is(&self, expects: &str) -> bool {
         self.names_of(&self.state).contains(&expects)
@@ -476,8 +481,84 @@ impl Session {
 
     /// Whether an operation was done that no flush has written.
     pub fn unwritten(&self) -> bool {
-        (self.held.values())
-            .any(|held| !held.pending.is_empty() || held.inputs.xml() != held.on_disk.as_slice())
+        self.held.values().any(Held::holds_unwritten)
+    }
+
+    /// The folder of the pack of maps the session is over.
+    pub fn folder(&self) -> &Path {
+        &self.folder
+    }
+
+    /// Read the map sets of the pack again, which an import or a person may have rewritten since the session opened; whether they changed.
+    pub fn reread_model(&mut self) -> Result<bool, Error> {
+        let model = Maps::read(&self.folder)?;
+        if model == self.model {
+            return Ok(false);
+        }
+        self.model = model;
+        self.boxes.clear();
+        Ok(true)
+    }
+
+    /// The entity `at` names, as the operations done so far leave it.
+    pub fn entity(&mut self, at: &At) -> Result<CEntityDefAny, Error> {
+        Pack::entity(self, at).map_err(|why| Error::Source {
+            at: at.source.clone(),
+            why,
+        })
+    }
+
+    /// The archetype `at` names, as the operations done so far leave it.
+    pub fn archetype(&mut self, at: &At) -> Result<CBaseArchetypeDefAny, Error> {
+        Pack::archetype(self, at).map_err(|why| Error::Source {
+            at: at.source.clone(),
+            why,
+        })
+    }
+
+    /// The map file of `source` as the operations done so far leave it, with the name of the file it cooks to, when the session holds that source and it is a map file.
+    pub(crate) fn held_map(&mut self, source: &str) -> Option<crate::delete::HeldMap> {
+        let held = self.held.get_mut(source)?;
+        if held.inputs.extension() != CMapData::EXTENSION {
+            return None;
+        }
+        let file = held.inputs.output_name();
+        Some(held.open_root().and_then(|root| match root {
+            Root::Map(map) => Ok((file, (**map).clone())),
+            Root::Types(_) => Err("it is not a map file".to_string()),
+        }))
+    }
+
+    /// Whether an operation was done to `source` that no flush has written.
+    pub fn holds_unwritten(&self, source: &str) -> bool {
+        self.held.get(source).is_some_and(Held::holds_unwritten)
+    }
+
+    /// The sources the session holds whose XML on disk is not what it read or last wrote.
+    pub fn changed_on_disk(&self) -> Vec<String> {
+        (self.held.iter())
+            .filter(|(_, held)| {
+                // ⚠ A file that is gone reads as an empty one, as `keep_over_the_disk` takes it, so a source kept over one is not named again.
+                let on_disk = std::fs::read(held.dir.join(or_source::metadata::XML));
+                on_disk.unwrap_or_default() != held.on_disk
+            })
+            .map(|(source, _)| source.clone())
+            .collect()
+    }
+
+    /// Forget what the session holds of `source`, which is read again from the disk when next named: what was done to it and not written is lost, and an inverse given for it is refused from here on.
+    pub fn read_again(&mut self, source: &str) {
+        if self.held.remove(source).is_some() {
+            self.boxes.clear();
+        }
+    }
+
+    /// Keep what the session holds of `source` over what the disk holds of it now, so the next flush writes over a file it would have refused as changed.
+    pub fn keep_over_the_disk(&mut self, source: &str) {
+        if let Some(held) = self.held.get_mut(source) {
+            let on_disk = std::fs::read(held.dir.join(or_source::metadata::XML));
+            held.on_disk = on_disk.unwrap_or_default();
+        }
     }
 
     /// Do `operation` to the root of its source and say what takes it back; nothing is written, and a refusal leaves every root as it was and keeps the session from writing when it is dropped.

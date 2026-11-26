@@ -780,6 +780,104 @@ fn a_flush_writes_over_no_source_that_was_changed_since_the_session_read_it() {
     );
 }
 
+/// A screen holds a session for as long as it is open, and something else writes the sources meanwhile: the session names each
+/// source that changed under it, reads again the one it did nothing to, and writes what it holds of the other over the file only
+/// once it is told to keep it.
+#[test]
+fn a_source_changed_on_disk_under_a_session_is_named_and_read_again_or_kept_over_the_disk() {
+    let (_scratch, [held, one_by_one]) = copies(pack);
+    let mine = place(HARBOUR, 1, [420.0, -66.5, 12.25]);
+    let mut session = Session::open(&held).unwrap();
+    session.apply(&mine).unwrap();
+    // `yard` is held with nothing left to write: an edit and what takes it back.
+    let there = session.apply(&place(YARD, 0, [60.0, 61.0, 1.0])).unwrap();
+    session.apply(&there.inverse).unwrap();
+    assert_eq!(session.changed_on_disk(), Vec::<String>::new());
+    let at = |source: &str, index| At {
+        source: source.to_string(),
+        index,
+    };
+    // The session reads through what it holds, which the disk does not hold yet.
+    assert_eq!(session.entity(&at(HARBOUR, 1)).unwrap().position.x, 420.0);
+    assert_eq!(
+        read_entity(&held.join(HARBOUR), 1).unwrap().position.x,
+        14.0
+    );
+    let crates = session.archetype(&at(TYPES, 1)).unwrap();
+    assert!(crates.name == "prop_crate_b");
+    let past = session.entity(&at(HARBOUR, 9)).unwrap_err();
+    assert!(
+        matches!(&past, Error::Source { at, .. } if at == HARBOUR),
+        "{past:?}"
+    );
+
+    // Something that is not the session edits both sources.
+    apply(&held, &place(YARD, 0, [-7.0, 8.0, 9.0])).unwrap();
+    apply(&held, &place(HARBOUR, 2, [1.0, 2.0, 3.0])).unwrap();
+    let outside = files(&held);
+    assert_eq!(session.changed_on_disk(), [HARBOUR, YARD]);
+    assert!(session.holds_unwritten(HARBOUR) && !session.holds_unwritten(YARD));
+    let refused = session.flush().unwrap_err();
+    assert!(
+        matches!(&refused, Error::Changed { at } if at == HARBOUR),
+        "{refused:?}"
+    );
+
+    // The one it did nothing to is read again, and an inverse given for what it held is refused.
+    session.read_again(YARD);
+    assert_eq!(session.entity(&at(YARD, 0)).unwrap().position.x, -7.0);
+    let stale = session.apply(&there.inverse).unwrap_err();
+    assert!(matches!(stale, Error::Stale { .. }), "{stale:?}");
+    assert_eq!(session.changed_on_disk(), [HARBOUR]);
+
+    // The other is kept over the disk: the flush writes what the session held, and the edit made outside it is gone.
+    session.keep_over_the_disk(HARBOUR);
+    assert_eq!(session.changed_on_disk(), Vec::<String>::new());
+    assert_eq!(differing(&outside, &files(&held)), Vec::<PathBuf>::new());
+    let [written] = session.flush().unwrap().try_into().unwrap();
+    assert_eq!(written.source, HARBOUR);
+    apply(&one_by_one, &mine).unwrap();
+    apply(&one_by_one, &place(YARD, 0, [-7.0, 8.0, 9.0])).unwrap();
+    assert_eq!(
+        differing(&files(&one_by_one), &files(&held)),
+        Vec::<PathBuf>::new(),
+        "`harbour` holds the session's edit alone, and `yard` the one made outside"
+    );
+}
+
+/// An import adds a source to a pack a session is open over: the session edits it once it has read the map sets again.
+#[test]
+fn a_session_reads_the_map_sets_again_and_edits_a_source_added_since_it_opened() {
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = pack(scratch.path());
+    let mut session = Session::open(&folder).unwrap();
+    session
+        .apply(&place(HARBOUR, 1, [20.0, 21.0, 1.0]))
+        .unwrap();
+    assert!(!session.reread_model().unwrap(), "nothing rewrote the sets");
+    let pier = map_file(
+        "pier",
+        &[Entity::at("prop_crate_a", [30.0, 20.0, 0.5], 21)],
+        ([0.0; 3], [100.0; 3]),
+    );
+    let added = add_files(&folder, &[incoming("pier.ymap", pier)], None).unwrap();
+    assert_eq!(added.refused, Vec::<(String, String)>::new());
+    let moved = place(PIER, 0, [31.0, 20.0, 0.5]);
+    let refused = session.apply(&moved).unwrap_err().to_string();
+    assert!(
+        refused.contains("no map set of the pack names this source"),
+        "{refused}"
+    );
+    assert!(session.reread_model().unwrap());
+    session.apply(&moved).unwrap();
+    // The refusal above kept the session from writing at a drop: the flush is asked for.
+    let written: Vec<String> = (session.flush().unwrap().into_iter())
+        .map(|written| written.source)
+        .collect();
+    assert_eq!(written, [HARBOUR, PIER]);
+    assert_eq!(read_entity(&folder.join(PIER), 0).unwrap().position.x, 31.0);
+}
+
 #[test]
 fn a_flush_that_cannot_write_an_operation_names_it_and_writes_nothing() {
     let (_scratch, [one_by_one, held]) = copies(pack);

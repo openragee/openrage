@@ -760,6 +760,24 @@ msgstr "Архетип {index} убран"
 msgid "Removed entity {index}"
 msgstr "Сущность {index} убрана"
 
+msgid "Entity {index} was left: {count} other entity places the same model at the same pose, and a deletion would not know which of them goes"
+msgid_plural "Entity {index} was left: {count} other entities place the same model at the same pose, and a deletion would not know which of them goes"
+msgstr[0] "Сущность {index} оставлена: ещё {count} сущность размещает ту же модель в той же позе, и удаление не знало бы, какую из них убрать"
+msgstr[1] "Сущность {index} оставлена: ещё {count} сущности размещают ту же модель в той же позе, и удаление не знало бы, какую из них убрать"
+msgstr[2] "Сущность {index} оставлена: ещё {count} сущностей размещают ту же модель в той же позе, и удаление не знало бы, какую из них убрать"
+
+msgid "{count} far model that stood for nothing else went with it"
+msgid_plural "{count} far models that stood for nothing else went with it"
+msgstr[0] "{count} дальняя модель, которая больше ничего не заменяла, убрана вместе с ней"
+msgstr[1] "{count} дальние модели, которые больше ничего не заменяли, убраны вместе с ней"
+msgstr[2] "{count} дальних моделей, которые больше ничего не заменяли, убраны вместе с ней"
+
+msgid "{count} entity it was the far model of went with it"
+msgid_plural "{count} entities it was the far model of went with it"
+msgstr[0] "{count} сущность, для которой она была дальней моделью, убрана вместе с ней"
+msgstr[1] "{count} сущности, для которых она была дальней моделью, убраны вместе с ней"
+msgstr[2] "{count} сущностей, для которых она была дальней моделью, убраны вместе с ней"
+
 msgid "Removed the weapon {name}"
 msgstr "Оружие {name} убрано"
 
@@ -883,8 +901,8 @@ msgstr "Дистанция стриминга"
 msgid "Take the archetype selected out of its type file. Entities that place it stay, and the rules say they place a name no type file declares. Undo puts it back"
 msgstr "Убрать выбранный архетип из его файла типов. Сущности, которые его размещают, остаются, и правила сообщат, что они размещают имя, не объявленное ни в одном файле типов. Команда «Отменить» вернёт его на место"
 
-msgid "Take the entity selected out of its map file, with the LOD links renumbered. Undo puts it back"
-msgstr "Убрать выбранную сущность из её файла карты с перенумерацией связей LOD. Команда «Отменить» вернёт её на место"
+msgid "Take the entity selected out of the map files of the pack with its chain: a far model left standing for nothing goes with it, and so does what names it as its far model. Undo puts them back"
+msgstr "Убрать выбранную сущность из файлов карты пака вместе с её цепочкой: дальняя модель, которая больше ничего не заменяет, убирается вместе с ней, как и то, что называет её своей дальней моделью. Команда «Отменить» вернёт их на место"
 
 msgid "Take the weapon selected out of the pack. Its sources stay in the folder of the pack, where the rules say that no weapon names them; Undo puts it back"
 msgstr "Убрать выбранное оружие из пака. Его источники остаются в папке пака, где правила сообщат, что ни одно оружие их не называет; команда «Отменить» вернёт его на место"
@@ -7789,8 +7807,8 @@ msgstr "Сохранить запрос…"
 msgid "Save the active document to a new location"
 msgstr "Сохранить активный документ в новом месте"
 
-msgid "Save the active document; one never saved asks where. With no document open, it saves the project"
-msgstr "Сохранить активный документ; если он ещё ни разу не сохранялся, будет задан вопрос, куда. Если документ не открыт, сохраняет проект"
+msgid "Save the active document; one never saved asks where. With no document open, or on the Map screen while an edit of the project's maps is unwritten, it saves the project"
+msgstr "Сохранить активный документ; если он ещё ни разу не сохранялся, будет задан вопрос, куда. Если документ не открыт или на экране «Карта» есть ещё не записанная правка карт проекта, сохраняет проект"
 
 msgid "Save the archive's changes first: a comparison reads it as it was last saved"
 msgstr "Сначала сохраните изменения архива: сравнение читает его в том виде, в каком он был сохранён в последний раз"

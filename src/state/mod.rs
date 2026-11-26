@@ -395,6 +395,10 @@ mod the_inspector_leads_with_a_summary;
 #[cfg(test)]
 mod the_lock_a_window_holds;
 #[cfg(test)]
+mod the_map_screen_holds_a_session;
+#[cfg(test)]
+mod the_map_screen_saves_with_the_project;
+#[cfg(test)]
 mod the_mesh_doctor_in_the_app;
 #[cfg(test)]
 mod the_panel_counts_the_apps_cpu_state;

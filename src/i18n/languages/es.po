@@ -760,6 +760,21 @@ msgstr "Arquetipo {index} quitado"
 msgid "Removed entity {index}"
 msgstr "Entidad {index} quitada"
 
+msgid "Entity {index} was left: {count} other entity places the same model at the same pose, and a deletion would not know which of them goes"
+msgid_plural "Entity {index} was left: {count} other entities place the same model at the same pose, and a deletion would not know which of them goes"
+msgstr[0] "La entidad {index} se dejó: {count} otra entidad coloca el mismo modelo en la misma pose, y un borrado no sabría cuál de ellas quitar"
+msgstr[1] "La entidad {index} se dejó: {count} otras entidades colocan el mismo modelo en la misma pose, y un borrado no sabría cuál de ellas quitar"
+
+msgid "{count} far model that stood for nothing else went with it"
+msgid_plural "{count} far models that stood for nothing else went with it"
+msgstr[0] "{count} modelo lejano que no representaba nada más se quitó con ella"
+msgstr[1] "{count} modelos lejanos que no representaban nada más se quitaron con ella"
+
+msgid "{count} entity it was the far model of went with it"
+msgid_plural "{count} entities it was the far model of went with it"
+msgstr[0] "{count} entidad de la que era el modelo lejano se quitó con ella"
+msgstr[1] "{count} entidades de las que era el modelo lejano se quitaron con ella"
+
 msgid "Removed the weapon {name}"
 msgstr "Arma {name} quitada"
 
@@ -883,8 +898,8 @@ msgstr "Distancia de carga"
 msgid "Take the archetype selected out of its type file. Entities that place it stay, and the rules say they place a name no type file declares. Undo puts it back"
 msgstr "Quitar el arquetipo seleccionado de su archivo de tipos. Las entidades que lo colocan permanecen, y las reglas indican que colocan un nombre que ningún archivo de tipos declara. Deshacer lo devuelve"
 
-msgid "Take the entity selected out of its map file, with the LOD links renumbered. Undo puts it back"
-msgstr "Quitar la entidad seleccionada de su archivo de mapa, con los vínculos de LOD renumerados. Deshacer la devuelve"
+msgid "Take the entity selected out of the map files of the pack with its chain: a far model left standing for nothing goes with it, and so does what names it as its far model. Undo puts them back"
+msgstr "Quitar la entidad seleccionada de los archivos de mapa del pack con su cadena: un modelo lejano que ya no representa nada se quita con ella, y también lo que la nombra como su modelo lejano. Deshacer los devuelve"
 
 msgid "Take the weapon selected out of the pack. Its sources stay in the folder of the pack, where the rules say that no weapon names them; Undo puts it back"
 msgstr "Quitar el arma seleccionada del pack. Sus fuentes permanecen en la carpeta del pack, donde las reglas indican que ningún arma las nombra; Deshacer la devuelve"
@@ -7784,8 +7799,8 @@ msgstr "Guardar consulta…"
 msgid "Save the active document to a new location"
 msgstr "Guardar el documento activo en una ubicación nueva"
 
-msgid "Save the active document; one never saved asks where. With no document open, it saves the project"
-msgstr "Guardar el documento activo; uno que nunca se ha guardado pregunta dónde. Sin ningún documento abierto, guarda el proyecto"
+msgid "Save the active document; one never saved asks where. With no document open, or on the Map screen while an edit of the project's maps is unwritten, it saves the project"
+msgstr "Guardar el documento activo; uno que nunca se ha guardado pregunta dónde. Sin ningún documento abierto, o en la pantalla Mapa mientras un cambio en los mapas del proyecto esté sin escribir, guarda el proyecto"
 
 msgid "Save the archive's changes first: a comparison reads it as it was last saved"
 msgstr "Guardar primero los cambios del archivo comprimido: una comparación lo lee tal como se guardó por última vez"

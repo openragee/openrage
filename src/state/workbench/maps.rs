@@ -83,10 +83,10 @@ pub struct Step {
     pub label: String,
     /// The folder of the pack the operations name their sources in.
     pub folder: PathBuf,
-    /// The inverse the change gave, which states the digest of the XML the change wrote.
-    pub undo: Operation,
-    /// What makes the change again: the operation itself, then the inverse `undo` gave when it was applied.
-    pub redo: Operation,
+    /// The inverses the change gave, the last first, each of which states the state of its source in the pack's session that it applies to.
+    pub undo: Vec<Operation>,
+    /// What makes the change again: its operations, then the inverses `undo` gave when it was applied.
+    pub redo: Vec<Operation>,
 }
 
 /// How many steps Undo keeps.
@@ -198,6 +198,8 @@ pub struct MapsWork {
     pub redo: Vec<Step>,
     /// Bumped whenever a map file changes, so what was read of it is read again.
     pub generation: u64,
+    /// The packs an edit was made to, each held open with what Save is yet to write.
+    pub(super) sessions: super::maps_session::Sessions,
     pub tool: Mode,
     pub snap: Snapping,
     /// The placement being dragged, if one is.

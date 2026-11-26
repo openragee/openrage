@@ -760,6 +760,21 @@ msgstr "Archétype {index} retiré"
 msgid "Removed entity {index}"
 msgstr "Entité {index} retirée"
 
+msgid "Entity {index} was left: {count} other entity places the same model at the same pose, and a deletion would not know which of them goes"
+msgid_plural "Entity {index} was left: {count} other entities place the same model at the same pose, and a deletion would not know which of them goes"
+msgstr[0] "L'entité {index} a été laissée : {count} autre entité place le même modèle à la même pose, et une suppression ne saurait pas laquelle retirer"
+msgstr[1] "L'entité {index} a été laissée : {count} autres entités placent le même modèle à la même pose, et une suppression ne saurait pas laquelle retirer"
+
+msgid "{count} far model that stood for nothing else went with it"
+msgid_plural "{count} far models that stood for nothing else went with it"
+msgstr[0] "{count} modèle lointain qui ne tenait lieu de rien d'autre est parti avec elle"
+msgstr[1] "{count} modèles lointains qui ne tenaient lieu de rien d'autre sont partis avec elle"
+
+msgid "{count} entity it was the far model of went with it"
+msgid_plural "{count} entities it was the far model of went with it"
+msgstr[0] "{count} entité dont elle était le modèle lointain est partie avec elle"
+msgstr[1] "{count} entités dont elle était le modèle lointain sont parties avec elle"
+
 msgid "Removed the weapon {name}"
 msgstr "Arme {name} retirée"
 
@@ -883,8 +898,8 @@ msgstr "Distance de chargement"
 msgid "Take the archetype selected out of its type file. Entities that place it stay, and the rules say they place a name no type file declares. Undo puts it back"
 msgstr "Retire l'archétype sélectionné de son fichier de types. Les entités qui le placent restent, et les règles disent qu'elles placent un nom qu'aucun fichier de types ne déclare. Annuler le remet"
 
-msgid "Take the entity selected out of its map file, with the LOD links renumbered. Undo puts it back"
-msgstr "Retire l'entité sélectionnée de son fichier de carte, en renumérotant les liens de LOD. Annuler la remet"
+msgid "Take the entity selected out of the map files of the pack with its chain: a far model left standing for nothing goes with it, and so does what names it as its far model. Undo puts them back"
+msgstr "Retire l'entité sélectionnée des fichiers de carte du pack avec sa chaîne : un modèle lointain qui ne tient plus lieu de rien part avec elle, ainsi que ce qui la nomme comme son modèle lointain. Annuler les remet"
 
 msgid "Take the weapon selected out of the pack. Its sources stay in the folder of the pack, where the rules say that no weapon names them; Undo puts it back"
 msgstr "Retire du pack l'arme sélectionnée. Ses sources restent dans le dossier du pack, où les règles disent qu'aucune arme ne les nomme ; Annuler la remet"
@@ -7811,8 +7826,8 @@ msgstr "Enregistrer la requête…"
 msgid "Save the active document to a new location"
 msgstr "Enregistrer le document actif à un nouvel emplacement"
 
-msgid "Save the active document; one never saved asks where. With no document open, it saves the project"
-msgstr "Enregistrer le document actif ; un document jamais enregistré demande où. Sans document ouvert, il enregistre le projet"
+msgid "Save the active document; one never saved asks where. With no document open, or on the Map screen while an edit of the project's maps is unwritten, it saves the project"
+msgstr "Enregistrer le document actif ; un document jamais enregistré demande où. Sans document ouvert, ou sur l'écran Carte tant qu'une modification des cartes du projet n'est pas écrite, il enregistre le projet"
 
 msgid "Save the archive's changes first: a comparison reads it as it was last saved"
 msgstr "Enregistrez d'abord les changements de l'archive : une comparaison la lit telle qu'elle a été enregistrée en dernier"

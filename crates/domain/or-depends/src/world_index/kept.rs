@@ -7,18 +7,19 @@ use std::path::Path;
 use flate2::write::ZlibEncoder;
 use flate2::{Compression, Decompress, FlushDecompress, Status};
 use glam::Vec3;
+use or_world::ArchetypeKind;
 
 use super::{
-    ArchetypeRow, Archive, ArchiveRows, BoundRow, GroupGate, KeptState, ManifestRow, MapFacts,
-    MapRow, Report, Span, Stamp, TypeFileRow, WorldIndex, WorldSource,
+    ArchetypeRow, Archive, ArchiveRows, BoundRow, Counted, GroupGate, KeptState, ManifestRow,
+    MapFacts, MapRow, Report, Span, Stamp, TypeFileRow, WorldIndex, WorldSource,
 };
 use crate::tables::NamedBounds;
 
 const MAGIC: [u8; 4] = *b"ORWI";
 /// The version of the bytes this file writes: a change to them takes another.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 /// The version of what a build reads of each file: a change to what a row holds of the same file takes another.
-pub const RULES: u32 = 2;
+pub const RULES: u32 = 3;
 /// The most a kept index inflates to, in bytes.
 const MOST_BYTES: usize = 1 << 28;
 
@@ -238,6 +239,15 @@ fn put_span(out: &mut Vec<u8>, span: Option<Span>) {
     }
 }
 
+/// Each name with how often it comes.
+fn put_counted(out: &mut Vec<u8>, counted: &[(u32, u32)]) {
+    put_len(out, counted.len());
+    for (name, count) in counted {
+        put_u32(out, *name);
+        put_u32(out, *count);
+    }
+}
+
 fn put_named(out: &mut Vec<u8>, named: &[NamedBounds]) {
     put_len(out, named.len());
     for (name, bounds) in named {
@@ -272,6 +282,7 @@ fn put_archive(out: &mut Vec<u8>, rows: &ArchiveRows) {
             for interior in &facts.interiors {
                 put_u32(out, *interior);
             }
+            put_counted(out, &facts.placed);
         }
     }
 
@@ -283,13 +294,23 @@ fn put_archive(out: &mut Vec<u8>, rows: &ArchiveRows) {
             put_len(out, archetypes.len());
             for archetype in archetypes {
                 put_u32(out, archetype.name);
+                out.push(match archetype.kind {
+                    ArchetypeKind::Base => 0,
+                    ArchetypeKind::Time => 1,
+                    ArchetypeKind::Mlo => 2,
+                });
                 put_span(out, archetype.span);
+                for value in archetype.sphere.0.to_array() {
+                    out.extend(value.to_le_bytes());
+                }
+                out.extend(archetype.sphere.1.to_le_bytes());
                 out.extend(archetype.lod_dist.to_le_bytes());
                 put_u32(out, archetype.asset_name);
                 put_u32(out, archetype.drawable_dictionary);
                 put_u32(out, archetype.texture_dictionary);
             }
         }
+        put_counted(out, &file.inside);
     }
 
     put_len(out, rows.manifests.len());
@@ -314,6 +335,11 @@ fn put_archive(out: &mut Vec<u8>, rows: &ArchiveRows) {
     for bound in &rows.bounds {
         put_text(out, &bound.logical);
         put_span(out, bound.span);
+    }
+
+    put_len(out, rows.files.len());
+    for file in &rows.files {
+        put_text(out, file);
     }
 }
 
@@ -386,6 +412,10 @@ impl<'a> Reader<'a> {
         Ok(out)
     }
 
+    fn counted(&mut self) -> Result<Counted, KeptError> {
+        self.list(|r| Ok((r.u32()?, r.u32()?)))
+    }
+
     fn named(&mut self) -> Result<Vec<NamedBounds>, KeptError> {
         self.list(|r| Ok((r.u32()?, r.list(Self::u32)?)))
     }
@@ -410,6 +440,7 @@ impl<'a> Reader<'a> {
                     entities: r.span()?,
                     streaming: r.span()?,
                     interiors: r.list(Self::u32)?,
+                    placed: r.counted()?,
                 }),
                 false => None,
             };
@@ -421,7 +452,14 @@ impl<'a> Reader<'a> {
                 true => Some(r.list(|r| {
                     Ok(ArchetypeRow {
                         name: r.u32()?,
+                        kind: match r.array::<1>()?[0] {
+                            0 => ArchetypeKind::Base,
+                            1 => ArchetypeKind::Time,
+                            2 => ArchetypeKind::Mlo,
+                            _ => return Err(KeptError::Malformed("an archetype of no kind")),
+                        },
                         span: r.span()?,
+                        sphere: (Vec3::new(r.f32()?, r.f32()?, r.f32()?), r.f32()?),
                         lod_dist: r.f32()?,
                         asset_name: r.u32()?,
                         drawable_dictionary: r.u32()?,
@@ -433,6 +471,7 @@ impl<'a> Reader<'a> {
             Ok(TypeFileRow {
                 logical,
                 archetypes,
+                inside: r.counted()?,
             })
         })?;
         let manifests = self.list(|r| {
@@ -457,6 +496,7 @@ impl<'a> Reader<'a> {
                 span: r.span()?,
             })
         })?;
+        let files = self.list(Self::text)?;
         Ok(ArchiveRows {
             archive: Archive {
                 device,
@@ -467,6 +507,7 @@ impl<'a> Reader<'a> {
             type_files,
             manifests,
             bounds,
+            files,
         })
     }
 }

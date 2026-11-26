@@ -251,6 +251,131 @@ pub fn interior_types_bytes(name: &str, interior: &str, model: &str, at: [f32; 3
     write_meta_binary(BinaryFormat::Rbm, Some(&layout), &root).expect("encodes")
 }
 
+/// The members a list of models reads of a type file: the three kinds of archetype, each with its box, its sphere, its
+/// asset and its dictionaries, and an interior with the entities it holds.
+const MODELS_PSC: &str = r#"<?xml version="1.0"?>
+<ParserSchema>
+  <structdef type="CEntityDef">
+    <string name="archetypeName" type="atHashString"/>
+    <Vector3 name="position"/>
+  </structdef>
+  <structdef type="CMloEntitySet">
+    <string name="name" type="atHashString"/>
+    <array name="entities" type="atArray"><pointer type="CEntityDef" policy="owner"/></array>
+  </structdef>
+  <structdef type="CBaseArchetypeDef">
+    <float name="lodDist"/>
+    <Vector3 name="bbMin"/>
+    <Vector3 name="bbMax"/>
+    <Vector3 name="bsCentre"/>
+    <float name="bsRadius"/>
+    <string name="name" type="atHashString"/>
+    <string name="textureDictionary" type="atHashString"/>
+    <string name="drawableDictionary" type="atHashString"/>
+    <string name="assetName" type="atHashString"/>
+  </structdef>
+  <structdef type="CTimeArchetypeDef" base="CBaseArchetypeDef">
+    <u32 name="timeFlags"/>
+  </structdef>
+  <structdef type="CMloArchetypeDef" base="CBaseArchetypeDef">
+    <u32 name="mloFlags"/>
+    <array name="entities" type="atArray"><pointer type="CEntityDef" policy="owner"/></array>
+    <array name="entitySets" type="atArray"><struct type="CMloEntitySet"/></array>
+  </structdef>
+  <structdef type="CMapTypes">
+    <array name="archetypes" type="atArray"><pointer type="CBaseArchetypeDef" policy="owner"/></array>
+    <string name="name" type="atHashString"/>
+  </structdef>
+</ParserSchema>"#;
+
+/// What a type file of the fixture declares of one archetype.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArchetypeSpec {
+    pub name: &'static str,
+    pub kind: or_world::ArchetypeKind,
+    pub span: Span,
+    /// `bsCentre` and `bsRadius`.
+    pub sphere: ([f32; 3], f32),
+    pub lod_dist: f32,
+    /// Empty for none, as each of the two dictionaries.
+    pub asset_name: &'static str,
+    pub drawable_dictionary: &'static str,
+    pub texture_dictionary: &'static str,
+    /// Of an interior: the archetype of each of its entities, and of each entity of its one entity set.
+    pub entities: Vec<&'static str>,
+    pub set: Vec<&'static str>,
+}
+
+impl ArchetypeSpec {
+    /// A base archetype named `name` in the box `span`, whose asset is its name, with no dictionary.
+    pub fn base(name: &'static str, span: Span) -> Self {
+        let centre = [0, 1, 2].map(|axis| (span.0[axis] + span.1[axis]) * 0.5);
+        Self {
+            name,
+            kind: or_world::ArchetypeKind::Base,
+            span,
+            sphere: (centre, (span.1[0] - span.0[0]).abs()),
+            lod_dist: 100.0,
+            asset_name: name,
+            drawable_dictionary: "",
+            texture_dictionary: "",
+            entities: Vec::new(),
+            set: Vec::new(),
+        }
+    }
+}
+
+/// A `.ytyp`'s bytes: a `CMapTypes` named `name` declaring `archetypes`, each as the kind it states.
+pub fn typed_bytes(name: &str, archetypes: &[ArchetypeSpec]) -> Vec<u8> {
+    let held = |names: &[&str]| {
+        let entities = names.iter().map(|archetype| {
+            let mut entity = MetaInstance::new("CEntityDef");
+            entity.set("archetypeName", Value::Hash(HashedString::new(*archetype)));
+            entity.set("position", Value::Vec3([0.0; 3]));
+            Value::Pointer(Some(Box::new(entity)))
+        });
+        Value::Array(entities.collect())
+    };
+    let items = archetypes.iter().map(|spec| {
+        let mut arch = MetaInstance::new(match spec.kind {
+            or_world::ArchetypeKind::Base => "CBaseArchetypeDef",
+            or_world::ArchetypeKind::Time => "CTimeArchetypeDef",
+            or_world::ArchetypeKind::Mlo => "CMloArchetypeDef",
+        });
+        arch.set("lodDist", Value::Float(f64::from(spec.lod_dist)));
+        arch.set("bbMin", Value::Vec3(spec.span.0));
+        arch.set("bbMax", Value::Vec3(spec.span.1));
+        arch.set("bsCentre", Value::Vec3(spec.sphere.0));
+        arch.set("bsRadius", Value::Float(f64::from(spec.sphere.1)));
+        arch.set("name", Value::Hash(HashedString::new(spec.name)));
+        let hashed = |text: &str| Value::Hash(HashedString::new(text));
+        arch.set("textureDictionary", hashed(spec.texture_dictionary));
+        arch.set("drawableDictionary", hashed(spec.drawable_dictionary));
+        arch.set("assetName", hashed(spec.asset_name));
+        match spec.kind {
+            or_world::ArchetypeKind::Base => {}
+            or_world::ArchetypeKind::Time => arch.set("timeFlags", Value::UInt(0)),
+            or_world::ArchetypeKind::Mlo => {
+                arch.set("mloFlags", Value::UInt(0));
+                arch.set("entities", held(&spec.entities));
+                let mut set = MetaInstance::new("CMloEntitySet");
+                set.set("name", Value::Hash(HashedString::new("set")));
+                set.set("entities", held(&spec.set));
+                let sets = vec![Value::Struct(Box::new(set))];
+                arch.set("entitySets", Value::Array(sets));
+            }
+        }
+        Value::Pointer(Some(Box::new(arch)))
+    });
+    let mut root = MetaInstance::new("CMapTypes");
+    root.set("archetypes", Value::Array(items.collect()));
+    root.set("name", Value::Hash(HashedString::new(name)));
+    let library =
+        build_library([("world_fixture_models.psc", MODELS_PSC.as_bytes())]).expect("the schema");
+    let layout = canonical::layout_for(&library, &root, BinaryFormat::Rbm, None).expect("lays out");
+    write_meta_binary(BinaryFormat::Rbm, Some(&layout), &root).expect("encodes")
+}
+
 /// A `_manifest.ymf`'s bytes: the bounds each map group and each interior archetype is named.
 pub fn manifest_bytes(groups: &[(&str, &[&str])], interiors: &[(&str, &[&str])]) -> Vec<u8> {
     let items = |type_name: &str, named: &[(&str, &[&str])]| {
@@ -363,6 +488,41 @@ fn archive_bytes(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
 /// Write the archive `name` of the install at `root`, holding `files`.
 pub fn write_archive(root: &Path, name: &str, files: &[(&str, Vec<u8>)]) {
     std::fs::write(root.join(name), archive_bytes(files)).expect("save");
+}
+
+/// A DLC list naming `packs` in that order, as `common.rpf` holds it at `data/dlclist.xml`.
+pub fn dlc_list_bytes(packs: &[&str]) -> Vec<u8> {
+    let paths = packs.iter().map(|pack| format!("dlcpacks:/{pack}/").into());
+    let list = or_title::DlcList {
+        paths: paths.collect(),
+    };
+    list.to_xml().into_bytes()
+}
+
+/// Write the pack `name` of the install at `root`, mounted on the device `dlc_<name>`, holding `files` and registering `data_files`.
+pub fn write_pack(
+    root: &Path,
+    name: &str,
+    order: i32,
+    data_files: Vec<or_title::DataFileEntry>,
+    mut files: Vec<(&str, Vec<u8>)>,
+) {
+    let setup = or_title::SetupData {
+        name_hash: name.into(),
+        device_name: format!("dlc_{name}"),
+        dat_file: "content.xml".into(),
+        order,
+        ..Default::default()
+    };
+    let content = or_title::ContentXml {
+        data_files,
+        ..Default::default()
+    };
+    files.push(("setup2.xml", setup.to_xml().into_bytes()));
+    files.push(("content.xml", content.to_xml().into_bytes()));
+    let folder = format!("x64/dlcpacks/{name}");
+    std::fs::create_dir_all(root.join(&folder)).expect("mkdir");
+    write_archive(root, &format!("{folder}/dlc.rpf"), &files);
 }
 
 /// The install at `root`, mounted with every pack its DLC list names.

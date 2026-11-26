@@ -40,6 +40,8 @@ pub fn run(args: &[String]) -> ExitCode {
         "ground" => super::world_ground::cmd_ground(rest),
         "find" => super::world_find::cmd_find(rest),
         "select" => super::world_select::cmd_select(rest),
+        "models" => super::world_models::cmd_models(rest),
+        "vehicles" => super::world_models::cmd_vehicles(rest),
         "-h" | "--help" | "help" => {
             print_usage();
             ExitCode::SUCCESS
@@ -1268,8 +1270,8 @@ fn print_usage() {
     eprintln!("                           Remove a map, its manifest entries and its group.");
     eprintln!("  prefab capture|place|list");
     eprintln!("                           Prefab catalogues, one directory per title.");
-    eprintln!("  index, at, ground, find and select name the install as their first argument");
-    eprintln!("                           or with --game <dir>.");
+    eprintln!("  index, at, ground, find, select, models and vehicles name the install as their");
+    eprintln!("                           first argument or with --game <dir>.");
     eprintln!("  index <install>          Build the world index of an install, or refresh the");
     eprintln!("                           kept one: every map, type file, archetype and bound,");
     eprintln!("                           and which archives were read again. --kept <file>");
@@ -1309,6 +1311,29 @@ fn print_usage() {
     eprintln!("                           <0-23> (12) and --weather <name> (EXTRASUNNY) set");
     eprintln!("                           what a manifest's groups let in. --level and --mode");
     eprintln!("                           mount as `dlc-list` does.");
+    eprintln!(
+        "  models <install> [<text>]   The models of the install, a page at a time, from the"
+    );
+    eprintln!("                           world index alone: each archetype once, under the last");
+    eprintln!("                           type file to declare it, with its kind, box, sphere,");
+    eprintln!("                           level-of-detail distance, dictionaries, the file that");
+    eprintln!("                           holds it and how often the maps place it. <text> is a");
+    eprintln!("                           part of a name, a name or a hash, as `find` reads one.");
+    eprintln!("                           --pack <device>, --kind <base|time|interior>,");
+    eprintln!("                           --min-size and --max-size <m> (the longest side of the");
+    eprintln!("                           box), --placed or --unplaced filter; --sort");
+    eprintln!("                           <name|size|placed> and --desc order; --offset <n> and");
+    eprintln!("                           --count <n> (50) page, and the total is always said.");
+    eprintln!("                           --level and --mode mount as `dlc-list` does.");
+    eprintln!(
+        "  vehicles <install> [<text>]   The vehicles the install's vehicle data files state,"
+    );
+    eprintln!("                           each model once under the last file to state it: its");
+    eprintln!("                           model, game name, class and type as the file spells");
+    eprintln!("                           them, and its pack. --class <VC_…>, --type");
+    eprintln!("                           <VEHICLE_TYPE_…> and --pack <device> filter; --offset");
+    eprintln!("                           and --count page. --level and --mode mount as");
+    eprintln!("                           `dlc-list` does.");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --types <dir>   Where to find `.ytyp` for archetype bounds. Defaults to");

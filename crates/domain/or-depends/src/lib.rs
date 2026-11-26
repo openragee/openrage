@@ -21,10 +21,12 @@ pub mod census;
 pub mod contents;
 pub mod export;
 pub mod find;
+pub mod models;
 pub mod placement;
 pub mod resolve;
 pub mod rules;
 pub mod tables;
+pub mod vehicles;
 pub mod world_collision;
 pub mod world_forest;
 pub mod world_index;
@@ -36,12 +38,14 @@ pub use catalogue::{Catalogue, Kind, Located};
 pub use census::{Census, Coverage, PhysicsRivals, TextureSources};
 pub use contents::ModelContents;
 pub use export::{export, ExportError, Exported, MANIFEST};
+pub use models::ModelCatalogue;
 pub use placement::{Placed, Placement, PlacementIndex, Watch};
 pub use resolve::{
     ArchetypeAssetIndex, ArchetypeAssets, DependencySet, Edge, Found, Resolver, Via,
 };
 pub use rules::{Derivable, Rule, Stated, RULES};
 pub use tables::InstallTables;
+pub use vehicles::VehicleCatalogue;
 pub use world_collision::WorldCollision;
 pub use world_forest::WorldForest;
 pub use world_index::{MountedWorld, WorldIndex, WorldSource};

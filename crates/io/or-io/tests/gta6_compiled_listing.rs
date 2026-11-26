@@ -23,7 +23,7 @@ const CONTENT_CIPHER_TYPE: u16 = 17;
 const SCRIPT_TYPE: u32 = 0x59;
 const MAX_DEPTH: usize = 8;
 /// The opcodes the interpreter's table holds.
-const TABLE: u16 = 530;
+const TABLE: u16 = or_io::gta6::script::opcode::COUNT;
 
 fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var)

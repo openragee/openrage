@@ -72,6 +72,51 @@ fn the_names_registry_names_a_native_by_its_hash_before_the_listing() {
 }
 
 #[test]
+fn the_table_gives_a_names_registry_the_handlers_it_lacks_and_the_listings_names() {
+    let dir = folder();
+    let table = NativeAddresses::load(dir.path(), None).expect("the folder reads");
+    let mut names = Names::default();
+    assert_eq!(listed(&names, 0x100), None, "no list states the handler");
+    // A handler a supplied list states keeps the hash that list gave it.
+    names.native_hashes.insert(0x200, 0xCC);
+    assert_eq!(table.supply(&mut names), 1);
+    assert_eq!(
+        (names.native_at(0x100), names.native_at(0x200)),
+        (Some(0xAA), Some(0xCC))
+    );
+    // With no natives list supplied, the names the listings declare are the list.
+    let label = names.natives.as_ref().map(|list| list.label());
+    assert_eq!(label, Some(LISTINGS_LABEL));
+    assert_eq!(listed(&names, 0x100).as_deref(), Some("SET_THING"));
+    assert_eq!(
+        listed(&names, 0x200).as_deref(),
+        Some("_0x00000000000000CC"),
+        "a hash no list names is the hash"
+    );
+    assert_eq!(table.supply(&mut names), 0, "nothing is left to give");
+}
+
+#[test]
+fn a_supplied_natives_list_keeps_naming_after_the_table_gave_its_handlers() {
+    let dir = folder();
+    let table = NativeAddresses::load(dir.path(), None).expect("the folder reads");
+    let mut names = Names::default();
+    let db = NativeDb::parse("test", b"0xBB DEMO::FROM_REGISTRY\n").expect("the list reads");
+    names.natives = Some(db);
+    assert_eq!(table.supply(&mut names), 2);
+    assert_eq!(
+        names.natives.as_ref().map(|list| list.label()),
+        Some("test")
+    );
+    assert_eq!(listed(&names, 0x200).as_deref(), Some("DEMO.FROM_REGISTRY"));
+    // ⚠ The listing names this one, and the user's list, which stands, does not.
+    assert_eq!(
+        listed(&names, 0x100).as_deref(),
+        Some("_0x00000000000000AA")
+    );
+}
+
+#[test]
 fn a_disagreement_or_a_malformed_listing_is_refused_by_name() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let a = listing(&[&native("SET_THING", 0xAA, 0x100)]);

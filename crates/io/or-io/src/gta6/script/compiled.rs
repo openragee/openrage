@@ -1,13 +1,16 @@
-//! A compiled GTA VI script program, read from its decrypted body: the container header, the
-//! instruction stream under the interpreter's two whitening rules, and its native calls.
+//! A compiled GTA VI script program as its decrypted body states it: the container header, the
+//! instruction stream as plain opcodes and operand bytes, and its native calls.
 //!
-//! ⚠ An instruction's length is the interpreter's own per opcode ([`length`]), and nothing turns
-//! the stream into the decompiler's input yet. The file's own native tables (header +0xA8 and
-//! +0xB0) stay undecoded: the interpreter never reads them, and no loader that does was found.
+//! ⚠ This is the view by bytes of the one instruction set in [`super::opcode`]: an opcode's
+//! number, its length and how its bytes are deciphered are asked of that table, and nothing here
+//! says what an instruction does. The file's own native tables (header +0xA8 and +0xB0) stay
+//! undecoded: the interpreter never reads them, and no loader that does was found.
 
 use std::collections::BTreeSet;
 
 use byteorder::{ByteOrder, LE};
+
+use super::opcode as set;
 
 /// The vector the interpreter XORs into the 8 operand bytes after an opcode word, at executable address 0x146178EE0.
 pub const OPERAND_KEY: [u8; 8] = [0x85, 0x94, 0xA7, 0xB6, 0xC1, 0xD0, 0xE3, 0xF2];
@@ -16,9 +19,9 @@ pub const OPERAND_KEY_HIGH: [u8; 8] = [0x0D, 0x1C, 0x2F, 0x3E, 0x49, 0x58, 0x6B,
 /// The most operand bytes an instruction holds after its opcode word.
 pub const MAX_OPERANDS: usize = 16;
 /// The multiplier that turns a raw 16-bit code word into its dispatch index.
-pub const OPCODE_MULTIPLIER: u16 = 0x3315;
+pub const OPCODE_MULTIPLIER: u16 = set::WORD_MULTIPLIER;
 /// The multiplier applied to an operand byte after the XOR, keeping the low byte.
-pub const OPERAND_MULTIPLIER: u8 = 0x6D;
+pub const OPERAND_MULTIPLIER: u8 = set::OPERAND_MULTIPLIER;
 /// The decoded opcode of a native call: operand bytes 0..4 the native's RVA, 4 the argument count, 5 the result count.
 pub const NATIVE: u16 = 0x8B;
 /// The RVA a program's check copy masks its hash with; the game places natives at that RVA less the unmasked value.
@@ -28,50 +31,6 @@ pub const HEADER_LEN: usize = 0x180;
 
 /// What a pointer in the body adds to the body offset it names.
 const POINTER_BASE: u64 = 0x5000_0000;
-
-/// Each opcode's instruction length in bytes, the opcode word included.
-///
-/// Read from the interpreter's handlers (the next fetch's distance from the opcode); 422 of them
-/// tile every function of 689 programs exactly at the offsets their listings print. 0x1D3 and
-/// 0x1D4 share a handler that advances by one byte more for 0x1D4, whose count is operand byte 0.
-/// 0x1F9 is no fall-through: the game's code patcher writes it over a function as the opcode word,
-/// an 8-byte program pointer and a 4-byte code offset, and no file carries it.
-static LENGTHS: [u8; 530] = [
-    2, 3, 2, 2, 2, 2, 2, 4, 4, 3, 4, 3, 3, 2, 2, 2, // 0x000
-    2, 2, 2, 2, 4, 4, 3, 3, 2, 2, 2, 2, 2, 2, 2, 4, // 0x010
-    3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 6, 6, // 0x020
-    10, 6, 18, 3, 6, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, // 0x030
-    4, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 5, // 0x040
-    3, 3, 3, 3, 3, 3, 3, 3, 4, 3, 4, 4, 4, 4, 4, 4, // 0x050
-    5, 4, 3, 3, 3, 3, 3, 3, 4, 4, 4, 3, 3, 3, 3, 3, // 0x060
-    4, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 5, 7, 7, // 0x070
-    2, 3, 3, 3, 4, 7, 5, 8, 6, 5, 4, 8, 6, 7, 4, 3, // 0x080
-    2, 2, 3, 3, 2, 3, 6, 7, 2, 6, 2, 2, 6, 3, 10, 6, // 0x090
-    3, 6, 6, 3, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, // 0x0A0
-    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, // 0x0B0
-    6, 6, 6, 6, 6, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // 0x0C0
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // 0x0D0
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 10, 18, 2, 2, 2, // 0x0E0
-    2, 2, 2, 4, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, // 0x0F0
-    2, 2, 2, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, // 0x100
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // 0x110
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // 0x120
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // 0x130
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // 0x140
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // 0x150
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, // 0x160
-    4, 4, 3, 6, 2, 4, 7, 6, 3, 4, 4, 6, 2, 2, 2, 2, // 0x170
-    2, 2, 2, 2, 2, 2, 2, 2, 3, 4, 6, 4, 4, 6, 6, 9, // 0x180
-    8, 4, 5, 4, 4, 4, 4, 4, 4, 6, 4, 6, 6, 6, 6, 6, // 0x190
-    6, 8, 4, 4, 4, 4, 4, 4, 6, 4, 7, 7, 7, 7, 7, 7, // 0x1A0
-    9, 7, 4, 4, 4, 4, 4, 6, 4, 4, 4, 4, 4, 6, 7, 7, // 0x1B0
-    7, 7, 9, 7, 7, 7, 7, 7, 7, 9, 7, 9, 2, 6, 6, 6, // 0x1C0
-    6, 4, 4, 2, 3, 2, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, // 0x1D0
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 14, 3, 3, 3, 3, 3, 3, // 0x1E0
-    3, 3, 3, 3, 3, 7, 7, 4, 7, 14, 2, 7, 7, 8, 8, 4, // 0x1F0
-    4, 4, 4, 2, 6, 8, 7, 7, 6, 2, 6, 6, 2, 2, 2, 6, // 0x200
-    6, 7, // 0x210
-];
 
 /// Why a body is not read as a compiled program, or its code stopped decoding.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -96,22 +55,24 @@ pub enum CompiledError {
 
 /// The decoded opcode of a raw 16-bit code word.
 pub fn opcode(word: u16) -> u16 {
-    word.wrapping_mul(OPCODE_MULTIPLIER)
+    set::of_word(word)
 }
 
 /// The decoded operand bytes of the up to 16 raw bytes after an opcode word; bytes past the input stay zero.
+// The key of a place is [`OPERAND_KEY`] and then [`OPERAND_KEY_HIGH`], which the instruction set states as one rule.
 pub fn operands(raw: &[u8]) -> [u8; MAX_OPERANDS] {
     let mut out = [0u8; MAX_OPERANDS];
-    let key = OPERAND_KEY.iter().chain(&OPERAND_KEY_HIGH);
-    for ((o, r), k) in out.iter_mut().zip(raw).zip(key) {
-        *o = (r ^ k).wrapping_mul(OPERAND_MULTIPLIER);
+    for (place, (o, r)) in out.iter_mut().zip(raw).enumerate() {
+        *o = set::plain(*r, place);
     }
     out
 }
 
-/// An opcode's instruction length in bytes, or `None` where it is past the table.
+/// An opcode's instruction length in bytes, the opcode word included, or `None` where it is past the table.
+// ⚠ 0x1F9 has a length and no fall-through: the engine writes it over a function in memory, and no file carries it.
 pub fn length(opcode: u16) -> Option<u8> {
-    LENGTHS.get(usize::from(opcode)).copied()
+    let row = set::spec(opcode)?;
+    u8::try_from(row.bytes()).ok()
 }
 
 /// The check copy a program with `hash` carries at +0x24.
@@ -436,10 +397,36 @@ mod tests {
 
     #[test]
     fn every_opcode_of_the_table_has_a_length() {
-        assert!(LENGTHS
-            .iter()
-            .all(|l| (2..=2 + MAX_OPERANDS as u8).contains(l)));
-        assert_eq!(length(LENGTHS.len() as u16), None);
+        for op in 0..set::COUNT {
+            let len = length(op).unwrap_or(0);
+            assert!((2..=2 + MAX_OPERANDS as u8).contains(&len), "{op:#X}");
+        }
+        assert_eq!(length(set::COUNT), None);
+        // The lengths the interpreter steps by, for opcodes no file was seen to hold.
+        let stepped = [(0x87, 8), (0x18F, 9), (0x190, 8), (0x192, 5), (0x1D1, 4)];
+        for (op, len) in stepped {
+            assert_eq!(length(op), Some(len), "{op:#X}");
+        }
+        assert_eq!(
+            (length(0x1FA), length(0x205), length(0x211)),
+            (Some(2), Some(8), Some(7))
+        );
+    }
+
+    #[test]
+    fn the_two_key_vectors_are_the_one_rule_of_the_instruction_set() {
+        let keys = OPERAND_KEY.iter().chain(&OPERAND_KEY_HIGH);
+        for (place, key) in keys.enumerate() {
+            assert_eq!(set::key(place), *key, "place {place}");
+        }
+        assert_eq!(
+            set::spec(NATIVE).map(|row| row.act),
+            Some(set::Act::CallNative)
+        );
+        assert_eq!(
+            set::spec(TAIL_CALL).map(|row| row.act),
+            Some(set::Act::TailCall)
+        );
     }
 
     #[test]
@@ -493,7 +480,7 @@ mod tests {
     #[test]
     fn an_opcode_past_the_table_stops_the_decode() {
         let mut code = encode(0x90, &[]);
-        code.extend(encode(LENGTHS.len() as u16, &[]));
+        code.extend(encode(set::COUNT, &[]));
         let b = body(&code);
         let program = Compiled::open(&b).expect("the header reads");
         let read: Vec<_> = program.instructions().collect();
@@ -502,7 +489,7 @@ mod tests {
             read[1],
             Err(CompiledError::OutOfTable {
                 offset: 2,
-                opcode: LENGTHS.len() as u16
+                opcode: set::COUNT
             })
         );
         let b = body(&encode(NATIVE, &[0, 0]));

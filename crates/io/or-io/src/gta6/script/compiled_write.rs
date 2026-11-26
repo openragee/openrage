@@ -4,11 +4,12 @@
 //! ⚠ An edit changes only an instruction's operand bytes, so the body keeps its length and can go
 //! into a patched copy of its archive. No run of the game was made with an edited program.
 
-use super::compiled::disasm::{self, Kind};
+use super::compiled::disasm;
 use super::compiled::{
     Compiled, CompiledError, Instruction, MAX_OPERANDS, OPCODE_MULTIPLIER, OPERAND_KEY,
     OPERAND_KEY_HIGH, OPERAND_MULTIPLIER,
 };
+use super::opcode::Act;
 
 /// The inverse of an odd `m` modulo 2^16, by Newton's step (each doubles the correct low bits).
 const fn inverse16(m: u16) -> u16 {
@@ -99,16 +100,28 @@ fn push_at(body: &[u8], offset: usize) -> Result<(Instruction, u8, usize), EditE
     let Some(op) = disasm::op(ins.opcode) else {
         return Err(not_a_push);
     };
-    let code = |k: Kind| matches!(k, Kind::Disp | Kind::Code | Kind::Table);
-    if op.fields.iter().any(|f| code(f.kind)) {
+    // An operand that is a place in the code: a jump's distance, a switch's table, a function's offset.
+    let code = matches!(
+        op.act,
+        Act::Jump
+            | Act::Switch
+            | Act::BranchZero(..)
+            | Act::BranchCompare(..)
+            | Act::Call
+            | Act::TailCall
+            | Act::PushFunction
+    );
+    if code {
         return Err(EditError::Branch {
             offset,
-            mnemonic: op.mnemonic,
+            mnemonic: op.name,
         });
     }
-    match op.fields {
-        [field] if op.mnemonic == "push" && field.kind == Kind::Imm => {
-            Ok((ins, field.width, program.header.code_start + offset))
+    match (op.act, op.fields) {
+        (Act::PushImm | Act::PushI64 | Act::PushType, [field]) => {
+            // A field is at most eight bytes wide.
+            let width = u8::try_from(field.1.bytes()).unwrap_or(u8::MAX);
+            Ok((ins, width, program.header.code_start + offset))
         }
         _ => Err(not_a_push),
     }

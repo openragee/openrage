@@ -5,6 +5,7 @@
 //! cached in their configuration folder; a name comes from the user's names registry by hash, else
 //! from the listing.
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
 use std::path::{Path, PathBuf};
@@ -13,6 +14,7 @@ use std::time::UNIX_EPOCH;
 use super::ir::Callee;
 use super::listing::{Listing, ListingError, Target};
 use super::Names;
+use crate::gta5::script::natives::{NativeDb, NativeName};
 
 /// The listings a folder is read for.
 pub const LISTING_SUFFIX: &str = ".ysc.cs";
@@ -20,6 +22,8 @@ pub const LISTING_SUFFIX: &str = ".ysc.cs";
 pub const CACHE_FILE: &str = "gta6_native_addresses.tsv";
 /// The cache's first line, before the fingerprint of the folder it was built from.
 const CACHE_HEAD: &str = "# openrage gta6 native addresses v1 ";
+/// The label of the natives list made of the names the listings declare.
+pub const LISTINGS_LABEL: &str = "the lifted listings";
 
 /// Why a folder of listings gave no table.
 #[derive(Debug, thiserror::Error)]
@@ -167,6 +171,36 @@ impl NativeAddresses {
         }
     }
 
+    /// Gives `names` the hash of each handler declared here that no supplied list states, and returns how many it gave.
+    // ⚠ A list the user supplied stands: a handler it states keeps its hash, and a natives list
+    // it holds keeps naming. Only where `names` holds no natives list do the listings' own names
+    // become one, so this is called after the natives list is chosen.
+    pub fn supply(&self, names: &mut Names) -> usize {
+        let mut given = 0;
+        for (address, declared) in &self.by_address {
+            if let Entry::Vacant(place) = names.native_hashes.entry(*address) {
+                place.insert(declared.hash);
+                given += 1;
+            }
+        }
+        if names.natives.is_none() {
+            let named = self.by_address.values().filter(|d| !unnamed(&d.name));
+            let rows: Vec<(u64, NativeName)> = named
+                .map(|d| {
+                    let name = NativeName {
+                        name: d.name.clone(),
+                        ..NativeName::default()
+                    };
+                    (d.hash, name)
+                })
+                .collect();
+            if !rows.is_empty() {
+                names.natives = Some(NativeDb::from_names(LISTINGS_LABEL, rows));
+            }
+        }
+        given
+    }
+
     /// How many addresses are declared.
     pub fn len(&self) -> usize {
         self.by_address.len()
@@ -186,6 +220,18 @@ impl NativeAddresses {
         }
         text
     }
+}
+
+/// What the supplied lists call the native whose handler is at `rva`: its name where a natives list names its hash, else `_0x` and the hash; `None` where no list states the handler.
+pub fn listed(names: &Names, rva: u32) -> Option<String> {
+    let hash = names.native_at(rva)?;
+    Some(match names.native(hash) {
+        Some(native) => match &native.namespace {
+            Some(namespace) => format!("{namespace}.{}", native.name),
+            None => native.name.clone(),
+        },
+        None => format!("_0x{hash:016X}"),
+    })
 }
 
 /// The table a cache's rows hold; `None` for a row that does not read, so the folder is read again.

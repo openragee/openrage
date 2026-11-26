@@ -18,7 +18,7 @@ use or_title::dlc::{build_pack_with, file_type_for, DlcPackSpec, PackFile};
 
 use crate::build::{check_file, moved, uncooked, BuildError, Loss, Verification};
 use crate::container::Output;
-use crate::contribution::{Contribution, ManifestEntry};
+use crate::contribution::{ArchiveContents, Contribution, ManifestEntry};
 use crate::plan::{Budget, Origin, Plan, PlannedFile, Registration};
 use crate::watch::Watch;
 
@@ -59,10 +59,11 @@ pub(crate) fn archive_of(path: &str) -> Option<&str> {
 pub(crate) fn finish<'a>(
     owned: &mut Vec<(&'a str, PlannedFile)>,
     entries: &[(&'a str, &ManifestEntry)],
+    archives: &[(&'a str, &ArchiveContents)],
     plan: &mut Plan,
 ) {
     let name = plan.resource.clone();
-    plan.registrations = register(owned, entries, &name, &mut plan.problems);
+    plan.registrations = register(owned, entries, archives, &name, &mut plan.problems);
     let documents = documents_of(&name, &plan.registrations);
     for (path, text) in [(SETUP, documents.setup2), (CONTENT, documents.content)] {
         owned.push((
@@ -78,10 +79,12 @@ pub(crate) fn finish<'a>(
 
 /// The files of a pack, each with the type the game is told it is, and a problem for each that cannot be registered.
 ///
-/// `name` is the pack's name, which is a device name and a folder name as well.
+/// `name` is the pack's name, which is a device name and a folder name as well. `said_to_hold` is what the contents state the
+/// archives of the pack hold.
 pub(crate) fn register<'a>(
     owned: &[(&'a str, PlannedFile)],
     entries: &[(&'a str, &ManifestEntry)],
+    said_to_hold: &[(&'a str, &ArchiveContents)],
     name: &str,
     problems: &mut Vec<String>,
 ) -> Vec<Registration> {
@@ -91,13 +94,20 @@ pub(crate) fn register<'a>(
         ));
     }
 
+    let held: BTreeSet<&str> = owned.iter().map(|(_, file)| file.path.as_str()).collect();
+    problems.extend(maps_in_a_pack(held.iter().copied()));
     // The type each file is stated to have, by the content that states it.
     let mut stated: BTreeMap<&str, (&str, &str)> = BTreeMap::new();
+    // The names the game asks a type file inside a nested archive by, each with its type.
+    let mut asked: BTreeMap<&str, &str> = BTreeMap::new();
     for &(module, entry) in entries {
         if let Some(path) = loose_type_file(entry) {
             problems.push(needs_an_archive(path));
         }
         match (entry.key.as_str(), entry.values.as_slice()) {
+            ("data_file", [file_type, path]) if is_behind(path, held.iter().copied()) => {
+                asked.insert(path.as_str(), file_type.as_str());
+            }
             ("data_file", [file_type, path]) => match stated.get(path.as_str()) {
                 Some((held, by)) if *held != file_type.as_str() => problems.push(format!(
                     "content `{by}` says `{path}` is a {held} and content `{module}` says it is a {file_type}"
@@ -111,8 +121,8 @@ pub(crate) fn register<'a>(
                 "content `{module}` adds a `data_file` line with {} value(s), and it takes a type and a path",
                 values.len()
             )),
-            // The version and the game name a FiveM resource; a pack has no manifest to put them in.
-            ("fx_version" | "game", _) => {}
+            // The version, the game and the line that declares a map are said of a FiveM resource; a pack has no manifest to put them in.
+            ("fx_version" | "game" | MAP_LINE, _) => {}
             (key, _) => problems.push(format!(
                 "content `{module}` adds the manifest line `{key}`, which a singleplayer DLC cannot ship: it has no manifest and runs no script"
             )),
@@ -135,6 +145,8 @@ pub(crate) fn register<'a>(
                 Some(file_type) => {
                     registered.insert(file.path.clone(), file_type.to_string());
                 }
+                // A map file that sits loose is said above, with the reason a type would not mend.
+                None if is_map(&file.path) => {}
                 None => untyped.push(&file.path),
             },
         }
@@ -150,7 +162,22 @@ pub(crate) fn register<'a>(
         }
         registered.insert(archive, ARCHIVE.to_string());
     }
-    let held: BTreeSet<&str> = owned.iter().map(|(_, file)| file.path.as_str()).collect();
+    let mut holds: BTreeMap<&str, (&str, &str)> = BTreeMap::new();
+    for &(module, archive) in said_to_hold {
+        let (path, contents) = (archive.path.as_str(), archive.contents.as_str());
+        match holds.get(path) {
+            _ if registered.get(path).map(String::as_str) != Some(ARCHIVE) => problems.push(format!(
+                "content `{module}` states what the archive `{path}` holds, and the build puts no file in an archive of that name"
+            )),
+            Some((held, by)) if *held != contents => problems.push(format!(
+                "content `{by}` says the archive `{path}` holds {held} and content `{module}` says it holds {contents}"
+            )),
+            Some(_) => {}
+            None => {
+                holds.insert(path, (contents, module));
+            }
+        }
+    }
     for (path, (_, module)) in &stated {
         if let Some(archive) = archive_of(path) {
             problems.push(format!(
@@ -166,11 +193,92 @@ pub(crate) fn register<'a>(
         problems.push("a pack with no files mounts and registers nothing".to_string());
     }
 
-    registered
+    let mut registrations: Vec<Registration> = registered
         .into_iter()
-        .map(|(path, file_type)| Registration { path, file_type })
-        .collect()
+        .map(|(path, file_type)| Registration {
+            contents: (holds.get(path.as_str())).map_or_else(String::new, |(c, _)| c.to_string()),
+            path,
+            file_type,
+            asked: false,
+        })
+        .collect();
+    registrations.extend(asked.into_iter().map(|(path, file_type)| Registration {
+        path: path.to_string(),
+        file_type: file_type.to_string(),
+        contents: String::new(),
+        asked: true,
+    }));
+    registrations.sort_by(|a, b| a.path.cmp(&b.path));
+    registrations
 }
+
+/// The line of a FiveM manifest that declares the resource a map.
+const MAP_LINE: &str = crate::resource::manifest::MAP_KEY;
+
+fn is_map(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".ymap")
+}
+
+/// Whether `path` is the name the game asks a type file of `held` by: `props/a.ityp` for `props/<any>.rpf/a.ytyp`.
+///
+/// ⚠ The install registers a type file by an `.ityp` name of the folder its nested archive is in, and no file of that name exists (`where_the_install_keeps_its_map_files`).
+fn is_behind<'a>(path: &str, mut held: impl Iterator<Item = &'a str>) -> bool {
+    let (folder, leaf) = path.rsplit_once('/').unwrap_or(("", path));
+    let Some(stem) = leaf
+        .rsplit_once('.')
+        .filter(|(_, ext)| ext.eq_ignore_ascii_case("ityp"))
+        .map(|(stem, _)| stem)
+    else {
+        return false;
+    };
+    let file = format!("{stem}.ytyp");
+    held.any(|held| {
+        archive_of(held).is_some_and(|archive| {
+            let within = archive.rsplit_once('/').map_or("", |(folder, _)| folder);
+            within.eq_ignore_ascii_case(folder)
+                && held[archive.len() + 1..].eq_ignore_ascii_case(&file)
+        })
+    })
+}
+
+/// Why the map files and type files among `paths` cannot ship in a singleplayer DLC, one sentence for each reason.
+///
+/// A map file that sits loose is named, since the game's packs register no map file and keep theirs inside an archive. One inside an
+/// archive is where they keep theirs, and is refused all the same for what nobody measured of that archive.
+fn maps_in_a_pack<'a>(paths: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let (mut loose, mut archives) = (Vec::new(), BTreeSet::new());
+    for path in paths {
+        let lower = path.to_ascii_lowercase();
+        match archive_of(path) {
+            None if lower.ends_with(".ymap") => loose.push(path),
+            Some(archive) if lower.ends_with(".ymap") || lower.ends_with(".ytyp") => {
+                archives.insert(archive);
+            }
+            _ => {}
+        }
+    }
+    let mut said = Vec::new();
+    if let Some(first) = loose.first() {
+        let more = match loose.len() - 1 {
+            0 => String::new(),
+            n => format!(" and {n} more"),
+        };
+        said.push(format!(
+            "The map file {first}{more} would sit loose in the pack, and the game's own packs keep their maps inside an archive the pack registers as map data: a singleplayer DLC ships a map only inside that archive, and {UNMEASURED}."
+        ));
+    }
+    for archive in archives {
+        said.push(format!(
+            "The maps and type files would ship inside the archive {archive}, which the pack registers as the game's own packs register theirs, but {UNMEASURED}: a singleplayer DLC cannot ship them until that is measured on an install."
+        ));
+    }
+    said
+}
+
+/// What nobody measured of the archive a pack keeps its maps in.
+///
+/// ⚠ Read by a person in the plan's problems and under the Builds window's matrix: no markup, and no name of a field of a file.
+const UNMEASURED: &str = "which folder of a pack the game reads that archive from, what a pack states of an archive that holds type files, and which change set turns map data on were never measured";
 
 /// The pack of `plan` once the files at `gone` are not in it: a registration of a file nothing holds any more is taken out, and the two documents are written again; whether a registration is left.
 ///
@@ -181,9 +289,10 @@ pub(crate) fn without(plan: &mut Plan, gone: &BTreeSet<String>, prefix: &str) ->
         .filter(|f| !gone.contains(&f.path))
         .filter_map(|f| f.path.strip_prefix(prefix).map(str::to_string))
         .collect();
-    // A registered archive is held by any file inside it.
+    // A registered archive is held by any file inside it, and a name the game asks by is held by the type file behind it.
     plan.registrations.retain(|r| {
         held.contains(&r.path)
+            || (r.asked && is_behind(&r.path, held.iter().map(String::as_str)))
             || held.iter().any(|p| {
                 p.strip_prefix(&r.path)
                     .is_some_and(|rest| rest.starts_with('/'))
@@ -211,9 +320,19 @@ pub(crate) fn documents_of(
     let mut spec = DlcPackSpec::new(name);
     spec.files = registrations
         .iter()
-        .map(|r| PackFile::new(&r.path, PathBuf::new()).with_file_type(&r.file_type))
+        .map(|r| pack_file(r, PathBuf::new()))
         .collect();
     spec.documents()
+}
+
+/// The file of a pack that `registration` is, read from `source`; a name the game asks by has no source.
+fn pack_file(registration: &Registration, source: PathBuf) -> PackFile {
+    let file = match registration.asked {
+        true => PackFile::asked(&registration.path),
+        false => PackFile::new(&registration.path, source),
+    };
+    file.with_file_type(&registration.file_type)
+        .with_contents(&registration.contents)
 }
 
 /// What each archive of a pack holds, counted as the archive counts: a file is one entry, a nested archive is one, each folder is one, and the archive has a root.
@@ -298,19 +417,23 @@ pub(crate) fn count_entries(
     }
 }
 
-/// Why a singleplayer DLC cannot ship what `contribution` hands over by itself, none when it can: a manifest line it has no manifest for, a file the game is told no type for, or a type file that would sit outside every archive.
+/// Why a singleplayer DLC cannot ship what `contribution` hands over by itself, none when it can: a manifest line it has no manifest for, a map whose archive is unmeasured or missing, a file the game is told no type for, or a type file that would sit outside every archive.
 ///
 /// ⚠ The rules of [`finish`], read for one content: a type another content states for a file is not counted here.
 pub(crate) fn refuses(contribution: &Contribution) -> Option<String> {
     for entry in &contribution.manifest {
         match (entry.key.as_str(), entry.values.as_slice()) {
-            ("data_file" | "fx_version" | "game", _) => {}
+            ("data_file" | "fx_version" | "game" | MAP_LINE, _) => {}
             (key, _) => {
                 return Some(format!(
                     "it adds the manifest line `{key}`, which a singleplayer DLC cannot ship: it has no manifest and runs no script"
                 ))
             }
         }
+    }
+    let files = contribution.files.iter().map(|file| file.path.as_str());
+    if let Some(why) = maps_in_a_pack(files).into_iter().next() {
+        return Some(why);
     }
     let untyped = untyped(contribution);
     if !untyped.is_empty() {
@@ -358,7 +481,10 @@ pub(crate) fn untyped(contribution: &Contribution) -> Vec<&str> {
     (contribution.files.iter())
         .map(|file| file.path.as_str())
         .filter(|path| {
-            archive_of(path).is_none() && !stated.contains(path) && file_type_for(path).is_none()
+            archive_of(path).is_none()
+                && !stated.contains(path)
+                && file_type_for(path).is_none()
+                && !is_map(path)
         })
         .collect()
 }
@@ -391,7 +517,7 @@ fn spec_of(plan: &Plan, source: impl Fn(&str) -> PathBuf) -> DlcPackSpec {
     spec.files = plan
         .registrations
         .iter()
-        .map(|r| PackFile::new(&r.path, source(&r.path)).with_file_type(&r.file_type))
+        .map(|r| pack_file(r, source(&r.path)))
         .collect();
     spec
 }

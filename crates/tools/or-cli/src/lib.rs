@@ -16,6 +16,10 @@ mod depends;
 mod describe;
 mod dlc;
 mod fixups;
+/// The maps with levels of detail and interiors that `world select`'s tests share with `or-depends`' own.
+#[cfg(test)]
+#[path = "../../../domain/or-depends/tests/forest_fixture/mod.rs"]
+mod forest_fixture;
 mod formats;
 mod gfx;
 mod gta6_anim;
@@ -82,6 +86,11 @@ mod inspect;
 mod jobs;
 mod keys;
 mod maps;
+mod maps_changes;
+mod maps_collision;
+mod maps_edit_game;
+mod maps_merge;
+mod maps_roads;
 mod mcp;
 mod mesh;
 mod meta;
@@ -91,7 +100,11 @@ mod navmesh_edit;
 mod particles;
 mod photo;
 mod project;
+mod project_acceptance;
 mod project_checks;
+mod project_mapping;
+mod project_resource;
+mod project_server;
 mod project_steps;
 mod registry;
 mod retarget;
@@ -122,6 +135,15 @@ mod weapons;
 mod world;
 mod world_archetypes;
 mod world_edit;
+mod world_find;
+/// The install built by hand that the world verbs' tests share with `or-depends`' own.
+#[cfg(test)]
+#[path = "../../../domain/or-depends/tests/world_fixture/mod.rs"]
+mod world_fixture;
+mod world_ground;
+mod world_index;
+mod world_new;
+mod world_select;
 
 pub use depends::DependencyIndex;
 pub use dlc::{create_dlc_pack, dlc_pack_of_folder, dlc_refusals};
@@ -137,6 +159,8 @@ pub use gta6_shading::{
 };
 pub use gta6_translate::{translate_gta6_program, Gta6Program, Gta6Refusal, DXIL_FRONT};
 pub use mesh::{export_scene, replace_mesh, Exported};
+pub use project_resource::check_resource_folder;
+pub use project_server::{check_build_against, check_server_folder, BuildCheck, BuildConcerns};
 pub use retarget::{retarget_file, Retargeted, CONVERTED as RETARGETED};
 pub use script::listing as script_listing;
 pub use script::provenance as script_provenance;
@@ -372,16 +396,16 @@ fn print_usage() {
         "  model      GTA VI models: replace a loose model's meshes from a glTF, as a new file"
     );
     eprintln!("  meta       Metadata (PSO/RBM/RBF0/XML): info, to-xml, from-xml, roundtrip");
-    eprintln!("  world      World data (.ymap/.ytyp): info, check, extents, states, create, delete, prefab");
+    eprintln!("  world      World data (.ymap/.ytyp): info, check, extents, states, create, delete, prefab, new-map, archetypes; index, at, ground, find and select over an install");
     eprintln!("  depends    What an asset needs and where a model is placed: of,");
     eprintln!("             placements, census, rules");
     eprintln!(
-        "  project    Projects: create, import game files, plan, build and verify a resource, a DLC or a package"
+        "  project    Projects: create, adopt a folder or a mapping in a zip, import game files, plan, build and verify a resource, a DLC or a package, and check a resource, a server and a build against it"
     );
     eprintln!("  wardrobe   Clothing packs: validate, plan, build, diff, import, fix and optimise textures");
     eprintln!("  addonped   Addon peds: validate and verify");
     eprintln!("  particles  Particles: list, validate and verify");
-    eprintln!("  maps       Maps: list, validate and verify");
+    eprintln!("  maps       Maps: list, validate, verify, changes of a map from its base, apply operations, merge two copies, the collision of an object, delete entities, edit an object the game placed, keep a manifest of the game, list doors, and list and edit roads");
     eprintln!("  weapons    Weapons: validate and verify");
     eprintln!("  photo      A WebP picture of each model in a folder or the game, with no window");
     eprintln!(
@@ -434,7 +458,8 @@ fn print_usage() {
     eprintln!("  navmesh    Census navmesh polygon flags, adjacency bits and cell references;");
     eprintln!("             disable or delete one polygon of a .ynv");
     eprintln!("  dlc        Build a DLC pack from a folder, or read one back");
-    eprintln!("  dlc-list   List the DLC packs in engine mount order (with --dlc cutoff)");
+    eprintln!("  dlc-list   List the DLC packs in engine mount order, up to a cutoff (--dlc) or a");
+    eprintln!("             pack of the DLC list (--level), as story or multiplayer (--mode)");
     eprintln!();
     eprintln!("Run `openrage-cli <command> --help` for command-specific usage.");
     eprintln!("`openrage-cli --version` prints the version.");

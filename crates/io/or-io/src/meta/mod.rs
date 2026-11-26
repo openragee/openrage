@@ -32,8 +32,9 @@ pub use snapshot::{
 pub use typed::{
     Anchor, CAlternateVariations, CAnchorProps, CBaseArchetypeDef, CBaseArchetypeDefAny,
     CComponentInfo, CCreatureMetaData, CEntityDef, CEntityDefAny, CMapData, CMapTypes,
-    CMloArchetypeDef, CMloInstanceDef, CPVClothComponentData, CPVComponentData, CPVDrawblData,
-    CPVTextureData, CPedCompExpressionData, CPedPropExpressionData, CPedPropInfo, CPedPropMetaData,
+    CMloArchetypeDef, CMloEntitySet, CMloInstanceDef, CMloPortalDef, CMloRoomDef,
+    CMloTimeCycleModifier, CPVClothComponentData, CPVComponentData, CPVDrawblData, CPVTextureData,
+    CPedCompExpressionData, CPedPropExpressionData, CPedPropInfo, CPedPropMetaData,
     CPedPropTexData, CPedSelectionSet, CPedVariationInfo, CScenarioChain, CScenarioChainingEdge,
     CScenarioChainingGraph, CScenarioChainingNode, CScenarioPoint, CScenarioPointCluster,
     CScenarioPointContainer, CScenarioPointLookUps, CScenarioPointRegion, CShaderVariableComponent,

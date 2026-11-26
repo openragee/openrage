@@ -163,6 +163,11 @@ impl ModelContents {
         true
     }
 
+    /// The header box read of the `.ybn` whose stem hashes to `name`, as `(min, max)`.
+    pub fn bound_box_of(&self, name: u32) -> Option<(Vec3, Vec3)> {
+        self.bound_boxes.get(&name).copied()
+    }
+
     /// Whether a bound's box lies inside a map's streaming box; `None` when either was not read.
     pub fn bound_inside_map(&self, bound: u32, map: u32) -> Option<bool> {
         let (min, max) = self.bound_boxes.get(&bound)?;

@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use or_io::container::rpf::crypto::{NoOpCryptoProvider, RpfCryptoProvider};
 use or_io::container::rpf::RpfBuilder;
-use or_title::vfs::{build_mounted_game, DlcCutoff};
+use or_title::vfs::{build_mounted_game, DlcCutoff, FileStamp};
 use or_title::{DlcList, GtaInstall, MountedGame, SetupData};
 
 const MODEL: &str = "levels/dlc/prop_dlc.ydr";
@@ -197,5 +197,91 @@ fn a_file_in_a_sub_pack_inside_the_title_update_locates_inside_the_sub_pack() {
         container_of(&game, &format!("{DEVICE}:/{MODEL}")),
         "update/update.rpf/dlcpacks/testpack/dlc1.rpf",
         "the walk's container is the chain of archives holding it"
+    );
+}
+
+/// The file on disk that holds the archive at `container`: the archive, or the one it is nested in.
+fn file_holding(root: &Path, container: &str) -> PathBuf {
+    let mut path = root.to_path_buf();
+    for part in container.split('/') {
+        path.push(part);
+        if path.is_file() {
+            return path;
+        }
+    }
+    panic!("no file on disk holds {container}");
+}
+
+/// ⚠ The stamp is what a kept index of the mount is matched by, so it is the file's as the mount
+/// opened it: asked of the disk later, it would name a file the mount never read.
+#[test]
+fn every_root_archive_is_stamped_by_the_file_that_holds_it_as_the_mount_found_it() {
+    for (name, holder, roots, nested) in [
+        ("stamp-disk", Holder::Disk, 3, 0),
+        ("stamp-title-update", Holder::TitleUpdate, 4, 2),
+    ] {
+        let (_scratch, root) = install(name, holder);
+        let game = mount(&root);
+        let mut inside_another = 0;
+        for mounted in &game.roots {
+            let file = file_holding(&root, &mounted.container);
+            assert!(mounted.stamp.is_some(), "{name}: {}", mounted.container);
+            assert_eq!(
+                mounted.stamp,
+                FileStamp::of(&file),
+                "{name}: {} is stamped by {}",
+                mounted.container,
+                file.display()
+            );
+            inside_another += usize::from(file != root.join(&mounted.container));
+        }
+        assert_eq!(
+            (game.roots.len(), inside_another),
+            (roots, nested),
+            "{name}"
+        );
+
+        // Every file is written again ten seconds on: the mount keeps the stamps it opened, and
+        // a mount made now has the new ones.
+        let files: std::collections::BTreeSet<PathBuf> = (game.roots.iter())
+            .map(|mounted| file_holding(&root, &mounted.container))
+            .collect();
+        for file in &files {
+            let later = std::fs::metadata(file)
+                .and_then(|meta| meta.modified())
+                .expect("a modification time")
+                + std::time::Duration::from_secs(10);
+            let handle = std::fs::File::options()
+                .write(true)
+                .open(file)
+                .expect("opened");
+            handle.set_modified(later).expect("timed");
+        }
+        let anew = mount(&root);
+        for (before, after) in game.roots.iter().zip(&anew.roots) {
+            let file = file_holding(&root, &before.container);
+            assert_ne!(
+                before.stamp,
+                FileStamp::of(&file),
+                "{name}: {}",
+                before.container
+            );
+            assert_eq!(
+                after.stamp,
+                FileStamp::of(&file),
+                "{name}: {}",
+                after.container
+            );
+        }
+        assert_eq!(anew.roots.len(), game.roots.len());
+    }
+    assert_eq!(
+        FileStamp::of(Path::new("/nowhere-openrage-test/x.rpf")),
+        None
+    );
+    assert_eq!(
+        FileStamp::of(&std::env::temp_dir()),
+        None,
+        "a folder is no archive"
     );
 }

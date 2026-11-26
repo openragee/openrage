@@ -1,9 +1,9 @@
-//! Small map files and type files for the suites that need some, made the way a synthetic file is made anywhere in the tree: a schema
+//! Small map files, type files and manifests for the suites that need some, made the way a synthetic file is made anywhere in the tree: a schema
 //! of the classes written inline, a value tree, and the layout the writer derives from the two.
 //!
 //! The classes are the engine's, with the members the typed world family reads (`or_io::meta::typed`), so a file made here opens as
-//! `CMapData` or `CMapTypes`, saves, and cooks from a source. It is a test fixture and not a way to make a map: an installed schema is a
-//! developer's artifact, and a record made from nothing is refused where there is none.
+//! `CMapData` or `CMapTypes`, saves, and cooks from a source. It is a test fixture and not a way to make a map: its RBM classes carry
+//! a zero signature no shipped file has. `or_world::create` makes a map from nothing.
 
 use or_io::meta::instance::HashedString;
 use or_io::meta::{build_library, canonical, write_meta_binary, BinaryFormat, MetaInstance, Value};
@@ -61,6 +61,101 @@ const PSC: &str = r#"<?xml version="1.0"?>
   </structdef>
 </ParserSchema>"#;
 
+/// The classes of a manifest, with the members `or-world` reads of one.
+const MANIFEST_PSC: &str = r#"<?xml version="1.0"?>
+<ParserSchema>
+  <structdef type="CImapDependencies">
+    <string name="imapName" type="atHashString"/>
+    <u32 name="manifestFlags"/>
+    <array name="itypDepArray" type="atArray"><string type="atHashString"/></array>
+  </structdef>
+  <structdef type="CPackFileMetaData">
+    <array name="imapDependencies_2" type="atArray"><struct type="CImapDependencies"/></array>
+  </structdef>
+</ParserSchema>"#;
+
+/// What a sample manifest states of one map: the flags of its entry and the type files it is said to need.
+#[derive(Debug, Clone, Copy)]
+pub struct Stated<'a> {
+    pub map: &'a str,
+    pub flags: u32,
+    pub types: &'a [&'a str],
+}
+
+/// A `_manifest.ymf` that states `stated`, in the container the game ships its manifests in.
+pub fn manifest_file(stated: &[Stated<'_>]) -> Vec<u8> {
+    // ⚠ A member the public table of names lacks is spelled by its hash in a document, and the writer looks it up under that spelling.
+    let flags = format!("hash_{:08X}", or_world::field::name_hash("manifestFlags"));
+    let entries = stated
+        .iter()
+        .map(|said| {
+            let mut entry = MetaInstance::new("CImapDependencies");
+            entry.set("imapName", Value::Hash(HashedString::new(said.map)));
+            entry.set(&flags, Value::UInt(u64::from(said.flags)));
+            entry.set(
+                "itypDepArray",
+                Value::Array(
+                    (said.types.iter())
+                        .map(|name| Value::Hash(HashedString::new(*name)))
+                        .collect(),
+                ),
+            );
+            Value::Struct(Box::new(entry))
+        })
+        .collect();
+    let mut root = MetaInstance::new("CPackFileMetaData");
+    root.set("imapDependencies_2", Value::Array(entries));
+    let library =
+        build_library([("inline.psc", MANIFEST_PSC.as_bytes())]).expect("the schema parses");
+    // ⚠ Written with the public table of names alone, whatever schema the process installed, so the spelling above is the one looked for.
+    or_io::meta::binary::hash_index::with_public_names_only(|| {
+        let layout = canonical::layout_for(&library, &root, BinaryFormat::Pso, None)
+            .expect("the manifest lays out");
+        write_meta_binary(BinaryFormat::Pso, Some(&layout), &root).expect("the manifest encodes")
+    })
+}
+
+/// What the schema gains for a type file one of whose archetypes states the door extension: the member on the archetype, and the
+/// extension's classes.
+const EXTENSIONS_MEMBER: &str = r#"    <string name="assetName" type="atHashString"/>
+    <array name="extensions" type="atArray"><pointer type="rage::fwExtensionDef" policy="owner"/></array>"#;
+const DOOR_CLASSES: &str = r#"  <structdef type="rage::fwExtensionDef">
+    <string name="name" type="atHashString"/>
+  </structdef>
+  <structdef type="CExtensionDef" base="rage::fwExtensionDef">
+    <Vector3 name="offsetPosition"/>
+  </structdef>
+  <structdef type="CExtensionDefDoor" base="CExtensionDef">
+    <bool name="enableLimitAngle"/>
+    <bool name="startsLocked"/>
+    <bool name="canBreak"/>
+    <float name="limitAngle"/>
+    <float name="doorTargetRatio"/>
+    <string name="audioHash" type="atHashString"/>
+  </structdef>
+</ParserSchema>"#;
+
+/// What the schema gains for a map file that carries container LODs: the member on the map, and the class of one.
+const CONTAINER_LODS_MEMBER: &str = r#"    <array name="entities" type="atArray"><pointer type="CEntityDef" policy="owner"/></array>
+    <array name="containerLods" type="atArray"><struct type="rage::fwContainerLodDef"/></array>"#;
+const CONTAINER_LOD_CLASS: &str = r#"  <structdef type="rage::fwContainerLodDef">
+    <string name="name" type="atHashString"/>
+    <u32 name="parentIndex"/>
+  </structdef>
+</ParserSchema>"#;
+
+/// The schema of a sample file, with the door extension where `doors` asks for it.
+fn schema(doors: bool) -> String {
+    if !doors {
+        return PSC.to_string();
+    }
+    PSC.replace(
+        r#"    <string name="assetName" type="atHashString"/>"#,
+        EXTENSIONS_MEMBER,
+    )
+    .replace("</ParserSchema>", DOOR_CLASSES)
+}
+
 /// One entity of a sample map.
 #[derive(Debug, Clone, Copy)]
 pub struct Entity<'a> {
@@ -71,6 +166,8 @@ pub struct Entity<'a> {
     pub scale: f32,
     pub guid: u32,
     pub parent: i32,
+    /// Whether `parent` is an index into the entities of the map this one names as its parent.
+    pub in_parent_map: bool,
     pub children: u32,
 }
 
@@ -83,15 +180,22 @@ impl<'a> Entity<'a> {
             scale: 1.0,
             guid,
             parent: -1,
+            in_parent_map: false,
             children: 0,
         }
     }
 }
 
+/// The flags of a sample entity that names its LOD parent in this map.
+const FLAGS: u64 = 32;
+/// The bit of an entity's flags that says its `parentIndex` is an index into the parent map.
+const LOD_IN_PARENT: u64 = 1 << 3;
+
 fn entity(e: &Entity<'_>) -> MetaInstance {
     let mut inst = MetaInstance::new("CEntityDef");
     inst.set("archetypeName", Value::Hash(HashedString::new(e.archetype)));
-    inst.set("flags", Value::UInt(32));
+    let in_parent = if e.in_parent_map { LOD_IN_PARENT } else { 0 };
+    inst.set("flags", Value::UInt(FLAGS | in_parent));
     inst.set("guid", Value::UInt(u64::from(e.guid)));
     inst.set("position", Value::Vec3(e.position));
     let stored = Placement::Entity.store(glam::Quat::from_rotation_z(e.yaw));
@@ -108,8 +212,12 @@ fn entity(e: &Entity<'_>) -> MetaInstance {
     inst
 }
 
-fn encode(root: &MetaInstance) -> Vec<u8> {
-    let library = build_library([("inline.psc", PSC.as_bytes())]).expect("the schema parses");
+fn encode(root: &MetaInstance, doors: bool) -> Vec<u8> {
+    encode_with(root, &schema(doors))
+}
+
+fn encode_with(root: &MetaInstance, schema: &str) -> Vec<u8> {
+    let library = build_library([("inline.psc", schema.as_bytes())]).expect("the schema parses");
     let layout =
         canonical::layout_for(&library, root, BinaryFormat::Rbm, None).expect("the file lays out");
     write_meta_binary(BinaryFormat::Rbm, Some(&layout), root).expect("the file encodes")
@@ -117,9 +225,66 @@ fn encode(root: &MetaInstance) -> Vec<u8> {
 
 /// A `.ymap` called `name` that places `entities`, whose extents are `extents` (the lowest and highest corner).
 pub fn map_file(name: &str, entities: &[Entity<'_>], extents: ([f32; 3], [f32; 3])) -> Vec<u8> {
+    map_under(name, HashedString::from_hash(0), entities, extents)
+}
+
+/// A `.ymap` called `name` whose parent map is `parent`, as [`map_file`] makes one.
+pub fn child_map_file(
+    name: &str,
+    parent: &str,
+    entities: &[Entity<'_>],
+    extents: ([f32; 3], [f32; 3]),
+) -> Vec<u8> {
+    map_under(name, HashedString::new(parent), entities, extents)
+}
+
+/// A `.ymap` as [`map_file`] makes one, that carries a container LOD for each index of `container_lods`, the entity it names.
+pub fn map_file_with_container_lods(
+    name: &str,
+    entities: &[Entity<'_>],
+    container_lods: &[u32],
+    extents: ([f32; 3], [f32; 3]),
+) -> Vec<u8> {
+    let mut root = map_root(name, HashedString::from_hash(0), entities, extents);
+    let lods = (container_lods.iter().enumerate())
+        .map(|(at, parent)| {
+            let mut lod = MetaInstance::new("rage::fwContainerLodDef");
+            lod.set(
+                "name",
+                Value::Hash(HashedString::new(format!("{name}_lod{at}"))),
+            );
+            lod.set("parentIndex", Value::UInt(u64::from(*parent)));
+            Value::Struct(Box::new(lod))
+        })
+        .collect();
+    root.set("containerLods", Value::Array(lods));
+    let schema = PSC
+        .replace(
+            r#"    <array name="entities" type="atArray"><pointer type="CEntityDef" policy="owner"/></array>"#,
+            CONTAINER_LODS_MEMBER,
+        )
+        .replace("</ParserSchema>", CONTAINER_LOD_CLASS);
+    encode_with(&root, &schema)
+}
+
+fn map_under(
+    name: &str,
+    parent: HashedString,
+    entities: &[Entity<'_>],
+    extents: ([f32; 3], [f32; 3]),
+) -> Vec<u8> {
+    encode(&map_root(name, parent, entities, extents), false)
+}
+
+fn map_root(
+    name: &str,
+    parent: HashedString,
+    entities: &[Entity<'_>],
+    extents: ([f32; 3], [f32; 3]),
+) -> MetaInstance {
     let mut root = MetaInstance::new("CMapData");
     root.set("name", Value::Hash(HashedString::new(name)));
-    root.set("parent", Value::Hash(HashedString::from_hash(0)));
+    root.set("parent", Value::Hash(parent));
     root.set("flags", Value::UInt(0));
     root.set("contentFlags", Value::UInt(65));
     root.set("streamingExtentsMin", Value::Vec3(extents.0));
@@ -135,7 +300,7 @@ pub fn map_file(name: &str, entities: &[Entity<'_>], extents: ([f32; 3], [f32; 3
                 .collect(),
         ),
     );
-    encode(&root)
+    root
 }
 
 /// One archetype of a sample type file.
@@ -145,6 +310,8 @@ pub struct Archetype<'a> {
     pub asset: &'a str,
     pub min: [f32; 3],
     pub max: [f32; 3],
+    /// Whether it states the door extension.
+    pub door: bool,
 }
 
 impl<'a> Archetype<'a> {
@@ -154,11 +321,25 @@ impl<'a> Archetype<'a> {
             asset: name,
             min,
             max,
+            door: false,
         }
     }
 }
 
-fn archetype(a: &Archetype<'_>) -> MetaInstance {
+fn door_extension() -> MetaInstance {
+    let mut inst = MetaInstance::new("CExtensionDefDoor");
+    inst.set("name", Value::Hash(HashedString::from_hash(0)));
+    inst.set("offsetPosition", Value::Vec3([0.0; 3]));
+    for flag in ["enableLimitAngle", "startsLocked", "canBreak"] {
+        inst.set(flag, Value::Bool(false));
+    }
+    inst.set("limitAngle", Value::Float(0.0));
+    inst.set("doorTargetRatio", Value::Float(0.0));
+    inst.set("audioHash", Value::Hash(HashedString::from_hash(0)));
+    inst
+}
+
+fn archetype(a: &Archetype<'_>, extensions: bool) -> MetaInstance {
     let mut inst = MetaInstance::new("CBaseArchetypeDef");
     inst.set("lodDist", Value::Float(100.0));
     inst.set("flags", Value::UInt(0));
@@ -183,11 +364,25 @@ fn archetype(a: &Archetype<'_>) -> MetaInstance {
         inst.set(empty, Value::Hash(HashedString::from_hash(0)));
     }
     inst.set("assetName", Value::Hash(HashedString::new(a.asset)));
+    if extensions {
+        let stated = a.door.then(door_extension);
+        inst.set(
+            "extensions",
+            Value::Array(
+                stated
+                    .into_iter()
+                    .map(|e| Value::Pointer(Some(Box::new(e))))
+                    .collect(),
+            ),
+        );
+    }
     inst
 }
 
 /// A `.ytyp` called `name` that declares `archetypes`.
 pub fn types_file(name: &str, archetypes: &[Archetype<'_>]) -> Vec<u8> {
+    // ⚠ A file with no door keeps the schema it always had, so its bytes do not move for the suites that weigh them.
+    let doors = archetypes.iter().any(|a| a.door);
     let mut root = MetaInstance::new("CMapTypes");
     root.set("name", Value::Hash(HashedString::new(name)));
     root.set(
@@ -195,12 +390,12 @@ pub fn types_file(name: &str, archetypes: &[Archetype<'_>]) -> Vec<u8> {
         Value::Array(
             archetypes
                 .iter()
-                .map(|a| Value::Pointer(Some(Box::new(archetype(a)))))
+                .map(|a| Value::Pointer(Some(Box::new(archetype(a, doors)))))
                 .collect(),
         ),
     );
     root.set("dependencies", Value::Array(Vec::new()));
-    encode(&root)
+    encode(&root, doors)
 }
 
 #[cfg(test)]

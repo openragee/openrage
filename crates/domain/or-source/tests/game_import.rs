@@ -18,7 +18,7 @@ use or_source::game_import::{
     import, import_watched, kind_of, tree_digest, Bounds, Facts, FileReport, Input, Options,
     Report, Verdict, Watch, KINDS,
 };
-use or_source::{fragment, git, metadata, models, particles, textures};
+use or_source::{bounds, fragment, git, metadata, models, particles, paths, textures};
 use serde_json::{json, Value};
 
 /// How many files of each extension the corpus check imports, spread over the staged ones.
@@ -149,11 +149,13 @@ fn the_kind_table_has_a_row_for_each_format_that_becomes_a_source_and_for_no_oth
             ("ymap", metadata::KIND),
             ("ytyp", metadata::KIND),
             ("ypt", particles::KIND),
+            ("ybn", bounds::KIND),
+            ("ynd", paths::KIND),
         ]
     );
     assert_eq!(kind_of("YTD").map(|r| r.kind), Some("textures"));
     // A `.meta` is a FiveM data file registered by its own path, and a source ships at stream/.
-    for none in ["ybn", "ycd", "awc", "yld", "meta", "xml", "txt", ""] {
+    for none in ["ycd", "awc", "yld", "ynv", "meta", "xml", "txt", ""] {
         assert!(kind_of(none).is_none(), ".{none}");
     }
 }
@@ -669,16 +671,16 @@ fn a_file_with_no_source_form_is_kept_as_a_compiled_file_once_and_never_overwrit
     let files = project.path().join("files");
     let first = run(
         project.path(),
-        &[given("collision.ybn", b"one", game("x/collision.ybn"))],
+        &[given("collision.ycd", b"one", game("x/collision.ycd"))],
     );
     assert_eq!(
         only(&first).verdict,
         Verdict::Kept {
-            copied_to: Some(files.join("collision.ybn"))
+            copied_to: Some(files.join("collision.ycd"))
         }
     );
     assert!(only(&first).reason.contains("compiled file"), "{first:#?}");
-    assert_eq!(fs::read(files.join("collision.ybn")).unwrap(), b"one");
+    assert_eq!(fs::read(files.join("collision.ycd")).unwrap(), b"one");
     assert_eq!(first.created.len(), 1);
     assert!(
         !project.path().join("sources").exists(),
@@ -686,35 +688,35 @@ fn a_file_with_no_source_form_is_kept_as_a_compiled_file_once_and_never_overwrit
     );
 
     let before = tree(project.path());
-    let again = run(project.path(), &[given("collision.ybn", b"one", loose())]);
+    let again = run(project.path(), &[given("collision.ycd", b"one", loose())]);
     assert_eq!(
         only(&again).verdict,
         Verdict::Kept {
-            copied_to: Some(files.join("collision.ybn"))
+            copied_to: Some(files.join("collision.ycd"))
         }
     );
     assert!(again.created.is_empty());
     assert_eq!(tree(project.path()), before);
 
-    let other = run(project.path(), &[given("collision.ybn", b"two", loose())]);
+    let other = run(project.path(), &[given("collision.ycd", b"two", loose())]);
     assert_eq!(
         only(&other).verdict,
         Verdict::Kept {
-            copied_to: Some(files.join("collision_2.ybn"))
+            copied_to: Some(files.join("collision_2.ycd"))
         }
     );
-    assert_eq!(fs::read(files.join("collision.ybn")).unwrap(), b"one");
+    assert_eq!(fs::read(files.join("collision.ycd")).unwrap(), b"one");
 
     let not_copied = import(
         project.path(),
-        &[given("elsewhere.ybn", b"x", loose())],
+        &[given("elsewhere.ycd", b"x", loose())],
         &Options {
             keep: false,
             ..Options::default()
         },
     );
     assert_eq!(only(&not_copied).verdict, Verdict::Kept { copied_to: None });
-    assert!(!files.join("elsewhere.ybn").exists());
+    assert!(!files.join("elsewhere.ycd").exists());
 }
 
 #[test]
@@ -914,7 +916,12 @@ fn the_ignore_blocks_keep_game_content_out_and_a_persons_lines_in_and_are_idempo
     );
     assert_eq!(
         block(&ignore),
-        ["/build/", "/vfs/", "/sources/a.textures.src/"],
+        [
+            "/build/",
+            "/vfs/",
+            git::KEPT_MANIFESTS,
+            "/sources/a.textures.src/"
+        ],
         "the game's source is ignored and the person's own is not"
     );
     let attributes = fs::read_to_string(root.join(".gitattributes")).unwrap();
@@ -931,6 +938,8 @@ fn the_ignore_blocks_keep_game_content_out_and_a_persons_lines_in_and_are_idempo
         "base.ymap",
         "base.ytyp",
         "base.meta",
+        "base.ybn",
+        "base.ynd",
     ] {
         assert!(
             lines.iter().any(|l| *l == format!("{base} binary")),

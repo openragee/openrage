@@ -255,6 +255,39 @@ fn an_edit_that_leaves_a_text_meta_no_xml_document_is_refused_by_the_compile_and
 }
 
 #[test]
+fn a_check_refuses_what_an_extraction_refuses_and_writes_nothing() {
+    let scratch = tempfile::tempdir().unwrap();
+    let mut answers = Vec::new();
+    for (bytes, name, extension) in [
+        (b"not metadata at all".to_vec(), "x", "ymap"),
+        (b"PSINbroken".to_vec(), "x", "ytyp"),
+        (RBF_XML.as_bytes().to_vec(), "x", "ydr"),
+        (synthetic(BinaryFormat::Rbm), "x", "ymap"),
+        (synthetic(BinaryFormat::Pso), "x", "ymap"),
+        // A name Windows takes for a device is no folder a source can be.
+        (synthetic(BinaryFormat::Rbm), "aux", "ymap"),
+    ] {
+        let checked = metadata::check(&bytes, name, extension);
+        let extracted = metadata::extract(&bytes, name, extension, scratch.path(), &how(name));
+        let said = |problems: &Vec<or_source::Problem>| {
+            (problems.iter().map(|p| p.message.clone())).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            checked.as_ref().err().map(said),
+            extracted.as_ref().err().map(said),
+            "{name}.{extension}"
+        );
+        answers.push(checked.is_ok());
+        if let Ok(dir) = extracted {
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+    assert_eq!(names(scratch.path()), Vec::<String>::new());
+    // The check was held to both answers.
+    assert_eq!(answers, [false, false, false, true, true, false]);
+}
+
+#[test]
 fn a_file_that_is_no_metadata_document_is_refused_with_the_reason_and_leaves_no_folder() {
     let scratch = tempfile::tempdir().unwrap();
     for (bytes, extension, why) in [
@@ -279,6 +312,53 @@ fn a_file_that_is_no_metadata_document_is_refused_with_the_reason_and_leaves_no_
         );
     }
     assert_eq!(names(scratch.path()), Vec::<String>::new());
+}
+
+#[test]
+fn the_base_of_a_source_cooks_to_what_the_source_cooks_to_until_its_xml_is_changed() {
+    for (format, extension) in [(BinaryFormat::Rbm, "ymap"), (BinaryFormat::Pso, "ytyp")] {
+        let scratch = tempfile::tempdir().unwrap();
+        let dir = extract(scratch.path(), &synthetic(format), "cs1_02", extension);
+        let base = |dir: &Path| {
+            metadata::compile_base(&Source::open(dir).unwrap())
+                .unwrap_or_else(|problems| panic!("{format:?}: {problems:#?}"))
+        };
+        let untouched = compile(&dir);
+        assert_eq!(
+            base(&dir).bytes,
+            untouched,
+            "{format:?}: an untouched source"
+        );
+        assert_eq!(base(&dir).file_name, format!("cs1_02.{extension}"));
+
+        let xml = fs::read_to_string(dir.join("metadata.xml")).unwrap();
+        let edited = xml.replace("contentFlags value=\"65\"", "contentFlags value=\"66\"");
+        assert_ne!(xml, edited, "{xml}");
+        fs::write(dir.join("metadata.xml"), edited).unwrap();
+        assert_eq!(content_flags(&compile(&dir)), 66);
+        assert_eq!(
+            base(&dir).bytes,
+            untouched,
+            "{format:?}: the base does not follow an edit of the XML"
+        );
+    }
+
+    // A base that is not the file the XML was exported from is refused, as the compile refuses it.
+    let scratch = tempfile::tempdir().unwrap();
+    let dir = extract(
+        scratch.path(),
+        &synthetic(BinaryFormat::Rbm),
+        "cs1_02",
+        "ymap",
+    );
+    fs::write(dir.join("base.ymap"), synthetic(BinaryFormat::Pso)).unwrap();
+    assert!(metadata::compile_base(&Source::open(&dir).unwrap()).is_err());
+
+    // A base that is no metadata file is refused, and the refusal names the base and not the XML.
+    fs::write(dir.join("base.ymap"), b"not a map").unwrap();
+    let problems = metadata::compile_base(&Source::open(&dir).unwrap()).unwrap_err();
+    assert_eq!(problems.len(), 1, "{problems:#?}");
+    assert_eq!(problems[0].file.as_deref(), Some("base.ymap"));
 }
 
 #[test]
@@ -387,6 +467,59 @@ fn a_metadata_source_cooks_to_the_game_extension_a_build_and_a_saved_xml_ask_for
     assert!(matches!(saved, Recook::Cooked { .. }), "{saved:?}");
     let now = fs::read(shadow.join(&id).join("cs1_02.ymap")).unwrap();
     assert_eq!(content_flags(&now), 66);
+}
+
+#[test]
+fn the_xml_for_a_changed_file_is_given_with_nothing_written_and_xml_typed_by_hand_is_no_export() {
+    let scratch = tempfile::tempdir().unwrap();
+    let dir = extract(
+        scratch.path(),
+        &synthetic(BinaryFormat::Rbm),
+        "cs1_02",
+        "ymap",
+    );
+    let inputs = metadata::Inputs::read(&Source::open(&dir).unwrap()).unwrap();
+    let held = fs::read(dir.join("metadata.xml")).unwrap();
+    assert_eq!(inputs.xml(), held);
+    assert_eq!(inputs.extension(), "ymap");
+    let cooked = inputs.compile().unwrap().bytes;
+    assert!(inputs.is_the_export_of(&cooked));
+    assert_eq!(
+        inputs.xml_of(&cooked).unwrap(),
+        held,
+        "the file the source cooks to asks for the XML it holds"
+    );
+
+    // Another file of its kind: the XML for it is given, and the source is as it was.
+    let typed = String::from_utf8(held.clone()).unwrap();
+    let mut edited = inputs.clone();
+    edited.set_xml(
+        typed
+            .replace("contentFlags value=\"65\"", "contentFlags value=\"66\"")
+            .into_bytes(),
+    );
+    let other = edited.compile().unwrap().bytes;
+    assert_eq!(content_flags(&other), 66);
+    let xml = inputs.xml_of(&other).unwrap();
+    assert_eq!(xml, edited.xml());
+    assert!(!inputs.is_the_export_of(&other));
+    assert_eq!(fs::read(dir.join("metadata.xml")).unwrap(), held);
+    let before = names(&dir);
+    metadata::write_xml(&dir, &xml).unwrap();
+    assert_eq!(compile(&dir), other);
+    assert_eq!(names(&dir), before, "the part file is gone");
+
+    // The same document spaced as no export spaces it cooks to the same file, and is not that file's export.
+    let mut spaced = inputs.clone();
+    spaced.set_xml(
+        typed
+            .replacen("<entities", "\n\n   <entities", 1)
+            .into_bytes(),
+    );
+    assert_ne!(spaced.xml(), held);
+    assert_eq!(spaced.compile().unwrap().bytes, cooked);
+    assert!(!spaced.is_the_export_of(&cooked));
+    assert_eq!(spaced.xml_of(&cooked).unwrap(), held);
 }
 
 /// Where the staged binary metadata documents are, as the R37 suites find them.

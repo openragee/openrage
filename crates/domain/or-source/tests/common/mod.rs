@@ -324,3 +324,115 @@ fn nudge_a_glb(path: &Path) -> bool {
     std::fs::write(path, bytes).unwrap();
     true
 }
+
+/// Reads the glb of the bounds source `name` as a tool would, lets `edit` change it, and writes it under the names it had.
+pub fn edit_bounds_glb(
+    dir: &Path,
+    name: &str,
+    edit: impl FnOnce(&mut or_interchange::scene::Scene),
+) {
+    let path = dir.join(or_source::bounds::MODEL);
+    let mut scene =
+        or_interchange::gltf::read::load(&path, &std::fs::read(&path).unwrap()).unwrap();
+    let mut materials: Vec<or_interchange::scene::Material> = Vec::new();
+    scene.name = name.to_string();
+    for object in &mut scene.objects {
+        object.name = name.to_string();
+        for mesh in &mut object.meshes {
+            mesh.name = mesh
+                .name
+                .strip_prefix(&format!("{name}_"))
+                .expect("a node is named after the asset")
+                .to_string();
+            for primitive in &mut mesh.primitives {
+                primitive.material = primitive.material_name.as_ref().map(|name| {
+                    materials
+                        .iter()
+                        .position(|m| &m.name == name)
+                        .unwrap_or_else(|| {
+                            materials.push(or_interchange::scene::Material {
+                                name: name.clone(),
+                                ..Default::default()
+                            });
+                            materials.len() - 1
+                        })
+                });
+            }
+        }
+    }
+    scene.materials = materials;
+    edit(&mut scene);
+    std::fs::write(
+        path,
+        or_interchange::gltf::write(&scene, name, or_interchange::gltf::Container::Glb).primary,
+    )
+    .unwrap();
+}
+
+/// The JSON pointer to every value of `doc` that is a number, a string or a flag.
+pub fn stated_values(doc: &serde_json::Value) -> Vec<String> {
+    fn walk(v: &serde_json::Value, at: &str, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::Object(o) => {
+                for (name, v) in o {
+                    walk(v, &format!("{at}/{name}"), out);
+                }
+            }
+            serde_json::Value::Array(list) => {
+                for (i, v) in list.iter().enumerate() {
+                    walk(v, &format!("{at}/{i}"), out);
+                }
+            }
+            serde_json::Value::Null => {}
+            _ => out.push(at.to_string()),
+        }
+    }
+    let mut out = Vec::new();
+    walk(doc, "", &mut out);
+    out
+}
+
+/// Other values a person could state where `v` is: one for each number a string of several holds.
+pub fn other_values(v: &serde_json::Value) -> Vec<serde_json::Value> {
+    use serde_json::Value;
+    let other_word = |text: &str| -> Option<String> {
+        let word = u64::from_str_radix(text.strip_prefix("0x")?, 16).ok()? ^ 1;
+        Some(format!("{word:#0width$x}", width = text.len()))
+    };
+    let other_lane = |text: &str| -> Option<String> {
+        other_word(text).or_else(|| Some(format!("{:?}", text.parse::<f32>().ok()? + 1.0)))
+    };
+    match v {
+        Value::Bool(flag) => vec![(!flag).into()],
+        Value::Number(n) => match n.as_i64() {
+            Some(whole) => vec![(whole + 1).into()],
+            None => vec![(n.as_f64().expect("a number") + 1.0).into()],
+        },
+        Value::String(text) => {
+            let address = text.split_once(':').and_then(|(region, index)| {
+                Some((region.parse::<u16>().ok()?, index.parse::<u16>().ok()?))
+            });
+            let lanes: Vec<&str> = text.split(' ').collect();
+            if let Some((region, index)) = address {
+                vec![format!("{region}:{}", index + 1).into()]
+            } else if lanes.iter().all(|lane| other_lane(lane).is_some()) {
+                (0..lanes.len())
+                    .map(|changed| {
+                        let stated: Vec<String> = lanes
+                            .iter()
+                            .enumerate()
+                            .map(|(i, lane)| match i == changed {
+                                true => other_lane(lane).expect("a number"),
+                                false => lane.to_string(),
+                            })
+                            .collect();
+                        stated.join(" ").into()
+                    })
+                    .collect()
+            } else {
+                vec![format!("{text}x").into()]
+            }
+        }
+        _ => Vec::new(),
+    }
+}

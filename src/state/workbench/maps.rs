@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use or_maps::edit::Pose;
 use or_maps::gizmo::{Handle, Mode};
+use or_maps::operation::Operation;
 use or_maps::{Depth, Facts, Finding, MapSet, Maps, Placed, Scene};
 use or_project::{Container, Module, ModuleKind};
 use or_renderer::{LineVertex, OrbitCamera};
@@ -76,19 +77,16 @@ pub fn read_all(container: &Container, project_folder: &Path) -> Vec<MapsRead> {
         .collect()
 }
 
-/// A file as an edit left it and as it was.
-#[derive(Debug, Clone)]
-pub struct FileChange {
-    pub path: PathBuf,
-    pub before: Vec<u8>,
-    pub after: Vec<u8>,
-}
-
-/// One change Undo takes back: what it was called and the files it wrote.
+/// One change Undo takes back: what it was called, and the operations that take it back and make it again.
 #[derive(Debug, Clone)]
 pub struct Step {
     pub label: String,
-    pub changes: Vec<FileChange>,
+    /// The folder of the pack the operations name their sources in.
+    pub folder: PathBuf,
+    /// The inverse the change gave, which states the digest of the XML the change wrote.
+    pub undo: Operation,
+    /// What makes the change again: the operation itself, then the inverse `undo` gave when it was applied.
+    pub redo: Operation,
 }
 
 /// How many steps Undo keeps.

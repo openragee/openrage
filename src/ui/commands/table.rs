@@ -66,6 +66,7 @@ pub enum Action {
     InstallPluginFile,
     KeyboardShortcuts,
     OpenGuide,
+    OpenAcceptanceGuide,
     OpenSampleProject,
     TakeTour,
     Log,
@@ -209,6 +210,26 @@ pub struct On {
     pub run: fn(&mut AppState, &egui::Context, &Target),
 }
 
+/// Where a command's keys are read; two commands share a key only in two places that are both panels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    /// The key dispatcher, wherever the pointer and the focus are.
+    App,
+    /// The model viewport, under the pointer.
+    Viewport,
+    /// The text editor.
+    TextEditor,
+    /// The Assets table and the Wardrobe's list, under the pointer.
+    Lists,
+}
+
+impl Place {
+    /// Whether one press can be read in both places: the dispatcher reads every press, a panel only its own.
+    pub fn overlaps(self, other: Place) -> bool {
+        self == Place::App || other == Place::App || self == other
+    }
+}
+
 /// One command: what it is called and where, its default keys, when it can run and what it does.
 pub struct Spec {
     pub action: Action,
@@ -230,8 +251,10 @@ pub struct Spec {
     pub label_now: Option<fn(&AppState) -> String>,
     /// A toggle's state.
     pub checked: Option<fn(&AppState) -> bool>,
-    /// ⚠ Its keys are read by their panel, under the pointer or with focus, never by the key dispatcher.
-    pub panel_key: bool,
+    /// ⚠ Where its keys are read: a place other than [`Place::App`] is a panel that reads them itself, under the pointer or with focus, and the key dispatcher leaves them to it.
+    pub place: Place,
+    /// ⚠ Its keys name where a key sits, as a US keyboard names that place, and never the character typed: Shift is then part of a binding.
+    pub by_position: bool,
     pub run: fn(&mut AppState, &egui::Context),
     /// In place of `enabled` and `run`, for a command that acts on what was clicked.
     pub on: Option<On>,
@@ -250,7 +273,8 @@ pub(super) const BASE: Spec = Spec {
     cli: None,
     label_now: None,
     checked: None,
-    panel_key: false,
+    place: Place::App,
+    by_position: false,
     run: |_, _| {},
     on: None,
 };
@@ -735,7 +759,7 @@ pub const COMMANDS: &[Spec] = &[
         defaults: &[(NONE, Key::Home)],
         hover: tr_key!("Frame everything in the viewport"),
         enabled: a_viewport,
-        panel_key: true,
+        place: Place::Viewport,
         run: |state, _| panels::viewport::request_framing(state, Action::FrameAll),
         ..BASE
     },
@@ -747,7 +771,7 @@ pub const COMMANDS: &[Spec] = &[
         defaults: &[(NONE, Key::F), (NONE, Key::Period)],
         hover: tr_key!("Frame the selected model or geometry in the viewport"),
         enabled: a_viewport,
-        panel_key: true,
+        place: Place::Viewport,
         run: |state, _| panels::viewport::request_framing(state, Action::FrameSelection),
         ..BASE
     },
@@ -785,6 +809,7 @@ pub const COMMANDS: &[Spec] = &[
     super::tools_and_help::INSTALL_PLUGIN_FOLDER,
     super::tools_and_help::INSTALL_PLUGIN_FILE,
     super::tools_and_help::OPEN_GUIDE,
+    super::tools_and_help::OPEN_ACCEPTANCE_GUIDE,
     super::tools_and_help::OPEN_SAMPLE_PROJECT,
     super::tools_and_help::TAKE_TOUR,
     super::tools_and_help::KEYBOARD_SHORTCUTS,
@@ -800,7 +825,7 @@ pub const COMMANDS: &[Spec] = &[
         category: tr_key!("Text"),
         defaults: &[(CTRL, Key::F)],
         enabled: a_text_document,
-        panel_key: true,
+        place: Place::TextEditor,
         run: |state, ctx| find_in_text(ctx, state, false),
         ..BASE
     },
@@ -811,7 +836,7 @@ pub const COMMANDS: &[Spec] = &[
         category: tr_key!("Text"),
         defaults: &[(CTRL, Key::H)],
         enabled: a_text_document,
-        panel_key: true,
+        place: Place::TextEditor,
         run: |state, ctx| find_in_text(ctx, state, true),
         ..BASE
     },
@@ -823,7 +848,7 @@ pub const COMMANDS: &[Spec] = &[
         defaults: &[(CTRL, Key::G)],
         hover: tr_key!("Move the caret to a line of the text document, by its number"),
         enabled: a_text_document,
-        panel_key: true,
+        place: Place::TextEditor,
         run: |state, ctx| {
             let Some(handle) = text_editor_for(ctx, state) else {
                 return;
@@ -857,6 +882,13 @@ pub const COMMANDS: &[Spec] = &[
     super::script::GO_TO_DEFINITION,
     super::script::FIND_REFERENCES,
 ];
+
+impl Spec {
+    /// Whether a panel reads its keys, and never the key dispatcher.
+    pub fn panel_key(&self) -> bool {
+        self.place != Place::App
+    }
+}
 
 pub fn spec(action: Action) -> Option<&'static Spec> {
     COMMANDS.iter().find(|spec| spec.action == action)

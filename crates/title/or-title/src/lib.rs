@@ -29,7 +29,7 @@ pub mod vfs;
 pub use archives::{format_recovery_hint, KnownArchiveNames};
 
 pub use dlc::{
-    ContentXml, DataFileEntry, DlcList, ExtraTitleUpdateData, SetupContentType, SetupData,
+    ContentXml, DataFileEntry, DlcList, ExtraTitleUpdateData, MapMode, SetupContentType, SetupData,
     TitleUpdateMount,
 };
 pub use game::{ContainerFamily, DlcPolicy, Game, GameId, GamePaths, GameProfile, InstallLayout};
@@ -47,7 +47,7 @@ pub use shader_extract::{ShaderExtractError, DEFAULT_SHADER_DIR};
 pub use vfs::{
     build_mounted_game, build_mounted_game_with, build_vfs_for_install, build_vfs_for_install_with,
     is_under_overlay, mount_shadow, record_file, refresh_plan, stale_copies, ArchiveDevice,
-    ArchiveOrigin, BaseRecord, Change, Discard, DlcCutoff, FileDevice, FolderDevice, MountOptions,
-    MountRoot, MountedGame, MountedPack, OverlayResolution, RefreshPlan, ShadowReport, StaleCopy,
-    Staleness, Vfs, VfsBuildError, VfsPath, OVERLAY_DIR,
+    ArchiveOrigin, BaseRecord, Change, Discard, DlcCutoff, FileDevice, FolderDevice, ListedPack,
+    ListedPackState, MountOptions, MountRoot, MountedGame, MountedPack, OverlayResolution,
+    RefreshPlan, ShadowReport, StaleCopy, Staleness, Vfs, VfsBuildError, VfsPath, OVERLAY_DIR,
 };

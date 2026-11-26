@@ -488,6 +488,57 @@ with tabs and a rail in the order the owner chose
   - [ ] [R69i The Automate room](#r69i-the-automate-room)
   - [ ] [R69j The guide the tour and the design say the window as built](#r69j-the-guide-the-tour-and-the-design-say-the-window-as-built)
 
+### Phase 11 — The GTA V world editor
+
+The owner asked on 2026-11-25 for every capability of NodeRunner Studio, for GTA V, in OpenRage
+([Project_Context.md](Project_Context.md#every-noderunner-studio-capability-for-gta-v-is-wanted-in-openrage-2026-11-25)),
+and said the same day to build it in parallel lanes
+([recorded](Project_Context.md#the-world-editor-plan-is-built-in-parallel-lanes-2026-11-25)).
+[World_Editor_Plan.md](World_Editor_Plan.md) says what the programme rests on, how it fits the tree
+and the order, and gives each row below its brief; [World_Editor_Parity.md](World_Editor_Parity.md)
+weighs each capability; [World_Editor_UX_Design.md](World_Editor_UX_Design.md) says what a mapper
+would meet. The rows are listed in the order of the plan's stages
+([the order](World_Editor_Plan.md#the-order-it-is-built-in)): R70a, R70b, R70h and R70w stand on
+nothing of this phase, R70g needs R70b only for the bounds at a position, and R70c, the GTA V map
+drawn with its models, is what most screen rows wait for. A row takes the default beside its
+question in [the rulings asked](World_Editor_Plan.md#rulings-asked-of-the-owner), except a part
+whose ruling says "It waits". Parts of R70a, R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k,
+R70l, R70m, R70n, R70p, R70q, R70r, R70v, R70w and R70y are built, on installs and packs made by
+hand and on the staged corpus, with no screen but the Build tab's line of R70a, the Map screen's
+Undo of R70h and the presets of keys in Settings of R70v. No row is closed, the install suites
+that have run are those of R70m's data part and, on the two installs, of R70b, R70c, R70e, R70g,
+R70h and R70k, and nothing was loaded in a game: each row's Where it stands says
+what is built and what is left. R70 has no letter left: a finding that fits no row opens the next
+number.
+
+- [ ] [R70 The GTA V world editor](#r70-the-gta-v-world-editor) — the plan of 2026-11-25, in the parts below, begun in lanes the same day; parts of R70a, R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70l, R70m, R70n, R70p, R70q, R70r, R70v, R70w and R70y are built and no row is closed, and the Map screen of wave P44 and the World screen of GTA VI are what it starts from
+  - [ ] [R70a What the game loads](#r70a-what-the-game-loads)
+  - [ ] [R70b The GTA V world index](#r70b-the-gta-v-world-index)
+  - [ ] [R70g Collision as a query](#r70g-collision-as-a-query)
+  - [ ] [R70h One vocabulary of world edits](#r70h-one-vocabulary-of-world-edits)
+  - [ ] [R70w A changed bound and a changed path region as sources](#r70w-a-changed-bound-and-a-changed-path-region-as-sources)
+  - [ ] [R70c The GTA V world streamed and drawn](#r70c-the-gta-v-world-streamed-and-drawn)
+  - [ ] [R70e Find anything and go there](#r70e-find-anything-and-go-there)
+  - [ ] [R70i Selecting and moving in the world](#r70i-selecting-and-moving-in-the-world)
+  - [ ] [R70q A build a server and a story install take](#r70q-a-build-a-server-and-a-story-install-take)
+  - [ ] [R70d The day sky water and shadows of the world](#r70d-the-day-sky-water-and-shadows-of-the-world)
+  - [ ] [R70f Layers of what the game hides](#r70f-layers-of-what-the-game-hides)
+  - [ ] [R70j A library of props and what comes in](#r70j-a-library-of-props-and-what-comes-in)
+  - [ ] [R70k Removing what the game placed](#r70k-removing-what-the-game-placed)
+  - [ ] [R70r Other resources of the server](#r70r-other-resources-of-the-server)
+  - [ ] [R70y What a project changed and putting it back](#r70y-what-a-project-changed-and-putting-it-back)
+  - [ ] [R70l Editing collision](#r70l-editing-collision)
+  - [ ] [R70m Interiors](#r70m-interiors)
+  - [ ] [R70n Doors](#r70n-doors)
+  - [ ] [R70o Parked vehicles zones lights and occluders](#r70o-parked-vehicles-zones-lights-and-occluders)
+  - [ ] [R70p Roads scenario points and the navmesh](#r70p-roads-scenario-points-and-the-navmesh)
+  - [ ] [R70s The model workshop](#r70s-the-model-workshop)
+  - [ ] [R70t Peds cutscenes life and walking the map](#r70t-peds-cutscenes-life-and-walking-the-map)
+  - [ ] [R70u Working together](#r70u-working-together)
+  - [ ] [R70v The keys settings and guide of a mapper](#r70v-the-keys-settings-and-guide-of-a-mapper)
+  - [ ] [R70x The audio of an interior](#r70x-the-audio-of-an-interior)
+  - [ ] [R70z A browser of models and vehicles](#r70z-a-browser-of-models-and-vehicles)
+
 ---
 
 ## Inputs outside the tree
@@ -5297,12 +5348,15 @@ texture or a buffer apart from its file has no capability
 **Where it stands.** Each is filed by surface, in-app pane or whole process, when picked up after
 [R46](#r46-first-plugin-a-clothing-tool-on-openrage), with its core data from
 [R32](#r32-world-data-ymap-ytyp-and-interiors), [R33](#r33-paths-navmesh-scenarios-and-tracks) or
-[R34](#r34-audio-and-media). The picking, the manipulator and the snaps of the world and map editor are
-built in the app itself, on the Map screen (wave P44, [what it built](Workbench_Views_Design.md#what-wave-p44-built-for-maps)):
-the plugin route for them stays available but is no longer the only one, and markers, a thumbnail browser, pawn
-modes and the interior builder stay on this row. **Done when.** Each exists, is owned by someone building on OpenRage, or
-is written off in one line. **Risk.** The pull to build these in the shell, where a WASM pane and a
-shell pane look alike. **Covers.** The rows above and the unnumbered mesh-authoring row.
+[R34](#r34-audio-and-media). The picking, the manipulator and the snaps of the world and map editor
+are built in the app, on the Map screen (wave P44,
+[what it built](Workbench_Views_Design.md#what-wave-p44-built-for-maps)), and the plugin route for
+them stays open. Markers and pawn modes stay on this row, and so do the thumbnail browser, the walk
+mode and the interior builder: [R70](#r70-the-gta-v-world-editor) proposes those three in the app,
+which waits for [ruling 2](World_Editor_Plan.md#rulings-asked-of-the-owner). **Done when.** Each
+exists, is owned by someone building on OpenRage, or is written off in one line. **Risk.** The pull
+to build these in the shell, where a WASM pane and a shell pane look alike. **Covers.** The rows
+above and the unnumbered mesh-authoring row.
 
 ### R48 Projects
 
@@ -9462,6 +9516,1010 @@ the rail's rooms and the kinds of tab, and its inventory names no control that i
 each step of the tour pointing at a control that is drawn; the guide's sections keep their anchors,
 since tooltips name them; `src/i18n/languages/fr.po` has every new sentence; and the gates of
 `just ready` pass.
+
+### R70 The GTA V world editor
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+A programme that brings every capability of NodeRunner Studio for GTA V into OpenRage, which the
+owner asked for on 2026-11-25
+([Project_Context.md](Project_Context.md#every-noderunner-studio-capability-for-gta-v-is-wanted-in-openrage-2026-11-25))
+and said the same day to build in parallel lanes
+([recorded](Project_Context.md#the-world-editor-plan-is-built-in-parallel-lanes-2026-11-25)).
+[World_Editor_Plan.md](World_Editor_Plan.md) owns what it rests on, how it fits the tree, the order,
+each part's brief and the rulings asked; [World_Editor_Parity.md](World_Editor_Parity.md) weighs
+each capability; [World_Editor_UX_Design.md](World_Editor_UX_Design.md) says what a mapper would
+meet. NodeRunner's licence forbids a work based on it, so a part is built from those documents and
+from measurements of the install
+([Licence_And_Provenance_Policy.md](../guides/Licence_And_Provenance_Policy.md#sources)).
+
+A stage is a point at which the result can be told to a mapper, not a gate: a part starts when the
+parts it depends on have merged. [R70a](#r70a-what-the-game-loads),
+[R70b](#r70b-the-gta-v-world-index), [R70h](#r70h-one-vocabulary-of-world-edits) and
+[R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources) stand on nothing of this
+programme, and [R70g](#r70g-collision-as-a-query) needs R70b only for the bounds at a position.
+[R70c](#r70c-the-gta-v-world-streamed-and-drawn) is what the screen parts wait for, and with
+[R70e](#r70e-find-anything-and-go-there), [R70i](#r70i-selecting-and-moving-in-the-world) and
+[R70q](#r70q-a-build-a-server-and-a-story-install-take) it is the first thing to hand a mapper: open
+the map, find a place, duplicate an object and swap its model, drop it to the ground, build a
+resource. The data parts of [R70m](#r70m-interiors) and
+[R70o](#r70o-parked-vehicles-zones-lights-and-occluders) wait for no screen part. A screen part and
+an open part of [R69](#r69-one-window-of-tabs-and-a-rail) that edit the same shell file never run
+together.
+
+A part's Done when is its check; its brief says what to read and what to build. A part that writes a
+kind of file adds it to the recipe and the sheet of R70a. Lanes began on 2026-11-25: parts of R70a,
+R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70l, R70m, R70n, R70p, R70q, R70r, R70v, R70w
+and R70y are built, with no part closed, install suites run for R70m's data part and for R70b,
+R70c, R70e, R70g, R70h and R70k, and nothing loaded in a game.
+
+### R70a What the game loads
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** A sheet of what to look for in a running game, a line for each kind of file a part of R70
+writes, each with the date, the game's build and the result; a test that reads its format; the Build
+tab's reading of it; a guide page with the steps to load a build on a FiveM server and in story
+mode; and the sample as a recipe that makes its sources on the person's machine over their own
+install, never a project in the repository ([brief](World_Editor_Plan.md#what-the-game-loads-r70a),
+[In_Game_Acceptance.md](../guides/In_Game_Acceptance.md)).
+
+**Where it stands.** The sheet, its reader, its command, its guide and the Build tab's reading are
+built; a run of the recipe over an install and every result are not. The sheet is
+`crates/domain/or-project/src/acceptance.json`, with the lines of a map changed, of a map made from
+nothing ([R70h](#r70h-one-vocabulary-of-world-edits)) and of a story pack, and no result: who runs
+the game is held back ([Workbench_Plan.md](Workbench_Plan.md#held-back)).
+`or_project::acceptance` refuses a line or a result that is wrong, by its id
+(`a_line_that_is_wrong_is_refused_with_its_id`), and a row a line names has a heading here
+(`every_line_names_a_row_of_the_roadmap`). `openrage-cli project acceptance` prints the lines about
+a resource or a pack a build wrote (`a_folder_no_build_wrote_is_refused`). The Build tab says which
+kinds of file of a build nobody saw the game load for its edition, with a link to the guide, and
+`openrage-cli project build` and `wardrobe build` print the same (`Sheet::seen`,
+`src/ui/the_build_tab_says_what_was_seen_in_game_on_screen.rs`). The guide's table is the data
+file's lines (`the_guide_lists_the_lines_of_the_sheet`), and the recipe's `openrage-cli project`
+commands are read from the guide and run over synthetic files
+(`the_recipe_builds_a_resource_and_the_command_names_the_lines_about_its_files`); a line whose kind
+the recipe does not build, or a kind it builds with no line, fails
+`the_sheet_and_the_recipe_are_about_the_same_kinds_of_file`
+([the rest](../reference/Crate_Reference.md#domain-crates)).
+
+⚠ A line is matched by its kind alone, so the line of a map made from nothing is read for every
+build that wrote a map, and a result counts for the place it was seen in, a server or story mode.
+
+Left: the recipe run headless over an install, in the slow tier, with its five commands that need
+one and that no test runs (`depends placements`, `names --resolve`, `depends of` and the two of
+`bulk`); a kind a part writes that is in
+neither the recipe nor the sheet, which no test fails for, as a bound and a path region from
+a source ([R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources)) and the manifest of a
+build's maps ([R70q](#r70q-a-build-a-server-and-a-story-install-take)); a second condition for what
+an extension does not tell, such as the container of a map; the step of the recipe that makes a map
+from nothing; a map in a story pack
+(`a_story_pack_refuses_the_sample_as_the_guide_says_it_does_today`); the results.
+
+**Depends on.** The plan's ruling 1, whose default is that the owner fills the sheet, once a stage.
+
+**Done when.** The sample builds headless over an install and every file reads back, in the slow
+tier and named in the skip ledger without an install; a kind of file a part writes and the recipe
+lacks fails a test; a test reads the sheet's format; the Build tab says "not checked in game" for a
+kind whose line is empty; and the guide page states the steps for a FiveM server and for story mode.
+Filling the sheet is the owner's.
+
+**Risk.** Without it no later part is known to load in game, the clause
+[R62](#r62-the-rbm-layout-synthesiser) is still open on.
+
+### R70b The GTA V world index
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** The index of a mounted GTA V install: every map with its extents, parent and the group
+that requests it; every archetype with its type file and box; and two queries by position, the maps
+and the bounds. The mount's cutoff at a level of DLC is passed from the screen, the choice of story
+or multiplayer is added to `or-title`, and the index is keyed by what the install holds, the cutoff
+and the choice, kept on disk and rebuilt only where the install changed. It adds
+`openrage-cli world at` and `openrage-cli world index`
+([brief](World_Editor_Plan.md#the-gta-v-world-index-r70b)).
+
+**Where it stands.** The install suite holds on both installs
+(`the_world_index_names_everything_a_real_install_lists`, 2026-11-26;
+[figures](../reference/Crate_Reference.md#domain-crates)): it failed on Enhanced while an archive
+the mount lists twice was read again at each start, and the index now names the copy of a file the
+title update patches, which is the one the mount opens.
+`crates/domain/or-depends/src/world_index.rs` reads every map, type file, manifest and bound an
+archive at a time, answers the maps and carried bounds at a position and is kept on disk by each
+archive's stamp (`the_world_index_of_a_mount`), behind `openrage-cli world index` and `world at`.
+`DlcCutoff::Level` stops the mount at a pack of the DLC list and `MountOptions::mode` takes the map
+as story or multiplayer
+(`a_mount_stops_at_a_level_of_dlc_and_takes_the_map_as_story_or_multiplayer`), set by
+`openrage-cli dlc-list` and by `world ground` ([R70g](#r70g-collision-as-a-query)), which keeps
+the index of a level in a file of its own. The cutoff by a pack's name hash (`--dlc`) keeps the
+folders of packs past it from the walk as a level does
+(`a_pack_past_a_name_hash_is_left_out_of_the_walk_as_one_past_a_level_is`), and an archive one of
+whose files did not open is kept with no stamp and read again
+(`a_file_that_did_not_open_is_read_again_by_the_next_build_though_its_archive_stands`). The index
+keeps each group's gate and each archetype's files for
+[R70c](#r70c-the-gta-v-world-streamed-and-drawn)
+(`an_instance_names_the_files_its_archetype_states_and_a_kept_index_names_them_too`). Left:
+the mode in the index's key; a level and a mode for `world index` and `world at`, and from a
+screen; an archive read at every build, for the folders a level leaves out of it.
+
+**Done when.** Over a mounted install the index names every map and type file the mount lists, and a
+position inside a known map's extents answers that map, in an install suite of the slow tier, named
+in the skip ledger without one; in the same suite the bounds answered at a position are the ones
+whose own boxes hold it; a second start opens no archive that did not change; an index kept at one
+cutoff is not read at another; story hides what multiplayer adds, on a synthetic mount; and
+`openrage-cli world at` answers a position.
+
+### R70c The GTA V world streamed and drawn
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** A GTA V install drawn through the world renderer, with its models and interiors, for both
+targets, in the World room and as a Map content's Scene. It lands in parts: the seam between what
+the World screen takes from a title and what it shares; the viewer made one for each world tab; the
+GTA V feed from R70b, with the content a project links as a layer; then the room, the tab, the stack
+as a bar under the tabs, the World tab's primary command, the shared camera and the viewer's presets
+and frame cap ([brief](World_Editor_Plan.md#the-gta-v-world-streamed-and-drawn-r70c)).
+
+**Where it stands.** The data half is headless
+([in full](../reference/Crate_Reference.md#domain-crates)):
+`crates/domain/or-depends/src/world_forest.rs` streams an install's maps and selects their entities
+by the shared rules, behind `openrage-cli world select`, on both installs
+(`the_forest_of_a_real_install_selects_what_its_index_holds_and_no_child_whole_beside_a_parent_that_holds_the_children_it_states`,
+2026-11-25). Nothing draws it.
+
+**Depends on.** [R70b](#r70b-the-gta-v-world-index); its room, tab and bar edit what
+[R69f](#r69f-a-rail-of-rooms-and-one-primary-action-a-tab) builds.
+
+**Done when.** A synthetic world of parent and child levels draws the level the rules select at each
+distance, in real frames with no window; an install's tab and a project's tab draw two stacks in one
+session; the GTA VI screens and a scanned GTA VI map body draw the same frames as before the seam,
+and [GTA_VI_World_Viewer.md](../features/GTA_VI_World_Viewer.md) states their new camera inputs; a
+synthetic interior draws its objects; a linked project's map draws in the linking project's tab; the
+French screens of the world hold at the smallest window; the bar names the stack and says when the
+install shown is not of the build's edition; the World tab has its primary command in R69f's table;
+a preset sets the distances and the frame cap it names; and a frame over the city is measured on the
+owner's machine, its budget recorded.
+
+### R70d The day sky water and shadows of the world
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** GTA V's timecycle, weather and water fed into the lighting, the shadow cascades, the sky
+and the water the World screen has for GTA VI, behind the seam of R70c, at an hour and a weather the
+person sets; a reader for GTA V's `water.xml` in `or-io` and the water it describes; the distance
+shadows reach as a setting; and a measure of what drawing GTA V's materials through the game's own
+shaders costs over the whole map, for the plan's ruling 9
+([brief](World_Editor_Plan.md#the-day-sky-water-and-shadows-of-the-world-r70d)).
+
+**Where it stands.** The water file reads and saves; nothing draws it, and nothing feeds GTA V's
+day to the world. `CWaterData` in `crates/io/or-io/src/gta5/data/water.rs` opens a `water.xml` into
+its water, calming and wave quads, keeps every element and attribute it does not type and writes
+them back, so an unchanged file saves to the bytes it came as and a changed value is written among
+them; a quad or a list the document did not hold is written with the document's own line endings
+and indentation (`what_the_document_did_not_hold_is_laid_out_as_the_document_is`); `height_at`
+answers the height of the water over a point, with a cut quad's half and a quad the game leaves
+out. `openrage-cli convert` and the formats census take the file by its name.
+Documents written by hand hold it, in `crates/io/or-io/src/gta5/data/water/tests.rs`:
+`a_document_reads_to_its_quads_and_saves_to_its_fixed_point`,
+`an_element_and_an_attribute_the_reader_does_not_name_survive_a_read_and_a_save`,
+`the_height_at_a_point_inside_a_quad_on_its_edge_and_outside_every_quad` and
+`each_refusal_names_its_element` among them. ⚠ No install's water file has been read: the list of
+what the reader types awaits one, `crates/title/or-title/tests/the_water_file_of_an_install.rs`
+holds the reader on a mount built by hand, and its test over a real install is in the slow tier and
+has not run. For a GTA VI install the world has the install's day, the sun's shadow in cascades
+(`crates/runtime/or-renderer/src/world/shadow.rs`), the game's lighting passes, lamps, a sky and
+water ([the day](../features/GTA_VI_World_Viewer.md#the-day)). For GTA V the Shaded viewport lights
+one model from the install's timecycle
+([Viewport_Shading_Modes.md](../features/Viewport_Shading_Modes.md)). Left: the water drawn, the
+feed of GTA V's timecycle and weather into the world's lighting, the shadow cascades and the sky,
+the distance shadows reach as a setting, and the measure of the game's own shaders.
+
+**Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn).
+
+**Done when.** The reader opens the water file of both installs and saves its fixed point; the same
+hour and weather give the same sun on a model in Shaded and in the world; a GTA VI day draws the
+same frames as before; the water of a synthetic file draws where the file puts it; the shadow
+setting changes how far a shadow is cast in a drawn frame; and the cost of the game's own shaders
+over the whole map is measured and recorded with its date and its machine.
+
+### R70e Find anything and go there
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** Places in the palette (a position in the forms scripts write, a hash in each spelling, a
+model, a map, a type), listed in the box and under the field of Files, a position or a hash first; a
+model's row with its count of placements, stepped through from the nearest; Show in world on a
+file's row, an archetype's row and a row of Uses and Placed by; bookmarks a person saves from the
+box, each with a key to go to it; Copy for script in Lua, JSON and C#, as templates in data, the
+button keeping the form used last; and `openrage-cli world find`
+([brief](World_Editor_Plan.md#find-anything-and-go-there-r70e)).
+
+**Where it stands.** The headless parts are built and no screen calls them
+([in full](../reference/Crate_Reference.md#domain-crates)).
+`crates/domain/or-maps/src/place.rs` reads what is pasted,
+`crates/domain/or-maps/src/script_text.rs` writes a position for a script, and
+`crates/domain/or-depends/src/find.rs` answers what a person typed from an install's indexes,
+which `openrage-cli world find` prints
+(`asking_a_mount_where_something_is`, on mounts built by hand). Both installs hold eight of their
+own models to their maps
+(`a_real_installs_own_models_are_found_by_name_and_each_placement_stands_in_the_map_it_names`,
+2026-11-25). Left: every part on screen.
+
+**Depends on.** [R70b](#r70b-the-gta-v-world-index);
+[R70c](#r70c-the-gta-v-world-streamed-and-drawn) to go there; [R70g](#r70g-collision-as-a-query) for
+the height of two numbers.
+
+**Done when.** Each form of a position parses to the same point; a hash typed three ways finds one
+model; a copy in each form parses back to the position and the heading it came from; two numbers
+over a known road go to the road and not to sea level; a model placed twice steps from one placement
+to the other; a pasted position is the first result with a file open; Show in world on a row moves
+the camera to that row's place; a bookmark's key goes to it after a restart; and
+`openrage-cli world find` prints the place a query names.
+
+### R70f Layers of what the game hides
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** Layers, each drawn within its radius of the camera: road nodes and links by category,
+navmesh by category, scenario points with their heading, collision by material and by version, rooms
+and portals, occluder boxes and occlusion meshes with a preview of what they hide, the levels of
+detail, and sound zones and fixed emitters, each sound played when selected; parked vehicles,
+timecycle zones and far lights once the data part of R70o types them; presets; the pick order; and
+the list of maps only a script requests, with a stated naming rule for two versions of one place
+([brief](World_Editor_Plan.md#layers-of-what-the-game-hides-r70f)).
+
+**Where it stands.** Not built. The viewport draws a `.ynv`'s polygons ([R33b](#r33b-navmesh-ynv)).
+`crates/domain/or-world/src/map_data.rs` reads a box occluder, the stored box of an occlusion mesh
+and a parked vehicle's position and one length; it only counts the timecycle zones and tests whether
+far lights are present. The GTA VI World panel lists the script-managed groups, and no screen uses
+`crates/domain/or-world/src/state.rs` for GTA V.
+
+**Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn) and
+[R70g](#r70g-collision-as-a-query); the data part of
+[R70o](#r70o-parked-vehicles-zones-lights-and-occluders) for parked vehicles, timecycle zones and
+far lights.
+
+**Done when.** Each layer draws a synthetic file's records at their places in real frames; a preset
+shows the layers it names and no other; a layer off costs no draw; a click where two layers overlap
+takes the thing the pick order puts first; selecting a synthetic emitter starts its sound; and the
+list names the maps of a synthetic manifest that only a script requests, two versions of one place
+under the stated rule.
+
+### R70g Collision as a query
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** In `or-world`, over declared bounds handed in: a ray, a swept sphere and a box overlap,
+with the hit's material, and the ground under a point that ignores walls. Then the set of bounds
+near a position, read through the index of R70b and kept by the caller that has the mount,
+`or-depends` for the CLI and the app's streamer for the screen. The particle collider becomes a
+caller, and `openrage-cli world ground` answers a position
+([brief](World_Editor_Plan.md#collision-as-a-query-r70g)).
+
+**Where it stands.** The primitives are built in
+`crates/domain/or-world/src/collision/`: `BoundCollider` is a bound's exact shapes under a tree, and
+`CollisionSet` holds the colliders its caller hands it by key and answers a ray, a swept sphere, a
+box overlap and the ground, held on bounds built by hand
+(`crates/domain/or-world/tests/collision_queries.rs`,
+`crates/domain/or-world/tests/collision_world.rs`).
+`crates/domain/or-depends/src/world_collision.rs` is the caller that hands it a mount's: the static
+bounds the index names for a column, held under a budget of bytes, behind
+`openrage-cli world ground`, on mounts built by hand
+(`crates/domain/or-depends/tests/the_ground_under_a_place_of_a_mount.rs`). Named and not loaded:
+the collision of an interior and of a placed prop, which needs the entity's placement and is next;
+`WorldCollision::place` is its seam. The install check holds on both installs
+(`the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them`, 2026-11-26;
+[figures](../reference/Crate_Reference.md#domain-crates)). A ray's slack past a triangle's edges
+grows with how far its origin is from the triangle over the triangle's size, so a slanted ray from
+hundreds of metres no longer passes through a seam
+(`a_slanted_ray_from_hundreds_of_metres_meets_the_corner_and_the_edge_it_is_aimed_at`). Of the staged corpus, 948
+bounds become colliders with none refused
+(`every_staged_bound_becomes_a_collider_whose_ray_and_swept_sphere_agree`, 2026-11-25), and 897 of
+971 geometries stop 40 mm short of the box they state
+(`every_staged_geometry_lies_in_the_box_it_states`, 2026-11-25), so whether the game's surface is
+the polygons is open. Left: the collision of interiors and placed props;
+and the particle collider, `BvhCollider` in `crates/runtime/or-simulation/src/collision.rs`,
+unchanged because it makes triangles of the curved shapes the query meets exactly, which is the
+owner's to rule on.
+
+**Depends on.** Nothing for the primitives; [R70b](#r70b-the-gta-v-world-index) for the bounds near
+a position.
+
+**Done when.** Each primitive of a bound is hit where arithmetic says, on bounds built by hand; the
+ground under a point beside a wall is the floor and not the wall's top, on bounds built by hand;
+over an install, the ground under a position on a known road is within a step of the road's nodes
+there, in the slow tier; `openrage-cli world ground` answers that position; and the particle
+preview's collisions are unchanged.
+
+### R70h One vocabulary of world edits
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** Named operations with inverses for what a world tool does, as data that Undo, History and
+`openrage-cli maps apply` share; the working set's renumbering across files carried over the typed
+roots; the first edit of a game object importing its map as a source with its base; a new map and a
+new entity made from a donor of the mounted install; and the Map screen's Undo moved into the
+project's History ([brief](World_Editor_Plan.md#one-vocabulary-of-world-edits-r70h)).
+
+**Where it stands.** The vocabulary, for one pack: `Operation`, `apply`, `apply_all` and `Session`
+in `crates/domain/or-maps/src/operation.rs`, which the Map screen's edits and
+`openrage-cli maps apply` call (`an_operation_and_its_inverse_leave_the_sources_as_they_were`, on
+synthetic packs). A session holds the sources as typed roots and writes them once at a flush; an
+inverse states the digest or the session token it applies to,
+or is refused (`a_session_of_map_edits_writes_once_what_each_edit_writes`); and the Map screen's
+Undo keeps the operation and its inverse
+(`an_undo_is_refused_once_its_source_was_edited_from_outside_and_goes_through_once_that_edit_is_taken_back`,
+slow tier; [timings](../reference/Crate_Reference.md#domain-crates)). And a map, a built entity,
+a type file and a base archetype made
+with no donor and no snapshot (`crates/domain/or-world/src/create.rs`), behind
+`openrage-cli world new-map` and `world archetypes`, which pass the rules of a pack
+(`a_map_and_a_type_file_made_from_nothing_enter_a_pack_and_break_none_of_its_rules`).
+
+⚠ They are written as PSO, and RBM is refused (`rbm_is_refused_with_the_word_nothing_derives_named`,
+[R62](#r62-the-rbm-layout-synthesiser)); whether the game, whose own world files are RBM, loads
+one is a line of [R70a](#r70a-what-the-game-loads)'s sheet, and none is made from an install's
+donor. What a pack that holds too little takes, a first record built and a last one put back by
+the XML, holds in a session as one by one
+(`crates/domain/or-maps/tests/an_operation_where_the_pack_holds_too_little.rs`,
+`crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`). A deletion
+planned by [R70k](#r70k-removing-what-the-game-placed) renumbers the links of the child maps, and
+one entity taken out alone leaves them, with a note. A session that refused an operation writes
+nothing when
+dropped. The first edit: `crates/domain/or-maps/src/first_edit.rs` imports each map file an edit
+of a game object changes, with the game's file as its base, as one record taken back whole,
+behind `openrage-cli maps edit-game` (`the_first_edit_of_a_game_object_imports_its_map`, an
+install built by hand); on both installs no map file that holds an entity refuses the plan of a
+move of its first, of the 11,076 map files of Legacy and the 11,052 of Enhanced, 1,833 and 1,842
+holding none (`the_map_files_of_the_install_a_first_edit_refuses_are_counted`, 2026-11-25). A place
+given with the game's path is a place in the game's file, carried to the source the project holds
+of it, and a copy of a map a later archive replaces is refused with the copy the install loads
+([or-maps](../reference/Crate_Reference.md#domain-crates)). ⚠ A new entity's
+guid is one more than its map's largest, the owner's to rule
+([R70y](#r70y-what-a-project-changed-and-putting-it-back)). Left: the Map screen on a session, a
+create across files, a new map and a built entity as operations, the donor and the install's
+boxes, History, the rule for a source of the other edition, the install measure; a first edit that
+deletes, applied over an install through the index, which no install suite does; and a deletion's
+refusal where the index holds a map file it could not read, whose parent is unknown.
+
+**Depends on.** Nothing in R70; it does the part of
+[R69h](#r69h-one-undo-for-the-tab-on-screen) a Map tab needs below the screen.
+
+**Done when.** Every operation followed by its inverse leaves the sources byte for byte, and a test
+fails when an operation has no inverse; a list applied by the CLI and by the screen gives the same
+sources; a deletion with its chain runs under `OPENRAGE_SCHEMA=none`; a new map reads back as its
+root, passes the rules and carries no zero signature; an edit is taken back after the project is
+opened again; History goes back over a first edit that imported; a first edit over the other
+edition's install writes nothing, and a rule names a source whose base is the other title's; the
+install suite counts the maps a first edit refuses; and one drag on the largest map of an install
+and what History keeps for a run of edits are measured.
+
+**Risk.** A large game map is a large XML written at each edit. A map made with no donor would carry
+a zero signature word ([R62](#r62-the-rbm-layout-synthesiser), open).
+
+### R70i Selecting and moving in the world
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** The pick by pixel with its second click; the rectangle; the group move; the choice of
+axes; copy, paste, duplicate and its repeat; the snap to another object's box; the swap of a model;
+the drop to the ground and the follow; the manipulator in the world; the tools' keys bound by where
+a key sits; the line that offers a project, the first edit's toast and Edit in the project; each
+tool's hints; an object's right-click menu and double click; and the safe fix of `guid-twice`
+([brief](World_Editor_Plan.md#selecting-and-moving-in-the-world-r70i)).
+
+**Where it stands.** The binding by where a key sits is built, with no tool on it
+([in full](../reference/Crate_Reference.md#panels-docks-and-panel-state)); the rest is not.
+
+**Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn), [R70g](#r70g-collision-as-a-query)
+and [R70h](#r70h-one-vocabulary-of-world-edits); it draws in [R69g](#r69g-one-details-panel)'s
+Details and [R69h](#r69h-one-undo-for-the-tab-on-screen)'s Undo.
+
+**Done when.** `the_maps_screen_on_screen` extended to a drag in the world on a model, as one step
+of Undo; a pick through a hole in a fence takes what is behind it, and a wall stops it; a rectangle
+leaves what a wall hides; a dropped object lands on the collision under it, not on a roof above; a
+repeated duplicate leaves equal spacing; an object moved against another snaps to its box, and a
+swapped model keeps its place; Delete on a game object writes nothing and says why; a moved object's
+far model follows it, and a shared one is left and reported; a tool in a read-only World tab writes
+nothing and offers Edit in the project; Escape that closes the palette keeps the selection; a tool's
+key answers by its position on an AZERTY layout; each tool and a drag show their hints; an object's
+menu draws from the registry (`every_context_menu_draws_from_the_registry`); a double click opens an
+object's model; Fix all safe leaves every guid stated once.
+
+### R70j A library of props and what comes in
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** The Library tab, a list by name with a search, over linked projects and the game's props
+by a category derived from the install; the ghost and the placement by surface; a zip as a place to
+adopt from; files an asset escrow locks recognised, kept whole and drawn as a box; and the map rules
+in the import report. Two parts wait for the owner: the thumbnails for the plan's ruling 2, and for
+ruling 5 the reader of the XML a Blender export writes and the watched folder
+([brief](World_Editor_Plan.md#a-library-of-props-and-what-comes-in-r70j)).
+
+**Where it stands.** What comes in is built headless, on archives made by hand: a zip
+read safely as a place to adopt from (`crates/domain/or-project/src/place.rs`), the report of an
+adoption with what the map rules find (`crates/domain/or-maps/src/mapping.rs`), and
+`openrage-cli project adopt` with `--dry-run`
+([in full](../reference/Crate_Reference.md#domain-crates)). No screen, Library, ghost or placement
+by surface is built. The ruling of 2026-09-22 keeps that XML out
+([R37](#r37-metadata-and-xml-at-parity)).
+
+**Depends on.** [R70i](#r70i-selecting-and-moving-in-the-world); rulings 2 and 5 for the parts that
+wait.
+
+**Done when.** The Library lists a linked project's props and a synthetic install's by derived
+category; a ghost lands on the surface under the pointer, on bounds built by hand; a prop dragged
+from a linked project builds with only the files it needs; a locked file survives a build byte for
+byte and is named; a zip that reaches outside its folder is refused; and an import that breaks a map
+rule names the rule in its report. Once ruling 2 is answered yes, the Library draws a thumbnail for
+each prop it lists; once ruling 5 is answered yes, an exported XML imports as sources that build,
+and a file changed in the watched folder is imported again. A no closes that part in one line.
+
+### R70k Removing what the game placed
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** A deletion of an object the game placed, over R70h: the chain across files, the parents'
+counts, and a preview that names each file touched before the step; the copy of the script line that
+hides a model, which changes no file; a flag for objects that cannot be told from a twin, which are
+left; and the rule for a door left where a building was deleted. The building's collision is
+[R70l](#r70l-editing-collision)'s and its occluders
+[R70o](#r70o-parked-vehicles-zones-lights-and-occluders)'s: until they land, the preview says both
+stay ([brief](World_Editor_Plan.md#removing-what-the-game-placed-r70k)).
+
+**Where it stands.** The chain is built for a pack whose sources hold the maps: `plan` in
+`crates/domain/or-maps/src/delete.rs` gives one list of operations whose inverses put the files
+back, with the links of each child map renumbered and the parents' counts lowered, behind
+`openrage-cli maps delete`
+(`a_deletion_takes_the_chain_of_far_models_across_the_files_of_a_pack`, on packs built by hand),
+and a session does it whole or not at all
+(`crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`).
+Both installs keep every link over the deletions sampled and undone: 40 of 47 maps sampled on
+Legacy and 39 of 47 on Enhanced, one map in two hundred of the 9,243 and 9,210 that hold entities,
+the rest holding no entity that stands for no other
+(`deleting_an_entity_of_the_install_keeps_every_link`, 2026-11-25). A map that is not
+among the sources keeps its links, and the rules `parent-link-broken` and `lod-children-uncounted` name
+what a removal alone leaves. Left: the rule for a door, the preview on a screen and the Map
+screen's Delete through the plan; the game's maps a deletion reaches come in by
+[R70h](#r70h-one-vocabulary-of-world-edits)'s first edit
+([or-maps](../reference/Crate_Reference.md#domain-crates)).
+
+**Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits) and
+[R70i](#r70i-selecting-and-moving-in-the-world).
+
+**Done when.** Over an install, deleting any object with its chain leaves every link and count
+valid, as `executing_a_plan_keeps_every_link` holds for a map; the preview names every file the step
+then writes and no other; undo restores every file; twins are flagged and left; the copied script
+line names the model deleted; and a door inside the box of a deleted building is reported.
+
+### R70l Editing collision
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** A collision tool: pick polygons, a rectangle that takes the visible ones, delete, set a
+material from the game's list, move with shared corners following; the three versions of an area
+written together, to the source of R70w. In `or-world`, over R70g, the association of a building
+with its polygons. From it, the proposal of polygons to remove with a deleted building, as data the
+person edits before it applies, which leaves ground slabs and decals unless an option, off by
+default, takes them; and the option that moves a building's collision with it, which takes the
+polygons inside its box, leaves the ground and says what it moved
+([brief](World_Editor_Plan.md#editing-collision-r70l)).
+
+**Where it stands.** The headless half is built, on no install
+([in full](../reference/Crate_Reference.md#domain-crates)).
+`crates/domain/or-world/src/collision/association.rs` proposes the polygons under an object's box,
+`crates/domain/or-maps/src/collision.rs` takes them out, sets a material or moves them, with
+inverses, and `openrage-cli maps collision` runs both. ⚠ The versions of an area the game ships are
+not copies (`the_staged_versions_of_an_area_hold_polygons_of_their_own`), so keeping them alike
+awaits the owner. Left: the tool, its screen and the proposal inside a deletion or a move.
+
+**Depends on.** [R70f](#r70f-layers-of-what-the-game-hides),
+[R70i](#r70i-selecting-and-moving-in-the-world), [R70k](#r70k-removing-what-the-game-placed) and
+[R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources).
+
+**Done when.** An edited bound passes the validation that refuses what the game would misread, and
+reads back with the polygons expected; a polygon moved takes the corners it shares; the three
+versions stay alike in what was edited; on bounds built by hand the association takes a building's
+walls and leaves the ground, and with the option on takes the slab too; a building moved with its
+collision takes the polygons inside its box, leaves the ground and names what it moved; and undo
+restores every file.
+
+**Risk.** Which polygons belong to a building is a geometric judgement, so it proposes and never
+applies unseen.
+
+### R70m Interiors
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** The data part first: rooms, portals, entity sets and the interior's time cycle modifiers
+declared in the typed world family of `or-io`, with the engine's names (the plan's ruling 14). Then
+what needs no builder: the entity set switches and their script lines; placement inside an interior;
+the sound passages and the room audio shown read only, with a notice on a game interior that was
+moved or copied; and the health rules the brief names. The builder waits for ruling 2: the edit of a
+room, a portal and an entity set, a new interior, a copy and a second instance
+([brief](World_Editor_Plan.md#interiors-r70m)). The audio is [R70x](#r70x-the-audio-of-an-interior).
+
+**Where it stands.** The data part is built, and its install suite passes on both installs:
+`crates/io/or-io/src/meta/typed/interior.rs` types the four records, and a save refuses a broken
+interior ([in full, with what is left](../reference/Crate_Reference.md#io-crates)).
+`every_interior_of_an_install_reads_typed_states_the_members_typed_and_saves_to_its_fixed_point`
+reads 541 interiors in 2,763 type files of the Legacy install, and saves 424 of those type files to
+their fixed point with 0 problems; of the Enhanced install, 556 interiors in 2,876 type files and
+439 saved, with 0 problems (at `8853987c8` with this change). Nothing after the data part is built.
+
+**Depends on.** Nothing for the data part; [R70f](#r70f-layers-of-what-the-game-hides) and
+[R70i](#r70i-selecting-and-moving-in-the-world) for the rest; ruling 2 for the builder.
+
+**Done when.** The declared members are the ones the install states, held by the install suite;
+every interior of an install reads typed and saves to its fixed point; each health rule fires on an
+interior built to break it; a prop placed in a room builds into the type file and into no map; a
+switch's copied line names its entity set; and a moved game interior carries the notice. Once ruling
+2 is answered yes: a room's box moved takes its portals with it, a fitted portal's corners are in
+the order the game expects, and a new interior, a copy and a second instance each read back and pass
+the health rules. A no closes the builder in one line.
+
+### R70n Doors
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** The search of doors, first by the door extension an archetype carries, counted over an
+install, then by model name, saying how many models had no name; the pairing of double doors; the
+copy forms as templates in data, among them the door tuning entry and the line that gives it to a
+model; the arc and the clearance over R70g; a door that opens in the view and stops where its arc is
+blocked; the zone in which a door opens by itself drawn, with its tuning read; the fitted
+replacement; and the door rules: a door model of the project whose archetype lacks what the game's
+doors carry, a game door moved or deleted, two doors at one place, and a door whose arc is blocked
+([brief](World_Editor_Plan.md#doors-r70n)).
+
+**Where it stands.** The headless part is built on packs made by hand, and no screen uses it:
+the search, the pairing, the arc, the rules `doors-overlap` and `door-blocked`, the copy forms and
+`openrage-cli maps doors` (`crates/domain/or-world/tests/the_doors_of_a_map.rs`,
+`crates/domain/or-maps/tests/the_doors_of_a_pack.rs`;
+[what each reads](../reference/Crate_Reference.md#domain-crates)).
+
+Left: the count over an install; the door tuning with its entry, its line and its zone; a door
+that opens in the view; the fitted replacement; an interior's entity sets; the two rules that need
+the game; an arc held against the game's collision, where the verb holds it against the boxes of
+the other entities alone; a verb that writes a door form or reads a person's patterns; and the
+name patterns, the cuts of the swept box and the least turn, which are judgements to measure.
+
+**Depends on.** [R70g](#r70g-collision-as-a-query) and
+[R70i](#r70i-selecting-and-moving-in-the-world).
+
+**Done when.** Over an install the search counts the doors found by their extension, those found by
+name and the models with no name, in the slow tier; two leaves that face each other pair and two
+that do not stay single; a door behind furniture is reported blocked and the same door in an empty
+room is not, and in the view it stops at the furniture; a door's zone draws at the size its tuning
+states; each copy form names the door it was copied from; a fitted replacement stands inside the
+frame of the door it replaces; and each door rule fires on a map built to break it.
+
+### R70o Parked vehicles zones lights and occluders
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** The data part first: parked vehicles, timecycle zones, far lights and occluders declared
+in the typed world family of `or-io`. Then their place, move, size and fields, the far lights' two
+maps kept in step, and occlusion meshes drawn and removed as boxes are; the occluder fit as a
+proposal, which for an interior puts thin boxes in its outer walls and leaves its portals to the
+outside free; from the association of R70l, the proposal of the occluders over a deleted building;
+the occluder rules the brief names; the copy of a zone's centre for a script; and a game vehicle
+drawn on a selected parking spot
+([brief](World_Editor_Plan.md#parked-vehicles-zones-lights-and-occluders-r70o)).
+
+**Where it stands.** Not built. `crates/domain/or-world/src/map_data.rs` reads a box occluder, the
+stored box of an occlusion mesh and a parked vehicle's position and one length, counts the timecycle
+zones and tests whether far lights are present; a save carries each record as it came. Which
+members an install states for them is unmeasured.
+
+**Depends on.** Nothing for the data part; [R70f](#r70f-layers-of-what-the-game-hides),
+[R70i](#r70i-selecting-and-moving-in-the-world), [R70k](#r70k-removing-what-the-game-placed) and
+[R70l](#r70l-editing-collision) for the rest.
+
+**Done when.** The declared members are the ones the install states, held by the install suite;
+every record of an install reads typed and saves to its fixed point; a record placed, moved and
+sized reads back so; the far lights' two maps agree after an edit; a zone's copied centre parses
+back to it; a fitted box lies inside the collision it was fitted to, on a building built by hand,
+and an interior's fitted boxes leave its outside portals free; the proposal over a deleted building
+names the occluders inside its box and no other; each occluder rule fires on a box built to break
+it; and a selected parking spot draws the vehicle its record names.
+
+### R70p Roads scenario points and the navmesh
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** The edit of a road node's fields and lanes, and nodes and links added and removed.
+Removing a node renumbers its region, so every region that names a renumbered node is written in the
+same step and named before it, and a node another region names is disabled and not deleted. The edit
+of a scenario point, in regions that exist, with its chain following. The rules the brief names, for
+a node, a link, a scenario point, a building added on walkable ground and a deleted building whose
+floors stay in the navmesh. No navmesh is authored
+([brief](World_Editor_Plan.md#roads-scenario-points-and-the-navmesh-r70p)).
+
+**Where it stands.** Part one is built, with no screen: operations with inverses on the road
+graph and rules over a set of regions, in `crates/domain/or-maps/src/roads/`, behind
+`openrage-cli maps roads` ([in full](../reference/Crate_Reference.md#domain-crates)). ⚠ The rule
+that a node another region names is disabled cannot be built: the file states no state that
+disables a node, so the request is refused, such a node is neither taken out nor disabled, and
+that Done-when clause awaits the owner. A link's lanes are not named either: its word is set
+whole. A changed `.ynd` is held as a source whose form awaits the owner's word
+([R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources)), and the list of operations
+follows that form: a node's address written `region:index`, the flag words stated whole and one
+document a region. Left: scenario points, the navmesh rules, every screen and the install suite; a
+line of the acceptance sheet and a step of its recipe for an edited path region, without which a
+build that ships one says nothing of acceptance; the digest of the documents an operation applies
+to, as a map operation's `expects`, before anything holds an inverse across edits; and a rule and a
+refusal for a node placed outside the cell of its region, which no rule compares today.
+
+**Depends on.** [R70f](#r70f-layers-of-what-the-game-hides),
+[R70i](#r70i-selecting-and-moving-in-the-world) and
+[R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources).
+
+**Done when.** An edited region and every region that names one of its nodes read back with every
+link resolving; a deleted node leaves no link to it in any region; a node another region names is
+disabled and not deleted; a scenario point moved takes its chain, and its region reads back; and
+each rule fires on a file built to break it.
+
+**Risk.** A link names its far node by region and index, so renumbering one region breaks its
+neighbours' links unless they are written in the same step.
+
+### R70q A build a server and a story install take
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** In a map's contribution to a build, the manifest of its maps, the line that declares the
+resource a map, and the line for the server's configuration shown after a build. For a story pack,
+the maps and the type files handed over at a path through an archive's name: the row adds that path
+in the Map content, the contents the install's packs state when they register an archive of maps,
+and a type file named inside that archive, and the cell unlocks (the plan's ruling 15). A map past
+its extents is split at the build, by area, its links carried across the parts
+([brief](World_Editor_Plan.md#a-build-a-server-and-a-story-install-take-r70q)).
+
+**Where it stands.** Part one is built; nothing ran against an install or a game. A Map content
+hands a build `stream/_manifest.ymf`, stating for each map the type files `or-world`'s derivation
+finds (`a_build_writes_a_manifest_that_reads_back_naming_the_type_file_its_map_needs`), and the
+line `this_is_a_map`. The manifest is not made from nothing:
+`crates/domain/or-world/src/manifest_build.rs` types it by the manifests of the game a content
+keeps in its `manifests` folder (`openrage-cli maps keep-manifest`) and copies each entry from the
+one they state for a map of that name, since nothing derives the flags of an entry. A map taken from the game keeps the entry the game states
+(`a_map_taken_from_the_game_keeps_the_entry_the_game_states_where_the_derived_one_differs`); a map
+none states, such as one made from nothing, gets no entry, and a note of the plan names it.
+`openrage-cli maps verify` fails a build whose manifest is gone or is another document. Of the
+1,801 `.ymf` staged in the metadata corpus, 1,798 read as a manifest a build writes from, and the
+185 that state a map are written back stating what they state
+(`every_staged_manifest_of_the_game_is_written_back_stating_what_it_states`, 2026-11-25).
+
+⚠ A kept manifest is a compiled file of the game held whole in a project, which the ruling of
+2026-10-09 says a project never holds
+([rulings in force](Workbench_Plan.md#rulings-in-force)); whether it stays, or the
+flags and the layout it is kept for are held another way, is the owner's to rule on. Until then it
+is treated as a source taken from the game is: `openrage-cli project check-sharing` names each one
+and exits 1, and the managed block of the project's `.gitignore` leaves the folder out
+(`a_manifest_of_the_game_a_maps_content_keeps_fails_the_sharing_check_and_is_ignored_by_git`).
+
+For a story pack the content hands its files over inside one nested archive, registered as map
+data, each type file asked for by the `.ityp` name of the archive's folder
+(`a_story_pack_holds_its_maps_in_the_nested_archive_its_content_document_registers`). The cell
+stays locked: the folder of that archive, what a pack states of an archive of type files and the
+change set that turns map data on are unmeasured
+([maps in a pack](../features/Dlc_Pack_Creation.md#maps-in-a-pack)).
+
+Left: the line for the server's configuration; the split, which
+`crates/domain/or-world/src/partition.rs` plans by level of detail and does not apply; the lists a
+derivation does not give, written empty; one manifest for two Map contents of a build, refused
+today as one path; keeping a manifest from the editor; the three measurements; and the install
+suite, written and never run ([the writer in full](../reference/Crate_Reference.md#domain-crates)).
+
+**Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits).
+
+**Done when.** A project's build writes a `_manifest.ymf` that reads back and names what the
+project's maps place, seen failing on a build that writes none; the resource's manifest declares it
+a map, and the line shown after a build names the resource; a changed game map whose derived lists
+differ from the shipped ones keeps the shipped entry; a built pack lists its maps where the
+install's own packs list theirs; the cell says yes only with the archive written; every link of a
+split map resolves; two builds are the same bytes, and one added object changes only the part that
+holds it.
+
+### R70r Other resources of the server
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** The scan of a folder of built resources into what each ships and claims, a server's or the
+builds of a person's other projects; a server's folder mounted as the read-only layer of the world's
+stack, in `or-title`; the finding that names two resources shipping one file, a rule of the Problems
+panel raised by the edit that imports such a file and again before a build writes; the three-way
+merge of a map with the game's file as base; a finding for a source whose base is no longer the
+install's file when the index is rebuilt; `openrage-cli project check-server` and
+`openrage-cli project check-resource`, with the findings the brief names; and a warning for a build
+folder the server does not look in
+([brief](World_Editor_Plan.md#other-resources-of-the-server-r70r)).
+
+**Where it stands.** The check of one resource folder, the scan of a server's resources and the
+three-way merge of a map are built
+([each in full, with what is open](../reference/Crate_Reference.md#domain-crates)).
+`crates/domain/or-project/src/resource.rs` reads any resource folder as a server will: the manifest
+is never run, and each row of `RULES` fires on a folder built to break it and on no other (`each_rule_fires_on_the_folder_built_to_break_it_and_on_no_other`).
+`openrage-cli project check-resource` prints the findings and exits 1 on an error; `--game` ran
+on no install.
+
+`crates/domain/or-project/src/server.rs` reads a server's resources folder, each file once
+(`a_scan_opens_each_file_once_and_a_second_scan_gives_the_same_findings_in_the_same_order`). Its
+rules find two resources that stream one name, two that declare one archetype and two folders of
+one resource name, and say which starts last where a configuration tells. `concerning` and
+`placement` say what a build would write again and whether a server looks where it is written; no
+build calls them. `openrage-cli project check-server` and `check-build` print both.
+
+`crates/domain/or-maps/src/merge.rs` merges two copies of a map, or of a type file by name, against
+the file both were made from: a change one side made is taken, and the rest is a conflict a policy
+answers with ours, theirs or stop. Twins are never paired
+(`twins_one_side_moved_are_a_conflict_that_names_them_and_nothing_is_merged_for_them`), and a
+merged map the rules find in error is refused. `openrage-cli maps merge` runs it over three files.
+⚠ An added entity whose guid is taken gets one more than the largest of the three files: that rule
+is the owner's, as are three readings the reference lists. A link into the parent map is merged as
+the number it is, and no map of an install was merged.
+
+Open: which of two copies a server loads is never said, and what a category and the configuration
+commands are was read from no server. Left: the server as a layer of the mount, the Problems
+panel's rule raised by the edit that imports a file, and the finding for a base that is no longer the install's. Nothing here says the game loads a file.
+
+**Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn),
+[R70h](#r70h-one-vocabulary-of-world-edits) and
+[R70q](#r70q-a-build-a-server-and-a-story-install-take).
+
+**Done when.** Two resources that change different objects of one map merge with no conflict, and
+two that move the same object report it; two that ship one bound are named and not merged; each
+finding of the resource check fires on a resource built to break it, and a sound one passes; a
+synthetic resources folder that ships one map draws it in place of the install's; importing a map
+another resource ships raises the finding before any build; a source whose base is no longer the
+rebuilt index's file is a finding that offers the merge; and a build folder under a folder that is
+not a category is warned about.
+
+### R70s The model workshop
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** In parts, each on its own check. First, operations on a model source: list its parts, each
+hidden or shown alone; remove a connected part in every level; move and copy a part; add a part
+copied from another model; add a box or a plane with a material of the model; draw the neighbouring
+objects around it. Second, for a game model, the count of placements that use it and Save as a new
+prop: the model under a new name with a type file that holds a copy of its archetype, the entity the
+workshop was opened from swapped to it. Third, after the plan's ruling 13, a prop made from an
+image. Last and marked experimental, an opening cut into a wall
+([brief](World_Editor_Plan.md#the-model-workshop-r70s)).
+
+**Where it stands.** Not built. A model is a source of glTF and JSON that recooks
+([Source_Format_Design.md](Source_Format_Design.md)), and a drawable made from nothing is held back
+in [Workbench_Plan.md](Workbench_Plan.md#held-back).
+
+**Depends on.** [R70i](#r70i-selecting-and-moving-in-the-world); ruling 13 for the prop from an
+image.
+
+**Done when.** A model with a part removed recooks, reads back and draws, the part gone from every
+level; a part moved, a part copied in from another model and a box added each recook and read back
+where they were put; a part hidden draws nothing and changes no source; the count of placements is
+what Placed by lists; after Save as a new prop the game's archetype still resolves to the game's
+file and one entity names the new one; and a wall with an opening cut recooks and reads back with
+the opening. Once ruling 13 is answered yes, a prop made from an image reads back as a drawable with
+its texture; a no closes that part in one line.
+
+### R70t Peds cutscenes life and walking the map
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** In parts, each on its own check. First a browser of peds with outfits and clips over the
+Animation workspace, which copies a ped's model name and the lines that play the clip shown. Then a
+player of a cutscene's tracks in the world, with no sound. Then what a scenario point would spawn at
+the hour shown. Last, after the plan's ruling 2, a character that walks, climbs and swims over the
+collision query, labelled on screen as a check of the path and not as the game's own movement
+([brief](World_Editor_Plan.md#peds-cutscenes-life-and-walking-the-map-r70t)).
+
+**Where it stands.** Not built. The Animation workspace plays a clip on a skinned ped, the Wardrobe
+dresses one, and a `.cut` opens as metadata ([R35](#r35-the-remaining-formats)).
+
+**Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn) and
+[R70g](#r70g-collision-as-a-query); ruling 2 for the walk.
+
+**Done when.** The browser lists the peds of a synthetic install, and the copied lines name the clip
+shown; a cutscene's cuts fall at the times its file states; and a point lists what its type and
+model set allow at the hour shown, on a region built by hand. Once ruling 2 is answered yes, the
+character stops at a wall and steps a kerb on bounds built by hand; a no closes the walk in one
+line.
+
+### R70u Working together
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** Three parts, each usable alone. First, the merge of R70r wrapped as the driver Git calls
+for a map source, so a shared repository merges by object; it merges a changed game map only where
+the repository holds the sources taken from the game (the plan's ruling 17). Second, a session on a
+direct connection: the host orders the operations of R70h and sends them, with each person's
+selection and camera; what a person holds selected is locked to the others; the host admits each
+person, a guest whose stack differs from the host's is refused with what differs, only the host
+builds, and a person can go to another's view; a person's Undo takes back their own last step,
+through the host; a guest who lost the session joins again; the host sets how many may join. Third,
+with ruling 6, a relay that forwards bytes it cannot read
+([brief](World_Editor_Plan.md#working-together-r70u)).
+
+**Where it stands.** Not built. A source taken from the game is left out of a repository by default
+([commit policy](Source_Format_Design.md#commit-policy)). Nothing reaches the network unless a
+person asks: the one client in the tree is behind `openrage-cli script download-natives`.
+
+**Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits) and
+[R70r](#r70r-other-resources-of-the-server); rulings 6 and 17.
+
+**Done when.** The driver merges two branches that change different objects of one map; two edits
+that cross are ordered the same for every person; a person who joins late has the same sources byte
+for byte; an operation on a thing another person holds is refused and names who holds it; a guest
+with a different stack is refused with what differs; a guest who asks for a build is refused; a
+person's Undo leaves another's step in place; and the relay forwards a session's bytes between two
+processes and decodes none.
+
+### R70v The keys settings and guide of a mapper
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** Presets of keys, with one that matches CodeWalker's, and the place of a binding in
+`src/ui/shortcuts.rs`; the settings a mapper changes on one page (mouse sensitivity, field of view,
+an inverted vertical axis, the movement letters of the keyboard's layout, the ground grid, the snap
+steps and the layer radii), with Restore defaults; a panel's title carrying a sentence on its game
+term as its hover; the sentences of the map rules wrapped into the catalogs; a tour of the world; a
+chapter of the guide; and a Map template that opens on the world
+([brief](World_Editor_Plan.md#the-keys-settings-and-guide-of-a-mapper-r70v)).
+
+**Where it stands.** Presets of keys and the place of a binding are built, ahead of this row,
+since the tools of [R70i](#r70i-selecting-and-moving-in-the-world) need both
+([in full](../reference/Crate_Reference.md#panels-docks-and-panel-state)). Settings ▸ Keyboard
+shortcuts offers OpenRage's own preset and CodeWalker's, which holds one binding, Ctrl+N for New
+project…, until its tools and camera have commands; a key the person chose stays over a preset. A
+conflict is one key for two commands read in one place
+(`no_two_commands_of_the_table_read_in_one_place_share_a_key`). Presets are the plan's
+default, which the entry of 2026-10-03 left to the owner
+([Project_Context.md](Project_Context.md#the-ux-reviews-plan-is-the-apps-next-work-2026-10-03)).
+Left: a mapper's settings page, a panel title's hover, the map rules' catalog sentences,
+the tour, the guide's chapter and the template.
+
+**Depends on.** [R70i](#r70i-selecting-and-moving-in-the-world).
+
+**Done when.** No preset binds one key to two commands of one place; every step of the tour points
+at a control that is drawn; each setting of the page changes what it names in a frame drawn with no
+window, and Restore defaults puts each back; a finding of a map rule draws in French; a panel's
+title shows its sentence on hover; the guide's chapter names no control that is not drawn; and a
+project made from the Map template opens on the world.
+
+### R70w A changed bound and a changed path region as sources
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** The form in which a project holds a bound and a path region it changed: the source, the
+base it was taken from, its cook and its compare against that base, in `or-source` beside the kinds
+of `crates/domain/or-source/src/game_import.rs`. A project holds no compiled game file, so
+[R70l](#r70l-editing-collision) and [R70p](#r70p-roads-scenario-points-and-the-navmesh) write to
+this form. It draws nothing
+([brief](World_Editor_Plan.md#a-changed-bound-and-a-changed-path-region-as-sources-r70w)).
+
+**Where it stands.** The source, the base and the cook are built in `or-source`, with no content
+kind and no screen; the compare against the base is not. `crates/domain/or-source/src/bounds.rs`
+makes `<name>.bounds.src` of a `.ybn`, its triangles as a glb and what a glb cannot say as
+`bounds.json`, and `crates/domain/or-source/src/paths.rs` makes `<name>.paths.src` of a `.ynd`, one
+`paths.json` of its nodes, links and junctions. Each keeps the game's file as its base, is a row of
+`or_source::game_import::KINDS`, cooks to the canonical save of its file while untouched and is left
+out of a build until it changes
+(`a_bound_taken_from_the_game_is_left_out_of_a_build_until_a_polygon_changes`,
+`a_path_region_taken_from_the_game_is_left_out_of_a_build_until_its_document_is_edited`).
+[Source_Format_Design.md](Source_Format_Design.md#bounds-and-path-regions) states both forms, what
+each refuses and what a rebuilt bound keeps of its file.
+
+On the staged corpus, with no install: 21 of 21 `.ybn` and 259 of 259 `.ynd` became a source that
+cooks to its canonical save (`every_corpus_ybn_becomes_a_source_that_cooks_to_its_canonical_save`,
+`every_corpus_ynd_becomes_a_source_that_cooks_to_its_canonical_save`, 2026-11-25), and each of the
+77991 nodes is addressed by its place in the one region of its file
+(`every_node_of_a_corpus_ynd_is_addressed_by_its_place_in_one_region`, 2026-11-25).
+
+Left: the compare of a source against its base, as the polygon removed or the field changed; the
+round trip over an install, which no suite walks; the form of a path region, which awaits the
+owner's word; a child added to or removed from a composite, and the changed meshes the source
+refuses by name; and nothing was run in the game.
+
+**Done when.** Every `.ybn` and `.ynd` of an install becomes a source and cooks back to the
+canonical save of its file, in the slow tier and named in the skip ledger without an install; an
+untouched source is left out of a build; a source with one polygon removed compares to its base as
+that polygon; and a path region with one node's field changed compares to its base as that field.
+
+### R70x The audio of an interior
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** First, in `or-io`, the authoring of the game data items of an interior and its rooms in a
+`.rel`, with a save that reaches a fixed point. Then the occlusion file written from the rooms and
+portals of R70m, through a donor's type table. Then the audio lines in the resource's manifest. A
+typed root for the occlusion metadata waits for the plan's ruling 16
+([brief](World_Editor_Plan.md#the-audio-of-an-interior-r70x)).
+
+**Where it stands.** Not built. A `.rel` item reads typed and no typed field is edited
+([R34b](#r34b-the-audio-metadata-schemas)), and the members of the occlusion metadata are spelled as
+hashes ([metadata](Source_Format_Design.md#metadata)). How the game finds an interior's occlusion
+file is not measured.
+
+**Depends on.** [R70m](#r70m-interiors).
+
+**Done when.** A `.rel` with an item added reads back typed and saves to its fixed point; the
+occlusion file of an install's interior, written again from its rooms and portals, reads back
+through the reader that opens the game's; and a resource with an interior registers both files.
+
+### R70y What a project changed and putting it back
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** The comparison of a map source with its base as data: entities added, moved, deleted and
+changed in a field, and those that cannot be told from a twin, listed as undecided and never as
+deleted; `openrage-cli maps changes`, which prints it; the panel that lists it, with counts, a
+filter and a click that selects the object or goes to where a deleted one stood, a deleted object
+drawn in the world as an outline while its row is selected; the operation that puts one object or
+one deleted building back as the base has it, with the far models a deletion took, as one step; and
+Discard changes to this map, after a question that counts them
+([brief](World_Editor_Plan.md#what-a-project-changed-and-putting-it-back-r70y)).
+
+**Where it stands.** The comparison and the verb are built, on synthetic maps, with no screen.
+`crates/domain/or-maps/src/changes.rs` compares two typed roots of one map by object: the entities
+added, the entities deleted and each one both hold with what it states differently, named (moved,
+turned, scaled, another archetype, flags, parent, guid, the other typed members by the engine's
+names). `types_changes` says the same of the archetypes of a type file, with the entities of an
+interior, and what a file states of itself is compared member by member. An entity is found by its
+guid, else by its archetype at the same pose, else by the nearest; a twin that moved is listed as
+ambiguous, the data's word for the plan's undecided, and never as moved
+(`two_twins_with_one_archetype_and_one_guid_are_ambiguous_when_one_moved_and_never_a_move`), and
+the parent links are compared through the matching. `source_changes` cooks a source and the base
+it keeps (`compile_base` in `crates/domain/or-source/src/metadata.rs`), and
+`openrage-cli maps changes` prints it, as data with `--json`
+(`crates/domain/or-maps/tests/what_a_map_changed_of_its_base.rs`;
+[the matching in full](../reference/Crate_Reference.md#domain-crates)).
+
+⚠ Two readings are the owner's to rule on. The nearest match believes a place over a guid
+(`an_entity_taken_out_and_another_of_its_archetype_put_in_read_as_one_moved_with_another_guid`).
+And a new entity takes one more than the largest guid of its map (`free_guid` in
+`crates/domain/or-world/src/create.rs`), so one added after the entity with the largest guid was
+deleted takes that guid and compares as one entity changed, held as it stands through the
+operations
+(`an_entity_added_after_the_one_with_the_largest_guid_went_takes_its_guid_and_compares_as_that_entity_changed`). What no typed
+member names (a car generator, an occluder, a room, a portal, an extension) is said to differ and
+is not listed. Left: the panel, the outline, the operation that puts an object back, Discard, and
+a map of an install compared.
+
+**Depends on.** [R70h](#r70h-one-vocabulary-of-world-edits) and
+[R70i](#r70i-selecting-and-moving-in-the-world).
+
+**Done when.** A source whose map moves one entity, deletes one and adds one compares to exactly
+those three, and two twins swapped compare as undecided; `openrage-cli maps changes` prints the
+three; the panel lists the three, and a click on the deleted one goes to where it stood and draws
+its outline; putting each back leaves the source equal to its base; a deleted building put back
+takes its far models with it in one step of Undo; and Discard changes to this map leaves the source
+equal to its base.
+
+### R70z A browser of models and vehicles
+
+[↑ checklist](#phase-11--the-gta-v-world-editor)
+
+**What.** The browser of every object type and every vehicle of the game: filters by class, by pack
+and by size, favourites, the models opened last, back and forward; where the model shown is placed,
+nearest first; a command that saves the view of a model as a PNG, with a transparent or a keying
+background, a size and preset views; and for a vehicle, the install's vehicle colours and variations
+read in `or-io`, the vehicle drawn in the combinations the game plans, the lines that paint it in
+the colours shown, copied, and its sheet. The grid of thumbnails waits for the plan's ruling 2
+([brief](World_Editor_Plan.md#a-browser-of-models-and-vehicles-r70z)).
+
+**Where it stands.** Not built. The thumbnail cache exists (`src/render/thumbnails.rs`), Placed by
+answers which maps place a model, and nothing in the tree interprets the install's vehicle colours
+and variations.
+
+**Depends on.** [R70e](#r70e-find-anything-and-go-there) and
+[R70j](#r70j-a-library-of-props-and-what-comes-in); ruling 2 for the thumbnails.
+
+**Done when.** A filter by class lists the vehicles a synthetic install's data puts in that class
+and no other; a favourite and the models opened last are there after a restart; the placements of a
+model are listed nearest first; a saved picture has the size asked and is transparent where nothing
+is drawn; a synthetic install's vehicle draws in each combination its data lists, the copied lines
+name the colours shown, and its sheet states what that data states. Once ruling 2 is answered yes,
+the grid draws a thumbnail for each model listed; a no closes that part in one line.
+
 ---
 
 ## Appendix A — union coverage index
@@ -9556,6 +10614,22 @@ merges from #415 to #451.
    is the consent, with a write to the base game still behind its question and its backup. Until the
    owner says so a save asks, and replacing a texture and saving it for the game stays at four
    actions where the review's target is three.
+8. **[R70](#r70-the-gta-v-world-editor): the rulings of the world editor plan.** The plan of
+   2026-11-25 asks the owner for rulings and gives each a default
+   ([the rulings asked](World_Editor_Plan.md#rulings-asked-of-the-owner), which owns the list). The
+   owner said that day to build the plan
+   ([recorded](Project_Context.md#the-world-editor-plan-is-built-in-parallel-lanes-2026-11-25)), so
+   a row takes a default until a sentence reverses it, except where a default reopens a dated
+   decision or builds what [Workbench_Plan.md](Workbench_Plan.md#held-back) holds back. Those parts
+   wait for the owner: the interior builder, the walk mode and the thumbnail browser in the app and
+   not in a plugin (ruling 2); the XML of a Blender export read on import (ruling 5); a story pack
+   installed into the mods folder, whose default is no (ruling 7); a drawable made from nothing
+   (ruling 13); and a typed root declared by hand outside the families the record names (ruling 16).
+   Among the defaults in force, these fill what a dated entry or a decision sheet left open: key
+   presets and the camera's pointer (ruling 8), the interior records declared in `or-io` and a story
+   pack's nested archive of maps (rulings 14 and 15), a live session that reaches the network when a
+   person starts one (ruling 6), and a changed game map left out of a repository by default (ruling
+   17).
 
 ## Deferred and known gaps
 

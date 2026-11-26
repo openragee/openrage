@@ -70,3 +70,5 @@ or-test-support.workspace = true
 or-particle.workspace = true
 # The zlib chunks of the synthetic GTA VI archive the `mcp` archive tools are tested on.
 flate2.workspace = true
+# The archive of a mapping the tests of `project adopt` write, with the crate that reads it.
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }

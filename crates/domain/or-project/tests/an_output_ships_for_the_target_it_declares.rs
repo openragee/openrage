@@ -67,6 +67,68 @@ fn an_enhanced_output_ships_a_legacy_dictionary_as_an_enhanced_one_and_the_rest_
 }
 
 #[test]
+fn a_file_an_asset_escrow_locks_ships_as_it_came_whatever_the_target_and_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    // No layout can be read off a locked file, so there is none to move it from: what follows the marker is no dictionary.
+    let locked = [
+        or_project::resource::ESCROW_MARKER.as_slice(),
+        b"what the escrow wrote",
+    ]
+    .concat();
+    let files = [
+        ("stream/road.ytd", legacy_ytd("road")),
+        ("stream/sealed.ytd", locked.clone()),
+        ("stream/sealed.ydr", locked.clone()),
+    ];
+    let project = declare(
+        &dir.path().join("pack"),
+        &files,
+        Value::Null,
+        output(Some("enhanced")),
+    );
+    let plans = planned(&project);
+    assert!(plans[0].is_buildable(), "{:?}", plans[0].problems);
+
+    let (built, stopped) = build_all(&plans, &dir.path().join("out"));
+    assert!(stopped.is_none(), "{stopped:?}");
+
+    let written = snapshot(&built[0].folder);
+    assert_eq!(written["stream/sealed.ytd"], locked);
+    assert_eq!(written["stream/sealed.ydr"], locked);
+    assert_eq!(
+        layout_of("ytd", &written["stream/road.ytd"]),
+        Generation::Gen9,
+        "the dictionary beside them still moves"
+    );
+    let found = &built[0].verification;
+    assert_eq!(found.problems, Vec::<String>::new());
+    assert_eq!(found.locked, ["stream/sealed.ydr", "stream/sealed.ytd"]);
+    assert!(
+        found.reloaded.iter().all(|r| !r.path.contains("sealed")),
+        "no reader opened a locked file: {:?}",
+        found.reloaded
+    );
+    assert_eq!(verify(&plans[0], &built[0].folder), *found);
+
+    // A locked file that is not the one the plan names is a problem, as a copy that differs is.
+    std::fs::write(
+        built[0].folder.join("stream/sealed.ydr"),
+        [&locked[..], b"!"].concat(),
+    )
+    .unwrap();
+    let changed = verify(&plans[0], &built[0].folder);
+    assert_eq!(changed.locked, ["stream/sealed.ytd"]);
+    assert!(
+        changed
+            .problems
+            .iter()
+            .any(|p| p.contains("stream/sealed.ydr") && p.contains("differs")),
+        "{:?}",
+        changed.problems
+    );
+}
+
+#[test]
 fn a_legacy_output_ships_an_enhanced_dictionary_as_a_legacy_one() {
     let dir = tempfile::tempdir().unwrap();
     let files = [("stream/sky.ytd", enhanced_ytd("sky"))];

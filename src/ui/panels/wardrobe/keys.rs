@@ -23,9 +23,9 @@ pub(super) fn handle(
             i.key_pressed(egui::Key::ArrowUp),
             i.key_pressed(egui::Key::Enter),
             i.modifiers.shift,
-            i.events
-                .iter()
-                .find_map(|event| shortcuts::action_for_event(event, &state.prefs)),
+            i.events.iter().find_map(|event| {
+                shortcuts::action_for_event(crate::ui::commands::Place::Lists, event, &state.prefs)
+            }),
         )
     });
     if down || up {

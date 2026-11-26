@@ -15,7 +15,7 @@ use crate::asset::{
     folder_name, new_id, parse_folder_name, sha256_hex, unsafe_file_name, AssetManifest, How,
     Source, MANIFEST,
 };
-use crate::{cook, fragment, git, metadata, models, particles, textures, Problem};
+use crate::{bounds, cook, fragment, git, metadata, models, particles, paths, textures, Problem};
 
 /// Where an import writes its sources, beside the project file.
 pub const SOURCES_DIR: &str = "sources";
@@ -260,6 +260,38 @@ pub const KINDS: &[Row] = &[
         },
         keeps_what_it_cannot: false,
     },
+    Row {
+        extension: "ybn",
+        kind: bounds::KIND,
+        extract: |bytes, name, parent, facts| {
+            bounds::extract(
+                bytes,
+                name,
+                parent,
+                &textures::Extraction {
+                    from_game: facts.from_game,
+                    virtual_path: facts.virtual_path.as_deref(),
+                },
+            )
+        },
+        keeps_what_it_cannot: true,
+    },
+    Row {
+        extension: "ynd",
+        kind: paths::KIND,
+        extract: |bytes, name, parent, facts| {
+            paths::extract(
+                bytes,
+                name,
+                parent,
+                &textures::Extraction {
+                    from_game: facts.from_game,
+                    virtual_path: facts.virtual_path.as_deref(),
+                },
+            )
+        },
+        keeps_what_it_cannot: true,
+    },
 ];
 
 /// A metadata file as a source.
@@ -427,7 +459,7 @@ pub fn import_watched(
 /// How the note that names the kinds of file an import kept begins.
 pub const KEPT_NOTE: &str = "Kept as compiled files, not sources: ";
 
-/// Names the kinds of file an import kept as compiled files, so a report says which formats still have no source: `Kept as compiled files, not sources: 2 .ybn, 1 .yft`.
+/// Names the kinds of file an import kept as compiled files, so a report says which formats still have no source: `Kept as compiled files, not sources: 2 .ycd, 1 .yft`.
 fn kept_note(files: &[FileReport]) -> Option<String> {
     let mut kinds: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for file in files
@@ -1106,7 +1138,7 @@ impl Index {
 ///
 /// ⚠ A source is not entered, `build/`, `vfs/` and a hidden folder are left alone, and a link is not followed, so
 /// no walk loops and nothing OpenRage wrote is read back as a source.
-fn source_folders(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn source_folders(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut visited = 0;
     let mut stack = vec![(root.to_path_buf(), 0)];
@@ -1226,7 +1258,10 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// A digest of a file, or of a folder's names and the bytes of every file in it.
+/// What a file browser writes into a folder a person opens, which is no part of what a tool made there or a person changed.
+pub const LEFT_BY_A_FILE_BROWSER: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
+
+/// A digest of a file, or of a folder's names and the bytes of every file in it but those of [`LEFT_BY_A_FILE_BROWSER`].
 pub fn tree_digest(path: &Path) -> io::Result<String> {
     let mut hash = Sha256::new();
     digest_into(&mut hash, path, "")?;
@@ -1252,6 +1287,7 @@ fn digest_into(hash: &mut Sha256, path: &Path, name: &str) -> io::Result<()> {
         let mut names: Vec<String> = std::fs::read_dir(path)?
             .map(|e| e.map(|e| e.file_name().to_string_lossy().into_owned()))
             .collect::<io::Result<_>>()?;
+        names.retain(|child| !LEFT_BY_A_FILE_BROWSER.contains(&child.as_str()));
         names.sort();
         for child in names {
             digest_into(hash, &path.join(&child), &format!("{name}/{child}"))?;

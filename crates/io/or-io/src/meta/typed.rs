@@ -5,12 +5,14 @@
 //!
 //! ⚠ A record keeps the value tree it was read from, and a save writes the
 //! typed members back into that tree: what no member names (enums,
-//! extensions, occluders, rooms, portals, entity overrides) reaches the file
-//! as it arrived, and an untouched save is the tree's own save.
+//! extensions, occluders, entity overrides) reaches the file as it arrived,
+//! and an untouched save is the tree's own save.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
+use std::rc::Rc;
 
 use crate::decl::{File, HasOrigin, Origin};
 use crate::decl::{Vec2, Vec3, Vec4};
@@ -129,6 +131,18 @@ macro_rules! narrow_member {
 
 narrow_member!(u8, u16);
 
+impl Element for u32 {
+    fn read_element(value: &Value) -> Result<Self, String> {
+        <Self as Member>::read(value)
+    }
+
+    fn write_element(&self, was: Option<&Value>, sibling: Option<&Value>) -> Result<Value, String> {
+        let mut value = was.or(sibling).cloned().unwrap_or(Value::UInt(0));
+        self.write(&mut value)?;
+        Ok(value)
+    }
+}
+
 impl Member for i32 {
     fn read(value: &Value) -> Result<Self, String> {
         match value {
@@ -227,6 +241,18 @@ impl Member for Vec3 {
             other => *other = Value::Vec3(xyz),
         }
         Ok(())
+    }
+}
+
+impl Element for Vec3 {
+    fn read_element(value: &Value) -> Result<Self, String> {
+        <Self as Member>::read(value)
+    }
+
+    fn write_element(&self, was: Option<&Value>, sibling: Option<&Value>) -> Result<Value, String> {
+        let mut value = was.or(sibling).cloned().unwrap_or(Value::Vec3([0.0; 3]));
+        self.write(&mut value)?;
+        Ok(value)
     }
 }
 
@@ -405,7 +431,8 @@ fn member<T: Member>(inst: &MetaInstance, owner: &str, name: &str, init: T) -> R
 }
 
 /// Writes a typed member into `inst`; `arrived` says `inst` is the tree the
-/// record was read from, whose type table a member it lacked is not in.
+/// record was read from, or one conformed to the class its document states,
+/// whose type table a member it lacked is not in.
 fn put<T: Member + PartialEq>(
     inst: &mut MetaInstance,
     name: &str,
@@ -496,26 +523,30 @@ fn empty(library: &SchemaLibrary, ty: &FieldType, init: Option<&Literal>) -> Res
     })
 }
 
+/// Why a `type_name` built here is not saved where nothing gives its class.
+fn no_class_to_build(type_name: &str) -> String {
+    if !crate::meta::has_default_library() {
+        format!(
+            "no schema snapshot is installed, so a `{type_name}` built or re-typed here cannot be saved; an array grows only by a copy of an element the file already holds"
+        )
+    } else {
+        format!(
+            "a `{type_name}` built or re-typed here is saved against the installed schema, which does not declare it"
+        )
+    }
+}
+
 /// Gives `inst` exactly the members the installed schema declares for its
 /// type: the ones it holds are kept, the rest are built empty.
 ///
 /// ⚠ A user's machine has no snapshot, so a record built here is refused
 /// there: an array grows only by a copy of an element the file holds, which
-/// keeps the tree it was read from and is never conformed.
+/// keeps the tree it was read from and is never conformed. A record of a world
+/// document is the exception, conformed to what [`world_types::Saving`] gives.
 fn conform(library: &SchemaLibrary, inst: &mut MetaInstance) -> Result<(), String> {
-    let resolved = library.resolve_any(&inst.type_name).ok_or_else(|| {
-        if !crate::meta::has_default_library() {
-            format!(
-                "no schema snapshot is installed, so a `{}` built or re-typed here cannot be saved; an array grows only by a copy of an element the file already holds",
-                inst.type_name
-            )
-        } else {
-            format!(
-                "a `{}` built or re-typed here is saved against the installed schema, which does not declare it",
-                inst.type_name
-            )
-        }
-    })?;
+    let resolved = library
+        .resolve_any(&inst.type_name)
+        .ok_or_else(|| no_class_to_build(&inst.type_name))?;
     let declared: Vec<_> = resolved
         .fields
         .iter()
@@ -547,6 +578,23 @@ struct Arrival {
     format: SourceFormat,
 }
 
+thread_local! {
+    /// The types of the world document this thread is saving, which a record built in it is conformed to.
+    static SAVING: RefCell<Option<Rc<world_types::Saving>>> = const { RefCell::new(None) };
+}
+
+/// Runs `write` with every record built here conformed to `saving`.
+fn while_saving<R>(saving: &Rc<world_types::Saving>, write: impl FnOnce() -> R) -> R {
+    struct Restore(Option<Rc<world_types::Saving>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SAVING.with(|saving| *saving.borrow_mut() = self.0.take());
+        }
+    }
+    let _restore = Restore(SAVING.with(|held| held.replace(Some(Rc::clone(saving)))));
+    write()
+}
+
 /// What a record holds besides its typed members: the tree it was read from,
 /// whether its array held it behind a pointer and, on a root, the arrival.
 #[derive(Clone, Default)]
@@ -555,6 +603,9 @@ struct Carry {
     /// On a creature root read from RBF, the tags it was read from, which a save writes the typed members back into.
     tags: Option<Box<MetaInstance>>,
     pointer: Option<bool>,
+    /// The class of a record read where it is held by value: its holder fixes it, whatever a text read with no schema
+    /// called the record (`Item`, or the member that holds it).
+    by_value: Option<&'static str>,
     arrival: Option<Box<Arrival>>,
     origin: Origin,
 }
@@ -567,33 +618,58 @@ impl Carry {
         }
     }
 
+    /// Whether the tree the record carries is one a `type_name` arrived as.
+    fn arrived_as(&self, type_name: &str) -> bool {
+        (self.instance.as_ref())
+            .is_some_and(|inst| is_named(self.by_value.unwrap_or(&inst.type_name), type_name))
+    }
+
     /// The tree to write the typed members into, and whether it is the one the
     /// record arrived as. A record moved to another type, or built here, is
     /// conformed to the schema's `type_name`, so no member of a type it left survives.
     fn instance(&self, type_name: &str) -> Result<(MetaInstance, bool), String> {
         match &self.instance {
-            Some(inst) if is_named(&inst.type_name, type_name) => Ok(((**inst).clone(), true)),
+            Some(inst) if self.arrived_as(type_name) => {
+                let mut inst = (**inst).clone();
+                // ⚠ A copy from another file carries that file's tree, which this document may state no class for.
+                if let Some(saving) = SAVING.with(|saving| saving.borrow().clone()) {
+                    saving.conform_carried(&mut inst)?;
+                }
+                Ok((inst, true))
+            }
             carried => {
                 let mut inst = carried
                     .as_deref()
                     .cloned()
                     .unwrap_or_else(|| MetaInstance::new(type_name));
                 inst.type_name = type_name.to_string();
-                conform(
-                    &ped_types::library(crate::meta::default_library()),
-                    &mut inst,
-                )?;
-                Ok((inst, false))
+                match SAVING.with(|saving| saving.borrow().clone()) {
+                    // ⚠ The class is the document's own, so a member it lacks cannot be held, as in a record that arrived.
+                    Some(saving) => {
+                        saving.conform(&mut inst)?;
+                        Ok((inst, true))
+                    }
+                    None => {
+                        conform(
+                            &ped_types::library(crate::meta::default_library()),
+                            &mut inst,
+                        )?;
+                        Ok((inst, false))
+                    }
+                }
             }
         }
     }
 
     fn carried(&self) -> impl Iterator<Item = (u32, &Value)> {
-        self.instance
-            .iter()
-            .flat_map(|inst| inst.fields.iter())
-            .map(|(n, v)| (name_hash(n), v))
-            .filter(|(key, _)| !is_typed(*key))
+        self.instance.iter().flat_map(|inst| {
+            // ⚠ By the class the record was read as: a text calls a room `Item`, a name no class's members are typed for.
+            let class = self.by_value.unwrap_or(inst.type_name.as_str());
+            let untyped = move |(key, _): &(u32, &Value)| !is_typed(class, *key);
+            (inst.fields.iter())
+                .map(|(n, v)| (name_hash(n), v))
+                .filter(untyped)
+        })
     }
 }
 
@@ -669,7 +745,12 @@ macro_rules! meta_record {
         impl Member for $name {
             fn read(value: &Value) -> Result<Self, String> {
                 match value {
-                    Value::Struct(inst) | Value::Pointer(Some(inst)) => Self::read(inst),
+                    Value::Struct(inst) => {
+                        let mut record = Self::read(inst)?;
+                        record.carry.by_value = Some($type_name);
+                        Ok(record)
+                    }
+                    Value::Pointer(Some(inst)) => Self::read(inst),
                     other => expected("a struct", other),
                 }
             }
@@ -797,6 +878,22 @@ macro_rules! meta_any {
         }
 
         impl $name {
+            /// The value tree this element saves as, behind a pointer when it arrived behind one.
+            pub fn to_value(&self) -> Result<Value, Error> {
+                self.write_element(None, None).map_err(|why| Error::Invalid {
+                    what: concat!("a `", stringify!($base), "` element").to_string(),
+                    why,
+                })
+            }
+
+            /// The element a value tree reads as, which keeps that tree as what it saves.
+            pub fn from_value(value: &Value) -> Result<Self, Error> {
+                Self::read_element(value).map_err(|why| Error::Invalid {
+                    what: concat!("a `", stringify!($base), "` element").to_string(),
+                    why,
+                })
+            }
+
             fn read(inst: &MetaInstance) -> Result<Self, String> {
                 $(if is_named(&inst.type_name, stringify!($derived)) {
                     return $derived::read(inst).map(Self::$derived);
@@ -937,10 +1034,14 @@ meta_derived! {
 }
 
 meta_derived! {
-    /// `CMloArchetypeDef`: an interior; its rooms, portals and entity sets are carried.
+    /// `CMloArchetypeDef`: an interior, with its rooms, portals, entity sets and time cycle modifiers.
     CMloArchetypeDef: CBaseArchetypeDef = "CMloArchetypeDef" {
         mlo_flags: u32 = "mloFlags",
         entities: Vec<CEntityDefAny> = "entities",
+        rooms: Vec<CMloRoomDef> = "rooms",
+        portals: Vec<CMloPortalDef> = "portals",
+        entity_sets: Vec<CMloEntitySet> = "entitySets",
+        time_cycle_modifiers: Vec<CMloTimeCycleModifier> = "timeCycleModifiers",
     }
 }
 
@@ -1088,14 +1189,21 @@ impl CScenarioPointRegion {
     }
 }
 
-/// Whether any typed record names the member stored under `key`.
-fn is_typed(key: u32) -> bool {
+/// Whether a typed record names the member a `class` record stores under `key`.
+///
+/// ⚠ The interior's records are judged by their class: a map carries a `timeCycleModifiers` of its own, and a name typed
+/// for every class would leave that array out of what two maps are compared by.
+fn is_typed(class: &str, key: u32) -> bool {
+    let names =
+        |members: &[&str]| (members.iter()).any(|name| literal_string_hash(name.as_bytes()) == key);
+    if (interior::MEMBERS.iter()).any(|(of, members)| is_named(class, of) && names(members)) {
+        return true;
+    }
     [
         CEntityDef::MEMBERS,
         CMloInstanceDef::MEMBERS,
         CBaseArchetypeDef::MEMBERS,
         CTimeArchetypeDef::MEMBERS,
-        CMloArchetypeDef::MEMBERS,
         CMapData::MEMBERS,
         CMapTypes::MEMBERS,
         CScenarioPoint::MEMBERS,
@@ -1130,8 +1238,7 @@ fn is_typed(key: u32) -> bool {
         SAlternateVariationComponent::MEMBERS,
     ]
     .iter()
-    .flat_map(|members| members.iter())
-    .any(|name| literal_string_hash(name.as_bytes()) == key)
+    .any(|members| names(members))
         || weapon::is_member(key)
 }
 
@@ -1176,6 +1283,7 @@ fn encode(
     arrival: Option<&Arrival>,
     root: &MetaInstance,
     reshaped: bool,
+    types: Option<&SchemaLibrary>,
 ) -> Result<Vec<u8>, Error> {
     let save = |why: String| Error::Save { ext, why };
     let (format, layout) = match arrival {
@@ -1187,7 +1295,8 @@ fn encode(
                     .map_err(|e| save(e.to_string()))
             }
         },
-        // PSO synthesis has no encoding for a `CMapData`'s occluder vertices; RBM has.
+        // ⚠ A world root built here does not reach this arm: `save_world_root` writes it as PSO, whose synthesis has no encoding
+        // for a `CMapData`'s occluder vertices, which RBM has.
         None => (BinaryFormat::Rbm, None),
     };
     let arrival_layout = layout.filter(|_| !reshaped);
@@ -1210,9 +1319,11 @@ fn encode(
     // what the document's own tables state stands in for what it lacks.
     let own = layout.map(type_tables::of_layout);
     let family = ped_types::library(crate::meta::default_library());
-    let library = match &own {
-        Some(tables) => type_tables::extend(&family, tables),
-        None => Cow::Borrowed(&*family),
+    let library = match (types, &own) {
+        // The records built here were conformed to these, so the layout is made of the same.
+        (Some(types), _) => Cow::Borrowed(types),
+        (None, Some(tables)) => type_tables::extend(&family, tables),
+        (None, None) => Cow::Borrowed(&*family),
     };
     let library = &*library;
     let container = match layout.map(|l| &l.container) {
@@ -1220,6 +1331,9 @@ fn encode(
             let donor = ped_types::donor(Some(&donor.model));
             rbm_layout_for_instance(library, root, Some(&donor))
                 .map(|l| ContainerLayout::Rbm(Box::new(l)))
+        }
+        None if format == BinaryFormat::Pso => {
+            pso_layout_for_instance(library, root).map(ContainerLayout::Pso)
         }
         None => {
             let donor = ped_types::donor(None);
@@ -1269,7 +1383,68 @@ fn save_root_as(
         });
     }
     let root = root.map_err(|why| Error::Save { ext, why })?;
-    encode(ext, carry.arrival.as_deref().or(fallback), &root, reshaped)
+    encode(
+        ext,
+        carry.arrival.as_deref().or(fallback),
+        &root,
+        reshaped,
+        None,
+    )
+}
+
+/// [`save_root`] for a root of the world family, which saves a record built here where no snapshot is installed.
+///
+/// ⚠ A root built here is written as PSO: an RBM class carries a signature word that nothing derives ([`world_types`]).
+fn save_world_root(
+    ext: &'static str,
+    broken: Option<Broken>,
+    write: impl Fn() -> Result<MetaInstance, String>,
+    carry: &Carry,
+    mut reshaped: bool,
+) -> Result<Vec<u8>, Error> {
+    let arrival = carry.arrival.as_deref();
+    if let (Some(arrival), false) = (arrival, reshaped) {
+        let root = write();
+        // ⚠ A record copied from another file is `reshaped` to no caller: it carries a tree of its own class, which the
+        // layout this file arrived with may not state, and that layout then has no place for it.
+        let copied = match (&root, &arrival.layout) {
+            (Ok(root), Some(layout)) => world_types::first_class_unstated(layout, root).is_some(),
+            _ => false,
+        };
+        // Nothing was built or copied here, so nothing is conformed and the arrival's own layout stands.
+        if !copied {
+            // ⚠ A copy of a class this file states may hold a member the class lacks here, which the layout has no place for.
+            if let (Ok(root), Some(layout), None) = (&root, &arrival.layout, &broken) {
+                if let Some((class, member)) = world_types::first_member_unstated(layout, root) {
+                    let why = world_types::would_drop_stated(class, member);
+                    return Err(Error::Save { ext, why });
+                }
+            }
+            return save_root(ext, broken, root, carry, reshaped);
+        }
+        reshaped = true;
+    }
+    if let Some(reason) = broken {
+        return Err(Error::Refused {
+            ext,
+            reason: crate::error::Reason::new(reason),
+        });
+    }
+    let saving = Rc::new(world_types::Saving::of(arrival));
+    let root = while_saving(&saving, write)
+        .and_then(|root| saving.refuse_what_has_no_place(&root).map(|()| root))
+        .map_err(|why| Error::Save { ext, why })?;
+    let built = Arrival {
+        layout: None,
+        format: SourceFormat::Pso,
+    };
+    encode(
+        ext,
+        Some(arrival.unwrap_or(&built)),
+        &root,
+        reshaped,
+        Some(&saving.library),
+    )
 }
 
 /// An index into an array the same file states, which the engine trusts and this one misses.
@@ -1283,12 +1458,10 @@ enum Broken {
     },
     #[error("entity {entity} is its own LOD parent")]
     ParentIsSelf { entity: usize },
-    #[error("archetype {archetype}'s {holder} attaches object {index}, past its {len} entities")]
-    AttachedObjectOutOfRange {
+    #[error("archetype {archetype}: {what}")]
+    Interior {
         archetype: usize,
-        holder: String,
-        index: u32,
-        len: usize,
+        what: interior::Broken,
     },
     #[error("{holder} point {point} names scenario type {index}, past the {len} type names in this region")]
     PointTypeOutOfRange {
@@ -1351,10 +1524,7 @@ fn broken_point_type(region: &CScenarioPointRegion) -> Option<Broken> {
 
 /// Built here or moved from another type, so no arrival layout has its shape.
 fn built_here(carry: &Carry, type_name: &str) -> bool {
-    !carry
-        .instance
-        .as_ref()
-        .is_some_and(|inst| is_named(&inst.type_name, type_name))
+    !carry.arrived_as(type_name)
 }
 
 /// ⚠ Only a parent in this file: an entity with `flags` bit 3 set indexes
@@ -1377,37 +1547,14 @@ fn broken_hierarchy(entities: &[CEntityDefAny]) -> Option<Broken> {
     })
 }
 
-/// A room or portal of an interior attaching an entity past the interior's own `entities`.
+/// The first interior whose rooms, portals or entity sets index or pair what the interior does not hold.
 fn broken_interior(archetypes: &[CBaseArchetypeDefAny]) -> Option<Broken> {
     archetypes.iter().enumerate().find_map(|(archetype, a)| {
         let CBaseArchetypeDefAny::CMloArchetypeDef(mlo) = a else {
             return None;
         };
-        let len = mlo.entities.len();
-        let carried = mlo.base.carry.instance.as_deref()?;
-        ["rooms", "portals"].into_iter().find_map(|list| {
-            let Some(Value::Array(holders)) = field(carried, list) else {
-                return None;
-            };
-            holders.iter().enumerate().find_map(|(i, holder)| {
-                let (Value::Struct(inst) | Value::Pointer(Some(inst))) = holder else {
-                    return None;
-                };
-                let Some(Value::Array(attached)) = field(inst, "attachedObjects") else {
-                    return None;
-                };
-                let index = attached
-                    .iter()
-                    .filter_map(|v| u32::read(v).ok())
-                    .find(|&i| i as usize >= len)?;
-                Some(Broken::AttachedObjectOutOfRange {
-                    archetype,
-                    holder: format!("{} {i}", list.trim_end_matches('s')),
-                    index,
-                    len,
-                })
-            })
-        })
+        let what = interior::broken(mlo)?;
+        Some(Broken::Interior { archetype, what })
     })
 }
 
@@ -1431,6 +1578,7 @@ meta_origin!(CScenarioPointRegion);
 
 mod alternate;
 pub mod alternate_types;
+mod interior;
 mod ped;
 mod ped_rbf;
 pub mod ped_types;
@@ -1441,8 +1589,18 @@ mod weapon_blob;
 mod weapon_components;
 mod weapon_info;
 pub mod weapon_types;
+pub mod world_types;
 pub use alternate::*;
+pub use interior::{CMloEntitySet, CMloPortalDef, CMloRoomDef, CMloTimeCycleModifier};
 pub use ped::*;
+
+impl CMapData {
+    /// What the file it was read from states under `member`, a member no typed record names.
+    pub fn carried(&self, member: &str) -> Option<&Value> {
+        let key = name_hash(member);
+        (self.carry.carried().find(|(held, _)| *held == key)).map(|(_, value)| value)
+    }
+}
 
 impl File for CMapData {
     const EXTENSION: &'static str = "ymap";
@@ -1456,7 +1614,8 @@ impl File for CMapData {
     fn to_bytes(&self) -> Result<Vec<u8>, Error> {
         let broken = broken_hierarchy(&self.entities);
         let reshaped = self.entities.iter().any(CEntityDefAny::reshaped);
-        save_root(Self::EXTENSION, broken, self.write(), &self.carry, reshaped)
+        let write = || self.write();
+        save_world_root(Self::EXTENSION, broken, write, &self.carry, reshaped)
     }
 }
 
@@ -1474,9 +1633,10 @@ impl File for CMapTypes {
         let reshaped = self.archetypes.iter().any(|a| {
             a.reshaped()
                 || matches!(a, CBaseArchetypeDefAny::CMloArchetypeDef(mlo)
-                    if mlo.entities.iter().any(CEntityDefAny::reshaped))
+                    if interior::holds_a_record_built_here(mlo))
         });
-        save_root(Self::EXTENSION, broken, self.write(), &self.carry, reshaped)
+        let write = || self.write();
+        save_world_root(Self::EXTENSION, broken, write, &self.carry, reshaped)
     }
 }
 
@@ -1570,6 +1730,41 @@ mod tests {
         let h = HashedString::from_hash(crate::string_hash(b"Prop_Bench_01A"));
         assert!(h == "prop_bench_01a");
         assert!(h != "prop_bench_01b");
+    }
+
+    #[test]
+    fn an_element_comes_back_from_the_value_tree_it_saves_as() {
+        let mut inst = MetaInstance::new("CEntityDef");
+        inst.set("guid", Value::UInt(7));
+        // A member no record types, which the element carries.
+        inst.set("priorityLevel", Value::UInt(2));
+        for value in [
+            Value::Pointer(Some(Box::new(inst.clone()))),
+            Value::Struct(Box::new(inst.clone())),
+        ] {
+            let mut element = CEntityDefAny::from_value(&value).unwrap();
+            assert_eq!(element.guid, 7);
+            assert_eq!(element.to_value().unwrap(), value);
+            element.guid = 9;
+            let changed = element.to_value().unwrap();
+            assert_eq!(
+                std::mem::discriminant(&changed),
+                std::mem::discriminant(&value)
+            );
+            let (Value::Pointer(Some(saved)) | Value::Struct(saved)) = changed else {
+                panic!("a struct, behind a pointer or not");
+            };
+            assert_eq!(saved.get("guid"), Some(&Value::UInt(9)));
+            assert_eq!(saved.get("priorityLevel"), Some(&Value::UInt(2)));
+        }
+        assert!(CEntityDefAny::from_value(&Value::Pointer(None)).is_err());
+        assert!(CEntityDefAny::from_value(&Value::UInt(1)).is_err());
+        inst.type_name = "CMapData".into();
+        let refused = CEntityDefAny::from_value(&Value::Struct(Box::new(inst))).unwrap_err();
+        assert!(
+            refused.to_string().contains("`CEntityDef` element"),
+            "{refused}"
+        );
     }
 
     #[test]

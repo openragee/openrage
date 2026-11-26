@@ -50,9 +50,20 @@ pub struct FrontDoor {
     pub tour: Option<usize>,
 }
 
-/// The guide's window: the heading it was opened at, and whether it has scrolled there yet.
+/// A document the binary carries that the guide's window shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GuideDocument {
+    /// `docs/guides/Workbench_Guide.md`.
+    #[default]
+    Workbench,
+    /// `docs/guides/In_Game_Acceptance.md`.
+    Acceptance,
+}
+
+/// The guide's window: the document it shows, the heading it was opened at, and whether it has scrolled there yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Guide {
+    pub document: GuideDocument,
     /// A heading of the guide, or empty to open it from the top.
     pub section: String,
     pub scrolled: bool,
@@ -66,9 +77,15 @@ impl FrontDoor {
 
     /// Open the guide at the heading `section`; an empty one opens it from the top.
     pub fn show_guide(&mut self, section: &str) {
+        self.show_document(GuideDocument::Workbench, section);
+    }
+
+    /// Open `document` in the guide's window at its heading `section`; an empty one opens it from the top.
+    pub fn show_document(&mut self, document: GuideDocument, section: &str) {
         self.guide = Some(Guide {
+            document,
             section: section.to_string(),
-            scrolled: section.is_empty(),
+            scrolled: false,
         });
     }
 }

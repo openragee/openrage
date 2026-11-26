@@ -3,8 +3,8 @@
 //! Point `OPENRAGE_GAME_ROOT` at an install root. Without one this skips, which is not a pass.
 //!
 //! Two questions, both asked of every `.ymap` and `.ytyp` the mount lists. First, every member the typed world family declares
-//! (`or_io::meta::typed`) is one the install states, and the members of an interior's rooms, portals, entity sets and time cycle
-//! modifiers that no typed record names are listed, so that the record to declare next is a measurement. Second, the rules of
+//! (`or_io::meta::typed`) is one the install states, and the members the install states of an interior's rooms, portals, entity
+//! sets and time cycle modifiers are listed, so that what those records type stays a measurement. Second, the rules of
 //! [`or_maps::RULES`] are run over the files as one set, and how many maps each fires on is printed and held to the figures the
 //! documents quote.
 //!
@@ -182,8 +182,8 @@ fn the_typed_world_family_names_only_what_the_install_states_and_the_rules_fire_
         "members the install never states: {undeclared_by_the_install:?}"
     );
 
-    // 2. What an interior states that no typed record names yet.
-    println!("interiors (types no typed record declares):");
+    // 2. What the install states for the four records of an interior, which `or_io::meta::typed::interior` types.
+    println!("interiors (what the install states for each record):");
     for type_name in [
         "CMloRoomDef",
         "CMloPortalDef",

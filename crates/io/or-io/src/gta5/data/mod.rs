@@ -7,3 +7,4 @@ pub mod nametable;
 pub mod ptx_clip_regions;
 pub mod timecycle;
 pub mod visual_settings;
+pub mod water;

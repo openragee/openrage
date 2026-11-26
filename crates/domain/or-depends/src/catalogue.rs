@@ -209,11 +209,8 @@ impl Catalogue {
 }
 
 /// The map a static bound's stem names: `<map>_N`, with an optional `hi@` or `ma@`.
-fn map_of_bound_stem(stem: &str) -> Option<&str> {
-    let stem = (stem.strip_prefix("hi@"))
-        .or_else(|| stem.strip_prefix("ma@"))
-        .unwrap_or(stem);
-    let (map, n) = stem.rsplit_once('_')?;
+pub(crate) fn map_of_bound_stem(stem: &str) -> Option<&str> {
+    let (map, n) = or_maps::collision::area_of(stem).rsplit_once('_')?;
     (!map.is_empty() && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then_some(map)
 }
 

@@ -21,6 +21,8 @@ pub struct PackFile {
     pub contents: String,
     pub persistent: bool,
     pub overlay: bool,
+    /// Whether the pack registers the path and holds no file there: a name the game asks by, such as the `.ityp` of a `.ytyp` inside a nested archive.
+    pub asked: bool,
 }
 
 impl PackFile {
@@ -41,7 +43,22 @@ impl PackFile {
             file_type,
             contents: String::new(),
             overlay: false,
+            asked: false,
         }
+    }
+
+    /// A name the pack registers that is no file of it.
+    pub fn asked(archive_path: impl Into<String>) -> Self {
+        Self {
+            asked: true,
+            ..Self::new(archive_path, PathBuf::new())
+        }
+    }
+
+    /// State what the file holds, as `CONTENTS_DLC_MAP_DATA` says of an archive of maps; an empty value states nothing.
+    pub fn with_contents(mut self, contents: impl Into<String>) -> Self {
+        self.contents = contents.into();
+        self
     }
 
     pub fn with_file_type(mut self, file_type: impl Into<String>) -> Self {
@@ -221,7 +238,7 @@ impl DlcPackSpec {
             if !seen.insert(key) {
                 out.push(format!("`{}` is added twice", f.archive_path));
             }
-            if !f.source.is_file() {
+            if !f.asked && !f.source.is_file() {
                 out.push(format!("`{}` is not a file", f.source.display()));
             }
             if f.file_type.trim().is_empty() {
@@ -277,7 +294,7 @@ pub fn build_pack_with(
 
     let docs = spec.documents();
     let mut builder = RpfBuilder::default().encrypted(encryption, crypto);
-    for file in &spec.files {
+    for file in spec.files.iter().filter(|file| !file.asked) {
         builder.insert_file(&file.archive_path, &file.source)?;
     }
     // ⚠ Last: a path added twice is replaced, and a pack file named `setup2.xml`

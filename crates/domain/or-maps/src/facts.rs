@@ -126,6 +126,17 @@ pub struct SourceFact {
     pub inside: Option<Result<Inside, String>>,
 }
 
+/// What a source of `kind` that cooks to a file of `extension` is for in a set; none for a kind a maps module does not hold.
+pub(crate) fn role_of(kind: &str, extension: &str) -> Option<Role> {
+    match (kind, extension) {
+        ("metadata", "ymap") => Some(Role::Map),
+        ("metadata", "ytyp") => Some(Role::Types),
+        ("drawable" | "drawables" | "fragment", _) => Some(Role::Model),
+        ("textures", _) => Some(Role::Textures),
+        _ => None,
+    }
+}
+
 impl SourceFact {
     /// The file the source cooks to, such as `harbour.ymap`.
     pub fn file_name(&self) -> String {
@@ -134,13 +145,7 @@ impl SourceFact {
 
     /// What the source is for in a set.
     pub fn role(&self) -> Option<Role> {
-        match (self.kind.as_str(), self.extension.as_str()) {
-            ("metadata", "ymap") => Some(Role::Map),
-            ("metadata", "ytyp") => Some(Role::Types),
-            ("drawable" | "drawables" | "fragment", _) => Some(Role::Model),
-            ("textures", _) => Some(Role::Textures),
-            _ => None,
-        }
+        role_of(&self.kind, &self.extension)
     }
 
     pub fn map(&self) -> Option<&MapInside> {
@@ -177,6 +182,8 @@ pub struct EntityFact {
     pub scale_z: f32,
     pub flags: u32,
     pub parent_index: i32,
+    /// How many entities it states name it as their LOD parent, in its own map file and in the ones under it.
+    pub num_children: u32,
     pub lod_dist: f32,
     /// The level of detail it is for, as the file names it (`LODTYPES_DEPTH_HD`), none where the file states none.
     pub lod_level: Option<String>,
@@ -192,6 +199,8 @@ pub struct MapInside {
     pub flags: u32,
     pub content_flags: u32,
     pub entities: Vec<EntityFact>,
+    /// The archetype each entity and each grass batch places, which is what the manifest's derivation reads (`or_world::manifest::placed`).
+    pub placed: Vec<u32>,
     /// The extents the file states, none where it states none.
     pub stored_entities: Option<([f32; 3], [f32; 3])>,
     pub stored_streaming: Option<([f32; 3], [f32; 3])>,
@@ -255,6 +264,8 @@ pub struct Facts {
     sources: BTreeMap<String, Fact>,
     /// The source folders of the module's own folder that no set names.
     pub unused: Vec<String>,
+    /// The manifests of the game the module keeps, from [`Depth::Open`] on: what its own manifest is typed by and takes its entries from.
+    pub manifests: Vec<crate::manifest::Kept>,
 }
 
 impl Facts {
@@ -304,6 +315,9 @@ pub fn inspect_named(folder: &Path, model: &Maps, depth: Depth, names: Names<'_>
         facts.insert(path, look(folder, path, depth, Some(&own)));
     }
     facts.unused = unused(folder, model);
+    if depth >= Depth::Open {
+        facts.manifests = crate::manifest::kept(folder);
+    }
     facts
 }
 
@@ -429,12 +443,14 @@ fn read_map(map: &MapData<'_>, names: Names<'_>) -> MapInside {
                     scale_z: field::f32_at(inst, keys::SCALE_Z).unwrap_or(1.0),
                     flags: entity.flags(),
                     parent_index: field::i32_at(inst, keys::PARENT_INDEX).unwrap_or(-1),
+                    num_children: entity.num_children(),
                     lod_dist: entity.lod_dist(),
                     lod_level: entity.lod_level().map(str::to_string),
                     interior: entity.is_interior_instance(),
                 }
             })
             .collect(),
+        placed: or_world::manifest::placed(map),
         stored_entities: map
             .stored_entities_extents()
             .map(|(min, max)| (min.to_array(), max.to_array())),

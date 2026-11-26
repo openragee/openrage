@@ -3706,6 +3706,9 @@ msgstr "Jede zur Prüfung erneut geöffnete Datei ({count}):"
 msgid "Every job running in the background and the ones just finished, with their progress, a Cancel and what each left"
 msgstr "Jede im Hintergrund laufende Aufgabe und die gerade beendeten, mit ihrem Fortschritt, „Abbrechen“ und dem, was jede hinterlassen hat"
 
+msgid "Every kind of file this build wrote that the acceptance sheet has a line about was seen loading in GTA V {edition}; the newest result is dated {date}"
+msgstr "Jede Dateiart, die dieser Build geschrieben hat und zu der das Abnahmeblatt eine Zeile hat, wurde in GTA V {edition} beim Laden gesehen; das neueste Ergebnis ist vom {date}"
+
 msgid "Every level of detail"
 msgstr "Jede Detailstufe"
 
@@ -4507,6 +4510,9 @@ msgstr "Wie stark die Helligkeit der Diffuse die Normal Map neigt"
 msgid "How the 3D view draws the ped: with textures, as a shape, as edges, or as the vertex data"
 msgstr "Wie die 3D-Ansicht den Ped zeichnet: mit Texturen, als Form, als Kanten oder als Vertex-Daten"
 
+msgid "How to check it in the game"
+msgstr "Wie man es im Spiel prüft"
+
 msgid "How to open a pack, fix it, build it, put it on a server and share a project, for someone who comes from Durty Cloth Tool"
 msgstr "Wie ein Pack geöffnet, korrigiert, erstellt, auf einen Server gebracht und ein Projekt geteilt wird, für alle, die von Durty Cloth Tool kommen"
 
@@ -4599,6 +4605,9 @@ msgstr "In diesem Projekt  ·  {count}"
 
 msgid "In {source}"
 msgstr "In {source}"
+
+msgid "In-game acceptance guide"
+msgstr "Leitfaden zur Abnahme im Spiel"
 
 msgid "Info and above"
 msgstr "Info und höher"
@@ -7043,6 +7052,9 @@ msgstr "`materials.dat` + `materialfx.dat` aus `common.rpf` mit der konfiguriert
 msgid "Read \"{section}\" in the guide"
 msgstr "„{section}“ im Leitfaden lesen"
 
+msgid "Read \"{section}\" in the guide to checking a build in the game, which nothing in OpenRage runs"
+msgstr "„{section}“ im Leitfaden zum Prüfen eines Builds im Spiel lesen, das nichts in OpenRage startet"
+
 msgid "Read a .glb or .gltf, show what it replaces or why it cannot, then change the open model as one step to undo or save, as openrage-cli mesh import does"
 msgstr "Eine .glb- oder .gltf-Datei lesen, anzeigen, was sie ersetzt oder warum das nicht geht, und dann das geöffnete Modell in einem Schritt ändern, der sich rückgängig machen oder speichern lässt, wie openrage-cli mesh import es tut"
 
@@ -8714,6 +8726,9 @@ msgstr "Auf der Seite „Bearbeitung“ der „Einstellungen“ lässt es sich s
 msgid "The Wardrobe's rules found nothing wrong in it."
 msgstr "Die Regeln der „Garderobe“ haben darin nichts Fehlerhaftes gefunden."
 
+msgid "The acceptance sheet has no line about what else this build wrote: {kinds}"
+msgstr "Das Abnahmeblatt hat keine Zeile zu dem, was dieser Build sonst geschrieben hat: {kinds}"
+
 msgid "The active document has no file yet"
 msgstr "Das aktive Dokument hat noch keine Datei"
 
@@ -10229,6 +10244,9 @@ msgstr "Was der Ordner enthält, gruppiert nach dem, was darin erkannt wird"
 msgid "What this writes"
 msgstr "Was dies schreibt"
 
+msgid "What to look for in a running game to say that it loads what a build wrote, how to load a build on a FiveM server and in story mode, and how to write down what you saw"
+msgstr "Worauf in einem laufenden Spiel zu achten ist, um zu sagen, dass es lädt, was ein Build geschrieben hat, wie ein Build auf einem FiveM-Server und im Story-Modus geladen wird und wie man aufschreibt, was man gesehen hat"
+
 msgid "What would be made"
 msgstr "Was erstellt würde"
 
@@ -11123,6 +11141,9 @@ msgstr "Shop-Namen"
 msgid "singleplayer DLC"
 msgstr "Einzelspieler-DLC"
 
+msgid "singleplayer DLC packs"
+msgstr "Einzelspieler-DLC-Packs"
+
 msgid "source"
 msgstr "Quelle"
 
@@ -11284,6 +11305,9 @@ msgstr "nach"
 
 msgid "type file"
 msgstr "Typdatei"
+
+msgid "type files"
+msgstr "Typdateien"
 
 msgid "under"
 msgstr "unter"
@@ -11530,6 +11554,11 @@ msgid "{count} item keeps a stable id, so the next build can tell what moved"
 msgid_plural "{count} items keep a stable id, so the next build can tell what moved"
 msgstr[0] "{count} Element behält eine stabile ID, damit der nächste Build erkennen kann, was sich verschoben hat"
 msgstr[1] "{count} Elemente behalten eine stabile ID, damit der nächste Build erkennen kann, was sich verschoben hat"
+
+msgid "{count} kind of file this build wrote was not seen loading in GTA V {edition}: {kinds}"
+msgid_plural "{count} kinds of file this build wrote were not seen loading in GTA V {edition}: {kinds}"
+msgstr[0] "{count} Dateiart, die dieser Build geschrieben hat, wurde in GTA V {edition} nicht beim Laden gesehen: {kinds}"
+msgstr[1] "{count} Dateiarten, die dieser Build geschrieben hat, wurden in GTA V {edition} nicht beim Laden gesehen: {kinds}"
 
 msgid "{count} map set"
 msgid_plural "{count} map sets"
@@ -14493,6 +14522,9 @@ msgstr "Es werden höchstens die {most} nächsten Modelle gezeichnet, bis zum Ra
 msgid "map {map}, index {index}: open that map body to follow it"
 msgstr "Map {map}, Index {index}: diesen Map-Inhalt öffnen, um ihm zu folgen"
 
+msgid "maps"
+msgstr "Maps"
+
 msgid "index {index} names nothing in {file}"
 msgstr "Index {index} benennt nichts in {file}"
 
@@ -17236,3 +17268,31 @@ msgstr "Dekompiliert das ganze Programm in einem eigenen Thread. Ein so großes 
 
 msgid "The script was not decompiled: {e}"
 msgstr "Das Skript wurde nicht dekompiliert: {e}"
+
+msgid "A key you chose, which no preset changes"
+msgstr "Eine selbst gewählte Taste, die keine Voreinstellung ändert"
+
+msgid "A set of keys for the commands it names: every other command keeps its key, and so does one whose key you chose. OpenRage is the set the app starts with."
+msgstr "Ein Satz von Tasten für die Befehle, die er nennt: Jeder andere Befehl behält seine Taste, ebenso ein Befehl mit selbst gewählter Taste. OpenRage ist der Satz, mit dem die Anwendung startet."
+
+msgid "CodeWalker"
+msgstr "CodeWalker"
+
+msgid "OpenRage"
+msgstr "OpenRage"
+
+msgid "Preset"
+msgstr "Voreinstellung"
+
+msgid "{count} command it names keeps the key you chose."
+msgid_plural "{count} commands it names keep the keys you chose."
+msgstr[0] "{count} davon behält die selbst gewählte Taste."
+msgstr[1] "{count} davon behalten die selbst gewählten Tasten."
+
+msgid "{key} (US keyboard)"
+msgstr "{key} (US-Tastatur)"
+
+msgid "{preset} changes the keys of {count} command."
+msgid_plural "{preset} changes the keys of {count} commands."
+msgstr[0] "{preset} ändert die Tasten von {count} Befehl."
+msgstr[1] "{preset} ändert die Tasten von {count} Befehlen."

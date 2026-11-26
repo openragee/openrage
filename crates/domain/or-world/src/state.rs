@@ -344,19 +344,36 @@ impl StateGroups {
     /// an earlier manifest declared.
     pub fn add_from(&mut self, manifest: Manifest<'_>, origin: &str) {
         for group in manifest.state_groups() {
-            let name = group.name();
-            if name == 0 {
-                continue;
-            }
-            let summary = Summary {
-                gate: group.gate(),
-                bounds: group.bounds(),
-                problems: group.problems(),
-                origin: origin.to_string(),
-            };
-            if self.by_name.insert(name, summary).is_some() {
-                self.redeclared += 1;
-            }
+            self.add_group(
+                group.name(),
+                (group.flags(), group.hours_on_off()),
+                group.weather_types(),
+                group.bounds(),
+                origin,
+            );
+        }
+    }
+
+    /// Fold in one group by what it states, its `Flags` and `HoursOnOff` as `(flags, hours)`, for a caller that kept those and dropped the manifest.
+    pub fn add_group(
+        &mut self,
+        name: u32,
+        (flags, hours): (u32, u32),
+        weather_types: Vec<u32>,
+        bounds: Vec<u32>,
+        origin: &str,
+    ) {
+        if name == 0 {
+            return;
+        }
+        let summary = Summary {
+            gate: Gate::of(flags, hours, &weather_types),
+            bounds,
+            problems: problems_of(flags, hours, !weather_types.is_empty()),
+            origin: origin.to_string(),
+        };
+        if self.by_name.insert(name, summary).is_some() {
+            self.redeclared += 1;
         }
     }
 
@@ -365,11 +382,15 @@ impl StateGroups {
     /// ⚠ A map is several files under one name, so the bit is folded with
     /// OR: one part holding the map back holds all of it back.
     pub fn add_map(&mut self, map: &MapData<'_>) {
-        let name = map.name();
+        self.add_map_flags(map.name(), map.flags());
+    }
+
+    /// [`Self::add_map`] for a map known by its name and its `flags` alone.
+    pub fn add_map_flags(&mut self, name: u32, flags: u32) {
         if name == 0 {
             return;
         }
-        let held = map.flags() & NOT_BY_DEFAULT != 0;
+        let held = flags & NOT_BY_DEFAULT != 0;
         *self.maps.entry(name).or_default() |= held;
     }
 
@@ -669,6 +690,69 @@ mod tests {
             }
         );
         assert!(groups.iter().all(|g| g.problems().is_empty()));
+    }
+
+    #[test]
+    fn groups_kept_as_what_they_state_gate_as_the_manifest_that_stated_them() {
+        let tree = sample();
+        let read = index_of(&tree);
+        let mut kept = StateGroups::new();
+        for group in Manifest::new(&tree).unwrap().state_groups() {
+            kept.add_group(
+                group.name(),
+                (group.flags(), group.hours_on_off()),
+                group.weather_types(),
+                group.bounds(),
+                "base",
+            );
+        }
+        // A group named nothing is no group, as a manifest's is none.
+        kept.add_group(0, (flags::TIMED, DAYTIME), vec![], vec![], "base");
+        assert_eq!(kept.len(), read.len());
+        // ⚠ Held to what each group says of itself: a manifest is folded in through the same
+        // `add_group`, so the two indexes agree whatever it does.
+        for group in Manifest::new(&tree).unwrap().state_groups() {
+            let name = group.name();
+            assert_eq!(kept.gate(name), Some(&group.gate()), "{name:#010X}");
+            assert_eq!(kept.bounds(name), group.bounds(), "{name:#010X}");
+        }
+        let puddles = Gate::TimedWeather {
+            hours: DAYTIME,
+            types: vec![hash("RAIN"), hash("THUNDER")],
+        };
+        assert_eq!(kept.gate(hash("puddles")), Some(&puddles));
+        assert_eq!(kept.bounds(hash("puddles")), [hash("puddles_col")]);
+        assert!(kept.check().is_empty());
+        // A flag word that disagrees with its fields is said of a group kept so, as of one read.
+        let mut odd = StateGroups::new();
+        odd.add_group(hash("never"), (flags::TIMED, 0), vec![], vec![], "base");
+        assert_eq!(
+            odd.check(),
+            [StateProblem::Gate {
+                group: hash("never"),
+                problem: GateProblem::TimedWithNoHours
+            }]
+        );
+        // And a map known by its flags alone is held back as the map read whole is.
+        let held = map("day_market", NOT_BY_DEFAULT);
+        let mut by_tree = index_of(&tree);
+        by_tree.add_map(&MapData::new(&held).unwrap());
+        kept.add_map_flags(hash("day_market"), NOT_BY_DEFAULT);
+        kept.add_map_flags(hash("plain"), 0);
+        // One no group names is held back by its own bit alone.
+        kept.add_map_flags(hash("loose_ipl"), NOT_BY_DEFAULT);
+        assert!(kept.is_held_back(hash("loose_ipl")) && !kept.is_held_back(hash("plain")));
+        let (noon, night) = (WorldState::at(12, "CLEAR"), WorldState::at(2, "CLEAR"));
+        for state in [&noon, &night] {
+            assert_eq!(
+                kept.is_active(hash("day_market"), state),
+                by_tree.is_active(hash("day_market"), state)
+            );
+        }
+        assert!(kept.is_active(hash("day_market"), &noon));
+        assert!(!kept.is_active(hash("day_market"), &night));
+        assert!(kept.is_active(hash("plain"), &night));
+        assert!(!kept.is_active(hash("loose_ipl"), &noon));
     }
 
     #[test]

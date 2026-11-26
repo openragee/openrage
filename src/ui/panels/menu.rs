@@ -648,6 +648,7 @@ fn help_menu(ui: &mut egui::Ui, state: &mut AppState) {
     ui.menu_button(tr!("Help"), |ui| {
         crate::ui::popup_of_the_shell(ui.ctx());
         item(ui, state, Action::OpenGuide);
+        item(ui, state, Action::OpenAcceptanceGuide);
         item(ui, state, Action::TakeTour);
         item(ui, state, Action::OpenSampleProject);
         item(ui, state, Action::KeyboardShortcuts);

@@ -4,7 +4,7 @@
 //! changed, writes to a fresh folder, reads every file back, swaps it in and keeps the last good build. This says what it did and never that the
 //! build loads in game, which nobody here can run.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -13,9 +13,10 @@ use std::time::SystemTime;
 
 use or_io::gta5::shaders::shader_defs::ParamRemap;
 use or_job::Snapshot;
+use or_project::acceptance::{kinds_in, Sheet};
 use or_project::{
     build_all_watched, check_reproducible, BuildError, BuildStep, Container, Cooked, Diff, Loss,
-    Memory, MetadataCount, ModuleKind, NameCheck, Plan, Reproducible, Watch,
+    Memory, MetadataCount, ModuleKind, NameCheck, Plan, Reproducible, Target, Watch,
 };
 use or_source::cook::cook_source;
 use or_wardrobe::sizes::Sizes;
@@ -101,6 +102,10 @@ pub struct BuiltPart {
     pub pack_checks: Vec<(String, Vec<Check>)>,
     /// What the files of each pack weigh by garment and slot, as the build planned them and at the sizes the cooks came out at.
     pub sizes: Vec<(String, Sizes)>,
+    /// The kinds of file it wrote, as the acceptance sheet names a kind: read once from the folder, by the worker.
+    pub kinds: BTreeSet<String>,
+    /// The edition it was written for, none when the build stated none and shipped each file as it was made.
+    pub target: Option<Target>,
 }
 
 impl BuiltSummary {
@@ -208,15 +213,43 @@ struct Running {
 }
 
 /// The build running, if one is, and what each output last built.
-#[derive(Default)]
 pub struct Builds {
     running: Option<Running>,
     last: BTreeMap<String, LastBuild>,
     /// The step of [`STEPS`] each build that stopped was on, by id.
     stopped: BTreeMap<String, usize>,
+    /// What people recorded of a running game, which a build's kinds of file are read against: the sheet the tree ships.
+    sheet: Sheet,
+}
+
+impl Default for Builds {
+    fn default() -> Self {
+        // ⚠ A sheet that does not read says nothing of any build, and the tab's last line still says that no build is tested in game.
+        let sheet = Sheet::shipped().unwrap_or_else(|why| {
+            tracing::error!("{why}");
+            Sheet::default()
+        });
+        Self {
+            running: None,
+            last: BTreeMap::new(),
+            stopped: BTreeMap::new(),
+            sheet,
+        }
+    }
 }
 
 impl Builds {
+    /// The acceptance sheet the builds are read against.
+    pub fn sheet(&self) -> &Sheet {
+        &self.sheet
+    }
+
+    /// Read the builds against `sheet` in place of the one the tree ships.
+    #[cfg(test)]
+    pub fn read_against(&mut self, sheet: Sheet) {
+        self.sheet = sheet;
+    }
+
     /// Start `job` on a worker; `false` when a build is already running.
     pub fn start(&mut self, job: Job) -> bool {
         if self.running.is_some() {
@@ -486,7 +519,16 @@ fn one(job: &Job, id: &str, (step, watch): (&AtomicU8, &Watch)) -> LastBuild {
         .map(|(plan, built)| {
             let (pack_checks, sizes) =
                 pack_checks(job, id, plan, &built.folder, split, &built.cooked);
+            let kinds = match kinds_in(&built.folder) {
+                Ok(counted) => counted.into_keys().collect(),
+                Err(why) => {
+                    tracing::warn!("the kinds of file of a build were not read: {why}");
+                    BTreeSet::new()
+                }
+            };
             BuiltPart {
+                kinds,
+                target: plan.target,
                 resource: plan.resource.clone(),
                 files: built.written.files,
                 bytes: built.written.bytes,

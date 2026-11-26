@@ -41,7 +41,7 @@ pub struct Lock {
     pub untyped: Vec<String>,
 }
 
-/// The locks of the matrix: for each content its contribution to a build that takes everything, and each kind of build it cannot ship in.
+/// The locks of the matrix: for each kind of build, what each content hands a build of that kind that takes everything, and why it cannot ship in it.
 pub(super) fn locks_of(
     container: &or_project::Container,
     folder: &std::path::Path,
@@ -49,23 +49,36 @@ pub(super) fn locks_of(
     folders: &[or_project::SourceFolder],
     clothing: &[Contribution],
 ) -> Vec<Lock> {
-    let mut probe = container.clone();
     let every: Vec<&str> = container.modules.iter().map(|m| m.id.as_str()).collect();
-    probe.outputs = vec![Output::of(OutputKind::FivemResource, PROBE, PROBE, &every)];
-    let mut made = or_project::files_contributions_with(&probe, PROBE, folder, held, folders)
+    let probe_of = |kind: &OutputKind| {
+        let mut probe = container.clone();
+        probe.outputs = vec![Output::of(kind.clone(), PROBE, PROBE, &every)];
+        probe
+    };
+    let resource = probe_of(&OutputKind::FivemResource);
+    let mut files = or_project::files_contributions_with(&resource, PROBE, folder, held, folders)
         .unwrap_or_default();
-    made.extend(clothing.iter().cloned());
-    let rest = or_content::contributions(&probe, folder, &made);
-    made.extend(rest);
+    files.extend(clothing.iter().cloned());
     // ⚠ A clothing pack is laid out for the kind of build it is planned for and ships in every kind, so no cell of the matrix is locked for it.
     let packs: Vec<&str> = (container.modules.iter())
         .filter(|m| m.kind == or_project::ModuleKind::Clothing)
         .map(|m| m.id.as_str())
         .collect();
-    made.retain(|c| !packs.contains(&c.module.as_str()));
     let mut locks = Vec::new();
-    for contribution in &made {
-        for kind in KINDS {
+    for kind in KINDS {
+        // ⚠ A content may hand its files over as the kind of build lays them out, as a Map content hands a story pack its maps
+        // inside an archive, so each kind is asked for itself and a cell says what a plan of that kind of build says.
+        let probe = probe_of(&kind);
+        let mut made = files.clone();
+        made.extend(or_project::content::contributions_to(
+            &or_content::kinds(),
+            &probe,
+            folder,
+            &files,
+            probe.outputs.first(),
+        ));
+        made.retain(|c| !packs.contains(&c.module.as_str()));
+        for contribution in &made {
             if let Some(why) = cannot_ship(contribution, &kind) {
                 let untyped = match kind {
                     OutputKind::SingleplayerDlc => or_project::files_without_a_type(contribution),
@@ -73,7 +86,7 @@ pub(super) fn locks_of(
                 };
                 locks.push(Lock {
                     content: contribution.module.clone(),
-                    kind,
+                    kind: kind.clone(),
                     why,
                     untyped,
                 });
@@ -284,5 +297,59 @@ impl super::Workbench {
         (scan.locks.iter())
             .find(|lock| lock.content == content && &lock.kind == kind)
             .map(|lock| lock.why.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use or_maps::import::{add_files, Incoming};
+    use or_maps::sample::{map_file, types_file, Archetype, Entity};
+    use or_project::{Container, Module};
+
+    /// ⚠ A Map content hands a story pack its maps inside an archive and a resource the same maps loose, so the sentence of a cell
+    /// is the one of the build the cell is for: what `project plan` of that build says, never what a resource's layout would.
+    #[test]
+    fn the_cell_of_a_kind_of_build_is_judged_by_what_the_content_hands_that_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let placed = map_file(
+            "harbour",
+            &[Entity::at("prop_crate_a", [10.0, 20.0, 0.5], 1)],
+            ([8.0, 18.0, -1.0], [12.0, 22.0, 2.0]),
+        );
+        let declared = types_file(
+            "harbour_types",
+            &[Archetype::new("prop_crate_a", [-1.0; 3], [1.0; 3])],
+        );
+        let incoming = |name: &'static str, bytes: &'static [u8]| Incoming {
+            name,
+            bytes,
+            from_game: false,
+            virtual_path: None,
+        };
+        let files = [
+            incoming("harbour.ymap", placed.leak()),
+            incoming("harbour_types.ytyp", declared.leak()),
+        ];
+        let added = add_files(&dir.path().join("maps"), &files, None).unwrap();
+        assert!(added.refused.is_empty(), "{:?}", added.refused);
+        let container = Container {
+            modules: vec![Module::maps("maps", "maps")],
+            outputs: Vec::new(),
+        };
+
+        let locks = locks_of(&container, dir.path(), &[], &[], &[]);
+        let of = |kind: OutputKind| {
+            (locks.iter())
+                .find(|lock| lock.content == "maps" && lock.kind == kind)
+                .map(|lock| lock.why.as_str())
+        };
+        assert_eq!(of(OutputKind::FivemResource), None);
+        let said = of(OutputKind::SingleplayerDlc).expect("the cell of a story pack is locked");
+        let archive = or_maps::layout::pack_archive("maps");
+        assert!(
+            said.contains(&archive) && !said.contains("stream/harbour.ymap"),
+            "the cell speaks of the archive a story pack holds the maps in: {said}"
+        );
     }
 }

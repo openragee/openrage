@@ -110,7 +110,7 @@ macro_rules! whole_numbers {
     )*};
 }
 
-whole_numbers!(i8, u8, i32, u32);
+whole_numbers!(i8, u8, i16, u16, i32, u32);
 
 /// A float as the text that reads back as exactly it: the shortest decimal, or its bits where none does.
 fn float_text(x: f32) -> String {
@@ -148,7 +148,8 @@ impl Json for f32 {
 
     fn read(&mut self, v: &Value, at: &mut Trail) -> Result<(), Fault> {
         let x = match v {
-            Value::Number(n) => n.as_f64().map(|wide| wide as f32),
+            // ⚠ A number past what a float holds would be read as an infinity; one is stated by its bits.
+            Value::Number(n) => n.as_f64().map(|wide| wide as f32).filter(|x| x.is_finite()),
             Value::String(text) => float_from(text),
             _ => None,
         };

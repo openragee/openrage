@@ -27,6 +27,7 @@ pub fn run(args: &[String]) -> ExitCode {
             super::world_edit::cmd_create_executed(rest)
         }
         "create" => cmd_create(rest),
+        "new-map" => super::world_new::cmd_new_map(rest),
         "states" => super::world_edit::cmd_states(rest),
         "delete-entity" => super::world_edit::cmd_delete_entity(rest),
         "delete-map" => super::world_edit::cmd_delete_map(rest),
@@ -34,6 +35,11 @@ pub fn run(args: &[String]) -> ExitCode {
         "to-xml" => cmd_to_xml(rest),
         "from-xml" => cmd_from_xml(rest),
         "archetypes" => super::world_archetypes::run(rest),
+        "index" => super::world_index::cmd_index(rest),
+        "at" => super::world_index::cmd_at(rest),
+        "ground" => super::world_ground::cmd_ground(rest),
+        "find" => super::world_find::cmd_find(rest),
+        "select" => super::world_select::cmd_select(rest),
         "-h" | "--help" | "help" => {
             print_usage();
             ExitCode::SUCCESS
@@ -833,8 +839,9 @@ fn cmd_from_xml(args: &[String]) -> ExitCode {
 
 /// Create a `.ymap` by cloning a donor and renaming it.
 ///
-/// ⚠ A donor brings its own layout; authoring a `CMapData` from nothing needs
-/// one `or_io::meta::binary::synth` derives from the gitignored schema snapshot.
+/// ⚠ A donor brings its own layout and its classes' signature words, so the
+/// clone is an RBM file as the donor is; `world new-map` makes a map from
+/// nothing, which is a PSO.
 ///
 /// A created map has to appear in a manifest to exist for the game, so this
 /// needs the mounted install and refuses whatever [`or_world::Plan`] refuses.
@@ -1150,7 +1157,7 @@ pub(crate) fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> 
     None
 }
 
-fn read(path: &Path, mode: ErrorMode) -> Result<MetaInstance, String> {
+pub(crate) fn read(path: &Path, mode: ErrorMode) -> Result<MetaInstance, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     parse(&bytes, mode)
 }
@@ -1187,7 +1194,7 @@ pub(crate) fn mounted_winners(
     Ok((game, winners.into_values().collect()))
 }
 
-fn gather(root: &Path, exts: &[&str]) -> Vec<PathBuf> {
+pub(crate) fn gather(root: &Path, exts: &[&str]) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if root.is_file() {
         out.push(root.to_path_buf());
@@ -1232,7 +1239,9 @@ fn print_usage() {
     eprintln!("  archetypes --like <donor.ytyp> --name <name> <drawables...> <out.ytyp>");
     eprintln!("                           Generate one archetype per drawable, bounds taken");
     eprintln!("                           from the drawable; --lod-dist and --txd state what");
-    eprintln!("                           no drawable records.");
+    eprintln!("                           no drawable records. With no --like the type file is");
+    eprintln!("                           made from nothing, as PSO, and may declare none; an");
+    eprintln!("                           archetype made so states no assetType.");
     eprintln!("  to-xml <file> [out.xml]  Export as XML, withheld unless re-importing it");
     eprintln!("                           reaches a fixed point; --anyway overrides.");
     eprintln!("  from-xml <in.xml> <out>  Import, refusing a file the game would misread.");
@@ -1243,6 +1252,14 @@ fn print_usage() {
     eprintln!("                           --toggle <map> prints the load/unload delta.");
     eprintln!("  create --game <dir> --like <map> --name <new> --manifest <logical.ymf>");
     eprintln!("         --out <dir>       Clone a map and state it in a manifest, both written.");
+    eprintln!("  new-map --name <map> [--entity <archetype> --at <x,y,z> --lod-dist <d>");
+    eprintln!("          --types <ytyp-or-dir>] <out.ymap>");
+    eprintln!("                           Make a map from nothing, with no donor and no schema");
+    eprintln!("                           snapshot: empty, or placing one entity (--turn <x,y,z>");
+    eprintln!("                           in degrees, --scale <xy>[,<z>], --flags <n>), with its");
+    eprintln!("                           extents and content flags derived. Written as PSO;");
+    eprintln!("                           --as rbm is refused, since an RBM class carries a");
+    eprintln!("                           signature word that nothing derives.");
     eprintln!("  delete-entity --game <dir> --map <m> --index <n> [--subtree] --out <dir>");
     eprintln!("                           Remove an entity (with its LOD children under");
     eprintln!("                           --subtree), renumbering every link in every file.");
@@ -1250,6 +1267,44 @@ fn print_usage() {
     eprintln!("                           Remove a map, its manifest entries and its group.");
     eprintln!("  prefab capture|place|list");
     eprintln!("                           Prefab catalogues, one directory per title.");
+    eprintln!("  index, at, ground, find and select name the install as their first argument");
+    eprintln!("                           or with --game <dir>.");
+    eprintln!("  index <install>          Build the world index of an install, or refresh the");
+    eprintln!("                           kept one: every map, type file, archetype and bound,");
+    eprintln!("                           and which archives were read again. --kept <file>");
+    eprintln!("                           names the file it is kept in; --fresh reads it all.");
+    eprintln!("  at <install> <x> <y> <z>   (or a place as pasted: x,y,z or vector3(x, y, z))");
+    eprintln!("                           The maps whose streaming extents hold a position and");
+    eprintln!("                           the bounds whose box does, from the world index.");
+    eprintln!("  ground <install> <x> <y> [<z>]   (or a place as pasted, as `at` takes one)");
+    eprintln!("                           The ground under a position: its height, material");
+    eprintln!("                           and bounds file, or none and the files looked in.");
+    eprintln!("                           With no z, the highest ground of the column; with");
+    eprintln!("                           one, from --rise <m> above it (1) down. --slope");
+    eprintln!("                           <degrees> is the steepest ground (60). --level");
+    eprintln!("                           <pack> and --mode <story|multiplayer> mount as");
+    eprintln!("                           `dlc-list` does. Static map collision only: an");
+    eprintln!("                           interior's is named and not loaded, and a placed");
+    eprintln!("                           prop's is not read.");
+    eprintln!("  find <install> <text>    Where something is: a place as pasted, with the maps");
+    eprintln!("                           and bounds that hold it and its ground; a hash in");
+    eprintln!("                           hexadecimal, unsigned or signed, with what it names;");
+    eprintln!("                           or a name, with the models and the maps it answers,");
+    eprintln!("                           best first, and the placements of the model it names");
+    eprintln!("                           in full. --near <x,y,z> orders placements from a");
+    eprintln!("                           view; --limit <n> is the most rows of a group (10);");
+    eprintln!("                           --copy <lua|json|csharp> prints the place, or the");
+    eprintln!("                           model's placements, as a script takes them. --level");
+    eprintln!("                           and --mode mount as `dlc-list` does.");
+    eprintln!("  select <install> <x,y,z> [--distance <m>]   (or a place as pasted)");
+    eprintln!("                           What the streamed world takes for a view at a place:");
+    eprintln!("                           the maps wanted, the instances selected by level of");
+    eprintln!("                           detail with every model taken as loaded, those that");
+    eprintln!("                           stand as a box and why, and the files needed.");
+    eprintln!("                           --distance lists only what stands within it. --hour");
+    eprintln!("                           <0-23> (12) and --weather <name> (EXTRASUNNY) set");
+    eprintln!("                           what a manifest's groups let in. --level and --mode");
+    eprintln!("                           mount as `dlc-list` does.");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --types <dir>   Where to find `.ytyp` for archetype bounds. Defaults to");

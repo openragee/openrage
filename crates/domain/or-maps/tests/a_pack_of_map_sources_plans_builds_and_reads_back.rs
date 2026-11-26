@@ -156,7 +156,8 @@ fn a_ymap_imports_to_a_source_and_builds_back_to_a_file_that_reads_equal() {
     let facts = inspect(&folder, &model, Depth::Open);
     let found = verify(&model, &facts, &built.folder);
     assert!(found.is_clean(), "{:?}", found.problems());
-    assert_eq!(found.checks.len(), 1);
+    let checked: Vec<&str> = found.checks.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(checked, ["map harbour", "map resource"]);
 
     // A second build of the same sources is the same build.
     let again = build_with(
@@ -244,9 +245,9 @@ fn a_singleplayer_dlc_cell_is_derived_from_what_the_content_hands_over() {
         None
     );
     // A `.ymap` streams from `stream/`, and no data file of the retail packs registers one: the install keeps its map data inside
-    // nested archives, which `content.xml` registers, so the cell stays locked until a wave builds that archive.
+    // nested archives, which `content.xml` registers, so a map that would sit loose locks the cell.
     let said = or_project::cannot_ship(&handed[0], &OutputKind::SingleplayerDlc)
-        .expect("a file with no type locks the cell");
+        .expect("a map file outside every archive locks the cell");
     assert!(said.contains("stream/harbour.ymap"), "{said}");
 }
 

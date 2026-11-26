@@ -3706,6 +3706,9 @@ msgstr "チェックのためにもう一度開いたすべてのファイル ({
 msgid "Every job running in the background and the ones just finished, with their progress, a Cancel and what each left"
 msgstr "バックグラウンドで実行中のすべてのジョブと、完了したばかりのジョブを、進行状況、キャンセル操作、残された内容とともに表示します"
 
+msgid "Every kind of file this build wrote that the acceptance sheet has a line about was seen loading in GTA V {edition}; the newest result is dated {date}"
+msgstr "このビルドが書き出したファイルのうち、受け入れシートに行がある種類はすべて、GTA V {edition} での読み込みが確認されています。最新の結果の日付は {date} です"
+
 msgid "Every level of detail"
 msgstr "すべてのLOD"
 
@@ -4534,6 +4537,9 @@ msgstr "ディフューズの明るさが法線マップをどれだけ傾ける
 msgid "How the 3D view draws the ped: with textures, as a shape, as edges, or as the vertex data"
 msgstr "3Dビューでpedをどう描画するか：テクスチャ付き、形状、エッジ、または頂点データ"
 
+msgid "How to check it in the game"
+msgstr "ゲームで確認する方法"
+
 msgid "How to open a pack, fix it, build it, put it on a server and share a project, for someone who comes from Durty Cloth Tool"
 msgstr "Durty Cloth Toolから移行する人向けに、パックを開き、修正し、ビルドし、サーバーに配置し、プロジェクトを共有する方法"
 
@@ -4626,6 +4632,9 @@ msgstr "このプロジェクト内  ·  {count}"
 
 msgid "In {source}"
 msgstr "{source}内"
+
+msgid "In-game acceptance guide"
+msgstr "ゲーム内受け入れガイド"
 
 msgid "Info and above"
 msgstr "情報以上"
@@ -7070,6 +7079,9 @@ msgstr "設定済みのGTAインストールと抽出済みのキーを使用し
 msgid "Read \"{section}\" in the guide"
 msgstr "ガイドの「{section}」を読む"
 
+msgid "Read \"{section}\" in the guide to checking a build in the game, which nothing in OpenRage runs"
+msgstr "ビルドをゲームで確認するためのガイドの「{section}」を読む。OpenRage はゲームを実行しません"
+
 msgid "Read a .glb or .gltf, show what it replaces or why it cannot, then change the open model as one step to undo or save, as openrage-cli mesh import does"
 msgstr "openrage-cli mesh importと同様に、.glbまたは.gltfを読み取り、置き換える内容、または置き換えられない理由を表示してから、開いているモデルを、元に戻すまたは保存できる1つのステップとして変更します"
 
@@ -8741,6 +8753,9 @@ msgstr "あとで設定の「編集」ページから変更できます"
 msgid "The Wardrobe's rules found nothing wrong in it."
 msgstr "ワードローブのルールでは、問題は見つかりませんでした。"
 
+msgid "The acceptance sheet has no line about what else this build wrote: {kinds}"
+msgstr "このビルドが書き出したその他のファイルについては、受け入れシートに行がありません: {kinds}"
+
 msgid "The active document has no file yet"
 msgstr "アクティブなドキュメントにはまだファイルがありません"
 
@@ -10256,6 +10271,9 @@ msgstr "フォルダーの内容を、認識された種類ごとにグループ
 msgid "What this writes"
 msgstr "書き込まれる内容"
 
+msgid "What to look for in a running game to say that it loads what a build wrote, how to load a build on a FiveM server and in story mode, and how to write down what you saw"
+msgstr "ビルドが書き出したものをゲームが読み込むと言うために実行中のゲームで何を見るか、FiveMサーバーとストーリーモードでビルドを読み込む方法、見たことを記録する方法"
+
 msgid "What would be made"
 msgstr "作成される内容"
 
@@ -11150,6 +11168,9 @@ msgstr "ショップ名"
 msgid "singleplayer DLC"
 msgstr "シングルプレイヤーDLC"
 
+msgid "singleplayer DLC packs"
+msgstr "シングルプレイヤーDLCパック"
+
 msgid "source"
 msgstr "ソース"
 
@@ -11310,6 +11331,9 @@ msgid "to"
 msgstr "先"
 
 msgid "type file"
+msgstr "タイプファイル"
+
+msgid "type files"
 msgstr "タイプファイル"
 
 msgid "under"
@@ -11557,6 +11581,11 @@ msgid "{count} item keeps a stable id, so the next build can tell what moved"
 msgid_plural "{count} items keep a stable id, so the next build can tell what moved"
 msgstr[0] "{count} 個の項目は安定IDを保持するため、次のビルドで何が移動したかを判別できます"
 msgstr[1] "{count} 個の項目は安定IDを保持するため、次のビルドで何が移動したかを判別できます"
+
+msgid "{count} kind of file this build wrote was not seen loading in GTA V {edition}: {kinds}"
+msgid_plural "{count} kinds of file this build wrote were not seen loading in GTA V {edition}: {kinds}"
+msgstr[0] "このビルドが書き出したファイルのうち {count} 種類は、GTA V {edition} での読み込みが確認されていません：{kinds}"
+msgstr[1] "このビルドが書き出したファイルのうち {count} 種類は、GTA V {edition} での読み込みが確認されていません：{kinds}"
 
 msgid "{count} map set"
 msgid_plural "{count} map sets"
@@ -14445,6 +14474,9 @@ msgstr "選択したエンティティから半径内にある、近い順に最
 msgid "map {map}, index {index}: open that map body to follow it"
 msgstr "マップ {map}、インデックス {index}：たどるにはそのマップボディを開いてください"
 
+msgid "maps"
+msgstr "マップ"
+
 msgid "index {index} names nothing in {file}"
 msgstr "インデックス {index}は{file}内の何も指していません"
 
@@ -17236,3 +17268,31 @@ msgstr "プログラム全体を専用のスレッドでデコンパイルしま
 
 msgid "The script was not decompiled: {e}"
 msgstr "スクリプトはデコンパイルされませんでした：{e}"
+
+msgid "A key you chose, which no preset changes"
+msgstr "自分で選んだキーです。プリセットでは変わりません"
+
+msgid "A set of keys for the commands it names: every other command keeps its key, and so does one whose key you chose. OpenRage is the set the app starts with."
+msgstr "プリセットは、それが挙げるコマンドのキーをまとめたものです。ほかのコマンドはキーをそのまま保ち、自分でキーを選んだコマンドも同じです。OpenRage はアプリの初期のセットです。"
+
+msgid "CodeWalker"
+msgstr "CodeWalker"
+
+msgid "OpenRage"
+msgstr "OpenRage"
+
+msgid "Preset"
+msgstr "プリセット"
+
+msgid "{count} command it names keeps the key you chose."
+msgid_plural "{count} commands it names keep the keys you chose."
+msgstr[0] "そのうち {count} 個のコマンドは、自分で選んだキーを保ちます。"
+msgstr[1] "そのうち {count} 個のコマンドは、自分で選んだキーを保ちます。"
+
+msgid "{key} (US keyboard)"
+msgstr "{key} (US キーボード)"
+
+msgid "{preset} changes the keys of {count} command."
+msgid_plural "{preset} changes the keys of {count} commands."
+msgstr[0] "{preset} は {count} 個のコマンドのキーを変更します。"
+msgstr[1] "{preset} は {count} 個のコマンドのキーを変更します。"

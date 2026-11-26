@@ -1,6 +1,7 @@
 //! What a build wrote and read back, part by part: the one place the Build tab says a built folder.
 
-use or_project::Container;
+use or_project::acceptance::Sheet;
+use or_project::{Container, Output};
 
 use super::build_tab::{against, file_row, said, LISTED, LIST_MARK, ROW};
 use super::{ago, severity_colour, size};
@@ -25,12 +26,13 @@ fn metadata_words(reader: &str) -> &'static str {
     }
 }
 
+/// Says what the build wrote and read back of `part`; the section of the acceptance guide its link asked for.
 pub(super) fn built_part(
     ui: &mut egui::Ui,
-    container: &Container,
+    (container, output, sheet): (&Container, &Output, &Sheet),
     at: std::time::SystemTime,
     part: &BuiltPart,
-) {
+) -> Option<&'static str> {
     let plain = theme::TEXT_PRIMARY;
     let dim = theme::TEXT_SECONDARY;
     let warning = severity_colour(Severity::Warning);
@@ -161,6 +163,7 @@ pub(super) fn built_part(
             }
         }
     }
+    let asked = super::in_game::seen_in_game(ui, sheet, output, part);
     if !part.cooked.is_empty() {
         said(
             ui,
@@ -254,4 +257,5 @@ pub(super) fn built_part(
                 });
         });
     }
+    asked
 }

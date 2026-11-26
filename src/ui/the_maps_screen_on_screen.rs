@@ -612,3 +612,306 @@ fn the_rows_of_the_list_are_named_in_french_in_the_french_interface() {
         );
     }
 }
+
+/// The edits the manipulator does not make are operations too: an entity renamed or taken out and an archetype added, changed or
+/// taken out are each one step, and Undo puts each source back to the bytes it held.
+#[test]
+fn an_entity_renamed_or_removed_and_an_archetype_added_changed_or_removed_are_each_one_step_undo_puts_back(
+) {
+    use or_io::decl::File;
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().unwrap();
+    let mut shell = a_maps_shell(dir.path());
+    let folder = shell.state.maps_pack().expect("a pack").folder.clone();
+    let types_source = "harbour_types.metadata.src";
+    let xml = |source: &str| std::fs::read(folder.join(source).join("metadata.xml")).unwrap();
+    let before = (xml("harbour.metadata.src"), xml(types_source));
+    let types = || {
+        or_io::meta::typed::CMapTypes::from_bytes(
+            &or_maps::facts::cooked(&folder.join(types_source)).unwrap(),
+        )
+        .unwrap()
+    };
+
+    select_entity(&mut shell, 1);
+    shell.state.rename_selected_entity_archetype("prop_crate_a");
+    assert!(the_map_file(&shell).entities[1].archetype_name == "prop_crate_a");
+    assert_eq!(the_map_file(&shell).entities[1].guid, 2);
+    shell.state.remove_selected_entity();
+    let map = the_map_file(&shell);
+    assert_eq!(map.entities.len(), 1);
+    assert_eq!(map.entities[0].guid, 1);
+    assert_eq!(shell.state.workbench.maps.undo.len(), 2);
+
+    let (module, set) = {
+        let (pack, set) = shell.state.shown_set().expect("a set");
+        (pack.module.clone(), set.id.clone())
+    };
+    shell.state.select_in_maps(
+        &module,
+        &set,
+        Some(Pick {
+            source: types_source.to_string(),
+            kind: PickKind::Archetype(1),
+        }),
+    );
+    shell
+        .state
+        .add_archetype_named("prop_new_crate", Some("prop_new_crate_lod"));
+    assert_eq!(types().archetypes.len(), 3);
+    assert!(types().archetypes[2].asset_name == "prop_new_crate_lod");
+    assert_eq!(
+        shell.state.workbench.maps.selected,
+        Some(Pick {
+            source: types_source.to_string(),
+            kind: PickKind::Archetype(2),
+        }),
+        "the archetype added is the one selected"
+    );
+    shell
+        .state
+        .edit_selected_archetype("Set the box".to_string(), &[], |archetype| {
+            archetype.bb_max.z = 9.5;
+        });
+    assert_eq!(types().archetypes[2].bb_max.z, 9.5);
+    assert!(types().archetypes[2].name == "prop_new_crate");
+    // A name another archetype holds is refused, and the source stays as it was.
+    let held = xml(types_source);
+    shell
+        .state
+        .edit_selected_archetype("Renamed".to_string(), &[], |archetype| {
+            archetype.name = or_io::meta::instance::HashedString::new("prop_crate_a");
+        });
+    assert_eq!(xml(types_source), held);
+    assert_eq!(shell.state.workbench.maps.undo.len(), 4);
+    shell.state.remove_selected_archetype();
+    assert_eq!(types().archetypes.len(), 2);
+    assert_eq!(shell.state.workbench.maps.undo.len(), 5);
+
+    for _ in 0..5 {
+        shell.state.undo_maps_change();
+    }
+    assert!(shell.state.workbench.maps.undo.is_empty());
+    assert!(
+        (xml("harbour.metadata.src"), xml(types_source)) == before,
+        "five steps back, the sources hold the bytes they held"
+    );
+}
+
+/// What is added is a copy of what is selected, and not of the first record its file holds.
+#[test]
+fn an_entity_and_an_archetype_added_are_copies_of_the_one_selected() {
+    use or_io::decl::File;
+    use or_maps::operation::{apply, Operation, Record};
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().unwrap();
+    let mut shell = a_maps_shell(dir.path());
+    let folder = shell.state.maps_pack().expect("a pack").folder.clone();
+    let types_source = "harbour_types.metadata.src";
+
+    // The second entity is given a distance of its own, which the first does not state.
+    let mut second = the_map_file(&shell).entities[1].clone();
+    let first = the_map_file(&shell).entities[0].lod_dist;
+    second.lod_dist = first + 23.5;
+    apply(
+        &folder,
+        &Operation::ReplaceEntity {
+            source: "harbour.metadata.src".to_string(),
+            entity: 1,
+            record: Record::entity(&second).unwrap(),
+            extents: None,
+            expects: None,
+        },
+    )
+    .unwrap();
+    select_entity(&mut shell, 1);
+    let pose = shell.state.selected_pose().expect("a pose");
+    shell
+        .state
+        .add_entity_at(or_maps::Name::from_text("prop_crate_a"), pose);
+    let map = the_map_file(&shell);
+    assert_eq!(map.entities.len(), 3);
+    assert_eq!(map.entities[2].lod_dist, first + 23.5);
+    assert!(map.entities[2].archetype_name == "prop_crate_a");
+
+    let (module, set) = {
+        let (pack, set) = shell.state.shown_set().expect("a set");
+        (pack.module.clone(), set.id.clone())
+    };
+    shell.state.select_in_maps(
+        &module,
+        &set,
+        Some(Pick {
+            source: types_source.to_string(),
+            kind: PickKind::Archetype(1),
+        }),
+    );
+    shell
+        .state
+        .edit_selected_archetype("Set the box".to_string(), &[], |archetype| {
+            archetype.bb_max.z = 9.5;
+        });
+    shell.state.add_archetype_named("prop_new_crate", None);
+    let types = or_io::meta::typed::CMapTypes::from_bytes(
+        &or_maps::facts::cooked(&folder.join(types_source)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(types.archetypes.len(), 3);
+    assert_eq!(types.archetypes[0].bb_max.z, 1.0);
+    assert_eq!(types.archetypes[2].bb_max.z, 9.5);
+    assert!(types.archetypes[2].name == "prop_new_crate");
+}
+
+/// A step of Undo keeps the operation that takes its change back, which states the XML it applies to.
+#[test]
+fn an_undo_is_refused_once_its_source_was_edited_from_outside_and_goes_through_once_that_edit_is_taken_back(
+) {
+    use or_maps::operation::{apply, Operation, PoseData};
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().unwrap();
+    let mut shell = a_maps_shell(dir.path());
+    let folder = shell.state.maps_pack().expect("a pack").folder.clone();
+    let file = the_map_source(&shell).join("metadata.xml");
+    let before = std::fs::read(&file).unwrap();
+
+    select_entity(&mut shell, 0);
+    let pose = shell.state.selected_pose().expect("a pose");
+    let moved = or_maps::edit::Pose {
+        position: pose.position + Vec3::new(2.0, 0.0, 0.0),
+        ..pose
+    };
+    shell
+        .state
+        .place_selected_entity(moved, "Moved".to_string());
+    assert_eq!(shell.state.workbench.maps.undo.len(), 1);
+    let step = &shell.state.workbench.maps.undo[0];
+    assert_eq!(
+        step.undo.expects(),
+        Some(or_maps::operation::digest_of(&std::fs::read(&file).unwrap()).as_str()),
+        "the step keeps the inverse, which states the XML the move wrote"
+    );
+
+    // Another entity of the same source is moved by something that is not this history.
+    let outside = apply(
+        &folder,
+        &Operation::PlaceEntity {
+            source: "harbour.metadata.src".to_string(),
+            expects: None,
+            entity: 1,
+            pose: PoseData {
+                position: [40.0, 41.0, 0.5],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale_xy: 1.0,
+                scale_z: 1.0,
+            },
+        },
+    )
+    .unwrap();
+    let edited = std::fs::read(&file).unwrap();
+    shell.state.undo_maps_change();
+    assert_eq!(
+        (
+            shell.state.workbench.maps.undo.len(),
+            shell.state.workbench.maps.redo.len()
+        ),
+        (1, 0),
+        "the step is kept for when the source is as it left it"
+    );
+    assert!(
+        std::fs::read(&file).unwrap() == edited,
+        "a refused Undo writes nothing"
+    );
+
+    apply(&folder, &outside.inverse).unwrap();
+    shell.state.undo_maps_change();
+    assert!(shell.state.workbench.maps.undo.is_empty());
+    assert!(std::fs::read(&file).unwrap() == before);
+    shell.state.redo_maps_change();
+    assert_eq!(
+        the_map_file(&shell).entities[0].position.x,
+        moved.position.x
+    );
+    shell.state.undo_maps_change();
+    assert!(std::fs::read(&file).unwrap() == before);
+}
+
+/// A map read again with no entity in it saves none, so the step that took the last one out keeps the XML and Undo puts it back.
+#[test]
+fn the_last_entity_of_a_map_taken_out_is_put_back_by_undo() {
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().unwrap();
+    let mut shell = a_maps_shell(dir.path());
+    let file = the_map_source(&shell).join("metadata.xml");
+    let before = std::fs::read(&file).unwrap();
+
+    for _ in 0..2 {
+        select_entity(&mut shell, 0);
+        shell.state.remove_selected_entity();
+    }
+    assert!(the_map_file(&shell).entities.is_empty());
+    assert_eq!(shell.state.workbench.maps.undo.len(), 2);
+    let emptied = std::fs::read(&file).unwrap();
+
+    shell.state.undo_maps_change();
+    assert_eq!(
+        the_map_file(&shell).entities.len(),
+        1,
+        "the entity taken out last is put back"
+    );
+    shell.state.undo_maps_change();
+    assert!(shell.state.workbench.maps.undo.is_empty());
+    assert!(std::fs::read(&file).unwrap() == before);
+
+    shell.state.redo_maps_change();
+    shell.state.redo_maps_change();
+    assert!(std::fs::read(&file).unwrap() == emptied);
+    shell.state.undo_maps_change();
+    shell.state.undo_maps_change();
+    assert!(std::fs::read(&file).unwrap() == before);
+}
+
+/// What an operation went without is said on the screen as `maps apply` prints it: an entity of a model no type file of the pack
+/// declares, moved past the extents, grows them to where it stands and not to its box.
+#[test]
+fn an_edit_says_what_its_operation_went_without_as_a_warning() {
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().unwrap();
+    let mut shell = a_maps_shell(dir.path());
+    let warnings = |shell: &Shell| -> Vec<String> {
+        (shell.state.toasts.iter())
+            .filter(|toast| toast.toast_type == crate::state::ToastType::Warning)
+            .map(|toast| toast.message.clone())
+            .collect()
+    };
+    select_entity(&mut shell, 0);
+    let pose = shell.state.selected_pose().expect("a pose");
+    let far = |x: f32| or_maps::edit::Pose {
+        position: Vec3::new(x, 20.0, 0.5),
+        ..pose
+    };
+    // A model the type file declares has its box in the pack: nothing is gone without.
+    shell
+        .state
+        .place_selected_entity(far(150.0), "Moved".to_string());
+    assert_eq!(warnings(&shell), Vec::<String>::new());
+
+    select_entity(&mut shell, 1);
+    shell
+        .state
+        .rename_selected_entity_archetype("prop_bench_01a");
+    assert_eq!(
+        warnings(&shell),
+        Vec::<String>::new(),
+        "a name alone grows nothing"
+    );
+    shell
+        .state
+        .place_selected_entity(far(300.0), "Moved".to_string());
+    let said = warnings(&shell);
+    let bench = format!("hash_{:08X}", or_io::string_hash(b"prop_bench_01a"));
+    assert!(
+        matches!(said.as_slice(), [note] if note.contains("no type file of the pack declares") && note.contains(&bench)),
+        "{said:?}"
+    );
+    assert_eq!(the_map_file(&shell).entities[1].position.x, 300.0);
+}

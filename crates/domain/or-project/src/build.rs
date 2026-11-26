@@ -76,6 +76,8 @@ pub struct Verification {
     pub checked: usize,
     /// Every file a reader of OpenRage opened, with the reader that did; never cut short.
     pub reloaded: Vec<Reloaded>,
+    /// The files locked by a server's asset escrow, by their path in the resource: equal to what the plan copies, and opened by no reader.
+    pub locked: Vec<String>,
     /// One sentence for each file that is missing, differs, is not in the plan or does not reload.
     pub problems: Vec<String>,
     /// The names the game resolves once that the plan checked, and the ones held twice.
@@ -785,6 +787,10 @@ pub(crate) fn moved(
     if data.len() as u64 != bytes {
         return Err(BuildError::SourceChanged(from.to_path_buf()));
     }
+    // ⚠ No layout can be read off a file an asset escrow locks, so there is none to move it from: it ships as it came.
+    if data.starts_with(crate::resource::ESCROW_MARKER) {
+        return Ok((data, None));
+    }
     let target = plan.target.map(|t| t.generation());
     if readers::layout(path, &data).ok() == target {
         return Ok((data, None));
@@ -966,8 +972,15 @@ pub(crate) fn check_file(
     file: &PlannedFile,
     written: &[u8],
 ) {
-    let planned = match &file.origin {
-        Origin::Copy { from, .. } => match std::fs::read(from) {
+    let locked = written.starts_with(crate::resource::ESCROW_MARKER);
+    let copied = match &file.origin {
+        Origin::Copy { from, .. } => Some(from),
+        // ⚠ A locked file the build was to move to its target ships as it came, so it is compared as a copy is.
+        Origin::Retarget { from, .. } if locked => Some(from),
+        _ => None,
+    };
+    let planned = match (copied, &file.origin) {
+        (Some(from), _) => match std::fs::read(from) {
             Ok(bytes) => Some(bytes),
             Err(e) => {
                 found.problems.push(format!(
@@ -977,14 +990,27 @@ pub(crate) fn check_file(
                 return;
             }
         },
-        Origin::Document(text) => Some(text.as_bytes().to_vec()),
-        Origin::Generated(bytes) => Some(bytes.clone()),
-        Origin::Retarget { .. } | Origin::Cook { .. } => None,
+        (None, Origin::Document(text)) => Some(text.as_bytes().to_vec()),
+        (None, Origin::Generated(bytes)) => Some(bytes.clone()),
+        (None, _) => None,
     };
     if planned.is_some_and(|planned| written != planned) {
         found
             .problems
             .push(format!("`{}` differs from what the plan names", file.path));
+        return;
+    }
+    // ⚠ A file an asset escrow locks is its author's as it came: equal to what the plan copies is all a build can say of it.
+    if copied.is_some() && locked {
+        // ⚠ Only the server of its keyholder opens it, so a pack or a package would install a file the game cannot read.
+        if plan.kind == OutputKind::FivemResource {
+            found.locked.push(file.path.clone());
+        } else {
+            found.problems.push(format!(
+                "`{}` is locked by a server's asset escrow, which only a FiveM server of its keyholder opens: the game cannot read it from a pack or a package",
+                file.path
+            ));
+        }
         return;
     }
     // ⚠ A file with no layout per target (a metadata file) has none to compare with the target's.
@@ -1028,7 +1054,7 @@ pub(crate) fn check_file(
 }
 
 /// Every file under `folder`, by its path inside it with `/`, in order.
-fn files_under(folder: &Path) -> Vec<String> {
+pub(crate) fn files_under(folder: &Path) -> Vec<String> {
     fn walk(base: &Path, dir: &Path, out: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;

@@ -146,16 +146,15 @@ pub fn run(args: &[String]) -> ExitCode {
             })
             .collect()
     };
-    let (Some(donor), Some(name), Some((out, inputs))) =
-        (value("--like"), value("--name"), positional.split_last())
-    else {
+    let (Some(name), Some((out, inputs))) = (value("--name"), positional.split_last()) else {
         eprintln!(
-            "Error: world archetypes --like <donor.ytyp> --name <types-name> \
+            "Error: world archetypes [--like <donor.ytyp>] --name <types-name> \
              <drawable-or-dir>... <out.ytyp>"
         );
         return ExitCode::from(2);
     };
-    if inputs.is_empty() {
+    let donor = value("--like");
+    if donor.is_some() && inputs.is_empty() {
         eprintln!("Error: no drawables given");
         return ExitCode::from(2);
     }
@@ -177,6 +176,9 @@ pub fn run(args: &[String]) -> ExitCode {
         }
     }
 
+    let Some(donor) = donor else {
+        return from_nothing(args, name, out, &facts, &authoring);
+    };
     let bytes = match std::fs::read(donor) {
         Ok(b) => b,
         Err(e) => {
@@ -217,10 +219,59 @@ pub fn run(args: &[String]) -> ExitCode {
         }
     };
 
+    written(out, &encoded, &facts, &authoring, name_hash)
+}
+
+/// The type file `name` made from nothing, declaring one archetype for each of `facts`.
+fn from_nothing(
+    args: &[String],
+    name: &str,
+    out: &str,
+    facts: &[DrawableFacts],
+    authoring: &Authoring,
+) -> ExitCode {
+    let format = match super::world_new::container(args) {
+        Ok(format) => format,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let mut types = or_world::create::types(name);
+    types.archetypes.extend(
+        facts
+            .iter()
+            .map(|f| or_world::create::archetype(f, authoring)),
+    );
+    let encoded = match or_world::create::types_file(&types, format) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let status = written(out, &encoded, facts, authoring, types.name.hash);
+    if status == ExitCode::SUCCESS && !facts.is_empty() {
+        println!(
+            "  Made from nothing, as PSO: no archetype states an assetType, which the typed \
+             family does not name yet."
+        );
+    }
+    status
+}
+
+/// Reads `encoded` back, holds each archetype to the drawable it was generated from, and writes it to `out`.
+fn written(
+    out: &str,
+    encoded: &[u8],
+    facts: &[DrawableFacts],
+    authoring: &Authoring,
+    name_hash: u32,
+) -> ExitCode {
     // ⚠ Read back before writing. An encoder whose output its own reader
     // does not return is one the game will not open either.
     let mut diags = Diagnostics::new(ErrorMode::Lenient);
-    let back = match parse_meta_binary_full(crate::meta::schema(), &encoded, &mut diags) {
+    let back = match parse_meta_binary_full(crate::meta::schema(), encoded, &mut diags) {
         Ok((back, _)) => back,
         Err(e) => {
             eprintln!("Error: the generated file does not read back: {e}");
@@ -234,7 +285,7 @@ pub fn run(args: &[String]) -> ExitCode {
     let read_back: Vec<_> = types.archetypes().collect();
     let exact = read_back
         .iter()
-        .zip(&facts)
+        .zip(facts)
         .filter(|(a, f)| {
             Agreement::of(a, f).is_some_and(|g| {
                 [g.bb_min, g.bb_max, g.bs_centre, g.bs_radius]
@@ -251,7 +302,7 @@ pub fn run(args: &[String]) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    if let Err(e) = std::fs::write(out, &encoded) {
+    if let Err(e) = std::fs::write(out, encoded) {
         eprintln!("Error: {out}: {e}");
         return ExitCode::FAILURE;
     }

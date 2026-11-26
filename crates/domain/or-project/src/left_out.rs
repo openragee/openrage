@@ -243,6 +243,50 @@ mod tests {
     }
 
     #[test]
+    fn a_name_a_pack_asks_a_type_file_by_goes_with_that_type_file_and_stays_with_another() {
+        let in_archive = |name: &str| format!("x64/levels/props.rpf/{name}.ytyp");
+        let mut props = Contribution::of("props");
+        for name in ["a", "b"] {
+            props.files.push(PlannedFile {
+                path: in_archive(name),
+                origin: Origin::Generated(name.as_bytes().to_vec()),
+            });
+            props.manifest.push(ManifestEntry {
+                key: "data_file".into(),
+                values: vec!["DLC_ITYP_REQUEST".into(), format!("x64/levels/{name}.ityp")],
+            });
+        }
+        let container = Container {
+            modules: vec![Module::files("props")],
+            outputs: vec![Output::of(
+                OutputKind::SingleplayerDlc,
+                "out",
+                "mypack",
+                &["props"],
+            )],
+        };
+        let plan = plan_with(&container, "out", Path::new("p"), &[props]).unwrap();
+        let registered = |plan: &Plan| -> Vec<String> {
+            plan.registrations.iter().map(|r| r.path.clone()).collect()
+        };
+        assert_eq!(
+            registered(&plan),
+            [
+                "x64/levels/a.ityp",
+                "x64/levels/b.ityp",
+                "x64/levels/props.rpf"
+            ]
+        );
+
+        let kept = without(&plan, &BTreeSet::from([in_archive("a")])).expect("b is still shipped");
+        assert_eq!(
+            registered(&kept),
+            ["x64/levels/b.ityp", "x64/levels/props.rpf"],
+            "the name of the type file left out goes, and the other's stays"
+        );
+    }
+
+    #[test]
     fn a_package_that_would_add_nothing_is_refused() {
         let plan = package_with_a_pack();
         let gone: BTreeSet<String> = plan

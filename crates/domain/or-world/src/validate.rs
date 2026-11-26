@@ -30,9 +30,13 @@ pub enum Problem {
         declared: u32,
         actual: u32,
     },
-    /// A room's attached-object index that is not a position in the
-    /// interior's entity array.
-    AttachedObjectOutOfRange { room: usize, index: u32, len: usize },
+    /// A room's or a portal's attached-object index that is not a position in
+    /// the interior's entity array.
+    AttachedObjectOutOfRange {
+        holder: Holder,
+        index: u32,
+        len: usize,
+    },
     /// An entity set whose two parallel arrays are different lengths.
     EntitySetArraysDiffer {
         set: usize,
@@ -53,6 +57,22 @@ pub enum Problem {
         len: usize,
         expected: usize,
     },
+}
+
+/// What attaches an object of an interior, by its position in its own array.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Holder {
+    Room(usize),
+    Portal(usize),
+}
+
+impl std::fmt::Display for Holder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Holder::Room(room) => write!(f, "room {room}"),
+            Holder::Portal(portal) => write!(f, "portal {portal}"),
+        }
+    }
 }
 
 impl std::fmt::Display for Problem {
@@ -80,9 +100,9 @@ impl std::fmt::Display for Problem {
                 f,
                 "entity {entity} declares {declared} children and {actual} name it"
             ),
-            Problem::AttachedObjectOutOfRange { room, index, len } => write!(
+            Problem::AttachedObjectOutOfRange { holder, index, len } => write!(
                 f,
-                "room {room} attaches object {index}, past the {len} entities in this interior"
+                "{holder} attaches object {index}, past the {len} entities in this interior"
             ),
             Problem::EntitySetArraysDiffer {
                 set,
@@ -225,7 +245,7 @@ pub fn check_interior(interior: &crate::map_types::Interior<'_>) -> Vec<Problem>
         for index in room.attached_objects() {
             if index as usize >= entity_count {
                 problems.push(Problem::AttachedObjectOutOfRange {
-                    room: i,
+                    holder: Holder::Room(i),
                     index,
                     len: entity_count,
                 });
@@ -250,7 +270,7 @@ pub fn check_interior(interior: &crate::map_types::Interior<'_>) -> Vec<Problem>
         for index in portal.attached_objects() {
             if index as usize >= entity_count {
                 problems.push(Problem::AttachedObjectOutOfRange {
-                    room: i,
+                    holder: Holder::Portal(i),
                     index,
                     len: entity_count,
                 });
@@ -345,6 +365,84 @@ mod tests {
         assert!(!problems
             .iter()
             .any(|p| matches!(p, Problem::ChildCountWrong { .. })));
+    }
+
+    fn slot<'a>(inst: &'a mut MetaInstance, name: &str, at: usize) -> &'a mut MetaInstance {
+        let Some(Value::Array(items)) = inst.get_mut(name) else {
+            panic!("the interior holds `{name}`");
+        };
+        match &mut items[at] {
+            Value::Struct(inner) | Value::Pointer(Some(inner)) => inner,
+            other => panic!("`{name}` holds records, and one is {other:?}"),
+        }
+    }
+
+    fn truncate(inst: &mut MetaInstance, name: &str, len: usize) {
+        let Some(Value::Array(items)) = inst.get_mut(name) else {
+            panic!("the record holds `{name}`");
+        };
+        items.truncate(len);
+    }
+
+    /// ⚠ A save of the typed root in `or-io` refuses what this check reports, and the two crates
+    /// each spell the sentence: this holds them to one.
+    #[test]
+    fn a_broken_interior_is_refused_at_the_save_with_the_sentence_the_check_gives() {
+        use crate::map_types::tests::{interior_file, tree};
+        use or_io::decl::File;
+
+        type Break = fn(&mut MetaInstance);
+        let breaks: [(Break, &str); 6] = [
+            (
+                |i| slot(i, "rooms", 1).set("attachedObjects", Value::Array(vec![Value::UInt(7)])),
+                "room 1 attaches object 7, past the 3 entities in this interior",
+            ),
+            (
+                |i| truncate(i, "entities", 2),
+                "portal 0 attaches object 2, past the 2 entities in this interior",
+            ),
+            (
+                |i| slot(i, "portals", 0).set("roomTo", Value::UInt(2)),
+                "portal 0 names room 2, past the 2 rooms in this interior",
+            ),
+            (
+                |i| slot(i, "portals", 0).set("roomFrom", Value::UInt(3)),
+                "portal 0 names room 3, past the 2 rooms in this interior",
+            ),
+            (
+                |i| truncate(slot(i, "entitySets", 0), "entities", 1),
+                "entity set 0 has 2 locations for 1 entities",
+            ),
+            (
+                |i| truncate(slot(i, "entitySets", 0), "locations", 0),
+                "entity set 0 has 0 locations for 2 entities",
+            ),
+        ];
+        for (broken, sentence) in breaks {
+            let bytes = interior_file(broken);
+            let root = tree(&bytes);
+            let types = crate::MapTypes::new(&root).expect("a type file");
+            let interior = types.archetypes().next().and_then(|a| a.interior());
+            let problems = check_interior(&interior.expect("the archetype is an interior"));
+            let said: Vec<String> = problems.iter().map(ToString::to_string).collect();
+            assert_eq!(said, [sentence]);
+
+            let typed = or_io::meta::CMapTypes::from_bytes(&bytes).expect("opens typed");
+            let refused = typed
+                .to_bytes()
+                .expect_err("a broken interior is not saved");
+            assert!(matches!(refused, or_io::Error::Refused { .. }), "{refused}");
+            let why = refused.to_string();
+            assert!(why.ends_with(&format!("archetype 0: {sentence}")), "{why}");
+        }
+
+        let bytes = interior_file(|_| {});
+        let root = tree(&bytes);
+        let types = crate::MapTypes::new(&root).expect("a type file");
+        let interior = types.archetypes().next().and_then(|a| a.interior());
+        assert_eq!(check_interior(&interior.expect("an interior")), vec![]);
+        let typed = or_io::meta::CMapTypes::from_bytes(&bytes).expect("opens typed");
+        typed.to_bytes().expect("an interior that holds saves");
     }
 
     #[test]

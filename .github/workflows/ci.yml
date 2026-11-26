@@ -266,9 +266,11 @@ jobs:
 
       # ⚠ **A documentation-only change still runs every test that reads a
       # document.** `src/doc_counts.rs`, `src/doc_citations.rs` and
-      # `src/doc_comments.rs` are in the `openrage` package; the other three
-      # read `docs/reference/Plugin_ABI.md`, `docs/reference/CLI_Server_Protocol.md` and
-      # `AGENTS.md`. A new test that reads a document belongs here too.
+      # `src/doc_comments.rs` are in the `openrage` package; the other five
+      # read `docs/reference/Plugin_ABI.md`, `docs/reference/CLI_Server_Protocol.md`,
+      # `AGENTS.md`, and `docs/guides/In_Game_Acceptance.md`, one with the Roadmap
+      # and one for the commands of its recipe.
+      # A new test that reads a document belongs here too.
       - name: Documentation gates (docs-only change)
         if: steps.classify.outputs.code == 'false'
         run: cargo test -p openrage
@@ -284,6 +286,14 @@ jobs:
       - name: Toolchain pin in AGENTS.md (docs-only change)
         if: steps.classify.outputs.code == 'false'
         run: cargo test -p or-test-support --test toolchain_pin
+
+      - name: Acceptance sheet guide (docs-only change)
+        if: steps.classify.outputs.code == 'false'
+        run: cargo test -p or-project --test the_acceptance_sheet_is_what_its_guide_and_the_roadmap_say
+
+      - name: Acceptance recipe commands (docs-only change)
+        if: steps.classify.outputs.code == 'false'
+        run: cargo test -p or-cli --test a_built_folder_is_read_against_the_acceptance_sheet
 
       # What the run above did not check.
       #

@@ -2,7 +2,8 @@
 //!
 //! A build already says that every file it wrote is the plan's and reloads through a reader. This says what only a module of maps
 //! knows: that each source reached the place the plan gave it, that each map file and type file reloads as the root it is and holds
-//! what its source states, and that the manifest registers each type file.
+//! what its source states, that the resource's manifest registers each type file and declares the resource a map, and that the
+//! manifest of the maps is there and states what the sources and the kept manifests come to.
 //!
 //! ⚠ It checks the files and not the game. Whether GTA V streams a map is a thing nobody working on this repository can run.
 
@@ -11,7 +12,8 @@ use std::path::Path;
 use or_io::meta::typed::{CMapData, CMapTypes};
 
 use crate::facts::{Facts, Role, SourceFact};
-use crate::layout::TYPE_FILE;
+use crate::layout::{stream_path, MAP_LINE, TYPE_FILE};
+use crate::manifest;
 use crate::model::Maps;
 use crate::plan::place_of;
 
@@ -22,6 +24,7 @@ pub fn verify(model: &Maps, facts: &Facts, resource: &Path) -> Verification {
     let mut found = Verification::default();
     let manifest = std::fs::read_to_string(resource.join("fxmanifest.lua")).unwrap_or_default();
     let mut seen: Vec<&str> = Vec::new();
+    let mut maps_shipped = false;
     for set in &model.maps {
         let mut problems = Vec::new();
         let mut shipped = Vec::new();
@@ -39,6 +42,7 @@ pub fn verify(model: &Maps, facts: &Facts, resource: &Path) -> Verification {
                 continue;
             }
             shipped.push(at.clone());
+            maps_shipped |= source.role() == Some(Role::Map);
             if seen.contains(&path.as_str()) {
                 continue;
             }
@@ -55,7 +59,57 @@ pub fn verify(model: &Maps, facts: &Facts, resource: &Path) -> Verification {
             ),
         );
     }
+    if maps_shipped {
+        let line = format!("{} '{}'", MAP_LINE.0, MAP_LINE.1);
+        // ⚠ Read as the statement `project check-resource` reads, never looked for as text: a line in a comment declares nothing.
+        let read = or_project::resource::manifest::Manifest::read(&manifest);
+        let stated =
+            (read.directives.iter()).any(|d| d.key == MAP_LINE.0 && d.values == [MAP_LINE.1]);
+        let problems = match stated {
+            true => Vec::new(),
+            false => vec![format!("the manifest does not state `{line}`")],
+        };
+        found.add(
+            "map resource".to_string(),
+            problems,
+            format!("the manifest declares the resource a map with `{line}`"),
+        );
+    }
+    let stated = manifest::of(model, facts);
+    if stated.file.is_some() {
+        let at = stream_path(manifest::FILE);
+        found.add(
+            "manifest of the maps".to_string(),
+            manifest_problems(resource, &at, &stated),
+            format!(
+                "`{at}` states the type files of {} map(s)",
+                stated.stated.len()
+            ),
+        );
+    }
     found
+}
+
+/// What is wrong with the manifest of the maps at `at` of `resource`: it is not there, does not read, or states other than `stated`.
+fn manifest_problems(resource: &Path, at: &str, stated: &manifest::Outcome) -> Vec<String> {
+    let bytes = match std::fs::read(resource.join(at)) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return vec![format!("`{at}` is not in the resource")]
+        }
+        Err(e) => return vec![format!("`{at}` cannot be read: {e}")],
+    };
+    match or_world::manifest_build::stated_in(&bytes) {
+        Ok(held) if held != stated.stated => vec![format!(
+            "`{at}` states other type files than the sources and the kept manifests come to"
+        )],
+        // ⚠ The document is the same bytes on every build, so one that states the same type files and differs states something else of an entry, such as its flags.
+        Ok(_) if stated.file.as_deref() != Some(bytes.as_slice()) => vec![format!(
+            "`{at}` states the type files the sources and the kept manifests come to, and is not the document they come to"
+        )],
+        Ok(_) => Vec::new(),
+        Err(why) => vec![format!("`{at}` does not read as a manifest: {why}")],
+    }
 }
 
 /// What is wrong with the file at `at` of `resource`: it does not reload as the root it is, holds other than its source states, or is a type file the manifest does not register.

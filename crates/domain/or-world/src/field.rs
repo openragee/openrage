@@ -128,6 +128,16 @@ pub fn structs_at(inst: &MetaInstance, hash: u32) -> impl Iterator<Item = &MetaI
     array_at(inst, hash).iter().filter_map(as_struct)
 }
 
+/// Whether every item of an array field is a struct, so a place among [`structs_at`]'s is a place in the array.
+// ⚠ A lenient read leaves a pointer it could not follow null and a member it could not decode raw.
+pub fn structs_fill(inst: &MetaInstance, hash: u32) -> bool {
+    match get(inst, hash) {
+        Some(Value::Array(items)) => items.iter().all(|item| as_struct(item).is_some()),
+        Some(Value::Raw(_)) => false,
+        _ => true,
+    }
+}
+
 /// The instance a value holds, whether inline or behind a pointer.
 pub fn as_struct(value: &Value) -> Option<&MetaInstance> {
     match value {

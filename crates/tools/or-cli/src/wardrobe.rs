@@ -335,6 +335,7 @@ fn build_of(args: &[String]) -> Result<ExitCode, Failure> {
             plan.totals.files, plan.totals.bytes
         );
         crate::project::report(&one.verification);
+        crate::project_acceptance::report_seen(&one.folder, plan.target);
         if let Some(found) = &one.since {
             crate::project::since(found);
         }

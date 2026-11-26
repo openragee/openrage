@@ -144,13 +144,26 @@ fn resolve_rdr2(exe: Option<&Path>) -> ResolvedCrypto {
 
 /// Mount the install at `root` with every DLC, printing each key note to stderr.
 pub(crate) fn mount_all(root: &Path, keys: Option<&Path>) -> Result<or_title::MountedGame, String> {
+    let all = or_title::DlcCutoff::All;
+    mount_at(root, keys, all, or_title::MountOptions::default()).map(|(game, _)| game)
+}
+
+/// Mount the install at `root` up to `cutoff` as `options` say, printing each key note to stderr: the mount, and the keys that opened it.
+pub(crate) fn mount_at(
+    root: &Path,
+    keys: Option<&Path>,
+    cutoff: or_title::DlcCutoff,
+    options: or_title::MountOptions,
+) -> Result<(or_title::MountedGame, Arc<dyn RpfCryptoProvider>), String> {
     let install = or_title::GtaInstall::from_path(root)
         .ok_or_else(|| format!("invalid install root: {}", root.display()))?;
     let resolved = resolve_crypto(root, keys);
     for note in &resolved.notes {
         eprintln!("note: {note}");
     }
-    or_title::build_mounted_game(&install, resolved.provider, or_title::DlcCutoff::All)
+    let provider = Arc::clone(&resolved.provider);
+    or_title::build_mounted_game_with(&install, resolved.provider, cutoff, options)
+        .map(|game| (game, provider))
         .map_err(|e| format!("mount failed: {e}"))
 }
 

@@ -2,24 +2,29 @@
 //!
 //! [`plan`] is a pure function of the model and what the disk said of its sources. [`contribution`] reads both for a module of a
 //! project and hands the result over as the [`Contribution`] the plan merges, so maps are one more kind of content going through the
-//! one path: each source cooks to `stream/<name>.<extension>`, and a type file is registered by the line that tells the game to read it.
+//! one path: each source cooks to `stream/<name>.<extension>`, a type file is registered by the line that tells the game to read it,
+//! the manifest of the maps is written beside them, and a line declares the resource a map. For a singleplayer DLC the same files go
+//! into the one nested archive the pack registers ([`Shape::Pack`]).
 
 use std::path::{Path, PathBuf};
 
 use or_project::{
-    Claim, Container, Contribution, Figure, Item, ManifestEntry, Module, ModuleKind, Origin,
-    PlannedFile,
+    ArchiveContents, Claim, Container, Contribution, Figure, Item, ManifestEntry, Module,
+    ModuleKind, Origin, Output, OutputKind, PlannedFile,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::facts::{inspect, Depth, Facts, Role, SourceFact};
-use crate::layout::{stream_path, TYPE_FILE};
+use crate::layout::{
+    pack_archive, pack_path, pack_type_request, stream_path, MAP_DATA, MAP_LINE, TYPE_FILE,
+};
+use crate::manifest;
 use crate::model::{self, MapSet, Maps};
 use crate::rules::{check, Finding, Known};
 
 /// The kind of name the game resolves once that an archetype's is.
-pub const ARCHETYPE_NAME: &str = "archetype name";
+pub const ARCHETYPE_NAME: &str = or_project::server::ARCHETYPE_CLAIM;
 /// The kind of name the game resolves once that a map file's is.
 pub const MAP_FILE: &str = "map file";
 
@@ -40,8 +45,47 @@ pub fn place_of(source: &SourceFact) -> String {
     stream_path(&source.file_name())
 }
 
+/// What a module's files are laid out for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    /// A FiveM resource, and any build that takes the files where a resource has them: at `stream/`.
+    Resource,
+    /// A singleplayer DLC: inside the one nested archive the pack registers for the content.
+    Pack,
+}
+
+impl Shape {
+    /// The shape a build of `kind` takes a module's files in.
+    pub fn of(kind: &OutputKind) -> Self {
+        match kind {
+            OutputKind::SingleplayerDlc => Self::Pack,
+            _ => Self::Resource,
+        }
+    }
+
+    /// Where a file called `file` of the content `module` lands.
+    fn place(self, module: &str, file: &str) -> String {
+        match self {
+            Self::Resource => stream_path(file),
+            Self::Pack => pack_path(module, file),
+        }
+    }
+}
+
 /// What `model` hands to the plan of module `module`, whose folder is `folder`, given what the disk said of its sources.
 pub fn plan(model: &Maps, facts: &Facts, module: &str, folder: &Path, known: Known<'_>) -> Planned {
+    plan_in(model, facts, module, folder, known, Shape::Resource)
+}
+
+/// [`plan`], with the files laid out for `shape`.
+pub fn plan_in(
+    model: &Maps,
+    facts: &Facts,
+    module: &str,
+    folder: &Path,
+    known: Known<'_>,
+    shape: Shape,
+) -> Planned {
     let findings = check(model, facts, known);
     let mut contribution = Contribution::of(module);
     contribution.problems = findings
@@ -64,7 +108,7 @@ pub fn plan(model: &Maps, facts: &Facts, module: &str, folder: &Path, known: Kno
                 continue;
             }
             shipped.push(path);
-            let at = place_of(source);
+            let at = shape.place(module, &source.file_name());
             contribution.files.push(PlannedFile {
                 path: at.clone(),
                 origin: Origin::Cook {
@@ -77,9 +121,14 @@ pub fn plan(model: &Maps, facts: &Facts, module: &str, folder: &Path, known: Kno
             });
             match source.role() {
                 Some(Role::Types) => {
+                    // ⚠ A pack asks for a type file by an `.ityp` name of the folder its archive is in, never by the file inside the archive.
+                    let asked = match shape {
+                        Shape::Resource => at,
+                        Shape::Pack => pack_type_request(&source.name),
+                    };
                     contribution.manifest.push(ManifestEntry {
                         key: "data_file".to_string(),
-                        values: vec![TYPE_FILE.to_string(), at],
+                        values: vec![TYPE_FILE.to_string(), asked],
                     });
                     if let Some(types) = source.types() {
                         for archetype in &types.archetypes {
@@ -107,6 +156,28 @@ pub fn plan(model: &Maps, facts: &Facts, module: &str, folder: &Path, known: Kno
             }
         }
         contribution.items.push(item(set, facts));
+    }
+    let stated = manifest::of(model, facts);
+    contribution
+        .notes
+        .extend((stated.notes.iter()).map(|note| format!("content `{module}`: {note}")));
+    if let Some(bytes) = stated.file {
+        contribution.files.push(PlannedFile {
+            path: shape.place(module, manifest::FILE),
+            origin: Origin::Generated(bytes),
+        });
+    }
+    if maps > 0 {
+        match shape {
+            Shape::Resource => contribution.manifest.push(ManifestEntry {
+                key: MAP_LINE.0.to_string(),
+                values: vec![MAP_LINE.1.to_string()],
+            }),
+            Shape::Pack => contribution.archives.push(ArchiveContents {
+                path: pack_archive(module),
+                contents: MAP_DATA.to_string(),
+            }),
+        }
     }
     contribution.figures = vec![
         Figure {
@@ -204,16 +275,36 @@ pub fn planned(
     depth: Depth,
     known: Known<'_>,
 ) -> Result<(Maps, Facts, Planned), Error> {
+    planned_in(project_folder, module, depth, known, Shape::Resource)
+}
+
+/// [`planned`], with the files laid out for `shape`.
+pub fn planned_in(
+    project_folder: &Path,
+    module: &Module,
+    depth: Depth,
+    known: Known<'_>,
+    shape: Shape,
+) -> Result<(Maps, Facts, Planned), Error> {
     let folder = module_folder(project_folder, module)?;
     let model = Maps::read(&folder)?;
     let facts = inspect(&folder, &model, depth);
-    let planned = plan(&model, &facts, &module.id, &folder, known);
+    let planned = plan_in(&model, &facts, &module.id, &folder, known, shape);
     Ok((model, facts, planned))
 }
 
 /// What module `module` hands over; a module whose folder or `maps.json` cannot be read hands over the reason.
 pub fn contribution(project_folder: &Path, module: &Module) -> Contribution {
-    match planned(project_folder, module, Depth::Open, None) {
+    contribution_in(project_folder, module, Shape::Resource)
+}
+
+/// What module `module` hands to the build `output`: its files where a build of that kind has them.
+pub fn contribution_for(project_folder: &Path, module: &Module, output: &Output) -> Contribution {
+    contribution_in(project_folder, module, Shape::of(&output.kind))
+}
+
+fn contribution_in(project_folder: &Path, module: &Module, shape: Shape) -> Contribution {
+    match planned_in(project_folder, module, Depth::Open, None, shape) {
         Ok((.., planned)) => planned.contribution,
         Err(e) => {
             let mut contribution = Contribution::of(&module.id);

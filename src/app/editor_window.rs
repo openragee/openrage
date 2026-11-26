@@ -6,6 +6,7 @@ use egui_wgpu::ScreenDescriptor;
 use winit::{
     event::{KeyEvent, WindowEvent},
     event_loop::ActiveEventLoop,
+    platform::modifier_supplement::KeyEventExtModifierSupplement,
     window::Window,
 };
 
@@ -131,6 +132,8 @@ impl App {
 
     /// Runs a key press's command, and takes the key from the focused widget.
     fn handle_keyboard_shortcut(&mut self, event: &KeyEvent, typing: bool) {
+        let seen = &mut self.app_state.prefs.keys_seen;
+        seen.see(&event.key_without_modifiers(), event.physical_key);
         let Some(action) = shortcuts::action_for_press(
             &event.logical_key,
             event.physical_key,
@@ -141,7 +144,7 @@ impl App {
             self.handle_plugin_shortcut(event, typing);
             return;
         };
-        if commands::spec(action).is_some_and(|spec| spec.panel_key) {
+        if commands::spec(action).is_some_and(|spec| spec.panel_key()) {
             return;
         }
         let Some(editor) = self.editor.as_mut() else {

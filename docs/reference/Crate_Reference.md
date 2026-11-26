@@ -101,7 +101,10 @@ back. The binary world tables are ordinary code behind no feature:
 `or_io::world_blanket` and `or_io::nav_precalc`, and so are the streaming cache
 files, `metadata.dat` and the audio sector grid (`or_io::cache_loader`,
 `or_io::social_club_metadata`, `or_io::audio_world_sectors`) and the `.mrf` move
-networks (`or_io::mrf`). `gta5::script::decompile`
+networks (`or_io::mrf`). The level's `water.xml` is ordinary code beside the other data
+files, `or_io::gta5::data::water`: `CWaterData` types its water, calming and wave quads,
+keeps every other element and attribute of the document for the save, and answers the
+height of the water over a point. `gta5::script::decompile`
 turns a script's bytecode into C-like source over the same reader as its
 disassembler.
 
@@ -137,6 +140,70 @@ file's bytes
 (`every_staged_rbf_creature_opens_typed_and_saves_byte_for_byte`) and a record
 built from nothing is an RBF document
 (`a_creature_built_from_nothing_writes_the_bytes_a_shipped_one_holds`).
+The world family's four base classes are declared in code too (`typed::world_types`: `CMapData`,
+`CEntityDef`, `CMapTypes` and `CBaseArchetypeDef`, each with the members its typed record names), so
+a map or a type file built from nothing saves with no snapshot, as PSO, since an RBM class carries a
+signature word that nothing derives; a record built into a file that arrived is conformed to the
+class that file's own table states, and to the declaration where a PSO states none
+(`an_entity_built_into_a_file_states_the_members_that_file_states`). The declaration wins over a
+snapshot there, so every machine writes the same members. A record copied from another file carries
+that file's tree, and a file whose table states no class for it takes it the same way: the last
+entity of a map taken out and put back, and the first of a map made from nothing
+(`the_last_entity_of_a_map_is_taken_out_and_put_back_as_it_was`,
+`a_map_and_a_type_file_made_from_nothing_take_their_first_record_as_a_copy`); a member the class
+lacks is refused and never dropped, and an RBM file refuses by its signature
+(`a_copy_put_into_an_rbm_file_that_states_no_class_for_it_is_refused_for_its_signature`). The same
+holds of a copy into a file that does state its class: a member that class lacks there is refused,
+where the writer would drop it and say nothing
+(`a_copy_whose_member_this_files_own_class_lacks_is_refused_rather_than_dropped`, and
+`every_staged_tree_holds_only_members_its_own_type_table_states` for the rule it rests on, that a
+tree as it was read holds no such member), and a copy that holds a record of a class the file lacks,
+an extension of an entity, is refused by that class's name
+(`a_copy_that_holds_a_record_of_a_class_this_file_lacks_is_refused_by_name_and_never_by_the_schema`).
+⚠ A class a table only names, for an array that holds nothing, is no class to lay a record out by
+(`a_room_put_into_a_file_whose_table_only_names_its_class_is_refused_by_name`).
+`crates/io/or-io/src/meta/typed/interior.rs` types the four records of an interior as members of
+`CMloArchetypeDef`: `CMloRoomDef`, `CMloPortalDef`, `CMloEntitySet` and `CMloTimeCycleModifier`, each
+with the members the installs state for it
+(`each_record_types_the_members_the_installs_state_and_no_other`) and what a file states beyond them
+carried (`a_room_renamed_saves_reads_back_and_keeps_the_member_no_record_types`). No class of the
+four is declared for a file that states none, so a record is added as a copy of one the file holds.
+A save refuses an interior whose room or portal attaches an entity past its list, whose portal names
+a room it lacks or whose entity set holds two arrays of different lengths, in the sentence
+`or_world::validate::check_interior` gives
+(`a_broken_interior_is_refused_at_the_save_with_the_sentence_the_check_gives`). ⚠ A record held by
+value keeps the tree it arrived as whatever a text read with no schema called it, `Item` for a room
+(`a_text_type_file_read_with_no_schema_saves_its_interior_as_it_came_and_takes_an_edit`).
+On type files built by hand, as PSO and as RBM, each of the four records reads to the values built
+and an untouched save is the file
+(`each_record_of_an_interior_reads_to_the_values_built_and_saves_to_the_same_bytes`); a portal whose
+rooms are swapped, an entity moved between entity sets and a room added as a copy each save and read
+back equal (`a_portal_whose_rooms_are_swapped_saves_and_reads_back`,
+`an_entity_moved_from_one_entity_set_to_another_saves_and_reads_back`,
+`a_room_added_as_a_copy_of_one_the_file_holds_saves_and_reads_back`); a portal, an entity set, a
+modifier and an entity built here take the members the file's own class states
+(`each_kind_of_record_built_here_takes_the_members_the_files_own_class_states`); a room of a text
+read with no schema reads back equal after an edit of a member only an interior types
+(`a_text_room_edited_in_a_member_only_an_interior_types_reads_back_equal`); and each typed member
+reads the slot the engine's class declares, where a schema snapshot is staged
+(`every_typed_member_of_an_interiors_records_reads_the_slot_the_engine_declares_for_it`). The install
+suite is `every_interior_of_an_install_reads_typed_states_the_members_typed_and_saves_to_its_fixed_point`
+in `crates/domain/or-world/tests/naming_every_scenario_point.rs`: it skips without
+`OPENRAGE_GAME_ROOT`, and with it set it passes on the Legacy install (541 interiors in 2,763 type
+files, 424 of the type files saved to their fixed point, 0 problems) and on the Enhanced one (556
+interiors in 2,876, 439 saved, 0 problems), at `8853987c8` with this change. The staged corpus holds
+no map or type file, so the census of `meta_census::` judges no world root and that run is what
+holds them. It measures nothing of which members an
+install states for a parked vehicle, an occluder or the far lights, which
+[R70o](../direction/Roadmap.md#r70o-parked-vehicles-zones-lights-and-occluders) opens with. Left in
+the interior records: whether a shipped interior with no room states the room class is not measured
+(the refusal above is tested on a layout a test took the class out of); a portal that has not four
+corners is left to the rule `interior-broken` and is not refused at the save; and the read views of
+`crates/domain/or-world/src/map_types.rs` still read the value tree, held to the typed records by
+`the_read_views_of_an_interior_read_what_the_typed_records_read`. `or-maps` still builds the first
+entity of an empty map and the first archetype of an empty type file and copies neither, and where
+the donor was made from nothing the record built is to the byte the copy
+(`the_first_record_an_operation_builds_is_to_the_byte_the_one_a_copy_of_another_files_gives`).
 `meta::typed::weapon` declares the weapon family, the roots `CWeaponInfoBlob`, `CWeaponComponentInfoBlob` and
 `CWeaponModelInfo__InitDataList`, whose files the installs ship as XML text: its types are `typed::weapon_types`, a record keeps
 the value tree it was read from so that a member no type names (a `ref` to a named item, a null pointer, a shape that differs from
@@ -240,13 +307,21 @@ alone, and `or-io` never depends on it.
 | Module | Answers |
 |---|---|
 | `game/` | which title and edition this is: profiles, the registry, `Game`, and what its game needs beside the executable to read the `mods` overlay |
-| `vfs/` | which bytes a `common:/…` path names |
-| `dlc/` | which packs exist, their override order, and writing one ([Dlc_Pack_Creation.md](../features/Dlc_Pack_Creation.md)) |
+| `vfs/` | which bytes a `common:/…` path names; a GTA V mount stops at a pack of the DLC list when given `DlcCutoff::Level`, reports every listed pack with the ones left out (`MountedGame::listed`) and keeps its walk out of the folders that hold or patch them, and takes the map as story or as multiplayer from `MountOptions::mode` |
+| `dlc/` | which packs exist, their override order, which of a pack's change sets apply to the map as story and as multiplayer (`mode.rs`), and writing one ([Dlc_Pack_Creation.md](../features/Dlc_Pack_Creation.md)) |
 | `gta6_mount.rs` | which maps a GTA VI install registers, from the registration documents a scan finds, with no table to read ([GTA_VI_World_Viewer.md](../features/GTA_VI_World_Viewer.md)) |
 | `mods/` | which mods an install holds, as `mods` and `mods_` hold them and in the game folder, what each writes, and which of two mods writing one path the load order resolves to |
 | `oiv.rs` | an `.oiv` package: the `assembly.xml` a build writes and reads back, and the stored zip it sits in |
 | `install/` | a table fetched from an install: clip regions, the materials palette, the shader archive, the names `install::names` indexes, and the file at a path the explorer writes (`virtual_file`, which reads archives as folders and goes into a nested archive) |
 | `archives.rs` | stock archive names and their NG key indices |
+
+⚠ A level cuts a pack's device, its patch layer and the walk, and nothing else:
+a path written into a folder of a left-out pack (`update:/dlc_patch/<pack>/…`,
+or the pack's archive under `dlcpacks:`) still opens and a glob still lists it.
+`--dlc`, the older cutoff by name hash in mount order, still mounts every pack
+when its name is unknown. The versions a map change set carries in an overlay
+information file are not read, so the highest one is not chosen, and the title
+update's own setup is not read, so its change sets have no mode.
 
 Adding a title has [its own section](#adding-a-title).
 
@@ -289,6 +364,321 @@ rather than mounting it, because Legacy keeps its wave banks in archives the
 mount does not hold, and joins each container to the `.rel` items naming its
 waves.
 
+`world_index::WorldIndex` is the world of a mounted GTA V install by name and
+by position: every map with its extents, parent and flags, every archetype with
+its type file, box and level-of-detail distance, each map's bounds as
+`InstallTables` and the filename convention give them, and the maps and the
+carried bounds at a point, through a tree over the boxes. It reads the mount
+through `WorldSource`, a root archive at a time and each file from the archive
+that lists it (`MountedWorld`), which is the seam a test counts reads through.
+`world_index::refresh` keeps the index in a file keyed by the install's path
+and each archive's place, size and modification time, so a start after nothing
+changed reads no file and a changed archive is read again alone; a file of
+another version or key, or one cut short or altered, is refused and rebuilt
+(`the_world_index_of_a_mount`). ⚠ The size and the time are `MountRoot::stamp`,
+which `or-title` takes before it opens the archive: asked of the disk when the
+index is built, they would file what an old mount read under the archive
+written since. `openrage-cli world index` and `world at` run
+it. ⚠ Every copy of a map, a type file and a bound that an archive holds is
+read, and which copy wins is settled when the archives are put together: a row
+kept for the copy the mount loads alone would be missing once the archive that
+shadowed it changed. ⚠ A file of the folder that patches a pack
+(`MountRoot::patch`, the folder of the title update its table names for the
+pack's device) lies in the title update, which mounts before every pack, and is
+the copy the mount opens at the pack's path: it stands in the order right after
+its pack's archive, above that archive's own copy, and is named by the path it
+is listed at, so what the index reads of a file's own archive is what the mount
+opens at the path the index names
+(`a_file_the_title_update_patches_is_named_where_the_mount_opens_it`). A
+manifest in such a folder replaces the pack's by its path. An archive the mount
+lists twice, as a DLC list that names a pack twice makes it, takes its kept rows
+both times (`an_archive_the_mount_lists_twice_is_kept_both_times`). A bound is answered at a position only where a map group, a
+map's name or an interior carries it, because an archetype's own `.ybn` states
+its box about the model's origin
+(`a_point_answers_the_bounds_something_carries_whose_box_holds_it`). An archive
+is told from the one before it by its size and its time alone, so on a file
+system that keeps times to the second one written twice within a second at one
+size reads as unchanged, until `world index --fresh` reads it all again. A
+root a level of DLC keeps folders out of (`MountRoot::left_out`) is given no
+stamp, because its file is the same at every level: it is read at every build,
+and what one level walked is never kept for another
+(`a_root_a_level_keeps_folders_out_of_is_read_at_every_build_and_never_kept_for_another_level`).
+With
+no `--kept` the index is kept under the configuration directory, a file an
+install. `maps_in_column`, `bounds_in_column` and `bounds_near_column` answer the
+maps and the carried bounds over or under a point at any height, and within a
+radius of it, through the same trees and with no scan of every entry
+(`a_column_answers_the_maps_and_the_bounds_a_scan_of_every_entry_answers`).
+`boxless_bounds_near_column` answers the carried bounds whose file states no
+box, or a box no place is in, by the maps that carry them and stream there.
+
+`world_collision::WorldCollision` is the static collision of a mounted install,
+read as a place asks for it. `stream` opens the bounds files whose box comes
+within a radius of a column, each from the archive that lists it
+(`Bound::archive`), builds a `BoundCollider` of each once and places it as the
+file states, because a file a map group or a map's name carries is in world
+space. It holds them in a `CollisionSet` under a budget of bytes
+(`BoundCollider::size_in_bytes`) and drops the file asked for longest ago, never
+one the question being answered asked for, so a later question reads a dropped
+file again
+(`the_budget_drops_the_file_asked_for_longest_ago_and_a_later_question_reads_it_again`).
+`ground` answers the ground under a point and `highest_ground` the highest of a
+column, each with the files held and the files that gave no collider, with why
+(`Unread`); a file that does not read is opened once, and a file of the
+question that is already held is never the one dropped for a file read beside it
+(`a_file_of_the_column_that_is_held_is_not_dropped_for_the_file_read_beside_it`).
+⚠ A file is found by the box its header states. One that states none is asked
+wherever a map that carries it streams, so a file that does not read is named
+and not passed over
+(`a_bound_whose_file_states_no_box_is_asked_wherever_its_map_stands`); a shape
+that lies outside the box its file states is still not found by a column only it
+covers. `colliders` is the set itself, for a ray, a swept sphere or a box.
+
+⚠ A bound an interior alone carries is named (`Streamed::unplaced`) and not
+read: its file states its box about the interior, as an archetype's own `.ybn`
+does about its model, and what puts it in the world is the entity's placement,
+which nothing here reads. So it is named by the maps that stream over the column
+and place the interior (`interior_bounds_near_column`), never by that box.
+`place` is the seam: a caller that knows the placement hands the collider in
+with its rotation, one scale and translation
+(`an_interiors_collision_is_named_and_not_loaded_until_a_caller_places_it`).
+
+`openrage-cli world ground` asks it of one position: with no height the highest
+ground of the column, with one the ground from `--rise` metres above it down, no
+steeper than `--slope` degrees. It says the height, the normal, the material and
+the bounds file, or none, and in both cases the files it looked in, those that
+did not read and those not loaded. A material is its `phMaterialMgr::Id` word,
+the type in its low byte, and the name the install's own table gives that type.
+`--level` and `--mode` mount as `dlc-list` does; an index at a level is kept in a
+file of its own, and a mode leaves out no bounds file, because it takes or
+leaves a pack's change sets and the index reads every bounds file of every
+archive mounted; the note names the change sets the mode did leave out
+(`a_level_leaves_out_the_bounds_of_the_packs_after_it_and_a_mode_leaves_out_none`).
+The flags are held through the verb itself, in a child process, by
+`a_level_a_mode_a_kept_file_and_a_fresh_read_are_taken_from_the_command_line`.
+The install suite
+(`the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them`, slow
+tier, not yet run on an install) asks the ground at an install's vehicle path
+nodes. ⚠ Nothing in a `.ynd` states the scale of a node's stored integers, so
+the suite tests one reading of it against four rivals (`NODE_SCALES`), and the
+share of nodes it asks to be within a step is a floor, not a measurement.
+
+On 2026-11-26, with the index at its second version, the install suite of the index
+(`the_world_index_names_everything_a_real_install_lists`) holds on both
+installs. Legacy: 117 archives and 39,088 files opened, 11,076 maps, each read
+and answered at the centre of its streaming extents, 1,707 type files and
+159,153 archetypes, 13,914 bounds of which 13,912 are carried, and a second
+start that opened nothing. Enhanced: 134 archives and 39,380 files opened,
+11,052 maps, 1,707 type files, 159,358 archetypes, 13,482 bounds of which
+13,480 are carried, and a second start that opened nothing. Each map, type file
+and bound the index names was read from its own archive and through the mount
+at the path named, to the same bytes: 26,697 files on Legacy, 3,864 of them in
+a folder that patches a pack, and 26,241 on Enhanced, 3,866 of them. ⚠ Before
+the patch folders took their place in the order, the index named the pack's own
+copy of 2,153 of the 11,076 maps of Legacy and 1,121 of the 11,052 of Enhanced
+where the mount opens the patch's (a review's measure, 2026-11-25). ⚠ The suite
+failed on Enhanced until a root the mount lists twice took its kept rows both
+times: the DLC list there names the pack mp2025_01_g9ec twice, the mount lists
+its `dlc.rpf` twice under one device and one container, and the second listing
+found no kept rows and was read again. The ground under the road nodes
+(`the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them`) holds
+on both: 4,242 of 4,404 nodes asked on Legacy and 4,237 of 4,403 on Enhanced
+have ground within a metre at four units a metre across and 32 up, where each
+rival reading puts 49 of 1,223 or fewer there.
+
+`find` answers what a person typed from the indexes of a mounted install
+([R70e](../direction/Roadmap.md#r70e-find-anything-and-go-there)). `find::find`
+reads the text with `or_maps::place::read_pasted`, which is why this crate
+depends on `or-maps`; `or-maps` names this crate for its tests alone, as a
+dev-dependency of the first edit's fixture, so `just ready` gates each of the
+two when the other changes. It returns rows in groups, each
+capped at the count asked for: a place, with the maps and the carried bounds
+that hold it and, handed a `WorldCollision`, its ground, which is where two
+numbers go; a hash in its three spellings, with the name a file of the install
+states for it and what it names (`find::Named`: an archetype with its type file,
+a map, a file of the `Catalogue` by its stem or, as an archive lists it, by its
+whole name); the models whose name answers, each with the
+type file that declares it and how many placements the `PlacementIndex` holds
+of it, and from a view its nearest; and the maps whose name answers, each with
+the centre of its extents. A name ranks as `find::Rank` says: the name itself,
+a prefix, a prefix of a part after an underscore, then contained
+(`a_models_exact_name_ranks_first_then_a_prefix_then_a_part_after_an_underscore_then_contained`).
+`find::SearchNames` is built once and holds the names in order and each part
+after an underscore in order, so a question is two binary searches and at most
+one pass over the names, which ends at the count asked for; it visits the
+placements of the rows it lists and no other
+(`a_question_costs_no_more_than_the_names_of_a_mount_and_never_their_square`,
+which counts `find::Work` on mounts of two sizes). ⚠ A type file states an
+archetype's hash and never its name, so a part of a name finds a model only
+where a file of the install carries that name (`find::names_of` takes the leaf
+and the stem of every entry); its hash and its name typed in full find it all
+the same, and `SearchNames::unnamed` counts the archetypes no file names.
+
+`find::placements_of` lists one model's placements, nearest a view first, each
+with its map file and, read from that file, the entity's index, its guid and
+its heading as a script takes one. A map is opened once, one tree at a time,
+while `find::Budget` allows, and a placement whose map was not read is listed
+where the index holds it, with why (`find::Unread`)
+(`a_models_placements_are_read_under_a_budget_and_a_model_nothing_places_says_so`).
+⚠ A placement is paired with its entity by its position to the bit, each entity
+once, because the `PlacementIndex` holds a position and a map and no index. The
+index said is the entity's place in the array as the file holds it, whatever
+stands before it
+(`an_entity_is_numbered_by_its_place_in_the_array_whatever_stands_before_it`). It
+holds a grass batch with no position, so a batch is listed last with none, and
+it folds maps alone: a model that only the entity list of an interior's
+archetype places reads as placed nowhere. `PlaceFound::script`,
+`PlacementFound::script` and `ModelPlacements::script` write a result in a form
+of `or_maps::script_text`, and each form of the tree reads back
+(`a_result_copied_for_a_script_reads_back_as_the_place_it_was_copied_from`). The
+suite is `asking_a_mount_where_something_is`, on mounts built by hand; the
+install suite
+(`a_real_installs_own_models_are_found_by_name_and_each_placement_stands_in_the_map_it_names`,
+slow tier) asks eight of an install's own models by name and holds each
+placement to the entity of the map file it names, the check
+`models_held_to_their_maps` also runs on a mount built by hand. On 2026-11-26
+it held on both installs: on Legacy 18 of 18 placements read are the entity
+their map file holds at the index said and lie inside that map's streaming
+extents, of 53,264 models a file names and a map places; on Enhanced 16 of 16,
+of 51,793.
+
+`openrage-cli world find <install> <text>` asks it, as lines or with `--json`:
+the groups, and the placements of the model the text names in full or by its
+hash. `--near` is the view placements are ordered from, `--limit` the most rows
+of a group, and `--copy` prints, alone, the place or that model's placements in
+the form named, to three decimals; a flag's value follows it or stands behind
+`=`, and a flag the verb lacks is refused. `--level` and `--mode` mount as `dlc-list`
+does, with the index of a level kept in a file of its own
+(`where_something_is_is_asked_from_the_command_line`), and its JSON lists what
+its lines list (`the_json_lists_what_the_text_lists`). ⚠ Nothing keeps which
+maps place a model, so the verb reads every map the index names for the models
+the text lists (`find::models_asked`, `find::place_maps`) and for no other, and
+a text that lists no model reads no map.
+Left of the row: every part on screen (the palette, the field of Files, Show in
+world, stepping through placements, bookmarks, the Copy for script button); the
+other things a script copies (a hash in both spellings as a line, the lines that
+spawn an object); a type as a row; and the placements an interior's own entity
+list makes. The palette, Go to File and the name index exist
+([R59j](../direction/Roadmap.md#r59j-one-command-registry),
+[R24b](../direction/Roadmap.md#r24b-go-to-file),
+[R23](../direction/Roadmap.md#r23-names-and-hashes)).
+
+`world_forest::WorldForest` is what the streamed world needs of a mounted GTA V
+install, with no screen: the input the rules of
+`crates/domain/or-world/src/streaming.rs` take, and what they select of it. A
+map's two boxes are `map_box` of its row, and what asks for it is `request_of`:
+nothing, the gate of a manifest group of its name, or a script alone. The gate
+is in `WorldIndex::state_groups`, which the index fills from each manifest's
+groups and keeps on disk, beside each archetype's `assetName`, drawable
+dictionary and texture dictionary; the kept file takes a new version for them
+(`an_instance_names_the_files_its_archetype_states_and_a_kept_index_names_them_too`).
+`stream` asks the index's tree for the maps near the view's column, takes those
+whose box the rules want and whose request holds at the hour and the weather
+given, and their parents with them, and reads each from the archive that lists
+it (`a_map_the_view_leaves_is_dropped_and_a_night_group_s_map_is_wanted_at_night_alone`).
+A map is one node an entity, in the file's order, so the index a file names a
+parent by is that parent's node: in the map's own entities, or in the parent
+map's where bit 3 of the entity's flags is set
+(`a_parent_in_the_parent_map_swaps_with_its_children_as_one_in_their_own_file_does`).
+`stream_some` reads at most the number of maps it is given, the nearest first
+(`of_the_maps_a_view_wants_the_nearest_is_read_first`), and a child read before
+its parent stands alone until the parent is read
+(`a_child_whose_parent_map_is_not_read_yet_stands_alone_until_it_is`). ⚠ The
+read is lenient, and a node's place is its entity's, so a map or an interior
+one of whose entities did not read is refused whole: read past the gap, every
+index after it would name the entity before the one it means
+(`a_map_one_of_whose_entities_did_not_read_is_refused_for_no_link_into_it_holds`).
+A file that gives nothing is listed with why and asked for once in the forest's
+life (`a_file_that_gives_the_forest_nothing_is_said_with_why_and_opened_once`).
+A map the
+view left leaves the forest and stays held under a budget of bytes; the one
+wanted longest ago is dropped first, never one in the forest, and is read again
+when wanted
+(`the_budget_drops_the_map_wanted_longest_ago_and_it_is_read_again_when_wanted`).
+⚠ The tree is of streaming extents and asks by a circle, while the rules grow a
+box along each axis: it is asked the circle about the grown box's corner, and a
+map whose streaming extents do not hold its entities' is asked at every view
+(`a_map_streams_by_its_entities_extents_where_its_streaming_ones_do_not_hold_them`).
+⚠ An interior's entities are no part of the map that places it: they are read
+from the type file that declares the interior while the view is within the
+instance's distance and band, placed through the instance, and stand under it
+as an instance stands under a list, so each draws by its own place and distance
+(`an_interior_within_its_distance_brings_its_entities_placed_through_its_instance`);
+an entity that names a parent inside the interior keeps it, and each instance
+of one interior brings its own copy
+(`two_instances_of_one_interior_each_bring_its_entities_and_a_link_inside_it_holds`).
+`select` returns each instance with its archetype, its matrix, its level, its
+fade and its `Model`: the files that draw it by name, or a box with its reason
+where no type file declares its archetype, which waits for no model and is asked
+of no one
+(`an_entity_of_an_archetype_no_type_file_declares_is_returned_as_a_box_with_its_reason`).
+`Selected::files` is what a selection needs, and `model_of` the same for an
+archetype a selection waits for or that the view's velocity brings into range
+(`a_model_the_view_s_velocity_brings_into_range_is_named_ahead_of_it`). An
+entity that states no distance takes its archetype's, and its radius is half
+the diagonal of the archetype's box under its scale
+(`an_entity_that_states_no_distance_takes_its_archetype_s_and_a_scale_below_one_keeps_its_radius`).
+An entity that states no level stands as an
+orphan and one that names a parent in a map the mount lacks stands alone, each
+counted by `misfits`. ⚠ A parent that states more children than name it never
+gives way, because the rules wait for as many as it states
+(`a_parent_that_states_more_children_than_name_it_draws_whole_beside_them`), and
+one whose children lie in several maps draws whole beside those the forest has
+until every one of those maps streams
+(`a_parent_whose_children_lie_in_two_maps_gives_way_once_both_are_in_the_forest`).
+Grass and prop lists, a time archetype's hours and an interior's entity sets are
+not read. `openrage-cli world select <install> <x,y,z>` says one view with every
+model taken as loaded: the maps wanted and why, the count of instances at each
+level, each that stands as a box with its reason, and each file needed with
+where the mount holds it or that it lacks it; `--distance` lists only what
+stands within it, `--hour` and `--weather` set what the groups let in, and
+`--json` lists what the lines list (`the_json_of_a_view_lists_what_its_lines_list`).
+A map or an interior that gave nothing is a line with why, and so is what did
+not fit the rules
+(`a_view_says_what_gave_nothing_what_an_interior_brought_and_why_a_parent_is_wanted`).
+It takes no request by name, so a map only a script asks for is never in its
+answer.
+The install suite
+(`the_forest_of_a_real_install_selects_what_its_index_holds_and_no_child_whole_beside_a_parent_that_holds_the_children_it_states`,
+slow tier) selects at the centres of 24 maps spread over an install's index,
+half of them maps that place an interior, and counts each child drawn whole
+beside its whole parent by what the parent states against what the forest holds
+of it. On 2026-11-26, with the index naming the copy of a map the title update
+patches, on Legacy 143,035 instances were selected, none a box, with 143
+interiors brought in, and no child stood whole beside its parent; on Enhanced
+139,038 instances, none a box, 148 interiors and no child beside its parent.
+⚠ On 2026-11-25, while the index named a pack's own copy where the mount opens
+its patch, Legacy gave 141,552 instances and 160 interiors, and one child stood
+whole beside a parent that states fewer children than name it, which the
+patched copies do not show; Enhanced gave 130,667 and 150. ⚠ The suite asked at
+first that no child stand so, and the parent it found then is not of the kind
+the hand-built test stood for: it states fewer children than name it, where
+[R32](../direction/Roadmap.md#r32-world-data-ymap-ytyp-and-interiors) records
+nine entities that state more. The rules have a parent give way when as many
+children as it states are found, so one that states another count either way
+never does
+(`a_parent_that_states_more_children_than_name_it_draws_whole_beside_them`,
+which holds both ways), and the suite fails on a child beside a parent that
+holds the children it states. Knowing a parent's true count needs every map
+that names its map as parent, which a view does not hold; the index could keep
+it for each parent. The maps and type files those tests write are in
+`crates/domain/or-depends/tests/forest_fixture/mod.rs`.
+
+Where a GTA V tree does not fit the rules, nothing was changed in them: an
+interior has no place in them, so its entities are brought in on the GTA V side;
+and what the rules take from a GTA VI archetype's flags and from whole metres is
+not assumed of GTA V, where every node is of the plain category and keeps the
+distance its file states. Left of
+[R70c](../direction/Roadmap.md#r70c-the-gta-v-world-streamed-and-drawn): every
+screen part of the row (the seam, a viewer for each tab, the feed of models,
+textures and materials, the room, the tab, the bar, the camera, the presets and
+the frame cap); grass and prop lists; a time archetype's hours; an interior's
+entity sets; whether an archetype's asset is a drawable or a fragment, which
+the index does not keep; and a request by name for `world select`. World is
+still a workspace shown while a GTA VI folder is set, with one viewer
+(`src/state/gta6_worldview/mod.rs`), and the Map screen draws boxes, a scanned
+GTA VI map body too.
+
 ⚠ A declared `drawableDictionary` outranks a loose file of the same stem, and
 `assetName` is then an entry inside that `.ydd`. Read as a filename, 76,898
 archetypes disagree; with the precedence right, 158,665 of 158,665 comparable
@@ -326,7 +716,35 @@ place for in `Scene::dropped`. `import` pairs a file with a drawable by the name
 pairs by position (`ImportNames` states the names a caller knows), and cuts a mesh that overflows a geometry
 into several (`ImportReport::splits`).
 
-**or-maps.** The maps engine, headless: the map files a person streams into the game, as content of a project, whose design is [Workbench_Views_Design.md](../direction/Workbench_Views_Design.md#maps). It has the shape of `or-particles`. `model` is `maps.json`, the file of a maps content (each map set with a stable id, a name, the sources it is made of as folders of the module, and the names a person typed for the hashes a map keeps, with the waivers); `layout` says where a source lands in a resource (at `stream/`, the one place a FiveM resource has, and why a singleplayer DLC is not claimed); `facts` looks at each source (what it cooks to, what the map file places and the type file declares through `or-world`'s views of the typed roots `CMapData` and `CMapTypes`, with an interior's rooms and portals read off the document because no typed record names them); `rules` is the table `RULES` (twenty-one, each a code, a severity and whether a waiver can set a finding aside) and `check` applies it; `plan` hands a build one `Contribution` (the cooked `.ymap` and `.ytyp` files and the models and textures at `stream/`, the figures and an item for each map set); `verify` reads a built resource back against the model; `adopt` is the recogniser `MapPack` and its `start_module`; and `import` makes sources of game files (a `.ymap` or `.ytyp` as a metadata source, the rest through the general import), refusing with its reason a file no source form holds. Three modules are the placement: `edit` changes what an entity or an archetype says in its source (it cooks the source, opens the typed root, changes a member, saves the root and writes the canonical XML back through `or_source::metadata::replace`, which refuses an XML that does not compile back to itself; an entity or an archetype that is added is a copy, since the typed family builds no record from nothing), `scene` is a map set as the boxes its entities place, with `or-world`'s placement rules, and `gizmo` is the manipulator's maths with no renderer: a ray through a pixel, the handles, a drag that moves, turns or scales, the snaps, the pick of a box and the ground under it. `sample` writes small synthetic map and type files for tests, which hold no game content. It depends on `or-io`, `or-world`, `or-project` and `or-source` and on no renderer or UI, and `openrage-cli maps` lists, validates and verifies it.
+**or-maps.** The maps engine, headless: the map files a person streams into the game, as content of a project, whose design is [Workbench_Views_Design.md](../direction/Workbench_Views_Design.md#maps). It has the shape of `or-particles`. `model` is `maps.json`, the file of a maps content (each map set with a stable id, a name, the sources it is made of as folders of the module, and the names a person typed for the hashes a map keeps, with the waivers); `layout` says where a source lands in a resource (at `stream/`, the one place a FiveM resource has) and in a singleplayer DLC (inside one nested archive the pack registers as map data, with what of that archive is unmeasured); `facts` looks at each source (what it cooks to, what the map file places and the type file declares through `or-world`'s views of the typed roots `CMapData` and `CMapTypes`, with an interior's rooms and portals read off the document by `or-world`'s read views, which a test holds to the typed records of `or-io`); `rules` is the table `RULES` (twenty-three, each a code, a severity and whether a waiver can set a finding aside) and `check` applies it; `plan` hands a build one `Contribution` (the cooked `.ymap` and `.ytyp` files and the models and textures at `stream/`, the manifest of the maps, the line that declares a FiveM resource a map, the figures and an item for each map set), laid out for the kind of build that takes it (`Shape`); `manifest` is the `_manifest.ymf` of the content's maps, written by `or_world::manifest_build` from the manifests of the game the content keeps in its `manifests` folder (`keep`), with a note for each map nothing can be written for; `verify` reads a built resource back against the model, the manifest of the maps included; `adopt` is the recogniser `MapPack` and its `start_module`; and `import` makes sources of game files (a `.ymap` or `.ytyp` as a metadata source, the rest through the general import), refusing with its reason a file no source form holds. `mapping` is a mapping that comes in as a folder or a zip (`or_project::place`): `analyse` finds its resources and loose stream folders and says, with nothing written, what an adoption makes of each file (`Becomes`: a source of which kind, a manifest of the game's maps, a file kept whole, a file an asset escrow locks, which is told by its first four bytes and handed to no reader, a file refused with the reason, an archive left out), whether a build carries each line of the manifest, and what `rules` says of the map files, type files and models as one set; two files that would be one source folder (a map file and a type file of one name) are told apart there, the second kept whole with the reason; `check` says what stops an adoption before it writes (the root named, the folder it is made in, the length of its paths there); and `adopt`, which asks `check` first, makes a project of one of them in a folder that is new or empty, the map files, type files, models and textures as sources of a maps content and every other file kept whole at its place, removing what it made when it cannot finish. Five modules are the placement: `edit` changes what an entity or an archetype says in its source (it cooks the source, opens the typed root, changes a member, saves the root and writes the canonical XML back through `or_source::metadata::replace`, which refuses an XML that does not compile back to itself; an entity or an archetype that is added is a copy, and `add_new_entity` and `add_new_archetype` add one that is no copy, with the members the file's own class states), `operation` names each of those changes as an `Operation`, data whose JSON states a format name and a schema, with `apply`, which does one to the sources of a pack and returns the operation that puts them back byte for byte, and `apply_all`, which does a list or none of it and writes nothing on a dry run (an inverse carries the record, the LOD links and the extents it replaces, and is the XML as it was when it is not proven to save the file as it was, on the file as edited and, unless it holds by construction, on the file the new XML cooks to as well; the first entity or archetype of a file that holds none is built with what the donor states and is no copy; an entity of an archetype no type file of the pack declares is held by the extents where it stands, which `Applied::notes` says, and `Done::notes` in a session; an entity taken out of or put into a map alone leaves the LOD links of the map files under it on other entities, which the same notes say for each such file unless the list holds its renumbering, and which the rule `lod-children-uncounted` or `parent-link-broken` then reports; an entity at or after one a container LOD of the file names is neither taken out nor put in; a source that leaves the folder of the pack is refused, and a rotation is stored at length one). An operation may state `expects`, the SHA-256 of the XML its source is to hold (`digest_of`), and is refused with `Error::Stale` when the source holds another: every inverse states the digest of what its operation wrote, so an inverse applied after another edit of its source is refused, and a step of the Map screen's Undo is the operation and its inverse with no copy of the XML. `Session` (`crates/domain/or-maps/src/operation/session.rs`) holds the sources of a pack open as their typed roots, so that an edit costs no XML: `Session::apply` changes a root and writes nothing, the boxes of the type files are read once and read again after a type file is edited, and `Session::flush` writes the XML of every source that changed through the same guard, all or none, which is byte for byte what `apply` writes operation by operation; a session dropped with operations unwritten flushes, and can only log a refusal. ⚠ A session that refused an operation since its last flush writes nothing when dropped and logs it, since what it did before the refusal may be part of a list that is sound only whole: `Session::apply_all` does a list or takes back what it did of it, `Session::discard` lets a session go unwritten, and `delete::apply_in` does a planned deletion through a session. What a save or the guard refuses is refused at the flush, which names the first operation it could not write (`Error::Unwritten`). An inverse is given with no save where it holds by construction and is proven at the flush, and is done as `apply` does it where it does not (XML typed by hand, an insertion that claims a child another entity has, a name a type file declares twice, the last record of a class taken out of a file). ⚠ A state the session has not written has no XML to hash, so its inverse states a token that only that session accepts; `Written` gives the digest of what a flush wrote, and an operation that states the digest of an XML is refused while its source holds operations the session has not written. `delete` plans taking entities out of the map files of a pack with their chain of far models (`plan` follows each LOD link, inside a file and, where `flags` bit 3 is set, into the map the file names as parent, and says as a `Deletion` what goes, which is the entities chosen, what stands under them and each parent left with no child; which parents stay with their count of children lowered; which chosen entities are left because another of their archetype stands at their pose and the chain of no other chosen entity takes them; what the sources do not hold of a chain; every file written with what changes in it; the list of operations that does it, `remove_entities`, `set_num_children` and `renumber_for_removed`, whose inverses put every file back and which a session takes like the others (`remove_entities` holds by construction unless a class leaves the file with what it takes, and `insert_entities` is done as `apply` does it); and each model a script line would hide instead. It reads the sources of the pack and no other map, so a map that is not among them keeps its links, a parent that counts children no source holds stays, it skips a source that can be no map file and refuses one that does not open and may be one, and it refuses to take an entity out of a file that carries container LODs or out of a map two files each hold entities of), `scene` is a map set as the boxes its entities place, with `or-world`'s placement rules, and `gizmo` is the manipulator's maths with no renderer: a ray through a pixel, the handles, a drag that moves, turns or scales, the snaps, the pick of a box and the ground under it. Two modules are what a search field and the clipboard take: `place` reads what a person pastes as a position with an optional heading (a call of numbers as Lua and C# write one, a table that names x, y and z with its braces or without, bare numbers, a call or brackets behind what a line of a script assigns them to, with a comma read as a decimal comma only between semicolons), as a hash in hexadecimal, unsigned or signed, or as text, refusing a number no map stores, and spells a hash each way with the name a lookup the caller passes knows; `script_text` writes a position and a list of named objects as Lua, JSON and C# from the templates of `crates/domain/or-maps/src/script_forms.json`, which a file of the same shape extends with no code, with the heading in degrees that `edit`'s pose gives, refusing a number that is not finite and more decimals than a 32-bit number has, and the line that hides a model within a radius of a position from the `hide_model` template of a form, by the hash of its name (the call the built-in forms write has not been run in a game). Two modules are the doors of a set, over `or_world::doors`: `doors` reads the name patterns that say a model is a door from `crates/domain/or-maps/src/door_patterns.json`, a starting guess a person extends, surveys a set into one row a door, reading an archetype two type files declare from the first as the scene and the extents do (what found it, what its box reads as, the other leaf of its double door, which is never held against its arc, how far it opens each way and on what it stops), names each source of the set that is not there or does not cook, and holds the rows to the table `DOOR_RULES`, whose codes `rule_of` knows so that a waiver of the pack names them; `door_text` writes a selection of doors, a double door once and whole, through the templates of `crates/domain/or-maps/src/door_forms.json`, where a form named after another project's door script states that it is unverified and begins what it writes with a comment that says so, and a form that could not is refused. `sample` writes small synthetic map files, type files and manifests for tests, which hold no game content. It depends on `or-io`, `or-world`, `or-project` and `or-source` and on no renderer or UI, and `openrage-cli maps` lists, validates and verifies it, applies a list of operations to it, plans or applies a deletion, keeps a manifest of the game for it and lists its doors.
+
+⚠ An operation is not yet a step of the project's History, and no screen holds a session. The Map screen's Undo keeps the operation and its inverse and applies them one by one with `apply`, so an edit and an Undo of the screen each still cost the XML of their source, and the screen's scan reads the disk after each; a flush writes on the thread that asks for it. An inverse that holds by construction is proven on the file as edited in memory; one that does not is proven again on the file cooked from the XML written, which is the file it is applied to, and is the XML as it was when that fails. The two files differ: a file read again names no class it holds no record of and saves no record of one, so the last entity of a map file or the last archetype of a type file is put back by the XML, in a session as one by one (`the_last_record_of_a_class_taken_out_of_a_file_is_put_back_by_the_xml`, and for several taken out at once `a_map_file_emptied_of_its_entities_gets_them_back_from_the_inverse_of_what_emptied_it`), and a file emptied that way takes its next record built from nothing, which a PSO file lays out and an RBM file, as the samples are, refuses for the signature nothing derives. The first entity or archetype of a file that holds none is built and no copy, so it is saved at the operation in a session too and never held to be sure; each of the five operations of a deletion refuses before its first change, since a session keeps the root an operation was refused on; and what the session, the deletion and an operation over a pack that holds too little were each built without is held through the others in `crates/domain/or-maps/tests/a_session_takes_a_chain_deletion_and_a_pack_that_holds_too_little.rs`. A game map is unmeasured. On a synthetic map of 20,000 entities, whose source is 11.7 MB of XML, one pose edit took 2.4 s one by one, and through a session 0.83 ms a step with one flush of 2.2 s for the drag, in the release profile on an Apple M5 Ultra under a load average of 70 (3.0 s, 1.2 ms and 2.5 s in the dev profile under a load average of 79); the flush is the XML that `or_source::metadata` exports, compiles back and exports again, and the operation with its inverse is 3,108 bytes of JSON where two copies of the XML are 23.4 MB (`one_pose_edit_is_timed_on_synthetic_maps_of_two_thousand_and_twenty_thousand_entities`, 2026-11-25, an ignored timing run by name).
+
+**or-maps, what changed.** `changes` says what a map or a type file changed of its base, by object and not by field: `map_changes` and `entity_changes` compare the entities of two typed roots (added, deleted, each one both hold with what it states differently, the unchanged as a count), `types_changes` the archetypes of two type files by name and member, with the entities of an interior, and `source_changes` cooks a metadata source and the base it keeps (`or_source::metadata::compile_base`) and compares the two. An entity is found by its guid where one entity of each file states it, else by its archetype at the same pose, else by its archetype with the nearest pose; two entities of one file with one archetype and one guid are twins, and a twin that moved is listed as ambiguous with the indexes of the entities it may be. The parent links are compared through the matching, since a deletion renumbers them. What a file states of itself beside them (its flags, its extents, the files it depends on) is compared member by member, and what no typed member names, such as a car generator, is said to differ and is not listed. A link is the entity it names and not its number: an entity taken out of the middle of a map is one deletion though every later index shifted, a parent that counts one child fewer because the child is gone is unchanged, and a parent among twins is the same parent while the link stays among them. A link into the parent map is a position in that map's array, which a chain deletion renumbers: `map_changes_under` compares it by the entity it names where a `ParentMap` gives that map's entities, which `PackSources` does for the sources of a pack, so a chain deletion reads as what it took out and a removal alone in a parent map as each link it left on another entity (`a_link_into_the_parent_map_of_a_pack_is_the_entity_it_names_there_and_not_its_number`); `source_changes`, which reads one source, compares such a link as the number it is. A turn is said as the rotation that places the entity, which a `CEntityDef` stores conjugated and a `CMloInstanceDef` as it is. The nearest match needs each entity to be the nearest of the other with no second as near, and two entities of one archetype at one place whose guids both changed are ambiguous, since the order of the file does not tell them apart. Comparing in the other direction swaps what was added and what was deleted, a map compared with itself reports nothing, and four times the entities cost less than ten times the time (`several_thousand_entities_compare_in_time_that_does_not_grow_with_the_square_of_their_number`). The base of a source is cooked to its canonical form, so a source as it was imported reports nothing. `openrage-cli maps changes` prints it through `PackSources`, a name as its text where the reader or the names of the pack give one and as its hash where neither does; a source that cannot be compared, or is not there, is named with the reason and fails the command, and a model or a texture dictionary of the set is passed over ([R70y](../direction/Roadmap.md#r70y-what-a-project-changed-and-putting-it-back)).
+
+**or-maps, the first edit of a game object.** `first_edit` (`crates/domain/or-maps/src/first_edit.rs`) is the one way an object the game placed is edited in a project ([R70h](../direction/Roadmap.md#r70h-one-vocabulary-of-world-edits)). An `Edit` names an entity by the logical path of its map file in a mounted install, or by a source of the content, and by its index or its guid there, and moves it or deletes it with its chain. `plan` says what the edit would import and do and writes nothing; `apply` imports each map file the edit changes that the content does not hold, through `import::add_one` with the game's file as the base, tells `maps.json` of them, does the operations through a `Session` flushed once, updates the project's ignore rules, and returns a `Record`; `take_back` applies the record's inverses, removes the sources it made and puts back the files it rewrote. The crate sees no mount, so `first_edit::Game` is what the caller that has one answers: the bytes at a logical path, where in the install's archives that file lies, the map file of a name, the map files under a map and the edition of the install; `openrage-cli` answers it from the mount and `or_depends::WorldIndex`. ⚠ A source made by a first edit states the path inside the archives as its `origin.virtual_path`, as every source taken from the game does, and never the logical path the mount loads the file by: `origin_check` reads the original there, and a later edit named by the logical path finds the source by it. For a deletion `delete::plan_reaching` plans over the content's map files and the game's beside them, and asks a `Beyond` for the parent map an entity that goes names and for the maps under a map that loses an entity, whose links move and which hold the children it counted; a map file read to follow the chain and left as it is stays the game's and is not imported. ⚠ A record's inverses are the session's, with the token of a state no XML holds replaced by what a disk reader knows: the first inverse of each source states the digest the flush wrote and the later ones state nothing, since the list is applied whole or not at all, and a source whose inverses the flush did not see put it back gets the XML it held. So a record kept as JSON is taken back after the project is opened again, and is refused with `Refusal::Stale` while a later edit of one of its sources stands. A source the record made is removed only when, the inverses applied, its folder has the digest the import left (`or_source::game_import::Created`); a person's file in it refuses the whole, is named in the refusal and puts the edit back, and what a file browser leaves in a folder (`LEFT_BY_A_FILE_BROWSER`) is no part of the digest. Refused before anything is written, each with the file's name: a path the install holds nothing at, a file that is no `.ymap` or does not read, an entity that is not there, a guid two entities state, a twin that would be deleted alone, a position that is not finite, an install of the other edition than a build that takes the content targets (a map ships as it is), and a source or a folder of the content under the name the source of the game's map would take, in whatever folder of the content a set names it and for each map file the chain brings in as for the entity's own (`Refusal::InTheWay`), so that a plan refuses what the import would. `take_back` refuses a record that names as a source it made anything but a folder inside the content (`Refusal::Outside`), since a record is a file anyone can write and such a source is removed. Refused by the import, with the sources made before it in the same call removed: a map file that cannot become a source. Refused after the import, with what it made removed and `maps.json` put back: an operation or a flush. `Record::told` is what the person is told, as the English texts a catalog is to translate (`first_edit::told`; none holds one yet, and no screen shows them) with their counts and names: what the edit did, the maps that came in, and what a source taken from the game is to a repository, in the words of the default commit policy or of a project that commits such sources. ⚠ Nothing of the app calls it yet, the import joins the first map set of the content, an entity of an interior is in a type file and cannot be named, and every check is on an install built by hand (`crates/domain/or-maps/tests/the_first_edit_of_a_game_object_imports_its_map.rs`): no sample reads as a map file and fails its XML fixed point, so the import's refusal is held on a map file whose name no source folder can take.
+
+**What holds the first edit.** `first_edit` takes an edit of one entity, a move or a deletion, addressed by the logical path of its map file in a mounted install and its index or guid there, and gives one record of the whole. It imports each map file the edit changes that the content does not hold, through `or_maps::import::add_one`, with the game's file as the base and the path inside the install's archives as where it was taken from, which is where `project check-original` reads the original: for a move the one map (`moving_an_entity_the_game_placed_imports_exactly_its_map_with_the_games_file_as_its_base`), for a deletion every file its chain changes, which `or_maps::delete::plan_reaching` finds by asking the caller that has the mount for the parent map and the maps under a map that loses an entity (`deleting_a_building_whose_far_model_is_in_the_parent_map_imports_both_map_files`, `a_deletion_imports_each_map_file_it_changes_and_no_map_file_it_only_read`). The operations are done through a session flushed once, and the record's inverses state the digest of what was written, so they are applied after the project is opened again; taking a record back applies them, removes the sources it made and puts `maps.json` and the ignore rules back, and the folder is byte for byte as it was (`taking_a_first_edit_back_leaves_no_source_and_the_projects_files_as_they_were`, `a_second_edit_in_a_map_the_project_holds_imports_nothing_and_is_taken_back_first`). An object the project added, and an entity of a map the project already holds, is edited there (`an_edit_of_an_object_the_project_added_imports_nothing`). Refused with the file's name and nothing left written: a map file that does not read or that the import refuses (`a_map_that_cannot_become_a_source_refuses_the_whole_edit_by_name_and_writes_nothing`), a guid two entities state and a twin (`an_entity_named_by_a_guid_two_entities_of_its_map_state_is_refused_as_ambiguous`), an install of the other edition than a build of the content targets, for the entity's map and for a map a deletion in a source of the project brings in (`a_map_of_an_install_of_the_other_edition_than_a_build_targets_is_refused_with_the_way_out`, `a_deletion_in_a_map_the_project_holds_imports_nothing_of_an_install_of_the_other_edition`), a source or a folder of the content under the name the game's map would take, by the plan as by the edit (`a_folder_in_the_place_a_map_of_the_game_would_take_refuses_the_plan_as_it_refuses_the_edit`), and an edit the disk refuses after the import (`an_edit_the_disk_refuses_after_the_import_leaves_the_project_as_it_was`). A record that names a folder outside the content as a source it made is refused and removes nothing (`a_record_that_names_a_folder_outside_the_content_removes_nothing`). A place given with a path of the install is a place in the game's file, as `world find` and `world select` print one, and is carried to the source of that file by what the two hold, refused where the entity is deleted there or cannot be told from a twin; with the source's own name it is a place in the source (`a_place_in_the_games_file_names_the_same_object_after_an_earlier_edit_took_one_out_of_the_source`). A path that is not the copy of its map the mount loads is refused with the path of that copy (`a_copy_of_a_map_that_a_later_archive_replaces_is_refused_with_the_copy_the_install_loads`). A move that restates the rotation an entity has leaves the four numbers as the file stores them, so it reads as a move and no turn (`a_move_alone_leaves_the_rotation_of_an_object_as_the_game_stores_it`), and a record's notes say what the edit leaves where it was: the far model of a moved object, the nearer models a moved far model stands for, and the static collision, which `maps collision` changes (`a_first_edit_says_what_it_leaves_where_it_was_the_far_model_on_a_move_and_the_collision_on_both`). The record carries what the person is told as message keys (`first_edit::told`), which no catalog of the app holds yet: the maps that came in, and what a source taken from the game is to a repository, which is true since the managed ignore block names such a source wherever a content keeps it (`a_source_taken_from_the_game_is_left_out_wherever_a_content_keeps_it`). `openrage-cli maps edit-game` prints the plan, does it with `--apply`, and takes a record back; after it `project check-sharing` names the source and `project check-original` finds its original in the install (`crates/tools/or-cli/tests/an_object_the_game_placed_is_edited_from_the_command_line.rs`). The census of the map files a first edit refuses, each with its sentence, is the shared test code `crates/domain/or-maps/tests/common/census.rs`, held on the install built by hand (`the_census_of_an_install_counts_the_map_files_a_first_edit_refuses_each_with_its_sentence`). ⚠ All of it is held on an install built by hand: no map of the game was imported by it, and no sample fails its XML fixed point while it reads as a map file, so that refusal is held by the import's other refusal of a file that reads. A first edit is not yet a step of History: a step would keep the record as its attachment, take it back with `first_edit::take_back`, and for Redo keep the sources it made aside as an import's step does. Left: the Map screen on a session, a create across files, a new map and a built entity as operations, the donor and the install's boxes, History with the first edit as a step, the toast, the rule that names a source whose base is the other title's (no source states the edition of the install it was taken from, and the rules of a content read no build), an edit of an interior's entity, and the install measure. The census over an install is with the install suites, below.
+
+**or-maps, the install suites of a deletion and of a first edit.** `the_map_files_of_the_install_a_first_edit_refuses_are_counted` plans the move of the first entity of every map file a mount loads, which takes each to its XML fixed point as the import would, and applies none: on 2026-11-25 none of the 11,076 map files of the Legacy install refuses, 1,833 of them holding no entity, and none of the 11,052 of the Enhanced install, 1,842 holding none. `deleting_an_entity_of_the_install_keeps_every_link` deletes one entity of a sample of an install's maps with its chain and holds what is left to the checks of `crates/domain/or-maps/tests/common/chain.rs`: the samples of one tree of maps share its pack, imported once and held to its bytes after each deletion is undone, and the trees, the map files of the survey and those of the census are spread over twelve threads. ⚠ A sample costs what its tree holds, because the pack is the whole tree of the sampled map, so that no link into a file that loses an entity is outside it, and the import, the plan, the deletion and its inverses each read every source of the pack. On the Legacy install the largest tree sampled at one map in twenty-five holds 233 map files and 75,237 entities, and that run, 370 samples in 122 trees, had not finished after 130 minutes of processor time on twelve threads, which is why the default is one map in two hundred. On 2026-11-25 on the Legacy install, of 9,243 maps that hold entities 47 were sampled: 7 hold no entity that stands for no other, and 40 deletions, 22 of them with a chain and 29 across files, took 66 entities out, renumbered 1,123 links inside a file and 15,008 into a parent map, lowered 25 counts, kept every link that stays and were undone to the byte, 13 of the inverses being the XML as it was; it took 69 minutes beside lanes that were building, of 98 minutes of processor time. On the Enhanced install the same day, of 9,210 maps that hold entities 47 were sampled: 8 hold no entity that stands for no other, and 39 deletions, 25 of them with a chain and 32 across files, took 70 entities out, renumbered 91 links inside a file and 15,749 into a parent map, lowered 27 counts and held to every check, 11 of the inverses being the XML as it was, in 112 minutes beside the same lanes, of 108 of processor time. Its body runs where no install is on maps built by hand (`the_checks_of_the_install_suite_hold_on_a_tree_of_maps_built_by_hand`). A suite that read only the map files a deletion changes, as `delete::plan_reaching` reaches them for a first edit, would cost a part of that; none does yet.
+
+**or-maps, a mapping that comes in.** What holds `or_project::place`, `mapping` and the verb, on files and archives built by hand ([R70j](../direction/Roadmap.md#r70j-a-library-of-props-and-what-comes-in)). **A place to adopt from.** `crates/domain/or-project/src/place.rs` lists a folder or a zip archive and writes nothing: a zip is listed from its directory of entries, a file's bytes are read in memory, and only `Place::stage` writes, into a hidden folder inside the project that goes when the adoption ends. A zip lists, reads and stages as the folder of the same files does (`a_zip_lists_reads_and_stages_as_the_folder_of_the_same_files_does`). A name that begins with a dot is left out once, with everything under it, and a hidden folder of a folder is not entered, so the folder a version control keeps in a cloned resource is neither listed nor counted (`a_hidden_name_is_left_out_once_and_nothing_under_it_is_listed`). **An archive that is not safe to unpack is refused whole, by the entry, with nothing written.** An entry whose path is absolute, climbs out with `..`, names a drive or a device of Windows, in either separator (`an_entry_that_leaves_the_folder_is_refused_by_name_whichever_separator_it_uses`); a link (`an_entry_that_is_a_link_is_refused_by_name`); two entries that differ only by case, refused on every host because a project is shared (`two_entries_that_differ_only_by_case_are_refused_by_both_names`); a path longer than the destination holds (`a_path_longer_than_the_destination_holds_is_refused_before_anything_is_written`), and at the listing a path longer by itself than any folder could hold, which also keeps the listing's cost in line with the archive's size: every folder on the way to a file is kept by its whole path, and a name of thousands of folders cost its length squared (`a_path_no_folder_could_hold_is_refused_at_the_listing_by_name`); an encrypted entry (`an_encrypted_entry_is_refused_by_name`); and an entry that unpacks to more than it states, which ends the unpack and removes the staging folder (`an_entry_larger_than_it_states_ends_the_unpack_and_the_staging_folder_is_removed`). The limits are the rows of `LIMITS`, each with its reason, and the argument of `Place::open`: how many entries, the unpacked size, the ratio of the unpacked size to the size of the archive, the size below which the ratio is not judged, and the length of a path (`an_archive_past_a_limit_is_refused_at_the_first_entry_past_it`, `a_folder_past_a_limit_is_refused_as_an_archive_is`). An archive inside is listed and not opened (`a_nested_archive_is_listed_and_not_opened`). A file of a folder whose name holds a `\`, one name there and a folder and a file on Windows, refuses the folder by name (`a_file_of_a_folder_whose_name_holds_the_other_separator_is_refused_by_name`, on a host that can hold such a name). **What a mapping holds, before anything is written.** `crates/domain/or-maps/src/mapping.rs` finds the resources and the loose stream folders of a place and says of each file what an adoption makes of it: a source of which kind, a manifest of the game's maps the content keeps, a file kept whole, a locked file, a file refused with the reason, an archive left out. It says of each line of the manifest whether a build carries it and who states it, and applies the rules of `or-maps` to the map files, type files and models as one set (`the_map_rules_say_what_a_set_built_to_break_them_lacks_before_it_is_adopted`). A zip is reported as the folder of the same files is and adopted to the same project, every byte equal but the ids OpenRage gives a map set and a source (`a_sound_mapping_in_a_zip_is_reported_and_adopted_as_the_folder_of_the_same_files_is`). A place with no resource and no stream folder says what it found and adopts nothing (`a_place_with_no_resource_and_no_stream_folder_says_what_it_found_and_adopts_nothing`), and an adoption that cannot finish removes what it made (`an_adoption_that_cannot_finish_leaves_the_folder_as_it_found_it`). Two files that would be one source, a map file and a type file of one name or two models of one name in two folders, are told apart in the report: the first becomes the source, and the second is kept whole with the reason and a note that the rules do not read a type file kept so (`two_files_that_would_be_one_source_are_told_apart_before_the_adoption`). `check` is what stops an adoption before it writes, the root it names, the folder it is made in and the length of its paths there, and `adopt` asks it first (`what_stops_an_adoption_is_said_before_anything_is_written`). The JSON document states what the text states, line for entry, on a report that holds a line of every kind (`the_document_of_a_report_states_what_its_lines_state`). **A locked file is kept whole.** It is told by its first four bytes, counted, and handed to no reader (`a_locked_file_is_kept_whole_and_counted_and_no_reader_is_handed_it`). A build ships it byte for byte and names it in what it read back, where it stopped the build before (`a_file_an_asset_escrow_locks_ships_as_it_came_and_is_named_and_not_opened`), and a build for another edition, which has no layout to move a locked file from, ships it the same (`a_file_an_asset_escrow_locks_ships_as_it_came_whatever_the_target_and_is_named`, on a FiveM resource; a story pack and an OIV package call the same two functions and were not run with one). What reads the folder a build wrote agrees with it: the check of a resource names the locked file and opens it no more, and the acceptance sheet counts it under its kind though no reader saw what it holds (`a_built_folder_with_a_locked_file_is_read_as_the_build_read_it`); ⚠ the Build tab does not show `Verification::locked` yet, so only `openrage-cli project build` says a file shipped unopened. **The verb.** `openrage-cli project adopt <mapping.zip|folder> --into <folder>` adopts, `--dry-run` prints the report and writes nothing, and `--json` prints the same report as data (`a_dry_run_prints_the_report_as_text_and_the_same_report_as_json_and_writes_nothing`); the project it makes plans and builds (`a_mapping_is_adopted_into_a_project_that_plans_and_builds_with_its_locked_file_as_it_came`). A dry run that names `--into` or `--root` says what would stop that adoption and exits 1 (`a_dry_run_says_what_would_stop_the_adoption_it_is_asked_about_and_writes_nothing`). A model or a texture is judged by its name until the adoption, where its reader is asked: one it refuses is kept whole, and the build of the project stops at it by name until it is taken out, as the adoption says (`a_model_no_reader_opens_is_kept_whole_and_the_build_stops_at_it_as_the_adoption_said`). What is left: the Library tab, the ghost and the placement by surface; the import report of the app showing this report; a locked file drawn as a box; a place of several resources adopted as one project, which today is adopted one resource at a time with `--root`; a line of a manifest a build does not state, such as a script line, which the report names as not carried and the project file records; a map file and a type file of one name as two sources, which the name of a source folder does not allow; a dry run that asks the reader of a model or a texture, which today makes a source to answer; a count of entries held before the directory of an archive is read, which the zip reader reads whole first; and the unicode forms of one name, which are refused only at the unpack, on a disk that makes them one file (`two_names_the_disk_makes_one_file_are_refused_at_the_unpack_and_never_written_over`), and not before as two cases of one name are. **What the report says of a manifest is what the plan does.** `this_is_a_map` is carried only where a map file becomes a source, a `data_file` line that names files by a pattern (`*` in a name, `**` for any folders) is carried once each file it names is stated, by the maps content for a type file it cooks and by the Files content for a file kept whole, and a word whose text holds a backslash is not carried, since the reader keeps it as written and Lua reads an escape (`what_the_report_says_a_build_carries_of_a_manifest_is_what_the_built_manifest_states`). A file a `server_script` line names is kept beside the project and is no file of it (`KeptBeside`), since a build lists every file it ships outside `stream/` under `files`, which a server sends to every client (`a_script_of_the_server_is_kept_beside_the_project_and_no_build_publishes_it`); no script line is carried, so the scripts of an adopted mapping do not run until their lines are added by hand. `.fxap`, the file an asset escrow writes beside what it locks, is listed by a place though its name begins with a dot, kept whole, shipped at the root of a build and listed nowhere, and a root with locked files and none is a note (`the_file_an_asset_escrow_writes_beside_what_it_locks_ships_with_the_locked_files`). A file kept under a stream folder spelled otherwise is placed under `stream` (`a_stream_folder_spelled_with_a_capital_is_adopted_into_a_project_that_builds`), and a file kept at the path a source cooks to is left out with the reason (`a_second_model_of_a_name_where_the_first_cooks_to_is_left_out_and_the_project_plans`). No install was read: every check is on files and archives built by hand. Links, adoption of a folder in place, the thumbnail cache and the import report exist ([R48](../direction/Roadmap.md#r48-projects)). The ruling of 2026-09-22 keeps the XML a Blender export writes out ([R37](../direction/Roadmap.md#r37-metadata-and-xml-at-parity)), and [Workbench_Plan.md](../direction/Workbench_Plan.md#held-back) holds its import back; an `.oiv` of another tool waits for [R50](../direction/Roadmap.md#r50-package-installation).
+
+**or-maps, roads.** `roads` is the path regions a folder holds as sources, every `<name>.paths.src` directly inside it ([R70p](../direction/Roadmap.md#r70p-roads-scenario-points-and-the-navmesh)). It is in `or-maps` because that crate holds the operations and the rules of the world, depends on `or-source` for the form and on `or-io` for the owned `CPathRegion`, and reads no mount. A node is named by its address, written `region:index` as a region's document writes it (`Address`), a link by its node and its place among that node's links, and a word as the document writes it (`Word`). `roads::operation` is the vocabulary: an `Operation` is data whose JSON states the format `openrage-road-operations` and a schema, `apply` does one to the sources and returns the operation that puts every document back byte for byte, and `apply_all` does a list or none of it and writes nothing on a dry run. The operations state a node's values (`street_name_hash`, `distance_to_target`, `coors_x`, `coors_y`, the height `coors_z` that `as_integer1` holds, and the two words whole, the second without the bits that count the links), state a link's word, add a link with the link back that the far node's region states, take a link out with the link back or alone, add a node after a region's vehicle nodes or after its pedestrian ones as a copy of the node it is linked to, take a node out, and put one back with its links, the links that named it and its junction. An operation edits the regions the sources cook to and writes each back as its document through `or_source::paths::Inputs::rules_of`, so a region is accepted only once its document compiles, reads back through the owned type and states the same document again. ⚠ Taking a node out, and adding a vehicle node before the pedestrian ones, renumbers the later nodes of the region: every link and junction reference of the set that names one is rewritten in the same step, a node another region of the set names by a link or a junction reference is not taken out and the refusal lists what names it, and the step is refused while a node it renumbers links to a region the set does not hold, since a link back from that region could not be rewritten; a node taken out that itself links to such a region is refused for its own link back, which would name a node that is gone (`a_node_that_links_out_of_the_set_is_refused_for_its_link_back_and_a_later_one_for_its_number`). ⚠ An operation states no digest of the documents it applies to, as a map operation's `expects` does: an inverse applied after another edit of the set is not refused and rewires the nodes that took its numbers, and nothing holds an inverse past the call that gave it yet. A node the junction table names is not moved, since nothing samples the ground under it again; taken out, it takes its references and a junction no other reference names with the height samples of that junction, and the later references are renumbered. An inverse is given only once it is proven, read back from its JSON, to export every document as it was, and is otherwise the documents as they were (`rewrite_regions`), which is how a document a person typed is put back. ⚠ Only what the declaration names is named: a link's word is set whole because `CPathNodeLink` names no lane in it, and `disable_node` is refused because `CPathNode` names no state that disables a node. `roads::rules` is the table `RULES` and `check`, which reads what the documents state (`or_source::paths::stated`) and not what they cook to, so a link to a node its region does not hold and a node of more links than its word counts (`most_links`, asked of the declaration) are findings: a document that does not read, a region two sources state, a link to a region the set does not hold (a note) or past the nodes of a region it holds, a link the far node does not return, a link that joins a vehicle node and a pedestrian node, which the region of each tells by its count of vehicle nodes, a node no link reaches, two nodes at one place, and a node above or under the ground, measured against a closure the caller passes in the units the file states its heights in. A rule that was not decided is listed with its reason and never passed over: the two of the ground when no ground is given, and the rows of `UNDECIDED`, which is the lanes of a link. `openrage-cli maps roads` lists a folder and applies a list. What holds it, on sets built by hand: every operation followed by its inverse leaves every source byte for byte as it was (`every_road_operation_followed_by_its_inverse_leaves_every_source_byte_for_byte_as_it_was`, which fails for an operation with no case), a list is applied whole or not at all (`a_list_is_applied_whole_or_not_at_all_and_a_dry_run_writes_nothing`), a node another region names is refused with the links that name it (`removing_a_node_a_link_of_another_region_names_is_refused_and_names_the_link`), one none names is taken out with its neighbour renumbered (`removing_a_node_none_names_renumbers_the_links_of_the_neighbour_so_each_reaches_the_node_it_reached`, `renumbering_is_refused_while_a_region_that_may_name_a_renumbered_node_is_not_in_the_set`), an added node keeps the order and the counts (`adding_a_node_keeps_the_vehicle_nodes_before_the_pedestrian_ones_and_the_counts_the_file_states`, `a_link_added_across_two_regions_is_stated_in_both`), the junction table is kept (`a_node_the_junction_table_names_is_not_moved_and_takes_any_other_value`, `removing_a_node_takes_its_junction_and_leaves_each_other_reference_its_own`), and what cannot be is refused (`a_request_that_states_what_cannot_be_is_refused_for_what_it_states`, `a_node_put_in_by_hand_is_refused_where_it_would_misstate_its_region`, `an_inverse_that_leaves_a_source_as_the_operation_left_it_is_not_given`, `a_document_that_cannot_be_written_leaves_the_one_written_before_it_as_it_was`). An edit is also held to a second reading of the set that knows no index, a node told by where it stands and a junction by its patch (`each_node_taken_out_leaves_every_other_node_its_links_and_its_junction_by_where_they_stand`, `each_link_taken_out_leaves_every_other_link_and_goes_with_the_link_back_or_alone`, `a_node_added_beside_each_node_stands_after_its_kind_and_moves_no_link_and_no_junction`). Each rule fires on a set built to break it and on no other, with the severity its brief gives (`each_rule_fires_on_a_set_built_to_break_it_and_on_no_other`, `each_rule_is_listed_with_the_severity_its_brief_gives_it`), and the listing as JSON lists what its text lists (`the_listing_as_json_lists_what_its_text_lists`). On the staged corpus, with no install: the 259 regions as one set hold 77991 nodes and 162904 links, and the rules find 25 places where two nodes stand, no link that is not returned, none to a node that is not there, none between a vehicle node and a pedestrian node and no node unreached (`the_rules_read_every_staged_region_and_no_file_of_the_game_is_an_error`, 2026-11-25), and a node of one region is taken out with a neighbour written in the same step and put back (`a_node_of_a_staged_region_is_taken_out_with_its_neighbours_renumbered_and_put_back`, 2026-11-25). Left: the scenario points, the navmesh rules, every screen, the ground handed to the two rules that need it ([R70g](../direction/Roadmap.md#r70g-collision-as-a-query)), a region made from nothing, and the suite over an install. ⚠ `roads::operation` and `operation` are two vocabularies of one shape and are not one: an inverse of a road operation states no digest of what it applies to, and its list is a format of its own.
+
+**or-maps, merging two copies.** `merge` merges two copies of one map against the file both were made from, which for a map of the game is the game's file: `merge_maps` takes the base, ours and theirs as typed roots and returns the merged root with a `Report`, `merge_types` does it for the archetypes of a type file, an archetype being the one of its name, `merge_files` reads three files and saves the result, and `merge_source` merges another copy into a metadata source, whose kept base is the base, and writes its XML. What a side changed is what `changes` says: `map_changes_paired` gives, beside the changes, the entity of the changed map that each entity of the base was found to be, and the merge compares two files no other way. A change only one side made is taken, a change both made to one value is one change, and the rest is a `Conflict`, which names the records as each of the three files indexes them and which the caller's policy answers with ours, theirs or stop, for each conflict by itself; a stop makes no file, and the report still lists every conflict with what was answered. The conflicts are one member both changed to different values, an entity one side changed and the other deleted, an entity both changed that is not merged member by member, an entity of one archetype both added at one position (a likely double, kept once only when the two state the same of every member and name no parent and no child of their own files), a group of twins, and a member of the file itself. ⚠ Twins are never paired: a group that either comparison lists as ambiguous is one conflict, the twins of the side taken stand in the places of the base's in the order of their files, and that holds when the other side is the base itself. ⚠ An entity one side gave another archetype is taken whole or not at all, since a guid a deletion freed is the guid the next added entity takes, and the comparison trusts a guid. A child left without a parent because its side deleted the parent is not read as a change of the child, so it keeps its parent where a conflict keeps the parent, and it is no conflict where the other side deleted it. An entity a side added keeps its guid when neither the base nor any other entity of the merged map states it, and takes one above every guid of the three files otherwise; the entities both hold keep the order of the base and the added ones follow in an order that does not depend on which side is called ours. The merged map is made of the base: each added entity follows the last, each record is put in its place by the operation of `operation` that an edit puts one with, and the entities that are gone are taken out by the one operation that takes several out of a map with one renumbering (`remove_entities` of `operation`, the one a chain deletion is made of), which renumbers the links, takes a child off its parent's count and refuses where a container LOD names an entity that would move or go (`a_merge_that_takes_out_an_entity_before_one_a_container_lod_names_is_refused_and_one_after_it_is_made`), so four times the entities take under six times as long (`a_merge_of_four_times_the_entities_takes_nowhere_near_sixteen_times_as_long`); a count of children is what its side states less the children of its own file, plus the children of the merged file, so what a child map adds is kept; and the extents are the union of what the sides state, grown to hold each entity where it stands. The result is saved and judged by the rules that judge a file by itself, `or_world::validate` among them, and an error refuses the merge with the reason, which names the base, ours or theirs where that file is refused by itself; a warning is a finding of the report. ⚠ What no typed member of the file names comes with the root it is in, so the side that changed it gives the merged file its container: a side in another container than the base is refused for it, and where both state the same of it the side in the container of the base is taken. A child of twins names the twin its own side has it under when that side is taken for the twins; a link from the other side to such a twin follows the order of the files, and a note says so. A `Conflict` says what each side did (`Disagreement`: the two values of a member, the members one side changed of what the other deleted, what each changed of a record that is not merged member by member, what a double differs in), `Ref::described` says a record as a person finds it (what it places, where, its guid), and a note names the entity it is about, the parent it named and which side deleted that. When one side states what the base states, the result is the other side as it is, byte for byte, once every conflict was answered with it. ⚠ A link into the parent map is a place among that map's entities, which a deletion there renumbers in every map under it, and this merge reads one file: a link both sides changed is a conflict of its own kind (`Disagreement::ParentMapLink`) though they state one number, a link one side changed is taken with a note that no parent map was read for it, and two copies of which either deleted an entity with its chain of far models are not merged file by file (`a_link_into_the_parent_map_that_both_sides_changed_is_a_conflict_of_its_own_though_they_state_one_number`); merging a pack through the pairing of the parent map's entities is not built. `Report::not_compared` says what the merge does not look into: what no typed member names is taken whole from the side that changed it, the flags of a file are one number, and the extents are not merged. ⚠ Three readings wait for the owner, each held by a test as it is built. Twins are a conflict though the other side is the base itself, where taking the side that moved one would guess nothing (`a_twin_a_side_moved_is_a_conflict_though_the_other_side_is_the_base_itself_and_taking_that_side_gives_it_byte_for_byte`). A guid two sides gave two different entities both hold is stated twice in the merged map, which the report lists as a finding and does not refuse (`a_guid_each_side_gave_another_entity_is_stated_twice_in_the_merged_map_and_is_a_finding_and_no_conflict`). And a double whose guid a merge gave anew differs from the other side's by that guid, so merging the two again is a conflict (`entities_both_sides_added_under_one_guid_both_take_a_new_guid_and_merging_a_side_again_meets_a_double`). A root built in memory that was never saved is refused in a merge that changes it, since an operation carries a record as the value tree its file saves it as (`roots_built_here_and_never_saved_are_refused_with_the_reason_and_merge_once_saved`), and an entity that took the guid of a deleted one of its own archetype compares as that entity moved, which no merge can tell from a move, and it takes what the other side changed of the deleted one (`an_entity_given_the_guid_of_one_its_side_deleted_is_read_as_that_one_moved_and_takes_what_the_other_side_changed_of_it`). The members of an interior instance merge one by one (`the_members_of_an_interior_instance_merge_one_by_one`); an interior archetype merges the members of its own type one by one and takes its entities whole from the side that changed them, a conflict when both did (`an_interior_and_a_time_archetype_merge_their_own_members_one_by_one_and_an_interior_takes_its_entities_whole`), and its rooms and its portals come with them, which no test builds. The module is `crates/domain/or-maps/src/merge.rs`, with the parts of an entity in `crates/domain/or-maps/src/merge/entity.rs`, the entities of a map in `crates/domain/or-maps/src/merge/map.rs`, the archetypes of a type file in `crates/domain/or-maps/src/merge/types.rs` and the files in `crates/domain/or-maps/src/merge/files.rs`. `openrage-cli maps merge` runs it over three files ([R70r](../direction/Roadmap.md#r70r-other-resources-of-the-server)).
+
+**or-maps, collision.** `collision` is the collision of an area as a person changes it, over the bounds sources of `or-source` (`crates/domain/or-maps/src/collision.rs`). An `Operation` is data whose JSON states the format `openrage-collision-operations` and a schema: polygons of a soup taken out (`remove_polygons`), given a material by the game's value, which is added to the soup's list when it is not there (`set_material`), or moved by a turn and a shift in the space of the file (`move_polygons`), each naming a bounds source as a folder of the pack, a soup by the address its document gives it and polygons by their place in that soup as the source compiles now. `apply` and `apply_all` do one or a list, all or none, and a dry run writes nothing. The game reads an area's collision from up to three files told apart by name, `<area>`, `hi@<area>` and `ma@<area>` (`VERSION_PREFIXES`, the prefixes `or-depends` reads a map's static bounds by), and an operation on one is done to every bounds source beside it that is a version of the same area, on the polygons with the same corners in the file's space to within `SAME_CORNER`; a version that lacks one refuses the operation and is named, and so is a bound its source cannot build again, with nothing written (`a_version_that_lacks_a_polygon_refuses_the_operation_by_name_and_nothing_is_written`, `a_bound_the_source_cannot_build_again_refuses_the_operation_by_name_and_nothing_is_written`). An operation that states `alone` changes its one source. An inverse is `restore_sources`, the document and the glb of every source the operation changed as they were, the glb as hexadecimal, so it is as large as they are and puts them back byte for byte (`taking_the_proposal_out_changes_the_three_versions_alike_and_the_inverse_restores_every_byte`). A moved polygon gets corners of its own, so a corner it shared with a polygon that stays is left where it was, to the bit while the bound keeps its quantum (`moving_the_buildings_polygons_leaves_the_corners_a_neighbour_shares_where_they_were`); a move through a composite's matrix that is no rotation, one scale and a translation is refused. `propose` hands `or_world::collision::associate` the bounds sources that are folders of the pack, each read where its file states it, and `Proposal::removal` and `Proposal::moving` make the operations it comes to: one for each version and soup a polygon is proposed in, `alone`, on what is proposed in that version, so that a list applied whole or not at all writes the versions together (`versions_that_hold_other_polygons_are_each_changed_by_what_is_proposed_in_them`); a bound that is one shape, which no operation takes out, is a note. `object_box` is the box of an entity of a map source: its archetype's box, stated or declared by a type file of the pack, under its placement. `collision::sample` builds a small bound from triangles for tests, with no game content.
+
+- ⚠ The versions of an area the game ships are not copies of one another, so an operation that asks them to be alike is refused on them and a proposal changes each by itself: of the 60,767 polygons of the staged versions of an area that has more than one, each looked for in each other version of its area, 462 are found, over 10 ordered pairs of versions, all of them between one area's version with no prefix and its `ma@` version (`the_staged_versions_of_an_area_hold_polygons_of_their_own`, 2026-11-25). The plan's sentence that the three versions are kept alike awaits the owner ([R70l](../direction/Roadmap.md#r70l-editing-collision)).
+- ⚠ A place in a soup is good until the soup is edited: a soup built again holds its polygons in another order, so a proposal is made again after each operation. An operation a proposal makes states the digest of the source it was read from (`expects`) and is refused once the source on disk is another, or once an earlier operation of the same list has built its soup again (`a_list_that_names_one_soup_twice_by_the_places_of_one_proposal_is_refused_at_the_second`); one written by hand may state none, and then names whatever is at those places.
+- ⚠ A maps content gives a bounds source no role (`role_of`), so `maps.json` names none: the proposal reads the `.bounds.src` folders of the content's own folder, the rule `source-unused` warns of each, and a build of the content ships nothing of a changed bound.
+- A move that takes a polygon outside the box a composite keeps of its child is refused by the compile, as `or_source::bounds` refuses any child that outgrows it, and so is taking every polygon out of a soup, which leaves a bound over nothing (`a_soup_that_is_the_buildings_alone_is_not_emptied_and_the_refusal_names_it`).
+- A source is named as the pack holds it, letter for letter: a disk that does not tell `S` from `s` would open one folder under two names and write it twice (`a_source_named_otherwise_than_the_pack_holds_it_is_not_edited`).
+- The staged bounds hold three areas with more than one version, and the 462 polygons found are 231 each way between one area's version with no prefix and its `ma@` version, with none in the other eight pairs, among them an area whose three versions hold 10, 2 and 1 soups (`the_staged_versions_of_an_area_hold_polygons_of_their_own`, 2026-11-25). Whether a polygon picked in one version is ever to reach another is the owner's to rule on.
+- ⚠ The move built is the building's: the corner a moved polygon shared with one that stays is left where it was. The move of a tool, in which the shared corners follow, is not built.
+- An inverse states the digest of each source as its edit left it (`Restored::expects`), so `restore_sources` is refused over a later edit of the source, which would be discarded with no word, and edits are taken back the last first (`the_inverse_of_an_edit_is_refused_over_a_later_edit_of_the_same_source_and_taken_back_in_order`); a list a person writes may state none. ⚠ A source whose document was written and whose glb then could not be is not put back.
+- Left: the tool, with its pick, its rectangle and the game's list of materials; the proposal inside the preview of a deletion ([R70k](../direction/Roadmap.md#r70k-removing-what-the-game-placed)) and behind a move in the world ([R70i](../direction/Roadmap.md#r70i-selecting-and-moving-in-the-world)), which nothing calls yet, and its step of Undo; a bounds source as content of a maps module; the import of the game's bounds for an object, which the caller does; and the judgement on game files, where the thresholds are unmeasured, on bounds built by hand and on the staged bounds alone.
 
 **or-particle** is the particle editor's half over the owned `.ypt` records in
 `or_io::gta5::particle`: behaviours, domains, keyframes and evolutions as the
@@ -370,6 +788,14 @@ resources of a split output and checks every one of them before it writes the
 first; a failure while one is written leaves the ones before it built. `clean` removes a resource, the build it replaced, the record of its items and the marker, and only where that marker says OpenRage built it; `built_resources` finds every resource in a build folder by its marker, which is how a clean reaches one that no output declares now, such as the build of a removed output or a split's `<name>_1`.
 
 `sizes` weighs the files of a plan by the content that wrote each (`Plan::made_by`, so a ranking adds up to the plan's totals, or to what a build wrote once it is given the sizes its cooked files came out at).
+
+`resource` checks any resource folder as a server will read it, whoever made it and with no project. `resource::manifest` reads the lines of a manifest (a key followed by text or by a table of text, in single or double quotes, with comments and a glob), runs nothing and keeps the lines it could not read. `check` reads the manifest, the files it lists and its data-file lines name, and every file under `stream/`, which it opens through the reader a build reloads its own files through (`readers`); a file that opens with the marker of a server's asset escrow is counted, named and never opened, and a map, a type file or a `.ymt` kept as text is refused, since those readers also take the text a source is kept as. The rules are the table `RULES`, each a code, a severity and a sentence, and `Report` is what they found as data with its text lines. What an install knows of a name the folder lacks is asked through the trait `Install`, which the caller implements because this crate sees no mount, and the ceiling for the streaming memory of one file is the `file_memory` entry of a `limits` map, with no number of its own in the code. `openrage-cli project check-resource` runs it; `each_rule_fires_on_the_folder_built_to_break_it_and_on_no_other` holds every rule to a folder built to break it. No manifest costs the reader (`crates/domain/or-project/src/resource/manifest.rs`) its stack (`brackets_opened_to_any_depth_cost_no_stack`), a sound folder reports nothing, a locked file is held by `a_locked_file_is_counted_named_and_not_opened`, and with an install the names a folder lacks are asked of a catalogue built by hand, on no install. Adoption reads a resource folder too (`crates/domain/or-project/src/adopt.rs`). It reads the files and never says a server starts the resource or the game loads a file. Open in it: no file is weighed without the `file_memory` limit, because the size at which a server warns has not been read from a server and is not in the tree; the types a server streams (`STREAMED`) were read from no server either, so a file of another type is a warning; `model-unused` is not run on a folder, where a model may be a vehicle's or a ped's that no type file names; nothing judges the game line, so a resource of another game has its files opened as GTA V's; a pattern of the manifest is not matched against the folder; that a version line or the line that declares a map is absent is said only of a manifest read whole; and a name is found whatever its case where the machine that checks ignores case, which a server on Linux does not.
+
+`server` reads the resources of a server together. `scan` walks a resources folder through its category folders in brackets, takes as a resource each folder with a manifest and keeps a folder that is neither in `Scan::ignored` without walking it; a link to a folder is not followed and is kept in `Scan::unlisted`, so the scan is not whole and the warning `folder-unread` names it, since a server follows one (`a_link_is_followed_by_neither_the_scan_nor_the_configuration`); it reads each manifest through `resource::manifest` and each file under a `stream/` once, and keeps names, sizes and SHA-256 digests and no bytes: a type file or a map is held only while the names it states are read, and a file that opens with the marker of an asset escrow is digested and handed to no reader. Every file is opened through the trait `Files`, which is where a test counts the reads. `findings` gives rows of the table `RULES`, each with the resources and the names it is about: files of one name in two resources (`file-in-two-resources`, or `file-in-two-resources-same` as a note where every copy is the same bytes), an archetype two resources declare, two folders of one resource name (`resource-name-twice`), what was not read of a resource, and, through the trait `GameFiles`, a file of the name of a file of the game, which is a note. A manifest of maps, a `.ymf`, is in none of these: every build that keeps one writes it under one name, and it is kept by the resource that ships it (`two_resources_that_each_keep_a_manifest_of_their_maps_do_not_clash_over_its_one_name`). Names the same resources share are one finding, as mods that write the same paths are one conflict in `or_title::mods`. `server::config` reads a server's configuration as far as its `ensure`, `start` and `exec` lines, the included files each once and where their line stands, so a finding says which of its resources starts last (`Finding::starts_last`); a resource's place is the first line that starts it or a category it is in, the order is said to be not known where a later line starts one of the resources again, a path that leaves the folder the configuration is in is not followed, and the order is said to be not known when no configuration is given or an included file was not read. `Config::read_beside` takes the scan too and reads an `exec` of `@resource/path` inside the folder of the one resource of that name, where `Config::read` keeps such a line as an included file that was not read. `concerning` asks a scan what a build is about to write again, from the plan's files under `stream/` and what `Declares::of` gives, leaving out the resource of the build's own name. `Declares` is the plan's archetype claims (`Plan::claims`, kind `ARCHETYPE_CLAIM`), which only a content of maps states, and the archetypes of every type file the plan ships under `stream/`: one copied or generated is read from its bytes and one cooked through the cook its caller hands it, and one that does not read is kept in `Declares::unread`, which `check-build` prints in place of its all-clear (`a_type_file_a_build_ships_as_a_file_is_asked_about_by_the_archetypes_it_states`). `check-build` also prints the problems of a plan that cannot be built and exits 1 (`a_build_whose_plan_has_a_problem_is_not_told_that_nothing_concerns_it`). `placement` asks it about the folder a build is written as: where that folder is inside the server's, a folder above it that is no category (`build-folder-outside-category`) and another folder of the resource's name (`build-resource-elsewhere`), with nothing said of a build written outside the server's folder or inside a resource of it, which is where a project adopted in place builds (`a_resource_adopted_where_it_stands_is_asked_about_its_type_file_and_is_placed_nowhere`). Nothing calls either but `openrage-cli project check-build`, and `openrage-cli project check-server` prints a `Report`. Open in it: nothing says which copy a server loads; that a folder in brackets is a category, that a streamed file is resolved by its name alone, what the three commands do and that `@resource/path` names a file of that resource were read from no server, and a `stop` or a `restart` line is not read; a type file or a map that does not open is the note `resource-unread` here and the error `file-unreadable` of `check-resource`, which is the owner's to rule on; a type file outside `stream/` is not read; what a server does with two folders of one resource name was read from no server, so the finding names them and no more; a name is compared in lower case for a file and exactly for a resource; and every file is digested, which on a large server reads every byte once. Each rule is held on folders built by hand: `a_category_in_brackets_is_walked_and_a_plain_folder_with_no_manifest_is_no_resource`, `a_locked_file_is_counted_digested_and_handed_to_no_reader`, `two_resources_that_stream_one_name_are_a_warning_for_different_bytes_and_a_note_for_the_same`, `two_resources_that_declare_one_archetype_are_named`, `two_folders_of_one_resource_name_are_named_and_a_line_that_starts_the_name_orders_neither`, `a_folder_that_cannot_be_listed_is_a_warning_and_the_scan_is_not_whole`, `a_streamed_file_that_cannot_be_read_is_noted_and_is_never_said_to_be_the_same_bytes`, `a_configuration_says_which_of_two_starts_last_and_without_one_the_order_is_not_known`, `a_file_of_a_resource_that_a_configuration_includes_is_read_inside_that_resource`, `a_build_is_told_only_what_concerns_the_files_and_the_archetypes_it_writes` and `a_build_written_where_a_server_does_not_look_is_warned_of_and_another_folder_of_its_name_is_named`; a resource whose manifest does not read stays in the result with its note, and a folder under which no resource is found is refused by both commands, since it would report nothing and read as passed. ⚠ `check-server` and `check-build` exit 1 on a warning, and `check-resource` exits 1 only on an error.
+
+`acceptance` is the sheet of what a person looks for in a running game, since no build can say the game loads a file ([In_Game_Acceptance.md](../guides/In_Game_Acceptance.md)). `acceptance.json` beside it holds the lines, each about one kind of file a build writes, which is an extension the build reads back (`readers::reads`, the table `reload` answers from) or the archive a pack is, with the results a person wrote down. `Sheet::parse` refuses a line or a result that is wrong and names the line by its id, `Sheet::about` gives a build the lines about the kinds of file it wrote with the newest result of each for an edition (`a_build_that_wrote_a_map_and_a_type_file_is_told_their_lines_and_that_nobody_checked_them`), `Sheet::seen` reads them as the kinds nobody saw the game load, or the day all were seen (`Seen`, whose `sentence` is the English that `openrage-cli project build` prints and the Build tab says in the language in use), by the results from where the build loads, story mode for a pack or a package and a server for a resource (`Place::of_output`, `Place::of_built`): a run on a server says nothing of a pack's maps (`a_result_counts_for_the_place_it_was_seen_in_and_a_pack_is_not_seen_by_a_run_on_a_server`). `Sheet::silent_sentence` names, beside a reading, the kinds the build wrote that no line is about, and `kinds_in` counts the kinds of a built resource, pack or package and refuses a folder that is none of them, such as a project's or the one it builds into. Nothing in it writes a result. ⚠ A line is matched by the kind of file alone, an extension: the line of a map made from nothing, which is a PSO where the game's own maps are RBM, is read for every build that wrote a map, so maps are not said to be seen until that line has a result too, and a build of none is told of a line it cannot check. The guide's example of a result is one the sheet reads (`the_guide_writes_a_result_the_way_the_sheet_reads_one`).
+
+The Build tab reads the sheet under what a build read back. `Sheet::seen` gives the kinds of file a build wrote that a line is about and that nobody saw the game load, for the edition the build was written for and for each of the two when it states none, or the day of the newest result when every such line was last seen to load (`a_build_is_told_the_kinds_nobody_saw_loading_for_its_edition_or_the_day_all_were_seen`). The Verification part says it in one sentence that names the kinds as a person does and never says that a file loads, with a link that opens the guide at the steps that load a build of that kind (`a_build_that_wrote_a_map_and_a_type_file_names_both_kinds_nobody_saw_loading`, `the_link_opens_the_acceptance_guide_at_the_steps_that_load_the_build`); a result of loaded in a test's own copy of the sheet turns the sentence of that edition alone (`a_result_of_loaded_for_legacy_is_said_with_its_day_and_an_enhanced_build_stays_unchecked`, which also holds that a build already written is read for the edition it was written for when the build's edition is changed after it), a pack is read against the line about a story pack and sent to the steps for story mode (`a_pack_built_by_the_app_is_read_against_the_line_about_a_story_pack_for_its_edition`, `the_link_under_a_story_pack_opens_the_steps_for_story_mode`), a build of files no line is about gains nothing (`a_build_of_files_no_line_is_about_says_nothing_of_the_sheet`), and the sentences wrap in a narrow column in every catalog (`each_sentence_wraps_inside_a_narrow_column_in_every_language`). `openrage-cli project build` prints the same reading under each resource (`the_build_of_the_recipe_says_which_kinds_nobody_saw_loading_as_the_sheet_reads_them`), and so does `openrage-cli wardrobe build`, the other verb that prints what a build read back (`the_build_of_a_clothing_pack_says_that_nobody_saw_a_story_pack_loading_from_either_build_verb`), in the English the tab says (`the_tab_and_the_command_say_a_reading_in_the_same_english`). Help ▸ In-game acceptance guide shows the guide in the window of the Workbench guide, which now draws its table, its commands and its links (`help_opens_the_acceptance_guide_from_the_top_with_its_table_and_its_commands_as_text`), each row of the table whole and inside the page (`the_table_of_lines_is_painted_whole_with_no_row_over_another_and_none_past_the_page`). Every one of these runs on `or_maps::sample`'s files and on no install.
 
 Content reaches a plan through one contract, `Contribution`: the files and
 documents, manifest lines, claimed names, named figures and stable-id items
@@ -415,6 +841,17 @@ the resource.
   project holds it (`Link::owner`), `refuse_write` is how anything that edits a pack is told it
   may not write a linked one, and `refuse_member` says why a file has no place in the project.
   `adopt` groups what a folder holds by what a `Recogniser` finds in it (`analyse`, `Adoption`),
+  `place` is a place to adopt from, a folder or a zip archive read as one (`Place`): it lists
+  the place and writes nothing, leaving a hidden name out once with what is under it (`left`),
+  hands over a file's bytes in memory (`head`, `read`), and stages
+  the files asked for in a hidden folder inside the project that goes when the `Staged` it returns
+  is dropped; an archive is refused whole with a `Refusal` that names the entry (a path that is
+  absolute, climbs out, names a drive or a device, a link, an encrypted entry, two names that
+  differ only by case, a path longer than `Limits::path` with the folder it is unpacked into or,
+  at the listing, by itself, more than the rows of `LIMITS` allow, an entry larger than it
+  states), and the limits are an argument whose defaults and reasons are those rows; a build names
+  a file an asset escrow locks in `Verification::locked`, equal to what the plan copies or would
+  have moved to another edition, and hands it to no reader,
   and `template` is the file another project is made from (`Template`, `.openrage-template`);
   `edit_container` rewrites the container of a project file and carries every other key. All
   three are described in [what links, adoption and templates build](../direction/Project_Model_Design.md#what-links-adoption-and-templates-build).
@@ -443,9 +880,9 @@ packing, and a re-encode of only the blocks an edited image changed, in
 `reencode`), `optimise` plans and writes the format, the mips and the size of the textures of a textures source (a mip chain added under the level that is there, a halving that keeps the levels below the top, a re-encode only where the size or the format changes, and the DDS of a texture that needs nothing left byte for byte), `models` does the same for a `.ydr` or a `.ydd` as a glb, a
 `drawable.json` and the base it replaces the geometry of, and imports a glb, a glTF
 or an FBX into one (`drawable_values` is what that `drawable.json` states of the base, the shaders and their parameters, distances, bounds and bone tags, which a compile sets where they differ), `fragment` does it for the common drawable of a `.yft` with the rest of the
-fragment the base's, `particles` does it for a `.ypt` as one `particles.json` of its rules, the textures of its dictionary as a textures source and its models kept whole as `models.ypt` ([Source_Format_Design.md](../direction/Source_Format_Design.md#what-wave-p43-built)), `metadata` makes a `.ymt`, `.ymap` or `.ytyp` into canonical XML
+fragment the base's, `particles` does it for a `.ypt` as one `particles.json` of its rules, the textures of its dictionary as a textures source and its models kept whole as `models.ypt` ([Source_Format_Design.md](../direction/Source_Format_Design.md#what-wave-p43-built)), `bounds` does it for a `.ybn` as a glb of its triangles and a `bounds.json` of what a glb cannot say, laid over the base (`bounds::edit` reads the polygons of the bound such a source compiles to, leaf by leaf in the order a collider numbers them, and states one soup again with other polygons, which the compile then checks: `leaves`, `Inputs::restated`, `crates/domain/or-source/src/bounds/edit.rs`; the 74 soups of the 21 staged `.ybn`, 132,858 polygons, each restated with what it holds cook to the canonical save of their file, and with one polygon taken out the 72 that hold more than one are built again into a bound that validates, none refused: `every_soup_of_a_corpus_ybn_restated_with_what_it_holds_cooks_to_the_canonical_save`, 2026-11-25), and `paths` for a `.ynd` as one `paths.json` of its nodes, links and junctions, with `stated`, which reads what a document states of its nodes and links with none of the checks of a compile, `Inputs::rules_of`, the document that makes the source cook to an owned region, and `write_rules` ([Source_Format_Design.md](../direction/Source_Format_Design.md#bounds-and-path-regions); `document` reads the members of such a sidecar by name, each fault with its place), `metadata` makes a `.ymt`, `.ymap` or `.ytyp` into canonical XML
 beside the file it came from and compiles it back through that file's type table
-(`or_io::meta::canonical`, `or-io`'s `meta` feature, which `or-source` turns on), and `cook::Cooker` recooks the one asset a saved path belongs to
+(`or_io::meta::canonical`, `or-io`'s `meta` feature, which `or-source` turns on), with `metadata::check` saying, with nothing written, whether a file would become such a source, and `cook::Cooker` recooks the one asset a saved path belongs to
 into a shadow folder, reporting a failure as `Problem` data and leaving the previous
 output in place; `textures::replace_image` puts one image into a `.ytd` by the same compile and
 `create` starts a source, empty or made of pictures (`new_source`, `author_textures`), and states no platform, `sample` writes the small valid game files a test drops at a door, `game_import::decompile` is the one door a game file's bytes enter a project by, a source folder or an `asset.json` comes in as it is, and `cook::cook_source` is that cook for one folder into a scratch folder, which a
@@ -453,7 +890,7 @@ build calls, and `cook::describe` says what a folder will cook to. `game_import`
 into sources under `sources/` (a table of kinds, a staging folder renamed into place, a
 numbered folder for a name another origin holds, a report with digests that undo exactly
 what it made, and for a game's file the hash of its own first cook in `asset.json`, `cook::cooked_sha256`, which is how a build tells the file is still the game's), and `git` keeps the managed blocks of a project's `.gitignore` and
-`.gitattributes` (`git::Commit` is what the owner chose a repository holds, the sources, the build or the sources taken from the game, stated by a `# commit:` line of the block that every rewrite keeps); `openrage-cli project import` calls them, and a taken-back import is kept aside and put back by `game_import::Created::copy_to` and `restore_from`, so that Redo makes it again. `origin_check` compares `origin.sha256` with the file an install reads at `origin.virtual_path`, once and when asked, and says the game's original changed; `models::import` puts a glb, a glTF or an FBX into a model source and `Imported::lines` is what `openrage-cli source import-model` and the app's Replace geometry… print or list. `crop` cuts a textures source to a window of its pictures by copying whole blocks of every mip, and refuses a texture made from pictures ([Source_Format_Design.md](../direction/Source_Format_Design.md#cropping-a-textures-source)). `maps` makes a normal map and a specular map of a diffuse texture as new pictures of the source ([Source_Format_Design.md](../direction/Source_Format_Design.md#maps-made-from-a-diffuse)), `budget` gives each DDS texture a ladder of sizes and formats with the PSNR of each and chooses across sources to fit a memory target ([Source_Format_Design.md](../direction/Source_Format_Design.md#budgeting-a-textures-source)), and `textures::inputs_of` says which file each texture compiles from. `schemas` generates the JSON Schema of `asset.json`, `textures.json`, `drawable.json` and `dictionary.json` from the types that read and write them, with `schemars`, and holds the files of `crates/domain/or-source/schemas/` to them; `or_wardrobe::model::schema` is that of `wardrobe.json`, kept in the same folder. It depends on `or-io` and
+`.gitattributes` (`git::Commit` is what the owner chose a repository holds, the sources, the build or the sources taken from the game, stated by a `# commit:` line of the block that every rewrite keeps; a source taken from the game is named by its path in the project wherever a content keeps it, found by the walk that finds a project's sources, so a game map a maps content changed is left out as one under `sources/` is); `openrage-cli project import` calls them, and a taken-back import is kept aside and put back by `game_import::Created::copy_to` and `restore_from`, so that Redo makes it again. `origin_check` compares `origin.sha256` with the file an install reads at `origin.virtual_path`, once and when asked, and says the game's original changed; `models::import` puts a glb, a glTF or an FBX into a model source and `Imported::lines` is what `openrage-cli source import-model` and the app's Replace geometry… print or list. `crop` cuts a textures source to a window of its pictures by copying whole blocks of every mip, and refuses a texture made from pictures ([Source_Format_Design.md](../direction/Source_Format_Design.md#cropping-a-textures-source)). `maps` makes a normal map and a specular map of a diffuse texture as new pictures of the source ([Source_Format_Design.md](../direction/Source_Format_Design.md#maps-made-from-a-diffuse)), `budget` gives each DDS texture a ladder of sizes and formats with the PSNR of each and chooses across sources to fit a memory target ([Source_Format_Design.md](../direction/Source_Format_Design.md#budgeting-a-textures-source)), and `textures::inputs_of` says which file each texture compiles from. `schemas` generates the JSON Schema of `asset.json`, `textures.json`, `drawable.json` and `dictionary.json` from the types that read and write them, with `schemars`, and holds the files of `crates/domain/or-source/schemas/` to them; `or_wardrobe::model::schema` is that of `wardrobe.json`, kept in the same folder. It depends on `or-io` and
 `or-interchange` and has no UI and no watcher.
 
 - A source is a folder anyone can edit or clone, so what it states never chooses where a
@@ -632,11 +1069,64 @@ copies, reads fields by name hash, and `write` edits the tree against the
 document's own layout. `scenario` is the exception: it names a scenario
 region's points over the typed `CScenarioPointRegion`. `streaming` is the
 other: the rules of which maps a camera streams in and which nodes of their
-level-of-detail forest draw, over plain values, for any title.
+level-of-detail forest draw, over plain values, for any title. `collision`
+is the third, over `or-io`'s declared bounds: a `BoundCollider` is one bound's
+shapes under a tree built once, a `CollisionSet` holds colliders by key with
+the transform that places each, and the set answers a ray, a swept sphere, a
+box overlap and the ground under a point in world space. `doors` is the fourth,
+over the views and the collision: it finds the doors among the entities of a
+set of maps by the door extension of the archetype and then by name patterns
+its caller hands it, reads a leaf's hinge, width and motion from the
+archetype's box, pairs the leaves of a double door, and opens a swinging leaf
+through its arc against a `CollisionSet` and the boxes of the other entities.
+`collision::associate`
+is a judgement over the same set and no query: which pieces of the bounds under
+the oriented box of a placed object are the object's own, as data a person edits
+(`crates/domain/or-world/src/collision/association.rs`).
 
+- `create` makes a map, an entity, a type file and a base archetype from nothing,
+  with no donor and no snapshot, over the typed roots: the file is a PSO, RBM is
+  refused for the signature word no tool derives, and a guid, the content flags
+  and the extents are derived as they are for a file that arrived
+  (`crates/domain/or-world/src/create.rs`). A free guid is one more than the largest an
+  entity of the map states (`free_guid`), so the guid of a deleted last entity is
+  handed out again, which the comparison of a map with its base reads as that
+  entity kept ([R70y](../direction/Roadmap.md#r70y-what-a-project-changed-and-putting-it-back));
+  and a root that arrived in another container than the one
+  asked for is refused (`CreateError::SavesAs`). ⚠ Only what the family types is
+  stated: an entity made so states no `lodLevel`, no `priorityLevel` and no
+  extension, and an archetype no `assetType`, which reads as the enum's zero. The
+  flags a plain prop of the game carries are not measured, so `flags` is the
+  caller's and zero when not given; an interior, a timed archetype, a room, a
+  portal and an entity set are not made from nothing. An entity that is no copy
+  is refused in an RBM map that holds none, and the XML of such a source compiles
+  a first entity over a PSO base only
+  (`an_xml_that_adds_the_first_entity_compiles_over_a_pso_base_and_never_over_an_rbm_one`).
 - `parentIndex` does not index its own map when bit 3 of `CEntityDef::flags` is
   set, and `write::refuse_if_broken` honours the bit. A map name names a set of
   files, which `MapGroup` merges (`crates/domain/or-world/src/group.rs`).
+- `manifest_build` writes a `_manifest.ymf` for the maps a pack ships
+  (`crates/domain/or-world/src/manifest_build.rs`). It makes none from
+  nothing: the document is typed by the type tables of manifests the game
+  ships, and each entry is a copy of the one they state for a map of that
+  name, since nothing derives an entry's flags. A map taken from the game keeps
+  its entry whole, and a map none of them states gets none and is named. A
+  derivation that left an archetype unresolved adds to the stated type files and
+  never replaces them, and an entry a later manifest states as an earlier one
+  does is written once.
+  A kept manifest with a member that does not decode is refused and never read
+  short, and the manifest written is read back strictly. Of the 1,798 staged
+  manifests a build writes from, 185 state a map: their 15,126 entries with
+  flags set none in 13,561 cases, so a flag written as nought for a map nothing
+  states would be wrong about one entry in ten of the game's, and they state
+  9,704 map names in 16,469 entries, 10,614 of which no earlier manifest states
+  (`every_staged_manifest_of_the_game_is_written_back_stating_what_it_states`,
+  2026-11-25). ⚠ The type table of a shipped manifest names an enum for those
+  flags and the one written names none, as for every PSO document the tree's
+  writer lays out; the bits are kept. The lists the derivation does not give
+  (world-state groups, texture bindings, a type file's own dependencies, interior
+  bounds) are written empty, and the cell of the Builds window is still derived
+  from the files as a resource takes them.
 - Create and delete are set operations, because a map exists for the game only
   through its `_manifest.ymf`. Deleting an entity renumbers every index above
   it in every file, and a delete takes a parent with its children
@@ -655,6 +1145,93 @@ level-of-detail forest draw, over plain values, for any title.
 - A prefab is typed by its entities' member set, which Enhanced extends, so a
   catalogue is one title's and a prefab of the other is refused
   (`a_prefab_round_trips_every_map`).
+- A door is read from its archetype's box and never from the game's door
+  tuning, so a hinge, a motion and an arc are proposals
+  (`crates/domain/or-world/src/doors/leaf.rs` states the rule). What the closed
+  leaf already touches never blocks it, because a leaf stands in a frame, on a
+  floor and inside the box of its building
+  (`what_the_closed_leaf_stands_in_does_not_block_it`), and the box that is swept
+  is cut back at its faces, its bottom and its hinge by three constants measured
+  on no install
+  (`the_wall_a_leaf_hangs_in_and_the_floor_its_box_dips_into_do_not_block_it`).
+- The doors are found among the entities an interior always places and not
+  among those of its entity sets, each saying whether the extension or a name
+  found it
+  (`a_door_is_found_by_its_extension_or_by_its_name_and_a_model_with_no_name_is_counted`,
+  `a_door_an_interior_places_is_found_where_the_instance_puts_it`). A leaf's hinge
+  is at the end of the width its model's origin stands by, and a box of no finite
+  size once scaled is not read
+  (`a_leafs_box_says_where_its_hinge_is_and_whether_it_swings_slides_or_lifts`,
+  `a_door_with_no_box_or_a_box_that_is_none_is_not_read`). Two leaves that reach
+  toward each other in one plane, across an opening their two reaches fill, are a
+  double door, and a leaf is in one pair at most
+  (`two_leaves_that_face_each_other_pair_and_two_side_by_side_stay_single`,
+  `a_leaf_is_paired_once`). `DoorArc` is the volume a swinging leaf sweeps, and
+  `clearance` opens the leaf in steps and answers the first angle at which it is
+  met and by what
+  (`furniture_in_the_arc_blocks_a_door_at_the_angle_the_geometry_gives_and_an_empty_room_does_not`,
+  `a_door_against_a_wall_opens_one_way_and_not_the_other`), the same for a scene
+  turned, leant and moved as a whole and for a leaf hinged at the other end of
+  its other axis
+  (`a_turned_box_blocks_a_door_where_it_stands_and_a_scene_carried_whole_blocks_it_at_the_same_angle`,
+  `a_leaf_hinged_at_the_high_end_of_its_y_is_swept_as_one_hinged_at_the_low_end_of_its_x`).
+  The arc opens to the angle its caller asks, a quarter turn each way in
+  `or-maps`, and the three cuts of the swept box are `ARC_SKIN`, `ARC_SILL` and
+  `ARC_HINGE_STRIP`. In `or-maps` the door rules each fire on a map built to
+  break them (`each_door_rule_fires_on_a_map_built_to_break_it`), the other leaf
+  of a double door is not held against a leaf's arc, since it opens with it
+  (`a_leaf_of_a_double_door_is_not_stopped_by_the_other_leaf`), a source that is
+  not there or does not cook is named
+  (`a_source_that_is_not_there_or_does_not_cook_is_named_and_never_passed_over`),
+  every door form writes both leaves of a pair
+  (`every_door_form_writes_both_leaves_of_a_pair_to_the_decimals_asked_and_reads_back`),
+  and the JSON of `maps doors` lists what its text lists
+  (`the_json_lists_the_same_doors_as_the_text_with_their_pairing_and_what_the_rules_say`).
+- The association proposes and applies nothing. Its rule is in its module header
+  and its six thresholds are named constants, none measured on a game file: a
+  piece wholly in the box, grown by `BOX_SLACK`, is proposed; a triangle the box
+  cuts is listed with the share of its area inside and proposed from `MOST` up,
+  which is above the three quarters one triangle of a rectangle cut across its
+  middle has; a cut shape that is no triangle is left; ground is left unless
+  `AssociationOptions::take_ground` asks for it; and an object lower than
+  `JUDGED_FROM` is not judged. Ground is a triangle within `GROUND_SLOPE` of
+  level, whichever way it is wound, whose part in the box is no more than
+  `GROUND_STEP` above the foot, the lowest point a standing piece reaches in the
+  box, so a roof is not ground and the floor the walls stand on is
+  (`a_box_building_on_a_flat_floor_gives_its_walls_and_its_roof_and_keeps_the_floor`,
+  `a_floor_of_the_buildings_own_goes_with_it_once_its_walls_reach_under_it_by_more_than_a_step`);
+  or one whose surface goes on past the box, sharing an edge, through level
+  triangles the box reaches and corners within `SHARED_CORNER`, with one the box
+  cuts and holds less than `MOST` of, so the ground on the high side of a
+  building on a slope stays and so does a deck that crosses the box
+  (`the_ground_uphill_of_a_building_on_a_slope_is_left_with_the_ground_downhill`,
+  `a_level_surface_that_goes_on_past_the_box_is_left_and_one_that_ends_in_it_goes`).
+  ⚠ A flat roof that goes on at one height over the house next door is left as
+  ground (`a_roof_is_the_objects_at_a_shared_corner_and_ground_along_a_shared_edge`),
+  the floor over a cellar the box holds is proposed, and a wall or a rail of
+  something else that the box holds whole is proposed.
+- A collision shape is exact, where the particle preview's `BvhCollider` makes
+  triangles of the same bound, so the two differ on a curved one. A box
+  primitive's four vertices are corners no edge joins
+  (`a_box_primitive_names_four_corners_no_edge_joins`), a placing transform is
+  a rotation, one scale and a translation or it is refused, a ray in a
+  triangle's plane meets nothing, and a query that starts inside a solid meets
+  it at distance 0, which the ground under a point passes through
+  (`crates/domain/or-world/src/collision/shape.rs`). A shape is refused by asking each of its
+  numbers, never its box alone, because `min` and `max` pass over a NaN
+  (`a_bound_of_sizes_and_places_that_are_no_numbers_is_refused`). `BvhCollider`
+  also leaves out the primitives of a geometry and passes over a polygon that
+  names a missing vertex, where the query refuses the bound, and two of its
+  suites count its triangles (`a_shipped_disc_bound_collides_with_thickness`),
+  so making it a caller changes what the particle preview collides with. The
+  staged capsule, disc, cylinder and box bounds each fill the box their header
+  states, which holds the axis and the radius each is read with
+  (`every_staged_primitive_bound_fills_the_box_it_states`); no sphere bound is
+  staged, so a sphere's reading is held by bounds built by hand alone. Of the
+  staged corpus, 948 bounds become colliders with none refused
+  (`every_staged_bound_becomes_a_collider_whose_ray_and_swept_sphere_agree`,
+  2026-11-25). `BoundCollider::size_in_bytes` is what a collider holds in memory,
+  which is what `or-depends` budgets by.
 - An archetype's bounds match its drawable's only about half the time, because
   the archetype's frame is not recorded in the drawable, and `lodDist` and
   `textureDictionary` are authoring decisions
@@ -749,8 +1326,13 @@ Opus stream of a container in memory, writing nothing. `convert retarget`, the a
 target share one call, `or_io::gta5::retarget::retarget_file`, which `or-cli` re-exports.
 `addonped validate` and `verify` are the rules and the verifier of `or-addonped`; the plan and the build of its content are `project`.
 `weapons validate` and `verify` are the rules and the verifier of `or-weapons`, and its plan and build are `project` as well.
+`maps changes` prints what each map file and type file of a maps content changed of the base its source keeps, by object (`or_maps::changes`), with what the file states of itself differently on a line of its own, and `--json` gives the same changes as data; it exits 1 when a source cannot be compared, and it is in `crates/tools/or-cli/src/maps_changes.rs`.
+`maps merge --base B --ours O --theirs T --out FILE [--take ours|theirs] [--json]` merges two copies of one map file or type file against the file both were made from (`or_maps::merge`), the base's extension saying which kind the three are, and prints what each side changed, what was applied, each conflict with what each side did, what was taken and what that leaves, and under it a line for each record it names as its file indexes it (what it places, where, its guid), the notes, and what the merge does not look into; with no `--take` a conflict stops it, nothing is written and it exits 1, and a merge that cannot be made valid fails with the reason. It is in `crates/tools/or-cli/src/maps_merge.rs`.
 `particles list`, `validate` and `verify` are those of `or-particles`, and its plan and build are `project` as well.
-`maps list`, `validate` and `verify` are those of `or-maps`, and its plan and build are `project` as well.
+`maps list`, `validate` and `verify` are those of `or-maps`, and its plan and build are `project` as well; `maps apply` does a list of `or_maps::operation` operations to the sources of a maps content, all or none, prints the notes of each and remembers in the content the names the list states (`Operation::names`), which a file keeps the hash of alone, and `--dry-run` says what it would change; an operation of the list that states `expects` is refused, and the list with it, when its source does not hold the XML of that digest; `maps delete` takes entities named as `<source>:<entity>`, prints the plan `or_maps::delete` makes of them (what goes, what stays, what is left as ambiguous, each file with what changes in it, and the script line that hides each model, in the form `--script` names within `--radius` metres) and writes it, every file or none, only with `--apply`; `maps edit-game` moves or deletes an object the game placed (`--game`, `--map <logical path>`, `--entity <index>` or `guid:<guid>`, `--move x,y,z` or `--delete`): it prints what `or_maps::first_edit` would import and do, with what the person is told, does it with `--apply`, keeps the record with `--record <file>`, takes one back with `--take-back <record.json>`, and prints the record as JSON with `--json`, in `crates/tools/or-cli/src/maps_edit_game.rs`; `maps keep-manifest` keeps a manifest of the game in a maps content, from the files named or from an install (`--game`), for a build to write the manifest of its own maps from; `maps doors` lists the doors of each map set with what found each, what its box reads as, its pairing, how far it opens each way against the boxes of the other entities and what the door rules say, `--names <file>` gives it the names of models a name a line, for a pack that remembers none, and `--json` prints the same doors as JSON; no verb writes a door form or reads a person's own patterns file yet. `maps roads <folder>` lists the path regions the folder holds as sources, each with the region it states and its nodes, links and junctions, and what the rules of `or_maps::roads::rules` find over the set, with the rules that were not decided and why; `--json` gives the same as data, and it exits 1 when a finding is an error. With `--apply <operations.json>` it does a list of `or_maps::roads::operation` operations to those sources, all or none, and `--dry-run` says what it would change. It is in `crates/tools/or-cli/src/maps_roads.rs`, and it takes a folder and not a project because a path region taken from the game is a source of the project's `sources` folder and of no maps content.
+`maps collision` prints what `or_maps::collision` proposes as the collision of an object, an entity of a map source named `--object <source>:<index>`, over the bounds sources the content holds: for each source and each soup the polygons proposed, those left and why, and the operations the proposal comes to. `--box` states the archetype's box where no type file of the content declares it and `--take-ground` proposes the ground too. It writes nothing unless asked: `--apply` takes the proposal out, `--move` and `--turn` move it about where the object stands, `--operations` applies a list a person edited, `--inverse` writes the list that puts every source back, before a source is written, `--dry-run` writes nothing and `--json` gives the proposal and its operations as data. It is in `crates/tools/or-cli/src/maps_collision.rs`, and it moves no entity.
+`project adopt <mapping.zip|folder> --into <folder>` adopts a mapping that comes in (`or_maps::mapping`), `--dry-run` prints what it holds and writes nothing, and with `--into` or `--root` what would stop that adoption, `--json` prints the same report as data, and `--limits` states the bounds of `or_project::place`; it is in `crates/tools/or-cli/src/project_mapping.rs`, and `project adopt <folder>` with none of those flags makes a project of the folder in place, as it did.
+`project acceptance` prints, for a folder a build wrote, the lines of `or-project`'s acceptance sheet about its files and which of them nobody has checked in game, and `project build` and `wardrobe build` say under each resource they wrote which kinds of file nobody saw the game load, as the sheet holds it (`project_acceptance.rs`).
 The GTA VI commands are the `gta6_*.rs` files of `crates/tools/or-cli/src/`, one concern a file, reached from
 `crates/tools/or-cli/src/rpf.rs` as the `rpf scan-*` verbs, which address a body by the offset a scan found it at;
 `rpf list` and `rpf extract` take an RPF9 archive too and answer from the scan. `ttpf` is
@@ -924,9 +1506,75 @@ the format-agnostic timeline both previews use.
   put-back, which then discards what that code wrote, so a draw that dispatches
   into other modules, as the Files and Outline panels' do, uses `get`
   (`a_taken_slot_reads_as_default_and_the_put_back_wins`).
+- **Keys by where they sit, by place and by preset**
+  ([R70i](../direction/Roadmap.md#r70i-selecting-and-moving-in-the-world),
+  [R70v](../direction/Roadmap.md#r70v-the-keys-settings-and-guide-of-a-mapper)). The binding by
+  where a key sits is built, and no tool is on it. A row of the command table says whether its keys
+  name a position (`by_position` in `src/ui/commands/table.rs`): such a binding answers the key at
+  that place whatever it types, and Shift is part of it, so a digit and Shift with it are two
+  bindings (`the_fourth_key_of_the_digit_row_answers_by_its_place_on_a_french_keyboard`,
+  `a_digit_with_shift_and_the_digit_alone_are_two_commands_by_position`, on presses built by hand,
+  never on a French keyboard in a window), and a panel that reads its own keys reads the place from
+  the press egui hands it (`a_panel_reads_a_key_bound_by_position_from_the_place_its_press_states`).
+  A hint and Settings name such a key by what it types once a press has shown it, and before that by
+  its place on a US keyboard, said as such
+  (`a_key_bound_by_position_is_named_by_what_it_types_once_a_press_has_shown_it`,
+  `a_hint_reads_a_key_bound_by_position_as_the_keyboard_in_use_types_it`,
+  `src/ui/shortcuts/position.rs`), and Settings takes the place of the key pressed for such a
+  command (`a_key_captured_for_a_command_bound_by_position_is_the_place_pressed`). No row of the
+  table says so yet and no default changed: the tools, their keys and the Map scene's own keys as
+  rows of the table come with the screen, and until a row says so no check draws a hint or a row of
+  Settings for such a command. ⚠ Two limits stand. egui names a digit of the numeric keypad as the
+  digit row's, so the two are one place, and the keypad is only kept from renaming the row
+  (`the_numeric_keypad_does_not_rename_a_key_of_the_digit_row`). A conflict is judged on a US
+  keyboard, where Shift and the key at a place meet the character that key then types
+  (`a_shifted_key_by_position_meets_the_character_a_us_keyboard_types_there`); a keyboard whose key
+  at a bound place types another binding's character makes two bindings meet that the check does not
+  see. The rest is not built. The Map screen's manipulator, snaps and typed fields work over boxes
+  ([built](../direction/Workbench_UX_Design.md#what-the-map-screen-builds)), and no command targets
+  a placed thing (`src/ui/commands/target.rs`). Presets of keys and the place of a binding are
+  built, ahead of the row they were planned in, because the tools of
+  [R70i](../direction/Roadmap.md#r70i-selecting-and-moving-in-the-world) need both. Settings ▸
+  Keyboard shortcuts offers a preset (`src/ui/shortcuts/presets.rs`): OpenRage's own, which changes
+  no command, and CodeWalker's, which holds only what a command of today's table can take, Ctrl+N
+  for New project…; the keys of its tools and of its camera wait for the commands R70i and
+  [R70c](../direction/Roadmap.md#r70c-the-gta-v-world-streamed-and-drawn) add. A preset changes the
+  commands it names and no other, a key the person chose stays over it and after it, the choice is
+  kept in the preferences, and the page says how many commands it changes and how many keep a key of
+  the person's
+  (`a_preset_changes_the_commands_it_names_and_no_other_and_openrages_own_puts_them_back`,
+  `a_key_the_person_chose_stays_under_a_preset_and_after_it`,
+  `a_preset_is_picked_from_a_named_control_and_says_how_many_commands_it_changes`). A conflict is
+  one key for two commands read in one place: a row of the command table names its place (`Place` in
+  `src/ui/commands/table.rs`), two panels share a key, and a command the key dispatcher reads shares
+  with none (`two_commands_share_a_key_only_when_the_table_reads_them_in_two_places`,
+  `no_two_commands_of_the_table_read_in_one_place_share_a_key`,
+  `no_preset_binds_one_key_to_two_commands_of_one_place`, and on the page
+  `the_page_gives_a_panels_key_to_another_panels_command_and_refuses_it_to_the_dispatchers`). A key
+  that two panels share is refused to a command of the dispatcher with each of the two named, and
+  Overwrite unbinds both and says so
+  (`the_page_names_every_command_a_key_is_taken_from_and_overwrite_unbinds_each`). Restore all
+  defaults is offered under a preset and returns to OpenRage's own
+  (`restore_all_defaults_is_offered_under_a_preset_and_returns_to_openrages_own`), and a command set
+  by hand to the key its preset gives is the preset's again
+  (`a_key_set_to_what_the_preset_gives_is_no_key_of_the_persons_own`). Seen on `just shots` screens,
+  not in a window. That presets exist is the default of the plan's ruling on the keys, which the
+  entry of 2026-10-03 left to the owner
+  ([Project_Context.md](../direction/Project_Context.md#the-ux-reviews-plan-is-the-apps-next-work-2026-10-03)).
+  Left: the page of a mapper's settings, the hover of a panel's title, the map rules' sentences in
+  the catalogs, the tour, the chapter of the guide and the template. A library crate's sentences are
+  English, and `Template::Maps` opens on the Map screen.
 - Every command is a row of `COMMANDS` in `src/ui/commands/table.rs` (the checks that enable one are `src/ui/commands/predicates.rs`): its id,
   label, category, default bindings, an enabled-when that says why not, and
-  what it runs. A command that acts on something (`On`) takes a `Target`: what
+  what it runs. A row also says where its keys are read (`Place`: the key
+  dispatcher, or the panel that reads them itself under the pointer or with
+  focus) and whether they name where a key sits and not the character typed
+  (`by_position`). `src/ui/shortcuts.rs` holds a press against the bindings: a
+  key the person chose first, then the chosen preset's
+  (`src/ui/shortcuts/presets.rs`), then the table's; two commands share a key
+  only when both are read by panels, in two places (`taken_by`), and
+  `src/ui/shortcuts/position.rs` names a key bound by where it sits by what it
+  types once a press has shown it. A command that acts on something (`On`) takes a `Target`: what
   a context menu was opened on, else the focused panel's selection
   (`src/ui/commands/target.rs`). The menu bar, the context menus, the command
   palette, Settings ▸ Keyboard shortcuts and the key dispatcher read it, and
@@ -961,7 +1609,7 @@ the format-agnostic timeline both previews use.
 - `Workspace::Project` is the neutral view of an open project and is offered only
   while one is: `commands::workspaces` lists the six workspaces of a window with
   no project, seven with one and eight with one that holds clothing, and the strip draws what fits, then More. Its panels are
-  `src/ui/panels/project/` (Project, Assets, Properties, Problems and Build, the buttons of a finding that Problems and Properties share in `fixes.rs`, and the Builds window in `builds_editor.rs`) with History
+  `src/ui/panels/project/` (Project, Assets, Properties, Problems and Build, the buttons of a finding that Problems and Properties share in `fixes.rs`, what the Build tab says of the acceptance sheet in `in_game.rs`, and the Builds window in `builds_editor.rs`) with History
   (the project's events there), Jobs and Log, and each reads what
   `AppState::workbench` holds and never touches the disk. It handles no kind of
   document, so opening an asset moves to the workspace that suits it. The commands are
@@ -979,7 +1627,7 @@ the format-agnostic timeline both previews use.
 - `Workspace::Wardrobe` is the first row of that table: the screen of a kind of content, offered only while the project holds clothing; it follows a separator in the strip and takes the last key. Its panels are `src/ui/panels/wardrobe/` (the garments, the header with the filter, whose commands `header::bar` draws in the row of tabs, the chips and the line of figures under the list, and the garment selected; the rows and the slot headings of the list are `rows.rs`, its keys, menus and quick look are `keys.rs`, `menus.rs` and `quick.rs`, and the Garment panel keeps its place form, its tags and group, its texture rows and its problems in `garment/`; the dressed ped is `preview.rs` for the rows, the view and its notes, `wear.rs` for who wears it and which version is shown, `tools.rs`, `parts.rs`, `light.rs` and `views.rs` for how it is drawn and what plays on it, `overlay.rs` for the helpers under the view and what is drawn on it, `tiles.rs` for the strip under it and `kit.rs` for the controls they share); the bottom of the workspace is the Project workspace's Problems, Build, History, Jobs and Log. A drop on the Wardrobe's panel is `DropTarget::Wardrobe` and is Add clothes (`src/state/os_drop.rs`). The commands are `src/ui/commands/wardrobe.rs`, and a toast can carry a button (`ToastAction`), which is how a drop offers Undo.
 - `Workspace::Weapons` is the second row of that table: the screen of a kind of content, offered only while the project holds weapons, after the Wardrobe in the strip. Its panels are `src/ui/panels/weapons/` (`list.rs` the weapons grouped and filtered, `weapon.rs` the weapon selected with the rows of its typed info in `fields.rs`, and `preview.rs` the assembled weapon, which the viewport draws through the scene of `src/state/workbench/weapons_scene.rs`); the bottom of the workspace is the Project workspace's. A drop on the list or on the assembled weapon is `DropTarget::Weapons` and is Add weapons (`src/state/os_drop.rs`), the commands are `src/ui/commands/weapons.rs`, and the state, whose edits are each a step of Undo, is `src/state/workbench/weapons.rs`.
 - `Workspace::Particle` is the third row of that table, and the first of a workspace that is also the editor of a kind of file (`edits_files`): it is offered with no project, keeps its name and its own saved arrangement, and while a project holds particles it gets a second one, `SavedLayouts::for_a_project`, which is the row's layout and holds the Effects panel (`src/ui/panels/particles/`, the effects of every particle file of the pack by file, with the filter and the two buttons). A click on an effect cooks the source if it is not cooked and opens the cooked file (`show_effect`), and a save of that document goes into the source (`or_source::particles::write_back`). A drop on the Effects panel is `DropTarget::Particles` and is Add particle effects, the commands are `src/ui/commands/particles.rs`, and the state is `src/state/workbench/particles.rs`.
-- `Workspace::Map` is the fourth row of that table: the screen of a kind of content, offered only while the project holds maps. Its panels are `src/ui/panels/maps/` (`list.rs` the sources of the set shown with the entities and archetypes under them, `scene.rs` the set as boxes in the viewport with the tools and the manipulator, `plan.rs` the set seen from above, and `entity.rs` the selection, every number a field that takes what is typed). The viewport is not changed to draw it: the scene panel builds the lines of the frame (`src/render/map_overlay.rs`), keeps them in `state.workbench.maps.overlay`, and the viewport's list of lines in front, the one plugins draw through, takes them with `map_overlay::append`, while `step_viewport_camera` hands the Map workspace its own camera, as it does the Wardrobe and the Weapons. A drop on the scene, the plan or the list is `DropTarget::Maps` and is Add map files (`src/state/os_drop.rs`), the commands are `src/ui/commands/maps.rs`, and the state, whose edits are each a step of Undo that writes the source through `or_maps::edit`, is `src/state/workbench/maps.rs` (the scan, the scene and the selection) and `maps_edit.rs` (the edits and their steps).
+- `Workspace::Map` is the fourth row of that table: the screen of a kind of content, offered only while the project holds maps. Its panels are `src/ui/panels/maps/` (`list.rs` the sources of the set shown with the entities and archetypes under them, `scene.rs` the set as boxes in the viewport with the tools and the manipulator, `plan.rs` the set seen from above, and `entity.rs` the selection, every number a field that takes what is typed). The viewport is not changed to draw it: the scene panel builds the lines of the frame (`src/render/map_overlay.rs`), keeps them in `state.workbench.maps.overlay`, and the viewport's list of lines in front, the one plugins draw through, takes them with `map_overlay::append`, while `step_viewport_camera` hands the Map workspace its own camera, as it does the Wardrobe and the Weapons. A drop on the scene, the plan or the list is `DropTarget::Maps` and is Add map files (`src/state/os_drop.rs`), the commands are `src/ui/commands/maps.rs`, and the state, whose edits are each an operation of `or_maps::operation` and a step of Undo that keeps the XML it wrote, is `src/state/workbench/maps.rs` (the scan, the scene and the selection) and `maps_edit.rs` (the edits and their steps).
 - The start page is `src/ui/panels/start_page.rs` (the five ways in, the goals of a first launch and the
   recent projects as cards) over `src/ui/panels/game_picker.rs` (the installs, the recent files and the
   keys), drawn by the Document panel while nothing is open and by `src/ui/dock.rs` in place of the

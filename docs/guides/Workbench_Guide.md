@@ -46,7 +46,7 @@ Press `Ctrl+B`, or Project ▸ Build. The Build tab says what the build will wri
 
 Tick Verify with a second build on the Build tab and the build is made a second time into a scratch folder and compared byte for byte; the tab says whether it ran, and it is off to begin with because it cooks every source again.
 
-A build tells you that every file it wrote reloads through OpenRage's readers. It never says that the game loads the pack, because nobody can run the game from here.
+A build tells you that every file it wrote reloads through OpenRage's readers. It never says that the game loads the pack, because nobody can run the game from here. Where a build wrote a kind of file that somebody can look for in a running game, such as a map, the Build tab says how many of those kinds nobody has recorded seeing the game load, and How to check it in the game under that sentence opens the steps, which are also under Help ▸ In-game acceptance guide.
 
 ## Many garments, and places that stay put
 
@@ -63,6 +63,10 @@ OpenRage does not start or change your server. To use a build:
 - Copy the resource folder from `build/` into the `resources` folder of your server.
 - Add `ensure` and the resource name to `server.cfg`, then restart the resource.
 - Try it in the game. Whether the clothes load is for a run on your server to tell you.
+- A resource from somewhere else can be checked before you copy it. `openrage-cli project check-resource` and the folder reads it as a server will: its manifest, the files the manifest names and everything under `stream`. It lists what is wrong, such as a file the manifest names that is not there, the same file name twice or a file that does not open, and exits 1 when something is an error. It cannot tell you whether the game loads a file.
+- A whole server can be checked for two resources that ship the same file. `openrage-cli project check-server` and the server's `resources` folder lists each file name two resources stream, as a warning when the two copies differ, each archetype two resources declare and each resource name two folders have; add `--cfg` and your `server.cfg` and it says which of the two starts last. `openrage-cli project check-build`, your project and `--server` with that folder says the same of what your build is about to write, before it is written: the files it streams and the archetypes of every type file it ships. Where a type file of the build cannot be read it says so, and where the build cannot be planned it lists why and exits 1. A resource or a category that is a link is not followed, and is listed as a folder that was not read.
+- A mapping you were given as a zip or a folder can be looked at before anything is unpacked. `openrage-cli project adopt`, the zip, `--into` with a new folder and `--dry-run` prints what each file would become, which lines of its manifest a build states and what the map rules say of it; without `--dry-run` it makes a project in that folder. A file locked by an asset escrow is kept as it came and never opened, and a script the manifest names for the server is kept beside the project and is not shipped.
+- The road nodes of a folder of path region sources are listed by `openrage-cli maps roads` and the folder, with what the rules say of them. `--apply` and a list of operations edits them, all of the list or none of it, and `--dry-run` shows what would change.
 
 ## Look at a game file
 
@@ -76,11 +80,11 @@ New project ▸ Files starts a project that copies scripts, interface and config
 
 A project is a folder: the project file, your sources, your clothing pack and your files. A zip of the folder or a push to Git sends all of it, so look before you send.
 
-- Project ▸ Check before sharing… lists what to take out. It looks at three things: paths in the project file that only your machine has (a linked folder on another drive, for one), sources taken from the game, which are the game's own files and not yours to hand out, and the `.openrage` folder, which holds this project's history and the files only your machine can name.
-- A new project starts with a `.gitignore` and a `.gitattributes`. OpenRage manages only the lines between its two marker lines, and every other line stays yours. The block leaves out `build/`, `vfs/` and the sources taken from the game, and marks textures and models as binary. A folder you adopt that already has either file is left as it is, until an import writes the block.
+- Project ▸ Check before sharing… lists what to take out. It looks at three things: paths in the project file that only your machine has (a linked folder on another drive, for one), sources taken from the game, which are the game's own files and not yours to hand out, with the manifests of the game a Map content keeps in its `manifests` folder (`openrage-cli maps keep-manifest`), which are the game's files whole, and the `.openrage` folder, which holds this project's history and the files only your machine can name.
+- A new project starts with a `.gitignore` and a `.gitattributes`. OpenRage manages only the lines between its two marker lines, and every other line stays yours. The block leaves out `build/`, `vfs/`, the sources taken from the game and the manifests of the game a Map content keeps, and marks textures and models as binary. A folder you adopt that already has either file is left as it is, until an import writes the block.
 - Select nothing in Assets to see the project's own Properties: In a repository chooses what a repository holds, the sources (to begin with), the build, or the sources taken from the game. The choice is written into the managed block, and an import keeps it.
 - A project open in another OpenRage window is read here and written there: this window says so, and changes nothing of the project. It stays that way when the other window lets go: open the project again here to write it.
-- The check is something you run. OpenRage installs no Git hook and cannot see a push. `openrage-cli project check-sharing` makes the same check with no window and writes nothing. It exits 1 when the project file holds a path of your machine or a source is taken from the game, so a pre-push hook of your own can run it; it lists the `.openrage` folders too, which Git never sees, and they do not make it exit 1; `openrage-cli project check-original` compares each source taken from the game with the game's file it was taken from.
+- The check is something you run. OpenRage installs no Git hook and cannot see a push. `openrage-cli project check-sharing` makes the same check with no window and writes nothing. It exits 1 when the project file holds a path of your machine, a source is taken from the game or a Map content keeps a manifest of the game, so a pre-push hook of your own can run it; it lists the `.openrage` folders too, which Git never sees, and they do not make it exit 1; `openrage-cli project check-original` compares each source taken from the game with the game's file it was taken from.
 - A tooltip in the Wardrobe that ends with a line beginning Shift+F1 names the section of this guide that explains the control: press Shift+F1 with the pointer on the control to open it there.
 - Project ▸ Save as template… shares the content and builds of a project with no file and no path of your machine in it.
 
@@ -88,6 +92,6 @@ A project is a folder: the project file, your sources, your clothing pack and yo
 
 - `Ctrl+B` builds.
 - `Ctrl+1` to `Ctrl+9` go to the tab in that place of the tab row: the screens of the project first, then the files.
-- Help ▸ Keyboard shortcuts… lists the rest and lets you change them.
+- Help ▸ Keyboard shortcuts… lists the rest and lets you change them, one at a time or by a preset of keys. A preset changes only the commands it names, and a key you chose yourself stays.
 
 The app is in English only for now.

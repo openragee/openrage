@@ -11,19 +11,23 @@
 //! classify carries no ruling.
 //!
 //! ⚠ Nothing here builds a second model of map data: the placement half keeps
-//! a position and a map name per hit and the archetype half a few scalars per
-//! archetype, because a retail install's value trees do not fit in memory
-//! together.
+//! a position and a map name per hit, the archetype half a few scalars per
+//! archetype and the world index a few per map, type file and bound, because
+//! a retail install's value trees do not fit in memory together.
 
 pub mod audio;
 pub mod catalogue;
 pub mod census;
 pub mod contents;
 pub mod export;
+pub mod find;
 pub mod placement;
 pub mod resolve;
 pub mod rules;
 pub mod tables;
+pub mod world_collision;
+pub mod world_forest;
+pub mod world_index;
 
 #[cfg(test)]
 mod tests_support;
@@ -38,3 +42,6 @@ pub use resolve::{
 };
 pub use rules::{Derivable, Rule, Stated, RULES};
 pub use tables::InstallTables;
+pub use world_collision::WorldCollision;
+pub use world_forest::WorldForest;
+pub use world_index::{MountedWorld, WorldIndex, WorldSource};

@@ -518,7 +518,7 @@ pub(crate) fn protected(path: &Path) -> Option<String> {
     std::fs::File::open(path)
         .and_then(|mut file| file.read_exact(&mut magic))
         .ok()?;
-    (&magic == b"FXAP").then(|| "a protected asset: it opens with FXAP and not with an RSC7 header, and OpenRage does not read protected assets".to_string())
+    (&magic == or_project::resource::ESCROW_MARKER).then(|| "a protected asset: it opens with FXAP and not with an RSC7 header, and OpenRage does not read protected assets".to_string())
 }
 
 /// Why a name cannot be placed in a pack, or none.
@@ -776,5 +776,24 @@ fn state_creature(
                 components: p.components.clone(),
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod escrow_tests {
+    /// ⚠ The crates below or-project cannot name its marker, so the one or-source spells is held to it here, where both are in reach.
+    #[test]
+    fn every_reader_of_a_locked_file_knows_it_by_the_same_bytes() {
+        assert_eq!(
+            or_source::models::PROTECTED,
+            or_project::resource::ESCROW_MARKER.as_slice()
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let sealed = dir.path().join("sealed.ydd");
+        let bytes = [or_source::models::PROTECTED, b" and what follows"].concat();
+        std::fs::write(&sealed, bytes).unwrap();
+        assert!(super::protected(&sealed).is_some());
+        std::fs::write(&sealed, b"RSC7 and what follows").unwrap();
+        assert!(super::protected(&sealed).is_none());
     }
 }

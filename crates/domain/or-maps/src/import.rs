@@ -3,7 +3,9 @@
 //! A `.ymap` or `.ytyp` becomes a metadata source, which is `or_source::metadata`'s form for them (a file whose XML would not come
 //! back to a fixed point with every value is refused with the reason, and nothing of it is kept); a model, a fragment or a texture
 //! dictionary becomes the source its format has. The sources join one map set: the one asked for, else the first, else a new one named
-//! for the first map file. What no source form holds is refused with the reason and never dropped.
+//! for the first map file. A `_manifest.ymf` of the game is kept as it is (`crate::manifest::keep`). What no source form holds is
+//! refused with the reason and never dropped, and so is a file whose source a set gives no role: a bound, a path region, a
+//! particle list.
 
 use std::path::{Path, PathBuf};
 
@@ -32,6 +34,8 @@ pub struct Added {
     pub refused: Vec<(String, String)>,
     /// The name of the set that was made for them, when none held them.
     pub set_made: Option<String>,
+    /// The manifests of the game that were kept, which are no source and join no set.
+    pub kept: Vec<PathBuf>,
 }
 
 /// The extension of a file name, lower case.
@@ -64,16 +68,27 @@ pub fn add_one(folder: &Path, file: &Incoming<'_>) -> Result<PathBuf, String> {
                 .collect::<Vec<_>>()
                 .join("; ")
         }),
-        _ => game_import::decompile(
-            file.bytes,
-            file.name,
-            folder,
-            &Origin {
-                from_game: file.from_game,
-                virtual_path: file.virtual_path.map(str::to_string),
-                ..Origin::default()
-            },
-        ),
+        ext => {
+            // ⚠ A source of a kind the module holds no role for would join a set whose rules then call it unreadable.
+            if let Some(row) = game_import::kind_of(ext) {
+                if crate::facts::role_of(row.kind, ext).is_none() {
+                    return Err(format!(
+                        "becomes a {} source, and a maps module holds map files, type files, models and textures",
+                        row.kind
+                    ));
+                }
+            }
+            game_import::decompile(
+                file.bytes,
+                file.name,
+                folder,
+                &Origin {
+                    from_game: file.from_game,
+                    virtual_path: file.virtual_path.map(str::to_string),
+                    ..Origin::default()
+                },
+            )
+        }
     }
 }
 
@@ -157,6 +172,14 @@ pub fn add_files(
     std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
     let mut added = Added::default();
     for file in incoming {
+        // A manifest of the game is kept as it is: the manifest of the pack's own maps is written from it.
+        if extension(file.name) == "ymf" {
+            match crate::manifest::keep(folder, file.bytes) {
+                Ok(path) => added.kept.push(path),
+                Err(why) => added.refused.push((file.name.to_string(), why)),
+            }
+            continue;
+        }
         match add_one(folder, file) {
             Ok(dir) => added.made.push(dir),
             Err(why) => added.refused.push((file.name.to_string(), why)),
@@ -180,7 +203,7 @@ mod tests {
         let added = add_files(
             dir.path(),
             &[Incoming {
-                name: "hull.ybn",
+                name: "hull.yld",
                 bytes: b"x",
                 from_game: false,
                 virtual_path: None,
@@ -197,6 +220,58 @@ mod tests {
         );
         // The module has its model after the call, empty.
         assert_eq!(Maps::read(dir.path()).unwrap(), Maps::new());
+    }
+
+    #[test]
+    fn a_bound_and_a_path_region_are_refused_at_the_door_and_join_no_set() {
+        use or_io::decl::File;
+        use or_io::gta5::bounds::build::{self, BoundMesh};
+        use or_io::gta5::bounds::PhBoundAny;
+        use or_io::gta5::CPathRegion;
+
+        let mesh = BoundMesh::new(
+            vec![[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [4.0, 4.0, 1.0]],
+            vec![[0, 1, 2]],
+        );
+        let bound = PhBoundAny::PhBoundBVH(build::bvh(&mesh).unwrap())
+            .to_bytes()
+            .unwrap();
+        let region = CPathRegion::default().to_bytes().unwrap();
+        // Both become sources where a project takes them, so the refusal is the module's and not the format's.
+        for (name, bytes) in [("hull.ybn", &bound), ("nodes7.ynd", &region)] {
+            let project = tempfile::tempdir().unwrap();
+            let made = game_import::decompile(bytes, name, project.path(), &Origin::default());
+            assert!(made.is_ok(), "{name}: {made:?}");
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let incoming: Vec<Incoming<'_>> = [("hull.ybn", &bound), ("nodes7.ynd", &region)]
+            .into_iter()
+            .map(|(name, bytes)| Incoming {
+                name,
+                bytes,
+                from_game: true,
+                virtual_path: None,
+            })
+            .collect();
+        let added = add_files(dir.path(), &incoming, None).unwrap();
+        assert!(added.made.is_empty(), "{:?}", added.made);
+        let why: Vec<&str> = added.refused.iter().map(|(_, why)| why.as_str()).collect();
+        assert_eq!(why.len(), 2);
+        assert!(why[0].contains("a bounds source"), "{why:?}");
+        assert!(why[1].contains("a paths source"), "{why:?}");
+        assert!(
+            why.iter().all(|why| why.contains("a maps module holds")),
+            "{why:?}"
+        );
+        assert_eq!(Maps::read(dir.path()).unwrap(), Maps::new());
+        let left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .filter(|name| name.to_string_lossy().ends_with(".src"))
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
     }
 
     #[test]

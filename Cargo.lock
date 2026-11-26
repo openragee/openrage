@@ -3172,6 +3172,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "zip",
 ]
 
 [[package]]
@@ -3193,13 +3194,16 @@ dependencies = [
 name = "or-depends"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "glam",
  "or-io",
+ "or-maps",
  "or-test-support",
  "or-title",
  "or-world",
  "tempfile",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
@@ -3292,6 +3296,7 @@ name = "or-maps"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "or-depends",
  "or-io",
  "or-project",
  "or-source",
@@ -3303,6 +3308,8 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 1.0.69",
+ "tracing",
+ "zip",
 ]
 
 [[package]]
@@ -3369,6 +3376,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 1.0.69",
+ "zip",
 ]
 
 [[package]]

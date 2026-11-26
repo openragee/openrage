@@ -15,7 +15,10 @@ redistribute, so it stays on the machine that made it.
   byte for byte, RBM on its decompressed payload.
 - A ped variation or creature record built from nothing saves too, against the ped
   family's types declared in code (`typed::ped_types`) and held to the tables the staged
-  documents state; a record of any other family built from nothing is refused.
+  documents state. A map or a type file built from nothing saves against the world
+  family's four base classes (`typed::world_types`), as PSO: an RBM class carries a
+  signature word that nothing derives. A record of any other family built from
+  nothing is refused.
 - Field names in `binary::public_names`, which covers the world metadata
   family, still resolve. Over the 6,071 documents of the metadata corpus a
   snapshot-less build names 122 of the 9,629 distinct name-hashes they carry

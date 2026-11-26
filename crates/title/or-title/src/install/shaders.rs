@@ -19,6 +19,8 @@ pub enum ShaderExtractError {
     },
     #[error("No shaders found under `{archive}/{folder}` (is this the right install?)")]
     NoShaders { archive: PathBuf, folder: String },
+    #[error("The install did not mount: {0}")]
+    Mount(#[source] VfsBuildError),
     #[error("Failed to extract `{entry}` from `{archive}`: {source}")]
     Extract {
         archive: PathBuf,
@@ -38,6 +40,7 @@ pub fn extract_entries_from_install(
     let vfs = build_vfs_for_install(install, crypto).map_err(|e| match e {
         VfsBuildError::MissingCommon { path } => ShaderExtractError::MissingArchive { path },
         VfsBuildError::OpenRpf { path, source } => ShaderExtractError::Rpf { path, source },
+        other @ VfsBuildError::LevelNotListed { .. } => ShaderExtractError::Mount(other),
     })?;
     let folder_norm = normalise(folder);
     let suffix = format!(".{}", extension.to_ascii_lowercase());

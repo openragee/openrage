@@ -16,8 +16,9 @@ use or_io::meta::binary::{ContainerLayout, MetaLayout};
 use or_io::meta::instance::HashedString;
 use or_io::meta::{
     write_meta_binary, BinaryFormat, CBaseArchetypeDef, CBaseArchetypeDefAny, CEntityDef,
-    CEntityDefAny, CMapData, CMapTypes, CMloArchetypeDef, CMloInstanceDef, CTimeArchetypeDef,
-    MetaDocument, MetaInstance, Value,
+    CEntityDefAny, CMapData, CMapTypes, CMloArchetypeDef, CMloEntitySet, CMloInstanceDef,
+    CMloPortalDef, CMloRoomDef, CMloTimeCycleModifier, CTimeArchetypeDef, MetaDocument,
+    MetaInstance, Value,
 };
 use or_io_verify::gates::{corpus_root, name};
 use or_test_support::ledger::{self, SkipReason};
@@ -588,6 +589,136 @@ fn a_map_built_from_nothing_saves_and_reopens() {
     assert!(back.entities[0].archetype_name == "prop_bench_01a");
 }
 
+/// The name hash of each member `inst` states.
+fn stated(inst: &MetaInstance) -> Vec<u32> {
+    let mut stated: Vec<u32> = inst.fields.iter().map(|(n, _)| name_hash(n)).collect();
+    stated.sort_unstable();
+    stated
+}
+
+fn hashed(members: &[&str]) -> Vec<u32> {
+    let mut hashed: Vec<u32> = members.iter().map(|m| name_hash(m)).collect();
+    hashed.sort_unstable();
+    hashed
+}
+
+/// ⚠ A snapshot declares more of each class than the typed records name, so a root that took its classes from the snapshot
+/// would state those members too, and a machine with none could not write the same file.
+#[test]
+fn a_root_built_from_nothing_states_the_declared_members_whatever_snapshot_is_installed() {
+    const WHAT: &str =
+        "a_root_built_from_nothing_states_the_declared_members_whatever_snapshot_is_installed";
+    let Some(library) = support::schema_or_skip(WHAT) else {
+        return;
+    };
+    let declares_more = |class: &str, typed: &[&str]| {
+        library
+            .resolve_any(class)
+            .is_some_and(|resolved| resolved.fields.len() > typed.len())
+    };
+    assert!(
+        declares_more("CEntityDef", CEntityDef::MEMBERS)
+            && declares_more("CMapData", CMapData::MEMBERS),
+        "the installed snapshot declares members no record types, so this can fail"
+    );
+
+    let mut map = CMapData::default();
+    map.name = HashedString::new("hills");
+    let mut e = CEntityDef::default();
+    e.archetype_name = HashedString::new("prop_bench_01a");
+    e.parent_index = -1;
+    map.entities.push(CEntityDefAny::Base(e));
+    let saved = map.to_bytes().expect("saves");
+    assert_eq!(
+        or_io::meta::detect_binary_format(&saved),
+        Some(BinaryFormat::Pso)
+    );
+    let root = saved_tree(saved);
+    assert_eq!(stated(&root), hashed(CMapData::MEMBERS));
+    let Some(Value::Array(entities)) = root
+        .fields
+        .iter()
+        .find_map(|(n, v)| (name_hash(n) == name_hash("entities")).then_some(v))
+    else {
+        panic!("the map holds its entities");
+    };
+    let Some(Value::Struct(entity) | Value::Pointer(Some(entity))) = entities.first() else {
+        panic!("the map holds its entity");
+    };
+    assert_eq!(stated(entity), hashed(CEntityDef::MEMBERS));
+
+    let mut types = CMapTypes::default();
+    types.archetypes = vec![CBaseArchetypeDefAny::Base(CBaseArchetypeDef::default())];
+    let root = saved_tree(types.to_bytes().expect("saves"));
+    assert_eq!(stated(&root), hashed(CMapTypes::MEMBERS));
+}
+
+/// ⚠ A snapshot lays an interior instance out over the entity class a root built from nothing takes from the declaration, which
+/// has fewer members than the entity a shipped interior is, so a copy of one would be saved without them.
+#[test]
+fn a_copy_of_a_class_derived_from_a_declared_one_is_refused_rather_than_narrowed() {
+    const WHAT: &str =
+        "a_copy_of_a_class_derived_from_a_declared_one_is_refused_rather_than_narrowed";
+    let Some(donor) = opened_hills(WHAT) else {
+        return;
+    };
+    let interior = donor.entities[2].clone();
+    assert!(interior.as_mlo_instance().is_some());
+    let mut map = CMapData::default();
+    map.name = HashedString::new("hills");
+    map.entities.push(interior);
+    let refused = map
+        .to_bytes()
+        .expect_err("the copy holds members of the entity class to drop");
+    let why = refused.to_string();
+    assert!(
+        why.contains("would drop") && why.contains("CMloInstanceDef"),
+        "{why}"
+    );
+}
+
+/// Each member `or_io::meta::typed::world_types` declares, held to the class the installed snapshot resolves: the same type, the
+/// same init, and the same order among the members declared.
+#[test]
+fn every_declared_world_member_is_typed_as_the_engine_declares_it() {
+    const WHAT: &str = "every_declared_world_member_is_typed_as_the_engine_declares_it";
+    let Some(library) = support::schema_or_skip(WHAT) else {
+        return;
+    };
+    let declared = or_io::meta::typed::world_types::declared();
+    let mut checked = 0;
+    for (class, def) in &declared.structs {
+        let engine = library
+            .resolve_any(class)
+            .unwrap_or_else(|| panic!("the snapshot declares `{class}`"));
+        let mut last = None;
+        for member in &def.fields {
+            let at = engine
+                .fields
+                .iter()
+                .position(|f| name_hash(&f.name) == name_hash(&member.name))
+                .unwrap_or_else(|| panic!("the engine's `{class}` has a `{}`", member.name));
+            let stated = &engine.fields[at];
+            assert_eq!(member.ty, stated.ty, "`{class}::{}`", member.name);
+            assert_eq!(member.init, stated.init, "`{class}::{}`", member.name);
+            assert!(
+                last < Some(at),
+                "`{class}::{}` is declared in the engine's order",
+                member.name
+            );
+            last = Some(at);
+            checked += 1;
+        }
+    }
+    let typed = [
+        CEntityDef::MEMBERS,
+        CMapData::MEMBERS,
+        CBaseArchetypeDef::MEMBERS,
+        CMapTypes::MEMBERS,
+    ];
+    assert_eq!(checked, typed.iter().map(|m| m.len()).sum::<usize>());
+}
+
 #[test]
 fn a_map_whose_parent_was_removed_is_refused_at_save() {
     const WHAT: &str = "a_map_whose_parent_was_removed_is_refused_at_save";
@@ -1068,4 +1199,148 @@ fn a_record_built_here_saves_the_engines_inits() {
         assert!(seen.contains(&name_hash(typed)), "no `{typed}` was checked");
     }
     assert!(missed.is_empty(), "{}", missed.join("\n"));
+}
+
+fn by_value(items: Vec<MetaInstance>) -> Value {
+    Value::Array(
+        items
+            .into_iter()
+            .map(|i| Value::Struct(Box::new(i)))
+            .collect(),
+    )
+}
+
+fn distinct_indexes(name: &str) -> Value {
+    Value::Array(vec![Value::UInt(u64::from(distinct_seed(name)))])
+}
+
+/// ⚠ The same trap as `every_typed_member_reads_the_slot_the_engine_declares_for_it`, for the four records of an
+/// interior: a member misspelt reads as its init in every file, and one read as the wrong type opens nothing.
+#[test]
+fn every_typed_member_of_an_interiors_records_reads_the_slot_the_engine_declares_for_it() {
+    const WHAT: &str =
+        "every_typed_member_of_an_interiors_records_reads_the_slot_the_engine_declares_for_it";
+    let Some(library) = support::schema_or_skip(WHAT) else {
+        return;
+    };
+    for (class, typed) in [
+        ("CMloRoomDef", CMloRoomDef::MEMBERS),
+        ("CMloPortalDef", CMloPortalDef::MEMBERS),
+        ("CMloEntitySet", CMloEntitySet::MEMBERS),
+        ("CMloTimeCycleModifier", CMloTimeCycleModifier::MEMBERS),
+    ] {
+        let engine = library
+            .resolve_any(class)
+            .unwrap_or_else(|| panic!("the snapshot declares `{class}`"));
+        let declared: Vec<u32> = engine.fields.iter().map(|f| name_hash(&f.name)).collect();
+        assert_eq!(
+            hashed(typed),
+            {
+                let mut declared = declared.clone();
+                declared.sort_unstable();
+                declared
+            },
+            "`{class}` types the members the engine declares for it, no member more and none fewer"
+        );
+    }
+
+    let mut room = distinct("CMloRoomDef");
+    set(&mut room, "name", Value::String("a room's name".into()));
+    set(&mut room, "attachedObjects", Value::Array(Vec::new()));
+    let mut portal = distinct("CMloPortalDef");
+    // The interior holds one room and no entity, so the portal names room 0 and attaches nothing.
+    set(&mut portal, "roomFrom", Value::UInt(0));
+    set(&mut portal, "roomTo", Value::UInt(0));
+    let corner = distinct_vec3("corners");
+    set(
+        &mut portal,
+        "corners",
+        Value::Array(vec![Value::Vec3([corner.x, corner.y, corner.z])]),
+    );
+    set(&mut portal, "attachedObjects", Value::Array(Vec::new()));
+    let mut entity_set = distinct("CMloEntitySet");
+    set(&mut entity_set, "locations", distinct_indexes("locations"));
+    set(
+        &mut entity_set,
+        "entities",
+        behind_pointers(vec![distinct("CEntityDef")]),
+    );
+    let modifier = distinct("CMloTimeCycleModifier");
+    let mut interior = distinct("CMloArchetypeDef");
+    set(&mut interior, "entities", Value::Array(Vec::new()));
+    set(&mut interior, "rooms", by_value(vec![room]));
+    set(&mut interior, "portals", by_value(vec![portal]));
+    set(&mut interior, "entitySets", by_value(vec![entity_set]));
+    set(
+        &mut interior,
+        "timeCycleModifiers",
+        by_value(vec![modifier]),
+    );
+    let mut root = sampled("CMapTypes");
+    set(&mut root, "archetypes", behind_pointers(vec![interior]));
+    let bytes = encoded(&root);
+
+    let types = CMapTypes::from_bytes(&bytes).expect("opens typed");
+    let CBaseArchetypeDefAny::CMloArchetypeDef(mlo) = &types.archetypes[0] else {
+        panic!("the archetype is the interior");
+    };
+    let room = &mlo.rooms[0];
+    assert_eq!(room.name, "a room's name");
+    assert_eq!(room.bb_min, distinct_vec3("bbMin"));
+    assert_eq!(room.bb_max, distinct_vec3("bbMax"));
+    assert_eq!(room.blend, distinct_f32("blend"));
+    assert_eq!(
+        room.timecycle_name.hash,
+        distinct_hash("timecycleName").hash
+    );
+    assert_eq!(
+        room.secondary_timecycle_name.hash,
+        distinct_hash("secondaryTimecycleName").hash
+    );
+    assert_eq!(room.flags, distinct_seed("flags"));
+    assert_eq!(room.portal_count, distinct_seed("portalCount"));
+    assert_eq!(room.floor_id, distinct_seed("floorId") as i32);
+    assert_eq!(
+        room.exterior_visibilty_depth,
+        distinct_seed("exteriorVisibiltyDepth") as i32
+    );
+
+    let portal = &mlo.portals[0];
+    assert_eq!((portal.room_from, portal.room_to), (0, 0));
+    assert_eq!(portal.flags, distinct_seed("flags"));
+    assert_eq!(portal.mirror_priority, distinct_seed("mirrorPriority"));
+    assert_eq!(portal.opacity, distinct_seed("opacity"));
+    assert_eq!(portal.audio_occlusion, distinct_seed("audioOcclusion"));
+    assert_eq!(portal.corners, [distinct_vec3("corners")]);
+
+    let entity_set = &mlo.entity_sets[0];
+    assert_eq!(entity_set.name.hash, distinct_hash("name").hash);
+    assert_eq!(entity_set.locations, [distinct_seed("locations")]);
+    assert_distinct_entity(&entity_set.entities[0]);
+
+    let modifier = &mlo.time_cycle_modifiers[0];
+    assert_eq!(modifier.name.hash, distinct_hash("name").hash);
+    assert_eq!(modifier.sphere, distinct_vec4("sphere"));
+    assert_eq!(modifier.percentage, distinct_f32("percentage"));
+    assert_eq!(modifier.range, distinct_f32("range"));
+    assert_eq!(modifier.start_hour, distinct_seed("startHour"));
+    assert_eq!(modifier.end_hour, distinct_seed("endHour"));
+
+    assert_eq!(types.to_bytes().expect("an untouched save"), bytes);
+
+    // A member a table lacks reads as the engine's init, which is what a record built here states.
+    let engine = library
+        .resolve_any("CMloRoomDef")
+        .expect("the snapshot declares the room");
+    let depth = engine
+        .fields
+        .iter()
+        .find(|f| name_hash(&f.name) == name_hash("exteriorVisibiltyDepth"))
+        .expect("the room has the member");
+    assert_eq!(
+        depth.init,
+        Some(or_io::meta::Literal::Int(i64::from(
+            CMloRoomDef::default().exterior_visibilty_depth
+        )))
+    );
 }

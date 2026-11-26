@@ -4,10 +4,12 @@ use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 use crate::asset::{sha256_hex, AssetManifest, Source, MANIFEST};
+use crate::bounds;
 use crate::fragment;
 use crate::metadata;
 use crate::models;
 use crate::particles;
+use crate::paths;
 use crate::textures::{self, Inputs};
 use crate::Problem;
 
@@ -154,6 +156,8 @@ pub fn describe(dir: &Path) -> Result<Described, String> {
         fragment::KIND => fragment::output_name(manifest),
         metadata::KIND => metadata::cooked_name(manifest).map_err(|p| p.message)?,
         particles::KIND => particles::output_name(manifest),
+        bounds::KIND => bounds::output_name(manifest),
+        paths::KIND => paths::output_name(manifest),
         models::DRAWABLE | models::DRAWABLES => models::output_name(manifest),
         kind => return Err(refused_kind(kind)),
     };
@@ -230,13 +234,15 @@ fn holds_id(dir: &Path, id: &str) -> bool {
 
 fn refused_kind(kind: &str) -> String {
     format!(
-        "this build cooks {}, {}, {}, {}, {} and {} sources, and this is a {kind} source",
+        "this build cooks {}, {}, {}, {}, {}, {}, {} and {} sources, and this is a {kind} source",
         textures::KIND,
         models::DRAWABLE,
         models::DRAWABLES,
         fragment::KIND,
         metadata::KIND,
-        particles::KIND
+        particles::KIND,
+        bounds::KIND,
+        paths::KIND
     )
 }
 
@@ -247,6 +253,8 @@ enum Read {
     Fragment(Box<fragment::Inputs>),
     Metadata(metadata::Inputs),
     Particles(Box<particles::Inputs>),
+    Bounds(Box<bounds::Inputs>),
+    Paths(Box<paths::Inputs>),
 }
 
 impl Read {
@@ -258,6 +266,8 @@ impl Read {
             particles::KIND => {
                 particles::Inputs::read(source).map(|inputs| Self::Particles(Box::new(inputs)))
             }
+            bounds::KIND => bounds::Inputs::read(source).map(|i| Self::Bounds(Box::new(i))),
+            paths::KIND => paths::Inputs::read(source).map(|i| Self::Paths(Box::new(i))),
             models::DRAWABLE | models::DRAWABLES => {
                 models::Inputs::read(source).map(|i| Self::Models(Box::new(i)))
             }
@@ -272,6 +282,8 @@ impl Read {
             Self::Fragment(inputs) => inputs.digest(),
             Self::Metadata(inputs) => inputs.digest(),
             Self::Particles(inputs) => inputs.digest(),
+            Self::Bounds(inputs) => inputs.digest(),
+            Self::Paths(inputs) => inputs.digest(),
         }
     }
 
@@ -282,6 +294,8 @@ impl Read {
             Self::Fragment(_) => fragment::output_name(manifest),
             Self::Metadata(inputs) => inputs.output_name(),
             Self::Particles(inputs) => inputs.output_name(),
+            Self::Bounds(inputs) => inputs.output_name(),
+            Self::Paths(inputs) => inputs.output_name(),
         }
     }
 
@@ -292,6 +306,8 @@ impl Read {
             Self::Fragment(inputs) => inputs.compile().map(|c| c.bytes),
             Self::Metadata(inputs) => inputs.compile().map(|c| c.bytes),
             Self::Particles(inputs) => inputs.compile().map(|c| c.bytes),
+            Self::Bounds(inputs) => inputs.compile().map(|c| c.bytes),
+            Self::Paths(inputs) => inputs.compile().map(|c| c.bytes),
         }
     }
 }
@@ -303,6 +319,8 @@ fn is_input(inside: &Path) -> bool {
         || fragment::is_input(inside)
         || metadata::is_input(inside)
         || particles::is_input(inside)
+        || bounds::is_input(inside)
+        || paths::is_input(inside)
 }
 
 /// Whether a path inside a textures source, relative to its folder, is a file the cook reads.

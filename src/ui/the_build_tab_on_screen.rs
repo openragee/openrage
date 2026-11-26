@@ -185,7 +185,7 @@ fn a_finished_build_says_what_it_did_in_plain_sentences_with_no_internal_name() 
     );
 }
 
-fn a_part(reloaded: usize) -> BuiltPart {
+pub(super) fn a_part(reloaded: usize) -> BuiltPart {
     BuiltPart {
         resource: "shopcase".into(),
         folder: PathBuf::from("build/shopcase"),
@@ -222,6 +222,8 @@ fn a_part(reloaded: usize) -> BuiltPart {
         dlclist_entry: None,
         pack_checks: Vec::new(),
         sizes: Vec::new(),
+        kinds: Default::default(),
+        target: None,
     }
 }
 

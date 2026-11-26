@@ -14,13 +14,22 @@ glam.workspace = true
 or-io = { workspace = true, features = ["awc", "meta", "rel"] }
 # The placement substrate, borrowed rather than re-derived. An index that
 # built its own model of map data would be the second model `or-world`
-# exists to avoid.
+# exists to avoid. The collision query the bounds of a mount are asked through
+# is there too, and reads no file: this crate hands it what the mount holds.
 or-world.workspace = true
 # ⚠ The one thing that puts this crate above the domain line rather than
 # inside `or-world`: a dependency is a name until something says which file
 # in which archive that name is, and only a mount knows.
 or-title.workspace = true
+# What a person pastes read as a place or a hash, and the forms a script takes a position in, which a search
+# reads its text with and copies a result as. ⚠ `or-maps` names this crate for its tests alone (a dev-dependency, for
+# the first edit's fixture), so no build depends on itself, and a change to either crate gates the other.
+or-maps.workspace = true
 thiserror.workspace = true
+# The kept world index says when it refuses a file and reads the install again.
+tracing.workspace = true
+# The kept world index is a zlib stream, whose checksum says a file is whole.
+flate2.workspace = true
 
 [dev-dependencies]
 or-test-support.workspace = true

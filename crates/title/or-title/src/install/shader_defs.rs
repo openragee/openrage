@@ -97,6 +97,7 @@ fn mounted(
     build_vfs_for_install(install, crypto).map_err(|e| match e {
         VfsBuildError::MissingCommon { path } => ShaderExtractError::MissingArchive { path },
         VfsBuildError::OpenRpf { path, source } => ShaderExtractError::Rpf { path, source },
+        other @ VfsBuildError::LevelNotListed { .. } => ShaderExtractError::Mount(other),
     })
 }
 

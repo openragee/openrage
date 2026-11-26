@@ -8,8 +8,9 @@
 //!
 //! ⚠ **A build never says a pack loads in game.** It says that every file it wrote equals what
 //! the plan named and reloads through the readers that exist for it, which is all that can be
-//! measured without running GTA V.
+//! measured without running GTA V. [`acceptance`] is where a person writes down a run of the game.
 
+pub mod acceptance;
 pub mod adopt;
 pub mod build;
 pub mod built;
@@ -27,10 +28,13 @@ pub mod lock;
 mod merge;
 mod oiv;
 pub mod paths;
+pub mod place;
 pub mod plan;
 pub mod project;
 mod readers;
 pub mod reference;
+pub mod resource;
+pub mod server;
 pub mod sizes;
 pub mod snapshot;
 pub mod split;
@@ -45,7 +49,9 @@ pub use build::{
 };
 pub use built::{built_files, BuiltFiles, Folder};
 pub use container::{Container, Module, ModuleKind, Output, OutputKind, Target};
-pub use contribution::{Claim, Contribution, Cooks, Figure, Item, ManifestEntry, SourceFolder};
+pub use contribution::{
+    ArchiveContents, Claim, Contribution, Cooks, Figure, Item, ManifestEntry, SourceFolder,
+};
 pub use diff::{diff, since_last_build, Diff, Moved};
 pub use paths::{
     build_root, find_sources, project_folder, relative_inside, resolve_member, shadow_root,

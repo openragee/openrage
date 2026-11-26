@@ -15,6 +15,9 @@ pub const END: &str = "# <<< openrage managed block";
 /// The two files the blocks are written in.
 pub const IGNORE: &str = ".gitignore";
 pub const ATTRIBUTES: &str = ".gitattributes";
+/// The manifests of the game a maps content keeps whole in its `manifests` folder, wherever the content lies: game content with no
+/// `asset.json` to say so, which a repository ignores unless it holds the sources taken from the game.
+pub const KEPT_MANIFESTS: &str = "**/manifests/*.ymf";
 /// Files of a source that Git must not diff, merge or convert, whatever they hold.
 const BINARY: &[&str] = &[
     "*.dds",
@@ -26,6 +29,8 @@ const BINARY: &[&str] = &[
     "base.ymap",
     "base.ytyp",
     "base.meta",
+    "base.ybn",
+    "base.ynd",
 ];
 /// Images beside a DDS: binary, or Git LFS when the person asked for it.
 const IMAGES: &[&str] = &[
@@ -205,13 +210,20 @@ fn ignore_block(root: &Path, commit: Commit) -> Vec<String> {
         lines.push("/build/".to_string());
     }
     lines.push("/vfs/".to_string());
+    if !commit.game_sources {
+        lines.push(KEPT_MANIFESTS.to_string());
+    }
     if !commit.sources {
         lines.push(format!("/{SOURCES_DIR}/"));
-    } else if !commit.game_sources {
+    }
+    if !commit.game_sources {
+        let under_sources = format!("{SOURCES_DIR}/");
         lines.extend(
             from_game_sources(root)
                 .iter()
-                .map(|folder| format!("/{SOURCES_DIR}/{}/", escape(folder))),
+                // The line that leaves out `sources/` whole already leaves these out.
+                .filter(|inside| commit.sources || !inside.starts_with(&under_sources))
+                .map(|inside| format!("/{}/", escape(inside))),
         );
     }
     lines.push(END.to_string());
@@ -229,21 +241,21 @@ fn attribute_block(lfs: bool) -> Vec<String> {
     lines
 }
 
-/// The folders of `sources/` whose `asset.json` says the content is the game's, in name order.
+/// The source folders of the project whose `asset.json` says the content is the game's, each by its path inside `root` with `/`, in order.
+///
+/// ⚠ Wherever a content keeps them and not only under `sources/`: a maps content holds the game's maps it changed in its own folder.
 fn from_game_sources(root: &Path) -> Vec<String> {
-    let mut folders: Vec<String> = std::fs::read_dir(root.join(SOURCES_DIR))
+    let mut folders: Vec<String> = crate::game_import::source_folders(root)
         .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            parse_folder_name(&name)?;
-            let text = std::fs::read_to_string(entry.path().join(MANIFEST)).ok()?;
-            AssetManifest::parse(&text)
-                .ok()?
-                .origin
-                .from_game
-                .then_some(name)
+        .filter_map(|dir| {
+            parse_folder_name(&dir.file_name()?.to_string_lossy())?;
+            let text = std::fs::read_to_string(dir.join(MANIFEST)).ok()?;
+            let from_game = AssetManifest::parse(&text).ok()?.origin.from_game;
+            let inside = dir.strip_prefix(root).ok()?;
+            let inside: Vec<_> = (inside.components())
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect();
+            from_game.then(|| inside.join("/"))
         })
         .collect();
     folders.sort();

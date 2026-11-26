@@ -1,0 +1,46 @@
+{
+  "format": "openrage-acceptance",
+  "schema": 1,
+  "lines": [
+    {
+      "id": "map-object-moved",
+      "kind": "ymap",
+      "row": "R32",
+      "do": "Go to the place where the object you moved stood.",
+      "look_for": "The object is drawn at the place you moved it to, and nothing is drawn where it stood.",
+      "results": []
+    },
+    {
+      "id": "map-object-added",
+      "kind": "ymap",
+      "row": "R62",
+      "do": "Go to the place where you added an object as a copy.",
+      "look_for": "The copy is drawn where you put it, and every object the map placed before is still drawn.",
+      "results": []
+    },
+    {
+      "id": "type-file-read",
+      "kind": "ytyp",
+      "row": "R32",
+      "do": "Go to an object of the archetype you changed in the type file.",
+      "look_for": "The object is drawn with its model and its textures, as it was before the build was loaded.",
+      "results": []
+    },
+    {
+      "id": "map-made-from-nothing",
+      "kind": "ymap",
+      "row": "R70h",
+      "do": "Go to the place of the object in a map you made from nothing.",
+      "look_for": "The object is drawn where the map places it.",
+      "results": []
+    },
+    {
+      "id": "story-pack-mounts",
+      "kind": "rpf",
+      "row": "R51c",
+      "do": "Install the pack, add its line to the DLC list and load a save in story mode.",
+      "look_for": "The game reaches the story with no error, and what the pack adds is in the game.",
+      "results": []
+    }
+  ]
+}

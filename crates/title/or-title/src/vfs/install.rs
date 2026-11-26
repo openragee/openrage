@@ -21,6 +21,8 @@ pub enum VfsBuildError {
         #[source]
         source: IoError,
     },
+    #[error("the DLC list names no pack `{level}` to stop at, among the {listed} it names")]
+    LevelNotListed { level: String, listed: usize },
 }
 
 pub fn build_vfs_for_install(

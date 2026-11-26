@@ -8,7 +8,7 @@
 //! measured over the owner's Legacy install (`what_the_rules_say_of_the_install`), and a rule that fires on a tenth of the game's maps
 //! only warns. Nothing here says a map loads in game.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
@@ -71,6 +71,18 @@ pub const RULES: &[Rule] = &[
         Error,
         false,
         "an interior attaches an entity past its list, names a room it does not have, or holds an entity set whose two arrays differ",
+    ),
+    rule(
+        "parent-link-broken",
+        Warning,
+        true,
+        "an entity names a LOD parent in the map its own names as parent, past the entities that map holds in the pack",
+    ),
+    rule(
+        "lod-children-uncounted",
+        Warning,
+        true,
+        "an entity counts fewer LOD children than the entities of the pack's map files name it as their parent, as a removal alone in a parent map leaves it",
     ),
     rule(
         "archetype-twice",
@@ -153,8 +165,12 @@ pub const RULES: &[Rule] = &[
     rule("waiver-unknown", Warning, false, "a waiver names no rule"),
 ];
 
+/// The rule `code` names, the door rules of [`crate::doors::DOOR_RULES`] among them.
 pub fn rule_of(code: &str) -> Option<&'static Rule> {
-    RULES.iter().find(|r| r.code == code)
+    RULES
+        .iter()
+        .chain(crate::doors::DOOR_RULES)
+        .find(|r| r.code == code)
 }
 
 /// How much the extents may fall short of an entity before a rule says so, in world units.
@@ -241,6 +257,13 @@ pub fn check(model: &Maps, facts: &Facts, known: Known<'_>) -> Vec<Finding> {
     }
     let mut named: BTreeMap<&str, Vec<&MapSet>> = BTreeMap::new();
     let mut cooked_to: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    // How many entities each map file of the pack holds, by the hash of its name: what a link into a parent map indexes.
+    let held: BTreeMap<u32, usize> = (model.maps.iter())
+        .flat_map(|set| &set.sources)
+        .filter_map(|path| facts.source(path)?.map())
+        .map(|map| (map.name.hash, map.entities.len()))
+        .collect();
+    let children = Children::of(model, facts);
     for set in &model.maps {
         let who = name_of(set);
         for path in &set.sources {
@@ -286,7 +309,7 @@ pub fn check(model: &Maps, facts: &Facts, known: Known<'_>) -> Vec<Finding> {
                 }
             }
         }
-        check_set(set, facts, known, &mut say);
+        check_set(set, facts, known, &held, &children, &mut say);
     }
     for (path, held) in named.iter().filter(|(_, held)| held.len() > 1) {
         for set in held {
@@ -330,11 +353,60 @@ fn of_role<'f>(
     })
 }
 
+/// How many entities of the map files of a pack name each entity as their LOD parent.
+struct Children {
+    /// By the hash of the name of the map the parent is in, and its index there.
+    named: BTreeMap<(u32, usize), u32>,
+    /// The maps two files of the pack each hold entities of: an index into one is into the two put together, which no file states.
+    split: BTreeSet<u32>,
+}
+
+impl Children {
+    fn of(model: &Maps, facts: &Facts) -> Self {
+        let mut named: BTreeMap<(u32, usize), u32> = BTreeMap::new();
+        let mut files: BTreeMap<u32, u32> = BTreeMap::new();
+        let maps = crate::facts::named_paths(model).filter_map(|path| facts.source(path)?.map());
+        for map in maps.filter(|map| !map.entities.is_empty()) {
+            *files.entry(map.name.hash).or_default() += 1;
+            for entity in &map.entities {
+                let Ok(index) = usize::try_from(entity.parent_index) else {
+                    continue;
+                };
+                let into = match entity.flags & (1 << 3) != 0 {
+                    true => map.parent.hash,
+                    false => map.name.hash,
+                };
+                *named.entry((into, index)).or_default() += 1;
+            }
+        }
+        let split = (files.into_iter())
+            .filter(|(_, files)| *files > 1)
+            .map(|(name, _)| name)
+            .collect();
+        Self { named, split }
+    }
+
+    /// The entities of `map` that count fewer children than name them: each with the count it states and the count that name it.
+    fn uncounted(&self, map: &crate::facts::MapInside) -> Vec<(usize, u32, u32)> {
+        if map.name.hash == 0 || self.split.contains(&map.name.hash) {
+            return Vec::new();
+        }
+        (map.entities.iter().enumerate())
+            .filter_map(|(index, entity)| {
+                let named = *self.named.get(&(map.name.hash, index))?;
+                (named > entity.num_children).then_some((index, entity.num_children, named))
+            })
+            .collect()
+    }
+}
+
 /// The rules that read inside the files of one set.
 fn check_set(
     set: &MapSet,
     facts: &Facts,
     known: Known<'_>,
+    held: &BTreeMap<u32, usize>,
+    children: &Children,
     say: &mut impl FnMut(&'static str, Option<&MapSet>, Place, String),
 ) {
     let who = name_of(set);
@@ -430,6 +502,49 @@ fn check_set(
                 format!("`{path}`: {problem}"),
             );
         }
+        // ⚠ An entity whose `flags` bit 3 is set indexes the entities of the parent map, so an entity taken out of that map leaves
+        // the link past its end or on another entity; only the first is something the files can show.
+        let parent_holds = held.get(&map.parent.hash).filter(|_| map.parent.hash != 0);
+        let past = parent_holds.and_then(|len| {
+            let past = |e: &crate::facts::EntityFact| {
+                e.flags & (1 << 3) != 0 && usize::try_from(e.parent_index).is_ok_and(|p| p >= *len)
+            };
+            let first = map.entities.iter().position(past)?;
+            Some((first, map.entities.iter().filter(|e| past(e)).count(), *len))
+        });
+        if let Some((first, count, len)) = past {
+            say(
+                "parent-link-broken",
+                Some(set),
+                Place {
+                    source: Some(path.to_string()),
+                    entity: Some(first),
+                    ..Place::default()
+                },
+                format!(
+                    "{count} entities of `{path}` name a LOD parent in the parent map `{}` past the {len} entities it holds, the first #{first} naming entity {}",
+                    map.parent.shown(),
+                    map.entities[first].parent_index
+                ),
+            );
+        }
+        // ⚠ A link that is not past the end names another entity once an entity before it is taken out of the parent map alone,
+        // which the counts show: a pack whose counts held before has one too low after it, or a link past the end.
+        if let [(first, stated, named), rest @ ..] = children.uncounted(map).as_slice() {
+            say(
+                "lod-children-uncounted",
+                Some(set),
+                Place {
+                    source: Some(path.to_string()),
+                    entity: Some(*first),
+                    ..Place::default()
+                },
+                format!(
+                    "{} entities of `{path}` count fewer LOD children than name them among the map files of the pack, the first #{first} counting {stated} where {named} name it: a removal alone in a parent map leaves the links into it on other entities, and `openrage-cli maps delete` plans one with its links",
+                    rest.len() + 1
+                ),
+            );
+        }
         let mut guids: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
         let mut placements: BTreeMap<(u32, [u32; 3], [u32; 4]), Vec<usize>> = BTreeMap::new();
         let mut undeclared: BTreeMap<u32, (usize, String)> = BTreeMap::new();
@@ -501,13 +616,14 @@ fn check_set(
                 ),
             }
         }
-        if let Some(short) = extents_short(map, &declared) {
+        if let Some((short, at_least)) = extents_short(map, &declared) {
+            let at_least = if at_least { "at least " } else { "" };
             say(
                 "extents-short",
                 Some(set),
                 at_source(path),
                 format!(
-                    "the extents `{path}` states fall {short:.1} short of the entities it places"
+                    "the extents `{path}` states fall {at_least}{short:.1} short of the entities it places"
                 ),
             );
         }
@@ -574,19 +690,36 @@ fn numbers(held: &[usize]) -> String {
         .join(", ")
 }
 
-/// How far the extents a map states fall short of its entities, none when they hold them (or when an archetype is unknown, which makes the answer a lower bound).
+/// How far the extents a map states fall short of its entities, none when they hold them, and whether that is a lower bound.
 ///
-/// ⚠ Only entities whose archetype a type file of the set declares have a box to place, and a map that places any other has extents this
-/// cannot compare (`or_world::extents::Extents::is_complete`), so it says nothing of them.
+/// ⚠ Only an entity whose archetype a type file of the set declares has a box to place. Any other is judged by where it stands, which
+/// the box of its entities and the box the map streams by both have to hold whatever its box is, so a map that places one is short
+/// by at least what this says (`or_world::extents::Extents::is_complete`).
 fn extents_short(
     map: &crate::facts::MapInside,
     declared: &BTreeMap<u32, Vec<(&str, usize, &ArchetypeFact)>>,
-) -> Option<f32> {
+) -> Option<(f32, bool)> {
     let (min, max) = map.stored_entities?;
     let (min, max) = (glam::Vec3::from(min), glam::Vec3::from(max));
+    let streaming = map
+        .stored_streaming
+        .map(|(min, max)| (glam::Vec3::from(min), glam::Vec3::from(max)));
+    let outside = |(min, max): (glam::Vec3, glam::Vec3), point: glam::Vec3| {
+        (min - point).max_element().max((point - max).max_element())
+    };
     let mut over = 0.0_f32;
+    let mut at_least = false;
     for entity in &map.entities {
-        let (_, _, archetype) = declared.get(&entity.archetype.hash)?.first()?;
+        let position = glam::Vec3::from(entity.position);
+        let Some((_, _, archetype)) = declared.get(&entity.archetype.hash).and_then(|d| d.first())
+        else {
+            at_least = true;
+            over = over.max(outside((min, max), position));
+            if let Some(streaming) = streaming {
+                over = over.max(outside(streaming, position));
+            }
+            continue;
+        };
         let placement = if entity.interior {
             or_world::Placement::InteriorInstance
         } else {
@@ -597,15 +730,13 @@ fn extents_short(
             glam::Vec3::from(archetype.bb_min) * scale,
             glam::Vec3::from(archetype.bb_max) * scale,
             placement.rotation_of(entity.rotation),
-            glam::Vec3::from(entity.position),
+            position,
         );
         for corner in corners {
-            over = over
-                .max((min - corner).max_element())
-                .max((corner - max).max_element());
+            over = over.max(outside((min, max), corner));
         }
     }
-    (over > EXTENTS_SLACK).then_some(over)
+    (over > EXTENTS_SLACK).then_some((over, at_least))
 }
 
 /// Set aside the findings a waiver of the model names, and add the findings about the waivers.

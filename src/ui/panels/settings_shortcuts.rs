@@ -1,6 +1,6 @@
 use crate::state::AppState;
 use crate::ui::commands;
-use crate::ui::shortcuts;
+use crate::ui::shortcuts::{self, presets};
 use crate::ui::theme;
 
 const CAPTURE_KEY: &str = "settings_shortcut_capture";
@@ -16,7 +16,8 @@ pub fn reset_transient(ctx: &egui::Context) {
 #[derive(Clone)]
 struct PendingConflict {
     new_action: commands::Action,
-    existing: commands::Action,
+    /// Every command Overwrite would leave without the key: two panels' commands can hold one.
+    existing: Vec<commands::Action>,
     mods: shortcuts::ShortcutMods,
     key: egui::Key,
 }
@@ -39,6 +40,7 @@ pub fn draw_shortcuts_page(ui: &mut egui::Ui, state: &mut AppState, query_lc: &s
     ui.add_space(theme::SPACING_DEFAULT);
 
     ui.horizontal(|ui| {
+        preset_choice(ui, state);
         let has_overrides = shortcuts::has_overrides(&state.prefs);
         let restore_btn = egui::Button::new(tr!("Restore all defaults"));
         if ui
@@ -51,12 +53,10 @@ pub fn draw_shortcuts_page(ui: &mut egui::Ui, state: &mut AppState, query_lc: &s
             shortcuts::restore_defaults(&mut state.prefs);
             crate::state::save_prefs(&state.prefs);
             state.show_toast(tr!("All keyboard shortcuts restored to defaults."));
-            ui.ctx().data_mut(|d| {
-                d.remove::<Option<commands::Action>>(egui::Id::new(CAPTURE_KEY));
-                d.remove::<PendingConflict>(egui::Id::new(CONFLICT_KEY));
-            });
+            reset_transient(ui.ctx());
         }
     });
+    preset_note(ui, &state.prefs);
     ui.add_space(theme::SPACING_SNUG);
     ui.separator();
     ui.add_space(theme::SPACING_SNUG);
@@ -130,12 +130,16 @@ pub fn draw_shortcuts_page(ui: &mut egui::Ui, state: &mut AppState, query_lc: &s
                         labels.join("\n")
                     };
                     let mut text = egui::RichText::new(label_text).monospace();
-                    if shortcuts::is_overridden(&state.prefs, action) {
+                    let own = shortcuts::is_overridden(&state.prefs, action);
+                    if own {
                         text = text.color(theme::ACCENT_TEXT);
                     } else if labels.is_empty() {
                         text = text.color(theme::TEXT_DISABLED);
                     }
-                    ui.label(text);
+                    let binding = ui.label(text);
+                    if own {
+                        binding.on_hover_text(tr!("A key you chose, which no preset changes"));
+                    }
                 }
 
                 let edit_label = if capturing == Some(action) {
@@ -165,7 +169,9 @@ pub fn draw_shortcuts_page(ui: &mut egui::Ui, state: &mut AppState, query_lc: &s
         });
 
     if let Some(action) = capturing {
-        if let Some((mods, key)) = next_combo(ui.ctx()) {
+        if let Some((mods, typed, position)) = next_combo(ui.ctx()) {
+            let by_position = commands::spec(action).is_some_and(|spec| spec.by_position);
+            let key = key_captured(by_position, typed, position);
             if key == egui::Key::Escape && !mods.ctrl && !mods.shift && !mods.alt {
                 to_capture = Some(None);
             } else if !shortcuts::is_valid_combo(mods, key) {
@@ -180,14 +186,18 @@ pub fn draw_shortcuts_page(ui: &mut egui::Ui, state: &mut AppState, query_lc: &s
                         state.show_toast(tr!(
                             "Bound {action} to {shortcuts}.",
                             action = sc_description(action),
-                            shortcuts = shortcuts::format_binding(mods, key)
+                            shortcuts = shortcuts::format_for(action, mods, key, &state.prefs)
                         ));
                         to_capture = Some(None);
                     }
                     Err(conflict) => {
+                        // The command the refusal names, then every other that holds the key.
+                        let mut existing = vec![conflict.existing];
+                        let holders = shortcuts::holders(&state.prefs, action, mods, key);
+                        existing.extend(holders.into_iter().filter(|&a| a != conflict.existing));
                         conflict_to_set = Some(Some(PendingConflict {
                             new_action: action,
-                            existing: conflict.existing,
+                            existing,
                             mods,
                             key,
                         }));
@@ -203,14 +213,21 @@ pub fn draw_shortcuts_page(ui: &mut egui::Ui, state: &mut AppState, query_lc: &s
         egui::Frame::group(ui.style())
             .fill(theme::BG_L2.get())
             .show(ui, |ui| {
-                ui.colored_label(
-                    theme::WARNING,
-                    tr!(
-                        "{shortcuts} is already bound to “{existing}”.",
-                        shortcuts = shortcuts::format_binding(conflict.mods, conflict.key),
-                        existing = sc_description(conflict.existing)
-                    ),
-                );
+                for &existing in &conflict.existing {
+                    ui.colored_label(
+                        theme::WARNING,
+                        tr!(
+                            "{shortcuts} is already bound to “{existing}”.",
+                            shortcuts = shortcuts::format_for(
+                                conflict.new_action,
+                                conflict.mods,
+                                conflict.key,
+                                &state.prefs
+                            ),
+                            existing = sc_description(existing)
+                        ),
+                    );
+                }
                 ui.label(
                     egui::RichText::new(tr!(
                         "Overwriting will leave the previous action without a binding."
@@ -227,12 +244,19 @@ pub fn draw_shortcuts_page(ui: &mut egui::Ui, state: &mut AppState, query_lc: &s
                             conflict.key,
                         );
                         crate::state::save_prefs(&state.prefs);
-                        state.show_toast(tr!(
-                            "Bound {new_action} to {shortcuts}; {existing} is now unbound.",
-                            new_action = sc_description(conflict.new_action),
-                            shortcuts = shortcuts::format_binding(conflict.mods, conflict.key),
-                            existing = sc_description(conflict.existing)
-                        ));
+                        for &existing in &conflict.existing {
+                            state.show_toast(tr!(
+                                "Bound {new_action} to {shortcuts}; {existing} is now unbound.",
+                                new_action = sc_description(conflict.new_action),
+                                shortcuts = shortcuts::format_for(
+                                    conflict.new_action,
+                                    conflict.mods,
+                                    conflict.key,
+                                    &state.prefs
+                                ),
+                                existing = sc_description(existing)
+                            ));
+                        }
                         conflict_to_set = Some(None);
                     }
                     if ui.button(tr!("Cancel")).clicked() {
@@ -286,16 +310,209 @@ pub fn matches_query(spec: &commands::Spec, prefs: &crate::state::Prefs, query_l
         .any(|text| text.to_lowercase().contains(query_lc))
 }
 
-fn next_combo(ctx: &egui::Context) -> Option<(shortcuts::ShortcutMods, egui::Key)> {
+/// The next key pressed: its modifiers, the key it types, and where it sits when the event says.
+fn next_combo(
+    ctx: &egui::Context,
+) -> Option<(shortcuts::ShortcutMods, egui::Key, Option<egui::Key>)> {
     ctx.input(|i| {
         i.events.iter().find_map(|event| match event {
             egui::Event::Key {
                 key,
+                physical_key,
                 pressed: true,
                 modifiers,
                 ..
-            } => Some(((*modifiers).into(), *key)),
+            } => Some(((*modifiers).into(), *key, *physical_key)),
             _ => None,
         })
     })
+}
+
+/// The key a press binds: for a command bound by where its key sits, the place pressed, whatever that key types.
+fn key_captured(by_position: bool, typed: egui::Key, position: Option<egui::Key>) -> egui::Key {
+    position.filter(|_| by_position).unwrap_or(typed)
+}
+
+/// The preset of keys in use, and the others to pick.
+fn preset_choice(ui: &mut egui::Ui, state: &mut AppState) {
+    let chosen = presets::chosen(&state.prefs);
+    let mut picked = chosen.id;
+    ui.label(tr!("Preset"));
+    let combo = egui::ComboBox::from_id_salt("shortcut_preset")
+        .selected_text(crate::i18n::tr(chosen.name))
+        .show_ui(ui, |ui| {
+            for preset in presets::PRESETS {
+                ui.selectable_value(&mut picked, preset.id, crate::i18n::tr(preset.name));
+            }
+        });
+    crate::ui::accessible_name::named(combo.response, tr!("Preset")).on_hover_text(tr!(
+        "A set of keys for the commands it names: every other command keeps its key, and so does one whose key you chose. OpenRage is the set the app starts with."
+    ));
+    let Some(preset) = (presets::PRESETS.iter()).find(|preset| preset.id == picked) else {
+        return;
+    };
+    if preset.id != chosen.id {
+        presets::choose(&mut state.prefs, preset);
+        crate::state::save_prefs(&state.prefs);
+        reset_transient(ui.ctx());
+    }
+}
+
+/// How many commands the preset in use changes, and how many keep a key the person chose; nothing for OpenRage's own.
+fn preset_note(ui: &mut egui::Ui, prefs: &crate::state::Prefs) {
+    let preset = presets::chosen(prefs);
+    if preset.id == presets::OPENRAGE.id {
+        return;
+    }
+    let changes = presets::changes(preset, prefs);
+    let mut note = tr_n!(
+        "{preset} changes the keys of {count} command.",
+        "{preset} changes the keys of {count} commands.",
+        changes.changed,
+        preset = crate::i18n::tr(preset.name)
+    );
+    if changes.kept > 0 {
+        note.push(' ');
+        note.push_str(&tr_n!(
+            "{count} command it names keeps the key you chose.",
+            "{count} commands it names keep the keys you chose.",
+            changes.kept
+        ));
+    }
+    ui.label(egui::RichText::new(note).small().weak());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::ThemeChoice;
+    use crate::ui::commands::Action;
+    use crate::ui::frames_of_the_shell::{key, Shell};
+    use crate::ui::panels::settings::SettingsCategory;
+
+    /// The page asked for a key for `action`, and `pressed` pressed; the frame after it is the one read.
+    fn capture(shell: &mut Shell, action: Action, pressed: egui::Key) {
+        // Opened afresh, as Edit clears a refusal still on the page.
+        shell.settings(SettingsCategory::Shortcuts);
+        (shell.ctx).data_mut(|d| d.insert_temp(egui::Id::new(CAPTURE_KEY), Some(action)));
+        shell.draw_settings(vec![key(pressed)]);
+        shell.draw_settings(Vec::new());
+    }
+
+    fn says(shell: &Shell, text: &str) -> bool {
+        (shell.described.iter()).any(|widget| widget.name.as_deref() == Some(text))
+    }
+
+    #[test]
+    fn a_key_captured_for_a_command_bound_by_position_is_the_place_pressed() {
+        // A French keyboard's fourth key of the digit row types an apostrophe.
+        let (typed, position) = (egui::Key::Quote, Some(egui::Key::Num4));
+        assert_eq!(key_captured(true, typed, position), egui::Key::Num4);
+        assert_eq!(key_captured(false, typed, position), egui::Key::Quote);
+        // An event that says no place leaves the key it typed.
+        assert_eq!(key_captured(true, typed, None), egui::Key::Quote);
+    }
+
+    #[test]
+    fn the_page_gives_a_panels_key_to_another_panels_command_and_refuses_it_to_the_dispatchers() {
+        let _serial = theme::serial();
+        let mut shell = Shell::new(ThemeChoice::Dark);
+        // F frames the selection in the viewport, by the table.
+        let refusal = "F is already bound to “Frame selection”.";
+
+        // Show grid is read by the dispatcher, wherever the pointer is.
+        capture(&mut shell, Action::ShowGrid, egui::Key::F);
+        assert!(
+            says(&shell, refusal),
+            "the dispatcher's command took a key a panel reads"
+        );
+        assert_eq!(
+            shortcuts::label_for(Action::ShowGrid, &shell.state.prefs),
+            None
+        );
+
+        // Frame all is the viewport's as well.
+        capture(&mut shell, Action::FrameAll, egui::Key::F);
+        assert!(
+            says(&shell, refusal),
+            "a second command of the viewport took its key"
+        );
+        assert_eq!(
+            shortcuts::label_for(Action::FrameAll, &shell.state.prefs).as_deref(),
+            Some("Home")
+        );
+
+        // The lists read Quick look themselves, and never where the viewport reads.
+        capture(&mut shell, Action::QuickLook, egui::Key::F);
+        assert!(
+            !(shell.described.iter()).any(|widget| (widget.name.as_deref())
+                .is_some_and(|name| name.contains("is already bound to"))),
+            "the lists' command was refused the viewport's key"
+        );
+        assert_eq!(
+            shortcuts::label_for(Action::QuickLook, &shell.state.prefs).as_deref(),
+            Some("F")
+        );
+        assert_eq!(
+            shortcuts::label_for(Action::FrameSelection, &shell.state.prefs).as_deref(),
+            Some("F or .")
+        );
+    }
+
+    #[test]
+    fn the_page_names_every_command_a_key_is_taken_from_and_overwrite_unbinds_each() {
+        let _serial = theme::serial();
+        let mut shell = Shell::new(ThemeChoice::Dark);
+        let none = shortcuts::ShortcutMods::none();
+        // The lists' Quick look shares F with the viewport's Frame selection, as two panels may.
+        let lists = shortcuts::set_binding(
+            &mut shell.state.prefs,
+            Action::QuickLook,
+            none,
+            egui::Key::F,
+        );
+        assert!(lists.is_ok(), "{lists:?}");
+
+        // Show grid is read by the dispatcher, so it would take the key from both.
+        // ⚠ The page is searched down to that row: under the whole table the refusal is drawn below the window, where no click lands.
+        let page = shell
+            .state
+            .panels
+            .get::<crate::ui::panels::settings::SettingsUiState>();
+        page.query = "show grid".into();
+        capture(&mut shell, Action::ShowGrid, egui::Key::F);
+        let losing = ["Frame selection", "Quick look"];
+        for existing in losing {
+            assert!(
+                says(&shell, &format!("F is already bound to “{existing}”.")),
+                "the page does not say that {existing} would lose its key"
+            );
+        }
+
+        let at = (shell.described.iter())
+            .find(|widget| widget.name.as_deref() == Some("Overwrite"))
+            .expect("a button to overwrite")
+            .bounds
+            .center();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        shell.draw_settings(vec![egui::Event::PointerMoved(at), button(true)]);
+        shell.draw_settings(vec![button(false)]);
+        shell.draw_settings(Vec::new());
+        let label = |action| shortcuts::label_for(action, &shell.state.prefs);
+        assert_eq!(label(Action::ShowGrid).as_deref(), Some("F"));
+        assert_eq!(label(Action::FrameSelection), None);
+        assert_eq!(label(Action::QuickLook), None);
+        for existing in losing {
+            let told = format!("Bound Show grid to F; {existing} is now unbound.");
+            assert!(
+                (shell.state.toasts.iter()).any(|toast| toast.message == told),
+                "no toast says that {existing} lost its key"
+            );
+        }
+    }
 }

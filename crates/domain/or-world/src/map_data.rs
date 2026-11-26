@@ -10,6 +10,7 @@ use or_io::meta::{MetaInstance, Value};
 use crate::extension::Extension;
 use crate::field;
 use crate::keys;
+use crate::streaming::Level;
 use crate::transform::{self, Placement};
 
 /// A `.ymap`'s root, borrowed.
@@ -69,6 +70,11 @@ impl<'a> MapData<'a> {
 
     pub fn entity_count(&self) -> usize {
         field::array_at(self.root, keys::ENTITIES).len()
+    }
+
+    /// Whether every entity read, so a place in [`Self::entities`] is the place a `parentIndex` names.
+    pub fn entities_are_whole(&self) -> bool {
+        field::structs_fill(self.root, keys::ENTITIES)
     }
 
     pub fn car_generator_count(&self) -> usize {
@@ -216,6 +222,17 @@ impl GrassBatch<'_> {
     }
 }
 
+/// The variants of `lodLevel`, each with the level it names.
+const LOD_LEVELS: [(&str, Level); Level::COUNT] = [
+    ("LODTYPES_DEPTH_HD", Level::Hd),
+    ("LODTYPES_DEPTH_LOD", Level::Lod),
+    ("LODTYPES_DEPTH_SLOD1", Level::Slod1),
+    ("LODTYPES_DEPTH_SLOD2", Level::Slod2),
+    ("LODTYPES_DEPTH_SLOD3", Level::Slod3),
+    ("LODTYPES_DEPTH_ORPHANHD", Level::OrphanHd),
+    ("LODTYPES_DEPTH_SLOD4", Level::Slod4),
+];
+
 /// One placement in a `.ymap`.
 #[derive(Debug, Clone, Copy)]
 pub struct Entity<'a> {
@@ -341,6 +358,26 @@ impl<'a> Entity<'a> {
         }
     }
 
+    /// The level its `lodLevel` names; `None` where it states none, or one that is no level.
+    // ⚠ A variant reads three ways: by its name where the names are known, as `hash_HHHHHHHH`
+    // of its name where they are not, and as `0xHHHHHHHH` where the file's own table lacks the value.
+    pub fn level(&self) -> Option<Level> {
+        let variant = self.lod_level()?;
+        if let Some(value) = or_io::meta::binary::enum_text::value_literal(variant) {
+            return u8::try_from(value)
+                .ok()
+                .and_then(|raw| LOD_LEVELS.iter().find(|(_, level)| *level as u8 == raw))
+                .map(|(_, level)| *level);
+        }
+        let named = |name: &str| {
+            let hash = or_io::hash::literal_string_hash(name.as_bytes());
+            variant == name || variant == format!("hash_{hash:08X}")
+        };
+        (LOD_LEVELS.iter())
+            .find(|(name, _)| named(name))
+            .map(|(_, level)| *level)
+    }
+
     pub fn extension_count(&self) -> usize {
         field::array_at(self.inst, keys::EXTENSIONS).len()
     }
@@ -424,6 +461,86 @@ mod tests {
         let mut with_parent = inst.clone();
         with_parent.set("parentIndex", Value::Int(7));
         assert_eq!(Entity::new(&with_parent).parent_index(), Some(7));
+    }
+
+    #[test]
+    fn an_entity_names_its_level_by_each_spelling_a_file_gives_a_variant() {
+        let stating = |variant: String| {
+            let mut inst = entity("CEntityDef", [0.0, 0.0, 0.0, 1.0]);
+            inst.set(
+                "lodLevel",
+                Value::Enum {
+                    type_name: "rage__eLodType".into(),
+                    variant,
+                },
+            );
+            inst
+        };
+        for (name, level) in LOD_LEVELS {
+            let hash = or_io::hash::literal_string_hash(name.as_bytes());
+            for spelling in [
+                name.to_string(),
+                format!("hash_{hash:08X}"),
+                format!("0x{:08X}", level as u8),
+            ] {
+                let inst = stating(spelling.clone());
+                assert_eq!(Entity::new(&inst).level(), Some(level), "{spelling}");
+            }
+        }
+        // The seven levels are numbered 0 to 6, each once.
+        let mut numbers: Vec<u8> = LOD_LEVELS.iter().map(|(_, level)| *level as u8).collect();
+        numbers.sort_unstable();
+        assert_eq!(numbers, (0..Level::COUNT as u8).collect::<Vec<_>>());
+        // The two levels a file numbers out of the order of their depth, and the first, each said outright.
+        for (name, number, level) in [
+            ("LODTYPES_DEPTH_HD", 0, Level::Hd),
+            ("LODTYPES_DEPTH_ORPHANHD", 5, Level::OrphanHd),
+            ("LODTYPES_DEPTH_SLOD4", 6, Level::Slod4),
+        ] {
+            assert_eq!(Entity::new(&stating(name.to_string())).level(), Some(level));
+            let numbered = stating(format!("0x{number:08X}"));
+            assert_eq!(Entity::new(&numbered).level(), Some(level), "{number}");
+        }
+        // No level stated, a number past the last and a name that is none read as no level.
+        let none = entity("CEntityDef", [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(Entity::new(&none).level(), None);
+        for other in [
+            "0x00000007",
+            "0xFFFFFFFF",
+            "hash_00000000",
+            "LODTYPES_DEPTH",
+        ] {
+            let inst = stating(other.to_string());
+            assert_eq!(Entity::new(&inst).level(), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn a_map_one_of_whose_entities_did_not_read_does_not_say_its_entities_are_whole() {
+        let placed = |inst: MetaInstance| Value::Pointer(Some(Box::new(inst)));
+        let of = |entities: Value| {
+            let mut root = MetaInstance::new("CMapData");
+            root.set("entities", entities);
+            root
+        };
+        let one = || placed(entity("CEntityDef", [0.0, 0.0, 0.0, 1.0]));
+        let whole = of(Value::Array(vec![one(), one()]));
+        assert!(MapData::new(&whole).unwrap().entities_are_whole());
+        // A pointer a lenient read could not follow is null, and the entities after it move up a place.
+        let holed = of(Value::Array(vec![one(), Value::Pointer(None), one()]));
+        let map = MapData::new(&holed).unwrap();
+        assert_eq!((map.entity_count(), map.entities().count()), (3, 2));
+        assert!(!map.entities_are_whole());
+        // A member that did not decode is raw, and reads as no entity at all.
+        let raw = of(Value::Raw("(decode error)".into()));
+        assert!(!MapData::new(&raw).unwrap().entities_are_whole());
+        // A map that places nothing, or states no entities, is whole.
+        assert!(MapData::new(&of(Value::Array(Vec::new())))
+            .unwrap()
+            .entities_are_whole());
+        assert!(MapData::new(&MetaInstance::new("CMapData"))
+            .unwrap()
+            .entities_are_whole());
     }
 
     #[test]

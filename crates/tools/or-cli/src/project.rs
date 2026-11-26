@@ -1,4 +1,4 @@
-//! `openrage-cli project`: create a project, adopt a folder, link content, share a template, print the plan of a build, build it and verify what was built.
+//! `openrage-cli project`: create a project, adopt a folder or a mapping that comes in as a zip, link content, share a template, print the plan of a build, build it and verify what was built.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -53,9 +53,13 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("apply-template") => crate::project_checks::apply_template(rest),
         Some("check-sharing") => crate::project_checks::check_sharing(rest),
         Some("check-original") => crate::project_checks::check_original(rest),
+        Some("check-resource") => crate::project_resource::check_resource(rest),
+        Some("check-server") => crate::project_server::check_server(rest),
+        Some("check-build") => crate::project_server::check_build(rest),
         Some("plan") => plan_of(rest),
         Some("build") => build_of(rest),
         Some("verify") => verify_of(rest),
+        Some("acceptance") => crate::project_acceptance::acceptance(rest),
         Some("history") => crate::project_steps::history_of(rest),
         Some("rollback") => crate::project_steps::rollback_of(rest),
         Some("remove") => crate::project_steps::remove_of(rest),
@@ -85,6 +89,9 @@ const USAGE: &str = "Usage:\n  \
          [--kind fivem|dlc|oiv] [--target legacy|enhanced] [--game legacy|enhanced|both]\n                              \
          [--template <file>] [<file>...]\n  \
          openrage-cli project adopt  <folder> [--name <project>] [--resource <name>]\n  \
+         openrage-cli project adopt  <mapping.zip|folder> --into <new folder> [--name <project>]\n                              \
+         [--resource <name>] [--root <resource in it>] [--limits <limit>=<n>,...]\n                              \
+         [--dry-run] [--json]\n  \
          openrage-cli project add-content  <project.openrage-proj> [--kind files|clothing] [<file>...]\n  \
          openrage-cli project add-build    <project.openrage-proj> [--name <resource>]\n                                    \
          [--kind fivem|dlc|oiv] [--target legacy|enhanced]\n  \
@@ -105,10 +112,17 @@ const USAGE: &str = "Usage:\n  \
          openrage-cli project check-sharing  <project.openrage-proj> [--json]\n  \
          openrage-cli project check-original <project.openrage-proj> --game <install root>\n                                      \
          [--keys <file>] [--source <source folder>] [--json]\n  \
+         openrage-cli project check-resource <resource folder> [--game <install root>] [--keys <file>]\n                                      \
+         [--limits file_memory=<bytes>] [--json]\n  \
+         openrage-cli project check-server <resources folder> [--cfg <server.cfg>] [--game <install root>]\n                                    \
+         [--keys <file>] [--json]\n  \
+         openrage-cli project check-build  <project.openrage-proj> --server <resources folder>\n                                    \
+         [--build <id>] [--out <folder>] [--json]\n  \
          openrage-cli project plan   <project.openrage-proj> [--build <id>] [--out <folder>]\n  \
          openrage-cli project build  <project.openrage-proj> [--build <id>] [--out <folder>]\n                              \
          [--shader-defs <json>] [--reproducible]\n  \
          openrage-cli project verify <project.openrage-proj> [--build <id>] [--out <folder>]\n  \
+         openrage-cli project acceptance <built folder>\n  \
          openrage-cli project clean  <project.openrage-proj> [--build <id>] [--out <folder>]\n  \
          openrage-cli project redirects <project.openrage-proj> [--build <id>] [--out <folder>]\n                                 \
          [--file <path>]\n  \
@@ -130,6 +144,24 @@ const USAGE: &str = "Usage:\n  \
          become addon ped content (an addonped.json), what no content claims is the Files\n\
          content, and what could not be placed is printed and recorded in\n\
          the project file.\n\
+         adopt --into makes a new project of a mapping that comes in as a zip or as a folder, which is\n\
+         read and never changed. It finds the resources (a folder with a manifest) and the loose stream\n\
+         folders, and prints what each file becomes: a map file, a type file, a model or a texture\n\
+         dictionary under stream/ becomes a source of a maps content; any other file is kept whole at\n\
+         its place; a file locked by a server's asset escrow is told by its first bytes, kept whole,\n\
+         counted and never opened; a map or a type file that does not read is refused with the reason;\n\
+         an archive inside is listed and not opened. It prints each line of the manifest with whether\n\
+         a build carries it, and what the map rules say of the set: an entity that places an archetype\n\
+         no type file of it declares, a type file whose archetype has no model. --dry-run prints that\n\
+         and writes nothing, and with --into or --root says what would stop that adoption and exits 1;\n\
+         --json prints it as data, and it exits 1 where there is no resource and no stream folder.\n\
+         A place of several is adopted one at a time with --root. A zip is listed\n\
+         from its directory and unpacked only by the adoption, into a hidden folder inside --into\n\
+         that is removed again; --into has to be new or empty. An archive is refused whole, with the\n\
+         entry named and nothing written, for an entry whose path is absolute, climbs out with ..,\n\
+         names a drive or a device, is a link, is encrypted, differs from another only by case, is\n\
+         longer than a path holds, or unpacks to more than it states, and past these limits:\n\
+         {LIMITS}\n\
          add-content adds the files named to the Files content, once each, and says why it\n\
          will not take one a build could not place. With --kind clothing it makes a clothing\n\
          folder with an empty pack instead, and every build takes it.\n\
@@ -165,6 +197,49 @@ const USAGE: &str = "Usage:\n  \
          do not fail it, since Git never sees them. check-original reads the install --game names and says, for each source taken\n\
          from the game (or the one --source names), whether the game's file it was taken from is\n\
          still that file; it exits 1 where the file changed or is gone.\n\
+         check-resource reads any resource folder as a server will read it, whoever made it and with\n\
+         no project: its manifest (fxmanifest.lua, or the older __resource.lua), the files the manifest\n\
+         lists and its data-file lines name, and every file under stream/. It lists what its rules find,\n\
+         each with a code, a severity, the file and a sentence: no manifest; no version line; a file\n\
+         named and not there; a path that leaves the resource, which is reported and not followed; one\n\
+         file name twice under stream/; a file of a type a server does not stream; a streamed file that\n\
+         does not open through OpenRage's reader of its type, with the reader's error, or that is a\n\
+         map, a type file or a .ymt kept as text, which no game streams; a file over the\n\
+         ceiling --limits file_memory=<bytes> states for the streaming memory of one file (no file is\n\
+         weighed without it); maps and no this_is_a_map line; and the names nothing holds: the model\n\
+         or the texture dictionary of an archetype, and an archetype a map places. With --game the\n\
+         install is asked about a name the resource lacks, and without it those are notes. A file\n\
+         locked by a server's asset escrow is counted, named and not opened, as a note. A line of the\n\
+         manifest that is not a key followed by text or a table of text is a note, and the manifest\n\
+         is never run. It writes nothing and exits 1 when a finding is an error; --json prints the\n\
+         same findings as data. It cannot see whether the game loads a file, whether a server starts\n\
+         the resource, or what another resource of the server ships.\n\
+         check-server reads the resources of a server together: every resource under the folder, through\n\
+         the category folders in brackets, each file once. A folder with no manifest that is no category\n\
+         is no resource and is not read, and a folder that is itself one resource, or that holds none, is\n\
+         refused. It keeps of a streamed file its name, its size and the digest of\n\
+         its bytes, and of a type file and a map the names they state; a file locked by a server's asset\n\
+         escrow is counted and digested, and handed to no reader. It lists, each with a code, a severity\n\
+         and a sentence: two folders of one resource name; resources that stream a file of one name, a warning where the copies differ and a\n\
+         note where they are the same bytes; resources that declare an archetype of one name; what was not\n\
+         read of a resource; and, with --game, a resource that streams a file of the name of a file of the\n\
+         game, said as an override and a note. With --cfg the configuration is read for its ensure, start\n\
+         and exec lines and nothing else, the files it includes each once, one named @resource/path inside\n\
+         that resource, and a finding about two\n\
+         resources says which of them starts last; a resource's place is the first line that starts it or\n\
+         a category it is in. Without --cfg, or when an included file was not read, it says the order is\n\
+         not known. A path of the configuration that leaves the folder the configuration is in is reported\n\
+         and not followed, and a line that is none of the three is a note. It writes nothing and exits 1\n\
+         when a finding is a warning or an error; --json prints the same findings as data. It cannot see\n\
+         which copy of a file a server loads, or whether a server starts a resource.\n\
+         check-build asks of a build of the project what the resources of a server already hold of it,\n\
+         before anything is written: another resource that streams a file the build writes under stream/,\n\
+         or declares an archetype a content of the build declares. A resource of the build's own name is\n\
+         the build's earlier copy and is not another resource, and a pack or a package is asked nothing.\n\
+         Where the folder the build is written into (--out, else the project's build folder) is inside\n\
+         the server's, it also warns of a folder above the resource that is no category in brackets,\n\
+         where a server does not look, and names another folder of the resource's name.\n\
+         It builds nothing, writes nothing and exits 1 when it finds one; --json prints the same as data.\n\
          plan prints what a build will write, the budgets, what changed since the last\n\
          build and why it cannot be built, without writing. A build that declares\n\
          split and is over a ceiling divides at content boundaries into several\n\
@@ -183,7 +258,14 @@ const USAGE: &str = "Usage:\n  \
          database OPENRAGE_SHADER_DEFS names, respells the parameters of a drawable that\n\
          moves; with none, they are dropped and named. With --reproducible it then builds\n\
          again into a scratch folder and says whether every byte is the same.\n\
+         Under each resource it says which kinds of file it wrote nobody has seen GTA V load,\n\
+         for the build's edition or for both when it states none, as the acceptance sheet holds it.\n\
          verify reads a built resource back against the plan the project has now.\n\
+         acceptance reads the folder a build wrote (a resource, or the folder of a dlc.rpf or an\n\
+         .oiv) and prints the lines of the acceptance sheet about the kinds of file in it: what to\n\
+         do in the game, what to look for, and for Legacy and for Enhanced the newest result a\n\
+         person wrote into the sheet, or that the line is not checked in game. It writes nothing,\n\
+         and exits 0 whatever the sheet holds.\n\
          clean removes the resources OpenRage built under build/ (or <out>), found by their\n\
          hidden marker, or with --build only the resources of that build: its name, and\n\
          <name>_1, <name>_2 and so on when it splits and no build is named so.\n\
@@ -199,7 +281,10 @@ const USAGE: &str = "Usage:\n  \
          OpenIV installs a package.\n";
 
 fn print_usage() {
-    eprintln!("{USAGE}");
+    eprintln!(
+        "{}",
+        USAGE.replace("{LIMITS}", &crate::project_mapping::limit_lines())
+    );
 }
 
 /// The flag that names a build of the project.
@@ -420,6 +505,9 @@ fn make_sources(folder: &Path) -> Result<(), Failure> {
 }
 
 fn adopt(args: &[String]) -> Result<ExitCode, Failure> {
+    if crate::project_mapping::is_asked(args) {
+        return crate::project_mapping::adopt_mapping(args);
+    }
     let (positional, flags) = parse(args, &["--name", "--resource"])?;
     let [folder] = positional.as_slice() else {
         return Err(Usage("expected one <folder> to adopt".into()));
@@ -1383,6 +1471,7 @@ fn build_of(args: &[String]) -> Result<ExitCode, Failure> {
         );
         cooked(built);
         report(&built.verification);
+        crate::project_acceptance::report_seen(&built.folder, plan.target);
         losses(built);
         if let Some(found) = &built.since {
             since(found);
@@ -1457,6 +1546,9 @@ pub(crate) fn report(found: &Verification) {
     println!("  {}", found.reload_line());
     for reloaded in &found.reloaded {
         println!("    {:<40} {}", reloaded.path, reloaded.reader);
+    }
+    for locked in &found.locked {
+        println!("    {locked:<40} locked by an asset escrow: shipped as it came and not opened");
     }
     for count in found.metadata() {
         println!(

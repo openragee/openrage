@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use or_io::gta5::retarget::CONVERTED;
 
 use crate::container::{Container, ModuleKind, Output, OutputKind, Target};
-use crate::contribution::{Contribution, Item, ManifestEntry, SourceFolder};
+use crate::contribution::{
+    ArchiveContents, Claim, Contribution, Item, ManifestEntry, SourceFolder,
+};
 use crate::paths::{folded, is_under, is_within};
 use crate::{dlc, merge, oiv};
 
@@ -54,6 +56,8 @@ pub struct Plan {
     pub items: Vec<Item>,
     /// The names the game resolves once that the plan checked, and the ones two contents hold.
     pub names: NameCheck,
+    /// Each name the game resolves once that a content this plan takes claims, in the order the contents state them.
+    pub claims: Vec<Claim>,
     /// What the output writes, which decides how a build writes it and reads it back.
     pub kind: OutputKind,
     /// The layout the output ships its drawables and texture dictionaries in; as authored when none.
@@ -106,6 +110,10 @@ pub enum Origin {
 pub struct Registration {
     pub path: String,
     pub file_type: String,
+    /// What the pack states an archive holds; empty where it states nothing.
+    pub contents: String,
+    /// Whether the path is a name the game asks by and no file of the pack: the `.ityp` of a `.ytyp` inside a nested archive.
+    pub asked: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -348,6 +356,7 @@ pub(crate) fn assemble(
         budgets: Vec::new(),
         items: Vec::new(),
         names: NameCheck::default(),
+        claims: Vec::new(),
         kind: declared.kind.clone(),
         target: declared.target,
         ship_unchanged: declared.ship_unchanged,
@@ -410,9 +419,13 @@ pub(crate) fn assemble(
         .filter(|c| c.pack)
         .map(|c| c.module.as_str())
         .collect();
+    let archives: Vec<(&str, &ArchiveContents)> = taken
+        .iter()
+        .flat_map(|c| c.archives.iter().map(move |held| (c.module.as_str(), held)))
+        .collect();
     match &declared.kind {
         OutputKind::FivemResource => manifest_of(&mut owned, &entries, declared, &mut plan),
-        OutputKind::SingleplayerDlc => dlc::finish(&mut owned, &entries, &mut plan),
+        OutputKind::SingleplayerDlc => dlc::finish(&mut owned, &entries, &archives, &mut plan),
         OutputKind::OivPackage => oiv::finish(&mut owned, (&entries, &packs), declared, &mut plan),
         OutputKind::Unknown(_) => unreachable!("an unknown kind returned above"),
     }
@@ -449,6 +462,9 @@ pub(crate) fn assemble(
         .collect();
     let taken_ids: BTreeSet<&str> = taken.iter().map(|c| c.module.as_str()).collect();
     plan.names = merge::claims(&in_the_project, &taken_ids, &mut plan.problems);
+    plan.claims = (taken.iter())
+        .flat_map(|c| c.claims.iter().cloned())
+        .collect();
     plan.budgets = merge::budgets(&taken, declared, &mut plan.problems);
     plan.items = merge::items(&taken, &mut plan.problems);
     // ⚠ A pack is an archive, and so is each archive in it, and the game corrupts one that holds too many entries.
@@ -558,6 +574,8 @@ fn manifest_of<'a>(
             .iter()
             .map(|(_, f)| f.path.as_str())
             .filter(|path| !is_under(path, "stream"))
+            // ⚠ A server reads the entitlement of an asset escrow itself: listed, it would be sent to every client.
+            .filter(|path| *path != crate::place::ESCROW_ENTITLEMENT)
             .collect();
         listed.sort_unstable();
         let text = merge::manifest(&listed, &stated, entries, &mut plan.problems);

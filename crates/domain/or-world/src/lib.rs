@@ -18,7 +18,10 @@
 //! hashes of their own names.
 
 pub mod archetypes;
+pub mod collision;
 pub mod content_flags;
+pub mod create;
+pub mod doors;
 pub mod execute;
 pub mod extension;
 pub mod extents;
@@ -28,6 +31,7 @@ pub mod group;
 pub mod interior_portals;
 pub mod keys;
 pub mod manifest;
+pub mod manifest_build;
 pub mod map_data;
 pub mod map_types;
 pub mod partition;

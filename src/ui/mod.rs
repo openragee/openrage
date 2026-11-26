@@ -55,6 +55,8 @@ mod the_addon_peds_on_screen;
 #[cfg(test)]
 mod the_build_tab_on_screen;
 #[cfg(test)]
+mod the_build_tab_says_what_was_seen_in_game_on_screen;
+#[cfg(test)]
 mod the_builds_read_plainly_on_screen;
 #[cfg(test)]
 mod the_builds_say_what_changed_and_what_they_checked_on_screen;
@@ -106,6 +108,8 @@ mod the_picker_on_screen;
 mod the_power_features_on_screen;
 #[cfg(test)]
 mod the_power_windows_in_plain_words_on_screen;
+#[cfg(test)]
+mod the_presets_and_places_of_keys_on_screen;
 #[cfg(test)]
 mod the_project_panels_on_screen;
 #[cfg(test)]

@@ -272,9 +272,9 @@ fn menu(ui: &mut egui::Ui, state: &AppState, asked: &mut Option<Command>) {
 }
 
 /// Frame all or Frame selection, when a key pressed this frame is bound to one.
-fn framing_requested(input: &egui::InputState, prefs: &Prefs) -> Option<Action> {
+pub(crate) fn framing_requested(input: &egui::InputState, prefs: &Prefs) -> Option<Action> {
     input.events.iter().find_map(|event| {
-        shortcuts::action_for_event(event, prefs)
+        shortcuts::action_for_event(crate::ui::commands::Place::Viewport, event, prefs)
             .filter(|action| matches!(action, Action::FrameAll | Action::FrameSelection))
     })
 }

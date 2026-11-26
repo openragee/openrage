@@ -94,11 +94,16 @@ impl InstallTables {
                 self.hd_texture.insert(asset, hd);
             }
         }
-        let root = manifest.instance();
-        for (name, bounds) in named_bounds(root, keys::MAP_DATA_GROUPS) {
+        let (groups, interiors) = stated_bounds(manifest);
+        self.add_bounds(groups, interiors);
+    }
+
+    /// Take what [`stated_bounds`] read of one manifest, the first to name a group or an interior keeping it.
+    pub(crate) fn add_bounds(&mut self, groups: Vec<NamedBounds>, interiors: Vec<NamedBounds>) {
+        for (name, bounds) in groups {
             self.static_bounds.entry(name).or_insert(bounds);
         }
-        for (name, bounds) in named_bounds(root, keys::INTERIORS) {
+        for (name, bounds) in interiors {
             self.interior_bounds.entry(name).or_insert(bounds);
         }
     }
@@ -118,6 +123,11 @@ impl InstallTables {
     /// The `.ybn` a manifest names for the map group `map`, in its order.
     pub fn static_bounds_of(&self, map: u32) -> &[u32] {
         self.static_bounds.get(&map).map_or(&[], Vec::as_slice)
+    }
+
+    /// The map groups a manifest names static bounds for.
+    pub fn bounded_groups(&self) -> impl Iterator<Item = u32> + '_ {
+        self.static_bounds.keys().copied()
     }
 
     /// How many map groups a manifest names static bounds for.
@@ -152,6 +162,20 @@ impl InstallTables {
     pub fn manifests(&self) -> usize {
         self.manifests
     }
+}
+
+/// A map group or an interior archetype, and the `.ybn` a manifest names for it, in its order.
+pub(crate) type NamedBounds = (u32, Vec<u32>);
+
+/// What a manifest's `MapDataGroups` and its `Interiors` name bounds for, each in the manifest's order.
+pub(crate) fn stated_bounds(
+    manifest: or_world::Manifest<'_>,
+) -> (Vec<NamedBounds>, Vec<NamedBounds>) {
+    let root = manifest.instance();
+    (
+        named_bounds(root, keys::MAP_DATA_GROUPS).collect(),
+        named_bounds(root, keys::INTERIORS).collect(),
+    )
 }
 
 /// Each `{ Name, Bounds }` item of the manifest array `key` that names both.

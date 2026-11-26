@@ -49,7 +49,7 @@ fn install_packs<'a>(
         .copied()
         .collect();
     let name = plan.resource.clone();
-    let registrations = dlc::register(&packed, &theirs, &name, &mut plan.problems);
+    let registrations = dlc::register(&packed, &theirs, &[], &name, &mut plan.problems);
     let documents = dlc::documents_of(&name, &registrations);
     let root = pack_root(&name);
     for (module, file) in packed {

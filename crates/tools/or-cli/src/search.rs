@@ -5,7 +5,10 @@ use std::sync::Arc;
 
 use or_io::awc::AwcKey;
 use or_io::container::rpf::crypto::RpfCryptoProvider;
-use or_title::{build_mounted_game, DlcCutoff, GtaInstall, MountedGame, SetupContentType};
+use or_title::{
+    build_mounted_game, build_mounted_game_with, DlcCutoff, GtaInstall, ListedPackState, MapMode,
+    MountOptions, MountedGame, SetupContentType,
+};
 
 use or_title::install::crawl;
 
@@ -796,10 +799,134 @@ pub(crate) fn pack_infos(game: &MountedGame) -> Vec<PackInfo> {
         .collect()
 }
 
+/// Where a `dlc-list` mount stops and which mode it takes; `--dlc` and `--level` both say where to stop, so one is given.
+pub(crate) fn dlc_list_mount(
+    dlc: Option<&str>,
+    level: Option<&str>,
+    mode: Option<&str>,
+) -> Result<(DlcCutoff, MountOptions), String> {
+    let cutoff = match (dlc, level) {
+        (Some(_), Some(_)) => {
+            return Err("--dlc and --level both say where to stop; give one".into())
+        }
+        (_, Some(level)) => DlcCutoff::Level(level.trim().to_string()),
+        (dlc, None) => resolve_cutoff(dlc),
+    };
+    let mode = match mode {
+        Some(word) => Some(
+            MapMode::from_label(word)
+                .ok_or_else(|| format!("--mode is story or multiplayer, not `{word}`"))?,
+        ),
+        None => None,
+    };
+    let options = MountOptions {
+        mode,
+        ..MountOptions::default()
+    };
+    Ok((cutoff, options))
+}
+
+/// The listed packs a mount left out, in the list's order.
+pub(crate) fn packs_left_out(game: &MountedGame) -> Vec<&str> {
+    (game.listed.iter())
+        .filter(|pack| pack.state == ListedPackState::LeftOut)
+        .map(|pack| pack.name.as_str())
+        .collect()
+}
+
+/// What `dlc-list` prints below its table: the listed packs left out, and what the mode made of each pack's change sets.
+pub(crate) fn dlc_list_notes(game: &MountedGame, mode: Option<MapMode>) -> Vec<String> {
+    let mut lines = Vec::new();
+    let left_out = packs_left_out(game);
+    if !left_out.is_empty() {
+        lines.push(format!(
+            "left out, {} of {} listed pack(s): {}",
+            left_out.len(),
+            game.listed.len(),
+            left_out.join(", ")
+        ));
+    }
+    let Some(mode) = mode else {
+        return lines;
+    };
+    let files = || game.packs.iter().flat_map(|p| &p.data_files);
+    lines.push(format!(
+        "as {}: {} of {} data file(s) enabled",
+        mode.label(),
+        files().filter(|f| !f.disabled).count(),
+        files().count()
+    ));
+    for pack in &game.packs {
+        if !pack.change_sets_left_out.is_empty() {
+            lines.push(format!(
+                "  {}: left out, stated for the other mode: {}",
+                pack.name_hash,
+                pack.change_sets_left_out.join(", ")
+            ));
+        }
+        if !pack.change_sets_unstated.is_empty() {
+            lines.push(format!(
+                "  {}: no mode stated, applied as without --mode: {}",
+                pack.name_hash,
+                pack.change_sets_unstated.join(", ")
+            ));
+        }
+    }
+    lines
+}
+
+/// What `dlc-list --json` prints: the mounted packs, the notes, the listed packs left out and, with a mode, what it made of each pack's change sets.
+pub(crate) fn dlc_list_json(
+    game: &MountedGame,
+    warnings: &[String],
+    mode: Option<MapMode>,
+) -> serde_json::Value {
+    let infos = pack_infos(game);
+    let mut doc = serde_json::json!({
+        "packs": infos,
+        "warnings": warnings,
+        "count": infos.len(),
+        "leftOut": packs_left_out(game),
+    });
+    if let Some(mode) = mode {
+        let change_sets: Vec<_> = (game.packs.iter())
+            .map(|p| {
+                serde_json::json!({
+                    "pack": p.name_hash,
+                    "leftOut": p.change_sets_left_out,
+                    "unstated": p.change_sets_unstated,
+                })
+            })
+            .collect();
+        doc["mode"] = mode.label().into();
+        doc["changeSets"] = change_sets.into();
+    }
+    doc
+}
+
+/// What `dlc-list` prints without `--json`: a row for each mounted pack, their count, then the notes.
+pub(crate) fn dlc_list_text(game: &MountedGame, mode: Option<MapMode>) -> Vec<String> {
+    let infos = pack_infos(game);
+    let mut lines: Vec<String> = (infos.iter().enumerate())
+        .map(|(idx, p)| {
+            format!(
+                "{:>3}  {:<26} {:<12} order={:<5} minor={:<3} files={:<5} {}",
+                idx, p.name_hash, p.content_type, p.order, p.minor_order, p.data_files, p.source
+            )
+        })
+        .collect();
+    lines.push(String::new());
+    lines.push(format!("{} pack(s)", infos.len()));
+    lines.extend(dlc_list_notes(game, mode));
+    lines
+}
+
 pub fn run_dlc_list(args: &[String]) -> ExitCode {
     let mut game: Option<PathBuf> = None;
     let mut keys: Option<PathBuf> = None;
     let mut dlc: Option<String> = None;
+    let mut level: Option<String> = None;
+    let mut mode: Option<String> = None;
     let mut json = false;
     let mut i = 0;
     while i < args.len() {
@@ -822,6 +949,14 @@ pub fn run_dlc_list(args: &[String]) -> ExitCode {
                 Ok(v) => dlc = Some(v),
                 Err(e) => return usage_error(&e),
             },
+            "--level" => match next_value(args, &mut i, "--level") {
+                Ok(v) => level = Some(v),
+                Err(e) => return usage_error(&e),
+            },
+            "--mode" => match next_value(args, &mut i, "--mode") {
+                Ok(v) => mode = Some(v),
+                Err(e) => return usage_error(&e),
+            },
             other => {
                 if let Some(v) = other.strip_prefix("--game=") {
                     game = Some(PathBuf::from(v));
@@ -829,6 +964,10 @@ pub fn run_dlc_list(args: &[String]) -> ExitCode {
                     keys = Some(PathBuf::from(v));
                 } else if let Some(v) = other.strip_prefix("--dlc=") {
                     dlc = Some(v.to_string());
+                } else if let Some(v) = other.strip_prefix("--level=") {
+                    level = Some(v.to_string());
+                } else if let Some(v) = other.strip_prefix("--mode=") {
+                    mode = Some(v.to_string());
                 } else {
                     return usage_error(&format!("unexpected argument: {other}"));
                 }
@@ -836,6 +975,11 @@ pub fn run_dlc_list(args: &[String]) -> ExitCode {
         }
         i += 1;
     }
+    let (cutoff, options) = match dlc_list_mount(dlc.as_deref(), level.as_deref(), mode.as_deref())
+    {
+        Ok(asked) => asked,
+        Err(e) => return usage_error(&e),
+    };
 
     let game_root = match resolve_game_root(game) {
         Ok(p) => p,
@@ -853,8 +997,7 @@ pub fn run_dlc_list(args: &[String]) -> ExitCode {
         Some(g) => g,
         None => return usage_error(&format!("invalid install root: {}", game_root.display())),
     };
-    let cutoff = resolve_cutoff(dlc.as_deref());
-    let game = match build_mounted_game(&install, resolved.provider, cutoff) {
+    let game = match build_mounted_game_with(&install, resolved.provider, cutoff, options) {
         Ok(g) => g,
         Err(e) => {
             eprintln!("Error: mount failed: {e}");
@@ -862,15 +1005,9 @@ pub fn run_dlc_list(args: &[String]) -> ExitCode {
         }
     };
     warnings.extend(game.diagnostics.messages().iter().map(|d| d.to_string()));
-    let infos = pack_infos(&game);
 
     if json {
-        let doc = serde_json::json!({
-            "packs": infos,
-            "warnings": warnings,
-            "count": infos.len(),
-        });
-        match serde_json::to_string_pretty(&doc) {
+        match serde_json::to_string_pretty(&dlc_list_json(&game, &warnings, options.mode)) {
             Ok(s) => println!("{s}"),
             Err(e) => eprintln!("Error: serialize: {e}"),
         }
@@ -878,13 +1015,9 @@ pub fn run_dlc_list(args: &[String]) -> ExitCode {
         for w in &warnings {
             eprintln!("note: {w}");
         }
-        for (idx, p) in infos.iter().enumerate() {
-            println!(
-                "{:>3}  {:<26} {:<12} order={:<5} minor={:<3} files={:<5} {}",
-                idx, p.name_hash, p.content_type, p.order, p.minor_order, p.data_files, p.source
-            );
+        for line in dlc_list_text(&game, options.mode) {
+            println!("{line}");
         }
-        println!("\n{} pack(s)", infos.len());
     }
     ExitCode::SUCCESS
 }
@@ -898,6 +1031,17 @@ fn print_dlc_list_usage() {
     eprintln!("  --game <dir>   GTA install root. Default: the app's selected game.");
     eprintln!("  --keys <file>  Override the keys cache (normally auto-resolved).");
     eprintln!("  --dlc=<X>      Cutoff: build number, pack nameHash, or basegame/0.");
+    eprintln!("                 A name no pack states mounts every pack, with a note.");
+    eprintln!("  --level <pack> Stop at this pack of the DLC list, by the name the list gives");
+    eprintln!("                 it: the packs listed after it and the title update's patches");
+    eprintln!("                 of them are left out and named below the table. A name the");
+    eprintln!("                 list lacks is refused. Not with --dlc.");
+    eprintln!("  --mode <story|multiplayer>");
+    eprintln!("                 The map as story or as multiplayer: a change set a pack's");
+    eprintln!("                 setup names under GROUP_MAP_SP only applies as story, one");
+    eprintln!("                 under GROUP_MAP only as multiplayer. The change sets left");
+    eprintln!("                 out, and the ones no group states a mode for, are named.");
+    eprintln!("                 Without it every change set applies.");
     eprintln!("  --json         Machine-readable output.");
 }
 
@@ -1278,3 +1422,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "dlc_list_tests.rs"]
+mod dlc_list_tests;

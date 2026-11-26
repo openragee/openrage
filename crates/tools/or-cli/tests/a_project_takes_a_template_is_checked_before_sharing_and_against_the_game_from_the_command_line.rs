@@ -133,6 +133,58 @@ fn a_folder_with_a_path_of_this_machine_and_a_source_from_the_game_fails_the_sha
     );
 }
 
+/// ⚠ A manifest a maps content keeps is the game's file whole, with no `asset.json` to say so: where it lies is what says it.
+#[test]
+fn a_manifest_of_the_game_a_maps_content_keeps_fails_the_sharing_check_and_is_ignored_by_git() {
+    use or_maps::sample::{manifest_file, Stated};
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = a_project(dir.path(), "harbor");
+    let folder = file.parent().unwrap().to_path_buf();
+    assert_eq!(
+        project(&["check-sharing", text(&file)]),
+        ExitCode::SUCCESS,
+        "the project holds nothing of the game yet"
+    );
+
+    let stated = Stated {
+        map: "harbour",
+        flags: 1,
+        types: &["harbour_types"],
+    };
+    let kept = or_maps::manifest::keep(&folder.join("maps"), &manifest_file(&[stated])).unwrap();
+    let inside = format!(
+        "maps/{}/{}",
+        or_maps::manifest::KEPT,
+        kept.file_name().unwrap().to_string_lossy()
+    );
+    let concerns = or_content::sharing::concerns(&file, &[], &[], false);
+    assert!(
+        (concerns.iter())
+            .any(|c| c.kind == or_content::sharing::Kind::GameContent && c.text.contains(&inside)),
+        "the kept manifest is named as the game's: {concerns:?}"
+    );
+    assert_eq!(
+        project(&["check-sharing", text(&file)]),
+        ExitCode::from(1),
+        "a pre-push hook that runs the verb is stopped"
+    );
+
+    or_source::git::update(&folder).unwrap();
+    let ignore = std::fs::read_to_string(folder.join(".gitignore")).unwrap();
+    assert!(
+        ignore
+            .lines()
+            .any(|line| line == or_source::git::KEPT_MANIFESTS),
+        "{ignore}"
+    );
+    assert_eq!(
+        or_source::git::KEPT_MANIFESTS,
+        format!("**/{}/*.ymf", or_maps::manifest::KEPT),
+        "the line is about the folder a maps content keeps them in"
+    );
+}
+
 #[test]
 fn the_private_folders_an_edit_leaves_are_listed_and_do_not_fail_the_sharing_check() {
     let dir = tempfile::tempdir().unwrap();

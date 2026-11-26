@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use or_project::adopt::{Recognised, Recogniser};
 use or_project::content::Content;
-use or_project::{Contribution, Module, ModuleKind};
+use or_project::{Contribution, Module, ModuleKind, Output};
 
 use crate::model::{Maps, FILE};
 use crate::plan::{contribution, module_folder};
@@ -22,6 +22,15 @@ pub struct MapPack;
 impl Content for MapPack {
     fn contribution(&self, project_folder: &Path, module: &Module) -> Contribution {
         contribution(project_folder, module)
+    }
+
+    fn contribution_for(
+        &self,
+        project_folder: &Path,
+        module: &Module,
+        output: &Output,
+    ) -> Contribution {
+        crate::plan::contribution_for(project_folder, module, output)
     }
 
     fn start(&self, project_folder: &Path, module: &Module, _name: &str) -> Result<(), String> {
@@ -49,11 +58,14 @@ impl Recogniser for MapPack {
             .flat_map(|m| m.sources.iter())
             .map(|s| folder.join(s.replace('/', std::path::MAIN_SEPARATOR_STR)))
             .collect();
-        // The file of the model, and everything inside a source it names.
+        // The file of the model, everything inside a source it names, and the manifests of the game it keeps.
+        let kept = folder.join(crate::manifest::KEPT);
         let claimed: Vec<PathBuf> = files
             .iter()
             .filter(|file| {
-                **file == folder.join(FILE) || sources.iter().any(|s| file.starts_with(s))
+                **file == folder.join(FILE)
+                    || file.starts_with(&kept)
+                    || sources.iter().any(|s| file.starts_with(s))
             })
             .cloned()
             .collect();

@@ -130,6 +130,21 @@ pub fn concerns(
             );
         }
     }
+    // ⚠ A maps content keeps manifests of the game whole (`or_maps::manifest::keep`): compiled files of the game that are no source,
+    // so no `asset.json` says whose they are, and where they lie is what says it.
+    let (manifests, _) = find_files(&folder, ".ymf");
+    for file in manifests {
+        let kept = (file.parent().and_then(Path::file_name))
+            .is_some_and(|dir| dir == or_maps::manifest::KEPT);
+        if let Some(inside) = relative_inside(&file, &folder).filter(|_| kept) {
+            say(
+                Kind::GameContent,
+                format!(
+                    "{inside} is a manifest of the game, kept whole; leave it out of what you send"
+                ),
+            );
+        }
+    }
     if folder.join(PRIVATE_DIR).is_dir() {
         say(
             Kind::PrivateFolder,

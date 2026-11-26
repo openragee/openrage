@@ -3706,6 +3706,9 @@ msgstr "已重新打开以检查的每个文件（{count}）："
 msgid "Every job running in the background and the ones just finished, with their progress, a Cancel and what each left"
 msgstr "后台运行的每个任务和刚完成的任务，含其进度、“取消”按钮以及各自留下的内容"
 
+msgid "Every kind of file this build wrote that the acceptance sheet has a line about was seen loading in GTA V {edition}; the newest result is dated {date}"
+msgstr "此构建写入的文件中，验收表有对应条目的每一种都已在 GTA V {edition} 中被看到加载；最新结果的日期为 {date}"
+
 msgid "Every level of detail"
 msgstr "每个细节层次"
 
@@ -4507,6 +4510,9 @@ msgstr "漫反射的亮度使法线贴图倾斜的陡峭程度"
 msgid "How the 3D view draws the ped: with textures, as a shape, as edges, or as the vertex data"
 msgstr "3D 视图绘制 ped 的方式：带纹理、作为形状、作为边线，或作为顶点数据"
 
+msgid "How to check it in the game"
+msgstr "如何在游戏中检查"
+
 msgid "How to open a pack, fix it, build it, put it on a server and share a project, for someone who comes from Durty Cloth Tool"
 msgstr "面向来自 Durty Cloth Tool 的用户：如何打开包、修复包、构建包、将其放到服务器上并共享项目"
 
@@ -4599,6 +4605,9 @@ msgstr "在此项目中  ·  {count}"
 
 msgid "In {source}"
 msgstr "在 {source} 中"
+
+msgid "In-game acceptance guide"
+msgstr "游戏内验收指南"
 
 msgid "Info and above"
 msgstr "信息及以上"
@@ -7043,6 +7052,9 @@ msgstr "使用已配置的 GTA 游戏安装和已提取的密钥，从 `common.r
 msgid "Read \"{section}\" in the guide"
 msgstr "在指南中阅读“{section}”"
 
+msgid "Read \"{section}\" in the guide to checking a build in the game, which nothing in OpenRage runs"
+msgstr "阅读游戏内检查构建指南中的“{section}”；OpenRage 不会运行游戏"
+
 msgid "Read a .glb or .gltf, show what it replaces or why it cannot, then change the open model as one step to undo or save, as openrage-cli mesh import does"
 msgstr "读取 .glb 或 .gltf，显示它会替换什么或为何无法替换，然后以一个可撤消、可保存的步骤更改已打开的模型，与 openrage-cli mesh import 的做法相同"
 
@@ -8714,6 +8726,9 @@ msgstr "之后可在“设置”的“编辑”页中更改"
 msgid "The Wardrobe's rules found nothing wrong in it."
 msgstr "“衣橱”的规则未发现其中有任何问题。"
 
+msgid "The acceptance sheet has no line about what else this build wrote: {kinds}"
+msgstr "验收表中没有关于此构建写入的其他文件的条目：{kinds}"
+
 msgid "The active document has no file yet"
 msgstr "活动文档尚无文件"
 
@@ -10229,6 +10244,9 @@ msgstr "文件夹的内容，按其中识别出的类型分组"
 msgid "What this writes"
 msgstr "此操作会写入什么"
 
+msgid "What to look for in a running game to say that it loads what a build wrote, how to load a build on a FiveM server and in story mode, and how to write down what you saw"
+msgstr "在运行中的游戏里要看什么才能说它加载了构建写入的内容，如何在 FiveM 服务器和故事模式中加载构建，以及如何记下你看到的情况"
+
 msgid "What would be made"
 msgstr "将创建的内容"
 
@@ -11123,6 +11141,9 @@ msgstr "商店名称"
 msgid "singleplayer DLC"
 msgstr "单人 DLC"
 
+msgid "singleplayer DLC packs"
+msgstr "单人 DLC 包"
+
 msgid "source"
 msgstr "源"
 
@@ -11283,6 +11304,9 @@ msgid "to"
 msgstr "到"
 
 msgid "type file"
+msgstr "类型文件"
+
+msgid "type files"
 msgstr "类型文件"
 
 msgid "under"
@@ -11530,6 +11554,11 @@ msgid "{count} item keeps a stable id, so the next build can tell what moved"
 msgid_plural "{count} items keep a stable id, so the next build can tell what moved"
 msgstr[0] "{count} 项保留了稳定的 ID，因此下一次构建能分辨出哪些发生了移动"
 msgstr[1] "{count} 项保留了稳定的 ID，因此下一次构建能分辨出哪些发生了移动"
+
+msgid "{count} kind of file this build wrote was not seen loading in GTA V {edition}: {kinds}"
+msgid_plural "{count} kinds of file this build wrote were not seen loading in GTA V {edition}: {kinds}"
+msgstr[0] "此构建写入的文件中有 {count} 种尚未在 GTA V {edition} 中被看到加载：{kinds}"
+msgstr[1] "此构建写入的文件中有 {count} 种尚未在 GTA V {edition} 中被看到加载：{kinds}"
 
 msgid "{count} map set"
 msgid_plural "{count} map sets"
@@ -14493,6 +14522,9 @@ msgstr "最多绘制最近的 {most} 个模型，范围为距所选实体的半�
 msgid "map {map}, index {index}: open that map body to follow it"
 msgstr "地图 {map}，索引 {index}：请打开该地图数据体以跟随"
 
+msgid "maps"
+msgstr "地图"
+
 msgid "index {index} names nothing in {file}"
 msgstr "索引 {index} 在 {file} 中不指向任何内容"
 
@@ -17236,3 +17268,31 @@ msgstr "在单独的线程上反编译整个程序。这么大的程序需要数
 
 msgid "The script was not decompiled: {e}"
 msgstr "脚本未能反编译：{e}"
+
+msgid "A key you chose, which no preset changes"
+msgstr "你选择的按键，任何预设都不会更改它"
+
+msgid "A set of keys for the commands it names: every other command keeps its key, and so does one whose key you chose. OpenRage is the set the app starts with."
+msgstr "为其列出的命令提供的一组按键：其他命令保留各自的按键，你自己选过按键的命令也是如此。OpenRage 是应用启动时使用的那一组。"
+
+msgid "CodeWalker"
+msgstr "CodeWalker"
+
+msgid "OpenRage"
+msgstr "OpenRage"
+
+msgid "Preset"
+msgstr "预设"
+
+msgid "{count} command it names keeps the key you chose."
+msgid_plural "{count} commands it names keep the keys you chose."
+msgstr[0] "其中 {count} 个命令保留你选择的按键。"
+msgstr[1] "其中 {count} 个命令保留你选择的按键。"
+
+msgid "{key} (US keyboard)"
+msgstr "{key}（美式键盘）"
+
+msgid "{preset} changes the keys of {count} command."
+msgid_plural "{preset} changes the keys of {count} commands."
+msgstr[0] "{preset} 更改了 {count} 个命令的按键。"
+msgstr[1] "{preset} 更改了 {count} 个命令的按键。"

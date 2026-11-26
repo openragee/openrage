@@ -128,6 +128,53 @@ fn a_dlc_is_declared_for_an_edition_remembered_by_the_file_and_built_with_its_li
 }
 
 #[test]
+fn a_pack_built_by_the_app_is_read_against_the_line_about_a_story_pack_for_its_edition() {
+    use or_project::acceptance::{Place, Seen};
+
+    let dir = tempfile::tempdir().unwrap();
+    let files = [("x64/models/cdimages/peds.rpf/road.ytd", legacy_ytd())];
+    let (mut state, _) = opened(dir.path(), &files, Vec::new());
+    let id = state
+        .add_build(
+            "police_dlc",
+            OutputKind::SingleplayerDlc,
+            Some(Target::Enhanced),
+        )
+        .expect("a pack name is a build");
+    until(&mut state, "the plan", |s| {
+        s.workbench.is_scanned() && !s.workbench.is_blocked(&id)
+    });
+    state.build_selected();
+    until(&mut state, "the build", |s| {
+        !s.workbench.builds().is_running()
+    });
+
+    let built = state.workbench.builds().last(&id).expect("it ended");
+    let LastBuild::Built(done) = built else {
+        panic!("the build stopped: {built:?}");
+    };
+    let part = &done.parts[0];
+    // The worker read the pack it wrote: the archive is a kind of its own, beside the kinds of the files in it.
+    assert!(
+        part.kinds.contains("rpf") && part.kinds.contains("ytd"),
+        "{:?}",
+        part.kinds
+    );
+    assert_eq!(part.target, Some(Target::Enhanced));
+    // ⚠ The test's own copy of the sheet with no result, so that what a person writes into the sheet the tree ships changes nothing here.
+    let mut own: serde_json::Value = serde_json::from_str(or_project::acceptance::SHEET).unwrap();
+    for line in own["lines"].as_array_mut().unwrap() {
+        line["results"] = serde_json::json!([]);
+    }
+    let sheet = or_project::acceptance::Sheet::parse(&own.to_string()).unwrap();
+    assert_eq!(
+        sheet.seen(&part.kinds, part.target, Place::StoryMode),
+        [(Target::Enhanced, Seen::Not(vec!["rpf".to_string()]))],
+        "the line about a story pack is the one line about what this build wrote"
+    );
+}
+
+#[test]
 fn a_pack_whose_files_have_no_type_is_blocked_with_the_file_named() {
     let dir = tempfile::tempdir().unwrap();
     let (mut state, _) = opened(

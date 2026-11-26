@@ -1,0 +1,42 @@
+{
+  "format": "openrage-script-forms",
+  "schema": 1,
+  "forms": [
+    {
+      "id": "lua",
+      "name": "Lua",
+      "place": "vector3({x}, {y}, {z})",
+      "place_heading": "vector4({x}, {y}, {z}, {heading})",
+      "list_open": "{",
+      "list_item": "\n    { name = \"{name}\", coords = {place} }",
+      "list_separator": ",",
+      "list_close": "\n}",
+      "hide_model": "CreateModelHide({x}, {y}, {z}, {radius}, {hash}, true) -- {name}",
+      "escapes": { "\\": "\\\\", "\"": "\\\"" }
+    },
+    {
+      "id": "json",
+      "name": "JSON",
+      "place": "{\"x\": {x}, \"y\": {y}, \"z\": {z}}",
+      "place_heading": "{\"x\": {x}, \"y\": {y}, \"z\": {z}, \"heading\": {heading}}",
+      "list_open": "[",
+      "list_item": "\n  {\"name\": \"{name}\", \"position\": {place}}",
+      "list_separator": ",",
+      "list_close": "\n]",
+      "hide_model": "{\"model\": {hash}, \"name\": \"{name}\", \"x\": {x}, \"y\": {y}, \"z\": {z}, \"radius\": {radius}}",
+      "escapes": { "\\": "\\\\", "\"": "\\\"" }
+    },
+    {
+      "id": "csharp",
+      "name": "C#",
+      "place": "new Vector3({x}f, {y}f, {z}f)",
+      "place_heading": "new Vector4({x}f, {y}f, {z}f, {heading}f)",
+      "list_open": "new[]\n{",
+      "list_item": "\n    new { Name = \"{name}\", Position = {place} }",
+      "list_separator": ",",
+      "list_close": "\n};",
+      "hide_model": "API.CreateModelHide({x}f, {y}f, {z}f, {radius}f, {hash}u, true); // {name}",
+      "escapes": { "\\": "\\\\", "\"": "\\\"", "\u2028": "\\u2028", "\u2029": "\\u2029" }
+    }
+  ]
+}

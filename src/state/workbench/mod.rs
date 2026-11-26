@@ -602,6 +602,12 @@ impl Workbench {
         self.builds.keep(output, last);
     }
 
+    /// Read the builds against `sheet` in place of the acceptance sheet the tree ships.
+    #[cfg(test)]
+    pub fn read_builds_against(&mut self, sheet: or_project::acceptance::Sheet) {
+        self.builds.read_against(sheet);
+    }
+
     pub(in crate::state) fn note(&mut self, text: impl Into<String>) {
         self.history.push(Event {
             at: SystemTime::now(),

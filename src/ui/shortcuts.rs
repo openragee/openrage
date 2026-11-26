@@ -1,7 +1,12 @@
 use winit::keyboard::{Key, ModifiersState, PhysicalKey};
 
 use crate::state::{PersistedBinding, Prefs};
-use crate::ui::commands::{self, Action, COMMANDS};
+use crate::ui::commands::{self, Action, Place, Spec, COMMANDS};
+
+mod position;
+pub mod presets;
+
+pub use position::{format_for, KeysSeen};
 
 /// The modifiers a binding names.
 ///
@@ -162,19 +167,88 @@ fn shift_picks_the_character(key: egui::Key) -> bool {
     )
 }
 
+/// One way to press a command: its modifiers, its key, and how the key is named.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Binding {
+    pub mods: ShortcutMods,
+    /// The key that types the binding's character, or with `by_position` the key a US keyboard has at that place.
+    pub key: egui::Key,
+    pub by_position: bool,
+}
+
+/// A key press as a binding is held against it.
+#[derive(Debug, Clone, Copy)]
+pub struct Press {
+    pub mods: ShortcutMods,
+    /// The key the press types, else the key at its place where the character has no name.
+    pub typed: egui::Key,
+    /// Where the key sits, as a US keyboard names that place; `None` when the event does not say.
+    // ⚠ egui names a digit of the numeric keypad as the digit row's, so the two are one place.
+    pub position: Option<egui::Key>,
+}
+
+impl Binding {
+    fn answers(self, press: Press) -> bool {
+        if self.by_position {
+            // ⚠ Every modifier counts: where a key sits does not move with Shift, so 4 and Shift+4 are two bindings.
+            press.position == Some(self.key) && self.mods == press.mods
+        } else {
+            self.key == press.typed && self.mods.accepts(press.mods, press.typed)
+        }
+    }
+
+    /// Whether one press of a US keyboard answers both.
+    ///
+    /// ⚠ A keyboard whose key at a bound place types another binding's character makes the two meet as well, which only a
+    /// table of every layout would show; the matcher then runs the command the person bound, else the first of the table.
+    fn collides(self, other: Binding) -> bool {
+        let (a, b) = (self.mods, other.mods);
+        let shift_is_read = self.by_position && other.by_position;
+        let one_key = self.key == other.key
+            && (a.shift == b.shift || (!shift_is_read && shift_picks_the_character(self.key)));
+        (a.ctrl, a.control, a.alt) == (b.ctrl, b.control, b.alt)
+            && (one_key || self.types_with_shift(other) || other.types_with_shift(self))
+    }
+
+    /// Whether this binding by position, with its Shift, types on a US keyboard the character `other` is bound to.
+    fn types_with_shift(self, other: Binding) -> bool {
+        self.by_position
+            && !other.by_position
+            && self.mods.shift
+            && us_shifted(self.key) == Some(other.key)
+    }
+}
+
+// The character a US keyboard types with Shift on the key at `position`, where egui has a key for that character:
+// a binding by character on it answers the same press as a binding by position on Shift and that key.
+fn us_shifted(position: egui::Key) -> Option<egui::Key> {
+    use egui::Key as K;
+    Some(match position {
+        K::Num1 => K::Exclamationmark,
+        K::Semicolon => K::Colon,
+        K::Slash => K::Questionmark,
+        K::Equals => K::Plus,
+        K::Backslash => K::Pipe,
+        K::OpenBracket => K::OpenCurlyBracket,
+        K::CloseBracket => K::CloseCurlyBracket,
+        _ => return None,
+    })
+}
+
 fn id_of(action: Action) -> Option<&'static str> {
     commands::spec(action).map(|spec| spec.id)
 }
 
-fn default_bindings(action: Action) -> &'static [(ShortcutMods, egui::Key)] {
-    commands::spec(action).map_or(&[], |spec| spec.defaults)
-}
-
 const UNBOUND_SENTINEL: &str = "__none__";
 
-fn effective_bindings(prefs: &Prefs, action: Action) -> Vec<(ShortcutMods, egui::Key)> {
-    let persisted = id_of(action).and_then(|id| prefs.shortcut_bindings.get(id));
-    if let Some(persisted) = persisted {
+/// The keys a command answers to: the person's own, else the chosen preset's, else the table's.
+pub(crate) fn bindings_of(spec: &Spec, prefs: &Prefs) -> Vec<Binding> {
+    let bound = |mods, key| Binding {
+        mods,
+        key,
+        by_position: spec.by_position,
+    };
+    if let Some(persisted) = prefs.shortcut_bindings.get(spec.id) {
         if persisted.key == UNBOUND_SENTINEL {
             return Vec::new();
         }
@@ -185,15 +259,24 @@ fn effective_bindings(prefs: &Prefs, action: Action) -> Vec<(ShortcutMods, egui:
                 shift: persisted.shift,
                 alt: persisted.alt,
             };
-            return vec![(mods, key)];
+            return vec![bound(mods, key)];
         }
         tracing::warn!(
-            action = ?action,
+            action = ?spec.action,
             key = %persisted.key,
             "Persisted shortcut binding has unrecognised key; falling back to default"
         );
     }
-    default_bindings(action).to_vec()
+    let keys = presets::keys_of(presets::chosen(prefs), spec);
+    keys.iter().map(|&(mods, key)| bound(mods, key)).collect()
+}
+
+/// Where a key sits, as a US keyboard names that place.
+fn position_of(physical: PhysicalKey) -> Option<egui::Key> {
+    match physical {
+        PhysicalKey::Code(code) => key_from_str(&format!("{code:?}")),
+        PhysicalKey::Unidentified(_) => None,
+    }
 }
 
 /// The key a press names: the character it types, else the key's name.
@@ -206,10 +289,42 @@ pub fn key_of(logical: &Key, physical: PhysicalKey) -> Option<egui::Key> {
     };
     // A character no binding can name (Cyrillic, Greek) falls back to where the
     // key sits on a US layout, as egui does, so `Ctrl+S` still saves there.
-    by_meaning.or_else(|| match physical {
-        PhysicalKey::Code(code) => key_from_str(&format!("{code:?}")),
-        PhysicalKey::Unidentified(_) => None,
+    by_meaning.or_else(|| position_of(physical))
+}
+
+/// The press a winit key event is, or `None` for a key nothing can name.
+pub(crate) fn press_of(
+    logical: &Key,
+    physical: PhysicalKey,
+    mods: ModifiersState,
+) -> Option<Press> {
+    Some(Press {
+        mods: mods.into(),
+        typed: key_of(logical, physical)?,
+        position: position_of(physical),
     })
+}
+
+/// The command of `table` a press runs, among those read in `place` when one is given.
+pub(crate) fn command_for<'a>(
+    table: &'a [Spec],
+    press: Press,
+    prefs: &Prefs,
+    place: Option<Place>,
+) -> Option<&'a Spec> {
+    let bound = |spec: &&Spec| {
+        place.is_none_or(|place| spec.place == place)
+            && bindings_of(spec, prefs)
+                .iter()
+                .any(|binding| binding.answers(press))
+    };
+    // ⚠ A key the user bound wins over another command's default: a default
+    // added later may name a key someone already chose for something else.
+    table
+        .iter()
+        .filter(|spec| prefs.shortcut_bindings.contains_key(spec.id))
+        .find(bound)
+        .or_else(|| table.iter().find(bound))
 }
 
 /// The action a key press runs, or `None` when it belongs to the focused widget or to nothing.
@@ -220,12 +335,11 @@ pub fn action_for_press(
     typing: bool,
     prefs: &Prefs,
 ) -> Option<Action> {
-    let key = key_of(logical, physical)?;
-    let mods = ShortcutMods::from(mods);
-    if typing && the_focused_field_keeps(mods, key) {
+    let press = press_of(logical, physical, mods)?;
+    if typing && the_focused_field_keeps(press.mods, press.typed) {
         return None;
     }
-    action_for(mods, key, prefs)
+    command_for(COMMANDS, press, prefs, None).map(|spec| spec.action)
 }
 
 // A field keeps every key typed without Ctrl or Alt, and the editing keys
@@ -257,32 +371,38 @@ fn the_focused_field_keeps(mods: ShortcutMods, key: egui::Key) -> bool {
         )
 }
 
-/// The action an egui key press names, for the keys a panel reads itself.
-pub fn action_for_event(event: &egui::Event, prefs: &Prefs) -> Option<Action> {
-    match event {
-        egui::Event::Key {
-            key,
-            pressed: true,
-            modifiers,
-            ..
-        } => action_for((*modifiers).into(), *key, prefs),
-        _ => None,
-    }
+/// The press an egui key event is, or `None` for a release and for any other event.
+pub(crate) fn press_of_event(event: &egui::Event) -> Option<Press> {
+    let egui::Event::Key {
+        key,
+        physical_key,
+        pressed: true,
+        modifiers,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    Some(Press {
+        mods: (*modifiers).into(),
+        typed: *key,
+        position: *physical_key,
+    })
 }
 
+/// The command read in `place` that an egui key press names, for the keys a panel reads itself.
+pub fn action_for_event(place: Place, event: &egui::Event, prefs: &Prefs) -> Option<Action> {
+    command_for(COMMANDS, press_of_event(event)?, prefs, Some(place)).map(|spec| spec.action)
+}
+
+/// The action a key names on a keyboard whose key at each place types what a US keyboard's does.
 pub fn action_for(mods: ShortcutMods, key: egui::Key, prefs: &Prefs) -> Option<Action> {
-    let bound = |&action: &Action| {
-        effective_bindings(prefs, action)
-            .iter()
-            .any(|&(m, k)| k == key && m.accepts(mods, key))
+    let press = Press {
+        mods,
+        typed: key,
+        position: Some(key),
     };
-    let actions = || COMMANDS.iter().map(|spec| spec.action);
-    // ⚠ A key the user bound wins over another command's default: a default
-    // added later may name a key someone already chose for something else.
-    actions()
-        .filter(|&action| is_overridden(prefs, action))
-        .find(bound)
-        .or_else(|| actions().find(bound))
+    command_for(COMMANDS, press, prefs, None).map(|spec| spec.action)
 }
 
 /// The binding a name such as `Ctrl+Shift+K` gives, as a plugin declares one.
@@ -330,12 +450,17 @@ pub fn plugin_command_for_press(
     state.plugin_command_bound_to(mods, key)
 }
 
+/// How each binding of a command reads on the keyboard in use, the one menus show first.
+pub(crate) fn labels_of(spec: &Spec, prefs: &Prefs) -> Vec<String> {
+    bindings_of(spec, prefs)
+        .into_iter()
+        .map(|binding| binding.label(&prefs.keys_seen))
+        .collect()
+}
+
 /// How each of an action's bindings reads, the one menus show first.
 pub fn labels_for(action: Action, prefs: &Prefs) -> Vec<String> {
-    effective_bindings(prefs, action)
-        .into_iter()
-        .map(|(mods, key)| format_binding(mods, key))
-        .collect()
+    commands::spec(action).map_or_else(Vec::new, |spec| labels_of(spec, prefs))
 }
 
 pub fn label_for(action: Action, prefs: &Prefs) -> Option<String> {
@@ -344,6 +469,11 @@ pub fn label_for(action: Action, prefs: &Prefs) -> Option<String> {
 }
 
 pub fn format_binding(mods: ShortcutMods, key: egui::Key) -> String {
+    format_keys(mods, key_label(key))
+}
+
+/// The modifiers of a binding, then what its key is called.
+fn format_keys(mods: ShortcutMods, key: &str) -> String {
     let mut parts: Vec<&str> = Vec::with_capacity(4);
     if mods.control {
         parts.push(tr!("Ctrl"));
@@ -357,7 +487,7 @@ pub fn format_binding(mods: ShortcutMods, key: egui::Key) -> String {
     if mods.alt {
         parts.push(tr!("Alt"));
     }
-    parts.push(key_label(key));
+    parts.push(key);
     parts.join("+")
 }
 
@@ -397,26 +527,95 @@ pub struct Conflict {
     pub existing: Action,
 }
 
+/// Each pair of commands of `table` that one press reaches in one place, by their ids.
+#[cfg(test)]
+pub(crate) fn conflicts_in(table: &[Spec], prefs: &Prefs) -> Vec<(&'static str, &'static str)> {
+    let bound: Vec<(&Spec, Vec<Binding>)> = table
+        .iter()
+        .map(|spec| (spec, bindings_of(spec, prefs)))
+        .collect();
+    let mut found = Vec::new();
+    for (at, (spec, keys)) in bound.iter().enumerate() {
+        for (other, other_keys) in &bound[at + 1..] {
+            let meet = spec.place.overlaps(other.place)
+                && keys
+                    .iter()
+                    .any(|a| other_keys.iter().any(|b| a.collides(*b)));
+            if meet {
+                found.push((spec.id, other.id));
+            }
+        }
+    }
+    found
+}
+
+/// Each command of `table` that `binding` would take a key from: one read where `spec` is, on a key that meets it.
+fn all_taken_by<'a>(
+    table: &'a [Spec],
+    prefs: &'a Prefs,
+    spec: &'a Spec,
+    binding: Binding,
+) -> impl Iterator<Item = &'a Spec> {
+    table.iter().filter(move |other| {
+        other.action != spec.action
+            && other.place.overlaps(spec.place)
+            && bindings_of(other, prefs)
+                .iter()
+                .any(|held| held.collides(binding))
+    })
+}
+
+/// The first command of `table` that `binding` would take a key from, which is the one a refusal names.
+pub(crate) fn taken_by<'a>(
+    table: &'a [Spec],
+    prefs: &'a Prefs,
+    spec: &'a Spec,
+    binding: Binding,
+) -> Option<&'a Spec> {
+    all_taken_by(table, prefs, spec, binding).next()
+}
+
+/// Every command that giving `key` to `action` would take it from: two panels' commands can hold one key.
+pub fn holders(prefs: &Prefs, action: Action, mods: ShortcutMods, key: egui::Key) -> Vec<Action> {
+    let Some(spec) = commands::spec(action) else {
+        return Vec::new();
+    };
+    all_taken_by(COMMANDS, prefs, spec, binding_for(spec, mods, key))
+        .map(|other| other.action)
+        .collect()
+}
+
+fn binding_for(spec: &Spec, mods: ShortcutMods, key: egui::Key) -> Binding {
+    Binding {
+        mods,
+        key,
+        by_position: spec.by_position,
+    }
+}
+
+/// Binds `key` to a command, refused while another command read in the same place has it.
 pub fn set_binding(
     prefs: &mut Prefs,
     action: Action,
     mods: ShortcutMods,
     key: egui::Key,
 ) -> Result<(), Conflict> {
-    if let Some(existing) = action_for(mods, key, prefs) {
-        if existing != action {
-            return Err(Conflict { existing });
-        }
+    let Some(spec) = commands::spec(action) else {
+        return Ok(());
+    };
+    if let Some(existing) = taken_by(COMMANDS, prefs, spec, binding_for(spec, mods, key)) {
+        return Err(Conflict {
+            existing: existing.action,
+        });
     }
     write_binding(prefs, action, mods, key);
     Ok(())
 }
 
+/// Binds `key` to a command and unbinds every command of [`holders`], which the caller has named to the person.
 pub fn force_set_binding(prefs: &mut Prefs, action: Action, mods: ShortcutMods, key: egui::Key) {
-    if let Some(existing) = action_for(mods, key, prefs) {
-        if existing != action {
-            clear_binding(prefs, existing);
-        }
+    for existing in holders(prefs, action, mods, key) {
+        clear_binding(prefs, existing);
     }
     write_binding(prefs, action, mods, key);
 }
@@ -427,12 +626,15 @@ pub fn reset_binding(prefs: &mut Prefs, action: Action) {
     }
 }
 
+/// Drops every key the person chose and returns to OpenRage's own preset.
 pub fn restore_defaults(prefs: &mut Prefs) {
     prefs.shortcut_bindings.clear();
+    prefs.shortcut_preset.clear();
 }
 
+/// Whether the keys differ from OpenRage's own: a key the person chose, or another preset.
 pub fn has_overrides(prefs: &Prefs) -> bool {
-    !prefs.shortcut_bindings.is_empty()
+    !prefs.shortcut_bindings.is_empty() || presets::chosen(prefs).id != presets::OPENRAGE.id
 }
 
 pub fn is_overridden(prefs: &Prefs, action: Action) -> bool {
@@ -440,10 +642,12 @@ pub fn is_overridden(prefs: &Prefs, action: Action) -> bool {
 }
 
 fn write_binding(prefs: &mut Prefs, action: Action, mods: ShortcutMods, key: egui::Key) {
-    let Some(id) = id_of(action) else {
+    let Some(spec) = commands::spec(action) else {
         return;
     };
-    if default_bindings(action) == [(mods, key)] {
+    let id = spec.id;
+    // The key the command has with nothing of the person's own, which needs no entry.
+    if presets::keys_of(presets::chosen(prefs), spec) == [(mods, key)] {
         prefs.shortcut_bindings.remove(id);
         return;
     }

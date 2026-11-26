@@ -164,7 +164,15 @@ No parameters; needs a mount. The result is `count` and `packs`, in engine
 mount order, each with `nameHash`, `deviceName`, `contentType` (`title-update`,
 `level`, `compat`, `paid` or `unknown`), `order`, `minorOrder`, `isLevelPack`,
 `subPackCount`, `dataFiles` (its registry entry count) and `source`. The
-one-shot equivalent is `openrage-cli dlc-list [--dlc <X>] [--json]`.
+one-shot equivalent is `openrage-cli dlc-list [--dlc <X>] [--json]`, which also
+takes what the server does not: `--level <pack>`, which stops at a pack of the
+DLC list by the name the list gives it, leaves out the packs listed after it
+and refuses a name the list lacks, and `--mode <story|multiplayer>`, which
+applies the change sets a pack's setup groups for that mode. It names the packs
+left out, the change sets left out and the ones no group states a mode for:
+below the table as text, and with `--json` as `leftOut` beside `packs`, and
+under `--mode` as `mode` and `changeSets`, each entry a `pack` with its
+`leftOut` and `unstated` change sets.
 
 ```
 -> {"cmd":"packs"}
@@ -257,9 +265,60 @@ pack and reads `wardrobe.json` after each request.
 changes projects and writes builds, and every route of this protocol reads but the four that change a pack. Its
 verbs are `create`, `adopt`, `import`, `add-content`, `add-build`, `set-build`,
 `set-file-type`, `remove-build`, `link`, `unlink`, `links`, `template`,
-`apply-template`, `check-sharing`, `check-original`, `plan`, `build`, `verify`,
-`clean`, `redirects`, `history`, `rollback`, `remove` and `recook`; each
+`apply-template`, `check-sharing`, `check-original`, `check-resource`, `check-server`,
+`check-build`, `plan`, `build`, `verify`,
+`acceptance`, `clean`, `redirects`, `history`, `rollback`, `remove` and `recook`; each
 exits 0, 1 for a refusal or a check that failed and 2 for a usage error.
+`acceptance` takes the folder a build wrote and prints the lines of the acceptance
+sheet about its files, with what a person saw of each in a running game
+([In_Game_Acceptance.md](../guides/In_Game_Acceptance.md)).
+
+`adopt <folder>` makes a project of a folder in place. `adopt <mapping.zip|folder> --into <folder>`
+makes a new project of a mapping that comes in as a zip or as a folder, which it reads and never
+changes: `--dry-run` prints what the mapping holds and writes nothing (each resource or loose
+stream folder, what each file becomes, whether a build carries each line of the manifest, and what
+the map rules say of the set; a script a `server_script` line names is kept beside the project,
+which no build ships), `--json` prints the same report as data, `--root` names the
+resource to adopt where there are several, and `--limits <limit>=<n>` states a bound of the place
+(`entries`, `bytes`, `ratio`, `ratio_floor`, `path`). A dry run that names `--into` or `--root`
+also says what would stop that adoption (a folder that holds something, a root the mapping does
+not hold, a path the folder cannot hold) and exits 1; with `--json` the refusal is the `refused`
+entry of `adopted`, as it is when an adoption is refused. An archive that is not safe to unpack is
+refused whole with the entry named and nothing written, and a place with no resource and no stream
+folder exits 1.
+
+`check-resource` takes no project and makes none: it reads any resource folder as a server
+will read it (its manifest, the files the manifest names and every file under `stream/`), lists
+what its rules find as text or, with `--json`, as data (a code, a severity, the file and a
+sentence for each finding), and exits 1 when a finding is an error. `--game <install root>` asks
+the install about a name the folder lacks, and `--limits file_memory=<bytes>` states the ceiling
+for the streaming memory of one file; another figure is a usage error, since nothing would be
+weighed against it. It cannot see whether the game loads a file.
+
+`check-server` takes the resources folder of a server and no project: it reads every resource
+under it through the category folders in brackets, each file once, and lists what two resources
+hold under one name, as text or, with `--json`, as data (a code, a severity, the resources, the
+names, the resource that starts last where one is known, and a sentence). Two copies of a file
+with different bytes, an archetype two resources declare and two folders of one resource name are
+warnings; the same bytes twice, a file locked by an asset escrow and a line of the configuration it
+does not read are notes. A resource or a category that is a link is not followed, and is a
+warning that the folder was not read. A manifest of maps (`_manifest.ymf`) under one name in two
+resources is no finding. A folder that is itself one resource, or under which no folder has a
+manifest, is refused with exit 1 and nothing is listed.
+`--cfg <file>` reads the server's configuration for its `ensure`, `start` and `exec` lines, so a
+finding says which resource starts last; without it, and where a later line starts one of the
+resources again, the order is said to be not known. An `exec`
+of `@resource/path` is read inside the folder of that resource.
+`--game <install root>` adds, as a note, each file a resource streams under the name of a file of
+the game. It exits 1 when a finding is a warning or an error. `check-build` takes a project and
+`--server <resources folder>`, builds nothing, and lists what another resource of that folder
+already streams or declares of what the build writes, by the archetypes its contents claim and
+those of every type file it ships, exiting 1 when it lists anything or when the plan cannot be
+built, whose problems it prints (`problems` with `--json`). A type file of the build that could not
+be read is named in place of the all-clear (`type_files_unread`), and is no finding. Where the
+folder the build is written into (`--out <folder>`, else the project's build folder) is inside
+that folder, it also warns of a folder above the resource that is no category in brackets and
+names another folder of the resource's name. Neither can see which copy of a file a server loads.
 
 A command that works on one build of a project names it with `--build <id>`.
 `--output <id>` is the older spelling of the same flag: it is still read, by

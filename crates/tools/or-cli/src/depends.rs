@@ -122,7 +122,7 @@ pub struct DependencyIndex {
 }
 
 /// Mount the install at `game_root`, then read what a resolver needs from it.
-fn load(game_root: &Path, keys: Option<&str>) -> Result<DependencyIndex, String> {
+pub(crate) fn load(game_root: &Path, keys: Option<&str>) -> Result<DependencyIndex, String> {
     // Installs the command's snapshot, which `parse` reads every table with.
     crate::meta::schema();
     let mount = super::keys::mount_all(game_root, keys.map(Path::new))?;
@@ -240,6 +240,11 @@ impl DependencyIndex {
             maps: map_winners.into_values().collect(),
             type_files,
         }
+    }
+
+    /// Every archetype the install's type files declare.
+    pub(crate) fn archetypes(&self) -> &ArchetypeAssetIndex {
+        &self.archetypes
     }
 
     /// The archetype a name, a `0x` hash or an asset path's stem names, else

@@ -26,6 +26,31 @@ A RAGE byte layout exists in one place. Since 2026-09-24 that place is the `or-i
 
 Newest first. An entry records a decision as it was taken; one a later decision overturns says so on a `Superseded` line. or-io's D1–D18 are in full, with the owner's words, in [the specification's table](OR_IO_Specification.md#owner-decisions).
 
+### The world editor plan is built in parallel lanes (2026-11-25)
+
+After [the plan](World_Editor_Plan.md) was written, the owner set the goal: "start on it on a parallized workflow, when a workflow is near the end start another with an actionable task list".
+
+- **What it starts.** The rows of [R70](Roadmap.md#r70-the-gta-v-world-editor), each by the default beside its question in [the rulings asked](World_Editor_Plan.md#rulings-asked-of-the-owner), each in a lane of its own. When a set of lanes nears its end, the next starts from a task list.
+- **What it does not decide.** A default that reopens a dated decision or builds what [Workbench_Plan.md](Workbench_Plan.md#held-back) holds back waits for the owner's answer: the interior builder, the walk mode and the thumbnail browser in the app and not a plugin; reading the XML a Blender export writes; a drawable made from nothing; a typed root declared by hand outside the families the record names; and installing into the game's mods folder.
+- **Nothing is pushed or merged.** The GitHub credentials on the machine were invalid that day, so each lane is a local branch.
+- **Lanes at once.** More than three lanes compiled at once, on a machine of 30 logical CPUs. That is above the three of [2026-09-26](#parallel-lanes-three-compiling-five-built-2026-09-26), a figure sized for a machine of eight, which the owner may restate.
+
+### Every NodeRunner Studio capability for GTA V is wanted in OpenRage (2026-11-25)
+
+The owner pointed at NodeRunner Studio (`https://github.com/HypnoZDev/NodeRunner`), a GTA V map editor for FiveM, and wrote: "Je veux toutes les fonctionnalités sur openrage pour gta v", asking for a plan of every feature, what makes each product good, the case for and against, and "comment bien intégrer les choses dans openrage, intégrer le world editor, le système de projets, avec une bonne UX pour les mappers", as a detailed roadmap.
+
+[World_Editor_Plan.md](World_Editor_Plan.md) is that plan and [R70](Roadmap.md#r70-the-gta-v-world-editor) schedules it; the earlier games NodeRunner shows stay with [2026-10-01](#earlier-rage-titles-are-a-future-goal-2026-10-01).
+
+The request rules on nothing else. The plan asks for rulings ([the rulings asked](World_Editor_Plan.md#rulings-asked-of-the-owner)) and this entry gives none; these touch what is recorded:
+
+- The interior builder, the walk mode and the thumbnail browser in the app: [2026-10-03](#the-ux-reviews-plan-is-the-apps-next-work-2026-10-03) left the world editor a plugin, and the ruling of 2026-10-20 in [Workbench_Plan.md](Workbench_Plan.md#rulings-in-force) moved placement into the app.
+- Reading the XML a Blender export writes, against the XML ruling of 2026-09-22 ([R37](Roadmap.md#r37-metadata-and-xml-at-parity)), and a drawable made from nothing; [Workbench_Plan.md](Workbench_Plan.md#held-back) holds both back.
+- Key presets, which 2026-10-03 left to the owner.
+- Installing a story pack into the game, undecided since [2026-11-21](#the-window-becomes-tabs-and-a-rail-in-ten-rows-2026-11-21).
+- The interior records in `or-io` and a story pack's nested archive, asked on 2026-10-21 and not answered; a typed root by hand outside the families [2026-09-26](#world-metadata-roots-may-be-declared-by-hand-2026-09-26) names.
+
+The owner gave no ruling on NodeRunner's licence, PolyForm Strict 1.0.0, which forbids a work based on the software ([Licence_And_Provenance_Policy.md](../guides/Licence_And_Provenance_Policy.md#sources)).
+
 ### Hosted CI is on again, and the self-hosted workflows stay off (2026-11-23)
 
 The owner asked, of the public repository: "Make sure the openrage CI pass, and that on a tag it publish a github release with all the builds". `ci.yml` is enabled again (`gh workflow enable`), and `release.yml` published `v0.1.0` with a package for each OS. `local-gate.yml` and `main-tip.yml` stay disabled, because the repository has no self-hosted runner: no automatic check sees the corpus, and `just ready` with a format's `just test-format` stays the gate before a merge.

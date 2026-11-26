@@ -996,16 +996,16 @@ fn the_twins_of_the_side_taken_stand_in_the_places_of_the_base_and_a_child_still
     assert_eq!(problems(&map), Vec::<String>::new());
 }
 
-/// A map of two entities that state `priority` in a member no typed record names, and that states `generators` of itself in another.
-fn a_map_with_members_no_record_types(priority: [u64; 2], generators: u64) -> CMapData {
-    a_map_with_members_no_record_types_in(BinaryFormat::Rbm, priority, generators)
+/// A map of two entities that state `priority` in a member no typed record names, and that states `lods` of itself in another.
+fn a_map_with_members_no_record_types(priority: [u64; 2], lods: u64) -> CMapData {
+    a_map_with_members_no_record_types_in(BinaryFormat::Rbm, priority, lods)
 }
 
 /// [`a_map_with_members_no_record_types`], saved in the container `format` names.
 fn a_map_with_members_no_record_types_in(
     format: BinaryFormat,
     priority: [u64; 2],
-    generators: u64,
+    lods: u64,
 ) -> CMapData {
     const PSC: &str = r#"<?xml version="1.0"?>
 <ParserSchema>
@@ -1022,22 +1022,32 @@ fn a_map_with_members_no_record_types_in(
     <u32 name="numChildren"/>
     <u32 name="priorityLevel"/>
   </structdef>
+  <structdef type="CCarGen">
+    <Vector3 name="position"/>
+    <string name="carModel" type="atHashString"/>
+    <u32 name="flags"/>
+  </structdef>
   <structdef type="CMapData">
     <string name="name" type="atHashString"/>
     <u32 name="flags"/>
-    <u32 name="carGenerators"/>
+    <u32 name="containerLods"/>
     <Vector3 name="streamingExtentsMin"/>
     <Vector3 name="streamingExtentsMax"/>
     <Vector3 name="entitiesExtentsMin"/>
     <Vector3 name="entitiesExtentsMax"/>
     <array name="entities" type="atArray"><pointer type="CEntityDef" policy="owner"/></array>
+    <array name="carGenerators" type="atArray"><struct type="CCarGen"/></array>
   </structdef>
 </ParserSchema>"#;
     assert!(
         !CEntityDef::MEMBERS.contains(&"priorityLevel")
-            && !CMapData::MEMBERS.contains(&"carGenerators"),
+            && !CMapData::MEMBERS.contains(&"containerLods"),
         "the members are ones the typed records carry and do not name"
     );
+    let mut parked = MetaInstance::new("CCarGen");
+    parked.set("position", Value::Vec3([8.0, 2.0, 3.0]));
+    parked.set("carModel", Value::Hash(HashedString::new("a_saloon")));
+    parked.set("flags", Value::UInt(0));
     let entities = (priority.iter().enumerate())
         .map(|(at, priority)| {
             let mut entity = MetaInstance::new("CEntityDef");
@@ -1059,7 +1069,7 @@ fn a_map_with_members_no_record_types_in(
     let mut root = MetaInstance::new("CMapData");
     root.set("name", Value::Hash(HashedString::new("harbour")));
     root.set("flags", Value::UInt(0));
-    root.set("carGenerators", Value::UInt(generators));
+    root.set("containerLods", Value::UInt(lods));
     for (corner, at) in [
         ("streamingExtentsMin", [-200.0; 3]),
         ("streamingExtentsMax", [200.0; 3]),
@@ -1069,6 +1079,10 @@ fn a_map_with_members_no_record_types_in(
         root.set(corner, Value::Vec3(at));
     }
     root.set("entities", Value::Array(entities));
+    root.set(
+        "carGenerators",
+        Value::Array(vec![Value::Struct(Box::new(parked))]),
+    );
     let library = build_library([("inline.psc", PSC.as_bytes())]).unwrap();
     let layout = canonical::layout_for(&library, &root, format, None).unwrap();
     let bytes = write_meta_binary(format, Some(&layout), &root).unwrap();
@@ -1188,6 +1202,37 @@ fn what_no_typed_member_names_is_taken_whole_from_the_side_that_changed_it_and_n
     let merge = merged(&base, &ours, &same, Take::Stop);
     assert_eq!(merge.report.conflicts, Vec::<Conflict>::new());
     assert!(map_changes(&same, &merge.merged.unwrap()).is_empty());
+}
+
+#[test]
+fn a_record_a_map_types_besides_its_entities_is_taken_whole_from_the_side_that_changed_it() {
+    let base = a_map_with_members_no_record_types([1, 1], 1);
+    assert_eq!(base.car_generators.len(), 1);
+    // Ours gives the parked vehicle another model, a record the map types and no comparison names, and theirs moves an entity.
+    let parked = |model: &str| {
+        let mut map = base.clone();
+        map.car_generators[0].car_model = HashedString::new(model);
+        map
+    };
+    let ours = parked("a_taxi");
+    let mut theirs = base.clone();
+    moved(&mut theirs, 0, [3.0, 2.0, 3.0]);
+    assert!(map_changes(&base, &ours).other);
+
+    let merge = merged(&base, &ours, &theirs, Take::Stop);
+    assert_eq!(merge.report.conflicts, Vec::<Conflict>::new());
+    let map = CMapData::from_bytes(&merge.merged.unwrap().to_bytes().unwrap()).unwrap();
+    let model_of = |map: &CMapData| map.car_generators[0].car_model.hash;
+    assert_eq!(model_of(&map), HashedString::new("a_taxi").hash);
+    assert_eq!(position_of(&map, 1), [3.0, 2.0, 3.0]);
+
+    // Both sides giving it another model is a conflict, and the merged map holds the vehicle of the side taken.
+    let theirs = parked("a_bus");
+    let stopped = merged(&base, &ours, &theirs, Take::Stop);
+    assert_eq!(stopped.report.conflicts.len(), 1, "{:?}", stopped.report);
+    assert!(stopped.merged.is_none());
+    let taken = merged(&base, &ours, &theirs, Take::Theirs).merged.unwrap();
+    assert_eq!(model_of(&taken), HashedString::new("a_bus").hash);
 }
 
 /// A map that places one interior, with the members of an interior instance, and one crate.

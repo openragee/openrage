@@ -14866,9 +14866,6 @@ msgstr "Нарисовано как «Материал»: поверхносте
 msgid "Its own mesh and pixel programs do not draw it: {why}"
 msgstr "Его собственные программы сетки и пикселей его не рисуют: {why}"
 
-msgid "{effect}: none of its passes reads the streams this geometry has"
-msgstr "{effect}: ни один его проход не читает потоки, которые есть у этой геометрии"
-
 msgid "{effect}: its programs are not translated yet"
 msgstr "{effect}: его программы ещё не транслированы"
 

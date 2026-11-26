@@ -341,7 +341,7 @@ impl RenderBridge {
                     .find(|archive| archive.is_file())
             })
         };
-        gta6_shaders::request(hashes, install);
+        gta6_shaders::request(&crate::render::gta6_meshlets::worn(state), install);
         if self.gta6_since.is_none_or(|(of, ..)| of != doc) {
             self.gta6_since = Some((doc, std::time::Instant::now(), false, false));
             crate::render::gta6_meshlets::start_decoding(state);

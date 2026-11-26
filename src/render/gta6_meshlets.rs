@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use or_cli::{Gta6Fed as Fed, Gta6Feed as Filled, Gta6ShadingPass, Gta6Stage as Stage};
 use or_io::gta5::shaders::spirv_pack::ConstantBuffer;
-use or_io::gta6::headerless::{Geometry, ParameterValue, Shader};
+use or_io::gta6::headerless::{Drawable, Geometry, Model, ParameterValue, Shader};
 use or_io::hash::string_hash_str;
 use or_renderer::game_shaders::mesh::Image;
 use or_renderer::game_shaders::meshlets::{Feed, MeshletSurface, ROW, VERTICES};
@@ -229,14 +229,6 @@ fn empty_table() -> Vec<u32> {
 /// The matrices a buffer of them is filled with: a skeleton has at most as many bones.
 const MATRICES: usize = 256;
 
-/// The pass of `passes` that draws `geometry`.
-fn pass_of<'p>(
-    passes: &'p [Arc<Gta6ShadingPass>],
-    geometry: &Geometry,
-) -> Option<&'p Arc<Gta6ShadingPass>> {
-    or_cli::gta6_drawing_pass(passes, &geometry.vertex_data)
-}
-
 /// What fills each binding of `stage` for `geometry` drawn with `shader`, its textures picked
 /// from `heap`, with `record` as the record its material's numbers head. Also how many
 /// bindings are left at nought.
@@ -446,22 +438,50 @@ pub(crate) fn start_decoding(state: &AppState) {
     }
 }
 
-/// The active GTA VI drawable for its own mesh and pixel programs. `None` where the document
-/// shows none; `Err` says why all of it draws as Material: the first geometry whose effect has
-/// no pass the renderer can be handed, with the effect's name.
-pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
+/// The active GTA VI drawable, and the models of its level the view draws.
+fn drawn_level(state: &AppState) -> Option<(&Drawable, &[Model])> {
     let doc = state.active_document()?;
     let DocPayload::Gta6Drawable(resource) = &doc.payload else {
         return None;
     };
-    let selection = state.selection.selected(doc.id);
-    let drawable = drawable_of(resource, selection)?;
+    let drawable = drawable_of(resource, state.selection.selected(doc.id))?;
     let held = |level: usize| {
         (drawable.levels.get(level))
             .and_then(Option::as_ref)
             .filter(|models| !models.is_empty())
     };
     let models = held(state.preview_scene.lod).or_else(|| held(0))?;
+    Some((drawable, models.as_slice()))
+}
+
+/// Each geometry the model view draws of `models`, in the order it uploads their meshes: those
+/// whose positions read.
+fn drawn(models: &[Model]) -> impl Iterator<Item = &Geometry> {
+    (models.iter())
+        .flat_map(|model| model.geometries.iter().flatten())
+        .filter(|geometry| geometry.positions.is_ok())
+}
+
+/// What the active GTA VI drawable's geometries wear: each one's effect with the streams it
+/// holds, which its shading pass is picked by. Empty where the document shows no such drawable.
+pub(crate) fn worn(state: &AppState) -> Vec<gta6_shaders::Worn> {
+    let Some((drawable, models)) = drawn_level(state) else {
+        return Vec::new();
+    };
+    let worn = |geometry: &Geometry| {
+        let shader = drawable.shaders.get(usize::from(geometry.shader))?;
+        let held = or_cli::gta6_held_streams(&geometry.vertex_data);
+        Some((shader.name_hash, held))
+    };
+    drawn(models).filter_map(worn).collect()
+}
+
+/// The active GTA VI drawable for its own mesh and pixel programs. `None` where the document
+/// shows none; `Err` says why all of it draws as Material: the first geometry whose effect has
+/// no pass the renderer can be handed, with the effect's name.
+pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
+    let (drawable, models) = drawn_level(state)?;
+    let selection = state.selection.selected(state.active_document()?.id);
     let mut out = Meshlets {
         surfaces: Vec::new(),
         of: Vec::new(),
@@ -480,34 +500,24 @@ pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
             None
         })
     };
-    // The model view uploads a mesh for each geometry whose positions read, in this order.
-    let drawn = (models.iter())
-        .flat_map(|model| model.geometries.iter().flatten())
-        .filter(|geometry| geometry.positions.is_ok());
     let lost = UNDER.lock().unwrap_or_else(|p| p.into_inner()).1.clone();
     let mut effects = Vec::new();
-    for (mesh, geometry) in drawn.enumerate() {
+    for (mesh, geometry) in drawn(models).enumerate() {
         let shader = drawable.shaders.get(usize::from(geometry.shader))?;
         let effect = effect_name(shader.name_hash);
-        let passes = gta6_shaders::shading(shader.name_hash);
-        let pass = match &passes {
+        let pass = match gta6_shaders::shading(shader.name_hash, &geometry.vertex_data) {
             _ if lost.contains(&shader.name_hash) => Err(tr!(
                 "{effect}: the graphics device was lost while its own passes drew, so it draws as Material until OpenRage is started again",
                 effect = effect,
             )),
-            Some(Ok(passes)) => pass_of(passes, geometry).ok_or_else(|| {
-                tr!(
-                    "{effect}: none of its passes reads the streams this geometry has",
-                    effect = effect,
-                )
-            }),
+            Some(Ok(pass)) => Ok(pass),
             Some(Err(why)) => Err(format!("{effect}: {why}")),
             None => Err(tr!(
                 "{effect}: its programs are not translated yet",
                 effect = effect,
             )),
         };
-        let pass = match pass {
+        let pass = &match pass {
             Ok(pass) => pass,
             Err(why) => {
                 out.rest.push(mesh);
@@ -660,7 +670,7 @@ mod tests {
             pass(&[0, 1, 2, 3, 6, 8]),
         ];
         let chosen = |held: &[usize]| {
-            let picked = pass_of(&passes, &geometry(held))?;
+            let picked = or_cli::gta6_drawing_pass(&passes, &geometry(held).vertex_data)?;
             passes.iter().position(|pass| Arc::ptr_eq(pass, picked))
         };
         assert_eq!(chosen(&[0, 1, 2, 3, 6, 8]), Some(2), "a skinned geometry");
@@ -684,7 +694,8 @@ mod tests {
             Some(2),
             "each kind misses one stream: the one that reads more"
         );
-        assert!(pass_of(&passes[..0], &geometry(&[0])).is_none(), "no pass");
+        let none = or_cli::gta6_drawing_pass(&passes[..0], &geometry(&[0]).vertex_data);
+        assert!(none.is_none(), "no pass");
     }
 
     #[test]

@@ -14762,9 +14762,6 @@ msgstr "Dibujadas como Material: {count} superficies; la primera: {why}"
 msgid "Its own mesh and pixel programs do not draw it: {why}"
 msgstr "Sus propios programas de malla y de píxel no lo dibujan: {why}"
 
-msgid "{effect}: none of its passes reads the streams this geometry has"
-msgstr "{effect}: ninguno de sus pases lee los flujos que tiene esta geometría"
-
 msgid "{effect}: its programs are not translated yet"
 msgstr "{effect}: sus programas aún no están traducidos"
 

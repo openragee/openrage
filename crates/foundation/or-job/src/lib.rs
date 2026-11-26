@@ -5,7 +5,7 @@
 //! other's, so what is shared is the counting and the stopping rather than the
 //! drawing.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -246,9 +246,84 @@ where
     }
 }
 
+/// The workers a job runs side by side on this machine: its cores less the two a frame and the system keep, and one at least.
+pub fn workers() -> usize {
+    let cores = std::thread::available_parallelism().map_or(1, usize::from);
+    cores.saturating_sub(2).max(1)
+}
+
+/// `each` over `items` on at most `workers` threads, the results in the items' order: `None` for an item reached once `cancel` is set.
+// ⚠ A panic of `each` is the caller's: it is raised again on the thread that called.
+pub fn side_by_side<T: Sync, R: Send>(
+    items: &[T],
+    workers: usize,
+    cancel: &Cancel,
+    each: impl Fn(&T) -> R + Sync,
+) -> Vec<Option<R>> {
+    let next = AtomicUsize::new(0);
+    let drain = || {
+        let mut mine = Vec::new();
+        while !cancel.is_set() {
+            let at = next.fetch_add(1, Ordering::Relaxed);
+            let Some(item) = items.get(at) else { break };
+            mine.push((at, each(item)));
+        }
+        mine
+    };
+    let threads = workers.min(items.len());
+    let done: Vec<(usize, R)> = match threads {
+        // One worker is the caller's own thread.
+        0 | 1 => drain(),
+        _ => std::thread::scope(|scope| {
+            let spawned: Vec<_> = (0..threads).map(|_| scope.spawn(drain)).collect();
+            (spawned.into_iter())
+                .flat_map(|worker| {
+                    (worker.join()).unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                })
+                .collect()
+        }),
+    };
+    let mut out: Vec<Option<R>> = items.iter().map(|_| None).collect();
+    for (at, result) in done {
+        out[at] = Some(result);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn items_run_side_by_side_on_no_more_workers_than_asked_and_come_back_in_order() {
+        let (running, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let items: Vec<u32> = (0..24).collect();
+        let doubled = side_by_side(&items, 3, &Cancel::new(), |n| {
+            let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(now, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(5));
+            running.fetch_sub(1, Ordering::SeqCst);
+            2 * n
+        });
+        let expected: Vec<Option<u32>> = items.iter().map(|n| Some(2 * n)).collect();
+        assert_eq!(doubled, expected);
+        let most = most.load(Ordering::SeqCst);
+        assert!((2..=3).contains(&most), "{most} ran at once of 3 asked");
+        let cores = std::thread::available_parallelism().map_or(1, usize::from);
+        assert!(workers() >= 1 && (cores < 3 || workers() + 2 <= cores));
+    }
+
+    #[test]
+    fn an_item_reached_after_the_stop_is_left_out() {
+        let cancel = Cancel::new();
+        let done = side_by_side(&[1, 2, 3, 4], 1, &cancel, |n| {
+            if *n == 2 {
+                cancel.set();
+            }
+            *n
+        });
+        assert_eq!(done, vec![Some(1), Some(2), None, None]);
+    }
 
     #[test]
     fn a_flag_is_shared_between_its_clones() {

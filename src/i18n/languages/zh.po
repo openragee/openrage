@@ -14762,9 +14762,6 @@ msgstr "按“材质”绘制：{count} 个表面；第一个：{why}"
 msgid "Its own mesh and pixel programs do not draw it: {why}"
 msgstr "它自身的网格程序和像素程序无法绘制它：{why}"
 
-msgid "{effect}: none of its passes reads the streams this geometry has"
-msgstr "{effect}：它的渲染通道均不读取此几何体拥有的流"
-
 msgid "{effect}: its programs are not translated yet"
 msgstr "{effect}：它的程序尚未翻译"
 

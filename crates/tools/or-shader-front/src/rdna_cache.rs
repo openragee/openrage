@@ -157,9 +157,17 @@ impl Cache {
 fn write_whole(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir)?;
-    let partial = path.with_extension(format!("{}.part", std::process::id()));
+    let partial = partial_of(path);
     std::fs::write(&partial, bytes)?;
     std::fs::rename(&partial, path)
+}
+
+/// A name beside `path` that no other write has, of this process or of another: two workers that
+/// translate one program at the same time each write a file of their own.
+fn partial_of(path: &Path) -> PathBuf {
+    static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let write = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    path.with_extension(format!("{}.{write}.part", std::process::id()))
 }
 
 // Lives for one write or one read, so the size of its larger variant costs nothing.
@@ -641,5 +649,22 @@ mod tests {
                 .get_or_translate(&pixel, &options)
                 .1
         );
+    }
+
+    #[test]
+    fn two_writes_of_one_entry_share_no_file_and_leave_none_beside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ab").join("cdef");
+        let (first, second) = (partial_of(&path), partial_of(&path));
+        assert_ne!(first, second, "two workers would write one file");
+        assert_eq!(first.parent(), path.parent());
+        write_whole(&path, b"whole").unwrap();
+        write_whole(&path, b"again").unwrap();
+        let left: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["cdef"]);
+        assert_eq!(std::fs::read(&path).unwrap(), b"again");
     }
 }

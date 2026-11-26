@@ -7,7 +7,9 @@ use or_io::gta5::shaders::sgd5::Sgd5Table;
 use or_shader_front::dxil::ShaderKind;
 use or_shader_front::rdna::link::{self, Linked};
 use or_shader_front::rdna_bind::picks::{deferred_targets, picks};
-use or_shader_front::rdna_bind::shading::{feed, parameter_of, parameter_slots, sources, Source};
+use or_shader_front::rdna_bind::shading::{
+    feed, parameter_of, parameter_slots, sources, Source, STREAM_SLOTS,
+};
 
 pub use or_shader_front::rdna_bind::kept as gta6_kept;
 pub use or_shader_front::rdna_bind::shading::{Fed, Feed, Stage};
@@ -506,16 +508,46 @@ pub fn drawing_pass<'p, P: std::borrow::Borrow<Gta6ShadingPass>>(
     passes: &'p [P],
     vertex_data: &[u8],
 ) -> Option<&'p P> {
+    let streams: Vec<_> = (passes.iter())
+        .map(|pass| &pass.borrow().mesh.streams)
+        .collect();
+    passes.get(drawing_pass_at(&streams, held_streams(vertex_data))?)
+}
+
+/// The streams the table at the head of a geometry's `vertex_data` holds, a bit a slot.
+pub fn held_streams(vertex_data: &[u8]) -> u32 {
     let held = |slot: &u32| {
         let at = 4 * *slot as usize;
         (vertex_data.get(at..at + 4)).is_some_and(|word| word != [0; 4])
     };
+    (0..STREAM_SLOTS)
+        .filter(held)
+        .fold(0, |bits, slot| bits | 1 << slot)
+}
+
+/// [`drawing_pass`] by the streams each pass's mesh program reads and those a geometry holds ([`held_streams`]): the pass's place.
+pub fn drawing_pass_at(streams: &[&BTreeSet<u32>], held: u32) -> Option<usize> {
+    let held = |slot: &&u32| **slot < u32::BITS && held >> **slot & 1 == 1;
     // The first of those that read as many: `max_by_key` keeps the last.
-    (passes.iter().rev()).max_by_key(|pass| {
-        let streams = &pass.borrow().mesh.streams;
-        let missing = streams.iter().filter(|slot| !held(slot)).count();
+    let best = (streams.iter().enumerate().rev()).max_by_key(|(_, streams)| {
+        let missing = streams.len() - streams.iter().filter(held).count();
         (std::cmp::Reverse(missing), streams.len())
-    })
+    });
+    best.map(|(at, _)| at)
+}
+
+/// The streams the mesh program of the inflated container `first` reads, as the stage of a pass of it states them; `table` is its own and `effect` the first table of the effect that runs it.
+pub fn mesh_streams(
+    first: &[u8],
+    table: &Sgd5Table,
+    effect: &Sgd5Table,
+) -> Result<BTreeSet<u32>, String> {
+    let first = native(first)?;
+    // Which slots cross as halves is the pixel stage's to say, and it moves no read of a stream.
+    let geometry =
+        rdna_bind::kept::lower(&first, &BTreeSet::new()).map_err(|why| said("mesh", &why))?;
+    let stage = feed(&first, geometry, table, effect).map_err(|why| said("mesh", &why))?;
+    Ok(stage.streams)
 }
 
 /// The workers a census runs side by side.

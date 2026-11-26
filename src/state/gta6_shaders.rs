@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use or_cli::{
-    gta6_view_passes, is_gta6_shading_pass, translate_gta6_mesh_stage, translate_gta6_pixel_stage,
-    translate_gta6_program, Gta6Program, Gta6ShadingPass,
+    gta6_drawing_pass_at, gta6_held_streams, gta6_view_passes, translate_gta6_program, Gta6Program,
+    Gta6ShadingPass,
 };
 use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9Scan};
 use or_io::gta5::shaders::sgd5::{Sgd5Effect, Sgd5File, Sgd5Program, Sgd5Table};
@@ -48,9 +48,23 @@ type Place = (PathBuf, u64, usize);
 /// A program read: its key, and whether its inputs read blend indices.
 type Keyed = (String, bool);
 
+/// One pass that shades a model with an effect, as far as it is known: where its mesh and its
+/// pixel program lie in their container, the streams the mesh program reads, and the pass once a
+/// geometry picked it, or why the renderer cannot be handed it.
+#[derive(Clone)]
+pub(crate) struct Candidate {
+    at: (usize, usize),
+    streams: BTreeSet<u32>,
+    pass: Option<Result<Arc<Gta6ShadingPass>, String>>,
+}
+
 /// The passes that shade a model with one effect, one for each mesh program its techniques run:
-/// a geometry is drawn by the one that reads the streams it has.
-pub(crate) type Passes = Vec<Arc<Gta6ShadingPass>>;
+/// a geometry is drawn by the one that reads the streams it has, and only that one is translated.
+pub(crate) type Passes = Vec<Candidate>;
+
+/// An effect by the hash of its name, with the streams a geometry that wears it holds
+/// ([`gta6_held_streams`]): what a pass is picked by.
+pub(crate) type Worn = (u32, u32);
 
 /// A program translated or refused, with the stage its pass runs it at.
 struct Done {
@@ -73,15 +87,15 @@ struct Shaders {
     /// The pass that shades a model with each effect, by the hash of the effect's name, or why
     /// the renderer cannot be handed it.
     shading: HashMap<u32, Result<Passes, String>>,
-    /// The effects a job has looked for since the containers last changed, found or not.
-    tried: HashSet<u32>,
+    /// What a job has looked for since the containers last changed, found or not.
+    tried: HashSet<Worn>,
     running: Option<Running>,
     /// The pack of what is done, numbered so that a new one is told from the last.
     pack: Option<(u64, Arc<GamePack>)>,
 }
 
 struct Running {
-    wanted: Vec<u32>,
+    wanted: Vec<Worn>,
     cancel: Cancel,
     progress: Progress,
     ended: Arc<Mutex<Option<Result<Found, String>>>>,
@@ -99,7 +113,9 @@ struct Input {
     sources: Vec<Arc<ShaderSource>>,
     keys: HashMap<Place, Keyed>,
     known: HashSet<String>,
-    wanted: Vec<u32>,
+    wanted: Vec<Worn>,
+    /// What jobs before this one found of the wanted effects' passes.
+    shading: HashMap<u32, Result<Passes, String>>,
     install: Option<PathBuf>,
 }
 
@@ -167,15 +183,15 @@ fn keep(s: &mut Shaders, sources: Vec<Arc<ShaderSource>>) {
     }
     // An effect not found before may be in a container new to the app.
     let effects = &s.effects;
-    s.tried.retain(|hash| effects.contains_key(hash));
+    s.tried.retain(|(hash, _)| effects.contains_key(hash));
 }
 
-/// Start translating the vertex and pixel passes of the effects `hashes` name, on a worker,
-/// unless each was looked for already; a job running for other effects is stopped. `install` is
-/// the GTA VI install's `shaders.rpf`, asked for when a job starts and searched once a session
-/// where no container read holds one.
-pub(crate) fn request(hashes: &[u32], install: impl FnOnce() -> Option<PathBuf>) {
-    let mut wanted = hashes.to_vec();
+/// Start translating, on a worker, the pass that draws each geometry of `worn` and the vertex
+/// and pixel passes of an effect with none, unless each was looked for already; a job running
+/// for others is stopped. `install` is the GTA VI install's `shaders.rpf`, asked for when a job
+/// starts and searched once a session where no container read holds one.
+pub(crate) fn request(worn: &[Worn], install: impl FnOnce() -> Option<PathBuf>) {
+    let mut wanted = worn.to_vec();
     wanted.sort_unstable();
     wanted.dedup();
     with(|s| {
@@ -183,24 +199,32 @@ pub(crate) fn request(hashes: &[u32], install: impl FnOnce() -> Option<PathBuf>)
         if running || wanted.iter().all(|h| s.tried.contains(h)) {
             return;
         }
-        // An effect a job has looked for is not translated again beside one it has not.
-        let fresh = (wanted.iter().copied())
-            .filter(|hash| !s.tried.contains(hash))
-            .collect();
-        let input = Input {
-            sources: s.sources.clone(),
-            keys: s.keys.clone(),
-            known: s.done.keys().cloned().collect(),
-            wanted: fresh,
-            install: install().filter(|path| !s.searched.contains(path)),
-        };
-        s.running = Some(Running::start(input, wanted));
+        s.running = Some(Running::start(input_of(s, &wanted, install), wanted));
     });
+}
+
+/// What a job for `wanted` is given of the session's translations.
+fn input_of(s: &Shaders, wanted: &[Worn], install: impl FnOnce() -> Option<PathBuf>) -> Input {
+    // What a job has looked for is not translated again beside what none has.
+    let fresh: Vec<Worn> = (wanted.iter().copied())
+        .filter(|worn| !s.tried.contains(worn))
+        .collect();
+    let shading = (fresh.iter())
+        .filter_map(|(hash, _)| Some((*hash, s.shading.get(hash)?.clone())))
+        .collect();
+    Input {
+        sources: s.sources.clone(),
+        keys: s.keys.clone(),
+        known: s.done.keys().cloned().collect(),
+        wanted: fresh,
+        shading,
+        install: install().filter(|path| !s.searched.contains(path)),
+    }
 }
 
 impl Running {
     /// Start the job of `input` for a request of the effects `wanted`.
-    fn start(input: Input, wanted: Vec<u32>) -> Self {
+    fn start(input: Input, wanted: Vec<Worn>) -> Self {
         let running = Self {
             wanted,
             cancel: Cancel::new(),
@@ -302,16 +326,99 @@ fn effect_of(source: &ShaderSource, hash: u32) -> Option<&Sgd5Effect> {
     (source.file.effects.iter()).find(|e| name_hash32(e.name.as_bytes()) == hash)
 }
 
+/// What reads an effect's programs as shading passes: the translator, or a test's stand-in.
+trait Translate: Sync {
+    /// A pixel stage, which several passes of an effect share.
+    type Pixel;
+    /// Whether the two inflated containers are the pass that shades a model.
+    fn shades(&self, mesh: &[u8], pixel: &[u8]) -> bool;
+    /// The streams the mesh program reads.
+    fn streams(
+        &self,
+        mesh: &[u8],
+        table: &Sgd5Table,
+        effect: &Sgd5Table,
+    ) -> Result<BTreeSet<u32>, String>;
+    fn pixel(
+        &self,
+        pixel: &[u8],
+        table: &Sgd5Table,
+        effect: &Sgd5Table,
+    ) -> Result<Self::Pixel, String>;
+    fn mesh(
+        &self,
+        mesh: &[u8],
+        table: &Sgd5Table,
+        effect: &Sgd5Table,
+        pixel: &Self::Pixel,
+    ) -> Result<Gta6ShadingPass, String>;
+}
+
+struct Translator;
+
+impl Translate for Translator {
+    type Pixel = or_cli::Gta6PixelStage;
+
+    fn shades(&self, mesh: &[u8], pixel: &[u8]) -> bool {
+        or_cli::is_gta6_shading_pass(mesh, pixel)
+    }
+
+    fn streams(
+        &self,
+        mesh: &[u8],
+        table: &Sgd5Table,
+        effect: &Sgd5Table,
+    ) -> Result<BTreeSet<u32>, String> {
+        or_cli::gta6_mesh_streams(mesh, table, effect)
+    }
+
+    fn pixel(
+        &self,
+        pixel: &[u8],
+        table: &Sgd5Table,
+        effect: &Sgd5Table,
+    ) -> Result<Self::Pixel, String> {
+        or_cli::translate_gta6_pixel_stage(pixel, table, effect)
+    }
+
+    fn mesh(
+        &self,
+        mesh: &[u8],
+        table: &Sgd5Table,
+        effect: &Sgd5Table,
+        pixel: &Self::Pixel,
+    ) -> Result<Gta6ShadingPass, String> {
+        or_cli::translate_gta6_mesh_stage(mesh, table, effect, pixel)
+    }
+}
+
 /// Each program the wanted effects' vertex and pixel passes run, read and translated unless read
 /// before, and each effect built of the passes whose two programs read.
 fn work(input: Input, cancel: &Cancel, progress: &Progress) -> Result<Found, String> {
+    work_with(&Translator, input, cancel, progress)
+}
+
+/// [`work`], its shading passes read by `translate`.
+fn work_with(
+    translate: &impl Translate,
+    input: Input,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Found, String> {
     let Input {
         mut sources,
         mut keys,
         mut known,
         wanted,
+        mut shading,
         install,
     } = input;
+    // Each effect wanted, with the streams the geometries that wear it hold.
+    let mut worn: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for (hash, streams) in wanted {
+        worn.entry(hash).or_default().push(streams);
+    }
+    let wanted: Vec<u32> = worn.keys().copied().collect();
     let mut found = Found::default();
     let held = |sources: &[Arc<ShaderSource>], hash: u32| {
         sources.iter().any(|s| effect_of(s, hash).is_some())
@@ -339,37 +446,72 @@ fn work(input: Input, cancel: &Cancel, progress: &Progress) -> Result<Found, Str
         found.searched = Some(archive);
         sources.extend(found.sources.iter().cloned());
     }
-    let effects: Vec<(u32, &ShaderSource, &Sgd5Effect)> = (wanted.iter())
+    // An effect found to have no pass of its own was given its vertex and pixel passes then.
+    let effects: Vec<(u32, &ShaderSource, &Sgd5Effect, Option<Passes>)> = (wanted.iter())
         .filter_map(|h| {
+            let before = match shading.remove(h) {
+                Some(Err(_)) => return None,
+                Some(Ok(passes)) => Some(passes),
+                None => None,
+            };
             sources
                 .iter()
-                .find_map(|s| Some((*h, &**s, effect_of(s, *h)?)))
+                .find_map(|s| Some((*h, &**s, effect_of(s, *h)?, before.clone())))
         })
         .collect();
     let total: usize = (effects.iter())
-        .map(|(_, s, e)| 2 * vertex_pixel_passes(&s.file, e).len())
+        .map(|(_, s, e, _)| 2 * vertex_pixel_passes(&s.file, e).len())
         .sum();
+    // The effects side by side: each is its own programs, and a worker's files are its own.
+    let looked = or_job::side_by_side(
+        &effects,
+        or_job::workers(),
+        cancel,
+        |(hash, source, effect, before)| {
+            // An effect read from a whole container is kept for the next session, once.
+            let kept = Some(*source)
+                .filter(|source| source.whole)
+                .and_then(|source| kept_effect(&source.archive, *hash))
+                .filter(|kept| !kept.exists());
+            if let Some(kept) = kept {
+                keep_effect(source, effect, &kept);
+            }
+            let started = std::time::Instant::now();
+            let (shading, did) = shading_passes(
+                translate,
+                source,
+                effect,
+                &worn[hash],
+                before.clone(),
+                cancel,
+            );
+            tracing::info!(
+                effect = %effect.name,
+                elapsed = ?started.elapsed(),
+                passes = shading.as_ref().map_or(0, Vec::len),
+                read = did.read,
+                translated = did.translated,
+                refused = did.refused,
+                drawn = did.drawn,
+                "a GTA VI effect's shading passes were translated"
+            );
+            shading
+        },
+    );
     let mut files = HashMap::new();
     let mut at = 0;
-    for (hash, source, effect) in &effects {
-        if cancel.is_set() {
+    for ((hash, source, effect, before), shading) in effects.iter().zip(looked) {
+        let Some(shading) = shading.filter(|_| !cancel.is_set()) else {
             return Err(stopped());
-        }
-        // An effect read from a whole container is kept for the next session, once.
-        let kept = Some(*source)
-            .filter(|source| source.whole)
-            .and_then(|source| kept_effect(&source.archive, *hash))
-            .filter(|kept| !kept.exists());
-        if let Some(kept) = kept {
-            keep_effect(source, effect, &kept);
-        }
-        let started = std::time::Instant::now();
-        let shading = shading_passes(source, effect, &mut files);
-        tracing::info!(effect = %effect.name, elapsed = ?started.elapsed(), passes = shading.as_ref().map_or(0, Vec::len), "a GTA VI effect's shading passes were translated");
+        };
         // An effect a model draws with by its own mesh and pixel programs needs none of its
         // vertex and pixel passes, which are many: they are translated only where it has none.
         let own = shading.is_ok();
         found.shading.push((*hash, shading));
+        // Its entry stands as the job that first looked for it made it.
+        if own && before.is_some() {
+            continue;
+        }
         let mut passes = Vec::new();
         let pairs = match own {
             true => Vec::new(),
@@ -439,52 +581,159 @@ fn read(
     translate_gta6_program(program, &stream, Some(effect))
 }
 
+/// What a job did for one effect: the mesh programs it read the streams of, the passes it
+/// translated whole and how many of those were refused, and the passes its geometries draw by.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Did {
+    read: usize,
+    translated: usize,
+    refused: usize,
+    drawn: usize,
+}
+
 /// The passes that shade a model with `effect`: each technique whose first pass is a mesh
 /// program no earlier one ran and a pixel program that writes the targets whose contents are
-/// established, translated as one; `Err` says why the renderer cannot be handed any.
-fn shading_passes(
+/// established, with the streams its mesh program reads; of those, the pass that draws a geometry
+/// holding each of the streams `held` is translated, and no other. `before` is what an earlier
+/// job found of them. `Err` says why the renderer cannot be handed any.
+fn shading_passes<T: Translate>(
+    translate: &T,
     source: &ShaderSource,
     effect: &Sgd5Effect,
-    files: &mut HashMap<PathBuf, File>,
-) -> Result<Passes, String> {
-    let mut seen = HashSet::new();
-    let mut passes = Vec::new();
-    let mut refused = None;
+    held: &[u32],
+    before: Option<Passes>,
+    cancel: &Cancel,
+) -> (Result<Passes, String>, Did) {
+    let mut did = Did::default();
+    let mut files = HashMap::new();
+    let mut container = |program: &Sgd5Program| {
+        let stream = stream(source, program, &mut files)?;
+        program.inflate(&stream).map_err(|e| e.to_string())
+    };
+    let parameters = &effect.parameters;
+    let listed = gta6_view_passes(&source.file, effect);
+    let pair_at = |at: (usize, usize)| {
+        (listed.iter().copied()).find(|(first, pixel)| (first.at, pixel.at) == at)
+    };
+    // The two containers of each pass, inflated when it is first asked about.
+    let mut inflated: HashMap<(usize, usize), (Vec<u8>, Vec<u8>)> = HashMap::new();
+    // What an earlier job found stands while its container still lists every pass of it.
+    let before = before.and_then(|passes| {
+        let pairs: Option<Vec<_>> = passes.iter().map(|pass| pair_at(pass.at)).collect();
+        Some((passes, pairs?))
+    });
+    let (mut passes, pairs) = match before {
+        Some(found) => found,
+        None => {
+            let mut seen = HashSet::new();
+            let (mut passes, mut pairs) = (Vec::new(), Vec::new());
+            for (first, pixel) in &listed {
+                if seen.contains(&first.at) {
+                    continue;
+                }
+                let (Ok(mesh), Ok(fragment)) = (container(first), container(pixel)) else {
+                    continue;
+                };
+                if translate.shades(&mesh, &fragment) {
+                    seen.insert(first.at);
+                    did.read += 1;
+                    let streams = translate.streams(&mesh, &first.variables, parameters);
+                    let (streams, pass) = match streams {
+                        Ok(streams) => (streams, None),
+                        Err(why) => (BTreeSet::new(), Some(Err(why))),
+                    };
+                    let at = (first.at, pixel.at);
+                    inflated.insert(at, (mesh, fragment));
+                    passes.push(Candidate { at, streams, pass });
+                    pairs.push((*first, *pixel));
+                }
+            }
+            (passes, pairs)
+        }
+    };
     // Several passes of an effect run one pixel program: it is translated once.
     let mut pixels = HashMap::new();
-    for (first, pixel) in gta6_view_passes(&source.file, effect) {
-        if seen.contains(&first.at) {
-            continue;
-        }
-        let mut container = |program: &Sgd5Program| {
-            let stream = stream(source, program, files)?;
-            program.inflate(&stream).map_err(|e| e.to_string())
+    type Pair<'f> = (&'f Sgd5Program, &'f Sgd5Program);
+    let mut whole = |pass: &mut Candidate, (first, pixel): Pair<'_>, did: &mut Did| {
+        let read = match inflated.entry(pass.at) {
+            Entry::Occupied(read) => Ok(read.into_mut()),
+            Entry::Vacant(slot) => match (container(first), container(pixel)) {
+                (Ok(mesh), Ok(fragment)) => Ok(slot.insert((mesh, fragment))),
+                (Err(why), _) | (_, Err(why)) => Err(why),
+            },
         };
-        let (Ok(mesh), Ok(fragment)) = (container(first), container(pixel)) else {
-            continue;
-        };
-        if is_gta6_shading_pass(&mesh, &fragment) {
-            seen.insert(first.at);
-            let parameters = &effect.parameters;
-            let stage = pixels.entry(pixel.at).or_insert_with(|| {
-                translate_gta6_pixel_stage(&fragment, &pixel.variables, parameters)
-            });
-            let pass = (stage.as_ref().map_err(Clone::clone)).and_then(|stage| {
-                translate_gta6_mesh_stage(&mesh, &first.variables, parameters, stage)
-            });
-            match pass {
-                Ok(pass) => passes.push(Arc::new(pass)),
-                Err(why) => refused = refused.or(Some(why)),
+        let translated = read.and_then(|(mesh, fragment)| {
+            let stage = pixels
+                .entry(pixel.at)
+                .or_insert_with(|| translate.pixel(fragment, &pixel.variables, parameters));
+            let stage = stage.as_ref().map_err(|why: &String| why.clone())?;
+            translate.mesh(mesh, &first.variables, parameters, stage)
+        });
+        did.translated += 1;
+        did.refused += usize::from(translated.is_err());
+        pass.pass = Some(translated.map(Arc::new));
+    };
+    // ⚠ A pass is picked by the streams its mesh program was read to read before its pixel
+    // program said which slots cross as halves. Were the pass as translated to read others,
+    // every pass is translated and picked among as translated.
+    let mut every = false;
+    let mut drawn = BTreeSet::new();
+    for streams in held {
+        loop {
+            if cancel.is_set() {
+                return (Err(stopped()), did);
+            }
+            if every {
+                for (pass, pair) in passes.iter_mut().zip(&pairs) {
+                    if pass.pass.is_none() {
+                        whole(pass, *pair, &mut did);
+                    }
+                }
+                for pass in &mut passes {
+                    if let Some(Ok(translated)) = &pass.pass {
+                        pass.streams = translated.mesh.streams.clone();
+                    }
+                }
+            }
+            let Some(picked) = pick(&passes, *streams) else {
+                break;
+            };
+            if passes[picked].pass.is_some() {
+                drawn.insert(picked);
+                break;
+            }
+            whole(&mut passes[picked], pairs[picked], &mut did);
+            let pass = &passes[picked];
+            let other = matches!(&pass.pass, Some(Ok(whole)) if whole.mesh.streams != pass.streams);
+            if other && !every {
+                tracing::warn!(effect = %effect.name, "a GTA VI mesh program reads other streams as its pass's stage than alone");
+                every = true;
             }
         }
     }
-    if passes.is_empty() {
-        return Err(refused.unwrap_or_else(|| {
+    did.drawn = drawn.len();
+    let refusal = |pass: &Candidate| match &pass.pass {
+        Some(Err(why)) => Some(why.clone()),
+        _ => None,
+    };
+    if passes.iter().all(|pass| refusal(pass).is_some()) {
+        let why = passes.iter().find_map(refusal).unwrap_or_else(|| {
             tr!("none of its techniques is a mesh pass that writes the deferred targets")
                 .to_string()
-        }));
+        });
+        return (Err(why), did);
     }
-    Ok(passes)
+    (Ok(passes), did)
+}
+
+/// The place among `passes` of the one that draws a geometry holding `streams`, of those the
+/// renderer can be handed or may yet be.
+fn pick(passes: &[Candidate], streams: u32) -> Option<usize> {
+    let open: Vec<usize> = (0..passes.len())
+        .filter(|at| !matches!(passes[*at].pass, Some(Err(_))))
+        .collect();
+    let read: Vec<&BTreeSet<u32>> = open.iter().map(|at| &passes[*at].streams).collect();
+    Some(open[gta6_drawing_pass_at(&read, streams)?])
 }
 
 /// `program`'s stream, read alone from its archive.
@@ -667,10 +916,21 @@ pub(crate) fn pack() -> Option<(u64, Arc<GamePack>)> {
     with(|s| s.pack.clone())
 }
 
-/// The passes that shade a model with the effect whose name hashes to `hash`, or why the
-/// renderer cannot be handed one; `None` before a job has looked for the effect.
-pub(crate) fn shading(hash: u32) -> Option<Result<Passes, String>> {
-    with(|s| s.shading.get(&hash).cloned())
+/// The pass that draws a geometry whose vertex data is `vertex_data` with the effect whose name
+/// hashes to `hash`, or why the renderer cannot be handed one; `None` before a job has
+/// translated it.
+pub(crate) fn shading(
+    hash: u32,
+    vertex_data: &[u8],
+) -> Option<Result<Arc<Gta6ShadingPass>, String>> {
+    with(|s| picked(s, hash, gta6_held_streams(vertex_data)))
+}
+
+fn picked(s: &Shaders, hash: u32, streams: u32) -> Option<Result<Arc<Gta6ShadingPass>, String>> {
+    match s.shading.get(&hash)? {
+        Ok(passes) => passes[pick(passes, streams)?].pass.clone(),
+        Err(why) => Some(Err(why.clone())),
+    }
 }
 
 /// Whether a translation job runs.

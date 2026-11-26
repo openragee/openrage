@@ -14717,9 +14717,6 @@ msgstr "Dessinées comme Matériau : {count} surfaces ; la première : {why}"
 msgid "Its own mesh and pixel programs do not draw it: {why}"
 msgstr "Ses propres programmes de maillage et de pixel ne le dessinent pas : {why}"
 
-msgid "{effect}: none of its passes reads the streams this geometry has"
-msgstr "{effect} : aucune de ses passes ne lit les flux de cette géométrie"
-
 msgid "{effect}: its programs are not translated yet"
 msgstr "{effect} : ses programmes ne sont pas encore traduits"
 

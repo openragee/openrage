@@ -14714,9 +14714,6 @@ msgstr "マテリアルとして描画：{count} 個のサーフェス。最初�
 msgid "Its own mesh and pixel programs do not draw it: {why}"
 msgstr "自身のメッシュプログラムとピクセルプログラムでは描画されません：{why}"
 
-msgid "{effect}: none of its passes reads the streams this geometry has"
-msgstr "{effect}：このジオメトリが持つストリームを読み取るパスがありません"
-
 msgid "{effect}: its programs are not translated yet"
 msgstr "{effect}：プログラムはまだ変換されていません"
 

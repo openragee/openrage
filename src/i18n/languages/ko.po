@@ -14762,9 +14762,6 @@ msgstr "머티리얼로 그려짐: 서피스 {count}개. 첫 번째: {why}"
 msgid "Its own mesh and pixel programs do not draw it: {why}"
 msgstr "자체 메시 및 픽셀 프로그램으로는 그려지지 않습니다: {why}"
 
-msgid "{effect}: none of its passes reads the streams this geometry has"
-msgstr "{effect}: 이 지오메트리의 스트림을 읽는 패스가 없습니다"
-
 msgid "{effect}: its programs are not translated yet"
 msgstr "{effect}: 프로그램이 아직 변환되지 않았습니다"
 

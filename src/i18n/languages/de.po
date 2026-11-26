@@ -14762,9 +14762,6 @@ msgstr "Als Material gezeichnet: {count} Flächen; die erste: {why}"
 msgid "Its own mesh and pixel programs do not draw it: {why}"
 msgstr "Seine eigenen Mesh- und Pixelprogramme zeichnen es nicht: {why}"
 
-msgid "{effect}: none of its passes reads the streams this geometry has"
-msgstr "{effect}: Keiner seiner Durchgänge liest die Streams dieser Geometrie"
-
 msgid "{effect}: its programs are not translated yet"
 msgstr "{effect}: Seine Programme sind noch nicht übersetzt"
 

@@ -128,7 +128,8 @@ fn input(source: ShaderSource, wanted: Vec<u32>) -> Input {
         sources: vec![Arc::new(source)],
         keys: HashMap::new(),
         known: HashSet::new(),
-        wanted,
+        wanted: wanted.into_iter().map(|hash| (hash, 0)).collect(),
+        shading: HashMap::new(),
         install: None,
     }
 }
@@ -229,7 +230,8 @@ fn an_effect_read_from_its_container_is_kept_and_the_next_session_reads_no_conta
         sources: Vec::new(),
         keys: HashMap::new(),
         known: HashSet::new(),
-        wanted: vec![hash],
+        wanted: vec![(hash, 0)],
+        shading: HashMap::new(),
         install: Some(path.clone()),
     };
     let again = work(later, &Cancel::new(), &Progress::new()).unwrap();
@@ -265,11 +267,319 @@ fn a_container_read_again_replaces_the_one_at_its_place_and_lets_unfound_effects
     let dir = tempfile::tempdir().unwrap();
     let mut shaders = Shaders::default();
     shaders.effects.insert(7, Effect::default());
-    shaders.tried.extend([7, 8]);
+    shaders.tried.extend([(7, 0), (8, 0)]);
     let (_, first, _) = archive(dir.path());
     let (_, second, _) = archive(dir.path());
     keep(&mut shaders, vec![Arc::new(first)]);
     keep(&mut shaders, vec![Arc::new(second)]);
     assert_eq!(shaders.sources.len(), 1);
-    assert_eq!(shaders.tried, HashSet::from([7]));
+    assert_eq!(shaders.tried, HashSet::from([(7, 0)]));
+}
+
+/// The passes of a made-up effect: each the bytes of its mesh program's container and of its pixel
+/// program's.
+type Listed<'a> = &'a [(&'a [u8], &'a [u8])];
+
+/// An archive holding one container at [`BASE`], and the container as read: each effect of
+/// `effects` by its name, with one technique for each of its passes, a pass the bytes of its mesh
+/// program's container and of its pixel program's.
+fn shaded(dir: &Path, effects: &[(&str, Listed)]) -> ShaderSource {
+    use or_io::gta5::shaders::sgd5::Sgd5Technique;
+    let mut bytes = vec![0xA5; BASE as usize + 0x10];
+    let mut programs: Vec<Sgd5Program> = Vec::new();
+    let mut read = Vec::new();
+    for (name, passes) in effects {
+        let mut listed = [vec![], vec![], vec![], vec![], vec![], vec![]];
+        for (bank, container) in passes
+            .iter()
+            .flat_map(|(mesh, pixel)| [(0, mesh), (1, pixel)])
+        {
+            let (stream, at) = (stored(container), bytes.len() - BASE as usize);
+            bytes.extend_from_slice(&stream);
+            bytes.extend_from_slice(&[0xA5; 8]);
+            let index = programs.iter().filter(|p| p.bank == Some(bank)).count() as u32;
+            listed[bank].push(index);
+            programs.push(Sgd5Program {
+                bank: Some(bank),
+                index: Some(index),
+                name: format!("bank{bank}"),
+                kind: 0,
+                key: 0,
+                at: at - 4,
+                stream: at..at + stream.len(),
+                inflated_len: container.len(),
+                variables: Sgd5Table::default(),
+            });
+        }
+        let technique = |i: usize| Sgd5Technique {
+            name: format!("t{i}"),
+            flag: false,
+            index: 0,
+            passes: 1,
+        };
+        let pass = |i: usize| Sgd5Pass {
+            name: format!("p{i}"),
+            programs: [i as u8 + 1, i as u8 + 1, 0, 0, 0, 0],
+        };
+        read.push(Sgd5Effect {
+            name: (*name).to_owned(),
+            at: 0,
+            word: 0,
+            programs: listed,
+            state_counts: [0; 4],
+            techniques: (0..passes.len()).map(technique).collect(),
+            passes: (0..passes.len()).map(pass).collect(),
+            bound: Vec::new(),
+            parameters: Sgd5Table::default(),
+            second: Sgd5Table::default(),
+            layout_flag: 0,
+            layout_refs: Vec::new(),
+            layouts: Vec::new(),
+        });
+    }
+    let path = dir.join("shaders.rpf");
+    std::fs::write(&path, &bytes).unwrap();
+    let count = |bank: usize| programs.iter().filter(|p| p.bank == Some(bank)).count() as _;
+    let bank_counts = [
+        Some(count(0)),
+        Some(count(1)),
+        Some(0),
+        Some(0),
+        Some(0),
+        Some(0),
+    ];
+    ShaderSource {
+        archive: path,
+        base: BASE,
+        file: Sgd5File {
+            head_word: 0,
+            layouts: Vec::new(),
+            globals: Sgd5Table::default(),
+            bank_counts,
+            programs,
+            gaps: Vec::new(),
+            effect_count: Some(effects.len() as _),
+            effects: read,
+        },
+        whole: true,
+    }
+}
+
+/// A stand-in for the translator. A mesh program's container is `M`, the streams it reads alone
+/// and, after a nought, those it reads besides as its pass's stage; a pixel program's is `P`, or
+/// `X` for one that is refused.
+#[derive(Default)]
+struct Told {
+    read: AtomicUsize,
+    pixels: AtomicUsize,
+    passes: AtomicUsize,
+    /// How many mesh programs are read at this moment, and the most that were at once.
+    now: AtomicUsize,
+    most: AtomicUsize,
+    slow: bool,
+}
+
+use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+
+impl Translate for Told {
+    type Pixel = ();
+
+    fn shades(&self, mesh: &[u8], pixel: &[u8]) -> bool {
+        mesh[0] == b'M' && matches!(pixel[0], b'P' | b'X')
+    }
+
+    fn streams(&self, mesh: &[u8], _: &Sgd5Table, _: &Sgd5Table) -> Result<BTreeSet<u32>, String> {
+        self.read.fetch_add(1, SeqCst);
+        if self.slow {
+            self.most
+                .fetch_max(self.now.fetch_add(1, SeqCst) + 1, SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            self.now.fetch_sub(1, SeqCst);
+        }
+        let alone = mesh[1..].iter().take_while(|slot| **slot != 0);
+        Ok(alone.map(|slot| u32::from(*slot)).collect())
+    }
+
+    fn pixel(&self, pixel: &[u8], _: &Sgd5Table, _: &Sgd5Table) -> Result<(), String> {
+        self.pixels.fetch_add(1, SeqCst);
+        match pixel[0] {
+            b'X' => Err("pixel program: refused".to_owned()),
+            _ => Ok(()),
+        }
+    }
+
+    fn mesh(
+        &self,
+        mesh: &[u8],
+        _: &Sgd5Table,
+        _: &Sgd5Table,
+        (): &(),
+    ) -> Result<Gta6ShadingPass, String> {
+        self.passes.fetch_add(1, SeqCst);
+        let stage = |streams: BTreeSet<u32>| or_cli::Gta6Stage {
+            approximations: Default::default(),
+            module: Arc::default(),
+            feeds: Vec::new(),
+            textures: Vec::new(),
+            streams,
+            rows: Vec::new(),
+        };
+        let streams = mesh[1..].iter().filter(|slot| **slot != 0);
+        Ok(Gta6ShadingPass {
+            mesh: stage(streams.map(|slot| u32::from(*slot)).collect()),
+            pixel: stage(BTreeSet::new()),
+            linked: Default::default(),
+        })
+    }
+}
+
+/// The streams a geometry holds, a bit a slot.
+fn holding(slots: &[u32]) -> u32 {
+    slots.iter().fold(0, |held, slot| held | 1 << slot)
+}
+
+/// A job for `wanted` as [`request`] starts one, run to its end by `translate` and taken into `s`
+/// as [`poll`] takes it.
+fn looked_for(s: &mut Shaders, translate: &Told, wanted: &[Worn]) {
+    let input = input_of(s, wanted, || None);
+    let found = work_with(translate, input, &Cancel::new(), &Progress::new());
+    merge(s, found.unwrap());
+    s.tried.extend(wanted.iter().copied());
+}
+
+/// The streams the mesh stage of the pass a geometry holding `held` is handed reads.
+fn handed(s: &Shaders, hash: u32, held: u32) -> Option<Result<Vec<u32>, String>> {
+    Some(picked(s, hash, held)?.map(|pass| pass.mesh.streams.iter().copied().collect()))
+}
+
+/// Which passes of the effect are translated.
+fn translated(s: &Shaders, hash: u32) -> Vec<bool> {
+    let passes = s.shading[&hash].as_ref().unwrap();
+    let whole = |pass: &Candidate| matches!(pass.pass, Some(Ok(_)));
+    passes.iter().map(whole).collect()
+}
+
+#[test]
+fn only_the_pass_a_geometry_picks_is_translated_and_a_second_geometry_still_gets_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    // Two passes for a geometry with no weights and two for one that has them.
+    let passes: Listed = &[
+        (b"M\x01\x02\x03", b"P"),
+        (b"M\x01\x02\x03", b"P"),
+        (b"M\x01\x02\x03\x06\x08", b"P"),
+        (b"M\x01\x02\x03\x06\x08", b"P"),
+    ];
+    let mut s = Shaders::default();
+    let source = shaded(dir.path(), &[("layered_t", passes)]);
+    keep(&mut s, vec![Arc::new(source)]);
+    let hash = name_hash32(b"layered_t");
+    let (plain, skinned) = (holding(&[1, 2, 3]), holding(&[1, 2, 3, 6, 8]));
+    let told = Told::default();
+    let counts = |told: &Told| {
+        (
+            told.read.load(SeqCst),
+            told.pixels.load(SeqCst),
+            told.passes.load(SeqCst),
+        )
+    };
+
+    looked_for(&mut s, &told, &[(hash, plain), (hash, plain)]);
+    // Each mesh program's streams are read, and as many pairs are translated as are drawn.
+    assert_eq!(counts(&told), (4, 1, 1));
+    assert_eq!(translated(&s, hash), [true, false, false, false]);
+    assert_eq!(handed(&s, hash, plain), Some(Ok(vec![1, 2, 3])));
+    // A geometry no job has looked for a pass of is handed none: never another geometry's.
+    assert_eq!(handed(&s, hash, skinned), None);
+    let done = Status::Done {
+        refused: 0,
+        first: None,
+    };
+    assert_eq!(status_of(&s, &[hash]), done);
+
+    let first = picked(&s, hash, plain).unwrap().unwrap();
+    looked_for(&mut s, &told, &[(hash, plain), (hash, skinned)]);
+    assert_eq!(counts(&told), (4, 2, 2), "the streams are read once");
+    assert_eq!(translated(&s, hash), [true, false, true, false]);
+    assert_eq!(handed(&s, hash, skinned), Some(Ok(vec![1, 2, 3, 6, 8])));
+    let again = picked(&s, hash, plain).unwrap().unwrap();
+    assert!(
+        Arc::ptr_eq(&first, &again),
+        "the first geometry's pass stands"
+    );
+}
+
+#[test]
+fn a_refused_pass_gives_way_to_the_one_drawn_were_every_pass_translated() {
+    let dir = tempfile::tempdir().unwrap();
+    let passes: Listed = &[
+        (b"M\x01\x02\x03", b"X"),
+        (b"M\x01\x02", b"P"),
+        (b"M\x01\x02\x03", b"P"),
+    ];
+    let refused: Listed = &[(b"M\x01", b"X"), (b"M\x01\x02", b"X")];
+    let mut s = Shaders::default();
+    let source = shaded(dir.path(), &[("first_t", passes), ("none_t", refused)]);
+    keep(&mut s, vec![Arc::new(source)]);
+    let (hash, none) = (name_hash32(b"first_t"), name_hash32(b"none_t"));
+    let told = Told::default();
+    looked_for(&mut s, &told, &[(hash, holding(&[1, 2, 3])), (none, 0)]);
+    // The first pass is refused by its pixel program; of the two left, the third reads more.
+    assert_eq!(translated(&s, hash), [false, false, true]);
+    assert_eq!(
+        handed(&s, hash, holding(&[1, 2, 3])),
+        Some(Ok(vec![1, 2, 3]))
+    );
+    // An effect every pass of which is refused says why, once each was tried.
+    let why = "pixel program: refused".to_owned();
+    assert_eq!(handed(&s, none, 0), Some(Err(why)));
+    // No mesh stage is linked to a pixel stage that was refused.
+    assert_eq!(told.passes.load(SeqCst), 1);
+}
+
+#[test]
+fn a_mesh_program_that_reads_other_streams_in_its_pass_has_every_pass_translated_to_pick_by() {
+    let dir = tempfile::tempdir().unwrap();
+    // The first reads two more streams as its pass's stage than alone.
+    let passes: Listed = &[
+        (b"M\x01\x02\x03\x00\x06\x08", b"P"),
+        (b"M\x01\x02\x03", b"P"),
+    ];
+    let mut s = Shaders::default();
+    let source = shaded(dir.path(), &[("moved_t", passes)]);
+    keep(&mut s, vec![Arc::new(source)]);
+    let hash = name_hash32(b"moved_t");
+    let told = Told::default();
+    looked_for(&mut s, &told, &[(hash, holding(&[1, 2, 3]))]);
+    assert_eq!(translated(&s, hash), [true, true]);
+    assert_eq!(
+        handed(&s, hash, holding(&[1, 2, 3])),
+        Some(Ok(vec![1, 2, 3]))
+    );
+    let skinned = holding(&[1, 2, 3, 6, 8]);
+    assert_eq!(handed(&s, hash, skinned), Some(Ok(vec![1, 2, 3, 6, 8])));
+}
+
+#[test]
+fn the_effects_of_a_job_are_read_side_by_side_on_no_more_workers_than_the_machine_spares() {
+    let dir = tempfile::tempdir().unwrap();
+    let pass: Listed = &[(b"M\x01", b"P")];
+    let names = ["a_t", "b_t", "c_t", "d_t", "e_t", "f_t"];
+    let effects: Vec<(&str, Listed)> = names.iter().map(|name| (*name, pass)).collect();
+    let mut s = Shaders::default();
+    keep(&mut s, vec![Arc::new(shaded(dir.path(), &effects))]);
+    let wanted: Vec<Worn> = (names.iter())
+        .map(|name| (name_hash32(name.as_bytes()), holding(&[1])))
+        .collect();
+    let told = Told {
+        slow: true,
+        ..Told::default()
+    };
+    looked_for(&mut s, &told, &wanted);
+    assert_eq!(told.passes.load(SeqCst), names.len());
+    let (most, spared) = (told.most.load(SeqCst), or_job::workers());
+    assert!(
+        most <= spared,
+        "{most} at once on a machine that spares {spared}"
+    );
+    assert!(most >= spared.min(2), "{most} at once: one after the other");
 }

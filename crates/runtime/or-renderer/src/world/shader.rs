@@ -235,8 +235,23 @@ fn handed_on(in: VsIn, world: vec3<f32>) -> VsOut {
     out.world_pos = world;
     out.fade = in.tint.a;
     out.tint = in.tint.rgb;
-    out.ambient = in.ambient;
+    out.ambient = by_face(in.ambient, normal);
     return out;
+}
+
+// The ambient scales of a vertex of model normal `n`: an instance standing in an opening states the room's by face, as `world::by_face` packs them, and a face turned out takes the outdoors' whole.
+fn by_face(a: vec2<f32>, n: vec3<f32>) -> vec2<f32> {
+    if (a.x >= 0.0) {
+        return a;
+    }
+    let v = -a.x - 2.0;
+    let code = floor(v * 0.5 + 0.25);
+    let axis = u32(code) / 2u;
+    let out = select(1.0, -1.0, (u32(code) & 1u) == 1u);
+    if (out * n[axis] > 0.0) {
+        return vec2<f32>(1.0, 0.0);
+    }
+    return vec2<f32>(v - 2.0 * code, a.y);
 }
 
 // ⚠ A cascade's cast binds no light, so grass casts unswayed.

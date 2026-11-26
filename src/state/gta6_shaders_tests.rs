@@ -449,13 +449,139 @@ fn holding(slots: &[u32]) -> u32 {
     slots.iter().fold(0, |held, slot| held | 1 << slot)
 }
 
-/// A job for `wanted` as [`request`] starts one, run to its end by `translate` and taken into `s`
-/// as [`poll`] takes it.
-fn looked_for(s: &mut Shaders, translate: &Told, wanted: &[Worn]) {
-    let input = input_of(s, wanted, || None);
+/// A request for `worn` as a frame makes it: the job [`request`] starts for it, run to its end by
+/// `translate` and taken into `s` as [`poll`] takes it. Whether it started one.
+fn looked_for(s: &mut Shaders, translate: &Told, worn: &[Worn]) -> bool {
+    let Some((input, wanted)) = asked(s, worn, || None) else {
+        return false;
+    };
     let found = work_with(translate, input, &Cancel::new(), &Progress::new());
-    merge(s, found.unwrap());
-    s.tried.extend(wanted.iter().copied());
+    took(s, &wanted, found).unwrap();
+    true
+}
+
+/// The vertex data of a geometry that holds a stream in each of `slots`: the table of streams at
+/// its head.
+fn vertex_data(slots: &[usize]) -> Vec<u8> {
+    let mut vertex_data = vec![0u8; 4 * 23];
+    for slot in slots {
+        vertex_data[4 * slot] = 1;
+    }
+    vertex_data
+}
+
+/// The streams the mesh stage of the pass [`shading`] hands a geometry of `vertex_data` reads.
+fn shaded_by(s: &Shaders, hash: u32, vertex_data: &[u8]) -> Option<Result<Vec<u32>, String>> {
+    let pass = shading_in(s, hash, vertex_data)?;
+    Some(pass.map(|pass| pass.mesh.streams.iter().copied().collect()))
+}
+
+#[test]
+fn an_effect_asked_for_again_on_a_geometry_of_other_streams_starts_a_job_for_that_geometry_s_pass()
+{
+    let dir = tempfile::tempdir().unwrap();
+    let passes: Listed = &[(b"M\x01\x02\x03", b"P"), (b"M\x01\x02\x03\x06\x08", b"P")];
+    let mut s = Shaders::default();
+    keep(
+        &mut s,
+        vec![Arc::new(shaded(dir.path(), &[("layered_t", passes)]))],
+    );
+    let hash = name_hash32(b"layered_t");
+    let (plain, skinned) = (vertex_data(&[1, 2, 3]), vertex_data(&[1, 2, 3, 6, 8]));
+    let worn = |vertex_data: &[u8]| (hash, gta6_held_streams(vertex_data));
+    let told = Told::default();
+
+    // A model of one geometry: a job, and its pass.
+    assert!(looked_for(&mut s, &told, &[worn(&plain)]));
+    assert_eq!(shaded_by(&s, hash, &plain), Some(Ok(vec![1, 2, 3])));
+    assert_eq!(shaded_by(&s, hash, &skinned), None);
+    // The next frame asks for the same and starts nothing.
+    assert!(!looked_for(&mut s, &told, &[worn(&plain)]));
+    // A model whose geometry wears the effect with other streams: a job, though one looked for
+    // the effect, and each geometry is handed its own pass.
+    assert!(looked_for(&mut s, &told, &[worn(&skinned)]));
+    assert_eq!(shaded_by(&s, hash, &skinned), Some(Ok(vec![1, 2, 3, 6, 8])));
+    assert_eq!(shaded_by(&s, hash, &plain), Some(Ok(vec![1, 2, 3])));
+    assert!(!looked_for(&mut s, &told, &[worn(&plain), worn(&skinned)]));
+    assert_eq!(told.passes.load(SeqCst), 2);
+}
+
+#[test]
+fn two_geometries_that_wear_one_effect_with_other_streams_are_each_drawn_by_the_pass_asked_for_theirs(
+) {
+    use crate::render::gta6_meshlets::{meshlets_of, worn_by, Sources};
+    use or_io::gta6::headerless::{Drawable, Geometry, Model, Palette, Shader};
+    let dir = tempfile::tempdir().unwrap();
+    let passes: Listed = &[(b"M\x01\x02\x03", b"P"), (b"M\x01\x02\x03\x06\x08", b"P")];
+    let mut s = Shaders::default();
+    keep(
+        &mut s,
+        vec![Arc::new(shaded(dir.path(), &[("layered_t", passes)]))],
+    );
+    let hash = name_hash32(b"layered_t");
+    // A geometry of one meshlet of one primitive: the head of its index data, then the record.
+    let index_data: Vec<u8> = [0x8000_0001u32, 0, 0, 0, !0, !0, !0]
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect();
+    let geometry = |slots: &[usize]| Geometry {
+        shader: 0,
+        vertex_count: 0,
+        channels: Vec::new(),
+        triangles: Vec::new(),
+        positions: Ok(Vec::new()),
+        vertices: Default::default(),
+        vertex_data: vertex_data(slots),
+        index_data: index_data.clone(),
+    };
+    let model = Model {
+        geometries: vec![Ok(geometry(&[1, 2, 3])), Ok(geometry(&[1, 2, 3, 6, 8]))],
+        palette: Ok(Palette::Own),
+        matrix_index: 0,
+    };
+    let drawable = Drawable {
+        name: String::new(),
+        box_min: [0.0; 3],
+        box_max: [0.0; 3],
+        shaders: vec![Shader {
+            name_hash: hash,
+            texture_keys: Vec::new(),
+            parameters: Vec::new(),
+        }],
+        levels: [Some(vec![model]), None, None, None],
+        lod_distances: [0.0; 4],
+        bound: None,
+        embedded: None,
+        extra_skeletons: Vec::new(),
+    };
+    let models = drawable.levels[0].as_deref().unwrap();
+
+    // What a frame asks a job for: the effect once for each set of streams a geometry holds.
+    let worn = worn_by(&drawable, models);
+    let (plain, skinned) = (holding(&[1, 2, 3]), holding(&[1, 2, 3, 6, 8]));
+    assert_eq!(worn, [(hash, plain), (hash, skinned)]);
+    let told = Told::default();
+    assert!(looked_for(&mut s, &told, &worn));
+    assert_eq!(told.passes.load(SeqCst), 2);
+
+    // And what the frame is then handed: each geometry's surface by the pass of its own streams.
+    let lost = BTreeSet::new();
+    let sources = Sources {
+        shading: &|hash, vertex_data| shading_in(&s, hash, vertex_data),
+        map: &|_| Ok(None),
+        layered: &|| None,
+        lost: &lost,
+    };
+    let (meshlets, effects) = meshlets_of(&drawable, models, &sources).expect("its shader");
+    assert_eq!((meshlets.rest.as_slice(), &meshlets.why), (&[][..], &None));
+    assert_eq!(effects, [hash, hash]);
+    // The stand-in names the one type of a mesh stage by the streams its pass reads.
+    let reads = |at: usize| {
+        let (_, named) = meshlets.surfaces[at].vertex.types.iter().next()?;
+        named.name.clone()
+    };
+    assert_eq!(reads(0).as_deref(), Some("{1, 2, 3}"));
+    assert_eq!(reads(1).as_deref(), Some("{1, 2, 3, 6, 8}"));
 }
 
 /// The streams the mesh stage of the pass a geometry holding `held` is handed reads.

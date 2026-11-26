@@ -465,9 +465,11 @@ fn drawn(models: &[Model]) -> impl Iterator<Item = &Geometry> {
 /// What the active GTA VI drawable's geometries wear: each one's effect with the streams it
 /// holds, which its shading pass is picked by. Empty where the document shows no such drawable.
 pub(crate) fn worn(state: &AppState) -> Vec<gta6_shaders::Worn> {
-    let Some((drawable, models)) = drawn_level(state) else {
-        return Vec::new();
-    };
+    drawn_level(state).map_or_else(Vec::new, |(drawable, models)| worn_by(drawable, models))
+}
+
+/// [`worn`], of the geometries of `models` the view draws of `drawable`.
+pub(crate) fn worn_by(drawable: &Drawable, models: &[Model]) -> Vec<gta6_shaders::Worn> {
     let worn = |geometry: &Geometry| {
         let shader = drawable.shaders.get(usize::from(geometry.shader))?;
         let held = or_cli::gta6_held_streams(&geometry.vertex_data);
@@ -482,6 +484,49 @@ pub(crate) fn worn(state: &AppState) -> Vec<gta6_shaders::Worn> {
 pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
     let (drawable, models) = drawn_level(state)?;
     let selection = state.selection.selected(state.active_document()?.id);
+    let stored = |key: u64| super::gta6_shaded::stored_level(state, selection, key);
+    let lost = UNDER.lock().unwrap_or_else(|p| p.into_inner()).1.clone();
+    let sources = Sources {
+        shading: &gta6_shaders::shading,
+        map: &|key| decoded(key, || stored(key)),
+        layered: &|| gta6_layer_index::worn(state, true),
+        lost: &lost,
+    };
+    let (mut out, effects) = meshlets_of(drawable, models, &sources)?;
+    UNDER.lock().unwrap_or_else(|p| p.into_inner()).0 = effects;
+    match (out.surfaces.is_empty(), out.why.take()) {
+        (true, Some(why)) => Some(Err(why)),
+        (true, None) => None,
+        (false, why) => {
+            out.why = why;
+            Some(Ok(out))
+        }
+    }
+}
+
+/// What the surfaces of a drawable are made from besides the drawable.
+pub(crate) struct Sources<'s> {
+    /// The pass that draws a geometry of this vertex data with the effect of this hash
+    /// ([`gta6_shaders::shading`]).
+    pub shading: &'s dyn Fn(u32, &[u8]) -> gta6_shaders::Shading,
+    /// The map of a key, decoded; `Err` while a worker decodes it.
+    pub map: &'s dyn Fn(u64) -> Result<Option<Arc<Image>>, ()>,
+    /// The layered material the drawable wears, asked for by the first pass that reads a record.
+    pub layered: &'s dyn Fn() -> Option<(Arc<Index>, Material)>,
+    /// The effects a device was lost under.
+    pub lost: &'s BTreeSet<u32>,
+}
+
+/// The geometries of `models` the view draws of `drawable` as surfaces of their own passes, with
+/// `why` the first that is none is not, and the effects they draw with. `None` where a geometry
+/// names a shader the drawable does not list.
+// ⚠ A geometry's pass is asked for by its own vertex data, which is what [`worn_by`] reads the
+// streams it asked a job for from: another geometry's would hand it a pass it cannot draw by.
+pub(crate) fn meshlets_of(
+    drawable: &Drawable,
+    models: &[Model],
+    from: &Sources<'_>,
+) -> Option<(Meshlets, Vec<u32>)> {
     let mut out = Meshlets {
         surfaces: Vec::new(),
         of: Vec::new(),
@@ -493,20 +538,19 @@ pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
     let decoding = std::cell::Cell::new(false);
     // The layered material the drawable wears, asked for by the first pass that reads a record.
     let mut worn: Option<Option<(Arc<Index>, Material)>> = None;
-    let mut tile = |key: u64| {
-        let stored = || super::gta6_shaded::stored_level(state, selection, key);
-        decoded(key, stored).unwrap_or_else(|()| {
+    let map = |key: u64| {
+        (from.map)(key).unwrap_or_else(|()| {
             decoding.set(true);
             None
         })
     };
-    let lost = UNDER.lock().unwrap_or_else(|p| p.into_inner()).1.clone();
+    let mut tile = map;
     let mut effects = Vec::new();
     for (mesh, geometry) in drawn(models).enumerate() {
         let shader = drawable.shaders.get(usize::from(geometry.shader))?;
         let effect = effect_name(shader.name_hash);
-        let pass = match gta6_shaders::shading(shader.name_hash, &geometry.vertex_data) {
-            _ if lost.contains(&shader.name_hash) => Err(tr!(
+        let pass = match (from.shading)(shader.name_hash, &geometry.vertex_data) {
+            _ if from.lost.contains(&shader.name_hash) => Err(tr!(
                 "{effect}: the graphics device was lost while its own passes drew, so it draws as Material until OpenRage is started again",
                 effect = effect,
             )),
@@ -530,17 +574,10 @@ pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
                 ParameterValue::Texture { slot } if p.hash == hash => Some(slot),
                 _ => None,
             })?;
-            let key = (*shader.texture_keys.get(usize::from(slot))?)?;
-            let stored = || super::gta6_shaded::stored_level(state, selection, key);
-            decoded(key, stored).unwrap_or_else(|()| {
-                decoding.set(true);
-                None
-            })
+            map((*shader.texture_keys.get(usize::from(slot))?)?)
         };
         let worn = match reads_a_record(pass) {
-            true => worn
-                .get_or_insert_with(|| gta6_layer_index::worn(state, true))
-                .as_ref(),
+            true => worn.get_or_insert_with(|| (from.layered)()).as_ref(),
             false => None,
         };
         let drawn = surface(pass, geometry, shader, &mut texture, worn, &mut tile);
@@ -551,16 +588,8 @@ pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
             effects.push(shader.name_hash);
         }
     }
-    UNDER.lock().unwrap_or_else(|p| p.into_inner()).0 = effects;
     out.decoding = decoding.get();
-    match (out.surfaces.is_empty(), out.why.take()) {
-        (true, Some(why)) => Some(Err(why)),
-        (true, None) => None,
-        (false, why) => {
-            out.why = why;
-            Some(Ok(out))
-        }
-    }
+    Some((out, effects))
 }
 
 #[cfg(test)]

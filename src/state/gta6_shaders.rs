@@ -62,6 +62,10 @@ pub(crate) struct Candidate {
 /// a geometry is drawn by the one that reads the streams it has, and only that one is translated.
 pub(crate) type Passes = Vec<Candidate>;
 
+/// The pass a geometry is drawn by, or why the renderer cannot be handed one; `None` before a job
+/// has translated it.
+pub(crate) type Shading = Option<Result<Arc<Gta6ShadingPass>, String>>;
+
 /// An effect by the hash of its name, with the streams a geometry that wears it holds
 /// ([`gta6_held_streams`]): what a pass is picked by.
 pub(crate) type Worn = (u32, u32);
@@ -227,16 +231,30 @@ fn keep(s: &mut Shaders, sources: Vec<Arc<ShaderSource>>) {
 /// for others is stopped. `install` is the GTA VI install's `shaders.rpf`, asked for when a job
 /// starts and searched once a session where no container read holds one.
 pub(crate) fn request(worn: &[Worn], install: impl FnOnce() -> Option<PathBuf>) {
+    with(|s| {
+        if let Some((input, wanted)) = asked(s, worn, install) {
+            s.running = Some(Running::start(input, wanted));
+        }
+    });
+}
+
+/// The job a request for `worn` starts, with what it is given; none where one runs for the same,
+/// or each was looked for already.
+// ⚠ Looked for is an effect with the streams of a geometry, never the effect alone: a second
+// geometry that wears it with other streams draws by another pass, which no job translated.
+fn asked(
+    s: &Shaders,
+    worn: &[Worn],
+    install: impl FnOnce() -> Option<PathBuf>,
+) -> Option<(Input, Vec<Worn>)> {
     let mut wanted = worn.to_vec();
     wanted.sort_unstable();
     wanted.dedup();
-    with(|s| {
-        let running = s.running.as_ref().is_some_and(|r| r.wanted == wanted);
-        if running || wanted.iter().all(|h| s.tried.contains(h)) {
-            return;
-        }
-        s.running = Some(Running::start(input_of(s, &wanted, install), wanted));
-    });
+    let running = s.running.as_ref().is_some_and(|r| r.wanted == wanted);
+    if running || wanted.iter().all(|h| s.tried.contains(h)) {
+        return None;
+    }
+    Some((input_of(s, &wanted, install), wanted))
 }
 
 /// What a job for `wanted` is given of the session's translations.
@@ -855,9 +873,8 @@ pub(super) fn poll(jobs: &mut JobLog) {
             .unwrap_or_else(|p| p.into_inner())
             .take()?;
         let running = s.running.take()?;
-        let said = match result {
-            Ok(found) => {
-                let (translated, refused) = merge(s, found);
+        let said = match took(s, &running.wanted, result) {
+            Ok((translated, refused)) => {
                 let said = tr!(
                     "GTA VI's programs for Shaded: translated {translated}, refused {refused}",
                     translated = translated,
@@ -871,13 +888,24 @@ pub(super) fn poll(jobs: &mut JobLog) {
                 tr!("GTA VI's programs were not translated: {why}", why = why),
             ),
         };
-        // A stopped or failed job is not started again for the same effects.
-        s.tried.extend(running.wanted.iter().copied());
         Some(said)
     });
     if let Some((outcome, said)) = said {
         jobs.record(JobKind::EffectsRead, outcome, said);
     }
+}
+
+/// Take what the job for `wanted` came to into the session's translations: how many programs it
+/// translated and refused.
+fn took(
+    s: &mut Shaders,
+    wanted: &[Worn],
+    found: Result<Found, String>,
+) -> Result<(usize, usize), String> {
+    let merged = found.map(|found| merge(s, found));
+    // A stopped or failed job is not started again for the same effects.
+    s.tried.extend(wanted.iter().copied());
+    merged
 }
 
 /// `found` kept, and the pack built anew: how many programs it translated and refused.
@@ -967,14 +995,16 @@ pub(crate) fn pack() -> Option<(u64, Arc<GamePack>)> {
 /// The pass that draws a geometry whose vertex data is `vertex_data` with the effect whose name
 /// hashes to `hash`, or why the renderer cannot be handed one; `None` before a job has
 /// translated it.
-pub(crate) fn shading(
-    hash: u32,
-    vertex_data: &[u8],
-) -> Option<Result<Arc<Gta6ShadingPass>, String>> {
-    with(|s| picked(s, hash, gta6_held_streams(vertex_data)))
+pub(crate) fn shading(hash: u32, vertex_data: &[u8]) -> Shading {
+    with(|s| shading_in(s, hash, vertex_data))
 }
 
-fn picked(s: &Shaders, hash: u32, streams: u32) -> Option<Result<Arc<Gta6ShadingPass>, String>> {
+/// [`shading`], of the session `s`.
+fn shading_in(s: &Shaders, hash: u32, vertex_data: &[u8]) -> Shading {
+    picked(s, hash, gta6_held_streams(vertex_data))
+}
+
+fn picked(s: &Shaders, hash: u32, streams: u32) -> Shading {
     match s.shading.get(&hash)? {
         Ok(passes) => passes[pick(passes, streams)?].pass.clone(),
         Err(why) => Some(Err(why.clone())),

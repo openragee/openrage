@@ -1,4 +1,4 @@
-//! Which entities of a set of maps are doors: by the door extension of the archetype, then by the model's name.
+//! Which entities of a set of maps are doors: by the door extension the entity or its archetype states, then by the model's name.
 
 use std::collections::HashMap;
 
@@ -142,7 +142,7 @@ impl PlacedEntity {
 /// What said an entity is a door.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FoundBy {
-    /// Its archetype states the door extension.
+    /// It states the door extension, or its archetype does.
     Extension,
     /// Its model's name matches this pattern.
     Name(String),
@@ -163,7 +163,7 @@ pub struct Found {
     pub others: Vec<PlacedEntity>,
     /// How many entities were looked at, those an interior places among them.
     pub entities: usize,
-    /// The entities whose archetype states no door extension and whose model has no name: a door among them is a door missed.
+    /// The entities that state no door extension, whose archetype states none and whose model has no name: a door among them is a door missed.
     pub unnamed: usize,
 }
 
@@ -255,10 +255,15 @@ pub fn find(
             interior_instance: entity.is_interior_instance(),
         };
         found.entities += 1;
+        // ⚠ The entity is asked first: in both installs measured the door extension is stated by entities, of the maps and
+        // of the interiors, and by no archetype.
+        let states_door = entity
+            .extensions()
+            .any(|extension| extension.kind() == ExtensionKind::Door);
         // ⚠ A placed interior is a building, never a leaf, whatever its name says.
         let found_by = if placed.interior_instance {
             None
-        } else if known.is_some_and(|d| d.states_door) {
+        } else if states_door || known.is_some_and(|d| d.states_door) {
             Some(FoundBy::Extension)
         } else {
             match &placed.name {

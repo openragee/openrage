@@ -18,7 +18,8 @@ use or_io::container::rpf::crypto::RpfCryptoProvider;
 use or_title::vfs::{build_mounted_game, DlcCutoff};
 use or_title::GtaInstall;
 use world_fixture::{
-    ground_at_the_road_nodes, held_to_its_mount, models_held_to_their_maps, NODE_SCALES, STEP,
+    ground_at_the_road_nodes, held_to_its_mount, models_held_to_their_maps, stated_by_the_files,
+    NODE_SCALES, STEP,
 };
 
 /// The first install of the machine and the keys of its executable; without either, `what` is
@@ -72,6 +73,37 @@ fn the_world_index_names_everything_a_real_install_lists() {
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let held = held_to_its_mount(&mount, &root, &scratch.path().join("world.index"));
     assert!(held.maps > 0 && held.type_files > 0, "{held:?}");
+}
+
+const STATED: &str = "what_the_files_of_a_real_install_state_where_the_index_takes_one_reading";
+
+/// ⚠ Needs an install. A measure of three readings the index takes of an install's files: a map
+/// is named by its file's stem, the last type file to declare an archetype is believed, and the
+/// box of an interior's bound is about the interior.
+#[test]
+fn what_the_files_of_a_real_install_state_where_the_index_takes_one_reading() {
+    let Some((root, crypto)) = install(STATED) else {
+        return;
+    };
+    let install = GtaInstall { root: root.clone() };
+    let game = build_mounted_game(&install, crypto, DlcCutoff::All).expect("the install mounts");
+    let (index, _) = WorldIndex::build(&MountedWorld::new(&game, &root), None);
+    let stated = stated_by_the_files(&game, &index);
+    eprintln!(
+        "\n=== {stated:?}; {} redefinition(s) in mount order ===",
+        index.redefined()
+    );
+    assert!(stated.maps > 0 && stated.interior_bounds > 0, "{stated:?}");
+    // A parent is found by the stem of its file, and an interior's bound is no place of the world.
+    assert!(
+        stated.parent_not_held * 100 <= stated.with_parent,
+        "{stated:?}"
+    );
+    assert!(
+        stated.nearer_a_placement * 10 <= stated.interior_bounds,
+        "{stated:?}"
+    );
+    assert_eq!(stated.answered_at_a_position, 0, "{stated:?}");
 }
 
 const ROADS: &str = "the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them";

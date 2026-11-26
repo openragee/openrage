@@ -181,9 +181,10 @@ fn print_usage() {
          the files it rewrote, refused while a later edit of one of its sources stands. --json prints\n\
          the record as data, with the lines of a deletion's plan. The world index is read from the\n\
          file `world index` keeps (--kept, --fresh). It exits 1 when the edit is refused.\n\
-         doors lists the doors of each map set: an entity whose archetype states the door extension, and\n\
-         an entity whose model's name a door pattern matches, with how many entities have a model with\n\
-         no name, since a door among them is missed. A model has a name when the content remembers it\n\
+         doors lists the doors of each map set: an entity that states the door extension or whose\n\
+         archetype does, and an entity whose model's name a door pattern matches, with how many\n\
+         entities have a model with no name, since a door among them is missed. A model has a name\n\
+         when the content remembers it\n\
          (one typed on the Map screen or stated by an operation of `maps apply`) or the file --names\n\
          gives lists it, a name a line: a map file a project imported keeps hashes alone. For each\n\
          door it says what its box reads as (a leaf that swings, slides or lifts, its hinge and its\n\

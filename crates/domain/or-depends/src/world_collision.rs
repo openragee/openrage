@@ -139,13 +139,10 @@ impl<'a> WorldCollision<'a> {
             let interior = |carrier: &Carrier| matches!(carrier.via, Via::ManifestInterior);
             found.carriers.iter().all(interior)
         };
+        // ⚠ Neither list holds a file an interior alone carries: the box such a file states is
+        // about the interior, and the index answers it at no position.
         for found in by_box.into_iter().chain(boxless) {
             let bound = found.bound;
-            // ⚠ The box an interior's file states is about the interior: it is no place of the
-            // world, so what it holds says nothing of this column.
-            if of_an_interior(&found) {
-                continue;
-            }
             let Some(at) = index.place_of_bound(bound.hash) else {
                 continue;
             };

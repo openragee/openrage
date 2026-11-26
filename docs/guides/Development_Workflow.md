@@ -248,6 +248,7 @@ allows, so a new target never moves the ceiling.
 | `just test-affected [PART…]` | `ready` without clippy, kept to the tests whose names hold a PART |
 | `just test-format MODULE` | one format's or-io-verify corpus suite and its owned-cost test, slow tier and ignored tests included |
 | `just slow-tier` | rewrite the slow tier in `.config/nextest.toml` from the timings of the last `just test` |
+| `just test-install CRATE SUITE [PART…]` | one test binary that reads a game install, slow tier included, a test at a time, kept to the tests whose names hold a PART ([install suites](#install-suites)) |
 | `just self-check` | the app's startup and every panel through real egui frames with no window; `--viewport` adds a surfaceless GPU device, `--open PATH` with it opens a file through the real load path and draws it in its workspace, and `--frames N` sets the frames per unit |
 | `just shots SCRIPT DIR` | the same frames driven by a script of steps, each `shot` saved as a PNG in `DIR` ([screenshots](#screenshots)) |
 | `just check` | `cargo check --workspace` |
@@ -378,6 +379,53 @@ not print ad-hoc skip lines.
   only when it creates the directory
   (`a_running_test_binary_can_find_the_ledger`). A ledger it cannot find is
   reported as unread, never as empty.
+
+### Install suites
+
+An install suite is a test that reads a game install: it takes its roots from
+`or_test_support::game_roots()`, which reads `OPENRAGE_GAME_ROOT` (install
+roots separated by `;`), records `skip_install` when the variable names none,
+and sits in a binary or a module the slow tier names.
+
+- **An unset variable does not mean the machine has no install.** Nothing
+  discovers one for a test, on purpose: a measurement wants a denominator it
+  was told. Look for the owner's installs before reporting a suite as not run,
+  and report a suite that skipped as not run, never as passed.
+- **Run one binary at a time**, on one install and then on the other edition,
+  with the variable set for that command alone:
+  `OPENRAGE_GAME_ROOT=<install root> just test-install or-depends the_world_index_of_a_real_install`.
+  A suite reads tens of gigabytes, so the recipe runs a binary's tests one
+  after another, and two suites are never started together. It is never a
+  lane's gate. A part of a test's name after the suite keeps the run to the
+  tests that hold it. ⚠ What follows the suite reaches the shell as it is
+  typed, so a nextest expression there needs its own quotes inside the
+  argument: `"-E 'test(=NAME)'"`.
+- **The install is read only.** A suite writes under a scratch directory, and
+  no game file or content of one goes into the tree, a fixture or a document;
+  a figure, the name of a test and what was measured do.
+- ⚠ **`--profile all` ends a test at fifteen minutes** unless an override of
+  `.config/nextest.toml` holds its suite to more. Beside other lanes that are
+  building, a walk of an install takes several times what it takes alone: the
+  ground under an install's road nodes took two minutes alone, was still
+  running at fourteen at a load of a hundred on thirty cores, and passed at
+  forty-three, two short of the forty-five its override gives it, at a load
+  of ninety to two hundred and ninety (2026-11-25). A time quoted from a
+  suite states the machine's load.
+- **A new install suite** goes in a binary the slow tier names. One in a
+  binary of its own is added to `ALWAYS_SLOW` in
+  `crates/tools/xtask/src/slow_tier.rs`, because a run on a machine with no
+  install times it at a skip and `just slow-tier` would put it back in the
+  default tier, where a test is ended at 30 s.
+- **What a suite counts is held in the default tier**, on files built by
+  hand, in a binary the slow tier does not name: the gate runs no test of a
+  slow binary, a hand-built one among them. The body both run is a module
+  they share, as `crates/domain/or-maps/tests/common/install_measures.rs` is
+  for `crates/domain/or-maps/tests/the_doors_bounds_and_path_regions_of_the_install.rs`
+  and
+  `crates/domain/or-maps/tests/the_measures_of_the_install_suite_hold_on_files_built_by_hand.rs`.
+- **What a run reports** is, for each install, passed, failed with its
+  message, or did not finish with how long it ran, and each figure with its
+  numerator, its denominator, the suite, the install and the date.
 
 ### The clean-checkout state
 

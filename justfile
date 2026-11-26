@@ -143,6 +143,12 @@ test-crate crate: require-nextest
 test-format module *ARGS: require-nextest
     cargo nextest run -p or-io-verify --profile all --test {{ module }} --test what_an_owned_file_costs --run-ignored all --success-output final -E 'binary({{ module }}) + (binary(what_an_owned_file_costs) & test(=what_an_owned_{{ module }}_costs))' {{ ARGS }}
 
+# ⚠ `OPENRAGE_GAME_ROOT` names the install, set for this command alone; a suite
+# reads tens of gigabytes, so run one at a time and never as a lane's gate.
+# One install suite of a crate, a test at a time, with what each test measured printed.
+test-install crate suite *ARGS: require-nextest
+    cargo nextest run -p {{ crate }} --profile all --test {{ suite }} -j 1 --no-fail-fast --success-output final {{ ARGS }}
+
 # One nextest expression rather than `--lib --bins`, which resolves features
 # differently and so builds a second graph. ⚠ The last two lines put the
 # binaries the filter left out into the ledger, which would otherwise report

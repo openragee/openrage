@@ -174,6 +174,39 @@ fn a_member_an_item_leaves_out_reads_as_the_games_default_and_is_not_added_by_a_
 }
 
 #[test]
+fn an_item_that_states_no_corner_is_a_quad_at_zero_and_saves_as_it_came() {
+    let text = "<WaterData>\n  <WaterQuads>\n    <Item>\n    </Item>\n  </WaterQuads>\n  \
+        <CalmingQuads><Item/></CalmingQuads>\n  <WaveQuads><Item></Item></WaveQuads>\n</WaterData>\n";
+    let data = open(text);
+    assert_eq!(data.water_quads, [CWaterQuad::default()]);
+    assert_eq!(data.calming_quads, [CCalmingQuad::default()]);
+    assert_eq!(data.wave_quads, [CWaveQuad::default()]);
+    assert!(data.unnamed().is_empty(), "{:?}", data.unnamed());
+    assert_eq!(saved(&data), text);
+
+    // A corner given to such a quad is written with the three left at zero, so the save reopens.
+    let mut moved = data.clone();
+    moved.water_quads[0].max_x = 8;
+    moved.wave_quads[0].min_y = -3;
+    let again = open(&saved(&moved));
+    assert_eq!(again.water_quads[0].rectangle_stated(), [0, 8, 0, 0]);
+    assert_eq!(again.calming_quads, [CCalmingQuad::default()]);
+    let wave = &again.wave_quads[0];
+    assert_eq!(
+        [wave.min_x, wave.max_x, wave.min_y, wave.max_y],
+        [0, 0, -3, 0]
+    );
+    assert_eq!(saved(&again), saved(&moved));
+
+    // An item that states one corner and leaves out another is still refused.
+    let partial = text.replace("<Item/>", "<Item><minX value=\"1\"/></Item>");
+    assert_eq!(
+        refusal(&partial),
+        "item 0 of <CalmingQuads>, counted from 0, states no <maxX>"
+    );
+}
+
+#[test]
 fn an_element_and_an_attribute_the_reader_does_not_name_survive_a_read_and_a_save() {
     let text = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!-- written by hand -->

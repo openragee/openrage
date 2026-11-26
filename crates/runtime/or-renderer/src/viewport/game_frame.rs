@@ -791,12 +791,12 @@ impl ViewportRenderer {
             });
             scene.record_water_fog(&mut pass);
         }
-        // The distant lights and coronas are laid in before the water's copy is taken, so that the water mirrors them
+        // What glows, and the distant lights and coronas, are laid in before the water's copy is taken, as the game's own emissive target is in its frame, so that the water mirrors them
         let lights_first = refracts && deferred.refraction.is_some();
-        if lights_first {
+        {
             let mut pass = over_the_frame(
                 encoder,
-                "viewport-distant-lights-pass",
+                "viewport-glow-pass",
                 &deferred.hdr,
                 wgpu::LoadOp::Load,
                 &self.depth_view,
@@ -805,7 +805,10 @@ impl ViewportRenderer {
                     store: wgpu::StoreOp::Store,
                 }),
             );
-            deferred.passes.record_distant_lights(&mut pass);
+            self.world.draw_glow(&mut pass, &self.bind_group);
+            if lights_first {
+                deferred.passes.record_distant_lights(&mut pass);
+            }
         }
         // Water is drawn over a copy of the frame as it stands, since it cannot read what it writes
         if let (true, Some(refraction)) = (refracts, &deferred.refraction) {

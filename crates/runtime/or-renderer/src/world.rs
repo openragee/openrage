@@ -807,15 +807,19 @@ impl World {
         self.cards.draw_gbuffer(pass, camera);
     }
 
-    /// Draw into a pass over the frame the game's passes lit, which reads the depth of the frame and writes none: the light of what glows, then what blends, the faces that turn away before those that face the camera.
-    pub(crate) fn draw_lit(&self, pass: &mut wgpu::RenderPass<'_>, camera: &wgpu::BindGroup) {
-        // ⚠ The water draws where the world has nothing else to, as over the open sea; leaving the world takes its mesh away.
-        self.water.draw(pass, camera, &self.light_group);
+    /// Draw the light of what glows over the frame the game's passes lit, tested against the depth the G-buffer pass wrote.
+    pub(crate) fn draw_glow(&self, pass: &mut wgpu::RenderPass<'_>, camera: &wgpu::BindGroup) {
         if self.draws_anything() && !self.glow_batches.is_empty() {
             pass.set_bind_group(0, camera, &[]);
             pass.set_bind_group(2, &self.light_group, &[]);
             self.record(pass, &self.glow_batches, &self.pipelines.glow, None, false);
         }
+    }
+
+    /// Draw into a pass over the frame the game's passes lit, which reads the depth of the frame and writes none: the water, then what blends, the faces that turn away before those that face the camera.
+    pub(crate) fn draw_lit(&self, pass: &mut wgpu::RenderPass<'_>, camera: &wgpu::BindGroup) {
+        // ⚠ The water draws where the world has nothing else to, as over the open sea; leaving the world takes its mesh away.
+        self.water.draw(pass, camera, &self.light_group);
         for faces in &self.pipelines.lit {
             self.draw(pass, camera, faces, false);
         }

@@ -611,25 +611,32 @@ impl<'a> Machine<'a> {
                 } => {
                     use naga::AtomicFunction as Af;
                     let value = self.value(frame, value).word();
-                    let Got::Place(Place::Global(global, path)) = self.got(frame, pointer) else {
-                        panic!("an update in one step of what is no memory of the group");
+                    let updated = |old: u32| match fun {
+                        Af::Add => old.wrapping_add(value),
+                        Af::Subtract => old.wrapping_sub(value),
+                        Af::And => old & value,
+                        Af::InclusiveOr => old | value,
+                        Af::ExclusiveOr => old ^ value,
+                        Af::Min => old.min(value),
+                        Af::Max => old.max(value),
+                        Af::Exchange { compare: None } => value,
+                        other => panic!("{other:?} is not run"),
                     };
-                    let old = self.memory(global, |whole| {
-                        let cell = whole.at(&path);
-                        let old = cell.word();
-                        *cell = Value::U(match fun {
-                            Af::Add => old.wrapping_add(value),
-                            Af::Subtract => old.wrapping_sub(value),
-                            Af::And => old & value,
-                            Af::InclusiveOr => old | value,
-                            Af::ExclusiveOr => old ^ value,
-                            Af::Min => old.min(value),
-                            Af::Max => old.max(value),
-                            Af::Exchange { compare: None } => value,
-                            other => panic!("{other:?} is not run"),
-                        });
-                        old
-                    });
+                    let old = match self.got(frame, pointer) {
+                        // The group's memory is updated in one step, whatever the other threads do.
+                        Got::Place(Place::Global(global, path)) => self.memory(global, |whole| {
+                            let cell = whole.at(&path);
+                            let old = cell.word();
+                            *cell = Value::U(updated(old));
+                            old
+                        }),
+                        Got::Place(place) => {
+                            let old = self.read(frame, &place).word();
+                            self.write(frame, &place, Value::U(updated(old)));
+                            old
+                        }
+                        _ => panic!("an update in one step of what is no memory"),
+                    };
                     if let Some(at) = result {
                         frame.values.insert(at, Got::Value(Value::U(old)));
                     }
@@ -660,34 +667,6 @@ impl<'a> Machine<'a> {
                     }
                     self.value(frame, value).words(&mut stored[2]);
                     self.out.stores.push(stored);
-                }
-                S::Atomic {
-                    pointer,
-                    ref fun,
-                    value,
-                    result,
-                } => {
-                    use naga::AtomicFunction as Af;
-                    let value = self.value(frame, value).word();
-                    let Got::Place(place) = self.got(frame, pointer) else {
-                        panic!("an update in one step of what is no memory");
-                    };
-                    let old = self.read(frame, &place).word();
-                    let new = match fun {
-                        Af::Add => old.wrapping_add(value),
-                        Af::Subtract => old.wrapping_sub(value),
-                        Af::And => old & value,
-                        Af::InclusiveOr => old | value,
-                        Af::ExclusiveOr => old ^ value,
-                        Af::Min => old.min(value),
-                        Af::Max => old.max(value),
-                        Af::Exchange { compare: None } => value,
-                        other => panic!("{other:?} is not run"),
-                    };
-                    self.write(frame, &place, Value::U(new));
-                    if let Some(at) = result {
-                        frame.values.insert(at, Got::Value(Value::U(old)));
-                    }
                 }
                 ref other => panic!("{other:?} is not run"),
             }
@@ -1185,6 +1164,7 @@ pub fn run_whole(module: &naga::Module, seed: u64, most: u64) -> Whole {
     let group = Group {
         memory: Mutex::new(memory),
         barrier: Barrier::new(1),
+        baton: None,
     };
     let ran = (0..threads.iter().product::<u32>())
         .map(|thread| {
@@ -1213,6 +1193,7 @@ pub fn run_whole(module: &naga::Module, seed: u64, most: u64) -> Whole {
                 module,
                 group: &group,
                 private: HashMap::new(),
+                turn: (0, 0),
                 out: Thread {
                     bounded: Some(most),
                     ..Thread::default()

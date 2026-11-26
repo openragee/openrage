@@ -1160,6 +1160,8 @@ var x = 0.0;
                 approximations: Default::default(),
                 half_slots: Default::default(),
                 subgroups: false,
+                intersections: Vec::new(),
+                region: None,
             };
             feed(&bare_mesh(), lowered, &program(), &Sgd5Table::default()).map(|_| ())
         };
@@ -1720,6 +1722,8 @@ struct Words { words: array<u32> }
             approximations: Default::default(),
             half_slots: Default::default(),
             subgroups: false,
+            intersections: Vec::new(),
+            region: None,
         };
         let five = Budget {
             uniform: 5,

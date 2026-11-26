@@ -16,7 +16,8 @@ use or_io::gta6::accel::layout::{
     INSTANCE_ROOT, INSTANCE_TRANSLATION, INVALID, TYPE_BOX32, TYPE_INSTANCE,
 };
 use or_io::gta6::accel::{
-    candidates_as, walk_wave, word, Arena, Cull, Form, Instance, Ray, Triangle, Wave, WaveOutcome,
+    candidates_as, walk_wave, word, Arena, Code, Form, Instance, Ray, Triangle, Wave, WaveOutcome,
+    RAY_CULL_BACK, RAY_CULL_FRONT,
 };
 
 use super::interp;
@@ -72,14 +73,15 @@ fn lower(spec: &Spec) -> Lowering {
             ring: (spec.number("ring") + 4) / spec.number("step"),
             stack: spec.number("pairs"),
             mask: spec.number("mask") as u8,
-            cull: match spec.text("cull") {
-                "none" => Cull::None,
-                "back" => Cull::Back,
-                "front" => Cull::Front,
+            flags: match spec.text("cull") {
+                "none" => 0,
+                "back" => RAY_CULL_BACK,
+                "front" => RAY_CULL_FRONT,
                 other => panic!("{other} is no culling"),
             },
             first_hit: spec.text("first_hit") == "true",
             bound: spec.number("bound"),
+            ..Wave::default()
         },
     }
 }
@@ -205,9 +207,17 @@ fn compare(
 ) -> Tally {
     let mut tally = Tally::default();
     for rays in rays.chunks(lowering.wave.lanes as usize) {
-        let want = walk_wave(words, top, rays, wave, &mut |_, probe| {
-            probe.software(words)
-        });
+        let want = walk_wave(
+            words,
+            top,
+            rays,
+            &[],
+            wave,
+            &mut Code {
+                body: &mut |_, probe| probe.software(words),
+                candidate: &mut |_, _| true,
+            },
+        );
         let wanted = expected(&want, rays);
         let (got, barriers) = run(spec, lowering, words, top, rays);
         for (lane, wanted) in wanted.iter().enumerate() {
@@ -437,7 +447,7 @@ fn a_walk_a_wave_takes_together_lowered_alone_equals_the_reference_walk_lane_for
                 world,
                 &all,
                 Wave {
-                    cull: Cull::None,
+                    flags: lowering.wave.flags & !(RAY_CULL_BACK | RAY_CULL_FRONT),
                     ..lowering.wave
                 },
             ),
@@ -475,9 +485,17 @@ fn a_chain_holds_a_stack_of_any_size_to_its_bound_and_a_box_more_overruns_it() {
                 stack: 2 * pairs,
                 ..Wave::default()
             };
-            let out = walk_wave(&words, top, &rays, &wave, &mut |_, probe| {
-                probe.software(&words)
-            });
+            let out = walk_wave(
+                &words,
+                top,
+                &rays,
+                &[],
+                &wave,
+                &mut Code {
+                    body: &mut |_, probe| probe.software(&words),
+                    candidate: &mut |_, _| true,
+                },
+            );
             let at = format!("{pairs} pairs, {boxes} boxes");
             let held = (waiting.min(pairs), waiting.saturating_sub(pairs));
             assert_eq!((out.deepest, out.dropped), held, "{at}");
@@ -497,8 +515,12 @@ fn reference(world: (&[u32], u32), rays: &[Ray]) -> WaveOutcome {
         world.0,
         world.1,
         &rays,
+        &[],
         &Wave::default(),
-        &mut |_, probe| probe.software(world.0),
+        &mut Code {
+            body: &mut |_, probe| probe.software(world.0),
+            candidate: &mut |_, _| true,
+        },
     )
 }
 

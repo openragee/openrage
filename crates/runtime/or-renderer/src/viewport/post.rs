@@ -300,7 +300,7 @@ impl Post {
                 wgpu::ColorWrites::COLOR,
             ),
             sampler: crate::game_shaders::samplers::linear(device),
-            composite_values: uniform(device, 16 * (4 + COMPENSATION_SAMPLES as u64 / 4)),
+            composite_values: uniform(device, 16 * (5 + COMPENSATION_SAMPLES as u64 / 4)),
             temporal_values: uniform(device, 64 * 3 + 16 * 8),
             sharpen_values: uniform(device, 48),
             targets: None,
@@ -575,6 +575,7 @@ impl Post {
             local.output[0],
             local.output[1],
         ];
+        values.extend(local.tone);
         values.extend(local.compensation);
         queue.write_buffer(&self.composite_values, 0, bytemuck::cast_slice(&values));
         draw(

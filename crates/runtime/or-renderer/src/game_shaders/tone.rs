@@ -352,6 +352,8 @@ pub struct LocalExposure {
     pub compensation: [f32; COMPENSATION_SAMPLES],
     pub input: [f32; 2],
     pub output: [f32; 2],
+    /// The local tone: the contrast the light about a pixel keeps about middle grey under it and over it, the contrast the pixel keeps about that light, and how much of that light is the blur's; ones where the moment does not turn it on.
+    pub tone: [f32; 4],
 }
 
 /// GTA VI's temporal anti-aliasing: how long a pixel takes to converge near and far, and how far its history may stray from what is about it.

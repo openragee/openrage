@@ -99,6 +99,8 @@ struct Composite {
     clamps: vec4<f32>,
     // the compensation curve's input range and its output range
     ranges: vec4<f32>,
+    // the local tone: contrast under middle grey, over it, of the detail, and the blur's share of the light about a pixel
+    tone: vec4<f32>,
     compensation: array<vec4<f32>, 8>,
 }
 
@@ -156,6 +158,19 @@ fn fs_composite(v: Out) -> @location(0) vec4<f32> {
         let k = composite.clamps;
         let own = clamp(clamp(ev + k.w * compensation_at(ev), k.x, k.y) + k.z, k.x, k.y);
         light *= exp2(p.y * (own - p.z));
+    }
+    let t = composite.tone;
+    if (any(t.xyz != vec3<f32>(1.0))) {
+        // The local tone, in stops of the exposed frame about middle grey: the light about the pixel keeps
+        // its contrast t.x under middle grey and t.y over it, and the pixel keeps t.z of its own about that light.
+        // Stand-in: the build's light about a pixel blends a bilateral grid, whose making is not read, with a
+        // blur; the grid's cell at the pixel's own luminance is taken as the pixel's own.
+        let middle = log2(0.18);
+        let pixel = log2(max(luminance(light), 1e-12));
+        let blurred = log2(max(luminance(smooth_local(v.uv)), 1e-12));
+        let base = mix(pixel, blurred, t.w);
+        let contrast = select(t.x, t.y, base > middle);
+        light *= exp2(middle + contrast * (base - middle) + t.z * (pixel - base) - pixel);
     }
     return vec4<f32>(light, scene);
 }

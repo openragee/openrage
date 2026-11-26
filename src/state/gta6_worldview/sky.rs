@@ -471,6 +471,15 @@ fn post_of(
                 get("postfx_exposure_compensation_ev_min", 4.0),
                 get("postfx_exposure_compensation_ev_max", -4.0),
             ],
+            tone: match get("postfx_local_exposure_enabled", 0.0) > 0.0 {
+                true => [
+                    get("postfx_local_exposure_sh_contrast", 1.0),
+                    get("postfx_local_exposure_hl_contrast", 1.0),
+                    get("postfx_local_exposure_dt_contrast", 1.0),
+                    get("postfx_local_exposure_blur_lum_amount", 0.6),
+                ],
+                false => [1.0; 4],
+            },
         },
         temporal: Temporal {
             near: visual("temporalaa.convergenceTime", 0.15),

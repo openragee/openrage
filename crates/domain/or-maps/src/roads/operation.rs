@@ -13,6 +13,12 @@
 //! [`Operation::RewriteRegions`] with the documents as they were: a document a person typed, which is not the export of its region,
 //! is put back that way.
 //!
+//! ⚠ **An inverse states what it applies to.** An operation may state `expects`, the digest of the documents the set is to hold
+//! ([`digest_of`]), and is refused when the set holds others ([`Error::Stale`]), as an operation of [`crate::operation`] is for its
+//! source. Every inverse states the digest of the documents its operation left. The digest is of every document of the set and not
+//! of those the inverse writes alone, because a link names a node of another region by its index: a region renumbered since is
+//! one the inverse may write no document of and still name the wrong node of.
+//!
 //! ⚠ **What a moved or a removed node leaves of the junction table.** A node the junction table names is not moved, since the height
 //! samples of its junction are of the ground where it stands and nothing here samples the ground again. Taking such a node out takes
 //! its references out with it, and a junction no reference names any more with its height samples, and the inverse carries them.
@@ -59,6 +65,16 @@ pub enum Error {
         at: String,
         why: String,
     },
+    /// The set does not hold the documents an operation states, said as [`crate::operation::Error::Stale`] says it of a source.
+    #[error("{}", stale(.name, .at, .expects, .found))]
+    Stale {
+        name: &'static str,
+        /// The folder that holds the set.
+        at: String,
+        expects: String,
+        /// The digest of the documents the set holds.
+        found: String,
+    },
     #[error("operation {number} of {of}, {refused}")]
     InList {
         /// Counted from one.
@@ -68,6 +84,16 @@ pub enum Error {
     },
     #[error("{0}")]
     Write(String),
+}
+
+/// A refusal for a set that is not as an operation expects it, in the words a map operation is refused with.
+fn stale(name: &'static str, at: &str, expects: &str, found: &str) -> crate::operation::Error {
+    crate::operation::Error::Stale {
+        name,
+        at: at.to_string(),
+        expects: expects.to_string(),
+        found: found.to_string(),
+    }
 }
 
 /// What a node states of itself, as a document states it.
@@ -144,6 +170,8 @@ pub enum Operation {
     SetNode {
         node: Address,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         street_name_hash: Option<Word>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         distance_to_target: Option<i16>,
@@ -162,12 +190,16 @@ pub enum Operation {
     /// State the word of a link, whole: the declaration names nothing inside it.
     SetLink {
         node: Address,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         link: usize,
         as_integer1: Word,
     },
     /// Add a link from `node` to `other_node` at the place `link`, last when none, and with `back_as_integer1` the link back, which the region of `other_node` states.
     AddLink {
         node: Address,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         other_node: Address,
         as_integer1: Word,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -181,6 +213,8 @@ pub enum Operation {
     /// Take a link out of `node`, with the link back: the one at `back_link`, else the first the far node states, and none with `one_way`.
     RemoveLink {
         node: Address,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         link: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         back_link: Option<usize>,
@@ -190,6 +224,8 @@ pub enum Operation {
     /// Add a node to a region, after its vehicle nodes or with `ped` after its pedestrian ones, as a copy of `linked_to` at a place of its own, linked to it both ways.
     AddNode {
         region: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         ped: bool,
         coors_x: i16,
@@ -203,10 +239,16 @@ pub enum Operation {
         back_as_integer1: Word,
     },
     /// Take a node out with its links and the links of its region that name it, and renumber what names a later node of its region; refused while another region of the set names it.
-    RemoveNode { node: Address },
+    RemoveNode {
+        node: Address,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+    },
     /// Put a node into a region at an address, with its links, the links that name it and its junction: what takes a removal back.
     InsertNode {
         node: Address,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
         /// Whether it stands among the pedestrian nodes, which an address at the end of the vehicle nodes does not say.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         ped: bool,
@@ -223,9 +265,17 @@ pub enum Operation {
         junction_map: Vec<PairRecord>,
     },
     /// Disable a node: always refused, since the declaration of a node names no state that says so.
-    DisableNode { node: Address },
+    DisableNode {
+        node: Address,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+    },
     /// Hold each `document` as the document of its source, as it is given: what takes back an edit of a document that was not the export of its region.
-    RewriteRegions { documents: Vec<Document> },
+    RewriteRegions {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        documents: Vec<Document>,
+    },
 }
 
 impl Operation {
@@ -251,16 +301,73 @@ impl Operation {
             | Self::SetLink { node, .. }
             | Self::AddLink { node, .. }
             | Self::RemoveLink { node, .. }
-            | Self::RemoveNode { node }
+            | Self::RemoveNode { node, .. }
             | Self::InsertNode { node, .. }
-            | Self::DisableNode { node } => format!("node {node}"),
+            | Self::DisableNode { node, .. } => format!("node {node}"),
             Self::AddNode { region, .. } => format!("region {region}"),
-            Self::RewriteRegions { documents } => (documents.iter())
+            Self::RewriteRegions { documents, .. } => (documents.iter())
                 .map(|d| format!("`{}`", d.source))
                 .collect::<Vec<_>>()
                 .join(", "),
         }
     }
+
+    /// The digest the documents of the set are to have when it is applied, when it states one: every inverse does.
+    pub fn expects(&self) -> Option<&str> {
+        match self {
+            Self::SetNode { expects, .. }
+            | Self::SetLink { expects, .. }
+            | Self::AddLink { expects, .. }
+            | Self::RemoveLink { expects, .. }
+            | Self::AddNode { expects, .. }
+            | Self::RemoveNode { expects, .. }
+            | Self::InsertNode { expects, .. }
+            | Self::DisableNode { expects, .. }
+            | Self::RewriteRegions { expects, .. } => expects.as_deref(),
+        }
+    }
+
+    /// State the digest the documents of the set are to have, or that any will do.
+    pub fn set_expects(&mut self, digest: Option<String>) {
+        match self {
+            Self::SetNode { expects, .. }
+            | Self::SetLink { expects, .. }
+            | Self::AddLink { expects, .. }
+            | Self::RemoveLink { expects, .. }
+            | Self::AddNode { expects, .. }
+            | Self::RemoveNode { expects, .. }
+            | Self::InsertNode { expects, .. }
+            | Self::DisableNode { expects, .. }
+            | Self::RewriteRegions { expects, .. } => *expects = digest,
+        }
+    }
+
+    /// The operation, refused unless the documents of the set have the digest `digest`.
+    pub fn expecting(mut self, digest: impl Into<String>) -> Self {
+        self.set_expects(Some(digest.into()));
+        self
+    }
+}
+
+/// The digest of the documents of a set, each with the name of its source: what an operation that states `expects` is held to.
+pub fn digest_of<'a>(documents: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> String {
+    let each = documents
+        .into_iter()
+        .map(|(source, document)| (source, crate::operation::digest_of(document)));
+    digest_of_each(each)
+}
+
+/// The digest of a set from the digest of each of its documents, in the order of the names of their sources.
+fn digest_of_each<'a>(digests: impl IntoIterator<Item = (&'a str, String)>) -> String {
+    let by_name: BTreeMap<&str, String> = digests.into_iter().collect();
+    let mut stated = String::new();
+    for (source, digest) in by_name {
+        // A digest is of one length and NUL is in no name, so no two sets state one text.
+        stated.push_str(&digest);
+        stated.push_str(source);
+        stated.push('\0');
+    }
+    crate::operation::digest_of(stated.as_bytes())
 }
 
 /// A list of operations as a file: what `openrage-cli maps roads --apply` takes.
@@ -308,9 +415,7 @@ impl Operations {
 /// What an operation did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Applied {
-    /// The operation that puts every source back byte for byte.
-    // ⚠ It names nodes by their index and states no digest of the documents it applies to: applied after another edit of the
-    // set it is not refused, and rewires the nodes that took those numbers.
+    /// The operation that puts every source back byte for byte, which states the digest of the documents this one left.
     pub inverse: Operation,
     /// The document of each source it changed, as it was and as the operation left it, in the order of the sources' names.
     pub edited: Vec<Edited>,
@@ -785,6 +890,7 @@ fn set_node(
     }
     Ok(Changed::taken_back_by(Operation::SetNode {
         node,
+        expects: None,
         street_name_hash: (stated.street_name_hash).map(|_| Word(held.street_name_hash)),
         distance_to_target: stated.distance_to_target.map(|_| held.distance_to_target),
         coors_x: stated.coors_x.map(|_| held.coors_x),
@@ -816,6 +922,7 @@ fn set_link(
     edited.as_integer1 = as_integer1.0;
     Ok(Changed::taken_back_by(Operation::SetLink {
         node,
+        expects: None,
         link,
         as_integer1: Word(was),
     }))
@@ -891,6 +998,7 @@ fn add_link(regions: &mut Regions<'_>, new: &NewLink) -> Result<Changed, String>
     Ok(Changed {
         inverse: Operation::RemoveLink {
             node,
+            expects: None,
             link: place,
             back_link: back,
             one_way: back.is_none(),
@@ -961,6 +1069,7 @@ fn remove_link(
     Ok(Changed {
         inverse: Operation::AddLink {
             node,
+            expects: None,
             other_node: other,
             as_integer1: Word(removed.as_integer1),
             link: Some(link),
@@ -1110,7 +1219,10 @@ fn insert_node(regions: &mut Regions<'_>, new: &NewNode<'_>) -> Result<Changed, 
     }
     region.junction_map.junction_map.data = pairs;
     Ok(Changed {
-        inverse: Operation::RemoveNode { node },
+        inverse: Operation::RemoveNode {
+            node,
+            expects: None,
+        },
         added: Some(node),
         notes: Vec::new(),
     })
@@ -1223,6 +1335,7 @@ fn remove_node(regions: &mut Regions<'_>, node: Address) -> Result<Changed, Stri
     }
     Ok(Changed::taken_back_by(Operation::InsertNode {
         node,
+        expects: None,
         ped,
         record: record_of(&removed),
         links,
@@ -1300,6 +1413,7 @@ fn change(regions: &mut Regions<'_>, operation: &Operation) -> Result<Changed, S
     match operation {
         Operation::SetNode {
             node,
+            expects: _,
             street_name_hash,
             distance_to_target,
             coors_x,
@@ -1322,11 +1436,13 @@ fn change(regions: &mut Regions<'_>, operation: &Operation) -> Result<Changed, S
         ),
         Operation::SetLink {
             node,
+            expects: _,
             link,
             as_integer1,
         } => set_link(regions, *node, *link, *as_integer1),
         Operation::AddLink {
             node,
+            expects: _,
             other_node,
             as_integer1,
             link,
@@ -1345,12 +1461,14 @@ fn change(regions: &mut Regions<'_>, operation: &Operation) -> Result<Changed, S
         ),
         Operation::RemoveLink {
             node,
+            expects: _,
             link,
             back_link,
             one_way,
         } => remove_link(regions, *node, *link, *back_link, *one_way),
         Operation::AddNode {
             region,
+            expects: _,
             ped,
             coors_x,
             coors_y,
@@ -1369,9 +1487,10 @@ fn change(regions: &mut Regions<'_>, operation: &Operation) -> Result<Changed, S
                 back_as_integer1: *back_as_integer1,
             },
         ),
-        Operation::RemoveNode { node } => remove_node(regions, *node),
+        Operation::RemoveNode { node, .. } => remove_node(regions, *node),
         Operation::InsertNode {
             node,
+            expects: _,
             ped,
             record,
             links,
@@ -1390,7 +1509,7 @@ fn change(regions: &mut Regions<'_>, operation: &Operation) -> Result<Changed, S
                 junction_map,
             },
         ),
-        Operation::DisableNode { node } => {
+        Operation::DisableNode { node, .. } => {
             regions.node(*node)?;
             Err(
                 "the file states no such thing: the declaration of a path node names two words of flags, a height and a count of links, and no state that disables a node, so none is invented here; a node no other region names is taken out with remove_node"
@@ -1415,6 +1534,8 @@ fn problems(found: Vec<or_source::Problem>) -> String {
 struct Held {
     dir: PathBuf,
     inputs: Inputs,
+    /// The digest of the document held, which the digest of the set is made of.
+    digest: String,
     on_disk: Vec<u8>,
     /// The region the document held cooks to, or why it does not cook.
     cooked: Result<CPathRegion, String>,
@@ -1430,6 +1551,8 @@ type Left = BTreeMap<String, (Vec<u8>, CPathRegion)>;
 
 /// The paths sources of a folder while operations are applied: nothing is written until [`Work::commit`].
 struct Work {
+    /// The folder that holds the set, as a refusal names it.
+    folder: String,
     held: BTreeMap<String, Held>,
 }
 
@@ -1445,13 +1568,23 @@ impl Work {
             let cooked = cooked(&inputs);
             let source = Held {
                 dir,
+                digest: crate::operation::digest_of(&on_disk),
                 inputs,
                 on_disk,
                 cooked,
             };
             held.insert(name, source);
         }
-        Ok(Self { held })
+        Ok(Self {
+            folder: folder.display().to_string(),
+            held,
+        })
+    }
+
+    /// The digest of the documents the work holds.
+    fn digest(&self) -> String {
+        let each = self.held.iter();
+        digest_of_each(each.map(|(source, held)| (source.as_str(), held.digest.clone())))
     }
 
     /// Each region of the set with the source that states it, refused while a source does not cook or two state one region.
@@ -1553,14 +1686,33 @@ impl Work {
             });
             left.insert(source.clone(), (candidate.rules().to_vec(), region));
         }
-        let inverse = Operation::RewriteRegions { documents: was };
+        let inverse = Operation::RewriteRegions {
+            expects: None,
+            documents: was,
+        };
         Ok((left, Changed::taken_back_by(inverse)))
     }
 
+    /// Do `operation` to the documents the work holds, once they have the digest the operation states.
+    fn apply(&mut self, operation: &Operation) -> Result<Applied, Error> {
+        if let Some(expects) = operation.expects() {
+            let found = self.digest();
+            if found != expects {
+                return Err(Error::Stale {
+                    name: operation.name(),
+                    at: self.folder.clone(),
+                    expects: expects.to_string(),
+                    found,
+                });
+            }
+        }
+        (self.change(operation)).map_err(|why| refused(operation, why))
+    }
+
     /// Do `operation` to the documents the work holds.
-    fn apply(&mut self, operation: &Operation) -> Result<Applied, String> {
+    fn change(&mut self, operation: &Operation) -> Result<Applied, String> {
         let (left, done) = match operation {
-            Operation::RewriteRegions { documents } => self.rewritten(documents)?,
+            Operation::RewriteRegions { documents, .. } => self.rewritten(documents)?,
             _ => {
                 let (left, mut done) = self.through(operation)?;
                 done.inverse = match self.proven(&left, &done.inverse) {
@@ -1568,6 +1720,7 @@ impl Work {
                     // An operation that changed no document is taken back by one that changes none.
                     None if left.is_empty() => done.inverse,
                     None => Operation::RewriteRegions {
+                        expects: None,
                         documents: (left.keys())
                             .map(|source| {
                                 let held = (self.held.get(source)).ok_or_else(|| {
@@ -1593,11 +1746,12 @@ impl Work {
                 before: held.inputs.rules().to_vec(),
                 after: text.clone(),
             });
+            held.digest = crate::operation::digest_of(&text);
             held.inputs.set_rules(text);
             held.cooked = Ok(region);
         }
         Ok(Applied {
-            inverse: done.inverse,
+            inverse: done.inverse.expecting(self.digest()),
             edited,
             added: done.added,
             notes: done.notes,
@@ -1648,7 +1802,7 @@ fn refused(operation: &Operation, why: String) -> Error {
 /// Apply `operation` to the path regions the sources of `folder` state, and say what takes it back; a refusal leaves every source as it was.
 pub fn apply(folder: &Path, operation: &Operation) -> Result<Applied, Error> {
     let mut work = Work::open(folder)?;
-    let applied = (work.apply(operation)).map_err(|why| refused(operation, why))?;
+    let applied = work.apply(operation)?;
     work.commit()?;
     Ok(applied)
 }
@@ -1662,10 +1816,10 @@ pub fn apply_all(
     let mut work = Work::open(folder)?;
     let mut applied = Vec::with_capacity(operations.len());
     for (index, operation) in operations.iter().enumerate() {
-        let done = work.apply(operation).map_err(|why| Error::InList {
+        let done = work.apply(operation).map_err(|refused| Error::InList {
             number: index + 1,
             of: operations.len(),
-            refused: Box::new(refused(operation, why)),
+            refused: Box::new(refused),
         })?;
         applied.push(done);
     }
@@ -1698,6 +1852,7 @@ mod tests {
         let work = Work::open(&folder).unwrap();
         let linked = Operation::AddLink {
             node: Address::new(7, 0),
+            expects: None,
             other_node: Address::new(8, 0),
             as_integer1: Word(3),
             link: None,
@@ -1713,6 +1868,7 @@ mod tests {
         // The link taken out of its own region alone: that document is as it was, and the other still holds the link back.
         let half = Operation::RemoveLink {
             node: Address::new(7, 0),
+            expects: None,
             link: 1,
             back_link: None,
             one_way: true,
@@ -1733,7 +1889,11 @@ mod tests {
         built::extract(&folder, "nodes7", &built::region(7, 3, &seven, &[]));
         let refused = |index| {
             let node = Address::new(7, index);
-            let why = apply(&folder, &Operation::RemoveNode { node }).unwrap_err();
+            let removed = Operation::RemoveNode {
+                node,
+                expects: None,
+            };
+            let why = apply(&folder, &removed).unwrap_err();
             why.to_string()
         };
         // Nothing follows the last node, so nothing is renumbered: what is in the way is the link back to the node itself.

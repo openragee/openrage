@@ -1274,9 +1274,12 @@ fn print_usage() {
     eprintln!("                           kept one: every map, type file, archetype and bound,");
     eprintln!("                           and which archives were read again. --kept <file>");
     eprintln!("                           names the file it is kept in; --fresh reads it all.");
+    eprintln!("                           --level <pack> mounts as `dlc-list` does, and the");
+    eprintln!("                           index of a level is kept in a file of its own.");
     eprintln!("  at <install> <x> <y> <z>   (or a place as pasted: x,y,z or vector3(x, y, z))");
     eprintln!("                           The maps whose streaming extents hold a position and");
     eprintln!("                           the bounds whose box does, from the world index.");
+    eprintln!("                           --level <pack> asks the index of that level.");
     eprintln!("  ground <install> <x> <y> [<z>]   (or a place as pasted, as `at` takes one)");
     eprintln!("                           The ground under a position: its height, material");
     eprintln!("                           and bounds file, or none and the files looked in.");

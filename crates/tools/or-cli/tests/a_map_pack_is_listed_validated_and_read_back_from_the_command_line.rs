@@ -694,3 +694,129 @@ fn a_resource_checked_with_an_install_asks_the_game_about_what_it_places_and_doe
         warning.message
     );
 }
+
+const DOORS_CHILD_ENV: &str = "OPENRAGE_MAPS_DOORS_OF_AN_INSTALL_ARGS";
+const DOORS_CHILD_TEST: &str = "run_maps_doors_of_an_install_for_a_parent";
+const DOORS_SEPARATOR: char = '\u{1f}';
+
+/// Not a test of its own: the body a parent's child process runs, since the command prints with `println!`.
+#[test]
+fn run_maps_doors_of_an_install_for_a_parent() {
+    let Some(args) = std::env::var_os(DOORS_CHILD_ENV) else {
+        return;
+    };
+    let args: Vec<String> = (args.to_string_lossy().split(DOORS_SEPARATOR))
+        .map(str::to_string)
+        .collect();
+    if or_cli::run(&args) != ExitCode::SUCCESS {
+        std::process::exit(1);
+    }
+}
+
+/// How many maps of an install the suite of `maps doors --game` lists the doors of, spread over the maps by name.
+const MAPS_LISTED: usize = 12;
+
+/// ⚠ Needs an install (`OPENRAGE_GAME_ROOT`). It is opened read-only: the index and the keys the command keeps go to a scratch folder.
+#[test]
+fn the_doors_of_maps_of_an_install_are_listed_from_the_command_line() {
+    use std::collections::BTreeMap;
+    const WHAT: &str = "the_doors_of_maps_of_an_install_are_listed_from_the_command_line";
+    let Some(root) = or_test_support::game_roots().into_iter().next() else {
+        or_test_support::skip_install(
+            WHAT,
+            format!("{} names no install", or_test_support::GAME_ROOT_ENV),
+        );
+        return;
+    };
+    let Some(game) = mounted(&root) else {
+        or_test_support::skip_install(WHAT, format!("{} does not mount", root.display()));
+        return;
+    };
+    // The last path the mount lists of each map file. ⚠ Where a title update patches a pack's file, that is the pack's own path,
+    // which answers the patched copy, and the world index lists that copy at its own path.
+    let mut winners: BTreeMap<String, String> = BTreeMap::new();
+    game.for_each_file(|logical, _, leaf| {
+        let leaf = leaf.to_ascii_lowercase();
+        if leaf.ends_with(".ymap") {
+            winners.insert(leaf, logical.to_string());
+        }
+    });
+    assert!(!winners.is_empty(), "the mount lists no map file");
+    let every = (winners.len() / MAPS_LISTED).max(1);
+    let sampled: Vec<&String> = (winners.values().step_by(every))
+        .take(MAPS_LISTED)
+        .collect();
+
+    let scratch = tempfile::tempdir().unwrap();
+    let config = scratch.path().join("config");
+    std::fs::create_dir(&config).unwrap();
+    let kept = scratch.path().join("world.index");
+    let (mut entities, mut doors, mut read, mut unnamed) = (0, 0, 0, 0);
+    let (mut by_extension, mut types_unread, mut at_a_patch) = (0, 0, 0);
+    for logical in &sampled {
+        let args = [
+            "maps",
+            "doors",
+            "--game",
+            text(&root),
+            "--map",
+            logical.as_str(),
+            "--kept",
+            text(&kept),
+            "--json",
+        ];
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                DOORS_CHILD_TEST,
+                "--exact",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(DOORS_CHILD_ENV, args.join(&DOORS_SEPARATOR.to_string()))
+            .env("OPENRAGE_CONFIG_DIR", &config)
+            .output()
+            .expect("this test binary runs as a child");
+        let printed = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "a map file the mount lists is refused: {printed}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // The harness prints lines of its own around the array.
+        let from = printed.find("[\n").expect("an array begins a line");
+        let to = printed.rfind("\n]").expect("and ends one") + 2;
+        let listed: serde_json::Value = serde_json::from_str(&printed[from..to]).unwrap();
+        // The file is named as the index spells it: the path asked, or the path of the copy that lies where the path asked does.
+        let named = listed[0]["map"].as_str().expect("the map is named");
+        if !named.eq_ignore_ascii_case(logical) {
+            let lies = |path: &str| game.vfs.locate(path);
+            assert!(lies(named).is_some(), "{named} lies nowhere");
+            assert_eq!(lies(named), lies(logical), "{logical} is listed as {named}");
+            at_a_patch += 1;
+        }
+        let set = &listed[0]["sets"][0];
+        entities += set["entities"].as_u64().expect("entities");
+        unnamed += set["unnamed"].as_u64().expect("unnamed");
+        types_unread += set["unread"].as_array().map_or(0, Vec::len);
+        for door in set["doors"].as_array().expect("doors") {
+            doors += 1;
+            read += u64::from(!door["leaf"].is_null());
+            by_extension += u64::from(door["found_by"] == "extension");
+        }
+    }
+    eprintln!(
+        "\n=== {}: maps doors --game listed {} of {} map file(s) (one in {every}): {entities} entit(ies), {unnamed} with no \
+         name and no door extension; {doors} door(s), {by_extension} by the door extension, {read} with a leaf read from \
+         its box; {types_unread} type file(s) not read; {at_a_patch} map file(s) listed at the path of the copy that patches the \
+         one asked ===",
+        root.display(),
+        sampled.len(),
+        winners.len(),
+    );
+    assert!(
+        entities > 0,
+        "no entity was looked at in {} maps",
+        sampled.len()
+    );
+    assert_eq!(types_unread, 0, "a type file the index names did not read");
+}

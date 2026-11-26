@@ -574,6 +574,13 @@ filter = 'test(deleting_an_entity_of_the_install_keeps_every_link)'
 slow-timeout = { period = "60s", terminate-after = 120 }
 priority = 100
 
+# The install suite of `maps doors --game` builds the world index of an install in its first child, which reads every map,
+# type file and bound, and then lists a dozen maps. Beside building lanes, at a load of a hundred and thirty, that first
+# child alone passed the fifteen minutes a slow test is ended at on the Legacy install, so it is held to forty-five.
+[[profile.all.overrides]]
+filter = 'test(the_doors_of_maps_of_an_install_are_listed_from_the_command_line)'
+slow-timeout = { period = "60s", terminate-after = 45 }
+
 # The install suites of the world index each read every map, type file and bound of an install, and the suite of the index reads
 # each again through the mount. Beside building lanes the forest took sixteen minutes on the Legacy install and the suite of the
 # index twenty-three on each install, so every test of the binary is held to forty-five.

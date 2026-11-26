@@ -2,7 +2,7 @@
 // key blocks, NG decrypt tables, hash LUT and AWC key.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 #[cfg(feature = "rayon")]
@@ -711,9 +711,11 @@ fn scan_one(haystack: &[u8], target: &[u8; 20], len: usize) -> Option<Vec<u8>> {
     }
     let last = haystack.len() - len;
     let result: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+    // ⚠ The scan asks this at every step and never the lock: millions of contended locks from every core panic the macOS kernel.
+    let found = AtomicBool::new(false);
     let stride_count = last / ALIGN_LENGTH + 1;
     spread(0..stride_count).for_each(|i| {
-        if result.lock().unwrap().is_some() {
+        if found.load(Ordering::Relaxed) {
             return;
         }
         let off = i * ALIGN_LENGTH;
@@ -725,6 +727,7 @@ fn scan_one(haystack: &[u8], target: &[u8; 20], len: usize) -> Option<Vec<u8>> {
         hasher.update(window);
         let h = hasher.finalize();
         if h[..] == target[..] {
+            found.store(true, Ordering::Relaxed);
             let mut guard = result.lock().unwrap();
             if guard.is_none() {
                 *guard = Some(window.to_vec());

@@ -14,7 +14,7 @@ What the editor and `openrage-cli` do with each kind of file beyond the read and
 - A `.mrf` shows its state machines, states and transitions with their conditions, and its nodes by kind.
 - A `.cut`, a binary `.srl` and metadata XML no schema declares, such as `images.meta` and `weather.xml`, open in the metadata editor.
 - A `.nametable` opens as its names, one per line, in the Data workspace, and a text `.dat` table or `preload.list` as text.
-- The level's `water.xml`, and a `water_*.xml` a pack adds, has no view of its own in the editor. `openrage-cli convert info` reports its water, calming and wave quads and whatever else it states, and `convert` and `convert verify` take it by its name; no install's file has been read yet.
+- The level's `water.xml`, and a `water_*.xml` a pack adds, has no view of its own in the editor. `openrage-cli convert info` reports its water, calming and wave quads and whatever else it states, and `convert` and `convert verify` take it by its name. The three such files of each of the owner's two installs read whole and save to the bytes they came as (`every_water_file_is_typed_whole_and_saves_to_its_fixed_point`, 2026-11-25).
 - Any other file opens as text when it is text, and otherwise read-only as its bytes.
 
 ## Gen8 and Gen9

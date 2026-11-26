@@ -544,12 +544,13 @@ fn an_interiors_collision_is_named_and_not_loaded_until_a_caller_places_it() {
     let reads = Reads::new(&source);
     let mut world = WorldCollision::new(&index, &reads, ROOMY);
 
-    // The interior's file states its box about the interior's origin, where the index answers
-    // it. That is no place of the world: nothing of the interior is said of a column there.
-    assert_eq!(
-        names_at(&index.bounds_in_column(0.0, 0.0)),
-        ["v_int_shop_0"]
-    );
+    // The interior's file states its box about the interior's origin. That is no place of the
+    // world: the index answers nothing there, and nothing of the interior is said of that column.
+    let file = index.bound(world_fixture::hash("v_int_shop_0"));
+    let span = file.and_then(|bound| bound.span);
+    let (low, high) = span.expect("its file states a box");
+    assert!(low.cmple(Vec3::ZERO).all() && high.cmpge(Vec3::ZERO).all());
+    assert!(index.bounds_in_column(0.0, 0.0).is_empty());
     let origin = world.highest_ground(0.0, 0.0, SLOPE);
     assert_eq!(origin.ground, None);
     assert_eq!(origin.streamed, Streamed::default());

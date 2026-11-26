@@ -491,7 +491,9 @@ pub fn held_to_its_mount(mount: &dyn Fn() -> MountedGame, root: &Path, file: &Pa
     let game = mount();
     let source = or_depends::MountedWorld::new(&game, root);
     let counting = Counting::new(&source);
+    let started = std::time::Instant::now();
     let (index, report) = refresh(&counting, file);
+    let first_build = started.elapsed();
     assert!(
         matches!(report.kept, KeptState::Absent),
         "{:?}",
@@ -564,6 +566,10 @@ pub fn held_to_its_mount(mount: &dyn Fn() -> MountedGame, root: &Path, file: &Pa
     }
     for map in index.maps() {
         for carried in index.bounds_of_map(map.hash) {
+            // An interior's bound states its box about the interior, which is no position.
+            if carried.via == or_depends::Via::ManifestInterior {
+                continue;
+            }
             let Some(bound) = carried.bound else { continue };
             let Some(span) = bound.span.filter(|span| is_box(*span)) else {
                 continue;
@@ -608,7 +614,13 @@ pub fn held_to_its_mount(mount: &dyn Fn() -> MountedGame, root: &Path, file: &Pa
     let game = mount();
     let source = or_depends::MountedWorld::new(&game, root);
     let counting = Counting::new(&source);
+    let started = std::time::Instant::now();
     let (again, report) = refresh(&counting, file);
+    eprintln!(
+        "=== the first build took {first_build:.1?} and kept {} byte(s); the second start read them in {:.1?} ===",
+        std::fs::metadata(file).map_or(0, |kept| kept.len()),
+        started.elapsed()
+    );
     assert!(
         matches!(report.kept, KeptState::Current),
         "{:?}: read again {:?}",
@@ -750,6 +762,160 @@ pub fn models_held_to_their_maps(
         }
     }
     held
+}
+
+/// What the files of a mount state where the index takes one reading of them, counted so that an
+/// install says how far each reading holds.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Stated {
+    /// The maps the mount would load that read, and those whose `name` is not the hash of their
+    /// file's stem, which is what the index names a map by.
+    pub maps: usize,
+    pub named_otherwise: usize,
+    /// Those of them whose stated name is the stem of another map of the mount.
+    pub named_as_another_map: usize,
+    /// The maps that state a parent, and those whose parent is the stem of no map of the mount.
+    pub with_parent: usize,
+    pub parent_not_held: usize,
+    /// The archetypes more than one type file declares, and those of them two files give another
+    /// box or another distance: only for these does it matter which file is taken last.
+    pub redefined: usize,
+    pub redefined_differently: usize,
+    /// The bounds a manifest names for an interior some map places, whose file states a box.
+    pub interior_bounds: usize,
+    /// Those whose interior's archetype states a box of no size, which says nothing of the bound.
+    pub of_an_interior_with_no_size: usize,
+    /// Those whose box has its centre nearer the world's origin than any place a map puts the
+    /// interior, as a box stated about the interior has, and those whose centre is nearer such a
+    /// place, as a box stated in the world has.
+    pub nearer_the_origin: usize,
+    pub nearer_a_placement: usize,
+    /// Those the index answers at the centre of their box all the same.
+    pub answered_at_a_position: usize,
+}
+
+/// Run `work` over `items` on a dozen threads, and give the answers in the order of the items.
+fn each<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let done = std::sync::Mutex::new(Vec::with_capacity(items.len()));
+    std::thread::scope(|scope| {
+        for _ in 0..12 {
+            scope.spawn(|| loop {
+                let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(item) = items.get(at) else { break };
+                let answer = work(item);
+                done.lock().expect("no worker panicked").push((at, answer));
+            });
+        }
+    });
+    let mut done = done.into_inner().expect("no worker panicked");
+    done.sort_by_key(|(at, _)| *at);
+    done.into_iter().map(|(_, answer)| answer).collect()
+}
+
+/// Read every map and type file `game` would load and say what they state beside `index`.
+pub fn stated_by_the_files(game: &MountedGame, index: &or_depends::WorldIndex) -> Stated {
+    use or_io::meta::binary::parse_meta_binary_full;
+    use or_io::meta::{Diagnostics, ErrorMode};
+    use std::collections::HashMap;
+
+    let parsed = |logical: &str| {
+        let bytes = game.vfs.open(logical)?;
+        let mut diags = Diagnostics::new(ErrorMode::Lenient);
+        parse_meta_binary_full(or_io::meta::default_library(), &bytes, &mut diags)
+            .ok()
+            .map(|(root, _)| root)
+    };
+    let mut stated = Stated::default();
+    // Where the maps put each interior, by its archetype.
+    let mut placed: HashMap<u32, Vec<glam::Vec3>> = HashMap::new();
+    let maps: Vec<(String, String)> = winners(game, ".ymap").into_iter().collect();
+    // A map's name, its parent and each interior it places, with where.
+    let read = each(&maps, |(_, logical)| {
+        let root = parsed(logical)?;
+        let map = or_world::MapData::new(&root)?;
+        let interiors: Vec<(u32, glam::Vec3)> = (map.entities())
+            .filter(|entity| entity.is_interior_instance())
+            .map(|entity| (entity.archetype(), entity.position()))
+            .collect();
+        Some((map.name(), map.parent(), interiors))
+    });
+    for ((stem, _), map) in maps.iter().zip(read) {
+        let Some((name, parent, interiors)) = map else {
+            continue;
+        };
+        stated.maps += 1;
+        let otherwise = name != hash(stem);
+        stated.named_otherwise += usize::from(otherwise);
+        stated.named_as_another_map += usize::from(otherwise && index.map(name).is_some());
+        for (archetype, position) in interiors {
+            placed.entry(archetype).or_default().push(position);
+        }
+        if parent != 0 {
+            stated.with_parent += 1;
+            stated.parent_not_held += usize::from(index.map(parent).is_none());
+        }
+    }
+
+    // Each archetype's first declaration, and whether a later file's differs from it.
+    type Declared = (Option<(glam::Vec3, glam::Vec3)>, f32);
+    let mut declared: HashMap<u32, (String, Declared, bool, bool)> = HashMap::new();
+    let type_files: Vec<(String, String)> = winners(game, ".ytyp").into_iter().collect();
+    let read = each(&type_files, |(_, logical)| {
+        let root = parsed(logical)?;
+        let types = or_world::MapTypes::new(&root)?;
+        let rows = types.archetypes().filter(|a| a.name() != 0).map(|a| {
+            let now: Declared = (
+                a.bounds().map(|bounds| (bounds.min, bounds.max)),
+                a.lod_dist(),
+            );
+            (a.name(), now)
+        });
+        Some(rows.collect::<Vec<_>>())
+    });
+    for ((stem, _), rows) in type_files.iter().zip(read) {
+        for (name, now) in rows.into_iter().flatten() {
+            match declared.get_mut(&name) {
+                Some((first, was, again, differs)) if first != stem => {
+                    *again = true;
+                    *differs |= *was != now;
+                }
+                Some(_) => {}
+                None => {
+                    declared.insert(name, (stem.clone(), now, false, false));
+                }
+            }
+        }
+    }
+    stated.redefined = declared.values().filter(|d| d.2).count();
+    stated.redefined_differently = declared.values().filter(|d| d.3).count();
+
+    for interior in index.tables().bounded_interiors() {
+        let Some(places) = placed.get(&interior) else {
+            continue;
+        };
+        let own = index
+            .archetype(interior)
+            .and_then(|archetype| archetype.span);
+        for name in index.tables().interior_bounds_of(interior) {
+            let Some((min, max)) = index.bound(*name).and_then(|bound| bound.span) else {
+                continue;
+            };
+            stated.interior_bounds += 1;
+            stated.of_an_interior_with_no_size +=
+                usize::from(own.is_some_and(|(own_min, own_max)| own_min == own_max));
+            let centre = (min + max) * 0.5;
+            let from_a_place = (places.iter())
+                .map(|place| centre.distance(*place))
+                .fold(f32::INFINITY, f32::min);
+            stated.nearer_the_origin += usize::from(centre.length() < from_a_place);
+            stated.nearer_a_placement += usize::from(from_a_place < centre.length());
+            let answered = index.bounds_at(centre);
+            stated.answered_at_a_position +=
+                usize::from(answered.iter().any(|found| found.bound.hash == *name));
+        }
+    }
+    stated
 }
 
 /// A `.ynd`'s bytes: a region of `car` vehicle nodes and then `ped` pedestrian ones, each at the

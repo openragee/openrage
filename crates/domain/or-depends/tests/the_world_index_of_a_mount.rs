@@ -21,7 +21,7 @@ use or_depends::{
 use or_title::MountedGame;
 use world_fixture::{
     bound_bytes, cube, hash, held_to_its_mount, manifest_bytes, map_bytes, mount, mount_all,
-    types_bytes, write_archive, Counting, Held, MapSpec, Span,
+    stated_by_the_files, types_bytes, write_archive, Counting, Held, MapSpec, Span, Stated,
 };
 
 /// One file of the fixture: where it sits in its archive, and what it is.
@@ -536,9 +536,12 @@ fn a_point_answers_the_bounds_something_carries_whose_box_holds_it() {
     .into();
     assert_eq!(group, expected);
 
-    let shop = at(centre(cube([120.0, -280.0, 0.0], 20.0)));
-    let by_interior = vec![(hash("v_int_shop"), Via::ManifestInterior)];
-    assert_eq!(shop, [("v_int_shop_0".to_string(), by_interior)].into());
+    // An interior carries this one alone, so its box is about the interior and holds no place.
+    let shop = index.bound(hash("v_int_shop_0")).and_then(|b| b.span);
+    assert_eq!(
+        shop.map(|(min, max)| (min + max) * 0.5).map(at),
+        Some(BTreeMap::new())
+    );
 
     // Its box holds this point, and nothing carries it: the manifest names the group's bounds.
     let uncarried = Vec3::new(1075.0, 75.0, 25.0);
@@ -564,6 +567,75 @@ fn a_point_answers_the_bounds_something_carries_whose_box_holds_it() {
         9,
         "every `.ybn` is named, carried or not"
     );
+}
+
+/// An interior stands far from the origin and its bound states a box about the interior's own
+/// origin, as every such bound of both installs does: that box holds no place of the world.
+#[test]
+fn an_interiors_bound_whose_box_is_about_the_interior_is_answered_at_no_position_and_named_by_its_map(
+) {
+    let far = cube([2000.0, 2000.0, 0.0], 100.0);
+    let town = cube([-50.0, -50.0, 0.0], 100.0);
+    let room = cube([-8.0, -8.0, -1.0], 16.0);
+    let manifest = manifest_bytes(&[], &[("int_far", &["int_far_col"])]);
+    let archives: Vec<(&'static str, Files)> = vec![
+        (
+            "common.rpf",
+            vec![("data/levels/gta5/_manifest.ymf", What::Raw(manifest))],
+        ),
+        (
+            "x64a.rpf",
+            vec![
+                (
+                    "levels/m_far.ymap",
+                    What::Map(MapSpec {
+                        interiors: vec!["int_far"],
+                        ..MapSpec::around(far)
+                    }),
+                ),
+                ("levels/m_town.ymap", What::Map(MapSpec::around(town))),
+                ("levels/m_town_0.ybn", What::Bound(town)),
+                ("levels/int_far_col.ybn", What::Bound(room)),
+            ],
+        ),
+    ];
+    let (_scratch, root) = install_of(&archives);
+    let game = mount(&root);
+    let index = built(&game, &root);
+    let names = |found: Vec<or_depends::world_index::BoundAt<'_>>| -> Vec<String> {
+        found.iter().map(|at| at.bound.name.clone()).collect()
+    };
+
+    // The origin is in the interior's box and in the town's: the town alone is there.
+    let origin = centre(room);
+    assert!(origin.cmpge(Vec3::from(town.0)).all() && origin.cmple(Vec3::from(town.1)).all());
+    assert_eq!(names(index.bounds_at(origin)), ["m_town_0"]);
+    assert_eq!(
+        names(index.bounds_in_column(origin.x, origin.y)),
+        ["m_town_0"]
+    );
+    assert_eq!(
+        names(index.bounds_near_column(origin.x, origin.y, 500.0)),
+        ["m_town_0"]
+    );
+
+    // It is carried, and named where the map that places its interior streams.
+    let carried = index.bounds_of_map(hash("m_far"));
+    let by_interior: Vec<&str> = (carried.iter())
+        .filter(|c| matches!(c.via, Via::ManifestInterior))
+        .filter_map(|c| Some(c.bound?.name.as_str()))
+        .collect();
+    assert_eq!(by_interior, ["int_far_col"]);
+    assert_eq!(index.carried_bounds(), 2);
+    let there = centre(far);
+    assert_eq!(
+        names(index.interior_bounds_near_column(there.x, there.y, 0.0)),
+        ["int_far_col"]
+    );
+    assert!(index.bounds_at(there).is_empty());
+    assert!(index
+        .interior_bounds_near_column(origin.x, origin.y, 0.0)
+        .is_empty());
 }
 
 /// How many files of the fixture's archive `name` an index opens: each map, type file, manifest
@@ -1362,6 +1434,33 @@ fn an_archive_with_no_stamp_is_read_at_every_build() {
     }
 }
 
+/// A content list may name one pack twice, and the mount then lists its archive twice.
+#[test]
+fn an_archive_the_mount_lists_twice_is_kept_twice_and_a_second_build_reads_neither() {
+    let archives = [
+        archive("common", "common.rpf", 100, 7),
+        archive("dlc_twice", "dlcpacks/twice/dlc.rpf", 300, 9),
+        archive("dlc_twice", "dlcpacks/twice/dlc.rpf", 300, 9),
+        archive("platform", "x64a.rpf", 200, 8),
+    ];
+    let bare = Bare::new("install", &archives);
+    let (first, kept, read) = bare.built_from(None);
+    assert!(matches!(kept, KeptState::Absent), "{kept:?}");
+    assert_eq!(read, [0, 1, 2, 3]);
+    let (second, kept, read) = bare.built_from(Some(&first));
+    assert_eq!(read, [0usize; 0], "an archive that stands was read again");
+    assert!(matches!(kept, KeptState::Current), "{kept:?}");
+    assert_eq!(second.archives().count(), archives.len());
+    assert_eq!(second.key(), first.key());
+
+    // One of the two changed: the other is still taken from the kept index.
+    let mut changed = archives.clone();
+    changed[2] = archive("dlc_twice", "dlcpacks/twice/dlc.rpf", 301, 9);
+    let (_, kept, read) = Bare::new("install", &changed).built_from(Some(&first));
+    assert_eq!(read, [2]);
+    assert!(matches!(kept, KeptState::Changed), "{kept:?}");
+}
+
 #[test]
 fn an_archive_of_another_size_or_one_that_left_is_not_answered_from_the_kept_file() {
     let (scratch, root) = install();
@@ -1653,18 +1752,146 @@ fn what_the_install_suite_checks_holds_of_the_mount_built_by_hand() {
     let maps = fixture_winners(|what| matches!(what, What::Map(_))).len();
     let type_files = fixture_winners(|what| matches!(what, What::Types(_))).len();
     let bounds = fixture_winners(|what| matches!(what, What::Bound(_))).len();
-    // Each bound a map's group, stem or interior names that the install holds: `m_group_9` is
-    // named and is no file.
-    let carried = 3 + (GROUP_BOUNDS.len() - 1) + INTERIOR_BOUNDS.len();
+    // Each bound a map's group or stem names that the install holds: `m_group_9` is named and is
+    // no file, and the one an interior names is asked at no position.
+    let asked = 3 + (GROUP_BOUNDS.len() - 1);
     let expected = Held {
         maps,
         type_files,
         bounds,
         maps_asked: maps,
-        bounds_asked: carried,
+        bounds_asked: asked,
     };
     assert_eq!(held, expected);
     assert_eq!((maps, type_files, bounds), (4, 2, 9));
+}
+
+/// ⚠ The measure the install suite prints, on an install built to give each of its counts.
+#[test]
+fn what_the_files_state_is_counted_on_an_install_built_to_state_it() {
+    let far = cube([2000.0, 2000.0, 0.0], 100.0);
+    let near = cube([-500.0, 300.0, 0.0], 100.0);
+    let unit = cube([-1.0, -1.0, -1.0], 2.0);
+    let room = cube([-10.0, -10.0, -2.0], 20.0);
+    let manifest = manifest_bytes(
+        &[],
+        &[
+            ("int_local", &["int_local_col"]),
+            ("int_world", &["int_world_col"]),
+            ("int_big", &["int_big_col"]),
+            ("int_both", &["m_near_0"]),
+        ],
+    );
+    let far_map = MapSpec {
+        interiors: vec!["int_local"],
+        ..MapSpec::around(far)
+    };
+    let near_map = MapSpec {
+        parent: "m_far",
+        interiors: vec!["int_world", "int_both"],
+        ..MapSpec::around(near)
+    };
+    let west_map = MapSpec {
+        parent: "m_far",
+        interiors: vec!["int_big"],
+        ..MapSpec::around(cube([-3000.0, -3000.0, -50.0], 100.0))
+    };
+    let renamed = MapSpec {
+        parent: "m_nowhere",
+        ..MapSpec::around(unit)
+    };
+    let archives: Vec<(&'static str, Files)> = vec![
+        (
+            "common.rpf",
+            vec![("data/levels/gta5/_manifest.ymf", What::Raw(manifest))],
+        ),
+        (
+            "x64a.rpf",
+            vec![
+                ("levels/m_far.ymap", What::Map(far_map)),
+                ("levels/m_near.ymap", What::Map(near_map)),
+                ("levels/m_west.ymap", What::Map(west_map)),
+                // It states another name than its file's, and a parent that is no file.
+                (
+                    "levels/m_renamed.ymap",
+                    What::Raw(map_bytes("m_other", &renamed)),
+                ),
+                // Each states the name of another map of the mount.
+                (
+                    "levels/m_grass.ymap",
+                    What::Raw(map_bytes("m_far", &MapSpec::around(unit))),
+                ),
+                (
+                    "levels/m_scrub.ymap",
+                    What::Raw(map_bytes("m_near", &MapSpec::around(unit))),
+                ),
+                // About the interior's own origin, far from where its map puts the interior.
+                (
+                    "levels/int_local_col.ybn",
+                    What::Bound(cube([-8.0, -8.0, -1.0], 16.0)),
+                ),
+                // Where the map that places its interior stands.
+                (
+                    "levels/int_world_col.ybn",
+                    What::Bound(cube([-480.0, 320.0, 0.0], 20.0)),
+                ),
+                // An interior's by the manifest and its map's by its name, so it is answered where it states.
+                (
+                    "levels/m_near_0.ybn",
+                    What::Bound(cube([-440.0, 360.0, 0.0], 20.0)),
+                ),
+                // About its interior's origin and off its centre.
+                (
+                    "levels/int_big_col.ybn",
+                    What::Bound(cube([-10.0, -10.0, -2.0], 40.0)),
+                ),
+                (
+                    "types/types_a.ytyp",
+                    What::Types(vec![
+                        ("int_local", room, 100.0),
+                        ("int_world", room, 100.0),
+                        // As the installs' type files state an interior: a box of no size.
+                        ("int_big", cube([0.0, 0.0, 0.0], 0.0), 100.0),
+                        ("prop_same", unit, 60.0),
+                        ("prop_again", unit, 60.0),
+                        ("prop_other", unit, 60.0),
+                    ]),
+                ),
+            ],
+        ),
+        (
+            "x64b.rpf",
+            vec![(
+                "types/types_b.ytyp",
+                What::Types(vec![
+                    ("prop_same", unit, 60.0),
+                    ("prop_again", unit, 60.0),
+                    ("prop_other", unit, 90.0),
+                ]),
+            )],
+        ),
+    ];
+    let (_scratch, root) = install_of(&archives);
+    let game = mount(&root);
+    let index = built(&game, &root);
+    assert_eq!(index.redefined(), 3);
+    assert_eq!(
+        stated_by_the_files(&game, &index),
+        Stated {
+            maps: 6,
+            named_otherwise: 3,
+            named_as_another_map: 2,
+            with_parent: 3,
+            parent_not_held: 1,
+            redefined: 3,
+            redefined_differently: 1,
+            interior_bounds: 4,
+            of_an_interior_with_no_size: 1,
+            nearer_the_origin: 2,
+            nearer_a_placement: 2,
+            answered_at_a_position: 1,
+        }
+    );
 }
 
 /// The names of what the folder that holds `file` holds.

@@ -159,6 +159,57 @@ fn a_lookup_that_is_wrong_about_a_hash_names_nothing() {
     assert_eq!(found.unnamed, 1);
 }
 
+/// ⚠ As the installs state a door: no archetype of either states the door extension, and the
+/// entities of the maps and of the interiors do.
+#[test]
+fn a_door_whose_entity_states_the_door_extension_is_found_by_it_whatever_its_archetype_states() {
+    let door_extension = || pointers(vec![ExtensionKind::Door.template().expect("a named kind")]);
+    let mut stated = entity("hatch_a", [0.0, 0.0, 0.0], 0.0);
+    stated.set("extensions", door_extension());
+    let mut inside = entity("hatch_a", [1.0, 0.0, 0.0], 0.0);
+    inside.set("extensions", door_extension());
+    let mut interior = archetype("yard_interior", [-5.0; 3], [5.0; 3], false);
+    interior.type_name = "CMloArchetypeDef".into();
+    interior.set(
+        "entities",
+        pointers(vec![inside, entity("hatch_a", [2.0, 0.0, 0.0], 0.0)]),
+    );
+    let types = type_file(vec![
+        interior,
+        archetype("hatch_a", LEAF_MIN, LEAF_MAX, false),
+    ]);
+    let map = map_file(vec![
+        stated,
+        entity("hatch_a", [10.0, 0.0, 0.0], 0.0),
+        entity_of(
+            "CMloInstanceDef",
+            "yard_interior",
+            [100.0, 0.0, 0.0],
+            Quat::IDENTITY,
+        ),
+    ]);
+    // Nothing names the model, so nothing but the extension can find it.
+    let found = found_in(&map, &types, &[]);
+
+    let doors: Vec<(EntityAt, &FoundBy, Vec3)> = (found.doors.iter())
+        .map(|door| (door.entity.at, &door.found_by, door.entity.position))
+        .collect();
+    let within = EntityAt {
+        map: 0,
+        entity: 2,
+        inside: Some(0),
+    };
+    assert_eq!(
+        doors,
+        vec![
+            (at(0), &FoundBy::Extension, Vec3::ZERO),
+            (within, &FoundBy::Extension, Vec3::new(101.0, 0.0, 0.0)),
+        ]
+    );
+    // The same model placed with no extension is no door, and is counted as one nothing could judge.
+    assert_eq!((found.entities, found.unnamed), (5, 2));
+}
+
 #[test]
 fn a_door_an_interior_places_is_found_where_the_instance_puts_it() {
     // Its own name would make it a door, were a placed interior ever one.

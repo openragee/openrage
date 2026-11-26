@@ -300,6 +300,41 @@ pub fn capsule_intensity(intensity: f32, length: f32, flags2: u32) -> f32 {
     }
 }
 
+/// Light flag bits: interior only, exterior only.
+const LIGHT_INTERIOR_ONLY: u32 = 1;
+const LIGHT_EXTERIOR_ONLY: u32 = 2;
+/// Flags that leave a light's range unscaled by the frame's outdoor and indoor scales.
+const MAP_RANGE_UNSCALED: u32 = 0x0208_0418;
+/// Flags that keep set-up from marking a light that states neither side as exterior only.
+const SETUP_KEEPS_SIDE: u32 = 0x0200_4018;
+
+/// A map light's flags as set-up leaves them: one that states neither side and none of a few flags is outdoors only.
+pub fn map_light_flags(flags: u32) -> u32 {
+    let side = LIGHT_INTERIOR_ONLY | LIGHT_EXTERIOR_ONLY;
+    if flags & side == 0 && flags & SETUP_KEEPS_SIDE == 0 {
+        flags | LIGHT_EXTERIOR_ONLY
+    } else {
+        flags
+    }
+}
+
+/// What a map light of set-up's `flags` has its range multiplied by from the frame's outdoor and indoor scales, held to one; the scale of the record's own factor is left at one, as nothing found writes it.
+pub fn map_range_scale(flags: u32, exterior: f32, interior: f32) -> f32 {
+    #[allow(clippy::float_cmp)]
+    let scaled = flags & MAP_RANGE_UNSCALED == 0 && (interior != 1.0 || exterior != 1.0);
+    if !scaled {
+        return 1.0;
+    }
+    let b = if flags & LIGHT_INTERIOR_ONLY != 0 {
+        interior
+    } else if flags & LIGHT_EXTERIOR_ONLY != 0 {
+        exterior
+    } else {
+        exterior.max(interior)
+    };
+    b.min(1.0)
+}
+
 /// Record radius, negated when the inside test is on and the camera is within the range-scaled range; pass false for lights other than point and spot.
 pub fn signed_range(range: f32, light: Vec3, camera: Vec3, inside_test_on: bool) -> f32 {
     if inside_test_on && (light - camera).length_squared() < range * range {

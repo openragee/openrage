@@ -654,3 +654,23 @@ fn far_fade_runs_over_the_last_five_percent() {
     // A zero reach stays finite: 0 / MIN_POSITIVE - 19 saturates to 0.
     assert_eq!(cascade_far_fade(0.0, 0.0), 0.0);
 }
+
+#[test]
+fn a_map_light_s_range_takes_its_side_s_scale_held_to_one() {
+    // At the defaults nothing scales.
+    assert_eq!(map_range_scale(map_light_flags(0), 1.0, 1.0), 1.0);
+    // A light that states no side is outdoors only after set-up.
+    assert_eq!(map_light_flags(0), 2);
+    assert_eq!(map_light_flags(0x10), 0x10, "a flag that keeps its side");
+    assert!(close(
+        map_range_scale(map_light_flags(0), 0.5, 0.8),
+        0.5,
+        1e-6
+    ));
+    assert!(close(map_range_scale(1, 0.5, 0.8), 0.8, 1e-6));
+    // Both sides: the larger, and never past one.
+    assert!(close(map_range_scale(0, 0.5, 0.8), 0.8, 1e-6));
+    assert_eq!(map_range_scale(2, 3.0, 1.0), 1.0);
+    // A flag of the unscaled set leaves it whole.
+    assert_eq!(map_range_scale(2 | 0x400, 0.5, 0.5), 1.0);
+}

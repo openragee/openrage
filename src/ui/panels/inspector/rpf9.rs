@@ -499,7 +499,9 @@ pub(super) fn draw_scan_origin(ui: &mut egui::Ui, state: &AppState, doc_id: Docu
             row(ui, tr!("Archive"), &archive);
             row(ui, tr!("Offset"), &format!("{:#X}", find.offset));
         }
-        row(ui, tr!("Found as"), &kind_label(&find));
+        let row_kind = tree_row.as_ref().and_then(|_| state.tree_row_kind(doc_id));
+        let (said_as, kind) = found_as(&find, row_kind);
+        row(ui, said_as, &kind);
         row(ui, tr!("Size"), &sizes(&find));
         if let Rpf9BodyKind::Zlib(Rpf9ZlibRun {
             resource: Some(resource),
@@ -537,6 +539,14 @@ fn block_map(resource: &Rpf9Resource) -> String {
         virtual_size = or_job::human_bytes(resource.virtual_len),
         physical_size = or_job::human_bytes(resource.physical_len),
     )
+}
+
+/// What a body is said to be: the kind its tree row's table states, else what a scan found it as.
+fn found_as(find: &Rpf9ScanFind, row_kind: Option<String>) -> (&'static str, String) {
+    match row_kind {
+        Some(kind) => (tr!("Kind"), kind),
+        None => (tr!("Found as"), kind_label(find)),
+    }
 }
 
 fn kind_label(find: &Rpf9ScanFind) -> String {
@@ -657,6 +667,32 @@ mod tests {
         };
         assert!(named_words(&row, Some("a_made_up_model.#dr")).ends_with("a_made_up_model.#dr"));
         assert_eq!(named_words(&row, None), row_words(&row));
+    }
+
+    #[test]
+    fn a_tree_row_is_said_to_be_its_row_s_kind_and_only_a_scan_s_body_its_guess() {
+        let find = Rpf9ScanFind {
+            offset: 0x1000,
+            kind: Rpf9BodyKind::Zlib(Rpf9ZlibRun {
+                content: Rpf9Content::ResourceShaped,
+                chunks: 1,
+                stored_pieces: 0,
+                first_chunk_len: 0x40,
+                first_chunk_inflated: 0x100,
+                inflated: 0x100,
+                signature: None,
+                resource: None,
+            }),
+            span: 0x40,
+            stored_len: Some(0x40),
+            inflated_len: Some(0x100),
+            container: None,
+        };
+        let guess = tr!("four zero bytes first").to_string();
+        assert_eq!(found_as(&find, None), (tr!("Found as"), guess.clone()));
+        let (said_as, kind) = found_as(&find, Some("drawable".into()));
+        assert_eq!((said_as, kind.as_str()), (tr!("Kind"), "drawable"));
+        assert_ne!(kind, guess);
     }
 
     #[test]

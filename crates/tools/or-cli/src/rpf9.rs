@@ -15,6 +15,7 @@
 //!                                          classify each flagged body by its inflated head
 //!   `rpf9 patch|fits <archive> --entry …`  bodies changed chunk by chunk, the tables kept byte for
 //!                                          byte; `fits` writes nothing
+//!   `rpf9 verify-patch <source> <copy>`    whether a copy is a patched copy of its source
 //!
 //! With `--strings`, `list` and `extract` show the strings a PSO document carries, its enciphered runs
 //! deciphered with the key snapshot. `--exe` names the game executable a masked snapshot opens with.
@@ -44,6 +45,8 @@ mod find;
 mod install;
 #[path = "rpf9_patch.rs"]
 pub(crate) mod patch;
+#[path = "rpf9_verify.rs"]
+mod verify;
 
 pub(crate) fn run(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
@@ -58,6 +61,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         }
         Some(verb @ ("add" | "build")) => crate::rpf9_write::run(verb, &args[1..]),
         Some(verb @ ("patch" | "fits")) => patch::run(verb, &args[1..]),
+        Some("verify-patch") => verify::run(&args[1..]),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -74,6 +78,8 @@ usage:
   openrage-cli rpf9 pack <archive.rpf> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli rpf9 find <install-dir> [--name <substr>] [--hash <hex>] [--kind <archive|resource|media|0xNN|kind label>] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli rpf9 census <build-root> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>] [--out <dir>] [--top-only]
+  openrage-cli rpf9 verify-patch <source.rpf> <copy.rpf> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+      (whether the copy is a patched copy of the source: the same length, every header, table and names span of every archive byte-identical, every differing byte inside a row that reads through its table; exits 0 only for a patched copy)
   openrage-cli rpf9 copy <archive.rpf> --out <new.rpf> [--keys <snapshot>]
   openrage-cli rpf9 replace <archive.rpf> [inner/path] --entry <selector> --with <file> --out <new.rpf> [--names <dir>] [--keys <snapshot>]
   openrage-cli rpf9 remove <archive.rpf> [inner/path] --entry <selector> --out <new.rpf> [--names <dir>] [--keys <snapshot>]
@@ -83,7 +89,10 @@ usage:
   openrage-cli rpf9 build <folder> --key-from <archive.rpf> --out <new.rpf> [--keys <snapshot>]
   openrage-cli rpf9 patch <archive.rpf> --entry <path> --with <file> [--entry <path> --with <file> ...] --out <new.rpf> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli rpf9 fits <archive.rpf> --entry <path> --with <file> [--entry <path> --with <file> ...] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
-      (patch changes bodies chunk by chunk into a new file whose tables stay byte-identical; fits says per chunk whether each would, and writes nothing)";
+      (patch changes bodies chunk by chunk into a new file whose tables stay byte-identical; fits says per chunk whether each would, and writes nothing)
+  openrage-cli rpf9 patch <archive.rpf> --from <folder> --out <new.rpf> [--skip-unfit] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+  openrage-cli rpf9 fits <archive.rpf> --from <folder> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
+      (--from: each file is the row of its path in the folder, a nested archive's rows in a folder of its path; rpf9 extract writes a nested archive as one file, taken only unchanged, so extract its rows with rpf9 extract <archive.rpf> <folder>/<inner/path> <inner/path> to edit them; a file naming no row is refused and nothing is written; the copy is written only when every row fits, or with --skip-unfit the rows that fit)";
 
 fn usage(msg: &str) -> ExitCode {
     eprintln!("Error: {msg}");

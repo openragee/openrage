@@ -332,13 +332,18 @@ impl MetaDocument {
     }
 
     fn regenerate_text_from_parsed(&mut self) {
-        let xml = self
-            .parsed
-            .as_ref()
-            .map(|p| or_io::meta::write_meta(&p.instance).unwrap_or_default())
-            .unwrap_or_default();
-        let xml = super::gta6_meta_names::shown_xml(xml, self.layout.as_ref(), &self.strings);
-        self.text = TextDocument::decode(xml.as_bytes());
+        // A GTA VI data XML edited only in its values shows the body its row saves as.
+        let spliced = crate::state::gta6_meta_save::splice::from_fields(self);
+        let xml = spliced.unwrap_or_else(|| {
+            let xml = self
+                .parsed
+                .as_ref()
+                .map(|p| or_io::meta::write_meta(&p.instance).unwrap_or_default())
+                .unwrap_or_default();
+            let shown = super::gta6_meta_names::shown_xml(xml, self.layout.as_ref(), &self.strings);
+            shown.into_bytes()
+        });
+        self.text = TextDocument::decode(&xml);
         self.text_revision = self.text_revision.wrapping_add(1);
         self.parsed_at_text_revision = self.text_revision;
     }
@@ -401,6 +406,12 @@ impl MetaDocument {
         self.keeps_a_checksum()
             || matches!(self.layout.as_ref().map(|l| &l.container),
                 Some(ContainerLayout::Rbm(rbm)) if rbm.seal.is_none())
+    }
+
+    /// Whether this is a GTA VI headerless resource, told by its layout alone, which writes nothing.
+    pub fn is_headerless(&self) -> bool {
+        matches!(self.layout.as_ref().map(|l| &l.container),
+            Some(or_io::meta::binary::ContainerLayout::Rbm(rbm)) if rbm.seal.is_none())
     }
 
     /// A GTA VI headerless resource's sections with its tree written in; `None` for any other

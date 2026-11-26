@@ -12,7 +12,7 @@ pub(crate) fn particles<T: ParticleTarget>(payload: &mut DocPayload) -> Option<&
 }
 
 /// Effect rule `idx` of `doc` held `before` until the edit.
-pub(super) fn effect<T: ParticleTarget>(
+pub(crate) fn effect<T: ParticleTarget>(
     state: &mut AppState,
     doc: DocumentId,
     idx: usize,

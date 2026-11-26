@@ -432,23 +432,30 @@ fn crumbs(ui: &mut egui::Ui, state: &mut AppState, listing: &Listing) {
 
 /// How many items the folder holds, how many are selected and how much they hold.
 fn status_line(ui: &mut egui::Ui, state: &mut AppState, listing: &Listing) {
-    let (selected, chosen_bytes, total_bytes) =
-        match state.document(listing.doc).map(|d| &d.payload) {
-            Some(DocPayload::Rpf(rpf)) => {
-                let size =
-                    |id: &RpfNodeId| crate::state::files_view::listed_bytes(&rpf.session, *id);
-                let selected: Vec<RpfNodeId> = state
-                    .selection
-                    .selected_ids(listing.doc)
-                    .into_iter()
-                    .filter(|id| listing.order.contains(id))
-                    .collect();
-                let chosen: u64 = selected.iter().map(size).sum();
-                let total: u64 = listing.order.iter().map(size).sum();
-                (selected.len(), chosen, total)
+    let (selected, chosen_bytes, total_bytes) = match state
+        .document(listing.doc)
+        .map(|d| &d.payload)
+    {
+        Some(DocPayload::Rpf(rpf)) => {
+            let size = |id: &RpfNodeId| crate::state::files_view::listed_bytes(&rpf.session, *id);
+            let selected: Vec<RpfNodeId> = state
+                .selection
+                .selected_ids(listing.doc)
+                .into_iter()
+                .filter(|id| listing.order.contains(id))
+                .collect();
+            let chosen: u64 = selected.iter().map(size).sum();
+            let total: u64 = listing.order.iter().map(size).sum();
+            let measuring = (listing.order.iter())
+                .any(|id| crate::state::files_view::measured_bytes(&rpf.session, *id).is_none());
+            if measuring {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(30));
             }
-            _ => (0, 0, 0),
-        };
+            (selected.len(), chosen, total)
+        }
+        _ => (0, 0, 0),
+    };
     let count = listing.order.len();
     let mut parts = vec![format!("{count} item{}", if count == 1 { "" } else { "s" })];
     if selected > 0 {

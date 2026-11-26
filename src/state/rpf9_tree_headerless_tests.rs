@@ -342,3 +342,6 @@ fn a_real_text_tables_first_text_changed_at_its_length_saves_as_a_patched_copy()
     let read = (reopened.read_entry_decrypted(&mut copy, e, &keys)).expect("the row reads");
     assert_eq!(Some(read), stored_body(&loose));
 }
+
+#[path = "gta6_app_saves_per_kind_tests.rs"]
+mod saves_per_kind;

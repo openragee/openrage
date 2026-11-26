@@ -31,6 +31,10 @@ use or_io::meta::schema::SchemaLibrary;
 use or_io::meta::Value;
 use or_io::{literal_string_hash, string_hash};
 
+#[path = "gta6_names_rules.rs"]
+mod rules;
+use rules::{NESTED_CAP, SIBLING_CAP};
+
 const USAGE: &str = "\
 usage: openrage-cli hashes mine <install-folder | archive.rpf> --out <file> [--names <dir>] [--keys <snapshot>] [--exe <exe>] [--listings <dir>] [--range <count>] [--max-bodies <n>|unlimited] [--max-total <n>|unlimited] [--archive <n>]...
   Writes the names it finds to <file> as 0xHASH<TAB>name rows, after each archive as it goes;
@@ -62,10 +66,6 @@ const BASENAME_CAP: usize = 1 << 21;
 const EXE_WINDOW: u64 = 16 << 20;
 /// The bytes one executable window carries into the next, so a string across the edge is whole once.
 const EXE_OVERLAP: usize = 256;
-/// The rounds of rules over the names each round found.
-const ROUNDS: usize = 3;
-/// The extensions and suffixes the rules try, the commonest first.
-const RULE_TOP: usize = 64;
 const DEFAULT_RANGE: u32 = 100;
 /// A body larger than this is not read for its schema in the first walk.
 const SCHEMA_BODY: u64 = 4 << 20;
@@ -76,20 +76,6 @@ const BODIES_FLAG: &str = "--max-bodies";
 const DEFAULT_BODIES: u64 = 50_000;
 const TOTAL_FLAG: &str = "--max-total";
 const LISTINGS_ENV: &str = "OPENRAGE_LIFTED_LISTINGS";
-/// The twins whose names the twin rule tries for one unnamed archive, the most rows shared first.
-const TWINS: usize = 3;
-/// The longest ending after a `_` the twin rule spells out letter by letter.
-const SHORT_ENDING: usize = 3;
-/// The candidates the nested-archive rule tries for one unnamed archive at most.
-// ponytail: a table with many named directories joins only the ones met first; the report counts
-// the archives cut short.
-const NESTED_CAP: usize = 1 << 17;
-/// The longest ending a named archive adds to a stem of its rows.
-const MAX_ENDING: usize = 24;
-/// The stem-and-ending candidates the sibling rule hashes in one table at most.
-// ponytail: a table past this tries only the stems met first, alphabetically; the report counts
-// the tables cut short.
-const SIBLING_CAP: usize = 1 << 22;
 const ARCHIVE_FLAG: &str = "--archive";
 
 /// A table the first walk met: the table above it, the 64-bit name of the row it was opened from
@@ -173,8 +159,8 @@ struct Miner {
     named64: HashMap<u64, String>,
     /// The unnamed nested archives whose candidates ran past [`NESTED_CAP`].
     nested_capped: HashSet<u64>,
-    /// The tables whose sibling candidates ran past [`SIBLING_CAP`].
-    siblings_capped: usize,
+    /// The tables whose sibling candidates ran past [`SIBLING_CAP`], by their place in `tree`.
+    siblings_capped: HashSet<usize>,
     /// Each archive walked, in walk order.
     archives: Vec<ArchiveRead>,
 }
@@ -240,149 +226,6 @@ impl Miner {
     /// The name a row has, from the resolver, the kept rows or this run.
     fn name64(&self, hash: u64) -> Option<&str> {
         (self.found64.get(&hash).or_else(|| self.named64.get(&hash))).map(String::as_str)
-    }
-
-    /// Tries each unnamed nested archive as a directory a named archive of the same table lies in,
-    /// joined with a stem the archive's named rows share or with that directory's last component,
-    /// then with each ending a named archive adds to such a stem and each extension named archives carry.
-    fn nested_rules(&mut self) {
-        let mut dirs: HashMap<Option<usize>, BTreeSet<String>> = HashMap::new();
-        let (mut endings, mut exts, mut unnamed) = (Vec::new(), BTreeSet::new(), Vec::new());
-        for table in &self.tree {
-            let Some(from) = table.from else {
-                continue;
-            };
-            let stems = shared_stems(table.rows.iter().filter_map(|&hash| self.name64(hash)));
-            let Some(archive) = self.name64(from) else {
-                if self.entry.contains_key(&from) {
-                    unnamed.push((from, table.parent, stems));
-                }
-                continue;
-            };
-            let archive = archive.to_ascii_lowercase();
-            let stem = stem_of(&archive);
-            exts.insert(archive[stem.len()..].to_string());
-            let (dir, last) = stem.split_at(stem.rfind('/').map_or(0, |at| at + 1));
-            let ends: BTreeSet<&str> = (stems.iter().map(String::as_str).chain(dir_stem(dir)))
-                .filter_map(|s| last.strip_prefix(s))
-                .filter(|end| end.starts_with('_') && end.len() <= MAX_ENDING)
-                .collect();
-            endings.extend(ends.into_iter().map(str::to_owned));
-            dirs.entry(table.parent)
-                .or_default()
-                .insert(dir.to_string());
-        }
-        let mut endings = ranked(counted(endings.into_iter()), 2);
-        endings.insert(0, String::new());
-        let was = std::mem::replace(&mut self.source, Source::Rules);
-        for (from, parent, stems) in unnamed {
-            let Some(dirs) = dirs.get(&parent) else {
-                continue;
-            };
-            let mut budget = NESTED_CAP;
-            'archive: for dir in dirs {
-                for stem in stems.iter().map(String::as_str).chain(dir_stem(dir)) {
-                    for end in &endings {
-                        for ext in &exts {
-                            if self.found64.contains_key(&from) {
-                                break 'archive;
-                            }
-                            if budget == 0 {
-                                self.nested_capped.insert(from);
-                                break 'archive;
-                            }
-                            budget -= 1;
-                            self.try_name(&format!("{dir}{stem}{end}{ext}"));
-                        }
-                    }
-                }
-            }
-        }
-        self.source = was;
-    }
-
-    /// Tries each unnamed nested archive as the name of a named one whose rows it shares, the most
-    /// rows shared first, with each ending of a `_` and up to [`SHORT_ENDING`] letters or digits.
-    fn twin_rules(&mut self) {
-        let mut holders: HashMap<u64, Vec<usize>> = HashMap::new();
-        for (at, table) in self.tree.iter().enumerate() {
-            if table.from.is_some_and(|from| self.name64(from).is_some()) {
-                for &row in table.rows.iter().filter(|&&row| row != 0) {
-                    holders.entry(row).or_default().push(at);
-                }
-            }
-        }
-        let endings = short_endings();
-        let was = std::mem::replace(&mut self.source, Source::Rules);
-        for at in 0..self.tree.len() {
-            let Some(from) = (self.tree[at].from)
-                .filter(|from| self.entry.contains_key(from) && !self.found64.contains_key(from))
-            else {
-                continue;
-            };
-            let mut shared: HashMap<usize, usize> = HashMap::new();
-            for row in &self.tree[at].rows {
-                for &twin in holders.get(row).into_iter().flatten() {
-                    *shared.entry(twin).or_default() += 1;
-                }
-            }
-            let mut twins: Vec<(usize, usize)> = shared.into_iter().collect();
-            twins.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-            'twins: for (twin, _) in twins.into_iter().take(TWINS) {
-                let Some(name) = (self.tree[twin].from).and_then(|f| self.name64(f)) else {
-                    continue;
-                };
-                let name = name.to_ascii_lowercase();
-                let state = NameHasher::default().with(name.as_bytes());
-                for end in &endings {
-                    if state.with(end.as_bytes()).finish() == from {
-                        self.try_entry(&format!("{name}{end}"));
-                        break 'twins;
-                    }
-                }
-            }
-        }
-        self.source = was;
-    }
-
-    /// Tries each unresolved row of a table as a stem that named rows of one of its directories
-    /// share, with each ending those rows add to such a stem, its last run of digits renumbered
-    /// below `range`; a candidate is spelled out only where its hash is an unresolved entry's.
-    fn sibling_rules(&mut self, range: u32) {
-        let was = std::mem::replace(&mut self.source, Source::Rules);
-        for at in 0..self.tree.len() {
-            let rows = &self.tree[at].rows;
-            if !rows.iter().any(|&row| self.unresolved(row)) {
-                continue;
-            }
-            let mut dirs: BTreeMap<String, Vec<String>> = BTreeMap::new();
-            for name in rows.iter().filter_map(|&row| self.name64(row)) {
-                let name = name.to_ascii_lowercase();
-                let (dir, last) = name.split_at(name.rfind('/').map_or(0, |cut| cut + 1));
-                dirs.entry(dir.to_string())
-                    .or_default()
-                    .push(last.to_string());
-            }
-            let mut budget = SIBLING_CAP;
-            'table: for (dir, lasts) in dirs {
-                let (stems, endings) = sibling_parts(&lasts, range);
-                let at_dir = NameHasher::default().with(dir.as_bytes());
-                for stem in &stems {
-                    let at_stem = at_dir.with(stem.as_bytes());
-                    for end in &endings {
-                        if budget == 0 {
-                            self.siblings_capped += 1;
-                            break 'table;
-                        }
-                        budget -= 1;
-                        if self.unresolved(at_stem.with(end.as_bytes()).finish()) {
-                            self.try_entry(&format!("{dir}{stem}{end}"));
-                        }
-                    }
-                }
-            }
-        }
-        self.source = was;
     }
 
     /// Whether `hash` is an unresolved entry's that this run has not named.
@@ -681,40 +524,6 @@ impl Miner {
         std::mem::take(&mut self.pending)
     }
 
-    /// The rules over the names resolved, `extra` and those found, then over what each round found.
-    fn rules(&mut self, extra: impl IntoIterator<Item = String>, range: u32) {
-        // Once, before the rounds, which take what it finds as work.
-        self.sibling_rules(range);
-        self.source = Source::Rules;
-        let mut work: Vec<String> = self.resolved.clone();
-        work.extend(extra);
-        work.extend(self.order.iter().cloned());
-        let exts = work.iter().filter_map(|name| {
-            let ext = &name[stem_of(name).len()..];
-            (2..=8)
-                .contains(&ext.len())
-                .then(|| ext.to_ascii_lowercase())
-        });
-        let exts = ranked(counted(exts), 1);
-        let suffixes = known_suffixes(&work);
-        let mut expanded = HashSet::new();
-        for _ in 0..ROUNDS {
-            let mark = self.order.len();
-            for name in &work {
-                if expanded.insert(name.clone()) {
-                    rule_candidates(name, &exts, &suffixes, range, &mut |c| self.try_name(c));
-                }
-            }
-            self.nested_rules();
-            self.twin_rules();
-            work = self.order[mark..].to_vec();
-            if work.is_empty() {
-                break;
-            }
-        }
-        self.source = Source::Install;
-    }
-
     /// The report: what was read, and per space how many unresolved hashes were named and how.
     fn lines(&self, refused: usize) -> Vec<String> {
         let by = |space, source| self.by.get(&(space, source)).copied().unwrap_or(0);
@@ -772,10 +581,10 @@ impl Miner {
                 self.basenames_dropped
             ));
         }
-        if self.siblings_capped > 0 {
+        if !self.siblings_capped.is_empty() {
             lines.push(format!(
                 "  siblings      {} tables not tried past {SIBLING_CAP} candidates",
-                self.siblings_capped
+                self.siblings_capped.len()
             ));
         }
         if !self.nested_capped.is_empty() {
@@ -908,141 +717,6 @@ fn is_ident(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b':'))
 }
 
-fn counted(items: impl Iterator<Item = String>) -> HashMap<String, usize> {
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    for item in items {
-        *counts.entry(item).or_default() += 1;
-    }
-    counts
-}
-
-/// The [`RULE_TOP`] commonest items of `counts` seen at least `least` times.
-fn ranked(counts: HashMap<String, usize>, least: usize) -> Vec<String> {
-    let mut ranked: Vec<(String, usize)> =
-        counts.into_iter().filter(|(_, n)| *n >= least).collect();
-    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    ranked
-        .into_iter()
-        .take(RULE_TOP)
-        .map(|(item, _)| item)
-        .collect()
-}
-
-/// The `_xxx` endings that turn one stem of `names` into another, seen twice or more.
-fn known_suffixes(names: &[String]) -> Vec<String> {
-    let mut stems: Vec<&str> = names.iter().map(|n| stem_of(n)).collect();
-    stems.sort_unstable();
-    stems.dedup();
-    let mut endings = Vec::new();
-    for (i, a) in stems.iter().enumerate() {
-        for b in stems[i + 1..]
-            .iter()
-            .take(32)
-            .take_while(|b| b.starts_with(a))
-        {
-            let rest = &b[a.len()..];
-            if (2..=12).contains(&rest.len()) && rest.starts_with('_') && !rest.contains('/') {
-                endings.push(rest.to_string());
-            }
-        }
-    }
-    ranked(counted(endings.into_iter()), 2)
-}
-
-/// What the rules make of `name`: its stem with each extension of `exts`, its stem without a suffix
-/// of `suffixes` and with each, and where the stem's last component holds digits, its last run of
-/// digits as each number below `range` that many digits wide, with the name's own extension and without.
-fn rule_candidates(
-    name: &str,
-    exts: &[String],
-    suffixes: &[String],
-    range: u32,
-    each: &mut impl FnMut(&str),
-) {
-    let stem = stem_of(name);
-    let ext = &name[stem.len()..];
-    for other in exts {
-        each(&format!("{stem}{other}"));
-    }
-    let base = (suffixes.iter().find(|s| stem.ends_with(s.as_str())))
-        .map_or(stem, |s| &stem[..stem.len() - s.len()]);
-    each(base);
-    for suffix in suffixes {
-        each(&format!("{base}{suffix}"));
-        if !ext.is_empty() {
-            each(&format!("{base}{suffix}{ext}"));
-        }
-    }
-    let from = stem.rfind('/').map_or(0, |at| at + 1);
-    let Some(last) = stem[from..].bytes().rposition(|b| b.is_ascii_digit()) else {
-        return;
-    };
-    let end = from + last + 1;
-    let digits = stem[..end]
-        .bytes()
-        .rev()
-        .take_while(u8::is_ascii_digit)
-        .count();
-    if digits > 4 {
-        return;
-    }
-    let (head, tail) = (&stem[..end - digits], &stem[end..]);
-    for n in 0..range.min(10u32.pow(digits as u32)) {
-        let numbered = format!("{head}{n:0digits$}{tail}");
-        each(&numbered);
-        if !ext.is_empty() {
-            each(&format!("{numbered}{ext}"));
-        }
-    }
-}
-
-/// The `_` prefixes of the last components of `names` that two of them share, or every one where
-/// there is one name, case-folded.
-fn shared_stems<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
-    let (mut counts, mut named) = (HashMap::<String, usize>::new(), 0);
-    for name in names {
-        named += 1;
-        let name = name.to_ascii_lowercase();
-        let stem = stem_of(&name);
-        let last = &stem[stem.rfind('/').map_or(0, |at| at + 1)..];
-        for (at, _) in last.match_indices('_').chain([(last.len(), "")]) {
-            *counts.entry(last[..at].to_string()).or_default() += 1;
-        }
-    }
-    let mut stems: Vec<String> = (counts.into_iter())
-        .filter(|(stem, n)| !stem.is_empty() && (named == 1 || *n >= 2))
-        .map(|(stem, _)| stem)
-        .collect();
-    stems.sort_unstable();
-    stems
-}
-
-/// The stems the last components `lasts` of one directory share, and the bare stem then each
-/// ending those components add to a stem, the commonest first, with each renumbering of its last
-/// run of digits below `range`.
-fn sibling_parts(lasts: &[String], range: u32) -> (Vec<String>, Vec<String>) {
-    let stems = shared_stems(lasts.iter().map(String::as_str));
-    let seen = lasts.iter().flat_map(|last| {
-        (stems.iter())
-            .filter_map(move |stem| last.strip_prefix(stem.as_str()))
-            .filter(|end| end.len() <= MAX_ENDING && end.starts_with(['_', '.']))
-            .map(str::to_owned)
-    });
-    let (mut endings, mut held) = (vec![String::new()], HashSet::from([String::new()]));
-    for end in ranked(counted(seen), 1) {
-        if held.insert(end.clone()) {
-            endings.push(end.clone());
-        }
-        // The rules' numbering of a name, given the ending alone.
-        rule_candidates(&end, &[], &[], range, &mut |each| {
-            if held.insert(each.to_string()) {
-                endings.push(each.to_string());
-            }
-        });
-    }
-    (stems, endings)
-}
-
 /// Each text `value` holds: its strings, the names its hashes were read by, and those of every
 /// value inside it.
 fn value_strings(value: &Value, each: &mut impl FnMut(&str)) {
@@ -1059,12 +733,6 @@ fn value_strings(value: &Value, each: &mut impl FnMut(&str)) {
         }),
         _ => {}
     }
-}
-
-/// The last component of `dir`, a directory that ends in `/`.
-fn dir_stem(dir: &str) -> Option<&str> {
-    let dir = dir.strip_suffix('/')?;
-    Some(&dir[dir.rfind('/').map_or(0, |at| at + 1)..]).filter(|last| !last.is_empty())
 }
 
 /// What each `"…"` of `text` holds; a `\` keeps the byte after it inside, and a literal ends at
@@ -1085,23 +753,6 @@ fn string_literals(text: &[u8]) -> Vec<&[u8]> {
         at = (end + 1).min(text.len());
     }
     literals
-}
-
-/// Every `_` followed by one to [`SHORT_ENDING`] lower-case letters or digits, the shortest first.
-fn short_endings() -> Vec<String> {
-    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
-    let (mut endings, mut longest) = (Vec::new(), vec!["_".to_string()]);
-    for _ in 0..SHORT_ENDING {
-        longest = (longest.iter())
-            .flat_map(|head| {
-                ALPHABET
-                    .iter()
-                    .map(move |&b| format!("{head}{}", char::from(b)))
-            })
-            .collect();
-        endings.extend(longest.iter().cloned());
-    }
-    endings
 }
 
 /// Where a table sits in the walk: its depth, and the 64-bit name of the row it was opened from.
@@ -1726,6 +1377,10 @@ mod fixture;
 #[cfg(test)]
 mod tests {
     use super::fixture::{self, Body};
+    use super::rules::{
+        dir_stem, known_suffixes, rule_candidates, shared_stems, short_endings, short_heads,
+        sibling_parts,
+    };
     use super::*;
 
     fn entry(index: u32, path: &str, name32: Option<u32>) -> Gta6Entry {
@@ -2559,6 +2214,123 @@ mod tests {
         }
     }
 
+    /// The miner after both walks of a fixture archive of one table holding `rows`, each body
+    /// stating nothing a row is named by, with the resolver naming `named`.
+    fn walked(rows: &[&str], named: &[&str]) -> Miner {
+        let keys = fixture::keys();
+        let entries: Vec<(&str, Body)> = (rows.iter())
+            .map(|path| (*path, Body::Zlib(fixture::pso("zq"))))
+            .collect();
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        std::fs::write(dir.path().join("parent.rpf"), fixture::archive(&entries)).expect("written");
+        let mut resolver = NameResolver::new();
+        for name in named.iter().copied() {
+            resolver.insert(name_hash64(name.as_bytes()), name);
+        }
+        let (mut miner, cancel) = (Miner::new(), Cancel::new());
+        let bounds = Bounds::new(Cap::new(DEFAULT_BODIES, CapUnit::Count("bodies")), &cancel);
+        let sink = &mut std::io::sink();
+        let paths = archives(dir.path());
+        mine_archives(&mut miner, &paths, &keys, &resolver, &bounds, sink)
+            .expect("the rows are written");
+        miner
+    }
+
+    /// Seven named rows and four unnamed ones, each a short head and an `@` or a `_` before a named
+    /// row's last component: a head a row the rule samples takes is learnt and names every row it
+    /// begins, and a head only an unsampled row takes is not tried.
+    #[test]
+    fn a_head_a_few_named_rows_take_is_tried_before_every_named_row_of_the_table() {
+        let named: Vec<String> = (1..=7)
+            .map(|i| format!("zq/props/zq_crate_{i:02}"))
+            .collect();
+        let named: Vec<&str> = named.iter().map(String::as_str).collect();
+        let unnamed = [
+            "zq/props/qx@zq_crate_03",
+            "zq/props/qx@zq_crate_04",
+            "zq/props/zw@zq_crate_06",
+            "zq/props/q7_zq_crate_05",
+        ];
+        let rows: Vec<&str> = named.iter().chain(&unnamed).copied().collect();
+        let mut miner = walked(&rows, &named);
+        assert_eq!(miner.entry.len(), 4);
+        miner.head_rules();
+        assert_eq!(
+            found(&miner, unnamed[0]),
+            Some(unnamed[0]),
+            "a sampled row's head"
+        );
+        assert_eq!(
+            found(&miner, unnamed[1]),
+            Some(unnamed[1]),
+            "the learnt head"
+        );
+        assert_eq!(
+            found(&miner, unnamed[2]),
+            None,
+            "no sampled row takes its head"
+        );
+        assert_eq!(
+            found(&miner, unnamed[3]),
+            Some(unnamed[3]),
+            "a head before a `_`"
+        );
+        assert_eq!(miner.by.get(&(Space::Entry, Source::Rules)), Some(&3));
+        assert_eq!(miner.source, Source::Install, "the source is put back");
+        let (heads, each) = (short_heads(), 36 + 36 * 36 + 36 * 36 * 36);
+        assert_eq!(heads.len(), 2 * each);
+        assert_eq!((heads[0].as_str(), heads[36].as_str()), ("a@", "aa@"));
+        assert_eq!(
+            (heads[each].as_str(), heads.last().map(String::as_str)),
+            ("a_", Some("999_"))
+        );
+    }
+
+    /// Named rows numbered in two digits: an unnamed row their stem numbers in three is named by
+    /// the sibling rule, and one in four is not.
+    #[test]
+    fn a_stem_named_rows_share_is_numbered_past_the_two_digits_they_show() {
+        let named = ["zq/w/zq_bay_07", "zq/w/zq_bay_12"];
+        let unnamed = ["zq/w/zq_bay_457", "zq/w/zq_bay_1457"];
+        let rows: Vec<&str> = named.iter().chain(&unnamed).copied().collect();
+        let mut miner = walked(&rows, &named);
+        miner.sibling_rules(DEFAULT_RANGE);
+        assert_eq!(found(&miner, unnamed[0]), Some(unnamed[0]));
+        assert_eq!(found(&miner, unnamed[1]), None, "past the three digits");
+        let (_, endings) = sibling_parts(&["zq_bay_07".into(), "zq_bay_12".into()], DEFAULT_RANGE);
+        assert!(endings.contains(&"_100".to_string()) && endings.contains(&"_999".to_string()));
+        assert!(!endings.contains(&"_1000".to_string()));
+    }
+
+    /// Two rows the head rule names give their directory a stem and an ending no row had: the
+    /// sibling rule names the third row only when it runs again after the head rule, as the rules'
+    /// rounds run it.
+    #[test]
+    fn the_sibling_rule_runs_again_over_the_names_the_other_rules_found() {
+        let named = ["zq/c/zq_lamp_01", "zq/c/zq_lamp_02", "zq/c/zq_lamp_02_lod"];
+        let unnamed = [
+            "zq/c/hi@zq_lamp_01",
+            "zq/c/hi@zq_lamp_02",
+            "zq/c/hi@zq_lamp_01_lod",
+        ];
+        let rows: Vec<&str> = named.iter().chain(&unnamed).copied().collect();
+        let mut once = walked(&rows, &named);
+        once.sibling_rules(DEFAULT_RANGE);
+        once.head_rules();
+        assert!(found(&once, unnamed[0]).is_some() && found(&once, unnamed[1]).is_some());
+        assert_eq!(
+            found(&once, unnamed[2]),
+            None,
+            "one sibling pass before the heads"
+        );
+        let mut miner = walked(&rows, &named);
+        miner.rules(Vec::new(), DEFAULT_RANGE);
+        for path in unnamed {
+            assert_eq!(found(&miner, path), Some(path));
+        }
+        assert_eq!(miner.rows, 3, "one row per name");
+    }
+
     /// A document whose one string member is a sound's name, beside a named file of the same
     /// directory: the name joined with that file's extension names the unnamed file; the same
     /// string outside a document is joined without it, and names nothing.
@@ -2772,12 +2544,16 @@ mod tests {
         assert_eq!(miner.source, Source::Install, "the source is put back");
     }
 
-    /// Every table of the build placed with the user's names, then the twin rule: it names at least
-    /// a thousand nested archives (1195 measured with round 35's mined table), each one unresolved
-    /// before. Install-gated, and needs the user's names folder: without it the build's nested
-    /// archives are nearly all unnamed, so none has a named twin.
+    /// Every table of the build placed with the user's names, then the twin rule: the nested
+    /// archives left unnamed after it are at most `UNNAMED_SHARE` of them (110 of 4351 with round
+    /// 37's table, where the rule names none and 107 have no named twin; round 35's left about 100
+    /// after the rule named 1195), and each one it names was unresolved before. Install-gated, and
+    /// needs the user's names folder: without it the build's nested archives are nearly all
+    /// unnamed, so none has a named twin.
     #[test]
     fn the_miner_runs_on_the_build_within_its_ceiling_and_names_the_twin_archives() {
+        /// The share of the nested archives the user's names and the twin rule may leave unnamed.
+        const UNNAMED_SHARE: f64 = 0.05;
         let present = |var: &str| {
             std::env::var_os(var)
                 .map(PathBuf::from)
@@ -2809,20 +2585,23 @@ mod tests {
             });
         }
         let unresolved: HashSet<u64> = miner.entry.keys().copied().collect();
-        let unnamed = (miner.tree.iter())
-            .filter_map(|t| t.from)
-            .filter(|from| miner.entry.contains_key(from))
-            .count();
+        let unnamed = |miner: &Miner| {
+            (miner.tree.iter())
+                .filter_map(|t| t.from)
+                .filter(|&from| miner.unresolved(from))
+                .count()
+        };
+        let nested = miner.tree.iter().filter(|t| t.from.is_some()).count();
+        let before = unnamed(&miner);
         miner.twin_rules();
-        let named = miner
-            .by
-            .get(&(Space::Entry, Source::Rules))
-            .copied()
-            .unwrap_or(0);
-        println!("{named} of {unnamed} unnamed nested archives named after their twins");
+        let (named, after) = (miner.found64.len(), unnamed(&miner));
+        println!(
+            "{named} of {before} unnamed nested archives named after their twins, {after} of {nested} left"
+        );
+        assert!(nested > 0 && named <= before, "{refused} tables refused");
         assert!(
-            named >= 1000,
-            "{named} twins named, {refused} tables refused"
+            (after as f64) <= UNNAMED_SHARE * nested as f64,
+            "{after} of {nested} nested archives left unnamed, {refused} tables refused"
         );
         assert!(miner.found64.keys().all(|hash| unresolved.contains(hash)));
     }
@@ -2911,6 +2690,40 @@ mod tests {
         miner.sibling_rules(DEFAULT_RANGE);
         let named = miner.found64.len();
         println!("{named} rows named by their siblings, {refused} tables refused");
+        assert!(miner.found64.keys().all(|hash| unresolved.contains(hash)));
+        assert_eq!(miner.rows, named, "one row per name");
+    }
+
+    /// Every table of the build placed with the user's names, then the head rule: whatever it
+    /// names was unresolved, one row each. Install-gated, and needs the user's names folder,
+    /// without which a table has no named row to learn a head from.
+    #[test]
+    fn the_miner_runs_on_the_build_within_its_ceiling_and_names_rows_by_their_tables_heads() {
+        let names = std::env::var_os(or_io::container::rpf::GTA6_NAMES_ENV)
+            .filter(|dir| Path::new(dir).exists());
+        if names.is_none() {
+            or_test_support::skip_install(
+                "the head rule over a GTA VI build",
+                format_args!("set {}", or_io::container::rpf::GTA6_NAMES_ENV),
+            );
+            return;
+        }
+        let Some((keys, build)) = the_build("the head rule over a GTA VI build") else {
+            return;
+        };
+        let resolver = load_resolver(None);
+        let mut miner = Miner::new();
+        let mut refused = 0;
+        for path in archives(&build) {
+            walk_archive(&path, &keys, &mut refused, &mut |_, mount, _, at| {
+                miner.place(at, &mount.archive.entries);
+                miner.add_table(&mount.archive.entries, &resolver);
+            });
+        }
+        let unresolved: HashSet<u64> = miner.entry.keys().copied().collect();
+        miner.head_rules();
+        let named = miner.found64.len();
+        println!("{named} rows named by a head their tables take, {refused} tables refused");
         assert!(miner.found64.keys().all(|hash| unresolved.contains(hash)));
         assert_eq!(miner.rows, named, "one row per name");
     }

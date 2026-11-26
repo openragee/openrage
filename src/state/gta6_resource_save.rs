@@ -15,6 +15,9 @@ use super::extract_job::{ExtractItem, OnClash};
 use super::gta6_edit::EditSections;
 use super::{AppState, DocumentId, GateOutcome, PendingRetailEdit, PendingRetailEditPrompt};
 
+#[path = "gta6_awc_in_extent.rs"]
+mod awc_in_extent;
+
 /// What a save writes of a GTA VI resource document's edits.
 pub enum EditedSave {
     /// Sections the document holds.
@@ -31,12 +34,9 @@ pub enum EditedSave {
     Bytes(Vec<u8>),
 }
 
-/// The audio container row's `edited_sections`: the container rewritten, once a stream is replaced.
+/// The audio container row's `edited_sections`: the container laid in its extents, else rewritten.
 pub(super) fn edited_awc(doc: &super::Document) -> Option<Result<EditedSave, String>> {
-    match &doc.payload {
-        super::DocPayload::Awc(awc) if doc.dirty => Some(awc.to_bytes().map(EditedSave::Bytes)),
-        _ => None,
-    }
+    awc_in_extent::edited(doc)
 }
 
 /// A row's `edited_sections` of the sections a payload holds edited.
@@ -114,8 +114,9 @@ impl AppState {
         if !xml && !over_archive {
             self.say_the_checksum_is_kept(id);
         }
-        // A form edit reaches the text only as the Text panel draws; both XML saves read the text.
-        if let Some(doc) = self.document_mut(id) {
+        // A form edit reaches the text only as the Text panel draws; an XML save reads the text,
+        // and any other makes it current on its worker.
+        if let Some(doc) = self.document_mut(id).filter(|_| xml) {
             if let super::DocPayload::Meta(meta) = &mut doc.payload {
                 meta.ensure_text_current();
             }

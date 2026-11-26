@@ -183,6 +183,31 @@ fn half_way_between_two_weathers_their_cycles_and_rain_are_half_of_each() {
 }
 
 #[test]
+fn a_queued_weather_is_laid_over_the_base_by_its_weight_with_its_modifiers() {
+    let tables = tables();
+    let at = |weight: f32| {
+        let weathers = WeatherBlend {
+            queued: Some(("AM_Wet", weight)),
+            ..WeatherBlend::steady("Sunny")
+        };
+        (tables.moment_in(13.45, weathers, 0.0, None)).expect("both are read")
+    };
+    let none = at(0.0);
+    assert_eq!(
+        none.own,
+        tables.moment(13.45, "Sunny", 0.0).expect("read").own
+    );
+    let half = at(0.5);
+    let mult = half.own.get("light_dir_mult").expect("stated");
+    assert!((mult - 0.375).abs() < 1e-6, "{mult}");
+    assert_eq!(half.wetness, 0.5);
+    let whole = at(1.0);
+    assert_eq!(whole.own.get("light_dir_mult"), Some(0.5));
+    assert_eq!(whole.own.get("far_clip"), Some(1.0));
+    assert_eq!(whole.wetness, 1.0);
+}
+
+#[test]
 fn a_metered_frame_is_exposed_by_the_curve_and_adapted_towards_it_at_the_settings_pace() {
     let tables = tables();
     let night = tables.moment(1.45, "Rainy", 0.0).expect("a cycle");

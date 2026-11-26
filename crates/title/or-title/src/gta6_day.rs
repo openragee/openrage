@@ -106,6 +106,8 @@ pub struct Moment {
     pub sun: [f32; 3],
     /// The way towards the moon.
     pub moon: [f32; 3],
+    /// The sun's day phase: 0.25 at sunrise, 0.5 at its noon and 0.75 at sunset, which the lights' cap by day is read on.
+    pub day_phase: f64,
     /// The exposure the moment's light is given at, in stops.
     pub stops: f32,
     /// The moment's light, which [`frame_keyframe`] gives the frame again at another exposure.
@@ -116,6 +118,27 @@ pub struct Moment {
     pub wetness: f32,
     /// Which body lights the moment, how faded, and the way its light comes from.
     pub bodies: Bodies,
+}
+
+/// The weathers a moment is made of, by name: a change from `from` to `to`, `along` (0 to 1) of the way, and a weather queued over it at its weight.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WeatherBlend<'a> {
+    pub from: &'a str,
+    pub to: &'a str,
+    pub along: f32,
+    pub queued: Option<(&'a str, f32)>,
+}
+
+impl<'a> WeatherBlend<'a> {
+    /// One weather alone.
+    pub fn steady(weather: &'a str) -> Self {
+        Self {
+            from: weather,
+            to: weather,
+            along: 0.0,
+            queued: None,
+        }
+    }
 }
 
 type Vars = BTreeMap<String, [f32; 2]>;
@@ -337,7 +360,7 @@ impl DayTables {
 
     /// The moment at `hour` (0 to 24) in `weather` (a weather type's name, else a cycle's) for a camera `y` metres north on the map; `None` where no cycle is read for it or the time table is not GTA VI's.
     pub fn moment(&self, hour: f32, weather: &str, y: f32) -> Option<Moment> {
-        self.moment_between(hour, weather, weather, 0.0, y)
+        self.moment_in(hour, WeatherBlend::steady(weather), y, None)
     }
 
     /// The moment at `hour` in `weather` inside a room whose time-cycle modifier and second modifier the hashes `modifiers` name, laid `strength` (0 to 1) of the way over the weather's; the weather's alone where no first modifier of that name is read.
@@ -349,19 +372,12 @@ impl DayTables {
         modifiers: [u32; 2],
         strength: f32,
     ) -> Option<Moment> {
-        let named = |hash: u32| {
-            (self.modifiers.iter()).find(|m| or_io::hash::string_hash_str(&m.name) == hash)
-        };
-        // ⚠ GTA V's, assumed: each variable the second modifier states stands in for the first's.
-        let room = named(modifiers[0]).map(|first| {
-            let mut vars = first.vars.clone();
-            if let Some(second) = named(modifiers[1]) {
-                vars.extend(second.vars.iter().map(|(k, v)| (k.clone(), *v)));
-            }
-            vars
-        });
-        let room = room.as_ref().map(|vars| (vars, strength.clamp(0.0, 1.0)));
-        self.moment_of(hour, weather, weather, 0.0, y, room)
+        self.moment_in(
+            hour,
+            WeatherBlend::steady(weather),
+            y,
+            Some((modifiers, strength)),
+        )
     }
 
     /// The moment at `hour` on the way from weather `from` to weather `to`, `along` (0 to 1) of it: their cycles and their modifiers blended, in the GLOBAL region.
@@ -373,19 +389,51 @@ impl DayTables {
         along: f32,
         y: f32,
     ) -> Option<Moment> {
-        self.moment_of(hour, from, to, along, y, None)
+        let weathers = WeatherBlend {
+            from,
+            to,
+            along,
+            queued: None,
+        };
+        self.moment_in(hour, weathers, y, None)
     }
 
-    /// [`Self::moment_between`] with a room's modifier and its strength laid over the weathers'.
+    /// The moment at `hour` in `weathers` for a camera `y` metres north, inside a room where `room` names its two modifiers' hashes and how far in it stands (0 to 1).
+    pub fn moment_in(
+        &self,
+        hour: f32,
+        weathers: WeatherBlend<'_>,
+        y: f32,
+        room: Option<([u32; 2], f32)>,
+    ) -> Option<Moment> {
+        let named = |hash: u32| {
+            (self.modifiers.iter()).find(|m| or_io::hash::string_hash_str(&m.name) == hash)
+        };
+        // ⚠ GTA V's, assumed: each variable the second modifier states stands in for the first's.
+        let vars = room.and_then(|(modifiers, _)| {
+            named(modifiers[0]).map(|first| {
+                let mut vars = first.vars.clone();
+                if let Some(second) = named(modifiers[1]) {
+                    vars.extend(second.vars.iter().map(|(k, v)| (k.clone(), *v)));
+                }
+                vars
+            })
+        });
+        let room = (vars.as_ref()).zip(room.map(|(_, strength)| strength.clamp(0.0, 1.0)));
+        self.moment_of(hour, weathers, y, room)
+    }
+
+    /// [`Self::moment_in`] with the room's variables read.
     fn moment_of(
         &self,
         hour: f32,
-        from: &str,
-        to: &str,
-        along: f32,
+        weathers: WeatherBlend<'_>,
         y: f32,
         room: Option<(&Vars, f32)>,
     ) -> Option<Moment> {
+        let WeatherBlend {
+            from, to, along, ..
+        } = weathers;
         let latitude = self.latitude(y);
         // The sun from the clock for an observer at the camera's place north; ⚠ its place east is
         // taken as nought, which moves the sun by under a minute of its day across the map.
@@ -404,7 +452,24 @@ impl DayTables {
         let (a, b) = (self.cycle_of(from)?, self.cycle_of(to)?);
         let along = along.clamp(0.0, 1.0);
         let mut own = (self.timecycle).keyframe_between(between, a, b, along, 0.0)?;
+        // A queued weather's cycle, sampled at the same pair, is laid over the base by its weight.
+        let queued = (weathers.queued)
+            .filter(|(_, weight)| *weight > 0.0)
+            .and_then(|(name, weight)| Some((name, self.cycle_of(name)?, weight.min(1.0))));
+        if let Some((_, cycle, weight)) = queued {
+            let over = (self.timecycle).keyframe_between(between, cycle, cycle, 0.0, 0.0)?;
+            for (name, value) in over.iter() {
+                let base = own.get(name).unwrap_or(value);
+                own.set(name, base + (value - base) * weight);
+            }
+        }
         self.modify(&mut own, from, to, along);
+        // ⚠ Inferred: its eight modifiers, in slots of their own at its weight, apply after the base's.
+        if let Some((name, _, weight)) = queued {
+            for (_, vars) in self.modifiers_of(name) {
+                self.apply(&mut own, vars, weight);
+            }
+        }
         self.with_defaults(&mut own);
         let sun: [f32; 3] = ephemeris.direction.into();
         // The cloud layer's cover and kind are the cycles' high-level values, blended as the weathers are.
@@ -413,7 +478,11 @@ impl DayTables {
                 (self.high_level.get(&cycle.to_ascii_lowercase())).and_then(|v| v.get(name))
             };
             if let (Some(x), Some(y)) = (of(a), of(b)) {
-                own.set(name, x + (y - x) * along);
+                let mut value = x + (y - x) * along;
+                if let Some(q) = queued.and_then(|(_, cycle, w)| Some((*of(cycle)?, w))) {
+                    value += (q.0 - value) * q.1;
+                }
+                own.set(name, value);
             }
         }
         if let Some((vars, strength)) = room {
@@ -457,11 +526,15 @@ impl DayTables {
             frame_hours,
             sun,
             moon,
+            day_phase: ephemeris.day_phase,
             stops,
             light_scale: light.exposure * FRAME_DIFFUSE,
             light,
             moon_dim: visual.get_f32("misc.MoonDimMult", 1.0),
-            wetness: rain(from) + (rain(to) - rain(from)) * along,
+            wetness: {
+                let base = rain(from) + (rain(to) - rain(from)) * along;
+                queued.map_or(base, |(name, _, w)| base + (rain(name) - base) * w)
+            },
             bodies: lit,
         })
     }

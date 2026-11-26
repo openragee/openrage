@@ -110,7 +110,7 @@ pub enum Origin {
 pub struct Registration {
     pub path: String,
     pub file_type: String,
-    /// What the pack states an archive holds; empty where it states nothing.
+    /// What the pack states the path holds; empty where it states nothing.
     pub contents: String,
     /// Whether the path is a name the game asks by and no file of the pack: the `.ityp` of a `.ytyp` inside a nested archive.
     pub asked: bool,
@@ -404,6 +404,8 @@ pub(crate) fn assemble(
         let module = contribution.module.as_str();
         owned.extend(contribution.files.iter().map(|f| (module, f.clone())));
         plan.problems.extend(contribution.problems.iter().cloned());
+        // ⚠ A content is asked for this build, so what locks the kind it laid its files out for stops this plan.
+        plan.problems.extend(contribution.locks.iter().cloned());
         plan.notes.extend(contribution.notes.iter().cloned());
     }
     if declared.target.is_some() {

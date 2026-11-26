@@ -1,11 +1,13 @@
 //! A `_manifest.ymf` for the maps a pack ships, made from manifests the game ships.
 //!
 //! ⚠ **A manifest is not made from nothing.** No schema in the tree declares
-//! its classes, and an entry's `manifestFlags` is a statement no derivation
-//! produces. So the document is typed by the type tables of the manifests it
-//! is handed, and each entry is a copy of the one they state for a map of
+//! its classes, so the document is typed by the type tables of the manifests
+//! it is handed, and each entry is a copy of the one they state for a map of
 //! that name, with the type files stated or derived. A map none of them
-//! states gets no entry, and the caller is told its name.
+//! states takes the shape of an entry they hold, the type files the
+//! derivation gives and the flags [`interior_flags`] gives; one that needs
+//! no type file gets no entry, as no manifest of the game states a map
+//! without one, and the caller is told its name.
 //!
 //! ⚠ The flags of an entry are a set of bits whose enum a shipped type table
 //! names. The table written here names none, as for every PSO document the
@@ -24,8 +26,27 @@ use crate::field;
 use crate::keys;
 use crate::manifest::{hashes, Manifest, StatedDependencies};
 
+/// The member of an entry that holds its flags, by the number it is stored under.
+// ⚠ Apart from `keys`: the public table of names lacks it, so a document read with no schema spells it by its hash.
+pub const MANIFEST_FLAGS: u32 = or_io::hash::literal_string_hash(b"manifestFlags");
+
+/// The bit of an entry's flags that says what it states is an interior's.
+pub const INTERIOR_DATA: u32 = 1;
+
+/// The flags of the entry for a map that places `entities` entities, `interiors` of them interiors.
+pub fn interior_flags(entities: usize, interiors: usize) -> u32 {
+    // ⚠ Measured on the manifests of two installs, and declared by no schema here: the bit is set on every entry whose map places
+    // interiors and nothing else, and on no other, a map that places an interior beside other entities among them
+    // (`what_the_flags_of_a_manifest_entry_follow`).
+    if interiors > 0 && interiors == entities {
+        INTERIOR_DATA
+    } else {
+        0
+    }
+}
+
 /// One map a manifest is asked to state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Wanted {
     /// The map's own name, which an entry states it by.
     pub name: u32,
@@ -35,6 +56,9 @@ pub struct Wanted {
     pub needs: BTreeSet<u32>,
     /// Whether the derivation left an archetype the map places unresolved, so `needs` is added to the type files the game states and never replaces them.
     pub incomplete: bool,
+    /// How many entities the map places, and how many of them are interiors: what the flags of an entry no manifest states are derived from.
+    pub entities: usize,
+    pub interiors: usize,
 }
 
 /// A manifest that was written, and what it states.
@@ -45,8 +69,12 @@ pub struct Built {
     pub stated: BTreeMap<u32, BTreeSet<u32>>,
     /// The maps whose entry is the one the game states, kept whole.
     pub kept: BTreeSet<u32>,
-    /// The maps it states nothing for, since no manifest handed in states a map of that name.
+    /// The maps no manifest handed in states, whose entry is derived: the type files they need, under [`interior_flags`].
+    pub derived: BTreeSet<u32>,
+    /// The maps it states nothing for, since no manifest handed in states a map of that name and none holds an entry to shape one by.
     pub unstated: BTreeSet<u32>,
+    /// The maps it states nothing for, since no manifest handed in states them and they need no type file.
+    pub needless: BTreeSet<u32>,
     /// The maps it states nothing for though a manifest handed in states them: one stated by pairs of a map and a type file alone, that needs no type file to pair it with.
     pub pairless: BTreeSet<u32>,
     /// The maps two manifests handed in state differently. ⚠ Their entry is taken in the order the manifests are handed in, which is no order the game mounts them in.
@@ -56,7 +84,7 @@ pub struct Built {
 /// Why no manifest was written.
 #[derive(Debug, thiserror::Error)]
 pub enum BuildError {
-    #[error("no manifest of the game was handed in, and a manifest is typed by one and takes the flags of each entry from one")]
+    #[error("no manifest of the game was handed in, and a manifest is typed by one")]
     NoDonor,
     /// The first number of this and the next two is which of the manifests handed in it is, from one.
     #[error("it does not read as a metadata document: {1}")]
@@ -65,7 +93,7 @@ pub enum BuildError {
     NotPso(usize, &'static str),
     #[error("it is no manifest: its root is `{1}`")]
     NotAManifest(usize, String),
-    #[error("no manifest handed in states any of the {0} map(s), so there is no entry to write")]
+    #[error("no manifest handed in states any of the {0} map(s), and no entry is derived for one: it needs no type file, or no manifest handed in holds an entry to shape one by")]
     NoEntry(usize),
     #[error("the manifests handed in state {0} map(s) only by pairs of a map and a type file, and none of those maps needs a type file, so there is no pair to write")]
     NoPair(usize),
@@ -115,7 +143,9 @@ fn build_named(kept: &[&[u8]], maps: &[Wanted]) -> Result<Built, BuildError> {
         bytes,
         stated,
         kept: tree.kept,
+        derived: tree.derived,
         unstated: tree.unstated,
+        needless: tree.needless,
         pairless: tree.pairless,
         disagreeing: tree.disagreeing,
     })
@@ -161,12 +191,14 @@ fn stated_by(root: &MetaInstance) -> BTreeMap<u32, BTreeSet<u32>> {
 pub struct Tree {
     pub root: MetaInstance,
     pub kept: BTreeSet<u32>,
+    pub derived: BTreeSet<u32>,
     pub unstated: BTreeSet<u32>,
+    pub needless: BTreeSet<u32>,
     pub pairless: BTreeSet<u32>,
     pub disagreeing: BTreeSet<u32>,
 }
 
-/// The tree of a manifest stating `maps`: the first of `kept` with every list emptied, then an entry for each map that one of `kept` states.
+/// The tree of a manifest stating `maps`: the first of `kept` with every list emptied, then an entry for each map that one of `kept` states or that needs a type file.
 pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildError> {
     let Some(first) = kept.first() else {
         return Err(BuildError::NoDonor);
@@ -178,6 +210,8 @@ pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildErr
         slot.keep_stated |= map.keep_stated;
         slot.incomplete |= map.incomplete;
         slot.needs.extend(map.needs.iter().copied());
+        slot.entities += map.entities;
+        slot.interiors += map.interiors;
     }
     // ⚠ One pass over what is kept, so the work is the entries and the maps and never their product. An entry a later manifest
     // states as an earlier one does is one entry: an update of the game restates the entries of the pack it patches, and both are
@@ -218,14 +252,27 @@ pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildErr
         stating(keys::IMAP_DEPENDENCIES),
     );
 
+    // The entry a map none of `kept` states is shaped by: the first any of them holds.
+    let shape = (kept.iter())
+        .flat_map(|root| field::structs_at(root, keys::IMAP_DEPENDENCIES_2))
+        .next();
     let (mut grouped, mut flat) = (Vec::new(), Vec::new());
     let (mut kept_whole, mut unstated) = (BTreeSet::new(), BTreeSet::new());
+    let (mut derived, mut needless) = (BTreeSet::new(), BTreeSet::new());
     let mut pairless = BTreeSet::new();
     for (&name, asked) in &wanted {
         let in_groups = groups.get(&name).map_or(&[][..], Vec::as_slice);
         let in_pairs = pairs.get(&name).map_or(&[][..], Vec::as_slice);
         if in_groups.is_empty() && in_pairs.is_empty() {
-            unstated.insert(name);
+            // ⚠ No manifest of the game states a map without a type file, so one that needs none is left out and never stated bare.
+            if asked.needs.is_empty() {
+                needless.insert(name);
+            } else if let Some(entry) = shape.and_then(|like| derived_entry(like, name, asked)) {
+                derived.insert(name);
+                grouped.push(entry);
+            } else {
+                unstated.insert(name);
+            }
             continue;
         }
         if asked.keep_stated {
@@ -302,7 +349,9 @@ pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildErr
     Ok(Tree {
         root,
         kept: kept_whole,
+        derived,
         unstated,
+        needless,
         pairless,
         disagreeing,
     })
@@ -314,6 +363,37 @@ struct Asked {
     keep_stated: bool,
     incomplete: bool,
     needs: BTreeSet<u32>,
+    entities: usize,
+    interiors: usize,
+}
+
+/// An entry for the map `name` that no manifest states, shaped like `like`: its name, the type files it needs and the flags derived; none when `like` holds another member, or spells one of the three in a way this does not write.
+fn derived_entry(like: &MetaInstance, name: u32, asked: &Asked) -> Option<MetaInstance> {
+    // ⚠ A member beside the three written here would be the statement of the map `like` is for, copied to another.
+    if like.fields.len() != 3 || !like.extras.is_empty() {
+        return None;
+    }
+    let mut entry = like.clone();
+    match field::get_mut(&mut entry, keys::IMAP_NAME)? {
+        Value::Hash(held) => *held = or_io::meta::instance::value::HashedString::from_hash(name),
+        Value::UInt(held) => *held = u64::from(name),
+        _ => return None,
+    }
+    let flags = interior_flags(asked.entities, asked.interiors);
+    match field::get_mut(&mut entry, MANIFEST_FLAGS)? {
+        Value::UInt(held) => *held = u64::from(flags),
+        Value::Int(held) => *held = i64::from(flags),
+        Value::Bitset { bits, .. } => *bits = u128::from(flags),
+        _ => return None,
+    }
+    let Value::Array(stated) = field::get_mut(&mut entry, keys::ITYP_DEP_ARRAY)? else {
+        return None;
+    };
+    let spelled = stated.first().cloned();
+    *stated = (asked.needs.iter())
+        .map(|hash| hash_like(spelled.as_ref(), *hash))
+        .collect();
+    Some(entry)
 }
 
 /// A hash spelled the way `like` spells one, so an entry's new member is the kind of value its type table declares.
@@ -369,7 +449,7 @@ mod tests {
 
     /// The flags member as a document spells it: the public table of names lacks it, so it is its hash.
     fn flags_member() -> String {
-        format!("hash_{:08X}", field::name_hash("manifestFlags"))
+        format!("hash_{:08X}", MANIFEST_FLAGS)
     }
 
     fn grouped(map: &str, flags: u32, types: &[&str]) -> Value {
@@ -415,7 +495,7 @@ mod tests {
             name: hash(name),
             keep_stated,
             needs: needs.iter().map(|t| hash(t)).collect(),
-            incomplete: false,
+            ..Wanted::default()
         }
     }
 
@@ -441,7 +521,7 @@ mod tests {
         .expect("the manifest reads");
         field::structs_at(&root, keys::IMAP_DEPENDENCIES_2)
             .filter(|e| field::hash_at(e, keys::IMAP_NAME) == Some(hash(map)))
-            .filter_map(|e| field::u32_at(e, field::name_hash("manifestFlags")))
+            .filter_map(|e| field::u32_at(e, MANIFEST_FLAGS))
             .collect()
     }
 
@@ -586,22 +666,136 @@ mod tests {
         assert_eq!(flags_of(&built.bytes, "harbour"), [2], "one entry");
     }
 
+    /// A map made from nothing that places `entities` entities, `interiors` of them interiors.
+    fn made(name: &str, needs: &[&str], entities: usize, interiors: usize) -> Wanted {
+        Wanted {
+            entities,
+            interiors,
+            ..wanted(name, false, needs)
+        }
+    }
+
     #[test]
-    fn a_map_no_manifest_states_gets_no_entry_and_is_named() {
+    fn a_map_no_manifest_states_takes_an_entry_with_the_type_files_it_needs_and_the_flags_derived()
+    {
+        // The entry that gives the shape states the other flags and another type file: nothing of it but its shape is taken.
+        let donor = encoded(&manifest(
+            Vec::new(),
+            vec![grouped("harbour", 1, &["t_old"])],
+        ));
+        let built = build(
+            &[&donor],
+            &[
+                made("yard", &["t_yard"], 3, 0),
+                made("shop", &["t_shop", "t_more"], 2, 2),
+                made("mixed", &["t_shop"], 2, 1),
+            ],
+        )
+        .expect("the manifest is written");
+        assert_eq!(
+            built.stated,
+            BTreeMap::from([
+                (hash("yard"), BTreeSet::from([hash("t_yard")])),
+                (
+                    hash("shop"),
+                    BTreeSet::from([hash("t_shop"), hash("t_more")])
+                ),
+                (hash("mixed"), BTreeSet::from([hash("t_shop")])),
+            ])
+        );
+        assert_eq!(flags_of(&built.bytes, "yard"), [0]);
+        assert_eq!(flags_of(&built.bytes, "shop"), [INTERIOR_DATA]);
+        assert_eq!(
+            flags_of(&built.bytes, "mixed"),
+            [0],
+            "an interior beside another entity is not an interior's map"
+        );
+        assert_eq!(
+            built.derived,
+            BTreeSet::from([hash("yard"), hash("shop"), hash("mixed")])
+        );
+        assert!(built.unstated.is_empty() && built.needless.is_empty() && built.kept.is_empty());
+        assert!(
+            flags_of(&built.bytes, "harbour").is_empty(),
+            "the map of the entry that gave the shape is not stated"
+        );
+    }
+
+    #[test]
+    fn an_entry_that_holds_a_member_beside_the_three_written_shapes_no_other() {
+        let asked = Asked {
+            needs: BTreeSet::from([hash("t_yard")]),
+            entities: 2,
+            ..Asked::default()
+        };
+        let Value::Struct(like) = grouped("harbour", 1, &["t_old"]) else {
+            panic!("an entry is a struct")
+        };
+        let entry = derived_entry(&like, hash("yard"), &asked).expect("three members are written");
+        assert_eq!(field::hash_at(&entry, keys::IMAP_NAME), Some(hash("yard")));
+        assert_eq!(field::u32_at(&entry, MANIFEST_FLAGS), Some(0));
+
+        // What the map of `like` states in a member this does not write would be said of `yard` too.
+        let mut more = (*like).clone();
+        more.set("somethingOfItsOwn", Value::UInt(7));
+        assert_eq!(derived_entry(&more, hash("yard"), &asked), None);
+        // A member spelled as this does not write it is no shape either.
+        let mut odd = (*like).clone();
+        odd.set(flags_member(), Value::String("INTERIOR_DATA".into()));
+        assert_eq!(derived_entry(&odd, hash("yard"), &asked), None);
+    }
+
+    #[test]
+    fn the_flags_of_an_entry_are_the_interior_bit_where_a_map_places_interiors_and_nothing_else() {
+        assert_eq!(interior_flags(0, 0), 0, "a map that places nothing");
+        assert_eq!(interior_flags(4, 0), 0);
+        assert_eq!(interior_flags(4, 3), 0);
+        assert_eq!(interior_flags(1, 1), INTERIOR_DATA);
+        assert_eq!(interior_flags(4, 4), INTERIOR_DATA);
+    }
+
+    #[test]
+    fn a_map_no_manifest_states_that_needs_no_type_file_gets_no_entry_and_is_named() {
         let donor = encoded(&manifest(Vec::new(), vec![grouped("harbour", 0, &[])]));
         let built = build(
             &[&donor],
             &[
                 wanted("harbour", false, &["t1"]),
-                wanted("made_here", false, &["t1"]),
+                made("made_here", &[], 2, 0),
+            ],
+        )
+        .unwrap();
+        assert_eq!(built.needless, BTreeSet::from([hash("made_here")]));
+        assert!(built.unstated.is_empty() && built.derived.is_empty());
+        assert!(!built.stated.contains_key(&hash("made_here")));
+
+        let none = build(&[&donor], &[made("made_here", &[], 2, 0)]).unwrap_err();
+        assert!(matches!(none, BuildError::NoEntry(1)), "{none}");
+    }
+
+    #[test]
+    fn a_map_no_manifest_states_is_left_out_where_the_kept_ones_hold_no_entry_to_shape_one_by() {
+        // Pairs alone: a pair states no flags, and an entry is not made from a pair.
+        let donor = encoded(&manifest(vec![pair("harbour", "t_old")], Vec::new()));
+        let built = build(
+            &[&donor],
+            &[
+                wanted("harbour", false, &["t_new"]),
+                made("made_here", &["t1"], 1, 0),
             ],
         )
         .unwrap();
         assert_eq!(built.unstated, BTreeSet::from([hash("made_here")]));
+        assert!(built.derived.is_empty() && built.needless.is_empty());
         assert!(!built.stated.contains_key(&hash("made_here")));
 
-        let none = build(&[&donor], &[wanted("made_here", false, &["t1"])]).unwrap_err();
+        // Asked for alone, the refusal says a shape is what is missing: the map does need a type file.
+        let none = build(&[&donor], &[made("made_here", &["t1"], 1, 0)]).unwrap_err();
         assert!(matches!(none, BuildError::NoEntry(1)), "{none}");
+        assert!(
+            none.to_string().contains("holds an entry to shape one by"),
+            "{none}"
+        );
     }
 
     /// ⚠ That the entry is typed by the table of the manifest it came from is the corpus suite's to hold

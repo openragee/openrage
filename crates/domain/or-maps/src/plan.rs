@@ -4,8 +4,9 @@
 //! project and hands the result over as the [`Contribution`] the plan merges, so maps are one more kind of content going through the
 //! one path: each source cooks to `stream/<name>.<extension>`, a type file is registered by the line that tells the game to read it,
 //! the manifest of the maps is written beside them, and a line declares the resource a map. For a singleplayer DLC the same files go
-//! into the one nested archive the pack registers ([`Shape::Pack`]).
+//! into the nested archives the packs of the game keep theirs in ([`Shape::Pack`], `crate::layout`).
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use or_project::{
@@ -17,7 +18,8 @@ use sha2::{Digest, Sha256};
 
 use crate::facts::{inspect, Depth, Facts, Role, SourceFact};
 use crate::layout::{
-    pack_archive, pack_path, pack_type_request, stream_path, MAP_DATA, MAP_LINE, TYPE_FILE,
+    pack_archive, pack_path, pack_type_request, props_path, stream_path, MAP_DATA, MAP_LINE, PROPS,
+    TYPE_FILE,
 };
 use crate::manifest;
 use crate::model::{self, MapSet, Maps};
@@ -50,7 +52,7 @@ pub fn place_of(source: &SourceFact) -> String {
 pub enum Shape {
     /// A FiveM resource, and any build that takes the files where a resource has them: at `stream/`.
     Resource,
-    /// A singleplayer DLC: inside the one nested archive the pack registers for the content.
+    /// A singleplayer DLC: the maps inside the nested archive the pack registers as map data, and each type file inside an archive of its own with its models.
     Pack,
 }
 
@@ -63,7 +65,7 @@ impl Shape {
         }
     }
 
-    /// Where a file called `file` of the content `module` lands.
+    /// Where a map file or the manifest called `file` of the content `module` lands.
     fn place(self, module: &str, file: &str) -> String {
         match self {
             Self::Resource => stream_path(file),
@@ -94,6 +96,10 @@ pub fn plan_in(
         .map(problem)
         .collect();
 
+    let homes = match shape {
+        Shape::Pack => props_homes(model, facts, module),
+        Shape::Resource => BTreeMap::new(),
+    };
     let mut shipped: Vec<&str> = Vec::new();
     let mut archetypes_claimed: Vec<u32> = Vec::new();
     let (mut entities, mut archetypes, mut interiors) = (0u64, 0u64, 0u64);
@@ -108,7 +114,13 @@ pub fn plan_in(
                 continue;
             }
             shipped.push(path);
-            let at = shape.place(module, &source.file_name());
+            // ⚠ In a pack only a map file goes into the archive of maps: the packs of the game keep models out of it and ask for no type file inside it.
+            let at = match homes.get(path.as_str()) {
+                Some(home) if source.role() != Some(Role::Map) => {
+                    props_path(home, &source.file_name())
+                }
+                _ => shape.place(module, &source.file_name()),
+            };
             contribution.files.push(PlannedFile {
                 path: at.clone(),
                 origin: Origin::Cook {
@@ -121,15 +133,33 @@ pub fn plan_in(
             });
             match source.role() {
                 Some(Role::Types) => {
-                    // ⚠ A pack asks for a type file by an `.ityp` name of the folder its archive is in, never by the file inside the archive.
-                    let asked = match shape {
-                        Shape::Resource => at,
-                        Shape::Pack => pack_type_request(&source.name),
-                    };
-                    contribution.manifest.push(ManifestEntry {
-                        key: "data_file".to_string(),
-                        values: vec![TYPE_FILE.to_string(), asked],
-                    });
+                    let interior = (source.types())
+                        .is_some_and(|types| types.archetypes.iter().any(|a| a.interior.is_some()));
+                    if shape == Shape::Pack && interior {
+                        // ⚠ Never asked for: no pack of the game asks for a type file that declares an interior. A lock, so the
+                        // cell of the build says what its plan says.
+                        contribution.locks.push(format!(
+                            "The type file {} declares an interior, and the game's own packs ask for no such type file by name: they state it in the manifest of its archive, in a list a build does not write yet, so a singleplayer DLC cannot ship it.",
+                            source.file_name()
+                        ));
+                    } else {
+                        // ⚠ A pack asks for a type file by an `.ityp` name of the folder its archive is in, never by the file inside the archive, and states props of it.
+                        let asked = match shape {
+                            Shape::Resource => at,
+                            Shape::Pack => {
+                                let asked = pack_type_request(&source.name);
+                                contribution.archives.push(ArchiveContents {
+                                    path: asked.clone(),
+                                    contents: PROPS.to_string(),
+                                });
+                                asked
+                            }
+                        };
+                        contribution.manifest.push(ManifestEntry {
+                            key: "data_file".to_string(),
+                            values: vec![TYPE_FILE.to_string(), asked],
+                        });
+                    }
                     if let Some(types) = source.types() {
                         for archetype in &types.archetypes {
                             archetypes += 1;
@@ -209,6 +239,50 @@ pub fn plan_in(
         contribution,
         findings,
     }
+}
+
+/// The props archive of a pack each source of `model` that is no map goes into, by the source's path: a type file into the one named
+/// for it, a model or a texture dictionary into that of the first type file with an archetype that names it, and what none names
+/// into the one named for the content `module`.
+fn props_homes<'a>(model: &'a Maps, facts: &Facts, module: &str) -> BTreeMap<&'a str, String> {
+    let sources = || {
+        (model.maps.iter())
+            .flat_map(|set| set.sources.iter())
+            .filter_map(|path| Some((path.as_str(), facts.source(path)?)))
+    };
+    // What the archetypes of each type file name: a model by its asset or its own name, a dictionary of drawables and one of textures.
+    let mut named: Vec<(&str, BTreeSet<u32>)> = Vec::new();
+    for (_, source) in sources() {
+        let Some(types) = source.types() else {
+            continue;
+        };
+        let mut names = BTreeSet::new();
+        for archetype in &types.archetypes {
+            names.insert(match archetype.asset_name.hash {
+                0 => archetype.name.hash,
+                asset => asset,
+            });
+            names.insert(archetype.drawable_dictionary.hash);
+            names.insert(archetype.texture_dictionary.hash);
+        }
+        names.remove(&0);
+        named.push((source.name.as_str(), names));
+    }
+    let mut homes = BTreeMap::new();
+    for (path, source) in sources() {
+        let home = match source.role() {
+            Some(Role::Map) => continue,
+            Some(Role::Types) => source.name.as_str(),
+            _ => {
+                let name = or_io::string_hash(source.name.as_bytes());
+                (named.iter())
+                    .find(|(_, names)| names.contains(&name))
+                    .map_or(module, |(types, _)| *types)
+            }
+        };
+        homes.insert(path, home.to_string());
+    }
+    homes
 }
 
 /// The item of a set: its id, its name and a digest of everything it ships.

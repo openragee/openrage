@@ -471,11 +471,12 @@ const ERRORS: [&str; 4] = [
     "file-missing",
     "file-unreadable",
 ];
-const NOTES: [&str; 5] = [
+const NOTES: [&str; 6] = [
     "manifest-line-unread",
     "file-locked",
     "archetype-without-model",
     "archetype-undeclared",
+    "texture-dictionary-missing",
     "texture-dictionary-elsewhere",
 ];
 

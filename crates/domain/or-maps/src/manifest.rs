@@ -2,11 +2,12 @@
 //!
 //! The lists are `or-world`'s derivation over what the sources place and declare, and the document is written by
 //! `or_world::manifest_build` from the manifests of the game the module keeps in its `manifests` folder. A manifest is not made from
-//! nothing: the tree declares none of its classes and derives no flags for an entry, so those come from a kept manifest, and with none
-//! kept, or for a map none of them states, nothing is written and the plan says so by name. A map taken from the game keeps the entry
-//! the game states for it, because the derivation and the shipped manifests agree for most maps and not all. A map that is not the
-//! game's and places an archetype no type file of the content declares keeps the type files the game states for a map of its name
-//! beside the ones found, since the derivation sees the content's own type files and no install.
+//! nothing: the tree declares none of its classes, so it is typed by a kept manifest, and with none kept nothing is written and the
+//! plan says so. A map taken from the game keeps the entry the game states for it, because the derivation and the shipped manifests
+//! agree for most maps and not all. A map that is not the game's and places an archetype no type file of the content declares keeps
+//! the type files the game states for a map of its name beside the ones found, since the derivation sees the content's own type
+//! files and no install. A map none of the kept manifests states, such as one made from nothing, takes an entry shaped like one
+//! they hold, with the type files it needs and the flags its entities give; one that needs no type file is left out and named.
 //!
 //! ⚠ A kept manifest is the game's own file, as a source's base file is: it is in the person's project and never in this repository.
 
@@ -120,6 +121,8 @@ pub fn of(model: &Maps, facts: &Facts) -> Outcome {
             needs: derived.types.difference(&resident).copied().collect(),
             // ⚠ A plan has no install, so an archetype of the game is one no type file here declares: the list is then short, and the writer adds it to the stated one.
             incomplete: derived.unresolved > 0,
+            entities: map.entities.len(),
+            interiors: map.entities.iter().filter(|e| e.interior).count(),
         });
     }
     if wanted.is_empty() {
@@ -160,8 +163,25 @@ pub fn of(model: &Maps, facts: &Facts) -> Outcome {
     };
     if !built.unstated.is_empty() {
         outcome.notes.push(format!(
-            "`{FILE}` states nothing for {}: no manifest of the game kept in `{KEPT}` states a map of that name, so nothing says what flags its entry takes",
+            "`{FILE}` states nothing for {}: no manifest of the game kept in `{KEPT}` states a map of that name, and none holds an entry for a map with its type files to shape one by",
             shown(&mut built.unstated.iter().copied(), &names)
+        ));
+    }
+    if !built.needless.is_empty() {
+        outcome.notes.push(format!(
+            "`{FILE}` states nothing for {}: no manifest of the game kept in `{KEPT}` states a map of that name, it needs no type file of this content, and no manifest of the game states a map without one",
+            shown(&mut built.needless.iter().copied(), &names)
+        ));
+    }
+    // ⚠ A derived entry names the content's type files alone: a type file of the game is one no plan sees.
+    let mut short = (wanted.iter())
+        .filter(|map| map.incomplete && built.derived.contains(&map.name))
+        .map(|map| map.name)
+        .peekable();
+    if short.peek().is_some() {
+        outcome.notes.push(format!(
+            "the entry `{FILE}` states for {} names the type files of this content alone: it places archetypes none of them declares, and a type file of the game that declares one and is not kept loaded is not named",
+            shown(&mut short, &names)
         ));
     }
     if !built.pairless.is_empty() {
@@ -215,12 +235,12 @@ fn refusal(error: &BuildError, facts: &Facts, names: &BTreeMap<u32, Name>) -> St
     };
     match error {
         BuildError::NoDonor => format!(
-            "no `{FILE}` is written: the content keeps no manifest of the game in `{KEPT}`, and that document is typed by one and takes the flags of each entry from one; `openrage-cli maps keep-manifest` keeps one"
+            "no `{FILE}` is written: the content keeps no manifest of the game in `{KEPT}`, and that document is typed by one; `openrage-cli maps keep-manifest` keeps one"
         ),
         BuildError::NoEntry(_) => {
             let maps: Vec<String> = names.values().map(|name| format!("`{}`", name.shown())).collect();
             format!(
-                "no `{FILE}` is written: no manifest of the game kept in `{KEPT}` states {}, so nothing says what flags an entry for it takes",
+                "no `{FILE}` is written: no manifest of the game kept in `{KEPT}` states {}, and no entry is derived for a map that needs no type file of this content or where no kept manifest holds an entry to shape one by",
                 maps.join(", ")
             )
         }

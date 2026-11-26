@@ -862,11 +862,10 @@ impl ViewportRenderer {
             (deferred.post).record_temporal(encoder, queue, &deferred.hdr, post, views);
             self.gpu_mark(encoder, "temporal");
         }
-        deferred.meter.record(encoder, self.day_revision);
+        let exposure = (self.day.as_ref().and_then(|d| d.stated)).map_or(1.0, |s| s.exposure);
+        (deferred.meter).record(encoder, queue, (self.day_revision, exposure));
         match post {
             Some(post) => {
-                let exposure = (self.day.as_ref().and_then(|d| d.stated))
-                    .map_or(1.0, |stated| stated.exposure);
                 (deferred.post).record_bloom(encoder, queue, &deferred.hdr, post, exposure);
                 (deferred.grade).record(encoder, queue, &deferred.hdr, &post.grade);
             }

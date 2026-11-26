@@ -277,7 +277,8 @@ pub fn exposed(
     metered: Option<&Metered>,
 ) -> Moment {
     let of = (hour.to_bits(), weather);
-    let now = Instant::now();
+    // The frame's clock, so that a shots run adapts by its frames and not by how long they took.
+    let now = or_transport::clock::now();
     let mut held = ADAPTING.lock().unwrap_or_else(|p| p.into_inner());
     let kept = held.as_mut().filter(|a| a.of == of && a.cut == cut);
     let Some(adapting) = kept else {
@@ -294,10 +295,11 @@ pub fn exposed(
         });
         return moment;
     };
-    // ⚠ Inferred: the build names these percentages; they are taken as parts of the frame.
-    let low = moment.own.get_or("postfx_exposure_lowlights_percent", 0.0);
-    let high = moment.own.get_or("postfx_exposure_highlights_percent", 0.0);
-    let Some(luminance) = metered.and_then(|m| m.average(low, high)) else {
+    // Parts of the frame's pixels, the brightest held to leave a hundredth at least, as the build passes them to its meter.
+    let low = moment.own.get_or("postfx_exposure_lowlights_percent", 0.2);
+    let high = (moment.own.get_or("postfx_exposure_highlights_percent", 0.2)).min(0.99 - low);
+    // The scene's luminance in cd/m², whatever exposure the frame read a frame or two late was drawn at.
+    let Some(scene) = metered.and_then(|m| m.average(low, high)) else {
         return adapting.give(&moment, None);
     };
     // The moment's own reset (v0x31e) starts the three readings again.
@@ -314,9 +316,10 @@ pub fn exposed(
         (false, false) => now.duration_since(adapting.at).as_secs_f32(),
     };
     let settings = tables.exposure_settings();
-    let scene = luminance / adapting.stops.exp2();
     let target = or_title::gta6_exposure::target_stops(&settings, &moment.own, scene);
-    let exposed = moment.metered(&settings, luminance, adapting.stops, seconds);
+    // `metered` takes the scene as a frame at the stops it adapts from would hold it.
+    let at_previous = scene * adapting.stops.exp2();
+    let exposed = moment.metered(&settings, at_previous, adapting.stops, seconds);
     tracing::debug!(
         scene,
         target,

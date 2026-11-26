@@ -116,7 +116,7 @@ fn the_frame_is_exposed_by_its_own_luminance_from_the_first_reading_of_its_own_h
     )
     .expect("a moment");
     // What is read in the first frame of an hour was drawn under the hour before.
-    let bright = Metered::of(vec![8.0; 16]);
+    let bright = Metered::of(vec![8.0 / unread.stops.exp2(); 16]);
     let grey = at(Some(&bright));
     assert_eq!(grey.stops, unread.stops);
     // The first reading of its own is taken whole: the curve over the scene's luminance.
@@ -130,11 +130,11 @@ fn the_frame_is_exposed_by_its_own_luminance_from_the_first_reading_of_its_own_h
     );
     assert_eq!(first.light_scale, first.stops.exp2() / std::f32::consts::PI);
     // A frame that reads the same scene keeps its exposure; nothing read holds it.
-    let same = Metered::of(vec![scene * first.stops.exp2(); 16]);
+    let same = Metered::of(vec![scene; 16]);
     assert_eq!(at(Some(&same)).stops, first.stops);
     assert_eq!(at(None).stops, first.stops);
     // A scene four times as bright is moved towards, not jumped to, a moment later.
-    let brighter = Metered::of(vec![4.0 * scene * first.stops.exp2(); 16]);
+    let brighter = Metered::of(vec![4.0 * scene; 16]);
     let next = at(Some(&brighter)).stops;
     let wanted = curve - 2.0 * 4f32.ln();
     assert!(next <= first.stops && next > wanted, "{next} {wanted}");
@@ -152,8 +152,8 @@ fn the_frame_is_exposed_by_its_own_luminance_from_the_first_reading_of_its_own_h
         exposed(&tables, moment, (9.5, WeatherState::Clear), 1, metered)
     };
     assert_eq!(cut(Some(&brighter)).stops, unread.stops);
-    // A scene of one candela a square metre, as the frame drawn at the cut's first stops holds it.
-    let lit = Metered::of(vec![unread.stops.exp2(); 16]);
+    // A scene of one candela a square metre.
+    let lit = Metered::of(vec![1.0; 16]);
     let whole = cut(Some(&lit)).stops;
     let scene = 1.0;
     let settings = tables.exposure_settings();

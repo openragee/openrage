@@ -429,3 +429,31 @@ fn a_dictionary_reads_its_frame_filters_animation_records_and_64_bit_words() {
     ));
     assert!(matches!(entry(7), Ok(Entry::Word64(0x0123_4567_89AB_CDEF))));
 }
+
+#[test]
+fn a_dictionary_states_the_trace_words_of_each_entry_that_is_a_drawable() {
+    let (mut img, _) = dictionary([0, name_hash32(b"box#dr")]);
+    let entries = u64_at(&img.bytes, 0x30) as usize & 0x0FFF_FFFF;
+    let drawable = u64_at(&img.bytes, entries + 8) as usize & 0x0FFF_FFFF;
+    img.u32(drawable + 0xB8, 0x0000_0400);
+    // The entry of no kind states none.
+    let words = trace_words(Rpf9Role::Dictionary, &img.bytes);
+    let [Ok(words)] = words.as_slice() else {
+        panic!("one drawable's words, not {words:?}");
+    };
+    assert_eq!(words.level_word, 0x0000_0400);
+    assert_eq!(words.shaders[0].name_hash, SHADER_HASH);
+    // An entry is asked for by its code.
+    let code = name_hash32(b"box#dr");
+    let entry = trace_words_of_entry(&img.bytes, code).expect("the dictionary reads");
+    assert_eq!(entry.as_ref(), Some(words));
+    assert!(matches!(
+        trace_words_of_entry(&img.bytes, code + 1),
+        Ok(None)
+    ));
+    // A dictionary whose entries do not read is one error.
+    assert!(matches!(
+        trace_words(Rpf9Role::Dictionary, &img.bytes[..0x20]).as_slice(),
+        [Err(_)]
+    ));
+}

@@ -333,6 +333,9 @@ impl Shell {
                 println!("shot  {}", path.display());
             }
             Step::World(step) => self.world(state, step, out)?,
+            Step::ModelPerf(frames, name, in_full) => {
+                self.model_perf(state, *frames, &out.join(name), *in_full)?;
+            }
             Step::Compare(step) => {
                 if let Err(why) = compare::run(step, out) {
                     println!("FAILED  {why}");

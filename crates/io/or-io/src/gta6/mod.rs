@@ -3,6 +3,7 @@
 //! GTA VI has no source here to name a field by, so a name says the role the field was measured to
 //! play. Reading comes first: a `.ttpf` texture pack is the one GTA VI file written.
 
+pub mod accel;
 // Its blocks decode through GTA V's channel codec, which `gta5` builds.
 #[cfg(feature = "gta5")]
 pub mod anim;

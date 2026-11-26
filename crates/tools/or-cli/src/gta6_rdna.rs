@@ -303,6 +303,18 @@ fn report(records: &[Record], run: Run) -> String {
         }
     }
     ranked(&mut out, "approximates", &approximations, TOP_REASONS);
+    let tests = |record: &&Record| !record.intersections.is_empty();
+    if records.iter().any(|record| tests(&record)) {
+        let _ = writeln!(
+            out,
+            "  ray tracers   {} block(s) test a ray against a node at {} place(s); {} of them lowered with their structures as memory",
+            records.iter().filter(tests).count(),
+            (records.iter().map(|r| r.intersections.len())).sum::<usize>(),
+            (records.iter().filter(tests))
+                .filter(|r| r.outcome == TRANSLATED)
+                .count()
+        );
+    }
     if run.backends {
         let _ = writeln!(
             out,
@@ -411,7 +423,7 @@ fn show(corpus: &Path, index: usize, records: &[Record]) -> Result<(), String> {
 }
 
 const USAGE: &str = "usage: rpf scan-rdna <archive.rpf> <offset> [--program <n>] [--json <file>] \
-    [--stage <text>] [--reason <text>] [--sample <n>] [--backends] [--cache] [--fresh] \
+    [--stage <text>] [--reason <text>] [--sample <n>] [--backends] [--arena] [--cache] [--fresh] \
     [--jobs <n>] [--worker-memory <MB>] [--memory <MB>] [--batch <n>] [--budget <ms>] \
     [--limit <bytes>]";
 
@@ -444,6 +456,7 @@ pub(crate) fn cmd_scan_rdna(args: &[String]) -> Result<(), String> {
         take_flag(&mut args, "--cache"),
         take_flag(&mut args, "--fresh"),
     );
+    let arena = take_flag(&mut args, "--arena");
     let [path, offset] = args.as_slice() else {
         return Err(USAGE.to_owned());
     };
@@ -464,6 +477,7 @@ pub(crate) fn cmd_scan_rdna(args: &[String]) -> Result<(), String> {
         cache: translations.as_deref(),
         memo: fs::create_dir_all(&memo).is_ok().then_some(memo.as_path()),
         memory_mb: worker_mb,
+        arena,
     };
     let range = match program {
         Some(index) => index.min(programs)..(index + 1).min(programs),
@@ -607,6 +621,13 @@ mod tests {
         ));
         has(&format!("  {HLSL:<22} 0\n"));
         assert!(!report(&sample(), Run::default()).contains("back ends"));
+        assert!(!text.contains("ray tracers"));
+        let mut traced = sample();
+        traced[0].intersections = vec![Default::default(); 3];
+        traced[2].intersections = vec![Default::default(); 2];
+        assert!(report(&traced, Run::default()).contains(
+            "  ray tracers   2 block(s) test a ray against a node at 5 place(s); 1 of them lowered"
+        ));
     }
 
     #[test]

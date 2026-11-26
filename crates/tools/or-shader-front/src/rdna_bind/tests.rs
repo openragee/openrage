@@ -385,6 +385,8 @@ fn a_program_that_loads_texels_is_lowered_again_with_each_such_texture_stated_as
         approximations: Default::default(),
         half_slots: Default::default(),
         subgroups: false,
+        intersections: Vec::new(),
+        region: None,
     };
     let texture = Resource {
         kind: ResourceKind::Texture {

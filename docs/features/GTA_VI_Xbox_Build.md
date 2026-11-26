@@ -230,6 +230,7 @@ Every command is `openrage-cli` and a row below; `openrage-cli rpf9`, `openrage-
 | `rpf scan-rdna-diff` | what changed between two `--json` runs: the outcomes that moved, the reasons that shifted by stage, the translations that got slower |
 | `rpf scan-rdna-bind` | how many passes translate in both stages, join every resource and bind |
 | `rpf scan-effect-use` | the drawables of an archive by the effects they name: how many each effect's own passes draw in Shaded, and why the rest draw as Material |
+| `rpf trace` | what the game gives its ray tracer of one drawable, a structure a model, traced on the CPU by the reference walk of the ray-tracing programs: the depth as digits, or a PNG |
 | `ttpf info`, `ttpf export`, `ttpf replace`, `ttpf plan` | a pack's textures listed, exported, one replaced into a new pack, and a save planned against the file's table |
 | `ttpf calibrate` | fits the coder's tables from the packs of a folder; `--coverage` then counts how every coded texture reads |
 | `gta6-save info`, `get`, `set`, `key` | what a save states, a value of a story save read or replaced into a new file, and the key a name hashes to |

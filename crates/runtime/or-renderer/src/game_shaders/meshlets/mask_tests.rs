@@ -25,6 +25,8 @@ fn sheet_over_a_floor(over: f32) -> MeshletSurface {
 /// State the scene's mask: `roots` a pixel in rows from the top, and the word of its one tile.
 fn state(scene: &mut MeshletScene, queue: &wgpu::Queue, roots: &[f32], word: u32) {
     scene.mask.stated = true;
+    // The mask is written behind the scene's back.
+    scene.forget();
     let write = |view: &wgpu::TextureView, bytes: &[u8], side: u32| {
         queue.write_texture(
             view.texture().as_image_copy(),

@@ -1,0 +1,433 @@
+//! What a frame of a model asks of the device, counted through the viewport that draws it.
+
+use super::scene_tests::{leaning, two_levels, BOX};
+use super::*;
+use crate::game_shaders::frame::read_back;
+use crate::{OrbitCamera, ShadingMode, ViewportRenderer};
+
+/// The pixels a side of the frame the model is drawn onto.
+const SIDE: u32 = 64;
+
+/// A viewport that draws `surfaces` by their own passes, on a device that times the stages of a
+/// frame where it can; none with no device.
+fn shown(
+    test: &str,
+    surfaces: &[MeshletSurface],
+) -> Option<(wgpu::Device, wgpu::Queue, ViewportRenderer)> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = match crate::instance::headless_adapter(&instance) {
+        Ok(adapter) => adapter,
+        Err(e) => {
+            or_test_support::skip_device(test, format_args!("no wgpu adapter: {e}"));
+            return None;
+        }
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("meshlet-calls-test"),
+        required_features: adapter.features() & crate::gpu_timer::FEATURES,
+        required_limits: adapter.limits(),
+        ..Default::default()
+    }))
+    .ok()?;
+    let mut renderer = ViewportRenderer::new(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        SIDE,
+        SIDE,
+    );
+    let (frame, mut pipelines) = (renderer.game_target(), MeshletPipelines::default());
+    let scene = prepared((&device, &queue), &mut pipelines, surfaces, &frame, 0);
+    renderer.set_gta6_scene(Some(scene));
+    Some((device, queue, renderer))
+}
+
+/// The scene of `surfaces` as `pipelines` have it once all but `waiting` of them have a pass.
+fn prepared(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    pipelines: &mut MeshletPipelines,
+    surfaces: &[MeshletSurface],
+    frame: &Target,
+    waiting: usize,
+) -> MeshletScene {
+    for _ in 0..4000 {
+        let scene = MeshletScene::prepare(device, queue, pipelines, surfaces, (SIDE, SIDE), frame);
+        match scene.expect("the scene prepares") {
+            Some(scene) if scene.waiting.len() == waiting => return scene,
+            _ => std::thread::sleep(std::time::Duration::from_millis(5)),
+        }
+    }
+    panic!("no scene came with {waiting} surfaces waiting for a pass");
+}
+
+/// Draw a frame of `renderer` through `camera` under `sky`: what its model asked of the device.
+fn frame(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    renderer: &mut ViewportRenderer,
+    camera: &OrbitCamera,
+    sky: Sky,
+) -> MeshletCalls {
+    renderer.set_gta6_sky(sky);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.render(&mut encoder, queue, camera, ShadingMode::Shaded);
+    queue.submit([encoder.finish()]);
+    renderer.gta6_scene().expect("a model is set").calls()
+}
+
+/// The leaning light over the box of the two levels, which casts their shadow.
+fn casting() -> Sky {
+    let mut sky = leaning();
+    sky.scene.bounds = Some(BOX);
+    sky
+}
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_frame_of_two_surfaces_is_counted_pass_by_pass_and_its_three_stages_are_marked() {
+    let test = "a_frame_of_two_surfaces_is_counted_pass_by_pass";
+    let surfaces = [two_levels(true), two_levels(true)];
+    let Some((device, queue, mut renderer)) = shown(test, &surfaces) else {
+        return;
+    };
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    // Surfaces, the groups of one, the buffers that hold a view matrix, and meshlets in all,
+    // each of one primitive.
+    let (s, g, v, m) = (2, 2, 2, 4);
+    let camera = OrbitCamera::default();
+    let calls = frame((&device, &queue), &mut renderer, &camera, casting());
+    let cast = MeshletCalls {
+        // The shadow's tile, the targets, the mask and the meter.
+        passes: 4,
+        // Each surface into the tile and into the targets, then the mask, the meter and the
+        // frame lit: three full-screen draws, of one group, one group and two.
+        draws: 2 * s + 3,
+        surface_draws: 2 * s,
+        binds: 2 * g * s + 4,
+        // The view matrix into each buffer that holds one, the shadow's two matrices, the light.
+        writes: v + 2,
+        written: u64::from(64 * v + 128) + LIGHT_BYTES as u64,
+        // The light's matrix into each of those buffers, and the camera's back.
+        copies: 2 * v,
+        vertices: u64::from(2 * 3 * m),
+    };
+    assert_eq!(calls, cast);
+    // Under a light that casts nothing the tile's pass goes, with its copies and its write. Seen
+    // from elsewhere, so that the targets are drawn again.
+    let camera = OrbitCamera { yaw: 1.5, ..camera };
+    let calls = frame((&device, &queue), &mut renderer, &camera, leaning());
+    let uncast = MeshletCalls {
+        passes: 3,
+        draws: s + 3,
+        surface_draws: s,
+        binds: g * s + 4,
+        writes: v + 1,
+        written: u64::from(64 * v) + LIGHT_BYTES as u64,
+        copies: 0,
+        vertices: u64::from(3 * m),
+    };
+    assert_eq!(calls, uncast);
+
+    // And with nothing forgotten in between, a frame like the last is the frame lit alone.
+    let calls = frame((&device, &queue), &mut renderer, &camera, leaning());
+    let lit_alone = MeshletCalls {
+        draws: 1,
+        binds: 2,
+        ..Default::default()
+    };
+    assert_eq!(calls, lit_alone);
+    renderer.gta6_scene().expect("a model is set").forget();
+    let calls = frame((&device, &queue), &mut renderer, &camera, leaning());
+    assert_eq!(calls, uncast);
+
+    let scene = renderer.gta6_scene().expect("a model is set");
+    assert_eq!((scene.drawn(), scene.meshlets()), (s as usize, m));
+    let mut stages = Vec::new();
+    let mut encoder = device.create_command_encoder(&Default::default());
+    scene.record_targets(&mut encoder, |_, stage| stages.push(stage));
+    assert_eq!(stages, ["model shadow", "model targets", "model meter"]);
+    drop(encoder);
+    let refused = pollster::block_on(validation.pop()).map(|e| e.to_string());
+    assert_eq!(refused, None);
+
+    // The viewport hands the three to the timer, on a device that times a frame.
+    if !device.features().contains(crate::gpu_timer::FEATURES) {
+        or_test_support::skip_device(test, "the device times no stage of a frame");
+        return;
+    }
+    let read = (0..1000).any(|_| {
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        renderer.collect_gpu_times(&device)
+    });
+    assert!(read, "the timestamps were never read");
+    let timed: Vec<_> = (renderer.gpu_stages().iter())
+        .map(|(stage, _)| *stage)
+        .collect();
+    assert_eq!(timed[..3], stages[..], "{timed:?}");
+}
+
+/// The same light from the other side, which casts the shadow elsewhere.
+fn cast_from_the_other_side() -> Sky {
+    let mut sky = casting();
+    sky.towards = Vec3::new(-0.6, 0.0, 0.8);
+    sky
+}
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_frame_draws_a_surface_again_only_where_the_camera_or_the_sun_moved() {
+    let test = "a_frame_draws_a_surface_again_only_where_the_camera_or_the_sun_moved";
+    let surfaces = [two_levels(true), two_levels(true)];
+    let Some((device, queue, mut renderer)) = shown(test, &surfaces) else {
+        return;
+    };
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let s = 2;
+    let camera = OrbitCamera::default();
+    let turned = OrbitCamera {
+        yaw: 1.5,
+        ..OrbitCamera::default()
+    };
+    let (sun, moved) = (casting(), cast_from_the_other_side());
+    let frames = [
+        (&camera, sun),
+        (&camera, sun),
+        (&turned, sun),
+        (&turned, moved),
+        (&camera, sun),
+    ];
+    let drawn: Vec<u32> = (frames.iter())
+        .map(|(camera, sky)| frame((&device, &queue), &mut renderer, camera, *sky).surface_draws)
+        .collect();
+    // Every surface into the tile and into the targets; then nothing moved, and none; the
+    // camera moved, into the targets; the sun moved, into the tile; both moved, into both.
+    assert_eq!(drawn, [2 * s, 0, s, s, 2 * s]);
+    let refused = pollster::block_on(validation.pop()).map(|e| e.to_string());
+    assert_eq!(refused, None);
+}
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_surface_draws_by_its_own_pass_while_a_worker_builds_another_s_and_both_as_before_once_built() {
+    let test = "a_surface_draws_by_its_own_pass_while_a_worker_builds_another_s";
+    // The floor across the frame, and a sliver of one: the frame shows which of the two drew.
+    let surfaces = [two_levels(true), two_levels(false)];
+    let Some((device, queue, mut renderer)) = shown(test, &surfaces) else {
+        return;
+    };
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let (gpu, target) = ((&device, &queue), renderer.game_target());
+    let camera = OrbitCamera {
+        distance: 2.5,
+        ..OrbitCamera::default()
+    };
+    // With every pass built before the scene was asked for: what the frame has to come to.
+    let whole = frame(gpu, &mut renderer, &camera, casting());
+    let whole = (whole, seen(gpu, &renderer));
+
+    let mut pipelines = MeshletPipelines::default();
+    pipelines.hold(&surfaces[0], true);
+    let ahead = prepared(gpu, &mut pipelines, &surfaces, &target, 1);
+    assert_eq!((ahead.drawn(), ahead.meshlets()), (1, 2));
+    assert_eq!(
+        (ahead.waiting.as_slice(), ahead.refused.len()),
+        (&[0][..], 0)
+    );
+    renderer.set_gta6_scene(Some(ahead));
+    // The one surface into the tile and into the targets, and the floor is not in them.
+    let calls = frame(gpu, &mut renderer, &camera, casting());
+    assert_eq!((calls.passes, calls.surface_draws), (4, 2));
+    let ahead = seen(gpu, &renderer);
+    assert!(ahead[1] != whole.1[1] && ahead[1].iter().any(|byte| *byte != 0));
+    // Asked again, the held pass is still the only one waited for, and no third is started.
+    assert_eq!(pipelines.waiting(&device, &surfaces), 1);
+    assert_eq!(pipelines.len(), 2);
+
+    pipelines.hold(&surfaces[0], false);
+    let both = prepared(gpu, &mut pipelines, &surfaces, &target, 0);
+    assert_eq!((both.drawn(), both.waiting.len()), (2, 0));
+    renderer.set_gta6_scene(Some(both));
+    assert_eq!(frame(gpu, &mut renderer, &camera, casting()), whole.0);
+    for (part, (now, before)) in seen(gpu, &renderer).iter().zip(&whole.1).enumerate() {
+        let differ = now.iter().zip(before).filter(|(a, b)| a != b).count();
+        assert_eq!(
+            differ, 0,
+            "part {part} of the frame differs in {differ} bytes"
+        );
+    }
+    let refused = pollster::block_on(validation.pop()).map(|e| e.to_string());
+    assert_eq!(refused, None);
+}
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_surface_is_drawn_three_vertices_a_primitive_of_its_largest_meshlet_and_fills_the_targets_as_at_the_most(
+) {
+    let test = "a_surface_is_drawn_three_vertices_a_primitive_of_its_largest_meshlet";
+    let camera = OrbitCamera {
+        distance: 2.5,
+        ..OrbitCamera::default()
+    };
+    // The two levels state one primitive a meshlet; then as many as a group has threads, which
+    // is every vertex a draw has ever had; then more than that, which is drawn as the most.
+    let drawn = |primitives: u32| {
+        let mut surface = two_levels(true);
+        surface.primitives = primitives;
+        let (device, queue, mut renderer) = shown(test, &[surface])?;
+        let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let calls = frame((&device, &queue), &mut renderer, &camera, casting());
+        let seen = seen((&device, &queue), &renderer);
+        let refused = pollster::block_on(validation.pop()).map(|e| e.to_string());
+        assert_eq!(refused, None);
+        Some((calls, seen))
+    };
+    let (Some(fitted), Some(most), Some(past)) = (drawn(1), drawn(VERTICES / 3), drawn(4000))
+    else {
+        return;
+    };
+    // Two meshlets, into the tile and into the targets.
+    assert_eq!(fitted.0.vertices, 2 * 2 * 3);
+    assert_eq!(most.0.vertices, u64::from(2 * 2 * VERTICES));
+    assert_eq!(past.0, most.0);
+    let counted = |calls: MeshletCalls| MeshletCalls {
+        vertices: 0,
+        ..calls
+    };
+    assert_eq!(counted(fitted.0), counted(most.0));
+    for (part, (fitted, most)) in fitted.1.iter().zip(&most.1).enumerate() {
+        let differ = fitted.iter().zip(most).filter(|(a, b)| a != b).count();
+        assert_eq!(
+            differ, 0,
+            "part {part} of the frame differs in {differ} bytes"
+        );
+        assert!(fitted.iter().any(|byte| *byte != 0), "part {part} is blank");
+    }
+}
+
+/// The frame `renderer` drew last and the first two targets of its model, as bytes.
+fn seen(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    renderer: &ViewportRenderer,
+) -> [Vec<u8>; 3] {
+    let scene = renderer.gta6_scene().expect("a model is set");
+    let target = |at: usize| scene.target(at).expect("a target");
+    [renderer.colour_texture(), target(0), target(1)].map(|texture| {
+        let rgba = wgpu::TextureFormat::Rgba8Unorm;
+        read_back(device, queue, texture, rgba, SIDE).bytes
+    })
+}
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_frame_drawn_after_a_skip_is_byte_for_byte_the_frame_drawn_in_full() {
+    let test = "a_frame_drawn_after_a_skip_is_byte_for_byte_the_frame_drawn_in_full";
+    let Some((device, queue, mut renderer)) = shown(test, &[two_levels(true)]) else {
+        return;
+    };
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let near = OrbitCamera {
+        distance: 2.5,
+        ..OrbitCamera::default()
+    };
+    let turned = OrbitCamera {
+        yaw: 1.5,
+        ..near.clone()
+    };
+    let (sun, moved) = (casting(), cast_from_the_other_side());
+    // The camera moves, then the sun, then nothing, then the camera again under a light that
+    // casts none, and under the first light from where the first frame was seen.
+    let frames = [
+        (&near, sun),
+        (&turned, sun),
+        (&turned, moved),
+        (&turned, moved),
+        (&near, leaning()),
+        (&near, sun),
+    ];
+    let mut run = |in_full: bool| -> Vec<(u32, [Vec<u8>; 3])> {
+        let mut drawn = Vec::new();
+        for (camera, sky) in &frames {
+            if in_full {
+                renderer.gta6_scene().expect("a model is set").forget();
+            }
+            let calls = frame((&device, &queue), &mut renderer, camera, *sky);
+            drawn.push((calls.surface_draws, seen((&device, &queue), &renderer)));
+        }
+        drawn
+    };
+    let (skipped, in_full) = (run(false), run(true));
+    for (at, (skipped, in_full)) in skipped.iter().zip(&in_full).enumerate() {
+        for (part, what) in ["the frame", "the colour target", "the normal target"]
+            .iter()
+            .enumerate()
+        {
+            let differ = (skipped.1[part].iter().zip(&in_full.1[part]))
+                .filter(|(a, b)| a != b)
+                .count();
+            assert_eq!(differ, 0, "{what} of frame {at} differs in {differ} bytes");
+        }
+    }
+    let draws =
+        |frames: &[(u32, [Vec<u8>; 3])]| -> Vec<u32> { frames.iter().map(|f| f.0).collect() };
+    assert_eq!(draws(&skipped), [2, 1, 1, 0, 1, 1]);
+    assert_eq!(draws(&in_full), [2, 2, 2, 2, 1, 2]);
+    // The frames are of a model, and each move shows: nothing here is equal for being blank.
+    let lit = |at: usize| &in_full[at].1[0];
+    assert!(lit(0) != lit(1) && lit(1) != lit(2) && lit(4) != lit(5));
+    assert_eq!(lit(2), lit(3));
+    let refused = pollster::block_on(validation.pop()).map(|e| e.to_string());
+    assert_eq!(refused, None);
+}
+
+#[test]
+fn what_a_frame_owes_the_device_is_what_the_bytes_it_is_drawn_by_made_stale() {
+    let light = |fill: u8| [fill; LIGHT_BYTES];
+    let (a, b) = ([1u8; 64], [2u8; 64]);
+    let owed = |shadow, targets, lit| Stale {
+        shadow,
+        targets,
+        lit,
+    };
+    let mut kept = Kept::default();
+    let mut taken = |view, tile, fill| {
+        let lacking = kept.take(view, tile, &light(fill));
+        (lacking, std::mem::take(&mut kept.stale))
+    };
+    // A first frame lacks everything, and the same frame again lacks nothing.
+    assert_eq!(taken(a, Some(a), 0), ((true, true), owed(true, true, true)));
+    assert_eq!(taken(a, Some(a), 0), ((false, false), Stale::default()));
+    // The camera moved: the targets. The sun moved: the tile. The light alone: neither.
+    assert_eq!(
+        taken(b, Some(a), 0),
+        ((true, false), owed(false, true, true))
+    );
+    assert_eq!(
+        taken(b, Some(b), 0),
+        ((false, false), owed(true, false, true))
+    );
+    assert_eq!(
+        taken(b, Some(b), 1),
+        ((false, true), owed(false, false, true))
+    );
+    // A frame that casts nothing leaves the tile, which the same light then finds as it cast it.
+    assert_eq!(taken(b, None, 1).1, Stale::default());
+    assert_eq!(taken(b, Some(b), 1).1, Stale::default());
+    // What no recording drew is owed still, whatever the frames after it lack.
+    assert!(kept.take(a, Some(a), &light(1)).0);
+    assert_eq!(kept.take(a, Some(a), &light(1)), (false, false));
+    assert_eq!(kept.stale, owed(true, true, true));
+}

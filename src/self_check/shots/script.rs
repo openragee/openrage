@@ -86,6 +86,8 @@ pub(super) enum Step {
     World(super::world::WorldStep),
     /// A shot measured against a reference image.
     Compare(super::compare::Compare),
+    /// What this many frames of the open GTA VI model cost at rest, and as many with the camera turned once round it, written as JSON to this file beside the shots; with `true`, every pass drawn every frame, whatever moved.
+    ModelPerf(usize, String, bool),
 }
 
 /// Every step with its line number and text, or the first line that is wrong.
@@ -322,6 +324,17 @@ fn parse_step(line: &str) -> Result<Step, String> {
         }
         "world" => super::world::parse(rest).map(Step::World),
         "compare" => super::compare::parse(rest).map(Step::Compare),
+        "model" => {
+            let (frames, name, in_full) = match args[..] {
+                ["perf", frames, name] => (frames, name, false),
+                ["perf", frames, name, "full"] => (frames, name, true),
+                _ => return Err("use `model perf FRAMES FILE [full]`".into()),
+            };
+            let frames = (frames.parse::<usize>().ok())
+                .filter(|n| (1..=10_000).contains(n))
+                .ok_or_else(|| format!("`{frames}` is not a number of frames from 1 to 10000"))?;
+            Ok(Step::ModelPerf(frames, file_stem(name)?, in_full))
+        }
         other => Err(format!("no step `{other}`")),
     }
 }
@@ -610,6 +623,30 @@ mod tests {
         }
         assert_eq!(one("scale 150"), Ok(Step::Scale(150)));
         assert_eq!(one("wait 1.5"), Ok(Step::Wait(Duration::from_millis(1500))));
+    }
+
+    #[test]
+    fn a_model_s_cost_is_asked_for_by_a_number_of_frames_and_a_file_s_name() {
+        assert_eq!(
+            one("model perf 120 cube.json"),
+            Ok(Step::ModelPerf(120, "cube.json".into(), false))
+        );
+        assert_eq!(
+            one("model perf 3 cube-full.json full"),
+            Ok(Step::ModelPerf(3, "cube-full.json".into(), true))
+        );
+        for bad in [
+            "model",
+            "model perf",
+            "model perf 120",
+            "model perf cube.json 120",
+            "model perf 0 cube.json",
+            "model perf 120 ../cube.json",
+            "model perf 120 cube.json whole",
+            "model cost 120 cube.json",
+        ] {
+            assert!(one(bad).is_err(), "`{bad}` should be refused");
+        }
     }
 
     /// ⚠ The name is joined to the output directory, so a separator or a

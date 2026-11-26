@@ -2,6 +2,7 @@
 //! physical section a scan's walk of their blocks gives; an edit that moves nothing is written back
 //! into those sections in place.
 
+mod accel_root;
 mod bound;
 mod bytes;
 mod cloth;
@@ -47,6 +48,7 @@ mod write_physics;
 mod write_skeleton;
 mod write_volume;
 
+pub use accel_root::{read_accel_root, AccelHead, AccelRecord, AccelRoot};
 pub use bound::{
     material_key, read_bound, Bound, BoundChild, BoundGeometry, Bvh, ChildBound, Primitive,
     UnknownShape,
@@ -55,8 +57,9 @@ pub use cloth::{read_cloth, Cloth, ClothEdge, ClothKind, ClothMesh, ClothShape, 
 pub use dictionary::{read_dictionary, BoneRecord, Dictionary, Entry, FilterTrack};
 pub use drawable::{
     model_shaders, read_drawable, read_drawable_with_bound, shader_buckets, stated_model_name,
-    stated_model_word, Channel, Drawable, DrawableWithBound, Geometry, Model, Palette, Parameter,
-    ParameterValue, Shader,
+    stated_model_word, trace_words, trace_words_of_entry, Channel, Drawable, DrawableWithBound,
+    Geometry, Model, Palette, Parameter, ParameterValue, Shader, TraceGeometry, TraceModel,
+    TraceShader, TraceWords,
 };
 pub use forest::{read_object_trees, ObjectItem, ObjectTrees, OBJECT_POINTER_TAG};
 pub use fragment::{Archetype, BoneBound, Fragment, FragmentChild, FragmentGroup};

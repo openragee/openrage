@@ -530,3 +530,70 @@ fn a_model_states_its_name_as_written_and_a_section_cut_before_the_name_s_end_st
     null[0xA8..0xB0].fill(0);
     assert!(stated_model_name(&null).is_err());
 }
+
+#[test]
+fn the_trace_words_are_the_level_word_each_bucket_mask_render_mask_key_word_and_the_two_counts() {
+    let (mut img, _, parts) = drawable([1.0, 1.0, 0.0]);
+    let target = |img: &Image, at: usize| u64_at(&img.bytes, at) as usize & 0x0FFF_FFFF;
+    let model = target(&img, target(&img, target(&img, parts.root + 0x50)));
+    let geometry = target(&img, target(&img, model + 0x08));
+    let record = target(&img, geometry + 0x40);
+    img.u32(parts.root + 0xB8, 0x0000_0400);
+    img.u32(parts.shader + 0x3C, 0xFF08);
+    img.bytes[model + 0x34] = 0xA5;
+    img.u64(geometry + 0x30, 0x0123_4567_89AB_CDEF);
+    let read = |img: &Image| trace_words(Rpf9Role::Drawable, &img.bytes);
+    let expected = TraceWords {
+        level_word: 0x0000_0400,
+        shaders: vec![TraceShader {
+            name_hash: SHADER_HASH,
+            bucket_mask: 0xFF08,
+        }],
+        levels: [
+            Some(vec![TraceModel {
+                render_mask: 0xA5,
+                geometries: vec![TraceGeometry {
+                    shader: 0,
+                    key_word: 0x0123_4567_89AB_CDEF,
+                    triangle_count: 1,
+                    vertex_count: 3,
+                }],
+            }]),
+            None,
+            None,
+            None,
+        ],
+    };
+    let mut words = read(&img);
+    assert_eq!(words.len(), 1);
+    assert_eq!(words.remove(0).expect("the words read"), expected);
+
+    // The triangle count is 23 bits: seven of them lie in the next word's low byte, under a bit
+    // of another field.
+    img.u32(record + 0x0C, 3 << 8 | 0x82);
+    let words = read(&img).remove(0).expect("the words read");
+    let geometry_words = words.levels[0].as_ref().expect("level 0")[0].geometries[0];
+    assert_eq!(geometry_words.triangle_count, 2 << 16 | 1);
+
+    // A geometry that names a shader the drawable lacks is refused.
+    let indices = target(&img, model + 0x20);
+    img.u16(indices, 1);
+    assert!(matches!(
+        read(&img).as_slice(),
+        [Err(HeaderlessError::IndexPastCount { .. })]
+    ));
+}
+
+#[test]
+fn a_body_of_another_role_states_no_trace_words_and_a_root_with_no_drawable_is_refused() {
+    let (mut img, _, parts) = drawable([1.0, 1.0, 0.0]);
+    img.u32(parts.shader + 0x3C, 0xFF01);
+    let own = trace_words(Rpf9Role::Drawable, &img.bytes);
+    assert!(matches!(own.as_slice(), [Ok(w)] if w.shaders[0].bucket_mask == 0xFF01));
+    assert!(trace_words(Rpf9Role::Bound, &img.bytes).is_empty());
+    // A fragment's drawable is the record its root points at from 0x18; this root has none.
+    assert!(matches!(
+        trace_words(Rpf9Role::DrawableWithBound, &img.bytes).as_slice(),
+        [Err(_)]
+    ));
+}

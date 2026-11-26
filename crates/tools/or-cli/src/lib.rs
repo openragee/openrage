@@ -78,6 +78,7 @@ mod gta6_spans;
 mod gta6_text;
 mod gta6_texture;
 mod gta6_texture_replace;
+mod gta6_trace;
 mod gta6_translate;
 mod gta6_uidata;
 mod gta6_world;

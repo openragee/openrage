@@ -31,6 +31,8 @@ or-io = { workspace = true, features = ["gta6"] }
 cc = "1"
 
 [dev-dependencies]
+# The ledger a test that needs the user's own build says it checked nothing in.
+or-test-support.workspace = true
 tempfile.workspace = true
 # The tests write each translated module with every writer a device of wgpu compiles one with.
 naga = { workspace = true, features = ["spv-out", "wgsl-out", "msl-out", "hlsl-out"] }

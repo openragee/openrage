@@ -629,6 +629,11 @@ impl ViewportRenderer {
         self.gta6_scene = scene;
     }
 
+    /// The GTA VI model [`ShadingMode::Shaded`] draws by its own programs, where one is set.
+    pub fn gta6_scene(&self) -> Option<&crate::game_shaders::meshlets::MeshletScene> {
+        self.gta6_scene.as_ref()
+    }
+
     /// The sun and the sky a GTA VI drawable's own passes are lit by.
     pub fn set_gta6_sky(&mut self, sky: crate::game_shaders::meshlets::Sky) {
         self.gta6_sky = sky;
@@ -693,7 +698,7 @@ impl ViewportRenderer {
                 camera: eye,
             };
             scene.update(queue, &lighting);
-            scene.record_targets(encoder);
+            scene.record_targets(encoder, |encoder, stage| self.gpu_mark(encoder, stage));
         } else if let (ShadingMode::Shaded, Some(scene)) = (mode, &self.game_scene) {
             scene.update(queue, &self.game_constants(camera, aspect));
         }

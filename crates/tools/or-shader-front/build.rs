@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+include!("fingerprint.rs");
+
 const VENDOR: &str = "vendor/dxbc-spirv";
 /// The translator's source folders; its Direct3D 9 front end is not built.
 const SOURCE_DIRS: [&str; 5] = ["dxbc", "ir", "ir/passes", "spirv", "util"];
@@ -33,20 +35,17 @@ fn fingerprint(paths: &[&str]) -> u64 {
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=fingerprint.rs");
     println!("cargo:rerun-if-changed=src/layout.rs");
     println!(
         "cargo:rustc-env=OR_SHADER_FRONT_FINGERPRINT={:016x}",
         fingerprint(&["src/shim.cpp", "src/layout.rs"])
     );
     // The native front end's own sources: a translation kept on disk is of the build that wrote it.
-    let rdna: Vec<String> = (sources_of("src/rdna", "rs").iter())
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect();
-    let rdna: Vec<&str> = rdna.iter().map(String::as_str).collect();
     println!("cargo:rerun-if-changed=src/rdna");
     println!(
         "cargo:rustc-env=OR_RDNA_FINGERPRINT={:016x}",
-        fingerprint(&rdna)
+        tree_fingerprint(Path::new("src/rdna"))
     );
     println!("cargo:rerun-if-changed=vendor");
     println!("cargo:rerun-if-changed=src/shim.cpp");

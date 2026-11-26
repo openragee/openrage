@@ -214,6 +214,145 @@ fn named_shaders(v: Bytes, named: usize, at: usize) -> Result<(String, Vec<Shade
     Ok((name, shaders.collect()))
 }
 
+/// What the choice of a drawable's ray-traced geometry reads of it, all in the virtual section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceWords {
+    /// The root's word at 0xB8, whose bits 9 to 11 state a level plus one, or 0 for none.
+    pub level_word: u32,
+    pub shaders: Vec<TraceShader>,
+    /// Four level slots, `None` where the slot is null.
+    pub levels: [Option<Vec<TraceModel>>; 4],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TraceShader {
+    /// The hash of the effect's name.
+    pub name_hash: u32,
+    /// The shader's word at +0x3C: a bit a draw bucket, and bit 13 for the ray tracer's phase.
+    pub bucket_mask: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceModel {
+    /// The model's byte at +0x34: a bit a render phase, and bit 5 for the ray tracer's.
+    pub render_mask: u8,
+    pub geometries: Vec<TraceGeometry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TraceGeometry {
+    /// An index into the drawable's shaders.
+    pub shader: u16,
+    /// The geometry's word at +0x30, which the key of a shipped acceleration structure folds.
+    pub key_word: u64,
+    /// The 23 bits at +0x0A of the meshlet record.
+    pub triangle_count: u32,
+    pub vertex_count: u32,
+}
+
+/// The trace words of each drawable of a body of `role`, found as [`model_shaders`] finds them; a
+/// dictionary that does not read is one error.
+pub fn trace_words(role: Rpf9Role, virtual_section: &[u8]) -> Vec<Result<TraceWords>> {
+    let read = sections(virtual_section, None, |v, _| match role {
+        Rpf9Role::Drawable => Ok(vec![trace_words_at(v, 0)]),
+        Rpf9Role::DrawableWithBound => Ok(vec![v
+            .to("drawable", 0x18)
+            .and_then(|at| trace_words_at(v, at))]),
+        Rpf9Role::Dictionary => {
+            let entries = super::dictionary::drawable_entries(v)?.into_iter();
+            Ok(entries.map(|at| trace_words_at(v, at)).collect())
+        }
+        _ => Ok(Vec::new()),
+    });
+    read.unwrap_or_else(|e| vec![Err(e)])
+}
+
+/// The trace words of the drawable a dictionary holds under `code`; `None` where no entry of the
+/// dictionary has that code.
+pub fn trace_words_of_entry(virtual_section: &[u8], code: u32) -> Result<Option<TraceWords>> {
+    sections(virtual_section, None, |v, _| {
+        let entry = super::dictionary::entry_of(v, code)?;
+        entry.map(|at| trace_words_at(v, at)).transpose()
+    })
+}
+
+fn trace_words_at(v: Bytes, at: usize) -> Result<TraceWords> {
+    v.get("drawable root", at, DRAWABLE_ROOT)?;
+    let shader = |p: usize| {
+        Ok(TraceShader {
+            name_hash: v.u32("shader name hash", p)?,
+            bucket_mask: v.u32("shader's bucket mask", p + 0x3C)?,
+        })
+    };
+    let shaders = (shader_pointers(v, at)?.into_iter())
+        .map(shader)
+        .collect::<Result<Vec<_>>>()?;
+    let mut levels: [Option<Vec<TraceModel>>; 4] = Default::default();
+    for (l, slot) in levels.iter_mut().enumerate() {
+        let Some(level) = v.ptr("level", at + 0x50 + 8 * l)? else {
+            continue;
+        };
+        let count = usize::from(v.u16("model count", level + 8)?);
+        let models = match count {
+            0 => 0,
+            _ => v.to("models", level)?,
+        };
+        v.array("models", models, count, 8)?;
+        let read =
+            (0..count).map(|i| trace_model(v, v.to("model", models + 8 * i)?, shaders.len()));
+        *slot = Some(read.collect::<Result<_>>()?);
+    }
+    Ok(TraceWords {
+        level_word: v.u32("level word", at + 0xB8)?,
+        shaders,
+        levels,
+    })
+}
+
+fn trace_model(v: Bytes, at: usize, shaders: usize) -> Result<TraceModel> {
+    v.get("model", at, 0x38)?;
+    let count = usize::from(v.u16("geometry count", at + 0x36)?);
+    let (geometries, shader_indices) = match count {
+        0 => (0, 0),
+        _ => (
+            v.to("geometries", at + 0x08)?,
+            v.to("shader indices", at + 0x20)?,
+        ),
+    };
+    v.array("geometries", geometries, count, 8)?;
+    v.array("shader indices", shader_indices, count, 2)?;
+    let geometry = |j: usize| {
+        let shader = v.u16("shader index", shader_indices + 2 * j)?;
+        if usize::from(shader) >= shaders {
+            return Err(HeaderlessError::IndexPastCount {
+                what: "geometry's shader index",
+                index: shader.into(),
+                count: shaders as u64,
+            });
+        }
+        let g = v.to("geometry", geometries + 8 * j)?;
+        let record = v.to("meshlet record", g + 0x40)?;
+        let declaration = v.to(
+            "vertex declaration",
+            v.to("vertex buffer", g + 0x08)? + 0x40,
+        )?;
+        let vertices = v.u64("vertex declaration's packed word", declaration + 0x138)? >> 10;
+        Ok(TraceGeometry {
+            shader,
+            key_word: v.u64("geometry's key word", g + 0x30)?,
+            triangle_count: v.u32("meshlet record's triangle count", record + 0x0A)? & 0x7F_FFFF,
+            vertex_count: u32::try_from(vertices).map_err(|_| HeaderlessError::Declaration {
+                at: declaration as u64,
+                why: "its vertex count passes 32 bits",
+            })?,
+        })
+    };
+    Ok(TraceModel {
+        render_mask: v.u8("render mask", at + 0x34)?,
+        geometries: (0..count).map(geometry).collect::<Result<_>>()?,
+    })
+}
+
 /// Whether a drawable root lies at `at`; a fragment's may have no level, under the empty box.
 pub(super) fn is_drawable_root(v: Bytes, at: usize, fragment: bool) -> bool {
     let levels = (0..4).all(|l| matches!(v.u64("level", at + 0x50 + 8 * l), Ok(0)));

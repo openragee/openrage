@@ -7,7 +7,7 @@ use crate::game_shaders::frame::read_back;
 
 /// A small triangle over the middle of the frame at a depth of six tenths, and under it at a
 /// tenth a floor: across the whole frame, or a sliver in a corner where `floored` is not.
-fn two_levels(floored: bool) -> MeshletSurface {
+pub(super) fn two_levels(floored: bool) -> MeshletSurface {
     let floor: [[f32; 3]; 3] = match floored {
         true => [[-1.0, -1.0, 0.1], [3.0, -1.0, 0.1], [-1.0, 3.0, 0.1]],
         false => [[-1.0, 1.0, 0.1], [-0.9, 1.0, 0.1], [-1.0, 0.9, 0.1]],
@@ -95,7 +95,7 @@ pub(super) fn frames_stated(
         };
         scene.update(&queue, &lighting);
         let mut encoder = device.create_command_encoder(&Default::default());
-        scene.record_targets(&mut encoder);
+        scene.record_targets(&mut encoder, |_, _| {});
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
@@ -154,7 +154,7 @@ pub(super) fn leaning() -> Sky {
 }
 
 /// The box the two levels fill.
-const BOX: (Vec3, Vec3) = (Vec3::new(-1.0, -1.0, 0.1), Vec3::new(1.0, 1.0, 0.6));
+pub(super) const BOX: (Vec3, Vec3) = (Vec3::new(-1.0, -1.0, 0.1), Vec3::new(1.0, 1.0, 0.6));
 /// The light leans towards +x, so the triangle's shadow falls three eighths of a unit towards
 /// -x: a place under it beside the triangle, where the camera sees it, and one in the open.
 const SHADOWED: (f32, f32) = (-0.5, -0.2);

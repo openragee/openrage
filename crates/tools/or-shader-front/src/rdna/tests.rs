@@ -5,11 +5,17 @@ use or_io::gta5::shaders::xdat::{XdatProgram, XdatStage};
 
 use super::*;
 
+mod equal;
 mod exact;
 mod interp;
 mod link;
 mod pass_aa;
 mod pass_ab;
+mod pass_rt;
+mod pass_rt_body;
+mod pass_rt_walk;
+mod pass_rt_wave;
+mod pass_rt_wave_walk;
 mod pass_w;
 mod pass_y;
 

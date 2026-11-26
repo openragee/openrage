@@ -100,6 +100,16 @@ impl AppState {
     }
 }
 
+impl AppState {
+    /// Turn the active document's camera to `yaw`, as a script orbits it; nothing where it has none yet.
+    pub fn turn_active_camera(&mut self, yaw: f32) {
+        let view = (self.active_document).and_then(|id| self.cameras.views.get_mut(&id));
+        if let Some(view) = view {
+            view.camera.yaw = yaw;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;

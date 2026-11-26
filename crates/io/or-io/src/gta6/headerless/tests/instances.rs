@@ -149,3 +149,35 @@ fn a_root_whose_records_start_where_its_block_map_does_is_refused() {
     v[0x18..0x20].copy_from_slice(&map);
     assert!(read_instances(&v, Some(&p)).is_err());
 }
+
+#[test]
+fn a_shipped_root_states_its_key_and_each_record_s_level_number_geometries_and_head() {
+    let (mut v, p) = instances(&[0x400, 0, 0x200]);
+    let records = u64_at(&v, 0x18) as usize & 0x0FFF_FFFF;
+    // Record 2: level 1, number 5, 0x2A3 geometries, under bits of fields not read.
+    let word: u32 = 0xA500_0000 | 1 << 22 | 5 << 18 | 0x2A3 << 8 | 0xC0;
+    v[records + 20..records + 24].copy_from_slice(&word.to_le_bytes());
+    let root = read_accel_root(&v, Some(&p)).expect("it reads");
+    assert_eq!(root.key, 0x1234_5678_9ABC_DEF0);
+    let head = |elements| {
+        Some(AccelHead {
+            checksum: 0xA1B2_C3D4,
+            elements,
+        })
+    };
+    let record = |level, number, geometries, structure| AccelRecord {
+        level,
+        number,
+        geometries,
+        structure,
+    };
+    assert_eq!(
+        root.records,
+        [
+            record(0, 0, 1, head(10)),
+            record(0, 1, 1, None),
+            record(1, 5, 0x2A3, head(12)),
+        ]
+    );
+    assert!(read_accel_root(&v, None).is_err());
+}

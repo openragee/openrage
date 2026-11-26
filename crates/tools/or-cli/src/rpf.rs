@@ -77,6 +77,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "scan-expressions" => super::gta6_expressions::cmd_scan_expressions(&args[1..]),
         "scan-radio" => super::gta6_uidata::cmd_scan_radio(&args[1..]).map_err(Run),
         "scan-dialogue" => super::gta6_uidata::cmd_scan_dialogue(&args[1..]).map_err(Run),
+        "trace" => super::gta6_trace::cmd_trace(&args[1..]),
         "scan-anim" => split_limit(&args[1..])
             .map_err(Usage)
             .and_then(|(limit, args)| super::gta6_anim::cmd_scan_anim(&args, limit)),
@@ -150,6 +151,7 @@ fn print_usage() {
          openrage-cli rpf scan-shading <archive.rpf> <offset> <effect or 0xhash> [--wgsl <folder>] [--limit <bytes>]   (one effect of the SGD5 effect container there, technique by technique: the stages of its first pass and the targets its pixel program exports, then the pass that shades a model translated, with what fills each binding and the places its code reads of it; --wgsl writes the two translated stages there as WGSL)\n  \
          openrage-cli rpf scan-effect-use <archive.rpf> <shaders.rpf> <offset> [--from <offset>] [--to <offset>] [--every <n>] [--limit <bytes>]   (the drawables of a GTA VI archive, or each n-th model body, by the effects their geometries name, against the SGD5 effect container at the offset of the second archive: per effect how many drawables name it, how many of its geometries its own passes draw, and why the rest do not, then the reasons counted)\n  \
          openrage-cli rpf scan-rdna-bind <archive.rpf> <offset> [--technique <name>] [--limit <bytes>]   (each effect of the SGD5 effect container there, its vertex and pixel passes through the native-code front end and its binder: how many translate in both stages, join every resource to a binding record and a name, and bind for the renderer, and what stopped the rest by name; --technique reports instead the first pass of that technique in each effect that has it: whether its two programs translate, and how many of the bindings they declare a model's file, the view and the material fill against those only the game fills)\n  \
+         openrage-cli rpf trace <archive.rpf> <offset> [--entry <code>] [--effects <archive.rpf> <offset>] [--level <n>] [--reduced] [--split median|area] [--size <n>] [--png <out.png>] [--limit <bytes>]   (what the game gives its ray tracer of the drawable, fragment or dictionary entry there, traced on the CPU by the reference walk of the ray-tracing programs and printed as depth digits or written as a PNG: one structure a model the ray tracer draws, the geometries whose shader draws in the opaque or the cutout bucket, of the level the game takes for a plain archetype, with --reduced for an archetype it traces a level down, or of --level; --effects names the SGD5 container whose effects say which geometries are described twice; --split names how the builder parts a box's nodes, about the median or by surface area)\n  \
          openrage-cli rpf scan-install <folder> [--kind <kind>] [--sample <n>]   (every GTA VI archive under the folder scanned in turn, cancellably: per archive and in all, how many bodies of each kind `rpf scan` tallies, or only those of a kind or family as `rpf scan-extract --kind` takes it; --sample adds under each archive at most n offsets of each kind, evenly spaced, for `rpf scan-open`; nothing is opened)\n"
     );
 }
@@ -795,7 +797,7 @@ pub(crate) fn split_limit(args: &[String]) -> Result<(u64, Vec<String>), String>
 type AtOffset = (String, u64);
 
 /// The archive and offset `--effects` names, and the other words.
-fn split_effects(args: &[String]) -> Result<(Option<AtOffset>, Vec<String>), String> {
+pub(super) fn split_effects(args: &[String]) -> Result<(Option<AtOffset>, Vec<String>), String> {
     match args.iter().position(|a| a == "--effects") {
         Some(i) => {
             let (Some(path), Some(word)) = (args.get(i + 1), args.get(i + 2)) else {

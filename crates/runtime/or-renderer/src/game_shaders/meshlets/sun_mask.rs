@@ -150,11 +150,16 @@ impl SunMask {
         })
     }
 
-    /// Fill the mask by `writer`, once the targets and the shadow's tile hold the frame.
-    pub(super) fn record(&self, encoder: &mut wgpu::CommandEncoder, writer: &wgpu::RenderPipeline) {
+    /// Fill the mask by `writer`, once the targets and the shadow's tile hold the frame; whether
+    /// a pass was drawn for it.
+    pub(super) fn record(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        writer: &wgpu::RenderPipeline,
+    ) -> bool {
         #[cfg(test)]
         if self.stated {
-            return;
+            return false;
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("meshlet-mask"),
@@ -175,6 +180,7 @@ impl SunMask {
         pass.set_pipeline(writer);
         pass.set_bind_group(0, &self.group, &[]);
         pass.draw(0..3, 0..1);
+        true
     }
 }
 

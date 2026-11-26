@@ -11,11 +11,12 @@ use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
 use crate::rdna::{
-    self, Index, IndexSource, Loc, Lowered, Options, Program, RdnaError, Resource, ResourceKind,
+    self, Index, IndexSource, Intersection, Loc, Lowered, Options, Program, RdnaError, Registers,
+    Resource, ResourceKind,
 };
 
 /// The stored form's version: a change to [`Stored`] takes a new number.
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 3;
 /// A hash of the native front end's sources, so a build never reads another build's lowering.
 pub const TRANSLATOR: &str = env!("OR_RDNA_FINGERPRINT");
 
@@ -26,6 +27,12 @@ pub struct Key([u8; 20]);
 
 impl Key {
     pub fn of(program: &Program, options: &Options) -> Key {
+        Self::with_layout(program, options, &rdna::arena_layout())
+    }
+
+    /// [`Key::of`] with the arena's layout a lowering is written from stated: the test of a
+    /// node reads its offsets from another crate, which [`TRANSLATOR`] does not name.
+    fn with_layout(program: &Program, options: &Options, layout: &[u32]) -> Key {
         // Destructured in full, so a field added to a program cannot be left out of its key.
         let Program {
             kind,
@@ -41,7 +48,7 @@ impl Key {
         let mut hash = Sha1::new();
         hash.update(format!(
             "rdna {FORMAT} {TRANSLATOR} {kind:?} {slot} {wave32} {inputs:?} {vertex_inputs:?} \
-             {position_read} {front_face} {launch:?} {options:?} "
+             {position_read} {front_face} {launch:?} {options:?} {layout:?} "
         ));
         for word in words {
             hash.update(word.to_le_bytes());
@@ -165,6 +172,10 @@ enum Stored<'a> {
         approximations: Vec<(String, u32)>,
         half_slots: Vec<u8>,
         subgroups: bool,
+        /// Each intersection's word, form, function, depth and loops.
+        intersections: Vec<(u32, bool, String, u32, Vec<u32>)>,
+        /// The registers a walk lowered alone is given, and those it leaves.
+        region: Option<(Vec<String>, Vec<String>)>,
     },
     Refused {
         name: String,
@@ -204,6 +215,8 @@ enum StoredKind {
         dim: u8,
         format: naga::StorageFormat,
     },
+    Arena,
+    Registers,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -286,6 +299,8 @@ fn store_resource(resource: &Resource) -> StoredResource {
             K::Buffer { stride } => StoredKind::Buffer { stride },
             K::TableWords => StoredKind::TableWords,
             K::StorageTexture { dim, format } => StoredKind::StorageTexture { dim, format },
+            K::Arena => StoredKind::Arena,
+            K::Registers => StoredKind::Registers,
         },
         at: resource.at.as_ref().map(store_loc),
         words: resource.words,
@@ -307,6 +322,8 @@ fn load_resource(resource: StoredResource) -> Resource {
             K::Buffer { stride } => ResourceKind::Buffer { stride },
             K::TableWords => ResourceKind::TableWords,
             K::StorageTexture { dim, format } => ResourceKind::StorageTexture { dim, format },
+            K::Arena => ResourceKind::Arena,
+            K::Registers => ResourceKind::Registers,
         },
         at: resource.at.map(load_loc),
         words: resource.words,
@@ -344,6 +361,10 @@ pub fn encode(cached: &Cached) -> Vec<u8> {
                 .collect(),
             half_slots: lowered.half_slots.iter().copied().collect(),
             subgroups: lowered.subgroups,
+            intersections: (lowered.intersections.iter().cloned())
+                .map(|at| (at.word, at.wide, at.function, at.depth, at.loops))
+                .collect(),
+            region: (lowered.region.clone()).map(|registers| (registers.given, registers.left)),
         },
         Cached::Refused { name, message } => Stored::Refused {
             name: name.clone(),
@@ -371,6 +392,8 @@ pub fn decode(bytes: &[u8]) -> Option<Cached> {
             approximations,
             half_slots,
             subgroups,
+            intersections,
+            region,
         } => Cached::Translated(Box::new(Lowered {
             module: module.into_owned(),
             resources: resources.into_iter().map(load_resource).collect(),
@@ -379,10 +402,24 @@ pub fn decode(bytes: &[u8]) -> Option<Cached> {
                 .collect::<BTreeMap<_, _>>(),
             half_slots: half_slots.into_iter().collect(),
             subgroups,
+            intersections: (intersections.into_iter())
+                .map(|(word, wide, function, depth, loops)| Intersection {
+                    word,
+                    wide,
+                    function,
+                    depth,
+                    loops,
+                })
+                .collect(),
+            region: region.map(|(given, left)| Registers { given, left }),
         })),
         Stored::Refused { name, message } => Cached::Refused { name, message },
     })
 }
+
+#[cfg(test)]
+#[path = "../fingerprint.rs"]
+mod fingerprint;
 
 #[cfg(test)]
 mod tests {
@@ -430,6 +467,29 @@ mod tests {
             ..Options::default()
         };
         assert_ne!(key, Key::of(&pixel, &halves));
+    }
+
+    #[test]
+    fn a_key_changes_with_any_number_of_the_arena_s_layout() {
+        let pixel = program(ShaderKind::Pixel, vec![S_ENDPGM]);
+        let options = Options::default();
+        let layout = rdna::arena_layout();
+        assert_eq!(
+            Key::of(&pixel, &options),
+            Key::with_layout(&pixel, &options, &layout)
+        );
+        // Each number alone: an offset moved in the crate that states the layout is another
+        // test of a node, and so another translation, under another name.
+        for at in 0..layout.len() {
+            let mut moved = layout.clone();
+            moved[at] ^= 4;
+            assert_ne!(
+                Key::of(&pixel, &options),
+                Key::with_layout(&pixel, &options, &moved),
+                "number {at} of the layout"
+            );
+        }
+        assert!(layout.len() >= 24, "{layout:?}");
     }
 
     #[test]
@@ -505,6 +565,8 @@ mod tests {
                 resource(ResourceKind::Sampler { comparison: true }, None),
                 resource(ResourceKind::Buffer { stride: Some(16) }, None),
                 resource(ResourceKind::TableWords, None),
+                resource(ResourceKind::Arena, None),
+                resource(ResourceKind::Registers, None),
                 resource(
                     ResourceKind::StorageTexture {
                         dim: 1,
@@ -516,9 +578,40 @@ mod tests {
             approximations: [("a made-up approximation", 2)].into(),
             half_slots: [1, 5].into(),
             subgroups: true,
+            intersections: vec![Intersection {
+                word: 7001,
+                wide: true,
+                function: "part3".to_owned(),
+                depth: 9,
+                loops: vec![11, 6002],
+            }],
+            region: Some(Registers {
+                given: vec!["v9".to_owned(), "s70".to_owned()],
+                left: vec!["v9".to_owned()],
+            }),
         }));
         let back = decode(&encode(&cached)).expect("what was encoded decodes");
         assert_eq!(text(&back), text(&cached));
+    }
+
+    #[test]
+    fn the_translator_s_name_changes_with_a_file_of_any_folder_and_not_with_line_endings() {
+        let dir = tempfile::tempdir().unwrap();
+        let inner = dir.path().join("to_naga");
+        std::fs::create_dir(&inner).unwrap();
+        std::fs::write(dir.path().join("mod.rs"), "mod to_naga;\n").unwrap();
+        std::fs::write(inner.join("trace.rs"), "fn test() {}\n").unwrap();
+        std::fs::write(inner.join("notes.txt"), "no source").unwrap();
+        let first = fingerprint::tree_fingerprint(dir.path());
+        std::fs::write(inner.join("notes.txt"), "still none").unwrap();
+        std::fs::write(inner.join("trace.rs"), "fn test() {}\r\n").unwrap();
+        assert_eq!(fingerprint::tree_fingerprint(dir.path()), first);
+        std::fs::write(inner.join("trace.rs"), "fn test() { }\n").unwrap();
+        assert_ne!(fingerprint::tree_fingerprint(dir.path()), first);
+        // And this build's is that of the sources it was built from, every folder of them.
+        let sources = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/rdna");
+        let now = fingerprint::tree_fingerprint(&sources);
+        assert_eq!(TRANSLATOR, format!("{now:016x}"));
     }
 
     #[test]

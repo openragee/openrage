@@ -48,6 +48,59 @@ pub(super) fn waves(program: &Program) -> Option<(u32, u32)> {
     }
 }
 
+/// What a lane's read of the wave's first lane is counted as where the two may differ, and a
+/// read of a lane by its number.
+pub(super) const FIRST_AS_THIS: &str = "the first lane read as this lane";
+pub(super) const LANE_AS_THIS: &str = "a lane read as this lane";
+pub(super) const LANES_AS_THIS: [&str; 2] = [FIRST_AS_THIS, LANE_AS_THIS];
+/// Why a program is not lowered a lane an invocation: it folds, counts, votes or reads over
+/// its wave somewhere, and an invocation alone has none of the other lanes' values.
+pub(super) const NOT_PRIVATE: &str = "a wave operation: the program is not one lane an invocation";
+/// Why a program that tests nodes is refused where its group is not one wave: the wave kept
+/// whole is one wave's, and the waves of a group of several keep a lane mask as each lane's
+/// own bit, which such a program reads as a number.
+pub(super) const NOT_ONE_WAVE: &str = "a program that tests nodes in a group that is not one wave";
+/// A lane read or written by its number where the group holds no thread of that number.
+pub(super) const NO_SUCH_LANE: &str = "a lane by its number that no thread of the group is";
+
+/// What an instruction of the memory a group shares does there: the order between two of them
+/// is the program's, but for two of one kind that takes no order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Memory {
+    Store,
+    Load,
+    /// An update that gives back what the dword held.
+    Exchange,
+    /// An update by a function whose results are the same in any order of the lanes.
+    Update(&'static str),
+}
+
+impl Memory {
+    pub(super) fn of(name: &str) -> Self {
+        match super::shared_update(name) {
+            Some((_, true)) => Self::Exchange,
+            Some(("swap" | "cmpswap", false)) => Self::Store,
+            Some((fun, false)) => Self::Update(fun),
+            None if name.starts_with("ds_read") => Self::Load,
+            None => Self::Store,
+        }
+    }
+}
+
+/// Whether `program` is tried a lane an invocation: a compute group of one wave that tests a
+/// ray against a node. Its lowering then holds each lane's own state, its lane's number from
+/// its place in the group and its stack at the lane's own addresses of the group's memory,
+/// with no vote and no barrier; and is kept only where it met no operation over the wave
+/// ([`NOT_PRIVATE`]), which is the whole of the gate.
+pub(super) fn may_be_private(program: &Program, cfg: &Cfg) -> bool {
+    waves(program).is_some_and(|(_, waves)| waves == 1) && tests_nodes(cfg)
+}
+
+/// Whether any instruction of the graph tests a ray against a node.
+pub(super) fn tests_nodes(cfg: &Cfg) -> bool {
+    (cfg.blocks.values().flat_map(|b| &b.insts)).any(|(_, inst)| super::trace::tests_a_node(inst))
+}
+
 /// `cfg` with every block cut after an `s_barrier`: a wave of several stops there until the
 /// group's other waves have come as far, and a wave stops only where a block ends.
 pub(super) fn split(cfg: &Cfg) -> Cfg {
@@ -120,6 +173,16 @@ pub(super) struct Shared {
     /// The block of each read that was lowered.
     sites: Vec<usize>,
     swizzle: Option<[Handle<naga::GlobalVariable>; 2]>,
+    /// The wave kept whole: the dwords its lanes gather a mask or one lane's value in, and the
+    /// high dword of the mask last gathered.
+    cells: Option<Handle<naga::GlobalVariable>>,
+    high: Option<Handle<naga::GlobalVariable>>,
+    /// Whether the group has met since the block's last instruction of the memory it shares,
+    /// and what that instruction was.
+    pub(super) met: bool,
+    pub(super) last: Option<Memory>,
+    /// Whether the module holds a barrier anywhere, in a block or in a function a block calls.
+    pub(super) meets: bool,
 }
 
 impl Shared {
@@ -177,6 +240,12 @@ fn repeat(
 }
 
 impl Cx<'_> {
+    /// The group meets where the builder stands.
+    pub(super) fn meet(&mut self) {
+        (self.b).push(Statement::ControlBarrier(naga::Barrier::WORK_GROUP));
+        self.shared_wave.meets = true;
+    }
+
     /// The wave's memory: the lanes' values, and whether each runs.
     fn wave_memory(&mut self) -> [Handle<naga::GlobalVariable>; 2] {
         if let Some(memory) = self.shared_wave.memory {
@@ -206,7 +275,7 @@ impl Cx<'_> {
     }
 
     /// This thread's number in its group: the waves fill in that order.
-    fn wave_thread(&mut self) -> Handle<E> {
+    pub(super) fn wave_thread(&mut self) -> Handle<E> {
         let threads = self.launch.map_or([1; 3], |launch| launch.threads);
         let [x, y, z] = [0, 1, 2].map(|axis| self.launch_number(0, axis));
         let (across, down) = (self.b.u32(threads[0].max(1)), self.b.u32(threads[1].max(1)));
@@ -259,6 +328,18 @@ impl Cx<'_> {
         Some(self.b.load(pointer))
     }
 
+    /// The count of the meetings this thread has made: its low bit picks the half of the
+    /// memory a meeting is made in.
+    fn wave_round(&mut self) -> Handle<naga::GlobalVariable> {
+        if let Some(round) = self.shared_wave.round {
+            return round;
+        }
+        let ty = self.ty(TypeInner::Scalar(Scalar::U32));
+        let round = self.private("wave_round".to_owned(), ty);
+        self.shared_wave.round = Some(round);
+        round
+    }
+
     /// Leaves this lane's `value` and whether it runs where the wave's other lanes read them,
     /// and waits for theirs: the first dword of its wave's in the half of the memory they are
     /// all in. One function of the module, since a program makes thousands of exchanges.
@@ -275,6 +356,7 @@ impl Cx<'_> {
                 Some(base)
             },
         );
+        self.shared_wave.met = true;
         match call {
             Some(base) => base,
             None => self.exchanged(value, runs),
@@ -284,15 +366,7 @@ impl Cx<'_> {
     /// [`Cx::exchange`], written where the builder stands.
     fn exchanged(&mut self, value: Handle<E>, runs: Handle<E>) -> Handle<E> {
         let [values, active] = self.wave_memory();
-        let round = match self.shared_wave.round {
-            Some(round) => round,
-            None => {
-                let ty = self.ty(TypeInner::Scalar(Scalar::U32));
-                let round = self.private("wave_round".to_owned(), ty);
-                self.shared_wave.round = Some(round);
-                round
-            }
-        };
+        let round = self.wave_round();
         let counter = self.global(round);
         let made = self.b.load(counter);
         let all = width(self.program) * self.shared_wave.waves;
@@ -310,7 +384,7 @@ impl Cx<'_> {
             });
             self.b.push(Statement::Store { pointer, value });
         }
-        (self.b).push(Statement::ControlBarrier(naga::Barrier::WORK_GROUP));
+        self.meet();
         let next = self.b.bin(Bo::Add, made, one);
         self.b.push(Statement::Store {
             pointer: counter,
@@ -637,7 +711,9 @@ impl Cx<'_> {
     /// Whether `condition` holds in any lane of the wave: what a branch of the wave is taken
     /// on. Outside a wave kept in shared memory it is this lane's own.
     pub(super) fn voted(&mut self, condition: Handle<E>) -> Handle<E> {
-        if self.shared_wave.threads.is_none() {
+        // A wave kept whole holds the same scalar registers in every lane: the condition is
+        // the wave's already.
+        if self.shared_wave.threads.is_none() || self.exact {
             return condition;
         }
         let bit = self.b.flag(condition);
@@ -646,6 +722,241 @@ impl Cx<'_> {
             Some(any) => self.b.ne0(any),
             None => condition,
         }
+    }
+}
+
+/// The bits of the lanes a group of `threads` has threads for, in the two dwords of a lane mask.
+pub(super) fn lanes_of(threads: u32) -> [u32; 2] {
+    let all = match threads {
+        64.. => u64::MAX,
+        fewer => (1u64 << fewer) - 1,
+    };
+    [all as u32, (all >> 32) as u32]
+}
+
+impl Cx<'_> {
+    /// What a store to `reg` keeps of `value` in a wave kept whole: of the lane mask, the lanes
+    /// the group has a thread for, whatever a program moves there. A lane with no thread never
+    /// runs: it would never take itself out of the mask, and a loop that goes round while the
+    /// mask holds a lane would not end; and the first lane that runs would be one nothing holds.
+    pub(super) fn thread_lanes(&mut self, reg: Reg, value: Handle<E>) -> Handle<E> {
+        let (threads, lanes) = (self.shared_wave.threads, width(self.program));
+        let held = match (reg, threads) {
+            (Reg::S(r), Some(threads)) if threads < lanes && (r == EXEC || r == EXEC + 1) => {
+                lanes_of(threads)[usize::from(r - EXEC)]
+            }
+            _ => return value,
+        };
+        match self.b.fun.expressions[value] {
+            E::Literal(naga::Literal::U32(word)) => self.b.u32(word & held),
+            _ => {
+                let held = self.b.u32(held);
+                self.b.bin(Bo::And, value, held)
+            }
+        }
+    }
+
+    /// The memory a wave kept whole is gathered in, six dwords updated in one step: a lane
+    /// mask's two dwords twice over and one lane's value twice over, a meeting writing the
+    /// half the one before it did not, which a slower lane may still be reading.
+    pub(super) fn wave_cells(&mut self) -> Handle<naga::GlobalVariable> {
+        if let Some(cells) = self.shared_wave.cells {
+            return cells;
+        }
+        let base = self.ty(TypeInner::Atomic(Scalar::U32));
+        let ty = self.ty(TypeInner::Array {
+            base,
+            size: naga::ArraySize::Constant(NonZeroU32::new(6).unwrap_or(NonZeroU32::MIN)),
+            stride: 4,
+        });
+        let variable = naga::GlobalVariable {
+            name: Some("wave_cells".to_owned()),
+            space: naga::AddressSpace::WorkGroup,
+            binding: None,
+            ty,
+            init: None,
+            memory_decorations: naga::MemoryDecorations::empty(),
+        };
+        let cells = (self.module.global_variables).append(variable, Span::UNDEFINED);
+        self.shared_wave.cells = Some(cells);
+        cells
+    }
+
+    /// Whether this lane's bit of the lane mask `low`, `high` is set.
+    pub(super) fn lane_bit(&mut self, low: Handle<E>, high: Option<Handle<E>>) -> Handle<E> {
+        let lane = self.wave_lane();
+        let word = match high {
+            Some(high) => {
+                let half = self.b.u32(super::WAVE / 2);
+                let upper = self.b.bin(Bo::GreaterEqual, lane, half);
+                self.b.select(upper, high, low)
+            }
+            None => low,
+        };
+        let moved = self.b.shift(Bo::ShiftRight, false, word, lane);
+        let one = self.b.u32(1);
+        let bit = self.b.bin(Bo::And, moved, one);
+        self.b.ne0(bit)
+    }
+
+    /// The first lane that runs, and the wave's first where none does: the lane
+    /// `v_readfirstlane_b32` reads.
+    pub(super) fn first_lane(&mut self) -> Handle<E> {
+        let low = self.raw(Reg::S(EXEC));
+        let zero = self.b.u32(0);
+        let first = self.b.math(naga::MathFunction::FirstTrailingBit, &[low]);
+        let rest = match self.program.wave32 {
+            true => zero,
+            false => {
+                let high = self.raw(Reg::S(EXEC + 1));
+                let second = self.b.math(naga::MathFunction::FirstTrailingBit, &[high]);
+                let half = self.b.u32(super::WAVE / 2);
+                let past = self.b.bin(Bo::Add, second, half);
+                let none = self.b.bin(Bo::Equal, high, zero);
+                self.b.select(none, zero, past)
+            }
+        };
+        let none = self.b.bin(Bo::Equal, low, zero);
+        self.b.select(none, rest, first)
+    }
+
+    /// The lane mask of the lanes whose `bit` is not nought, as the wave holds it: one
+    /// meeting of the group. Each lane takes its own bit out of the mask's dword and puts it
+    /// back as it now is, all meet, and all read the two dwords.
+    pub(super) fn wave_ballot(&mut self, bit: Handle<E>) -> [Handle<E>; 2] {
+        let wide = !self.program.wave32;
+        let held = lanes_of(self.shared_wave.threads.unwrap_or(1));
+        let low = self.wave_call("wave_ballot".to_owned(), vec![bit], |cx, f, taken| {
+            std::mem::swap(&mut cx.b, f);
+            let cells = cx.wave_cells();
+            let round = cx.wave_round();
+            let counter = cx.global(round);
+            let made = cx.b.load(counter);
+            let (one, five) = (cx.b.u32(1), cx.b.u32(5));
+            let parity = cx.b.bin(Bo::And, made, one);
+            let half = cx.b.bin(Bo::ShiftLeft, parity, one);
+            let lane = cx.wave_lane();
+            let mine = cx.b.shift(Bo::ShiftLeft, false, one, lane);
+            let word = cx.b.bin(Bo::ShiftRight, lane, five);
+            let place = cx.b.bin(Bo::Add, half, word);
+            let memory = cx.global(cells);
+            let cell = cx.b.emit(E::Access {
+                base: memory,
+                index: place,
+            });
+            let others = cx.b.not(mine);
+            cx.atomic(cell, naga::AtomicFunction::And, others);
+            let (set, zero) = (cx.b.ne0(taken[0]), cx.b.u32(0));
+            let own = cx.b.select(set, mine, zero);
+            cx.atomic(cell, naga::AtomicFunction::InclusiveOr, own);
+            cx.meet();
+            let next = cx.b.bin(Bo::Add, made, one);
+            cx.b.push(Statement::Store {
+                pointer: counter,
+                value: next,
+            });
+            let mut words = [zero; 2];
+            for (k, word) in words.iter_mut().enumerate().take(1 + usize::from(wide)) {
+                let (by, lanes) = (cx.b.u32(k as u32), cx.b.u32(held[k]));
+                let place = cx.b.bin(Bo::Add, half, by);
+                let memory = cx.global(cells);
+                let cell = cx.b.emit(E::Access {
+                    base: memory,
+                    index: place,
+                });
+                // A lane the group has no thread for is in no mask, whatever its bit holds.
+                let read = cx.b.load(cell);
+                *word = cx.b.bin(Bo::And, read, lanes);
+            }
+            if wide {
+                let ty = cx.ty(TypeInner::Scalar(Scalar::U32));
+                let high = match cx.shared_wave.high {
+                    Some(high) => high,
+                    None => cx.private("wave_mask_high".to_owned(), ty),
+                };
+                cx.shared_wave.high = Some(high);
+                let pointer = cx.global(high);
+                cx.b.push(Statement::Store {
+                    pointer,
+                    value: words[1],
+                });
+            }
+            std::mem::swap(&mut cx.b, f);
+            Some(words[0])
+        });
+        self.shared_wave.met = true;
+        let low = low.unwrap_or(bit);
+        let high = match self.shared_wave.high.filter(|_| wide) {
+            Some(high) => {
+                let pointer = self.global(high);
+                self.b.load(pointer)
+            }
+            None => self.b.u32(0),
+        };
+        [low, high]
+    }
+
+    /// `value` as the lane numbered `writer` holds it: one meeting of the group. That lane
+    /// leaves it, all meet, and all read it.
+    pub(super) fn wave_pick(&mut self, value: Handle<E>, writer: Handle<E>) -> Handle<E> {
+        let arguments = vec![value, writer];
+        let picked = self.wave_call("wave_pick".to_owned(), arguments, |cx, f, taken| {
+            std::mem::swap(&mut cx.b, f);
+            let cells = cx.wave_cells();
+            let round = cx.wave_round();
+            let counter = cx.global(round);
+            let made = cx.b.load(counter);
+            let (one, four) = (cx.b.u32(1), cx.b.u32(4));
+            let parity = cx.b.bin(Bo::And, made, one);
+            let place = cx.b.bin(Bo::Add, parity, four);
+            let memory = cx.global(cells);
+            let cell = cx.b.emit(E::Access {
+                base: memory,
+                index: place,
+            });
+            let lane = cx.wave_lane();
+            let mine = cx.b.bin(Bo::Equal, lane, taken[1]);
+            let mut accept = Block::new();
+            accept.push(
+                Statement::Store {
+                    pointer: cell,
+                    value: taken[0],
+                },
+                Span::UNDEFINED,
+            );
+            cx.b.push(Statement::If {
+                condition: mine,
+                accept,
+                reject: Block::new(),
+            });
+            cx.meet();
+            let next = cx.b.bin(Bo::Add, made, one);
+            cx.b.push(Statement::Store {
+                pointer: counter,
+                value: next,
+            });
+            let read = cx.b.load(cell);
+            std::mem::swap(&mut cx.b, f);
+            Some(read)
+        });
+        self.shared_wave.met = true;
+        picked.unwrap_or(value)
+    }
+
+    /// Before an instruction of the memory the group shares, in a wave kept whole: the group
+    /// meets, so every lane's instruction before it is done, as one wave in step has them.
+    /// Not where the group has met since the block's last such instruction, nor between two
+    /// loads or two updates by one function, which no order of the lanes changes. The
+    /// program's own compiler left the meeting out: its group is one wave.
+    pub(super) fn memory_order(&mut self, name: &str) {
+        let kind = Memory::of(name);
+        let unordered =
+            self.shared_wave.last == Some(kind) && matches!(kind, Memory::Load | Memory::Update(_));
+        if !self.shared_wave.met && !unordered {
+            self.meet();
+        }
+        self.shared_wave.met = false;
+        self.shared_wave.last = Some(kind);
     }
 }
 
@@ -686,7 +997,6 @@ impl Shared {
         self.planned.sort_unstable();
     }
 
-    /// Before an instruction: nothing it reads hangs on another thread yet.impl Shared {
     /// Before an instruction: nothing it reads hangs on another thread yet.
     pub(super) fn begin(&mut self) {
         self.reading = 0;
@@ -1059,8 +1369,12 @@ impl Cx<'_> {
             value: here,
         });
         self.shared_wave.guarding = true;
-        let mut cases = Vec::with_capacity(blocks.len() + 1);
+        // Each block under an `if` of its own, one after another, and no `switch`: a block
+        // holds the barriers of its exchanges, and Direct3D 12's software adapter ends its
+        // process on a barrier in an arm of a switch of three ways or more, taken or not.
         for (index, statements) in blocks.into_iter().enumerate() {
+            let number = self.b.u32(index as u32);
+            let this = self.b.bin(Bo::Equal, chosen, number);
             self.b.open();
             self.b.push(Statement::Block(statements));
             match ends.get(index) {
@@ -1088,22 +1402,14 @@ impl Cx<'_> {
                 let value = self.b.select(here, one, old);
                 self.b.push(Statement::Store { pointer, value });
             }
-            cases.push(naga::SwitchCase {
-                value: naga::SwitchValue::U32(index as u32),
-                body: self.b.close(),
-                fall_through: false,
+            let accept = self.b.close();
+            self.b.push(Statement::If {
+                condition: this,
+                accept,
+                reject: Block::new(),
             });
         }
         self.shared_wave.guarding = false;
-        cases.push(naga::SwitchCase {
-            value: naga::SwitchValue::Default,
-            body: Block::new(),
-            fall_through: false,
-        });
-        self.b.push(Statement::Switch {
-            selector: chosen,
-            cases,
-        });
         let body = self.b.close();
         self.b.push(Statement::Loop {
             body,

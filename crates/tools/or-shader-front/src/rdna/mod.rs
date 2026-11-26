@@ -5,6 +5,7 @@ pub mod cfg;
 pub mod decode;
 pub mod link;
 mod opcodes;
+pub mod opt;
 pub mod sym;
 pub mod to_naga;
 
@@ -14,8 +15,9 @@ pub use cfg::{Block, Cfg, CfgError, Terminator};
 pub use decode::{decode, decode_one, DecodeError, Family, Inst, Op, Operand};
 pub use sym::{Index, IndexSource, Loc};
 pub use to_naga::{
-    bound_entries_checked, emitted, lower, lower_with, Emitted, Lowered, NotTranslated, Options,
-    Pair, Resource, ResourceKind, LOOP_NOT_SHOWN, LOOP_OTHER_LANES, LOOP_UNCHANGING,
+    arena_layout, bound_entries_checked, emitted, intersections, lower, lower_with, Emitted,
+    Intersection, Lowered, NotTranslated, Options, Pair, Region, Registers, Resource, ResourceKind,
+    LOOP_NOT_SHOWN, LOOP_OTHER_LANES, LOOP_UNCHANGING,
 };
 
 use crate::dxil::container::{Container, ContainerError};

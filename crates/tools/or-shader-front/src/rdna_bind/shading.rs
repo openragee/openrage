@@ -1635,6 +1635,8 @@ struct Words { words: array<u32> }
             approximations: Default::default(),
             half_slots: Default::default(),
             subgroups: false,
+            intersections: Vec::new(),
+            region: None,
         };
         let stage = feed(&native, lowered(resources.clone()), &program(), &effect).unwrap();
         const CONSTANT_BUFFERS: usize = Budget::DEFAULT.uniform as usize;

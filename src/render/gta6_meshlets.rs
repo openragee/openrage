@@ -10,7 +10,7 @@ use or_io::gta5::shaders::spirv_pack::ConstantBuffer;
 use or_io::gta6::headerless::{Geometry, ParameterValue, Shader};
 use or_io::hash::string_hash_str;
 use or_renderer::game_shaders::mesh::Image;
-use or_renderer::game_shaders::meshlets::{Feed, MeshletSurface, ROW};
+use or_renderer::game_shaders::meshlets::{Feed, MeshletSurface, ROW, VERTICES};
 
 use super::gta6_layers::Material;
 use crate::state::gta6_resource::{drawable_of, effect_name};
@@ -367,6 +367,18 @@ fn record_of(
     })
 }
 
+/// The primitives of the largest of the first `meshlets` meshlets of a geometry's index data:
+/// a meshlet's record is sixteen bytes from the twelfth on, and its first dword holds the
+/// vertices less one in its low seven bits and the primitives less one in the seven above.
+/// `None` where the data ends before a record.
+fn largest_meshlet(index_data: &[u8], meshlets: u32) -> Option<u32> {
+    let primitives = |meshlet: usize| {
+        let record = index_data.get(12 + 16 * meshlet..)?.first_chunk::<4>()?;
+        Some(((u32::from_le_bytes(*record) >> 7) & 0x7F) + 1)
+    };
+    (0..meshlets as usize).try_fold(0, |most, meshlet| Some(most.max(primitives(meshlet)?)))
+}
+
 /// The surface of `geometry` drawn by `pass`, and how many of its bindings are left at nought.
 /// `worn` is the layered material the drawable wears, and `tile` finds a texture of its layers.
 fn surface(
@@ -407,6 +419,8 @@ fn surface(
         fragment: Arc::clone(&pass.pixel.module),
         feeds: filled,
         meshlets,
+        // Data cut short of a record is drawn as a group has threads: nothing of it is lost.
+        primitives: largest_meshlet(&geometry.index_data, meshlets).unwrap_or(VERTICES / 3),
     };
     (meshlets > 0).then_some((surface, zeroed))
 }
@@ -671,6 +685,55 @@ mod tests {
             "each kind misses one stream: the one that reads more"
         );
         assert!(pass_of(&passes[..0], &geometry(&[0])).is_none(), "no pass");
+    }
+
+    #[test]
+    fn a_surface_states_the_primitives_of_the_largest_meshlet_its_index_data_records() {
+        // The head (bit 31 and the count), two words, then four words a meshlet: the first
+        // holds the vertices less one, the primitives less one and a radius above them.
+        let index_data = |primitives: &[u32], cut: usize| {
+            let mut words = vec![0x8000_0000 | primitives.len() as u32, 0, 0];
+            for (meshlet, primitives) in primitives.iter().enumerate() {
+                let vertices = [0x7F, 0, 0x55][meshlet % 3];
+                words.extend([vertices | (primitives - 1) << 7 | 0xFFFF << 16, !0, !0, !0]);
+            }
+            let mut bytes = bytes_of(&words);
+            bytes.truncate(bytes.len() - cut);
+            bytes
+        };
+        let stated = |primitives: &[u32], cut: usize| {
+            let geometry = Geometry {
+                shader: 0,
+                vertex_count: 0,
+                channels: Vec::new(),
+                triangles: Vec::new(),
+                positions: Ok(Vec::new()),
+                vertices: Default::default(),
+                vertex_data: Vec::new(),
+                index_data: index_data(primitives, cut),
+            };
+            let shader = Shader {
+                name_hash: 1,
+                texture_keys: Vec::new(),
+                parameters: Vec::new(),
+            };
+            let (surface, _) = surface(
+                &pass(&[]),
+                &geometry,
+                &shader,
+                &mut |_| None,
+                None,
+                &mut |_| None,
+            )?;
+            Some((surface.meshlets, surface.primitives))
+        };
+        assert_eq!(stated(&[5, 77, 12], 0), Some((3, 77)));
+        assert_eq!(stated(&[1], 0), Some((1, 1)));
+        assert_eq!(stated(&[3, 128], 0), Some((2, 128)));
+        assert_eq!(stated(&[26, 2, 9, 4], 0), Some((4, 26)));
+        // Cut inside its last record's first dword, it is drawn as a group has threads.
+        assert_eq!(stated(&[5, 77], 13), Some((2, VERTICES / 3)));
+        assert_eq!(stated(&[], 0), None, "no meshlet, no surface");
     }
 
     #[test]

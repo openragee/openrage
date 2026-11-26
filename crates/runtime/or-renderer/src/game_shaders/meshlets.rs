@@ -17,8 +17,8 @@ use super::mesh::Image;
 use super::pipeline::{entry_of, fragment_targets_in, Target};
 use super::targets::render_target;
 
-/// The vertices of an instance of a lowered mesh program: three corners for each of the 128
-/// threads of a group.
+/// The most vertices an instance of a lowered mesh program is drawn with: three corners for
+/// each of the 128 threads of a group.
 pub const VERTICES: u32 = 384;
 
 /// The depth target the passes draw with: the farthest is nought, as in the viewport.
@@ -173,6 +173,9 @@ pub struct MeshletSurface {
     pub feeds: BTreeMap<(u32, u32), Feed>,
     /// The meshlets of the geometry: an instance draws one.
     pub meshlets: u32,
+    /// The primitives of the largest of them: an instance runs three vertices for each, since
+    /// the thread of a vertex is its primitive's and a meshlet makes none on a thread past its own.
+    pub primitives: u32,
 }
 
 /// A buffer the frame writes the view into, and where.
@@ -184,12 +187,90 @@ struct Draw {
     /// By group number.
     groups: Vec<(u32, wgpu::BindGroup)>,
     meshlets: u32,
+    /// The vertices of an instance.
+    vertices: u32,
     views: Vec<ViewWrite>,
+}
+
+/// What a frame of a model asked of the device, counted where each call is recorded.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MeshletCalls {
+    /// The render passes begun: the viewport's own, which the frame is lit in, is not one.
+    pub passes: u32,
+    /// Every draw, the full-screen ones among them.
+    pub draws: u32,
+    /// The draws of a surface, into the shadow's tile or into the targets.
+    pub surface_draws: u32,
+    /// The bind groups set.
+    pub binds: u32,
+    /// The queue's writes, and the bytes of them.
+    pub writes: u32,
+    pub written: u64,
+    /// The copies from a buffer to a buffer.
+    pub copies: u32,
+    /// Vertices times instances, over the draws of a surface.
+    pub vertices: u64,
+}
+
+/// What a recording has to draw again.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Stale {
+    /// The shadow's tile, which holds the surfaces as the light's matrix places them.
+    shadow: bool,
+    /// The targets, which hold them as the view matrix does.
+    targets: bool,
+    /// The mask and the meter, which read the tile, the targets and the light.
+    lit: bool,
+}
+
+/// What a frame need not ask of the device again: the bytes its buffers hold already, and what
+/// the tile and the targets were last drawn by. A scene's feeds are bound once and never
+/// written after, so these three are all a pass of its surfaces reads that moves.
+#[derive(Default)]
+struct Kept {
+    /// The view matrix the surfaces' buffers hold.
+    view: Option<[u8; 64]>,
+    /// The light's matrix the tile was last cast by.
+    tile: Option<[u8; 64]>,
+    /// What the light's buffer holds.
+    light: Option<Box<[u8; LIGHT_BYTES]>>,
+    /// What is owed until a recording draws it.
+    stale: Stale,
+}
+
+impl Kept {
+    /// Take in the bytes a frame is drawn by: whether the buffers lack its view, and its light.
+    /// What they make stale is owed from here on.
+    fn take(
+        &mut self,
+        view: [u8; 64],
+        tile: Option<[u8; 64]>,
+        light: &[u8; LIGHT_BYTES],
+    ) -> (bool, bool) {
+        let moved = self.view != Some(view);
+        // A frame that casts nothing leaves the tile as it was cast last.
+        let cast = tile.is_some() && tile != self.tile;
+        let relit = self.light.as_deref() != Some(light);
+        self.view = Some(view);
+        if cast {
+            self.tile = tile;
+        }
+        if relit {
+            self.light = Some(Box::new(*light));
+        }
+        self.stale.shadow |= cast;
+        self.stale.targets |= moved;
+        self.stale.lit |= moved || cast || relit;
+        (moved, relit)
+    }
 }
 
 /// The surfaces of a model ready to draw, with the targets their pixel programs write.
 pub struct MeshletScene {
     draws: Vec<Draw>,
+    kept: std::cell::RefCell<Kept>,
+    /// What the frame last begun by [`MeshletScene::update`] has asked of the device so far.
+    calls: std::cell::Cell<MeshletCalls>,
     formats: Vec<Option<wgpu::TextureFormat>>,
     targets: Vec<Option<wgpu::TextureView>>,
     depth: wgpu::TextureView,
@@ -217,6 +298,9 @@ pub struct MeshletScene {
     /// The surfaces it was prepared from that the device has no pass for, each by its place
     /// among them, and why.
     pub refused: Vec<(usize, String)>,
+    /// Those whose pass a worker still builds, each by its place among them: the caller draws
+    /// them as it draws `rest`, and prepares again once [`MeshletPipelines::waiting`] counts fewer.
+    pub waiting: Vec<usize>,
 }
 
 /// The texels of a row no image fills: one row of a palette, which is as wide.
@@ -591,6 +675,30 @@ impl MeshletPipelines {
         }
     }
 
+    /// How many of `surfaces` a worker still builds the pass of.
+    pub fn waiting(&mut self, device: &wgpu::Device, surfaces: &[MeshletSurface]) -> usize {
+        let waits = |surface: &&MeshletSurface| matches!(self.of(device, surface), Ok(None));
+        surfaces.iter().filter(waits).count()
+    }
+
+    /// Take `surface`'s pass as one a worker still builds and start none, or with `held` false
+    /// let the next ask start one: how a test sees a frame drawn while a pass builds.
+    #[doc(hidden)]
+    pub fn hold(&mut self, surface: &MeshletSurface, held: bool) {
+        let key = Self::key(surface);
+        match held {
+            true => self.built.insert(key, Slot::default()),
+            false => self.built.remove(&key),
+        };
+    }
+
+    fn key(surface: &MeshletSurface) -> (usize, usize) {
+        (
+            Arc::as_ptr(&surface.vertex) as usize,
+            Arc::as_ptr(&surface.fragment) as usize,
+        )
+    }
+
     /// The pass of `surface`, which a worker starts to build where none has: `None` until it
     /// is built, `Err` where the device has none for it.
     fn of(
@@ -598,10 +706,7 @@ impl MeshletPipelines {
         device: &wgpu::Device,
         surface: &MeshletSurface,
     ) -> Result<Option<Arc<Built>>, String> {
-        let key = (
-            Arc::as_ptr(&surface.vertex) as usize,
-            Arc::as_ptr(&surface.fragment) as usize,
-        );
+        let key = Self::key(surface);
         if !self.built.contains_key(&key) {
             let folder = self.folder.as_deref();
             let compiled = (self.compiled)
@@ -1001,9 +1106,9 @@ fn light_bytes(lighting: &Lighting, casts: bool) -> [u8; LIGHT_BYTES] {
 
 impl MeshletScene {
     /// Prepare `surfaces` for targets of `size`, lit onto a frame of `frame`'s formats.
-    /// `None` while a worker still builds a pass of theirs: the caller asks again. `Err` says
-    /// why the scene is not one to draw; what the device refuses of the groups is reported
-    /// through its own error scopes.
+    /// `None` while no pass of theirs is built and a worker builds one: the caller asks again.
+    /// `Err` says why the scene is not one to draw; what the device refuses of the groups is
+    /// reported through its own error scopes.
     pub fn prepare(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -1016,23 +1121,22 @@ impl MeshletScene {
             return Err("no surface to draw".to_string());
         }
         // Every pass is asked for before any is waited for, so that they build side by side. A
-        // surface whose pass the device has none for is left to the caller; the others draw.
-        let (mut passes, mut refused) = (Vec::with_capacity(surfaces.len()), Vec::new());
+        // surface whose pass the device has none for, or none yet, is left to the caller; the
+        // others draw.
+        let (mut passes, mut waiting, mut refused) = (Vec::new(), Vec::new(), Vec::new());
         for (at, surface) in surfaces.iter().enumerate() {
             match pipelines.of(device, surface) {
-                Ok(pass) => passes.push((surface, pass)),
+                Ok(Some(pass)) => passes.push((surface, pass)),
+                Ok(None) => waiting.push(at),
                 Err(why) => refused.push((at, why)),
             }
         }
         if passes.is_empty() {
-            return Err(refused.swap_remove(0).1);
+            return match waiting.is_empty() {
+                true => Err(refused.swap_remove(0).1),
+                false => Ok(None),
+            };
         }
-        let Some(passes) = (passes.into_iter())
-            .map(|(surface, pass)| Some((surface, pass?)))
-            .collect::<Option<Vec<_>>>()
-        else {
-            return Ok(None);
-        };
         let formats = passes[0].1.formats.clone();
         let mut draws = Vec::with_capacity(surfaces.len());
         for (surface, built) in passes {
@@ -1044,6 +1148,7 @@ impl MeshletScene {
                 caster: built.caster.clone(),
                 groups: Vec::new(),
                 meshlets: surface.meshlets,
+                vertices: 3 * surface.primitives.min(VERTICES / 3),
                 views: Vec::new(),
             };
             for (group, layout) in (0..).zip(&built.layouts) {
@@ -1207,6 +1312,8 @@ impl MeshletScene {
             resolve_group(device, &resolve_layout, &targets, &depth, &light, &mask)?;
         Ok(Some(Self {
             draws,
+            kept: Default::default(),
+            calls: Default::default(),
             formats,
             targets,
             depth,
@@ -1225,6 +1332,7 @@ impl MeshletScene {
             casts: Default::default(),
             rest: Vec::new(),
             refused,
+            waiting,
         }))
     }
 
@@ -1247,12 +1355,82 @@ impl MeshletScene {
             self.targets = targets;
             self.depth = depth;
             self.mask = mask;
+            self.forget();
         }
+    }
+
+    /// Forget what was drawn and written: the next frame asks the device for all of it again.
+    // ⚠ Whatever writes a buffer or a texture of the scene's behind its back calls this, a
+    // writer of the mask that is no pass of the scene's among them: the meter reads the mask.
+    pub fn forget(&self) {
+        self.kept.take();
     }
 
     /// How many surfaces draw.
     pub fn drawn(&self) -> usize {
         self.draws.len()
+    }
+
+    /// The meshlets of the surfaces that draw.
+    pub fn meshlets(&self) -> u32 {
+        self.draws.iter().map(|draw| draw.meshlets).sum()
+    }
+
+    /// The meshlets of each surface that draws, and the vertices one of them is drawn with.
+    pub fn fitted(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        (self.draws.iter()).map(|draw| (draw.meshlets, draw.vertices))
+    }
+
+    /// What the last frame asked of the device.
+    pub fn calls(&self) -> MeshletCalls {
+        self.calls.get()
+    }
+
+    fn count(&self, add: impl FnOnce(&mut MeshletCalls)) {
+        let mut calls = self.calls.get();
+        add(&mut calls);
+        self.calls.set(calls);
+    }
+
+    fn write(&self, queue: &wgpu::Queue, buffer: &wgpu::Buffer, at: u64, bytes: &[u8]) {
+        queue.write_buffer(buffer, at, bytes);
+        self.count(|calls| {
+            calls.writes += 1;
+            calls.written += bytes.len() as u64;
+        });
+    }
+
+    /// Draw every surface into `pass`: by its caster for the shadow's tile, else by its own pass.
+    fn draw_surfaces(&self, pass: &mut wgpu::RenderPass<'_>, cast: bool) {
+        for draw in &self.draws {
+            pass.set_pipeline(if cast { &draw.caster } else { &draw.pipeline });
+            for (group, bound) in &draw.groups {
+                pass.set_bind_group(*group, bound, &[]);
+            }
+            pass.draw(0..draw.vertices, 0..draw.meshlets);
+        }
+        self.count(|calls| {
+            calls.passes += 1;
+            calls.draws += self.draws.len() as u32;
+            calls.surface_draws += self.draws.len() as u32;
+            calls.binds += self
+                .draws
+                .iter()
+                .map(|d| d.groups.len() as u32)
+                .sum::<u32>();
+            calls.vertices += (self.draws.iter())
+                .map(|d| u64::from(d.vertices) * u64::from(d.meshlets))
+                .sum::<u64>();
+        });
+    }
+
+    /// Count a full-screen draw that set `binds` groups, in `passes` passes of its own.
+    fn count_full_screen(&self, passes: u32, binds: u32) {
+        self.count(|calls| {
+            calls.passes += passes;
+            calls.draws += 1;
+            calls.binds += binds;
+        });
     }
 
     /// The texture of target `index`, for the bytes the pixel programs wrote.
@@ -1267,19 +1445,35 @@ impl MeshletScene {
         (self.draws.iter().flat_map(|draw| &draw.views)).any(|(_, at)| at % 4 != 0)
     }
 
-    /// Write this frame's view and what the last draw lights by.
+    /// Write what moved of this frame's view and of what the last draw lights by, and take in
+    /// what [`MeshletScene::record_targets`] has to draw again for it.
     pub fn update(&self, queue: &wgpu::Queue, lighting: &Lighting) {
-        let matrix = lighting.view_proj.to_cols_array();
-        for (buffer, at) in self.draws.iter().flat_map(|draw| &draw.views) {
-            queue.write_buffer(buffer, *at as u64, bytemuck::cast_slice(&matrix));
-        }
+        self.calls.set(MeshletCalls::default());
         let cast = sun_shadow::cast_of(&lighting.sky).filter(|_| !self.casts_no_shadow());
-        if let Some(to_tile) = cast {
-            let both = [matrix, to_tile.to_cols_array()];
-            queue.write_buffer(&self.matrices, 0, bytemuck::cast_slice(&both));
+        // Compared as bytes: a nought of the other sign is another matrix to a program.
+        let bytes = |matrix: Mat4| -> [u8; 64] { bytemuck::cast(matrix.to_cols_array()) };
+        let (view, tile) = (bytes(lighting.view_proj), cast.map(bytes));
+        let light = light_bytes(lighting, cast.is_some());
+        let mut kept = self.kept.borrow_mut();
+        let (moved, relit) = kept.take(view, tile, &light);
+        if moved {
+            for (buffer, at) in self.draws.iter().flat_map(|draw| &draw.views) {
+                self.write(queue, buffer, *at as u64, &view);
+            }
+        }
+        // The tile's pass copies the camera's matrix back, so it is handed this frame's.
+        if let (Some(tile), true) = (tile, kept.stale.shadow) {
+            self.write(
+                queue,
+                &self.matrices,
+                0,
+                bytemuck::cast_slice(&[view, tile]),
+            );
         }
         (self.casts).store(cast.is_some(), std::sync::atomic::Ordering::Relaxed);
-        queue.write_buffer(&self.light, 0, &light_bytes(lighting, cast.is_some()));
+        if relit {
+            self.write(queue, &self.light, 0, &light);
+        }
     }
 
     /// Draw the surfaces as the light sees them into the tile: the light's matrix is copied to
@@ -1304,24 +1498,41 @@ impl MeshletScene {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        for draw in &self.draws {
-            pass.set_pipeline(&draw.caster);
-            for (group, bound) in &draw.groups {
-                pass.set_bind_group(*group, bound, &[]);
-            }
-            pass.draw(0..VERTICES, 0..draw.meshlets);
-        }
+        self.draw_surfaces(&mut pass, true);
         drop(pass);
         for (buffer, at) in views() {
             encoder.copy_buffer_to_buffer(&self.matrices, 0, buffer, *at as u64, 64);
         }
+        self.count(|calls| calls.copies += 2 * views().count() as u32);
+    }
+
+    /// Draw what the last [`MeshletScene::update`] left stale: the surfaces into the shadow's
+    /// tile, the surfaces into the targets, the mask and what they meter to, each in a pass of
+    /// its own; `mark` is told where each of the three ends, drawn or not.
+    pub fn record_targets(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        mut mark: impl FnMut(&mut wgpu::CommandEncoder, &'static str),
+    ) {
+        let stale = std::mem::take(&mut self.kept.borrow_mut().stale);
+        match self.casts.load(std::sync::atomic::Ordering::Relaxed) {
+            true if stale.shadow => self.record_shadow(encoder),
+            // A tile no frame cast into stays owed to the next one that casts.
+            _ => self.kept.borrow_mut().stale.shadow = stale.shadow,
+        }
+        mark(encoder, "model shadow");
+        if stale.targets {
+            self.record_surfaces(encoder);
+        }
+        mark(encoder, "model targets");
+        if stale.lit {
+            self.record_lit(encoder);
+        }
+        mark(encoder, "model meter");
     }
 
     /// Draw the surfaces into the targets, in a pass of their own.
-    pub fn record_targets(&self, encoder: &mut wgpu::CommandEncoder) {
-        if self.casts.load(std::sync::atomic::Ordering::Relaxed) {
-            self.record_shadow(encoder);
-        }
+    fn record_surfaces(&self, encoder: &mut wgpu::CommandEncoder) {
         let attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> = (self.targets.iter())
             .map(|target| {
                 target.as_ref().map(|view| wgpu::RenderPassColorAttachment {
@@ -1350,15 +1561,14 @@ impl MeshletScene {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        for draw in &self.draws {
-            pass.set_pipeline(&draw.pipeline);
-            for (group, bound) in &draw.groups {
-                pass.set_bind_group(*group, bound, &[]);
-            }
-            pass.draw(0..VERTICES, 0..draw.meshlets);
+        self.draw_surfaces(&mut pass, false);
+    }
+
+    /// Fill the mask from the tile and the targets, and meter what the surfaces come to.
+    fn record_lit(&self, encoder: &mut wgpu::CommandEncoder) {
+        if self.mask.record(encoder, &self.mask_writer) {
+            self.count_full_screen(1, 1);
         }
-        drop(pass);
-        self.mask.record(encoder, &self.mask_writer);
         // What the surfaces meter to, before the frame is lit by it.
         let mut meter = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("meshlet-meter"),
@@ -1379,6 +1589,7 @@ impl MeshletScene {
         meter.set_pipeline(&self.meter);
         meter.set_bind_group(0, &self.resolve_group, &[]);
         meter.draw(0..3, 0..1);
+        self.count_full_screen(1, 1);
     }
 
     /// Light what the targets hold onto the frame `pass` draws, with its depth.
@@ -1387,6 +1598,7 @@ impl MeshletScene {
         pass.set_bind_group(0, &self.resolve_group, &[]);
         pass.set_bind_group(1, &self.metered_group, &[]);
         pass.draw(0..3, 0..1);
+        self.count_full_screen(0, 2);
     }
 }
 
@@ -1402,6 +1614,8 @@ use sun_mask::SunMask;
 pub use sun_shadow::to_tile;
 pub use tone::{metered, Curve, Filmic, Tone};
 
+#[cfg(test)]
+mod calls_tests;
 #[cfg(test)]
 mod far_tests;
 #[cfg(test)]

@@ -338,3 +338,19 @@ fn a_fragment_s_masses_and_inertia_write_in_place_and_a_moved_child_is_refused()
 
 #[path = "write_fragment_child.rs"]
 mod write_fragment_child;
+
+#[test]
+fn a_fragment_states_the_trace_words_of_the_drawable_its_root_points_at() {
+    let (mut img, _, parts) = fragment();
+    img.u32(parts.drawable + 0xB8, 0x0000_0600);
+    let words = trace_words(Rpf9Role::DrawableWithBound, &img.bytes);
+    let [Ok(words)] = words.as_slice() else {
+        panic!("one drawable's words, not {words:?}");
+    };
+    assert_eq!(words.level_word, 0x0000_0600);
+    let models = words.levels[0].as_ref().expect("level 0");
+    assert_eq!(
+        (models.len(), models[0].geometries[0].triangle_count),
+        (1, 1)
+    );
+}

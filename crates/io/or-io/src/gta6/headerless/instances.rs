@@ -1,9 +1,10 @@
 //! Ray-tracing instances: a root of N transforms and N records, and a physical section tiled with
 //! one serialized acceleration structure per record of non-zero size.
 //!
-//! Not read, since what they hold is not known: a record word but for its low six bits, the key's
-//! source, a structure's words +0x108 and +0x130 to +0x13C, and its nodes past +0x140, which are
-//! the console driver's.
+//! The key and a record's word are read as what they state by `read_accel_root`, over this
+//! reader. Not read, since what they hold is not known: bits 6 and 7 and the top byte of a record
+//! word, a structure's words +0x130 to +0x13C, and its nodes past +0x140, which are the console
+//! driver's.
 
 use super::bytes::{f32_at, sections, u32_at, u64_at, Bytes};
 use super::{HeaderlessError, Result};
@@ -19,7 +20,8 @@ const FORMAT_WORD: u32 = 0x8102_0006;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Instances {
-    /// v+0x40, which differs between roots; what it hashes is not known.
+    /// v+0x40: the key the game makes of the geometries its ray tracer is given of one level
+    /// of the model, which `gta6::accel::select` computes.
     pub key: u64,
     pub instances: Vec<Instance>,
 }
@@ -30,7 +32,8 @@ pub struct Instance {
     pub transform: [f32; 12],
     /// The bytes of the instance's structure in the physical section, a multiple of 256.
     pub size: u32,
-    /// The record's word; bits 16 to 21 are four times the index in most records.
+    /// The record's word: bits 8 to 17 the geometries described to the builder, bits 18 to 21
+    /// the model's number in its level, bits 22 and 23 the level; its low six bits are clear.
     pub word: u32,
     /// `None` for a record of size 0.
     pub structure: Option<Structure>,
@@ -41,9 +44,12 @@ pub struct Instance {
 pub struct Structure {
     /// A multiple of 64 that rounds up to the record's size; the deserialized size is 0x100 less.
     pub serialized_size: u64,
-    /// +0x104, above the primitive count: vertices, as inferred.
+    /// +0x104, above the primitive count. What it counts is not known: it is neither the
+    /// vertices nor the triangles of the build description.
     pub count: u32,
+    /// The CRC-32C of the description the structure was built from.
     pub word_108: u32,
+    /// +0x10C: inferred from the triangle counts to be the structure's triangle nodes.
     pub primitives: u32,
     pub box_min: [f32; 3],
     pub box_max: [f32; 3],

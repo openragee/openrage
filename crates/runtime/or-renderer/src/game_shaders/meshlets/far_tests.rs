@@ -80,7 +80,7 @@ fn draws_far(
         }
     };
     let mut encoder = device.create_command_encoder(&Default::default());
-    scene.record_targets(&mut encoder);
+    scene.record_targets(&mut encoder, |_, _| {});
     queue.submit([encoder.finish()]);
     let finished = device.poll(wgpu::PollType::wait_indefinitely());
     finished.map(|_| scene.drawn()).map_err(|e| e.to_string())

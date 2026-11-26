@@ -221,14 +221,15 @@ pub struct RenderBridge {
     /// The passes of GTA VI's own programs built so far, kept across the models opened.
     gta6_pipelines: or_renderer::game_shaders::meshlets::MeshletPipelines,
     /// The active GTA VI drawable while a worker still builds a pass of its own programs: asked
-    /// for again each frame, and drawn as Material until then.
+    /// for again each frame, and the surfaces of that pass drawn as Material until then.
     gta6_building: Option<crate::render::gta6_meshlets::Meshlets>,
     /// Whether a worker still decodes a map of the active GTA VI drawable: it is read again each
     /// frame, and drawn as Material until then.
     gta6_decoding: bool,
     /// The GTA VI drawable Shaded was last asked for, since when, and whether its own programs
-    /// have drawn it since: how long a model takes to its first shaded frame is said once.
-    gta6_since: Option<(crate::state::DocumentId, std::time::Instant, bool)>,
+    /// have drawn a surface of it since, and every surface they draw: how long a model takes to
+    /// each is said once.
+    gta6_since: Option<(crate::state::DocumentId, std::time::Instant, bool, bool)>,
     /// What the day the renderer holds was worked out from: the install's timecycle, the hour and the weather.
     day_key: Option<(usize, u32, u32, crate::state::drivers::WeatherState)>,
 

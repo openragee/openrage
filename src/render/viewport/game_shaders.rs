@@ -20,6 +20,23 @@ pub struct GameSceneReport {
     pub gta6: Option<(bool, String)>,
 }
 
+/// What a frame of the active GTA VI drawable's own passes costs the device.
+#[derive(Debug, Clone, Copy)]
+pub struct ModelCost {
+    pub calls: or_renderer::game_shaders::meshlets::MeshletCalls,
+    /// The surfaces its own passes draw, and their meshlets.
+    pub surfaces: usize,
+    pub meshlets: u32,
+    /// The surfaces drawn as Material while a worker still builds their pass.
+    pub waiting: usize,
+    /// The passes built for the device, or being built.
+    pub passes: usize,
+    /// Whether it casts the sun's shadow under a light that casts one.
+    pub casts: bool,
+    /// The pixels of the viewport.
+    pub size: (u32, u32),
+}
+
 /// No pass of GTA VI's own programs built yet: what the device's driver compiles of them is kept
 /// under the configuration folder, where the backend keeps any.
 pub(super) fn gta6_pipelines() -> or_renderer::game_shaders::meshlets::MeshletPipelines {
@@ -58,6 +75,67 @@ impl RenderBridge {
                 false
             }
         }
+    }
+
+    /// What the last frame of the active GTA VI drawable's own passes asked of the device; none where they draw nothing.
+    pub fn model_cost(&self) -> Option<ModelCost> {
+        let scene = self.renderer.gta6_scene().filter(|s| s.drawn() > 0)?;
+        Some(ModelCost {
+            calls: scene.calls(),
+            surfaces: scene.drawn(),
+            meshlets: scene.meshlets(),
+            waiting: scene.waiting.len(),
+            passes: self.gta6_pipelines.len(),
+            casts: !scene.casts_no_shadow(),
+            size: self.renderer.size(),
+        })
+    }
+
+    /// The meshlets of each surface the active GTA VI drawable's own passes draw, and the vertices one of them is drawn with.
+    pub fn model_surfaces(&self) -> Vec<(u32, u32)> {
+        let scene = self.renderer.gta6_scene();
+        scene.into_iter().flat_map(|scene| scene.fitted()).collect()
+    }
+
+    /// Each target the active GTA VI drawable's own passes fill, as a digest of its bytes and how many of them are not nought; none for one that is not read back.
+    // ⚠ Waits for the device: for a script's step, never for a frame of the editor. The digest
+    // is this build's: it tells two runs of one build apart and nothing else.
+    pub fn model_targets(&self) -> Vec<Option<(u64, usize)>> {
+        use std::hash::Hasher;
+        let targets = (self.renderer.gta6_scene().into_iter())
+            .flat_map(|scene| (0..).map_while(|at| scene.target(at)));
+        let (width, height) = self.renderer.size();
+        let digested = |texture| {
+            let read = crate::render::read_back::rgba;
+            let pixels = read(&self.device, &self.queue, texture, width, height).ok()?;
+            let mut digest = std::hash::DefaultHasher::new();
+            digest.write(&pixels);
+            let filled = pixels.iter().filter(|byte| **byte != 0).count();
+            Some((digest.finish(), filled))
+        };
+        targets.map(digested).collect()
+    }
+
+    /// Have the next frame of the active GTA VI drawable's own passes draw every pass again, whatever moved.
+    pub fn redraw_model(&self) {
+        if let Some(scene) = self.renderer.gta6_scene() {
+            scene.forget();
+        }
+    }
+
+    /// The stages of the last frame as the device timed them, once it has finished it; none on a device that times none.
+    // ⚠ Waits for the device: for a script's step, never for a frame of the editor.
+    pub fn timed_stages(&self) -> Option<Vec<(&'static str, f32)>> {
+        if !(self.device.features()).contains(or_renderer::gpu_timer::FEATURES) {
+            return None;
+        }
+        for _ in 0..8 {
+            if self.renderer.collect_gpu_times(&self.device) {
+                break;
+            }
+            let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        }
+        Some(self.renderer.gpu_stages())
     }
 
     /// Whether there is a pack of the game's shaders to draw with.
@@ -264,8 +342,8 @@ impl RenderBridge {
             })
         };
         gta6_shaders::request(hashes, install);
-        if self.gta6_since.is_none_or(|(of, _, _)| of != doc) {
-            self.gta6_since = Some((doc, std::time::Instant::now(), false));
+        if self.gta6_since.is_none_or(|(of, ..)| of != doc) {
+            self.gta6_since = Some((doc, std::time::Instant::now(), false, false));
             crate::render::gta6_meshlets::start_decoding(state);
         }
         let running = gta6_shaders::running();
@@ -284,11 +362,18 @@ impl RenderBridge {
         let (drawn, left_out) = match kept {
             // A worker was building a pass of its own programs: once it has, they draw it
             Some(kept) if building => {
+                let drew = matches!(self.gta6_own, Some(Ok(_)));
                 self.gta6_own = self.prepare_gta6_meshlets(state);
                 match self.gta6_own {
                     Some(Ok(_)) => {
                         self.renderer.set_game_scene(None);
                         (0, Vec::new())
+                    }
+                    // What some of its passes drew and none does now is prepared from nothing
+                    // by the next frame, as a drawable they never drew is
+                    _ if drew => {
+                        self.game_scene_key = None;
+                        kept
                     }
                     _ => kept,
                 }
@@ -317,11 +402,15 @@ impl RenderBridge {
                 }
             }
         };
-        if let (Some(Ok(_)), Some((_, since, said @ false))) =
+        if let (Some(Ok(_)), Some((_, since, first, every))) =
             (&self.gta6_own, self.gta6_since.as_mut())
         {
-            *said = true;
-            tracing::info!(elapsed = ?since.elapsed(), "a GTA VI drawable's first frame by its own programs");
+            if !std::mem::replace(first, true) {
+                tracing::info!(elapsed = ?since.elapsed(), "a GTA VI drawable's first frame by its own programs");
+            }
+            if self.gta6_building.is_none() && !std::mem::replace(every, true) {
+                tracing::info!(elapsed = ?since.elapsed(), "a GTA VI drawable's last surface by its own programs");
+            }
         }
         let said = crate::render::gta6_shaded::said(
             &gta6_shaders::status(hashes),
@@ -345,13 +434,21 @@ impl RenderBridge {
         &mut self,
         state: &AppState,
     ) -> Option<Result<crate::render::gta6_shaded::Own, String>> {
+        self.prepare_gta6_meshlets_of(|| crate::render::gta6_meshlets::meshlets(state))
+    }
+
+    /// [`Self::prepare_gta6_meshlets`] of the drawable `read` gives where no worker builds for one.
+    fn prepare_gta6_meshlets_of(
+        &mut self,
+        read: impl FnOnce() -> Option<Result<crate::render::gta6_meshlets::Meshlets, String>>,
+    ) -> Option<Result<crate::render::gta6_shaded::Own, String>> {
         use or_renderer::game_shaders::meshlets::MeshletScene;
         // The drawable a worker builds for is the one asked about again, as it was read then
         let meshlets = match self.gta6_building.take() {
             Some(meshlets) => meshlets,
             None => {
                 self.renderer.set_gta6_scene(None);
-                match crate::render::gta6_meshlets::meshlets(state)? {
+                match read()? {
                     Ok(meshlets) => meshlets,
                     Err(why) => return Some(Err(why)),
                 }
@@ -364,6 +461,15 @@ impl RenderBridge {
             return Some(Err(tr!("a worker is still decoding its maps").to_string()));
         }
         self.gta6_decoding = false;
+        // What some of its passes draw is prepared again only once a worker has built another:
+        // a prepare makes every buffer and texture of every surface anew
+        let waiting = (self.gta6_pipelines).waiting(&self.device, &meshlets.surfaces);
+        let shown = self.renderer.gta6_scene().map(|scene| scene.waiting.len());
+        if let (true, Some(Ok(own))) = (shown == Some(waiting), &self.gta6_own) {
+            let own = own.clone();
+            self.gta6_building = Some(meshlets);
+            return Some(Ok(own));
+        }
         // What the device refuses is reported by its error scope and not by a panic: a stage
         // its shader compiler does not take is an internal error, not a validation one
         let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
@@ -393,33 +499,39 @@ impl RenderBridge {
                 "a worker builds a GTA VI drawable's own passes"
             );
         }
-        Some(match (scene, refused) {
+        let building = tr!("a worker is still building its passes for this device");
+        let own = match (scene, refused) {
             (Ok(None), None) => {
                 self.gta6_building = Some(meshlets);
-                Err(tr!("a worker is still building its passes for this device").to_string())
+                return Some(Err(building.to_string()));
             }
             (Ok(Some(mut scene)), None) => {
-                // A surface the device has no pass for is drawn as Material beside the others
-                let mut meshlets = meshlets;
-                for (at, why) in &scene.refused {
+                // A surface the device has no pass for, or none yet, is drawn as Material beside
+                // the others
+                let (mut rest, mut why) = (meshlets.rest.clone(), meshlets.why.clone());
+                let refused = scene.refused.iter().map(|(at, why)| (at, why.as_str()));
+                let waiting = scene.waiting.iter().map(|at| (at, building));
+                for (at, reason) in refused.chain(waiting) {
                     let Some((mesh, effect)) = meshlets.of.get(*at) else {
                         continue;
                     };
-                    meshlets.rest.push(*mesh);
-                    meshlets
-                        .why
-                        .get_or_insert_with(|| format!("{effect}: {why}"));
+                    rest.push(*mesh);
+                    why.get_or_insert_with(|| format!("{effect}: {reason}"));
                 }
                 let own = crate::render::gta6_shaded::Own {
                     drawn: scene.drawn(),
                     zeroed: meshlets.zeroed,
-                    rest: meshlets.rest.len(),
-                    why: meshlets.why,
+                    rest: rest.len(),
+                    why,
                     unshadowed: scene.casts_no_shadow(),
                 };
-                scene.rest = meshlets.rest;
+                // The drawable is asked about again until every pass of its surfaces is built
+                if !scene.waiting.is_empty() {
+                    self.gta6_building = Some(meshlets);
+                }
+                scene.rest = rest;
                 self.renderer.set_gta6_scene(Some(scene));
-                Ok(own)
+                return Some(Ok(own));
             }
             (Err(why), None) => Err(why),
             (_, Some(error)) => {
@@ -428,7 +540,10 @@ impl RenderBridge {
                 self.gta6_pipelines = gta6_pipelines();
                 Err(error.to_string())
             }
-        })
+        };
+        // What drew by some of its passes draws by none of them now
+        self.renderer.set_gta6_scene(None);
+        Some(own)
     }
 
     /// Prepare `surfaces` with `pack`'s forward passes alone, since GTA VI's effects hold none of
@@ -463,3 +578,7 @@ impl RenderBridge {
         (drawn, left_out)
     }
 }
+
+#[cfg(test)]
+#[path = "gta6_ahead_tests.rs"]
+mod tests;

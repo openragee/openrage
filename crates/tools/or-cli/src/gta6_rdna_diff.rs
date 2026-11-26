@@ -245,6 +245,14 @@ mod tests {
             .backends
             .insert("WGSL".to_owned(), "made up".to_owned());
         records[0].approximations.insert("made up".to_owned(), 2);
+        records[0].wave = "made up".to_owned();
+        records[0].intersections.push(crate::gta6_rdna_run::Site {
+            word: 7,
+            wide: true,
+            function: "made up".to_owned(),
+            depth: 3,
+            loops: vec![2, 5],
+        });
         write_records(&path, &records).unwrap();
         assert_eq!(read_records(&path).unwrap(), records);
         fs::write(&path, "{\"index\": 1}\nnot a record\n").unwrap();

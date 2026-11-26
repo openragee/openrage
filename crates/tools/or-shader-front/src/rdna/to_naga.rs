@@ -23,12 +23,14 @@ mod ends;
 mod flow;
 mod geometry;
 mod halves;
+mod trace;
 mod uniform;
 mod wave;
 
 use flow::Flow;
 pub use geometry::{emitted, Emitted, Pair};
 use halves::Rounding;
+pub use trace::{arena_layout, intersections, Intersection, Region, Registers};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NotTranslated {
@@ -138,6 +140,12 @@ pub enum ResourceKind {
         dim: u8,
         format: naga::StorageFormat,
     },
+    /// The structures a program that traces rays walks, as one buffer of dwords it only reads:
+    /// an address the program forms is a byte offset into it ([`Options::arena`]).
+    Arena,
+    /// The registers of a walk lowered alone ([`Options::region`]), a row of dwords an
+    /// invocation: those it is given, or with [`Resource::written`] those it leaves.
+    Registers,
 }
 
 /// One binding of a translated module and the table word its descriptor starts at.
@@ -172,6 +180,11 @@ pub struct Lowered {
     /// Whether the module holds subgroup operations, which a device has to allow: a wave of the
     /// program is the subgroup the device runs an invocation in.
     pub subgroups: bool,
+    /// The instructions that test a ray against a node, in the code's order, each with where
+    /// its call is in the module.
+    pub intersections: Vec<Intersection>,
+    /// The registers of a walk lowered alone, by their slots in its two buffers.
+    pub region: Option<Registers>,
 }
 
 impl Lowered {
@@ -284,6 +297,16 @@ pub struct Options {
     /// The other half of a geometry pair: the geometry program a vertex half runs before, or the
     /// vertex half a geometry program runs after. With it either half lowers to the pair's one module.
     pub pair: Option<std::sync::Arc<Pair>>,
+    /// Whether a program that traces rays is lowered as its code states it, with the structures
+    /// it walks as memory: one buffer of dwords ([`ResourceKind::Arena`]) that every address
+    /// the program forms from a structure's descriptor is a byte offset into, and one function
+    /// of the module for the instruction that tests a ray against a node. Without it such a
+    /// program is refused.
+    pub arena: bool,
+    /// One walk of a program that traces rays, lowered alone as a compute module: the loop
+    /// entered at a word of the program, with the registers it reads before it writes them
+    /// given in one buffer and the registers named left in another where it ends.
+    pub region: Option<Region>,
 }
 
 /// The first export target of each kind: the colour targets start at 0.
@@ -1496,6 +1519,18 @@ struct Cx<'a> {
     lane: Option<Handle<naga::GlobalVariable>>,
     /// The wave of a compute group kept in the memory the group shares.
     shared_wave: wave::Shared,
+    /// Whether an invocation is one lane with nothing of the others ([`wave::NOT_PRIVATE`]).
+    private_lanes: bool,
+    /// Whether the wave is kept whole: an invocation is one lane, as a wave in shared memory
+    /// has it, and every scalar register holds in every lane what the wave's one register
+    /// holds. A lane mask is then the wave's own number, gathered through a meeting of the
+    /// group wherever the lanes make one; a branch is the wave's with no vote; and a vector
+    /// register is read and written at a lane's number through the group's memory. The
+    /// lowering of a program that tests nodes and is not a lane an invocation: such a program
+    /// counts masks, ands them with a lane's bit and keeps them in tables.
+    exact: bool,
+    /// The structures a program walks as memory, and its tests of a ray against a node.
+    trace: trace::Trace,
     /// The `v_readfirstlane_b32` that read what this lane holds too, by their words, and
     /// whether a compute program holds one of the others: the wave's own first lane is then
     /// read, in the memory the group shares.
@@ -1846,6 +1881,9 @@ impl<'a> Cx<'a> {
     // ⚠ With the other lanes left set, nothing a module runs ever takes them out again, and a
     // loop that goes round while the mask holds a lane never ends on any device.
     fn own_lane(&mut self, reg: Reg, value: Handle<E>) -> Handle<E> {
+        if self.exact {
+            return self.thread_lanes(reg, value);
+        }
         match reg {
             Reg::S(EXEC) => match self.b.fun.expressions[value] {
                 _ if self.within(value, 1, 4) => value,
@@ -1977,7 +2015,7 @@ impl<'a> Cx<'a> {
 
     /// This lane's number in its subgroup.
     fn lane_number(&mut self) -> Handle<E> {
-        if self.shared_wave.threads.is_some() {
+        if self.shared_wave.threads.is_some() || self.private_lanes {
             return self.wave_lane();
         }
         let global = match self.lane {
@@ -2243,9 +2281,15 @@ impl<'a> Cx<'a> {
         Ok(self.b.load(cell))
     }
 
-    /// Whether this lane runs: bit 0 of the lane mask, in a wave whose turn it is.
+    /// Whether this lane runs: its bit of the lane mask, in a wave whose turn it is. The bit is
+    /// bit 0 where an invocation holds its own lane's bit alone, and the one at the lane's
+    /// number in a wave kept whole.
     fn active(&mut self) -> Handle<E> {
         let exec = self.raw(Reg::S(EXEC));
+        if self.exact {
+            let high = (!self.program.wave32).then(|| self.raw(Reg::S(EXEC + 1)));
+            return self.lane_bit(exec, high);
+        }
         let one = self.b.u32(1);
         let bit = self.b.bin(Bo::And, exec, one);
         let runs = self.b.ne0(bit);
@@ -2355,7 +2399,9 @@ impl<'a> Cx<'a> {
     }
 
     /// Whether a lane mask has any lane set: both halves of a 64-lane mask, the low one of a 32-lane.
-    // ponytail: this lane stands for the wave, so a vote over the wave is this lane's own bit.
+    // ponytail: where an invocation holds its own lane's bit alone it stands for the wave, and
+    // a vote over the wave is that bit; a wave kept whole holds the whole mask and votes as the
+    // wave does.
     fn mask_any(&mut self, pc: u32, base: u8) -> Value {
         let mut bits = self.sreg(pc, base)?;
         if !self.program.wave32 {
@@ -2368,26 +2414,47 @@ impl<'a> Cx<'a> {
     /// This lane's bit of the mask in register `base`.
     fn mask_bit(&mut self, pc: u32, base: u8) -> Value {
         let mask = self.sreg(pc, base)?;
+        if self.exact {
+            let high = match self.program.wave32 {
+                true => None,
+                false => Some(self.sreg(pc, base + 1)?),
+            };
+            return Ok(self.lane_bit(mask, high));
+        }
         let one = self.b.u32(1);
         let bit = self.b.bin(Bo::And, mask, one);
         Ok(self.b.ne0(bit))
     }
 
-    /// Writes a comparison's result as a lane mask: this lane's bit where it is active, nothing of the other lanes.
+    /// Writes a comparison's result as a lane mask: this lane's bit where it is active and
+    /// nothing of the other lanes, or in a wave kept whole the bit of every lane, gathered.
     fn put_mask(&mut self, base: u8, condition: Handle<E>) {
         let active = self.active();
         let bit = self.b.bin(Bo::LogicalAnd, condition, active);
         let low = self.b.flag(bit);
-        self.put(Reg::S(base), low);
-        if !self.program.wave32 {
-            let zero = self.b.u32(0);
-            self.put(Reg::S(base + 1), zero);
+        if self.exact {
+            // The wave's own mask: every lane's bit, gathered.
+            let [low, high] = self.wave_ballot(low);
+            self.put(Reg::S(base), low);
+            if !self.program.wave32 {
+                self.put(Reg::S(base + 1), high);
+            }
+        } else {
+            self.put(Reg::S(base), low);
+            if !self.program.wave32 {
+                let zero = self.b.u32(0);
+                self.put(Reg::S(base + 1), zero);
+            }
         }
         self.shared_wave.masks.insert(base);
     }
 
     /// Clears this lane's bit of the lane mask where `condition` fails.
     fn narrow_exec(&mut self, condition: Handle<E>) {
+        if self.exact {
+            // The lanes that run and pass: no other lane's bit is in the mask they leave.
+            return self.put_mask(EXEC, condition);
+        }
         let exec = self.raw(Reg::S(EXEC));
         let (all, others) = (self.b.u32(u32::MAX), self.b.u32(!1));
         let keep = self.b.select(condition, all, others);
@@ -2437,7 +2504,8 @@ impl<'a> Cx<'a> {
             // wrote. Waves that take turns wait where the block ends, which is here.
             "s_barrier" if self.launch.is_some() => {
                 if self.shared_wave.waves == 1 {
-                    (self.b).push(Statement::ControlBarrier(naga::Barrier::WORK_GROUP));
+                    self.meet();
+                    self.shared_wave.met = true;
                 }
                 return Ok(());
             }
@@ -2567,9 +2635,12 @@ impl<'a> Cx<'a> {
             }
             "s_brev_b32" | "s_bcnt1_i32_b32" | "s_ff1_i32_b32" => {
                 // Half of a wave of 64 lanes' mask holds this lane's bit alone here, or nothing.
-                if name != "s_brev_b32" && self.holds_mask(src) {
+                if name != "s_brev_b32" && self.holds_mask(src) && !self.exact {
                     self.note("a count over half a wave's mask read as this lane's");
                 }
+                // A lane alone cannot say what a count or a first bit is of: a mask an earlier
+                // block saved is the wave's.
+                self.wave_ops |= self.private_lanes && name != "s_brev_b32";
                 let value = self.sv(pc, src)?;
                 let fun = match name {
                     "s_brev_b32" => Mf::ReverseBits,
@@ -2589,6 +2660,7 @@ impl<'a> Cx<'a> {
             }
             "s_flbit_i32_b32" => {
                 // The first set bit counted from the top, and every bit set where there is none.
+                self.wave_ops |= self.private_lanes;
                 let value = self.sv(pc, src)?;
                 let (zero, none) = (self.b.u32(0), self.b.u32(u32::MAX));
                 let leading = self.b.math(Mf::CountLeadingZeros, &[value]);
@@ -2649,6 +2721,8 @@ impl<'a> Cx<'a> {
     fn mask_read(&mut self, pc: u32, name: &str, dst: Operand, own: [Handle<E>; 2]) -> Done {
         let count = name.starts_with("s_bcnt1");
         let [low, high] = match self.subgroups {
+            // A wave kept whole holds the mask itself.
+            _ if self.exact => own,
             true => self.ballot(own[0]),
             false => {
                 self.note("a count over the wave's lanes read as this lane's");
@@ -3117,8 +3191,14 @@ impl<'a> Cx<'a> {
             return Err(refused(pc, inst));
         };
         if name.starts_with("s_load_dword") {
-            if matches!(self.state.get(usize::from(base)), Some(Sym::Code)) {
-                // A pointer the code made from its own address: the words are the program's.
+            let held = self.state.get(usize::from(base));
+            // With the structures a program walks as memory, a pointer the code computed is
+            // an address inside them: it adds a node's place to a structure's address.
+            // ponytail: a table's pointer `sym` lost track of would be read so too; it calls
+            // one it lost on some paths `Mixed`, which is refused below as it always was.
+            let arena = self.trace.on && matches!(held, Some(Sym::Unknown));
+            if arena || matches!(held, Some(Sym::Code)) {
+                // A pointer the code made from its own address reads the program's words.
                 let mut bytes = self.get(pc, Reg::S(base));
                 let fixed = self.b.u32(offset & !3);
                 bytes = self.b.bin(Bo::Add, bytes, fixed);
@@ -3130,7 +3210,10 @@ impl<'a> Cx<'a> {
                 for k in 0..words {
                     let step = self.b.u32(4 * u32::from(k));
                     let at = self.b.bin(Bo::Add, bytes, step);
-                    values.push(self.code_word(at));
+                    values.push(match arena {
+                        true => self.arena_word(at),
+                        false => self.code_word(at),
+                    });
                 }
                 for (k, value) in (0..words).zip(values) {
                     self.put(Reg::S(to + k), value);
@@ -3342,9 +3425,10 @@ impl<'a> Cx<'a> {
         self.b.load(cell)
     }
 
-    /// `global_load_dword*` in a program that takes its own address: words of the program itself.
-    // ponytail: an address from anywhere but the code reads past the array, which no program of
-    // the build was seen to do; a pointer in user data needs its own buffer.
+    /// `global_load_dword*` in a program that takes its own address: words of the program
+    /// itself, or of the arena where the structures a program walks are memory.
+    // ponytail: without the arena an address from anywhere but the code reads past the array,
+    // which no program of the build was seen to do; a pointer in user data needs its own buffer.
     fn flat(&mut self, pc: u32, inst: &Inst, name: &str) -> Done {
         let Inst::Flat {
             addr,
@@ -3372,9 +3456,21 @@ impl<'a> Cx<'a> {
             _ if part.is_some() => 1,
             _ => return Err(refused(pc, inst)),
         };
-        if !self.reads_code {
+        // With the structures a program walks as memory, an address that is not of the
+        // code's own words is one inside them.
+        // ponytail: an address of the code that `sym` lost between two blocks would be read
+        // there too; the build's programs add the code's address in the block that loads.
+        let own = self.state.moved(*addr) == Some(&Sym::Code)
+            || sym::register(*saddr)
+                .is_some_and(|r| self.state.get(usize::from(r)) == Some(&Sym::Code));
+        let arena = self.trace.on && !own;
+        if !self.reads_code && !arena {
             return Err(form(pc, inst, "an address that is not the code's own"));
         }
+        let word = |cx: &mut Self, bytes| match arena {
+            true => cx.arena_word(bytes),
+            false => cx.code_word(bytes),
+        };
         let mut bytes = self.vreg(pc, *addr)?;
         if *saddr != Operand::Null {
             let by = self.sv(pc, *saddr)?;
@@ -3383,7 +3479,7 @@ impl<'a> Cx<'a> {
         let fixed = self.b.u32(i32::from(*offset) as u32);
         bytes = self.b.bin(Bo::Add, bytes, fixed);
         if let Some((bits, signed)) = part {
-            let word = self.code_word(bytes);
+            let word = word(self, bytes);
             let (three, eight) = (self.b.u32(3), self.b.u32(8));
             let within = self.b.bin(Bo::And, bytes, three);
             let by = self.b.bin(Bo::Multiply, within, eight);
@@ -3396,7 +3492,7 @@ impl<'a> Cx<'a> {
         for k in 0..count {
             let step = self.b.u32(4 * u32::from(k));
             let at = self.b.bin(Bo::Add, bytes, step);
-            values.push(self.code_word(at));
+            values.push(word(self, at));
         }
         for (k, value) in (0..count).zip(values) {
             self.vput(dst.wrapping_add(k), value);
@@ -3780,6 +3876,14 @@ impl<'a> Cx<'a> {
                     _ => None,
                 };
                 let first = match self.shared_wave.threads {
+                    // In a wave kept whole a scalar source is the same in every lane.
+                    Some(_) if launched.is_none() && self.exact => Some(match src {
+                        Operand::Vgpr(_) => {
+                            let first = self.first_lane();
+                            self.wave_pick(value, first)
+                        }
+                        _ => value,
+                    }),
                     Some(_) if launched.is_none() => self.shared_first(value),
                     _ => launched,
                 };
@@ -3791,7 +3895,7 @@ impl<'a> Cx<'a> {
                     Some(first) => first,
                     None => {
                         if !self.first_exact.contains(&pc) && matches!(src, Operand::Vgpr(_)) {
-                            self.note("the first lane read as this lane");
+                            self.note(wave::FIRST_AS_THIS);
                             self.wants_wave |= self.launch.is_some();
                         }
                         value
@@ -4355,6 +4459,9 @@ impl<'a> Cx<'a> {
     /// register in a vector one. A lane nothing wrote that way is read as this lane's own value.
     fn lane(&mut self, pc: u32, inst: &Inst, name: &str, dst: u8, srcs: [Operand; 3]) -> Done {
         let Operand::Int(lane) = srcs[1] else {
+            if self.exact {
+                return self.lane_whole(pc, inst, name, dst, srcs);
+            }
             // A lane the program computes is the first that runs of some mask, which here is
             // this one, unless the register is one the program keeps scalars in.
             let from = match (name, srcs[0]) {
@@ -4371,7 +4478,7 @@ impl<'a> Cx<'a> {
                     let index = self.sv(pc, srcs[1])?;
                     value = self.gather(value, index);
                 }
-                false => self.note("a lane read as this lane"),
+                false => self.note(wave::LANE_AS_THIS),
             }
             self.put(Reg::S(dst & 0x7F), value);
             return Ok(());
@@ -4388,6 +4495,9 @@ impl<'a> Cx<'a> {
                 }
                 return Ok(());
             }
+        }
+        if self.exact {
+            return self.lane_whole(pc, inst, name, dst, srcs);
         }
         if name == "v_writelane_b32" {
             let value = match self.computed_place(pc, srcs[0]) {
@@ -4422,12 +4532,79 @@ impl<'a> Cx<'a> {
             }
             false => {
                 // ponytail: exact where the value is the same in every lane, as `v_readfirstlane_b32` is.
-                self.note("a lane read as this lane");
+                self.note(wave::LANE_AS_THIS);
                 self.vreg(pc, from)?
             }
         };
         self.put(Reg::S(dst & 0x7F), value);
         Ok(())
+    }
+
+    /// `v_writelane_b32` and `v_readlane_b32` in a wave kept whole, where an invocation's
+    /// vector register is its lane's: a write is the store of the lane whose number it is,
+    /// whether that lane runs or not, and a read is that lane's value, picked. So a register a
+    /// program keeps a table in is a vector register still: a whole write of it under the lane
+    /// mask leaves the lanes that do not run as they were. A table's word keeps its place
+    /// beside the lane, as `sym` knows it.
+    fn lane_whole(
+        &mut self,
+        pc: u32,
+        inst: &Inst,
+        name: &str,
+        dst: u8,
+        srcs: [Operand; 3],
+    ) -> Done {
+        let width = wave::width(self.program);
+        let threads = self.shared_wave.threads.unwrap_or(width);
+        let constant = match srcs[1] {
+            Operand::Int(lane) => Some(lane as u32 & (width - 1)),
+            _ => None,
+        };
+        if constant.map_or(threads < width, |lane| lane >= threads) {
+            return Err(form(pc, inst, wave::NO_SUCH_LANE));
+        }
+        if name == "v_writelane_b32" {
+            // A table's word at a place a run computed is kept by that place alone.
+            if let (Some(place), Some(lane)) = (self.computed_place(pc, srcs[0]), constant) {
+                self.put(Reg::Spill(dst, lane as u8), place);
+                return Ok(());
+            }
+            let value = self.sv(pc, srcs[0])?;
+            let number = self.lane_named(pc, srcs[1], width)?;
+            let lane = self.wave_lane();
+            let (mine, old) = (self.b.bin(Bo::Equal, lane, number), self.raw(Reg::V(dst)));
+            let value = self.b.select(mine, value, old);
+            self.put(Reg::V(dst), value);
+            *self.versions.entry(dst).or_default() += 1;
+            self.permuted.remove(&dst);
+            return Ok(());
+        }
+        let Operand::Vgpr(from) = srcs[0] else {
+            return Err(form(pc, inst, "a source that is no vector register"));
+        };
+        let known = constant.and_then(|lane| self.state.spilled(from, lane as u8).cloned());
+        match (known, constant) {
+            (Some(Sym::Word(at)), Some(lane)) if at.index.is_some() => {
+                let place = self.get(pc, Reg::Spill(from, lane as u8));
+                self.put_place(pc, dst & 0x7F, place, &at);
+                return Ok(());
+            }
+            (Some(Sym::Word(_)), _) => {
+                self.defined.insert(Reg::S(dst & 0x7F));
+                return Ok(());
+            }
+            _ => {}
+        }
+        let (value, number) = (self.vreg(pc, from)?, self.lane_named(pc, srcs[1], width)?);
+        let value = self.wave_pick(value, number);
+        self.put(Reg::S(dst & 0x7F), value);
+        Ok(())
+    }
+
+    /// The lane an operand numbers: its low bits, as many as number a wave's lanes.
+    fn lane_named(&mut self, pc: u32, operand: Operand, width: u32) -> Value {
+        let (number, last) = (self.sv(pc, operand)?, self.b.u32(width - 1));
+        Ok(self.b.bin(Bo::And, number, last))
     }
 
     /// A vector source as a 64-bit value's two dwords: a register and the next, or a constant extended.
@@ -4819,6 +4996,24 @@ impl<'a> Cx<'a> {
     /// `v_mbcnt_*` over a mask of every lane: how many lanes of the wave come before this one, in
     /// the mask's low half or in its high half, added to the second source.
     fn mbcnt(&mut self, pc: u32, inst: &Inst, name: &str, dst: u8, srcs: [Operand; 3]) -> Done {
+        if srcs[0] != Operand::Int(-1) && self.exact {
+            // The mask's dword is the wave's: its bits below this lane's place in that half.
+            let (mask, base) = (self.sv(pc, srcs[0])?, self.sv(pc, srcs[1])?);
+            let (lane, half) = (self.wave_lane(), self.b.u32(WAVE / 2));
+            let below = match name {
+                "v_mbcnt_lo_u32_b32" => self.b.math(Mf::Min, &[lane, half]),
+                _ => {
+                    let past = self.b.math(Mf::Max, &[lane, half]);
+                    self.b.bin(Bo::Subtract, past, half)
+                }
+            };
+            let before = self.b.low_bits(below);
+            let counted = self.b.bin(Bo::And, mask, before);
+            let count = self.b.math(Mf::CountOneBits, &[counted]);
+            let value = self.b.bin(Bo::Add, count, base);
+            self.vput(dst, value);
+            return Ok(());
+        }
         if srcs[0] != Operand::Int(-1) {
             // The lanes of a mask before this one, counted: the low half's instruction gives
             // the whole count, since a mask here holds this lane's bit and no other's.
@@ -5050,8 +5245,18 @@ impl<'a> Cx<'a> {
         self.put(Reg::Next, entry);
         self.b.open();
         let selector = self.raw(Reg::Next);
+        // ⚠ Where the module holds a barrier each block stands under an `if` of its own, one
+        // after another, and no `switch`: Direct3D 12's software adapter ends its process on a
+        // barrier in an arm of a switch of three ways or more, taken or not. The number was
+        // read once, where the round starts, so one block runs a round as one case did.
+        let meets = self.shared_wave.meets;
+        let count = blocks.len() as u32;
         let mut cases = Vec::with_capacity(blocks.len() + 1);
         for (index, (statements, end)) in blocks.into_iter().zip(ends).enumerate() {
+            let this = meets.then(|| {
+                let number = self.b.u32(index as u32);
+                self.b.bin(Bo::Equal, selector, number)
+            });
             self.b.open();
             self.b.push(Statement::Block(statements));
             match *end {
@@ -5073,20 +5278,40 @@ impl<'a> Cx<'a> {
                     .unwrap_or(());
                 }
             }
-            cases.push(naga::SwitchCase {
-                value: naga::SwitchValue::U32(index as u32),
-                body: self.b.close(),
-                fall_through: false,
-            });
+            let body = self.b.close();
+            match this {
+                Some(condition) => self.b.push(Statement::If {
+                    condition,
+                    accept: body,
+                    reject: Block::new(),
+                }),
+                None => cases.push(naga::SwitchCase {
+                    value: naga::SwitchValue::U32(index as u32),
+                    body,
+                    fall_through: false,
+                }),
+            }
         }
+        // A number of no block ends the thread.
         self.b.open();
         self.b.push(Statement::Return { value: None });
-        cases.push(naga::SwitchCase {
-            value: naga::SwitchValue::Default,
-            body: self.b.close(),
-            fall_through: false,
-        });
-        self.b.push(Statement::Switch { selector, cases });
+        let none = self.b.close();
+        if meets {
+            let count = self.b.u32(count);
+            let past = self.b.bin(Bo::GreaterEqual, selector, count);
+            self.b.push(Statement::If {
+                condition: past,
+                accept: none,
+                reject: Block::new(),
+            });
+        } else {
+            cases.push(naga::SwitchCase {
+                value: naga::SwitchValue::Default,
+                body: none,
+                fall_through: false,
+            });
+            self.b.push(Statement::Switch { selector, cases });
+        }
         let body = self.b.close();
         self.b.push(Statement::Loop {
             body,
@@ -5977,6 +6202,9 @@ impl<'a> Cx<'a> {
         else {
             return Err(refused(pc, inst));
         };
+        if name.starts_with("image_bvh") {
+            return self.intersect(pc, inst, name);
+        }
         let (coords, arrayed, cube) = match dim {
             0 => (1usize, false, false),
             1 => (2, false, false),
@@ -6582,6 +6810,7 @@ impl<'a> Cx<'a> {
         self.waved.clear();
         self.chosen.clear();
         self.shared_wave.masks.clear();
+        (self.shared_wave.met, self.shared_wave.last) = (false, None);
         self.carry = None;
         self.b.open();
         self.b.open();
@@ -6596,6 +6825,7 @@ impl<'a> Cx<'a> {
             }
         }
         self.swizzles_past(block);
+        self.region_leave(block);
         // A neighbour's value still held where the block ends may be read by another block.
         let left = (self.permuted.keys()).map(|&n| (index, n));
         self.rebuilt.extend(left.filter(|_| self.fragment));
@@ -6952,6 +7182,12 @@ impl<'a> Cx<'a> {
         if *gds {
             return Err(form(pc, inst, "the memory every group shares"));
         }
+        if self.trace.unordered(name) && !self.exact {
+            return Err(form(pc, inst, trace::NOT_THE_STACK));
+        }
+        if self.exact && name != "ds_bpermute_b32" {
+            self.memory_order(name);
+        }
         let whole = u32::from(*offset0) | (u32::from(*offset1) << 8);
         // Each lane takes the value of the lane its address numbers, four bytes a lane.
         if name == "ds_bpermute_b32" {
@@ -7116,9 +7352,25 @@ impl<'a> Cx<'a> {
     /// unwritten only on paths that switch its lane off, and reads as zero there.
     fn live_ins(&mut self, live: &BTreeMap<Reg, u32>, handed: &BTreeSet<Reg>) -> Done {
         let (one, zero) = (self.b.u32(1), self.b.u32(0));
-        self.put(Reg::S(EXEC), one);
-        self.put(Reg::S(EXEC + 1), zero);
+        match self.shared_wave.threads.filter(|_| self.exact) {
+            // The wave kept whole starts with every lane of its width, of which a store to
+            // the lane mask keeps those the group has a thread for.
+            Some(_) => {
+                let lanes = wave::lanes_of(wave::width(self.program));
+                let [low, high] = lanes.map(|lanes| self.b.u32(lanes));
+                self.put(Reg::S(EXEC), low);
+                self.put(Reg::S(EXEC + 1), high);
+            }
+            None => {
+                self.put(Reg::S(EXEC), one);
+                self.put(Reg::S(EXEC + 1), zero);
+            }
+        }
+        let given = self.region_take(live);
         for (&reg, &pc) in live {
+            if given.contains(&reg) {
+                continue;
+            }
             if let Some(value) = self.pair_live_in(reg, pc, handed)? {
                 self.put(reg, value);
                 continue;
@@ -7469,9 +7721,13 @@ pub fn lower_with(
         let (program, split) = joined?;
         let cfg =
             Cfg::build(&program.words).map_err(|why| NotTranslated::Structure(why.to_string()))?;
-        return lower_as(&program, &cfg, options, Some(&split));
+        return lower_as(&program, &cfg, options, Some(&split), None);
     }
-    lower_as(program, cfg, options, None)
+    if let Some(region) = &options.region {
+        let walk = trace::cut(cfg, region)?;
+        return lower_as(program, &walk.cfg, options, None, Some(&walk));
+    }
+    lower_as(program, cfg, options, None, None)
 }
 
 /// [`lower_with`], of a program that may be the joined halves of a geometry pair.
@@ -7480,9 +7736,31 @@ fn lower_as(
     cfg: &Cfg,
     options: &Options,
     split: Option<&geometry::Split>,
+    walk: Option<&trace::Cut>,
 ) -> Result<Lowered, NotTranslated> {
     let (mut told, mut eager, mut shared) = (StoredImages::new(), false, None);
-    let mut read = None;
+    // What a walk's registers hold where it starts is what the whole program left in them.
+    let mut read = walk.map(|walk| Read::of(program, walk.whole));
+    // A program that walks structures itself, a lane an invocation where it holds nothing of
+    // the wave; whatever stops that lowering, the ones below say what the program is.
+    while options.arena && wave::may_be_private(program, cfg) {
+        let knows = (&told, eager, None, true);
+        match lower_pass(program, (cfg, &mut read), options, knows, (split, walk)) {
+            Ok(Pass::Done(lowered, _)) => return Ok(*lowered),
+            Ok(Pass::Again(more)) => told.extend(more),
+            Err(NotTranslated::Descriptor {
+                what: MIXED_NUMBER, ..
+            }) if !eager => eager = true,
+            Err(_) => break,
+        }
+    }
+    // Such a program whose lanes do hold something of the wave: the wave kept whole in the
+    // memory its group shares, which the lowerings below do not come to.
+    if options.arena && wave::may_be_private(program, cfg) {
+        shared = wave::waves(program);
+    } else if options.arena && program.launch.is_some() && wave::tests_nodes(cfg) {
+        return Err(NotTranslated::Pipeline(wave::NOT_ONE_WAVE));
+    }
     // What the lowering onto the device's subgroup came to, where it stands if the one
     // through shared memory stops: a group of several waves, or one that asked for its wave
     // only to read a first lane.
@@ -7494,8 +7772,8 @@ fn lower_as(
             program,
             (cfg, &mut read),
             options,
-            (&told, eager, shared),
-            split,
+            (&told, eager, shared, false),
+            (split, walk),
         ) {
             // A compute group lowered onto its device's subgroup: again, with its waves in
             // the memory the group shares, which every device runs alike.
@@ -7530,8 +7808,8 @@ fn lower_as(
             program,
             (cfg, &mut read),
             options,
-            (&told, eager, shared),
-            split,
+            (&told, eager, shared, false),
+            (split, walk),
         ) {
             Ok(Pass::Done(lowered, _)) => return Ok(*lowered),
             Ok(Pass::Again(more)) => told.extend(more),
@@ -7576,8 +7854,8 @@ fn lower_pass(
     program: &Program,
     (cfg, read): (&Cfg, &mut Option<Read>),
     options: &Options,
-    (told, eager, shared): (&StoredImages, bool, Option<(u32, u32)>),
-    split: Option<&geometry::Split>,
+    (told, eager, shared, private): (&StoredImages, bool, Option<(u32, u32)>, bool),
+    (split, walk): (Option<&geometry::Split>, Option<&trace::Cut>),
 ) -> Result<Pass, NotTranslated> {
     let stage = match program.kind {
         ShaderKind::Pixel => naga::ShaderStage::Fragment,
@@ -7591,8 +7869,8 @@ fn lower_pass(
         other => return Err(NotTranslated::Stage(format!("{other:?}").to_lowercase())),
     };
     let fragment = stage == naga::ShaderStage::Fragment;
-    if (cfg.blocks.values().flat_map(|b| &b.insts))
-        .any(|(_, inst)| inst.name().starts_with("image_bvh"))
+    if !options.arena
+        && (cfg.blocks.values().flat_map(|b| &b.insts)).any(|(_, inst)| trace::tests_a_node(inst))
     {
         return Err(NotTranslated::Pipeline(RAY_TRACING));
     }
@@ -7668,6 +7946,12 @@ fn lower_pass(
         half_mode: None,
         lane: None,
         shared_wave: wave::Shared::of(shared),
+        private_lanes: private,
+        exact: options.arena
+            && !private
+            && shared.is_some_and(|(_, waves)| waves == 1)
+            && wave::tests_nodes(cfg),
+        trace: trace::Trace::of(options.arena, cfg, walk),
         first_exact: BTreeSet::new(),
         wants_wave: false,
         first_entry: BTreeMap::new(),
@@ -7707,7 +7991,7 @@ fn lower_pass(
             .unwrap_or(0),
         reads_code: (cfg.blocks.values().flat_map(|b| &b.insts))
             .any(|(_, inst)| inst.name() == "s_getpc_b64"),
-        spills: spilled(cfg),
+        spills: spilled(walk.map_or(cfg, |walk| walk.whole)),
         launch: program.launch,
         ids: None,
         shared: None,
@@ -7717,6 +8001,10 @@ fn lower_pass(
         sampled: BTreeSet::new(),
         loads_unstated: Vec::new(),
     };
+    // What a wave kept whole is known by, whether or not its lanes ever meet.
+    if cx.exact {
+        cx.wave_cells();
+    }
     if (cfg.blocks.values().flat_map(|b| &b.insts)).any(|(_, inst)| writes_float_mode(inst)) {
         let flag = cx.ty(TypeInner::Scalar(Scalar::BOOL));
         cx.half_mode = Some(cx.private("halves_toward_zero".to_owned(), flag));
@@ -7775,6 +8063,7 @@ fn lower_pass(
         std::mem::swap(&mut cx.locals, &mut part.1);
         lowered.push(block?);
     }
+    let intersections = cx.trace.placed(nodes.as_deref(), &starts);
     // An image loaded as a texture that the program also stores to: its loads have to go
     // through the stored binding, which only another lowering can give them.
     let clash: StoredImages = (cx.images_stored.iter())
@@ -7807,7 +8096,10 @@ fn lower_pass(
         .into_iter()
         .zip(not_shown)
     {
-        if loops > 0 {
+        // The lane mask of a wave kept whole holds no lane the module does not run: a store
+        // to it keeps the lanes the group has a thread for, and each thread takes its own bit
+        // out where the program does.
+        if loops > 0 && !(cx.exact && name == LOOP_OTHER_LANES) {
             *cx.notes.entry(name).or_default() += loops;
         }
     }
@@ -7841,6 +8133,7 @@ fn lower_pass(
         return Err(NotTranslated::NoPosition);
     }
 
+    let region = cx.trace.registers();
     let Cx {
         mut module,
         b,
@@ -7873,6 +8166,14 @@ fn lower_pass(
         wants_wave,
         ..
     } = cx;
+    if private
+        && (wave_ops
+            || wave::LANES_AS_THIS
+                .iter()
+                .any(|read| notes.contains_key(read)))
+    {
+        return Err(NotTranslated::Pipeline(wave::NOT_PRIVATE));
+    }
     // What the program updates in one step holds atomic dwords, which its other reads and
     // stores go through too.
     if !atomics.is_empty() || shared_atomic {
@@ -8296,6 +8597,8 @@ fn lower_pass(
         approximations: notes,
         half_slots: halves.keys().map(|(slot, _)| *slot).collect(),
         subgroups: wave_ops || lane.is_some(),
+        intersections,
+        region,
     };
     Ok(Pass::Done(Box::new(lowered), wants_wave))
 }

@@ -148,6 +148,7 @@ pub(super) fn surface() -> MeshletSurface {
         fragment: Arc::new(wgsl(PIXEL)),
         feeds,
         meshlets: 2,
+        primitives: 1,
     }
 }
 
@@ -194,8 +195,11 @@ fn a_model_drawn_by_a_mesh_and_a_pixel_stage_is_lit_onto_the_frame() {
         let mixed = [surface(), unbound.clone()];
         let mut prepare = |surfaces: &[MeshletSurface]| loop {
             match MeshletScene::prepare(&device, &queue, &mut pipelines, surfaces, size, &frame) {
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(5)),
-                Ok(Some(scene)) => break Ok((scene.drawn(), scene.refused)),
+                // A pass is refused by the worker that builds it: until then its surface waits.
+                Ok(Some(scene)) if scene.waiting.is_empty() => {
+                    break Ok((scene.drawn(), scene.refused))
+                }
+                Ok(_) => std::thread::sleep(std::time::Duration::from_millis(5)),
                 Err(why) => break Err(why),
             }
         };
@@ -218,7 +222,7 @@ fn a_model_drawn_by_a_mesh_and_a_pixel_stage_is_lit_onto_the_frame() {
         };
         scene.update(&queue, &lighting);
         let mut encoder = device.create_command_encoder(&Default::default());
-        scene.record_targets(&mut encoder);
+        scene.record_targets(&mut encoder, |_, _| {});
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,

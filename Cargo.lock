@@ -3413,6 +3413,7 @@ dependencies = [
  "flate2",
  "naga",
  "or-io",
+ "or-test-support",
  "serde",
  "sha1",
  "tempfile",

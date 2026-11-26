@@ -5,6 +5,7 @@
 //! the owned form carries.
 
 mod bound_walk;
+mod gta6_accel;
 
 use std::collections::BTreeMap;
 use std::mem::{offset_of, size_of};

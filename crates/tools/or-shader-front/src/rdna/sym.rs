@@ -588,8 +588,10 @@ pub fn step(state: &mut State, inst: &Inst) {
 
 /// `state` after the instruction at word `pc`; a lane mask is one register where `wave32`, else a pair.
 pub fn step_at(state: &mut State, pc: u32, inst: &Inst, wave32: bool) {
-    step_scalars(state, pc, inst, wave32);
+    // The vector registers first, from the scalar ones as the instruction found them: a sum
+    // may leave its carry in the scalar register it added.
     step_vectors(state, inst);
+    step_scalars(state, pc, inst, wave32);
 }
 
 fn step_scalars(state: &mut State, pc: u32, inst: &Inst, wave32: bool) {

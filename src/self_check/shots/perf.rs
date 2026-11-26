@@ -1,5 +1,6 @@
-//! The `world perf` and `world move` steps: what frames of the World screen cost on the CPU and
-//! the device, at rest and while the camera moves, written as JSON beside the shots.
+//! The `world perf`, `world move` and `model perf` steps: what frames of the World screen or of
+//! a GTA VI model cost on the CPU and the device, at rest and while the camera moves, written as
+//! JSON beside the shots.
 //!
 //! ⚠ The device's stages are read a frame or two late, and only on a device that times them.
 
@@ -178,6 +179,139 @@ impl Shell {
     }
 }
 
+/// What a frame of a model asks of the device, by the names its record gives them.
+fn calls_of(calls: &or_renderer::game_shaders::meshlets::MeshletCalls) -> Value {
+    json!({
+        "passes": calls.passes,
+        "draws": calls.draws,
+        "surface_draws": calls.surface_draws,
+        "bind_group_sets": calls.binds,
+        "queue_writes": calls.writes,
+        "queue_bytes": calls.written,
+        "buffer_copies": calls.copies,
+        "vertices_times_instances": calls.vertices,
+    })
+}
+
+/// The frames of one phase of `model perf`, under the spread of each of their times and counts.
+fn phase(frames: Vec<Value>) -> Value {
+    let of = |key: &str| spread(frames.iter().filter_map(|f| f[key].as_f64()).collect());
+    let stage = |name: &str| {
+        let timed = |f: &Value| {
+            let stages = f["gpu_stages"].as_array()?;
+            stages.iter().find(|s| s[0] == name)?[1].as_f64()
+        };
+        spread(frames.iter().filter_map(timed).collect())
+    };
+    let count = |key: &str| {
+        spread(
+            (frames.iter())
+                .filter_map(|f| f["calls"][key].as_f64())
+                .collect(),
+        )
+    };
+    let keys = frames.first().and_then(|f| f["calls"].as_object());
+    let calls: serde_json::Map<String, Value> = (keys.into_iter().flatten())
+        .map(|(key, _)| (key.clone(), count(key)))
+        .collect();
+    json!({
+        "frame_ms": of("frame_ms"),
+        "record_ms": of("record_ms"),
+        "submit_ms": of("submit_ms"),
+        "gpu_ms": {
+            "model shadow": stage("model shadow"),
+            "model targets": stage("model targets"),
+            "model meter": stage("model meter"),
+            "lines and models": stage("lines and models"),
+        },
+        "calls": calls,
+        "frames": frames,
+    })
+}
+
+const NOT_ITS_OWN: &str =
+    "no GTA VI model is drawn by its own passes: open one, put `mode shaded` and wait for its passes";
+
+impl Shell {
+    /// Draw a frame of the open model and say what it cost; `in_full`, with every pass drawn again.
+    fn model_frame(&mut self, state: &mut AppState, in_full: bool) -> Result<Value, String> {
+        if in_full {
+            self.bridge.redraw_model();
+        }
+        let started = Instant::now();
+        self.idle(state, 1)?;
+        let frame = started.elapsed();
+        let stages = self.bridge.timed_stages();
+        let cost = self.bridge.model_cost().ok_or(NOT_ITS_OWN)?;
+        Ok(json!({
+            "frame_ms": ms(frame),
+            "record_ms": ms(self.submitted.0),
+            "submit_ms": ms(self.submitted.1),
+            "gpu_stages": stages.map(|s| s.iter().map(|(s, t)| json!([s, t])).collect::<Vec<_>>()),
+            "calls": calls_of(&cost.calls),
+        }))
+    }
+
+    /// Measure `count` frames of the open GTA VI model at rest, then `count` with the camera
+    /// turned once round it by even steps, and write what they cost to `path` after each;
+    /// `in_full`, every frame draws every pass, as each did before a frame skipped what had
+    /// not moved.
+    pub(super) fn model_perf(
+        &mut self,
+        state: &mut AppState,
+        count: usize,
+        path: &Path,
+        in_full: bool,
+    ) -> Result<(), String> {
+        let cost = self.bridge.model_cost().ok_or(NOT_ITS_OWN)?;
+        // The timer times no frame while the last one's stages are unread.
+        let timed = self.bridge.timed_stages().is_some();
+        let info = self.device.adapter_info();
+        let digested = |target: &Option<(u64, usize)>| {
+            let (digest, filled) = (*target)?;
+            Some(json!({ "digest": format!("{digest:016x}"), "bytes_not_nought": filled }))
+        };
+        let targets = self.bridge.model_targets();
+        let mut json = json!({
+            "adapter": info.name,
+            "backend": format!("{:?}", info.backend),
+            "kind": format!("{:?}", info.device_type),
+            "driver": format!("{} {}", info.driver, info.driver_info),
+            "size": [cost.size.0, cost.size.1],
+            "surfaces": cost.surfaces,
+            "surfaces_waiting": cost.waiting,
+            // A surface's meshlets, and the vertices one of them is drawn with.
+            "surfaces_drawn_by": self.bridge.model_surfaces(),
+            "meshlets": cost.meshlets,
+            "passes_built": cost.passes,
+            "casts_a_shadow": cost.casts,
+            "every_pass_every_frame": in_full,
+            // As the frames before this step left them: equal in two runs of one build that
+            // draw the same triangles from the same place.
+            "targets": targets.iter().map(digested).collect::<Vec<_>>(),
+            // Where the device times none, a frame's `gpu_stages` is null and never noughts.
+            "device_times_stages": timed,
+        });
+        let mut frames = Vec::with_capacity(count);
+        for _ in 0..count {
+            frames.push(self.model_frame(state, in_full)?);
+        }
+        json["rest"] = phase(frames);
+        write(path, &json)?;
+        // By the angle and never by a drag, so that two runs draw the same frames.
+        let yaw = self.bridge.camera().yaw;
+        let mut frames = Vec::with_capacity(count);
+        for turned in 1..=count {
+            let part = turned as f32 / count as f32;
+            state.turn_active_camera(yaw + std::f32::consts::TAU * part);
+            frames.push(self.model_frame(state, in_full)?);
+        }
+        state.turn_active_camera(yaw);
+        json["orbit"] = phase(frames);
+        write(path, &json)
+    }
+}
+
 /// The spread of each time over `frames`, the layout's over the frames that laid out, and what
 /// came, went and came back over them.
 fn summary(frames: &[Value]) -> Value {
@@ -243,5 +377,31 @@ mod tests {
         let half = between(&a, &b, 0.5);
         assert_eq!((half.position.x, half.yaw), (25.0, 20.0));
         assert_eq!(between(&a, &b, 1.0), b);
+    }
+
+    #[test]
+    fn a_phase_of_a_model_s_frames_spreads_their_times_their_stages_and_their_counts() {
+        let calls = |draws: u32| {
+            calls_of(&or_renderer::game_shaders::meshlets::MeshletCalls {
+                draws,
+                ..Default::default()
+            })
+        };
+        let frame = |ms: f64, draws: u32, targets: Option<f64>| {
+            json!({
+                "frame_ms": ms,
+                "gpu_stages": targets.map(|t| json!([["model targets", t]])),
+                "calls": calls(draws),
+            })
+        };
+        let found = phase(vec![frame(2.0, 3, Some(0.5)), frame(4.0, 7, None)]);
+        assert_eq!(found["frame_ms"]["mean"], 3.0);
+        assert_eq!(found["calls"]["draws"]["min"], 3.0);
+        assert_eq!(found["calls"]["draws"]["max"], 7.0);
+        assert_eq!(found["calls"]["vertices_times_instances"]["max"], 0.0);
+        // A frame the device did not time is left out, and a stage none timed has no spread.
+        assert_eq!(found["gpu_ms"]["model targets"]["n"], 1);
+        assert_eq!(found["gpu_ms"]["model shadow"], Value::Null);
+        assert_eq!(found["frames"].as_array().map(Vec::len), Some(2));
     }
 }

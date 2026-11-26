@@ -93,6 +93,12 @@ fn a_wave_at_a_barrier_waits_for_the_group_s_other_waves() {
     let out = translate(&group([16, 8, 1], 128, words)).unwrap();
     validate(&out.module);
     assert!(!out.subgroups);
+    // A block of the waves' turns stands under an `if`, and its barriers in no `switch`.
+    let switches = |s: &naga::Statement| matches!(s, naga::Statement::Switch { .. });
+    let (_, main) = (out.module.functions.iter())
+        .find(|(_, f)| f.name.as_deref() == Some("main_body"))
+        .unwrap();
+    assert_eq!(count(&main.body, &switches), 0);
     let ran = interp::run(&out.module, [16, 8, 1], &|_, _| None);
     for (thread, lane) in ran.iter().enumerate() {
         assert_eq!(lane.reg("v1"), 3 * (127 - thread as u32), "thread {thread}");
@@ -462,4 +468,57 @@ fn a_compute_thread_reads_its_wave_s_first_thread_at_the_entry() {
         let read = [lane.reg("s20"), lane.reg("s21")];
         assert_eq!(read, [0, 4 * (thread as u32 / 64)], "thread {thread}");
     }
+}
+
+/// A graph that does not nest, after the words `before`: the entry branches into the middle of
+/// a loop that the block after it enters at its head. `inside` opens the loop's second block,
+/// and `v4` is left what `v3` held on the way a run takes, which never comes to the loop's head.
+pub(super) fn entered_twice(before: &[u32], inside: &[u32]) -> Vec<u32> {
+    let back = 0x1_0000 - (inside.len() as u32 + 3);
+    let mut words = before.to_vec();
+    words.extend([
+        vop1(V_MOV, 3, F_ONE),
+        sopc(S_CMP_EQ_U32, I_ZERO, I_ZERO),
+        sopp(S_CBRANCH_SCC1, 1),
+        vop1(V_MOV, 3, F_HALF),
+    ]);
+    words.extend_from_slice(inside);
+    words.extend([
+        sopc(S_CMP_LG_U32, I_ZERO, I_ZERO),
+        sopp(S_CBRANCH_SCC1, back as u16),
+        vop1(V_MOV, 4, V + 3),
+    ]);
+    words
+}
+
+/// The `switch` statements among those of the module's body.
+pub(super) fn switches(module: &naga::Module) -> usize {
+    let (_, main) = (module.functions.iter())
+        .find(|(_, f)| f.name.as_deref() == Some("main_body"))
+        .unwrap();
+    count(&main.body, &|s| matches!(s, naga::Statement::Switch { .. }))
+}
+
+pub(super) const DISPATCHED: &str = "a dispatch loop for a graph that does not nest";
+
+#[test]
+fn a_block_that_meets_stands_under_an_if_where_the_graph_does_not_nest() {
+    let lowered = |inside: u32| {
+        let mut words = entered_twice(&[], &[inside]);
+        words.push(S_ENDPGM);
+        let out = translate(&group([8, 8, 1], 0, words)).unwrap();
+        validate(&out.module);
+        assert!(out.approximations.contains_key(DISPATCHED));
+        let ran = interp::run(&out.module, [8, 8, 1], &|_, _| None);
+        assert_eq!(ran.len(), 64);
+        for (thread, lane) in ran.iter().enumerate() {
+            assert_eq!(lane.reg("v4"), ONE, "thread {thread}");
+        }
+        (switches(&out.module), ran[0].barriers)
+    };
+    // The program's own barrier in a block of the loop: every block under an `if`, and the
+    // one barrier come to once.
+    assert_eq!(lowered(sopp(op(opcodes::SOPP, "s_barrier"), 0)), (0, 1));
+    // The same graph with no barrier anywhere keeps its switch.
+    assert_eq!(lowered(vop1(V_MOV, 5, F_ONE)), (1, 0));
 }

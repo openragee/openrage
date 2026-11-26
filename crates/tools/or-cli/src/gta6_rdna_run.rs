@@ -82,6 +82,52 @@ pub(crate) struct Record {
     pub module: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wgsl: Option<String>,
+    /// With `--arena`, each instruction that tests a ray against a node, in the code's order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intersections: Vec<Site>,
+    /// How the module of a program that tests nodes keeps its wave: [`wave_of`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub wave: String,
+}
+
+/// One test of a ray against a node: its word, whether its node is the 64-bit form's, the
+/// function of the module its call is in, the ifs and loops around it, and the first word of
+/// each of those loops, the outermost first.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Site {
+    pub word: u32,
+    pub wide: bool,
+    pub function: String,
+    pub depth: u32,
+    pub loops: Vec<u32>,
+}
+
+fn sites(found: Vec<rdna::Intersection>) -> Vec<Site> {
+    (found.into_iter())
+        .map(|at| Site {
+            word: at.word,
+            wide: at.wide,
+            function: at.function,
+            depth: at.depth,
+            loops: at.loops,
+        })
+        .collect()
+}
+
+/// How a module keeps its program's wave, by what it holds: the wave whole in the memory the
+/// group shares, a lane mask the wave's own number; the lanes' values exchanged there, a mask
+/// each lane's own bit; the device's subgroup; or none of them where one lane computes alone.
+fn wave_of(lowered: &rdna::Lowered) -> &'static str {
+    let holds = |name: &str| {
+        (lowered.module.global_variables.iter())
+            .any(|(_, global)| global.name.as_deref() == Some(name))
+    };
+    match (holds("wave_cells"), holds("wave_values"), lowered.subgroups) {
+        (true, ..) => "whole in shared memory",
+        (false, true, _) => "shared memory",
+        (false, false, true) => "subgroup",
+        (false, false, false) => "one lane",
+    }
 }
 
 /// A line a worker prints.
@@ -160,6 +206,10 @@ fn judge(
             record.graph = name != "graph";
             record.reason = Some(name.clone());
             record.detail = Some(message.clone());
+            // Where its tests of a node would be follows from its graph, whatever stopped it.
+            if let (true, Ok(cfg)) = (options.arena, rdna::Cfg::build(&program.words)) {
+                record.intersections = sites(rdna::intersections(&cfg));
+            }
             return record;
         }
         Cached::Translated(lowered) => lowered,
@@ -171,6 +221,10 @@ fn judge(
         .collect();
     if lowered.subgroups {
         record.features.push("subgroups".to_owned());
+    }
+    if !lowered.intersections.is_empty() {
+        record.wave = wave_of(lowered).to_owned();
+        record.intersections = sites(lowered.intersections.clone());
     }
     let module = &lowered.module;
     record.module = digest(module);
@@ -280,10 +334,11 @@ fn say(said: &Said) {
 /// The exit status of a worker that stopped on a program past its budget.
 const EXIT_TIMED_OUT: i32 = 3;
 
-/// `rpf scan-rdna-worker <corpus> <start> <end> <first block> <budget ms> <backends> <wgsl> <cache | -> <memo | -> <memory MB>`:
+/// `rpf scan-rdna-worker <corpus> <start> <end> <first block> <budget ms> <backends> <wgsl> <cache | -> <memo | -> <memory MB> <arena>`:
 /// the programs `start..end` of a corpus, from `first block` of the first, a [`Said`] a line.
 pub(crate) fn cmd_worker(args: &[String]) -> Result<(), String> {
-    let [corpus, start, end, first, budget, with_backends, with_wgsl, cache, memo, memory] = args
+    let [corpus, start, end, first, budget, with_backends, with_wgsl, cache, memo, memory, arena] =
+        args
     else {
         return Err("scan-rdna-worker is run by scan-rdna".to_owned());
     };
@@ -334,7 +389,8 @@ pub(crate) fn cmd_worker(args: &[String]) -> Result<(), String> {
             continue;
         };
         for (block, program) in blocks.into_iter().enumerate().skip(first) {
-            let options = super::gta6_rdna_pairs::options(&mut corpus, &pairs, index, &program);
+            let mut options = super::gta6_rdna_pairs::options(&mut corpus, &pairs, index, &program);
+            options.arena = arena == "1";
             let stub = Record {
                 index,
                 block,
@@ -524,6 +580,8 @@ pub(crate) struct Plan<'a> {
     pub memo: Option<&'a Path>,
     /// The memory a worker may commit, in megabytes.
     pub memory_mb: u64,
+    /// Whether a program that traces rays is lowered with its structures as memory.
+    pub arena: bool,
 }
 
 impl Plan<'_> {
@@ -540,6 +598,7 @@ impl Plan<'_> {
                 .arg(self.cache.unwrap_or(Path::new("-")))
                 .arg(self.memo.unwrap_or(Path::new("-")))
                 .arg(self.memory_mb.to_string())
+                .arg(flag(self.arena))
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 // A worker is silent but for its last words, which are few: read once it is dead.
@@ -929,5 +988,81 @@ mod tests {
         assert_eq!(stray.reason.as_deref(), Some("graph"));
         // The same program again is answered from the cache.
         assert!(judged(&program(ShaderKind::Pixel, vec![S_ENDPGM])).cached);
+    }
+
+    #[test]
+    fn a_program_that_tests_nodes_is_placed_whether_or_not_it_lowers() {
+        use or_shader_front::dxil::ShaderKind;
+        const S_ENDPGM: u32 = 0xBF81_0000;
+        // v0..v11 = 1.0; s8..s11 = a structure's descriptor; the 64-bit test of the node in v0.
+        let s_mov = |dst: u32, src: u32| 0xBE80_0300 | dst << 16 | src;
+        let mut words: Vec<u32> = (0..12).map(|v| 0x7E00_0200 | v << 17 | 242).collect();
+        words.extend([s_mov(8, 128), s_mov(9, 255), 0x8000_0000, s_mov(10, 193)]);
+        words.extend([s_mov(11, 255), 0x8900_03FF]);
+        let at = words.len() as u32;
+        words.extend([0xF000_0000 | 0x67 << 18 | 0xF << 8 | 1, 2 << 16 | 4 << 21]);
+        let program = |words: Vec<u32>| Program {
+            kind: ShaderKind::Compute,
+            slot: 11,
+            words,
+            wave32: false,
+            inputs: Vec::new(),
+            vertex_inputs: Vec::new(),
+            position_read: 0,
+            front_face: false,
+            launch: Some(rdna::Launch {
+                user_registers: 2,
+                group_axes: 0,
+                group_size: false,
+                threads: [8, 8, 1],
+                shared_dwords: 128,
+            }),
+        };
+        let judged = |words: &[u32], arena: bool| {
+            let options = Options {
+                arena,
+                ..Options::default()
+            };
+            let cache = Cache::in_memory();
+            let record = Record::default();
+            judge(
+                &program(words.to_vec()),
+                &options,
+                &cache,
+                Want::default(),
+                record,
+                |_| {},
+            )
+        };
+        let whole = [words.as_slice(), &[S_ENDPGM]].concat();
+        let site = Site {
+            word: at,
+            wide: true,
+            function: "main_body".to_owned(),
+            ..Site::default()
+        };
+        let lowered = judged(&whole, true);
+        assert_eq!(lowered.outcome, TRANSLATED, "{:?}", lowered.detail);
+        assert_eq!(lowered.intersections, std::slice::from_ref(&site));
+        assert_eq!(lowered.wave, "one lane");
+        // The test of a node is the module's own function: counted as no departure.
+        assert!(lowered.approximations.is_empty());
+        // Unasked it is refused as it always was, and nothing is said of its tests.
+        let unasked = judged(&whole, false);
+        assert_eq!(
+            (unasked.outcome.as_str(), unasked.reason.as_deref()),
+            (REFUSED, Some("a program that traces rays"))
+        );
+        assert_eq!(
+            (unasked.intersections.len(), unasked.wave.as_str()),
+            (0, "")
+        );
+        // A trace word after the test stops the lowering; the test's place is its graph's.
+        let stopped = judged(&[words.as_slice(), &[0xBFA8_0000, S_ENDPGM]].concat(), true);
+        assert_eq!(
+            (stopped.outcome.as_str(), stopped.reason.as_deref()),
+            (REFUSED, Some("s_ttracedata_imm"))
+        );
+        assert_eq!(stopped.intersections, [site]);
     }
 }

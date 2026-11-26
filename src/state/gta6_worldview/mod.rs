@@ -663,11 +663,10 @@ impl Viewer {
         self.soon.1 = soonest(wanted.iter().map(|(soon, key, _)| (*key, *soon)));
         if let Some(textures) = &self.textures {
             let asked = wanted.into_iter();
-            textures.want(
-                asked
-                    .map(|(soon, key, pixels)| (soon, (key, pixels)))
-                    .collect(),
-            );
+            // ⚠ A frame asks for a texture at the size its distance needs then, which changes as the
+            // camera moves: a key being read at one size is not read again at another meanwhile.
+            let asked = asked.map(|(soon, key, pixels)| (soon, (key, pixels)));
+            textures.want_unheld(asked.collect(), |(key, _)| *key);
         }
     }
 

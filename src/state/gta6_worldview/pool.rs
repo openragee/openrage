@@ -162,6 +162,20 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
         Some((request, answer))
     }
 
+    /// [`Self::want`], less each ask for what `alike` finds held already under another request: what is being read, or was and is not taken.
+    pub(super) fn want_unheld<K: Eq + Hash>(
+        &self,
+        mut wanted: Vec<(f32, Q)>,
+        alike: impl Fn(&Q) -> K,
+    ) {
+        let mut queue = self.shared.queue.lock().unwrap_or_else(|p| p.into_inner());
+        let held: HashSet<K> = queue.held.iter().map(&alike).collect();
+        wanted.retain(|(_, q)| queue.held.contains(q) || !held.contains(&alike(q)));
+        queue.wanted = wanted;
+        drop(queue);
+        self.shared.woken.notify_all();
+    }
+
     /// Ask for nothing, and let go of every answer that arrived and is not taken; what those weighed.
     pub(super) fn forget(&self) -> u64 {
         let mut arrived = self.arrived.lock().unwrap_or_else(|p| p.into_inner());
@@ -313,6 +327,22 @@ mod tests {
         let mut got = Vec::new();
         wait_for(&pool, 3, &mut got);
         assert_eq!(got, [1, 2, 3]);
+    }
+
+    #[test]
+    fn what_is_held_under_one_request_is_not_asked_for_again_under_another_alike() {
+        // At its most once one has arrived: nothing after it starts, and it stays held.
+        let pool: Pool<(u32, u32), u64> = Pool::bounded(1, (6, |w| *w), || (), |_, _| 6);
+        pool.want(vec![(1.0, (7, 256))]);
+        let started = Instant::now();
+        while pool.shared.queue.lock().map_or(0, |q| q.waiting) < 6
+            && started.elapsed() < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        pool.want_unheld(vec![(1.0, (7, 512)), (2.0, (8, 256))], |(key, _)| *key);
+        let queue = pool.shared.queue.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(queue.wanted, vec![(2.0, (8, 256))]);
     }
 
     #[test]

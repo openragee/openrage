@@ -131,7 +131,7 @@ fn a_build_writes_a_manifest_that_reads_back_naming_the_type_file_its_map_needs(
     let dir = tempfile::tempdir().unwrap();
     let folder = module(dir.path());
     // The game's entry says another type file than the one the map's crate is declared in, so only the derivation gives the answer.
-    keep(&folder, "harbour", 5, &["t_stated_by_the_donor"]);
+    keep(&folder, "harbour", 4, &["t_stated_by_the_donor"]);
     let container = container(OutputKind::FivemResource, &["maps"]);
     let planned = plan(&container, dir.path());
     assert_eq!(planned.problems, Vec::<String>::new());
@@ -292,7 +292,7 @@ fn a_map_no_kept_manifest_states_that_needs_no_type_file_of_the_content_is_named
     )
     .unwrap();
     assert_eq!(added.refused, Vec::<(String, String)>::new());
-    keep(&folder, "harbour", 5, &[]);
+    keep(&folder, "harbour", 4, &[]);
 
     let model = Maps::read(&folder).unwrap();
     let stated = manifest::of(&model, &inspect(&folder, &model, Depth::Open));
@@ -933,6 +933,9 @@ fn the_cell_of_a_singleplayer_dlc_says_yes_to_type_files_and_models_and_no_to_a_
         !said.contains("never measured"),
         "the folder and the type files are measured and built: {said}"
     );
+    // A package installs the same pack, so its cell says the same of the same content.
+    let oiv = OutputKind::OivPackage;
+    assert_eq!(cannot_ship(&packed, &oiv).as_ref(), Some(&said));
 
     // Where the archive is, and what the pack states of it, are parts of that yes: each withheld is named in its place.
     let mut unstated = packed.clone();
@@ -959,6 +962,7 @@ fn the_cell_of_a_singleplayer_dlc_says_yes_to_type_files_and_models_and_no_to_a_
         "the type file is still handed over"
     );
     assert_eq!(cannot_ship(&packed, &dlc), None);
+    assert_eq!(cannot_ship(&packed, &oiv), None);
 }
 
 #[test]
@@ -1353,4 +1357,171 @@ fn a_type_file_that_declares_an_interior_is_asked_for_by_nothing_and_refused_for
         Some(problem.as_str())
     );
     assert_eq!(cannot_ship(&handed[0], &OutputKind::FivemResource), None);
+}
+
+#[test]
+fn an_oiv_of_a_maps_content_installs_the_pack_a_singleplayer_dlc_is_and_is_locked_as_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("maps");
+    let declared = types_file(
+        "harbour_types",
+        &[Archetype::new("prop_crate_a_maps", [-1.0; 3], [1.0; 3])],
+    );
+    let added = add_files(
+        &folder,
+        &[Incoming {
+            name: "harbour_types.ytyp",
+            bytes: &declared,
+            from_game: false,
+            virtual_path: None,
+        }],
+        None,
+    )
+    .unwrap();
+    assert_eq!(added.refused, Vec::<(String, String)>::new());
+
+    // A content of a type file alone: the package installs it inside the pack it adds, registered as the pack registers it.
+    let oiv = OutputKind::OivPackage;
+    let package = container(oiv.clone(), &["maps"]);
+    let handed_over = handed(&package, dir.path());
+    assert_eq!(cannot_ship(&handed_over[0], &oiv), None);
+    let planned = plan(&package, dir.path());
+    assert_eq!(planned.problems, Vec::<String>::new());
+    let pack = "update/x64/dlcpacks/harbour/dlc.rpf";
+    let paths: Vec<&str> = planned.files.iter().map(|f| f.path.as_str()).collect();
+    assert!(
+        paths.contains(&format!("{pack}/{PROPS}/harbour_types.ytyp").as_str())
+            && paths.contains(&format!("{pack}/content.xml").as_str()),
+        "nothing is installed at the stream folder of a resource, which the game does not read: {paths:?}"
+    );
+    let story = plan(
+        &container(OutputKind::SingleplayerDlc, &["maps"]),
+        dir.path(),
+    );
+    assert_eq!(
+        planned.registrations, story.registrations,
+        "the pack a package installs registers what the pack built alone registers"
+    );
+    assert!(
+        (planned.registrations.iter()).any(|r| r.path == ASKED && r.contents == "CONTENTS_PROPS"),
+        "{:?}",
+        planned.registrations
+    );
+
+    // ⚠ With a map the package is locked by the sentence that locks the pack: nothing is written where the game reads nothing.
+    let placed = map_file(
+        "harbour",
+        &[Entity::at("prop_crate_a_maps", [10.0, 20.0, 0.5], 1)],
+        ([8.0, 18.0, -1.0], [12.0, 22.0, 2.0]),
+    );
+    let added = add_files(
+        &folder,
+        &[Incoming {
+            name: "harbour.ymap",
+            bytes: &placed,
+            from_game: false,
+            virtual_path: None,
+        }],
+        None,
+    )
+    .unwrap();
+    assert_eq!(added.refused, Vec::<(String, String)>::new());
+    let handed_over = handed(&package, dir.path());
+    let dlc = OutputKind::SingleplayerDlc;
+    let said = cannot_ship(&handed_over[0], &oiv).expect("the map locks the cell of a package");
+    assert_eq!(
+        Some(&said),
+        cannot_ship(
+            &handed(&container(dlc.clone(), &["maps"]), dir.path())[0],
+            &dlc
+        )
+        .as_ref()
+    );
+    assert!(
+        said.contains(ARCHIVE) && said.contains("when the pack starts"),
+        "{said}"
+    );
+    let planned = plan(&package, dir.path());
+    assert!(planned.problems.contains(&said), "{:?}", planned.problems);
+    assert!(
+        planned.files.iter().all(|f| !f.path.starts_with("stream/")),
+        "{:?}",
+        planned.files.iter().map(|f| &f.path).collect::<Vec<_>>()
+    );
+    assert!(
+        (planned.registrations.iter())
+            .any(|r| r.path == ARCHIVE && r.contents == "CONTENTS_DLC_MAP_DATA"),
+        "{:?}",
+        planned.registrations
+    );
+}
+
+#[test]
+fn a_map_is_stated_in_the_manifest_by_the_name_of_its_file_whatever_name_it_states() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("maps");
+    // `yard.ymap` states the name of a map of the game, which a kept manifest states with the type file the game gives it.
+    let placed = map_file(
+        "harbour",
+        &[Entity::at(CRATE_A, [10.0, 20.0, 0.5], 1)],
+        ([8.0, 18.0, -1.0], [12.0, 22.0, 2.0]),
+    );
+    let declared = types_file(
+        "yard_types",
+        &[Archetype::new(CRATE_A, [-1.0; 3], [1.0; 3])],
+    );
+    let files = [("yard.ymap", &placed), ("yard_types.ytyp", &declared)];
+    let incoming: Vec<Incoming> = (files.iter())
+        .map(|(name, bytes)| Incoming {
+            name,
+            bytes,
+            from_game: false,
+            virtual_path: None,
+        })
+        .collect();
+    let added = add_files(&folder, &incoming, None).unwrap();
+    assert_eq!(added.refused, Vec::<(String, String)>::new());
+    keep(&folder, "harbour", 0, &["v_harbour_game"]);
+
+    let planned = plan(&container(OutputKind::FivemResource, &["maps"]), dir.path());
+    assert!(
+        planned.files.iter().any(|f| f.path == "stream/yard.ymap"),
+        "the build ships the file by its own name"
+    );
+    let model = Maps::read(&folder).unwrap();
+    let stated = manifest::of(&model, &inspect(&folder, &model, Depth::Open));
+    let written = stated.file.expect("a manifest is written");
+    assert_eq!(
+        stated_in(&written).expect("the manifest reads back"),
+        BTreeMap::from([(hash("yard"), BTreeSet::from([hash("yard_types")]))]),
+        "the map the build ships, and nothing for the map of the game whose name it states"
+    );
+}
+
+#[test]
+fn a_map_a_kept_manifest_states_as_an_interiors_map_is_named_where_it_places_what_is_no_interior() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = module(dir.path());
+    // The game states `harbour` with the bit of an interior's map, and the map of the content places one crate.
+    keep(
+        &folder,
+        "harbour",
+        4 | or_world::manifest_build::INTERIOR_DATA,
+        &[],
+    );
+    let model = Maps::read(&folder).unwrap();
+    let stated = manifest::of(&model, &inspect(&folder, &model, Depth::Open));
+    let written = stated.file.expect("a manifest is written");
+    assert_eq!(
+        flags_of_the_entries(&written),
+        [Some(4 | or_world::manifest_build::INTERIOR_DATA)],
+        "the flags the game states are kept"
+    );
+    let [note] = stated.notes.as_slice() else {
+        panic!("one note names the map: {:?}", stated.notes)
+    };
+    assert!(
+        note.contains("`harbour`") && note.contains("keeps the flags the game states"),
+        "{note}"
+    );
 }

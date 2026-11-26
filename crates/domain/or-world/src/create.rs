@@ -33,6 +33,8 @@ pub enum CreateError {
     NotANumber(&'static str),
     #[error("a level-of-detail distance of {0} is below zero")]
     NegativeLodDist(f32),
+    #[error("a scale of {0} across and {1} up is not above nought, and the box a map streams by is spread from an entity by its scale")]
+    ScaleNotAboveNought(f32, f32),
     #[error(
         "a world file made from nothing is not written as RBM: an RBM class carries a signature \
          word that nothing derives, and there is no file to take it from; write it as PSO, or copy \
@@ -81,7 +83,7 @@ impl Placed {
         }
     }
 
-    /// Refuses a number a file cannot store: one that is not finite, or a distance below zero.
+    /// Refuses a number a file cannot store or a map cannot stream by: one that is not finite, a distance below zero, or a scale that is not above nought.
     pub fn check(&self) -> Result<(), CreateError> {
         for (what, finite) in [
             ("position", self.position.is_finite()),
@@ -98,6 +100,12 @@ impl Placed {
         }
         if self.lod_dist < 0.0 {
             return Err(CreateError::NegativeLodDist(self.lod_dist));
+        }
+        if !(self.scale_xy > 0.0 && self.scale_z > 0.0) {
+            return Err(CreateError::ScaleNotAboveNought(
+                self.scale_xy,
+                self.scale_z,
+            ));
         }
         Ok(())
     }
@@ -694,6 +702,70 @@ mod tests {
             Err(CreateError::NegativeLodDist(_))
         ));
         place(&mut map("hills"), &good).expect("a finite placement is placed");
+    }
+
+    #[test]
+    fn a_scale_that_is_not_above_nought_is_refused_before_anything_is_placed() {
+        // ⚠ The extents spread an entity's distance by its scale: at nought or below the streaming box came out holding nothing.
+        let good = bench_at(Vec3::new(1.0, 2.0, 3.0));
+        for (scale_xy, scale_z) in [
+            (0.0, 1.0),
+            (1.0, 0.0),
+            (-1.0, 1.0),
+            (1.0, -1.0),
+            (-0.0, -0.0),
+        ] {
+            let placed = Placed {
+                scale_xy,
+                scale_z,
+                ..good.clone()
+            };
+            let mut made = map("hills");
+            let refused = place(&mut made, &placed).expect_err("a scale not above nought");
+            assert!(
+                matches!(refused, CreateError::ScaleNotAboveNought(xy, z) if xy == scale_xy && z == scale_z),
+                "{refused}"
+            );
+            assert!(made.entities.is_empty(), "nothing was placed");
+        }
+        let small = Placed {
+            scale_xy: 0.25,
+            scale_z: 0.5,
+            ..good
+        };
+        place(&mut map("hills"), &small).expect("a scale above nought is placed");
+    }
+
+    #[test]
+    fn a_map_whose_entity_states_a_scale_of_nought_is_not_saved_with_streaming_extents_that_hold_nothing(
+    ) {
+        // An entity that arrived with such a scale, which no check of a placement saw.
+        let mut made = map("hills");
+        place(&mut made, &bench_at(Vec3::ZERO)).expect("placed");
+        (made.entities[0].scale_xy, made.entities[0].scale_z) = (0.0, 0.0);
+        let refused = map_file(&made, &index_of(&bench_types()), BinaryFormat::Pso)
+            .expect_err("streaming extents that hold nothing are not written");
+        assert!(
+            matches!(refused, CreateError::Derive(WriteError::NoStreamingExtents)),
+            "{refused}"
+        );
+
+        // A mirrored entity is drawn as far as one that is not: its distance is spread by the size of its scale.
+        (made.entities[0].scale_xy, made.entities[0].scale_z) = (-1.0, -1.0);
+        let saved =
+            map_file(&made, &index_of(&bench_types()), BinaryFormat::Pso).expect("it saves");
+        let back = CMapData::from_bytes(&saved).expect("opens");
+        let reach = Vec3::splat(60.0);
+        let (min, max) = (
+            vec3(back.entities_extents_min),
+            vec3(back.entities_extents_max),
+        );
+        assert!(min.abs_diff_eq(Vec3::new(-1.0, -2.0, -3.0), 1e-3), "{min}");
+        assert!(max.abs_diff_eq(Vec3::new(1.0, 2.0, 0.0), 1e-3), "{max}");
+        let wide_min = vec3(back.streaming_extents_min);
+        let wide_max = vec3(back.streaming_extents_max);
+        assert!(wide_min.abs_diff_eq(min - reach, 1e-3), "{wide_min}");
+        assert!(wide_max.abs_diff_eq(max + reach, 1e-3), "{wide_max}");
     }
 
     #[test]

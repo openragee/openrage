@@ -212,7 +212,7 @@ impl Laid<'_> {
         }
     }
 
-    /// The merged map, made of the base: what `other` changed of what no typed member names, the members `file_members` name from their sides, then each entity added after the last, each record put in its place by the operation an edit puts one with, and the entities that are gone taken out in one pass, which renumbers the links after them.
+    /// The merged map, made of the base: what `other` changed of the records beside the entities and of what no typed member names, the members `file_members` name from their sides, then each entity added after the last, each record put in its place by the operation an edit puts one with, and the entities that are gone taken out in one pass, which renumbers the links after them.
     fn build(
         &self,
         other: Option<Side>,
@@ -433,10 +433,24 @@ pub fn merge_maps(
         &changes_theirs.root,
         &mut asked,
     );
+    // ⚠ The records a map types beside its entities are not merged inside: they go with what no typed member names, whole and
+    // together from one side, and are named by the members that hold them.
+    let mut rest: Vec<&str> = (crate::changes::RECORDS.into_iter())
+        .filter(|member| {
+            [&changes_ours, &changes_theirs]
+                .iter()
+                .any(|c| c.records.contains(member))
+        })
+        .collect();
+    if changes_ours.other || changes_theirs.other || rest.is_empty() {
+        rest.push(OTHER);
+    }
+    let rest = rest.join(", ");
     let other = other_from(
-        changes_ours.other,
-        changes_theirs.other,
-        || !map_changes(ours, theirs).other,
+        &rest,
+        changes_ours.rest_differs(),
+        changes_theirs.rest_differs(),
+        || !map_changes(ours, theirs).rest_differs(),
         &mut asked,
     );
 
@@ -1144,7 +1158,7 @@ pub fn merge_maps(
         ours: SourceChanges::Map(changes_ours.clone()),
         theirs: SourceChanges::Map(changes_theirs.clone()),
         applied,
-        file: file_said(&file_members, other),
+        file: file_said(&file_members, other, &rest),
         conflicts: asked.conflicts,
         merged: !asked.stopped,
         not_compared: not_compared(true),
@@ -1176,7 +1190,7 @@ pub fn merge_maps(
                 targets: &targets,
                 excess: &excess,
             };
-            let root = root_from(other, base, [ours, theirs])?;
+            let root = root_from(other, &rest, base, [ours, theirs])?;
             let map = laid.build(root.map(|(side, _)| side), &file_members)?;
             // An entity of the merged map as a note names it.
             let here = |place: usize| -> Option<(usize, String)> {

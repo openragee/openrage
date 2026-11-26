@@ -289,7 +289,7 @@ mod tests {
     use crate::meta::{build_library, canonical, detect_binary_format};
 
     /// What the installs state for each record of a map, by name
-    /// (`docs/direction/Roadmap.md`, R70o, "Where it stands").
+    /// (`docs/reference/Crate_Reference.md`, the table of the members of `CMapData`).
     const STATED: &[(&str, &[&str])] = &[
         (
             "CCarGen",

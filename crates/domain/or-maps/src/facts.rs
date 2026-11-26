@@ -96,6 +96,12 @@ fn name_at(inst: &MetaInstance, key: u32, names: Names<'_>) -> Name {
     name_of(field::get(inst, key), names)
 }
 
+/// The hash the game knows the map of the file called `stem` by, and a map under it states as its parent, whatever name the file itself states.
+// ⚠ 473 map files of each install state the name of another map file (`what_the_files_of_a_real_install_state_where_the_index_takes_one_reading`), so a map found by the name it states is another map.
+pub fn map_name(stem: &str) -> u32 {
+    or_io::string_hash(stem.as_bytes())
+}
+
 /// What is known of one source a set names.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Fact {
@@ -204,8 +210,13 @@ pub struct MapInside {
     /// The extents the file states, none where it states none.
     pub stored_entities: Option<([f32; 3], [f32; 3])>,
     pub stored_streaming: Option<([f32; 3], [f32; 3])>,
-    /// What the engine would misread in the file, one sentence each (`or_world::validate`).
+    /// What the engine would misread of the LOD hierarchy of the file, one sentence each (`or_world::validate`).
     pub problems: Vec<String>,
+    /// What the engine would misread of the records the file holds beside its entities, its far lights and its occlude models, one sentence each.
+    pub record_problems: Vec<String>,
+    /// How many far lights the file holds, and how many distant ones: a map of far lights and the map it names as parent hold one count, a light to each.
+    pub far_lights: usize,
+    pub distant_lights: usize,
 }
 
 /// An archetype, as a type file declares it.
@@ -425,6 +436,19 @@ pub fn inside_of(bytes: &[u8], extension: &str, names: Names<'_>) -> Result<Insi
 
 fn read_map(map: &MapData<'_>, names: Names<'_>) -> MapInside {
     let root = map.instance();
+    let found = or_world::validate::check(map);
+    let said = |of_a_record: bool| -> Vec<String> {
+        (found.iter())
+            .filter(|problem| problem.is_of_a_record() == of_a_record)
+            .map(ToString::to_string)
+            .collect()
+    };
+    // The length of the first array of a family of far lights, which a save holds the others to.
+    let lights = |family: u32, first: &str| {
+        field::struct_at(root, family).map_or(0, |held| {
+            field::array_at(held, or_io::hash::literal_string_hash(first.as_bytes())).len()
+        })
+    };
     MapInside {
         name: name_at(root, keys::NAME, names),
         parent: name_at(root, keys::PARENT, names),
@@ -457,10 +481,10 @@ fn read_map(map: &MapData<'_>, names: Names<'_>) -> MapInside {
         stored_streaming: map
             .stored_streaming_extents()
             .map(|(min, max)| (min.to_array(), max.to_array())),
-        problems: or_world::validate::check(map)
-            .iter()
-            .map(ToString::to_string)
-            .collect(),
+        problems: said(false),
+        record_problems: said(true),
+        far_lights: lights(keys::LOD_LIGHTS_SOA, "direction"),
+        distant_lights: lights(keys::DISTANT_LOD_LIGHTS_SOA, "position"),
     }
 }
 

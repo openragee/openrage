@@ -109,10 +109,9 @@ pub fn compute(map: &MapData<'_>, index: &ArchetypeIndex) -> Extents {
         for corner in entity.place(bounds.min, bounds.max) {
             entities.add_point(corner);
         }
-        for corner in entity.place(
-            bounds.min - lod_dist / entity.scale().max_element().max(f32::MIN_POSITIVE),
-            bounds.max + lod_dist / entity.scale().max_element().max(f32::MIN_POSITIVE),
-        ) {
+        // ⚠ By the size of the scale: an entity mirrored by a scale below nought is drawn as far as one that is not.
+        let spread = lod_dist / entity.scale().abs().max_element().max(f32::MIN_POSITIVE);
+        for corner in entity.place(bounds.min - spread, bounds.max + spread) {
             streaming.add_point(corner);
         }
     }

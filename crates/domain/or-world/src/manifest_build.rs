@@ -79,6 +79,8 @@ pub struct Built {
     pub pairless: BTreeSet<u32>,
     /// The maps two manifests handed in state differently. ⚠ Their entry is taken in the order the manifests are handed in, which is no order the game mounts them in.
     pub disagreeing: BTreeSet<u32>,
+    /// The maps a manifest handed in states whose entry keeps flags that say other of interiors than [`interior_flags`] gives for what the map places.
+    pub flags_differ: BTreeSet<u32>,
 }
 
 /// Why no manifest was written.
@@ -148,6 +150,7 @@ fn build_named(kept: &[&[u8]], maps: &[Wanted]) -> Result<Built, BuildError> {
         needless: tree.needless,
         pairless: tree.pairless,
         disagreeing: tree.disagreeing,
+        flags_differ: tree.flags_differ,
     })
 }
 
@@ -196,6 +199,7 @@ pub struct Tree {
     pub needless: BTreeSet<u32>,
     pub pairless: BTreeSet<u32>,
     pub disagreeing: BTreeSet<u32>,
+    pub flags_differ: BTreeSet<u32>,
 }
 
 /// The tree of a manifest stating `maps`: the first of `kept` with every list emptied, then an entry for each map that one of `kept` states or that needs a type file.
@@ -260,6 +264,7 @@ pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildErr
     let (mut kept_whole, mut unstated) = (BTreeSet::new(), BTreeSet::new());
     let (mut derived, mut needless) = (BTreeSet::new(), BTreeSet::new());
     let mut pairless = BTreeSet::new();
+    let mut flags_differ = BTreeSet::new();
     for (&name, asked) in &wanted {
         let in_groups = groups.get(&name).map_or(&[][..], Vec::as_slice);
         let in_pairs = pairs.get(&name).map_or(&[][..], Vec::as_slice);
@@ -274,6 +279,20 @@ pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildErr
                 unstated.insert(name);
             }
             continue;
+        }
+        // ⚠ The flags a manifest states are kept, every bit of them: where the bit of an interior's map no longer follows what the
+        // map places, the caller is told and nothing is derived over what the game states.
+        let written = match asked.keep_stated {
+            true => in_groups,
+            false => &in_groups[..in_groups.len().min(1)],
+        };
+        let follows = interior_flags(asked.entities, asked.interiors);
+        let stated = written.iter().filter_map(|entry| flags_stated(entry));
+        if stated
+            .into_iter()
+            .any(|flags| flags & INTERIOR_DATA != follows)
+        {
+            flags_differ.insert(name);
         }
         if asked.keep_stated {
             kept_whole.insert(name);
@@ -354,7 +373,18 @@ pub fn tree_of(kept: &[&MetaInstance], maps: &[Wanted]) -> Result<Tree, BuildErr
         needless,
         pairless,
         disagreeing,
+        flags_differ,
     })
+}
+
+/// The flags an entry states, none where it states none or spells them in a way this does not read.
+fn flags_stated(entry: &MetaInstance) -> Option<u32> {
+    match field::get(entry, MANIFEST_FLAGS)? {
+        Value::UInt(held) => u32::try_from(*held).ok(),
+        Value::Int(held) => u32::try_from(*held).ok(),
+        Value::Bitset { bits, .. } => u32::try_from(*bits).ok(),
+        _ => None,
+    }
 }
 
 /// What the maps of one name ask of their entry, joined.
@@ -719,6 +749,45 @@ mod tests {
             flags_of(&built.bytes, "harbour").is_empty(),
             "the map of the entry that gave the shape is not stated"
         );
+    }
+
+    #[test]
+    fn a_map_a_kept_manifest_states_keeps_its_flags_and_is_named_where_they_no_longer_follow_what_it_places(
+    ) {
+        // The game states `shop` as an interior's map and `yard` as none; the pack's shop now places a chair beside its interior,
+        // and its yard two interiors and nothing else.
+        let donor = encoded(&manifest(
+            Vec::new(),
+            vec![
+                grouped("shop", INTERIOR_DATA, &["t_shop"]),
+                grouped("yard", 4, &["t_yard"]),
+                grouped("quay", 4 | INTERIOR_DATA, &["t_quay"]),
+            ],
+        ));
+        for keep_stated in [false, true] {
+            let kept = |name: &str, needs: &[&str], entities: usize, interiors: usize| Wanted {
+                keep_stated,
+                ..made(name, needs, entities, interiors)
+            };
+            let built = build(
+                &[&donor],
+                &[
+                    kept("shop", &["t_shop"], 3, 1),
+                    kept("yard", &["t_yard"], 2, 2),
+                    kept("quay", &["t_quay"], 1, 1),
+                ],
+            )
+            .expect("the manifest is written");
+            // The flags the game states are kept, as every bit of them is.
+            assert_eq!(flags_of(&built.bytes, "shop"), [INTERIOR_DATA]);
+            assert_eq!(flags_of(&built.bytes, "yard"), [4]);
+            assert_eq!(flags_of(&built.bytes, "quay"), [4 | INTERIOR_DATA]);
+            assert_eq!(
+                built.flags_differ,
+                BTreeSet::from([hash("shop"), hash("yard")]),
+                "kept whole: {keep_stated}"
+            );
+        }
     }
 
     #[test]

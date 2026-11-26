@@ -11,6 +11,11 @@ use super::shape::{Obb, Shape, Similarity, Touch};
 use super::{BoxOverlap, CollisionError, GroundProbe, Hit, OrientedBox, Part};
 use crate::extents::Aabb;
 
+/// How many steps of a float at the size of a point's coordinates the ground probe starts above its rise: what a point found on
+/// a slope at map coordinates is off its plane by, measured over 4,000 asks at up to 7,000 m
+/// (`the_ground_asked_at_the_height_it_answered_with_no_rise_is_the_same_ground`).
+const ON_THE_GROUND: f32 = 16.0;
+
 #[derive(Debug, Clone)]
 struct Placed {
     collider: Arc<BoundCollider>,
@@ -184,13 +189,24 @@ impl<K: Ord> CollisionSet<K> {
         // ⚠ A few ulps under the cosine: the normal of a level triangle comes out of its cross product just short of one, and a
         // limit of nought would refuse the floor and answer with whatever lies under it.
         let flattest = probe.max_slope.cos() - 4.0 * f32::EPSILON;
+        // A solid the top of the probe starts inside is no surface, and is passed through.
+        let accept = |normal: Vec3, inside: bool| !inside && normal.z >= flattest;
+        let top = point + Vec3::Z * probe.max_rise;
+        // ⚠ A point that stands on a slope is a rounding either side of its plane, by the size of its coordinates: a probe that
+        // starts at the point passed the surface the point stands on in two asks of five. What lies within that rounding of the
+        // top of the probe, above it or below, is looked for first, from that much higher.
+        let lift = ON_THE_GROUND * f32::EPSILON * point.abs().max_element().max(1.0);
+        let at_the_top = self.nearest(top + Vec3::Z * lift, Vec3::NEG_Z, 2.0 * lift, 0.0, accept);
+        if let Some((key, mut hit)) = at_the_top {
+            hit.distance = (hit.distance - lift).max(0.0);
+            return Some((key, hit));
+        }
         self.nearest(
-            point + Vec3::Z * probe.max_rise,
+            top,
             Vec3::NEG_Z,
             probe.max_rise + probe.max_drop,
             0.0,
-            // A solid the top of the probe starts inside is no surface, and is passed through.
-            |normal, inside| !inside && normal.z >= flattest,
+            accept,
         )
     }
 

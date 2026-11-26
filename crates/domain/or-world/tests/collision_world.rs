@@ -1670,3 +1670,53 @@ fn a_level_floor_is_ground_to_a_probe_that_takes_no_slope_at_all() {
         .expect("the floor under the steep triangle");
     assert_at(hit.position, Vec3::new(2.0, 2.0, 0.0));
 }
+
+/// ⚠ A point the ground query answered lies a rounding either side of the plane it was found on, and the probe of a second ask
+/// with no rise starts at the point itself.
+#[test]
+fn the_ground_asked_at_the_height_it_answered_with_no_rise_is_the_same_ground() {
+    let mut dice = Dice(7);
+    let (mut asked, mut missed) = (0, 0);
+    let mut furthest = 0.0f32;
+    for _ in 0..200 {
+        // One sloped triangle, far out on the map.
+        let corners = [
+            Vec3::new(-30.0, -30.0, dice.between(-4.0, 4.0)),
+            Vec3::new(30.0, -30.0, dice.between(-4.0, 4.0)),
+            Vec3::new(0.0, 40.0, dice.between(-4.0, 4.0)),
+        ];
+        let far = Vec3::new(
+            dice.between(-7000.0, 7000.0),
+            dice.between(-7000.0, 7000.0),
+            dice.between(0.0, 600.0),
+        );
+        let set = set_of(vec![(
+            "terrain",
+            PhBoundAny::PhBoundGeometry(bounds::triangles(&corners, &[[0, 1, 2]])),
+            Affine3A::from_translation(far),
+        )]);
+        let probe = GroundProbe {
+            max_rise: 0.0,
+            max_drop: 50.0,
+            max_slope: 60f32.to_radians(),
+        };
+        for _ in 0..20 {
+            let over = Vec3::new(dice.between(-8.0, 8.0), dice.between(-12.0, 8.0), 20.0);
+            let (_, first) = set
+                .ground(far + over, &probe)
+                .expect("the terrain is under the point");
+            asked += 1;
+            match set.ground(first.position, &probe) {
+                Some((_, again)) => {
+                    furthest = furthest.max((again.position.z - first.position.z).abs());
+                }
+                None => missed += 1,
+            }
+        }
+    }
+    assert_eq!(missed, 0, "of {asked} asks at the ground's own height");
+    assert!(
+        furthest < 0.02,
+        "the ground moved {furthest} between two asks"
+    );
+}

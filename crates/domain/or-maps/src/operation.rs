@@ -150,7 +150,7 @@ impl From<Pose> for PoseData {
 }
 
 impl PoseData {
-    /// The pose with its rotation at length one, refused when a number of it is not finite or its rotation has no length.
+    /// The pose with its rotation at length one, refused when a number of it is not finite, its rotation has no length or its scale is not above nought.
     fn checked(&self) -> Result<Pose, String> {
         let pose = Pose {
             position: Vec3::from_array(self.position),
@@ -170,6 +170,13 @@ impl PoseData {
         }
         if pose.rotation.length_squared() <= f32::EPSILON {
             return Err("a rotation of no length turns nothing".to_string());
+        }
+        // ⚠ The box a map streams by is spread from an entity by its scale, and no entity of the two installs states one at or below nought.
+        if !(pose.scale_xy > 0.0 && pose.scale_z > 0.0) {
+            return Err(format!(
+                "a scale of {} across and {} up is not above nought, and the box a map streams by is spread from an entity by its scale",
+                pose.scale_xy, pose.scale_z
+            ));
         }
         // ⚠ The file stores the conjugate, which is the turn back only of a rotation of length one.
         Ok(Pose {
@@ -1776,7 +1783,7 @@ fn does_not_cook(path: &str, why: &str) -> String {
 /// What a map file states of its place among the maps of a pack.
 #[derive(Clone)]
 struct Linked {
-    /// The hash of its name, which a map under it states as its parent.
+    /// The hash of the name of its file, which a map under it states as its parent (`crate::facts::map_name`).
     name: u32,
     /// The hash of the name of the map it names as parent; nought for none.
     parent: u32,
@@ -1785,9 +1792,10 @@ struct Linked {
 }
 
 impl Linked {
-    fn of(map: &CMapData) -> Self {
+    /// What `map` states, as the map of the file `file`, such as `harbour.ymap`.
+    fn of(map: &CMapData, file: &str) -> Self {
         Self {
-            name: map.name.hash,
+            name: crate::facts::map_name(file.rsplit_once('.').map_or(file, |(stem, _)| stem)),
             parent: map.parent.hash,
             into_parent: (map.entities.iter())
                 .filter(|entity| in_parent_map(entity.flags))
@@ -2144,10 +2152,11 @@ impl Pack for Work<'_> {
         if let Some(known) = self.linked.get(source) {
             return known.clone();
         }
-        let is_map =
-            (self.hold(source)).is_ok_and(|held| held.inputs.extension() == CMapData::EXTENSION);
-        let linked = (is_map.then(|| self.root::<CMapData>(source).ok()).flatten())
-            .map(|map| Linked::of(&map));
+        let file = (self.hold(source).ok())
+            .filter(|held| held.inputs.extension() == CMapData::EXTENSION)
+            .map(|held| held.inputs.output_name());
+        let linked =
+            file.and_then(|file| Some(Linked::of(&self.root::<CMapData>(source).ok()?, &file)));
         self.linked.insert(source.to_string(), linked.clone());
         linked
     }

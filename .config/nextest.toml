@@ -593,8 +593,8 @@ slow-timeout = { period = "60s", terminate-after = 45 }
 priority = 100
 
 # The install suite of the doors, bounds and path regions reads every map, type file or bound of an install. Its slowest test
-# took two minutes alone and was still running at fourteen beside building lanes, at a load of a hundred on thirty cores, so
-# it is held to forty-five.
+# took four minutes on the Legacy install at a load of sixty on thirty cores and twenty-two beside building lanes, so it is held
+# to forty-five.
 [[profile.all.overrides]]
 filter = 'binary_id(=or-maps::the_doors_bounds_and_path_regions_of_the_install)'
 slow-timeout = { period = "60s", terminate-after = 45 }

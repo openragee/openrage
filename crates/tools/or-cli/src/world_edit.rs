@@ -403,8 +403,8 @@ pub fn cmd_delete_map(args: &[String]) -> ExitCode {
 
 /// `world create --game <dir> --like <donor> --name <n> --manifest <logical.ymf> --out <dir>`
 ///
-/// ⚠ The donor is read out of the install by its map name, because its
-/// manifest entry is the only statement of what `manifestFlags` it takes.
+/// ⚠ The donor is read out of the install by its map name: the entry of the
+/// new map is a copy of the entry a manifest of the install states for it.
 pub fn cmd_create_executed(args: &[String]) -> ExitCode {
     let (Some(game_root), Some(donor), Some(name), Some(manifest), Some(out)) = (
         flag_value(args, "--game"),

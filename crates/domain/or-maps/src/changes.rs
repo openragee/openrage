@@ -26,8 +26,10 @@
 //! does for the sources of a pack), and by its number where none does.
 //!
 //! What a file states of itself beside its entities or its archetypes (its flags, its extents, the files it depends on) is compared
-//! member by member ([`MapChanges::root`], [`TypesChanges::root`]), and what no typed member names, such as a car generator, is said
-//! to differ and not listed ([`MapChanges::other`]).
+//! member by member ([`MapChanges::root`], [`TypesChanges::root`]). The records a map types beside its entities (its parked
+//! vehicles, occluders, time cycle modifiers and far lights) are named by the member that holds them where they differ and are not
+//! compared record by record ([`MapChanges::records`]), and what no typed member names, such as a grass batch, is said to differ and
+//! not listed ([`MapChanges::other`]).
 
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
@@ -181,9 +183,21 @@ pub struct MapChanges {
     pub unchanged: usize,
     /// What the map states of itself differently, each member by the engine's name; empty for the entities of an interior.
     pub root: Vec<MemberChange>,
-    /// Whether what no typed member of the map names differs: a car generator, an occluder, a light.
+    /// The members that hold the records a map types beside its entities, where the two maps differ in one, by the engine's name ([`RECORDS`]): said to differ, and not compared record by record.
+    pub records: Vec<&'static str>,
+    /// Whether what no typed member of the map names differs: a grass batch, a container LOD, an extension.
     pub other: bool,
 }
+
+/// The members of a map that hold the records it types beside its entities, by the engine's names.
+pub const RECORDS: [&str; 6] = [
+    "carGenerators",
+    "boxOccluders",
+    "occludeModels",
+    "timeCycleModifiers",
+    "LODLightsSOA",
+    "DistantLODLightsSOA",
+];
 
 impl MapChanges {
     /// Whether the two maps state the same of themselves and hold the same entities stating the same.
@@ -193,7 +207,12 @@ impl MapChanges {
             && self.changed.is_empty()
             && self.ambiguous.is_empty()
             && self.root.is_empty()
-            && !self.other
+            && !self.rest_differs()
+    }
+
+    /// Whether the maps differ in what is not compared inside: a family of records, or what no typed member names.
+    pub fn rest_differs(&self) -> bool {
+        self.other || !self.records.is_empty()
     }
 }
 
@@ -758,6 +777,32 @@ fn maps_compared(
             physics_dictionaries: "physicsDictionaries",
         }, &mut |member, from, to| out.root.push(MemberChange { member, from, to }));
         (was.entities, is.entities) = (Vec::new(), Vec::new());
+        let [cars, boxes, models, modifiers, lights, distant] = RECORDS;
+        let differing = [
+            (cars, base.car_generators != now.car_generators),
+            (boxes, base.box_occluders != now.box_occluders),
+            (models, base.occlude_models != now.occlude_models),
+            (
+                modifiers,
+                base.time_cycle_modifiers != now.time_cycle_modifiers,
+            ),
+            (lights, base.lod_lights_soa != now.lod_lights_soa),
+            (
+                distant,
+                base.distant_lod_lights_soa != now.distant_lod_lights_soa,
+            ),
+        ];
+        out.records = (differing.into_iter())
+            .filter_map(|(member, differs)| differs.then_some(member))
+            .collect();
+        for root in [&mut was, &mut is] {
+            root.car_generators = Default::default();
+            root.box_occluders = Default::default();
+            root.occlude_models = Default::default();
+            root.time_cycle_modifiers = Default::default();
+            root.lod_lights_soa = Default::default();
+            root.distant_lod_lights_soa = Default::default();
+        }
         out.other = was != is;
     }
     (out, pairs)
@@ -1164,6 +1209,11 @@ enum Roots {
 }
 
 fn roots_of(dir: &Path) -> Result<Roots, Error> {
+    named_roots_of(dir).map(|(_, roots)| roots)
+}
+
+/// [`roots_of`], with the hash the map or the type file is known by: that of its file's name (`crate::facts::map_name`).
+fn named_roots_of(dir: &Path) -> Result<(u32, Roots), Error> {
     let source = or_source::asset::Source::open(dir).map_err(|p| Error::Source(p.to_string()))?;
     let file = or_source::metadata::cooked_name(&source.manifest)
         .map_err(|p| Error::Source(p.to_string()))?;
@@ -1177,7 +1227,7 @@ fn roots_of(dir: &Path) -> Result<Roots, Error> {
     };
     let now = or_source::metadata::compile(&source).map_err(|p| Error::Cook(said(p)))?;
     let base = or_source::metadata::compile_base(&source).map_err(|p| Error::Base(said(p)))?;
-    Ok(if extension == "ymap" {
+    let roots = if extension == "ymap" {
         Roots::Map(
             Box::new(read("the base", "map file", &base.bytes)?),
             Box::new(read("the source", "map file", &now.bytes)?),
@@ -1187,7 +1237,8 @@ fn roots_of(dir: &Path) -> Result<Roots, Error> {
             Box::new(read("the base", "type file", &base.bytes)?),
             Box::new(read("the source", "type file", &now.bytes)?),
         )
-    })
+    };
+    Ok((crate::facts::map_name(&source.manifest.name), roots))
 }
 
 /// What the map file or type file the source in `dir` cooks to changed of the file its base cooks to.
@@ -1200,7 +1251,8 @@ pub fn source_changes(dir: &Path) -> Result<SourceChanges, Error> {
 
 /// The map files and type files of a pack read once, so that each map file is compared with its parent map in hand.
 pub struct PackSources {
-    read: BTreeMap<String, Result<Roots, Error>>,
+    /// Each source by its path, with the hash of its file's name.
+    read: BTreeMap<String, Result<(u32, Roots), Error>>,
 }
 
 impl PackSources {
@@ -1209,7 +1261,7 @@ impl PackSources {
         let read = (paths.into_iter())
             .map(|path| {
                 let dir = folder.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
-                (path.to_string(), roots_of(&dir))
+                (path.to_string(), named_roots_of(&dir))
             })
             .collect();
         Self { read }
@@ -1222,7 +1274,8 @@ impl PackSources {
             return None;
         }
         let mut cooking = (self.read.iter()).filter_map(|(other, read)| match read {
-            Ok(Roots::Map(base, now)) if other != path && now.name.hash == named => {
+            // ⚠ By the name of its file and not the name it states: a file that states the parent's name is another map.
+            Ok((name, Roots::Map(base, now))) if other != path && *name == named => {
                 Some(ParentMap {
                     base: &base.entities,
                     now: &now.entities,
@@ -1238,12 +1291,14 @@ impl PackSources {
     /// What the source `path` changed of its base, as [`source_changes`] says it, with the links of a map file into its parent map compared by the entity each names where a source read cooks to that map.
     pub fn changes(&self, path: &str) -> Result<SourceChanges, Error> {
         match self.read.get(path) {
-            Some(Ok(Roots::Map(base, now))) => Ok(SourceChanges::Map(map_changes_under(
+            Some(Ok((_, Roots::Map(base, now)))) => Ok(SourceChanges::Map(map_changes_under(
                 base,
                 now,
                 self.parent_of(path, base, now),
             ))),
-            Some(Ok(Roots::Types(base, now))) => Ok(SourceChanges::Types(types_changes(base, now))),
+            Some(Ok((_, Roots::Types(base, now)))) => {
+                Ok(SourceChanges::Types(types_changes(base, now)))
+            }
             Some(Err(why)) => Err(why.clone()),
             None => Err(Error::Source(format!("`{path}` was not read"))),
         }

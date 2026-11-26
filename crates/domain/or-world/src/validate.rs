@@ -57,6 +57,22 @@ pub enum Problem {
         len: usize,
         expected: usize,
     },
+    /// An occlude model whose `dataSize` is not the count of the bytes it holds.
+    OccludeModelSizeDiffers {
+        model: usize,
+        stated: u32,
+        held: usize,
+    },
+}
+
+impl Problem {
+    /// Whether it is of a record a map holds beside its entities, a far light or an occlude model, and not of the LOD hierarchy.
+    pub fn is_of_a_record(&self) -> bool {
+        matches!(
+            self,
+            Problem::LightArraysDiffer { .. } | Problem::OccludeModelSizeDiffers { .. }
+        )
+    }
 }
 
 /// What attaches an object of an interior, by its position in its own array.
@@ -127,15 +143,49 @@ impl std::fmt::Display for Problem {
                 f,
                 "light array {field} holds {len} where its siblings hold {expected}"
             ),
+            Problem::OccludeModelSizeDiffers {
+                model,
+                stated,
+                held,
+            } => write!(
+                f,
+                "occlude model {model} states {stated} bytes of `verts` (dataSize) and holds {held}"
+            ),
         }
     }
 }
 
-/// Check a map's LOD hierarchy and its light arrays.
+/// Check a map's LOD hierarchy, its light arrays and its occlude models.
 pub fn check(map: &MapData<'_>) -> Vec<Problem> {
     let mut problems = check_hierarchy(map);
     problems.extend(check_light_arrays(map));
+    problems.extend(check_occlude_models(map));
     problems
+}
+
+/// ⚠ `dataSize` counts the bytes behind `verts`, and the engine reads that many: a save of the typed map refuses a model
+/// whose two differ.
+fn check_occlude_models(map: &MapData<'_>) -> Vec<Problem> {
+    use crate::field;
+    use or_io::hash::literal_string_hash;
+    use or_io::meta::Value;
+
+    let models = field::structs_at(map.instance(), crate::keys::OCCLUDE_MODELS);
+    (models.enumerate())
+        .filter_map(|(model, record)| {
+            let stated = field::u32_at(record, literal_string_hash(b"dataSize")).unwrap_or(0);
+            let held = match field::get(record, literal_string_hash(b"verts")) {
+                Some(Value::Array(items)) => items.len(),
+                Some(Value::ByteArray(bytes)) => bytes.len(),
+                _ => 0,
+            };
+            (stated as usize != held).then_some(Problem::OccludeModelSizeDiffers {
+                model,
+                stated,
+                held,
+            })
+        })
+        .collect()
 }
 
 /// ⚠ **Only the links this file can resolve.** An entity whose `flags` bit 3
@@ -503,6 +553,58 @@ mod tests {
         assert_eq!(check(&MapData::new(&root).expect("a map")), vec![]);
         let typed = or_io::meta::CMapData::from_bytes(&bytes).expect("opens typed");
         typed.to_bytes().expect("far lights that hold save");
+    }
+
+    /// ⚠ As for the far lights: a save of the typed map refuses an occlude model whose `dataSize` misses its bytes, and
+    /// this holds the two crates' sentences to one.
+    #[test]
+    fn an_occlude_model_whose_size_misses_its_bytes_is_refused_at_the_save_with_the_sentence_the_check_gives(
+    ) {
+        use crate::map_data::tests::{map_file, tree};
+        use or_io::decl::File;
+
+        let with_a_model = |stated: i64, held: usize| {
+            map_file(|root| {
+                let mut model = MetaInstance::new("Item");
+                model.set("dataSize", Value::Int(stated));
+                model.set("verts", Value::ByteArray(vec![7; held]));
+                model.set("numTris", Value::Int(1));
+                let models = vec![Value::Struct(Box::new(model))];
+                root.set("occludeModels", Value::Array(models));
+            })
+        };
+        for (stated, held, sentence) in [
+            (
+                11,
+                12,
+                "occlude model 0 states 11 bytes of `verts` (dataSize) and holds 12",
+            ),
+            (
+                12,
+                0,
+                "occlude model 0 states 12 bytes of `verts` (dataSize) and holds 0",
+            ),
+        ] {
+            let bytes = with_a_model(stated, held);
+            let root = tree(&bytes);
+            let problems = check(&MapData::new(&root).expect("a map"));
+            let said: Vec<String> = problems.iter().map(ToString::to_string).collect();
+            assert_eq!(said, [sentence]);
+            assert!(problems[0].is_of_a_record());
+
+            let typed = or_io::meta::CMapData::from_bytes(&bytes).expect("opens typed");
+            let refused = typed
+                .to_bytes()
+                .expect_err("an occlude model whose size misses its bytes is not saved");
+            assert!(matches!(refused, or_io::Error::Refused { .. }), "{refused}");
+            assert!(refused.to_string().ends_with(sentence), "{refused}");
+        }
+
+        let bytes = with_a_model(12, 12);
+        let root = tree(&bytes);
+        assert_eq!(check(&MapData::new(&root).expect("a map")), vec![]);
+        let typed = or_io::meta::CMapData::from_bytes(&bytes).expect("opens typed");
+        typed.to_bytes().expect("a model that holds saves");
     }
 
     #[test]

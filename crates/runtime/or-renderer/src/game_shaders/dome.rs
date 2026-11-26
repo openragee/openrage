@@ -447,15 +447,17 @@ impl SkyPass {
             noise.due.store(variant & 2 != 0, Ordering::Relaxed);
             noise.pass.write(queue, &values);
         }
+        // A sky whose night is GTA VI's draws its own discs.
+        let own_discs = view.is_some_and(|v| v.night.is_some());
         if let Some(sun) = &self.sun {
             let (colour, size) = sky.disc();
             let toward = sky.sun_direction();
-            let shown = colour.max_element() > 0.0 && toward.z > -SUN_BELOW;
+            let shown = !own_discs && colour.max_element() > 0.0 && toward.z > -SUN_BELOW;
             sun.write(queue, engine, sky, far, shown, (toward, size));
         }
         if let Some(moon) = &self.moon {
             let (toward, _, size, intensity) = sky.moon();
-            let shown = intensity >= 1e-4 && toward.z >= -1e-6;
+            let shown = !own_discs && intensity >= 1e-4 && toward.z >= -1e-6;
             moon.write(queue, engine, sky, far, shown, (toward, size));
         }
     }

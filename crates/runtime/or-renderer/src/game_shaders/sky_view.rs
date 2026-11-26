@@ -7,7 +7,7 @@ use glam::{Mat4, Vec3};
 
 use super::deferred::{DEPTH_STENCIL_FORMAT, HDR_FORMAT};
 use super::engine::EngineConstants;
-use super::sky_stars::{PointStars, StarsPass};
+use super::sky_stars::{DiscsPass, PointStars, StarsPass};
 
 /// How many texels the table has round the compass and from the horizon to the zenith.
 pub const AROUND: u32 = 128;
@@ -43,6 +43,8 @@ pub struct SkyMaps {
     pub airglow: Option<SkyMap>,
     /// The profile each point star is laid with.
     pub star: Option<SkyMap>,
+    /// The face of the moon: its colour, and in alpha how much of it is there.
+    pub moon: Option<SkyMap>,
 }
 
 /// Maps are read once and held: two are the same only where they are one.
@@ -71,7 +73,18 @@ pub struct Night {
     pub moon: [f32; 3],
     /// The frame's scale of every point star's size and colour, the power its profile is raised to twice, and one where they are drawn.
     pub point: [f32; 4],
+    /// What the air lets through from the camera towards a way whose up part is `(i / (AIR_SAMPLES - 1))²`.
+    pub air: [[f32; 4]; AIR_SAMPLES],
+    /// The sun's disc: its way and radius at the stars' distance (none drawn at nought), and its colour with how much its limb darkens.
+    pub sun_disc: [f32; 4],
+    pub sun_colour: [f32; 4],
+    /// The moon's disc: the way its light comes from and its radius at the stars' distance (none drawn at nought), and its colour.
+    pub moon_disc: [f32; 4],
+    pub moon_colour: [f32; 4],
 }
+
+/// How many ways up the air's transmittance is stated at.
+pub const AIR_SAMPLES: usize = 16;
 
 /// A layer of clouds marched through over the table, its light in the frame's units.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -570,6 +583,7 @@ pub struct SkyViewPass {
     maps: RefCell<Option<Arc<SkyMaps>>>,
     shown: Cell<bool>,
     stars: StarsPass,
+    discs: DiscsPass,
 }
 
 /// A one-texel map left as the device made it, all zeros.
@@ -747,6 +761,7 @@ impl SkyViewPass {
             maps: RefCell::new(None),
             shown: Cell::new(false),
             stars: StarsPass::new(device),
+            discs: DiscsPass::new(device),
         }
     }
 
@@ -814,11 +829,20 @@ impl SkyViewPass {
             view.exposure,
             (view.stars.as_ref(), profile),
         );
+        let face = view.maps.as_deref().and_then(|m| m.moon.as_ref());
+        self.discs.write(
+            queue,
+            (engine.projection, engine.view),
+            view.night.as_ref(),
+            view.exposure,
+            face,
+        );
     }
 
-    /// Add the sky into `pass`, where a frame was written with a table: the point stars first, so that the clouds in front of the sky hide them.
+    /// Add the sky into `pass`, where a frame was written with a table: the discs and the point stars first, as the build draws them, so that the clouds in front of the sky hide them.
     pub fn record(&self, pass: &mut wgpu::RenderPass<'_>) {
         if self.shown.get() {
+            self.discs.record(pass);
             self.stars.record(pass);
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &*self.bind.borrow(), &[]);

@@ -5,7 +5,6 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
 
 use glam::{Vec2, Vec3};
 use or_io::codec::texture::decode_level;
@@ -14,19 +13,21 @@ use or_io::gta6::constellations;
 use or_io::gta6::hash::name_hash64;
 use or_io::gta6::headerless::{read_dictionary, Entry};
 use or_renderer::game_shaders::sky_stars::PointStars;
-use or_renderer::game_shaders::sky_view::{Night, SkyMap, SkyMaps};
+use or_renderer::game_shaders::sky_view::{Night, SkyMap, SkyMaps, AIR_SAMPLES};
 use or_renderer::world::sky_dome::{
     self, DomeCall, PointStar, PointStarScales, SkyTunables, SkyVariables,
 };
 use or_title::gta6_day::{DayTables, Moment};
 use or_title::gta6_mount::table::entry_offset;
+use or_title::gta6_sky::Atmosphere;
 
 use super::texture::Places;
 
-/// The names of the star field, of the air's glow and of a point star's profile in the sky's dictionary.
+/// The names of the star field, of the air's glow, of a point star's profile and of the moon's face in the sky's dictionary.
 const STARS: &str = "stars";
 const AIRGLOW: &str = "airglow";
 const STAR: &str = "star";
+const MOON: &str = "moon-new";
 /// The archive and the document of the catalogue of point stars.
 const CATALOGUE_ARCHIVE: &str = "data.rpf";
 const CATALOGUE: &str = "data/effects/constellations";
@@ -34,8 +35,6 @@ const CATALOGUE: &str = "data/effects/constellations";
 /// The catalogue of each install asked for, read on a worker: `None` in the slot where it does not read.
 type Catalogue = Arc<OnceLock<Option<Arc<PointStars>>>>;
 static CATALOGUES: Mutex<Vec<(PathBuf, Catalogue)>> = Mutex::new(Vec::new());
-/// When the night was first asked for: the stars blink by the milliseconds since, as the game's clock counts them.
-static CLOCK: OnceLock<Instant> = OnceLock::new();
 /// The most a dictionary body read for its maps inflates to.
 const BODY_LIMIT: u64 = 1 << 28;
 /// The build states the air's glow in thousandths of the sky's unit.
@@ -55,6 +54,7 @@ pub(super) fn read(places: Arc<Places>) {
             stars: map(&places, STARS),
             airglow: map(&places, AIRGLOW),
             star: map(&places, STAR),
+            moon: map(&places, MOON),
         };
         let maps = super::pool::or_on_panic("the sky's maps", read, SkyMaps::default());
         tracing::info!(
@@ -218,9 +218,7 @@ fn sky_variables(own: &dyn Fn(&str, f32) -> f32) -> SkyVariables {
 pub fn night_of(tables: &DayTables, moment: &Moment, latitude: f32) -> Night {
     let own = |name: &str, default: f32| moment.own.get_or(name, default);
     let stated = |name: &str, default: f32| tables.visual_settings.get_f32(name, default);
-    let bodies = &moment.bodies;
-    // ⚠ Inferred: the galaxy lights whole where neither body does; the build weighs it by how far each is past its threshold.
-    let galaxy = f32::from(u8::from(bodies.sun_fade <= 0.0 && bodies.moon_fade <= 0.0));
+    let galaxy = moment.bodies.third_fade;
     let boost = |name: &str| (galaxy * own(name, 1.0)).max(1.0);
     let air = |colour: &str, intensity: &str| {
         let scale = own(intensity, 0.0) * boost("sky_air_glow_galaxy_light_mult") * AIR_GLOW_UNIT;
@@ -267,8 +265,49 @@ pub fn night_of(tables: &DayTables, moment: &Moment, latitude: f32) -> Night {
     let call = DomeCall::from_words(0, sky_dome::MAIN_VIEW_FLAGS);
     let scales = sky_dome::point_star_scales(&variables, &tunables, galaxy);
     let drawn = sky_dome::point_stars_drawn(&variables, call, 1);
-    let ms = CLOCK.get_or_init(Instant::now).elapsed().as_millis() as u32;
+    // The stars blink by the game's clock in milliseconds, as the build's counter counts them.
+    let ms = (or_transport::clock::game_seconds() * 1000.0) as u32;
+    let (sun, moon) = (Vec3::from(moment.sun), Vec3::from(moment.moon));
+    let block = sky_dome::fill_dome_block(
+        &variables,
+        &tunables,
+        &sky_dome::Bodies {
+            sun,
+            moon,
+            night_weight: galaxy,
+        },
+        &sky_dome::DomeView {
+            camera: Vec3::ZERO,
+            ground_height: 0.0,
+            sky: sky_dome::SkyMatrix {
+                rotation_rows: [glam::Vec4::X, glam::Vec4::Y, glam::Vec4::Z, glam::Vec4::W],
+                fourth_row: glam::Vec4::W,
+            },
+            texture_width: None,
+        },
+        call,
+        ms,
+    );
+    let atmosphere = Atmosphere::of(&moment.own);
+    let through = std::array::from_fn(|i| {
+        let up = (i as f32 / (AIR_SAMPLES - 1) as f32).powi(2);
+        let [r, g, b] = atmosphere.transmittance(up);
+        [r, g, b, 0.0]
+    });
+    let sun_disc = sky_dome::sun_disc(&variables, sun, call).map_or(0.0, |d| d.radius);
+    let moon_disc = sky_dome::moon_disc(&variables, moon, call).map_or(0.0, |d| d.radius);
+    // ⚠ A stand-in for the frame's sun colour, a member of a block not read: the sun's illuminance
+    // spread over its disc as its darkened limb leaves it, the disc's mean being 0.2 + 0.8 x 2/3.
+    let angle = sky_dome::disc_angular_radius(variables.sun_size);
+    let spread = std::f32::consts::TAU * (1.0 - angle.cos()) * (0.2 + block.row_190 * 2.0 / 3.0);
+    let sun_light = block.row_194 * moment.light.sun_illuminance / spread.max(1e-9);
+    let moon_colour = block.moon_colour * block.row_164;
     Night {
+        air: through,
+        sun_disc: sun.extend(sun_disc).to_array(),
+        sun_colour: [sun_light, sun_light, sun_light, block.row_190],
+        moon_disc: block.moon_lit_direction.extend(moon_disc).to_array(),
+        moon_colour: moon_colour.extend(0.0).to_array(),
         fill,
         glow: air("sky_air_glow_color", "sky_air_glow_intensity"),
         cloud: kind("cloud", (0.03, 0.03, 4.0)),

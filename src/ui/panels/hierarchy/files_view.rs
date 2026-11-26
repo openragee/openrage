@@ -435,10 +435,8 @@ fn status_line(ui: &mut egui::Ui, state: &mut AppState, listing: &Listing) {
     let (selected, chosen_bytes, total_bytes) =
         match state.document(listing.doc).map(|d| &d.payload) {
             Some(DocPayload::Rpf(rpf)) => {
-                let size = |id: &RpfNodeId| match rpf.session.node(*id) {
-                    Some(node) if !node.is_dir() => rpf.session.size_for(*id).unwrap_or(0),
-                    _ => 0,
-                };
+                let size =
+                    |id: &RpfNodeId| crate::state::files_view::listed_bytes(&rpf.session, *id);
                 let selected: Vec<RpfNodeId> = state
                     .selection
                     .selected_ids(listing.doc)

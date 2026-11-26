@@ -1154,8 +1154,19 @@ fn gta6_xml(bytes: &[u8]) -> Result<(MetaInstance, Option<String>), String> {
 fn print_gta6_xml(name: &str, bytes: &[u8]) -> Result<(), String> {
     let (instance, untyped) = gta6_xml(bytes)?;
     let (typed, kept) = or_io::meta::instance::parser::member_counts(&instance);
+    let label = "XML, GTA VI's library";
+    // A document no structure and no schemaless tree holds is one element kept whole.
+    if let (Some(missing), Some(root)) = (&untyped, kept_whole_root(&instance)) {
+        println!("{name}");
+        println!("  container    {label}  ({} bytes)", bytes.len());
+        println!("  root element {root}");
+        println!(
+            "  untyped      the whole document, kept as text: GTA VI's library holds no structure {missing}"
+        );
+        return Ok(());
+    }
     let document = (instance, None, Diagnostics::lenient());
-    print_document(name, "XML, GTA VI's library", bytes.len(), &document);
+    print_document(name, label, bytes.len(), &document);
     match untyped {
         Some(missing) => println!(
             "  untyped      the whole document: GTA VI's library holds no structure {missing}"
@@ -1163,6 +1174,16 @@ fn print_gta6_xml(name: &str, bytes: &[u8]) -> Result<(), String> {
         None => println!("  members      {typed} typed, {kept} untyped and kept as text"),
     }
     Ok(())
+}
+
+/// The root element's tag of a document kept whole: no type, no member, one element.
+fn kept_whole_root(instance: &MetaInstance) -> Option<&str> {
+    match instance.extras.as_slice() {
+        [root] if instance.type_name.is_empty() && instance.fields.is_empty() => {
+            Some(root.tag.as_str())
+        }
+        _ => None,
+    }
 }
 
 /// The user's configuration directory, where the keys cache lives.
@@ -1464,6 +1485,20 @@ mod tests {
         assert!(opts.gta6);
         assert_eq!(opts.input.as_deref(), Some(Path::new("a.xml")));
         assert!(!Options::parse(&["a.xml".into()]).expect("parses").gta6);
+    }
+
+    /// A document neither a structure nor the schemaless tree holds is named by its root element.
+    #[test]
+    fn a_gta6_document_kept_whole_is_named_by_its_root_element() {
+        let library = or_io::meta::SchemaLibrary::default();
+        let read = |xml: &str| {
+            or_io::meta::instance::parser::parse_typed_or_tree(&library, xml.as_bytes())
+                .expect("it opens")
+                .0
+        };
+        let whole = read("<zq_cycle_data version=\"2\"><a>1</a></zq_cycle_data>");
+        assert_eq!(kept_whole_root(&whole), Some("zq_cycle_data"));
+        assert_eq!(kept_whole_root(&read("<ZqTree><a>1</a></ZqTree>")), None);
     }
 
     /// The reader spells an unnamed root `hash_HHHHHHHH` and a named one with

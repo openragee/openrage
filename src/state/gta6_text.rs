@@ -20,6 +20,8 @@ pub struct Gta6TextDocument {
     pub rows: Vec<(usize, Option<usize>)>,
     /// Whether a text was taken to be changed since the table was read.
     pub edited: bool,
+    /// The virtual section the table was read from, which a save writes over.
+    pub section: Vec<u8>,
 }
 
 impl Gta6TextDocument {
@@ -40,7 +42,22 @@ impl Gta6TextDocument {
             table,
             rows,
             edited: false,
+            section: virtual_section.to_vec(),
         })
+    }
+
+    /// The table over the section it was read from, at its length; else laid out again, and why.
+    pub fn written(&self) -> Result<(Vec<u8>, Option<String>), String> {
+        let why = match self.table.to_section_over(&self.section) {
+            Ok(section) => return Ok((section, None)),
+            Err(why) => why.to_string(),
+        };
+        let section = self.table.to_section().map_err(|e| e.to_string())?;
+        let said = tr!(
+            "The text table is laid out again at another length ({reason}), so a save into its archive writes a rebuilt archive, which the game refuses because only its maker can sign the table.",
+            reason = why
+        );
+        Ok((section, Some(said)))
     }
 
     /// The key and text of row `row`.
@@ -68,7 +85,7 @@ impl Gta6TextDocument {
 
     pub fn held_bytes(&self) -> usize {
         let texts: usize = self.table.texts().map(|(_, t)| t.len()).sum();
-        texts + self.rows.len() * std::mem::size_of::<(usize, Option<usize>)>()
+        texts + self.section.len() + self.rows.len() * std::mem::size_of::<(usize, Option<usize>)>()
     }
 
     /// The table's plain texts as GTA V's text table; refused while it holds grammatical variants,
@@ -95,15 +112,19 @@ impl Gta6TextDocument {
     }
 }
 
-/// The text table row's `edited_sections`: the table as one page, once a text was changed.
+/// The text table row's `edited_sections`: the table over its own section, once a text was changed.
 pub(super) fn edited_sections(payload: &DocPayload) -> Option<Result<Rpf9Sections, String>> {
     let DocPayload::Gta6Text(doc) = payload else {
         return None;
     };
     doc.edited.then(|| {
+        let (virtual_section, rebuilt) = doc.written()?;
+        if let Some(said) = rebuilt {
+            tracing::info!("{said}");
+        }
         Ok(Rpf9Sections {
             form: Rpf9Form::BlockMapped,
-            virtual_section: doc.table.to_section().map_err(|e| e.to_string())?,
+            virtual_section,
             physical: Vec::new(),
         })
     })
@@ -235,6 +256,35 @@ mod tests {
         *doc.text_mut(0).expect("a text") = "holds a \0 NUL".into();
         let refused = edited_sections(&payload(&doc)).expect("edited");
         assert!(refused.expect_err("refused").contains("NUL"));
+    }
+
+    #[test]
+    fn a_same_length_edit_saves_at_the_section_s_length_and_a_longer_one_is_laid_out_again() {
+        let section = table(true).to_section().expect("written");
+        let payload = |doc: &Gta6TextDocument| DocPayload::Gta6Text(Box::new(doc.clone()));
+        let mut doc = Gta6TextDocument::open(&section).expect("it opens");
+        *doc.text_mut(1).expect("a text") = "anOther line".into();
+        let (same, said) = doc.written().expect("written");
+        assert_eq!(said, None, "nothing is laid out again");
+        assert_eq!(same.len(), section.len());
+        assert_ne!(same, section);
+        let sections = edited_sections(&payload(&doc))
+            .expect("edited")
+            .expect("written");
+        assert_eq!(sections.virtual_section, same);
+        let again = Gta6TextDocument::open(&same).expect("it opens");
+        assert_eq!(again.row(1), Some((0x182, None, "anOther line")));
+
+        *doc.text_mut(1).expect("a text") = "a line longer than the one it was".into();
+        let (longer, said) = doc.written().expect("written");
+        assert_ne!(longer.len(), section.len());
+        let said = said.expect("it says why");
+        assert!(said.contains("rebuilt archive"), "{said}");
+        let again = Gta6TextDocument::open(&longer).expect("it opens");
+        assert_eq!(
+            again.row(1),
+            Some((0x182, None, "a line longer than the one it was"))
+        );
     }
 
     fn finished(state: &mut crate::state::AppState) {

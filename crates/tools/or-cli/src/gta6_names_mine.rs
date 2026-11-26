@@ -1,7 +1,8 @@
 //! `hashes mine`: names for the hashes of a GTA VI install that no table names. Candidates are the
-//! strings the install's bodies and the user's executable state, and what rules make of the names
-//! already resolved; a candidate is kept only where its hash equals an unresolved one, and the
-//! matches go to the user's file as `0xHASH<TAB>name`, the rows `NameResolver` and `ParserNames` read.
+//! strings the install's bodies, the user's executable and the user's lifted script listings
+//! state, and what rules make of the names already resolved; a candidate is kept only where its
+//! hash equals an unresolved one, and the matches go to the user's file as `0xHASH<TAB>name`, the
+//! rows `NameResolver` and `ParserNames` read.
 
 use std::cell::Cell;
 use std::collections::hash_map::RandomState;
@@ -17,8 +18,9 @@ use or_job::Cancel;
 
 use super::census_cap::{Cap, CapUnit};
 use super::gta6_hashes::{read_row, row_size};
-use or_io::gta6::hash::{name_hash32, name_hash64};
+use or_io::gta6::hash::{name_hash32, name_hash64, NameHasher};
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
+use or_io::gta6::script::native_addresses::LISTING_SUFFIX;
 use or_io::meta::binary::layout::ContainerLayout;
 use or_io::meta::binary::pso::schema::{PsoSchemaItem, ARRAY_INFO_NAME_HASH};
 use or_io::meta::binary::pso::string_names::document_strings;
@@ -29,12 +31,15 @@ use or_io::meta::schema::SchemaLibrary;
 use or_io::{literal_string_hash, string_hash};
 
 const USAGE: &str = "\
-usage: openrage-cli hashes mine <install-folder | archive.rpf> --out <file> [--names <dir>] [--keys <snapshot>] [--exe <exe>] [--range <count>] [--max-bodies <n>|unlimited]
+usage: openrage-cli hashes mine <install-folder | archive.rpf> --out <file> [--names <dir>] [--keys <snapshot>] [--exe <exe>] [--listings <dir>] [--range <count>] [--max-bodies <n>|unlimited] [--max-total <n>|unlimited]
   Writes the names it finds to <file> as 0xHASH<TAB>name rows, after each archive as it goes;
   rows already in <file> are kept. Name the file resolved-names.tsv in the folder --names or
   OPENRAGE_GTA6_NAMES reads, and the explorer and the metadata reader take its names. No archive
   is written.
-  --max-bodies <n>   read at most <n> bodies in each of its two walks (default 200000)";
+  --listings <dir>   also try the string literals of the lifted script listings in <dir>
+                     (else OPENRAGE_LIFTED_LISTINGS)
+  --max-bodies <n>   read at most <n> bodies of each archive in each walk (default 50000)
+  --max-total <n>    read at most <n> bodies of the whole install in each walk (default unlimited)";
 
 const MIN_CANDIDATE: usize = 3;
 const MAX_CANDIDATE: usize = 160;
@@ -45,11 +50,11 @@ const MAX_BODY: u64 = 64 << 20;
 /// The bytes of a body whose strings are taken.
 const BODY_PREFIX: usize = 16 << 20;
 const MAX_DEPTH: usize = 8;
-/// The directory-and-stem joins tried in one table at most.
-const JOIN_CAP: usize = 2_000_000;
+/// The directory-and-stem joins tried in one table at most; a join hashes only its last component.
+const JOIN_CAP: usize = 1 << 31;
 /// The last components one table's bodies give that are held for its joins at most.
 // ponytail: a table past this joins only the ones met first; the report counts the rest dropped.
-const BASENAME_CAP: usize = 1 << 18;
+const BASENAME_CAP: usize = 1 << 21;
 const EXE_WINDOW: u64 = 16 << 20;
 /// The bytes one executable window carries into the next, so a string across the edge is whole once.
 const EXE_OVERLAP: usize = 256;
@@ -63,7 +68,14 @@ const SCHEMA_BODY: u64 = 4 << 20;
 /// The candidate hashes held to skip a repeated try; cleared past this, as a repeat is cheap.
 const SEEN_CAP: usize = 1 << 22;
 const BODIES_FLAG: &str = "--max-bodies";
-const DEFAULT_BODIES: u64 = 200_000;
+/// The bodies each walk reads of one archive by default, so that every archive is sampled.
+const DEFAULT_BODIES: u64 = 50_000;
+const TOTAL_FLAG: &str = "--max-total";
+const LISTINGS_ENV: &str = "OPENRAGE_LIFTED_LISTINGS";
+/// The twins whose names the twin rule tries for one unnamed archive, the most rows shared first.
+const TWINS: usize = 3;
+/// The longest ending after a `_` the twin rule spells out letter by letter.
+const SHORT_ENDING: usize = 3;
 /// The candidates the nested-archive rule tries for one unnamed archive at most.
 // ponytail: a table with many named directories joins only the ones met first; the report counts
 // the archives cut short.
@@ -91,7 +103,19 @@ enum Source {
     #[default]
     Install,
     Executable,
+    Listings,
     Rules,
+}
+
+/// What one archive gave: the bodies each walk read of it and the rows its string walk made.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ArchiveRead {
+    schema_bodies: u64,
+    string_bodies: u64,
+    rows: usize,
+    /// Whether the per-archive ceiling stopped each walk with a body of it still unread.
+    schema_short: bool,
+    string_short: bool,
 }
 
 /// The unresolved hashes of an install, the candidates tried against them and what matched.
@@ -140,6 +164,8 @@ struct Miner {
     named64: HashMap<u64, String>,
     /// The unnamed nested archives whose candidates ran past [`NESTED_CAP`].
     nested_capped: HashSet<u64>,
+    /// Each archive walked, in walk order.
+    archives: Vec<ArchiveRead>,
 }
 
 impl Miner {
@@ -263,6 +289,82 @@ impl Miner {
         self.source = was;
     }
 
+    /// Tries each unnamed nested archive as the name of a named one whose rows it shares, the most
+    /// rows shared first, with each ending of a `_` and up to [`SHORT_ENDING`] letters or digits.
+    fn twin_rules(&mut self) {
+        let mut holders: HashMap<u64, Vec<usize>> = HashMap::new();
+        for (at, table) in self.tree.iter().enumerate() {
+            if table.from.is_some_and(|from| self.name64(from).is_some()) {
+                for &row in table.rows.iter().filter(|&&row| row != 0) {
+                    holders.entry(row).or_default().push(at);
+                }
+            }
+        }
+        let endings = short_endings();
+        let was = std::mem::replace(&mut self.source, Source::Rules);
+        for at in 0..self.tree.len() {
+            let Some(from) = (self.tree[at].from)
+                .filter(|from| self.entry.contains_key(from) && !self.found64.contains_key(from))
+            else {
+                continue;
+            };
+            let mut shared: HashMap<usize, usize> = HashMap::new();
+            for row in &self.tree[at].rows {
+                for &twin in holders.get(row).into_iter().flatten() {
+                    *shared.entry(twin).or_default() += 1;
+                }
+            }
+            let mut twins: Vec<(usize, usize)> = shared.into_iter().collect();
+            twins.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            'twins: for (twin, _) in twins.into_iter().take(TWINS) {
+                let Some(name) = (self.tree[twin].from).and_then(|f| self.name64(f)) else {
+                    continue;
+                };
+                let name = name.to_ascii_lowercase();
+                let state = NameHasher::default().with(name.as_bytes());
+                for end in &endings {
+                    if state.with(end.as_bytes()).finish() == from {
+                        self.try_entry(&format!("{name}{end}"));
+                        break 'twins;
+                    }
+                }
+            }
+        }
+        self.source = was;
+    }
+
+    /// Joins each directory of `dirs` with each of `basenames`, whole and without its extension,
+    /// through one hash state per directory; a join is spelled out only where its hash is an
+    /// unresolved entry's.
+    fn join(&mut self, dirs: &BTreeSet<String>, basenames: &BTreeSet<String>) {
+        let was = std::mem::replace(&mut self.source, Source::Rules);
+        let mut budget = JOIN_CAP;
+        for dir in dirs {
+            let state = NameHasher::default().with(dir.as_bytes());
+            for base in basenames {
+                if budget == 0 {
+                    self.joins_skipped += 1;
+                    continue;
+                }
+                budget -= 1;
+                let stem = stem_of(base);
+                let at_stem = state.with(stem.as_bytes());
+                self.try_joined(dir, stem, at_stem.finish());
+                if stem.len() < base.len() {
+                    let whole = at_stem.with(&base.as_bytes()[stem.len()..]);
+                    self.try_joined(dir, base, whole.finish());
+                }
+            }
+        }
+        self.source = was;
+    }
+
+    fn try_joined(&mut self, dir: &str, base: &str, hash: u64) {
+        if self.entry.contains_key(&hash) && !self.found64.contains_key(&hash) {
+            self.try_entry(&format!("{dir}{base}"));
+        }
+    }
+
     /// Mines the bodies of one table, then joins the directories its names hold with the last
     /// component of each string they state.
     fn mine_table<B: AsRef<[u8]>>(
@@ -283,19 +385,7 @@ impl Miner {
         let dirs: BTreeSet<String> = (named.iter().chain(&found))
             .filter_map(|name| name.rfind('/').map(|at| name[..=at].to_ascii_lowercase()))
             .collect();
-        let was = std::mem::replace(&mut self.source, Source::Rules);
-        let mut budget = JOIN_CAP;
-        for dir in &dirs {
-            for base in &basenames {
-                if budget == 0 {
-                    self.joins_skipped += 1;
-                    continue;
-                }
-                budget -= 1;
-                self.try_name(&format!("{dir}{base}"));
-            }
-        }
-        self.source = was;
+        self.join(&dirs, &basenames);
     }
 
     fn body(&mut self, bytes: &[u8], keys: Option<&GtaViKeys>, basenames: &mut BTreeSet<String>) {
@@ -397,6 +487,27 @@ impl Miner {
         Ok(())
     }
 
+    /// The string literals of the lifted script listings in `folder`, which name the streams,
+    /// movies and documents the scripts load; how many listings were read.
+    fn mine_listings(&mut self, folder: &Path) -> std::io::Result<usize> {
+        let is_listing = |path: &Path| {
+            let name = path.file_name().and_then(|n| n.to_str());
+            path.is_file() && name.is_some_and(|n| n.ends_with(LISTING_SUFFIX))
+        };
+        let listed = std::fs::read_dir(folder)?.flatten().map(|e| e.path());
+        let mut paths: Vec<PathBuf> = listed.filter(|p| is_listing(p)).collect();
+        paths.sort();
+        self.source = Source::Listings;
+        for path in &paths {
+            let text = std::fs::read(path)?;
+            for literal in string_literals(&text) {
+                self.consider(literal, None);
+            }
+        }
+        self.source = Source::Install;
+        Ok(paths.len())
+    }
+
     fn try_name(&mut self, name: &str) {
         if self.seen.len() >= SEEN_CAP {
             self.seen.clear();
@@ -489,6 +600,7 @@ impl Miner {
                 }
             }
             self.nested_rules();
+            self.twin_rules();
             work = self.order[mark..].to_vec();
             if work.is_empty() {
                 break;
@@ -502,9 +614,11 @@ impl Miner {
         let by = |space, source| self.by.get(&(space, source)).copied().unwrap_or(0);
         let sources = |space| {
             format!(
-                "{} from the install's strings, {} from the executable, {} by the rules",
+                "{} from the install's strings, {} from the executable, {} from the script \
+                 listings, {} by the rules",
                 by(space, Source::Install),
                 by(space, Source::Executable),
+                by(space, Source::Listings),
                 by(space, Source::Rules)
             )
         };
@@ -563,6 +677,54 @@ impl Miner {
                 "  schemas       {} PSO bodies whose schema did not read",
                 self.schemas_unread
             ));
+        }
+        lines
+    }
+
+    /// A line per archive of `paths`, named from `install`, with what each walk read of it, then
+    /// a line for each walk that one of `bounds`' ceilings stopped short.
+    fn walk_lines(&self, paths: &[PathBuf], install: &Path, bounds: &Bounds<'_>) -> Vec<String> {
+        let mut lines = Vec::new();
+        for (path, read) in paths.iter().zip(&self.archives) {
+            let name = path.strip_prefix(install).unwrap_or(path);
+            let short = read.schema_short || read.string_short;
+            lines.push(format!(
+                "  archive       {}: {} bodies read for their schemas, {} for their strings, {} \
+                 names found{}",
+                name.display(),
+                read.schema_bodies,
+                read.string_bodies,
+                read.rows,
+                if short {
+                    "; stopped at the ceiling"
+                } else {
+                    ""
+                }
+            ));
+        }
+        let schema: Vec<(u64, bool)> = (self.archives.iter())
+            .map(|a| (a.schema_bodies, a.schema_short))
+            .collect();
+        let string: Vec<(u64, bool)> = (self.archives.iter())
+            .map(|a| (a.string_bodies, a.string_short))
+            .collect();
+        let walks = [
+            ("schema walk", schema, self.schema_bodies),
+            ("string walk", string, self.bodies as u64),
+        ];
+        for (walk, each, all) in walks {
+            let stopped = each.iter().filter(|(_, short)| *short).count();
+            let most = (each.iter().filter(|(_, short)| *short))
+                .map(|(n, _)| *n)
+                .max();
+            let note = most.and_then(|n| bounds.bodies.note(n, BODIES_FLAG));
+            if let Some(note) = note {
+                let of = each.len();
+                lines.push(format!("  {walk}   {stopped} of {of} archives: {note}"));
+            }
+            if let Some(note) = bounds.total.note(all, TOTAL_FLAG) {
+                lines.push(format!("  {walk}   {note}"));
+            }
         }
         lines
     }
@@ -733,6 +895,43 @@ fn shared_stems<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
 fn dir_stem(dir: &str) -> Option<&str> {
     let dir = dir.strip_suffix('/')?;
     Some(&dir[dir.rfind('/').map_or(0, |at| at + 1)..]).filter(|last| !last.is_empty())
+}
+
+/// What each `"…"` of `text` holds; a `\` keeps the byte after it inside, and a literal ends at
+/// the end of its line, so one quote out of place spoils one line.
+fn string_literals(text: &[u8]) -> Vec<&[u8]> {
+    let mut literals = Vec::new();
+    let mut at = 0;
+    while let Some(open) = text[at..].iter().position(|&b| b == b'"') {
+        let start = at + open + 1;
+        let mut end = start;
+        while end < text.len() && !matches!(text[end], b'"' | b'\n') {
+            // ⚠ A `\` at a line's end keeps nothing: the line end still closes the literal.
+            let escapes = text[end] == b'\\' && text.get(end + 1) != Some(&b'\n');
+            end += if escapes { 2 } else { 1 };
+        }
+        let end = end.min(text.len());
+        literals.push(&text[start..end]);
+        at = (end + 1).min(text.len());
+    }
+    literals
+}
+
+/// Every `_` followed by one to [`SHORT_ENDING`] lower-case letters or digits, the shortest first.
+fn short_endings() -> Vec<String> {
+    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let (mut endings, mut longest) = (Vec::new(), vec!["_".to_string()]);
+    for _ in 0..SHORT_ENDING {
+        longest = (longest.iter())
+            .flat_map(|head| {
+                ALPHABET
+                    .iter()
+                    .map(move |&b| format!("{head}{}", char::from(b)))
+            })
+            .collect();
+        endings.extend(longest.iter().cloned());
+    }
+    endings
 }
 
 /// Where a table sits in the walk: its depth, and the 64-bit name of the row it was opened from.
@@ -970,18 +1169,26 @@ struct Options {
     names: Option<PathBuf>,
     keys: Option<PathBuf>,
     exe: Option<PathBuf>,
+    listings: Option<PathBuf>,
     range: u32,
     bodies: Cap,
+    total: Cap,
 }
 
 fn parse(args: &[String]) -> Result<Options, String> {
     let (mut install, mut out, mut names, mut keys, mut exe) = (None, None, None, None, None);
+    let mut listings = None;
     let mut range = DEFAULT_RANGE;
     let mut bodies = Cap::new(DEFAULT_BODIES, CapUnit::Count("bodies"));
+    let mut total = Cap::new(0, CapUnit::Count("bodies")).lifted();
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         if let Some(v) = arg.strip_prefix("--max-bodies=") {
             bodies = bodies.parse(BODIES_FLAG, v)?;
+            continue;
+        }
+        if let Some(v) = arg.strip_prefix("--max-total=") {
+            total = total.parse(TOTAL_FLAG, v)?;
             continue;
         }
         let mut value = |what: &str| {
@@ -992,9 +1199,14 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--names" => names = Some(value("a folder")?),
             "--keys" => keys = Some(value("a snapshot file")?),
             "--exe" => exe = Some(value("the executable")?),
+            "--listings" => listings = Some(value("a folder")?),
             BODIES_FLAG => {
                 let v = value("a count")?;
                 bodies = bodies.parse(BODIES_FLAG, &v.to_string_lossy())?;
+            }
+            TOTAL_FLAG => {
+                let v = value("a count")?;
+                total = total.parse(TOTAL_FLAG, &v.to_string_lossy())?;
             }
             "--range" => {
                 let count = value("a count")?;
@@ -1015,15 +1227,18 @@ fn parse(args: &[String]) -> Result<Options, String> {
         names,
         keys,
         exe,
+        listings,
         range,
         bodies,
+        total,
     })
 }
 
-/// How far the walk reads: the bodies each walk may read, the flag Ctrl-C sets, and the count of
-/// bodies held at once.
+/// How far the walk reads: the bodies each walk may read of one archive and of the install, the
+/// flag Ctrl-C sets, and the count of bodies held at once.
 struct Bounds<'a> {
     bodies: Cap,
+    total: Cap,
     cancel: &'a Cancel,
     holding: Holding,
 }
@@ -1032,9 +1247,15 @@ impl<'a> Bounds<'a> {
     fn new(bodies: Cap, cancel: &'a Cancel) -> Self {
         Self {
             bodies,
+            total: Cap::new(0, CapUnit::Count("bodies")).lifted(),
             cancel,
             holding: Holding::default(),
         }
+    }
+
+    /// Whether a walk that has read `read` bodies, `since` of them before this archive, stops.
+    fn stops(&self, read: u64, since: u64) -> bool {
+        self.cancel.is_set() || self.bodies.reached(read - since) || self.total.reached(read)
     }
 }
 
@@ -1051,15 +1272,19 @@ fn mine_archives(
     out: &mut dyn Write,
 ) -> std::io::Result<usize> {
     let (mut refused, total) = (0, archives.len());
+    let first = miner.archives.len();
     for (i, path) in archives.iter().enumerate() {
         eprintln!("  schemas [{}/{total}] {}", i + 1, path.display());
+        let since = miner.schema_bodies;
+        let mut short = false;
         walk_archive(path, keys, &mut refused, &mut |file, mount, leaves, at| {
             let entries = &mount.archive.entries;
             miner.place(at, entries);
             miner.add_table(entries, resolver);
             for &at in leaves {
                 let entry = &entries[at];
-                if bounds.cancel.is_set() || bounds.bodies.reached(miner.schema_bodies) {
+                if bounds.stops(miner.schema_bodies, since) {
+                    short |= bounds.bodies.reached(miner.schema_bodies - since);
                     break;
                 }
                 if stated_size(mount, entry).is_some_and(|n| n > SCHEMA_BODY) {
@@ -1074,9 +1299,18 @@ fn mine_archives(
                 }
             }
         });
+        let read = miner.schema_bodies - since;
+        miner.archives.push(ArchiveRead {
+            schema_bodies: read,
+            schema_short: short,
+            ..ArchiveRead::default()
+        });
+        eprintln!("  schemas [{}/{total}] {read} bodies read", i + 1);
     }
     for (i, path) in archives.iter().enumerate() {
         eprintln!("  strings [{}/{total}] {}", i + 1, path.display());
+        let (since, rows) = (miner.bodies as u64, miner.rows);
+        let mut short = false;
         walk_archive(path, keys, &mut 0, &mut |file, mount, leaves, _| {
             let entries = &mount.archive.entries;
             let named: Vec<String> = (entries.iter())
@@ -1085,7 +1319,8 @@ fn mine_archives(
             let (mut skipped, mut taken) = (0, miner.bodies as u64);
             let holding = &bounds.holding;
             let bodies = leaves.iter().filter_map(|&at| {
-                if bounds.cancel.is_set() || bounds.bodies.reached(taken) {
+                if bounds.stops(taken, since) {
+                    short |= bounds.bodies.reached(taken - since);
                     return None;
                 }
                 let body = read_body(&mut *file, mount, &entries[at], keys, holding);
@@ -1097,11 +1332,15 @@ fn mine_archives(
             miner.skipped += skipped;
         });
         flush_rows(miner, out)?;
+        let read = &mut miner.archives[first + i];
+        read.string_bodies = miner.bodies as u64 - since;
+        read.rows = miner.rows - rows;
+        read.string_short = short;
         eprintln!(
-            "  strings [{}/{total}] {} bodies read so far, {} rows found",
+            "  strings [{}/{total}] {} bodies read, {} names found",
             i + 1,
-            miner.bodies,
-            miner.rows
+            read.string_bodies,
+            read.rows
         );
     }
     Ok(refused)
@@ -1136,7 +1375,8 @@ fn mine(options: &Options) -> Result<Vec<String>, String> {
         }
     }
     let cancel = super::jobs::on_interrupt();
-    let bounds = Bounds::new(options.bodies, &cancel);
+    let mut bounds = Bounds::new(options.bodies, &cancel);
+    bounds.total = options.total;
     let unwritten = |e: std::io::Error| format!("{}: {e}", options.out.display());
     // The rows are written beside the output as they are found, so a run that stops keeps them
     // there and leaves the output whole; they are joined to it under its lock at the end.
@@ -1154,6 +1394,14 @@ fn mine(options: &Options) -> Result<Vec<String>, String> {
         miner
             .mine_exe(exe)
             .map_err(|e| format!("{}: {e}", exe.display()))?;
+    }
+    let listings =
+        (options.listings.clone()).or_else(|| std::env::var_os(LISTINGS_ENV).map(PathBuf::from));
+    let mut listings_read = None;
+    if let Some(folder) = listings.as_ref().filter(|_| !cancel.is_set()) {
+        let read =
+            (miner.mine_listings(folder)).map_err(|e| format!("{}: {e}", folder.display()))?;
+        listings_read = Some(read);
     }
     flush_rows(&mut miner, &mut out).map_err(unwritten)?;
     miner.rules(seeds32, options.range);
@@ -1180,10 +1428,13 @@ fn mine(options: &Options) -> Result<Vec<String>, String> {
             "  executable    none read: pass --exe or set {GTA6_EXE_ENV}"
         ));
     }
-    let schemas = options.bodies.note(miner.schema_bodies, BODIES_FLAG);
-    lines.extend(schemas.map(|note| format!("  schema walk   {note}")));
-    let strings = options.bodies.note(miner.bodies as u64, BODIES_FLAG);
-    lines.extend(strings.map(|note| format!("  string walk   {note}")));
+    lines.push(match (&listings, listings_read) {
+        (Some(folder), Some(read)) => {
+            format!("  listings      {read} read from {}", folder.display())
+        }
+        _ => format!("  listings      none read: pass --listings or set {LISTINGS_ENV}"),
+    });
+    lines.extend(miner.walk_lines(&archives, &options.install, &bounds));
     lines.push(format!(
         "  written       {}: {found} rows found, after the rows it held; no archive is written",
         options.out.display()
@@ -1315,7 +1566,7 @@ mod tests {
         assert_eq!(miner.by.get(&(Space::Entry, Source::Install)), Some(&1));
         assert_eq!(miner.by.get(&(Space::Entry, Source::Rules)), Some(&2));
         let lines = miner.lines(0);
-        assert!(lines[1].contains("3 of 5 unresolved 64-bit names: 1 from the install's strings, 0 from the executable, 2 by the rules"), "{lines:?}");
+        assert!(lines[1].contains("3 of 5 unresolved 64-bit names: 1 from the install's strings, 0 from the executable, 0 from the script listings, 2 by the rules"), "{lines:?}");
     }
 
     /// The walk over an archive enciphered under a synthetic key: a parent table whose one named
@@ -1454,15 +1705,17 @@ mod tests {
         };
         let keys = GtaViKeys::from_file(&snapshot).expect("the key snapshot parses");
         let size = |p: &PathBuf| std::fs::metadata(p).map_or(u64::MAX, |m| m.len());
-        let smallest = archives(&build).into_iter().min_by_key(size);
-        let smallest = smallest.expect("the build holds an archive");
+        let mut smallest = archives(&build);
+        smallest.sort_by_key(size);
+        smallest.truncate(3);
+        assert_eq!(smallest.len(), 3, "the build holds three archives");
 
         let mut miner = Miner::new();
         let cancel = Cancel::new();
         let bounds = Bounds::new(Cap::at(CEILING, CapUnit::Count("bodies")), &cancel);
         let refused = mine_archives(
             &mut miner,
-            &[smallest],
+            &smallest,
             &keys,
             &NameResolver::new(),
             &bounds,
@@ -1470,7 +1723,15 @@ mod tests {
         )
         .expect("the rows are written");
         assert!(miner.tables > 0, "{refused} tables refused");
-        assert!(miner.schema_bodies <= CEILING && miner.bodies as u64 <= CEILING);
+        assert_eq!(miner.archives.len(), 3, "a record per archive");
+        for read in &miner.archives {
+            assert!(read.schema_bodies <= CEILING && read.string_bodies <= CEILING);
+        }
+        let each: u64 = miner.archives.iter().map(|a| a.string_bodies).sum();
+        assert_eq!(
+            each, miner.bodies as u64,
+            "the archives' bodies add up to the walk's"
+        );
         assert!(bounds.holding.peak.get() <= 1, "one body held at a time");
     }
 
@@ -1784,5 +2045,303 @@ mod tests {
         std::fs::write(&out, &latest).expect("concurrent cache update");
         write_rows(&out, &snapshot, "").expect("merge mining output");
         assert_eq!(std::fs::read_to_string(out).expect("read"), latest);
+    }
+
+    /// Three archives of four bodies each, each body stating its own path: the ceiling is per
+    /// archive, so every archive is read up to it, and the overall ceiling stops the walk early.
+    #[test]
+    fn the_per_archive_ceiling_reads_from_every_archive_and_the_total_stops_the_walk() {
+        let keys = fixture::keys();
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        for archive in ["a", "b", "c"] {
+            let paths: Vec<String> = (0..4).map(|i| format!("zq/{archive}/body_{i}")).collect();
+            let entries: Vec<(&str, Body)> = (paths.iter())
+                .map(|path| (path.as_str(), Body::Zlib(fixture::pso(path))))
+                .collect();
+            let bytes = fixture::archive(&entries);
+            std::fs::write(dir.path().join(format!("{archive}.rpf")), bytes).expect("written");
+        }
+        let paths = archives(dir.path());
+        let resolver = NameResolver::new();
+        let read = |bodies: Cap, total: Cap| {
+            let mut miner = Miner::new();
+            let cancel = Cancel::new();
+            let mut bounds = Bounds::new(bodies, &cancel);
+            bounds.total = total;
+            mine_archives(
+                &mut miner,
+                &paths,
+                &keys,
+                &resolver,
+                &bounds,
+                &mut std::io::sink(),
+            )
+            .expect("the rows are written");
+            let lines = miner.walk_lines(&paths, dir.path(), &bounds);
+            (miner.archives, lines)
+        };
+        let unlimited = Cap::at(1, CapUnit::Count("bodies")).lifted();
+        let two = Cap::at(2, CapUnit::Count("bodies"));
+        let (each, lines) = read(two, unlimited);
+        let reads: Vec<(u64, u64)> = each
+            .iter()
+            .map(|a| (a.schema_bodies, a.string_bodies))
+            .collect();
+        assert_eq!(
+            reads,
+            [(2, 2); 3],
+            "every archive is read up to its ceiling"
+        );
+        assert!(
+            each.iter().all(|a| a.rows == 2),
+            "each body read names itself"
+        );
+        assert_eq!(lines.len(), 5, "{lines:?}");
+        assert_eq!(lines[0], "  archive       a.rpf: 2 bodies read for their schemas, 2 for their strings, 2 names found; stopped at the ceiling");
+        assert!(
+            lines[3].starts_with("  schema walk   3 of 3 archives: STOPPED SHORT at 2 bodies"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[4].starts_with("  string walk   3 of 3 archives: STOPPED SHORT"),
+            "{lines:?}"
+        );
+
+        let (each, lines) = read(unlimited, unlimited);
+        assert!(each
+            .iter()
+            .all(|a| (a.schema_bodies, a.string_bodies, a.rows) == (4, 4, 4)));
+        assert_eq!(lines.len(), 3, "nothing stopped short: {lines:?}");
+
+        // A ceiling of exactly an archive's bodies reads them all, so nothing is said to stop.
+        let (each, lines) = read(Cap::at(4, CapUnit::Count("bodies")), unlimited);
+        assert!(each
+            .iter()
+            .all(|a| (a.schema_bodies, a.string_bodies) == (4, 4)));
+        assert_eq!(
+            lines.len(),
+            3,
+            "a ceiling every body fits stops nothing: {lines:?}"
+        );
+
+        let (each, lines) = read(unlimited, Cap::at(6, CapUnit::Count("bodies")));
+        let strings: Vec<u64> = each.iter().map(|a| a.string_bodies).collect();
+        assert_eq!(strings, [4, 2, 0], "the overall ceiling stops the walk");
+        assert_eq!(lines.len(), 5, "{lines:?}");
+        assert!(lines[4].contains("STOPPED SHORT at 6 bodies") && lines[4].contains(TOTAL_FLAG));
+    }
+
+    #[test]
+    fn both_ceilings_parse_and_the_per_archive_one_is_the_default() {
+        let args = |rest: &[&str]| {
+            let mut all = vec![
+                "install".to_string(),
+                "--out".to_string(),
+                "o.tsv".to_string(),
+            ];
+            all.extend(rest.iter().map(|a| a.to_string()));
+            parse(&all)
+        };
+        let options = args(&[]).expect("the defaults parse");
+        assert_eq!(options.bodies.limit(), Some(DEFAULT_BODIES));
+        assert!(options.total.is_unlimited());
+        let options = args(&[
+            "--max-total=9",
+            "--max-bodies",
+            "unlimited",
+            "--listings",
+            "l",
+        ])
+        .expect("both ceilings parse");
+        assert_eq!(options.total.limit(), Some(9));
+        assert!(options.bodies.is_unlimited());
+        assert_eq!(options.listings, Some(PathBuf::from("l")));
+        assert!(args(&["--max-total", "0"]).is_err(), "zero is no ceiling");
+    }
+
+    /// Two directories joined with three basenames: each join whose hash is an unresolved entry's
+    /// is found, whole or without its extension, and no other join makes a row.
+    #[test]
+    fn a_join_is_tried_whole_and_without_its_extension_against_the_unresolved_entries_only() {
+        let targets = ["zq/a/lamp.xml", "zq/b/lamp", "zq/a/crate"];
+        let entries: Vec<Gta6Entry> = (targets.iter().zip(0..))
+            .map(|(path, at)| entry(at, path, Some(name_hash32(path.as_bytes()))))
+            .collect();
+        let mut miner = Miner::new();
+        miner.add_table(&entries, &NameResolver::new());
+        let dirs: BTreeSet<String> = ["zq/a/", "zq/b/"].map(String::from).into();
+        let basenames: BTreeSet<String> = ["lamp.xml", "crate", "never"].map(String::from).into();
+        miner.join(&dirs, &basenames);
+        for path in targets {
+            assert_eq!(found(&miner, path), Some(path));
+        }
+        assert_eq!(miner.rows, 3, "one row per unresolved entry joined");
+        assert_eq!(miner.by.get(&(Space::Entry, Source::Rules)), Some(&3));
+        assert_eq!(miner.joins_skipped, 0);
+        assert_eq!(miner.source, Source::Install, "the source is put back");
+    }
+
+    #[test]
+    fn a_literal_ends_at_its_quote_or_its_line_and_a_backslash_keeps_a_quote_inside() {
+        let text =
+            b"Load(\"zq/a/one\"); x = \"two \\\"q\\\" three\"; y = \"open\nz = \"zq/b/four\"";
+        let got: Vec<&[u8]> = string_literals(text);
+        let want: [&[u8]; 4] = [b"zq/a/one", b"two \\\"q\\\" three", b"open", b"zq/b/four"];
+        assert_eq!(got, want);
+        assert!(string_literals(b"no quote at all").is_empty());
+        // A backslash at a line's end does not carry the literal onto the next line.
+        let text = b"x = \"a\\\nLoad(\"zq/b/c\")";
+        let want: [&[u8]; 2] = [b"a\\", b"zq/b/c"];
+        assert_eq!(string_literals(text), want);
+    }
+
+    /// A folder of one listing and one other file: a literal of the listing names an entry and a
+    /// structure, and the other file is not read.
+    #[test]
+    fn the_string_literals_of_the_lifted_listings_name_their_entries_and_structures() {
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        let listing = "void Main() { Play(\"zq/streams/zq_intro_01\"); Make(\"ZqWidgetMeta\"); }";
+        std::fs::write(dir.path().join(format!("zq{LISTING_SUFFIX}")), listing).expect("written");
+        std::fs::write(dir.path().join("zq.txt"), "\"zq/streams/zq_other\"").expect("written");
+        let targets = ["zq/streams/zq_intro_01", "zq/streams/zq_other"];
+        let entries: Vec<Gta6Entry> = (targets.iter().zip(0..))
+            .map(|(path, at)| entry(at, path, Some(name_hash32(path.as_bytes()))))
+            .collect();
+        let mut miner = Miner::new();
+        miner.add_table(&entries, &NameResolver::new());
+        let class = literal_string_hash(b"ZqWidgetMeta");
+        miner.class.insert(class);
+        assert_eq!(
+            miner.mine_listings(dir.path()).expect("the folder reads"),
+            1
+        );
+        assert_eq!(found(&miner, targets[0]), Some(targets[0]));
+        assert_eq!(found(&miner, targets[1]), None, "not a listing");
+        assert_eq!(
+            miner.found_class.get(&class).map(String::as_str),
+            Some("ZqWidgetMeta")
+        );
+        assert_eq!(miner.by.get(&(Space::Entry, Source::Listings)), Some(&1));
+        assert!(miner.lines(0)[1].contains("1 from the script listings"));
+        assert!(miner.mine_listings(&dir.path().join("absent")).is_err());
+    }
+
+    #[test]
+    fn the_short_endings_are_every_underscore_and_one_to_three_letters_or_digits() {
+        let endings = short_endings();
+        assert_eq!(endings.len(), 36 + 36 * 36 + 36 * 36 * 36);
+        assert_eq!((endings[0].as_str(), endings[36].as_str()), ("_a", "_aa"));
+        assert!(endings.iter().any(|e| e == "_z9q"));
+        assert!(endings
+            .iter()
+            .all(|e| e.starts_with('_') && (2..=4).contains(&e.len())));
+    }
+
+    /// Two archives: one holds a named nested archive, the other an unnamed one built of the same
+    /// rows and named the first one's name and a short ending, and an unnamed one whose rows no
+    /// named archive holds. Only the twin is named, and by the twin rule alone.
+    #[test]
+    fn an_unnamed_nested_archive_is_named_after_the_named_archive_whose_rows_it_holds() {
+        let keys = fixture::keys();
+        let nested = |rows: &[&str]| {
+            let entries: Vec<(&str, Body)> = (rows.iter())
+                .map(|row| (*row, Body::Zlib(fixture::pso("zq"))))
+                .collect();
+            Body::Nested(fixture::archive(&entries))
+        };
+        let rows = ["zq_r1", "zq_r2", "zq_r3"];
+        let first = fixture::archive(&[("zq/maps/zq_alpha", nested(&rows))]);
+        let second = fixture::archive(&[
+            ("zq/maps/zq_alpha_q7", nested(&rows[..2])),
+            ("zq/maps/zq_omega_q7", nested(&["zq_r9"])),
+        ]);
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        std::fs::write(dir.path().join("a.rpf"), first).expect("written");
+        std::fs::write(dir.path().join("b.rpf"), second).expect("written");
+        let mut resolver = NameResolver::new();
+        resolver.insert(name_hash64(b"zq/maps/zq_alpha"), "zq/maps/zq_alpha");
+
+        let mut miner = Miner::new();
+        let cancel = Cancel::new();
+        let bounds = Bounds::new(Cap::at(1, CapUnit::Count("bodies")), &cancel);
+        let paths = archives(dir.path());
+        mine_archives(
+            &mut miner,
+            &paths,
+            &keys,
+            &resolver,
+            &bounds,
+            &mut std::io::sink(),
+        )
+        .expect("the rows are written");
+        miner.nested_rules();
+        assert_eq!(
+            found(&miner, "zq/maps/zq_alpha_q7"),
+            None,
+            "no other rule names it"
+        );
+        miner.twin_rules();
+        assert_eq!(
+            found(&miner, "zq/maps/zq_alpha_q7"),
+            Some("zq/maps/zq_alpha_q7")
+        );
+        assert_eq!(found(&miner, "zq/maps/zq_omega_q7"), None, "it has no twin");
+        assert_eq!(miner.by.get(&(Space::Entry, Source::Rules)), Some(&1));
+        assert_eq!(miner.source, Source::Install, "the source is put back");
+    }
+
+    /// Every table of the build placed with the user's names, then the twin rule: it names at least
+    /// a thousand nested archives (1195 measured with round 35's mined table), each one unresolved
+    /// before. Install-gated, and needs the user's names folder: without it the build's nested
+    /// archives are nearly all unnamed, so none has a named twin.
+    #[test]
+    fn the_miner_runs_on_the_build_within_its_ceiling_and_names_the_twin_archives() {
+        let present = |var: &str| {
+            std::env::var_os(var)
+                .map(PathBuf::from)
+                .filter(|p| p.exists())
+        };
+        let snapshot = present(or_io::container::rpf::GTA6_SNAPSHOT_ENV);
+        let names = present(or_io::container::rpf::GTA6_NAMES_ENV);
+        let (Some(snapshot), Some(build), Some(_)) =
+            (snapshot, present("OPENRAGE_GTA6_BUILD"), names)
+        else {
+            or_test_support::skip_install(
+                "the twin archives of a GTA VI build",
+                format_args!(
+                    "set {}, OPENRAGE_GTA6_BUILD and {}, the user's names folder",
+                    or_io::container::rpf::GTA6_SNAPSHOT_ENV,
+                    or_io::container::rpf::GTA6_NAMES_ENV
+                ),
+            );
+            return;
+        };
+        let keys = GtaViKeys::from_file(&snapshot).expect("the key snapshot parses");
+        let resolver = load_resolver(None);
+        let mut miner = Miner::new();
+        let mut refused = 0;
+        for path in archives(&build) {
+            walk_archive(&path, &keys, &mut refused, &mut |_, mount, _, at| {
+                miner.place(at, &mount.archive.entries);
+                miner.add_table(&mount.archive.entries, &resolver);
+            });
+        }
+        let unresolved: HashSet<u64> = miner.entry.keys().copied().collect();
+        let unnamed = (miner.tree.iter())
+            .filter_map(|t| t.from)
+            .filter(|from| miner.entry.contains_key(from))
+            .count();
+        miner.twin_rules();
+        let named = miner
+            .by
+            .get(&(Space::Entry, Source::Rules))
+            .copied()
+            .unwrap_or(0);
+        println!("{named} of {unnamed} unnamed nested archives named after their twins");
+        assert!(
+            named >= 1000,
+            "{named} twins named, {refused} tables refused"
+        );
+        assert!(miner.found64.keys().all(|hash| unresolved.contains(hash)));
     }
 }

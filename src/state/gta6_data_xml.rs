@@ -61,4 +61,27 @@ mod tests {
         let root = doc.parsed.as_ref().map(|p| p.instance.type_name.clone());
         assert_eq!(root.as_deref(), Some("OrOtherRootZq"));
     }
+
+    /// A document no structure and no schemaless tree holds opens kept whole, named untyped, and
+    /// saves as it came.
+    #[test]
+    fn a_document_kept_whole_opens_names_its_root_and_saves_as_it_came() {
+        let xml = concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+            "<or_zq_cycle_data version=\"2\">\n  <Item name=\"a\">text</Item>\n</or_zq_cycle_data>\n"
+        )
+        .as_bytes()
+        .to_vec();
+        let library = crate::state::meta_schema();
+        let (instance, untyped) =
+            or_io::meta::instance::parser::parse_typed_or_tree(library, &xml).expect("it opens");
+        assert_eq!(untyped.as_deref(), Some("or_zq_cycle_data"));
+        // The writer itself, not the text the document keeps, writes the element back whole.
+        let written = or_io::meta::write_meta(&instance).expect("it writes");
+        assert_eq!(written.as_bytes(), xml.as_slice());
+        let doc = super::MetaDocument::from_gta_vi_xml(xml.clone(), instance, untyped);
+        assert_eq!(doc.parse_error, None);
+        assert_eq!(doc.gta6_untyped_elements, 1);
+        assert_eq!(doc.to_bytes().expect("it saves"), xml);
+    }
 }

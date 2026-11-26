@@ -949,9 +949,7 @@ fn cmd_scan_body(args: &[String]) -> Result<(), Failure> {
         return Ok(());
     }
     if rewrite {
-        println!(
-            "  the table as OpenRage writes it, one page: `rpf scan-open {out} 0` reads it again"
-        );
+        println!("  the table as OpenRage writes it: `rpf scan-open {out} 0` reads it again");
         return Ok(());
     }
     if let Rpf9BodyKind::Zlib(Rpf9ZlibRun {

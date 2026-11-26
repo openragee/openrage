@@ -17076,9 +17076,6 @@ msgstr "{offset} の本体を保持するエントリがアーカイブにあり
 msgid "Save into a copy of the archive…"
 msgstr "アーカイブのコピーに保存…"
 
-msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"
-msgstr "GTA VIドキュメントの編集を、読み込み元アーカイブの新しいコピーのエントリの位置に書き込みます。テーブルの署名が古いため、ゲームはそのコピーを拒否します"
-
 msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
 msgstr "GTA VIのキーがありません: 設定 ▸ ゲーム でGTA VIのインストールフォルダーを設定すると、その実行ファイルでキーを解除できます。"
 
@@ -17359,3 +17356,30 @@ msgstr[1] "{preset} は {count} 個のコマンドのキーを変更します。
 
 msgid "The world goes over to the weather chosen in a minute of the game's time, as the game's own weather changes"
 msgstr "ゲーム内時間の1分をかけて、ゲーム自体の天候の変化と同じように選んだ天候へ移り変わります"
+
+msgid "Not saved into its row: {reason}"
+msgstr "行に保存されませんでした: {reason}"
+
+msgid "{name} is saved into its row of {archive}, and the archive's Save as… writes it to a new file: a patched copy where the body fits its entry's chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{name} は {archive} の自分の行に保存されました。アーカイブの「名前を付けて保存…」で新しいファイルに書き込まれます。本体がエントリのチャンクに収まる場合はパッチ済みコピー、そうでなければ再構築されたアーカイブで、テーブルに署名できるのは作成者だけなので、ゲームはそれを拒否します。"
+
+msgid "Save a copy"
+msgstr "コピーを保存"
+
+msgid "Save a patched copy"
+msgstr "パッチ済みコピーを保存"
+
+msgid "Save a rebuilt archive"
+msgstr "再構築されたアーカイブを保存"
+
+msgid "Nothing in {file} is edited, so the copy is the archive as it was read, byte for byte."
+msgstr "{file} には何も編集がないため、コピーは読み込んだときのアーカイブそのもので、バイト単位で同じです。"
+
+msgid "{file} is the archive as it was read, byte for byte: nothing in it is edited."
+msgstr "{file} は読み込んだときのアーカイブそのもので、バイト単位で同じです。中身は何も編集されていません。"
+
+msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from: a patched copy, its table byte-identical, where the body fits its entry's chunks, which no check read in the game's code rejects though the game has not been run with it; else a rebuilt archive, which the game refuses because only its maker can sign the table"
+msgstr "GTA VI ドキュメントの編集を、読み込み元のアーカイブの新しいコピーにエントリの位置で書き込みます。本体がエントリのチャンクに収まる場合はテーブルがバイト単位で同じパッチ済みコピーになり、ゲームのコード中に読まれたどの検査もそれを拒否しませんが、ゲームをそれで実行したことはありません。そうでなければ再構築されたアーカイブになり、テーブルに署名できるのは作成者だけなので、ゲームはそれを拒否します"
+
+msgid "The text table is laid out again at another length ({reason}), so a save into its archive writes a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "テキストテーブルは別の長さで配置し直されます ({reason})。そのため、そのアーカイブに保存すると再構築されたアーカイブが書き込まれ、テーブルに署名できるのは作成者だけなので、ゲームはそれを拒否します。"

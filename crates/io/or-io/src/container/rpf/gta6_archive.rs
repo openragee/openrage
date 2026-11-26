@@ -631,10 +631,15 @@ impl NameResolver {
     /// Record a `hash -> name` shortcut, keeping the first name seen for a hash.
     pub fn insert(&mut self, hash: u64, name: impl Into<String>) {
         let name = name.into();
+        // ⚠ A hash the vocabulary already names keeps that name: a warm load holds a lower-case name
+        // there with no shortcut, and the first name a hash is given wins either way.
+        let held = self.vocabulary.name64(hash).is_some();
         if crate::gta6::hash::name_hash64(name.as_bytes()) == hash {
             self.vocabulary.add(&name, None);
         }
-        self.shortcut.entry(hash).or_insert(name);
+        if !held {
+            self.shortcut.entry(hash).or_insert(name);
+        }
     }
 
     /// Add the entries of a `hash<TAB>name` table, as `resolved-names.tsv` holds them: the first

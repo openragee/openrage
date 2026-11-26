@@ -238,12 +238,16 @@ pub(super) fn finish_rename(
             let new_name = rename.buffer.trim().to_string();
             if new_name.is_empty() || new_name == old_name {
             } else if let Err(e) = state.rpf_rename_node(doc_id, node_id, &new_name) {
+                let gated = e == crate::state::retail_pending_message();
                 state.show_error_toast(e);
-                super::ui_state(state).renaming = Some(RenameState {
-                    focus_pending: true,
-                    buffer: new_name,
-                    ..rename
-                });
+                // ⚠ The edit mode's refusal closes the editor: its window takes the focus, the field loses it, and a reopened editor commits again every frame. Any other refusal reopens it with what was typed.
+                if !gated {
+                    super::ui_state(state).renaming = Some(RenameState {
+                        focus_pending: true,
+                        buffer: new_name,
+                        ..rename
+                    });
+                }
             }
         }
         InlineRenameAction::Cancel => {}
@@ -625,4 +629,115 @@ fn more_extract_menu(
 
 pub(super) fn rpf_path_supported(name: &str) -> bool {
     crate::state::DocumentKind::from_path(std::path::Path::new(name)).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{EditMode, ToastType};
+
+    fn errors(state: &AppState) -> usize {
+        let shown = state.toasts.iter();
+        shown.filter(|t| t.toast_type == ToastType::Error).count()
+    }
+
+    fn editing(state: &mut AppState, doc: DocumentId, node: RpfNodeId, buffer: &str) {
+        super::super::ui_state(state).start_rename_rpf(doc, node, buffer);
+    }
+
+    /// Frames of an editor whose field loses the focus each frame, as it does under the edit mode's window.
+    fn commit_each_frame(state: &mut AppState, doc: DocumentId, node: RpfNodeId, old: &str) {
+        for _ in 0..5 {
+            let Some(rename) = super::super::ui_state(state).renaming.take() else {
+                return;
+            };
+            finish_rename(state, doc, node, old, rename, InlineRenameAction::Commit);
+        }
+    }
+
+    #[test]
+    fn a_rename_the_edit_mode_refuses_shows_one_toast_and_closes_the_editor() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let install = tmp.path().join("GTAV");
+        std::fs::create_dir_all(install.join("update")).expect("install dirs");
+        std::fs::write(install.join("gta5.exe"), b"an install marker").expect("marker");
+        let mut state = AppState::new();
+        state.retail_edit_session_allow = false;
+        state.prefs.edit_mode = EditMode::ReadOnly;
+        let doc = state.open_game_root(install);
+        let root = match &state.document(doc).expect("the install").payload {
+            DocPayload::Rpf(rpf) => rpf.session.root_id(),
+            _ => panic!("an install is an archive tree"),
+        };
+        state.request_expand(doc, root);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while state.expander.is_in_flight(doc, root) {
+            state.poll_expansions();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the install never listed"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let update = match &state.document(doc).expect("the install").payload {
+            DocPayload::Rpf(rpf) => (rpf.session.children_of(root).into_iter())
+                .find(|&id| rpf.session.node(id).is_some_and(|n| n.name == "update")),
+            _ => None,
+        }
+        .expect("the install lists update");
+
+        state.clear_toasts();
+        editing(&mut state, doc, update, "patched");
+        commit_each_frame(&mut state, doc, update, "update");
+        assert_eq!(errors(&state), 1, "one refused commit, one toast");
+        assert!(super::super::ui_state(&mut state).renaming.is_none());
+    }
+
+    #[test]
+    fn a_taken_name_reopens_the_editor_with_what_was_typed() {
+        let mut session = crate::state::RpfEditSession::empty();
+        let root = session.root_id();
+        session.add_file_copy(root, "a.ydr", vec![1]).expect("a");
+        let b = session.add_file_copy(root, "b.ydr", vec![1]).expect("b");
+        let mut state = AppState::default();
+        let doc = state.new_empty_document(DocumentKind::Rpf);
+        let Some(DocPayload::Rpf(rpf)) = state.document_mut(doc).map(|d| &mut d.payload) else {
+            panic!("an empty archive document holds an archive");
+        };
+        rpf.session = session;
+
+        state.clear_toasts();
+        editing(&mut state, doc, b, "A.YDR");
+        let rename = super::super::ui_state(&mut state).renaming.take();
+        let rename = rename.expect("the editor is open");
+        finish_rename(
+            &mut state,
+            doc,
+            b,
+            "b.ydr",
+            rename,
+            InlineRenameAction::Commit,
+        );
+        assert_eq!(errors(&state), 1);
+        let reopened = super::super::ui_state(&mut state).renaming.clone();
+        let reopened = reopened.expect("a taken name keeps the editor open");
+        assert!(reopened.focus_pending);
+        assert_eq!(reopened.buffer, "A.YDR");
+
+        // Any refusal but the edit mode's keeps what was typed: here a name the archive refuses.
+        editing(&mut state, doc, b, "bad/name");
+        let rename = super::super::ui_state(&mut state).renaming.take();
+        let rename = rename.expect("the editor is open");
+        finish_rename(
+            &mut state,
+            doc,
+            b,
+            "b.ydr",
+            rename,
+            InlineRenameAction::Commit,
+        );
+        let reopened = super::super::ui_state(&mut state).renaming.clone();
+        let reopened = reopened.expect("a refused name keeps the editor open");
+        assert_eq!(reopened.buffer, "bad/name");
+    }
 }

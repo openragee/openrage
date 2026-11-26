@@ -22,7 +22,8 @@ mod tests {
     }
 
     /// Env-gated: the names folder `OPENRAGE_GTA6_NAMES` names, loaded cold into an empty
-    /// configuration and then warm from the cache that kept, which reads no source; prints both times.
+    /// configuration and then warm from the cache that kept, which reads no source and hashes no
+    /// name; prints both times.
     #[test]
     fn the_names_load_warm_from_the_cache_faster_than_cold() {
         let Some(dir) = std::env::var_os(or_io::container::rpf::GTA6_NAMES_ENV) else {
@@ -37,6 +38,7 @@ mod tests {
         let cold = NameResolver::load_cached(Some(&dir), Some(config.path()));
         let cold_took = started.elapsed();
         let read = NameResolver::sources_read_on_this_thread();
+        let hashed = NameResolver::names_hashed_on_this_thread();
         let started = Instant::now();
         let warm = NameResolver::load_cached(Some(&dir), Some(config.path()));
         let warm_took = started.elapsed();
@@ -45,7 +47,9 @@ mod tests {
             cold.len()
         );
         assert_eq!(NameResolver::sources_read_on_this_thread(), read);
+        assert_eq!(NameResolver::names_hashed_on_this_thread(), hashed);
         assert_eq!(warm.len(), cold.len());
+        assert_eq!(warm.vocabulary().counts(), cold.vocabulary().counts());
         assert!(
             warm_took < cold_took,
             "warm {warm_took:?}, cold {cold_took:?}"

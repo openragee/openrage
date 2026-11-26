@@ -375,14 +375,10 @@ pub const COMMANDS: &[Spec] = &[
         id: "save_into_archive_copy",
         label: tr_key!("Save into a copy of the archive…"),
         category: tr_key!("File"),
-        hover: tr_key!("Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"),
+        hover: tr_key!("Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from: a patched copy, its table byte-identical, where the body fits its entry's chunks, which no check read in the game's code rejects though the game has not been run with it; else a rebuilt archive, which the game refuses because only its maker can sign the table"),
         enabled: |state| state.can_save_into_archive_copy(),
         run: |state, _| {
-            let name = state.archive_copy_name();
-            let kind = crate::state::DocumentKind::Rpf9;
-            if let Some(path) = file_dialogs::save_any_file(kind, name.as_deref()) {
-                state.save_into_archive_copy(path);
-            }
+            state.ask_and_save_into_archive_copy();
         },
         ..BASE
     },

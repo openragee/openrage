@@ -199,6 +199,26 @@ impl Vocabulary {
         }
     }
 
+    /// Holds each lower-cased name under the 64-bit and 32-bit hashes it was kept with, hashing none.
+    pub fn extend_hashed(&mut self, held: Vec<(u64, u32, Box<str>)>) {
+        self.names.reserve(held.len());
+        self.by32.reserve(held.len());
+        for (word, hash, text) in held {
+            let Entry::Vacant(slot) = self.names.entry(word) else {
+                continue;
+            };
+            slot.insert(Name { text, kind: None });
+            match self.by32.entry(hash) {
+                Entry::Vacant(first) => {
+                    first.insert(word);
+                }
+                Entry::Occupied(_) => {
+                    self.shared32.insert(hash);
+                }
+            }
+        }
+    }
+
     /// Holds each name the first `prefix` bytes of `body` spell; how many were new.
     pub fn harvest(&mut self, body: &[u8], prefix: usize) -> usize {
         let mut new = 0;

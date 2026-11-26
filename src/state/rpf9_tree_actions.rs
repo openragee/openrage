@@ -2,6 +2,7 @@
 //! names it by, and the preview tab its body opens in through the read its open asks for.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use or_io::container::rpf::{Rpf9Kind, Rpf9Place};
 
@@ -45,19 +46,23 @@ fn gta6_hash(session: &RpfEditSession, node: &RpfSessionNode) -> Option<u64> {
     Some(archive.rpf9_row(entry_index)?.name64)
 }
 
-/// Where the GTA VI file row `node`'s open reads its body: its place, its row's start and its kind.
+/// The body a save into a row left there.
+type Edited = Option<Arc<Vec<u8>>>;
+
+/// Where the GTA VI file row `node`'s open reads its body: its place, its row's start, its kind,
+/// and the body a save into the row left there.
 fn gta6_body(
     state: &AppState,
     doc: DocumentId,
     node: RpfNodeId,
-) -> Option<(Rpf9Place, u64, Option<Rpf9Kind>)> {
+) -> Option<(Rpf9Place, u64, Option<Rpf9Kind>, Edited)> {
     let DocPayload::Rpf(rpf) = &state.document(doc)?.payload else {
         return None;
     };
     let RpfNodeBacking::ArchiveFile {
         archive_id,
         entry_index,
-        override_bytes: None,
+        override_bytes,
     } = &rpf.session.node(node)?.backing
     else {
         return None;
@@ -65,13 +70,14 @@ fn gta6_body(
     let archive = &rpf.session.archive(*archive_id)?.archive;
     let place = archive.rpf9_place(*entry_index)?;
     let row_start = place.base + archive.binary_entry(*entry_index)?.file_offset;
-    Some((place, row_start, archive.rpf9_kind(*entry_index)))
+    let kind = archive.rpf9_kind(*entry_index);
+    Some((place, row_start, kind, override_bytes.clone()))
 }
 
 impl AppState {
     /// Open a GTA VI file row in the preview tab by the read its open leaves the load worker, where the workspace shows its kind; `false` for any other row.
     pub(crate) fn preview_gta6_row(&mut self, doc: DocumentId, node: RpfNodeId) -> bool {
-        let Some((place, row_start, kind)) = gta6_body(self, doc, node) else {
+        let Some((place, row_start, kind, edited)) = gta6_body(self, doc, node) else {
             return false;
         };
         // The row's kind stands for the extension a GTA V row's name gives its preview.
@@ -79,7 +85,7 @@ impl AppState {
             .and_then(|ext| DocumentKind::from_path(Path::new(&format!("row.{ext}"))));
         if shown.is_some_and(|kind| self.active_workspace.handles_kind(kind)) {
             let path = body_path(&place.file, place.offset, View::Bytes);
-            tree_open::leave(&path, &place, row_start, rpf9_table::keys);
+            tree_open::leave(&path, &place, row_start, rpf9_table::keys, edited);
             tree_open::name(self, &path, doc, node);
             self.open_scanned_path(path, true);
         }

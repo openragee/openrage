@@ -17076,9 +17076,6 @@ msgstr "归档中没有条目包含位于 {offset} 的内容"
 msgid "Save into a copy of the archive…"
 msgstr "保存到归档的副本…"
 
-msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"
-msgstr "将 GTA VI 文档的修改写入其条目的位置，保存到读取来源归档的新副本中。游戏会拒绝该副本，因为其表的签名已过期"
-
 msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
 msgstr "没有 GTA VI 密钥：请在 设置 ▸ 游戏 中设置 GTA VI 安装文件夹，以便其可执行文件解锁密钥。"
 
@@ -17359,3 +17356,30 @@ msgstr[1] "{preset} 更改了 {count} 个命令的按键。"
 
 msgid "The world goes over to the weather chosen in a minute of the game's time, as the game's own weather changes"
 msgstr "世界在游戏时间的一分钟内转为所选天气，与游戏自身的天气变化一样"
+
+msgid "Not saved into its row: {reason}"
+msgstr "未保存到其行中：{reason}"
+
+msgid "{name} is saved into its row of {archive}, and the archive's Save as… writes it to a new file: a patched copy where the body fits its entry's chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{name} 已保存到 {archive} 中它的行，该归档的“另存为…”会把它写入新文件：主体能放入其条目的块时为修补副本，否则为重建的归档，游戏会拒绝它，因为只有其制作者能签名该表。"
+
+msgid "Save a copy"
+msgstr "保存副本"
+
+msgid "Save a patched copy"
+msgstr "保存修补副本"
+
+msgid "Save a rebuilt archive"
+msgstr "保存重建的归档"
+
+msgid "Nothing in {file} is edited, so the copy is the archive as it was read, byte for byte."
+msgstr "{file} 中没有任何编辑，因此副本就是读取时的归档，逐字节相同。"
+
+msgid "{file} is the archive as it was read, byte for byte: nothing in it is edited."
+msgstr "{file} 就是读取时的归档，逐字节相同：其中没有任何编辑。"
+
+msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from: a patched copy, its table byte-identical, where the body fits its entry's chunks, which no check read in the game's code rejects though the game has not been run with it; else a rebuilt archive, which the game refuses because only its maker can sign the table"
+msgstr "将 GTA VI 文档的编辑写在其条目的位置，写入读取它的归档的新副本：主体能放入其条目的块时为修补副本，其表逐字节相同，游戏代码中读到的任何检查都不会拒绝它，尽管尚未用它运行过游戏；否则为重建的归档，游戏会拒绝它，因为只有其制作者能签名该表"
+
+msgid "The text table is laid out again at another length ({reason}), so a save into its archive writes a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "文本表以另一长度重新排布（{reason}），因此保存到其归档会写出重建的归档，游戏会拒绝它，因为只有其制作者能签名该表。"

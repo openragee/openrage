@@ -21,12 +21,14 @@ pub(in crate::state) type Keys = fn() -> Result<Arc<GtaViKeys>, String>;
 /// The most a row opened from the tree inflates to, as for a body opened from a scan's list.
 const LIMIT: u64 = 1 << 30;
 
-/// A clear row of the archive whose header is at `base`, read by its table when its path opens.
-#[derive(Clone, Copy)]
+/// A clear row of the archive whose header is at `base`, read by its table when its path opens,
+/// or the body a save into the row left in the tree, which opens in place of what the file holds.
+#[derive(Clone)]
 struct Row {
     base: u64,
     entry: u32,
     keys: Keys,
+    edited: Option<Arc<Vec<u8>>>,
 }
 
 /// The rows the tree left for the load worker, by the path their body opens under.
@@ -38,17 +40,29 @@ fn rows() -> MutexGuard<'static, BTreeMap<PathBuf, Row>> {
     ROWS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Leave the read the load worker opens `path`, the body of `place`, with: a ciphered row's decipher, or a clear row's table; a headerless resource's row, whose body starts past the slot at `row_start`, reads as a scan does.
-pub(in crate::state) fn leave(path: &Path, place: &Rpf9Place, row_start: u64, keys: Keys) {
-    if place.ciphered {
+/// Leave the read the load worker opens `path`, the body of `place`, with: the body `edited` a save into the row left, a ciphered row's decipher, or a clear row's table; a headerless resource's row, whose body starts past the slot at `row_start`, reads as a scan does.
+pub(in crate::state) fn leave(
+    path: &Path,
+    place: &Rpf9Place,
+    row_start: u64,
+    keys: Keys,
+    edited: Option<Arc<Vec<u8>>>,
+) {
+    let row = Row {
+        base: place.base,
+        entry: place.entry,
+        keys,
+        edited,
+    };
+    if row.edited.is_some() {
+        rows().insert(path.to_path_buf(), row);
+    } else if place.ciphered {
         crate::state::rpf9_scan::remember_ciphered(path, place.base, place.entry);
     } else if place.offset == row_start {
-        let row = Row {
-            base: place.base,
-            entry: place.entry,
-            keys,
-        };
         rows().insert(path.to_path_buf(), row);
+    } else {
+        // A row whose edit is gone reads what the file holds again.
+        rows().remove(path);
     }
 }
 
@@ -109,8 +123,35 @@ pub(in crate::state) fn read(
     archive: &Path,
     offset: u64,
 ) -> Option<Result<TableRead, String>> {
-    let row = rows().get(path).copied()?;
+    let row = rows().get(path).cloned()?;
+    if let Some(edited) = &row.edited {
+        return Some(read_edited(path, archive, offset, edited));
+    }
     Some(read_row(path, archive, offset, row))
+}
+
+/// The body `edited` a save left in the row whose body is at `offset` of `archive`: a headerless
+/// resource's loose form read as a loose file is, any other body under the kind the file's start names.
+fn read_edited(
+    path: &Path,
+    archive: &Path,
+    offset: u64,
+    edited: &[u8],
+) -> Result<TableRead, String> {
+    let file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
+    match read_rpf9_body(&file, offset, LIMIT) {
+        Ok((find, _)) if is_resource(&find) => {
+            let (find, bytes) = read_rpf9_body(std::io::Cursor::new(edited), 0, LIMIT)
+                .map_err(|e| e.to_string())?;
+            Ok(TableRead::Body(find, bytes))
+        }
+        Ok((mut find, _)) => {
+            let stored = find.stored_len.unwrap_or_default();
+            stated(&mut find, stored, edited);
+            Ok(TableRead::Body(find, edited.to_vec()))
+        }
+        Err(_) => Ok(TableRead::Plain(by_head(path, edited.to_vec()))),
+    }
 }
 
 fn read_row(path: &Path, archive: &Path, offset: u64, row: Row) -> Result<TableRead, String> {
@@ -189,6 +230,9 @@ fn by_head(path: &Path, bytes: Vec<u8>) -> DocPayload {
     let banner = document_io::no_reader(path);
     DocPayload::Hex(HexDocument { bytes, banner })
 }
+
+#[path = "rpf9_tree_bind.rs"]
+mod bind;
 
 #[cfg(test)]
 #[path = "rpf9_tree_open_names_tests.rs"]
@@ -329,7 +373,7 @@ mod tests {
             ciphered: false,
         };
         let path = body_path(disk, offset, View::Bytes);
-        leave(&path, &place, start, synthetic_keys);
+        leave(&path, &place, start, synthetic_keys, None);
         let payload = read_body(&path, disk, offset);
         (path, start, payload)
     }
@@ -494,7 +538,7 @@ mod tests {
                     match shape {
                         0 => {
                             let real = entry.real.expect("a chunked row states its size");
-                            leave(&path, &place, start, rpf9_table::keys);
+                            leave(&path, &place, start, rpf9_table::keys, None);
                             let len = match read(&path, &disk, offset) {
                                 Some(Ok(TableRead::Body(f, _))) if is_resource(&f) => continue,
                                 Some(Ok(TableRead::Body(_, bytes))) => Some(bytes.len()),
@@ -513,7 +557,7 @@ mod tests {
                             }
                         }
                         1 => {
-                            leave(&path, &place, start, rpf9_table::keys);
+                            leave(&path, &place, start, rpf9_table::keys, None);
                             assert!(read(&path, &disk, offset).is_none());
                             if read_body(&path, &disk, offset).is_err() {
                                 continue;
@@ -537,7 +581,7 @@ mod tests {
                         }
                     }
                     // The read works, so the open does.
-                    leave(&path, &place, start, rpf9_table::keys);
+                    leave(&path, &place, start, rpf9_table::keys, None);
                     if let Err(e) = read_body(&path, &disk, offset) {
                         panic!("{}: row {} opens: {e}", disk.display(), entry.index);
                     }

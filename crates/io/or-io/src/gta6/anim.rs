@@ -42,7 +42,7 @@ pub use motion::{
     PhaseCurve, TimeWarp, Typed, Weight,
 };
 pub use signature::dof_signature;
-pub use write::{edit, reencode, rename_clip, AnimEdit};
+pub use write::{edit, edit_in_extent, reencode, rename_clip, AnimEdit};
 
 use crate::codec::anim::channel::{
     reconstruct_component, ChannelFormat, DecodedChannel, FORMAT_COUNT,

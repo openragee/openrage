@@ -5,6 +5,9 @@ use std::borrow::Cow;
 
 use super::gta6_archive::Gta6Archive;
 
+/// The kind of a 24-byte row whose class byte says only that it holds a file.
+pub const PLAIN_FILE: &str = "file";
+
 /// The kinds a 24-byte row's class byte names.
 pub const CLASSES: [(u8, &str); 10] = [
     (0x00, "archive"),
@@ -17,7 +20,8 @@ pub const CLASSES: [(u8, &str); 10] = [
     (0x60, "object trees"),
     (0x68, "span grid"),
     (0x69, "height map"),
-    (0xFF, "media"),
+    // Its rows hold XML, PSO and movies alike.
+    (0xFF, PLAIN_FILE),
 ];
 
 /// The kinds a 20-byte row's type code names, one per code of the headerless version table.
@@ -118,7 +122,7 @@ mod tests {
         assert_eq!(kind_label(Some(0x60), None), "object trees");
         assert_eq!(kind_label(Some(0x68), None), "span grid");
         assert_eq!(kind_label(Some(0x69), None), "height map");
-        assert_eq!(kind_label(Some(0xFF), None), "media");
+        assert_eq!(kind_label(Some(0xFF), None), "file");
         // A 24-byte row's class wins over any code; unknown bytes and codes print as hex.
         assert_eq!(kind_label(Some(0x0B), Some(0x02)), "resource");
         assert_eq!(kind_label(Some(0x0E), None), "class 0x0e");

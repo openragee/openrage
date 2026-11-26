@@ -57,7 +57,7 @@ impl DiscoveryWorker {
                             );
                             icons.push((inst.game, path));
                         }
-                        Err(e) => tracing::warn!(
+                        Err(e) => tracing::debug!(
                             game = ?inst.game,
                             exe = %inst.exe.display(),
                             error = %e,

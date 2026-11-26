@@ -483,6 +483,7 @@ impl AppState {
     }
 
     pub fn poll_save_result(&mut self) {
+        self.poll_tree_row_saves();
         let Some(job) = &self.save_receiver else {
             return;
         };
@@ -533,6 +534,9 @@ impl AppState {
             return saved;
         }
         if let Some(started) = self.save_edited_resource(doc_id) {
+            return started;
+        }
+        if let Some(started) = self.save_into_tree_row(doc_id) {
             return started;
         }
         if self.refused_as_read_only_document(doc_id) || self.refused_gta6_tree_in_place(doc_id) {

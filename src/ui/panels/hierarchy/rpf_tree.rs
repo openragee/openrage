@@ -6,9 +6,12 @@ use super::rows::{
 use super::rpf::{classify_rename_response, finish_rename, rpf_context_menu, rpf_path_supported};
 use super::*;
 use crate::state::explorer::{gta6_kind, row_matches};
+use crate::state::RpfEditSession;
 use crate::ui::commands::{self, Action, Command, Target};
 use crate::ui::panels::registry::ids;
 use or_io::container::rpf::Rpf9Kind;
+use std::collections::HashSet;
+use std::sync::Arc;
 
 /// The name a GTA VI row's icon is chosen by: its own, with the extension GTA V gives its kind.
 ///
@@ -51,7 +54,59 @@ fn needs_expand(node: &RpfSessionNode) -> bool {
     )
 }
 
-/// Every row the tree shows, top to bottom: the rows under each open folder, less the files the filter drops.
+/// The folders a filter leaves in the tree: each whose name holds the lower-case `needle`, each not yet listed, whose rows the filter has still to reach, and each above either or a loaded row that matches.
+fn folders_kept(session: &RpfEditSession, needle: &str) -> HashSet<RpfNodeId> {
+    let mut kept = HashSet::new();
+    for id in session.all_nodes() {
+        let Some(node) = session.node(id) else {
+            continue;
+        };
+        let (hit, mut up) = if node.is_dir() || needs_expand(node) {
+            let named = node.name.to_ascii_lowercase().contains(needle);
+            (named || needs_expand(node), Some(id))
+        } else {
+            (
+                row_matches(&node.name, gta6_kind(session, node), needle),
+                node.parent,
+            )
+        };
+        if !hit {
+            continue;
+        }
+        while let Some(at) = up.filter(|&at| kept.insert(at)) {
+            up = session.node(at).and_then(|n| n.parent);
+        }
+    }
+    kept
+}
+
+/// [`folders_kept`] for this frame's filter, worked out again only when the filter, the count of
+/// rows or the document's `epoch` changes.
+///
+/// ⚠ Keyed on the epoch as well as the count of rows: a rename changes no count.
+fn folders_kept_now(
+    ctx: &egui::Context,
+    doc_id: DocumentId,
+    epoch: u64,
+    session: &RpfEditSession,
+    needle: &str,
+) -> Arc<HashSet<RpfNodeId>> {
+    type Kept = (String, usize, u64, Arc<HashSet<RpfNodeId>>);
+    let id = egui::Id::new(("rpf_tree_folders_kept", doc_id));
+    let nodes = session.file_count() + session.directory_count();
+    let cached = ctx.data(|d| d.get_temp::<Kept>(id));
+    if let Some((n, count, at, kept)) = cached {
+        if n == needle && count == nodes && at == epoch {
+            return kept;
+        }
+    }
+    let kept = Arc::new(folders_kept(session, needle));
+    let entry: Kept = (needle.to_owned(), nodes, epoch, Arc::clone(&kept));
+    ctx.data_mut(|d| d.insert_temp(id, entry));
+    kept
+}
+
+/// Every row the tree shows, top to bottom: the rows under each open folder, less the rows the filter drops.
 ///
 /// ⚠ The whole list each frame and nothing drawn: a row costs a map lookup here and a dozen
 /// widgets on screen, so only the rows in view are drawn from it.
@@ -63,12 +118,16 @@ pub(super) fn list_rows(
 ) -> Vec<ListedRow> {
     let mut rows = Vec::new();
     let mut expand = Vec::new();
-    if let Some(DocPayload::Rpf(rpf)) = state.document(doc_id).map(|d| &d.payload) {
+    let doc = state.document(doc_id);
+    if let Some((DocPayload::Rpf(rpf), epoch)) = doc.map(|d| (&d.payload, d.payload_epoch())) {
         let session = &rpf.session;
         let sort = state.prefs.explorer.sort;
         let files = super::ui_state_ref(state);
         let needle = files.map(|f| f.filter.to_ascii_lowercase());
         let needle = needle.as_deref().unwrap_or_default();
+        // While a filter is set, a folder stays only where it leads to a match.
+        let kept =
+            (!needle.is_empty()).then(|| folders_kept_now(ctx, doc_id, epoch, session, needle));
         let pulse = pulse_state_from_ctx(ctx);
         // A row waiting to be listed: its depth, its parent's id, and whether it is shown or only closed.
         let mut waiting: Vec<(RpfNodeId, usize, egui::Id, bool)> =
@@ -97,15 +156,16 @@ pub(super) fn list_rows(
                 }
                 continue;
             }
-            let mut kept = egui::collapsing_header::CollapsingState::load_with_default_open(
+            let shown = shown && kept.as_ref().is_none_or(|kept| kept.contains(&id));
+            let mut collapsing = egui::collapsing_header::CollapsingState::load_with_default_open(
                 ctx, id_here, false,
             );
-            let was_open = kept.is_open();
+            let was_open = collapsing.is_open();
             let revealed = files.is_some_and(|f| f.reveal_ancestors.contains(&id));
             let open = revealed || pulse.unwrap_or(was_open);
             if open != was_open {
-                kept.set_open(open);
-                kept.store(ctx);
+                collapsing.set_open(open);
+                collapsing.store(ctx);
             }
             if shown {
                 rows.push(ListedRow {
@@ -473,6 +533,74 @@ mod tests {
         assert!(row_matches(name, None, "0xab"));
         assert!(!row_matches(name, None, "0xcd"));
         assert!(!row_matches("0xab.ydr", None, "0xcd"));
+    }
+
+    #[test]
+    fn a_filtered_tree_lists_the_match_and_the_folders_above_it_only() {
+        let mut session = RpfEditSession::empty();
+        let root = session.root_id();
+        let levels = session.add_folder(root, "levels").expect("levels");
+        let gta5 = session.add_folder(levels, "gta5").expect("gta5");
+        session
+            .add_file_copy(gta5, "props.ydr", vec![1])
+            .expect("ydr");
+        session
+            .add_file_copy(gta5, "props.ytd", vec![1])
+            .expect("ytd");
+        let audio = session.add_folder(root, "audio").expect("audio");
+        session
+            .add_file_copy(audio, "sfx.awc", vec![1])
+            .expect("awc");
+        session
+            .add_file_copy(root, "readme.txt", vec![1])
+            .expect("txt");
+        let mut state = AppState::default();
+        let doc = state.new_empty_document(DocumentKind::Rpf);
+        let Some(DocPayload::Rpf(rpf)) = state.document_mut(doc).map(|d| &mut d.payload) else {
+            panic!("an empty archive document holds an archive");
+        };
+        rpf.session = session;
+        let ctx = egui::Context::default();
+        write_pulse_to_ctx(&ctx, Some(true));
+        let listed = |state: &mut AppState, filter: &str| -> Vec<String> {
+            crate::ui::panels::hierarchy::ui_state(state).filter = filter.to_owned();
+            let rows = list_rows(&ctx, state, doc, egui::Id::new("tree"));
+            let Some(DocPayload::Rpf(rpf)) = state.document(doc).map(|d| &d.payload) else {
+                return Vec::new();
+            };
+            rows.iter()
+                .filter_map(|row| Some(rpf.session.node(row.node)?.name.clone()))
+                .collect()
+        };
+        assert_eq!(listed(&mut state, "YDR"), ["levels", "gta5", "props.ydr"]);
+        assert_eq!(listed(&mut state, "gta5"), ["levels", "gta5"]);
+        assert_eq!(listed(&mut state, "nothing"), Vec::<String>::new());
+        assert_eq!(
+            listed(&mut state, "").len(),
+            7,
+            "with no filter every row is listed"
+        );
+        // A folder not yet listed stays under any filter, so that the filter reaches its rows.
+        let Some(DocPayload::Rpf(rpf)) = state.document_mut(doc).map(|d| &mut d.payload) else {
+            panic!("the archive document");
+        };
+        let root = rpf.session.root_id();
+        let unlisted = rpf.session.add_folder(root, "x64a").expect("x64a");
+        rpf.session.node_mut(unlisted).expect("x64a").backing = RpfNodeBacking::DiskFolder {
+            fs_path: std::path::PathBuf::from("x64a"),
+            scanned: false,
+        };
+        let listed_now = listed(&mut state, "ydr");
+        assert!(listed_now.iter().any(|n| n == "x64a"), "{listed_now:?}");
+        assert!(
+            listed_now.iter().any(|n| n == "props.ydr"),
+            "{listed_now:?}"
+        );
+        let nothing = listed(&mut state, "nothing");
+        assert!(
+            !nothing.is_empty() && nothing.iter().all(|n| n == "x64a"),
+            "{nothing:?}"
+        );
     }
 
     #[test]

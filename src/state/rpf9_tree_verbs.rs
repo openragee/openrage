@@ -2,7 +2,8 @@
 //! OpenRage reopens, and the tree's edits save to a new file, as a patched copy whose table is
 //! byte-identical when every edit is a body that fits its entry's chunks, else through the GTA VI
 //! writer as a rebuilt archive, which the game refuses because only its maker can sign the table.
-//! Which of the two is planned on a worker before anything is written, and the save dialog says it.
+//! Which of the two is planned on a worker before anything is written, and a question before the
+//! save dialog says it.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::File;
@@ -12,9 +13,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use or_io::container::rpf::gta6_container_write::Rpf9NewBody;
 use or_io::container::rpf::{
-    plan_patch, read_rpf9_body, write_planned_copy, write_rpf9_resource, BodyForm, BodyPatch,
-    Gta6Class, Gta6Mount, GtaViKeys, PatchPlan, PatchRefusal, Rpf9ArchiveWriter, Rpf9Sections,
-    RpfEntry, RpfVersion, RPF9_MAGIC, RPF9_SLOT,
+    gta6_patch::plan_patch_with, read_rpf9_body, write_planned_copy, write_rpf9_resource, BodyForm,
+    BodyPatch, Gta6Class, Gta6Mount, GtaViKeys, PatchPlan, PatchRefusal, Rpf9ArchiveWriter,
+    Rpf9Sections, RpfEntry, RpfVersion, RPF9_MAGIC, RPF9_SLOT,
 };
 use or_io::container::RpfArchive;
 
@@ -35,6 +36,8 @@ type Ended = (DocumentId, u64, PathBuf, Result<Saved, String>);
 /// How a copy of a GTA VI archive was written.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Saved {
+    /// Nothing was edited, so the copy is the archive as it was read, byte for byte.
+    AsRead,
     /// Each changed body went in chunk by chunk, and every byte of the table is as it was read.
     Patched,
     /// The archive was laid out again: whether a table and whether a body changed, and why each
@@ -57,6 +60,14 @@ pub(crate) struct Replaced {
 pub(crate) fn patched_said(file: &str) -> String {
     tr!(
         "{file} is a patched copy: each changed body is written in its entry's place, chunk by chunk, and its table is byte-identical, so the table's signature still matches and no check read in the game's code rejects it; the game has not been run with it.",
+        file = file
+    )
+}
+
+/// What a copy at `file` of an archive with nothing edited is, said in full.
+pub(crate) fn as_read_said(file: &str) -> String {
+    tr!(
+        "{file} is the archive as it was read, byte for byte: nothing in it is edited.",
         file = file
     )
 }
@@ -102,10 +113,35 @@ pub(crate) struct Planned {
     writer: Rpf9ArchiveWriter,
 }
 
+/// Which copy a planned save writes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Writes {
+    /// The archive as it was read, byte for byte.
+    AsRead,
+    /// Each changed body in its entry's chunks, the table byte-identical.
+    Patched,
+    /// The archive laid out again, which the game refuses.
+    Rebuilt,
+}
+
 impl Planned {
-    /// Whether the save writes a patched copy rather than a rebuilt archive.
-    pub(crate) fn patched(&self) -> bool {
-        self.kept.is_empty() && !self.patches.is_empty()
+    /// Which copy the save writes.
+    pub(crate) fn writes(&self) -> Writes {
+        // Every edit the writer holds is a patch or a row in `kept`, so with neither it holds none.
+        match (self.patches.is_empty(), self.kept.is_empty()) {
+            (true, true) => Writes::AsRead,
+            (false, true) => Writes::Patched,
+            _ => Writes::Rebuilt,
+        }
+    }
+}
+
+/// The save dialog's title for `planned`, short enough for a title bar.
+pub(crate) fn planned_title(planned: &Planned) -> &'static str {
+    match planned.writes() {
+        Writes::AsRead => tr!("Save a copy"),
+        Writes::Patched => tr!("Save a patched copy"),
+        Writes::Rebuilt => tr!("Save a rebuilt archive"),
     }
 }
 
@@ -118,13 +154,22 @@ fn off_by(got: u64, want: u64) -> String {
     }
 }
 
-/// What a save of the archive `file` planned as `planned` writes and why, as its dialog says it.
+/// What a save of the archive `file` planned as `planned` writes and why, as its question says it.
 pub(crate) fn planned_said(file: &str, planned: &Planned) -> String {
-    if planned.patched() {
-        return tr!(
-            "The edits to {file} save as a patched copy: each changed body is written in its entry's place, chunk by chunk, and the table stays byte-identical, so its signature still matches and no check read in the game's code rejects it; the game has not been run with it.",
-            file = file
-        );
+    match planned.writes() {
+        Writes::AsRead => {
+            return tr!(
+                "Nothing in {file} is edited, so the copy is the archive as it was read, byte for byte.",
+                file = file
+            );
+        }
+        Writes::Patched => {
+            return tr!(
+                "The edits to {file} save as a patched copy: each changed body is written in its entry's place, chunk by chunk, and the table stays byte-identical, so its signature still matches and no check read in the game's code rejects it; the game has not been run with it.",
+                file = file
+            );
+        }
+        Writes::Rebuilt => {}
     }
     let said = tr!(
         "The edits to {file} save as a rebuilt archive, which the game refuses because only its maker can sign the table.",
@@ -140,6 +185,11 @@ pub(crate) fn planned_said(file: &str, planned: &Planned) -> String {
     );
     format!("{said} {why}")
 }
+
+/// The largest changed chunk an app save runs the optimal parse over.
+// ponytail: a save's plan has no stop and no progress yet, and the parse takes about two minutes per
+// 8 MiB chunk; raise this to `gta6_patch::OPTIMAL_CAP` once the plan reports and stops.
+const SAVE_OPTIMAL_CAP: usize = 256 << 10;
 
 /// Plan `replaced` into the archive at `source`, reading only: a patched copy when each body fits
 /// its entry's chunks and `kept` names no other edit, else a rebuild by `writer`, with each row that
@@ -183,7 +233,7 @@ pub(crate) fn plan_save(
             entry,
             body: row.body.clone(),
         };
-        match plan_patch(&mut file, keys, &patch) {
+        match plan_patch_with(&mut file, keys, &patch, SAVE_OPTIMAL_CAP, &mut |_, _| true) {
             Ok(plan) => patches.push(plan),
             Err(why) => {
                 let by = match &why {
@@ -217,10 +267,17 @@ pub(crate) fn write_planned(
     planned: &Planned,
 ) -> Result<Saved, String> {
     new_file(out, source)?;
-    if planned.patched() {
-        write_planned_copy(source, out, keys, planned.patches.clone())
-            .map_err(|e| e.to_string())?;
-        return Ok(Saved::Patched);
+    match planned.writes() {
+        Writes::AsRead => {
+            copy_new(source, out)?;
+            return Ok(Saved::AsRead);
+        }
+        Writes::Patched => {
+            write_planned_copy(source, out, keys, planned.patches.clone())
+                .map_err(|e| e.to_string())?;
+            return Ok(Saved::Patched);
+        }
+        Writes::Rebuilt => {}
     }
     let (tables, bodies) = write_plan(&planned.writer, source, out, keys)?;
     Ok(Saved::Rebuilt {
@@ -228,6 +285,24 @@ pub(crate) fn write_planned(
         bodies,
         kept: planned.kept.clone(),
     })
+}
+
+/// Copy `source` byte for byte into the new file `out`; a refused copy leaves nothing there.
+fn copy_new(source: &Path, out: &Path) -> Result<(), String> {
+    let mut from = File::open(source).map_err(|e| format!("{}: {e}", source.display()))?;
+    // `create_new` refuses any file that exists, so the cleanup below only removes one made here.
+    let mut to = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(out)
+        .map_err(|e| format!("{}: {e}", out.display()))?;
+    let copied = std::io::copy(&mut from, &mut to).and_then(|_| to.flush());
+    drop(to);
+    if let Err(e) = copied {
+        let _ = std::fs::remove_file(out);
+        return Err(format!("{}: {e}", out.display()));
+    }
+    Ok(())
 }
 
 /// A tree's save planned on a worker: its document, the edit it was at, the archive, and the keys
@@ -241,9 +316,11 @@ struct Plan {
 }
 
 // ponytail: lists for the process, emptied by the next frame's poll: the saves that ended, the plans
-// whose dialog has not been shown, and the plan whose dialog picked the file the save writes.
+// whose question has not been asked, the plan whose question waits on its answer (one at a time, a
+// later plan taking its place), and the plan whose dialog picked the file the save writes.
 static ENDED: Mutex<Vec<Ended>> = Mutex::new(Vec::new());
 static PLANNED: Mutex<Vec<(DocumentId, Result<Plan, String>)>> = Mutex::new(Vec::new());
+static ASKED: Mutex<Option<Plan>> = Mutex::new(None);
 static HELD: Mutex<Option<Plan>> = Mutex::new(None);
 
 fn lock<T>(list: &'static Mutex<T>) -> MutexGuard<'static, T> {
@@ -764,8 +841,43 @@ impl AppState {
         true
     }
 
-    /// Show the save dialog of each tree's save planned, its title saying what the save writes and
-    /// why, and save into the file it picks.
+    /// The short title and the full sentence of the planned save whose question waits, for a tree
+    /// this app shows.
+    pub(crate) fn planned_save_question(&self) -> Option<(&'static str, String)> {
+        let asked = lock(&ASKED);
+        let plan = asked.as_ref().filter(|p| self.shows(p))?;
+        let file = crate::state::jobs::file_name(&plan.source);
+        let title = planned_title(&plan.planned);
+        Some((title, planned_said(&file, &plan.planned)))
+    }
+
+    /// Whether `plan` is of a document this app holds.
+    fn shows(&self, plan: &Plan) -> bool {
+        self.document(plan.doc_id).is_some()
+    }
+
+    /// Answer the planned save's question: `go` asks where the copy goes and writes it there.
+    pub(crate) fn answer_planned_save(&mut self, go: bool) {
+        let plan = lock(&ASKED).take_if(|p| self.shows(p));
+        let Some(plan) = plan.filter(|_| go) else {
+            return;
+        };
+        let Some(name) = self.gta6_tree_copy_name(plan.doc_id) else {
+            return;
+        };
+        let title = planned_title(&plan.planned);
+        let Some(out) = file_dialogs::save_gta6_archive_copy(&name, title) else {
+            return;
+        };
+        let doc_id = plan.doc_id;
+        *lock(&HELD) = Some(plan);
+        // Save as… asks what every save asks, the retail gate included, then writes the plan held.
+        let previous = self.active_document.replace(doc_id);
+        self.save_active_document_as(out);
+        self.active_document = previous;
+    }
+
+    /// Hold each tree's save planned for its question, which says what the save writes and why.
     fn ask_where_planned_saves_go(&mut self) {
         let arrived: Vec<_> = {
             let mut planned = lock(&PLANNED);
@@ -792,25 +904,21 @@ impl AppState {
                 self.plan_tree_save(doc_id, move || Ok(keys));
                 continue;
             }
-            let Some(name) = self.gta6_tree_copy_name(doc_id) else {
-                continue;
-            };
-            let said = planned_said(&crate::state::jobs::file_name(&plan.source), &plan.planned);
-            let Some(out) = file_dialogs::save_gta6_archive_copy(&name, &said) else {
-                continue;
-            };
-            *lock(&HELD) = Some(plan);
-            // Save as… asks what every save asks, the retail gate included, then writes the plan held.
-            let previous = self.active_document.replace(doc_id);
-            self.save_active_document_as(out);
-            self.active_document = previous;
+            *lock(&ASKED) = Some(plan);
         }
     }
 
     /// Show the dialog of each save planned, and say how each save of a GTA VI tree ended.
     pub(in crate::state) fn poll_tree_saves(&mut self) {
         self.ask_where_planned_saves_go();
-        let done = std::mem::take(&mut *lock(&ENDED));
+        let done: Vec<_> = {
+            let mut ended = lock(&ENDED);
+            // A save of another app's document is left for that app's poll, as a plan is.
+            let (here, others): (Vec<_>, Vec<_>) = (std::mem::take(&mut *ended).into_iter())
+                .partition(|(doc_id, ..)| self.document(*doc_id).is_some());
+            *ended = others;
+            here
+        };
         for (doc_id, at, out, said) in done {
             let file = crate::state::jobs::file_name(&out);
             let saved = match said {
@@ -828,14 +936,20 @@ impl AppState {
                 doc.saved_as_of(at);
             }
             self.file_replaced(&out);
-            let Saved::Rebuilt {
-                tables,
-                bodies,
-                kept,
-            } = saved
-            else {
-                self.show_toast(patched_said(&file));
-                continue;
+            let (tables, bodies, kept) = match saved {
+                Saved::AsRead => {
+                    self.show_toast(as_read_said(&file));
+                    continue;
+                }
+                Saved::Patched => {
+                    self.show_toast(patched_said(&file));
+                    continue;
+                }
+                Saved::Rebuilt {
+                    tables,
+                    bodies,
+                    kept,
+                } => (tables, bodies, kept),
             };
             let said = match (tables, bodies) {
                 (true, _) => tr!(

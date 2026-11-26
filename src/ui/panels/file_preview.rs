@@ -251,7 +251,10 @@ fn draw_body(
             }
         }
         PreviewBody::Hex { head, total } => {
-            for line in entry_preview::hex_lines(head) {
+            let font = egui::TextStyle::Monospace.resolve(ui.style());
+            let glyph = ui.ctx().fonts_mut(|f| f.glyph_width(&font, '0'));
+            let per_line = entry_preview::bytes_per_line(ui.available_width(), glyph);
+            for line in entry_preview::hex_lines(head, per_line) {
                 ui.label(egui::RichText::new(line).small().monospace());
             }
             if head.len() < *total {

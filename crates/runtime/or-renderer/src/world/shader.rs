@@ -418,8 +418,8 @@ fn four_layer(s: ptr<function, Surface>, maps: Maps, in: VsOut) -> vec3<f32> {
     return vec3<f32>(blended.xy + over, blended.z);
 }
 
-// The two-layer family: the second layer over the first by the control map and the vertex's second colour, then the dirt.
-fn two_layer(s: ptr<function, Surface>, maps: Maps, in: VsOut, tint: vec3<f32>) -> vec3<f32> {
+// How much the second layer of a two-layer material shows, by the control map and the vertex's second colour.
+fn second_share(maps: Maps, in: VsOut) -> f32 {
     var c = dot(maps.weights, m.control_filter);
     if ((m.flags & INVERT_CONTROL) != 0u) {
         c = 1.0 - c;
@@ -427,7 +427,12 @@ fn two_layer(s: ptr<function, Surface>, maps: Maps, in: VsOut, tint: vec3<f32>) 
     let x = clamp(in.colour1.x * (1.0 + c), 0.0, 1.0);
     let soft = max(m.control_softness, 1e-3);
     let shown = clamp(x / max(0.01, mix(1.0 / (soft * soft), 1.0, x)), 0.0, 1.0);
-    let w1 = clamp(shown * m.control_entity + m.control_offset, 0.0, 1.0);
+    return clamp(shown * m.control_entity + m.control_offset, 0.0, 1.0);
+}
+
+// The two-layer family: the second layer over the first by the control map and the vertex's second colour, then the dirt.
+fn two_layer(s: ptr<function, Surface>, maps: Maps, in: VsOut, tint: vec3<f32>) -> vec3<f32> {
+    let w1 = second_share(maps, in);
     let m0 = 1.0 - m.translucency_as_tint_mask * (1.0 - maps.c3.a);
     let m1 = 1.0 - m.translucency_as_tint_mask * (1.0 - maps.n3.a);
     let l0 = maps.c0.rgb * (1.0 + m.layer0_tint * m0 * (tint - 1.0));
@@ -727,16 +732,26 @@ fn behind_glass(s: ptr<function, Surface>, maps: Maps, in: VsOut, across: vec3<f
     let veiled = maps.c0.a > 0.05 && (m.flags & VEIL) != 0u;
     let curtain = pow(clamp(1.0 - 1.186 * (maps.c1.a - 0.15686), 0.0, 1.0), 3.0);
     let shows = clamp(1.0 - maps.c0.a, 0.0, 1.0) * select(curtain, 1.0, veiled && (m.flags & VEIL_BARES) != 0u);
-    let let_through = select(1.0, m.interior_slant.w * 0.1 * (1.0 - clamp(1.186 * (maps.c0.a - 0.15686), 0.0, 1.0)), veiled);
+    // ⚠ The share is taken only where the first layer's alpha is under 0.157 as well: a pane it covers more than that lets its light through whole, and only how little of the room it shows dims it.
+    let thinly = veiled && maps.c0.a < 0.15686;
+    let let_through = select(1.0, m.interior_slant.w * 0.1 * (1.0 - clamp(1.186 * (maps.c0.a - 0.15686), 0.0, 1.0)), thinly);
     let n = normalize(in.world_normal);
     let facing = max(abs(dot(n, normalize(camera.camera_pos_ws.xyz - in.world_pos))), 1e-4);
     let thin = m.interior_glass.w;
     let thick = max(0.0, m.interior_slant.y * (min(m.interior_slant.x, thin / facing) - thin) + thin);
-    let through = exp(-2.0 * m.interior_glass.rgb * thick);
     let layer = (*s).albedo;
+    let diffuse = diffuse_of(*s);
+    // The pane's own colour, by the share the effect states, thins the glass's absorption and tints the room's light.
+    // ⚠ The room's light crosses the glass once and the room seen in it twice: the light takes the absorption once, the colour its square.
+    let once = exp(-m.interior_glass.rgb * (1.0 - m.emissive_diffuse_tint * diffuse) * thick);
+    let through = once * once;
+    let tinted = 1.0 + m.emissive_diffuse_tint * (diffuse - 1.0);
     (*s).albedo = mix(layer, through * mix(layer, room.seen, shows), 1.0 - maps.c1.a);
-    let own = clamp(1.2439 * (maps.c0.a - 0.19607), 0.0, 1.0);
-    (*s).emissive = emissive_strength() * maps.a3.rgb * through * room.light * mix(room.colour, layer, own) * shows * let_through;
+    // How much of the pane's own colour the room's light takes in place of the room's: by the first layer's alpha, and off the veil's way, towards the second layer's by as far as that layer shows over its alpha.
+    let own0 = clamp(1.2439 * (maps.c0.a - 0.19607), 0.0, 1.0);
+    let own1 = clamp(1.186 * (maps.c1.a - 0.15686), 0.0, 1.0);
+    let own = select(mix(own0, own1, maps.c1.a * second_share(maps, in)), own0, veiled && (m.flags & VEIL_BARES) != 0u);
+    (*s).emissive = emissive_strength() * maps.a3.rgb * tinted * once * room.light * mix(room.colour, diffuse, own) * shows * let_through;
 }
 
 // The colour the diffuse light multiplies: the albedo less what its metal turns to reflection.

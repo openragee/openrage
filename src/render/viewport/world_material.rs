@@ -137,6 +137,7 @@ pub(super) fn constants_of(material: &CpuMaterial) -> WorldConstants {
         constants.interior_room = interior.size;
         constants.interior_plane = interior.plane_of;
         constants.interior_glass = interior.glass;
+        constants.emissive_diffuse_tint = interior.diffuse;
         let [most, slant, glow] = interior.slant;
         constants.interior_slant = [most, slant, glow, interior.veil.unwrap_or(0.0)];
         constants.flags |= flag(interior.veil.is_some(), WorldConstants::VEIL)
@@ -249,6 +250,7 @@ mod tests {
             size: [1.0, 2.5, 0.8, 1.0],
             plane_of: [1.0, 0.2, 2.0, 7.0],
             glass: [15.0, 12.5, 12.5, 0.02],
+            diffuse: 0.25,
             slant: [0.04, 0.5, 1.0],
             veil: Some(0.75),
             veil_bares: true,
@@ -272,6 +274,8 @@ mod tests {
         assert_eq!(constants.interior_room, interior.size);
         assert_eq!(constants.interior_glass, interior.glass);
         assert_eq!(constants.interior_slant, [0.04, 0.5, 1.0, 0.75]);
+        // The interior effect states the pane's share of its own light in the glass's fourth word, not the emissive's own
+        assert_eq!(constants.emissive_diffuse_tint, 0.25);
         // No veil, no veil's flags, whatever the curtain words say
         let unveiled = CpuMaterial {
             interior: Some(Interior {

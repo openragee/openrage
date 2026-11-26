@@ -554,7 +554,7 @@ fn an_interior_window_names_its_room_cubes_and_back_plane_and_reads_its_room_fro
         (0x6AD7_14D8, &[1.0]),
         (0x2881_A0FF, &[2.5]),
         (0xC096_32A5, &[0.5]),
-        (0x1C25_0A16, &[15.0, 12.5, 12.5, 0.0]),
+        (0x1C25_0A16, &[15.0, 12.5, 12.5, 1.0]),
         (0x0F2E_7960, &[0.02]),
     ];
     let material = of(&shader(&records, constants), 0);
@@ -570,6 +570,8 @@ fn an_interior_window_names_its_room_cubes_and_back_plane_and_reads_its_room_fro
     // The back plane's alpha is divided by its cut, as a scale
     assert_eq!(interior.plane_of[2], 2.0);
     assert_eq!(interior.glass, [15.0, 12.5, 12.5, 0.02]);
+    // The absorption's fourth word is the pane's share of its own colour in the room's light
+    assert_eq!(interior.diffuse, 1.0);
     let keys = material.keys();
     assert!([0x5A, 0x5B, 0x5C].iter().all(|k| keys.contains(k)));
     // A two-layer material that states no room cube has no room behind it

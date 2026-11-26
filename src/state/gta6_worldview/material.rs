@@ -68,6 +68,8 @@ pub struct Interior {
     pub plane_of: [f32; 4],
     /// The glass's absorption per channel, and its thickness.
     pub glass: [f32; 4],
+    /// How far the pane's own colour tints the room's light and thins the glass's absorption.
+    pub diffuse: f32,
     /// The most the glass is thick seen aslant, how much of that slant it takes, and how much light the back plane gives.
     pub slant: [f32; 3],
     /// Where the first layer covers a pane, the share of the room's light let through it, before a tenth of what the layer leaves; none where the effect does not take that way.
@@ -380,7 +382,7 @@ const ROOM_SIZE: [u32; 5] = [
 const PLANE_DEPTH: u32 = 0xEB3B_E113;
 const PLANE_CUT: u32 = 0xC096_32A5;
 const ROOM_DARKENS: u32 = 0xA1C8_E7E6;
-/// The glass's absorption per channel, its thickness, the most it is thick seen aslant, and how much of the slant it takes.
+/// The glass's absorption per channel and in its fourth how far the pane's colour tints the room's light, its thickness, the most it is thick seen aslant, and how much of the slant it takes.
 const GLASS_ABSORPTION: u32 = 0x1C25_0A16;
 const GLASS_THICKNESS: u32 = 0x0F2E_7960;
 const GLASS_MOST: u32 = 0x5775_351A;
@@ -555,7 +557,7 @@ fn interior_of(r: &Records) -> Option<Interior> {
         return None;
     }
     let [depth, width, height, up, across] = ROOM_SIZE.map(|hash| r.float(hash, 1.0));
-    let [k_r, k_g, k_b] = r.floats(GLASS_ABSORPTION, [0.0; 3]);
+    let [k_r, k_g, k_b, diffuse] = r.floats(GLASS_ABSORPTION, [0.0; 4]);
     let veil = (r.float(VEIL, 0.0) == 1.0).then(|| r.float(VEIL_LIGHT, 1.0));
     Some(Interior {
         room: r.key(ROOM_CUBE),
@@ -571,6 +573,7 @@ fn interior_of(r: &Records) -> Option<Interior> {
             r.float(ROOM_DARKENS, 1.0).abs().max(1e-6),
         ],
         glass: [k_r, k_g, k_b, r.float(GLASS_THICKNESS, 0.0)],
+        diffuse,
         slant: [
             r.float(GLASS_MOST, 0.0),
             r.float(GLASS_SLANT, 0.0).abs(),

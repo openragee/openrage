@@ -19,8 +19,6 @@ const CURVE_OFFSET: f32 = 10.0;
 const LEAST_LUMINANCE: f32 = 1e-6;
 /// The grey the stand-in meter sees the world as.
 const GREY: f32 = 0.18;
-/// The lowest a body stands for the sky it lights, which keeps the dusk sky lit while its body is under the horizon.
-const LOWEST_SKY_LIGHT: f32 = 0.05;
 /// The up part of a way along the horizon, where the dome and the fog take their colours.
 const HORIZON: f32 = 0.02;
 /// The crossfade a keyframe states for the fades worked out from the zenith angles.
@@ -29,14 +27,6 @@ const AUTOMATIC: f32 = -10.0;
 /// The luminance of a colour.
 fn luminance(c: [f32; 3]) -> f32 {
     0.2125 * c[0] + 0.7154 * c[1] + 0.0721 * c[2]
-}
-
-fn normalised(v: [f32; 3]) -> [f32; 3] {
-    let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    match length > 0.0 {
-        true => v.map(|c| c / length),
-        false => [0.0, 0.0, 1.0],
-    }
 }
 
 /// One exposure curve of the visual settings: the stops it gives a metered luminance.
@@ -220,6 +210,8 @@ pub fn light_variables(k: &Keyframe) -> LightVariables {
 pub struct Bodies {
     pub sun_fade: f32,
     pub moon_fade: f32,
+    /// The weight of neither body being up, which the night sky's galaxy terms take.
+    pub third_fade: f32,
     pub sun_leads: bool,
     /// The way towards the body that leads.
     pub body: [f32; 3],
@@ -252,6 +244,7 @@ pub fn bodies(k: &Keyframe, sun: [f32; 3], moon: [f32; 3], tunables: &LightTunab
     Bodies {
         sun_fade: state.weights.sun,
         moon_fade: state.weights.moon,
+        third_fade: state.weights.third,
         sun_leads,
         body: if sun_leads { sun } else { moon },
         towards: state.direction.into(),
@@ -280,7 +273,9 @@ pub fn light(
     let air = Atmosphere::of(k);
     let lit = bodies(k, sun, moon, &settings.bodies);
     let clear = air.transmittance(lit.body[2]);
-    let sky_light = normalised([lit.body[0], lit.body[1], lit.body[2].max(LOWEST_SKY_LIGHT)]);
+    // ⚠ A stand-in shared with the dome: the ground takes the sky the dome draws, of the same air lit
+    // by its body where it stands, under the horizon too, in place of the build's atmosphere tables.
+    let sky_light = lit.body;
     let clear_sky = air.irradiance(sky_light, lit.illuminance);
     // The clouds shade the ground from the body by what they cover, and send on down as the sky's
     // light what they scatter of it: a storm's dark is its cloud, its sun as strong as a clear noon's.

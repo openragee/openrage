@@ -231,6 +231,25 @@ fn the_dome_is_lit_by_the_body_that_leads_and_the_disc_by_the_sun_alone() {
 }
 
 #[test]
+fn the_ground_takes_the_sky_of_a_sun_under_the_horizon_where_it_stands() {
+    let (k, settings) = (day(), settings());
+    let moon = at_zenith(45.0);
+    let (setting, _) = light(&k, at_zenith(91.0), moon, &settings);
+    let (twilight, _) = light(&k, at_zenith(98.0), moon, &settings);
+    assert!(twilight.illuminance > 1000.0, "the sun still leads");
+    // The sky darkens as its sun sinks, the ground's with the dome's zenith.
+    assert!(
+        twilight.sky[1] < 0.5 * setting.sky[1],
+        "{:?} {:?}",
+        twilight.sky,
+        setting.sky
+    );
+    let ground = twilight.sky[1] / setting.sky[1];
+    let dome = twilight.dome[0][1] / setting.dome[0][1];
+    assert!((ground / dome - 1.0).abs() < 0.5, "{ground} {dome}");
+}
+
+#[test]
 fn a_storm_shades_the_ground_from_its_sun_and_lights_it_by_what_its_clouds_scatter() {
     let settings = settings();
     let (clear, _) = light(&day(), at_zenith(15.0), at_zenith(45.0), &settings);

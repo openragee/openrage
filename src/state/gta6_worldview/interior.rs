@@ -31,6 +31,8 @@ const DOOR: u32 = 1 << 26;
 // ⚠ Measured: a map's door near an opening of a shell stands on it, within centimetres, and none
 // stands from there to metres off it.
 const IN_OPENING: f32 = 0.25;
+/// How near two places are to be one, in metres: a placed instance's origin and its entity's position.
+const SAME_PLACE: f32 = 0.01;
 
 fn rows_of(m: Mat4) -> Rows {
     let t = m.transpose().to_cols_array_2d();
@@ -112,13 +114,24 @@ pub(super) struct Placed {
     pub(super) children: Vec<Child>,
     /// What takes a point of the world into the interior's own space, where its rooms stand.
     pub(super) own: Mat4,
-    /// The middle of its box, in its own space.
-    pub(super) middle: Vec3,
     pub(super) rooms: Vec<RoomBox>,
     pub(super) names: Vec<RoomNames>,
     pub(super) portals: Vec<Opening>,
     /// The luminous flux of each room's lamps, in lumens.
     pub(super) flux: Vec<f32>,
+    /// The doors the map places in the openings of its shell.
+    pub(super) doors: Vec<InOpening>,
+}
+
+/// A door the map places in an opening of an interior's shell, in the interior's space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct InOpening {
+    /// Where it stands: its hinge.
+    pub(super) at: Vec3,
+    /// The opening's normal, out of the interior.
+    pub(super) out: Vec3,
+    /// The ambient scales its face turned into the room takes: the room's, the opening it shuts left out.
+    pub(super) inward: [f32; 2],
 }
 
 /// The luminous flux of `light`, in lumens, its intensity taken in candelas: all round for a
@@ -200,10 +213,10 @@ pub(super) fn place(
         .iter()
         .map(|d| inward.transform_point3(*d))
         .collect();
-    let in_opening = |p: &Portal| {
+    let in_opening = |p: &Portal, d: &Vec3| {
         let corners = p.corners.map(Vec3::from);
-        let near = |d: &Vec3| point_polygon_distance(*d, &corners).is_some_and(|a| a <= IN_OPENING);
-        (p.room_from == 0 || p.room_to == 0) && map_doors.iter().any(near)
+        let near = point_polygon_distance(*d, &corners).is_some_and(|a| a <= IN_OPENING);
+        (p.room_from == 0 || p.room_to == 0) && near
     };
     let portals: Vec<Opening> = (interior.portals.iter().zip(doors))
         .map(|(p, doors)| Opening {
@@ -211,7 +224,7 @@ pub(super) fn place(
             corners: p.corners.map(Vec3::from),
             flags: p.flags,
             shut: interior_rooms::shut_at_rest(p.flags, doors),
-            door: in_opening(p),
+            door: map_doors.iter().any(|d| in_opening(p, d)),
         })
         .collect();
     let rooms: Vec<RoomBox> = (interior.rooms.iter())
@@ -260,6 +273,24 @@ pub(super) fn place(
         })
         .collect();
     let (min, max) = (Vec3::from(interior.bb_min), Vec3::from(interior.bb_max));
+    let doors = (map_doors.iter())
+        .filter_map(|&at| {
+            let k = (interior.portals.iter()).position(|p| in_opening(p, &at))?;
+            let opening = portals.get(k)?;
+            let (normal, point) = interior_rooms::plane_of(&opening.corners)?;
+            // Out of the interior is away from the middle of its box, where its rooms are.
+            let out = match normal.dot((min + max) / 2.0 - point) > 0.0 {
+                true => -normal,
+                false => normal,
+            };
+            let room = opening.rooms[0].max(opening.rooms[1]);
+            let mut behind = portals.clone();
+            behind[k].shut = true;
+            let lamps = flux.get(room as usize).copied().unwrap_or(0.0);
+            let inward = interior_rooms::ambient_of(&rooms, &behind, room, at, lamps);
+            Some(InOpening { at, out, inward })
+        })
+        .collect();
     Placed {
         entity: instance.entity,
         name: interior.name,
@@ -272,7 +303,6 @@ pub(super) fn place(
         },
         children,
         own: outer.inverse(),
-        middle: (min + max) / 2.0,
         rooms,
         names: (interior.rooms.iter())
             .map(|r| RoomNames {
@@ -284,13 +314,22 @@ pub(super) fn place(
             .collect(),
         portals,
         flux,
+        doors,
     }
 }
 
 impl Placed {
-    /// The interior and room a camera at `eye` stands in, where it stands in one of this interior's rooms.
-    pub(super) fn inside(&self, eye: Vec3) -> Option<Inside> {
-        let room = interior_rooms::room_of(&self.rooms, self.own.transform_point3(eye))?;
+    /// What the walk takes of it.
+    pub(super) fn shell(&self) -> interior_rooms::Shell<'_> {
+        interior_rooms::Shell {
+            rooms: &self.rooms,
+            portals: &self.portals,
+            own: self.own,
+        }
+    }
+
+    /// This interior and its room `room`, as a camera inside it stands in them.
+    pub(super) fn inside(&self, room: usize) -> Option<Inside> {
         let names = self.names.get(room)?;
         Some(Inside {
             interior: self.name,
@@ -321,6 +360,10 @@ impl Placed {
                 if !reach(instance.centre, instance.radius) {
                     continue;
                 }
+                if let Some(ambient) = self.door_ambient(&instance.rows) {
+                    instance.ambient = ambient;
+                    continue;
+                }
                 let p = self.own.transform_point3(instance.centre);
                 let room = interior_rooms::room_around(&self.rooms, p, instance.radius * scale);
                 if let Some(room) = room {
@@ -337,6 +380,23 @@ impl Placed {
         }
     }
 
+    /// The ambient scales by face of an instance placed by `rows` where it is a door of one of the shell's openings: the outdoors' on the face turned out, the room's on the other.
+    fn door_ambient(&self, rows: &Rows) -> Option<[f32; 2]> {
+        let at = self
+            .own
+            .transform_point3(Vec3::new(rows[0][3], rows[1][3], rows[2][3]));
+        let door = (self.doors.iter()).find(|d| d.at.distance(at) <= SAME_PLACE)?;
+        // The model's axis nearest the opening's normal, and which way along it is out.
+        let (axis, out) = (0..3)
+            .map(|j| {
+                let along = Vec3::new(rows[0][j], rows[1][j], rows[2][j]);
+                let along = self.own.transform_vector3(along).normalize_or_zero();
+                (j, along.dot(door.out))
+            })
+            .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))?;
+        Some(or_renderer::world::by_face(axis, out, door.inward))
+    }
+
     /// Whether the sphere of `radius` about `p` in the world reaches into one of the interior's rooms.
     pub(super) fn reaches_a_room(&self, p: Vec3, radius: f32) -> bool {
         let (p, r) = (self.own.transform_point3(p), radius * stretch(self.own));
@@ -344,49 +404,20 @@ impl Placed {
             .any(|room| p.clamp(room.min, room.max).distance_squared(p) <= r * r)
     }
 
-    /// `pyramids`, planes through the camera in the interior's own space, as planes in the world.
-    pub(super) fn to_world(
-        &self,
-        pyramids: &[interior_rooms::Planes],
-    ) -> Vec<interior_rooms::Planes> {
-        // A plane through the eye takes the transpose of the map into the interior's space.
-        let linear = glam::Mat3::from_mat4(self.own).transpose();
-        let world = |n: &Vec3| (linear * *n).normalize_or_zero();
-        (pyramids.iter())
-            .map(|planes| planes.iter().map(world).collect())
-            .collect()
-    }
-
-    /// Call `draw` with each child a camera of `view` sees at the hour `hour`, 0 to 23, how far from
-    /// the camera it stands and how opaque it draws, the interior itself drawing `fade` opaque; what
-    /// it sees of the rooms, where the interior is in range.
+    /// Call `draw` with each child of what `seen` holds a camera of `view` sees at the hour `hour`,
+    /// 0 to 23, how far from the camera it stands and how opaque it draws, the interior itself
+    /// drawing `fade` opaque.
     pub(super) fn each(
         &self,
         view: &View,
         hour: u32,
         fade: f32,
+        seen: &Seen,
         mut draw: impl FnMut(&Child, f32, f32),
-    ) -> Option<Seen> {
+    ) {
         let eye = view.eye;
-        if !self.in_range(eye, view) {
-            return None;
-        }
-        // An interior of no room but the outside has nothing to see through: all of it is seen.
-        let seen = match self.rooms.len() > 1 {
-            true => interior_rooms::seen(
-                &self.rooms,
-                &self.portals,
-                self.middle,
-                self.own.transform_point3(eye),
-            ),
-            false => Seen {
-                rooms: vec![true; self.rooms.len()],
-                portals: vec![true; self.portals.len()],
-                outside: None,
-            },
-        };
         for child in &self.children {
-            if (child.hours >> hour) & 1 == 0 || !sees(&seen, child.location) {
+            if (child.hours >> hour) & 1 == 0 || !sees(seen, child.location) {
                 continue;
             }
             let r = &child.rows;
@@ -396,7 +427,6 @@ impl Placed {
                 draw(child, away, fade * own);
             }
         }
-        Some(seen)
     }
 }
 

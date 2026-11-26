@@ -1,23 +1,24 @@
-//! Which rooms and portals of an interior a camera sees, in the interior's own space: the room it
-//! stands in and the rooms seen through its portals, each portal clipped to the opening the camera
-//! looks through to reach it; from outside, the rooms seen through the portals to the outside.
+//! Which rooms and portals of the interiors around a camera it sees, by the build's walk: from the
+//! room it stands in through the open portals and the links into the interiors they join; from
+//! outside, each interior through its portals to the outside; and the light a room's openings and
+//! lamps give what stands in it, in the interior's own space.
 //!
 //! ⚠ Room 0 is the outside of every other room: a portal to it is a door or window of the shell.
 
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use or_io::gta6::timecycle::ARTIFICIAL_AMBIENT_LUX;
+use or_world::interior_portals::{self as rules, LinkTarget, RoomRef};
 use or_world::streaming_rules::{
-    portal_is_shut, portal_leads_outside, PortalDoor, PORTAL_LINK, PORTAL_MIRROR,
+    camera_portal_factor, portal_is_shut, portal_leads_outside, uses_interior_ambient, PortalDoor,
+    PORTAL_LINK, PORTAL_MIRROR,
 };
 
-/// How near a portal's plane the camera may stand and still look through the whole of it, in metres.
-const DOORWAY: f32 = 0.1;
 /// How many portals deep a camera looks.
-const DEPTH: usize = 8;
-/// How many rooms a walk enters, along all its paths, before it gives up and takes every room as seen.
-// ⚠ The paths a walk follows grow as the portals' count to the power of `DEPTH`: rooms whose
-// doors all open where the camera stands would hold the world's thread for hours.
-const MOST_ENTERED: usize = 1 << 14;
+const DEPTH: u32 = 8;
+/// How near the middles of two portals stand for a link of one to lead through the other, in metres.
+// ⚠ Inferred: the build's walk resolves a link to the other instance and its portal to the outside;
+// how it finds them was not read, and a link and the portal it meets stand in one place.
+const LINKED: f32 = 0.5;
 
 /// A room's box, in the interior's space.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,8 +63,9 @@ pub(super) fn shut_at_rest(flags: u32, doors: usize) -> bool {
     portal_is_shut(flags, true, &vec![at_rest; doors])
 }
 
-/// What a camera sees of an interior: by room and by portal; from a room, the pyramids through the
-/// portals to the outside it sees the outside through, `None` where nothing of the outside is hidden.
+/// What a camera sees of an interior: by room and by portal; from a room, the pyramids in the world
+/// through the portals to the outside it sees the outside through, `None` where nothing of the
+/// outside is hidden.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct Seen {
     pub(super) rooms: Vec<bool>,
@@ -99,29 +101,6 @@ pub(super) fn room_around(rooms: &[RoomBox], p: Vec3, radius: f32) -> Option<usi
 /// Planes through the camera, each a unit normal: a point `p` is inside where `normal · (p − eye) ≥ 0` for each.
 pub(super) type Planes = Vec<Vec3>;
 
-/// The part of `polygon` inside every one of `planes` through `eye`.
-fn clip(mut polygon: Vec<Vec3>, eye: Vec3, planes: &[Vec3]) -> Vec<Vec3> {
-    for normal in planes {
-        if polygon.len() < 3 {
-            break;
-        }
-        let side = |p: Vec3| normal.dot(p - eye);
-        let mut out = Vec::with_capacity(polygon.len() + 1);
-        for (k, &a) in polygon.iter().enumerate() {
-            let b = polygon[(k + 1) % polygon.len()];
-            let (sa, sb) = (side(a), side(b));
-            if sa >= 0.0 {
-                out.push(a);
-            }
-            if (sa >= 0.0) != (sb >= 0.0) {
-                out.push(a + (b - a) * (sa / (sa - sb)));
-            }
-        }
-        polygon = out;
-    }
-    polygon
-}
-
 /// The planes through `eye` and each edge of `polygon`, each facing its middle.
 fn pyramid(eye: Vec3, polygon: &[Vec3]) -> Planes {
     let middle = polygon.iter().copied().sum::<Vec3>() / polygon.len() as f32;
@@ -139,103 +118,181 @@ fn pyramid(eye: Vec3, polygon: &[Vec3]) -> Planes {
 }
 
 /// The plane of an opening, as a unit normal and a point on it; `None` for one with no area.
-fn plane_of(corners: &[Vec3; 4]) -> Option<(Vec3, Vec3)> {
+pub(super) fn plane_of(corners: &[Vec3; 4]) -> Option<(Vec3, Vec3)> {
     let normal = (corners[2] - corners[0]).cross(corners[3] - corners[1]);
     let normal = normal.try_normalize()?;
     Some((normal, corners.iter().copied().sum::<Vec3>() / 4.0))
 }
 
-struct Walk<'a> {
-    eye: Vec3,
-    portals: &'a [Opening],
-    /// The middle of the interior's box: the side of a shell's portal its rooms are on.
-    middle: Vec3,
-    seen: Seen,
-    path: Vec<u32>,
-    /// How many more rooms it may enter.
-    left: usize,
-    /// The openings each portal was crossed through, the way into its first room and the way out.
-    crossed: Vec<[Vec<Vec<Vec3>>; 2]>,
+/// An interior a camera may see into: its rooms and portals in its own space, and what takes a
+/// point of the world into that space.
+pub(super) struct Shell<'a> {
+    pub(super) rooms: &'a [RoomBox],
+    pub(super) portals: &'a [Opening],
+    pub(super) own: Mat4,
 }
 
-/// Whether every corner of `inner` lies within the convex `outer`, both in a plane facing `normal`.
-fn within(inner: &[Vec3], outer: &[Vec3], normal: Vec3) -> bool {
-    const SLACK: f32 = 1e-4;
-    let turn = |a: Vec3, b: Vec3, p: Vec3| normal.dot((b - a).cross(p - a));
-    let &[a, b, c, ..] = outer else {
-        return false;
-    };
-    let wise = turn(a, b, c).signum();
-    inner.iter().all(|&p| {
-        (0..outer.len()).all(|k| wise * turn(outer[k], outer[(k + 1) % outer.len()], p) >= -SLACK)
-    })
+/// What a camera sees of the shells around it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(super) struct Walked {
+    /// By shell: the rooms and portals it sees; from a room, the pyramids in the world the outside is seen through.
+    pub(super) seen: Vec<Seen>,
+    /// The shell and room the camera stands in.
+    pub(super) standing: Option<(usize, usize)>,
+    /// The room the camera stands in, or, where the factor takes the interior's light, the room past the nearest portal to the outside.
+    pub(super) inside: Option<(usize, usize)>,
 }
 
-impl Walk<'_> {
-    fn enter(&mut self, room: u32, planes: &[Vec3]) {
-        if let Some(slot) = self.seen.rooms.get_mut(room as usize) {
-            *slot = true;
+/// `shell` as the build's walk takes it: its portals in the world, each room's portals, its box in the world.
+fn walked(shell: &Shell<'_>) -> rules::Interior {
+    let world = shell.own.inverse();
+    let portals = (shell.portals.iter())
+        .map(|o| rules::Portal {
+            def: rules::PortalDef {
+                room_a: o.rooms[0],
+                room_b: o.rooms[1],
+                flags: o.flags,
+                opacity: 0,
+                corners: o.corners.map(|c| world.transform_point3(c)).to_vec(),
+            },
+            shut: o.shut,
+            link: None,
+        })
+        .collect();
+    let mut rooms = vec![Vec::new(); shell.rooms.len()];
+    for (k, o) in shell.portals.iter().enumerate() {
+        let [a, b] = o.rooms;
+        for room in if a == b { vec![a] } else { vec![a, b] } {
+            if let Some(list) = rooms.get_mut(room as usize) {
+                list.push(k);
+            }
         }
-        self.left = self.left.saturating_sub(1);
-        if self.path.len() >= DEPTH || self.left == 0 {
-            return;
+    }
+    let (mut least, mut most) = (Vec3::INFINITY, Vec3::NEG_INFINITY);
+    for room in shell.rooms {
+        for k in 0..8 {
+            let at = |axis: usize| match k >> axis & 1 {
+                0 => room.min[axis],
+                _ => room.max[axis],
+            };
+            let p = world.transform_point3(Vec3::new(at(0), at(1), at(2)));
+            (least, most) = (least.min(p), most.max(p));
         }
-        self.path.push(room);
-        for (k, portal) in self.portals.iter().enumerate() {
-            let other = match portal.rooms {
-                [a, b] if a == room && b != room => b,
-                [a, b] if b == room && a != room => a,
-                _ => continue,
+    }
+    rules::Interior {
+        portals,
+        rooms,
+        // ⚠ What the viewer draws the contents of is what the build calls populated.
+        proxy_state: rules::POPULATED_PROXY_STATE,
+        bounds_min: least,
+        bounds_max: most,
+    }
+}
+
+/// The middle of a portal's corners.
+fn middle(def: &rules::PortalDef) -> Vec3 {
+    def.corners.iter().copied().sum::<Vec3>() / def.corners.len().max(1) as f32
+}
+
+/// Join each link portal of `interiors` to the portal to the outside of another interior that stands where it does.
+fn link(interiors: &mut [rules::Interior]) {
+    let outward: Vec<(usize, usize, Vec3)> = (interiors.iter().enumerate())
+        .flat_map(|(i, interior)| {
+            let exterior = interior.rooms.first().map_or(&[][..], Vec::as_slice);
+            (exterior.iter().enumerate()).filter_map(move |(slot, &k)| {
+                Some((i, slot, middle(&interior.portals.get(k)?.def)))
+            })
+        })
+        .collect();
+    for (i, interior) in interiors.iter_mut().enumerate() {
+        for portal in interior.portals.iter_mut().filter(|p| p.def.is_link()) {
+            let at = middle(&portal.def);
+            portal.link = (outward.iter())
+                .find(|(j, _, there)| *j != i && there.distance(at) <= LINKED)
+                .map(|&(interior, slot, _)| LinkTarget { interior, slot });
+        }
+    }
+}
+
+/// What a camera at `eye` sees of `shells`: from the room it stands in, through its open portals
+/// and the links into the shells they join; each other shell from outside, through its open
+/// portals to the outside; all of it with no test of where the camera looks.
+// ponytail: the world's thread is told where the camera stands and not where it looks, so each
+// portal passes the frustum's test, as though the camera looked every way; narrow it with the
+// view's planes if the rooms drawn cost.
+pub(super) fn walk(shells: &[Shell<'_>], eye: Vec3) -> Walked {
+    let mut interiors: Vec<rules::Interior> = shells.iter().map(walked).collect();
+    link(&mut interiors);
+    let standing = (shells.iter().enumerate())
+        .find_map(|(i, s)| Some((i, room_of(s.rooms, s.own.transform_point3(eye))?)));
+    let mut seen: Vec<Seen> = (shells.iter())
+        .map(|s| Seen {
+            rooms: vec![false; s.rooms.len()],
+            portals: vec![false; s.portals.len()],
+            outside: None,
+        })
+        .collect();
+    for i in 0..shells.len() {
+        let room = match standing {
+            Some((j, room)) if j == i => room,
+            _ => 0,
+        };
+        let start = RoomRef { interior: i, room };
+        let found = rules::visible_rooms(&interiors, start, &[], DEPTH);
+        // ⚠ Inferred: the walk ends at the outside, and the build's scan of every shell's portals from the outside, its own among them, is a start of its own.
+        let again = (room != 0 && found.exterior_seen).then(|| {
+            let outside = RoomRef {
+                interior: i,
+                room: 0,
             };
-            // A mirror is seen in the room it hangs in, and nothing is seen through it.
-            if portal.flags & PORTAL_MIRROR != 0 {
-                self.seen.portals[k] = true;
-                continue;
+            rules::visible_rooms(&interiors, outside, &[], DEPTH)
+        });
+        let rooms = found
+            .rooms
+            .iter()
+            .chain(again.iter().flat_map(|v| &v.rooms));
+        // The outside of an interior is seen through each of its portals to the outside the walk reaches.
+        let outward = (found.exterior_portals.iter()).map(|p| (p.interior, 0));
+        for (at, room) in rooms.map(|r| (r.interior, r.room)).chain(outward) {
+            if let Some(slot) = seen.get_mut(at).and_then(|s| s.rooms.get_mut(room)) {
+                *slot = true;
             }
-            if self.path.contains(&other) {
-                continue;
-            }
-            let Some((normal, point)) = plane_of(&portal.corners) else {
-                continue;
-            };
-            let off = normal.dot(self.eye - point);
-            // From outside, a shell's portal is looked into only from the side away from its rooms.
-            if room == 0 && off * normal.dot(self.middle - point) > 0.0 {
-                continue;
-            }
-            let opening = clip(portal.corners.to_vec(), self.eye, planes);
-            let doorway = off.abs() < DOORWAY;
-            if opening.len() < 3 && !doorway {
-                continue;
-            }
-            let next = match doorway {
-                // Standing in the opening, the camera sees through all of it what it saw before.
-                true => planes.to_vec(),
-                false => pyramid(self.eye, &opening),
-            };
-            self.seen.portals[k] = true;
-            // A shut portal's door is seen, and nothing past it.
-            if portal.shut {
-                continue;
-            }
-            // ⚠ Through an opening within one this portal was crossed through the same way, the eye
-            // sees nothing it did not: the walk would otherwise follow every order of the same doors.
-            let way = &mut self.crossed[k][usize::from(other == portal.rooms[0])];
-            if opening.len() >= 3 {
-                if way.iter().any(|seen| within(&opening, seen, normal)) {
-                    continue;
-                }
-                way.push(opening);
-            }
+        }
+        if room != 0 {
             // ⚠ GTA V's rule: from a room the outside is drawn through the portals to it the camera sees.
-            let outside = self.seen.outside.as_mut();
-            let leads_out = other == 0 && portal_leads_outside(room, other, portal.flags);
-            if let Some(outside) = outside.filter(|_| leads_out) {
-                outside.push(next.clone());
-            }
-            self.enter(other, &next);
+            let through = (found.exterior_portals.iter())
+                .filter_map(|p| interiors.get(p.interior)?.portals.get(p.portal))
+                .map(|p| pyramid(eye, &p.def.corners))
+                .collect();
+            seen[i].outside = Some(through);
         }
-        self.path.pop();
+    }
+    // What a portal holds is seen with either room it joins.
+    for (s, shell) in seen.iter_mut().zip(shells) {
+        for (k, o) in shell.portals.iter().enumerate() {
+            s.portals[k] = (o.rooms.iter()).any(|r| s.rooms.get(*r as usize) == Some(&true));
+        }
+    }
+    let distances = rules::exterior_portal_distances(eye, &interiors);
+    let factor = camera_portal_factor(standing.is_some(), distances);
+    let inside = standing.or_else(|| {
+        // Where the factor takes the interior's light, the room past the nearest portal to the outside.
+        let nearest = (interiors.iter().enumerate())
+            .flat_map(|(i, interior)| {
+                let exterior = interior.rooms.first().map_or(&[][..], Vec::as_slice);
+                (exterior.iter()).filter_map(move |&k| {
+                    let def = &interior.portals.get(k)?.def;
+                    let away = rules::point_polygon_distance(eye, &def.corners)?;
+                    Some((away, i, def.room_a.max(def.room_b) as usize))
+                })
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))?;
+        uses_interior_ambient(factor).then_some((nearest.1, nearest.2))
+    });
+    Walked {
+        seen,
+        standing,
+        inside,
     }
 }
 
@@ -328,36 +385,6 @@ pub(super) fn ambient_of(
         factor + (1.0 - factor) * near.clamp(0.0, 1.0),
         (bounced / ARTIFICIAL_AMBIENT_LUX).clamp(0.0, 1.0),
     ]
-}
-
-/// What a camera at `eye` sees of an interior of `rooms` and `portals` whose box's middle is
-/// `middle`: from the room it stands in, else from outside.
-pub(super) fn seen(rooms: &[RoomBox], portals: &[Opening], middle: Vec3, eye: Vec3) -> Seen {
-    let mut walk = Walk {
-        eye,
-        portals,
-        middle,
-        seen: Seen {
-            rooms: vec![false; rooms.len()],
-            portals: vec![false; portals.len()],
-            outside: None,
-        },
-        path: Vec::new(),
-        left: MOST_ENTERED,
-        crossed: vec![Default::default(); portals.len()],
-    };
-    let start = room_of(rooms, eye).unwrap_or(0) as u32;
-    if start != 0 {
-        walk.seen.outside = Some(Vec::new());
-    }
-    walk.enter(start, &[]);
-    if walk.left == 0 {
-        // A walk cut short has not seen what it left out: it hides nothing.
-        walk.seen.rooms.fill(true);
-        walk.seen.portals.fill(true);
-        walk.seen.outside = None;
-    }
-    walk.seen
 }
 
 #[cfg(test)]

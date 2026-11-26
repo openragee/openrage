@@ -624,54 +624,58 @@ impl Streamer {
         // The contents of each interior whose instance draws, or that the camera stands in: a
         // chunk an interior, as opaque as its instance.
         let outdoors = out.instances.len();
+        // The interiors in range, in one order whatever the maps' order, and what the camera sees of them.
+        let mut near: Vec<(u32, &super::interior::Placed)> = (loaded.iter())
+            .flat_map(|(name, map)| map.interiors.iter().map(move |i| (*name, i)))
+            .filter(|(_, i)| i.in_range(eye, view))
+            .collect();
+        near.sort_by_key(|(name, i)| (*name, i.entity));
+        let shells: Vec<_> = near.iter().map(|(_, i)| i.shell()).collect();
+        let walked = super::interior_rooms::walk(&shells, eye);
+        out.inside = (walked.inside).and_then(|(k, room)| near.get(k)?.1.inside(room));
         let mut through = None;
-        for (name, map) in loaded {
-            for interior in &map.interiors {
-                let inside = interior.inside(eye);
-                out.inside = out.inside.or(inside);
-                let drawn = interiors.get(&(*name, interior.entity)).copied();
-                let Some(fade) = drawn.or(inside.map(|_| 1.0)) else {
-                    continue;
-                };
-                let from = out.instances.len();
-                let seen = interior.each(view, hour, fade, |child, away, fade| {
-                    match ready(child.model) {
-                        Some(true) => {
-                            let model = models.ix(child.model);
-                            (out.instances).push(Instance {
-                                model,
-                                rows: child.rows,
-                                centre: child.centre,
-                                radius: child.radius,
-                                fade,
-                                tint: [1.0; 3],
-                                ambient: child.ambient,
-                                cast_only: false,
-                            });
-                        }
-                        Some(false) => {
-                            let nearest = waited.entry(child.model).or_insert(away);
-                            *nearest = nearest.min(away);
-                            // ponytail: the build picks 4, 3 or 2 by the interior and room the camera stands in, its mapping not read: 4 inside this interior, 2 outside it.
-                            let band = match inside {
-                                Some(_) => BAND_INTERIOR_HIGH,
-                                None => BAND_INTERIOR_LOW,
-                            };
-                            raise(&mut out.bands, child.model, band);
-                            let at = out.waiting_at.entry(child.model).or_default();
-                            at.push((child.centre, child.radius));
-                        }
-                        None => {}
+        for (k, ((name, interior), seen)) in near.iter().zip(&walked.seen).enumerate() {
+            let inside = walked.standing.is_some_and(|(at, _)| at == k);
+            let drawn = interiors.get(&(*name, interior.entity)).copied();
+            let Some(fade) = drawn.or(inside.then_some(1.0)) else {
+                continue;
+            };
+            let from = out.instances.len();
+            interior.each(view, hour, fade, seen, |child, away, fade| {
+                match ready(child.model) {
+                    Some(true) => {
+                        let model = models.ix(child.model);
+                        (out.instances).push(Instance {
+                            model,
+                            rows: child.rows,
+                            centre: child.centre,
+                            radius: child.radius,
+                            fade,
+                            tint: [1.0; 3],
+                            ambient: child.ambient,
+                            cast_only: false,
+                        });
                     }
-                });
-                if let Some(seen) = seen {
-                    if let (Some(_), None, Some(pyramids)) = (inside, &through, &seen.outside) {
-                        through = Some((interior, interior.to_world(pyramids)));
+                    Some(false) => {
+                        let nearest = waited.entry(child.model).or_insert(away);
+                        *nearest = nearest.min(away);
+                        // ponytail: the build picks 4, 3 or 2 by the interior and room the camera stands in, its mapping not read: 4 inside this interior, 2 outside it.
+                        let band = match inside {
+                            true => BAND_INTERIOR_HIGH,
+                            false => BAND_INTERIOR_LOW,
+                        };
+                        raise(&mut out.bands, child.model, band);
+                        let at = out.waiting_at.entry(child.model).or_default();
+                        at.push((child.centre, child.radius));
                     }
-                    (out.rooms_seen).insert((*name, interior.entity as u32), seen.rooms);
+                    None => {}
                 }
-                close(&mut out, from);
+            });
+            if let (true, None, Some(pyramids)) = (inside, &through, &seen.outside) {
+                through = Some((*interior, pyramids.clone()));
             }
+            (out.rooms_seen).insert((*name, interior.entity as u32), seen.rooms.clone());
+            close(&mut out, from);
         }
         // ⚠ GTA V's rule: from a room the outside is seen through the portals to it alone; what stands
         // out of their sight still casts the sun's shadow in.

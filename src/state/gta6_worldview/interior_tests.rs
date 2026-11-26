@@ -142,6 +142,36 @@ fn a_door_the_map_places_in_an_opening_of_the_shell_stands_in_it_and_shuts_nothi
 }
 
 #[test]
+fn a_door_in_an_opening_takes_the_outdoors_on_its_face_turned_out_and_the_room_s_on_the_other() {
+    let mut shell = interior();
+    shell.portals[0].flags = 64;
+    // The opening faces world +y once the shell is turned; the room past it has no other opening and no lamp.
+    let in_doorway = Vec3::new(10.0, 24.0, 31.0);
+    let placed = place(&index(), &instance(), &shell, &[in_doorway]);
+    let rows = |x: [f32; 3], y: [f32; 3]| -> Rows {
+        let z = Vec3::from(x).cross(Vec3::from(y));
+        [
+            [x[0], y[0], z.x, 10.0],
+            [x[1], y[1], z.y, 24.0],
+            [x[2], y[2], z.z, 31.0],
+        ]
+    };
+    let unturned = rows([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
+    let spun = rows([0.0, -1.0, 0.0], [1.0, 0.0, 0.0]);
+    assert_eq!(
+        placed.door_ambient(&unturned),
+        Some(or_renderer::world::by_face(1, 1.0, [0.0, 0.0]))
+    );
+    assert_eq!(
+        placed.door_ambient(&spun),
+        Some(or_renderer::world::by_face(0, -1.0, [0.0, 0.0]))
+    );
+    let mut elsewhere = unturned;
+    elsewhere[1][3] = 20.0;
+    assert_eq!(placed.door_ambient(&elsewhere), None);
+}
+
+#[test]
 fn an_interior_s_entities_stand_in_the_world_under_the_instance_that_places_it() {
     let placed = place(&index(), &instance(), &interior(), &[]);
     // The ghost has no model, 0xDEAD no archetype, and the set 0xB is off.
@@ -209,7 +239,12 @@ fn faded_at(
 ) -> Vec<(ModelRef, f32)> {
     let mut models = Vec::new();
     let eye = placed.centre + Vec3::new(0.0, north, 0.0);
-    placed.each(&view(eye, scales), hour, 0.5, |child, away, fade| {
+    let view = view(eye, scales);
+    if !placed.in_range(eye, &view) {
+        return models;
+    }
+    let seen = interior_rooms::walk(&[placed.shell()], eye).seen.remove(0);
+    placed.each(&view, hour, 0.5, &seen, |child, away, fade| {
         assert!((away - eye.distance(origin(&child.rows))).abs() < 1e-4);
         models.push((child.model, fade / 0.5));
     });
@@ -291,40 +326,24 @@ fn a_child_fades_out_over_its_band_and_with_the_interior() {
 }
 
 #[test]
-fn from_outside_the_contents_draw_seen_through_a_portal_alone() {
-    let placed = place(&index(), &instance(), &interior(), &[]);
-    // South of the middle is the interior's west, whose wall has no opening.
-    assert!(drawn(&placed, -10.0, 1.0).is_empty());
+fn from_outside_the_contents_draw_seen_through_an_open_portal_alone() {
+    let mut placed = place(&index(), &instance(), &interior(), &[]);
+    // The build's walk tests no side of a portal: from the west, whose wall has no opening, too.
+    assert_eq!(drawn(&placed, -10.0, 1.0), [model(0x1000)]);
     assert_eq!(drawn(&placed, 10.0, 1.0), [model(0x1000)]);
+    placed.portals[0].shut = true;
+    assert!(drawn(&placed, 10.0, 1.0).is_empty());
 }
 
 #[test]
 fn the_camera_in_a_room_is_inside_the_interior_and_that_room() {
     let placed = place(&index(), &instance(), &interior(), &[]);
-    let inside = placed.inside(placed.centre).expect("in the second room");
+    let walked = interior_rooms::walk(&[placed.shell()], placed.centre);
+    assert_eq!(walked.standing, Some((0, 1)));
+    let inside = placed.inside(1).expect("the second room");
     assert_eq!((inside.interior, inside.room), (9, 1));
-    assert_eq!(
-        placed.inside(placed.centre + Vec3::new(0.0, 10.0, 0.0)),
-        None
-    );
-}
-
-#[test]
-fn a_plane_through_the_camera_in_the_interior_s_space_is_turned_into_the_world_s() {
-    let mut placed = place(&index(), &instance(), &interior(), &[]);
-    // Turned a quarter round the vertical and twice as wide as it is high: its own +x is the world's +y.
-    let outer = Mat4::from_scale_rotation_translation(
-        Vec3::new(2.0, 2.0, 1.0),
-        Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
-        Vec3::new(5.0, 6.0, 7.0),
-    );
-    placed.own = outer.inverse();
-    let tilted = Vec3::new(1.0, 0.0, 1.0).normalize();
-    let world = placed.to_world(&[vec![Vec3::X, tilted]]);
-    assert!(world[0][0].abs_diff_eq(Vec3::Y, 1e-5), "{:?}", world[0][0]);
-    // A tilted plane leans by the interior's heights over its widths.
-    let expected = Vec3::new(0.0, 0.5, 1.0).normalize();
-    assert!(world[0][1].abs_diff_eq(expected, 1e-5), "{:?}", world[0][1]);
+    let away = placed.centre + Vec3::new(0.0, 30.0, 0.0);
+    assert_eq!(interior_rooms::walk(&[placed.shell()], away).inside, None);
 }
 
 #[test]

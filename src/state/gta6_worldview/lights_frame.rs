@@ -2,10 +2,11 @@
 //! the frame's units, and the brightest of them at the camera as the frame's point, spot and
 //! capsule lights, each as the nested volumes that follow GTA VI's law (`lights_law`).
 
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use or_io::gta5::data::visual_settings::VisualSettings;
 use or_io::gta6::map::light_ext::{Light, LightKind};
 use or_renderer::game_shaders::distant_lights::SpriteLook;
+use or_renderer::game_shaders::room_mask::LightRoom;
 use or_renderer::world::light_math::{
     capsule_intensity, clamp_spot_cone, lamp_hour_factor, map_light_flags, map_range_scale,
     spot_cosines, spot_intensity_factor, ATTR_DAY_BIT, ATTR_NIGHT_BIT,
@@ -47,6 +48,8 @@ pub struct FrameLights {
     pub coronas: Option<(or_renderer::CoronaLook, Vec<or_renderer::Corona>)>,
     /// The lamps drawn, which light what blends, a lamp's own glass among it: the nearest of them count.
     pub lamps: Vec<or_renderer::WorldLamp>,
+    /// The boxes interiors' lamps light alone, each with where its lamps' volumes lie in the three lists.
+    pub rooms: Vec<LightRoom>,
 }
 /// A level-of-detail light stands for a placed light this near it, in metres.
 const SAME_PLACE: f32 = 0.02;
@@ -58,6 +61,8 @@ pub struct Lamp {
     pub light: Light,
     /// For a level-of-detail light: how far from the camera it is drawn, and the last metres of that it fades out over.
     pub reach: Option<[f32; 2]>,
+    /// For an interior's lamp held to its room: the room, whose boxes are all it lights.
+    pub room: Option<RoomKey>,
 }
 
 /// How far the level-of-detail lights of each size class (small, medium, large) are drawn, and the metres they fade out over, in metres.
@@ -165,6 +170,7 @@ pub fn lod_lamps(lod: &MapLod, parent: &MapLod, reach: &LodReach) -> Vec<Lamp> {
                     corona: [0.0; 3],
                 },
                 reach: Some(reach),
+                room: None,
             })
         })
         .collect()
@@ -285,11 +291,11 @@ pub fn frame_lights<'a>(
     most: usize,
 ) -> FrameLights {
     let chosen = choose(lamps, eye, hour, most, &LightVars::default(), &|_, _| true);
-    volumes_of(&chosen, hour, scale)
+    volumes_of(&chosen, (hour, scale), &|_| Vec::new())
 }
 
-/// A lamp the frame draws as volumes: the light, and how much of it its reach leaves.
-pub type Chosen = (Light, f32);
+/// A lamp the frame draws as volumes: the light, how much of it its reach leaves, and the room's box it lights alone.
+pub type Chosen = (Light, f32, Option<RoomKey>);
 
 /// The lamps lit at `hour`, within reach of `eye` and of which `seen` holds a sphere at their place as large as their reach, the `most` nearest the camera by the edge of their reach, nearest first.
 pub fn choose<'a>(
@@ -315,7 +321,7 @@ pub fn choose<'a>(
                 return None;
             }
             // The nearest by the edge of their reach are kept: a light past them is a distant light's sprite.
-            Some((-(distance - l.radius).max(0.0), (l, reach)))
+            Some((-(distance - l.radius).max(0.0), (l, reach, lamp.room)))
         })
         .collect();
     if lit.len() > most && most > 0 {
@@ -378,104 +384,140 @@ fn lamp_of(l: &Light, kind: LightKind, strength: Vec3, direction: Vec3) -> or_re
     lamp
 }
 
-/// The volumes of `chosen` lit at `hour`, their intensity times `scale`.
-pub fn volumes_of(chosen: &[Chosen], hour: f32, scale: f32) -> FrameLights {
+/// A room an interior's lamp stands in: its map, its interior's place among the map's entities, and the room.
+pub type RoomKey = [u32; 3];
+
+/// The volumes of `chosen` lit at `hour`, their intensity times `scale`: those that light every pixel first, then the lamps of each room together, each room's boxes, as `boxes` gives them, kept in `rooms` with where its volumes lie; a room with no box lights every pixel.
+pub fn volumes_of(
+    chosen: &[Chosen],
+    (hour, scale): (f32, f32),
+    boxes: &dyn Fn(RoomKey) -> Vec<Mat4>,
+) -> FrameLights {
     let mut out = FrameLights {
         lights: chosen.len(),
         kept: (chosen.iter())
-            .map(|(l, reach)| (Vec3::from(l.position), *reach))
+            .map(|(l, reach, _)| (Vec3::from(l.position), *reach))
             .collect(),
         ..FrameLights::default()
     };
-    for &(l, reach) in chosen {
-        // The game's record holds a spot's outer cone within 89° and its inner one a degree inside it, and a degree at the least.
-        let l = match l.kind {
-            LightKind::Spot => {
-                let (cone_inner, cone_outer) = clamp_spot_cone(l.cone_inner, l.cone_outer);
-                Light {
-                    cone_inner,
-                    cone_outer,
-                    ..l
+    let mut rooms: Vec<(RoomKey, Vec<Mat4>)> = Vec::new();
+    for key in chosen.iter().filter_map(|c| c.2) {
+        if !rooms.iter().any(|(k, _)| *k == key) {
+            rooms.push((key, boxes(key)));
+        }
+    }
+    let boxed = |room: Option<RoomKey>| {
+        room.is_some_and(|key| rooms.iter().any(|(k, b)| *k == key && !b.is_empty()))
+    };
+    let times = |l: &Light, reach: f32| reach * scale * hour_strength(l.hours, hour);
+    for &(l, reach, _) in chosen.iter().filter(|c| !boxed(c.2)) {
+        push_volumes(&mut out, l, times(&l, reach));
+    }
+    let lengths = |out: &FrameLights| {
+        [out.points.len(), out.spots.len(), out.capsules.len()].map(|n| n as u32)
+    };
+    for (key, bounds) in rooms.iter().filter(|(_, b)| !b.is_empty()) {
+        let from = lengths(&out);
+        for &(l, reach, _) in chosen.iter().filter(|c| c.2 == Some(*key)) {
+            push_volumes(&mut out, l, times(&l, reach));
+        }
+        let to = lengths(&out);
+        let lights: [std::ops::Range<u32>; 3] = std::array::from_fn(|k| from[k]..to[k]);
+        (out.rooms).extend(bounds.iter().map(|&bounds| LightRoom {
+            bounds,
+            lights: lights.clone(),
+        }));
+    }
+    out
+}
+/// Add the volumes of `l` to `out`, its intensity times `times` (the frame's units, the hour and its reach).
+fn push_volumes(out: &mut FrameLights, l: Light, times: f32) {
+    // The game's record holds a spot's outer cone within 89° and its inner one a degree inside it, and a degree at the least.
+    let l = match l.kind {
+        LightKind::Spot => {
+            let (cone_inner, cone_outer) = clamp_spot_cone(l.cone_inner, l.cone_outer);
+            Light {
+                cone_inner,
+                cone_outer,
+                ..l
+            }
+        }
+        _ => l,
+    };
+    let shape = match l.kind {
+        LightKind::Spot => {
+            let (cos_inner, cos_outer) = spot_cosines(l.cone_inner, l.cone_outer);
+            spot_intensity_factor(cos_inner, cos_outer, SPOT_K)
+        }
+        LightKind::Capsule => capsule_intensity(1.0, l.length, FLAGS_TWO),
+        _ => 1.0,
+    };
+    let intensity = l.intensity * shape * times;
+    let (position, colour) = (Vec3::from(l.position), Vec3::from(l.colour));
+    let direction = Vec3::from(l.direction).normalize_or_zero();
+    // A spot or a capsule with no axis shines all round.
+    let kind = match direction == Vec3::ZERO {
+        true => LightKind::Point,
+        false => l.kind,
+    };
+    let inner = l.cone_inner;
+    out.lamps
+        .push(lamp_of(&l, kind, colour * intensity, direction));
+    let pieces: Vec<(f32, f32, f32, f32)> = match kind {
+        LightKind::Spot => (spot_cones(inner, l.cone_outer).iter())
+            .filter(|(_, part)| *part > 0.0)
+            .flat_map(|&(o, part)| {
+                cones_within(inner, o)
+                    .into_iter()
+                    .map(move |(way, o, i, share)| (way, o, i, share * part))
+            })
+            .collect(),
+        // An area light shines from one side, as the cosine of the angle from its axis: one straight ramp across a right angle.
+        LightKind::Area => cones_within(0.0, 90.0),
+        _ => Vec::new(),
+    };
+    // The law's strength is the stated intensity over d², so each volume's is over R².
+    let per_area = intensity / (l.radius * l.radius);
+    for (share, strength) in SHELLS {
+        let (radius, intensity) = (l.radius * share.sqrt(), per_area * strength);
+        let point = |intensity| PointLight {
+            position,
+            colour,
+            intensity,
+            radius,
+            falloff: SHELL_EXPONENT,
+        };
+        match kind {
+            LightKind::Spot | LightKind::Area => {
+                for &(way, o, i, part) in &pieces {
+                    if o >= 180.0 {
+                        out.points.push(point(intensity * part));
+                        continue;
+                    }
+                    out.spots.push(SpotLight {
+                        position,
+                        direction: direction * way,
+                        colour,
+                        intensity: intensity * part,
+                        radius,
+                        falloff: SHELL_EXPONENT,
+                        outer_degrees: o.min(MOST_CONE),
+                        inner_degrees: i,
+                    });
                 }
             }
-            _ => l,
-        };
-        let shape = match l.kind {
-            LightKind::Spot => {
-                let (cos_inner, cos_outer) = spot_cosines(l.cone_inner, l.cone_outer);
-                spot_intensity_factor(cos_inner, cos_outer, SPOT_K)
-            }
-            LightKind::Capsule => capsule_intensity(1.0, l.length, FLAGS_TWO),
-            _ => 1.0,
-        };
-        let intensity = l.intensity * shape * scale * hour_strength(l.hours, hour) * reach;
-        let (position, colour) = (Vec3::from(l.position), Vec3::from(l.colour));
-        let direction = Vec3::from(l.direction).normalize_or_zero();
-        // A spot or a capsule with no axis shines all round.
-        let kind = match direction == Vec3::ZERO {
-            true => LightKind::Point,
-            false => l.kind,
-        };
-        let inner = l.cone_inner;
-        out.lamps
-            .push(lamp_of(&l, kind, colour * intensity, direction));
-        let pieces: Vec<(f32, f32, f32, f32)> = match kind {
-            LightKind::Spot => (spot_cones(inner, l.cone_outer).iter())
-                .filter(|(_, part)| *part > 0.0)
-                .flat_map(|&(o, part)| {
-                    cones_within(inner, o)
-                        .into_iter()
-                        .map(move |(way, o, i, share)| (way, o, i, share * part))
-                })
-                .collect(),
-            // An area light shines from one side, as the cosine of the angle from its axis: one straight ramp across a right angle.
-            LightKind::Area => cones_within(0.0, 90.0),
-            _ => Vec::new(),
-        };
-        // The law's strength is the stated intensity over d², so each volume's is over R².
-        let per_area = intensity / (l.radius * l.radius);
-        for (share, strength) in SHELLS {
-            let (radius, intensity) = (l.radius * share.sqrt(), per_area * strength);
-            let point = |intensity| PointLight {
+            LightKind::Capsule => out.capsules.push(CapsuleLight {
                 position,
+                direction,
+                length: l.length,
                 colour,
                 intensity,
                 radius,
                 falloff: SHELL_EXPONENT,
-            };
-            match kind {
-                LightKind::Spot | LightKind::Area => {
-                    for &(way, o, i, part) in &pieces {
-                        if o >= 180.0 {
-                            out.points.push(point(intensity * part));
-                            continue;
-                        }
-                        out.spots.push(SpotLight {
-                            position,
-                            direction: direction * way,
-                            colour,
-                            intensity: intensity * part,
-                            radius,
-                            falloff: SHELL_EXPONENT,
-                            outer_degrees: o.min(MOST_CONE),
-                            inner_degrees: i,
-                        });
-                    }
-                }
-                LightKind::Capsule => out.capsules.push(CapsuleLight {
-                    position,
-                    direction,
-                    length: l.length,
-                    colour,
-                    intensity,
-                    radius,
-                    falloff: SHELL_EXPONENT,
-                }),
-                LightKind::Point => out.points.push(point(intensity)),
-            }
+            }),
+            LightKind::Point => out.points.push(point(intensity)),
         }
     }
-    out
 }
 
 #[cfg(test)]

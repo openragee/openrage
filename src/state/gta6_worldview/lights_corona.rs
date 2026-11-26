@@ -178,6 +178,7 @@ mod tests {
                 corona,
             },
             reach: None,
+            room: None,
         }
     }
 

@@ -27,6 +27,7 @@ fn placed_at(x: f32) -> Lamp {
             corona: [0.0; 3],
         },
         reach: None,
+        room: None,
     }
 }
 
@@ -36,6 +37,7 @@ fn lod_map(parent: u32, falloff: &[f32]) -> MapLights {
         parent,
         placed: Vec::new(),
         inside: Vec::new(),
+        rooms: HashMap::new(),
         lod: MapLod {
             direction: vec![[0.0, 0.0, -1.0]; n],
             falloff: falloff.to_vec(),

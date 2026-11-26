@@ -548,29 +548,95 @@ pub(super) fn lights_of(
         .collect()
 }
 
+/// The boxes the lamps of each room light, by the place of its interior's instance and the room.
+pub(super) type RoomBoxes = HashMap<[u32; 2], Vec<Mat4>>;
+
+/// How much larger than its stated box a room is taken to be on each side, in metres, so that its own walls lie in it.
+// ⚠ Assumed: thinner than an outer wall, so the far face of a wall stays out.
+const ROOM_GROWN: f32 = 0.1;
+/// How far either side of its plane a portal's own box reaches, in metres: what stands in an opening and just before it.
+// ponytail: a fixed depth; the light that goes far out through an opening would need the opening's view, not a box.
+const PORTAL_DEPTH: f32 = 1.0;
+/// A portal's flag: a mirror, which no light passes.
+const MIRROR: u32 = 0x04;
+
+/// The box of room `room` of `interior` placed by `outer`, `ROOM_GROWN` larger, as the world from a cube of minus one to one; none for room 0, the outside.
+fn room_bounds(interior: &Interior, outer: Mat4, room: u32) -> Option<Mat4> {
+    let r = &interior.rooms.get(room as usize).filter(|_| room > 0)?.room;
+    let (min, max) = (Vec3::from(r.bb_min), Vec3::from(r.bb_max));
+    let half = ((max - min) / 2.0 + Vec3::splat(ROOM_GROWN)).max(Vec3::splat(ROOM_GROWN));
+    Some(outer * Mat4::from_scale_rotation_translation(half, Quat::IDENTITY, (min + max) / 2.0))
+}
+
+/// The boxes a lamp of room `room` of `interior` placed by `outer` lights: its room's, and for each portal of the room but a mirror, the room it opens on and the opening's own box, `PORTAL_DEPTH` either side of it; none for room 0.
+// ponytail: every portal counts as open; the door rule if a shut door shows light through it.
+pub(super) fn light_bounds(interior: &Interior, outer: Mat4, room: u32) -> Vec<Mat4> {
+    let Some(own) = room_bounds(interior, outer, room) else {
+        return Vec::new();
+    };
+    let mut boxes = vec![own];
+    for p in (interior.portals.iter()).filter(|p| p.flags & MIRROR == 0) {
+        let other = match (p.room_from == room, p.room_to == room) {
+            (true, _) => p.room_to,
+            (_, true) => p.room_from,
+            _ => continue,
+        };
+        boxes.extend(room_bounds(interior, outer, other).filter(|b| !boxes.contains(b)));
+        let c = p.corners.map(Vec3::from);
+        if let Some((normal, middle)) = interior_rooms::plane_of(&c) {
+            let (across, up) = ((c[1] - c[0]) / 2.0, (c[3] - c[0]) / 2.0);
+            let middle = middle.extend(1.0);
+            let opening = Mat4::from_cols(
+                across.extend(0.0),
+                up.extend(0.0),
+                (normal * PORTAL_DEPTH).extend(0.0),
+                middle,
+            );
+            boxes.push(outer * opening);
+        }
+    }
+    boxes
+}
+
 /// The lights of the contents of the interiors the map body `model` places, read through `files`,
-/// each with the place of its interior's instance among the map's entities and its room.
+/// each with the place of its interior's instance among the map's entities, its room, and whether it
+/// stands inside its room's box; and the boxes [`light_bounds`] gives each room that holds a lamp,
+/// by the instance's place and the room.
 pub(super) fn lights_placed(
     index: &WorldIndex,
     files: &mut HashMap<u32, File>,
     model: &RbmModel,
-) -> Vec<(Light, [u32; 2])> {
+) -> (Vec<(Light, [u32; 2], bool)>, RoomBoxes) {
+    let mut lights = Vec::new();
+    let mut boxes = HashMap::new();
     if !interior::places_interiors(model) {
-        return Vec::new();
+        return (lights, boxes);
     }
     let instances = interior::read_instances(model)
         .inspect_err(|error| tracing::debug!(%error, "a map's interior instances were not read"))
         .unwrap_or_default();
-    let mut lights = Vec::new();
     with_interiors(index, files, &instances, |instance, interior| {
         let at = instance.entity as u32;
-        lights.extend(
-            (lights_of(index, instance, interior).into_iter()).map(|(l, room)| (l, [at, room])),
+        let outer = placing(
+            instance.scale_xy,
+            instance.scale_z,
+            instance.rotation,
+            instance.position,
         );
+        for (l, room) in lights_of(index, instance, interior) {
+            // A lamp that stands outside its room's box is not held to it: what it lights is not known.
+            let inside = room_bounds(interior, outer, room).is_some_and(|m| {
+                let p = m.inverse().transform_point3(Vec3::from(l.position));
+                p.abs().max_element() <= 1.0
+            });
+            if inside {
+                (boxes.entry([at, room])).or_insert_with(|| light_bounds(interior, outer, room));
+            }
+            lights.push((l, [at, room], inside));
+        }
     });
-    lights
+    (lights, boxes)
 }
-
 #[cfg(test)]
 #[path = "interior_tests.rs"]
 mod tests;

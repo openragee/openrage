@@ -382,6 +382,7 @@ impl RenderBridge {
         self.renderer.set_point_lights(lights.points);
         self.renderer.set_spot_lights(lights.spots);
         self.renderer.set_capsule_lights(lights.capsules);
+        self.renderer.set_light_rooms(lights.rooms);
         (self.renderer).set_distant_lights(lights.sprite_look, lights.sprites);
         self.renderer.set_coronas(lights.coronas);
         self.renderer.set_world_lamps(lights.lamps);
@@ -765,6 +766,7 @@ impl RenderBridge {
             self.renderer.set_point_lights(Vec::new());
             self.renderer.set_spot_lights(Vec::new());
             self.renderer.set_capsule_lights(Vec::new());
+            self.renderer.set_light_rooms(Vec::new());
             (self.renderer).set_distant_lights(Default::default(), Default::default());
             self.renderer.set_coronas(None);
             self.renderer.set_world_lamps(Vec::new());

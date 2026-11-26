@@ -22,6 +22,7 @@ fn placed(kind: LightKind, x: f32, hours: u32) -> Lamp {
     Lamp {
         light: light(kind, x, hours),
         reach: None,
+        room: None,
     }
 }
 
@@ -237,6 +238,7 @@ fn a_level_of_detail_light_with_a_placed_light_in_its_place_gives_way_to_it() {
     let lod = |x: f32| Lamp {
         light: light(LightKind::Point, x, ALL_HOURS),
         reach: Some([500.0, 100.0]),
+        room: None,
     };
     let near = [placed(LightKind::Point, 10.015, 1)];
     let kept = without_placed(vec![lod(10.0), lod(10.05), lod(-0.001)], &near);
@@ -249,6 +251,7 @@ fn a_list_is_passed_over_only_where_none_of_its_lamps_would_light() {
     let lod = |x: f32| Lamp {
         light: light(LightKind::Point, x, ALL_HOURS),
         reach: Some([500.0, 100.0]),
+        room: None,
     };
     let list = LodList::of(vec![lod(0.0), lod(20.0)]);
     let at = |x: f32| Vec3::new(x, 0.0, 0.0);
@@ -414,6 +417,7 @@ fn the_frame_s_variables_scale_a_placed_light_and_a_level_of_detail_light_each_b
     // A level-of-detail light: the global and set 0's intensity, its tint, its own range scale; never set 1's.
     let lod = Lamp {
         reach: Some([500.0, 100.0]),
+        room: None,
         ..placed(LightKind::Point, 0.0, 0)
     };
     let far = as_lit(&lod, &vars);
@@ -421,4 +425,81 @@ fn the_frame_s_variables_scale_a_placed_light_and_a_level_of_detail_light_each_b
     assert_eq!(far.colour, [1.0, 0.25, 0.0]);
     // At the table's defaults nothing changes.
     assert_eq!(as_lit(&lod, &LightVars::default()), lod.light);
+}
+
+#[test]
+fn an_interior_s_lamps_follow_the_lamps_that_light_everywhere_room_by_room_each_box_with_its_room_s_lamps(
+) {
+    let lamp = |kind, x, room: Option<RoomKey>| Lamp {
+        room,
+        ..placed(kind, x, ALL_HOURS)
+    };
+    let (a, b, none) = ([1, 7, 1], [1, 7, 2], [1, 7, 3]);
+    let lamps = [
+        lamp(LightKind::Point, 1.0, Some(a)),
+        lamp(LightKind::Point, 2.0, None),
+        lamp(LightKind::Capsule, 3.0, Some(b)),
+        lamp(LightKind::Point, 4.0, Some(a)),
+        lamp(LightKind::Spot, 5.0, None),
+        // A room with no box lights every pixel.
+        lamp(LightKind::Point, 6.0, Some(none)),
+    ];
+    let chosen = choose(
+        &lamps,
+        Vec3::ZERO,
+        22.0,
+        MOST,
+        &LightVars::default(),
+        &|_, _| true,
+    );
+    let at = |x: f32| Mat4::from_translation(Vec3::new(x, 0.0, 0.0));
+    let boxes = |key: RoomKey| match key[2] {
+        1 => vec![at(100.0), at(101.0)],
+        2 => vec![at(200.0)],
+        _ => Vec::new(),
+    };
+    let out = volumes_of(&chosen, (22.0, 1.0), &boxes);
+    let points: Vec<f32> = out.points.iter().map(|p| p.position.x).collect();
+    let bounds: Vec<Mat4> = out.rooms.iter().map(|r| r.bounds).collect();
+    assert_eq!(bounds.len(), 3, "{bounds:?}");
+    let room_a = &out.rooms[bounds
+        .iter()
+        .position(|m| *m == at(100.0))
+        .expect("a's box")];
+    assert_eq!(
+        out.rooms
+            .iter()
+            .filter(|r| r.lights == room_a.lights)
+            .count(),
+        2,
+        "both of a's boxes take a's lamps"
+    );
+    // What lights everywhere comes first, then each room's own volumes.
+    let free = room_a.lights[0].start.min(
+        out.rooms
+            .iter()
+            .map(|r| r.lights[0].start)
+            .min()
+            .unwrap_or(0),
+    ) as usize;
+    assert!(
+        points[..free].iter().all(|x| [2.0, 5.0, 6.0].contains(x)),
+        "{points:?}"
+    );
+    let a_points = &points[room_a.lights[0].start as usize..room_a.lights[0].end as usize];
+    assert!(
+        !a_points.is_empty() && a_points.iter().all(|x| *x == 1.0 || *x == 4.0),
+        "{points:?}"
+    );
+    let room_b = out
+        .rooms
+        .iter()
+        .find(|r| r.bounds == at(200.0))
+        .expect("b's box");
+    assert!(room_b.lights[0].is_empty() && room_b.lights[1].is_empty());
+    assert_eq!(
+        room_b.lights[2],
+        0..out.capsules.len() as u32,
+        "every capsule is b's"
+    );
 }

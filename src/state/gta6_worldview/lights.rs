@@ -24,7 +24,7 @@ use super::index::{Enabled, WorldIndex};
 use super::interior::{self, RoomsSeen};
 use super::lights_corona::{self, CoronaReach, View};
 use super::lights_distant::{self, DistantReach};
-use super::lights_frame::{self, Chosen, FrameLights, Lamp, LodList, LodReach, Placed};
+use super::lights_frame::{self, Chosen, FrameLights, Lamp, LodList, LodReach, Placed, RoomKey};
 use super::lights_lod::{self, MapLod};
 pub use super::lights_vars::LightVars;
 use super::pool::Pool;
@@ -69,6 +69,8 @@ pub(super) struct MapLights {
     /// The lights of the contents of the interiors it places, each with its interior's place among
     /// its entities and its room.
     inside: Vec<(Lamp, [u32; 2])>,
+    /// The boxes the lamps of each room of those interiors light, by the interior's place and the room.
+    rooms: interior::RoomBoxes,
     lod: MapLod,
 }
 
@@ -81,7 +83,11 @@ fn lights_of(model: &RbmModel, index: &WorldIndex) -> Option<MapLights> {
         parent: data.parent,
         ..MapLights::default()
     };
-    let lamp = |light| Lamp { light, reach: None };
+    let lamp = |light| Lamp {
+        light,
+        reach: None,
+        room: None,
+    };
     for entity in &data.entities {
         let held = index.archetype_lights(entity.archetype_word);
         if held.is_empty() {
@@ -294,10 +300,21 @@ impl Lights {
                     or_io::meta::binary::rbm::gta6::read_model(virtual_section, physical).ok()?;
                 let mut read = lights_of(&model, &shared)?;
                 // The lights of an interior's contents stand in the map that places it.
-                let inside = super::interior::lights_placed(&shared, files, &model);
+                let (inside, rooms) = super::interior::lights_placed(&shared, files, &model);
                 read.inside = (inside.into_iter())
-                    .map(|(light, at)| (Lamp { light, reach: None }, at))
+                    .map(|(light, [at, room], held)| {
+                        let (reach, room_key) = (None, held.then_some([name, at, room]));
+                        (
+                            Lamp {
+                                light,
+                                reach,
+                                room: room_key,
+                            },
+                            [at, room],
+                        )
+                    })
                     .collect();
+                read.rooms = rooms;
                 Some(read)
             },
         );
@@ -480,7 +497,12 @@ impl Lights {
             .chosen
             .as_ref()
             .map_or(&[][..], |c| c.chosen.as_slice());
-        let mut out = lights_frame::volumes_of(chosen, hour, scale);
+        let loaded = &self.loaded;
+        let boxes = |[map, at, room]: RoomKey| {
+            (loaded.get(&map).and_then(|m| m.rooms.get(&[at, room])))
+                .map_or_else(Vec::new, Vec::clone)
+        };
+        let mut out = lights_frame::volumes_of(chosen, (hour, scale), &boxes);
         self.drawn = out.lights;
         nearest_lamps(&mut out.lamps, view.eye);
         // The frame's units for a radiance are the stated ones times the exposure, which `scale` holds over pi.

@@ -403,16 +403,14 @@ pub fn day_of_moment(
         moon_dim: moment.moon_dim,
         // The Weather bar's own wetness where the install's weather states no rain.
         wetness: moment.wetness.max(wet),
-        // How far a material's glow has gone to its night value: the cycle's own blend, else on by the night hours.
-        night_emissive: (moment.own.get("global_emissive_scale_blend_value")).unwrap_or_else(
-            || {
-                night_emissive(
-                    hour,
-                    visual.get_f32("emissive.night.start.time", 20.0) as u32,
-                    visual.get_f32("emissive.night.end.time", 7.0) as u32,
-                )
-            },
-        ),
+        // How far a material's glow has gone to its night value: the cycle's own blend, which GTA VI names without GTA V's `scale`, else on by the night hours.
+        night_emissive: (moment.own.get("global_emissive_blend_value")).unwrap_or_else(|| {
+            night_emissive(
+                hour,
+                visual.get_f32("emissive.night.start.time", 20.0) as u32,
+                visual.get_f32("emissive.night.end.time", 7.0) as u32,
+            )
+        }),
         // ⚠ GTA VI's exposure curve has the frame's name and another shape (a natural logarithm, a
         // bending and offsets in place of a power): the moment is exposed by its own key already and
         // the frame's own exposure held at nought, so the frame is never given it.

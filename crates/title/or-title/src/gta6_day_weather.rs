@@ -2,18 +2,7 @@
 //! Not coded, because not read: the commit routines at the end of a change and of a queue, what the schedule selector's two indices mean, the generator's seed, and the slot strength when both weathers have a modifier. The wind a weather sets is the wind module's.
 
 use crate::gta6_day_frame::QueuedModifier;
-
-/// A weather record's wind, as the wind module takes it.
-// lander: a copy of the wind track's `gta6_day_wind::WeatherWind`; keep one when both land.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct WeatherWind {
-    /// Base speed at walk 0, m/s (inferred).
-    pub speed_low: f32,
-    /// Base speed at walk 1, m/s (inferred).
-    pub speed_high: f32,
-    /// Heading the wind comes from, degrees clockwise from north (the from is inferred).
-    pub heading_degrees: f32,
-}
+use crate::gta6_day_wind::WeatherWind;
 
 /// Milliseconds a queued weather counts down per unit of dt; that the unit is a second is GTA V's, assumed.
 pub const MILLISECONDS_PER_DT: f32 = 1000.0;

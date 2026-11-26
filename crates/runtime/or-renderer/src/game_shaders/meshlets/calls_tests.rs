@@ -8,12 +8,21 @@ use crate::{OrbitCamera, ShadingMode, ViewportRenderer};
 /// The pixels a side of the frame the model is drawn onto.
 const SIDE: u32 = 64;
 
-/// A viewport that draws `surfaces` by their own passes, on a device that times the stages of a
-/// frame where it can; none with no device.
+/// A viewport that draws `surfaces` by their own passes; none with no device.
 fn shown(
     test: &str,
     surfaces: &[MeshletSurface],
 ) -> Option<(wgpu::Device, wgpu::Queue, ViewportRenderer)> {
+    let (device, queue, mut renderer) = viewport(test)?;
+    let (frame, mut pipelines) = (renderer.game_target(), MeshletPipelines::default());
+    let scene = prepared((&device, &queue), &mut pipelines, surfaces, &frame, 0);
+    renderer.set_gta6_scene(Some(scene));
+    Some((device, queue, renderer))
+}
+
+/// A viewport with no model yet, on a device that times the stages of a frame where it can; none
+/// with no device.
+fn viewport(test: &str) -> Option<(wgpu::Device, wgpu::Queue, ViewportRenderer)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = match crate::instance::headless_adapter(&instance) {
         Ok(adapter) => adapter,
@@ -29,16 +38,13 @@ fn shown(
         ..Default::default()
     }))
     .ok()?;
-    let mut renderer = ViewportRenderer::new(
+    let renderer = ViewportRenderer::new(
         &device,
         &queue,
         wgpu::TextureFormat::Rgba8UnormSrgb,
         SIDE,
         SIDE,
     );
-    let (frame, mut pipelines) = (renderer.game_target(), MeshletPipelines::default());
-    let scene = prepared((&device, &queue), &mut pipelines, surfaces, &frame, 0);
-    renderer.set_gta6_scene(Some(scene));
     Some((device, queue, renderer))
 }
 
@@ -313,6 +319,66 @@ fn a_surface_is_drawn_three_vertices_a_primitive_of_its_largest_meshlet_and_fill
         );
         assert!(fitted.iter().any(|byte| *byte != 0), "part {part} is blank");
     }
+}
+
+/// A mesh stage whose every thread makes a triangle in a cell of its own, of a grid of eight
+/// by sixteen: a meshlet's threads fill eight rows from the eighth of its number on. The frame
+/// then shows which vertices the device ran.
+const CELLS: &str = "
+struct Out {
+    @builtin(position) position: vec4<f32>,
+    @location(0) shade: vec3<f32>,
+}
+
+@vertex fn main(@builtin(vertex_index) v: u32, @builtin(instance_index) meshlet: u32) -> Out {
+    let thread = v / 3u;
+    let cell = vec2<f32>(f32(thread % 8u), f32(thread / 8u + 8u * meshlet));
+    var corners = array<vec2<f32>, 3>(vec2(0.1, 0.1), vec2(0.9, 0.1), vec2(0.1, 0.9));
+    let at = (cell + corners[v % 3u]) / vec2<f32>(8.0, 16.0);
+    var out: Out;
+    out.position = vec4<f32>(at.x * 2.0 - 1.0, 1.0 - at.y * 2.0, 0.5, 1.0);
+    out.shade = vec3<f32>(1.0);
+    return out;
+}";
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn the_device_draws_the_primitives_a_surface_states_for_each_meshlet_and_no_thread_past_them() {
+    let test = "the_device_draws_the_primitives_a_surface_states_for_each_meshlet";
+    let mut cells = super::tests::surface();
+    cells.vertex = Arc::new(naga::front::wgsl::parse_str(CELLS).expect("the stage parses"));
+    cells.primitives = 5;
+    let Some((device, queue, mut renderer)) = shown(test, &[cells]) else {
+        return;
+    };
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let gpu = (&device, &queue);
+    let calls = frame(gpu, &mut renderer, &OrbitCamera::default(), casting());
+    let [_, colour, _] = seen(gpu, &renderer);
+    // The cells of the grid the colour target holds anything in, by column and row.
+    let (wide, high) = (SIDE as usize / 8, SIDE as usize / 16);
+    let filled = |column: usize, row: usize| {
+        let texel = |x: usize, y: usize| 4 * ((row * high + y) * SIDE as usize + column * wide + x);
+        (0..wide).any(|x| (0..high).any(|y| colour[texel(x, y)..][..4] != [0; 4]))
+    };
+    let drawn: Vec<(usize, usize)> = (0..16)
+        .flat_map(|row| (0..8).map(move |column| (column, row)))
+        .filter(|(column, row)| filled(*column, *row))
+        .collect();
+    // Five threads of each of the two meshlets, and not the hundred and twenty-three after them.
+    let stated: Vec<(usize, usize)> = [0, 8]
+        .iter()
+        .flat_map(|row| (0..5).map(move |column| (column, *row)))
+        .collect();
+    assert_eq!(drawn, stated);
+    // What the frame counts is what the device was handed: three corners a primitive, for each
+    // meshlet, into the tile and into the targets.
+    assert_eq!(calls.vertices, 2 * 3 * 5 * 2);
+    let refused = pollster::block_on(validation.pop()).map(|e| e.to_string());
+    assert_eq!(refused, None);
 }
 
 /// The frame `renderer` drew last and the first two targets of its model, as bytes.

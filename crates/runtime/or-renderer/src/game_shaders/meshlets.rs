@@ -1434,25 +1434,24 @@ impl MeshletScene {
 
     /// Draw every surface into `pass`: by its caster for the shadow's tile, else by its own pass.
     fn draw_surfaces(&self, pass: &mut wgpu::RenderPass<'_>, cast: bool) {
+        let (mut binds, mut vertices) = (0, 0);
         for draw in &self.draws {
             pass.set_pipeline(if cast { &draw.caster } else { &draw.pipeline });
             for (group, bound) in &draw.groups {
                 pass.set_bind_group(*group, bound, &[]);
+                binds += 1;
             }
-            pass.draw(0..draw.vertices, 0..draw.meshlets);
+            // One range for the draw and for the count of it: the two never part.
+            let (corners, meshlets) = (0..draw.vertices, 0..draw.meshlets);
+            vertices += u64::from(corners.end) * u64::from(meshlets.end);
+            pass.draw(corners, meshlets);
         }
         self.count(|calls| {
             calls.passes += 1;
             calls.draws += self.draws.len() as u32;
             calls.surface_draws += self.draws.len() as u32;
-            calls.binds += self
-                .draws
-                .iter()
-                .map(|d| d.groups.len() as u32)
-                .sum::<u32>();
-            calls.vertices += (self.draws.iter())
-                .map(|d| u64::from(d.vertices) * u64::from(d.meshlets))
-                .sum::<u64>();
+            calls.binds += binds;
+            calls.vertices += vertices;
         });
     }
 

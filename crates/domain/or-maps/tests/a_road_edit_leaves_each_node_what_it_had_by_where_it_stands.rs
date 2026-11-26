@@ -244,6 +244,7 @@ fn each_node_taken_out_leaves_every_other_node_its_links_and_its_junction_by_whe
             let gone = was.order[&region][usize::from(index)];
             let take = Operation::RemoveNode {
                 node: Address::new(region, index),
+                expects: None,
             };
             if named_by_another_region(&was, region, gone) {
                 let why = apply(&folder, &take).expect_err("a node another region names stays");
@@ -292,6 +293,7 @@ fn each_link_taken_out_leaves_every_other_link_and_goes_with_the_link_back_or_al
                         &folder,
                         &Operation::RemoveLink {
                             node: Address::new(region, index as u16),
+                            expects: None,
                             link,
                             back_link: None,
                             one_way,
@@ -339,6 +341,7 @@ fn a_node_added_beside_each_node_stands_after_its_kind_and_moves_no_link_and_no_
                     &folder,
                     &Operation::AddNode {
                         region,
+                        expects: None,
                         ped,
                         coors_x: new[0],
                         coors_y: new[1],

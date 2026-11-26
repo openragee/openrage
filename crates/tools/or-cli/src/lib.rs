@@ -90,6 +90,7 @@ mod keys;
 mod maps;
 mod maps_changes;
 mod maps_collision;
+mod maps_doors;
 mod maps_edit_game;
 mod maps_merge;
 mod maps_roads;

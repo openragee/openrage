@@ -386,20 +386,20 @@ fn clouded(view: vec3<f32>, behind: vec3<f32>, pixel: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(behind * through + cloud, through);
 }
 
-// Where on the face of a cube the way `d` meets it, from nought to one each way.
-// ⚠ Inferred: the program's cube coordinates over the absolute major axis, as a cube's lookup takes them.
+// Where on the face of a cube the way `d` meets it, as the program works it out: the face's two
+// coordinates over twice the major axis with its sign, which no cube lookup takes, plus one half.
 fn cube_face(d: vec3<f32>) -> vec2<f32> {
     let a = abs(d);
     var st = vec2<f32>(0.0);
     var major = 1.0;
     if (a.z >= a.y && a.z >= a.x) {
-        major = a.z;
+        major = d.z;
         st = vec2<f32>(select(d.x, -d.x, d.z < 0.0), -d.y);
     } else if (a.y >= a.x) {
-        major = a.y;
+        major = d.y;
         st = vec2<f32>(d.x, select(d.z, -d.z, d.y < 0.0));
     } else {
-        major = a.x;
+        major = d.x;
         st = vec2<f32>(select(-d.z, d.z, d.x < 0.0), -d.y);
     }
     return st / (2.0 * major) + 0.5;
@@ -423,7 +423,8 @@ fn night_sky(view: vec3<f32>, clip: vec2<f32>, angle: f32) -> vec3<f32> {
     // The air's map is laid twice across the screen, as the program lays it.
     var sky = frame.fill.rgb + frame.glow.rgb * textureSampleLevel(airglow, tiled, screen * 2.0, 0.0).r;
     let c = frame.cloud.w * (1.0 - s.z) * band;
-    let reach = frame.scales.w * 20000.0 * view.z + 1.0;
+    // The blink is whole at the horizon and fades as the way climbs through the blink's height.
+    let reach = 1.0 - frame.scales.w * 20000.0 * view.z;
     let phase = 3.1415927 * fract(43759.0 * sin(dot(screen, vec2<f32>(12.99, 78.233)))) + frame.blink.w;
     let b = 1.0 + reach * reach * (sin(phase) - 1.0);
     let dense = frame.dense.rgb * (dense_a * dense_a * b) * c * (frame.dense.w * (1.0 - s.z));

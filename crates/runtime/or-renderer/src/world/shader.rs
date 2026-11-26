@@ -648,7 +648,9 @@ fn layer_uv(in: VsOut, layer: u32) -> vec2<f32> {
     let first = m.uv_sets[layer] == 1.0;
     let t = select(m.uv1_transform, m.uv0_transform, first);
     let uv = select(in.uv1, in.uv, first) * t.xy + t.zw;
-    return select(uv, uv * m.uv_extra.zw, layer == 1u);
+    // ⚠ The two-layer programs scale the second layer's v about one, not nought: its far edge stays where it is.
+    let scaled = vec2<f32>(uv.x * m.uv_extra.z, 1.0 - m.uv_extra.w * (1.0 - uv.y));
+    return select(uv, scaled, layer == 1u);
 }
 
 // ⚠ Every map is sampled and every derivative taken before anything is discarded, and in control flow every pixel shares.
@@ -668,10 +670,11 @@ fn surface_of(in: VsOut, front_facing: bool) -> Surface {
     maps.c2 = textureSample(layer2_colour, map_smp, uv2);
     maps.n2 = textureSample(layer2_normal, map_smp, uv2);
     maps.a2 = textureSample(layer2_a, map_smp, uv2);
-    // Material B of the first layers is sampled where its layer is, and the emissive map by the first coordinate
+    // Material B of the first layers is sampled where its layer is, and the emissive map by the first coordinate, or the interior effect's where its first layer is
     maps.c3 = textureSample(layer3_colour, map_smp, select(uv0, uv3, m.family.x == FOUR_LAYER));
     maps.n3 = textureSample(layer3_normal, map_smp, select(uv1, uv3, m.family.x == FOUR_LAYER));
-    maps.a3 = textureSample(layer3_a, map_smp, select(in.uv, uv3, m.family.x == FOUR_LAYER));
+    let emissive_uv = select(in.uv, uv0, (m.flags & INTERIOR) != 0u);
+    maps.a3 = textureSample(layer3_a, map_smp, select(emissive_uv, uv3, m.family.x == FOUR_LAYER));
     maps.weights = textureSample(weights_map, map_smp, coordinate_set(in, m.uv_extra.x));
     maps.tint = textureSample(tint_map, map_smp, in.uv);
     maps.second = textureSample(second_map, map_smp, in.uv);

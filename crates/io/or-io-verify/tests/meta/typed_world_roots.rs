@@ -15,10 +15,11 @@ use or_io::meta::binary::synth::{name_hash, rbm_layout_for, rbm_layout_for_insta
 use or_io::meta::binary::{ContainerLayout, MetaLayout};
 use or_io::meta::instance::HashedString;
 use or_io::meta::{
-    write_meta_binary, BinaryFormat, CBaseArchetypeDef, CBaseArchetypeDefAny, CEntityDef,
-    CEntityDefAny, CMapData, CMapTypes, CMloArchetypeDef, CMloEntitySet, CMloInstanceDef,
-    CMloPortalDef, CMloRoomDef, CMloTimeCycleModifier, CTimeArchetypeDef, MetaDocument,
-    MetaInstance, Value,
+    write_meta_binary, BinaryFormat, BoxOccluder, CBaseArchetypeDef, CBaseArchetypeDefAny, CCarGen,
+    CDistantLODLight, CEntityDef, CEntityDefAny, CLODLight, CMapData, CMapTypes, CMloArchetypeDef,
+    CMloEntitySet, CMloInstanceDef, CMloPortalDef, CMloRoomDef, CMloTimeCycleModifier,
+    CTimeArchetypeDef, CTimeCycleModifier, FloatXYZ, MetaDocument, MetaInstance, OccludeModel,
+    Value,
 };
 use or_io_verify::gates::{corpus_root, name};
 use or_test_support::ledger::{self, SkipReason};
@@ -602,6 +603,15 @@ fn hashed(members: &[&str]) -> Vec<u32> {
     hashed
 }
 
+/// The name hash of each member `or_io::meta::typed::world_types` declares for `class`, sorted.
+fn declared_members(class: &str) -> Vec<u32> {
+    let declared = or_io::meta::typed::world_types::declared();
+    let class = declared.resolve(class).expect("the class is declared");
+    let mut members: Vec<u32> = class.fields.iter().map(|f| name_hash(&f.name)).collect();
+    members.sort_unstable();
+    members
+}
+
 /// ⚠ A snapshot declares more of each class than the typed records name, so a root that took its classes from the snapshot
 /// would state those members too, and a machine with none could not write the same file.
 #[test]
@@ -634,7 +644,10 @@ fn a_root_built_from_nothing_states_the_declared_members_whatever_snapshot_is_in
         Some(BinaryFormat::Pso)
     );
     let root = saved_tree(saved);
-    assert_eq!(stated(&root), hashed(CMapData::MEMBERS));
+    // ⚠ The members that hold a map's parked vehicles, occluders, modifiers and far lights are typed and not declared.
+    let of_a_map = declared_members("CMapData");
+    assert!(of_a_map.len() < CMapData::MEMBERS.len());
+    assert_eq!(stated(&root), of_a_map);
     let Some(Value::Array(entities)) = root
         .fields
         .iter()
@@ -710,13 +723,23 @@ fn every_declared_world_member_is_typed_as_the_engine_declares_it() {
             checked += 1;
         }
     }
+    // ⚠ A map types six members no class is declared for: the ones that hold the records of `typed::map_records`.
     let typed = [
-        CEntityDef::MEMBERS,
-        CMapData::MEMBERS,
-        CBaseArchetypeDef::MEMBERS,
-        CMapTypes::MEMBERS,
+        ("CEntityDef", CEntityDef::MEMBERS),
+        ("CMapData", CMapData::MEMBERS),
+        ("CBaseArchetypeDef", CBaseArchetypeDef::MEMBERS),
+        ("CMapTypes", CMapTypes::MEMBERS),
     ];
-    assert_eq!(checked, typed.iter().map(|m| m.len()).sum::<usize>());
+    let both = |(class, typed): &(&str, &[&str])| {
+        let declared = declared_members(class);
+        let is_declared = |member: &&&str| declared.contains(&name_hash(member));
+        typed.iter().filter(is_declared).count()
+    };
+    assert_eq!(checked, typed.iter().map(both).sum::<usize>());
+    assert_eq!(
+        typed.iter().map(|(_, typed)| typed.len()).sum::<usize>(),
+        checked + 6
+    );
 }
 
 #[test]
@@ -904,7 +927,11 @@ fn distinct_vec4(name: &str) -> Vec4 {
 /// Every scalar and hash slot of `type_name`, as the installed schema declares
 /// it, holding a value derived from the slot's own name hash and no default.
 fn distinct(type_name: &str) -> MetaInstance {
-    let mut inst = sampled(type_name);
+    distinct_of(sampled(type_name))
+}
+
+/// `inst` with every scalar and hash slot holding a value derived from the slot's own name hash and no default.
+fn distinct_of(mut inst: MetaInstance) -> MetaInstance {
     for (name, slot) in &mut inst.fields {
         let seed = distinct_seed(name);
         match slot {
@@ -1343,4 +1370,236 @@ fn every_typed_member_of_an_interiors_records_reads_the_slot_the_engine_declares
             CMloRoomDef::default().exterior_visibilty_depth
         )))
     );
+}
+
+/// The class the installed schema declares for what a map holds under `member`, an array's elements or a struct, sampled.
+fn sampled_under(member: &str) -> MetaInstance {
+    let shape = rbm_layout_for(support::schema(), "CMapData").expect("a map lays out");
+    let root = shape
+        .model
+        .class_for(literal_string_hash(b"CMapData"))
+        .expect("a map is in its own table");
+    let entry = (root.entries.iter())
+        .find(|e| e.name_hash == name_hash(member))
+        .unwrap_or_else(|| panic!("a map has `{member}`"));
+    let held = match entry.data_type {
+        PsoType::Struct => *entry,
+        _ => *root
+            .entry(entry.contents_index())
+            .expect("an array states its element"),
+    };
+    let class = shape
+        .model
+        .class_for(held.referent_hash())
+        .unwrap_or_else(|| panic!("the class `{member}` holds is in the table"));
+    sample_instance(&shape.model, class)
+}
+
+fn distinct_point(name: &str) -> MetaInstance {
+    let point = distinct_vec3(name);
+    let mut inst = MetaInstance::new("FloatXYZ");
+    inst.set("x", Value::Float(f64::from(point.x)));
+    inst.set("y", Value::Float(f64::from(point.y)));
+    inst.set("z", Value::Float(f64::from(point.z)));
+    inst
+}
+
+fn distinct_floats(name: &str) -> Value {
+    Value::Array(vec![Value::Float(f64::from(distinct_f32(name)))])
+}
+
+/// ⚠ A member narrower than the seed takes the seed's low bits, which its own name still tells apart.
+fn narrow_seed(name: &str, below: u32) -> u32 {
+    distinct_seed(name) % below
+}
+
+fn distinct_bytes(name: &str) -> Value {
+    Value::Array(vec![Value::UInt(u64::from(narrow_seed(name, 256)))])
+}
+
+/// ⚠ The same trap as `every_typed_member_reads_the_slot_the_engine_declares_for_it`, for the records a map holds besides
+/// entities: a member misspelt reads as its init in every file, and one read as the wrong type opens nothing.
+#[test]
+fn every_typed_member_of_a_maps_records_reads_the_slot_the_engine_declares_for_it() {
+    const WHAT: &str =
+        "every_typed_member_of_a_maps_records_reads_the_slot_the_engine_declares_for_it";
+    let Some(library) = support::schema_or_skip(WHAT) else {
+        return;
+    };
+    // ⚠ A file names an occluder by its bare name, where the snapshot keys it under its namespace.
+    for (class, typed) in [
+        ("CCarGen", CCarGen::MEMBERS),
+        ("rage::BoxOccluder", BoxOccluder::MEMBERS),
+        ("rage::OccludeModel", OccludeModel::MEMBERS),
+        ("CTimeCycleModifier", CTimeCycleModifier::MEMBERS),
+        ("FloatXYZ", FloatXYZ::MEMBERS),
+        ("CLODLight", CLODLight::MEMBERS),
+        ("CDistantLODLight", CDistantLODLight::MEMBERS),
+    ] {
+        let engine = library
+            .resolve_any(class)
+            .unwrap_or_else(|| panic!("the snapshot declares `{class}`"));
+        let mut declared: Vec<u32> = engine.fields.iter().map(|f| name_hash(&f.name)).collect();
+        declared.sort_unstable();
+        assert_eq!(
+            hashed(typed),
+            declared,
+            "`{class}` types the members the engine declares for it, no member more and none fewer"
+        );
+    }
+
+    const BOX: [&str; 8] = [
+        "iCenterX", "iCenterY", "iCenterZ", "iCosZ", "iLength", "iWidth", "iHeight", "iSinZ",
+    ];
+    let mut car = distinct_of(sampled_under("carGenerators"));
+    set(
+        &mut car,
+        "livery",
+        Value::Int(i64::from(narrow_seed("livery", 100))),
+    );
+    let mut occluder = distinct_of(sampled_under("boxOccluders"));
+    for member in BOX {
+        let low = i64::from(narrow_seed(member, 30_000));
+        set(&mut occluder, member, Value::Int(low));
+    }
+    let verts: Vec<u8> = (0..24).map(|b| b ^ 0x5A).collect();
+    let mut model = distinct_of(sampled_under("occludeModels"));
+    set(&mut model, "dataSize", Value::UInt(verts.len() as u64));
+    set(&mut model, "verts", Value::ByteArray(verts.clone()));
+    let modifier = distinct_of(sampled_under("timeCycleModifiers"));
+    let mut lights = distinct_of(sampled_under("LODLightsSOA"));
+    set(
+        &mut lights,
+        "direction",
+        by_value(vec![distinct_point("direction")]),
+    );
+    for member in ["falloff", "falloffExponent"] {
+        set(&mut lights, member, distinct_floats(member));
+    }
+    for member in ["timeAndStateFlags", "hash"] {
+        set(&mut lights, member, distinct_indexes(member));
+    }
+    for member in [
+        "coneInnerAngle",
+        "coneOuterAngleOrCapExt",
+        "coronaIntensity",
+    ] {
+        set(&mut lights, member, distinct_bytes(member));
+    }
+    let mut distant = distinct_of(sampled_under("DistantLODLightsSOA"));
+    set(
+        &mut distant,
+        "position",
+        by_value(vec![distinct_point("position")]),
+    );
+    set(&mut distant, "RGBI", distinct_indexes("RGBI"));
+
+    let mut root = sampled("CMapData");
+    set(&mut root, "carGenerators", by_value(vec![car]));
+    set(&mut root, "boxOccluders", by_value(vec![occluder]));
+    set(&mut root, "occludeModels", by_value(vec![model]));
+    set(&mut root, "timeCycleModifiers", by_value(vec![modifier]));
+    set(&mut root, "LODLightsSOA", Value::Struct(Box::new(lights)));
+    set(
+        &mut root,
+        "DistantLODLightsSOA",
+        Value::Struct(Box::new(distant)),
+    );
+    let bytes = encoded(&root);
+
+    let map = CMapData::from_bytes(&bytes).expect("opens typed");
+    let car = &map.car_generators[0];
+    assert_eq!(car.position, distinct_vec3("position"));
+    assert_eq!(car.orient_x, distinct_f32("orientX"));
+    assert_eq!(car.orient_y, distinct_f32("orientY"));
+    assert_eq!(
+        car.perpendicular_length,
+        distinct_f32("perpendicularLength")
+    );
+    assert_eq!(car.car_model.hash, distinct_hash("carModel").hash);
+    assert_eq!(car.flags, distinct_seed("flags"));
+    let remaps = [
+        (car.body_color_remap1, "bodyColorRemap1"),
+        (car.body_color_remap2, "bodyColorRemap2"),
+        (car.body_color_remap3, "bodyColorRemap3"),
+        (car.body_color_remap4, "bodyColorRemap4"),
+    ];
+    for (remap, member) in remaps {
+        assert_eq!(remap, distinct_seed(member) as i32, "{member}");
+    }
+    assert_eq!(car.pop_group.hash, distinct_hash("popGroup").hash);
+    assert_eq!(i32::from(car.livery), narrow_seed("livery", 100) as i32);
+
+    let b = &map.box_occluders[0];
+    let read = [
+        b.i_center_x,
+        b.i_center_y,
+        b.i_center_z,
+        b.i_cos_z,
+        b.i_length,
+        b.i_width,
+        b.i_height,
+        b.i_sin_z,
+    ];
+    for (read, member) in read.into_iter().zip(BOX) {
+        assert_eq!(
+            i32::from(read),
+            narrow_seed(member, 30_000) as i32,
+            "{member}"
+        );
+    }
+
+    let model = &map.occlude_models[0];
+    assert_eq!(model.bmin, distinct_vec3("bmin"));
+    assert_eq!(model.bmax, distinct_vec3("bmax"));
+    assert_eq!(model.data_size as usize, verts.len());
+    assert_eq!(model.verts, verts);
+    assert_eq!(
+        u32::from(model.num_verts_in_bytes),
+        distinct_seed("numVertsInBytes")
+    );
+    assert_eq!(u32::from(model.num_tris), distinct_seed("numTris"));
+    assert_eq!(model.flags, distinct_seed("flags"));
+
+    let modifier = &map.time_cycle_modifiers[0];
+    assert_eq!(modifier.name.hash, distinct_hash("name").hash);
+    assert_eq!(modifier.min_extents, distinct_vec3("minExtents"));
+    assert_eq!(modifier.max_extents, distinct_vec3("maxExtents"));
+    assert_eq!(modifier.percentage, distinct_f32("percentage"));
+    assert_eq!(modifier.range, distinct_f32("range"));
+    assert_eq!(modifier.start_hour, distinct_seed("startHour"));
+    assert_eq!(modifier.end_hour, distinct_seed("endHour"));
+
+    let point = |p: &FloatXYZ| Vec3 {
+        x: p.x,
+        y: p.y,
+        z: p.z,
+    };
+    let lights = &map.lod_lights_soa;
+    assert_eq!(point(&lights.direction[0]), distinct_vec3("direction"));
+    assert_eq!(lights.falloff, [distinct_f32("falloff")]);
+    assert_eq!(lights.falloff_exponent, [distinct_f32("falloffExponent")]);
+    assert_eq!(
+        lights.time_and_state_flags,
+        [distinct_seed("timeAndStateFlags")]
+    );
+    assert_eq!(lights.hash, [distinct_seed("hash")]);
+    let byte = |member: &str| narrow_seed(member, 256) as u8;
+    assert_eq!(lights.cone_inner_angle, [byte("coneInnerAngle")]);
+    assert_eq!(
+        lights.cone_outer_angle_or_cap_ext,
+        [byte("coneOuterAngleOrCapExt")]
+    );
+    assert_eq!(lights.corona_intensity, [byte("coronaIntensity")]);
+
+    let distant = &map.distant_lod_lights_soa;
+    assert_eq!(point(&distant.position[0]), distinct_vec3("position"));
+    assert_eq!(distant.rgbi, [distinct_seed("RGBI")]);
+    assert_eq!(
+        u32::from(distant.num_street_lights),
+        distinct_seed("numStreetLights")
+    );
+    assert_eq!(u32::from(distant.category), distinct_seed("category"));
+
+    assert_eq!(map.to_bytes().expect("an untouched save"), bytes);
 }

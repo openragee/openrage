@@ -165,14 +165,241 @@ impl<'a> MapData<'a> {
         })
     }
 
-    /// Car generator positions, with the length that sizes the slot.
-    pub fn car_generators(&self) -> impl Iterator<Item = (Vec3, f32)> + 'a {
-        field::structs_at(self.root, keys::CAR_GENERATORS).filter_map(|inst| {
-            Some((
-                field::vec3_at(inst, keys::POSITION)?.into(),
-                field::f32_at(inst, keys::PERPENDICULAR_LENGTH).unwrap_or(0.0),
-            ))
+    /// The parked vehicles, each with every member the installs state for one.
+    pub fn car_generators(&self) -> impl Iterator<Item = CarGenerator<'a>> + 'a {
+        field::structs_at(self.root, keys::CAR_GENERATORS).map(|inst| CarGenerator { inst })
+    }
+
+    /// The time cycle modifiers, each applied inside its box between two hours.
+    pub fn time_cycle_modifiers(&self) -> impl Iterator<Item = TimeCycleModifier<'a>> + 'a {
+        field::structs_at(self.root, keys::TIME_CYCLE_MODIFIERS)
+            .map(|inst| TimeCycleModifier { inst })
+    }
+
+    /// The far lights this map describes: all of each but where it stands and its colour.
+    pub fn lod_lights(&self) -> Option<LodLights<'a>> {
+        // ⚠ A far light is split across two maps: light `i` has its position and colour at `i` of the
+        // `distant_lod_lights` of the map this one names as its parent, and no shipped map holds both families.
+        field::struct_at(self.root, keys::LOD_LIGHTS_SOA).map(|inst| LodLights { inst })
+    }
+
+    /// Where the far lights of a child map stand and their colours, under the child's subscript.
+    pub fn distant_lod_lights(&self) -> Option<DistantLodLights<'a>> {
+        field::struct_at(self.root, keys::DISTANT_LOD_LIGHTS_SOA)
+            .map(|inst| DistantLodLights { inst })
+    }
+}
+
+/// One parked vehicle of a map.
+#[derive(Debug, Clone, Copy)]
+pub struct CarGenerator<'a> {
+    inst: &'a MetaInstance,
+}
+
+impl CarGenerator<'_> {
+    pub fn position(&self) -> Option<Vec3> {
+        field::vec3_at(self.inst, keys::POSITION).map(Vec3::from)
+    }
+
+    /// The heading, as the two numbers the file states.
+    pub fn orient(&self) -> (f32, f32) {
+        (
+            field::f32_at(self.inst, keys::ORIENT_X).unwrap_or(0.0),
+            field::f32_at(self.inst, keys::ORIENT_Y).unwrap_or(0.0),
+        )
+    }
+
+    /// The length that sizes the slot.
+    pub fn perpendicular_length(&self) -> f32 {
+        field::f32_at(self.inst, keys::PERPENDICULAR_LENGTH).unwrap_or(0.0)
+    }
+
+    pub fn car_model(&self) -> u32 {
+        field::hash_at(self.inst, keys::CAR_MODEL).unwrap_or(0)
+    }
+
+    /// The flags, as the one word the file states.
+    pub fn flags(&self) -> u32 {
+        field::u32_at(self.inst, keys::FLAGS).unwrap_or(0)
+    }
+
+    pub fn body_color_remaps(&self) -> [i32; 4] {
+        [
+            keys::BODY_COLOR_REMAP_1,
+            keys::BODY_COLOR_REMAP_2,
+            keys::BODY_COLOR_REMAP_3,
+            keys::BODY_COLOR_REMAP_4,
+        ]
+        .map(|key| field::i32_at(self.inst, key).unwrap_or(0))
+    }
+
+    pub fn pop_group(&self) -> u32 {
+        field::hash_at(self.inst, keys::POP_GROUP).unwrap_or(0)
+    }
+
+    /// The livery, `-1` where the file states none.
+    pub fn livery(&self) -> i32 {
+        field::i32_at(self.inst, keys::LIVERY).unwrap_or(-1)
+    }
+}
+
+/// One time cycle modifier of a map.
+#[derive(Debug, Clone, Copy)]
+pub struct TimeCycleModifier<'a> {
+    inst: &'a MetaInstance,
+}
+
+impl TimeCycleModifier<'_> {
+    pub fn name(&self) -> u32 {
+        field::hash_at(self.inst, keys::NAME).unwrap_or(0)
+    }
+
+    /// The box the modifier is applied in.
+    pub fn extents(&self) -> Option<(Vec3, Vec3)> {
+        Some((
+            field::vec3_at(self.inst, keys::MIN_EXTENTS)?.into(),
+            field::vec3_at(self.inst, keys::MAX_EXTENTS)?.into(),
+        ))
+    }
+
+    pub fn percentage(&self) -> f32 {
+        field::f32_at(self.inst, keys::PERCENTAGE).unwrap_or(0.0)
+    }
+
+    pub fn range(&self) -> f32 {
+        field::f32_at(self.inst, keys::RANGE).unwrap_or(0.0)
+    }
+
+    /// The hours it starts and ends at.
+    pub fn hours(&self) -> (u32, u32) {
+        (
+            field::u32_at(self.inst, keys::START_HOUR).unwrap_or(0),
+            field::u32_at(self.inst, keys::END_HOUR).unwrap_or(0),
+        )
+    }
+}
+
+fn float_of(value: &Value) -> Option<f32> {
+    match value {
+        Value::Float(v) => Some(*v as f32),
+        Value::Int(v) => Some(*v as f32),
+        Value::UInt(v) => Some(*v as f32),
+        _ => None,
+    }
+}
+
+fn word_of(value: &Value) -> Option<u32> {
+    match value {
+        Value::UInt(v) => Some(*v as u32),
+        Value::Int(v) => Some(*v as u32),
+        _ => None,
+    }
+}
+
+/// The three floats of a `FloatXYZ`.
+fn point_of(value: &Value) -> Option<Vec3> {
+    let inst = field::as_struct(value)?;
+    Some(Vec3::new(
+        field::f32_at(inst, keys::X)?,
+        field::f32_at(inst, keys::Y)?,
+        field::f32_at(inst, keys::Z)?,
+    ))
+}
+
+/// What a map of far lights states of one light.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LodLight {
+    pub direction: Vec3,
+    pub falloff: f32,
+    pub falloff_exponent: f32,
+    /// `timeAndStateFlags`, as the one word the file states.
+    pub time_and_state_flags: u32,
+    pub hash: u32,
+    pub cone_inner_angle: u8,
+    pub cone_outer_angle_or_cap_ext: u8,
+    pub corona_intensity: u8,
+}
+
+/// The far lights of a map: eight arrays under one subscript.
+#[derive(Debug, Clone, Copy)]
+pub struct LodLights<'a> {
+    inst: &'a MetaInstance,
+}
+
+impl LodLights<'_> {
+    /// How many lights the first array holds; [`crate::validate`] says where another holds fewer.
+    pub fn len(&self) -> usize {
+        field::array_at(self.inst, keys::DIRECTION).len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The light at `index`, where every array holds one there.
+    pub fn get(&self, index: usize) -> Option<LodLight> {
+        let at = |key| field::array_at(self.inst, key).get(index);
+        let byte = |key| at(key).and_then(word_of).map(|word| word as u8);
+        Some(LodLight {
+            direction: at(keys::DIRECTION).and_then(point_of)?,
+            falloff: at(keys::FALLOFF).and_then(float_of)?,
+            falloff_exponent: at(keys::FALLOFF_EXPONENT).and_then(float_of)?,
+            time_and_state_flags: at(keys::TIME_AND_STATE_FLAGS).and_then(word_of)?,
+            hash: at(keys::HASH).and_then(word_of)?,
+            cone_inner_angle: byte(keys::CONE_INNER_ANGLE)?,
+            cone_outer_angle_or_cap_ext: byte(keys::CONE_OUTER_ANGLE_OR_CAP_EXT)?,
+            corona_intensity: byte(keys::CORONA_INTENSITY)?,
         })
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = LodLight> + '_ {
+        (0..self.len()).map_while(|index| self.get(index))
+    }
+}
+
+/// Where a far light stands and its colour, which the parent of its map states.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DistantLodLight {
+    pub position: Vec3,
+    /// `RGBI`, as the one word the file states.
+    pub rgbi: u32,
+}
+
+/// The positions and colours of the far lights a child map describes: two arrays under its subscript.
+#[derive(Debug, Clone, Copy)]
+pub struct DistantLodLights<'a> {
+    inst: &'a MetaInstance,
+}
+
+impl DistantLodLights<'_> {
+    /// How many lights the first array holds; [`crate::validate`] says where the other holds fewer.
+    pub fn len(&self) -> usize {
+        field::array_at(self.inst, keys::POSITION).len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The light at `index`, where both arrays hold one there.
+    pub fn get(&self, index: usize) -> Option<DistantLodLight> {
+        let at = |key| field::array_at(self.inst, key).get(index);
+        Some(DistantLodLight {
+            position: at(keys::POSITION).and_then(point_of)?,
+            rgbi: at(keys::RGBI).and_then(word_of)?,
+        })
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = DistantLodLight> + '_ {
+        (0..self.len()).map_while(|index| self.get(index))
+    }
+
+    pub fn num_street_lights(&self) -> u32 {
+        field::u32_at(self.inst, keys::NUM_STREET_LIGHTS).unwrap_or(0)
+    }
+
+    pub fn category(&self) -> u32 {
+        field::u32_at(self.inst, keys::CATEGORY).unwrap_or(0)
     }
 }
 
@@ -399,9 +626,234 @@ impl<'a> Entity<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use or_io::decl::File;
     use or_io::meta::instance::value::HashedString;
+    use or_io::meta::{CMapData, MetaDocument};
+
+    fn items(of: impl IntoIterator<Item = MetaInstance>) -> Value {
+        Value::Array(of.into_iter().map(|i| Value::Struct(Box::new(i))).collect())
+    }
+
+    fn floats(of: &[f64]) -> Value {
+        Value::Array(of.iter().map(|&f| Value::Float(f)).collect())
+    }
+
+    fn words(of: &[u64]) -> Value {
+        Value::Array(of.iter().map(|&w| Value::UInt(w)).collect())
+    }
+
+    fn points(of: &[[f64; 3]]) -> Value {
+        items(of.iter().map(|[x, y, z]| {
+            let mut point = MetaInstance::new("Item");
+            point.set("x", Value::Float(*x));
+            point.set("y", Value::Float(*y));
+            point.set("z", Value::Float(*z));
+            point
+        }))
+    }
+
+    fn parked(model: &str, x: f32, livery: i64) -> MetaInstance {
+        let mut car = MetaInstance::new("Item");
+        car.set("position", Value::Vec3([x, -40.25, 30.0]));
+        car.set("orientX", Value::Float(0.5));
+        car.set("orientY", Value::Float(-0.75));
+        car.set("perpendicularLength", Value::Float(2.5));
+        car.set("carModel", Value::String(model.into()));
+        car.set("flags", Value::UInt(1664));
+        car.set("bodyColorRemap1", Value::Int(12));
+        car.set("bodyColorRemap2", Value::Int(-1));
+        car.set("bodyColorRemap3", Value::Int(3));
+        car.set("bodyColorRemap4", Value::Int(-1));
+        car.set("popGroup", Value::String("a_pop_group".into()));
+        car.set("livery", Value::Int(livery));
+        car
+    }
+
+    /// A map as the text a document with no schema is: two parked vehicles, a time cycle modifier and three far
+    /// lights in both families, which no shipped map holds together; `edit` changes the map before it is written.
+    pub(crate) fn map_file(edit: impl FnOnce(&mut MetaInstance)) -> Vec<u8> {
+        let mut modifier = MetaInstance::new("Item");
+        modifier.set("name", Value::String("a_warm_evening".into()));
+        modifier.set("minExtents", Value::Vec3([-100.0, -50.0, 0.0]));
+        modifier.set("maxExtents", Value::Vec3([100.0, 50.0, 80.0]));
+        modifier.set("percentage", Value::Float(80.0));
+        modifier.set("range", Value::Float(45.0));
+        modifier.set("startHour", Value::UInt(20));
+        modifier.set("endHour", Value::UInt(6));
+
+        let mut lights = MetaInstance::new("LODLightsSOA");
+        lights.set(
+            "direction",
+            points(&[[0.0, 0.0, -1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]),
+        );
+        lights.set("falloff", floats(&[25.0, 30.5, 35.0]));
+        lights.set("falloffExponent", floats(&[8.0, 16.0, 32.5]));
+        lights.set("timeAndStateFlags", words(&[0x00FF_FFFF, 0x0100_0FFF, 7]));
+        lights.set("hash", words(&[0xAAAA_0001, 0xAAAA_0002, 0xAAAA_0003]));
+        lights.set("coneInnerAngle", words(&[10, 20, 30]));
+        lights.set("coneOuterAngleOrCapExt", words(&[40, 50, 60]));
+        lights.set("coronaIntensity", words(&[70, 80, 255]));
+
+        let mut distant = MetaInstance::new("DistantLODLightsSOA");
+        distant.set(
+            "position",
+            points(&[[10.0, 20.0, 30.0], [11.0, 21.0, 31.0], [12.0, 22.0, 32.5]]),
+        );
+        distant.set("RGBI", words(&[0xFF10_2030, 0x8040_5060, 0x4070_8090]));
+        distant.set("numStreetLights", Value::UInt(2));
+        distant.set("category", Value::UInt(1));
+
+        let mut root = MetaInstance::new("CMapData");
+        root.set("name", Value::String("town".into()));
+        root.set("timeCycleModifiers", items([modifier]));
+        root.set(
+            "carGenerators",
+            items([parked("a_saloon", 120.5, -1), parked("a_van", 124.5, 3)]),
+        );
+        root.set("LODLightsSOA", Value::Struct(Box::new(lights)));
+        root.set("DistantLODLightsSOA", Value::Struct(Box::new(distant)));
+        edit(&mut root);
+        or_io::meta::write_meta(&root)
+            .expect("the map is written as text")
+            .into_bytes()
+    }
+
+    /// The tree `bytes` reads as, which the read views borrow.
+    pub(crate) fn tree(bytes: &[u8]) -> MetaInstance {
+        MetaDocument::parse(or_io::meta::default_library(), bytes.to_vec())
+            .expect("the map reads")
+            .instance
+    }
+
+    #[test]
+    fn the_read_views_of_a_maps_records_read_what_the_typed_records_read() {
+        let bytes = map_file(|_| {});
+        let root = tree(&bytes);
+        let viewed = MapData::new(&root).expect("a map");
+        let typed = CMapData::from_bytes(&bytes).expect("opens typed");
+        let at = |v: or_io::decl::Vec3| Vec3::new(v.x, v.y, v.z);
+
+        assert_eq!(viewed.car_generator_count(), typed.car_generators.len());
+        assert_eq!(typed.car_generators.len(), 2);
+        for (car, typed) in viewed.car_generators().zip(&typed.car_generators) {
+            assert_eq!(car.position(), Some(at(typed.position)));
+            assert_eq!(car.orient(), (typed.orient_x, typed.orient_y));
+            assert_eq!(car.perpendicular_length(), typed.perpendicular_length);
+            assert_eq!(car.car_model(), typed.car_model.hash);
+            assert_eq!(car.flags(), typed.flags);
+            let remaps = [
+                typed.body_color_remap1,
+                typed.body_color_remap2,
+                typed.body_color_remap3,
+                typed.body_color_remap4,
+            ];
+            assert_eq!(car.body_color_remaps(), remaps);
+            assert_eq!(car.pop_group(), typed.pop_group.hash);
+            assert_eq!(car.livery(), i32::from(typed.livery));
+        }
+        let van = viewed.car_generators().nth(1).expect("the second");
+        assert_eq!(van.car_model(), HashedString::new("a_van").hash);
+        assert_eq!(van.position(), Some(Vec3::new(124.5, -40.25, 30.0)));
+        assert_eq!((van.orient(), van.livery()), ((0.5, -0.75), 3));
+        assert_eq!(van.body_color_remaps(), [12, -1, 3, -1]);
+
+        assert_eq!(
+            viewed.time_cycle_modifier_count(),
+            typed.time_cycle_modifiers.len()
+        );
+        assert_eq!(typed.time_cycle_modifiers.len(), 1);
+        for (modifier, typed) in (viewed.time_cycle_modifiers()).zip(&typed.time_cycle_modifiers) {
+            assert_eq!(modifier.name(), typed.name.hash);
+            assert_eq!(
+                modifier.extents(),
+                Some((at(typed.min_extents), at(typed.max_extents)))
+            );
+            assert_eq!(modifier.percentage(), typed.percentage);
+            assert_eq!(modifier.range(), typed.range);
+            assert_eq!(modifier.hours(), (typed.start_hour, typed.end_hour));
+            assert_eq!(modifier.hours(), (20, 6));
+            assert_eq!(modifier.name(), HashedString::new("a_warm_evening").hash);
+        }
+
+        let lights = viewed.lod_lights().expect("the map states the family");
+        let family = &typed.lod_lights_soa;
+        assert_eq!((lights.len(), family.len()), (3, 3));
+        let read: Vec<LodLight> = lights.iter().collect();
+        assert_eq!(read.len(), 3);
+        for (index, light) in read.iter().enumerate() {
+            assert_eq!(lights.get(index), Some(*light));
+            let direction = &family.direction[index];
+            assert_eq!(
+                light.direction,
+                Vec3::new(direction.x, direction.y, direction.z)
+            );
+            assert_eq!(light.falloff, family.falloff[index]);
+            assert_eq!(light.falloff_exponent, family.falloff_exponent[index]);
+            assert_eq!(
+                light.time_and_state_flags,
+                family.time_and_state_flags[index]
+            );
+            assert_eq!(light.hash, family.hash[index]);
+            assert_eq!(light.cone_inner_angle, family.cone_inner_angle[index]);
+            assert_eq!(
+                light.cone_outer_angle_or_cap_ext,
+                family.cone_outer_angle_or_cap_ext[index]
+            );
+            assert_eq!(light.corona_intensity, family.corona_intensity[index]);
+        }
+        assert_eq!(read[2].falloff_exponent, 32.5);
+        assert_eq!((read[1].hash, read[2].corona_intensity), (0xAAAA_0002, 255));
+        assert_eq!(lights.get(3), None);
+
+        let distant = viewed
+            .distant_lod_lights()
+            .expect("the map states the family");
+        let family = &typed.distant_lod_lights_soa;
+        assert_eq!((distant.len(), family.len()), (3, 3));
+        let read: Vec<DistantLodLight> = distant.iter().collect();
+        assert_eq!(read.len(), 3);
+        for (index, light) in read.iter().enumerate() {
+            let position = &family.position[index];
+            assert_eq!(
+                light.position,
+                Vec3::new(position.x, position.y, position.z)
+            );
+            assert_eq!(light.rgbi, family.rgbi[index]);
+        }
+        assert_eq!(read[2].position, Vec3::new(12.0, 22.0, 32.5));
+        assert_eq!(read[0].rgbi, 0xFF10_2030);
+        assert_eq!(
+            distant.num_street_lights(),
+            u32::from(family.num_street_lights)
+        );
+        assert_eq!(distant.category(), u32::from(family.category));
+        assert_eq!((distant.num_street_lights(), distant.category()), (2, 1));
+    }
+
+    #[test]
+    fn a_far_light_one_array_lacks_is_no_light_and_a_map_with_no_family_has_none() {
+        let bytes = map_file(|root| {
+            let Some(Value::Struct(lights)) = root.get_mut("LODLightsSOA") else {
+                panic!("the map holds the family");
+            };
+            lights.set("hash", words(&[0xAAAA_0001, 0xAAAA_0002]));
+        });
+        let root = tree(&bytes);
+        let lights = MapData::new(&root).and_then(|map| map.lod_lights());
+        let lights = lights.expect("the map states the family");
+        assert_eq!(lights.len(), 3);
+        assert!(lights.get(1).is_some());
+        assert_eq!(lights.get(2), None);
+        assert_eq!(lights.iter().count(), 2);
+
+        let bare = MetaInstance::new("CMapData");
+        let map = MapData::new(&bare).expect("a map");
+        assert!(map.lod_lights().is_none() && map.distant_lod_lights().is_none());
+        assert_eq!(map.car_generators().count(), 0);
+        assert_eq!(map.time_cycle_modifiers().count(), 0);
+    }
 
     fn entity(type_name: &str, rotation: [f32; 4]) -> MetaInstance {
         let mut inst = MetaInstance::new(type_name);

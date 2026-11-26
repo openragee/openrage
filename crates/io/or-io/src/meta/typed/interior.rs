@@ -1057,11 +1057,12 @@ mod tests {
     }
 
     #[test]
-    fn a_maps_own_time_cycle_modifiers_still_count_in_what_two_maps_are_compared_by() {
+    fn a_member_a_map_carries_under_a_name_an_interior_types_still_counts_in_what_two_maps_are_compared_by(
+    ) {
         let mut inst = MetaInstance::new("CMapData");
-        inst.set("timeCycleModifiers", Value::Array(vec![Value::UInt(1)]));
+        inst.set("portalCount", Value::UInt(1));
         let one = CMapData::read(&inst).expect("reads");
-        inst.set("timeCycleModifiers", Value::Array(vec![Value::UInt(2)]));
+        inst.set("portalCount", Value::UInt(2));
         let other = CMapData::read(&inst).expect("reads");
         assert_ne!(
             one, other,
@@ -1072,6 +1073,8 @@ mod tests {
             name_hash("timeCycleModifiers")
         ));
         assert!(is_typed("CMloRoomDef", name_hash("blend")));
+        assert!(is_typed("CMloRoomDef", name_hash("portalCount")));
         assert!(!is_typed("CMapData", name_hash("blend")));
+        assert!(!is_typed("CMapData", name_hash("portalCount")));
     }
 }

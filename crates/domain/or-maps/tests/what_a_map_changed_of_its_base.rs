@@ -952,8 +952,8 @@ fn every_member_a_comparison_names_is_one_the_typed_record_names() {
     assert_eq!(change.to, Stated::Text("CBaseArchetypeDef".into()));
 }
 
-/// A map of one entity that states `priority` in a member no typed record names, and that states `generators` of itself in another.
-fn a_map_with_members_no_record_types(priority: u64, generators: u64) -> CMapData {
+/// A map of one entity that states `priority` in a member no typed record names, and that states `lods` of itself in another.
+fn a_map_with_members_no_record_types(priority: u64, lods: u64) -> CMapData {
     const PSC: &str = r#"<?xml version="1.0"?>
 <ParserSchema>
   <structdef type="CEntityDef">
@@ -965,7 +965,7 @@ fn a_map_with_members_no_record_types(priority: u64, generators: u64) -> CMapDat
   </structdef>
   <structdef type="CMapData">
     <string name="name" type="atHashString"/>
-    <u32 name="carGenerators"/>
+    <u32 name="containerLods"/>
     <array name="entities" type="atArray"><pointer type="CEntityDef" policy="owner"/></array>
   </structdef>
 </ParserSchema>"#;
@@ -980,12 +980,12 @@ fn a_map_with_members_no_record_types(priority: u64, generators: u64) -> CMapDat
     entity.set("priorityLevel", Value::UInt(priority));
     assert!(
         !CEntityDef::MEMBERS.contains(&"priorityLevel")
-            && !CMapData::MEMBERS.contains(&"carGenerators"),
+            && !CMapData::MEMBERS.contains(&"containerLods"),
         "the members are ones the typed records carry and do not name"
     );
     let mut root = MetaInstance::new("CMapData");
     root.set("name", Value::Hash(HashedString::new("harbour")));
-    root.set("carGenerators", Value::UInt(generators));
+    root.set("containerLods", Value::UInt(lods));
     root.set(
         "entities",
         Value::Array(vec![Value::Pointer(Some(Box::new(entity)))]),
@@ -1047,15 +1047,33 @@ fn what_a_file_states_of_itself_is_named_member_by_member_beside_what_it_holds()
     now.physics_dictionaries
         .push(HashedString::new("quay_collision"));
     let changes = map_changes(&base, &now);
-    assert_eq!(changes.root.len(), CMapData::MEMBERS.len() - 1);
+    // ⚠ The records a map holds are typed and not named member by member: its entities are compared apart, and the rest
+    // is said to differ.
+    const HELD: [&str; 7] = [
+        "entities",
+        "boxOccluders",
+        "occludeModels",
+        "timeCycleModifiers",
+        "carGenerators",
+        "LODLightsSOA",
+        "DistantLODLightsSOA",
+    ];
+    assert_eq!(changes.root.len(), CMapData::MEMBERS.len() - HELD.len());
     for change in &changes.root {
         assert!(
-            CMapData::MEMBERS.contains(&change.member) && change.member != "entities",
+            CMapData::MEMBERS.contains(&change.member) && !HELD.contains(&change.member),
             "{} is no member of a map",
             change.member
         );
     }
+    assert!(HELD.iter().all(|held| CMapData::MEMBERS.contains(held)));
     assert_eq!(indexes(&changes), (vec![], vec![], vec![]));
+    assert!(!changes.other);
+
+    let mut parked = base.clone();
+    parked.car_generators.push(or_io::meta::CCarGen::default());
+    let changes = map_changes(&base, &parked);
+    assert!(changes.root.is_empty() && changes.other, "{changes:?}");
 
     // And of a type file: its name and the files it depends on.
     let base = types(&[Archetype::new("prop_crate_a", [-1.0; 3], [1.0; 3])]);

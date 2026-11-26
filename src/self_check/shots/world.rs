@@ -339,9 +339,13 @@ fn hex(names: &[u32]) -> Vec<String> {
     out
 }
 
-/// Write what the viewer wants and draws at its camera, and what the device holds of it (`textures`, `stand_ins`), to `path` as JSON; `whole` is the models told once whole, the seconds they waited on the device for their maps in all, and the most.
+/// Write what the viewer wants and draws at its camera to `path` as JSON, the swaps the last frame
+/// drew open (`open`, of the selection of its version) in place of what they hold until then, and
+/// what the device holds of it (`textures`, `stand_ins`).
+/// `whole` is the models told once whole, the seconds they waited on the device for their maps in all, and the most.
 fn dump(
     path: &Path,
+    (version, open): (u64, Vec<bool>),
     (textures, stand_ins): (Vec<String>, Vec<String>),
     whole: (usize, f64, f32),
 ) -> Result<(), String> {
@@ -352,9 +356,27 @@ fn dump(
     let (census, s) = (&selected.census, selected.streaming);
     let records: usize = selected.cards.iter().map(|list| list.records.len()).sum();
     let taken = viewer.reads_waited();
+    let mut nodes: std::collections::BTreeMap<(u32, u32), f32> = (census.drawn_nodes.iter())
+        .map(|(map, at, fade)| ((*map, *at), *fade))
+        .collect();
+    let open = match version == selected.version {
+        true => open,
+        false => Vec::new(),
+    };
+    let opened = (selected.swaps.iter().zip(&open)).filter(|(_, open)| **open);
+    for (swap, _) in opened {
+        for (map, at, _) in &swap.before {
+            nodes.remove(&(*map, *at));
+        }
+        nodes.extend(
+            swap.after
+                .iter()
+                .map(|(map, at, fade)| ((*map, *at), *fade)),
+        );
+    }
     // ⚠ A node's fade is written as `MAP:INDEX:FADE`, so a fade in time can be judged against the distance's.
-    let mut drawn_nodes: Vec<String> = (census.drawn_nodes.iter())
-        .map(|(map, at, fade)| format!("{map:08X}:{at}:{fade:.3}"))
+    let mut drawn_nodes: Vec<String> = (nodes.iter())
+        .map(|((map, at), fade)| format!("{map:08X}:{at}:{fade:.3}"))
         .collect();
     drawn_nodes.sort_unstable();
     let json = serde_json::json!({
@@ -391,13 +413,14 @@ fn dump(
         "drawn_by_level": by_level(&census.drawn),
         "list_instances": census.list_instances,
         "drawn_nodes": drawn_nodes,
+        "swaps": { "held": selected.swaps.len(), "open": open.iter().filter(|o| **o).count() },
         "cards": { "lists": selected.cards.len(), "records": records },
         // ⚠ A texture is `KEY:ASKED:WIDTHxHEIGHT` and a stand-in `ID:SLOT:LEVEL`: two runs of one scene should hold the same.
         "device_textures": textures,
         "device_stand_ins": stand_ins,
         "models_whole": { "count": whole.0, "waits_s": whole.1, "most_s": whole.2 },
-        "models_taken": { "count": taken[0].0, "waits_s": taken[0].1, "most_s": taken[0].2 },
-        "textures_taken": { "count": taken[1].0, "waits_s": taken[1].1, "most_s": taken[1].2 },
+        "models_taken": { "count": taken[0].0, "waits_s": taken[0].1, "most_s": taken[0].2, "stale": viewer.stale[0] },
+        "textures_taken": { "count": taken[1].0, "waits_s": taken[1].1, "most_s": taken[1].2, "stale": viewer.stale[1] },
     });
     drop(viewer);
     let text = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
@@ -451,11 +474,12 @@ impl Shell {
                     self.failed.push(why);
                 }
             }
-            WorldStep::Dump(name) => dump(
-                &out.join(name),
-                self.bridge.world_residency(),
-                self.bridge.world_whole(),
-            )?,
+            WorldStep::Dump(name) => {
+                let (version, open) = self.bridge.world_open();
+                let open = (version, open.to_vec());
+                let residency = self.bridge.world_residency();
+                dump(&out.join(name), open, residency, self.bridge.world_whole())?;
+            }
             // The groups follow the modes, as they do on the screen until a group is ticked.
             WorldStep::Modes(modes) => viewer().enabled.modes = *modes,
             WorldStep::Fly(velocity, seconds) => self.fly(state, *velocity, *seconds, false)?,

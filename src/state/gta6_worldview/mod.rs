@@ -157,6 +157,8 @@ pub struct Viewer {
     pub models_waiting: usize,
     /// How many textures wait to be read.
     pub textures_waiting: usize,
+    /// The models and the textures taken that nothing asked for any more when they were.
+    pub stale: [usize; 2],
     /// How long the last frame took to work out its day, before the lights about the camera.
     pub day_took: std::time::Duration,
     /// The game's wind about the camera.
@@ -207,6 +209,7 @@ impl Default for Viewer {
             lights: None,
             models_waiting: 0,
             textures_waiting: 0,
+            stale: [0; 2],
             day_took: std::time::Duration::ZERO,
             wind: wind::Wind::default(),
             weathering: sky::Weathering::default(),
@@ -635,6 +638,17 @@ impl Viewer {
         self.have.entry(model).or_insert(Some(false));
     }
 
+    /// Look at each model read and not yet taken.
+    pub fn each_read(&self, mut look: impl FnMut(&ModelRef, &CpuModel)) {
+        if let Some(models) = &self.models {
+            models.each_arrived(|model, read| {
+                if let Some(read) = read {
+                    look(model, read);
+                }
+            });
+        }
+    }
+
     /// The models and the textures read and taken, the seconds they waited from read to taken in all, and the most.
     pub fn reads_waited(&self) -> [(usize, f64, f32); 2] {
         [
@@ -657,6 +671,7 @@ impl Viewer {
         let soon = &self.soon.1;
         let ((key, pixels), texture) = (self.textures.as_ref()?)
             .take_soonest(|(key, _)| soon.get(key).copied().unwrap_or(f32::INFINITY))?;
+        self.stale[1] += usize::from(!self.soon.1.contains_key(&key));
         let bytes = texture.as_ref().map_or(0, CpuTexture::bytes);
         self.held.fetch_sub(bytes, Ordering::Relaxed);
         Some((key, pixels, texture))
@@ -667,6 +682,7 @@ impl Viewer {
         let soon = &self.soon.0;
         let (model, read) = (self.models.as_ref()?)
             .take_soonest(|model| soon.get(model).copied().unwrap_or(f32::INFINITY))?;
+        self.stale[0] += usize::from(!self.soon.0.contains_key(&model));
         let bytes = read.as_ref().map_or(0, CpuModel::bytes);
         self.held.fetch_sub(bytes, Ordering::Relaxed);
         Some((model, read))

@@ -139,8 +139,8 @@ pub struct WorldDrawn {
 }
 
 /// What a layout was made for: the selection, the camera, what is on the device, the scale of
-/// the level-of-detail distances, the height of the screen and how far the sun's shadow is cast.
-type LaidFor = (u64, [u32; 16], u64, u32, u32, Option<u32>);
+/// the level-of-detail distances, the height of the screen, how far the sun's shadow is cast and how many swaps are open.
+type LaidFor = (u64, [u32; 16], u64, u32, u32, Option<u32>, usize);
 
 /// What the day was worked out for: the hour, the days, the weathers, the camera's place north
 /// in hundreds of metres, whether the install's tables gave one, and the exposure the frame metered.
@@ -177,10 +177,14 @@ pub(super) struct WorldGpu {
     told: Vec<(ModelRef, Option<bool>)>,
     /// The models on the device not yet told, for the maps they sample are not all there, with when each was put there.
     pending: HashMap<ModelRef, Instant>,
+    /// What each model read and not yet put on the device will sample.
+    early: HashMap<ModelRef, ready::Early>,
     /// The models told once whole since the world began, the seconds they waited on the device for their maps in all, and the most.
     whole: (usize, f64, f32),
     laid_for: Option<LaidFor>,
     layout: Layout,
+    /// Which swaps of the selection of this version the last layout drew as open.
+    open: (u64, Vec<bool>),
     /// When the last frame was and where the camera stood in it.
     was: Option<(Instant, Vec3)>,
     drawn: WorldDrawn,
@@ -247,6 +251,11 @@ impl RenderBridge {
     /// The models told once whole, the seconds they waited on the device for their maps in all, and the most.
     pub fn world_whole(&self) -> (usize, f64, f32) {
         self.world.whole
+    }
+
+    /// The version of the selection last laid out, and which of its swaps it drew open.
+    pub fn world_open(&self) -> (u64, &[bool]) {
+        (self.world.open.0, &self.world.open.1)
     }
 
     /// Forget the lit frame's temporal history and start its camera offsets from their first.
@@ -323,6 +332,7 @@ impl RenderBridge {
                 break;
             };
             world.forget(&model);
+            world.early.remove(&model);
             world.cost.reread.0 += u64::from(world.gone.0.remove(&model));
             let slot = match read {
                 Some(read) => {
@@ -342,6 +352,10 @@ impl RenderBridge {
             world.models.insert(model, slot);
         }
         world.cost.uploaded.0 = uploaded;
+        // ⚠ What a model will sample is asked for as its read ends, not once a frame has room to put it on the device: a frame lays out again to ask.
+        let mut noted = false;
+        viewer.each_read(|model, read| noted |= world.note_read(*model, read));
+        world.changes += u64::from(noted);
         world.release_whole(viewer.reads_textures());
         world.cost.taking = taking.elapsed();
 
@@ -418,6 +432,15 @@ impl RenderBridge {
         // What casts a shadow into the view draws as well, where the sun's shadows are cast.
         let casts = self.renderer.shadows() && self.renderer.has_deferred();
         let reach = casts.then(|| self.renderer.shadow_reach());
+        // A swap opens the frame its last model is ready in: a model on the device and told, or one that never comes.
+        let ready = |model: &ModelRef| match world.models.get(model) {
+            Some(Slot::Ready { .. }) => !world.pending.contains_key(model),
+            Some(Slot::Missing) => true,
+            None => false,
+        };
+        let open: Vec<bool> = (selected.swaps.iter())
+            .map(|swap| swap.waits.iter().all(ready))
+            .collect();
         // Nothing moved, arrived or left: the device holds this frame's instances already.
         let key = (
             selected.version,
@@ -426,6 +449,7 @@ impl RenderBridge {
             lod_scale.to_bits(),
             height,
             reach.map(f32::to_bits),
+            open.iter().filter(|open| **open).count(),
         );
         if world.laid_for == Some(key) {
             return;
@@ -455,7 +479,10 @@ impl RenderBridge {
         let occluding = Instant::now();
         world.layout.occlude(&selected.occluders, &view);
         let occluded = occluding.elapsed();
-        world.layout.cull(&selected.chunks, instances, &view);
+        world
+            .layout
+            .cull((&selected.chunks, &open), instances, &view);
+        world.open = (selected.version, open);
         world.layout.place(instances);
         let culled = occluding.elapsed() - occluded;
 
@@ -629,6 +656,12 @@ impl RenderBridge {
             (eye, lod_scale),
             (per_metre, budgets.most_side),
             frame,
+        ));
+        wanted.extend(world.ask_early(
+            &selected.wanted,
+            seen,
+            lod_scale,
+            (per_metre, budgets.most_side),
         ));
         let in_view = (selected.wanted.iter())
             .map(|(_, model)| *model)

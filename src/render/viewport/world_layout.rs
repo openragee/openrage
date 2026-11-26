@@ -120,10 +120,20 @@ impl Layout {
     ///
     /// ⚠ On every core: a selection holds tens of thousands of instances, and a frame that tested
     /// each on the UI thread spent most of its time here.
-    pub(super) fn cull(&mut self, chunks: &[Chunk], instances: &[Instance], view: &View) {
+    /// A chunk a swap gates draws as `open` says of the swap.
+    pub(super) fn cull(
+        &mut self,
+        (chunks, open): (&[Chunk], &[bool]),
+        instances: &[Instance],
+        view: &View,
+    ) {
         let this = &*self;
         let hidden = AtomicUsize::new(0);
         let seen = (chunks.par_iter())
+            .filter(|chunk| {
+                let is_open = |swap: u32| open.get(swap as usize).copied().unwrap_or(false);
+                (chunk.gate).is_none_or(|(swap, when)| is_open(swap) == when)
+            })
             .flat_map_iter(|chunk| {
                 let away = view.eye.distance(chunk.centre);
                 let wider = chunk.radius + reach(view.shadow_far, away, chunk.radius);
@@ -314,6 +324,7 @@ mod tests {
             radius: 100.0,
             from: 0,
             to: instances.len() as u32,
+            gate: None,
         }];
         let mut layout = Layout::default();
         layout.clear();
@@ -324,7 +335,7 @@ mod tests {
         assert!(layout.slots(1).is_empty());
         assert!(layout.slots(7).is_empty());
 
-        layout.cull(&chunks, &instances, &view(None));
+        layout.cull((&chunks, &[]), &instances, &view(None));
         layout.place(&instances);
         // The one behind the camera and the one of the absent model are left out.
         assert_eq!(layout.seen.len(), 3);
@@ -354,6 +365,36 @@ mod tests {
     }
 
     #[test]
+    fn a_gated_chunk_draws_until_its_swap_is_open_or_from_then() {
+        let instances = [
+            instance(0, Vec3::new(0.0, 5.0, 0.0), 1.0),
+            instance(0, Vec3::new(0.0, 6.0, 0.0), 1.0),
+            instance(0, Vec3::new(0.0, 7.0, 0.0), 1.0),
+        ];
+        let chunk = |at: u32, gate| Chunk {
+            centre: instances[at as usize].centre,
+            radius: 1.0,
+            from: at,
+            to: at + 1,
+            gate,
+        };
+        let chunks = [
+            chunk(0, None),
+            chunk(1, Some((0, false))),
+            chunk(2, Some((0, true))),
+        ];
+        let mut layout = Layout::default();
+        layout.clear();
+        layout.model([f32::INFINITY].into_iter());
+        for (open, drawn) in [(&[][..], [0, 1]), (&[false], [0, 1]), (&[true], [0, 2])] {
+            layout.cull((&chunks, open), &instances, &view(None));
+            let mut seen: Vec<u32> = layout.seen.iter().map(|s| s.at).collect();
+            seen.sort_unstable();
+            assert_eq!(seen, drawn, "open {open:?}");
+        }
+    }
+
+    #[test]
     fn what_casts_a_shadow_into_the_view_is_tested_wider() {
         assert_eq!(reach(None, 10.0, 2.0), 0.0);
         assert_eq!(reach(Some(100.0), 10.0, 2.0), 2.0 * SHADOW_REACH);
@@ -367,13 +408,14 @@ mod tests {
             radius: 1.0,
             from: 0,
             to: 1,
+            gate: None,
         }];
         let mut layout = Layout::default();
         layout.clear();
         layout.model([f32::INFINITY].into_iter());
-        layout.cull(&chunks, &instances, &view(None));
+        layout.cull((&chunks, &[]), &instances, &view(None));
         assert!(layout.seen.is_empty());
-        layout.cull(&chunks, &instances, &view(Some(100.0)));
+        layout.cull((&chunks, &[]), &instances, &view(Some(100.0)));
         assert_eq!(layout.seen.len(), 1);
         // It draws for its shadow alone, and is no slot's nearest.
         assert!(!layout.seen[0].shown);
@@ -391,11 +433,12 @@ mod tests {
             radius: 1.0,
             from: 0,
             to: 1,
+            gate: None,
         }];
         let mut layout = Layout::default();
         layout.clear();
         layout.model([f32::INFINITY].into_iter());
-        layout.cull(&chunks, &instances, &view(None));
+        layout.cull((&chunks, &[]), &instances, &view(None));
         assert!(!layout.seen[0].shown);
         layout.place(&instances);
         assert_eq!(layout.laid[0].cast_only, 1.0);
@@ -424,6 +467,7 @@ mod tests {
             radius: 1.0,
             from,
             to: from + 1,
+            gate: None,
         };
         // Behind the wall, half out from behind its side, and before it.
         let places = [
@@ -438,20 +482,20 @@ mod tests {
         let mut layout = Layout::default();
         layout.clear();
         layout.model([f32::INFINITY].into_iter());
-        layout.cull(&chunks, &instances, &view(None));
+        layout.cull((&chunks, &[]), &instances, &view(None));
         assert_eq!(layout.seen.len(), 3);
         layout.occlude(&occluders, &view(None));
-        layout.cull(&chunks, &instances, &view(None));
+        layout.cull((&chunks, &[]), &instances, &view(None));
         let seen: Vec<u32> = layout.seen.iter().map(|s| s.at).collect();
         assert_eq!(seen, [1, 2]);
         // Tested as wide as its shadow reaches, it is still wholly behind the wall.
-        layout.cull(&chunks, &instances, &view(Some(100.0)));
+        layout.cull((&chunks, &[]), &instances, &view(Some(100.0)));
         let seen: Vec<u32> = layout.seen.iter().map(|s| s.at).collect();
         assert_eq!(seen, [1, 2]);
         // Larger, its shadow's reach passes the wall's side: it draws for that.
         let mut wide = chunks.clone();
         wide[0].radius = 8.0;
-        layout.cull(&wide, &instances, &view(Some(100.0)));
+        layout.cull((&wide, &[]), &instances, &view(Some(100.0)));
         assert_eq!(layout.seen.len(), 3);
     }
 

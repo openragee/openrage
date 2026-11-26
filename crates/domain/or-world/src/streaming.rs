@@ -260,6 +260,29 @@ pub struct ListDraw {
     pub skipped: std::ops::Range<usize>,
 }
 
+/// A node whose model is loading, as it draws once the model is ready.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Waiting {
+    pub node: NodeId,
+    /// Its parent; itself for a root.
+    pub parent: NodeId,
+    pub fade: f32,
+    pub yields: bool,
+    /// For a list, a range of [`Selection::skipped`]; empty for an entity.
+    pub skipped: std::ops::Range<usize>,
+}
+
+/// A parent drawn whole for a child on its way, and how it draws once every such child is ready.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Held {
+    pub node: NodeId,
+    /// How opaque it draws then: nought where it is gone.
+    pub then: f32,
+    pub yields: bool,
+    /// For a list, a range of [`Selection::skipped`] left out then besides its own.
+    pub skipped: std::ops::Range<usize>,
+}
+
 /// What a selection draws and what it waits for.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Selection {
@@ -271,6 +294,10 @@ pub struct Selection {
     pub skipped: Vec<u32>,
     /// The nodes in range whose model is loading, nearest ancestors first.
     pub wanted: Vec<NodeId>,
+    /// The nodes waited for, so that a frame can draw one the moment its model is ready.
+    pub waiting: Vec<Waiting>,
+    /// The parents of [`Self::drawn`] and [`Self::lists`] held whole for a child of `waiting`.
+    pub held: Vec<Held>,
     /// Whether a fade in time is under way: the next selection differs though nothing moves.
     pub fading: bool,
 }
@@ -630,15 +657,21 @@ impl Pass<'_> {
             && self.forest.links.parent[at as usize] == NONE
     }
 
+    /// How opaque node `at` draws now where `target` is what the distances allow, kept as [`Self::settle`] does.
+    fn stepped(&self, at: u32, target: f32) -> f32 {
+        let (slot, node) = self.forest.links.place(at as usize);
+        let was = self.forest.maps[slot].was[node];
+        match self.timed && target > was && self.fades_in_time(at) {
+            true => (was + FADE_STEP).min(target),
+            false => target,
+        }
+    }
+
     /// How opaque node `at` draws now where `target` is what the distances allow: what drew less
     /// a selection ago gains one step, and the rest is there at once.
     fn settle(&mut self, at: u32, target: f32) -> f32 {
+        let fade = self.stepped(at, target);
         let (slot, node) = self.forest.links.place(at as usize);
-        let was = self.forest.maps[slot].was[node];
-        let fade = match self.timed && target > was && self.fades_in_time(at) {
-            true => (was + FADE_STEP).min(target),
-            false => target,
-        };
         self.out.fading |= fade < target;
         self.forest.maps[slot].now[node] = fade;
         fade
@@ -681,61 +714,106 @@ impl Pass<'_> {
             _ => node.num_children,
         };
         let crosses = !node.batch && stated > 0 && found == stated;
-        let yields = !held && crosses && own >= 1.0;
-        let target = match () {
-            _ if held => 1.0,
-            _ if crosses && own >= 1.0 => 1.0 - most,
+        // How it draws once no child holds it.
+        let (free, free_yields) = match crosses && own >= 1.0 {
+            true => (1.0 - most, true),
             // A child is as opaque as the most opaque of its parent's.
-            _ => shared.unwrap_or(own),
+            false => (shared.unwrap_or(own), false),
+        };
+        let (target, yields) = match held {
+            true => (1.0, false),
+            false => (free, free_yields),
         };
         if target <= 0.0 {
             return;
         }
         let id = self.forest.id_of(at);
+        let parent = self.forest.links.parent[at as usize];
         match (self.state)(id) {
             NodeState::Ready => {}
-            // A child was waited for by its parent's pass.
+            // A root was not waited for by a parent's pass. Either is drawn by the frame its model is
+            // ready in, as the next selection will draw it: a root that fades in time a step in.
             NodeState::Loading => {
-                if self.forest.links.parent[at as usize] == NONE {
-                    self.out.wanted.push(id);
-                }
+                let parent = match parent {
+                    NONE => {
+                        self.out.wanted.push(id);
+                        id
+                    }
+                    parent => self.forest.id_of(parent),
+                };
+                let skipped = match node.extent {
+                    Extent::Box(..) => self.left_out(at).0,
+                    Extent::Point => 0..0,
+                };
+                let fade = self.stepped(at, target);
+                self.out.waiting.push(Waiting {
+                    node: id,
+                    parent,
+                    fade,
+                    yields,
+                    skipped,
+                });
                 return;
             }
             NodeState::Absent => return,
         }
         let fade = self.settle(at, target);
-        match self.node(at).extent {
-            Extent::Box(..) => self.draw_list(at, id, fade, yields),
-            Extent::Point => self.out.drawn.push(NodeDraw {
+        let later = match node.extent {
+            Extent::Box(..) => {
+                let (now, later) = self.left_out(at);
+                self.out.lists.push(ListDraw {
+                    node: id,
+                    fade,
+                    yields,
+                    skipped: now,
+                });
+                later
+            }
+            Extent::Point => {
+                self.out.drawn.push(NodeDraw {
+                    node: id,
+                    fade,
+                    yields,
+                });
+                0..0
+            }
+        };
+        if held {
+            let then = match free > 0.0 {
+                true => self.stepped(at, free),
+                false => 0.0,
+            };
+            self.out.held.push(Held {
                 node: id,
-                fade,
-                yields,
-            }),
+                then,
+                yields: free_yields,
+                skipped: later,
+            });
         }
     }
 
-    /// Draw the list `at` less each instance whose own entity draws in its place.
-    fn draw_list(&mut self, at: u32, id: NodeId, fade: f32, yields: bool) {
+    /// The instances of the list `at` left out as their own entity draws in their place, then those
+    /// left out once the entities on their way are ready, as two ranges of `skipped`.
+    // An entity that stands in for an instance draws by its own place, which is the instance's,
+    // and its instance is left out while it draws at all; one with no model leaves it drawn.
+    fn left_out(&mut self, at: u32) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
         let from = self.out.skipped.len();
+        let mut later = Vec::new();
         let mut child = self.first_child(at);
         while child != NONE {
-            // An entity that stands in for an instance draws by its own place, which is the
-            // instance's, and its instance is left out while it draws at all; one with no model
-            // leaves its instance drawn.
             let alone = self.by_distance(child);
             if let Some(instance) = self.node(child).instance.filter(|_| alone > 0.0) {
-                if (self.state)(self.forest.id_of(child)) == NodeState::Ready {
-                    self.out.skipped.push(instance);
+                match (self.state)(self.forest.id_of(child)) {
+                    NodeState::Ready => self.out.skipped.push(instance),
+                    NodeState::Loading => later.push(instance),
+                    NodeState::Absent => {}
                 }
             }
             child = self.next_sibling(child);
         }
-        self.out.lists.push(ListDraw {
-            node: id,
-            fade,
-            yields,
-            skipped: from..self.out.skipped.len(),
-        });
+        let mid = self.out.skipped.len();
+        self.out.skipped.extend(later);
+        (from..mid, mid..self.out.skipped.len())
     }
 }
 

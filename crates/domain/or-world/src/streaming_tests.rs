@@ -169,6 +169,49 @@ fn a_parent_is_held_whole_while_a_child_that_draws_is_not_ready_and_the_child_is
 }
 
 #[test]
+fn what_a_held_parent_and_its_waiting_child_draw_once_the_child_is_ready_is_the_next_selection() {
+    for away in [90.0, 110.0] {
+        let mut forest = parent_and_two_children();
+        let held = forest.select(&along(away), &loading(&[(2, 1)]));
+        assert_eq!(held.held.len(), 1, "at {away}");
+        let (parent, child) = (&held.held[0], &held.waiting[0]);
+        assert_eq!(
+            (parent.node, child.node, child.parent),
+            ((1, 0), (2, 1), (1, 0))
+        );
+        let ready = forest.select(&along(away), &all_ready);
+        assert!(
+            close(parent.then, fade(&ready, (1, 0))),
+            "the parent at {away}"
+        );
+        let yields = ready
+            .drawn
+            .iter()
+            .find(|d| d.node == (1, 0))
+            .is_some_and(|d| d.yields);
+        assert_eq!(parent.yields && parent.then > 0.0, yields, "at {away}");
+        assert!(
+            close(child.fade, fade(&ready, (2, 1))),
+            "the child at {away}"
+        );
+    }
+    // Nothing waits: nothing is held.
+    let mut forest = parent_and_two_children();
+    let ready = forest.select(&along(90.0), &all_ready);
+    assert!(ready.held.is_empty() && ready.waiting.is_empty());
+    // A root that fades in time waits as its own parent, at the step the next selection gives it.
+    let mut forest = lone(Level::Slod1);
+    forest.select(&along(10.0), &loading(&[(1, 0)]));
+    let waiting = forest.select(&along(10.0), &loading(&[(1, 0)]));
+    assert_eq!(
+        (waiting.waiting[0].node, waiting.waiting[0].parent),
+        ((1, 0), (1, 0))
+    );
+    let ready = forest.select(&along(10.0), &all_ready);
+    assert!(close(waiting.waiting[0].fade, FADE_STEP) && close(fade(&ready, (1, 0)), FADE_STEP));
+}
+
+#[test]
 fn a_child_that_holds_its_parent_is_waited_for_though_its_own_children_draw_in_its_place() {
     let mut forest = Forest::new();
     forest.insert(
@@ -692,8 +735,11 @@ fn a_list_draws_by_its_box_s_centre_less_each_instance_whose_entity_draws() {
     // An entity still loading leaves its instance drawn and is waited for.
     let waiting = [(2, 0)];
     let held = forest.select(&at(12.0, 12.0), &loading(&waiting));
-    assert_eq!((held.drawn.len(), held.skipped.len()), (0, 0));
+    assert_eq!(held.drawn.len(), 0);
+    assert!(held.skipped[held.lists[0].skipped.clone()].is_empty());
     assert_eq!(held.wanted, vec![(2, 0)]);
+    // Once it is ready its instance is left out too.
+    assert_eq!(&held.skipped[held.held[0].skipped.clone()], &[4]);
 }
 
 #[test]

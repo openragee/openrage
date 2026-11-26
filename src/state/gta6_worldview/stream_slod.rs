@@ -117,6 +117,11 @@ pub struct Standing {
     /// The box that holds every place.
     low: Vec3,
     high: Vec3,
+    /// A bit a cell of the box's ground, set where a place stands: most cards are let go by it without a look-up.
+    taken: Vec<u64>,
+    /// The cell the bits start at, and how many cells a row.
+    first: (i32, i32),
+    columns: i32,
 }
 
 /// The side of a cell of `Standing`, in metres.
@@ -144,7 +149,40 @@ impl Standing {
             standing.low = standing.low.min(at);
             standing.high = standing.high.max(at);
         }
+        if standing.cells.is_empty() {
+            return standing;
+        }
+        let (first, last) = (cell_of(standing.low), cell_of(standing.high));
+        let span = |a: i32, b: i32| i64::from(b) - i64::from(a) + 1;
+        let (columns, rows) = (span(first.0, last.0), span(first.1, last.1));
+        // ponytail: past a grid of 2^26 cells (65 km on a side) every card is looked up.
+        if columns * rows > 1 << 26 {
+            return standing;
+        }
+        let columns = columns as i32;
+        standing.taken = vec![0; (columns as usize * rows as usize).div_ceil(64)];
+        (standing.first, standing.columns) = (first, columns);
+        for cell in standing.cells.keys() {
+            let bit = ((cell.1 - first.1) * columns + cell.0 - first.0) as usize;
+            standing.taken[bit / 64] |= 1 << (bit % 64);
+        }
         standing
+    }
+
+    /// Whether a place may stand in `cell`: false only where the bits say none does.
+    fn may_hold(&self, cell: (i32, i32)) -> bool {
+        if self.taken.is_empty() {
+            return true;
+        }
+        let (x, y) = (
+            cell.0.saturating_sub(self.first.0),
+            cell.1.saturating_sub(self.first.1),
+        );
+        if x < 0 || y < 0 || x >= self.columns {
+            return false;
+        }
+        let bit = (i64::from(y) * i64::from(self.columns) + i64::from(x)) as usize;
+        (self.taken.get(bit / 64)).is_some_and(|word| word >> (bit % 64) & 1 == 1)
     }
 
     /// Whether some place lies inside `list`'s box, grown by the room a place is allowed.
@@ -166,6 +204,7 @@ impl Standing {
         let ((x0, y0), (x1, y1)) = (cell_of(at - room), cell_of(at + room));
         (x0..=x1)
             .flat_map(|cx| (y0..=y1).map(move |cy| (cx, cy)))
+            .filter(|c| self.may_hold(*c))
             .filter_map(|c| self.cells.get(&c))
             .flatten()
             .any(|p| {

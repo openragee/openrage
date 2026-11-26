@@ -173,3 +173,42 @@ fn a_far_stand_in_yields_to_a_model_drawn_where_it_stands_and_to_nothing_else() 
     assert!(Standing::of([edge - Vec3::new(0.01, 0.0, 0.0)])
         .stands_at(edge + Vec3::new(0.05, 0.0, 0.0)));
 }
+
+#[test]
+fn the_cells_bits_let_go_of_no_place_that_stands() {
+    // Places on a ragged grid across negative and positive cells, some on a cell's edge.
+    let places: Vec<Vec3> = (0..40)
+        .map(|k| {
+            Vec3::new(
+                k as f32 * 7.9 - 150.0,
+                (k * k % 23) as f32 * 8.0 - 90.0,
+                1.0,
+            )
+        })
+        .collect();
+    let standing = Standing::of(places.iter().copied());
+    assert!(!standing.taken.is_empty());
+    let looked_up = |at: Vec3| {
+        (places.iter()).any(|p| {
+            (p.x - at.x).hypot(p.y - at.y) <= SAME_TREE && (p.z - at.z).abs() <= SAME_TREE_HEIGHT
+        })
+    };
+    for p in &places {
+        for off in [
+            Vec3::ZERO,
+            Vec3::new(0.1, -0.1, 0.5),
+            Vec3::new(0.3, 0.0, 0.0),
+            Vec3::new(-40.0, 3.0, 0.0),
+        ] {
+            assert_eq!(
+                standing.stands_at(*p + off),
+                looked_up(*p + off),
+                "at {}",
+                *p + off
+            );
+        }
+    }
+    // Outside the box every way.
+    assert!(!standing.stands_at(Vec3::new(-1000.0, 0.0, 1.0)));
+    assert!(!standing.stands_at(Vec3::new(0.0, 5000.0, 1.0)));
+}

@@ -264,9 +264,13 @@ fn a_selection_draws_each_entity_and_each_instance_with_its_model_and_waits_for_
     let mut streamer = streamer_with(&map);
 
     let view = View::at(Vec3::ZERO, 1.0);
-    // Nothing is on the device yet: each model is waited for once, and nothing draws.
+    // Nothing is on the device yet: each model is waited for once, and nothing draws until a frame finds it there.
     let none = streamer.select(&view, &|_| Some(false));
-    assert!(none.instances.is_empty() && none.chunks.is_empty());
+    assert!(none
+        .chunks
+        .iter()
+        .all(|c| c.gate.is_some_and(|(_, then)| then)));
+    assert_eq!(none.swaps.len(), 3);
     let mut models: Vec<u64> = none.wanted.iter().map(|(_, m)| m.offset).collect();
     models.sort_unstable();
     assert_eq!(models, vec![0x1000, 0x2000]);
@@ -306,6 +310,62 @@ fn a_selection_draws_each_entity_and_each_instance_with_its_model_and_waits_for_
     // A map let go before its body arrived is not kept.
     assert!(!streamer.insert(56, read_map(&index, &map)));
     assert!(!streamer.loaded.contains_key(&56));
+}
+
+#[test]
+fn a_parent_held_for_a_child_on_its_way_is_swapped_by_a_frame_for_what_the_next_selection_draws() {
+    let mut map = made_up();
+    // The second tree stands in for the second lamp of the list beside it.
+    map.entities[1].parent = Some(StreamLink {
+        map: None,
+        index: 3,
+        instance: Some(1),
+    });
+    let mut streamer = streamer_with(&map);
+    let view = View::at(Vec3::new(20.0, 0.0, 0.0), 1.0);
+    let lamps_only = |m: ModelRef| Some(m.offset == 0x2000);
+    let held = streamer.select(&view, &lamps_only);
+    // The list held for the tree first, then the first tree, a root, waiting alone.
+    assert_eq!(held.swaps.len(), 2);
+    assert_eq!(
+        held.swaps[0]
+            .waits
+            .iter()
+            .map(|m| m.offset)
+            .collect::<Vec<_>>(),
+        [0x1000]
+    );
+    let at = |s: &Selected, gate: Option<(u32, bool)>| {
+        let mut out: Vec<(u64, [i32; 3])> = (s.chunks.iter())
+            .filter(|c| c.gate == gate)
+            .flat_map(|c| &s.instances[c.from as usize..c.to as usize])
+            .map(|i| {
+                (
+                    s.models[i.model as usize].offset,
+                    i.centre.round().as_ivec3().to_array(),
+                )
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    };
+    // Until the tree is ready both lamps draw; from then the tree, and the lamp it stands in for does not.
+    assert_eq!(at(&held, Some((0, false))).len(), 2);
+    let swapped = at(&held, Some((0, true)));
+    assert_eq!(
+        swapped.iter().filter(|(model, _)| *model == 0x1000).count(),
+        1
+    );
+    assert_eq!(
+        swapped.iter().filter(|(model, _)| *model == 0x2000).count(),
+        1
+    );
+    // What the frame swaps in is what the next selection draws, the first tree, its own root, aside.
+    let ready = streamer.select(&view, &|_| Some(true));
+    assert!(ready.swaps.is_empty());
+    let mut next = at(&ready, None);
+    next.retain(|(_, centre)| *centre != [1, 2, 3]);
+    assert_eq!(swapped, next);
 }
 
 #[test]

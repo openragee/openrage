@@ -12,10 +12,76 @@ use std::collections::HashMap;
 use glam::Vec3;
 
 use super::textures::{self, Texture};
-use super::{Slot, WorldGpu};
+use super::{material, Slot, WorldGpu};
 use crate::state::gta6_world::worldview::index::ModelRef;
+use crate::state::gta6_world::worldview::CpuModel;
+
+/// What a model read and not yet on the device will sample: the distance each of its levels ends
+/// at, and each map no model holds itself with its level, mesh density and whether it is read whole.
+pub(super) type Early = (Vec<f32>, Vec<(usize, u64, f32, bool)>);
 
 impl WorldGpu {
+    /// Note what `read`, the model `model` read and not yet put on the device, will sample; whether it was not noted before.
+    pub(super) fn note_read(&mut self, model: ModelRef, read: &CpuModel) -> bool {
+        if self.early.contains_key(&model) {
+            return false;
+        }
+        let own = |key: &u64| read.palettes.iter().any(|(k, _)| k == key);
+        let mut maps = Vec::new();
+        for (level, lod) in read.lods.iter().enumerate() {
+            for mesh in &lod.meshes {
+                let density = textures::density(&mesh.vertices, &mesh.indices);
+                for (at, key) in material::slots_of(&mesh.material).into_iter().enumerate() {
+                    let Some(key) = key.filter(|key| !own(key)) else {
+                        continue;
+                    };
+                    maps.push((
+                        level,
+                        key,
+                        density,
+                        material::read_whole(&mesh.material, at),
+                    ));
+                }
+            }
+        }
+        let untils = read.lods.iter().map(|lod| lod.until).collect();
+        self.early.insert(model, (untils, maps));
+        true
+    }
+
+    /// What the models read and not yet on the device that something in view (`seen`) waits for
+    /// will sample, asked at the size [`Self::ask_whole`] asks it once they are there.
+    pub(super) fn ask_early(
+        &self,
+        wanted: &[(f32, ModelRef)],
+        seen: impl Fn(&ModelRef) -> bool,
+        lod_scale: f32,
+        (per_metre, most_side): (f32, u32),
+    ) -> Vec<(f32, u64, u32)> {
+        let mut asks = Vec::new();
+        for (away, model) in wanted.iter().filter(|(_, model)| seen(model)) {
+            let Some((untils, maps)) = self.early.get(model) else {
+                continue;
+            };
+            for (level, key, density, whole) in maps {
+                if self.textures.map.contains_key(key) || self.palettes.contains_key(key) {
+                    continue;
+                }
+                let from = level
+                    .checked_sub(1)
+                    .and_then(|before| untils.get(before))
+                    .map_or(0.0, |until| until * lod_scale);
+                let near = away.max(from);
+                let pixels = match whole {
+                    true => most_side,
+                    false => textures::pixels(*density, near, 1.0, per_metre, most_side),
+                };
+                asks.push((near, *key, pixels));
+            }
+        }
+        asks
+    }
+
     /// The maps the meshes of `lods` sample that no model holds itself, with each one's level and mesh density, and whether it is read whole.
     fn maps_of<'a>(
         &'a self,

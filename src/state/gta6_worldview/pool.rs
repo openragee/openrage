@@ -162,6 +162,15 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
         Some((request, answer))
     }
 
+    /// Look at each answer that arrived and is not taken yet.
+    pub(super) fn each_arrived(&self, mut look: impl FnMut(&Q, &A)) {
+        let mut arrived = self.arrived.lock().unwrap_or_else(|p| p.into_inner());
+        arrived.extend(self.answers.try_iter());
+        for (request, answer, ..) in arrived.iter() {
+            look(request, answer);
+        }
+    }
+
     /// The answers taken soonest first, the seconds they waited from answered to taken in all, and the most.
     pub(super) fn waited(&self) -> (usize, f64, f32) {
         *self.waited.lock().unwrap_or_else(|p| p.into_inner())

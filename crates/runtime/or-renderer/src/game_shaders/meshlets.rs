@@ -648,17 +648,21 @@ pub struct MeshletPipelines {
     compiled: Option<Option<Compiled>>,
     /// The workers that build the passes, made with the first of them.
     workers: Option<or_job::Pool>,
+    /// What a worker runs before it builds a pass, where a test watches the builds.
+    #[cfg(test)]
+    before: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
-/// The workers that build passes, no more at once than the machine spares: a compiler holds
-/// hundreds of megabytes a stage. Each time the last of them finds no pass left to build, what
-/// `compiled` gives of the driver's work is kept in `file`: once a batch, where a save after each
-/// pass writes the whole of it as many times as there are passes.
+/// The workers that build passes, `limit` at once and no more: a compiler holds hundreds of
+/// megabytes a stage. Each time the last of them finds no pass left to build, what `compiled`
+/// gives of the driver's work is kept in `file`: once a batch, where a save after each pass
+/// writes the whole of it as many times as there are passes.
 fn pass_workers(
+    limit: usize,
     file: Option<PathBuf>,
     compiled: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
 ) -> or_job::Pool {
-    or_job::Pool::new(or_job::workers(), BUILD_STACK, move || {
+    or_job::Pool::new(limit, BUILD_STACK, move || {
         if let Some(file) = &file {
             keep(file, compiled());
         }
@@ -758,11 +762,19 @@ impl MeshletPipelines {
             let slot = Slot::default();
             let (theirs, device) = (Arc::clone(&slot), device.clone());
             let stages = (Arc::clone(&surface.vertex), Arc::clone(&surface.fragment));
+            // No more at once than the machine spares.
+            let limit = or_job::workers();
             let workers = self.workers.get_or_insert_with(|| match compiled.clone() {
-                Some((cache, file)) => pass_workers(Some(file), move || cache.get_data()),
-                None => pass_workers(None, || None),
+                Some((cache, file)) => pass_workers(limit, Some(file), move || cache.get_data()),
+                None => pass_workers(limit, None, || None),
             });
+            #[cfg(test)]
+            let before = self.before.clone();
             let work = move || {
+                #[cfg(test)]
+                if let Some(before) = &before {
+                    before();
+                }
                 let cache = compiled.as_ref().map(|(cache, _)| &**cache);
                 let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     build_checked(&device, stages, cache)

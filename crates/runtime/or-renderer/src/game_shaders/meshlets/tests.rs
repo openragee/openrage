@@ -347,6 +347,90 @@ fn the_built_in_sky_has_a_sun_by_day_a_dim_moon_by_night_and_less_of_both_under_
     }
 }
 
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn the_passes_of_a_scene_are_built_no_more_at_once_than_the_workers_and_kept_once_and_whole() {
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    let test = "the_passes_of_a_scene_are_built_no_more_at_once_than_the_workers";
+    let Some((device, queue)) = gpu(test) else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("kept").join("an-adapter-and-its-driver");
+    let whole: Vec<u8> = (0..1 << 20).map(|at| (at % 251) as u8).collect();
+    // How often the driver's work was asked for, the builds begun and those ended.
+    let counts = Arc::new([const { AtomicUsize::new(0) }; 3]);
+    let (theirs, data) = (Arc::clone(&counts), whole.clone());
+    let workers = pass_workers(2, Some(file.clone()), move || {
+        theirs[0].fetch_add(1, SeqCst);
+        Some(data.clone())
+    });
+    // No build goes on before every pass of the scene is asked for, then all do.
+    let (go, wait) = std::sync::mpsc::channel::<()>();
+    let (wait, theirs) = (Mutex::new(wait), Arc::clone(&counts));
+    let before = move || {
+        theirs[1].fetch_add(1, SeqCst);
+        let _ = wait.lock().map(|wait| wait.recv());
+        theirs[2].fetch_add(1, SeqCst);
+    };
+    let mut pipelines = MeshletPipelines {
+        workers: Some(workers),
+        before: Some(Arc::new(before)),
+        ..MeshletPipelines::default()
+    };
+    // Six surfaces, each of two stages of its own: six passes.
+    let surfaces: Vec<MeshletSurface> = (0..6).map(|_| surface()).collect();
+    let frame = Target {
+        colour: wgpu::TextureFormat::Rgba8Unorm,
+        depth: DEPTH,
+        depth_compare: wgpu::CompareFunction::GreaterEqual,
+        blend: None,
+        colour_attachments: Some(1),
+    };
+    let mut prepare = || {
+        MeshletScene::prepare(
+            &device,
+            &queue,
+            &mut pipelines,
+            &surfaces,
+            (SIZE, SIZE),
+            &frame,
+        )
+        .expect("the scene prepares")
+    };
+    assert!(prepare().is_none(), "a scene before any pass is built");
+    let begun = || counts[1].load(SeqCst);
+    let started = std::time::Instant::now();
+    while begun() < 2 && started.elapsed() < std::time::Duration::from_secs(20) {
+        std::thread::yield_now();
+    }
+    // Long enough for a third worker to begin a build, were there one.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert_eq!(begun(), 2, "builds at once on two workers");
+    for _ in 0..6 {
+        go.send(()).unwrap();
+    }
+    let scene = loop {
+        match prepare() {
+            Some(scene) if scene.waiting.is_empty() => break scene,
+            _ => std::thread::sleep(std::time::Duration::from_millis(5)),
+        }
+    };
+    assert_eq!((scene.drawn(), scene.refused.len()), (6, 0));
+    while !file.is_file() && started.elapsed() < std::time::Duration::from_secs(60) {
+        std::thread::yield_now();
+    }
+    // Long enough for a second write to begin, were there one.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert_eq!(std::fs::read(&file).unwrap(), whole);
+    let [asked, begun, ended] = [0, 1, 2].map(|at| counts[at].load(SeqCst));
+    assert_eq!((begun, ended), (6, 6));
+    assert_eq!(asked, 1, "writes of the file while six passes built");
+}
+
 #[test]
 fn the_passes_of_a_batch_keep_what_the_driver_compiled_once_and_whole() {
     use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
@@ -355,7 +439,7 @@ fn the_passes_of_a_batch_keep_what_the_driver_compiled_once_and_whole() {
     let whole: Vec<u8> = (0..1 << 20).map(|at| (at % 251) as u8).collect();
     let asked = Arc::new(AtomicUsize::new(0));
     let (theirs, data) = (Arc::clone(&asked), whole.clone());
-    let workers = pass_workers(Some(file.clone()), move || {
+    let workers = pass_workers(or_job::workers(), Some(file.clone()), move || {
         theirs.fetch_add(1, SeqCst);
         Some(data.clone())
     });

@@ -53,6 +53,7 @@ pub use contribution::{
     ArchiveContents, Claim, Contribution, Cooks, Figure, Item, ManifestEntry, SourceFolder,
 };
 pub use diff::{diff, since_last_build, Diff, Moved};
+pub use dlc::{LEVEL_FOLDER, MAP_DATA};
 pub use paths::{
     build_root, find_sources, project_folder, relative_inside, resolve_member, shadow_root,
     store_path, BUILD_DIR, PROJECT_EXTENSION, SEARCH_DEPTH, SHADOW_DIR,

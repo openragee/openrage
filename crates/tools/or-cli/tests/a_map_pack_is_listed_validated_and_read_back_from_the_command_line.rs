@@ -388,13 +388,33 @@ fn entries_of(bytes: &[u8]) -> Vec<String> {
     })
 }
 
+/// The flags of each entry the manifest in `bytes` states for the map `name`.
+fn flags_stated_for(bytes: &[u8], name: u32) -> Vec<u32> {
+    use or_io::meta::binary::hash_index::with_public_names_only;
+    use or_io::meta::binary::parse_meta_binary_full;
+    use or_world::manifest_build::MANIFEST_FLAGS;
+    use or_world::{field, keys};
+    with_public_names_only(|| {
+        let (root, _) = parse_meta_binary_full(
+            &or_io::meta::SchemaLibrary::default(),
+            bytes,
+            &mut or_io::meta::Diagnostics::lenient(),
+        )
+        .expect("the manifest reads");
+        field::structs_at(&root, keys::IMAP_DEPENDENCIES_2)
+            .filter(|entry| field::hash_at(entry, keys::IMAP_NAME) == Some(name))
+            .filter_map(|entry| field::u32_at(entry, MANIFEST_FLAGS))
+            .collect()
+    })
+}
+
 /// Every `_manifest.ymf` staged in the metadata corpus is one a manifest can be written from, and what is written from it states what
 /// it states: each entry kept whole as for a map taken from the game, and each entry rewritten with the type files it states already.
 ///
 /// ⚠ The staged files stay where they are staged: none is copied into the tree, and a build keeps one only in a person's project.
 #[test]
 fn every_staged_manifest_of_the_game_is_written_back_stating_what_it_states() {
-    use or_world::manifest_build::{build, stated_in, BuildError, Wanted};
+    use or_world::manifest_build::{build, interior_flags, stated_in, BuildError, Wanted};
 
     const WHAT: &str = "every_staged_manifest_of_the_game_is_written_back_stating_what_it_states";
     let origin = or_test_support::owned_corpus_origin(
@@ -426,6 +446,8 @@ fn every_staged_manifest_of_the_game_is_written_back_stating_what_it_states() {
     // The entries that carry flags, and those of them that set no bit: what a derivation of the flags would have to tell apart.
     let (mut flagged, mut flagless) = (0usize, 0usize);
     let mut failures = Vec::new();
+    // The entries derived for a map no manifest states, and the manifests that hold no entry to shape one by.
+    let (mut derived, mut shapeless) = (0usize, 0usize);
     // Every manifest that states a map, to be kept at once as the manifests of one install are.
     let mut every: Vec<Vec<u8>> = Vec::new();
     for path in &files {
@@ -460,6 +482,7 @@ fn every_staged_manifest_of_the_game_is_written_back_stating_what_it_states() {
                     keep_stated: true,
                     needs: types.clone(),
                     incomplete: false,
+                    ..Wanted::default()
                 })
                 .collect();
             match build(&[bare, &bytes], &wanted) {
@@ -479,6 +502,7 @@ fn every_staged_manifest_of_the_game_is_written_back_stating_what_it_states() {
                 keep_stated: false,
                 needs: Default::default(),
                 incomplete: true,
+                ..Wanted::default()
             })
             .collect();
         match build(&[&bytes], &short) {
@@ -490,6 +514,38 @@ fn every_staged_manifest_of_the_game_is_written_back_stating_what_it_states() {
                 "{name}: rewritten from a derivation that resolved nothing: {e}"
             )),
         }
+        // A map no manifest states takes an entry shaped by one of this manifest's: its type files and its derived flags read back,
+        // typed by the table the game wrote, whichever way that table spells the flags.
+        let made = or_io::string_hash(b"openrage_a_map_no_manifest_states");
+        let needs = std::collections::BTreeSet::from([or_io::string_hash(
+            b"openrage_a_type_file_no_manifest_states",
+        )]);
+        for (entities, interiors) in [(3, 0), (2, 2)] {
+            let wanted = [Wanted {
+                name: made,
+                needs: needs.clone(),
+                entities,
+                interiors,
+                ..Wanted::default()
+            }];
+            match build(&[&bytes], &wanted) {
+                Ok(built)
+                    if built.derived.contains(&made)
+                        && built.stated.get(&made) == Some(&needs)
+                        && flags_stated_for(&built.bytes, made)
+                            == [interior_flags(entities, interiors)] =>
+                {
+                    derived += 1
+                }
+                Ok(built) => failures.push(format!(
+                    "{name}: an entry derived for a map of {entities} entities, {interiors} of them interiors, reads back under the flags {:?}",
+                    flags_stated_for(&built.bytes, made)
+                )),
+                // A manifest that states its maps by pairs alone holds no entry to shape one by.
+                Err(BuildError::NoEntry(_)) => shapeless += 1,
+                Err(e) => failures.push(format!("{name}: an entry derived: {e}")),
+            }
+        }
         for keep_stated in [true, false] {
             let wanted: Vec<Wanted> = (stated.iter())
                 .map(|(map, types)| Wanted {
@@ -497,6 +553,7 @@ fn every_staged_manifest_of_the_game_is_written_back_stating_what_it_states() {
                     keep_stated,
                     needs: types.clone(),
                     incomplete: false,
+                    ..Wanted::default()
                 })
                 .collect();
             match build(&[&bytes], &wanted) {
@@ -537,6 +594,7 @@ fn every_staged_manifest_of_the_game_is_written_back_stating_what_it_states() {
             keep_stated: true,
             needs: Default::default(),
             incomplete: false,
+            ..Wanted::default()
         })
         .collect();
     let kept: Vec<&[u8]> = every.iter().map(Vec::as_slice).collect();
@@ -550,7 +608,7 @@ fn every_staged_manifest_of_the_game_is_written_back_stating_what_it_states() {
         Err(e) => failures.push(format!("kept at once: {e}")),
     }
     println!(
-        "{} staged .ymf: {read} read as a manifest a build writes from, {other_container} in another container, {stating} state {entries} map(s) in {flagged} entries with flags, {flagless} of which set none; {behind_a_bare_one} written back behind a manifest that states nothing; kept at once they state {} map name(s) in {stated_in_all} entries, {} of them stated by no earlier manifest",
+        "{} staged .ymf: {read} read as a manifest a build writes from, {other_container} in another container, {stating} state {entries} map(s) in {flagged} entries with flags, {flagless} of which set none; {behind_a_bare_one} written back behind a manifest that states nothing; {derived} entries derived for a map none states read back with their flags, and {shapeless} were not derived for want of an entry to shape one by; kept at once they state {} map name(s) in {stated_in_all} entries, {} of them stated by no earlier manifest",
         files.len(),
         names.len(),
         once.len()
@@ -569,6 +627,10 @@ fn every_staged_manifest_of_the_game_is_written_back_stating_what_it_states() {
     assert_eq!(
         behind_a_bare_one, stating,
         "no staged manifest states nothing, so the join of two type tables went unexercised"
+    );
+    assert!(
+        derived > 0,
+        "no staged manifest holds an entry to shape one by, so no derived entry was read back"
     );
 }
 

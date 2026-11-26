@@ -41,6 +41,12 @@ pub(crate) const DOCUMENTS: [&str; 2] = [SETUP, CONTENT];
 /// The type of a file that is an archive, whatever its name.
 const ARCHIVE: &str = "RPF_FILE";
 
+/// The folder of a pack every archive of maps is under, in the packs of both installs measured (`how_the_packs_of_an_install_carry_their_maps`).
+pub const LEVEL_FOLDER: &str = "x64/levels/gta5";
+
+/// What a pack states an archive of map files holds, as every pack of both installs that registers one states it.
+pub const MAP_DATA: &str = "CONTENTS_DLC_MAP_DATA";
+
 /// The path of the archive a file at `path` is inside, up to and including its name: the first folder that ends in `.rpf`.
 pub(crate) fn archive_of(path: &str) -> Option<&str> {
     let mut end = 0;
@@ -95,7 +101,12 @@ pub(crate) fn register<'a>(
     }
 
     let held: BTreeSet<&str> = owned.iter().map(|(_, file)| file.path.as_str()).collect();
-    problems.extend(maps_in_a_pack(held.iter().copied()));
+    let stated_of = |archive: &str| {
+        (said_to_hold.iter())
+            .find(|(_, said)| said.path == archive)
+            .map(|(_, said)| said.contents.as_str())
+    };
+    problems.extend(maps_in_a_pack(held.iter().copied(), stated_of));
     // The type each file is stated to have, by the content that states it.
     let mut stated: BTreeMap<&str, (&str, &str)> = BTreeMap::new();
     // The names the game asks a type file inside a nested archive by, each with its type.
@@ -166,9 +177,14 @@ pub(crate) fn register<'a>(
     for &(module, archive) in said_to_hold {
         let (path, contents) = (archive.path.as_str(), archive.contents.as_str());
         match holds.get(path) {
-            _ if registered.get(path).map(String::as_str) != Some(ARCHIVE) => problems.push(format!(
-                "content `{module}` states what the archive `{path}` holds, and the build puts no file in an archive of that name"
-            )),
+            // What a pack states is said of an archive it packs or of a name it asks a type file by.
+            _ if registered.get(path).map(String::as_str) != Some(ARCHIVE)
+                && !asked.contains_key(path) =>
+            {
+                problems.push(format!(
+                    "content `{module}` states what the archive `{path}` holds, and the build puts no file in an archive of that name"
+                ))
+            }
             Some((held, by)) if *held != contents => problems.push(format!(
                 "content `{by}` says the archive `{path}` holds {held} and content `{module}` says it holds {contents}"
             )),
@@ -202,11 +218,15 @@ pub(crate) fn register<'a>(
             asked: false,
         })
         .collect();
-    registrations.extend(asked.into_iter().map(|(path, file_type)| Registration {
-        path: path.to_string(),
-        file_type: file_type.to_string(),
-        contents: String::new(),
-        asked: true,
+    registrations.extend(asked.into_iter().map(|(path, file_type)| {
+        Registration {
+            path: path.to_string(),
+            file_type: file_type.to_string(),
+            contents: holds
+                .get(path)
+                .map_or_else(String::new, |(c, _)| c.to_string()),
+            asked: true,
+        }
     }));
     registrations.sort_by(|a, b| a.path.cmp(&b.path));
     registrations
@@ -241,20 +261,20 @@ fn is_behind<'a>(path: &str, mut held: impl Iterator<Item = &'a str>) -> bool {
     })
 }
 
-/// Why the map files and type files among `paths` cannot ship in a singleplayer DLC, one sentence for each reason.
+/// Why the map files among `paths` cannot ship in a singleplayer DLC, one sentence for each reason; `stated_of` is what the pack states an archive holds.
 ///
-/// A map file that sits loose is named, since the game's packs register no map file and keep theirs inside an archive. One inside an
-/// archive is where they keep theirs, and is refused all the same for what nobody measured of that archive.
-fn maps_in_a_pack<'a>(paths: impl Iterator<Item = &'a str>) -> Vec<String> {
+/// ⚠ Each sentence is read by a person in the plan's problems and under the Builds window's matrix: no markup, and no name of a field of a file.
+fn maps_in_a_pack<'a>(
+    paths: impl Iterator<Item = &'a str>,
+    stated_of: impl Fn(&str) -> Option<&'a str>,
+) -> Vec<String> {
     let (mut loose, mut archives) = (Vec::new(), BTreeSet::new());
-    for path in paths {
-        let lower = path.to_ascii_lowercase();
+    for path in paths.filter(|path| is_map(path)) {
         match archive_of(path) {
-            None if lower.ends_with(".ymap") => loose.push(path),
-            Some(archive) if lower.ends_with(".ymap") || lower.ends_with(".ytyp") => {
+            None => loose.push(path),
+            Some(archive) => {
                 archives.insert(archive);
             }
-            _ => {}
         }
     }
     let mut said = Vec::new();
@@ -264,21 +284,34 @@ fn maps_in_a_pack<'a>(paths: impl Iterator<Item = &'a str>) -> Vec<String> {
             n => format!(" and {n} more"),
         };
         said.push(format!(
-            "The map file {first}{more} would sit loose in the pack, and the game's own packs keep their maps inside an archive the pack registers as map data: a singleplayer DLC ships a map only inside that archive, and {UNMEASURED}."
+            "The map file {first}{more} would sit loose in the pack, and the game's own packs keep their maps inside an archive under {LEVEL_FOLDER} that the pack registers as map data: a singleplayer DLC ships a map only inside such an archive."
         ));
     }
+    let level = format!("{LEVEL_FOLDER}/");
     for archive in archives {
-        said.push(format!(
-            "The maps and type files would ship inside the archive {archive}, which the pack registers as the game's own packs register theirs, but {UNMEASURED}: a singleplayer DLC cannot ship them until that is measured on an install."
-        ));
+        said.push(if !archive.to_ascii_lowercase().starts_with(&level) {
+            format!(
+                "The maps would ship inside the archive {archive}, and the game's own packs keep every archive of maps under {LEVEL_FOLDER}: a singleplayer DLC ships a map only from there."
+            )
+        } else if stated_of(archive) != Some(MAP_DATA) {
+            format!(
+                "The maps would ship inside the archive {archive}, which the pack does not state to hold map data, as every pack of the game states of an archive of maps: a singleplayer DLC cannot ship them."
+            )
+        } else {
+            format!("The maps would ship inside the archive {archive}, {TURNED_ON}.")
+        });
     }
     said
 }
 
-/// What nobody measured of the archive a pack keeps its maps in.
+/// What still locks a pack whose maps are laid out and registered as the game's own are: the change set that turns them on.
 ///
-/// ⚠ Read by a person in the plan's problems and under the Builds window's matrix: no markup, and no name of a field of a file.
-const UNMEASURED: &str = "which folder of a pack the game reads that archive from, what a pack states of an archive that holds type files, and which change set turns map data on were never measured";
+/// ⚠ A pack built here turns every file on from one change set of the group that runs when the pack starts. Of the archives of
+/// maps the packs of two installs register, none is turned on from that group: each is turned on from the map group of
+/// multiplayer by a compat pack, from the group a level pack streams its update from, or from no group
+/// (`how_the_packs_of_an_install_carry_their_maps`), and no setup states the map group of the story
+/// (`which_groups_the_change_sets_of_an_install_belong_to`).
+const TURNED_ON: &str = "laid out and registered as the game's own packs lay theirs out, but a build turns that archive on when the pack starts, and no pack of the two installs measured turns its maps on at start or for the story. A singleplayer DLC cannot ship maps until a pack that turns them on when it starts is seen to load in the game";
 
 /// The pack of `plan` once the files at `gone` are not in it: a registration of a file nothing holds any more is taken out, and the two documents are written again; whether a registration is left.
 ///
@@ -417,7 +450,7 @@ pub(crate) fn count_entries(
     }
 }
 
-/// Why a singleplayer DLC cannot ship what `contribution` hands over by itself, none when it can: a manifest line it has no manifest for, a map whose archive is unmeasured or missing, a file the game is told no type for, or a type file that would sit outside every archive.
+/// Why a singleplayer DLC cannot ship what `contribution` hands over by itself, none when it can: a manifest line it has no manifest for, a map, what the content says locks it, a file the game is told no type for, or a type file that would sit outside every archive.
 ///
 /// ⚠ The rules of [`finish`], read for one content: a type another content states for a file is not counted here.
 pub(crate) fn refuses(contribution: &Contribution) -> Option<String> {
@@ -432,8 +465,16 @@ pub(crate) fn refuses(contribution: &Contribution) -> Option<String> {
         }
     }
     let files = contribution.files.iter().map(|file| file.path.as_str());
-    if let Some(why) = maps_in_a_pack(files).into_iter().next() {
+    let stated_of = |archive: &str| {
+        (contribution.archives.iter())
+            .find(|said| said.path == archive)
+            .map(|said| said.contents.as_str())
+    };
+    if let Some(why) = maps_in_a_pack(files, stated_of).into_iter().next() {
         return Some(why);
+    }
+    if let Some(why) = contribution.locks.first() {
+        return Some(why.clone());
     }
     let untyped = untyped(contribution);
     if !untyped.is_empty() {

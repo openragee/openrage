@@ -423,15 +423,41 @@ fn asking(contribution: &mut Contribution, path: &str) {
     });
 }
 
+/// ⚠ What only the content knows of a file, such as what a type file declares, reaches the cell and the plan as one sentence: a
+/// cell that said yes over a plan that is refused would offer a build that cannot be made.
+#[test]
+fn what_a_content_says_locks_the_build_it_is_laid_out_for_locks_the_cell_and_stops_the_plan() {
+    let (container, mut contribution) = a_type_file_in_an_archive();
+    let dlc = OutputKind::SingleplayerDlc;
+    assert_eq!(or_project::cannot_ship(&contribution, &dlc), None);
+    let clear = plan_with(&container, "dlc", Path::new("/p"), &[contribution.clone()]).unwrap();
+    assert_eq!(clear.problems, Vec::<String>::new());
+
+    let lock = "The type file a.ytyp cannot ship in a singleplayer DLC.".to_string();
+    contribution.locks.push(lock.clone());
+    assert_eq!(
+        or_project::cannot_ship(&contribution, &dlc).as_deref(),
+        Some(lock.as_str())
+    );
+    let plan = plan_with(&container, "dlc", Path::new("/p"), &[contribution]).unwrap();
+    assert_eq!(plan.problems, [lock]);
+}
+
 #[test]
 fn a_type_file_in_a_nested_archive_is_asked_for_by_the_name_of_its_folder_and_by_no_other() {
     let (container, mut contribution) = a_type_file_in_an_archive();
     asking(&mut contribution, "x64/levels/a.ityp");
+    // As the packs of the game state it: props of the name the type file is asked for by, and nothing of its archive.
     contribution.archives.push(ArchiveContents {
-        path: "x64/levels/props.rpf".to_string(),
+        path: "x64/levels/a.ityp".to_string(),
         contents: "CONTENTS_PROPS".to_string(),
     });
     let plan = plan_with(&container, "dlc", Path::new("/p"), &[contribution]).unwrap();
+    assert_eq!(
+        plan.problems,
+        Vec::<String>::new(),
+        "a type file asked for from an archive ships in a singleplayer DLC"
+    );
     let registered: Vec<(&str, &str, &str, bool)> = (plan.registrations.iter())
         .map(|r| {
             (
@@ -445,8 +471,13 @@ fn a_type_file_in_a_nested_archive_is_asked_for_by_the_name_of_its_folder_and_by
     assert_eq!(
         registered,
         [
-            ("x64/levels/a.ityp", "DLC_ITYP_REQUEST", "", true),
-            ("x64/levels/props.rpf", "RPF_FILE", "CONTENTS_PROPS", false),
+            (
+                "x64/levels/a.ityp",
+                "DLC_ITYP_REQUEST",
+                "CONTENTS_PROPS",
+                true
+            ),
+            ("x64/levels/props.rpf", "RPF_FILE", "", false),
         ]
     );
     assert!(

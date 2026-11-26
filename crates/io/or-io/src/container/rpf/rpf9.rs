@@ -392,12 +392,15 @@ mod tests {
 
     #[test]
     fn an_archive_is_refused_as_rpf9_with_its_table_encrypted() {
-        let err = RpfArchive::from_bytes(archive()).expect_err("no key opens RPF9");
-        assert!(matches!(err, IoError::Rpf9TocEncrypted), "{err:?}");
-        let text = err.to_string();
+        let text = IoError::Rpf9TocEncrypted.to_string();
         for word in ["RPF9", "GTA VI", "encrypted", "no key"] {
             assert!(text.contains(word), "`{text}` lacks `{word}`");
         }
+        // The reader takes its keys from the process, a context given or else the environment's,
+        // and no call gives it none: with keys, the filler table is refused as it deciphers.
+        let err = RpfArchive::from_bytes(archive()).expect_err("a filler table opens as RPF9");
+        let keyless = matches!(crate::container::rpf::Gta6Context::current(), Ok(None));
+        assert_eq!(matches!(err, IoError::Rpf9TocEncrypted), keyless, "{err:?}");
     }
 
     #[test]

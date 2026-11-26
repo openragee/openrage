@@ -421,8 +421,8 @@ static BUILTIN: &[FormatCapabilities] = &[
     },
     FormatCapabilities {
         inspector: Some(inspector::awc),
-        // A scanned container's replaced stream is saved as the whole rewritten container, by
-        // Save As only: Save into its archive stays refused.
+        // A GTA VI container's replaced stream saves by Save As and into its tree row, laid in the
+        // extents it was read with where it fits them, else as the whole rewritten container.
         edited_sections: Some(super::gta6_resource_save::edited_awc),
         ..FormatCapabilities::none(DocumentKind::Awc)
     },
@@ -587,7 +587,7 @@ static BUILTIN: &[FormatCapabilities] = &[
         mesh_sources: None,
         skeleton_sources: None,
         skeleton_data: None,
-        edited_sections: Some(|d| held(super::gta6_meta_save::edited_sections(&d.payload))),
+        edited_sections: Some(|d| super::gta6_meta_save::edited_sections(&d.payload)),
     },
     FormatCapabilities {
         inspector: Some(inspector::hex),

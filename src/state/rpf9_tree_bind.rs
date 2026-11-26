@@ -39,10 +39,12 @@ fn ended() -> MutexGuard<'static, Vec<Ended>> {
 /// row, any other row's body, made on the worker; refused where the view writes none.
 fn row_body(doc: &Document) -> Result<Body, String> {
     if let DocPayload::Meta(meta) = &doc.payload {
-        if meta.is_edited() && meta.headerless_sections().is_none() {
-            // A metadata body's text is parsed and written on the worker, never on the UI thread.
-            let meta = meta.clone();
+        if meta.is_edited() && !meta.is_headerless() {
+            // A metadata body's text is parsed and written on the worker, never on the UI thread;
+            // a form edit reaches the text there too, so the row holds what the Text view shows.
+            let mut meta = meta.clone();
             return Ok(Box::new(move || {
+                meta.ensure_text_current();
                 let keys = || crate::state::rpf9_scan::rpf9_table::keys().ok();
                 crate::state::gta6_meta_save::meta_bytes(&meta, keys)
             }));
@@ -95,10 +97,6 @@ impl AppState {
             return None;
         };
         super::super::tree_verbs::refused_tree(&rpf.session)?;
-        // A form edit reaches the text only as the Text panel draws; the save reads the text.
-        if let Some(DocPayload::Meta(meta)) = self.document_mut(doc_id).map(|d| &mut d.payload) {
-            meta.ensure_text_current();
-        }
         let doc = self.document(doc_id)?;
         let at = doc.history.at();
         match row_body(doc) {

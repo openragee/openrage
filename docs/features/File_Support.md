@@ -139,12 +139,17 @@ folder's view offers the scan and the name harvest.
   with one. In the app, a document opened from a row of an archive's tree saves into that row,
   and the tree's Save as… and File ▸ Save into a copy of the archive… write a patched copy when
   every change fits, a headerless resource's as well as any other row's; `openrage-cli rpf9 patch`
-  writes one, and `rpf9 fits` says whether a replacement fits. A change fits only at the body's own
+  writes one, `rpf9 fits` says whether a replacement fits, both take a folder of edited bodies at
+  their rows' paths with `--from`, and `rpf9 verify-patch` checks that a copy differs from its
+  source only inside the bodies of its rows, with every table as it was. A change fits only at the body's own
   length, and a changed chunk is deflated again with zlib's levels and then, on a chunk within a
   size cap, an optimal parse, which must fit the stored size the table states. On the one build
   measured, most unchanged chunks fit again, and an edit made by each of the text table, script,
   metadata, texture and model writers fitted and read back (`gta6_edit_to_patched_copy`, on the
-  code of `e4d30d553`); a chunk past the cap fits only where zlib fits it.
+  code of `ab3a0cf2`); a chunk past the cap fits only where zlib fits it. Three edits made in the
+  app on that build, a text, a metadata XML value and a headerless metadata value, each saved as a
+  patched copy the size of its source that differs from it only inside the edited row's body, with
+  no table span touched (by hand, 2026-11-26).
   [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md#an-edit-in-the-app-from-the-files-tree-to-a-patched-copy)
   walks one edit from the tree to a patched copy, gives the CLI's steps and a script's, and says
   [what fits today](../guides/GTA_VI_Modding.md#what-fits-today) with the measured figures.

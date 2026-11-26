@@ -113,10 +113,6 @@ impl AppState {
         let refused =
             || tr!("Only a document opened from a GTA VI archive is saved into a copy of it");
         let id = self.active_document.ok_or_else(|| refused().to_string())?;
-        // A form edit reaches the text only as the Text panel draws; the save reads the text.
-        if let Some(DocPayload::Meta(meta)) = self.document_mut(id).map(|d| &mut d.payload) {
-            meta.ensure_text_current();
-        }
         let doc = self.document(id).ok_or_else(|| refused().to_string())?;
         let (archive, offset) = (doc.path.as_deref())
             .and_then(archive_origin)
@@ -237,10 +233,12 @@ impl AppState {
 /// writes none.
 fn archive_body(doc: &Document) -> Result<Body, String> {
     if let DocPayload::Meta(meta) = &doc.payload {
-        if meta.is_edited() && meta.headerless_sections().is_none() {
-            // A metadata body's text is parsed and written on the worker, never on the UI thread.
-            let meta = meta.clone();
+        if meta.is_edited() && !meta.is_headerless() {
+            // A metadata body's text is parsed and written on the worker, never on the UI thread;
+            // a form edit reaches the text there too.
+            let mut meta = meta.clone();
             return Ok(Box::new(move || {
+                meta.ensure_text_current();
                 let keys = || crate::state::rpf9_scan::rpf9_table::keys().ok();
                 crate::state::gta6_meta_save::meta_bytes(&meta, keys)
             }));

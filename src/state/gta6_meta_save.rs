@@ -11,6 +11,7 @@ use or_io::meta::binary::ContainerLayout;
 
 use super::document::{meta_schema, DocPayload, MetaDocument};
 use super::extract_job::{ExtractItem, OnClash};
+use super::gta6_resource_save::EditedSave;
 use super::{AppState, DocumentId};
 
 #[cfg(test)]
@@ -18,7 +19,7 @@ use super::{AppState, DocumentId};
 mod string_fixture;
 
 #[path = "gta6_data_xml_splice.rs"]
-mod splice;
+pub(super) mod splice;
 
 /// The bytes `meta` saves as, a table-form PSO's new texts enciphered with the keys `keys` loads.
 // `keys` is called only when the write needs to encipher a text, which only the writer knows.
@@ -54,14 +55,22 @@ pub(crate) fn meta_bytes(
     })
 }
 
-/// The metadata row's `edited_sections`: a headerless resource's, once it is edited.
-pub(super) fn edited_sections(payload: &DocPayload) -> Option<Result<Rpf9Sections, String>> {
+/// The metadata row's `edited_sections`: a headerless resource's, once it is edited, written as a loose resource on the save's worker.
+pub(super) fn edited_sections(payload: &DocPayload) -> Option<Result<EditedSave, String>> {
     let DocPayload::Meta(meta) = payload else {
         return None;
     };
-    meta.is_edited()
-        .then(|| meta.headerless_sections())
-        .flatten()
+    if !meta.is_edited() || !meta.is_headerless() {
+        return None;
+    }
+    let meta = meta.clone();
+    let write: Arc<super::gta6_other_bodies_save::Write> = Arc::new(move || {
+        let sections: Rpf9Sections = meta.headerless_sections().unwrap_or_else(|| {
+            Err("the document is no longer a headerless resource".to_string())
+        })?;
+        or_io::container::rpf::write_rpf9_resource(&sections).map_err(|e| e.to_string())
+    });
+    Some(Ok(EditedSave::Written(write)))
 }
 
 impl AppState {
@@ -87,19 +96,18 @@ impl AppState {
         let DocPayload::Meta(meta) = &self.document(doc)?.payload else {
             return None;
         };
-        if !meta.is_edited() || meta.headerless_sections().is_some() {
+        if !meta.is_edited() || meta.is_headerless() {
             return None;
         }
-        match meta_bytes(meta, || super::rpf9_scan::rpf9_table::keys().ok()) {
-            Ok(bytes) => {
-                let item = ExtractItem::bytes(name.clone(), bytes);
-                Some(self.start_scanned_extraction(name, dest, reads, vec![item], OnClash::Save))
-            }
-            Err(e) => {
-                self.show_error_toast(tr!("Cannot save: {reason}", reason = e));
-                Some(false)
-            }
-        }
+        // The text is parsed and the body written on the save's worker, never on the UI thread.
+        let meta = meta.clone();
+        let write: Arc<super::gta6_other_bodies_save::Write> = Arc::new(move || {
+            let mut meta = meta.clone();
+            meta.ensure_text_current();
+            meta_bytes(&meta, || super::rpf9_scan::rpf9_table::keys().ok())
+        });
+        let item = ExtractItem::written(name.clone(), write);
+        Some(self.start_scanned_extraction(name, dest, reads, vec![item], OnClash::Save))
     }
 }
 
@@ -313,6 +321,43 @@ mod tests {
             or_io::meta::binary::rbm::gta6::open(&sections.virtual_section, &sections.physical)
                 .expect("it opens");
         assert_eq!(root_value(&instance), &Value::UInt(79));
+    }
+
+    #[test]
+    fn a_metadata_body_s_save_returns_before_its_bytes_are_made_on_the_worker() {
+        let _serial = crate::ui::theme::serial();
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let mut bytes = rpf9_head(1, 0x1A0);
+        bytes.resize(0x1000, 0);
+        bytes.extend(zlib(&table_form_pso()));
+        let mut state = AppState::new();
+        let archive = written(dir.path(), &bytes);
+        let scan = scanned(&mut state, archive.clone());
+        state.open_scanned_body(scan, row_at(&rows(&state, scan), 0x1000));
+        settle(&mut state);
+        let body = (state.active_document)
+            .filter(|&d| d != scan)
+            .expect("the body");
+        // XML that does not parse: a save that parsed it before returning refuses at once.
+        let Some(DocPayload::Meta(meta)) = state.document_mut(body).map(|d| &mut d.payload) else {
+            panic!("a metadata document");
+        };
+        meta.text = crate::state::TextDocument::decode(b"<not xml");
+        meta.mark_text_edited();
+        state.toasts.clear();
+        let out = dir.path().join("out");
+        let started = state.save_edited_meta(body, out.clone(), "bad.pso".into(), archive);
+        assert_eq!(
+            started,
+            Some(true),
+            "the save starts before the XML is parsed"
+        );
+        assert!(!said(&state, ToastType::Error, &["Cannot save"]));
+        finished(&mut state);
+        assert!(
+            !out.join("bad.pso").exists(),
+            "XML that does not parse writes no file"
+        );
     }
 
     /// `typed` typed at a click into the Text panel over the active document.

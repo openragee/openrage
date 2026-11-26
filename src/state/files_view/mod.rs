@@ -3,6 +3,8 @@
 //! exporting a row under a name of the user's.
 
 pub mod pictures;
+#[path = "../rpf9_tree_row_kind.rs"]
+mod rpf9_tree_row_kind;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -92,42 +94,60 @@ fn compression_label(rpf9_deflated: Option<bool>, compressed: bool) -> &'static 
 
 /// The bytes row `id` adds to its folder's total: the Size it shows for a file or an archive, a folder's none.
 pub fn listed_bytes(session: &RpfEditSession, id: RpfNodeId) -> u64 {
+    measured_bytes(session, id).unwrap_or(0)
+}
+
+/// `listed_bytes`, or `None` while a worker still measures the row's held body.
+pub fn measured_bytes(session: &RpfEditSession, id: RpfNodeId) -> Option<u64> {
     let Some(node) = session.node(id) else {
-        return 0;
+        return Some(0);
     };
     match &node.backing {
-        RpfNodeBacking::Archive { .. } => row_facts(session, id).and_then(|f| f.size).unwrap_or(0),
+        RpfNodeBacking::Archive { .. } => {
+            Some(row_facts(session, id).and_then(|f| f.size).unwrap_or(0))
+        }
         RpfNodeBacking::ArchiveFile {
             archive_id,
             entry_index,
             override_bytes: Some(held),
         } => match session.archive(*archive_id) {
             Some(slot) => held_size(&slot.archive, *entry_index, held),
-            None => held.len() as u64,
+            None => Some(held.len() as u64),
         },
-        _ if node.is_dir() => 0,
-        _ => session.size_for(id).unwrap_or(0),
+        _ if node.is_dir() => Some(0),
+        _ => Some(session.size_for(id).unwrap_or(0)),
     }
 }
 
-/// The bytes a row's held body stands for: a headerless resource's sections, which the loose form it holds deflates, else its length.
-fn held_size(archive: &RpfArchive, entry_index: u32, held: &Arc<Vec<u8>>) -> u64 {
+/// A held body and the size of the sections it stands for, `None` until measured.
+type Measured = (Weak<Vec<u8>>, Option<u64>);
+
+/// The bytes a row's held body stands for: a headerless resource's sections, which the loose form it holds deflates, else its length; `None` while a worker measures those sections.
+fn held_size(archive: &RpfArchive, entry_index: u32, held: &Arc<Vec<u8>>) -> Option<u64> {
     let headerless = (archive.rpf9_row(entry_index)).is_some_and(|row| row.row_bytes == Some(20));
     if !headerless {
-        return held.len() as u64;
+        return Some(held.len() as u64);
     }
-    // ponytail: the loose form is inflated once, on the UI thread at its first look, and kept while
-    // the row holds it; have the save into the row measure it on its worker if a large body stutters.
-    static MEMO: Mutex<Vec<(Weak<Vec<u8>>, u64)>> = Mutex::new(Vec::new());
+    // ponytail: a loose form states no section size, so a worker inflates each held body once and the
+    // row shows no size until it ends; a view showing `None` asks for a repaint to pick it up.
+    static MEMO: Mutex<Vec<Measured>> = Mutex::new(Vec::new());
     let mut memo = MEMO.lock().unwrap_or_else(PoisonError::into_inner);
     memo.retain(|(body, _)| body.strong_count() > 0);
     let held_at = Arc::as_ptr(held);
     if let Some((_, len)) = memo.iter().find(|(body, _)| body.as_ptr() == held_at) {
         return *len;
     }
-    let len = sections_len(held).unwrap_or(held.len() as u64);
-    memo.push((Arc::downgrade(held), len));
-    len
+    memo.push((Arc::downgrade(held), None));
+    let body = Arc::clone(held);
+    std::thread::spawn(move || {
+        let len = sections_len(&body).unwrap_or(body.len() as u64);
+        let mut memo = MEMO.lock().unwrap_or_else(PoisonError::into_inner);
+        let at = Arc::as_ptr(&body);
+        if let Some((_, measured)) = memo.iter_mut().find(|(b, _)| b.as_ptr() == at) {
+            *measured = Some(len);
+        }
+    });
+    None
 }
 
 /// The inflated length of the sections a loose GTA VI resource holds; `None` for bytes that are no such file.
@@ -247,7 +267,7 @@ pub fn row_facts(session: &RpfEditSession, id: RpfNodeId) -> Option<RowFacts> {
                 RpfEntry::Directory(_) => {}
             }
             if let Some(edited) = override_bytes {
-                facts.size = Some(held_size(archive, *entry_index, edited));
+                facts.size = held_size(archive, *entry_index, edited);
                 facts.version = rsc7_version(edited);
                 facts.edition = facts.version.and_then(|v| edition_of(&node.name, v));
             }
@@ -702,6 +722,13 @@ mod tests {
                 "the loose form is shorter than its sections"
             );
             session.set_bytes_for(model, held).expect("held");
+            // The first look inflates nothing on the drawing thread: a worker measures the sections.
+            assert_eq!(size(&session, model), None);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while size(&session, model).is_none() {
+                assert!(std::time::Instant::now() < deadline, "never measured");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
             assert_eq!(size(&session, model), Some(0x200));
             assert_eq!(listed_bytes(&session, model), 0x200);
 

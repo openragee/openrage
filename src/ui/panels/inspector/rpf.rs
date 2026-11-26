@@ -75,8 +75,12 @@ pub(super) fn draw_rpf(
             row(ui, "Holds", &plural(node.children.len(), "item"));
             return;
         }
-        let size = session.size_for(node_id).unwrap_or(0);
-        row(ui, "Size", &or_job::human_bytes(size));
+        match crate::state::files_view::measured_bytes(session, node_id) {
+            Some(size) => row(ui, "Size", &or_job::human_bytes(size)),
+            None => ui
+                .ctx()
+                .request_repaint_after(std::time::Duration::from_millis(30)),
+        }
         if internals
             && matches!(
                 node.backing,

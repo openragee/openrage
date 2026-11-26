@@ -6,33 +6,49 @@ use std::ops::Range;
 use or_io::meta::instance::parser::{parse_typed_or_tree, spanned_root, SpannedElement};
 use or_io::meta::{normalize_member_name, MetaInstance, SchemaLibrary, SourceFormat, Value};
 
-use crate::state::MetaDocument;
+use crate::state::{MetaDocument, TextDocument};
 
 /// The bytes `meta`'s form edits save as when it is a GTA VI data XML whose every edit is a value:
 /// its source text with those values spliced in; `None` where the text is written again.
 pub(super) fn spliced(meta: &MetaDocument) -> Option<Vec<u8>> {
-    let xml = meta.gta6_library && meta.source_format == SourceFormat::Xml;
     // Text typed and not read yet is the modder's own, saved as typed.
-    if !xml || !meta.is_edited() || meta.parsed_at_text_revision < meta.text_revision {
+    if meta.parsed_at_text_revision < meta.text_revision {
+        return None;
+    }
+    let shown = |bytes: &[u8]| TextDocument::decode(bytes).encode();
+    let text = meta.text.encode();
+    // The source as read, or a text a form edit since has still to write again, is not typed.
+    // ⚠ A mark left from an older revision is stale, as `ensure_text_current` judges it.
+    if meta.text_dirty_for == Some(meta.revision()) || text == shown(&meta.raw_bytes) {
+        return from_fields(meta);
+    }
+    // Any other text was typed, unless it is this splice, which is what a form edit shows.
+    let out = source_spliced(meta)?.ok()?;
+    (shown(&out) == text).then_some(out)
+}
+
+/// The body `spliced` saves, whatever the text holds: what the Text view shows after a form edit.
+pub(crate) fn from_fields(meta: &MetaDocument) -> Option<Vec<u8>> {
+    let out = source_spliced(meta)?;
+    out.inspect_err(|why| {
+        tracing::warn!(
+            %why,
+            "the metadata XML is written again from its fields, so a GTA VI archive saved with \
+             it is rebuilt, which the game refuses because only its maker can sign the table"
+        )
+    })
+    .ok()
+}
+
+/// The splice of `meta`'s fields into its source; `None` for a document that is not an edited GTA
+/// VI data XML.
+fn source_spliced(meta: &MetaDocument) -> Option<Result<Vec<u8>, String>> {
+    let xml = meta.gta6_library && meta.source_format == SourceFormat::Xml;
+    if !xml || !meta.is_edited() {
         return None;
     }
     let edited = &meta.parsed.as_ref()?.instance;
-    let typed = meta.text.encode() != meta.raw_bytes
-        && or_io::meta::write_meta(edited).ok() != Some(meta.text.text.to_string());
-    if typed {
-        return None;
-    }
-    match splice(meta.schema(), &meta.raw_bytes, edited) {
-        Ok(bytes) => Some(bytes),
-        Err(why) => {
-            tracing::warn!(
-                %why,
-                "the metadata XML is written again from its fields, so a GTA VI archive saved with \
-                 it is rebuilt, which the game refuses because only its maker can sign the table"
-            );
-            None
-        }
-    }
+    Some(splice(meta.schema(), &meta.raw_bytes, edited))
 }
 
 /// `original` with each value `edited` changes written over that value's bytes and every other
@@ -438,6 +454,41 @@ mod tests {
         assert_eq!(out, XML.replace("zq_core", "zq_core_animation").as_bytes());
     }
 
+    /// `count` of `meta` set to `value` in the form, and its text brought up to date as the Text
+    /// view and a save into a row do.
+    fn form_edited(meta: &mut crate::state::MetaDocument, value: i64) {
+        let parsed = meta.parsed.as_mut().expect("it parsed");
+        parsed.instance.set("count", Value::Int(value));
+        meta.after_visual_edit_in_place();
+        meta.ensure_text_current();
+    }
+
+    #[test]
+    fn after_a_form_edit_the_text_view_shows_the_body_its_row_saves_and_typing_is_typed() {
+        use crate::state::{MetaDocument, TextDocument};
+        let default = crate::state::meta_schema();
+        let library = or_io::meta::names_library().unwrap_or(default);
+        let (instance, untyped) = parse_typed_or_tree(library, XML.as_bytes()).expect("it reads");
+        let mut meta = MetaDocument::from_gta_vi_xml(XML.into(), instance, untyped);
+        let saved = |meta: &MetaDocument| super::super::meta_bytes(meta, || None).expect("saved");
+        // The second edit is spliced into the source again, not into the text the first showed.
+        for value in [34, 56] {
+            form_edited(&mut meta, value);
+            let want = XML.replace("\"12\"", &format!("\"{value}\""));
+            assert_eq!(String::from_utf8(meta.text.encode()).expect("text"), want);
+            assert_eq!(saved(&meta), want.as_bytes());
+        }
+        // Text typed in that view is the modder's own, before it is read again and after.
+        let typed = XML
+            .replace("\"12\"", "\"56\"")
+            .replace("zq hand edit", "zq typed");
+        meta.text = TextDocument::decode(typed.as_bytes());
+        meta.mark_text_edited();
+        assert_eq!(saved(&meta), typed.as_bytes());
+        meta.ensure_parsed_current();
+        assert_eq!(saved(&meta), typed.as_bytes());
+    }
+
     #[test]
     fn a_structural_edit_is_refused_and_says_so() {
         let mut inst = read();
@@ -480,12 +531,17 @@ mod tests {
 
     /// Every data XML among the small rows of the build's three smallest root archives, one
     /// letter of a string changed, splices to its length with one byte different, or is refused.
-    /// Install-gated: it needs the key snapshot and the build, and skips without them.
+    /// The form edit's Text view holds that splice, and the row planned with it at the app's cap
+    /// is a patched copy, or a chunk its deflaters cannot fit. Install-gated: it needs the key
+    /// snapshot and the build, and skips without them.
     #[test]
     fn a_data_xml_of_the_build_edited_at_its_length_changes_one_byte() {
-        use or_io::container::rpf::Gta6Mount;
+        use or_io::container::rpf::gta6_patch::plan_patch_with;
+        use or_io::container::rpf::{BodyPatch, Gta6Mount, PatchRefusal};
         const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
         const CAP: u64 = 0x40000;
+        // The optimal parse's cap of the app's save plan, `SAVE_OPTIMAL_CAP`.
+        const SAVE_CAP: usize = 256 << 10;
         const DOCS: usize = 16;
         let build =
             (std::env::var_os(BUILD_ENV).map(std::path::PathBuf::from)).filter(|p| p.is_dir());
@@ -509,6 +565,7 @@ mod tests {
         archives.sort();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         let (mut spliced, mut refused) = (0usize, Vec::new());
+        let (mut patched, mut unfit) = (0usize, Vec::new());
         'walk: for (_, disk) in archives.iter().take(3) {
             let Ok(mut file) = std::fs::File::open(disk) else {
                 continue;
@@ -531,27 +588,85 @@ mod tests {
                 if !head.trim_ascii_start().starts_with(b"<") {
                     continue;
                 }
-                let Ok((mut inst, _)) = parse_typed_or_tree(library, &body) else {
+                let Ok((read, untyped)) = parse_typed_or_tree(library, &body) else {
                     continue;
                 };
+                let mut inst = read.clone();
                 if !one_letter_changed(&mut inst) {
                     continue;
                 }
                 let at = format!("{} row {}", disk.display(), entry.index);
-                match splice(library, &body, &inst) {
-                    Ok(out) => {
-                        assert_eq!(out.len(), body.len(), "{at} keeps its length");
-                        let differ = (0..out.len()).filter(|&i| out[i] != body[i]).count();
-                        assert_eq!(differ, 1, "{at} differs in the one letter edited");
-                        spliced += 1;
+                let out = match splice(library, &body, &inst) {
+                    Ok(out) => out,
+                    Err(why) => {
+                        refused.push(format!("{at}: {why}"));
+                        continue;
                     }
-                    Err(why) => refused.push(format!("{at}: {why}")),
+                };
+                assert_eq!(out.len(), body.len(), "{at} keeps its length");
+                let differ = (0..out.len()).filter(|&i| out[i] != body[i]).count();
+                assert_eq!(differ, 1, "{at} differs in the one letter edited");
+                spliced += 1;
+
+                // The same edit made in the form: the Text view holds the splice, which saves.
+                let mut meta = crate::state::MetaDocument::from_gta_vi_xml(body, read, untyped);
+                meta.parsed.as_mut().expect("it parsed").instance = inst;
+                meta.after_visual_edit_in_place();
+                meta.ensure_text_current();
+                let shown = crate::state::TextDocument::decode(&out).encode();
+                assert_eq!(
+                    meta.text.encode(),
+                    shown,
+                    "{at}: the Text view holds the splice"
+                );
+                assert_eq!(
+                    super::spliced(&meta).as_ref(),
+                    Some(&out),
+                    "{at} saves the splice"
+                );
+
+                let patch = BodyPatch {
+                    base: mount.base,
+                    entry: entry.index,
+                    body: out,
+                };
+                let mut in_time = |_: u64, _: u64| std::time::Instant::now() < deadline;
+                match plan_patch_with(&mut file, &keys, &patch, SAVE_CAP, &mut in_time) {
+                    Ok(plan) => {
+                        assert!(
+                            plan.chunks.iter().any(|c| c.changed),
+                            "{at}: a chunk changes"
+                        );
+                        patched += 1;
+                    }
+                    Err(PatchRefusal::Stopped { .. }) => break 'walk,
+                    // Named refusals the app reports too: a chunk that does not fit, a cipher the
+                    // planner does not encipher, a body with no chunk table to match.
+                    Err(
+                        why @ (PatchRefusal::ChunkDoesNotFit { .. }
+                        | PatchRefusal::CipherUnsupported { .. }
+                        | PatchRefusal::NoChunkTable { .. }),
+                    ) => {
+                        unfit.push(format!("{at}: {why}"));
+                    }
+                    Err(why) => panic!("{at} is refused a patched copy: {why}"),
                 }
             }
+        }
+        println!(
+            "data XML of the build: {spliced} spliced, {patched} planned patched, {} refused by the planner",
+            unfit.len()
+        );
+        for why in &unfit {
+            println!("  {why}");
         }
         assert!(
             spliced > 0,
             "no data XML of the build's smallest archives spliced; refused: {refused:?}"
+        );
+        assert!(
+            patched > 0,
+            "no spliced data XML of the build plans as a patched copy; unfit: {unfit:?}"
         );
     }
 }

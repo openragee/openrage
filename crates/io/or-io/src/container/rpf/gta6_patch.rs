@@ -410,72 +410,14 @@ fn plan_in<R: Read + Seek>(
 ) -> Result<PatchPlan, PatchRefusal> {
     let e = patch.entry;
     let malformed = |why: String| PatchRefusal::Malformed { entry: e, why };
-    let no_row = PatchRefusal::NoRow {
-        base: patch.base,
-        entry: e,
-    };
-    let Some(entry) = mount.archive.entries.get(e as usize) else {
-        return Err(no_row);
-    };
-    if entry.kind() == Some(Gta6Class::NestedArchive) {
-        return Err(PatchRefusal::NestedArchive { entry: e });
-    }
-    let Some((at, len, real)) = extent(mount, entry) else {
-        return Err(no_row);
-    };
-    let end = source.seek(SeekFrom::End(0)).map_err(IoError::from)?;
-    if at.checked_add(len).is_none_or(|x| x > end) {
-        return Err(malformed(
-            "has a stored extent that runs past the file".into(),
-        ));
-    }
-    let raw = read_at(source, at, len)?;
-    let mut plain = raw.clone();
-    if let Some(cipher) = entry.cipher {
-        if cipher.cipher_type != CONTENT_CIPHER_TYPE {
-            return Err(PatchRefusal::CipherUnsupported {
-                entry: e,
-                cipher_type: cipher.cipher_type,
-            });
-        }
-        if let Some(why) = framing_reject_reason(&cipher.framing, len) {
-            return Err(malformed(why));
-        }
-        let mut failed = None;
-        decrypt_extent(&mut plain, &cipher.framing, &cipher.iv, |slice, ctr| {
-            if failed.is_none() {
-                failed = keys.content_decrypt(cipher.key_id, ctr, slice).err();
-            }
-        });
-        if let Some(err) = failed {
-            return Err(err.into());
-        }
-    }
-
-    let chunks = match entry_chunks(&mount.archive, e as usize) {
-        Err(err) => return Err(malformed(format!("has a malformed chunk table ({err})"))),
-        Ok(Some(chunks)) => chunks,
-        Ok(None) => {
-            let chunk = lone_chunk(&plain, real).ok_or(PatchRefusal::NoChunkTable { entry: e })?;
-            // A ciphered body with no table is read by a walk that can split it otherwise; the patch
-            // goes ahead only where that walk reads the body this chunk holds.
-            if entry.cipher.is_some() {
-                let held = chunk_content(&plain[..chunk.stored as usize], &chunk).map(|(_, c)| c);
-                if held.is_none()
-                    || mount.read_entry_decrypted(&mut *source, entry, keys).ok() != held
-                {
-                    return Err(PatchRefusal::NoChunkTable { entry: e });
-                }
-            }
-            vec![chunk]
-        }
-    };
-    let want: u64 = chunks.iter().map(|c| u64::from(c.inflated)).sum();
-    if let Some(real) = real.filter(|&r| r != want) {
-        return Err(malformed(format!(
-            "has chunks that inflate to {want} bytes, not the {real} its row states"
-        )));
-    }
+    let RowChunks {
+        at,
+        raw,
+        plain,
+        chunks,
+        want,
+        ciphered,
+    } = row_chunks(mount, source, keys, e)?;
     if patch.body.len() as u64 != want {
         return Err(PatchRefusal::Length {
             entry: e,
@@ -561,9 +503,159 @@ fn plan_in<R: Read + Seek>(
     Ok(PatchPlan {
         base: patch.base,
         entry: e,
-        ciphered: entry.cipher.is_some(),
+        ciphered,
         chunks: planned,
         writes,
+    })
+}
+
+/// Every span no patch may write, of the root archive and each nested one at any depth.
+pub fn every_table_span<R: Read + Seek>(
+    src: &mut R,
+    keys: &GtaViKeys,
+) -> Result<Vec<(u64, u64)>, IoError> {
+    let file_end = src.seek(SeekFrom::End(0))?;
+    let mut spans = Vec::new();
+    let mut todo = vec![(Gta6Mount::open_root(src, keys)?, file_end)];
+    while let Some((mount, end)) = todo.pop() {
+        mount_spans(src, &mount, end, &mut spans)?;
+        for e in &mount.archive.entries {
+            let (Some(start), Some(n)) = (mount.absolute_start(e), e.stored) else {
+                continue;
+            };
+            // A header past the file's end is not in it; one at or before its parent's would loop.
+            if e.kind() == Some(Gta6Class::NestedArchive)
+                && start > mount.base
+                && start + RPF9_HEADER_SIZE as u64 <= file_end
+            {
+                todo.push((mount.open_nested(src, e, keys)?, start + n));
+            }
+        }
+    }
+    spans.sort_unstable();
+    Ok(spans)
+}
+
+/// Row `entry` of `mount` read as a patch reads it: deciphered, each chunk inflated to its stated size.
+pub fn read_row_by_chunks<R: Read + Seek>(
+    mount: &Gta6Mount,
+    source: &mut R,
+    keys: &GtaViKeys,
+    entry: u32,
+) -> Result<Vec<u8>, PatchRefusal> {
+    let row = row_chunks(mount, source, keys, entry)?;
+    // Not sized from the table: a malformed one may state any total.
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    for (i, chunk) in row.chunks.iter().enumerate() {
+        let stored = chunk.stored as usize;
+        let (_, content) = (row.plain.get(pos..pos + stored))
+            .and_then(|old| chunk_content(old, chunk))
+            .ok_or_else(|| PatchRefusal::Malformed {
+                entry,
+                why: format!(
+                    "has chunk {i}, which does not inflate from {stored} bytes to the {} its table \
+                     states",
+                    chunk.inflated
+                ),
+            })?;
+        out.extend_from_slice(&content);
+        pos = (pos + stored + 15) & !15;
+    }
+    Ok(out)
+}
+
+/// A row's stored bytes, where they sit, as stored and deciphered, and its chunks with their total.
+struct RowChunks {
+    at: u64,
+    raw: Vec<u8>,
+    plain: Vec<u8>,
+    chunks: Vec<Chunk>,
+    want: u64,
+    ciphered: bool,
+}
+
+/// Row `e` of `mount` located, deciphered and split into the chunks its table or lone stream states.
+fn row_chunks<R: Read + Seek>(
+    mount: &Gta6Mount,
+    source: &mut R,
+    keys: &GtaViKeys,
+    e: u32,
+) -> Result<RowChunks, PatchRefusal> {
+    let malformed = |why: String| PatchRefusal::Malformed { entry: e, why };
+    let no_row = PatchRefusal::NoRow {
+        base: mount.base,
+        entry: e,
+    };
+    let Some(entry) = mount.archive.entries.get(e as usize) else {
+        return Err(no_row);
+    };
+    if entry.kind() == Some(Gta6Class::NestedArchive) {
+        return Err(PatchRefusal::NestedArchive { entry: e });
+    }
+    let Some((at, len, real)) = extent(mount, entry) else {
+        return Err(no_row);
+    };
+    let end = source.seek(SeekFrom::End(0)).map_err(IoError::from)?;
+    if at.checked_add(len).is_none_or(|x| x > end) {
+        return Err(malformed(
+            "has a stored extent that runs past the file".into(),
+        ));
+    }
+    let raw = read_at(source, at, len)?;
+    let mut plain = raw.clone();
+    if let Some(cipher) = entry.cipher {
+        if cipher.cipher_type != CONTENT_CIPHER_TYPE {
+            return Err(PatchRefusal::CipherUnsupported {
+                entry: e,
+                cipher_type: cipher.cipher_type,
+            });
+        }
+        if let Some(why) = framing_reject_reason(&cipher.framing, len) {
+            return Err(malformed(why));
+        }
+        let mut failed = None;
+        decrypt_extent(&mut plain, &cipher.framing, &cipher.iv, |slice, ctr| {
+            if failed.is_none() {
+                failed = keys.content_decrypt(cipher.key_id, ctr, slice).err();
+            }
+        });
+        if let Some(err) = failed {
+            return Err(err.into());
+        }
+    }
+
+    let chunks = match entry_chunks(&mount.archive, e as usize) {
+        Err(err) => return Err(malformed(format!("has a malformed chunk table ({err})"))),
+        Ok(Some(chunks)) => chunks,
+        Ok(None) => {
+            let chunk = lone_chunk(&plain, real).ok_or(PatchRefusal::NoChunkTable { entry: e })?;
+            // A ciphered body with no table is read by a walk that can split it otherwise; the patch
+            // goes ahead only where that walk reads the body this chunk holds.
+            if entry.cipher.is_some() {
+                let held = chunk_content(&plain[..chunk.stored as usize], &chunk).map(|(_, c)| c);
+                if held.is_none()
+                    || mount.read_entry_decrypted(&mut *source, entry, keys).ok() != held
+                {
+                    return Err(PatchRefusal::NoChunkTable { entry: e });
+                }
+            }
+            vec![chunk]
+        }
+    };
+    let want: u64 = chunks.iter().map(|c| u64::from(c.inflated)).sum();
+    if let Some(real) = real.filter(|&r| r != want) {
+        return Err(malformed(format!(
+            "has chunks that inflate to {want} bytes, not the {real} its row states"
+        )));
+    }
+    Ok(RowChunks {
+        at,
+        raw,
+        plain,
+        chunks,
+        want,
+        ciphered: entry.cipher.is_some(),
     })
 }
 

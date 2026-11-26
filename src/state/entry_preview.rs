@@ -3,18 +3,23 @@
 
 use std::sync::Arc;
 
+use or_io::container::rpf::BodyForm;
+
 use super::document::{DocumentId, RpfNodeId};
+use super::extract_job::{plan, TypeFilter};
 use super::files_view::pictures::{PictureKind, PICTURE_LIMIT};
 use super::rpf_session::RpfEditSession;
 use super::{AppState, DocPayload, RpfNodeBacking};
 
 /// Entries larger than this are described but not read.
 ///
-/// ⚠ **The read is on the UI thread**, because a preview follows the
-/// selection frame by frame; 4 MiB inflates in a few milliseconds and keeps
-/// arrowing through a folder of textures responsive, where a 200 MB `.rpf`
-/// would freeze the window for the length of a decompress.
+/// The read is on a worker, but a preview follows the selection, so arrowing
+/// through a folder starts one read per row: 4 MiB inflates in a few
+/// milliseconds, where a 200 MB `.rpf` would hold the worker and the drive.
 pub const READ_LIMIT: u64 = 4 * 1024 * 1024;
+
+/// The read of a row's bytes, which the pane makes on a worker; `None` is a read that failed.
+pub type BodyRead = Box<dyn FnOnce() -> Option<Vec<u8>> + Send>;
 
 const TEXT_CHARS: usize = 16 * 1024;
 const HEX_BYTES: usize = 512;
@@ -49,6 +54,8 @@ pub enum PreviewBody {
     },
     /// A texture or a model, which the pane draws as its picture, made off the UI thread.
     Picture,
+    /// Its bytes are being read on a worker.
+    Reading,
     TooLarge,
     Unreadable,
 }
@@ -176,42 +183,95 @@ fn stored_in(backing: &RpfNodeBacking) -> String {
     }
 }
 
-/// Describe one row of an archive document, reading it if it is small enough.
-pub fn preview(session: &RpfEditSession, id: RpfNodeId) -> Option<EntryPreview> {
+/// Describe one row of an archive document from its tree, with the read its body waits on when it is small enough to show.
+pub fn preview(
+    session: &RpfEditSession,
+    id: RpfNodeId,
+) -> Option<(EntryPreview, Option<BodyRead>)> {
     let node = session.node(id)?;
     let path = session
         .path_of(id)
         .map(|p| format!("/{p}"))
         .unwrap_or_default();
-    let size = (!node.is_dir()).then(|| session.size_for(id)).flatten();
-    let mut kind = super::files_view::kind_in_words(session, node);
+    let held = (!node.is_dir()).then(|| session.size_for(id)).flatten();
+    // A headerless row holding its loose form is listed by the sections it inflates to, as its Size column is.
+    let size = held.and_then(|_| super::files_view::measured_bytes(session, id));
     let drawn = matches!(
         super::files_view::pictures::picture_kind(&node.name),
         Some(PictureKind::Texture | PictureKind::Model)
     );
+    let mut read: Option<BodyRead> = None;
     let body = if node.is_dir() {
         folder_body(session, id)
-    } else if drawn && size.is_some_and(|s| s <= PICTURE_LIMIT) {
+    } else if drawn && held.is_some_and(|s| s <= PICTURE_LIMIT) {
         PreviewBody::Picture
-    } else if size.is_some_and(|s| s > READ_LIMIT) {
+    } else if held.is_some_and(|s| s > READ_LIMIT) {
         PreviewBody::TooLarge
     } else {
-        match session.bytes_for(id) {
-            Some(bytes) => {
-                kind = super::files_view::kind_by_head(kind, &bytes);
-                classify(&node.name, &bytes)
+        match plan(session, id, &TypeFilter::All).into_iter().next() {
+            Some(item) => {
+                read = Some(Box::new(move || {
+                    (item.read(BodyForm::Decoded))
+                        .map_err(
+                            |e| tracing::warn!(node_id = id, error = %e, "preview read failed"),
+                        )
+                        .ok()
+                }));
+                PreviewBody::Reading
             }
             None => PreviewBody::Unreadable,
         }
     };
-    Some(EntryPreview {
+    let preview = EntryPreview {
         name: node.name.clone(),
         path,
         size,
-        kind,
+        kind: super::files_view::kind_in_words(session, node),
         stored_in: stored_in(&node.backing),
         body,
-    })
+    };
+    Some((preview, read))
+}
+
+/// `preview` with the body `bytes` show and the kind their head names; `None` is a read that failed.
+pub fn with_bytes(mut preview: EntryPreview, bytes: Option<&[u8]>) -> EntryPreview {
+    preview.body = match bytes {
+        Some(bytes) => {
+            preview.kind =
+                super::files_view::kind_by_head(std::mem::take(&mut preview.kind), bytes);
+            classify(&preview.name, bytes)
+        }
+        None => PreviewBody::Unreadable,
+    };
+    preview
+}
+
+/// What holds row `id`'s bytes, by address, and its entry: bytes put into it, or a saved archive under it, change it.
+pub fn backing_revision(session: &RpfEditSession, id: RpfNodeId) -> (usize, u32) {
+    let Some(node) = session.node(id) else {
+        return (0, 0);
+    };
+    match &node.backing {
+        RpfNodeBacking::InMemoryFile { bytes }
+        | RpfNodeBacking::DiskFile {
+            override_bytes: Some(bytes),
+            ..
+        } => (Arc::as_ptr(bytes).addr(), 0),
+        RpfNodeBacking::ArchiveFile {
+            override_bytes: Some(bytes),
+            entry_index,
+            ..
+        } => (Arc::as_ptr(bytes).addr(), *entry_index),
+        RpfNodeBacking::ArchiveFile {
+            archive_id,
+            entry_index,
+            ..
+        } => (
+            (session.archive(*archive_id)).map_or(0, |slot| Arc::as_ptr(&slot.archive).addr()),
+            *entry_index,
+        ),
+        _ => (0, 0),
+    }
 }
 
 impl AppState {
@@ -234,7 +294,7 @@ impl AppState {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -322,7 +382,8 @@ mod tests {
             .unwrap();
         session.add_file_copy(models, "b.ydr", vec![0; 28]).unwrap();
         session.add_file_copy(root, "c.ytd", vec![0; 2]).unwrap();
-        let p = preview(&session, root).unwrap();
+        let (p, read) = preview(&session, root).unwrap();
+        assert!(read.is_none(), "a folder is described from its tree");
         match p.body {
             PreviewBody::Folder {
                 files,
@@ -335,9 +396,136 @@ mod tests {
             }
             _ => panic!("a folder previews as a folder"),
         }
-        let file = preview(&session, session.children_of(models)[0]).unwrap();
+        let (file, _) = preview(&session, session.children_of(models)[0]).unwrap();
         assert_eq!(file.path, "/models/a.ydr");
         assert_eq!(file.size, Some(100));
+    }
+
+    #[test]
+    fn a_file_is_read_by_the_read_it_hands_back_and_a_failed_read_is_unreadable() {
+        let mut session = RpfEditSession::empty();
+        let root = session.root_id();
+        let id = session
+            .add_file_copy(root, "a.meta", b"<Item />".to_vec())
+            .unwrap();
+        let (head, read) = preview(&session, id).unwrap();
+        assert!(matches!(head.body, PreviewBody::Reading));
+        let bytes = read.expect("a small file waits on a read")();
+        let read = with_bytes(head.clone(), bytes.as_deref());
+        match read.body {
+            PreviewBody::Text { text, .. } => assert_eq!(text, "<Item />"),
+            _ => panic!("its bytes are text"),
+        }
+        assert!(matches!(
+            with_bytes(head, None).body,
+            PreviewBody::Unreadable
+        ));
+    }
+
+    #[test]
+    fn new_bytes_of_the_same_length_change_the_backing_revision() {
+        let mut session = RpfEditSession::empty();
+        let root = session.root_id();
+        let id = session
+            .add_file_copy(root, "a.txt", b"one".to_vec())
+            .unwrap();
+        let before = backing_revision(&session, id);
+        session.set_bytes_for(id, b"two".to_vec()).unwrap();
+        assert_ne!(backing_revision(&session, id), before);
+    }
+
+    /// A headerless GTA VI row holding its loose form previews at the size of the sections it inflates to.
+    #[test]
+    fn a_headerless_override_previews_at_its_section_size() {
+        let _serial = crate::ui::theme::serial();
+        let (session, model, _held) = headerless_override();
+        // The sections are measured on a worker, never on the drawing thread.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let shown = loop {
+            let (shown, _) = preview(&session, model).expect("a preview");
+            if shown.size.is_some() || std::time::Instant::now() > deadline {
+                break shown;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert_eq!(shown.size, Some(0x200));
+    }
+
+    /// What `headerless_override` keeps alive: the archive's folder and the context it was read under.
+    pub(crate) struct Held {
+        given: Option<Arc<or_io::container::rpf::Gta6Context>>,
+        _dir: tempfile::TempDir,
+    }
+    impl Drop for Held {
+        fn drop(&mut self) {
+            or_io::container::rpf::Gta6Context::swap_given(self.given.take());
+        }
+    }
+
+    /// A synthetic GTA VI archive's headerless row `model.ydr` holding a loose form shorter than its 0x200 bytes of sections.
+    pub(crate) fn headerless_override() -> (RpfEditSession, RpfNodeId, Held) {
+        use std::io::Cursor;
+
+        use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
+        use or_io::container::rpf::{
+            write_rpf9_resource, Gta6Context, NameResolver, Rpf9Form, Rpf9Sections,
+        };
+        use or_io::container::{NoOpCryptoProvider, RpfArchive};
+        use or_io::gta6::hash::name_hash64;
+
+        use crate::state::rpf_archive_open::tree_verbs::tests::{rbm_section, synthetic_keys};
+
+        let loose = |virtual_section: Vec<u8>| {
+            write_rpf9_resource(&Rpf9Sections {
+                form: Rpf9Form::BlockMapped,
+                virtual_section,
+                physical: Vec::new(),
+            })
+            .expect("a loose resource")
+        };
+
+        let mut names = NameResolver::new();
+        names.insert(name_hash64(b"data/model.ydr"), "data/model.ydr");
+        let context = Gta6Context {
+            keys: synthetic_keys().expect("the synthetic snapshot parses"),
+            names: Arc::new(names),
+        };
+        let given = Gta6Context::swap_given(Some(Arc::new(context)));
+        let entries = [(
+            "data/model.ydr".to_owned(),
+            Rpf9NewBody::Resource {
+                type_code: 0x02,
+                loose: loose(rbm_section()),
+            },
+        )];
+        let key = Rpf9IndexKey {
+            key_id: 0xDEAD_BEEF,
+            iv: [0x33; 16],
+        };
+        let keys = synthetic_keys().expect("the synthetic snapshot parses");
+        let plan = build(&entries, &key, &keys).expect("the archive builds");
+        let mut bytes = Vec::new();
+        (plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut bytes))
+            .expect("the archive is laid out");
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let path = dir.path().join("source.rpf");
+        std::fs::write(&path, bytes).expect("the archive is written");
+        let archive = RpfArchive::open_with(&path, Arc::new(NoOpCryptoProvider::new()))
+            .expect("the archive opens");
+        let mut session = RpfEditSession::from_archive(archive).expect("the tree lists");
+        let model = (session.all_nodes().into_iter())
+            .find(|&id| session.node(id).is_some_and(|n| n.name == "model.ydr"))
+            .expect("the row is listed");
+
+        let mut grown = rbm_section();
+        grown.resize(0x200, 0);
+        let held = loose(grown);
+        assert!(
+            held.len() < 0x200,
+            "the loose form is shorter than its sections"
+        );
+        session.set_bytes_for(model, held).expect("held");
+        (session, model, Held { given, _dir: dir })
     }
 
     /// Selecting a drawable in the tree previews it as a picture made off the
@@ -380,7 +568,7 @@ mod tests {
         };
         assert!(
             matches!(
-                preview(&rpf.session, ydr).expect("a preview").body,
+                preview(&rpf.session, ydr).expect("a preview").0.body,
                 PreviewBody::Picture
             ),
             "a drawable previews as its picture"

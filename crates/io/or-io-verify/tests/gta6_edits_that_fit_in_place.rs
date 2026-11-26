@@ -19,8 +19,12 @@
 //! them, never by a type code; an AWC row, which is stored whole with no chunk table, is taken as
 //! the one stored chunk the patch writer reads it as.
 //!
+//! (6) Every kind holds at least one body: a kind the files' shares left with none is reserved a
+//! place, and the files cut short are walked again for those kinds alone in the time held back.
+//!
 //! Bounded: 40 bodies per kind, 8 per kind from each archive file, bodies of at most 4 MiB stored,
-//! and 300 s of walking, shared out among the archive files, after which it reports what it reached;
+//! and 300 s of walking, shared out among the archive files with 60 s held back for the kinds
+//! reserved a place, after which it reports what it reached;
 //! the census's optimal parse takes chunks of at most 256 KiB inflated, and 300 s more in all, an
 //! equal share per kind, which the walk's bound does not count: at most about ten minutes in all.
 //!
@@ -72,6 +76,8 @@ const SLOT: u64 = 16;
 const PER_KIND: usize = 40;
 const PER_ARCHIVE: usize = 8;
 const DEADLINE: Duration = Duration::from_secs(300);
+/// The walk's time held back for the kinds the files' shares left with no body.
+const RESERVE: Duration = Duration::from_secs(60);
 /// The two stream caps the archive writer cuts a block at.
 const CAPS: [u64; 2] = [8 << 20, 32 << 20];
 /// The piece a 24-byte row's body is cut into before each piece is deflated or stored.
@@ -664,10 +670,10 @@ struct State {
     until: Duration,
     /// Whether the current archive file was left at the end of its share.
     cut_here: bool,
-    /// Archive files left at the end of their share.
-    cut: usize,
     /// The optimal parse's time so far, which the walk's bound leaves out.
     optimal_spent: Duration,
+    /// The kinds reserved a place: while any is, only those still with no body are wanted.
+    reserved: Vec<&'static str>,
 }
 
 /// Every kind the census samples.
@@ -678,9 +684,14 @@ fn all_kinds() -> impl Iterator<Item = &'static str> {
 }
 
 impl State {
+    fn bodies(&self, kind: &str) -> usize {
+        self.kinds.get(kind).map_or(0, |t| t.bodies)
+    }
+
     fn wants(&self, kind: &str) -> bool {
-        self.kinds.get(kind).map_or(0, |t| t.bodies) < PER_KIND
-            && self.here.get(kind).copied().unwrap_or(0) < PER_ARCHIVE
+        let bodies = self.bodies(kind);
+        let open = self.reserved.is_empty() || (bodies == 0 && self.reserved.contains(&kind));
+        open && bodies < PER_KIND && self.here.get(kind).copied().unwrap_or(0) < PER_ARCHIVE
     }
 
     /// The walk's time so far: what has passed less the optimal parse's.
@@ -688,9 +699,12 @@ impl State {
         (self.started.map_or(Duration::ZERO, |t| t.elapsed())).saturating_sub(self.optimal_spent)
     }
 
-    /// Whether every kind's sample is full.
+    /// Whether every kind's sample is full, or, while kinds are reserved a place, each holds a body.
     fn full(&self) -> bool {
-        all_kinds().all(|k| self.kinds.get(k).map_or(0, |t| t.bodies) >= full_at(k))
+        match self.reserved.is_empty() {
+            true => all_kinds().all(|k| self.bodies(k) >= full_at(k)),
+            false => self.reserved.iter().all(|k| self.bodies(k) > 0),
+        }
     }
 
     fn done(&mut self) -> bool {
@@ -1115,30 +1129,47 @@ fn which_edits_fit_in_place_is_measured_per_kind() {
         started: Some(Instant::now()),
         ..State::default()
     };
+    let mut cut = Vec::new();
     for (i, path) in archives.iter().enumerate() {
         if st.full() {
             break;
         }
         // Each archive file walks for an equal share of the time left, so one early in the order
         // that holds more than its share does not keep the walk from those after it.
-        let left = DEADLINE.saturating_sub(st.walked());
+        let left = (DEADLINE - RESERVE).saturating_sub(st.walked());
         st.until = st.walked() + left / (archives.len() - i) as u32;
-        st.here.clear();
-        st.cut_here = false;
-        let label = (path.file_name()).map_or_else(String::new, |n| n.to_string_lossy().into());
-        let mut file = File::open(path).expect("open the archive");
-        let mount = Gta6Mount::open_root(&mut file, &keys).expect("the archive opens");
-        walk(&mut file, &keys, &library, (&mount, &label, 0), &mut st);
-        st.cut += usize::from(st.cut_here);
+        if walk_file(&mut st, &keys, &library, path) {
+            cut.push(path);
+        }
+    }
+    // A kind left with no body lies past where its file's share ran out: those files are walked
+    // again, each for an equal share of the time left, wanting only the kinds still with none.
+    st.reserved = all_kinds().filter(|k| st.bodies(k) == 0).collect();
+    let reserved = st.reserved.clone();
+    for (i, path) in cut.iter().enumerate() {
+        if reserved.is_empty() || st.full() {
+            break;
+        }
+        let left = DEADLINE.saturating_sub(st.walked());
+        st.until = st.walked() + left / (cut.len() - i) as u32;
+        walk_file(&mut st, &keys, &library, path);
     }
 
-    let timed_out = st.cut > 0;
+    let timed_out = !cut.is_empty();
     if timed_out {
         println!(
             "the walk stopped at the end of its share of its {} s bound in {} of {} archive files",
-            DEADLINE.as_secs(),
-            st.cut,
+            (DEADLINE - RESERVE).as_secs(),
+            cut.len(),
             archives.len()
+        );
+    }
+    if !reserved.is_empty() {
+        println!(
+            "reserved a place, walking the files cut short again: {:?}",
+            (reserved.iter())
+                .map(|k| (*k, st.bodies(k)))
+                .collect::<Vec<_>>()
         );
     }
     for kind in all_kinds() {
@@ -1204,30 +1235,55 @@ fn which_edits_fit_in_place_is_measured_per_kind() {
         texts.is_none_or(|w| w.keys().all(|label| label == "identical")),
         "a text table written over its own section is not byte-identical: {texts:?}"
     );
-    let bodies = |kind: &str| st.kinds.get(kind).map_or(0, |t| t.bodies);
-    // The kinds round 36's walk reached none of, which each archive file's share now reaches.
-    for kind in [SCRIPT, AWC, FILTERS, EXPRESSIONS] {
-        assert!(bodies(kind) > 0, "the walk sampled no {kind} body");
-    }
+    let empty: Vec<&str> = all_kinds().filter(|k| st.bodies(k) == 0).collect();
+    assert!(
+        empty.is_empty(),
+        "kinds with no body in the sample, each reserved a place: {empty:?}"
+    );
     if !timed_out {
         for (kind, mirrored) in MIRRORED {
             assert!(
-                bodies(kind) >= mirrored,
+                st.bodies(kind) >= mirrored,
                 "{} {kind} bodies sampled, where the node mirror samples {mirrored}",
-                bodies(kind)
+                st.bodies(kind)
             );
         }
-        for (kind, _) in HEADERLESS {
-            assert!(
-                st.kinds.get(kind).is_some_and(|t| t.bodies > 0),
-                "the build holds no sampled {kind} body"
-            );
-        }
-        assert!(
-            st.kinds.get(PSO_TABLE).is_some_and(|t| t.bodies > 0),
-            "the build holds no sampled table-form PSO"
-        );
     }
+}
+
+/// One archive file walked from its start; whether its share ran out first.
+fn walk_file(st: &mut State, keys: &GtaViKeys, library: &SchemaLibrary, path: &Path) -> bool {
+    st.here.clear();
+    st.cut_here = false;
+    let label = (path.file_name()).map_or_else(String::new, |n| n.to_string_lossy().into());
+    let mut file = File::open(path).expect("open the archive");
+    let mount = Gta6Mount::open_root(&mut file, keys).expect("the archive opens");
+    walk(&mut file, keys, library, (&mount, &label, 0), st);
+    st.cut_here
+}
+
+#[test]
+fn a_kind_reserved_a_place_is_wanted_until_it_holds_a_body() {
+    let mut st = State::default();
+    st.kinds.entry(DRAWABLE).or_default().bodies = 3;
+    assert!(st.wants(DRAWABLE) && st.wants(HEIGHT_MAP));
+    assert!(!st.full());
+    st.reserved = vec![HEIGHT_MAP];
+    assert!(
+        !st.wants(DRAWABLE),
+        "a kind with a body is wanted while others are reserved"
+    );
+    assert!(st.wants(HEIGHT_MAP));
+    assert!(!st.full());
+    st.kinds.entry(HEIGHT_MAP).or_default().bodies = 1;
+    assert!(
+        !st.wants(HEIGHT_MAP),
+        "a reserved kind is wanted past its place"
+    );
+    assert!(
+        st.full(),
+        "the reserve is not done once each kind holds a body"
+    );
 }
 
 #[test]

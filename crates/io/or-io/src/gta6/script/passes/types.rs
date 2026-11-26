@@ -3,14 +3,17 @@
 //! Evidence is joined per variable to a fixed point; then each cast the kinds make redundant
 //! goes, a constant takes the kind of what reads it and an access through an address is typed.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use crate::gta6::script::cfg::{self, Terminator};
 use crate::gta6::script::ir::{
-    BinOp, Callee, Const, Expr, Kind, Scalar, Stmt, StoreKind, UnOp, Var, VarInfo, Width,
+    BinOp, Callee, Const, Expr, FunctionKey, Head, Kind, Returns, Scalar, Stmt, StoreKind, TypeKey,
+    UnOp, Var, VarInfo, Width,
 };
 use crate::gta6::script::names::Names;
-use crate::gta6::script::Stats;
+use crate::gta6::script::project::{signatures, Signature};
+use crate::gta6::script::{Context, Pass, Project, Stats};
 
 #[path = "types_kinds.rs"]
 mod kinds;
@@ -21,27 +24,43 @@ use kinds::Lat;
 const MAX_DEPTH: u32 = 192;
 /// The rounds a fixed point may take before the function is left untyped.
 const MAX_ROUNDS: usize = 24;
+/// The rounds the layouts' evidence is given to agree with the kinds it leads to.
+const FIELD_ROUNDS: usize = 4;
+/// The loads an address may be under before the type of its object is given up on.
+const MAX_OWNERS: u32 = 16;
+/// The rounds a kind lost may cost the kinds of what is copied from it, before every unproved kind goes.
+const LOOSE_ROUNDS: usize = 8;
 
 /// Infers the kind of every variable and constant, then drops each cast the kinds make redundant and types each access.
-pub fn run(f: &mut cfg::Function, names: &Names, _stats: &mut Stats) {
-    let Some(mut facts) = Facts::of(f, names) else {
+pub fn run(f: &mut cfg::Function, names: &Names, stats: &mut Stats) {
+    run_in(f, &Context::baseline(names), stats);
+}
+
+/// [`run`] with the project as evidence where `kinds` is on, and each conflict of signs settled where `signs` is.
+// `Stats` has no count of kinds or casts, so nothing is counted here.
+pub fn run_in(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
+    let around = Around::of(&f.head, cx);
+    let Some(mut facts) = Facts::of(f, &around) else {
         return;
     };
     if narrowings(f) {
-        match Facts::of(f, names) {
+        match Facts::of(f, &around) {
             Some(again) => facts = again,
             None => return,
         }
     }
     let mut typing = Typing {
-        names,
-        wide: wide_of(f),
+        around: &around,
+        wide: wide_of(f, around.kinds),
         facts,
         known: HashMap::new(),
         normal: HashSet::new(),
+        past: RefCell::new(HashSet::new()),
+        loose: HashSet::new(),
     };
     typing.infer(&f.cfg);
     typing.settle(&f.cfg);
+    typing.loosen(&f.cfg);
     for block in &mut f.cfg.blocks {
         for stmt in &mut block.stmts {
             typing.stmt(stmt);
@@ -49,6 +68,136 @@ pub fn run(f: &mut cfg::Function, names: &Names, _stats: &mut Stats) {
         typing.term(&mut block.term);
     }
     typing.record(f);
+}
+
+/// What stands around a function: the user's names, the project's facts, and which of this pass's later rules are on.
+struct Around<'a> {
+    names: &'a Names,
+    project: &'a Project,
+    /// The hash of the function's program, which a call of one of its own functions is looked up by.
+    program: u32,
+    /// `kinds` is on: signatures, layouts and the kinds another pass wrote are evidence.
+    kinds: bool,
+    /// `signs` is on: a 32-bit integer read under both signs takes one of them.
+    signs: bool,
+    /// `interproc` is on: a call's cell is widened as the integer its callee's signature names.
+    interproc: bool,
+    /// What the function's own signature says the one cell it returns is.
+    returned: Lat,
+}
+
+impl<'a> Around<'a> {
+    fn of(head: &Head, cx: &Context<'a>) -> Around<'a> {
+        let mut around = Around {
+            names: cx.names,
+            project: cx.project,
+            program: head.program,
+            kinds: cx.options.on(Pass::Kinds),
+            signs: cx.options.on(Pass::Signs),
+            interproc: cx.options.on(Pass::Interproc),
+            returned: Lat::None,
+        };
+        let own = around.held(FunctionKey::new(head.program, head.at));
+        if let Some(own) = own.filter(|own| own.returns == 1 && head.returns == Returns::Cell) {
+            around.returned = kinds::stated(&own.result);
+        }
+        around
+    }
+
+    /// The project's signature of a function, where `kinds` is on and the signature waits on nothing more.
+    // ⚠ One that still waits holds what its function's own code says so far, which proves nothing.
+    fn held(&self, key: FunctionKey) -> Option<&'a Signature> {
+        let held = self.project.signatures.get(&key)?;
+        (self.kinds && signatures::settled(held)).then_some(held)
+    }
+
+    /// The project's signature of the function a call names outright: one of this program, or of one it imports.
+    // ⚠ Not a virtual call's: the slot's function is one of those the call may reach.
+    fn signature(&self, callee: &Callee) -> Option<&'a Signature> {
+        self.held(signatures::key_of(self.program, callee)?)
+    }
+
+    /// What a call yields in one cell: what it is, and the kind its cell is widened as.
+    // ⚠ A signature's word on how the cell is widened is what `interproc` rests on, so it is
+    // taken only where that name is on, and only for a truth or an integer: with it off the
+    // result only types what it is assigned to and tested as.
+    fn yields(&self, callee: &Callee, returns: Option<u32>) -> (Lat, Option<Kind>) {
+        let one = |own: &&Signature| own.returns == 1 && returns.is_none_or(|cells| cells == 1);
+        match self.signature(callee).filter(one) {
+            Some(own) => {
+                let widened =
+                    self.interproc && kinds::narrow(&own.result) && !own.result.is_float();
+                let shape = widened.then(|| own.result.clone());
+                (kinds::stated(&own.result), shape)
+            }
+            None => yields(self.names, callee, returns),
+        }
+    }
+
+    /// How a call takes each of its arguments.
+    fn arg_reads(&self, callee: &Callee, args: &[Expr], wide: &HashSet<Var>) -> Vec<Read> {
+        let Some(own) = self.signature(callee) else {
+            return arg_reads(self.names, callee, args.len());
+        };
+        // ⚠ A parameter of one cell must face an argument of one, and a wider one a wider
+        // argument, or a kind would land on the cell beside its own.
+        let faces = |cells: u32, arg: &Expr| (cells == 1) == one_cell(arg, wide);
+        let fits = own.params.len() == args.len()
+            && own
+                .params
+                .iter()
+                .zip(args)
+                .all(|(param, arg)| faces(param.cells, arg));
+        if !fits {
+            return vec![Read::Cell; args.len()];
+        }
+        let read = own
+            .params
+            .iter()
+            .map(|param| match kinds::stated(&param.kind) {
+                lat if param.cells == 1 && lat != Lat::None => Read::Hint(lat),
+                _ => Read::Cell,
+            });
+        read.collect()
+    }
+
+    /// What the project says the global cell at byte `offset` of a program holds.
+    fn global(&self, program: u32, offset: u32, statics: bool) -> Lat {
+        let cells = self
+            .project
+            .programs
+            .get(&program)
+            .map(|info| match statics {
+                true => &info.statics,
+                false => &info.globals,
+            });
+        match cells.and_then(|cells| cells.get(&offset)) {
+            Some(kind) if self.kinds => kinds::stated(kind),
+            _ => Lat::None,
+        }
+    }
+
+    /// What two pieces of evidence say together.
+    // Where `kinds` is on, two named references are the one the other derives from, else some
+    // reference for good: `Lat::join` alone would let a third type take the place of two.
+    fn join(&self, a: &Lat, b: &Lat) -> Lat {
+        match (a, b) {
+            (Lat::Is(x), Lat::Is(y))
+                if self.kinds && x != y && kinds::named(x) && kinds::named(y) =>
+            {
+                let key = |kind: &Kind| match kind {
+                    Kind::Object(name) => TypeKey::of_name(name),
+                    _ => None,
+                };
+                match (key(x), key(y)) {
+                    (Some(from), Some(to)) if self.project.is_a(from, to) => Lat::Is(y.clone()),
+                    (Some(to), Some(from)) if self.project.is_a(from, to) => Lat::Is(x.clone()),
+                    _ => Lat::Refs,
+                }
+            }
+            _ => a.join(b),
+        }
+    }
 }
 
 /// How the expression around one takes its value.
@@ -96,33 +245,102 @@ struct Facts {
     params_escape: Option<u32>,
     /// Each `byte_offset(base, n)` taken as a value: an embedded struct, whose offset stays apart.
     apart: HashSet<(Base, u64)>,
+    /// How often something that reads one sign alone reads each variable as an `int`, and as a `uint`.
+    signs: HashMap<Var, (u32, u32)>,
+    /// How often each variable is read by name, and how many of those reads take only whether it is zero.
+    // ⚠ A read through the variable's own address is in neither count.
+    tested: HashMap<Var, (u32, u32)>,
+    /// The one named reference each variable is handed on as, a conflict where two calls take two.
+    // ⚠ Kept from the joins: what is passed may derive from what is taken, so an assignment says more.
+    wanted: HashMap<Var, Lat>,
     /// An expression was nested too deep to read.
     deep: bool,
 }
 
 impl Facts {
     /// Reads a function; `None` where an expression is nested too deep to follow.
-    fn of(f: &cfg::Function, names: &Names) -> Option<Facts> {
-        let wide = wide_of(f);
+    fn of(f: &cfg::Function, around: &Around<'_>) -> Option<Facts> {
+        let wide = wide_of(f, around.kinds);
         let mut facts = Facts::default();
         let mut scan = Scan {
-            names,
+            around,
+            head: &f.head,
             wide: &wide,
             facts: &mut facts,
         };
+        if around.kinds {
+            scan.stated();
+        }
         scan.function(&f.cfg);
         (!facts.deep).then_some(facts)
     }
 }
 
-/// The variables a function declares as several cells.
-fn wide_of(f: &cfg::Function) -> HashSet<Var> {
-    let wide = f
-        .head
-        .vars
-        .iter()
-        .filter(|(_, info)| info.width == Width::Cells);
+/// The variables no one-cell kind is inferred for: those declared as several cells and, where `by_kind`, those another pass gave a kind this lattice does not join.
+fn wide_of(f: &cfg::Function, by_kind: bool) -> HashSet<Var> {
+    let opaque = |kind: &Kind| *kind != Kind::Unknown && kinds::stated(kind) == Lat::None;
+    let vars = f.head.vars.iter();
+    let wide =
+        vars.filter(|(_, info)| info.width == Width::Cells || (by_kind && opaque(&info.kind)));
     wide.map(|(var, _)| *var).collect()
+}
+
+/// Whether an expression is one cell wide by its form.
+fn one_cell(e: &Expr, wide: &HashSet<Var>) -> bool {
+    match e {
+        Expr::Var(var) => !wide.contains(var),
+        Expr::Call { returns, .. } => *returns == Some(1),
+        Expr::Cells(_)
+        | Expr::GuidEmpty
+        | Expr::LoadBytes { .. }
+        | Expr::ExtractBytes { .. }
+        | Expr::ZeroSlots(_)
+        | Expr::Vector3(_)
+        | Expr::BuiltinGlobal(_) => false,
+        _ => true,
+    }
+}
+
+/// Variables joined into sets, each set under one of its members.
+#[derive(Default)]
+struct Groups {
+    /// The member each variable stands under; one that is not here stands for its set.
+    above: HashMap<Var, Var>,
+}
+
+impl Groups {
+    /// The member the set of `var` goes by.
+    fn find(&mut self, var: Var) -> Var {
+        let mut top = var;
+        while let Some(up) = self.above.get(&top) {
+            top = *up;
+        }
+        let mut at = var;
+        while at != top {
+            at = self.above.insert(at, top).unwrap_or(top);
+        }
+        top
+    }
+
+    fn join(&mut self, a: Var, b: Var) {
+        let (a, b) = (self.find(a), self.find(b));
+        if a != b {
+            self.above.insert(a, b);
+        }
+    }
+}
+
+/// What the variables of one set say of their sign together.
+#[derive(Default)]
+struct Signs {
+    /// Reads of any of them as an `int`, and as a `uint`, by something that reads one sign alone.
+    signed: u32,
+    unsigned: u32,
+    /// An assignment makes one of them an `int`, or a `uint`.
+    int: bool,
+    uint: bool,
+    /// One of them is neither: the set has no one sign to take.
+    other: bool,
 }
 
 /// How often a function mentions each variable, for [`narrowings`].
@@ -398,14 +616,35 @@ fn store_read(kind: StoreKind) -> Read {
     }
 }
 
-/// How a terminator takes its expression.
-fn term_read(term: &Terminator) -> Read {
+/// How a terminator takes its expression; `returned` is what the function's own signature says it returns.
+fn term_read(term: &Terminator, returned: &Lat) -> Read {
     match term {
         // A switch compares as an `int`, and equality reads either sign alike.
         Terminator::Switch { .. } => Read::As(Scalar::I32, true),
         Terminator::Branch { .. } => Read::Truth,
+        Terminator::Return(_) if *returned != Lat::None => Read::Hint(returned.clone()),
         _ => Read::Cell,
     }
+}
+
+/// The address under the constant `byte_offset`s of `addr`, and `offset` counted from it.
+fn based(mut addr: &Expr, mut offset: u32) -> Option<(&Expr, u32)> {
+    for _ in 0..8 {
+        let Expr::ByteOffset {
+            addr: under,
+            offset: by,
+        } = addr
+        else {
+            return Some((addr, offset));
+        };
+        let Expr::Const(c) = &**by else {
+            return None;
+        };
+        let add = u32::try_from(c.bits).ok()?;
+        offset = offset.checked_add(add)?;
+        addr = &**under;
+    }
+    None
 }
 
 /// How a call takes each of its arguments.
@@ -414,7 +653,10 @@ fn arg_reads(names: &Names, callee: &Callee, passed: usize) -> Vec<Read> {
         Callee::Intrinsic { name, .. } => (0..passed)
             .map(|index| match kinds::intrinsic_reads(name, index) {
                 Some(ty) => Read::As(ty, false),
-                None => Read::Cell,
+                None => match kinds::intrinsic_takes(name, index) {
+                    Lat::None => Read::Cell,
+                    lat => Read::Hint(lat),
+                },
             })
             .collect(),
         Callee::Native { hash, .. } => {
@@ -536,6 +778,74 @@ fn is_zero(e: &Expr) -> bool {
     matches!(e, Expr::Const(c) if c.bits == 0 && !c.kind.is_float())
 }
 
+/// The cell of a constant, or of a cast of one.
+fn constant_cell(e: &Expr) -> Option<u64> {
+    match e {
+        Expr::Const(c) => Some(c.bits),
+        Expr::Cast { to, e: inner } => match &**inner {
+            Expr::Const(c) => Some(kinds::cast_bits(*to, c.bits)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The cell a shift of two constants makes, and the type the shift is written at.
+// How a compiler writes a constant of one bit: at 64 bits, whatever then reads it.
+fn literal_shift(e: &Expr) -> Option<(u64, &Kind)> {
+    let Expr::Binary {
+        op: BinOp::Shl,
+        at,
+        l,
+        r,
+    } = e
+    else {
+        return None;
+    };
+    let bits = kinds::shifted(at, constant_cell(l)?, constant_cell(r)?)?;
+    Some((bits, at))
+}
+
+/// Calls `f` with each shift of two constants a value may be: the value itself, or an arm of a choice.
+fn each_literal<'a>(e: &'a Expr, depth: u32, f: &mut impl FnMut(u64, &'a Kind)) {
+    if depth > MAX_DEPTH {
+        return;
+    }
+    match e {
+        Expr::Select { then, els, .. } => {
+            each_literal(then, depth + 1, f);
+            each_literal(els, depth + 1, f);
+        }
+        other => {
+            if let Some((bits, at)) = literal_shift(other) {
+                f(bits, at);
+            }
+        }
+    }
+}
+
+/// The variable an expression is, bare or under one cast to an integer: what a test of the expression against zero reads.
+fn tested_var(e: &Expr) -> Option<Var> {
+    match e {
+        Expr::Var(var) => Some(*var),
+        Expr::Cast { to, e: inner } if !to.kind().is_float() => match &**inner {
+            Expr::Var(var) => Some(*var),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether a value is the constant 1, where it is the integer constant 0 or 1 or a truth written out.
+fn zero_or_one(e: &Expr) -> Option<bool> {
+    match e {
+        Expr::Const(c) if c.bits <= 1 && (c.kind.is_integer() || c.kind == Kind::Bool) => {
+            Some(c.bits == 1)
+        }
+        _ => None,
+    }
+}
+
 /// `!e`, written as the opposite comparison where that is the same test.
 fn negated(e: Expr) -> Expr {
     match e {
@@ -581,19 +891,47 @@ fn flipped(op: BinOp) -> BinOp {
 
 /// One reading of a function for [`Facts`].
 struct Scan<'a> {
-    names: &'a Names,
+    around: &'a Around<'a>,
+    head: &'a Head,
     wide: &'a HashSet<Var>,
     facts: &'a mut Facts,
 }
 
 impl Scan<'_> {
+    /// Notes what stands before the code is read: the kinds another pass wrote, and those the function's own signature gives its parameters.
+    fn stated(&mut self) {
+        let (head, around) = (self.head, self.around);
+        for (var, info) in &head.vars {
+            self.note(*var, &kinds::stated(&info.kind));
+        }
+        let Some(own) = around.held(FunctionKey::new(head.program, head.at)) else {
+            return;
+        };
+        // ⚠ A signature of other cells than the function takes is another function's.
+        let cells = own
+            .params
+            .iter()
+            .try_fold(0u32, |sum, param| sum.checked_add(param.cells));
+        if cells != Some(head.params) {
+            return;
+        }
+        let mut cell = 0;
+        for param in &own.params {
+            if param.cells == 1 {
+                self.note(Var::Param(cell), &kinds::stated(&param.kind));
+            }
+            cell += param.cells;
+        }
+    }
+
     fn function(&mut self, cfg: &cfg::Cfg) {
+        let around = self.around;
         for block in &cfg.blocks {
             for stmt in &block.stmts {
                 self.stmt(stmt);
             }
             if let Some(e) = block.term.expr() {
-                self.expr(e, &term_read(&block.term), 0);
+                self.expr(e, &term_read(&block.term, &around.returned), 0);
             }
         }
     }
@@ -672,9 +1010,50 @@ impl Scan<'_> {
             return;
         }
         let d = depth + 1;
+        // ⚠ Counted here and once: the variable itself is then read as an operand or under a
+        // cast, never as a truth again.
+        match (e, read) {
+            (
+                Expr::Binary {
+                    op: BinOp::Eq | BinOp::Ne,
+                    at,
+                    l,
+                    r,
+                },
+                _,
+            ) if !at.is_float() => match (is_zero(l), is_zero(r)) {
+                (false, true) => self.test(l),
+                (true, false) => self.test(r),
+                _ => {}
+            },
+            (
+                Expr::Binary {
+                    op: BinOp::LogicalAnd | BinOp::LogicalOr,
+                    l,
+                    r,
+                    ..
+                },
+                _,
+            ) => {
+                self.test(l);
+                self.test(r);
+            }
+            (_, Read::Truth) => self.test(e),
+            _ => {}
+        }
         match e {
             Expr::Var(var) => self.var(*var, read),
-            Expr::Cast { to, e: inner } => self.expr(inner, &under_cast(*to, read), d),
+            Expr::Sugar { e: inner, .. } => self.expr(inner, read, d),
+            Expr::Cast { to, e: inner } => {
+                let under = match (read, to) {
+                    // Whether 32 bits are zero is the same under either sign.
+                    (Read::Truth, Scalar::I32 | Scalar::U32) if self.around.signs => {
+                        Read::As(*to, true)
+                    }
+                    _ => under_cast(*to, read),
+                };
+                self.expr(inner, &under, d);
+            }
             Expr::Binary { op, at, l, r } => {
                 let (left, right) = operand_reads(*op, at);
                 self.expr(l, &left, d);
@@ -685,6 +1064,17 @@ impl Scan<'_> {
                 e: inner,
             }
             | Expr::Truth(inner) => self.expr(inner, &Read::Truth, d),
+            Expr::Unary {
+                op: UnOp::BitNot,
+                e: inner,
+            } if self.around.signs => match &**inner {
+                // `~` flips each bit whatever the sign: the cast under it says 32 bits and no more.
+                Expr::Cast {
+                    to: to @ (Scalar::I32 | Scalar::U32),
+                    e: under,
+                } => self.expr(under, &Read::As(*to, true), d),
+                other => self.expr(other, &Read::Keep, d),
+            },
             Expr::Unary { e: inner, .. } => self.expr(inner, &Read::Keep, d),
             Expr::Select { cond, then, els } => {
                 self.expr(cond, &Read::Truth, d);
@@ -692,7 +1082,7 @@ impl Scan<'_> {
                 self.expr(els, read, d);
             }
             Expr::Call { callee, args, .. } => {
-                let reads = arg_reads(self.names, callee, args.len());
+                let reads = self.around.arg_reads(callee, args, self.wide);
                 for (arg, read) in args.iter().zip(&reads) {
                     self.expr(arg, read, d);
                 }
@@ -704,7 +1094,7 @@ impl Scan<'_> {
                     (&**addr, *offset, read)
                 {
                     if outer.bytes() <= ty.bytes() {
-                        self.note(*var, &kinds::cast_evidence(*outer, *weak));
+                        self.reading(*var, *outer, *weak);
                     }
                 }
             }
@@ -748,24 +1138,74 @@ impl Scan<'_> {
         }
     }
 
+    /// Notes that `e` is read only for whether it is zero, where it is a variable bare or under a cast to an integer.
+    fn test(&mut self, e: &Expr) {
+        if let Some(var) = tested_var(e) {
+            let count = self.facts.tested.entry(var).or_default();
+            count.1 = count.1.saturating_add(1);
+        }
+    }
+
     fn var(&mut self, var: Var, read: &Read) {
+        let count = self.facts.tested.entry(var).or_default();
+        count.0 = count.0.saturating_add(1);
         let (lat, bytes) = match read {
             Read::Cell | Read::Truth | Read::Keep | Read::Operand { .. } => (Lat::None, 8),
-            Read::Hint(lat) => (lat.clone(), 8),
+            Read::Hint(lat) => (self.hinted(var, lat), 8),
             Read::Base => (Lat::Is(Kind::Pointer), 8),
-            Read::As(to, weak) => (kinds::cast_evidence(*to, *weak), to.bytes()),
+            Read::As(to, weak) => {
+                self.seen(var, to.bytes());
+                return self.reading(var, *to, *weak);
+            }
             Read::Low(bytes) => (Lat::None, *bytes),
         };
         self.seen(var, bytes);
         self.note(var, &lat);
     }
 
+    /// What a hint says of `var` at once; a named reference is kept for the end, and says only "a reference" till then.
+    fn hinted(&mut self, var: Var, lat: &Lat) -> Lat {
+        match lat {
+            Lat::Is(Kind::Object(_) | Kind::Array(_)) if !self.untyped(var) => {
+                let wanted = self.facts.wanted.entry(var).or_default();
+                *wanted = match &*wanted {
+                    Lat::None => lat.clone(),
+                    held if held == lat => lat.clone(),
+                    _ => Lat::Conflict,
+                };
+                Lat::Is(Kind::Pointer)
+            }
+            other => other.clone(),
+        }
+    }
+
+    /// Records a read of `var` as `to`; `weak` where what reads it takes either sign alike.
+    // Where `signs` is on, a read under one sign is counted and says "32 bits" alone, so that
+    // reads under both are settled together and not a conflict.
+    fn reading(&mut self, var: Var, to: Scalar, weak: bool) {
+        let counted = !weak && self.around.signs && matches!(to, Scalar::I32 | Scalar::U32);
+        if counted && !self.untyped(var) {
+            let count = self.facts.signs.entry(var).or_default();
+            match to {
+                Scalar::I32 => count.0 = count.0.saturating_add(1),
+                _ => count.1 = count.1.saturating_add(1),
+            }
+        }
+        self.note(var, &kinds::cast_evidence(to, weak || counted));
+    }
+
+    /// Whether no one-cell kind is inferred for a variable.
+    fn untyped(&self, var: Var) -> bool {
+        matches!(var, Var::Global { .. }) || self.wide.contains(&var)
+    }
+
     fn note(&mut self, var: Var, lat: &Lat) {
-        if matches!(var, Var::Global { .. }) || self.wide.contains(&var) || *lat == Lat::None {
+        if self.untyped(var) || *lat == Lat::None {
             return;
         }
+        let around = self.around;
         let known = self.facts.uses.entry(var).or_default();
-        *known = known.join(lat);
+        *known = around.join(known, lat);
     }
 
     fn seen(&mut self, var: Var, bytes: u32) {
@@ -798,7 +1238,7 @@ impl Scan<'_> {
 
 /// The kinds of a function's variables, and the rewriting they allow.
 struct Typing<'a> {
-    names: &'a Names,
+    around: &'a Around<'a>,
     /// Variables of several cells, which no one-cell kind is given.
     wide: HashSet<Var>,
     facts: Facts,
@@ -806,6 +1246,10 @@ struct Typing<'a> {
     known: HashMap<Var, Lat>,
     /// Variables whose cell always holds a value widened as their kind widens it.
     normal: HashSet<Var>,
+    /// Variables some read takes more bytes of than their kind fills.
+    past: RefCell<HashSet<Var>>,
+    /// Variables [`Typing::loosen`] took the kind from.
+    loose: HashSet<Var>,
 }
 
 impl Typing<'_> {
@@ -813,18 +1257,86 @@ impl Typing<'_> {
         !matches!(var, Var::Global { .. }) && !self.wide.contains(&var)
     }
 
+    /// What a variable is: by the evidence for one this pass types, by the project for a global.
     fn lat(&self, var: Var) -> Lat {
-        match self.typed(var) {
-            true => self.known.get(&var).cloned().unwrap_or_default(),
-            false => Lat::None,
+        match var {
+            var if self.wide.contains(&var) => Lat::None,
+            Var::Global {
+                program,
+                offset,
+                statics,
+            } => self.around.global(program, offset, statics),
+            var => self.known.get(&var).cloned().unwrap_or_default(),
         }
     }
 
     fn infer(&mut self, cfg: &cfg::Cfg) {
         self.known = std::mem::take(&mut self.facts.uses);
-        match self.flow(cfg) {
-            true => self.fill(cfg),
-            false => self.known.clear(),
+        if !(self.flow(cfg) && self.fill(cfg) && self.refine(cfg) && self.literals(cfg)) {
+            self.known.clear();
+        }
+    }
+
+    /// Gives each variable assigned a shift of two constants the type the shift is written at, unless the variable is already a number that constant is a value of; `false` when the joins that follow run out of rounds.
+    // ⚠ Last, and never among the joins: the type a compiler writes a one-bit constant at says
+    // nothing of what reads the constant, so it stands only where nothing else does.
+    fn literals(&mut self, cfg: &cfg::Cfg) -> bool {
+        let mut given: Vec<(Var, Kind)> = Vec::new();
+        each_def(cfg, &mut |target, value| {
+            each_literal(value, 0, &mut |bits, at| {
+                if self.typed(target) && !kinds::holds(&self.lat(target), bits) {
+                    given.push((target, at.clone()));
+                }
+            });
+        });
+        if given.is_empty() {
+            return true;
+        }
+        for (var, at) in given {
+            let joined = self.around.join(&self.lat(var), &Lat::Is(at));
+            self.known.insert(var, joined);
+        }
+        self.flow(cfg) && self.fill(cfg)
+    }
+
+    /// Makes a truth of each variable given both 0 and 1 and nothing else, where every read of it takes only whether it is zero.
+    // ⚠ Only one no write through an address can reach: its cell then holds 0 or 1, and each test
+    // of it against zero is the variable itself. Given 0 alone it may be a reference never set.
+    fn flags(&mut self, cfg: &cfg::Cfg) {
+        // Whether each variable is given only such constants, and whether a 0 and a 1 are among them.
+        let mut given: HashMap<Var, (bool, bool, bool)> = HashMap::new();
+        for stmt in cfg.blocks.iter().flat_map(|block| &block.stmts) {
+            let mut note = |target: Var, value: Option<&Expr>| {
+                let held = given.entry(target).or_insert((true, false, false));
+                match value.and_then(zero_or_one) {
+                    Some(true) => held.2 = true,
+                    Some(false) => held.1 = true,
+                    None => held.0 = false,
+                }
+            };
+            match stmt {
+                Stmt::Assign { target, value } => note(*target, Some(value)),
+                Stmt::AssignMany { targets, values } if targets.len() == values.len() => {
+                    for (target, value) in targets.iter().zip(values) {
+                        note(*target, Some(value));
+                    }
+                }
+                // A value of several cells fills several targets: none of them is given a constant.
+                Stmt::AssignMany { targets, .. } => {
+                    for target in targets {
+                        note(*target, None);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (var, (only, zero, one)) in given {
+            let (reads, tests) = self.facts.tested.get(&var).copied().unwrap_or((0, 0));
+            let tested = tests > 0 && tests == reads;
+            let free = self.typed(var) && self.sealed(var) && kinds::takes_truth(&self.lat(var));
+            if only && zero && one && tested && free {
+                self.known.insert(var, Lat::Is(Kind::Bool));
+            }
         }
     }
 
@@ -842,7 +1354,7 @@ impl Typing<'_> {
                     false => self.evidence(value, 0),
                 };
                 let known = self.lat(target);
-                let joined = known.join(&given);
+                let joined = self.around.join(&known, &given);
                 if joined != known {
                     self.known.insert(target, joined);
                     changed = true;
@@ -855,8 +1367,8 @@ impl Typing<'_> {
         false
     }
 
-    /// Gives a variable nothing types the kind of what it is copied into, where that is one kind.
-    fn fill(&mut self, cfg: &cfg::Cfg) {
+    /// Gives a variable nothing types the kind of what it is copied into, where that is one kind; `false` when the joins that follow run out of rounds.
+    fn fill(&mut self, cfg: &cfg::Cfg) -> bool {
         for _ in 0..3 {
             let mut wanted: HashMap<Var, Lat> = HashMap::new();
             each_def(cfg, &mut |target, value| {
@@ -865,19 +1377,245 @@ impl Typing<'_> {
                 };
                 if self.typed(*from) && self.lat(*from) == Lat::None {
                     let slot = wanted.entry(*from).or_default();
-                    *slot = slot.join(&self.lat(target));
+                    *slot = self.around.join(slot, &self.lat(target));
                 }
             });
-            wanted.retain(|_, lat| matches!(lat, Lat::Int32 | Lat::Is(_)));
+            wanted.retain(|_, lat| matches!(lat, Lat::Int32 | Lat::Is(_) | Lat::Refs));
             if wanted.is_empty() {
-                return;
+                return true;
             }
             self.known.extend(wanted);
             if !self.flow(cfg) {
-                self.known.clear();
-                return;
+                return false;
             }
         }
+        true
+    }
+
+    /// The rules of `kinds` and of `signs`, each with the joins it feeds; `false` when a join runs out of rounds.
+    fn refine(&mut self, cfg: &cfg::Cfg) -> bool {
+        let around = self.around;
+        if around.kinds {
+            if self.handed_on() && !self.flow(cfg) {
+                return false;
+            }
+            if !around.project.fields.is_empty() && !self.fields(cfg) {
+                return false;
+            }
+            self.defaults(cfg);
+            self.flags(cfg);
+        }
+        if around.signs && self.signs(cfg) {
+            return self.flow(cfg);
+        }
+        true
+    }
+
+    /// Gives a variable that is some reference and no more the one type every signature takes it as; `true` when any took one.
+    fn handed_on(&mut self) -> bool {
+        let mut changed = false;
+        for (var, lat) in std::mem::take(&mut self.facts.wanted) {
+            let open = matches!(self.lat(var), Lat::None | Lat::Is(Kind::Pointer));
+            if open && matches!(lat, Lat::Is(_)) {
+                self.known.insert(var, lat);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Joins in what the project's layouts say of each value loaded from, or stored to, a field of an object of known type.
+    // ⚠ What a layout says rests on the kind of the base, which the joins may then change: the
+    // kinds stand only when the evidence read off them is the evidence they were found with.
+    fn fields(&mut self, cfg: &cfg::Cfg) -> bool {
+        let before = self.known.clone();
+        let mut held: Vec<(Var, Lat)> = Vec::new();
+        for _ in 0..FIELD_ROUNDS {
+            let found = self.field_evidence(cfg);
+            if found == held {
+                return true;
+            }
+            self.known = before.clone();
+            for (var, lat) in &found {
+                let joined = self.around.join(&self.lat(*var), lat);
+                self.known.insert(*var, joined);
+            }
+            held = found;
+            if !(self.flow(cfg) && self.fill(cfg)) {
+                return false;
+            }
+        }
+        self.known = before;
+        true
+    }
+
+    /// What the layouts say of each variable given a field's bytes or stored into a field, by the kinds now held, in the order of the code.
+    fn field_evidence(&self, cfg: &cfg::Cfg) -> Vec<(Var, Lat)> {
+        let mut found = Vec::new();
+        each_def(cfg, &mut |target, value| {
+            if let Expr::Load { ty, addr, offset } = peeled(value, 8) {
+                let lat = self.field(addr, *offset, ty.bytes(), 0);
+                // ⚠ Four bytes loaded as an `int` are not a float until a read says so.
+                let says = !matches!(lat, Lat::None | Lat::Is(Kind::F32));
+                if says && self.typed(target) {
+                    found.push((target, lat));
+                }
+            }
+        });
+        for stmt in cfg.blocks.iter().flat_map(|block| &block.stmts) {
+            let Stmt::Store {
+                kind,
+                addr,
+                offset,
+                value,
+            } = stmt
+            else {
+                continue;
+            };
+            let Expr::Var(var) = peeled(value, kind.bytes()) else {
+                continue;
+            };
+            // A reference stored to a field may derive from what the field takes: only a number says what the variable is.
+            let lat = match self.field(addr, *offset, kind.bytes(), 0) {
+                Lat::Is(of) if kinds::reference(&of) => Lat::None,
+                lat => lat,
+            };
+            if lat != Lat::None && self.typed(*var) {
+                found.push((*var, lat));
+            }
+        }
+        found
+    }
+
+    /// What the project's layout says the `bytes` bytes at `offset` from `addr` are; nothing where the type `addr` points at, or its field, is not known.
+    fn field(&self, addr: &Expr, offset: u32, bytes: u32, depth: u32) -> Lat {
+        let found = based(addr, offset).and_then(|(base, offset)| {
+            let owner = self.owner(base, depth)?;
+            self.around.project.field(owner, offset)
+        });
+        match found {
+            Some(field) if field.bytes == bytes => kinds::field(&field.kind, bytes),
+            _ => Lat::None,
+        }
+    }
+
+    /// The type of the object `addr` points at, where a variable's kind or a field's says.
+    fn owner(&self, addr: &Expr, depth: u32) -> Option<TypeKey> {
+        if depth > MAX_OWNERS {
+            return None;
+        }
+        let kind = match addr {
+            Expr::Var(var) => self.lat(*var).kind(),
+            Expr::Cast {
+                to: Scalar::I64 | Scalar::U64,
+                e,
+            } => return self.owner(e, depth + 1),
+            Expr::Load {
+                ty: Scalar::U64,
+                addr: under,
+                offset,
+            } => self.field(under, *offset, 8, depth + 1).kind(),
+            _ => return None,
+        };
+        match kind {
+            Kind::Object(name) => TypeKey::of_name(&name),
+            _ => None,
+        }
+    }
+
+    /// Gives a variable nothing types the width of its widest read, where each value it is given is an integer constant that fits: a `byte`, a `ushort`, or 32 bits of either sign.
+    // ⚠ Never one whose cell is read whole, which says more than its low bytes do, nor one whose
+    // address is taken, which something else may then fill.
+    fn defaults(&mut self, cfg: &cfg::Cfg) {
+        // The bytes the constants each variable is given fill; 0 once it is given anything else.
+        let mut given: HashMap<Var, u32> = HashMap::new();
+        each_def(cfg, &mut |target, value| {
+            let bytes = match value {
+                Expr::Const(c) => kinds::integer_bytes(c),
+                // A shift of two constants is the constant it makes.
+                other => literal_shift(other).map_or(0, |(bits, at)| {
+                    let kind = at.clone();
+                    kinds::integer_bytes(&Const { bits, kind })
+                }),
+            };
+            let held = given.entry(target).or_insert(bytes);
+            *held = match bytes.min(*held) {
+                0 => 0,
+                _ => bytes.max(*held),
+            };
+        });
+        for (var, bytes) in given {
+            let read = self.facts.read.get(&var).copied().unwrap_or(0);
+            let open = self.typed(var)
+                && self.lat(var) == Lat::None
+                && !self.facts.addressed.contains(&var);
+            if bytes == 0 || !(1..=4).contains(&read) || !open {
+                continue;
+            }
+            let lat = match bytes.max(read) {
+                1 => Lat::Is(Kind::U8),
+                2 => Lat::Is(Kind::U16),
+                _ => Lat::Int32,
+            };
+            self.known.insert(var, lat);
+        }
+    }
+
+    /// Settles the sign of each 32-bit integer read under one: the sign an assignment gives its set, else the one more reads take; `true` when any took one.
+    // A variable goes with every variable it is copied to or from. Where a set cannot agree, one
+    // whose own reads all take one sign keeps that sign, as it does with `signs` off.
+    fn signs(&mut self, cfg: &cfg::Cfg) -> bool {
+        if self.facts.signs.is_empty() {
+            return false;
+        }
+        let mut groups = Groups::default();
+        each_def(cfg, &mut |target, value| {
+            if let Expr::Var(from) = value {
+                if self.typed(target) && self.typed(*from) {
+                    groups.join(target, *from);
+                }
+            }
+        });
+        let own = |var: &Var| self.facts.signs.get(var).copied().unwrap_or((0, 0));
+        let mut sets: HashMap<Var, Signs> = HashMap::new();
+        for (var, lat) in &self.known {
+            let set = sets.entry(groups.find(*var)).or_default();
+            match lat {
+                Lat::None | Lat::Int32 => {}
+                Lat::Is(Kind::I32) => set.int = true,
+                Lat::Is(Kind::U32) => set.uint = true,
+                _ => set.other = true,
+            }
+            let (signed, unsigned) = own(var);
+            set.signed = set.signed.saturating_add(signed);
+            set.unsigned = set.unsigned.saturating_add(unsigned);
+        }
+        let mut settled: Vec<(Var, Kind)> = Vec::new();
+        for (var, lat) in &self.known {
+            let Some(set) = sets.get(&groups.find(*var)) else {
+                continue;
+            };
+            if *lat != Lat::Int32 {
+                continue;
+            }
+            let (signed, unsigned) = own(var);
+            let agreed = !set.other && !(set.int && set.uint);
+            let kind = match agreed {
+                true if set.int => Kind::I32,
+                true if set.uint => Kind::U32,
+                true if set.unsigned > set.signed => Kind::U32,
+                true if set.signed > 0 => Kind::I32,
+                false if unsigned > 0 && signed == 0 => Kind::U32,
+                false if signed > 0 && unsigned == 0 => Kind::I32,
+                _ => continue,
+            };
+            settled.push((*var, kind));
+        }
+        let changed = !settled.is_empty();
+        for (var, kind) in settled {
+            self.known.insert(var, Lat::Is(kind));
+        }
+        changed
     }
 
     /// Finds the variables every assignment leaves widened as their kind widens.
@@ -906,6 +1644,59 @@ impl Typing<'_> {
         self.normal.clear();
     }
 
+    /// Takes the kind from each number narrower than its cell that is read past its kind and not proved widened as it.
+    // ⚠ Declared `int`, such a variable reads as 32 bits where the code takes the 64 its cell
+    // holds. One that loses its kind is a whole cell to what it is copied into, hence the rounds.
+    fn loosen(&mut self, cfg: &cfg::Cfg) {
+        for round in 0..=LOOSE_ROUNDS {
+            let unproved = |(var, lat): (&Var, &Lat)| {
+                (kinds::number_bytes(&lat.kind()).is_some() && !self.normal.contains(var))
+                    .then_some(*var)
+            };
+            let mut loose: Vec<Var> = self.known.iter().filter_map(unproved).collect();
+            if loose.is_empty() {
+                return;
+            }
+            if round < LOOSE_ROUNDS {
+                self.past.borrow_mut().clear();
+                // The reads are those the rewrite itself meets: it runs on a copy, for them alone.
+                for block in &cfg.blocks {
+                    for stmt in &block.stmts {
+                        self.stmt(&mut stmt.clone());
+                    }
+                    self.term(&mut block.term.clone());
+                }
+                let past = self.past.borrow();
+                loose.retain(|var| past.contains(var));
+            }
+            if loose.is_empty() {
+                return;
+            }
+            for var in loose {
+                self.known.insert(var, Lat::Conflict);
+                self.loose.insert(var);
+            }
+        }
+    }
+
+    /// Notes a read of `var` that takes more of its cell than its kind fills.
+    fn read(&self, var: Var, read: &Read) {
+        let Some(own) = kinds::number_bytes(&self.lat(var).kind()) else {
+            return;
+        };
+        let taken = match read {
+            Read::As(to, _) => to.bytes(),
+            Read::Low(bytes) => *bytes,
+            // What takes the cell as a kind reads as much of it as that kind fills.
+            Read::Hint(lat) => kinds::number_bytes(&lat.kind()).unwrap_or(8),
+            Read::Operand { at, .. } => kinds::number_bytes(at).unwrap_or(8),
+            Read::Cell | Read::Truth | Read::Base | Read::Keep => 8,
+        };
+        if taken > own {
+            self.past.borrow_mut().insert(var);
+        }
+    }
+
     /// Whether only an assignment that names the variable writes it.
     fn sealed(&self, var: Var) -> bool {
         match var {
@@ -932,20 +1723,29 @@ impl Typing<'_> {
             Expr::Var(var) => self.lat(*var),
             Expr::Cast { to, .. } => Lat::Is(to.kind()),
             Expr::Truth(_) | Expr::Unary { op: UnOp::Not, .. } => Lat::Is(Kind::Bool),
-            Expr::Unary { op, e: inner } => match (op, self.evidence(inner, depth + 1)) {
-                (UnOp::Neg, Lat::Is(kind))
-                    if matches!(kind, Kind::I32 | Kind::I64 | Kind::F32 | Kind::F64) =>
-                {
-                    Lat::Is(kind)
+            Expr::Unary { op, e: inner } => {
+                // Under an operator a shift of two constants is of the type it is written at: the operator works at it.
+                let under = match literal_shift(inner) {
+                    Some((_, at)) => Lat::Is(at.clone()),
+                    None => self.evidence(inner, depth + 1),
+                };
+                match (op, under) {
+                    (UnOp::Neg, Lat::Is(kind))
+                        if matches!(kind, Kind::I32 | Kind::I64 | Kind::F32 | Kind::F64) =>
+                    {
+                        Lat::Is(kind)
+                    }
+                    (UnOp::BitNot, Lat::Is(kind))
+                        if matches!(kind, Kind::I32 | Kind::U32 | Kind::I64 | Kind::U64) =>
+                    {
+                        Lat::Is(kind)
+                    }
+                    _ => Lat::None,
                 }
-                (UnOp::BitNot, Lat::Is(kind))
-                    if matches!(kind, Kind::I32 | Kind::U32 | Kind::I64 | Kind::U64) =>
-                {
-                    Lat::Is(kind)
-                }
-                _ => Lat::None,
-            },
+            }
             Expr::Binary { op, .. } if op.is_logical() => Lat::Is(Kind::Bool),
+            // A shift of two constants is the constant it makes: an integer literal, as above.
+            Expr::Binary { .. } if literal_shift(e).is_some() => Lat::None,
             // A bit operation yields a 32-bit integer of either sign, whichever its casts name.
             Expr::Binary { op, at, .. }
                 if either_sign(*op) && matches!(at, Kind::I32 | Kind::U32) =>
@@ -956,9 +1756,13 @@ impl Typing<'_> {
                 Kind::Unknown => Lat::None,
                 at => Lat::Is(at.clone()),
             },
-            Expr::Select { then, els, .. } => self
-                .evidence(then, depth + 1)
-                .join(&self.evidence(els, depth + 1)),
+            Expr::Select { then, els, .. } => {
+                let (then, els) = (
+                    self.evidence(then, depth + 1),
+                    self.evidence(els, depth + 1),
+                );
+                self.around.join(&then, &els)
+            }
             // Four bytes and eight are loaded as they lie; a narrower load names its type.
             Expr::Load { ty, .. } => match ty {
                 Scalar::I32 | Scalar::U64 => Lat::None,
@@ -966,7 +1770,7 @@ impl Typing<'_> {
             },
             Expr::Call {
                 callee, returns, ..
-            } => yields(self.names, callee, *returns).0,
+            } => self.around.yields(callee, *returns).0,
             Expr::NewObject(ty) => Lat::Is(Kind::Object(ty.name.clone())),
             Expr::NewArray { .. } | Expr::AddrOf { .. } | Expr::ByteOffset { .. } => {
                 Lat::Is(Kind::Pointer)
@@ -991,16 +1795,20 @@ impl Typing<'_> {
             Expr::Cast { to, .. } => fits(&to.kind()),
             Expr::Truth(_) | Expr::Unary { op: UnOp::Not, .. } => fits(&Kind::Bool),
             Expr::Binary { op, .. } if op.is_logical() => fits(&Kind::Bool),
-            Expr::Binary { at, .. } => fits(at),
+            Expr::Binary { at, .. } => match literal_shift(e) {
+                Some((bits, _)) => kinds::normal(k, bits),
+                None => fits(at),
+            },
             Expr::Select { then, els, .. } => {
                 self.norm(then, k, depth + 1) && self.norm(els, k, depth + 1)
             }
             Expr::Load { ty, .. } => fits(&ty.kind()),
             Expr::Call {
                 callee, returns, ..
-            } => yields(self.names, callee, *returns)
-                .1
-                .is_some_and(|shape| fits(&shape)),
+            } => {
+                let shape = self.around.yields(callee, *returns).1;
+                shape.is_some_and(|shape| fits(&shape))
+            }
             _ => false,
         }
     }
@@ -1062,6 +1870,12 @@ impl Typing<'_> {
             } => {
                 self.merge(addr, offset);
                 self.expr(value, &store_read(*kind), 0);
+                // A constant stored to a field is of the kind the project's layout gives the field.
+                if self.around.kinds {
+                    if let Expr::Const(c) = &mut *value {
+                        kinds::retype(c, &self.field(addr, *offset, kind.bytes(), 0).kind());
+                    }
+                }
                 match self.own_cell(addr, *offset, kind.bytes()) {
                     Some(var) => {
                         let mut value = take(value);
@@ -1147,7 +1961,7 @@ impl Typing<'_> {
     }
 
     fn term(&self, term: &mut Terminator) {
-        let read = term_read(term);
+        let read = term_read(term, &self.around.returned);
         if let Some(e) = term.expr_mut() {
             self.expr(e, &read, 0);
         }
@@ -1161,6 +1975,10 @@ impl Typing<'_> {
         let replaced = match e {
             Expr::Const(c) => {
                 self.constant(c, read);
+                None
+            }
+            Expr::Sugar { e: inner, .. } => {
+                self.expr(inner, read, d);
                 None
             }
             Expr::Cast { to, e: inner } => {
@@ -1202,7 +2020,7 @@ impl Typing<'_> {
                 None
             }
             Expr::Call { callee, args, .. } => {
-                let reads = arg_reads(self.names, callee, args.len());
+                let reads = self.around.arg_reads(callee, args, &self.wide);
                 for (arg, read) in args.iter_mut().zip(&reads) {
                     self.expr(arg, read, d);
                 }
@@ -1211,7 +2029,13 @@ impl Typing<'_> {
             Expr::Load { ty, addr, offset } => {
                 self.merge(addr, offset);
                 match self.own_read(addr, *offset) {
-                    Some(var) => Some(self.read_of(*ty, var, read)),
+                    Some(var) => {
+                        match *ty {
+                            Scalar::U64 => self.read(var, read),
+                            ty => self.read(var, &Read::As(ty, false)),
+                        }
+                        Some(self.read_of(*ty, var, read))
+                    }
                     None => {
                         self.expr(addr, &Read::Base, d);
                         None
@@ -1252,8 +2076,11 @@ impl Typing<'_> {
                 }
                 None
             }
-            Expr::Var(_)
-            | Expr::GuidEmpty
+            Expr::Var(var) => {
+                self.read(*var, read);
+                None
+            }
+            Expr::GuidEmpty
             | Expr::AddrOf { .. }
             | Expr::ZeroSlots(_)
             | Expr::NewObject(_)
@@ -1321,7 +2148,12 @@ impl Typing<'_> {
                     return false;
                 }
                 let given = self.evidence(inner, 0);
-                if given == Lat::Is(k) {
+                // With `signs` on a read under a sign no longer widens a narrower variable's
+                // kind, and C# widens such an operand itself; never a `bool`, which it does not.
+                let narrower = |from: &Kind| *from != Kind::Bool && kinds::widens(from, &k);
+                let promoted =
+                    self.around.signs && matches!(&given, Lat::Is(from) if narrower(from));
+                if promoted || given == Lat::Is(k) {
                     return true;
                 }
                 *weak
@@ -1363,10 +2195,13 @@ impl Typing<'_> {
         if op == BinOp::Shl {
             if let (Expr::Const(value), Expr::Const(count)) = (&*l, &*r) {
                 if let Some(bits) = kinds::shifted(at, value.bits, count.bits) {
-                    return Some(Expr::Const(Const {
+                    // A constant like any written whole: it takes the kind of what reads it.
+                    let mut folded = Const {
                         bits,
                         kind: at.clone(),
-                    }));
+                    };
+                    self.constant(&mut folded, read);
+                    return Some(Expr::Const(folded));
                 }
             }
         }
@@ -1474,24 +2309,21 @@ impl Typing<'_> {
         for (var, kind) in found {
             if kind != Kind::Unknown {
                 let info = f.head.vars.entry(var);
-                info.or_insert_with(|| VarInfo::new(Width::Cell)).kind = kind;
+                let info = info.or_insert_with(|| VarInfo::new(Width::Cell));
+                // ⚠ A type another pass proved for a value of several cells says more than the
+                // expression that fills it; the cells the values pass counted say less.
+                let proved = !matches!(info.kind, Kind::Unknown | Kind::Aggregate(_));
+                if !(proved && self.wide.contains(&var)) {
+                    info.kind = kind;
+                }
+            } else if self.loose.contains(&var)
+                || (self.around.kinds && self.lat(var) == Lat::Conflict)
+            {
+                // Evidence that disagrees with a kind another pass wrote leaves the variable none.
+                if let Some(info) = f.head.vars.get_mut(&var) {
+                    info.kind = Kind::Unknown;
+                }
             }
-        }
-    }
-
-    /// Whether an expression is one cell wide by its form.
-    fn one_cell(&self, e: &Expr) -> bool {
-        match e {
-            Expr::Var(var) => !self.wide.contains(var),
-            Expr::Call { returns, .. } => *returns == Some(1),
-            Expr::Cells(_)
-            | Expr::GuidEmpty
-            | Expr::LoadBytes { .. }
-            | Expr::ExtractBytes { .. }
-            | Expr::ZeroSlots(_)
-            | Expr::Vector3(_)
-            | Expr::BuiltinGlobal(_) => false,
-            _ => true,
         }
     }
 
@@ -1502,7 +2334,7 @@ impl Typing<'_> {
             Expr::GuidEmpty => Kind::Handle,
             Expr::ZeroSlots(cells) => Kind::Aggregate(*cells),
             // ⚠ An item may itself be a value of several cells, and then the count of items is not the count of cells.
-            Expr::Cells(items) if items.iter().all(|item| self.one_cell(item)) => {
+            Expr::Cells(items) if items.iter().all(|item| one_cell(item, &self.wide)) => {
                 Kind::Aggregate(items.len() as u32)
             }
             Expr::LoadBytes { bytes, .. } | Expr::ExtractBytes { bytes, .. } => {
@@ -1515,6 +2347,7 @@ impl Typing<'_> {
             } if *cells > 1 => {
                 let named = match callee {
                     Callee::Native { hash, .. } if *cells == 2 => self
+                        .around
                         .names
                         .native(*hash)
                         .and_then(|native| native.returns.as_deref())

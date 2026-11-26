@@ -239,11 +239,7 @@ fn draw_project(ui: &mut egui::Ui, state: &mut AppState) {
     let Some(name) = state.project_name() else {
         return;
     };
-    let unsaved = if state.project_carried.changed {
-        " ●"
-    } else {
-        ""
-    };
+    let unsaved = if state.project_unsaved() { " ●" } else { "" };
     let named = ui
         .add(
             egui::Button::new(

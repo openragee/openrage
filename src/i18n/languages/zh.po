@@ -760,6 +760,21 @@ msgstr "已移除原型 {index}"
 msgid "Removed entity {index}"
 msgstr "已移除实体 {index}"
 
+msgid "Entity {index} was left: {count} other entity places the same model at the same pose, and a deletion would not know which of them goes"
+msgid_plural "Entity {index} was left: {count} other entities place the same model at the same pose, and a deletion would not know which of them goes"
+msgstr[0] "实体 {index} 已保留：另有 {count} 个实体以相同姿态放置同一模型，删除时无法分辨该移除哪一个"
+msgstr[1] "实体 {index} 已保留：另有 {count} 个实体以相同姿态放置同一模型，删除时无法分辨该移除哪一个"
+
+msgid "{count} far model that stood for nothing else went with it"
+msgid_plural "{count} far models that stood for nothing else went with it"
+msgstr[0] "{count} 个不再代表其他任何对象的远景模型已随之移除"
+msgstr[1] "{count} 个不再代表其他任何对象的远景模型已随之移除"
+
+msgid "{count} entity it was the far model of went with it"
+msgid_plural "{count} entities it was the far model of went with it"
+msgstr[0] "{count} 个以它为远景模型的实体已随之移除"
+msgstr[1] "{count} 个以它为远景模型的实体已随之移除"
+
 msgid "Removed the weapon {name}"
 msgstr "已移除武器 {name}"
 
@@ -883,8 +898,8 @@ msgstr "流式加载距离"
 msgid "Take the archetype selected out of its type file. Entities that place it stay, and the rules say they place a name no type file declares. Undo puts it back"
 msgstr "将所选原型从其类型文件中移出。放置它的实体会保留，规则会提示它们放置的名称没有任何类型文件声明。“撤消”可将其放回"
 
-msgid "Take the entity selected out of its map file, with the LOD links renumbered. Undo puts it back"
-msgstr "将所选实体从其地图文件中移出，并重新编号 LOD 链接。“撤消”可将其放回"
+msgid "Take the entity selected out of the map files of the pack with its chain: a far model left standing for nothing goes with it, and so does what names it as its far model. Undo puts them back"
+msgstr "将所选实体连同其链从包的地图文件中移出：不再代表任何对象的远景模型会随之移除，以它为远景模型的对象也一样。“撤消”可将其放回"
 
 msgid "Take the weapon selected out of the pack. Its sources stay in the folder of the pack, where the rules say that no weapon names them; Undo puts it back"
 msgstr "将所选武器从包中移出。它的源会保留在包的文件夹中，规则会提示没有武器引用它们；“撤消”可将其放回"
@@ -7784,8 +7799,8 @@ msgstr "保存查询…"
 msgid "Save the active document to a new location"
 msgstr "将活动文档保存到新位置"
 
-msgid "Save the active document; one never saved asks where. With no document open, it saves the project"
-msgstr "保存活动文档；从未保存过的文档会询问保存位置。没有打开任何文档时，则保存项目"
+msgid "Save the active document; one never saved asks where. With no document open, or on the Map screen while an edit of the project's maps is unwritten, it saves the project"
+msgstr "保存活动文档；从未保存过的文档会询问保存位置。没有打开任何文档时，或在地图界面上项目地图的编辑尚未写入时，则保存项目"
 
 msgid "Save the archive's changes first: a comparison reads it as it was last saved"
 msgstr "先保存归档的更改：比较读取的是其上次保存时的状态"

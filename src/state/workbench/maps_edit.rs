@@ -1,29 +1,32 @@
 //! The edits of the Map workspace: an entity placed, added or taken out, an archetype added, changed or taken out, and the Undo and Redo
 //! that move along them.
 //!
-//! ⚠ **Thin by design.** Each edit is an operation of `or_maps::operation`, applied by the one function `openrage-cli maps apply` applies
-//! a list with, which changes the map file or the type file a source cooks to and writes the result back as the source's XML. A step
-//! of Undo keeps the inverse the operation gave, which states the digest of the XML it applies to, so Undo refuses once anything
-//! else has changed the source. What an operation went without or left to another file, its notes, is said as a warning where
-//! `maps apply` prints a note.
+//! ⚠ **Thin by design.** Each edit is an operation of `or_maps::operation`, the vocabulary `openrage-cli maps apply` applies a list of,
+//! done to the session the workspace holds its pack open in (`maps_session.rs`): the map file or the type file a source cooks to
+//! changes in memory, and the source's XML is written when the project is saved. A step of Undo keeps the inverses the session gave,
+//! each of which states the state of its source it applies to, so a step applies only in its order. What an operation went without or
+//! left to another file, its notes, is said as a warning where `maps apply` prints a note.
+//!
+//! ⚠ **Delete is a plan.** An entity goes with its chain (`or_maps::delete`): what names it as its far model, and each far model
+//! left standing for nothing, across the map files of the pack, as one step.
 
 use std::path::{Path, PathBuf};
 
-use glam::Vec3;
+use or_maps::delete::{self, Why};
 use or_maps::edit::Pose;
-use or_maps::operation::{Applied, At, Operation, Record};
+use or_maps::operation::{At, Done, Error, Operation, Record};
 use or_maps::Maps;
 use or_project::ModuleKind;
 
 use super::maps::{Pick, PickKind, Step, KEPT};
 use crate::state::AppState;
 
-/// Do `operation` to the sources of the pack in `folder`; a refusal is its reason alone, which is what a toast reads.
-fn apply(folder: &Path, operation: &Operation) -> Result<Applied, String> {
-    or_maps::operation::apply(folder, operation).map_err(|refused| match refused {
-        or_maps::operation::Error::Refused { why, .. } => why,
+/// The reason alone of a record the session could not give, which is what a toast reads.
+fn unread(refused: Error) -> String {
+    match refused {
+        Error::Source { why, .. } => why,
         other => other.to_string(),
-    })
+    }
 }
 
 impl AppState {
@@ -32,13 +35,66 @@ impl AppState {
         Some(self.maps_pack()?.folder.clone())
     }
 
-    /// The folder of the source `source` of the shown pack.
-    fn map_source_dir(&self, source: &str) -> Option<PathBuf> {
-        let pack = self.maps_pack()?;
-        Some(
-            pack.folder
-                .join(source.replace('/', std::path::MAIN_SEPARATOR_STR)),
-        )
+    /// Do `operation` to the session of the pack in `folder` as one step called `label`, unless it changes nothing; whether it was done, and what it added.
+    fn do_map_step(
+        &mut self,
+        label: String,
+        folder: &Path,
+        operation: Operation,
+    ) -> Result<(bool, Option<usize>), String> {
+        let operations = vec![operation];
+        let done = self.do_in_the_map_session(folder, &operations, false)?;
+        let Some((inverse, added)) = done.first().map(|did| (did.inverse.clone(), did.added))
+        else {
+            return Ok((false, None));
+        };
+        if self.puts_back_what_is_held(folder, &inverse) {
+            // ⚠ Taken back in the session, which then has nothing of it left to write: a field left as it was is no step and no unsaved change.
+            self.do_in_the_map_session(folder, &[inverse], false)?;
+            return Ok((false, None));
+        }
+        self.push_maps_applied(label, folder, operations, done);
+        Ok((true, added))
+    }
+
+    /// Whether `inverse` would put back the record its source already holds, with no extents to restore: the operation it takes back changed nothing.
+    fn puts_back_what_is_held(&mut self, folder: &Path, inverse: &Operation) -> bool {
+        let Ok(open) = self.workbench.maps.sessions.open(folder) else {
+            return false;
+        };
+        let held = match inverse {
+            Operation::ReplaceEntity {
+                source,
+                entity,
+                record,
+                extents: None,
+                ..
+            } => {
+                let at = At {
+                    source: source.clone(),
+                    index: *entity,
+                };
+                let now = open.session.entity(&at).map_err(unread);
+                now.and_then(|now| Record::entity(&now))
+                    .map(|now| now == *record)
+            }
+            Operation::ReplaceArchetype {
+                source,
+                archetype,
+                record,
+                ..
+            } => {
+                let at = At {
+                    source: source.clone(),
+                    index: *archetype,
+                };
+                let now = open.session.archetype(&at).map_err(unread);
+                now.and_then(|now| Record::archetype(&now))
+                    .map(|now| now == *record)
+            }
+            _ => Ok(false),
+        };
+        held.unwrap_or(false)
     }
 
     /// Stand the entity `index` of the map file `source` at `pose`, as one step Undo takes back.
@@ -63,10 +119,8 @@ impl AppState {
             pose: pose.into(),
             expects: None,
         };
-        match apply(&folder, &operation) {
-            Ok(applied) if applied.edited.changed() => {
-                self.patch_scene(source, index, pose);
-                self.push_maps_applied(label, &folder, operation, applied);
+        match self.do_map_step(label, &folder, operation) {
+            Ok((true, _)) => {
                 let set = self.workbench.maps.set.clone().unwrap_or_default();
                 self.workbench.maps.module = Some(module.clone());
                 if self.workbench.maps.selected.is_none() {
@@ -96,34 +150,6 @@ impl AppState {
             return;
         };
         self.place_entity_in(&source, index, pose, label);
-    }
-
-    /// Put the scene the shown set was last read as to the pose written, so the entity does not jump back for the frames before the next scan.
-    fn patch_scene(&mut self, source: &str, index: usize, pose: Pose) {
-        let set = self.shown_set().map(|(_, set)| set.id.clone());
-        let module = self.maps_pack().map(|p| p.module.clone());
-        let (Some(set), Some(module)) = (set, module) else {
-            return;
-        };
-        let Some(scan) = self.workbench.scan.as_mut() else {
-            return;
-        };
-        let Some(scene) = (scan.maps.iter_mut())
-            .find(|m| m.module == module)
-            .and_then(|m| m.read.as_mut().ok())
-            .and_then(|pack| pack.scenes.iter_mut().find(|(id, _)| *id == set))
-            .map(|(_, scene)| scene)
-        else {
-            return;
-        };
-        if let Some(placed) = scene
-            .find(source, index)
-            .and_then(|at| scene.placed.get_mut(at))
-        {
-            placed.obb.position = pose.position;
-            placed.obb.rotation = pose.rotation;
-            placed.obb.scale = Vec3::new(pose.scale_xy, pose.scale_xy, pose.scale_z);
-        }
     }
 
     /// Add an entity of `archetype` at `pose` to the map file the selection is in (else the first of the shown set), as a copy of the entity selected (else the first one the set holds).
@@ -167,10 +193,6 @@ impl AppState {
             return;
         };
         // The record to copy: the entity selected, else the first the target holds, else the first any map file of the set holds.
-        let holds = |source: &str, at: usize| {
-            (self.map_source_dir(source))
-                .is_some_and(|dir| or_maps::edit::read_entity(&dir, at).is_ok())
-        };
         let selected = match self.workbench.maps.selected.clone() {
             Some(Pick {
                 source,
@@ -182,10 +204,13 @@ impl AppState {
             source: source.clone(),
             index: 0,
         };
-        let donor = selected
-            .filter(|at| holds(&at.source, at.index))
-            .or_else(|| Some(first(&target)).filter(|at| holds(&at.source, 0)))
-            .or_else(|| sources.iter().map(first).find(|at| holds(&at.source, 0)));
+        let mut candidates = (selected.into_iter())
+            .chain([first(&target)])
+            .chain(sources.iter().map(first));
+        let donor = match self.workbench.maps.sessions.open(&folder) {
+            Ok(open) => candidates.find(|at| open.session.entity(at).is_ok()),
+            Err(why) => return self.show_error_toast(why),
+        };
         let Some(donor) = donor else {
             self.show_warning_toast(tr!(
                 "No entity in this set can be copied: add the first from a map file that has one"
@@ -201,11 +226,10 @@ impl AppState {
             donor: Some(donor),
             expects: None,
         };
-        match apply(&folder, &operation) {
-            Ok(applied) => {
+        match self.do_map_step(label, &folder, operation) {
+            Ok((_, added)) => {
                 self.remember_map_names(&module, &[text.as_deref().unwrap_or_default()]);
-                let added = applied.added.map(PickKind::Entity);
-                self.push_maps_applied(label, &folder, operation, applied);
+                let added = added.map(PickKind::Entity);
                 self.select_in_maps(
                     &module,
                     &set_id,
@@ -219,7 +243,7 @@ impl AppState {
         }
     }
 
-    /// Take the entity selected out of its map file, with the LOD links renumbered, as one step.
+    /// Take the entity selected out of the map files of its pack with its chain, as one step: what names it as its far model goes with it, and so does each far model left standing for nothing.
     pub fn remove_selected_entity(&mut self) {
         let Some(Pick {
             source,
@@ -234,16 +258,54 @@ impl AppState {
         let Some(folder) = self.maps_pack_folder() else {
             return;
         };
-        let operation = Operation::RemoveEntity {
-            source,
-            entity: index,
-            extents: None,
-            expects: None,
+        let chosen = [At { source, index }];
+        let planned = (self.workbench.maps.sessions.open(&folder)).and_then(|open| {
+            delete::plan_in(&mut open.session, &chosen).map_err(|refused| refused.to_string())
+        });
+        let planned = match planned {
+            Ok(planned) => planned,
+            Err(why) => return self.show_error_toast(why),
         };
-        match apply(&folder, &operation) {
-            Ok(applied) => {
+        if planned.operations.is_empty() {
+            // The plan leaves an entity it cannot tell from another, and then takes nothing.
+            if let Some(left) = planned.ambiguous.first() {
+                self.show_warning_toast(tr_n!(
+                    "Entity {index} was left: {count} other entity places the same model at the same pose, and a deletion would not know which of them goes",
+                    "Entity {index} was left: {count} other entities place the same model at the same pose, and a deletion would not know which of them goes",
+                    left.twins.len(),
+                    index = index
+                ));
+            }
+            return;
+        }
+        match self.do_in_the_map_session(&folder, &planned.operations, false) {
+            Ok(done) => {
                 let label = tr!("Removed entity {index}", index = index);
-                self.push_maps_applied(label, &folder, operation, applied);
+                self.push_maps_applied(label, &folder, planned.operations, done);
+                for note in &planned.notes {
+                    self.show_warning_toast(note.to_string());
+                }
+                let went = |why: fn(&Why) -> bool| {
+                    (planned.goes.iter())
+                        .filter(|going| why(&going.why))
+                        .count()
+                };
+                let far = went(|why| *why == Why::LeftWithNoChild);
+                if far > 0 {
+                    self.show_warning_toast(tr_n!(
+                        "{count} far model that stood for nothing else went with it",
+                        "{count} far models that stood for nothing else went with it",
+                        far
+                    ));
+                }
+                let under = went(|why| matches!(why, Why::Under(_)));
+                if under > 0 {
+                    self.show_warning_toast(tr_n!(
+                        "{count} entity it was the far model of went with it",
+                        "{count} entities it was the far model of went with it",
+                        under
+                    ));
+                }
                 let set = self.workbench.maps.set.clone().unwrap_or_default();
                 self.select_in_maps(&module, &set, None);
             }
@@ -331,12 +393,17 @@ impl AppState {
         let Some((module, _)) = self.maps_folder_to_write() else {
             return;
         };
-        let (Some(folder), Some(dir)) = (self.maps_pack_folder(), self.map_source_dir(&source))
-        else {
+        let Some(folder) = self.maps_pack_folder() else {
             return;
         };
-        // The record as the person changed it, which the operation puts in the place of the one the file holds.
-        let changed = or_maps::edit::read_archetype(&dir, index).and_then(|mut archetype| {
+        // The record as the person changed it, which the operation puts in the place of the one the session holds.
+        let at = At {
+            source: source.clone(),
+            index,
+        };
+        let held = (self.workbench.maps.sessions.open(&folder))
+            .and_then(|open| open.session.archetype(&at).map_err(unread));
+        let changed = held.and_then(|mut archetype| {
             change(&mut archetype);
             Record::archetype(&archetype)
         });
@@ -347,13 +414,10 @@ impl AppState {
                 record,
                 expects: None,
             };
-            apply(&folder, &operation).map(|applied| (operation, applied))
+            self.do_map_step(label, &folder, operation)
         });
         match done {
-            Ok((operation, applied)) if applied.edited.changed() => {
-                self.remember_map_names(&module, typed);
-                self.push_maps_applied(label, &folder, operation, applied);
-            }
+            Ok((true, _)) => self.remember_map_names(&module, typed),
             Ok(_) => {}
             Err(why) => self.show_error_toast(why),
         }
@@ -375,11 +439,16 @@ impl AppState {
         let Some((module, _)) = self.maps_folder_to_write() else {
             return;
         };
-        let (Some(folder), Some(dir)) = (self.maps_pack_folder(), self.map_source_dir(&source))
-        else {
+        let Some(folder) = self.maps_pack_folder() else {
             return;
         };
-        let renamed = or_maps::edit::read_entity(&dir, index).and_then(|mut entity| {
+        let at = At {
+            source: source.clone(),
+            index,
+        };
+        let held = (self.workbench.maps.sessions.open(&folder))
+            .and_then(|open| open.session.entity(&at).map_err(unread));
+        let renamed = held.and_then(|mut entity| {
             entity.archetype_name = or_io::meta::instance::HashedString::new(name);
             Record::entity(&entity)
         });
@@ -391,18 +460,15 @@ impl AppState {
                 extents: None,
                 expects: None,
             };
-            apply(&folder, &operation).map(|applied| (operation, applied))
+            let label = tr!(
+                "Placed {name} as entity {index}",
+                name = name,
+                index = index
+            );
+            self.do_map_step(label, &folder, operation)
         });
         match done {
-            Ok((operation, applied)) if applied.edited.changed() => {
-                self.remember_map_names(&module, &[name]);
-                let label = tr!(
-                    "Placed {name} as entity {index}",
-                    name = name,
-                    index = index
-                );
-                self.push_maps_applied(label, &folder, operation, applied);
-            }
+            Ok((true, _)) => self.remember_map_names(&module, &[name]),
             Ok(_) => {}
             Err(why) => self.show_error_toast(why),
         }
@@ -431,6 +497,8 @@ impl AppState {
         if let Ok(mut model) = Maps::read(&folder) {
             if model.remember(typed) {
                 let _ = model.write(&folder);
+                // The scan reads the names the pack remembers, and no edit asks for one any more.
+                self.workbench.want_scan();
             }
         }
     }
@@ -467,17 +535,17 @@ impl AppState {
             return;
         };
         // The record to copy: the archetype selected, when its file still holds it.
-        let donor = match self.workbench.maps.selected.clone() {
+        let selected = match self.workbench.maps.selected.clone() {
             Some(Pick {
                 source,
                 kind: PickKind::Archetype(index),
             }) => Some(At { source, index }),
             _ => None,
-        }
-        .filter(|at| {
-            (self.map_source_dir(&at.source))
-                .is_some_and(|dir| or_maps::edit::read_archetype(&dir, at.index).is_ok())
-        });
+        };
+        let donor = match self.workbench.maps.sessions.open(&folder) {
+            Ok(open) => selected.filter(|at| open.session.archetype(at).is_ok()),
+            Err(why) => return self.show_error_toast(why),
+        };
         let operation = Operation::AddArchetype {
             source: target.clone(),
             name: name.to_string(),
@@ -485,12 +553,11 @@ impl AppState {
             donor,
             expects: None,
         };
-        match apply(&folder, &operation) {
-            Ok(applied) => {
+        let label = tr!("Added the archetype {name}", name = name);
+        match self.do_map_step(label, &folder, operation) {
+            Ok((_, added)) => {
                 self.remember_map_names(&module, &[name, asset.unwrap_or(name)]);
-                let added = applied.added.map(PickKind::Archetype);
-                let label = tr!("Added the archetype {name}", name = name);
-                self.push_maps_applied(label, &folder, operation, applied);
+                let added = added.map(PickKind::Archetype);
                 self.select_in_maps(
                     &module,
                     &set_id,
@@ -524,10 +591,9 @@ impl AppState {
             archetype: index,
             expects: None,
         };
-        match apply(&folder, &operation) {
-            Ok(applied) => {
-                let label = tr!("Removed archetype {index}", index = index);
-                self.push_maps_applied(label, &folder, operation, applied);
+        let label = tr!("Removed archetype {index}", index = index);
+        match self.do_map_step(label, &folder, operation) {
+            Ok(_) => {
                 let set = self.workbench.maps.set.clone().unwrap_or_default();
                 self.select_in_maps(&module, &set, None);
             }
@@ -568,20 +634,22 @@ impl AppState {
         );
     }
 
-    /// Keep `operation`, which was applied to the pack in `folder`, as a step of Undo, and say what it went without.
+    /// Keep `operations`, which the session of the pack in `folder` did, as one step of Undo, and say what they went without.
     fn push_maps_applied(
         &mut self,
         label: String,
         folder: &Path,
-        operation: Operation,
-        applied: Applied,
+        operations: Vec<Operation>,
+        done: Vec<Done>,
     ) {
-        self.say_maps_notes(&applied.notes);
+        for step in &done {
+            self.say_maps_notes(&step.notes);
+        }
         self.push_maps_step(Step {
             label,
             folder: folder.to_path_buf(),
-            undo: applied.inverse,
-            redo: operation,
+            undo: (done.into_iter().rev().map(|step| step.inverse)).collect(),
+            redo: operations,
         });
     }
 
@@ -600,35 +668,21 @@ impl AppState {
         }
         work.redo.clear();
         work.generation += 1;
-        self.workbench.want_scan();
     }
 
-    /// Take the change of `step` back (`undo`) or make it again, by the operation the step keeps, which is refused once anything but this history changed its source; the step then keeps the operation that goes the other way.
+    /// Take the change of `step` back (`undo`) or make it again in the session of its pack, by the operations the step keeps, all of them or none; the step then keeps the operations that go the other way.
     fn apply_maps_step(&mut self, step: &mut Step, undo: bool) -> Result<(), String> {
-        let operation = if undo { &step.undo } else { &step.redo };
-        let applied =
-            or_maps::operation::apply(&step.folder, operation).map_err(
-                |refused| match refused {
-                    or_maps::operation::Error::Stale { at, .. } => {
-                        let file = (step.folder)
-                            .join(at.replace('/', std::path::MAIN_SEPARATOR_STR))
-                            .join(or_source::metadata::XML);
-                        tr!(
-                            "{file} changed since: take back the changes made after this one first",
-                            file = file.display().to_string()
-                        )
-                        .to_string()
-                    }
-                    other => other.to_string(),
-                },
-            )?;
-        self.say_maps_notes(&applied.notes);
-        if undo {
-            step.redo = applied.inverse;
-        } else {
-            step.undo = applied.inverse;
+        let operations = if undo { &step.undo } else { &step.redo };
+        let done = self.do_in_the_map_session(&step.folder, operations, true)?;
+        for did in &done {
+            self.say_maps_notes(&did.notes);
         }
-        self.workbench.want_scan();
+        let other_way = (done.into_iter().rev().map(|did| did.inverse)).collect();
+        if undo {
+            step.redo = other_way;
+        } else {
+            step.undo = other_way;
+        }
         self.workbench.maps.generation += 1;
         self.workbench.maps.preview = None;
         Ok(())

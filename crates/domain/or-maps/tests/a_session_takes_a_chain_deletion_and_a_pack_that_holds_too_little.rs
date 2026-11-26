@@ -295,6 +295,65 @@ fn a_chain_deletion_done_through_a_session_and_taken_back_by_its_inverses_restor
     );
 }
 
+/// A deletion planned for a screen that holds a session is of the files as the session holds them: an entity taken out and not yet
+/// written has moved the indexes the plan names.
+#[test]
+fn a_deletion_planned_in_a_session_is_of_the_files_as_the_session_holds_them() {
+    let (_scratch, [one_by_one, held]) = copies(city);
+    let mut session = Session::open(&held).unwrap();
+    assert_eq!(
+        delete::plan_in(&mut session, &tower_and_shed()).unwrap(),
+        delete::plan(&held, &tower_and_shed()).unwrap(),
+        "with nothing done, the session holds what the disk holds"
+    );
+    // The first house is taken out, in the session and not on its disk: the shed is entity 2 of `city` from here on.
+    let house = Operation::RemoveEntity {
+        source: CITY.into(),
+        expects: None,
+        entity: 1,
+        extents: None,
+    };
+    session.apply(&house).unwrap();
+    apply(&one_by_one, &house).unwrap();
+    let shed = [at(CITY, 2)];
+    let planned = delete::plan_in(&mut session, &shed).unwrap();
+    assert_eq!(planned, delete::plan(&one_by_one, &shed).unwrap());
+    let gone: Vec<(String, String)> = (planned.goes.iter())
+        .map(|going| {
+            (
+                going.entity.at.source.clone(),
+                going.entity.archetype.shown(),
+            )
+        })
+        .collect();
+    let named = |source: &str, archetype: &str| {
+        let hash = or_io::string_hash(archetype.as_bytes());
+        (source.to_string(), or_maps::Name::of(hash).shown())
+    };
+    assert_eq!(
+        gone,
+        [
+            named(CITY, "shed"),
+            named(LOD, "lod_shed"),
+            named(SLOD, "slod_far")
+        ],
+        "the shed with its two far models"
+    );
+    assert_ne!(
+        delete::plan(&held, &shed).unwrap(),
+        planned,
+        "the disk of the session still holds the house, and names it by that index"
+    );
+
+    delete::apply_in(&mut session, &planned).unwrap();
+    session.flush().unwrap();
+    delete::apply(&one_by_one, &planned).unwrap();
+    assert_eq!(
+        differing(&files(&one_by_one), &files(&held)),
+        Vec::<PathBuf>::new()
+    );
+}
+
 #[test]
 fn an_inverse_of_a_chain_deletion_is_refused_once_its_source_was_edited_after_it() {
     let (_scratch, [one_by_one, held]) = copies(city);

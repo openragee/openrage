@@ -739,12 +739,20 @@ pub(super) fn save_project_as(state: &mut AppState, _: &egui::Context) {
     }
 }
 
-/// Whether Save (Ctrl+S) has something to write: the document in front, or with none open the project's own changes.
+/// Whether Save (Ctrl+S) writes the project and not the document in front: no document is open, or the Map screen shows the project's maps with an edit nothing wrote.
+fn saves_the_project(state: &AppState) -> bool {
+    let map_edits = state.active_workspace == crate::ui::dock::Workspace::Map
+        && state.workbench.maps.scanned.is_none()
+        && state.map_edits_unwritten();
+    state.active_document.is_none() || map_edits
+}
+
+/// Whether Save (Ctrl+S) has something to write: the document in front, or with none open the project's own changes, or the edits of the Map screen on it.
 pub(super) fn something_to_save(state: &AppState) -> Result<(), &'static str> {
-    if state.active_document.is_none() && state.project_path.is_some() {
+    if saves_the_project(state) && state.project_path.is_some() {
         super::table::not_busy(state)?;
         return none_if(
-            !state.project_carried.changed,
+            !state.project_unsaved(),
             tr!("The project has no unsaved changes"),
         );
     }
@@ -754,9 +762,9 @@ pub(super) fn something_to_save(state: &AppState) -> Result<(), &'static str> {
     none_if(unchanged, tr!("The document has no unsaved changes"))
 }
 
-/// Save (Ctrl+S): the document in front, one never saved asking where; with none open, the project.
+/// Save (Ctrl+S): the document in front, one never saved asking where; with none open, or on the Map screen with edits of the project's maps to write, the project.
 pub(super) fn save(state: &mut AppState, _: &egui::Context) {
-    if state.active_document.is_none() {
+    if saves_the_project(state) {
         state.save_active_project(save_project_dialog);
     } else if state.active_document().is_some_and(|d| d.path.is_some()) {
         state.save_active_document();

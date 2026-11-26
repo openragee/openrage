@@ -35,6 +35,11 @@ impl AppState {
         }
     }
 
+    /// Whether the open project holds something Save project is yet to write: a change to its members, or an edit of its maps.
+    pub fn project_unsaved(&self) -> bool {
+        self.project_carried.changed || self.map_edits_unwritten()
+    }
+
     pub fn save_project_to(&mut self, path: PathBuf) -> std::io::Result<()> {
         if let (Some(why), true) = (
             self.read_only_reason(),
@@ -42,6 +47,8 @@ impl AppState {
         ) {
             return Err(std::io::Error::other(why));
         }
+        // The edits of the Map screen are the project's, held in memory until here: a pack that cannot be written stops the save.
+        self.flush_map_sessions().map_err(std::io::Error::other)?;
         // ⚠ Read before the save adds the open tabs to the project, or the file would read as changed outside.
         self.begin_history();
         // ⚠ A project made by saving a session states the workspace on screen; one that has a file states what the file did, whatever the person has switched to since.
@@ -204,7 +211,7 @@ impl AppState {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or(tr!("Untitled"));
-            parts.push(marked(name.to_string(), self.project_carried.changed));
+            parts.push(marked(name.to_string(), self.project_unsaved()));
         }
         parts.push("OpenRage".to_string());
         parts.join(" — ")

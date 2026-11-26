@@ -760,6 +760,21 @@ msgstr "Rimosso l'archetipo {index}"
 msgid "Removed entity {index}"
 msgstr "Rimossa l'entità {index}"
 
+msgid "Entity {index} was left: {count} other entity places the same model at the same pose, and a deletion would not know which of them goes"
+msgid_plural "Entity {index} was left: {count} other entities place the same model at the same pose, and a deletion would not know which of them goes"
+msgstr[0] "L'entità {index} è stata lasciata: {count} altra entità colloca lo stesso modello nella stessa posa, e un'eliminazione non saprebbe quale togliere"
+msgstr[1] "L'entità {index} è stata lasciata: {count} altre entità collocano lo stesso modello nella stessa posa, e un'eliminazione non saprebbe quale togliere"
+
+msgid "{count} far model that stood for nothing else went with it"
+msgid_plural "{count} far models that stood for nothing else went with it"
+msgstr[0] "{count} modello lontano che non stava per nient'altro è stato rimosso con essa"
+msgstr[1] "{count} modelli lontani che non stavano per nient'altro sono stati rimossi con essa"
+
+msgid "{count} entity it was the far model of went with it"
+msgid_plural "{count} entities it was the far model of went with it"
+msgstr[0] "{count} entità di cui era il modello lontano è stata rimossa con essa"
+msgstr[1] "{count} entità di cui era il modello lontano sono state rimosse con essa"
+
 msgid "Removed the weapon {name}"
 msgstr "Rimossa l'arma {name}"
 
@@ -883,8 +898,8 @@ msgstr "Distanza di streaming"
 msgid "Take the archetype selected out of its type file. Entities that place it stay, and the rules say they place a name no type file declares. Undo puts it back"
 msgstr "Rimuovi l'archetipo selezionato dal suo file dei tipi. Le entità che lo posizionano restano e le regole segnalano che posizionano un nome che nessun file dei tipi dichiara. Annulla lo ripristina"
 
-msgid "Take the entity selected out of its map file, with the LOD links renumbered. Undo puts it back"
-msgstr "Rimuovi l'entità selezionata dal suo file di mappa, con i collegamenti LOD rinumerati. Annulla la ripristina"
+msgid "Take the entity selected out of the map files of the pack with its chain: a far model left standing for nothing goes with it, and so does what names it as its far model. Undo puts them back"
+msgstr "Rimuovi l'entità selezionata dai file di mappa del pack con la sua catena: un modello lontano che non sta più per niente viene rimosso con essa, e così ciò che la indica come proprio modello lontano. Annulla li ripristina"
 
 msgid "Take the weapon selected out of the pack. Its sources stay in the folder of the pack, where the rules say that no weapon names them; Undo puts it back"
 msgstr "Rimuovi l'arma selezionata dal pack. I suoi sorgenti restano nella cartella del pack, dove le regole segnalano che nessuna arma li nomina; Annulla la ripristina"
@@ -7784,8 +7799,8 @@ msgstr "Salva query…"
 msgid "Save the active document to a new location"
 msgstr "Salva il documento attivo in una nuova posizione"
 
-msgid "Save the active document; one never saved asks where. With no document open, it saves the project"
-msgstr "Salva il documento attivo; uno mai salvato chiede dove. Se non c'è alcun documento aperto, salva il progetto"
+msgid "Save the active document; one never saved asks where. With no document open, or on the Map screen while an edit of the project's maps is unwritten, it saves the project"
+msgstr "Salva il documento attivo; uno mai salvato chiede dove. Se non c'è alcun documento aperto, o nella schermata Mappa finché una modifica alle mappe del progetto non è scritta, salva il progetto"
 
 msgid "Save the archive's changes first: a comparison reads it as it was last saved"
 msgstr "Salva prima le modifiche dell'archivio: un confronto lo legge come è stato salvato l'ultima volta"

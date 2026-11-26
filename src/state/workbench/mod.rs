@@ -23,6 +23,7 @@ mod imports;
 mod links;
 mod maps;
 mod maps_edit;
+mod maps_session;
 mod members;
 mod originals;
 mod output_sizes;
@@ -619,17 +620,17 @@ impl Workbench {
         }
     }
 
-    /// What a scan left, once it has: the rows, and a watch on each source folder.
-    fn take_scan(&mut self) {
+    /// What a scan left, once it has: the rows, and a watch on each source folder; whether one was taken.
+    fn take_scan(&mut self) -> bool {
         let Some(receiver) = &self.scanning else {
-            return;
+            return false;
         };
         let Ok(scan) = receiver.try_recv() else {
-            return;
+            return false;
         };
         self.scanning = None;
         if self.project.as_deref() != Some(scan.project.as_path()) {
-            return;
+            return false;
         }
         if let Some(cooks) = self.cooks.as_mut() {
             for row in scan.rows.iter().filter(|row| row.kept == Kept::Source) {
@@ -645,6 +646,7 @@ impl Workbench {
         self.scan = Some(scan);
         self.follow_packs();
         self.findings_stale = true;
+        true
     }
 
     fn recompute_findings(&mut self) {
@@ -659,6 +661,7 @@ impl Workbench {
                     &self.builds,
                 );
                 found.extend(findings::original_changes(scan, &self.originals));
+                found.extend(self.unsaved_map_findings());
                 found
             }
             None => Vec::new(),

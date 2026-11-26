@@ -760,6 +760,21 @@ msgstr "Arquétipo {index} removido"
 msgid "Removed entity {index}"
 msgstr "Entidade {index} removida"
 
+msgid "Entity {index} was left: {count} other entity places the same model at the same pose, and a deletion would not know which of them goes"
+msgid_plural "Entity {index} was left: {count} other entities place the same model at the same pose, and a deletion would not know which of them goes"
+msgstr[0] "A entidade {index} foi deixada: {count} outra entidade coloca o mesmo modelo na mesma pose, e uma remoção não saberia qual delas retirar"
+msgstr[1] "A entidade {index} foi deixada: {count} outras entidades colocam o mesmo modelo na mesma pose, e uma remoção não saberia qual delas retirar"
+
+msgid "{count} far model that stood for nothing else went with it"
+msgid_plural "{count} far models that stood for nothing else went with it"
+msgstr[0] "{count} modelo distante que não representava mais nada foi removido com ela"
+msgstr[1] "{count} modelos distantes que não representavam mais nada foram removidos com ela"
+
+msgid "{count} entity it was the far model of went with it"
+msgid_plural "{count} entities it was the far model of went with it"
+msgstr[0] "{count} entidade de que ela era o modelo distante foi removida com ela"
+msgstr[1] "{count} entidades de que ela era o modelo distante foram removidas com ela"
+
 msgid "Removed the weapon {name}"
 msgstr "Arma {name} removida"
 
@@ -883,8 +898,8 @@ msgstr "Distância de streaming"
 msgid "Take the archetype selected out of its type file. Entities that place it stay, and the rules say they place a name no type file declares. Undo puts it back"
 msgstr "Retirar o arquétipo selecionado do arquivo de tipos. As entidades que o posicionam permanecem, e as regras indicam que elas posicionam um nome que nenhum arquivo de tipos declara. Desfazer o restaura"
 
-msgid "Take the entity selected out of its map file, with the LOD links renumbered. Undo puts it back"
-msgstr "Retirar a entidade selecionada do arquivo de mapa, com os vínculos de LOD renumerados. Desfazer a restaura"
+msgid "Take the entity selected out of the map files of the pack with its chain: a far model left standing for nothing goes with it, and so does what names it as its far model. Undo puts them back"
+msgstr "Retirar a entidade selecionada dos arquivos de mapa do pack com a sua cadeia: um modelo distante que já não representa nada sai com ela, e também o que a nomeia como seu modelo distante. Desfazer os restaura"
 
 msgid "Take the weapon selected out of the pack. Its sources stay in the folder of the pack, where the rules say that no weapon names them; Undo puts it back"
 msgstr "Retirar a arma selecionada do pack. Suas fontes permanecem na pasta do pack, onde as regras indicam que nenhuma arma as nomeia; Desfazer a restaura"
@@ -7784,8 +7799,8 @@ msgstr "Salvar consulta…"
 msgid "Save the active document to a new location"
 msgstr "Salvar o documento ativo em um novo local"
 
-msgid "Save the active document; one never saved asks where. With no document open, it saves the project"
-msgstr "Salvar o documento ativo; um que nunca foi salvo pergunta onde. Sem nenhum documento aberto, salva o projeto"
+msgid "Save the active document; one never saved asks where. With no document open, or on the Map screen while an edit of the project's maps is unwritten, it saves the project"
+msgstr "Salvar o documento ativo; um que nunca foi salvo pergunta onde. Sem nenhum documento aberto, ou na tela Mapa enquanto uma alteração nos mapas do projeto não estiver gravada, salva o projeto"
 
 msgid "Save the archive's changes first: a comparison reads it as it was last saved"
 msgstr "Salve primeiro as alterações do archive: uma comparação o lê como foi salvo pela última vez"

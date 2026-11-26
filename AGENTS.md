@@ -535,6 +535,8 @@ The module table and the app's traps are in
   refused of a GTA VI Xbox build, and its commands.
 - [GTA_VI_World_Viewer.md](docs/features/GTA_VI_World_Viewer.md): the World screen, how a
   GTA VI install is mounted with no table to read, and the streaming rules.
+- [GTA_VI_Script_Decompiler.md](docs/features/GTA_VI_Script_Decompiler.md): what is read of
+  a compiled GTA VI script, the levels, the passes, the names lists, and its commands.
 - [CLI_Server_Protocol.md](docs/reference/CLI_Server_Protocol.md), with
   [openrage_client.go](docs/reference/openrage_client.go), and
   [Plugin_ABI.md](docs/reference/Plugin_ABI.md): the `openrage-cli serve` protocol and

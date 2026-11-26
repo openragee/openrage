@@ -294,18 +294,13 @@ pub fn night_of(tables: &DayTables, moment: &Moment, latitude: f32) -> Night {
         let [r, g, b] = atmosphere.transmittance(up);
         [r, g, b, 0.0]
     });
-    let sun_disc = sky_dome::sun_disc(&variables, sun, call).map_or(0.0, |d| d.radius);
     let moon_disc = sky_dome::moon_disc(&variables, moon, call).map_or(0.0, |d| d.radius);
-    // ⚠ A stand-in for the frame's sun colour, a member of a block not read: the sun's illuminance
-    // spread over its disc as its darkened limb leaves it, the disc's mean being 0.2 + 0.8 x 2/3.
-    let angle = sky_dome::disc_angular_radius(variables.sun_size);
-    let spread = std::f32::consts::TAU * (1.0 - angle.cos()) * (0.2 + block.row_190 * 2.0 / 3.0);
-    let sun_light = block.row_194 * moment.light.sun_illuminance / spread.max(1e-9);
     let moon_colour = block.moon_colour * block.row_164;
     Night {
         air: through,
-        sun_disc: sun.extend(sun_disc).to_array(),
-        sun_colour: [sun_light, sun_light, sun_light, block.row_190],
+        // ⚠ The sun's disc is left to the older pass: its colour is a member of a block not read.
+        sun_disc: sun.extend(0.0).to_array(),
+        sun_colour: [block.row_194, block.row_194, block.row_194, block.row_190],
         moon_disc: block.moon_lit_direction.extend(moon_disc).to_array(),
         moon_colour: moon_colour.extend(0.0).to_array(),
         fill,

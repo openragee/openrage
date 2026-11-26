@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
-use crate::facts::{ArchetypeFact, Fact, Facts, Role, SourceFact};
+use crate::facts::{map_name, ArchetypeFact, Fact, Facts, Role, SourceFact};
 use crate::model::{MapSet, Maps};
 
 pub use or_project::content::rule::{Rule, Severity};
@@ -67,6 +67,12 @@ pub const RULES: &[Rule] = &[
         "a map names a LOD parent that is not in it, a parent cycle, or a child count the entities do not give: the engine trusts these and a save refuses them",
     ),
     rule(
+        "records-broken",
+        Error,
+        false,
+        "a map's far lights hold arrays of different lengths, or an occlude model states another count of bytes than it holds: the engine trusts these and a save refuses them",
+    ),
+    rule(
         "interior-broken",
         Error,
         false,
@@ -79,10 +85,22 @@ pub const RULES: &[Rule] = &[
         "an entity names a LOD parent in the map its own names as parent, past the entities that map holds in the pack",
     ),
     rule(
+        "far-lights-out-of-step",
+        Warning,
+        true,
+        "a map holds another count of far lights than the map it names as parent holds distant lights in the pack, and the two are one list of lights in two files",
+    ),
+    rule(
         "lod-children-uncounted",
         Warning,
         true,
         "an entity counts fewer LOD children than the entities of the pack's map files name it as their parent, as a removal alone in a parent map leaves it",
+    ),
+    rule(
+        "map-named-otherwise",
+        Warning,
+        true,
+        "a map file that holds entities states another name than its file's, where a map is found by its file: the game's manifests state one so, and so does the parent a map under it names",
     ),
     rule(
         "archetype-twice",
@@ -257,11 +275,18 @@ pub fn check(model: &Maps, facts: &Facts, known: Known<'_>) -> Vec<Finding> {
     }
     let mut named: BTreeMap<&str, Vec<&MapSet>> = BTreeMap::new();
     let mut cooked_to: BTreeMap<String, Vec<&str>> = BTreeMap::new();
-    // How many entities each map file of the pack holds, by the hash of its name: what a link into a parent map indexes.
-    let held: BTreeMap<u32, usize> = (model.maps.iter())
+    // What each map file of the pack holds that a map under it indexes, by the hash of its file's name.
+    let held: BTreeMap<u32, Held> = (model.maps.iter())
         .flat_map(|set| &set.sources)
-        .filter_map(|path| facts.source(path)?.map())
-        .map(|map| (map.name.hash, map.entities.len()))
+        .filter_map(|path| {
+            let source = facts.source(path)?;
+            let map = source.map()?;
+            let held = Held {
+                entities: map.entities.len(),
+                distant_lights: map.distant_lights,
+            };
+            Some((map_name(&source.name), held))
+        })
         .collect();
     let children = Children::of(model, facts);
     for set in &model.maps {
@@ -353,9 +378,16 @@ fn of_role<'f>(
     })
 }
 
+/// What a map file of a pack holds that a map under it runs beside: its entities, which a link into the parent map indexes, and its distant lights, one to each far light of the map under it.
+#[derive(Clone, Copy)]
+struct Held {
+    entities: usize,
+    distant_lights: usize,
+}
+
 /// How many entities of the map files of a pack name each entity as their LOD parent.
 struct Children {
-    /// By the hash of the name of the map the parent is in, and its index there.
+    /// By the hash of the name of the file of the map the parent is in, and its index there.
     named: BTreeMap<(u32, usize), u32>,
     /// The maps two files of the pack each hold entities of: an index into one is into the two put together, which no file states.
     split: BTreeSet<u32>,
@@ -365,16 +397,19 @@ impl Children {
     fn of(model: &Maps, facts: &Facts) -> Self {
         let mut named: BTreeMap<(u32, usize), u32> = BTreeMap::new();
         let mut files: BTreeMap<u32, u32> = BTreeMap::new();
-        let maps = crate::facts::named_paths(model).filter_map(|path| facts.source(path)?.map());
-        for map in maps.filter(|map| !map.entities.is_empty()) {
-            *files.entry(map.name.hash).or_default() += 1;
+        let maps = crate::facts::named_paths(model).filter_map(|path| {
+            let source = facts.source(path)?;
+            Some((map_name(&source.name), source.map()?))
+        });
+        for (name, map) in maps.filter(|(_, map)| !map.entities.is_empty()) {
+            *files.entry(name).or_default() += 1;
             for entity in &map.entities {
                 let Ok(index) = usize::try_from(entity.parent_index) else {
                     continue;
                 };
                 let into = match entity.flags & (1 << 3) != 0 {
                     true => map.parent.hash,
-                    false => map.name.hash,
+                    false => name,
                 };
                 *named.entry((into, index)).or_default() += 1;
             }
@@ -386,14 +421,14 @@ impl Children {
         Self { named, split }
     }
 
-    /// The entities of `map` that count fewer children than name them: each with the count it states and the count that name it.
-    fn uncounted(&self, map: &crate::facts::MapInside) -> Vec<(usize, u32, u32)> {
-        if map.name.hash == 0 || self.split.contains(&map.name.hash) {
+    /// The entities of `map`, whose file is called by the name that hashes to `name`, that count fewer children than name them: each with the count it states and the count that name it.
+    fn uncounted(&self, name: u32, map: &crate::facts::MapInside) -> Vec<(usize, u32, u32)> {
+        if self.split.contains(&name) {
             return Vec::new();
         }
         (map.entities.iter().enumerate())
             .filter_map(|(index, entity)| {
-                let named = *self.named.get(&(map.name.hash, index))?;
+                let named = *self.named.get(&(name, index))?;
                 (named > entity.num_children).then_some((index, entity.num_children, named))
             })
             .collect()
@@ -405,7 +440,7 @@ fn check_set(
     set: &MapSet,
     facts: &Facts,
     known: Known<'_>,
-    held: &BTreeMap<u32, usize>,
+    held: &BTreeMap<u32, Held>,
     children: &Children,
     say: &mut impl FnMut(&'static str, Option<&MapSet>, Place, String),
 ) {
@@ -502,10 +537,58 @@ fn check_set(
                 format!("`{path}`: {problem}"),
             );
         }
+        for problem in &map.record_problems {
+            say(
+                "records-broken",
+                Some(set),
+                Place {
+                    source: Some(path.to_string()),
+                    ..Place::default()
+                },
+                format!("`{path}`: {problem}"),
+            );
+        }
+        // ⚠ Only a file that holds entities: 473 map files of each install state the name of another, and none of them holds one.
+        if !map.entities.is_empty() && map.name.hash != map_name(&source.name) {
+            say(
+                "map-named-otherwise",
+                Some(set),
+                Place {
+                    source: Some(path.to_string()),
+                    ..Place::default()
+                },
+                format!(
+                    "`{path}` cooks to {}, and the map inside states the name `{}`: a map is found by its file, as the map a map under it names as parent is, so the name stated says nothing of where the links into it lead",
+                    source.file_name(),
+                    map.name.shown()
+                ),
+            );
+        }
         // ⚠ An entity whose `flags` bit 3 is set indexes the entities of the parent map, so an entity taken out of that map leaves
         // the link past its end or on another entity; only the first is something the files can show.
         let parent_holds = held.get(&map.parent.hash).filter(|_| map.parent.hash != 0);
-        let past = parent_holds.and_then(|len| {
+        // ⚠ A far light and its distant light are one light under one subscript, in two files: a pair out of step reads past the
+        // shorter, and a save of one file cannot see it.
+        if let Some(parent) =
+            parent_holds.filter(|p| map.far_lights > 0 && p.distant_lights != map.far_lights)
+        {
+            say(
+                "far-lights-out-of-step",
+                Some(set),
+                Place {
+                    source: Some(path.to_string()),
+                    ..Place::default()
+                },
+                format!(
+                    "`{path}` holds {} far lights and its parent map `{}` holds {} distant ones in the pack: the two run under one subscript, a light to each",
+                    map.far_lights,
+                    map.parent.shown(),
+                    parent.distant_lights
+                ),
+            );
+        }
+        let past = parent_holds.and_then(|parent| {
+            let len = &parent.entities;
             let past = |e: &crate::facts::EntityFact| {
                 e.flags & (1 << 3) != 0 && usize::try_from(e.parent_index).is_ok_and(|p| p >= *len)
             };
@@ -530,7 +613,8 @@ fn check_set(
         }
         // ⚠ A link that is not past the end names another entity once an entity before it is taken out of the parent map alone,
         // which the counts show: a pack whose counts held before has one too low after it, or a link past the end.
-        if let [(first, stated, named), rest @ ..] = children.uncounted(map).as_slice() {
+        let file = map_name(&source.name);
+        if let [(first, stated, named), rest @ ..] = children.uncounted(file, map).as_slice() {
             say(
                 "lod-children-uncounted",
                 Some(set),
@@ -779,5 +863,152 @@ fn waive(model: &Maps, found: &mut Vec<Finding>) {
         }) {
             finding.waived = Some(waiver.reason.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use or_io::meta::{MetaInstance, Value};
+
+    use super::*;
+    use crate::facts::inside_of;
+
+    #[test]
+    fn a_record_of_a_map_that_a_save_refuses_is_a_finding_of_its_own_rule_and_not_of_the_lod_hierarchy(
+    ) {
+        // A map as text, which a source someone edited by hand cooks to: an occlude model that states eleven bytes and holds twelve,
+        // and far lights whose arrays differ. A save of the typed map refuses both, so no sample of the crate can be written with them.
+        let mut model = MetaInstance::new("Item");
+        model.set("dataSize", Value::Int(11));
+        model.set("verts", Value::ByteArray(vec![7; 12]));
+        let mut lights = MetaInstance::new("LODLightsSOA");
+        let words = |n: u64| Value::Array((0..n).map(Value::UInt).collect());
+        for array in [
+            "direction",
+            "falloff",
+            "falloffExponent",
+            "timeAndStateFlags",
+            "coneInnerAngle",
+            "coneOuterAngleOrCapExt",
+            "coronaIntensity",
+        ] {
+            lights.set(array, words(3));
+        }
+        lights.set("hash", words(2));
+        let mut root = MetaInstance::new("CMapData");
+        root.set("name", Value::String("yard".into()));
+        root.set(
+            "occludeModels",
+            Value::Array(vec![Value::Struct(Box::new(model))]),
+        );
+        root.set("LODLightsSOA", Value::Struct(Box::new(lights)));
+        let text = or_io::meta::write_meta(&root).unwrap().into_bytes();
+
+        let source = "yard.metadata.src";
+        let mut set = MapSet::new("yard");
+        set.sources.push(source.to_string());
+        let mut maps = Maps::new();
+        maps.maps.push(set);
+        let mut facts = Facts::default();
+        facts.insert(
+            source,
+            Fact::Source(Box::new(SourceFact {
+                kind: "metadata".into(),
+                name: "yard".into(),
+                extension: "ymap".into(),
+                bytes: text.len() as u64,
+                game: Vec::new(),
+                digest: None,
+                inside: Some(inside_of(&text, "ymap", None)),
+            })),
+        );
+        let found = check(&maps, &facts, None);
+        let of = |code: &str| -> Vec<&str> {
+            (found.iter().filter(|f| f.code == code))
+                .map(|f| f.message.as_str())
+                .collect()
+        };
+        assert_eq!(of("hierarchy-broken"), Vec::<&str>::new());
+        let said = of("records-broken");
+        assert_eq!(said.len(), 2, "{found:?}");
+        assert!(
+            said[0].ends_with("light array hash holds 2 where its siblings hold 3"),
+            "{said:?}"
+        );
+        assert!(
+            said[1].ends_with("occlude model 0 states 11 bytes of `verts` (dataSize) and holds 12"),
+            "{said:?}"
+        );
+        assert!(
+            (found.iter()).all(|f| f.code != "records-broken" || f.blocks()),
+            "what a save refuses stops a build"
+        );
+    }
+
+    /// A map as text called `name` under `parent`, with `lights` far lights and `distant` distant ones.
+    fn lights_map(name: &str, parent: &str, lights: u64, distant: u64) -> SourceFact {
+        let words = |n: u64| Value::Array((0..n).map(Value::UInt).collect());
+        let mut far = MetaInstance::new("LODLightsSOA");
+        for array in [
+            "direction",
+            "falloff",
+            "falloffExponent",
+            "timeAndStateFlags",
+            "hash",
+            "coneInnerAngle",
+            "coneOuterAngleOrCapExt",
+            "coronaIntensity",
+        ] {
+            far.set(array, words(lights));
+        }
+        let mut held = MetaInstance::new("DistantLODLightsSOA");
+        held.set("position", words(distant));
+        held.set("RGBI", words(distant));
+        let mut root = MetaInstance::new("CMapData");
+        root.set("name", Value::String(name.into()));
+        root.set("parent", Value::String(parent.into()));
+        root.set("LODLightsSOA", Value::Struct(Box::new(far)));
+        root.set("DistantLODLightsSOA", Value::Struct(Box::new(held)));
+        let text = or_io::meta::write_meta(&root).unwrap().into_bytes();
+        SourceFact {
+            kind: "metadata".into(),
+            name: name.into(),
+            extension: "ymap".into(),
+            bytes: text.len() as u64,
+            game: Vec::new(),
+            digest: None,
+            inside: Some(inside_of(&text, "ymap", None)),
+        }
+    }
+
+    #[test]
+    fn a_map_of_far_lights_is_held_to_the_distant_lights_of_the_map_it_names_as_parent_in_the_pack()
+    {
+        let findings = |distant: u64, with_the_parent: bool| -> Vec<String> {
+            let mut set = MapSet::new("yard");
+            let mut facts = Facts::default();
+            let mut files = vec![lights_map("lodlights_yard", "distlodlights_yard", 3, 0)];
+            if with_the_parent {
+                files.push(lights_map("distlodlights_yard", "", 0, distant));
+            }
+            for file in files {
+                let source = format!("{}.metadata.src", file.name);
+                set.sources.push(source.clone());
+                facts.insert(&source, Fact::Source(Box::new(file)));
+            }
+            let mut maps = Maps::new();
+            maps.maps.push(set);
+            (check(&maps, &facts, None).into_iter())
+                .filter(|f| f.code == "far-lights-out-of-step")
+                .map(|f| f.message)
+                .collect()
+        };
+        assert_eq!(
+            findings(2, true),
+            ["`lodlights_yard.metadata.src` holds 3 far lights and its parent map `distlodlights_yard` holds 2 distant ones in the pack: the two run under one subscript, a light to each"]
+        );
+        assert_eq!(findings(3, true), Vec::<String>::new());
+        // A parent the pack does not hold is the game's, which no rule of a pack reads.
+        assert_eq!(findings(2, false), Vec::<String>::new());
     }
 }

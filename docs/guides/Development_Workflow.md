@@ -384,8 +384,19 @@ not print ad-hoc skip lines.
 
 An install suite is a test that reads a game install: it takes its roots from
 `or_test_support::game_roots()`, which reads `OPENRAGE_GAME_ROOT` (install
-roots separated by `;`), records `skip_install` when the variable names none,
-and sits in a binary or a module the slow tier names.
+roots separated by `;`) and records `skip_install` when the variable names
+none. One written since this section sits in a binary or a module the slow
+tier names.
+
+- ⚠ **Forty-two older binaries that read an install are still in the default
+  tier** (the files under a crate's `tests/` that call `game_roots()`, against
+  the binaries `.config/nextest.toml` names, 2026-11-26),
+  `or-world::every_untouched_world_file_reencodes` among them. With no install
+  named each skips; with `OPENRAGE_GAME_ROOT` exported for a whole shell, a bare
+  `cargo nextest run` or `just ready` ends each at 30 s, so the variable is set
+  for one command, as the points below say. Most of them hold tests built by
+  hand beside the one that reads an install, so a binary is split before it
+  moves to the slow tier, and none was moved whole.
 
 - **An unset variable does not mean the machine has no install.** Nothing
   discovers one for a test, on purpose: a measurement wants a denominator it

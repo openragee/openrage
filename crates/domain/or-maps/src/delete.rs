@@ -36,7 +36,7 @@ use or_source::metadata::Inputs;
 use or_world::MapData;
 
 use crate::edit::in_parent_map;
-use crate::facts::{named_paths, stays_inside, Name};
+use crate::facts::{map_name, named_paths, stays_inside, Name};
 use crate::model::{self, Maps};
 use crate::operation::{self, Applied, At, Operation};
 use crate::script_text::{self, ScriptForm};
@@ -71,6 +71,8 @@ pub enum Error {
 struct MapFile {
     /// The source, as the pack names it.
     source: String,
+    /// The hash of the name of the file it cooks to, which is the map's name to the game and to the maps under it (`crate::facts::map_name`).
+    name: u32,
     map: CMapData,
     /// The container LODs the file carries, whose indexes no deletion renumbers.
     container_lods: usize,
@@ -291,14 +293,14 @@ fn map_files(folder: &Path, model: &Maps) -> Result<Vec<MapFile>, Error> {
         let cooked = (inputs.compile())
             .map_err(|found| unread(problems(found)))?
             .bytes;
-        files.push(MapFile::read(path, cooked).map_err(unread)?);
+        files.push(MapFile::read(path, &source.manifest.name, cooked).map_err(unread)?);
     }
     Ok(files)
 }
 
 impl MapFile {
-    /// The map file `bytes` hold, which the source `source` cooks to or is to be made of.
-    fn read(source: &str, bytes: Vec<u8>) -> Result<Self, String> {
+    /// The map file `bytes` hold, called `stem`, which the source `source` cooks to or is to be made of.
+    fn read(source: &str, stem: &str, bytes: Vec<u8>) -> Result<Self, String> {
         let map = CMapData::from_bytes(&bytes).map_err(|e| e.to_string())?;
         let document = MetaDocument::parse(or_io::meta::default_library(), bytes)
             .map_err(|e| e.to_string())?;
@@ -306,6 +308,7 @@ impl MapFile {
             MapData::new(&document.instance).map_or(0, |data| data.container_lod_count());
         Ok(Self {
             source: source.to_string(),
+            name: map_name(stem),
             map,
             container_lods,
         })
@@ -318,7 +321,9 @@ pub struct Reached(MapFile);
 impl Reached {
     /// The map file `bytes` hold, under the name `source` its source is to have in the pack.
     pub fn read(source: &str, bytes: Vec<u8>) -> Result<Self, String> {
-        MapFile::read(source, bytes).map(Self)
+        let folder = source.rsplit('/').next().unwrap_or(source);
+        let stem = or_source::asset::parse_folder_name(folder).map_or(folder, |(name, _)| name);
+        MapFile::read(source, stem, bytes).map(Self)
     }
 
     /// The name its source is to have in the pack.
@@ -334,7 +339,7 @@ impl Reached {
 /// What lies beyond the pack, which a plan asks for the map files its links lead into: the caller that has the mount answers.
 // ⚠ An error stops the plan: a map file that is there and does not read may hold links a deletion would break.
 pub trait Beyond {
-    /// The map file of the map called `name`, by the hash of its name; none where there is no such map.
+    /// The map file of the map called `name`, by the hash of its file's name; none where there is no such map.
     fn named(&mut self, name: u32) -> Result<Option<Reached>, String>;
 
     /// The map files of the maps that name `parent` as their parent map.
@@ -357,19 +362,19 @@ struct Links<'a> {
     /// Where the link of each entity leads, for the entities that have one.
     parents: BTreeMap<Node, Parent>,
     children: BTreeMap<Node, Vec<Node>>,
-    /// The file that holds the entities of each map name, which the links into that map index.
+    /// The file that holds the entities of each map, by the name of its file, which the links into that map index.
     owner: BTreeMap<u32, usize>,
-    /// The names that several files each hold entities of, with those files.
+    /// The names that several files are each called and hold entities under, with those files.
     split: BTreeMap<u32, Vec<usize>>,
 }
 
 impl<'a> Links<'a> {
     fn of(files: &'a [MapFile], names: &dyn Fn(u32) -> Option<String>) -> Self {
-        // The file that holds the entities of each map name: a part with none indexes nothing.
+        // The file that holds the entities of each map, by the name of its file: one with none indexes nothing.
         let mut holding: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
         for (file, held) in files.iter().enumerate() {
             if !held.map.entities.is_empty() {
-                holding.entry(held.map.name.hash).or_default().push(file);
+                holding.entry(held.name).or_default().push(file);
             }
         }
         let mut links = Self {
@@ -400,7 +405,7 @@ impl<'a> Links<'a> {
                     Parent::At((file, named))
                 } else {
                     let parent = &held.map.parent;
-                    let among = || files.iter().any(|other| other.map.name.hash == parent.hash);
+                    let among = || files.iter().any(|other| other.name == parent.hash);
                     let len = (links.owner.get(&parent.hash))
                         .map_or(0, |owner| files[*owner].map.entities.len());
                     match (links.owner.get(&parent.hash), links.split.get(&parent.hash)) {
@@ -645,7 +650,7 @@ fn plan_over(
         if held.container_lods > 0 {
             return Err(Error::ContainerLods(held.source.clone()));
         }
-        if let Some(parts) = links.split.get(&held.map.name.hash) {
+        if let Some(parts) = links.split.get(&held.name) {
             return Err(Error::SplitMap(links.sources(parts)));
         }
     }
@@ -765,9 +770,8 @@ pub fn plan_reaching(
     let (mut named, mut under): (BTreeSet<u32>, BTreeSet<u32>) = Default::default();
     let planned = loop {
         let planned = plan_over(&files, chosen, &|hash| model.name_of(hash))?;
-        let map_of = |source: &str| {
-            (files.iter().find(|file| file.source == source)).map(|file| file.map.name.hash)
-        };
+        let map_of =
+            |source: &str| (files.iter().find(|file| file.source == source)).map(|file| file.name);
         let mut found: Vec<Reached> = Vec::new();
         for note in &planned.notes {
             match note {
@@ -789,9 +793,8 @@ pub fn plan_reaching(
         }
         let before = files.len();
         for reached in found {
-            let held = |file: &MapFile| {
-                file.map.name.hash == reached.0.map.name.hash || file.source == reached.0.source
-            };
+            let held =
+                |file: &MapFile| file.name == reached.0.name || file.source == reached.0.source;
             if !files.iter().any(held) {
                 files.push(reached.0);
             }
@@ -824,8 +827,10 @@ mod tests {
     const BOX: ([f32; 3], [f32; 3]) = ([0.0; 3], [100.0; 3]);
 
     fn file(source: &str, bytes: &[u8]) -> MapFile {
+        // A source is named here by the stem of its file, behind any folder.
         MapFile {
             source: source.to_string(),
+            name: map_name(source.rsplit('/').next().unwrap_or(source)),
             map: CMapData::from_bytes(bytes).expect("a sample map opens"),
             container_lods: 0,
         }
@@ -900,14 +905,15 @@ mod tests {
             map_file("far", &[stands], BOX)
         };
         let near = child_map_file("near", "far", &[under(2, 0)], BOX);
+        // Two sources of one pack that each cook to `far.ymap`, in two folders.
         let split = vec![
-            file("far_a", &part(1)),
-            file("far_b", &part(9)),
+            file("a/far", &part(1)),
+            file("b/far", &part(9)),
             file("near", &near),
         ];
-        let refused = plan_over(&split, &[at("far_a", 0)], &unnamed).unwrap_err();
+        let refused = plan_over(&split, &[at("a/far", 0)], &unnamed).unwrap_err();
         assert!(
-            matches!(&refused, Error::SplitMap(sources) if sources == &["far_a", "far_b"]),
+            matches!(&refused, Error::SplitMap(sources) if sources == &["a/far", "b/far"]),
             "{refused}"
         );
         // A link into the split map names neither file: the entity goes alone, and the plan says what it could not follow.
@@ -917,15 +923,15 @@ mod tests {
             planned.notes,
             [Note::ParentMapSplit {
                 entity: at("near", 0),
-                sources: vec!["far_a".to_string(), "far_b".to_string()],
+                sources: vec!["a/far".to_string(), "b/far".to_string()],
             }]
         );
 
-        // A second file of the name that holds no entity, as a part of instanced grass is: the links index the one that holds some.
+        // A second file of the name that holds no entity: the links index the one that holds some.
         let stub = map_file("far", &[], BOX);
         let parts = vec![
-            file("far_a", &part(1)),
-            file("far_grass", &stub),
+            file("a/far", &part(1)),
+            file("b/far", &stub),
             file("near", &near),
         ];
         let planned = plan_over(&parts, &[at("near", 0)], &unnamed).unwrap();
@@ -934,8 +940,21 @@ mod tests {
             .iter()
             .map(|going| going.entity.at.clone())
             .collect();
-        assert_eq!(gone, [at("near", 0), at("far_a", 0)]);
+        assert_eq!(gone, [at("near", 0), at("a/far", 0)]);
         assert_eq!(planned.notes, Vec::new());
+
+        // ⚠ A file that states the name of another map is not a part of it: a map is the file called so, and the link names no source.
+        let stating = vec![file("depot", &part(1)), file("near", &near)];
+        let planned = plan_over(&stating, &[at("near", 0)], &unnamed).unwrap();
+        assert_eq!(planned.goes.len(), 1);
+        assert!(
+            matches!(
+                planned.notes.as_slice(),
+                [Note::ParentMapNotAmongSources { .. }]
+            ),
+            "{:?}",
+            planned.notes
+        );
     }
 
     #[test]

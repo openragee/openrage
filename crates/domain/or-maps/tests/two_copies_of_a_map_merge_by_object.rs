@@ -1217,7 +1217,9 @@ fn a_record_a_map_types_besides_its_entities_is_taken_whole_from_the_side_that_c
     let ours = parked("a_taxi");
     let mut theirs = base.clone();
     moved(&mut theirs, 0, [3.0, 2.0, 3.0]);
-    assert!(map_changes(&base, &ours).other);
+    let changes = map_changes(&base, &ours);
+    assert!(!changes.other, "a parked vehicle is a record the map types");
+    assert_eq!(changes.records, ["carGenerators"]);
 
     let merge = merged(&base, &ours, &theirs, Take::Stop);
     assert_eq!(merge.report.conflicts, Vec::<Conflict>::new());
@@ -1230,6 +1232,11 @@ fn a_record_a_map_types_besides_its_entities_is_taken_whole_from_the_side_that_c
     let theirs = parked("a_bus");
     let stopped = merged(&base, &ours, &theirs, Take::Stop);
     assert_eq!(stopped.report.conflicts.len(), 1, "{:?}", stopped.report);
+    assert!(
+        matches!(&stopped.report.conflicts[0].what, Disagreement::File { member, .. } if member == "carGenerators"),
+        "the conflict names the member that holds the vehicles: {:?}",
+        stopped.report.conflicts[0].what
+    );
     assert!(stopped.merged.is_none());
     let taken = merged(&base, &ours, &theirs, Take::Theirs).merged.unwrap();
     assert_eq!(model_of(&taken), HashedString::new("a_bus").hash);

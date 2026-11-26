@@ -52,7 +52,7 @@ pub fn place_of(source: &SourceFact) -> String {
 pub enum Shape {
     /// A FiveM resource, and any build that takes the files where a resource has them: at `stream/`.
     Resource,
-    /// A singleplayer DLC: the maps inside the nested archive the pack registers as map data, and each type file inside an archive of its own with its models.
+    /// A singleplayer DLC, and the pack an `.oiv` installs: the maps inside the nested archive the pack registers as map data, and each type file inside an archive of its own with its models.
     Pack,
 }
 
@@ -60,7 +60,7 @@ impl Shape {
     /// The shape a build of `kind` takes a module's files in.
     pub fn of(kind: &OutputKind) -> Self {
         match kind {
-            OutputKind::SingleplayerDlc => Self::Pack,
+            OutputKind::SingleplayerDlc | OutputKind::OivPackage => Self::Pack,
             _ => Self::Resource,
         }
     }
@@ -90,6 +90,7 @@ pub fn plan_in(
 ) -> Planned {
     let findings = check(model, facts, known);
     let mut contribution = Contribution::of(module);
+    contribution.pack = shape == Shape::Pack;
     contribution.problems = findings
         .iter()
         .filter(|f| f.blocks())

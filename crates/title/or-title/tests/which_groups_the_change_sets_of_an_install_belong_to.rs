@@ -100,7 +100,12 @@ struct Figures {
 
 fn measure(game: &MountedGame) -> Figures {
     let mut figures = Figures::default();
+    // ⚠ Each device once: a mount can list one pack twice, and its change sets are then counted twice.
+    let mut counted: BTreeSet<String> = BTreeSet::new();
     for pack in &game.packs {
+        if !counted.insert(pack.device_name.to_ascii_lowercase()) {
+            continue;
+        }
         let title_update = pack.name_hash == TITLE_UPDATE;
         // ⚠ The mount gives the title update a setup of its own making; the document is read here.
         let setup = match title_update {

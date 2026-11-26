@@ -734,9 +734,10 @@ impl Pack for Session {
     }
 
     fn linked(&mut self, source: &str) -> Option<Linked> {
-        let is_map =
-            (self.hold(source)).is_ok_and(|held| held.inputs.extension() == CMapData::EXTENSION);
-        (is_map.then(|| self.map_of(source).ok()).flatten()).map(Linked::of)
+        let file = (self.hold(source).ok())
+            .filter(|held| held.inputs.extension() == CMapData::EXTENSION)
+            .map(|held| held.inputs.output_name())?;
+        Some(Linked::of(self.map_of(source).ok()?, &file))
     }
 }
 

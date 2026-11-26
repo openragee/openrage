@@ -52,6 +52,8 @@ const TEMPS: u64 = 0xA3 << 56;
 const GLOBALS: u64 = 0xA4 << 56;
 const STATICS: u64 = 0xA5 << 56;
 const HEAP: u64 = 0xA6 << 56;
+/// The bits of a temporary's address that say which of its cells, and which byte of it.
+const TEMP_CELLS: u64 = 0xF_FFFF;
 
 /// What a run may take: statements and jumps, events, the seeds past the first [`SEEDS`] that are tried for blocks none has entered, and the inputs then tried that are chosen to turn a test towards such a block.
 #[derive(Clone, Copy, Debug)]
@@ -359,6 +361,10 @@ struct Machine<'f> {
     /// The objects an event has shown, numbered as they were first shown.
     // ⚠ Two allocations may change places, so an object is known by where it first went, not by when it was made.
     shown: HashMap<u64, u64>,
+    /// The temporaries an event has shown, numbered as they were first shown.
+    // ⚠ Two forms of one function name their temporaries apart (a listing numbers values the
+    // lifter leaves unnamed), so a temporary's address is known by where it first went.
+    temps: HashMap<u64, u64>,
     /// The locals whose address was handed out, the lowest such parameter, and the lowest cell of each temporary.
     out_locals: BTreeSet<u64>,
     /// The locals proved one cell wide on the form read: an address handed out stops before the next of them.
@@ -446,14 +452,29 @@ impl<'f> Machine<'f> {
         }
     }
 
-    /// A cell as an event states it: an object by the order it was first shown in.
+    /// A cell as an event states it: an object, or a temporary's address, by the order it was first shown in.
     fn stated(&mut self, cell: u64) -> u64 {
-        if cell >> 56 != 0xA6 {
-            return cell;
+        match cell >> 56 {
+            0xA6 => {
+                let next = self.shown.len() as u64 + 1;
+                let id = *self.shown.entry(cell & !0xFFFF).or_insert(next);
+                HEAP | (id << 16) | (cell & 0xFFFF)
+            }
+            0xA3 => {
+                let next = self.temps.len() as u64 + 1;
+                let id = *self.temps.entry(cell & !TEMP_CELLS).or_insert(next);
+                TEMPS | (id << 20) | (cell & TEMP_CELLS)
+            }
+            _ => cell,
         }
-        let next = self.shown.len() as u64 + 1;
-        let id = *self.shown.entry(cell & !0xFFFF).or_insert(next);
-        HEAP | (id << 16) | (cell & 0xFFFF)
+    }
+
+    /// A frame address as an event would state it, where one has shown it; else as it is.
+    fn shown_at(&self, addr: u64) -> u64 {
+        match (addr >> 56, self.temps.get(&(addr & !TEMP_CELLS))) {
+            (0xA3, Some(id)) => TEMPS | (id << 20) | (addr & TEMP_CELLS),
+            _ => addr,
+        }
     }
 
     fn read(&self, addr: u64, bytes: u32) -> u64 {
@@ -514,8 +535,8 @@ impl<'f> Machine<'f> {
             }
             0xA2 => lower(&mut self.low_param, (addr - PARAMS) / 8),
             0xA3 => {
-                let base = addr & !0xF_FFFF;
-                let cell = (addr & 0xF_FFFF) / 8;
+                let base = addr & !TEMP_CELLS;
+                let cell = (addr & TEMP_CELLS) / 8;
                 let low = self.low_temps.entry(base).or_insert(cell);
                 *low = (*low).min(cell);
             }
@@ -666,11 +687,15 @@ impl<'f> Machine<'f> {
             }
         }
         let cells: Vec<u64> = cells.into_iter().map(|cell| self.stated(cell)).collect();
-        let exposed = self.exposed();
+        let mut exposed: Vec<(u64, u64)> = (self.exposed().into_iter())
+            .map(|addr| (self.shown_at(addr), addr))
+            .collect();
+        // In the order of the addresses as stated: two forms hold their temporaries in other places.
+        exposed.sort_unstable();
         let mut seen = 0;
-        for addr in &exposed {
+        for (at, addr) in &exposed {
             let cell = self.cell(*addr);
-            seen = mix2(mix2(seen, *addr), self.stated(cell));
+            seen = mix2(mix2(seen, *at), self.stated(cell));
         }
         self.run.events.push(Event::Call {
             callee: id,
@@ -683,8 +708,8 @@ impl<'f> Machine<'f> {
         self.cells.retain(|addr, _| {
             framed(*addr) || (addr >> 56 == 0xA6 && !shown.contains_key(&(addr & !0xFFFF)))
         });
-        for addr in exposed {
-            let h = mix2(mix2(self.seed ^ 0xC10B, addr), n);
+        for (at, addr) in exposed {
+            let h = mix2(mix2(self.seed ^ 0xC10B, at), n);
             let new = self.draw(h);
             self.cells.insert(addr, new);
             self.holds_draw(addr, Some((h, 0)));
@@ -1422,6 +1447,7 @@ pub(crate) fn run_on(
         calls: 0,
         allocs: HashMap::new(),
         shown: HashMap::new(),
+        temps: HashMap::new(),
         out_locals: BTreeSet::new(),
         singles,
         low_param: None,
@@ -1851,6 +1877,23 @@ fn the_oracle_lets_a_callee_read_and_write_a_local_whose_address_it_was_given() 
     assert!(!differ(
         "local_2 = 7; Native.DEMO.USE(Vm.Address(locals, 3)); return local_2;",
         "local_2 = 7; v_000010_0 = local_2; Native.DEMO.USE(Vm.Address(locals, 3)); return v_000010_0;",
+    ));
+}
+
+#[test]
+fn a_temporary_handed_out_is_known_by_where_it_went_and_not_by_its_name() {
+    // Two forms of one function that name the temporary apart do the same.
+    let named = |v: &str| {
+        format!("{v} = zero_slots(2); Native.DEMO.USE(Vm.Address({v}, 0)); return {v}[0];")
+    };
+    assert!(!differ(&named("v_000028_3"), &named("v_000030_4")));
+    // Two temporaries handed out in the other order are still told apart by what comes back.
+    let both = |a: &str, b: &str| {
+        format!("v_000028_3 = zero_slots(2); v_000030_4 = zero_slots(2); Native.DEMO.USE2(Vm.Address({a}, 0), Vm.Address({b}, 0)); return v_000028_3[0];")
+    };
+    assert!(differ(
+        &both("v_000028_3", "v_000030_4"),
+        &both("v_000030_4", "v_000028_3")
     ));
 }
 

@@ -787,6 +787,45 @@ fn shows_one_function_lifted_beside_its_listing() {
     }
 }
 
+/// The opcodes that no test written by hand holds to a meaning: this suite is their check.
+const CHECKED: [u16; 3] = [168, 349, 352];
+
+/// The tallies of the sites of each of [`CHECKED`], by what holding its function against its listing came to.
+const SITES: [[&str; 4]; 3] = [
+    [
+        "sites of opcode 168 where every block of both forms ran the same",
+        "sites of opcode 168 in functions that run the same where a seed went",
+        "sites of opcode 168 in functions that run otherwise",
+        "sites of opcode 168 in functions not run",
+    ],
+    [
+        "sites of opcode 349 where every block of both forms ran the same",
+        "sites of opcode 349 in functions that run the same where a seed went",
+        "sites of opcode 349 in functions that run otherwise",
+        "sites of opcode 349 in functions not run",
+    ],
+    [
+        "sites of opcode 352 where every block of both forms ran the same",
+        "sites of opcode 352 in functions that run the same where a seed went",
+        "sites of opcode 352 in functions that run otherwise",
+        "sites of opcode 352 in functions not run",
+    ],
+];
+
+/// How many instructions of each of [`CHECKED`] the function at `at` holds.
+fn sites(program: &Program, project: &Project, at: u32) -> [u64; 3] {
+    let mut sites = [0; 3];
+    let insns = program
+        .function(at)
+        .and_then(|row| decode::function_in(program, project, row).ok());
+    for insn in insns.into_iter().flatten() {
+        if let Some(n) = CHECKED.iter().position(|opcode| *opcode == insn.opcode) {
+            sites[n] += 1;
+        }
+    }
+    sites
+}
+
 #[test]
 fn every_compiled_program_reads_and_lifts_to_what_its_listing_does() {
     let what = "a folder of compiled programs read, lifted and held against their listings";
@@ -897,7 +936,20 @@ fn every_compiled_program_reads_and_lifts_to_what_its_listing_does() {
                     found.wrong("branches turned", &at, &why);
                 }
             }
-            match caught(|| agree(&lifted, &read, Limits::CORPUS, project)) {
+            let agreed = caught(|| agree(&lifted, &read, Limits::CORPUS, project));
+            let outcome = match &agreed {
+                Some(Ok(done)) if done.skipped => 3,
+                Some(Ok(done)) if done.whole => 0,
+                Some(Ok(_)) => 1,
+                _ => 2,
+            };
+            for (n, counted) in sites(&program, project, read.head.at)
+                .into_iter()
+                .enumerate()
+            {
+                found.count(SITES[n][outcome], counted);
+            }
+            match agreed {
                 Some(Ok(done)) if done.skipped => found.count("functions not run", 1),
                 Some(Ok(done)) if done.whole => {
                     found.count("functions that run the same, every block entered", 1);

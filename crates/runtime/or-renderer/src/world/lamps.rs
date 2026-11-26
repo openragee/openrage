@@ -8,24 +8,27 @@ pub const WORLD_LAMPS: usize = 256;
 pub(crate) const LAMP_FLOATS: usize = 12;
 /// The most gusts the game's wind keeps alive at once.
 pub const WORLD_GUSTS: usize = 2;
-/// The floats of the wind after the lamps: the wind's row, then each gust's.
-pub(crate) const WIND_FLOATS: usize = 4 + 4 * WORLD_GUSTS;
+/// The floats of the wind after the lamps: the wind's two rows, then each gust's.
+pub(crate) const WIND_FLOATS: usize = 8 + 4 * WORLD_GUSTS;
 
-/// The wind the grass bends in, in metres and metres a second, x east and y north: the way it blows, its base speed and the most speed the game's wind reaches, then each live gust's centre, its strength times its ramp, and the half-width of the square it wraps in; a gust of no strength adds nothing.
+/// The wind the grass bends in, in metres and metres a second, x east and y north: the way it blows, the speeds the game's wind volumes are filled with at the ground and from the falloff height up with one over that height (nought where none), the most speed the game's wind reaches, then each live gust's centre, its strength times its ramp, and the half-width of the square it wraps in; a gust of no strength adds nothing.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct WorldWind {
     pub direction: [f32; 2],
-    pub speed: f32,
+    pub prevailing: [f32; 2],
+    pub rise: f32,
     pub most: f32,
     pub gusts: [[f32; 4]; WORLD_GUSTS],
 }
 
 impl WorldWind {
     /// The rows the light's buffer holds after the lamps.
-    pub(crate) fn rows(&self) -> [[f32; 4]; 1 + WORLD_GUSTS] {
+    pub(crate) fn rows(&self) -> [[f32; 4]; 2 + WORLD_GUSTS] {
         let [x, y] = self.direction;
-        let mut out = [[x, y, self.speed, self.most]; 1 + WORLD_GUSTS];
-        out[1..].copy_from_slice(&self.gusts);
+        let [bottom, top] = self.prevailing;
+        let mut out = [[x, y, bottom, top]; 2 + WORLD_GUSTS];
+        out[1] = [self.rise, self.most, 0.0, 0.0];
+        out[2..].copy_from_slice(&self.gusts);
         out
     }
 }
@@ -101,18 +104,20 @@ mod tests {
     }
 
     #[test]
-    fn the_wind_is_its_way_speed_and_most_then_a_row_a_gust() {
+    fn the_wind_is_its_way_and_speeds_then_its_rise_and_most_then_a_row_a_gust() {
         let wind = WorldWind {
             direction: [0.0, -1.0],
-            speed: 3.0,
+            prevailing: [3.0, 7.0],
+            rise: 0.02,
             most: 20.0,
             gusts: [[400.0, -400.0, 5.0, 800.0], [0.0; 4]],
         };
         let rows = wind.rows();
         assert_eq!(rows.len() * 4, WIND_FLOATS);
-        assert_eq!(rows[0], [0.0, -1.0, 3.0, 20.0]);
-        assert_eq!(rows[1], [400.0, -400.0, 5.0, 800.0]);
-        assert_eq!(rows[2], [0.0; 4]);
+        assert_eq!(rows[0], [0.0, -1.0, 3.0, 7.0]);
+        assert_eq!(rows[1], [0.02, 20.0, 0.0, 0.0]);
+        assert_eq!(rows[2], [400.0, -400.0, 5.0, 800.0]);
+        assert_eq!(rows[3], [0.0; 4]);
         let declared = format!("gusts: array<vec4<f32>, {WORLD_GUSTS}>");
         assert!(super::super::shader::WORLD_SHADER.contains(&declared));
     }

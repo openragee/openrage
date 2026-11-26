@@ -24,6 +24,8 @@ fn variables() -> WindVariables {
         gust_interval: [0.0, 0.0],
         speed_a_kmh: [0.0, 0.0],
         speed_b_kmh: [0.0, 0.0],
+        speed_mult: 1.0,
+        falloff_height: 0.0,
     }
 }
 
@@ -64,8 +66,29 @@ fn variables_come_from_their_frame_indices() {
     assert_eq!(v.gust_interval, [1111.0, 1112.0]);
     assert_eq!(v.speed_a_kmh, [1118.0, 1119.0]);
     assert_eq!(v.speed_b_kmh, [1120.0, 1121.0]);
-    // Index 1121 is the last read: a frame of 1121 floats lacks it.
-    assert_eq!(WindVariables::from_frame(&frame[..1121]), None);
+    assert_eq!((v.speed_mult, v.falloff_height), (1105.0, 1122.0));
+    // Index 1122 is the last read: a frame of 1122 floats lacks it.
+    assert_eq!(WindVariables::from_frame(&frame[..1122]), None);
+}
+
+#[test]
+fn the_injected_speed_goes_from_the_first_timecycle_speed_to_the_second_up_the_falloff_height() {
+    let mut state = WindState::calm();
+    state.timecycle_speeds = [2.0, 6.0];
+    let v = WindVariables {
+        speed_mult: 0.5,
+        falloff_height: 100.0,
+        ..variables()
+    };
+    assert_close(state.injected_speed(&v, -5.0), 1.0, 1e-6);
+    assert_close(state.injected_speed(&v, 25.0), 1.5, 1e-6);
+    assert_close(state.injected_speed(&v, 400.0), 3.0, 1e-6);
+    // No falloff height: the first speed at every height.
+    let flat = WindVariables {
+        falloff_height: 0.0,
+        ..v
+    };
+    assert_close(state.injected_speed(&flat, 400.0), 1.0, 1e-6);
 }
 
 #[test]

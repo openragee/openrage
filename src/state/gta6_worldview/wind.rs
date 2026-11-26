@@ -80,12 +80,12 @@ impl Wind {
         };
         let config = WindConfig::image_defaults();
         (self.state).step(self.clock, dt, variables, WALK, &randoms, &config);
-        world_wind(&self.state)
+        world_wind(&self.state, variables)
     }
 }
 
-/// The wind as the world's program takes it: the way, the base speed and the most speed, and each live gust.
-fn world_wind(state: &WindState) -> WorldWind {
+/// The wind as the world's program takes it: the way, the speeds the volumes' fill injects at the ground and up the falloff height, the most speed, and each live gust.
+fn world_wind(state: &WindState, variables: &WindVariables) -> WorldWind {
     let mut gusts = [[0.0; 4]; WORLD_GUSTS];
     for (row, gust) in gusts.iter_mut().zip(&state.gusts) {
         *row = [
@@ -95,9 +95,14 @@ fn world_wind(state: &WindState) -> WorldWind {
             gust.radius,
         ];
     }
+    let height = variables.falloff_height;
     WorldWind {
         direction: [state.direction.x, state.direction.y],
-        speed: state.base_speed,
+        prevailing: [
+            state.injected_speed(variables, 0.0),
+            state.injected_speed(variables, height.max(0.0)),
+        ],
+        rise: if height > 0.0 { 1.0 / height } else { 0.0 },
         most: max_speed([DEFAULT_VOLUME_MAX_SPEED_KMH; 2]),
         gusts,
     }
@@ -141,7 +146,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_world_takes_the_way_the_base_speed_the_most_and_each_gust_by_its_ramp() {
+    fn the_world_takes_the_way_the_injected_speeds_the_most_and_each_gust_by_its_ramp() {
         let weather = WeatherWind {
             speed_low: 1.0,
             speed_high: 2.0,
@@ -154,13 +159,16 @@ mod tests {
             gust_strength_kmh: [36.0, 36.0],
             gust_duration: [10.0, 10.0],
             gust_interval: [0.0, 0.0],
-            speed_a_kmh: [0.0, 0.0],
-            speed_b_kmh: [0.0, 0.0],
+            speed_a_kmh: [36.0, 36.0],
+            speed_b_kmh: [72.0, 72.0],
+            speed_mult: 0.5,
+            falloff_height: 50.0,
         };
         let first = wind.step(0.0, (WeatherState::Clear, Some(weather)), &calm);
-        // Heading 0: the wind comes from the north and blows south, at lerp(1, 2, 0.5).
+        // Heading 0: the wind comes from the north and blows south; the timecycle speeds start at nought.
         assert_eq!(first.direction, [0.0, -1.0]);
-        assert_eq!(first.speed, 1.5);
+        assert_eq!(first.prevailing, [0.0, 0.0]);
+        assert_eq!(first.rise, 1.0 / 50.0);
         // 74 km/h in m/s.
         assert!((first.most - 74.0 / 3.6).abs() < 1e-4, "{}", first.most);
         // A gust of 36 km/h is born on the first frame at no weight: it adds nothing yet.
@@ -168,6 +176,10 @@ mod tests {
         assert_eq!(first.gusts[0][3], 800.0);
         // A frame later it has ramped in by the time gone over a fifth of its ten seconds.
         let later = wind.step(0.02, (WeatherState::Clear, Some(weather)), &calm);
+        // Each timecycle speed eases at 2 m/s a second, then is halved: the weather's own speed is not the volumes'.
+        for speed in later.prevailing {
+            assert!((speed - 0.02).abs() < 1e-6, "{:?}", later.prevailing);
+        }
         assert!(later.gusts[0][2] > 0.0, "{:?}", later.gusts);
         assert!(later.gusts[0][2] < 10.0, "{:?}", later.gusts);
         // The same game time after a restart gives the same gusts: the wind runs on the game's clock alone.

@@ -23,8 +23,9 @@ struct Light {
     ambient_up: vec4<f32>,
     frame: vec4<f32>,
     lamps: array<Lamp, 256>,
-    // The wind as `WorldWind`'s rows: the way it blows, its base speed and its most speed, then each gust's centre, strength and half-width.
+    // The wind as `WorldWind`'s rows: the way it blows and the speeds its volumes are filled with at the ground and up the falloff height, one over that height and its most speed, then each gust's centre, strength and half-width.
     wind: vec4<f32>,
+    wind_rise: vec4<f32>,
     gusts: array<vec4<f32>, 2>,
 };
 // A material's constants, laid out as `WorldConstants` after a word of the family.
@@ -177,25 +178,25 @@ fn wrapped(offset: vec2<f32>, half: f32) -> vec2<f32> {
     return offset - 2.0 * half * round(offset / (2.0 * half));
 }
 
-// The wind's speed at `at`: the base speed, and each gust's strength by a fall-off linear over its half-width. ponytail: the fall-off is a stand-in, the game's gust shape was not read.
-fn wind_speed_at(at: vec2<f32>) -> f32 {
-    var speed = light.wind.z;
+// The wind's speed at `at`: the speed the game's volumes are filled with at that height, as their fill injects it before it is turned along the ground and carried, and each gust's strength by a fall-off linear over its half-width. ponytail: the fall-off is a stand-in, the game's gust shape was not read.
+fn wind_speed_at(at: vec3<f32>) -> f32 {
+    var speed = mix(light.wind.z, light.wind.w, saturate(at.z * light.wind_rise.x));
     for (var k = 0u; k < 2u; k++) {
         let gust = light.gusts[k];
         if (gust.z > 0.0 && gust.w > 0.0) {
-            speed += gust.z * max(1.0 - length(wrapped(at - gust.xy, gust.w)) / gust.w, 0.0);
+            speed += gust.z * max(1.0 - length(wrapped(at.xy - gust.xy, gust.w)) / gust.w, 0.0);
         }
     }
     return speed;
 }
 
-// ponytail: the wind is the game's, its way, its speed and its gusts; how a blade answers it is a stand-in. The game bends a blade by its material's `bendiness` towards global wind volumes it fills at run time, which no file holds; here a blade leans down the wind by its height above its clump's foot, the foot still, as far as the wind's speed over its most, with a flutter of each clump. Read the volumes' writer if a frame of the game's grass is to be matched.
+// ponytail: the wind's way, speed and gusts are the game's; how a blade answers it is a stand-in. The game bends a blade by its material's `bendiness` towards the velocity of the wind volumes it fills at run time; here a blade leans down the wind by its height above its clump's foot, the foot still, as far as the wind's speed over its most, with a flutter of each clump. Read the grass stage's use of the volumes if a frame of the game's grass is to be matched.
 fn swayed(in: VsIn, world: vec3<f32>) -> vec3<f32> {
-    if (m.family.x != GRASS || m.grass_bend <= 0.0 || light.wind.w <= 0.0) {
+    if (m.family.x != GRASS || m.grass_bend <= 0.0 || light.wind_rise.y <= 0.0) {
         return world;
     }
     let foot = vec3<f32>(in.row0.w, in.row1.w, in.row2.w);
-    let push = max(wind_speed_at(foot.xy), 0.0) / light.wind.w;
+    let push = max(wind_speed_at(foot), 0.0) / light.wind_rise.y;
     let high = max(world.z - foot.z, 0.0);
     let flutter = 0.15 * sin(4.7 * light.frame.w + dot(foot.xy, vec2<f32>(1.7, 2.3)));
     let lean = m.grass_bend * push * (1.0 + flutter) * high * high / (high + 0.3);

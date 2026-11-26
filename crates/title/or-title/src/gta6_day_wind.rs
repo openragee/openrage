@@ -1,5 +1,5 @@
 //! The global wind: heading and base speed from the weather object, the eased timecycle speeds, up to two moving gusts, the two noise scroll offsets, the maximum speed and a viewer's wind field, with axes x east, y north, z up.
-//! Not known and so not applied: the random walk's rate and retarget thresholds (the step and the target are arguments), the wind volumes' fill and the shader's own use of the block; the calm byte (read: it zeroes dir and both timecycle speeds each frame) is not applied because its writer was not found.
+//! Not known and so not applied: the random walk's rate and retarget thresholds (the step and the target are arguments), the wind volumes' fill past the speed it injects, and the shaders' own use of the block; the calm byte (read: it zeroes dir and both timecycle speeds each frame) is not applied because its writer was not found.
 
 use glam::Vec3;
 use or_io::gta5::data::timecycle::Keyframe;
@@ -14,6 +14,12 @@ const HEADING_WEIGHT: usize = 1103;
 
 /// Frame index of v1104, the timecycle heading in degrees.
 const HEADING_DEGREES: usize = 1104;
+
+/// Frame index of v1105, which the wind volumes' fill multiplies the wind it injects by.
+const SPEED_MULT: usize = 1105;
+
+/// Frame index of v1122, the height over which the injected speed goes from the first timecycle speed to the second (m).
+const FALLOFF_HEIGHT: usize = 1122;
 
 /// Frame index of v1107, the first of the gust strength pair (km/h).
 const GUST_STRENGTH: usize = 1107;
@@ -79,6 +85,10 @@ pub struct WindVariables {
     pub speed_a_kmh: [f32; 2],
     /// v1120, v1121, the second timecycle speed range, km/h.
     pub speed_b_kmh: [f32; 2],
+    /// v1105, the multiplier of the wind the volumes are filled with.
+    pub speed_mult: f32,
+    /// v1122, the height the first timecycle speed has gone over to the second by, m; at or below 0 the first speed at every height.
+    pub falloff_height: f32,
 }
 
 impl WindVariables {
@@ -92,6 +102,8 @@ impl WindVariables {
             gust_interval: pair(frame, GUST_INTERVAL)?,
             speed_a_kmh: pair(frame, SPEED_A)?,
             speed_b_kmh: pair(frame, SPEED_B)?,
+            speed_mult: *frame.get(SPEED_MULT)?,
+            falloff_height: *frame.get(FALLOFF_HEIGHT)?,
         })
     }
 
@@ -462,6 +474,17 @@ impl WindState {
         {
             *offset = scroll(*offset, self.direction, dt, *rate, *period);
         }
+    }
+
+    /// The speed the wind volumes' fill injects along the wind at height `z` (m/s): the two eased timecycle speeds blended by how far `z` is up the falloff height, times v1105.
+    pub fn injected_speed(&self, variables: &WindVariables, z: f32) -> f32 {
+        let up = if variables.falloff_height > 0.0 {
+            (z / variables.falloff_height).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let [bottom, top] = self.timecycle_speeds;
+        lerp(bottom, top, up) * variables.speed_mult
     }
 
     /// Wind velocity (m/s) at a point, a viewer stand-in: dir x s read from this build, plus each live gust's direction x strength x weight x falloff, a sum the build was not seen to make.

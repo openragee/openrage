@@ -374,3 +374,38 @@ fn what_gta_vi_states_under_the_frames_name_passes_and_the_rest_is_left_to_the_f
         assert!(whole.get(name).is_some(), "{name}");
     }
 }
+
+#[test]
+fn the_two_layers_of_fog_are_one_with_the_density_at_the_first_and_as_much_fog_above_it() {
+    let mut own = Keyframe::default();
+    assert_eq!(height_fog(&own), None, "no first layer, no fog");
+    for (name, value) in [
+        ("local_atmosphere_fog_density", 0.003),
+        ("local_atmosphere_fog_height", 0.0),
+        ("local_atmosphere_fog_falloff", 250.0),
+    ] {
+        own.set(name, value);
+    }
+    let first = height_fog(&own).expect("a first layer");
+    assert_eq!((first.density, first.falloff), (0.003, 250.0));
+    own.set("local_atmosphere_fog_density_layer_1", 0.01);
+    own.set("local_atmosphere_fog_falloff_layer_1", 100.0);
+    let both = height_fog(&own).expect("two layers");
+    let column = |f: HeightFog| f.density * f.falloff;
+    assert!((both.density - 0.013).abs() < 1e-6, "{both:?}");
+    assert!(
+        (column(both) - (0.003 * 250.0 + 0.01 * 100.0)).abs() < 1e-4,
+        "{both:?}"
+    );
+    let light = FrameLight {
+        exposure: 1.0,
+        ..Default::default()
+    };
+    let frame = frame_keyframe(&own, &light);
+    assert_eq!(
+        frame.get("fog_start"),
+        Some(0.0),
+        "summed from the camera on"
+    );
+    assert!((frame.get("fog_density").unwrap_or(0.0) - 130.0).abs() < 1e-3);
+}

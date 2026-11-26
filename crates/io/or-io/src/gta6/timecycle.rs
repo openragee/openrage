@@ -547,16 +547,16 @@ pub fn frame_keyframe(own: &Keyframe, light: &FrameLight) -> Keyframe {
         }
     }
 
-    // ⚠ GTA V's exponential height fog is assumed to read GTA VI's local atmosphere's fog.
-    if let Some(density) = own.get("local_atmosphere_fog_density") {
-        frame.set("fog_density", density * FRAME_FOG_DENSITY);
+    // ⚠ GTA V's exponential height fog is assumed to read GTA VI's local atmosphere's fog: its two
+    // layers, each a density at its height falling off by e over its falloff, are laid into the
+    // frame's one at the first layer's height, with the density there and as much fog above it.
+    if let Some(fog) = height_fog(own) {
+        frame.set("fog_density", fog.density * FRAME_FOG_DENSITY);
+        frame.set("fog_base_height", fog.height);
+        frame.set("fog_falloff", FRAME_FOG_FALLOFF / fog.falloff);
     }
-    if let Some(height) = own.get("local_atmosphere_fog_height") {
-        frame.set("fog_base_height", height);
-    }
-    if let Some(falloff) = own.get("local_atmosphere_fog_falloff").filter(|f| *f > 0.0) {
-        frame.set("fog_falloff", FRAME_FOG_FALLOFF / falloff);
-    }
+    // The build's fog is summed from the camera on: the frame's fog starts where it stands, not GTA V's 73 m out.
+    frame.set("fog_start", 0.0);
     // The haze is the air's own extinction, and what it fades to the sky's radiance at the horizon: a radiance, it takes the exposure whole.
     frame.set("fog_haze_density", light.haze * FRAME_FOG_DENSITY);
     for (stem, radiance) in FOG.iter().zip(light.fog) {
@@ -566,6 +566,42 @@ pub fn frame_keyframe(own: &Keyframe, light: &FrameLight) -> Keyframe {
         frame.set(name, 1.0);
     }
     frame
+}
+
+/// One exponential layer of height fog: its density per metre at `height` metres, falling off by e over `falloff` metres up.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HeightFog {
+    pub density: f32,
+    pub height: f32,
+    pub falloff: f32,
+}
+
+/// The two layers of fog `own` states as one at the first's height: the density there, and the falloff that holds as much fog above it; none where it states no first layer.
+pub fn height_fog(own: &Keyframe) -> Option<HeightFog> {
+    let layer = |suffix: &str, falloff: f32| {
+        let get = |name: &str| own.get(&format!("local_atmosphere_fog_{name}{suffix}"));
+        Some(HeightFog {
+            density: get("density")?.max(0.0),
+            height: get("height").unwrap_or(0.0),
+            falloff: get("falloff").unwrap_or(falloff).max(1.0),
+        })
+    };
+    // The variable table's defaults of the falloffs.
+    let first = layer("", 50.0)?;
+    let Some(second) = layer("_layer_1", 50.0).filter(|l| l.density > 0.0) else {
+        return Some(first);
+    };
+    let there = second.density * (-(first.height - second.height) / second.falloff).exp();
+    let density = first.density + there;
+    let falloff = match density > 0.0 {
+        true => (first.density * first.falloff + there * second.falloff) / density,
+        false => first.falloff,
+    };
+    Some(HeightFog {
+        density,
+        height: first.height,
+        falloff,
+    })
 }
 
 #[cfg(test)]

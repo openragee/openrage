@@ -526,6 +526,8 @@ impl RenderBridge {
         let grey = world.textures.grey(&self.device, &self.queue);
         let room = world.textures.bytes < budgets.textures_kept;
         let mut wanted = Vec::new();
+        // The soonest and the largest each map on the device is seen at, over every material that draws with it.
+        let mut seen_at: HashMap<u64, (f32, u32)> = HashMap::new();
         for id in touched {
             let material = &mut world.materials[id as usize];
             let mut with = [ABSENT; WORLD_MAPS];
@@ -550,10 +552,8 @@ impl RenderBridge {
                             (ready.used, ready.at) = (frame, material.at);
                         }
                         *stamp = ready.stamp;
-                        // Seen larger than it was asked for at, it is asked for again while there is room.
-                        if !ready.top && pixels > ready.got && room {
-                            wanted.push((material.priority, key, pixels));
-                        }
+                        let seen = seen_at.entry(key).or_insert((material.priority, pixels));
+                        *seen = (seen.0.min(material.priority), seen.1.max(pixels));
                     }
                     Some(Texture::Missing) => {
                         *stamp = match world.cards.stated(key) {
@@ -584,6 +584,14 @@ impl RenderBridge {
                 let made = (self.renderer).world_surface(&self.device, &surface);
                 material.made = Some((made, with));
                 material.making += 1;
+            }
+        }
+        // A map seen at another size than it was asked for at is asked for again, larger while there is room and smaller always, so that the device holds what the selection wants and not the largest it wanted on the way.
+        for (key, (priority, pixels)) in seen_at {
+            if let Some(Texture::Ready(ready)) = world.textures.map.get(&key) {
+                if (!ready.top && pixels > ready.got && room) || pixels < ready.got {
+                    wanted.push((priority, key, pixels));
+                }
             }
         }
         // The far stand-ins, and the colour maps a species waits for to be baked.

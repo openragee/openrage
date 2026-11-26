@@ -304,6 +304,11 @@ pub(super) fn pixels(density: f32, away: f32, scale: f32, per_metre: f32, most: 
         .min(most)
 }
 
+/// Whether an answer at `answer` pixels takes the place of a texture held at `held`: a larger one always, a smaller one only while its ask still `standing`, since a late answer to an ask the camera has left behind must not undo a later one.
+fn replaces(held: u32, answer: u32, standing: bool) -> bool {
+    answer > held || (answer < held && standing)
+}
+
 /// The world's textures on the device, by the key each is found by in the packs.
 #[derive(Default)]
 pub(super) struct Textures {
@@ -345,13 +350,13 @@ impl Textures {
         (bc, most_side): (bool, u32),
         (frame, eye): (u64, Vec3),
     ) -> u64 {
-        if self.asked.get(&key) == Some(&pixels) {
+        let standing = self.asked.get(&key) == Some(&pixels);
+        if standing {
             self.asked.remove(&key);
         }
         let (mut used, mut at) = (frame, eye);
         if let Some(Texture::Ready(held)) = self.map.get(&key) {
-            // A late answer to a smaller ask leaves the larger one in place.
-            if held.got >= pixels {
+            if !replaces(held.got, pixels, standing) {
                 return 0;
             }
             (used, at) = (held.used, held.at);
@@ -502,6 +507,14 @@ mod tests {
         let mut wanted = [(2.0, 7, 512)];
         textures.hold(&mut wanted);
         assert_eq!(wanted, [(2.0, 7, 512)]);
+    }
+
+    #[test]
+    fn a_smaller_answer_replaces_a_texture_only_while_it_is_still_asked_for() {
+        assert!(replaces(256, 1024, false));
+        assert!(replaces(1024, 256, true));
+        assert!(!replaces(1024, 256, false));
+        assert!(!replaces(512, 512, true));
     }
 
     #[test]

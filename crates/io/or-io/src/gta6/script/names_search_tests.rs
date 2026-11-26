@@ -234,3 +234,46 @@ fn the_types_and_fields_of_a_program_no_list_names_are_what_is_sought() {
     assert_eq!(rest.len(), 2);
     assert!(!rest.is_empty() && Targets::default().is_empty());
 }
+
+#[test]
+fn a_search_on_threads_finds_and_tries_what_one_thread_does() {
+    let targets = targets();
+    for join in 1..=MAX_JOIN {
+        let budget = Budget {
+            join,
+            candidates: 1 << 20,
+        };
+        let one = search(WORDS, &targets, budget);
+        for threads in [1, 3, 8] {
+            let many = search_threads(WORDS, &targets, budget, threads);
+            assert_eq!(many, one, "{join} words, {threads} threads");
+        }
+    }
+    // A length whose joins the budget does not cover is not started.
+    let short = Budget {
+        join: 2,
+        candidates: 4 * WORDS.len() as u64 + 1,
+    };
+    let many = search_threads(WORDS, &targets, short, 4);
+    assert!(!many.complete);
+    assert_eq!(many.tried, 4 * WORDS.len() as u64);
+    assert_eq!(names_of(&many), ["IQuill"]);
+    let none = search_threads(WORDS, &Targets::default(), Budget::default(), 4);
+    assert_eq!((none.tried, none.complete, none.found.len()), (0, true, 0));
+}
+
+#[test]
+fn a_name_splits_into_the_words_it_is_written_in() {
+    let cases: [(&str, &[&str]); 7] = [
+        ("QuillGrommet", &["Quill", "Grommet"]),
+        ("_kestrelQuill", &["kestrel", "Quill"]),
+        ("GROMMET_KESTREL", &["GROMMET", "KESTREL"]),
+        ("m_UQGrommet", &["m", "UQ", "Grommet"]),
+        ("Quill3Grommet", &["Quill", "3", "Grommet"]),
+        ("kestrelgrommet", &["kestrelgrommet"]),
+        ("__", &[]),
+    ];
+    for (name, words) in cases {
+        assert_eq!(words_of(name), words, "{name}");
+    }
+}

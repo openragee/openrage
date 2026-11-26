@@ -234,6 +234,7 @@ pub fn search<'w>(
         found: BTreeSet::new(),
         tried: 0,
         left: budget.candidates,
+        first: (0, 1),
     };
     let mut complete = true;
     if !targets.is_empty() && !lexicon.seen.is_empty() {
@@ -257,6 +258,106 @@ pub fn search<'w>(
     }
 }
 
+/// Searches as [`search`] does, on `threads` threads, each taking every `threads`th first word.
+// ⚠ The budget is spent a length and a shape at a time: a run whose count of joins it does not
+// cover is not started, where [`search`] tries its first joins.
+pub fn search_threads<'w>(
+    words: impl IntoIterator<Item = &'w str>,
+    targets: &Targets,
+    budget: Budget,
+    threads: usize,
+) -> Search {
+    let lexicon = Lexicon::of(words);
+    let threads = threads.max(1);
+    let count = lexicon.lower.len() as u64;
+    let mut done = Search {
+        complete: true,
+        ..Search::default()
+    };
+    let mut found = BTreeSet::new();
+    let mut left = budget.candidates;
+    if targets.is_empty() || count == 0 {
+        return done;
+    }
+    'joins: for length in 1..=budget.join.min(MAX_JOIN) {
+        for shape in &SHAPES {
+            if length == 1 && !shape.between.is_empty() {
+                continue;
+            }
+            let joins = count.checked_pow(length as u32).unwrap_or(u64::MAX);
+            if joins > left {
+                done.complete = false;
+                break 'joins;
+            }
+            left -= joins;
+            done.tried += joins;
+            let parts: Vec<BTreeSet<Found>> = std::thread::scope(|scope| {
+                let handles: Vec<_> = (0..threads)
+                    .map(|offset| {
+                        let lexicon = &lexicon;
+                        scope.spawn(move || {
+                            let mut run = Run {
+                                targets,
+                                lexicon,
+                                found: BTreeSet::new(),
+                                tried: 0,
+                                left: u64::MAX,
+                                first: (offset, threads),
+                            };
+                            run.joins(length, shape);
+                            run.found
+                        })
+                    })
+                    .collect();
+                // A thread that panicked carries its panic on.
+                (handles.into_iter())
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .unwrap_or_else(|e| std::panic::resume_unwind(e))
+                    })
+                    .collect()
+            });
+            for part in parts {
+                found.extend(part);
+            }
+        }
+    }
+    done.found = found.into_iter().collect();
+    done
+}
+
+/// The words a name is written in: split at `_`, where a lower-case letter meets a capital, before the capital that opens a word after capitals, and around digits.
+pub fn words_of(name: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    for part in name.split('_') {
+        let chars: Vec<char> = part.chars().collect();
+        let mut word = String::new();
+        for (n, c) in chars.iter().enumerate() {
+            let prev = n.checked_sub(1).and_then(|p| chars.get(p));
+            let next = chars.get(n + 1);
+            let cut = match prev {
+                None => false,
+                Some(p) => {
+                    (p.is_ascii_lowercase() && c.is_ascii_uppercase())
+                        || (p.is_ascii_digit() != c.is_ascii_digit())
+                        || (p.is_ascii_uppercase()
+                            && c.is_ascii_uppercase()
+                            && next.is_some_and(char::is_ascii_lowercase))
+                }
+            };
+            if cut && !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
+            word.push(*c);
+        }
+        if !word.is_empty() {
+            words.push(word);
+        }
+    }
+    words
+}
+
 /// One search under way.
 struct Run<'a> {
     targets: &'a Targets,
@@ -265,6 +366,8 @@ struct Run<'a> {
     tried: u64,
     /// The joins the budget still allows.
     left: u64,
+    /// The first words this run takes: those at `.0` and every `.1`th after it.
+    first: (usize, usize),
 }
 
 impl Run<'_> {
@@ -275,7 +378,9 @@ impl Run<'_> {
         let (lexicon, targets) = (self.lexicon, self.targets);
         let count = lexicon.lower.len() as u64;
         let last = length.clamp(1, MAX_JOIN) - 1;
+        let (offset, stride) = self.first;
         let mut at = [0usize; MAX_JOIN];
+        at[0] = offset;
         let mut state = [0u32; MAX_JOIN];
         state[0] = partial_literal_hash(shape.before.to_ascii_lowercase().as_bytes(), 0);
         let mut d = 0;
@@ -296,6 +401,10 @@ impl Run<'_> {
             self.left -= count;
             self.tried += count;
             for (n, lower) in lexicon.lower.iter().enumerate() {
+                // A one-word join's last word is its first.
+                if last == 0 && n % stride != offset {
+                    continue;
+                }
                 let hash = finalize_hash(partial_literal_hash(lower, state[d]));
                 if let Some(sought) = targets.sought(hash) {
                     at[d] = n;
@@ -308,7 +417,7 @@ impl Run<'_> {
                     return true;
                 }
                 d -= 1;
-                at[d] += 1;
+                at[d] += if d == 0 { stride } else { 1 };
                 if at[d] < lexicon.lower.len() {
                     break;
                 }

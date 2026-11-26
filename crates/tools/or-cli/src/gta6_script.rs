@@ -31,6 +31,8 @@ mod export;
 mod help;
 #[path = "gta6_script_lists.rs"]
 mod lists;
+#[path = "gta6_script_names.rs"]
+mod names_verbs;
 #[path = "gta6_script_source.rs"]
 mod source;
 
@@ -168,6 +170,9 @@ struct Held {
 
 /// Runs `script` where its arguments name a compiled GTA VI script; `None` leaves them to the command for GTA V's.
 pub fn run(args: &[String]) -> Option<ExitCode> {
+    if let Some(done) = names_verbs::run(args) {
+        return Some(done);
+    }
     let (verb, rest) = match args.first().map(String::as_str) {
         Some("disasm") => (Verb::Disasm, &args[1..]),
         Some("decompile") => (Verb::Decompile, &args[1..]),

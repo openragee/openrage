@@ -249,13 +249,27 @@ fn through(blocks: &[Block], mut x: BlockId) -> BlockId {
     x
 }
 
+/// Whether a jump to `a` and a jump to `b` do the same: one block, or two that hold nothing and return the same value.
+// A compiler ends each half of a sparse `switch` it cut in two with a `return` of its own.
+fn alike(blocks: &[Block], a: BlockId, b: BlockId) -> bool {
+    if a == b {
+        return true;
+    }
+    let bare = blocks[a].stmts.is_empty() && blocks[b].stmts.is_empty();
+    match (&blocks[a].term, &blocks[b].term) {
+        (Terminator::Return(one), Terminator::Return(other)) => bare && one == other,
+        _ => false,
+    }
+}
+
 /// A tree of tests of one variable against constants, as a compiler lays a sparse `switch` out, becomes that switch.
 // The tree's inner tests hold no statement and are reached from the tree alone, and the variable
 // is read and nothing else, so reading it once is reading it at every test.
-// ⚠ Exact only because every way out of the tree other than by an equality goes to one block:
-// a value no case names then reaches that block, and what each constant reaches is worked out by
-// running the tests on it.
-pub(super) fn switch_trees(blocks: &mut Vec<Block>) {
+// ⚠ Exact only because every way out of the tree other than by an equality goes to one block, or
+// to blocks that are bare returns of one value: a value no case names then reaches that block or
+// one that does what it does, and what each constant reaches is worked out by running the tests
+// on it. `returns` is what lets bare returns of one value stand for one block.
+pub(super) fn switch_trees(blocks: &mut Vec<Block>, returns: bool) {
     let n = blocks.len();
     let mut tests: Vec<Option<Test>> = blocks
         .iter()
@@ -328,7 +342,7 @@ pub(super) fn switch_trees(blocks: &mut Vec<Block>) {
                 let leaf = through(blocks, y);
                 match default {
                     None => default = Some(leaf),
-                    Some(d) => fits &= d == leaf,
+                    Some(d) => fits &= d == leaf || (returns && alike(blocks, d, leaf)),
                 }
             }
         }
@@ -395,11 +409,16 @@ pub(super) fn switch_trees(blocks: &mut Vec<Block>) {
         for s in blocks[r].term.successors() {
             lead(&mut preds, r, s);
         }
-        // A block that only jumped on, and that the tree alone led to, is led to by nothing now.
+        // A block that only jumped on, and that the tree alone led to, is led to by nothing now;
+        // so is a bare return the default stands for.
         for mut x in arms {
             while x != ENTRY && !dead[x] && preds[x].is_empty() && blocks[x].stmts.is_empty() {
                 let on = match &blocks[x].term {
                     Terminator::Jump(on) => *on,
+                    Terminator::Return(_) if returns => {
+                        dead[x] = true;
+                        break;
+                    }
                     _ => break,
                 };
                 dead[x] = true;

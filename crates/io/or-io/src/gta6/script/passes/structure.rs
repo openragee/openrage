@@ -6,29 +6,49 @@
 //!
 //! ⚠ No block is copied and none that holds a statement is dropped, so every statement comes out
 //! once. `Stats::gotos_out` counts the jumps left as `goto`, on the finished tree.
+//!
+//! The pass `gotos` adds the rules that take out a `goto` the above leaves: a sparse switch whose
+//! halves each end in a `return` of their own in `graph`, three choices of region in `region`,
+//! and the rewrites of the finished statements in `exits` and `tails`. ⚠ With it on, a tail of a
+//! few statements that leaves is written at each `goto` to it, so a statement may come out more
+//! than once, which `Stats::statements_out` then counts.
 
 #[path = "structure_cond.rs"]
 mod cond;
+#[path = "structure_exits.rs"]
+mod exits;
 #[path = "structure_graph.rs"]
 mod graph;
 #[path = "structure_layout.rs"]
 mod layout;
 #[path = "structure_region.rs"]
 mod region;
+#[path = "structure_tails.rs"]
+mod tails;
 
 use std::collections::HashMap;
 
 use crate::gta6::script::cfg;
 use crate::gta6::script::ir::{Expr, Returns};
 use crate::gta6::script::names::Names;
+use crate::gta6::script::options::Pass;
 use crate::gta6::script::tree::{self, Label, Stmt};
-use crate::gta6::script::Stats;
+use crate::gta6::script::{Context, Stats};
 
 /// The sweeps given to dropping what the sweep before left unreachable.
 const SWEEPS: usize = 4;
 
+/// The times the rules of `exits` go over a body: one rewrite may lay bare the next.
+const ROUNDS: usize = 4;
+
 /// Rebuilds `if`, `while`, `do`, `for` and `switch` from the blocks, with a `goto` only where no construct explains a jump.
-pub fn run(f: cfg::Function, _names: &Names, _stats: &mut Stats) -> tree::Function {
+pub fn run(f: cfg::Function, names: &Names, stats: &mut Stats) -> tree::Function {
+    run_in(f, &Context::baseline(names), stats)
+}
+
+/// [`run`] as the pipeline calls it: the pass `gotos` of `cx` adds the rules that take out the jumps `run` leaves.
+pub fn run_in(f: cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> tree::Function {
+    let gotos = cx.options.on(Pass::Gotos);
     let cfg::Function {
         mut head,
         cfg: flow,
@@ -41,13 +61,28 @@ pub fn run(f: cfg::Function, _names: &Names, _stats: &mut Stats) -> tree::Functi
         };
     }
     graph::thread_joins(&mut blocks, &mut head);
-    graph::switch_trees(&mut blocks);
+    graph::switch_trees(&mut blocks, gotos);
     graph::unbias_switches(&mut blocks);
     graph::merge_conditions(&mut blocks);
     let order = layout::order(&blocks);
     let blocks = graph::reordered(blocks, &order);
-    let (mut body, mut named) = region::structured(blocks);
+    let (mut body, mut named) = region::structured(blocks, gotos);
     tidy(&mut body, &mut named);
+    // Only a function that still jumps has anything for the rules over statements.
+    if gotos && named.values().any(|count| *count > 0) {
+        if tails::next_gotos(&mut body, &mut named) {
+            tidy(&mut body, &mut named);
+        }
+        for _ in 0..ROUNDS {
+            if !exits::rewritten(&mut body, &mut named) {
+                break;
+            }
+            tidy(&mut body, &mut named);
+        }
+        if tails::copied(&mut body, &mut named) {
+            tidy(&mut body, &mut named);
+        }
+    }
     plain_defaults(&mut body);
     // A void function returns by running off its end.
     if head.returns == Returns::Void && matches!(body.last(), Some(Stmt::Return(None))) {

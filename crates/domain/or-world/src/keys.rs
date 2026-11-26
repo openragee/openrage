@@ -86,6 +86,7 @@ keys! {
     BLEND => "blend",
     TIMECYCLE_NAME => "timecycleName",
     SECONDARY_TIMECYCLE_NAME => "secondaryTimecycleName",
+    PORTAL_COUNT => "portalCount",
     ATTACHED_OBJECTS => "attachedObjects",
     ROOM_FROM => "roomFrom",
     ROOM_TO => "roomTo",

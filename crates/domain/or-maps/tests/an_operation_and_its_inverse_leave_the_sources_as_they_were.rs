@@ -9,19 +9,23 @@ use std::path::{Path, PathBuf};
 use or_maps::edit::{read_archetype, read_entity};
 use or_maps::import::{add_files, Incoming};
 use or_maps::operation::{
-    apply, apply_all, digest_of, At, Counted, Error, Extents, Inserted, Operation, Operations,
-    PoseData, Record, FORMAT,
+    apply, apply_all, digest_of, At, Attached, Counted, Error, Extents, Inserted, Operation,
+    Operations, PortalMembers, PoseData, Record, RoomMembers, FORMAT,
 };
-use or_maps::sample::{child_map_file, map_file, types_file, Archetype, Entity};
+use or_maps::sample::{
+    child_map_file, map_file, types_file, types_file_with_interiors, Archetype, Entity, VILLA,
+};
 
 const HARBOUR: &str = "harbour.metadata.src";
 const YARD: &str = "yard.metadata.src";
 const PIER: &str = "pier.metadata.src";
 const TYPES: &str = "harbour_types.metadata.src";
+/// The type file whose one archetype is the interior `or_maps::sample::VILLA`.
+const VILLA_TYPES: &str = "villa_types.metadata.src";
 
 /// A pack of one set: `harbour`, whose entity 0 is the LOD parent of 1 and 2 and whose 3 stands alone, `yard` with one entity, `pier`,
-/// whose parent map is `harbour` and whose two entities name its entities 0 and 3 as their LOD parents, and a type file of two crates.
-/// The extents `harbour` states hold none of what stands past 100.
+/// whose parent map is `harbour` and whose two entities name its entities 0 and 3 as their LOD parents, a type file of two crates, and
+/// a type file of one interior. The extents `harbour` states hold none of what stands past 100.
 fn pack(dir: &Path) -> PathBuf {
     let folder = dir.join("maps");
     let harbour = map_file(
@@ -76,6 +80,7 @@ fn pack(dir: &Path) -> PathBuf {
             Archetype::new("prop_crate_b", [-2.0; 3], [2.0; 3]),
         ],
     );
+    let villa = types_file_with_interiors("villa_types", &[], &[VILLA]);
     let incoming = |name: &'static str, bytes: &'static [u8]| Incoming {
         name,
         bytes,
@@ -89,12 +94,84 @@ fn pack(dir: &Path) -> PathBuf {
             incoming("yard.ymap", yard.leak()),
             incoming("pier.ymap", pier.leak()),
             incoming("harbour_types.ytyp", types.leak()),
+            incoming("villa_types.ytyp", villa.leak()),
         ],
         None,
     )
     .unwrap();
     assert_eq!(added.refused, Vec::<(String, String)>::new());
     folder
+}
+
+/// A room put between the hall and the kitchen of the villa, so the kitchen and the cellar are named one later.
+fn add_room() -> Operation {
+    Operation::AddRoom {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        room: Some(2),
+        members: RoomMembers {
+            name: Some("attic".into()),
+            bb_min: Some([-5.0, -5.0, 3.0]),
+            bb_max: Some([5.0, 5.0, 5.5]),
+            timecycle_name: Some("villa_attic_dust".into()),
+            floor_id: Some(1),
+            ..RoomMembers::default()
+        },
+        attached_objects: Vec::new(),
+    }
+}
+
+/// The portal between the hall and the kitchen taken out: each counts one portal fewer.
+fn remove_portal() -> Operation {
+    Operation::RemovePortal {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        portal: 1,
+    }
+}
+
+/// The chair taken out of the villa: every later entity is named one earlier by the room or the portal that attaches it.
+fn remove_interior_entity() -> Operation {
+    Operation::RemoveInteriorEntity {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        entity: 1,
+    }
+}
+
+/// The set of the party taken out with the two entities it holds.
+fn remove_entity_set() -> Operation {
+    Operation::RemoveEntitySet {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        set: 0,
+    }
+}
+
+fn remove_time_cycle_modifier() -> Operation {
+    Operation::RemoveTimeCycleModifier {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        modifier: 0,
+    }
+}
+
+/// The table moved out of the kitchen into the set of the night, before the candle it holds.
+fn move_entity_into_set() -> Operation {
+    Operation::MoveEntityIntoSet {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        entity: 2,
+        set: 1,
+        location: 2,
+        at: Some(0),
+    }
 }
 
 /// Every file under `folder`, by its path.
@@ -307,6 +384,149 @@ const CASES: &[Case] = &[
             expects: None,
         }
     },
+    // The operations of an interior, each on the villa as it was imported.
+    |_| add_room(),
+    |folder| inverse_of(folder, &add_room()),
+    |_| Operation::SetRoom {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        room: 2,
+        members: RoomMembers {
+            name: Some("scullery".into()),
+            bb_max: Some([13.5, 5.0, 3.0]),
+            blend: Some(0.25),
+            secondary_timecycle_name: Some("villa_steam".into()),
+            flags: Some(96),
+            exterior_visibilty_depth: Some(2),
+            ..RoomMembers::default()
+        },
+    },
+    // The cellar opens to the outside, before the two portals after the front door: it and the outside each count one more.
+    |_| Operation::AddPortal {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        portal: Some(1),
+        members: PortalMembers {
+            room_from: Some(3),
+            room_to: Some(0),
+            flags: Some(8),
+            opacity: Some(40),
+            corners: Some(vec![
+                [12.0, -1.0, -3.0],
+                [12.0, 1.0, -3.0],
+                [12.0, 1.0, -0.75],
+                [12.0, -1.0, -0.75],
+            ]),
+            ..PortalMembers::default()
+        },
+        attached_objects: vec![3],
+    },
+    |_| remove_portal(),
+    |folder| inverse_of(folder, &remove_portal()),
+    // The portal of the cellar leads from the hall: the kitchen counts one fewer and the hall one more.
+    |_| Operation::SetPortal {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        portal: 2,
+        members: PortalMembers {
+            room_from: Some(1),
+            mirror_priority: Some(2),
+            ..PortalMembers::default()
+        },
+    },
+    // And its corners and its flags alone, which count nothing.
+    |_| Operation::SetPortal {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        portal: 2,
+        members: PortalMembers {
+            flags: Some(0x2000),
+            audio_occlusion: Some(0x1234_5678),
+            corners: Some(vec![
+                [8.5, 3.0, 0.0],
+                [10.5, 3.0, 0.0],
+                [10.5, 3.0, 2.5],
+                [8.5, 3.0, 2.5],
+            ]),
+            ..PortalMembers::default()
+        },
+    },
+    // The chair is attached to the portal of the kitchen too, before nothing: the first of its list.
+    |_| Operation::AttachEntity {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        entity: 1,
+        room: None,
+        portal: Some(1),
+        at: None,
+    },
+    // The shell leaves the hall, where it was the first of two.
+    |_| Operation::DetachEntity {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        entity: 0,
+        room: Some(1),
+        portal: None,
+    },
+    // A copy of the table, in the cellar.
+    |_| Operation::AddInteriorEntity {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        archetype_name: "prop_stool".into(),
+        pose: pose([9.0, 1.0, -3.0]),
+        donor: Some(2),
+        room: Some(3),
+    },
+    |_| remove_interior_entity(),
+    |folder| inverse_of(folder, &remove_interior_entity()),
+    |_| Operation::AddEntitySet {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        set: Some(1),
+        name: "villa_dawn".into(),
+        entities: Vec::new(),
+    },
+    |_| remove_entity_set(),
+    // The set put back with the two entities it held, each in its room.
+    |folder| inverse_of(folder, &remove_entity_set()),
+    |_| move_entity_into_set(),
+    |folder| inverse_of(folder, &move_entity_into_set()),
+    // The crate of the party leaves its set for the cellar, before the chair: every index from 1 up moves.
+    |_| Operation::MoveEntityOutOfSet {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        set: 0,
+        entity: 1,
+        to: Some(1),
+        attached: vec![Attached {
+            room: Some(3),
+            portal: None,
+            at: Some(0),
+        }],
+    },
+    |_| Operation::AddTimeCycleModifier {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        modifier: Some(1),
+        name: "villa_noon".into(),
+        sphere: [2.5, -1.0, 1.5, 3.25],
+        percentage: 60.0,
+        range: 2.5,
+        start_hour: 11,
+        end_hour: 14,
+    },
+    |_| remove_time_cycle_modifier(),
+    |folder| inverse_of(folder, &remove_time_cycle_modifier()),
 ];
 
 #[test]

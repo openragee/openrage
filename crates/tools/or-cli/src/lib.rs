@@ -92,6 +92,7 @@ mod maps_changes;
 mod maps_collision;
 mod maps_doors;
 mod maps_edit_game;
+mod maps_interior;
 mod maps_merge;
 mod maps_put_back;
 mod maps_roads;

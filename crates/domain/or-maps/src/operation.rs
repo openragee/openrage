@@ -28,6 +28,11 @@
 //! operations that say so are `remove_entities`, `set_num_children` and `renumber_for_removed`, with the two that take them back, and
 //! [`crate::delete`] writes the list of them that removes an entity with its chain.
 //!
+//! ⚠ **An interior is edited inside its type file, by the same operations.** The ones that name a room, a portal, an entity set, a
+//! time cycle modifier or an entity of an interior edit the interior a type file declares at `archetype`, renumber every index of
+//! it that names what they move, and give as their inverse another of them (`operation/interior.rs`). An inverse that states members
+//! again, or puts one entity into or takes it out of one list, holds by construction; every other is proven as the rest are.
+//!
 //! ⚠ **The boxes the extents grow to hold are the pack's own.** An operation that places an entity reads the type files of every map set
 //! that names its source, the first to declare a name winning, so what it writes does not depend on which set a screen shows. An entity
 //! of an archetype none of them declares, as any prop of the game is, is held where it stands, and [`Applied::notes`] says so.
@@ -51,7 +56,9 @@ use crate::edit::{self, in_parent_map, Edited, Pose};
 use crate::facts::{stays_inside, Name};
 use crate::model::{self, Maps};
 
+mod interior;
 mod session;
+pub use interior::{Attached, PortalMembers, RoomMembers, SetEntity, NOT_A_ROOM, OUTSIDE};
 pub use session::{Done, Session, Written};
 
 /// The file a list of operations states it is.
@@ -531,6 +538,198 @@ pub enum Operation {
         archetype: usize,
         record: Record,
     },
+    /// Add a room to an interior of a type file, at `room` or last, with every room a portal or an entity set names renumbered: what takes a removal back.
+    AddRoom {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        /// The interior, by its index among the archetypes of the type file.
+        archetype: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        room: Option<usize>,
+        members: RoomMembers,
+        /// The entities of the interior the room attaches, by their index.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attached_objects: Vec<u32>,
+    },
+    /// Take a room no portal and no entity set names out of an interior, with every later room renumbered where one is named.
+    RemoveRoom {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        room: usize,
+    },
+    /// State members of a room of an interior: its name, its box and what else the file names of it.
+    SetRoom {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        room: usize,
+        members: RoomMembers,
+    },
+    /// Add a portal between two rooms of an interior, at `portal` or last, each of the two rooms counting one portal more: what takes a removal back.
+    AddPortal {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        portal: Option<usize>,
+        members: PortalMembers,
+        /// The entities of the interior the portal attaches, by their index.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attached_objects: Vec<u32>,
+    },
+    /// Take a portal out of an interior, each of its two rooms counting one portal fewer.
+    RemovePortal {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        portal: usize,
+    },
+    /// State members of a portal of an interior: its two rooms, its corners, its flags as one word and what else the file names of it.
+    SetPortal {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        portal: usize,
+        members: PortalMembers,
+    },
+    /// Attach an entity of an interior to a room or to a portal, at `at` in that list or last: what puts it into a room.
+    AttachEntity {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        entity: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        room: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        portal: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<usize>,
+    },
+    /// Take an entity of an interior out of the list of a room or of a portal.
+    DetachEntity {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        entity: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        room: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        portal: Option<usize>,
+    },
+    /// Add an entity that places `archetype_name` at `pose`, in the interior's own space, to an interior, as a copy of its entity `donor` (else of its first) with a guid of its own, attached to `room` when one is named.
+    AddInteriorEntity {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        /// The name of the archetype the entity places, or `hash_XXXXXXXX` for one known by its hash alone.
+        archetype_name: String,
+        pose: PoseData,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        donor: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        room: Option<usize>,
+    },
+    /// Take an entity out of an interior, and out of every room and portal that attaches it, with every index of a later entity renumbered.
+    RemoveInteriorEntity {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        entity: usize,
+    },
+    /// Put an entity into an interior at an index, with every index of a later entity renumbered and the attachments a removal there took: what takes a removal back.
+    InsertInteriorEntity {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        entity: usize,
+        record: Record,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attached: Vec<Attached>,
+    },
+    /// Add an entity set called `name` to an interior, at `set` or last, holding `entities`: what takes a removal back.
+    AddEntitySet {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        set: Option<usize>,
+        /// The name of the set, or `hash_XXXXXXXX` for one known by its hash alone.
+        name: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        entities: Vec<SetEntity>,
+    },
+    /// Take an entity set out of an interior, with the entities it holds.
+    RemoveEntitySet {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        set: usize,
+    },
+    /// Move an entity of an interior into one of its entity sets, standing in the room `location`, at `at` in the set or last; it leaves every room and portal that attached it.
+    MoveEntityIntoSet {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        entity: usize,
+        set: usize,
+        location: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<usize>,
+    },
+    /// Move an entity out of an entity set into the entities of its interior, at `to` or last, attached as `attached` says.
+    MoveEntityOutOfSet {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        set: usize,
+        /// The entity, by its index in the set.
+        entity: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<usize>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attached: Vec<Attached>,
+    },
+    /// Add a time cycle modifier to an interior, at `modifier` or last: what takes a removal back.
+    AddTimeCycleModifier {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        modifier: Option<usize>,
+        /// The name of the modifier, or `hash_XXXXXXXX` for one known by its hash alone.
+        name: String,
+        /// The centre and the radius of the sphere it applies in, in the interior's own space.
+        sphere: [f32; 4],
+        percentage: f32,
+        range: f32,
+        start_hour: u32,
+        end_hour: u32,
+    },
+    /// Take a time cycle modifier out of an interior.
+    RemoveTimeCycleModifier {
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expects: Option<String>,
+        archetype: usize,
+        modifier: usize,
+    },
     /// Hold `xml` as the XML of a source, as it is given: what takes back an edit of XML that was not the export of its file.
     RewriteSource {
         source: String,
@@ -560,6 +759,23 @@ impl Operation {
             Self::RemoveArchetype { .. } => "remove_archetype",
             Self::InsertArchetype { .. } => "insert_archetype",
             Self::ReplaceArchetype { .. } => "replace_archetype",
+            Self::AddRoom { .. } => "add_room",
+            Self::RemoveRoom { .. } => "remove_room",
+            Self::SetRoom { .. } => "set_room",
+            Self::AddPortal { .. } => "add_portal",
+            Self::RemovePortal { .. } => "remove_portal",
+            Self::SetPortal { .. } => "set_portal",
+            Self::AttachEntity { .. } => "attach_entity",
+            Self::DetachEntity { .. } => "detach_entity",
+            Self::AddInteriorEntity { .. } => "add_interior_entity",
+            Self::RemoveInteriorEntity { .. } => "remove_interior_entity",
+            Self::InsertInteriorEntity { .. } => "insert_interior_entity",
+            Self::AddEntitySet { .. } => "add_entity_set",
+            Self::RemoveEntitySet { .. } => "remove_entity_set",
+            Self::MoveEntityIntoSet { .. } => "move_entity_into_set",
+            Self::MoveEntityOutOfSet { .. } => "move_entity_out_of_set",
+            Self::AddTimeCycleModifier { .. } => "add_time_cycle_modifier",
+            Self::RemoveTimeCycleModifier { .. } => "remove_time_cycle_modifier",
             Self::RewriteSource { .. } => "rewrite_source",
         }
     }
@@ -583,6 +799,23 @@ impl Operation {
             | Self::RemoveArchetype { source, .. }
             | Self::InsertArchetype { source, .. }
             | Self::ReplaceArchetype { source, .. }
+            | Self::AddRoom { source, .. }
+            | Self::RemoveRoom { source, .. }
+            | Self::SetRoom { source, .. }
+            | Self::AddPortal { source, .. }
+            | Self::RemovePortal { source, .. }
+            | Self::SetPortal { source, .. }
+            | Self::AttachEntity { source, .. }
+            | Self::DetachEntity { source, .. }
+            | Self::AddInteriorEntity { source, .. }
+            | Self::RemoveInteriorEntity { source, .. }
+            | Self::InsertInteriorEntity { source, .. }
+            | Self::AddEntitySet { source, .. }
+            | Self::RemoveEntitySet { source, .. }
+            | Self::MoveEntityIntoSet { source, .. }
+            | Self::MoveEntityOutOfSet { source, .. }
+            | Self::AddTimeCycleModifier { source, .. }
+            | Self::RemoveTimeCycleModifier { source, .. }
             | Self::RewriteSource { source, .. } => source,
         }
     }
@@ -606,6 +839,23 @@ impl Operation {
             | Self::RemoveArchetype { expects, .. }
             | Self::InsertArchetype { expects, .. }
             | Self::ReplaceArchetype { expects, .. }
+            | Self::AddRoom { expects, .. }
+            | Self::RemoveRoom { expects, .. }
+            | Self::SetRoom { expects, .. }
+            | Self::AddPortal { expects, .. }
+            | Self::RemovePortal { expects, .. }
+            | Self::SetPortal { expects, .. }
+            | Self::AttachEntity { expects, .. }
+            | Self::DetachEntity { expects, .. }
+            | Self::AddInteriorEntity { expects, .. }
+            | Self::RemoveInteriorEntity { expects, .. }
+            | Self::InsertInteriorEntity { expects, .. }
+            | Self::AddEntitySet { expects, .. }
+            | Self::RemoveEntitySet { expects, .. }
+            | Self::MoveEntityIntoSet { expects, .. }
+            | Self::MoveEntityOutOfSet { expects, .. }
+            | Self::AddTimeCycleModifier { expects, .. }
+            | Self::RemoveTimeCycleModifier { expects, .. }
             | Self::RewriteSource { expects, .. } => expects.as_deref(),
         }
     }
@@ -629,16 +879,41 @@ impl Operation {
             | Self::RemoveArchetype { expects, .. }
             | Self::InsertArchetype { expects, .. }
             | Self::ReplaceArchetype { expects, .. }
+            | Self::AddRoom { expects, .. }
+            | Self::RemoveRoom { expects, .. }
+            | Self::SetRoom { expects, .. }
+            | Self::AddPortal { expects, .. }
+            | Self::RemovePortal { expects, .. }
+            | Self::SetPortal { expects, .. }
+            | Self::AttachEntity { expects, .. }
+            | Self::DetachEntity { expects, .. }
+            | Self::AddInteriorEntity { expects, .. }
+            | Self::RemoveInteriorEntity { expects, .. }
+            | Self::InsertInteriorEntity { expects, .. }
+            | Self::AddEntitySet { expects, .. }
+            | Self::RemoveEntitySet { expects, .. }
+            | Self::MoveEntityIntoSet { expects, .. }
+            | Self::MoveEntityOutOfSet { expects, .. }
+            | Self::AddTimeCycleModifier { expects, .. }
+            | Self::RemoveTimeCycleModifier { expects, .. }
             | Self::RewriteSource { expects, .. } => *expects = digest,
         }
     }
 
-    /// The names it states as text, which a file keeps the hash of alone: the archetype an entity is added of, and the name and the asset of an archetype added; none of one spelled `hash_XXXXXXXX`.
+    /// The names it states as text, which a file keeps the hash of alone: the archetype an entity is added of, the name and the asset of an archetype added, and the names of an entity set, a time cycle modifier and a room's time cycles; none of one spelled `hash_XXXXXXXX`.
     pub fn names(&self) -> Vec<&str> {
         let stated: Vec<&str> = match self {
             Self::AddEntity { archetype, .. } => vec![archetype],
             Self::AddArchetype { name, asset, .. } => {
                 (std::iter::once(name).chain(asset).map(String::as_str)).collect()
+            }
+            Self::AddInteriorEntity { archetype_name, .. } => vec![archetype_name],
+            Self::AddEntitySet { name, .. } | Self::AddTimeCycleModifier { name, .. } => vec![name],
+            Self::AddRoom { members, .. } | Self::SetRoom { members, .. } => {
+                (members.timecycle_name.iter())
+                    .chain(&members.secondary_timecycle_name)
+                    .map(String::as_str)
+                    .collect()
             }
             _ => Vec::new(),
         };
@@ -708,7 +983,7 @@ pub struct Applied {
     pub inverse: Operation,
     /// The XML of the source it edited, as it was and as the operation left it.
     pub edited: Edited,
-    /// The index of the entity or the archetype it added, when it added one.
+    /// The index of what it added, when it added something: an entity, an archetype, or a room, a portal, an entity set, a modifier or an entity of an interior.
     pub added: Option<usize>,
     /// What it could not read and went without, or left to another file, a sentence each: an archetype with no box in the pack, a type file that does not cook, the links of another map file into entities it moved.
     pub notes: Vec<String>,
@@ -1196,6 +1471,23 @@ fn sure_in_types(types: &CMapTypes, operation: &Operation) -> bool {
             }
             _ => true,
         },
+        Operation::AddRoom { .. }
+        | Operation::RemoveRoom { .. }
+        | Operation::SetRoom { .. }
+        | Operation::AddPortal { .. }
+        | Operation::RemovePortal { .. }
+        | Operation::SetPortal { .. }
+        | Operation::AttachEntity { .. }
+        | Operation::DetachEntity { .. }
+        | Operation::AddInteriorEntity { .. }
+        | Operation::RemoveInteriorEntity { .. }
+        | Operation::InsertInteriorEntity { .. }
+        | Operation::AddEntitySet { .. }
+        | Operation::RemoveEntitySet { .. }
+        | Operation::MoveEntityIntoSet { .. }
+        | Operation::MoveEntityOutOfSet { .. }
+        | Operation::AddTimeCycleModifier { .. }
+        | Operation::RemoveTimeCycleModifier { .. } => interior::sure(types, operation),
         _ => true,
     }
 }
@@ -1521,6 +1813,23 @@ fn change_map(
         | Operation::RemoveArchetype { .. }
         | Operation::InsertArchetype { .. }
         | Operation::ReplaceArchetype { .. }
+        | Operation::AddRoom { .. }
+        | Operation::RemoveRoom { .. }
+        | Operation::SetRoom { .. }
+        | Operation::AddPortal { .. }
+        | Operation::RemovePortal { .. }
+        | Operation::SetPortal { .. }
+        | Operation::AttachEntity { .. }
+        | Operation::DetachEntity { .. }
+        | Operation::AddInteriorEntity { .. }
+        | Operation::RemoveInteriorEntity { .. }
+        | Operation::InsertInteriorEntity { .. }
+        | Operation::AddEntitySet { .. }
+        | Operation::RemoveEntitySet { .. }
+        | Operation::MoveEntityIntoSet { .. }
+        | Operation::MoveEntityOutOfSet { .. }
+        | Operation::AddTimeCycleModifier { .. }
+        | Operation::RemoveTimeCycleModifier { .. }
         | Operation::RewriteSource { .. } => Err(format!(
             "{} does not edit a map file, which this source is",
             operation.name()
@@ -1625,6 +1934,23 @@ fn change_types(
             };
             Ok((inverse, None))
         }
+        Operation::AddRoom { .. }
+        | Operation::RemoveRoom { .. }
+        | Operation::SetRoom { .. }
+        | Operation::AddPortal { .. }
+        | Operation::RemovePortal { .. }
+        | Operation::SetPortal { .. }
+        | Operation::AttachEntity { .. }
+        | Operation::DetachEntity { .. }
+        | Operation::AddInteriorEntity { .. }
+        | Operation::RemoveInteriorEntity { .. }
+        | Operation::InsertInteriorEntity { .. }
+        | Operation::AddEntitySet { .. }
+        | Operation::RemoveEntitySet { .. }
+        | Operation::MoveEntityIntoSet { .. }
+        | Operation::MoveEntityOutOfSet { .. }
+        | Operation::AddTimeCycleModifier { .. }
+        | Operation::RemoveTimeCycleModifier { .. } => interior::change(types, operation, context),
         Operation::PlaceEntity { .. }
         | Operation::AddEntity { .. }
         | Operation::RemoveEntity { .. }
@@ -1936,6 +2262,23 @@ fn context(pack: &mut impl Pack, operation: &Operation) -> Result<Context, Strin
         | Operation::RemoveArchetype { .. }
         | Operation::InsertArchetype { .. }
         | Operation::ReplaceArchetype { .. }
+        | Operation::AddRoom { .. }
+        | Operation::RemoveRoom { .. }
+        | Operation::SetRoom { .. }
+        | Operation::AddPortal { .. }
+        | Operation::RemovePortal { .. }
+        | Operation::SetPortal { .. }
+        | Operation::AttachEntity { .. }
+        | Operation::DetachEntity { .. }
+        | Operation::AddInteriorEntity { .. }
+        | Operation::RemoveInteriorEntity { .. }
+        | Operation::InsertInteriorEntity { .. }
+        | Operation::AddEntitySet { .. }
+        | Operation::RemoveEntitySet { .. }
+        | Operation::MoveEntityIntoSet { .. }
+        | Operation::MoveEntityOutOfSet { .. }
+        | Operation::AddTimeCycleModifier { .. }
+        | Operation::RemoveTimeCycleModifier { .. }
         | Operation::RewriteSource { .. } => {}
     }
     Ok(context)
@@ -2089,7 +2432,10 @@ impl<'a> Work<'a> {
             (_, CMapTypes::EXTENSION) => {
                 let context = context(self, operation)?;
                 let inputs = &self.hold(source)?.inputs;
-                through::<CMapTypes>(inputs, operation, &context, change_types, sure_in_types)?
+                let done =
+                    through::<CMapTypes>(inputs, operation, &context, change_types, sure_in_types)?;
+                notes = context.notes.into_inner();
+                done
             }
             (_, other) => {
                 return Err(format!(

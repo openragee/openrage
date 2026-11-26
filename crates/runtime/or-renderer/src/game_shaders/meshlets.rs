@@ -302,6 +302,8 @@ pub struct MeshletScene {
     kept: std::cell::RefCell<Kept>,
     /// What the frame last begun by [`MeshletScene::update`] has asked of the device so far.
     calls: std::cell::Cell<MeshletCalls>,
+    /// Whether every surface is drawn with [`VERTICES`] and not with those fitted to it.
+    at_most: std::cell::Cell<bool>,
     formats: Vec<Option<wgpu::TextureFormat>>,
     targets: Vec<Option<wgpu::TextureView>>,
     depth: wgpu::TextureView,
@@ -1399,6 +1401,7 @@ impl MeshletScene {
             draws,
             kept: Default::default(),
             calls: Default::default(),
+            at_most: Default::default(),
             formats,
             targets,
             depth,
@@ -1486,6 +1489,14 @@ impl MeshletScene {
         self.kept.take();
     }
 
+    /// Draw every surface with the most vertices an instance has, or with `most` false as fitted to it.
+    // What a bench holds the fitted draw against: the targets hold the same bytes either way
+    // unless a mesh program makes a primitive on a thread past those its record states.
+    pub fn draw_at_most(&self, most: bool) {
+        self.at_most.set(most);
+        self.forget();
+    }
+
     /// How many surfaces draw.
     pub fn drawn(&self) -> usize {
         self.draws.len()
@@ -1530,7 +1541,11 @@ impl MeshletScene {
                 binds += 1;
             }
             // One range for the draw and for the count of it: the two never part.
-            let (corners, meshlets) = (0..draw.vertices, 0..draw.meshlets);
+            let fitted = match self.at_most.get() {
+                true => VERTICES,
+                false => draw.vertices,
+            };
+            let (corners, meshlets) = (0..fitted, 0..draw.meshlets);
             vertices += u64::from(corners.end) * u64::from(meshlets.end);
             pass.draw(corners, meshlets);
         }

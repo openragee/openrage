@@ -340,6 +340,7 @@ impl Shell {
             Step::ModelPerf(frames, name, in_full) => {
                 self.model_perf(state, *frames, &out.join(name), *in_full)?;
             }
+            Step::ModelPasses => self.bridge.rebuild_model_passes(),
             Step::Compare(step) => {
                 if let Err(why) = compare::run(step, out) {
                     println!("FAILED  {why}");

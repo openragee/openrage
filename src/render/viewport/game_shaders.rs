@@ -116,6 +116,24 @@ impl RenderBridge {
         targets.map(digested).collect()
     }
 
+    /// Have the active GTA VI drawable's own passes draw each surface with the most vertices an instance has, or as fitted to it again.
+    pub fn model_at_most(&self, most: bool) {
+        if let Some(scene) = self.renderer.gta6_scene() {
+            scene.draw_at_most(most);
+        }
+    }
+
+    /// Forget every pass built of a GTA VI drawable's own programs and the scene made of them: the next frames build them again, with its maps decoded already.
+    // ⚠ For a script's step, which times what a model waits for once its maps are in.
+    pub fn rebuild_model_passes(&mut self) {
+        self.gta6_pipelines = gta6_pipelines();
+        self.renderer.set_gta6_scene(None);
+        self.game_scene_key = None;
+        self.gta6_since = None;
+        self.gta6_own = None;
+        self.gta6_building = None;
+    }
+
     /// Have the next frame of the active GTA VI drawable's own passes draw every pass again, whatever moved.
     pub fn redraw_model(&self) {
         if let Some(scene) = self.renderer.gta6_scene() {
@@ -508,6 +526,7 @@ impl RenderBridge {
             tracing::info!(
                 elapsed = ?started.elapsed(),
                 surfaces = meshlets.surfaces.len(),
+                drawn = scene.as_ref().map_or(0, |scene| scene.as_ref().map_or(0, MeshletScene::drawn)),
                 passes = self.gta6_pipelines.len(),
                 "a GTA VI drawable's own passes were prepared"
             );

@@ -379,27 +379,44 @@ fn the_device_draws_the_primitives_a_surface_states_for_each_meshlet_and_no_thre
     };
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let gpu = (&device, &queue);
-    let calls = frame(gpu, &mut renderer, &OrbitCamera::default(), casting());
-    let [_, colour, _] = seen(gpu, &renderer);
-    // The cells of the grid the colour target holds anything in, by column and row.
-    let (wide, high) = (SIDE as usize / 8, SIDE as usize / 16);
-    let filled = |column: usize, row: usize| {
-        let texel = |x: usize, y: usize| 4 * ((row * high + y) * SIDE as usize + column * wide + x);
-        (0..wide).any(|x| (0..high).any(|y| colour[texel(x, y)..][..4] != [0; 4]))
+    // The cells of the grid the colour target holds anything in after a frame, by column and
+    // row, and what the frame counted.
+    let cells = |renderer: &mut ViewportRenderer| {
+        let calls = frame(gpu, renderer, &OrbitCamera::default(), casting());
+        let [_, colour, _] = seen(gpu, renderer);
+        let (wide, high) = (SIDE as usize / 8, SIDE as usize / 16);
+        let filled = |column: usize, row: usize| {
+            let texel =
+                |x: usize, y: usize| 4 * ((row * high + y) * SIDE as usize + column * wide + x);
+            (0..wide).any(|x| (0..high).any(|y| colour[texel(x, y)..][..4] != [0; 4]))
+        };
+        let drawn: Vec<(usize, usize)> = (0..16)
+            .flat_map(|row| (0..8).map(move |column| (column, row)))
+            .filter(|(column, row)| filled(*column, *row))
+            .collect();
+        (drawn, calls.vertices)
     };
-    let drawn: Vec<(usize, usize)> = (0..16)
-        .flat_map(|row| (0..8).map(move |column| (column, row)))
-        .filter(|(column, row)| filled(*column, *row))
-        .collect();
     // Five threads of each of the two meshlets, and not the hundred and twenty-three after them.
     let stated: Vec<(usize, usize)> = [0, 8]
         .iter()
         .flat_map(|row| (0..5).map(move |column| (column, *row)))
         .collect();
-    assert_eq!(drawn, stated);
     // What the frame counts is what the device was handed: three corners a primitive, for each
     // meshlet, into the tile and into the targets.
-    assert_eq!(calls.vertices, 2 * 3 * 5 * 2);
+    assert_eq!(cells(&mut renderer), (stated.clone(), 2 * 3 * 5 * 2));
+    // Asked for the most an instance has, every thread of each meshlet fills its cell; asked
+    // for the fitted draw again, the five do.
+    let scene = |renderer: &ViewportRenderer, most: bool| {
+        (renderer.gta6_scene().expect("a model is set")).draw_at_most(most);
+    };
+    scene(&renderer, true);
+    let (drawn, vertices) = cells(&mut renderer);
+    assert_eq!(
+        (drawn.len(), vertices),
+        (2 * 64, u64::from(2 * 2 * VERTICES))
+    );
+    scene(&renderer, false);
+    assert_eq!(cells(&mut renderer), (stated, 2 * 3 * 5 * 2));
     let refused = pollster::block_on(validation.pop()).map(|e| e.to_string());
     assert_eq!(refused, None);
 }

@@ -272,6 +272,19 @@ impl Shell {
             Some(json!({ "digest": format!("{digest:016x}"), "bytes_not_nought": filled }))
         };
         let targets = self.bridge.model_targets();
+        // The targets drawn fitted, then with the most vertices an instance has, then fitted
+        // again, in this one process: the same maps are bound each time.
+        let drawn = |shell: &mut Self, state: &mut AppState, most: bool| {
+            shell.bridge.model_at_most(most);
+            shell.idle(state, 1)?;
+            Ok::<_, String>(shell.bridge.model_targets())
+        };
+        let fitted = drawn(self, state, false)?;
+        let at_most = drawn(self, state, true)?;
+        let again = drawn(self, state, false)?;
+        let differ = (fitted.iter().zip(&at_most).zip(&again))
+            .filter(|((fitted, most), again)| fitted != most || fitted != again)
+            .count();
         let mut json = json!({
             "adapter": info.name,
             "backend": format!("{:?}", info.backend),
@@ -289,6 +302,12 @@ impl Shell {
             // As the frames before this step left them: equal in two runs of one build that
             // draw the same triangles from the same place.
             "targets": targets.iter().map(digested).collect::<Vec<_>>(),
+            // Drawn in this process with the vertices fitted to each surface, with the most an
+            // instance has, and fitted again: the targets that do not hold the same bytes all
+            // three times, of those it has.
+            "targets_fitted": fitted.iter().map(digested).collect::<Vec<_>>(),
+            "targets_at_the_most_vertices": at_most.iter().map(digested).collect::<Vec<_>>(),
+            "targets_that_differ_at_the_most_vertices": differ,
             // Where the device times none, a frame's `gpu_stages` is null and never noughts.
             "device_times_stages": timed,
         });
@@ -308,7 +327,14 @@ impl Shell {
         }
         state.turn_active_camera(yaw);
         json["orbit"] = phase(frames);
-        write(path, &json)
+        write(path, &json)?;
+        match differ {
+            0 => Ok(()),
+            _ => Err(format!(
+                "{differ} of {} targets differ between the draw fitted to each surface and the draw with the most vertices",
+                fitted.len()
+            )),
+        }
     }
 }
 

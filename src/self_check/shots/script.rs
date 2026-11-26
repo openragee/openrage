@@ -88,6 +88,8 @@ pub(super) enum Step {
     Compare(super::compare::Compare),
     /// What this many frames of the open GTA VI model cost at rest, and as many with the camera turned once round it, written as JSON to this file beside the shots; with `true`, every pass drawn every frame, whatever moved.
     ModelPerf(usize, String, bool),
+    /// Build the passes of the open GTA VI model again from nothing, its maps decoded already.
+    ModelPasses,
 }
 
 /// Every step with its line number and text, or the first line that is wrong.
@@ -334,9 +336,10 @@ fn parse_step(line: &str) -> Result<Step, String> {
         "compare" => super::compare::parse(rest).map(Step::Compare),
         "model" => {
             let (frames, name, in_full) = match args[..] {
+                ["passes"] => return Ok(Step::ModelPasses),
                 ["perf", frames, name] => (frames, name, false),
                 ["perf", frames, name, "full"] => (frames, name, true),
-                _ => return Err("use `model perf FRAMES FILE [full]`".into()),
+                _ => return Err("use `model perf FRAMES FILE [full]` or `model passes`".into()),
             };
             let frames = (frames.parse::<usize>().ok())
                 .filter(|n| (1..=10_000).contains(n))
@@ -643,6 +646,7 @@ mod tests {
             one("model perf 3 cube-full.json full"),
             Ok(Step::ModelPerf(3, "cube-full.json".into(), true))
         );
+        assert_eq!(one("model passes"), Ok(Step::ModelPasses));
         for bad in [
             "model",
             "model perf",
@@ -652,6 +656,7 @@ mod tests {
             "model perf 120 ../cube.json",
             "model perf 120 cube.json whole",
             "model cost 120 cube.json",
+            "model passes again",
         ] {
             assert!(one(bad).is_err(), "`{bad}` should be refused");
         }

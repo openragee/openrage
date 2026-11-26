@@ -16,6 +16,7 @@ pub(super) fn kind_units(
 
     explorer_units(state, bridge.as_deref_mut(), frames, blank, report);
     script_unit(state, bridge.as_deref_mut(), frames, report);
+    super::gta6_script::units(state, bridge.as_deref_mut(), frames, report);
     name_table_unit(state, bridge.as_deref_mut(), frames, report);
     let inspected = [
         (

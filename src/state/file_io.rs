@@ -153,6 +153,9 @@ impl AppState {
         if self.load_receiver.is_some() {
             return;
         }
+        if let Some((path, kind, data, row)) = self.next_waiting_gta6_script() {
+            return self.spawn_inline_load(path, kind, data, row);
+        }
         let path = match self.pending_loads.pop_front() {
             Some(p) => p,
             None => {
@@ -192,6 +195,7 @@ impl AppState {
         let provider = self.keys.provider();
         let path_clone = path.clone();
         thread::spawn(move || {
+            gta6_script::reading(&path_clone);
             let result =
                 parse_payload_from_path(&path_clone, kind, provider).map(|(payload, resource)| {
                     LoadResult::Success {
@@ -310,6 +314,10 @@ impl AppState {
         data: Vec<u8>,
         binding: Option<RpfEntryBinding>,
     ) {
+        // ⚠ A script decompiles for seconds: it waits for the load worker and is never read here.
+        if self.load_receiver.is_some() && gta6_script::may_be_script(kind, &data) {
+            return self.gta6_script_waits((path, kind, data, binding));
+        }
         let provider = self.keys.provider();
         if self.load_receiver.is_some() {
             match parse_payload(&path, kind, &data, provider) {
@@ -327,6 +335,7 @@ impl AppState {
         self.tabs.arriving = binding;
         let path_clone = path.clone();
         thread::spawn(move || {
+            gta6_script::reading(&path_clone);
             let result = parse_payload(&path_clone, kind, &data, provider).map(|payload| {
                 LoadResult::Success {
                     path: path_clone.clone(),
@@ -380,6 +389,7 @@ impl AppState {
     }
 
     pub fn poll_load_result(&mut self) {
+        self.poll_gta6_scripts();
         let result = match &self.load_receiver {
             Some((_, receiver)) => match receiver.try_recv() {
                 Ok(result) => result,
@@ -447,6 +457,7 @@ impl AppState {
             return false;
         }
         self.pending_loads.clear();
+        self.forget_waiting_gta6_scripts();
         self.batch_loading = false;
         self.loading = LoadingState::Idle;
         true

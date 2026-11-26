@@ -29,6 +29,10 @@ mod script;
 
 pub use script::{natives_dir, ScriptDocument};
 
+pub mod gta6_script;
+
+pub use gta6_script::Gta6ScriptDocument;
+
 #[allow(clippy::large_enum_variant)]
 mod meta;
 
@@ -231,6 +235,7 @@ impl Document {
             DocPayload::Gta6Text(text) => text.held_bytes(),
             DocPayload::Gta6AudioData(audio) => audio.held_bytes(),
             DocPayload::Gta6Save(save) => save.held_bytes(),
+            DocPayload::Gta6Script(script) => script.held_bytes(),
         };
         image + payload
     }

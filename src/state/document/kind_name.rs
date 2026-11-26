@@ -71,6 +71,7 @@ impl DocumentKind {
             Self::Gta6AudioData => "Gta6AudioData",
             Self::Gta6Expressions => "Gta6Expressions",
             Self::Gta6Save => "Gta6Save",
+            Self::Gta6Script => "Gta6Script",
             Self::GameRoot => "GameRoot",
             Self::Folder => "Folder",
             Self::Text => "Text",

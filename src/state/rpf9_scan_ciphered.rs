@@ -13,6 +13,10 @@ fn decrypted_payload(path: &Path, bytes: Vec<u8>) -> DocPayload {
     if super::super::document_io::is_text(&bytes) {
         return super::gta6_data_xml::payload(path, bytes);
     }
+    // A program the decompiler reads opens as its source; the listing takes one only it reads.
+    if let Some(script) = super::super::document::gta6_script::sniffed(&bytes) {
+        return script;
+    }
     if let Some(listing) = gta6_script_view::script_payload(&bytes) {
         return listing;
     }
@@ -175,6 +179,14 @@ mod ciphered_open {
         assert!(
             matches!(decrypted_payload(path, binary), DocPayload::Hex(_)),
             "a headerless binary body keeps its bytes under the banner, not decoded as text"
+        );
+
+        // A compiled script starts with eight zero bytes, and so does a body that is none.
+        let zeros = vec![0u8; 64];
+        let banner = super::super::super::document_io::no_reader(path);
+        assert!(
+            matches!(decrypted_payload(path, zeros), DocPayload::Hex(hex) if hex.banner == banner),
+            "a body of zero bytes is no script and keeps its bytes under the banner"
         );
     }
 

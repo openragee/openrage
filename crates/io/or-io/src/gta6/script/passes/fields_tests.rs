@@ -1,6 +1,6 @@
 use super::*;
 use crate::gta6::script::class::Role;
-use crate::gta6::script::ir::{Const, Head, Kind, Returns, Scalar, StoreKind, VmType};
+use crate::gta6::script::ir::{Const, Head, Kind, Returns, Scalar, StoreKind, VarInfo, VmType};
 use crate::gta6::script::project::{FieldFacts, Member, TypeFacts};
 use crate::gta6::script::{Names, Options};
 
@@ -112,7 +112,7 @@ fn an_access_of_an_object_the_function_makes_is_its_types_field() {
                 then: vec![set(Var::Local(1), load(Scalar::I32, local(0), 0x10))],
                 els: Vec::new(),
             },
-            // As wide as no field at its offset, and at an offset of no field.
+            // As wide as no field at its offset, and at an offset of no field within the type.
             set(Var::Local(1), load(Scalar::U64, local(0), 0x10)),
             set(Var::Local(1), load(Scalar::I32, local(0), 0x14)),
             tree::Stmt::Simple(store(local(0), 8)),
@@ -136,6 +136,8 @@ fn an_access_of_an_object_the_function_makes_is_its_types_field() {
     let mut wanted = body();
     wanted[1] = stored;
     wanted[2] = tested;
+    // No row overlaps the bytes, which the type holds: they are its field, of no proved kind.
+    wanted[4] = set(Var::Local(1), of(MADE, load(Scalar::I32, local(0), 0x14)));
     assert_eq!(done.body, wanted);
     // The way back is the body as it was.
     assert_eq!(tree::desugar(done.body), body());
@@ -145,7 +147,7 @@ fn an_access_of_an_object_the_function_makes_is_its_types_field() {
     assert_eq!(read(function(body()), &project, off).body, body());
 
     let counted = Found {
-        loads: 2,
+        loads: 3,
         stores: 1,
     };
     assert_eq!(apply(&mut function(body()), &project), counted);
@@ -318,4 +320,62 @@ fn a_constant_stored_to_a_field_the_layouts_prove_a_floats_is_a_float() {
     // Switched off, the constant is the integer it was read as.
     let off = Options::default().without(Pass::Fields);
     assert_eq!(read(function(body()), &project, off).body, body());
+}
+
+#[test]
+fn a_variable_the_kinds_pass_types_as_an_object_is_a_base_of_that_type() {
+    let typed_as = |var: Var, kind: Kind| {
+        let mut f = function(vec![
+            set(Var::Local(3), load(Scalar::I32, Expr::Var(var), 0x14)),
+            tree::Stmt::Simple(store(Expr::Var(var), 0x10)),
+        ]);
+        let mut info = VarInfo::new(ir::Width::Cell);
+        info.kind = kind;
+        f.head.vars.insert(var, info);
+        f
+    };
+    let project = project();
+    let object = Kind::Object(MADE.to_string());
+    for var in [Var::Local(1), Var::Param(1)] {
+        let done = read(typed_as(var, object.clone()), &project, Options::default());
+        let wanted = vec![
+            set(
+                Var::Local(3),
+                of(MADE, load(Scalar::I32, Expr::Var(var), 0x14)),
+            ),
+            group(MADE, store(Expr::Var(var), 0x10)),
+        ];
+        assert_eq!(done.body, wanted, "{var:?}");
+        assert_eq!(tree::desugar(done.body), typed_as(var, object.clone()).body);
+    }
+    // A type the project does not hold, a value type, and no type at all say nothing.
+    let unheld = Kind::Object(HELD.to_string());
+    for kind in [unheld, Kind::Pointer, Kind::Unknown] {
+        let f = typed_as(Var::Local(1), kind);
+        assert_eq!(read(f.clone(), &project, Options::default()).body, f.body);
+    }
+    let mut value = project.clone();
+    if let Some(ty) = value.types.get_mut(&MADE) {
+        ty.flags = 0x04;
+    }
+    let f = typed_as(Var::Local(1), object.clone());
+    assert_eq!(read(f.clone(), &value, Options::default()).body, f.body);
+    // A local an address of the frame may reach, and bytes past those the type holds.
+    let mut reached = typed_as(Var::Local(1), object.clone());
+    let lower = Expr::AddrOf {
+        var: Var::Local(0),
+        cell: 0,
+    };
+    reached.body.push(set(Var::Local(2), lower));
+    assert_eq!(
+        read(reached.clone(), &project, Options::default()).body,
+        reached.body
+    );
+    let past = |var: Var| {
+        let mut f = typed_as(var, object.clone());
+        f.body = vec![set(Var::Local(3), load(Scalar::I32, Expr::Var(var), 0x20))];
+        f
+    };
+    let f = past(Var::Local(1));
+    assert_eq!(read(f.clone(), &project, Options::default()).body, f.body);
 }

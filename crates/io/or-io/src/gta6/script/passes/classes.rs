@@ -1095,6 +1095,78 @@ fn nest(
     }
 }
 
+/// The fields the functions of a unit read and write as a type's that the project's layouts hold no row of, by type and offset, with the widths seen.
+#[derive(Default)]
+struct Unrowed(BTreeMap<(TypeKey, u32), BTreeSet<u32>>);
+
+impl Unrowed {
+    /// Notes each access in `body` read as a field the project has no row of.
+    fn note(&mut self, body: &[Stmt], project: &Project) {
+        let mut seen = |owner: TypeKey, offset: u32, bytes: u32| {
+            if project.field(owner, offset).is_none() {
+                self.0.entry((owner, offset)).or_default().insert(bytes);
+            }
+        };
+        tree::each_expr(body, &mut |top| {
+            top.walk(&mut |e| {
+                let Expr::Sugar {
+                    kind: ExprSugar::Field { owner },
+                    e,
+                } = e
+                else {
+                    return;
+                };
+                match &**e {
+                    Expr::Load { ty, offset, .. } => seen(*owner, *offset, ty.bytes()),
+                    Expr::LoadBytes { offset, bytes, .. } => seen(*owner, *offset, *bytes),
+                    _ => {}
+                }
+            });
+        });
+        tree::each_sugar(body, &mut |sugar| {
+            let Sugar::Group {
+                kind: Group::Field { owner },
+                parts,
+            } = sugar
+            else {
+                return;
+            };
+            for part in parts {
+                match part {
+                    ir::Stmt::Store { kind, offset, .. } => seen(*owner, *offset, kind.bytes()),
+                    ir::Stmt::StoreBytes { offset, bytes, .. } => seen(*owner, *offset, *bytes),
+                    _ => {}
+                }
+            }
+        });
+    }
+
+    /// Adds to each class of `program` the fields its functions use and no row states: of no proved kind, as wide as every access of it is.
+    // ⚠ A field accessed at two widths is left out: which bytes it holds is not said.
+    fn add(self, classes: &mut BTreeMap<TypeKey, Class>, project: &Project, program: u32) {
+        for ((owner, offset), widths) in self.0 {
+            let [bytes] = widths.into_iter().collect::<Vec<u32>>()[..] else {
+                continue;
+            };
+            let home = project.types.get(&owner).map(|facts| facts.home);
+            if !classes.contains_key(&owner) && home != Some(program) {
+                continue;
+            }
+            let class = classes
+                .entry(owner)
+                .or_insert_with(|| class_of(project, owner));
+            let field = Field {
+                offset,
+                bytes,
+                kind: Kind::Unknown,
+                is_static: false,
+            };
+            let at = class.fields.partition_point(|held| held.offset < offset);
+            class.fields.insert(at, field);
+        }
+    }
+}
+
 /// Whether a body holds a wait: only the body of an `async` method does, since a wait is made of a proved state machine alone.
 fn waits(body: &[Stmt]) -> bool {
     let mut found = false;
@@ -1130,8 +1202,10 @@ pub fn unit(
 
     // Which classes' methods make the objects of each compiler-made type; `None` is a free function.
     let mut makers: BTreeMap<TypeKey, BTreeSet<Option<TypeKey>>> = BTreeMap::new();
+    let mut unrowed = Unrowed::default();
     let mut free = Vec::new();
     for f in functions {
+        unrowed.note(&f.body, project);
         let found = member(project, FunctionKey::new(f.head.program, f.head.at));
         let owner = found.map(|m| m.owner);
         tree::each_expr(&f.body, &mut |top| {
@@ -1172,6 +1246,7 @@ pub fn unit(
         class.methods.push(method);
     }
 
+    unrowed.add(&mut classes, project, program);
     for class in classes.values_mut() {
         class.methods.sort_by_key(|method| method.function.head.at);
         // ⚠ No method is made the accessor of a property: every call of it still names it as a

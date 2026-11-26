@@ -1,16 +1,18 @@
 //! Fields: a load or a store through a reference of known type is an access of that type's field.
 //!
 //! Works on the structured form. A load becomes `ExprSugar::Field` and a store `Group::Field`,
-//! each naming the type that declares the field, only where the project's layout of that type has
-//! a field at the offset as wide as the access. A reference is of known type where it is a base
-//! of one, or a field the layouts give a type, loaded through such a reference.
+//! each naming the type that declares the field: where the project's layout of that type has a
+//! field at the offset as wide as the access, or has none that the access overlaps, inside the
+//! bytes the type holds. A reference is of known type where it is a base of one, a variable the
+//! kinds pass proves holds one, or a field the layouts give a type, loaded through such a
+//! reference.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gta6::script::ir::{
     self, Expr, ExprSugar, FunctionKey, Kind, Scalar, StoreKind, TypeKey, Var,
 };
-use crate::gta6::script::project::{FieldFacts, Project};
+use crate::gta6::script::project::{layouts, FieldFacts, Project};
 use crate::gta6::script::tree::{self, Group, Sugar};
 use crate::gta6::script::{Context, Pass, Stats};
 
@@ -21,6 +23,8 @@ pub const PASSES: &[Pass] = &[Pass::Fields];
 const BASES: usize = 64;
 /// The fields an address may be loaded through, one after another, below a base of known type.
 const CHAIN: usize = 8;
+/// The bytes of an object's header: its fields start after them.
+const HEADER: u32 = 8;
 
 /// Calls `f` on each simple statement `stmt` holds itself: its own, a loop head's, a source construct's.
 fn own_simples<'a>(stmt: &'a tree::Stmt, f: &mut impl FnMut(&'a ir::Stmt)) {
@@ -109,7 +113,33 @@ fn objects(f: &mut tree::Function, project: &Project) -> BTreeMap<Var, TypeKey> 
     if let Some(owner) = receiver {
         bases.insert(this, owner);
     }
+
+    // A variable the kinds pass declares a reference to an object of a script type is one, as
+    // far as no address of the frame reaches it.
+    for (var, info) in &f.head.vars {
+        let Some(ty) = object_type(project, &info.kind) else {
+            continue;
+        };
+        let reached = match var {
+            Var::Local(n) => lowest.is_some_and(|low| *n >= low),
+            Var::Value { .. } | Var::Stack { .. } | Var::Param(_) => addressed.contains(var),
+            Var::Global { .. } => true,
+        };
+        if !reached {
+            bases.entry(*var).or_insert(ty);
+        }
+    }
     bases
+}
+
+/// The script type `kind` refers to an object of, where the project holds that type and it is no value type.
+fn object_type(project: &Project, kind: &Kind) -> Option<TypeKey> {
+    let Kind::Object(name) = kind else {
+        return None;
+    };
+    let key = TypeKey::of_name(name).filter(|key| key.builtin().is_none())?;
+    let facts = project.types.get(&key)?;
+    (!facts.is_value()).then_some(key)
 }
 
 /// The type that declares the field of `bytes` bytes at `offset` of an object of type `ty`, and the field.
@@ -175,6 +205,37 @@ fn pointee(project: &Project, bases: &BTreeMap<Var, TypeKey>, addr: &Expr) -> Op
     Some(ty)
 }
 
+/// The type an access of `bytes` bytes at `offset` of an object of type `ty` lies in, where no row of `ty` or of its bases says anything at those bytes.
+// ⚠ Past the bytes `ty` holds the object may be of a type below it, whose field no row of `ty`
+// states: the access keeps the form it has, as it does at the object's header.
+fn unrowed(project: &Project, ty: TypeKey, offset: u32, bytes: u32) -> Option<TypeKey> {
+    let end = u64::from(offset) + u64::from(bytes);
+    if offset < HEADER || bytes == 0 {
+        return None;
+    }
+    let mut at = ty;
+    for _ in 0..BASES {
+        let rows = project.fields.get(&at).into_iter().flatten();
+        let overlaps = |row: &FieldFacts| {
+            u64::from(row.offset) < end
+                && u64::from(offset) < u64::from(row.offset) + u64::from(row.bytes)
+        };
+        if rows.into_iter().any(overlaps) {
+            return None;
+        }
+        match project.types.get(&at)?.base {
+            Some(base) => at = base,
+            None => break,
+        }
+    }
+    let row = FieldFacts {
+        offset,
+        bytes,
+        kind: Kind::Unknown,
+    };
+    layouts::declarer(&project.types, ty, &row)
+}
+
 /// The type that declares the field an access of `bytes` bytes at `offset` through `addr` is of, where `addr` points at an object of known type.
 fn declared(
     project: &Project,
@@ -184,7 +245,10 @@ fn declared(
     bytes: u32,
 ) -> Option<TypeKey> {
     let ty = pointee(project, bases, addr)?;
-    field_of(project, ty, offset, bytes).map(|(owner, _)| owner)
+    match field_of(project, ty, offset, bytes) {
+        Some((owner, _)) => Some(owner),
+        None => unrowed(project, ty, offset, bytes),
+    }
 }
 
 /// The type that declares the field a store writes, where it writes one whole.

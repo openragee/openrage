@@ -479,11 +479,14 @@ pub fn absorb(into: &mut Project, from: &mut Project) {
             note(into, key, row);
         }
     }
+    for (place, truth) in std::mem::take(&mut from.truths) {
+        *into.truths.entry(place).or_insert(true) &= truth;
+    }
 }
 
 /// The type that declares the field a row was seen as on `key`: the furthest base type the field still lies in; `None` for a row `key` itself does not hold.
 // A type's fields lie after its base type's, so what ends within the base is the base's.
-fn declarer(
+pub(crate) fn declarer(
     types: &BTreeMap<TypeKey, TypeFacts>,
     key: TypeKey,
     row: &FieldFacts,

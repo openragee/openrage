@@ -146,6 +146,8 @@ fn fs_composite(v: Out) -> @location(0) vec4<f32> {
     let blurred = textureSampleLevel(bloom, linear_clamp, v.uv, 0.0).rgb;
     // What the bloom spreads is what it takes from the frame
     var light = mix(frame.rgb, blurred, p.x);
+    // ⚠ The alpha leaves here holding the scene's luminance before the per-pixel exposure, in cd/m², which the rod shift after the mapping is weighed by.
+    let scene = luminance(light) / max(p.w, 1e-30);
     if (p.y > 0.0) {
         // The frame holds its light at the frame's exposure: the luminance about the pixel is that over the exposure
         let about = luminance(smooth_local(v.uv)) / max(p.w, 1e-30);
@@ -155,7 +157,7 @@ fn fs_composite(v: Out) -> @location(0) vec4<f32> {
         let own = clamp(clamp(ev + k.w * compensation_at(ev), k.x, k.y) + k.z, k.x, k.y);
         light *= exp2(p.y * (own - p.z));
     }
-    return vec4<f32>(light, frame.a);
+    return vec4<f32>(light, scene);
 }
 "#;
 
@@ -236,16 +238,34 @@ fn fs_temporal(v: Out) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// The mapped frame pushed from its four neighbours by the build's amount.
+/// The mapped frame's darkest pixels shifted towards a rod's sight, then pushed from its four neighbours by the build's amount.
 const SHARPEN: &str = r#"
 struct Sharpen {
     amount: vec4<f32>,
+    // the rod shift's tint and strength, then its weight's scale and bias
+    tint: vec4<f32>,
+    weight: vec4<f32>,
 }
 
 @group(0) @binding(2) var<uniform> sharpen: Sharpen;
+// The lit frame, whose alpha holds the scene's luminance in cd/m²
+@group(0) @binding(3) var scene: texture_2d<f32>;
+
+// A rod's luminance of the colour from its XYZ, mixed in where the scene is darker than about
+// 0.04 cd/m², as the composite does after its curve.
+// ⚠ Inferred: on the values the mapped target holds; whether the build shifts before or after its own encoding is a branch the program does not show.
+fn rod_shifted(c: vec3<f32>, luminance: f32) -> vec3<f32> {
+    let x = dot(c, vec3<f32>(0.5149, 0.3244, 0.1607));
+    let y = max(0.0, dot(c, vec3<f32>(0.2654, 0.6704, 0.0642)));
+    let z = max(0.0, dot(c, vec3<f32>(0.0248, 0.1248, 0.8504)));
+    let rod = ((z + y) / max(0.01, x) + 1.0) * 1.33 - 1.68;
+    let w = saturate(0.04 / (0.04 + luminance) * sharpen.weight.x + sharpen.weight.y);
+    return c + w * (sharpen.tint.w * rod * y * sharpen.tint.rgb - c);
+}
 
 fn texel(at: vec2<i32>, size: vec2<i32>) -> vec3<f32> {
-    return textureLoad(source, clamp(at, vec2<i32>(0), size - 1), 0).rgb;
+    let p = clamp(at, vec2<i32>(0), size - 1);
+    return rod_shifted(textureLoad(source, p, 0).rgb, textureLoad(scene, p, 0).a);
 }
 
 @fragment

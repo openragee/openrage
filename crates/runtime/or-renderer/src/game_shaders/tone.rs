@@ -330,6 +330,8 @@ pub struct Gta6Post {
     pub sharpen: f32,
     /// The moment's colour grade.
     pub grade: super::grade::Grade,
+    /// The moment's shift of the darkest pixels towards a rod's sight.
+    pub scotopic: super::grade::Scotopic,
 }
 
 /// GTA VI's per-pixel exposure: the stops its curve gives the luminance about a pixel, of which `amount` takes the place of the frame's.

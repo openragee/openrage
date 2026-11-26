@@ -866,8 +866,8 @@ impl ViewportRenderer {
         (deferred.meter).record(encoder, queue, (self.day_revision, exposure));
         match post {
             Some(post) => {
-                (deferred.post).record_bloom(encoder, queue, &deferred.hdr, post, exposure);
                 (deferred.grade).record(encoder, queue, &deferred.hdr, &post.grade);
+                (deferred.post).record_bloom(encoder, queue, &deferred.hdr, post, exposure);
             }
             // The bright part of the lit frame is blurred and put back over it, before the frame is mapped
             None => deferred.passes.record_bloom(encoder, &deferred.hdr, &tone),
@@ -916,7 +916,8 @@ impl ViewportRenderer {
         if let Some(post) = post {
             let background = self.display_background();
             let screen = &self.colour_display_view;
-            (deferred.post).record_sharpen(encoder, queue, screen, background, post.sharpen);
+            let shift = (post.sharpen, &post.scotopic);
+            (deferred.post).record_sharpen(encoder, queue, screen, background, shift);
         } else if antialiased {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("viewport-antialias-pass"),

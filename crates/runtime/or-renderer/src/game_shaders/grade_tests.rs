@@ -25,8 +25,14 @@ fn a_moment_that_states_nothing_packs_white_and_the_multipliers_scale_the_points
         "postfx_grad_bottom_col_mult" => 1.5,
         "postfx_grad_top_col_fade" => 0.25,
         "postfx_grad_midpoint" => 0.4,
+        "postfx_grad_middle_col_smooth_t" => 0.25,
+        "postfx_grad_center_col_smooth_t" => 0.75,
+        "postfx_grad_color_min" => 0.1,
         _ => default,
     });
+    // Each set takes its own middle's smoothing; both take the one least.
+    assert_eq!(night.vertical.pivot[2..], [0.25, 0.1]);
+    assert_eq!(night.horizontal.pivot[2..], [0.75, 0.1]);
     let top = 0.5 * 0.25f32.powf(1.0 / 2.4);
     assert!(
         (night.vertical.first[0] - top).abs() < 1e-6,

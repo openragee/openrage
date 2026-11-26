@@ -11,6 +11,7 @@ use super::post_math::{
 };
 use super::post_shaders::{module, Part};
 use crate::game_shaders::deferred::HDR_FORMAT;
+use crate::game_shaders::grade::Scotopic;
 use crate::game_shaders::tone::{Gta6Post, Temporal, BLOOM_SIZES, COMPENSATION_SAMPLES};
 
 /// The longest a frame counts for when the history takes its share, in seconds: a slow frame converges by frames, not by time.
@@ -298,7 +299,7 @@ impl Post {
             sampler: crate::game_shaders::samplers::linear(device),
             composite_values: uniform(device, 16 * (4 + COMPENSATION_SAMPLES as u64 / 4)),
             temporal_values: uniform(device, 64 * 3 + 16 * 6),
-            sharpen_values: uniform(device, 16),
+            sharpen_values: uniform(device, 48),
             targets: None,
             bound: None,
             kept: Cell::new(Kept {
@@ -389,7 +390,7 @@ impl Post {
         });
         let sharpen = Some(group(
             &self.sharpen,
-            &[(0, ldr)],
+            &[(0, ldr), (3, hdr)],
             Some((2, &self.sharpen_values)),
         ));
         self.bound = Some(Bound {
@@ -563,23 +564,21 @@ impl Post {
         copy(encoder, &t.scratch, hdr);
     }
 
-    /// Sharpen the mapped frame into `screen`, a target of the display format.
+    /// Shift the mapped frame's darkest pixels by `scotopic` and sharpen it by `amount` into `screen`, a target of the display format.
     pub(super) fn record_sharpen(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         queue: &wgpu::Queue,
         screen: &wgpu::TextureView,
         background: wgpu::Color,
-        amount: f32,
+        (amount, scotopic): (f32, &Scotopic),
     ) {
         let Some(bind) = self.bound.as_ref().and_then(|b| b.sharpen.as_ref()) else {
             return;
         };
-        queue.write_buffer(
-            &self.sharpen_values,
-            0,
-            bytemuck::cast_slice(&[amount, 0.0, 0.0, 0.0]),
-        );
+        let mut values = vec![amount, 0.0, 0.0, 0.0];
+        values.extend(scotopic.words());
+        queue.write_buffer(&self.sharpen_values, 0, bytemuck::cast_slice(&values));
         draw(
             encoder,
             screen,

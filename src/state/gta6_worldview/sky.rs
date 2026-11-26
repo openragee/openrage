@@ -485,6 +485,7 @@ fn post_of(
         },
         sharpen: visual("sharpen.intensity", 0.15),
         grade: or_renderer::game_shaders::grade::Grade::of(&get),
+        scotopic: or_renderer::game_shaders::grade::Scotopic::of(&get),
     }
 }
 

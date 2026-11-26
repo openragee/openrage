@@ -1,5 +1,6 @@
 //! The lights of a frame drawn as volumes of the game's pass for their kind, over the frame the sun lit: each light one instance of a unit sphere the pass shapes.
 
+use std::ops::Range;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
@@ -14,6 +15,7 @@ use super::engine::EngineConstants;
 use super::mesh::scene::MATERIAL_CLEAR;
 use super::pack::GamePack;
 use super::pipeline::{DrawState, Target};
+use super::room_mask::ROOM_BIT;
 use super::screen::{vertex_inputs, ScreenError, ScreenPass, Space};
 
 /// The pass that reads a light from a stream of its own, after the twenty-four that read one from the constants and the three that only mark the stencil.
@@ -125,6 +127,8 @@ fn records<L>(
 /// The lights of one kind, drawn into the frame the sun lit.
 pub struct LightVolumes<L> {
     pass: ScreenPass,
+    /// The same pass drawn only over the pixels a room marked.
+    in_room: ScreenPass,
     inputs: Vec<SignatureElement>,
     sphere: wgpu::Buffer,
     corners: u32,
@@ -197,6 +201,30 @@ impl<L: Copy + PartialEq> LightVolumes<L> {
             Space::Unit,
             &mut |name, requirement| provide(device, frame, name, requirement),
         )?;
+        let marked = wgpu::StencilFaceState {
+            compare: wgpu::CompareFunction::Equal,
+            ..draw.stencil.front
+        };
+        let in_room = ScreenPass::new(
+            device,
+            queue,
+            pack,
+            effect,
+            technique,
+            INSTANCED,
+            &target,
+            &DrawState {
+                stencil: wgpu::StencilState {
+                    front: marked,
+                    back: marked,
+                    read_mask: ROOM_BIT,
+                    write_mask: 0,
+                },
+                ..draw.clone()
+            },
+            Space::Unit,
+            &mut |name, requirement| provide(device, frame, name, requirement),
+        )?;
         let streams = pass.streams();
         let corners = sphere();
         let mut bytes = Vec::with_capacity(corners.len() * streams.vertex_stride as usize);
@@ -221,6 +249,7 @@ impl<L: Copy + PartialEq> LightVolumes<L> {
         });
         Ok(Self {
             pass,
+            in_room,
             inputs: vertex_inputs,
             sphere,
             corners: corners.len() as u32,
@@ -233,9 +262,11 @@ impl<L: Copy + PartialEq> LightVolumes<L> {
 
     /// Read `frame` anew, for targets of another size.
     pub fn bind(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Inputs<'_>) {
-        self.pass.bind(device, queue, &mut |name, requirement| {
-            provide(device, frame, name, requirement)
-        });
+        for pass in [&mut self.pass, &mut self.in_room] {
+            pass.bind(device, queue, &mut |name, requirement| {
+                provide(device, frame, name, requirement)
+            });
+        }
     }
 
     /// Write the constants of this frame and the first [`MOST`] of `lights`.
@@ -254,6 +285,7 @@ impl<L: Copy + PartialEq> LightVolumes<L> {
         let mut values = engine.values();
         values.extend(lighting_values(engine, screen));
         self.pass.write(queue, &values);
+        self.in_room.write(queue, &values);
         // ⚠ Thousands of lights, each written attribute by attribute: only when they changed.
         let mut written = self.written.lock().unwrap_or_else(|p| p.into_inner());
         if written.as_slice() == lights {
@@ -274,13 +306,24 @@ impl<L: Copy + PartialEq> LightVolumes<L> {
 
     /// Draw the lights the frame was written with into `pass`: its colour target of the format this was built for, and the depth and stencil of the frame, which it only reads.
     pub fn record(&self, pass: &mut wgpu::RenderPass<'_>) {
+        self.record_range(pass, 0..u32::MAX, false);
+    }
+
+    /// Draw the lights of `range` the frame was written with into `pass`; `in_room` only over the pixels a room marked, the stencil's reference at its bit.
+    pub fn record_range(&self, pass: &mut wgpu::RenderPass<'_>, range: Range<u32>, in_room: bool) {
         let drawn = self.drawn.load(Ordering::Relaxed);
-        if drawn == 0 {
+        let range = range.start.min(drawn)..range.end.min(drawn);
+        if range.is_empty() {
             return;
         }
-        pass.set_stencil_reference(MATERIAL_CLEAR);
-        self.pass
-            .record_instanced(pass, &self.sphere, self.corners, &self.instances, drawn);
+        let screen = match in_room {
+            true => &self.in_room,
+            false => {
+                pass.set_stencil_reference(MATERIAL_CLEAR);
+                &self.pass
+            }
+        };
+        screen.record_instanced(pass, &self.sphere, self.corners, &self.instances, range);
     }
 }
 

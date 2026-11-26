@@ -275,6 +275,7 @@ pub struct ViewportRenderer {
     point_lights: Vec<crate::game_shaders::point_lights::PointLight>,
     spot_lights: Vec<crate::game_shaders::spot_lights::SpotLight>,
     capsule_lights: Vec<crate::game_shaders::capsule_lights::CapsuleLight>,
+    light_rooms: Vec<crate::game_shaders::room_mask::LightRoom>,
     distant_lights: (
         crate::game_shaders::distant_lights::SpriteLook,
         Arc<[crate::game_shaders::distant_lights::DistantLight]>,
@@ -399,6 +400,11 @@ impl ViewportRenderer {
         lights: Vec<crate::game_shaders::capsule_lights::CapsuleLight>,
     ) {
         self.capsule_lights = lights;
+    }
+
+    /// Say which of the lights set last light only their room's box; none by default.
+    pub fn set_light_rooms(&mut self, rooms: Vec<crate::game_shaders::room_mask::LightRoom>) {
+        self.light_rooms = rooms;
     }
 
     /// Show `lights` seen from afar in Shaded as sprites of `size`, which the game's distant lights pass draws.

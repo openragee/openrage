@@ -635,6 +635,7 @@ impl ViewportRenderer {
         deferred
             .passes
             .write_capsule_lights(queue, &engine, &screen, &self.capsule_lights);
+        (deferred.passes).write_light_rooms(queue, &engine, &self.light_rooms);
         let (look, distant) = &self.distant_lights;
         (deferred.passes).write_distant_lights(queue, &engine, &screen, (*look, distant));
         let coronas = (self.coronas.as_ref()).map(|(look, c)| (*look, c.as_slice()));
@@ -732,6 +733,7 @@ impl ViewportRenderer {
             );
             deferred.passes.record_lighting(&mut pass, &engine);
         }
+        (deferred.passes).record_rooms(encoder, &deferred.hdr, &self.depth_view);
         self.gpu_mark(encoder, "lighting");
         let sky_shown = self.shows_sky(deferred);
         if sky_shown {

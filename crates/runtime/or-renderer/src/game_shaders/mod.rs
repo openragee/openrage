@@ -28,6 +28,7 @@ pub mod pipeline;
 pub mod point_lights;
 pub mod quad;
 pub mod resolve;
+pub mod room_mask;
 pub mod samplers;
 pub mod screen;
 pub mod shadow;

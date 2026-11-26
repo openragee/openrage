@@ -378,7 +378,7 @@ impl DistantLights {
             &self.corners,
             CORNERS.len() as u32,
             &self.instances,
-            drawn,
+            0..drawn,
         );
     }
 }

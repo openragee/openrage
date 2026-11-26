@@ -272,6 +272,7 @@ impl ViewportRenderer {
             point_lights: Vec::new(),
             spot_lights: Vec::new(),
             capsule_lights: Vec::new(),
+            light_rooms: Vec::new(),
             distant_lights: Default::default(),
             coronas: None,
             fog_volumes: Vec::new(),

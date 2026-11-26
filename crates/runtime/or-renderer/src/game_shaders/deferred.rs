@@ -1,8 +1,9 @@
 //! The game's deferred frame: opaque surfaces written to a G-buffer by the game's own passes, then lit by its lighting pass.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 
 use super::ambient::AmbientPass;
 use super::antialias::AntiAliasPass;
@@ -20,6 +21,7 @@ use super::pack::GamePack;
 use super::pipeline::{DrawState, Target};
 use super::point_lights::{PointLight, PointLights};
 use super::resolve::ResolvePass;
+use super::room_mask::{LightRoom, RoomMask, MOST_BOXES, ROOM_BIT};
 use super::samplers::{point, smooth};
 use super::screen::{ScreenError, ScreenPass, Space};
 use super::shadow::{sphere_of, Fit, ShadowPass};
@@ -549,6 +551,9 @@ pub struct FramePasses {
     coronas: Option<Coronas>,
     lighting: LightingPass,
     resolve: ResolvePass,
+    /// The rooms whose lamps light only what lies inside them, and the passes that mark them.
+    room_mask: RoomMask,
+    light_rooms: std::sync::Mutex<Vec<LightRoom>>,
 }
 
 impl FramePasses {
@@ -609,6 +614,8 @@ impl FramePasses {
             coronas,
             lighting: LightingPass::new(device, queue, pack, hdr, inputs)?,
             resolve,
+            room_mask: RoomMask::new(device),
+            light_rooms: std::sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -932,18 +939,139 @@ impl FramePasses {
         self.ambient.as_ref().map(AmbientPass::depth)
     }
 
-    /// Light the G-buffer into `pass`, by the sun and then by the lights of the particles.
-    pub fn record_lighting(&self, pass: &mut wgpu::RenderPass<'_>, engine: &EngineConstants) {
-        self.lighting.record(pass, &Sun::of(engine));
+    /// Draw the lights of `ranges` (points, spots, capsules) into `pass`; `in_room` only over the pixels a box marked, the stencil's reference at its bit.
+    fn record_lights_of(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        ranges: &[Range<u32>; 3],
+        in_room: bool,
+    ) {
         if let Some(lights) = &self.lights {
-            lights.record(pass);
+            lights.record_range(pass, ranges[0].clone(), in_room);
         }
         if let Some(spots) = &self.spots {
-            spots.record(pass);
+            spots.record_range(pass, ranges[1].clone(), in_room);
         }
         if let Some(capsules) = &self.capsules {
-            capsules.record(pass);
+            capsules.record_range(pass, ranges[2].clone(), in_room);
         }
+    }
+
+    /// Light the G-buffer into `pass`, by the sun and then by the lights that light every pixel, those before any box's; [`Self::record_rooms`] draws the rest.
+    pub fn record_lighting(&self, pass: &mut wgpu::RenderPass<'_>, engine: &EngineConstants) {
+        self.lighting.record(pass, &Sun::of(engine));
+        let rooms = self.light_rooms.lock().unwrap_or_else(|p| p.into_inner());
+        let free =
+            std::array::from_fn(|k| 0..rooms.first().map_or(u32::MAX, |r| r.lights[k].start));
+        self.record_lights_of(pass, &free, false);
+    }
+
+    /// Draw the lamps of each box into the lit frame `hdr`, over the pixels whose surface lies inside the box: a box after another, its pixels marked in the stencil of `depth`, its lamps drawn over those an earlier box of theirs did not light, the marks cleared after each set of lamps.
+    // ⚠ Passes of their own: the lighting pass samples the depth, so the stencil cannot be written there.
+    pub fn record_rooms(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        hdr: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+    ) {
+        let rooms = self.light_rooms.lock().unwrap_or_else(|p| p.into_inner());
+        if rooms.is_empty() {
+            return;
+        }
+        fn stencil_pass<'a>(
+            encoder: &'a mut wgpu::CommandEncoder,
+            depth: &wgpu::TextureView,
+        ) -> wgpu::RenderPass<'a> {
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("room-mask"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: None,
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            })
+        }
+        fn light_pass<'a>(
+            encoder: &'a mut wgpu::CommandEncoder,
+            hdr: &wgpu::TextureView,
+            depth: &wgpu::TextureView,
+        ) -> wgpu::RenderPass<'a> {
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("room-lights"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: hdr,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: None,
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            })
+        }
+        let marked = rooms.len().min(MOST_BOXES);
+        // Where the boxes of the set of lamps being drawn start.
+        let mut set = 0;
+        for k in 0..marked {
+            {
+                let mut pass = stencil_pass(encoder, depth);
+                if k > 0 && rooms[k].lights != rooms[k - 1].lights {
+                    // A new set of lamps starts from no mark: the last set's boxes are cleared.
+                    (set..k).for_each(|j| self.room_mask.clear(&mut pass, j));
+                    set = k;
+                } else if k > 0 {
+                    self.room_mask.keep(&mut pass, k - 1);
+                }
+                self.room_mask.mark(&mut pass, k);
+            }
+            let mut pass = light_pass(encoder, hdr, depth);
+            pass.set_stencil_reference(ROOM_BIT);
+            self.record_lights_of(&mut pass, &rooms[k].lights, true);
+        }
+        // ponytail: lamps past the most boxes a frame marks light unmasked; more marks if a frame shows that many.
+        if rooms.len() > marked {
+            let mut pass = light_pass(encoder, hdr, depth);
+            let mut drawn: Vec<&[Range<u32>; 3]> = vec![&rooms[marked - 1].lights];
+            for room in &rooms[marked..] {
+                if !drawn.contains(&&room.lights) {
+                    self.record_lights_of(&mut pass, &room.lights, false);
+                    drawn.push(&room.lights);
+                }
+            }
+        }
+        let mut pass = stencil_pass(encoder, depth);
+        (set..marked).for_each(|j| self.room_mask.clear(&mut pass, j));
+    }
+    /// Say which lamps of the lists written this frame light only their room's box, which [`Self::record_lighting`] masks them to.
+    pub fn write_light_rooms(
+        &self,
+        queue: &wgpu::Queue,
+        engine: &EngineConstants,
+        rooms: &[LightRoom],
+    ) {
+        let bounds: Vec<Mat4> = rooms.iter().map(|r| r.bounds).collect();
+        if !bounds.is_empty() {
+            let eye = engine.view.inverse().w_axis.truncate();
+            (self.room_mask).write(queue, engine.projection * engine.view, eye, &bounds);
+        }
+        let mut kept = self.light_rooms.lock().unwrap_or_else(|p| p.into_inner());
+        kept.clear();
+        kept.extend_from_slice(rooms);
     }
 
     /// Map the lit frame to the screen in `pass`.

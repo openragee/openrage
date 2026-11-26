@@ -368,14 +368,14 @@ impl ScreenPass {
         &self.streams
     }
 
-    /// Draw `count` instances of `vertices` vertices of `geometry` into `pass`, in place of the quad, with the per-instance inputs read from `instances`.
+    /// Draw the instances of `range` of `vertices` vertices of `geometry` into `pass`, in place of the quad, with the per-instance inputs read from `instances`.
     pub fn record_instanced(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         geometry: &wgpu::Buffer,
         vertices: u32,
         instances: &wgpu::Buffer,
-        count: u32,
+        range: std::ops::Range<u32>,
     ) {
         pass.set_pipeline(&self.pass.pipeline);
         pass.set_vertex_buffer(0, geometry.slice(..));
@@ -383,7 +383,7 @@ impl ScreenPass {
         for (group, bind_group) in &self.groups {
             pass.set_bind_group(*group, bind_group, &[]);
         }
-        pass.draw(0..vertices, 0..count);
+        pass.draw(0..vertices, range);
     }
 
     /// The format of each colour target the pass writes, by location.

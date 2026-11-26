@@ -26,6 +26,7 @@ use super::lights_corona::{self, CoronaReach, View};
 use super::lights_distant::{self, DistantReach};
 use super::lights_frame::{self, Chosen, FrameLights, Lamp, LodList, LodReach, Placed};
 use super::lights_lod::{self, MapLod};
+pub use super::lights_vars::LightVars;
 use super::pool::Pool;
 
 pub use super::lights_frame::MOST;
@@ -226,24 +227,38 @@ pub struct Lights {
     inside: Vec<(Lamp, [u32; 3])>,
     /// The lamps last chosen to be drawn as volumes, with what they were chosen for; none once the lamps change.
     chosen: Option<Choice>,
-    /// The distant lights' sprites as last worked out, and the eye and the day's cap they were for; none once the lamps change.
-    sprites: Option<(Vec3, bool, Arc<[or_renderer::DistantLight]>)>,
+    /// The distant lights' sprites as last worked out, and the eye, the day's cap and the frame's variables they were for; none once the lamps change.
+    sprites: Option<(Vec3, bool, u64, Arc<[or_renderer::DistantLight]>)>,
 }
 
-/// The lamps chosen to be drawn as volumes, and the eye, the way it looked, the hour, the most and the rooms seen they were chosen for.
+/// The lamps chosen to be drawn as volumes, and the eye, the way it looked, the hour, the most, the rooms seen and the frame they were chosen for.
 struct Choice {
     eye: Vec3,
     forward: Vec3,
     hour: u32,
     most: usize,
     rooms: u32,
+    frame: u64,
     chosen: Vec<Chosen>,
 }
 
-/// The day's phase at `hour` (0 to 24) as the lights' cap by day reads it, 0.25 at sunrise and 0.5 at noon.
-// ponytail: the clock stands in for the phase the sun's rise, noon and set make of it, which the day's own frame would give.
-fn day_phase(hour: f32) -> f64 {
-    f64::from(hour.rem_euclid(24.0)) / 24.0
+/// What of the day's frame the lights take: its light variables, and its day phase (0.25 at sunrise, 0.5 at noon) where the day states one.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LightFrame {
+    pub vars: LightVars,
+    pub day_phase: Option<f64>,
+}
+
+impl LightFrame {
+    /// The day phase the lights' cap by day reads at `hour` (0 to 24): the frame's, else the clock's.
+    // ponytail: the clock stands in where no day is read; it puts noon at 12:00 where the sun puts it later.
+    fn phase(&self, hour: f32) -> f64 {
+        (self.day_phase).unwrap_or_else(|| f64::from(hour.rem_euclid(24.0)) / 24.0)
+    }
+
+    fn bits(&self, hour: f32) -> u64 {
+        self.vars.bits() ^ self.phase(hour).to_bits().rotate_left(17)
+    }
 }
 
 /// How far the camera turns before the lamps are chosen again, in degrees: the cone they are chosen in is as much wider than the view.
@@ -423,22 +438,28 @@ impl Lights {
         view: &View,
         (hour, scale, most): (f32, f32, usize),
         rooms: &RoomsSeen,
+        frame: &LightFrame,
     ) -> FrameLights {
         let turned = |was: Vec3| was.dot(view.forward) < TURN.to_radians().cos();
         let digest = digest(rooms);
+        let bits = frame.bits(hour);
         let fresh = (self.chosen.as_ref()).is_some_and(|c| {
             c.eye == view.eye
                 && c.hour == hour.to_bits()
                 && c.most == most
                 && c.rooms == digest
+                && c.frame == bits
                 && !turned(c.forward)
         });
         if !fresh {
-            self.chosen = Some(self.choose(view, hour, most, rooms));
+            self.chosen = Some(self.choose(view, hour, most, rooms, frame));
         }
-        let capped = in_day_cap(day_phase(hour));
-        // ⚠ Worked out over every distant light of the maps loaded, which are many: only when the eye moves, the day's cap comes or goes, or the lamps change.
-        if (self.sprites.as_ref()).is_none_or(|(at, was, _)| *at != view.eye || *was != capped) {
+        let capped = in_day_cap(frame.phase(hour));
+        let vars = frame.vars.bits();
+        // ⚠ Worked out over every distant light of the maps loaded, which are many: only when the eye moves, the day's cap comes or goes, the frame's variables change or the lamps change.
+        if (self.sprites.as_ref())
+            .is_none_or(|(at, was, of, _)| *at != view.eye || *was != capped || *of != vars)
+        {
             // A distant list's lights point the way the level-of-detail lights of the map that names it as parent do.
             let ways: HashMap<u32, &[[f32; 3]]> = (self.loaded.values())
                 .filter(|m| m.parent != 0)
@@ -448,11 +469,12 @@ impl Lights {
                 let way = ways.get(name).copied();
                 (m.lod.distant.as_slice(), m.lod.category, way)
             });
-            let mut sprites = lights_distant::sprites(lists, view.eye, &self.distant_reach);
+            let mut sprites =
+                lights_distant::sprites(lists, view.eye, &self.distant_reach, &frame.vars);
             if capped {
                 sprites.retain(|s| s.position.distance(view.eye) <= DAY_RANGE_CAP);
             }
-            self.sprites = Some((view.eye, capped, sprites.into()));
+            self.sprites = Some((view.eye, capped, vars, sprites.into()));
         }
         let chosen = self
             .chosen
@@ -463,7 +485,7 @@ impl Lights {
         nearest_lamps(&mut out.lamps, view.eye);
         // The frame's units for a radiance are the stated ones times the exposure, which `scale` holds over pi.
         let exposure = scale * PI;
-        if let Some((_, _, sprites)) = &self.sprites {
+        if let Some((_, _, _, sprites)) = &self.sprites {
             out.sprites = Arc::clone(sprites);
         }
         out.sprite_look = SpriteLook {
@@ -482,10 +504,17 @@ impl Lights {
 
     /// The lamps the camera of `view` can see lit at `hour`, at most `most`: those whose reach lies within a cone about the view as wide as the widest screen and [`TURN`] more.
     // ⚠ Worked out over every lamp of the maps loaded, which are many: only when the eye moves, the hour changes or the camera turns past what the cone allows for.
-    fn choose(&self, view: &View, hour: f32, most: usize, rooms: &RoomsSeen) -> Choice {
+    fn choose(
+        &self,
+        view: &View,
+        hour: f32,
+        most: usize,
+        rooms: &RoomsSeen,
+        frame: &LightFrame,
+    ) -> Choice {
         let (eye, forward) = (view.eye, view.forward);
         let wide = (view.tan_half * WIDEST.hypot(1.0)).atan() + TURN.to_radians();
-        let phase = day_phase(hour);
+        let phase = frame.phase(hour);
         let seen = |p: Vec3, radius: f32| {
             if !light_in_day_reach(p, eye, phase) {
                 return false;
@@ -503,7 +532,8 @@ impl Lights {
             hour: hour.to_bits(),
             most,
             rooms: digest(rooms),
-            chosen: lights_frame::choose(lamps, eye, hour, most, &seen),
+            frame: frame.bits(hour),
+            chosen: lights_frame::choose(lamps, eye, hour, most, &frame.vars, &seen),
         }
     }
 

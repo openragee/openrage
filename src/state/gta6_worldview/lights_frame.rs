@@ -7,12 +7,21 @@ use or_io::gta5::data::visual_settings::VisualSettings;
 use or_io::gta6::map::light_ext::{Light, LightKind};
 use or_renderer::game_shaders::distant_lights::SpriteLook;
 use or_renderer::world::light_math::{
-    clamp_spot_cone, lamp_hour_factor, ATTR_DAY_BIT, ATTR_NIGHT_BIT,
+    capsule_intensity, clamp_spot_cone, lamp_hour_factor, map_light_flags, map_range_scale,
+    spot_cosines, spot_intensity_factor, ATTR_DAY_BIT, ATTR_NIGHT_BIT,
 };
 use or_renderer::{CapsuleLight, DistantLight, PointLight, SpotLight};
 
 use super::lights_law::{spot_cones, SHELLS, SHELL_EXPONENT};
 use super::lights_lod::{Distant, MapLod};
+use super::lights_vars::LightVars;
+
+/// The blend of a spot's intensity toward the sphere over its cone, one for none: the build's for a level-of-detail light.
+// ⚠ Needs the executable: where a map light's blend comes from was not read; one is taken, as for a level-of-detail light.
+const SPOT_K: f32 = 1.0;
+/// The second flag word of a light, whose bit 17 divides a capsule by its length: nought on the level-of-detail path.
+// ⚠ Needs the executable: no member of the file's light is known to carry it for a map light.
+const FLAGS_TWO: u32 = 0;
 
 /// The most lights the frame is handed: the placed lights a dense street holds within 150 m.
 pub const MOST: usize = 2048;
@@ -92,6 +101,33 @@ fn reach_strength(reach: Option<[f32; 2]>, distance: f32) -> f32 {
     match reach {
         None => 1.0,
         Some([range, fade]) => ((range - distance) / fade.max(1e-3)).clamp(0.0, 1.0),
+    }
+}
+
+/// `lamp`'s light as the frame's variables `vars` give it: a placed light's intensity times the global intensity and its range times its side's scale, held to one; a level-of-detail light's intensity times the global and its set's, its colour tinted and overridden by its set, its range times its own scale. A level-of-detail light of the maps is of set 0: set 1 and its category multipliers are a vehicle's.
+pub fn as_lit(lamp: &Lamp, vars: &LightVars) -> Light {
+    let l = lamp.light;
+    match lamp.reach {
+        None => Light {
+            intensity: l.intensity * vars.intensity,
+            radius: l.radius
+                * map_range_scale(
+                    map_light_flags(l.flags),
+                    vars.map_range[0],
+                    vars.map_range[1],
+                ),
+            ..l
+        },
+        Some(_) => {
+            let set = &vars.sets[0];
+            let base = Vec3::from(l.colour) * vars.lod_gain * set.tint;
+            Light {
+                intensity: l.intensity * vars.intensity * set.intensity,
+                colour: (base + (set.colour - base) * set.amount).to_array(),
+                radius: l.radius * vars.lod_range,
+                ..l
+            }
+        }
     }
 }
 
@@ -248,7 +284,7 @@ pub fn frame_lights<'a>(
     scale: f32,
     most: usize,
 ) -> FrameLights {
-    let chosen = choose(lamps, eye, hour, most, &|_, _| true);
+    let chosen = choose(lamps, eye, hour, most, &LightVars::default(), &|_, _| true);
     volumes_of(&chosen, hour, scale)
 }
 
@@ -261,11 +297,12 @@ pub fn choose<'a>(
     eye: Vec3,
     hour: f32,
     most: usize,
+    vars: &LightVars,
     seen: &dyn Fn(Vec3, f32) -> bool,
 ) -> Vec<Chosen> {
     let mut lit: Vec<(f32, Chosen)> = (lamps.into_iter())
         .filter_map(|lamp| {
-            let l = lamp.light;
+            let l = as_lit(lamp, vars);
             if !(l.lights_around() && l.radius > 0.0 && l.colour.iter().any(|c| *c > 0.0)) {
                 return None;
             }
@@ -363,7 +400,15 @@ pub fn volumes_of(chosen: &[Chosen], hour: f32, scale: f32) -> FrameLights {
             }
             _ => l,
         };
-        let intensity = l.intensity * scale * hour_strength(l.hours, hour) * reach;
+        let shape = match l.kind {
+            LightKind::Spot => {
+                let (cos_inner, cos_outer) = spot_cosines(l.cone_inner, l.cone_outer);
+                spot_intensity_factor(cos_inner, cos_outer, SPOT_K)
+            }
+            LightKind::Capsule => capsule_intensity(1.0, l.length, FLAGS_TWO),
+            _ => 1.0,
+        };
+        let intensity = l.intensity * shape * scale * hour_strength(l.hours, hour) * reach;
         let (position, colour) = (Vec3::from(l.position), Vec3::from(l.colour));
         let direction = Vec3::from(l.direction).normalize_or_zero();
         // A spot or a capsule with no axis shines all round.

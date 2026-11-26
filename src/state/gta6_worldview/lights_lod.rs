@@ -92,6 +92,13 @@ const LAYOUT: &[Member] = &[
     (
         DISTANT_LIGHT,
         "CDistantLODLight",
+        b"flags",
+        0xA0,
+        Some(ARRAY),
+    ),
+    (
+        DISTANT_LIGHT,
+        "CDistantLODLight",
         b"category",
         CATEGORY_AT,
         None,
@@ -122,6 +129,8 @@ pub struct Distant {
     pub intensity: f32,
     /// 1 point, 2 spot, 4 capsule, 32 area.
     pub light_type: u8,
+    /// Bit 0 keeps it out of the frame's list of distant lights.
+    pub flags: u8,
 }
 
 /// The lists of one map body.
@@ -237,16 +246,22 @@ pub fn read(model: &RbmModel) -> Result<MapLod, LodError> {
     };
     let (position, rgb) = (at(0x00, 12, "position")?, at(0x10, 4, "RGB")?);
     let (intensity, light_type) = (at(0x20, 4, "intensity")?, at(0x90, 1, "lightType")?);
-    if [rgb.len(), intensity.len(), light_type.len()] != [position.len(); 3] {
+    let flags = at(0xA0, 1, "flags")?;
+    let n = position.len();
+    if [rgb.len(), intensity.len(), light_type.len()] != [n; 3] || ![0, n].contains(&flags.len()) {
         return Err(broken("distant lights", "its lists are not as long"));
     }
-    let distant: Vec<Distant> = (position.zip(rgb).zip(intensity).zip(light_type))
-        .map(|(((position, rgb), intensity), light_type)| Distant {
-            position: floats(position),
-            rgb: [rgb[0], rgb[1], rgb[2]],
-            intensity: floats::<1>(intensity)[0],
-            light_type: light_type[0],
-        })
+    let flags = flags.map(|f| f[0]).chain(std::iter::repeat(0));
+    let distant: Vec<Distant> = (position.zip(rgb).zip(intensity).zip(light_type).zip(flags))
+        .map(
+            |((((position, rgb), intensity), light_type), flags)| Distant {
+                position: floats(position),
+                rgb: [rgb[0], rgb[1], rgb[2]],
+                intensity: floats::<1>(intensity)[0],
+                light_type: light_type[0],
+                flags,
+            },
+        )
         .collect();
     let finite = |d: &Distant| d.position.iter().all(|x| x.is_finite());
     if !distant.iter().all(finite) {

@@ -27,6 +27,7 @@ pub(crate) mod lights_frame;
 pub(crate) mod lights_index;
 mod lights_law;
 mod lights_lod;
+mod lights_vars;
 mod model;
 mod occluders;
 mod pool;
@@ -687,6 +688,13 @@ impl Viewer {
             ))
         });
         let scale = sky::scale_of(moment.as_ref());
+        let table = (tables.as_ref()).and_then(|t| t.executable.variables.as_ref());
+        let light_frame = lights::LightFrame {
+            vars: (table.zip(moment.as_ref())).map_or_else(Default::default, |(table, m)| {
+                lights::LightVars::of(table, &m.own)
+            }),
+            day_phase: moment.as_ref().map(|m| m.day_phase),
+        };
         let day = (tables.as_ref())
             .zip(moment)
             .map(|(tables, moment)| sky::day_of_moment(tables, moment, (hour, days), weathers, eye))
@@ -723,7 +731,8 @@ impl Viewer {
                     tan_half: (self.camera.fov_y * 0.5).tan(),
                 };
                 let none = interior::RoomsSeen::new();
-                lights.lights(&view, (hour, scale, lights::MOST), rooms.unwrap_or(&none))
+                let rooms = rooms.unwrap_or(&none);
+                lights.lights(&view, (hour, scale, lights::MOST), rooms, &light_frame)
             });
         // The lights take the exposure over pi; a material's own light is a radiance and takes it whole.
         let exposure = match day {

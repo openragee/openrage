@@ -7,6 +7,7 @@ use or_renderer::game_shaders::distant_lights::SpriteLook;
 use or_renderer::DistantLight;
 
 use super::lights_lod::Distant;
+use super::lights_vars::LightVars;
 
 /// How far the distant lights of each size class (small, medium, large) are drawn, the distances they fade in over, what their stated intensity is multiplied by, and how a sprite is drawn; the default draws nothing.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -59,15 +60,22 @@ impl DistantReach {
     }
 }
 
-/// The light type of a spot in a distant list, the one kind whose sprite shines one way.
+/// The light types of a point and a spot in a distant list, the spot the one kind whose sprite shines one way: the only two the frame's list of distant lights takes.
+const POINT: u8 = 1;
 const SPOT: u8 = 2;
+/// The flag that keeps a light out of that list.
+const LEFT_OUT: u8 = 1;
 
-/// The sprites of the distant lights `lists` hold, each list with its size class and the way each of its lights points where the map of its level-of-detail lights is read, seen from `eye`, their stated intensity times the settings' gain. A light drawn as a volume keeps its sprite: the volume lights what stands around it, the sprite is the glow of its source.
+/// The sprites of the distant lights `lists` hold, each list with its size class and the way each of its lights points where the map of its level-of-detail lights is read, seen from `eye`: the points and spots the frame's list takes, their stated intensity times the settings' gain and the frame's intensity of `vars`, their colour tinted and overridden by its set 0. A light drawn as a volume keeps its sprite: the volume lights what stands around it, the sprite is the glow of its source.
+// ⚠ The list also takes a light by a per-object float and a state byte the viewer has neither of: every light is taken as powered and whole.
 pub fn sprites<'a>(
     lists: impl IntoIterator<Item = (&'a [Distant], u16, Option<&'a [[f32; 3]]>)>,
     eye: Vec3,
     reach: &DistantReach,
+    vars: &LightVars,
 ) -> Vec<DistantLight> {
+    let set = &vars.sets[0];
+    let gain = reach.gain * vars.intensity * set.intensity;
     if reach.gain <= 0.0 {
         return Vec::new();
     }
@@ -80,7 +88,8 @@ pub fn sprites<'a>(
         for (i, light) in list.iter().enumerate() {
             let position = Vec3::from(light.position);
             let distance = position.distance(eye);
-            if distance > range || light.intensity <= 0.0 {
+            let kept = matches!(light.light_type, POINT | SPOT) && light.flags & LEFT_OUT == 0;
+            if !kept || distance > range || light.intensity <= 0.0 {
                 continue;
             }
             // The pass fades a light in by the square of how far it has come across its class's fade.
@@ -93,10 +102,12 @@ pub fn sprites<'a>(
                 (SPOT, Some(d)) => Vec3::from(d[i]).normalize_or_zero(),
                 _ => Vec3::ZERO,
             };
+            let base =
+                Vec3::from(light.rgb.map(|c| f32::from(c) / 255.0)) * vars.lod_gain * set.tint;
             out.push(DistantLight {
                 position,
-                colour: Vec3::from(light.rgb.map(|c| f32::from(c) / 255.0)),
-                strength: light.intensity * reach.gain * fade,
+                colour: base + (set.colour - base) * set.amount,
+                strength: light.intensity * gain * fade,
                 direction,
             });
         }
@@ -124,13 +135,39 @@ mod tests {
             rgb: [255, 128, 0],
             intensity,
             light_type: 1,
+            flags: 0,
         }
+    }
+
+    #[test]
+    fn only_points_and_spots_the_list_keeps_are_drawn_at_the_frame_s_intensity_and_tint() {
+        let mut capsule = light(400.0, 1.0);
+        capsule.light_type = 4;
+        let mut left_out = light(400.0, 1.0);
+        left_out.flags = 1;
+        let list = [light(400.0, 1.0), capsule, left_out];
+        let mut vars = LightVars {
+            intensity: 0.5,
+            ..LightVars::default()
+        };
+        vars.sets[0].intensity = 3.0;
+        vars.sets[0].amount = 1.0;
+        vars.sets[0].colour = Vec3::new(0.0, 1.0, 0.0);
+        let out = sprites([(&list[..], 0, None)], Vec3::ZERO, &reach(), &vars);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!((out[0].strength - 20.0 * 1.5).abs() < 1e-4, "{out:?}");
+        assert_eq!(out[0].colour, Vec3::new(0.0, 1.0, 0.0), "overridden whole");
     }
 
     #[test]
     fn a_sprite_carries_its_intensity_times_the_gain_and_its_colour() {
         let list = [light(400.0, 120.0)];
-        let out = sprites([(&list[..], 0, None)], Vec3::ZERO, &reach());
+        let out = sprites(
+            [(&list[..], 0, None)],
+            Vec3::ZERO,
+            &reach(),
+            &LightVars::default(),
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].position, Vec3::new(400.0, 0.0, 0.0));
         assert_eq!(out[0].colour, Vec3::new(1.0, 128.0 / 255.0, 0.0));
@@ -144,11 +181,21 @@ mod tests {
         spot.light_type = 2;
         let list = [spot, light(500.0, 1.0)];
         let down = [[0.0, 0.0, -2.0], [0.0, 0.0, -1.0]];
-        let out = sprites([(&list[..], 0, Some(&down[..]))], Vec3::ZERO, &reach());
+        let out = sprites(
+            [(&list[..], 0, Some(&down[..]))],
+            Vec3::ZERO,
+            &reach(),
+            &LightVars::default(),
+        );
         let ways: Vec<Vec3> = out.iter().map(|s| s.direction).collect();
         assert_eq!(ways, [Vec3::NEG_Z, Vec3::ZERO]);
         // Lists that do not stand one for one give no way at all.
-        let short = sprites([(&list[..], 0, Some(&down[..1]))], Vec3::ZERO, &reach());
+        let short = sprites(
+            [(&list[..], 0, Some(&down[..1]))],
+            Vec3::ZERO,
+            &reach(),
+            &LightVars::default(),
+        );
         assert!(short.iter().all(|s| s.direction == Vec3::ZERO));
     }
 
@@ -160,20 +207,35 @@ mod tests {
             light(50.0, 1.0),
             light(3001.0, 1.0),
         ];
-        let small = sprites([(&list[..], 0, None)], Vec3::ZERO, &reach());
+        let small = sprites(
+            [(&list[..], 0, None)],
+            Vec3::ZERO,
+            &reach(),
+            &LightVars::default(),
+        );
         let strengths: Vec<f32> = small.iter().map(|s| s.strength).collect();
         assert_eq!(strengths.len(), 2, "{strengths:?}");
         assert!(
             (strengths[0] / strengths[1] - 0.25).abs() < 1e-3,
             "{strengths:?}"
         );
-        let large = sprites([(&list[..], 2, None)], Vec3::ZERO, &reach());
+        let large = sprites(
+            [(&list[..], 2, None)],
+            Vec3::ZERO,
+            &reach(),
+            &LightVars::default(),
+        );
         assert_eq!(
             large.len(),
             1,
             "only the one at 3,001 m is past the large class's fade"
         );
-        let none = sprites([(&list[..], 0, None)], Vec3::ZERO, &DistantReach::default());
+        let none = sprites(
+            [(&list[..], 0, None)],
+            Vec3::ZERO,
+            &DistantReach::default(),
+            &LightVars::default(),
+        );
         assert!(none.is_empty());
     }
 

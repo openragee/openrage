@@ -176,12 +176,14 @@ fn a_level_of_detail_light_stands_at_its_parents_distant_light_and_fades_out_at_
                 rgb: [255, 0, 51],
                 intensity: 80.0,
                 light_type: 2,
+                flags: 0,
             },
             Distant {
                 position: [200.0, 0.0, 0.0],
                 rgb: [255, 255, 255],
                 intensity: 40.0,
                 light_type: 4,
+                flags: 0,
             },
         ],
         category: 1,
@@ -301,13 +303,20 @@ fn a_lamp_the_camera_cannot_see_is_not_chosen_and_one_it_can_takes_its_place() {
         placed(LightKind::Point, 60.0, ALL_HOURS),
     ];
     let ahead = |p: Vec3, radius: f32| p.x + radius > 0.0;
-    let one = choose(&lamps, Vec3::ZERO, 12.0, 1, &ahead);
+    let one = choose(&lamps, Vec3::ZERO, 12.0, 1, &LightVars::default(), &ahead);
     assert_eq!(one.len(), 1);
     assert_eq!(
         one[0].0.position[0], 30.0,
         "the nearer lamp behind lights nothing seen"
     );
-    let all = choose(&lamps, Vec3::ZERO, 12.0, 8, &|_, _| true);
+    let all = choose(
+        &lamps,
+        Vec3::ZERO,
+        12.0,
+        8,
+        &LightVars::default(),
+        &|_, _| true,
+    );
     assert_eq!(all[0].0.position[0], -10.0);
 }
 
@@ -382,4 +391,34 @@ fn a_light_that_only_draws_a_corona_lights_nothing() {
     let mut corona = placed(LightKind::Point, 5.0, ALL_HOURS);
     corona.light.flags = or_io::gta6::map::light_ext::CORONA_ONLY;
     assert_eq!(frame_lights(&[corona], Vec3::ZERO, 12.0, 1.0, 8).lights, 0);
+}
+
+#[test]
+fn the_frame_s_variables_scale_a_placed_light_and_a_level_of_detail_light_each_by_its_own() {
+    let mut vars = LightVars {
+        intensity: 0.5,
+        lod_range: 2.0,
+        map_range: [0.25, 3.0],
+        ..LightVars::default()
+    };
+    vars.sets[0].intensity = 4.0;
+    vars.sets[0].tint = Vec3::new(1.0, 0.5, 1.0);
+    vars.sets[1].intensity = 100.0;
+    // A placed light: the global intensity, and outdoors (no side stated) its outdoor range scale.
+    let near = as_lit(&placed(LightKind::Point, 0.0, 0), &vars);
+    assert_eq!((near.intensity, near.radius), (5.0, 1.25));
+    // Indoors only: the indoor scale, held to one.
+    let mut inside = placed(LightKind::Point, 0.0, 0);
+    inside.light.flags = 1;
+    assert_eq!(as_lit(&inside, &vars).radius, 5.0);
+    // A level-of-detail light: the global and set 0's intensity, its tint, its own range scale; never set 1's.
+    let lod = Lamp {
+        reach: Some([500.0, 100.0]),
+        ..placed(LightKind::Point, 0.0, 0)
+    };
+    let far = as_lit(&lod, &vars);
+    assert_eq!((far.intensity, far.radius), (20.0, 10.0));
+    assert_eq!(far.colour, [1.0, 0.25, 0.0]);
+    // At the table's defaults nothing changes.
+    assert_eq!(as_lit(&lod, &LightVars::default()), lod.light);
 }

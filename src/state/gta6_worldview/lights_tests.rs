@@ -54,6 +54,7 @@ fn distant_map(xs: &[f32]) -> MapLights {
         rgb: [255, 0, 51],
         intensity: 80.0,
         light_type: 1,
+        flags: 0,
     };
     MapLights {
         lod: MapLod {
@@ -167,7 +168,11 @@ fn an_interior_s_lamp_lights_while_its_contents_draw_and_its_room_is_seen_alone(
         forward: Vec3::X,
         tan_half: 0.5,
     };
-    let mut drawn = |rooms: &RoomsSeen| lights.lights(&view, (12.0, 1.0, MOST), rooms).lights;
+    let mut drawn = |rooms: &RoomsSeen| {
+        lights
+            .lights(&view, (12.0, 1.0, MOST), rooms, &LightFrame::default())
+            .lights
+    };
     assert_eq!(
         drawn(&RoomsSeen::new()),
         0,

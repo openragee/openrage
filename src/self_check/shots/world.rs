@@ -414,6 +414,7 @@ fn dump(
         "list_instances": census.list_instances,
         "drawn_nodes": drawn_nodes,
         "swaps": { "held": selected.swaps.len(), "open": open.iter().filter(|o| **o).count() },
+        "jumps": viewer.jumps,
         "cards": { "lists": selected.cards.len(), "records": records },
         // ⚠ A texture is `KEY:ASKED:WIDTHxHEIGHT` and a stand-in `ID:SLOT:LEVEL`: two runs of one scene should hold the same.
         "device_textures": textures,

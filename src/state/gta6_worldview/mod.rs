@@ -13,6 +13,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use glam::Vec3;
 use or_job::{Cancel, Progress};
 use or_renderer::FlyCamera;
+use or_world::streaming_rules::FOCUS_JUMP_DISTANCE;
 
 use crate::state::jobs::{JobKind, Outcome, RunningJob, Then};
 use crate::ui::panels::log::grouped;
@@ -159,6 +160,9 @@ pub struct Viewer {
     pub textures_waiting: usize,
     /// The models and the textures taken that nothing asked for any more when they were.
     pub stale: [usize; 2],
+    /// Where the camera stood the frame before, and how many times it jumped from there.
+    last_eye: Option<Vec3>,
+    pub jumps: usize,
     /// How long the last frame took to work out its day, before the lights about the camera.
     pub day_took: std::time::Duration,
     /// The game's wind about the camera.
@@ -210,6 +214,8 @@ impl Default for Viewer {
             models_waiting: 0,
             textures_waiting: 0,
             stale: [0; 2],
+            last_eye: None,
+            jumps: 0,
             day_took: std::time::Duration::ZERO,
             wind: wind::Wind::default(),
             weathering: sky::Weathering::default(),
@@ -473,7 +479,7 @@ impl Viewer {
         if self.world.as_ref().is_some_and(World::died) && self.unexplained < MOST_RESTARTS {
             self.restart_world();
         }
-        let world = self.world.as_ref()?;
+        self.world.as_ref()?;
         for (model, state) in models.iter() {
             match state {
                 Some(false) => self.have.remove(model),
@@ -481,7 +487,16 @@ impl Viewer {
             };
         }
         let told = !models.is_empty();
-        world.look(self.camera.position, self.distance_scale());
+        let eye = self.camera.position;
+        if self
+            .last_eye
+            .is_some_and(|was| was.distance(eye) > FOCUS_JUMP_DISTANCE)
+        {
+            self.forget_asks();
+        }
+        self.last_eye = Some(eye);
+        let world = self.world.as_ref()?;
+        world.look(eye, self.distance_scale());
         // The groups the world-state data has on at this hour and these modes, unless the person chose them.
         if let (false, Some(index)) = (self.groups_chosen, &self.index) {
             let on = index.default_on_in(self.hour, self.enabled.modes, self.groups_proven);
@@ -503,7 +518,9 @@ impl Viewer {
         world.tell(models);
         let latest = world.latest();
         let mut want = told;
-        if self.wanted_of != latest.version {
+        // What a selection made before a jump waits for is not asked for.
+        let here = |at: Vec3| at.distance(eye) <= FOCUS_JUMP_DISTANCE;
+        if self.wanted_of != latest.version && here(latest.eye) {
             self.wanted_of = latest.version;
             self.wanted.clone_from(&latest.wanted);
             self.bands.clone_from(&latest.bands);
@@ -511,7 +528,7 @@ impl Viewer {
         }
         // What a selection under way waits for is asked for before it is whole, in place of the last whole one's.
         let asked = world.asked();
-        if asked.version > latest.version && asked.version != self.asked_of {
+        if asked.version > latest.version && asked.version != self.asked_of && here(asked.eye) {
             self.asked_of = asked.version;
             self.wanted.clone_from(&asked.wanted);
             self.bands.clone_from(&asked.bands);
@@ -521,6 +538,24 @@ impl Viewer {
             self.want_models();
         }
         Some(latest)
+    }
+
+    /// After a jump of the camera, ask for nothing and let go of what was read and not taken: it was for the place left.
+    // ⚠ The game calls a handler on a jump that was not read: this treatment is inferred.
+    fn forget_asks(&mut self) {
+        self.jumps += 1;
+        (self.wanted, self.species_models) = (Vec::new(), Vec::new());
+        self.bands.clear();
+        self.in_view.clear();
+        let models = self.models.as_ref().map_or(0, Pool::forget);
+        let textures = self.textures.as_ref().map_or(0, Pool::forget);
+        self.held.fetch_sub(models + textures, Ordering::Relaxed);
+    }
+
+    /// Whether the last selection was made for a place the camera has jumped from.
+    fn left(&self) -> bool {
+        (self.world.as_ref())
+            .is_some_and(|w| w.latest().eye.distance(self.camera.position) > FOCUS_JUMP_DISTANCE)
     }
 
     /// Start the world's thread again in place of one that died, told what the dead one was, and without the maps it took in since its last whole selection: what it died on.
@@ -604,8 +639,9 @@ impl Viewer {
         let species = (self.species_models.iter())
             .map(|(away, model)| (-request_priority(BAND_LOW_DETAIL, *away, None), *model));
         // ⚠ A selection made before a model arrived still waits for it: it is not read twice.
+        let left = self.left();
         let wanted: Vec<(f32, ModelRef)> = (selected.chain(species))
-            .filter(|(_, model)| !self.have.contains_key(model))
+            .filter(|(_, model)| !left && !self.have.contains_key(model))
             .collect();
         self.models_waiting = wanted.len();
         self.soon.0 = soonest(wanted.iter().map(|(soon, model)| (*model, *soon)));
@@ -616,6 +652,8 @@ impl Viewer {
 
     /// Ask for `wanted` (how soon, key, longest side seen in pixels) in place of what was asked before.
     pub fn want_textures(&mut self, wanted: Vec<(f32, u64, u32)>) {
+        // What a frame laid out for the place the camera jumped from asks for is not read.
+        let wanted = if self.left() { Vec::new() } else { wanted };
         // ⚠ With no pack indexed nothing reads a texture: none waits, or what waits for none never ends.
         self.textures_waiting = if self.textures.is_some() {
             wanted.len()

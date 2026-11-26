@@ -102,10 +102,22 @@ impl CardList {
             let q = |at: usize| f32::from(u16::from_le_bytes([r[at], r[at + 1]])) / 65535.0;
             min + Vec3::new(q(0), q(2), q(4)) * size
         };
-        (self.records.iter().enumerate())
-            .filter(|(_, r)| standing.stands_at(place(r)))
-            .map(|(at, _)| at as u32)
-            .collect()
+        // ⚠ A plain loop, the bits of the at most four cells a card's room reaches tested first: a
+        // look-up a card was most of a selection's time at a city camera.
+        let room = Vec3::new(SAME_TREE, SAME_TREE, 0.0);
+        let mut out = Vec::new();
+        for (at, record) in self.records.iter().enumerate() {
+            let p = place(record);
+            let ((x0, y0), (x1, y1)) = (cell_of(p - room), cell_of(p + room));
+            let near = standing.may_hold((x0, y0))
+                || standing.may_hold((x1, y0))
+                || standing.may_hold((x0, y1))
+                || standing.may_hold((x1, y1));
+            if near && standing.stands_at(p) {
+                out.push(at as u32);
+            }
+        }
+        out
     }
 }
 

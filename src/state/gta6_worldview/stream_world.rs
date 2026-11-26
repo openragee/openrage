@@ -77,6 +77,8 @@ struct Told {
 #[derive(Default)]
 pub(in super::super) struct Asked {
     pub version: u64,
+    /// Where the camera stood for it.
+    pub eye: Vec3,
     pub wanted: Vec<(f32, ModelRef)>,
     pub bands: HashMap<ModelRef, f32>,
 }
@@ -294,6 +296,7 @@ fn run(index: Arc<WorldIndex>, skipped: HashSet<u32>, shared: &Shared) {
             let mut ask = |wanted: &HashMap<ModelRef, f32>, bands: &HashMap<ModelRef, f32>| {
                 let asked = Asked {
                     version,
+                    eye,
                     wanted: wanted.iter().map(|(model, away)| (*away, *model)).collect(),
                     bands: bands.clone(),
                 };

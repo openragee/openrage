@@ -162,6 +162,25 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
         Some((request, answer))
     }
 
+    /// Ask for nothing, and let go of every answer that arrived and is not taken; what those weighed.
+    pub(super) fn forget(&self) -> u64 {
+        let mut arrived = self.arrived.lock().unwrap_or_else(|p| p.into_inner());
+        arrived.extend(self.answers.try_iter());
+        let gone: Vec<(Q, A, u64, Instant)> = arrived.drain(..).collect();
+        drop(arrived);
+        let mut queue = self.shared.queue.lock().unwrap_or_else(|p| p.into_inner());
+        queue.wanted.clear();
+        let mut weighed = 0;
+        for (request, _, weight, _) in &gone {
+            queue.held.remove(request);
+            queue.waiting = queue.waiting.saturating_sub(*weight);
+            weighed += weight;
+        }
+        drop(queue);
+        self.shared.woken.notify_all();
+        weighed
+    }
+
     /// Look at each answer that arrived and is not taken yet.
     pub(super) fn each_arrived(&self, mut look: impl FnMut(&Q, &A)) {
         let mut arrived = self.arrived.lock().unwrap_or_else(|p| p.into_inner());
@@ -294,6 +313,29 @@ mod tests {
         let mut got = Vec::new();
         wait_for(&pool, 3, &mut got);
         assert_eq!(got, [1, 2, 3]);
+    }
+
+    #[test]
+    fn forgetting_asks_for_nothing_and_lets_go_of_what_arrived_with_its_weight() {
+        // At its most once two have arrived: what is asked for after them is not started.
+        let pool: Pool<u32, u64> = Pool::bounded(1, (12, |weight| *weight), || (), |_, _| 6);
+        pool.want(vec![(1.0, 1), (2.0, 2)]);
+        let started = Instant::now();
+        while pool.shared.queue.lock().map_or(0, |q| q.waiting) < 12
+            && started.elapsed() < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        pool.want(vec![(3.0, 3), (4.0, 4)]);
+        assert_eq!(pool.forget(), 12);
+        std::thread::sleep(Duration::from_millis(50));
+        let queue = pool.shared.queue.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(
+            (queue.waiting, queue.wanted.len(), queue.held.len()),
+            (0, 0, 0)
+        );
+        drop(queue);
+        assert_eq!(pool.take_soonest(|_| 0.0), None);
     }
 
     #[test]

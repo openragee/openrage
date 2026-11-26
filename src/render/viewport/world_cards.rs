@@ -5,7 +5,7 @@
 //! ⚠ A species whose model the world never drew near is read for its atlas alone, after
 //! everything that draws: until it is baked its cards draw nothing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use glam::Vec3;
@@ -32,7 +32,7 @@ pub(super) struct Cards {
     table: Option<Arc<[Species]>>,
     /// The slot each species id was baked into, and `None` for one that will never bake.
     slots: HashMap<usize, Option<u32>>,
-    /// The next slot to bake into: never one baked before, since a bake draws over what a slot holds.
+    /// The next slot never baked into; a bake draws over what a slot holds, so a full atlas bakes over only the slot of a species no shown list names.
     next: u32,
     /// The level of its model each species id was baked from.
     levels: HashMap<usize, usize>,
@@ -223,6 +223,8 @@ impl WorldGpu {
         }
         // The model of each species a shown list names and no slot holds, by the nearest list that names it.
         let mut waits: HashMap<usize, f32> = HashMap::new();
+        // Every species a shown list names.
+        let mut named: HashSet<usize> = HashSet::new();
         for list in self
             .cards
             .shown
@@ -231,6 +233,7 @@ impl WorldGpu {
         {
             let away = (eye.distance(Vec3::from(list.centre)) - list.radius).max(0.0);
             for id in list.ids.iter().map(|id| usize::from(*id)) {
+                named.insert(id);
                 if !self.cards.slots.contains_key(&id) {
                     let nearest = waits.entry(id).or_insert(away);
                     *nearest = nearest.min(away);
@@ -289,12 +292,31 @@ impl WorldGpu {
                 more = true;
                 continue;
             }
+            // ⚠ With the atlas full, a species a shown list names is baked over the slot of the lowest id no shown list names: which species hold a slot is then the selection's, not the order they arrived in.
+            let fresh = self.cards.next < renderer.card_slots(device);
+            let over = match fresh || !named.contains(&id) {
+                true => None,
+                false => (self.cards.slots.iter())
+                    .filter_map(|(held, slot)| Some((*held, (*slot)?)))
+                    .filter(|(held, _)| !named.contains(held))
+                    .min(),
+            };
+            let slot = match (fresh, over) {
+                (true, _) => self.cards.next,
+                (false, Some((_, slot))) => slot,
+                // No slot for now: left unsettled, for a later selection to give it one.
+                (false, None) => continue,
+            };
             bakes -= 1;
-            let slot = self.cards.next;
-            let fits = slot < renderer.card_slots(device)
-                && renderer.bake_card_slot(device, queue, slot, kind.centre, kind.radius, &meshes);
+            let fits =
+                renderer.bake_card_slot(device, queue, slot, kind.centre, kind.radius, &meshes);
+            if let Some((held, _)) = over {
+                self.cards.slots.remove(&held);
+                self.cards.levels.remove(&held);
+                changed = true;
+            }
             if fits {
-                self.cards.next += 1;
+                self.cards.next += u32::from(fresh);
                 self.cards.levels.insert(id, level);
             }
             settled.push((id, fits.then_some(slot)));

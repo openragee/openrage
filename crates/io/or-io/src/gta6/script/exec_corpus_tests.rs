@@ -18,7 +18,7 @@ use crate::gta6::script::ir::{Const, VmType};
 use crate::gta6::script::lift::LiftError;
 use crate::gta6::script::opcode::Op;
 use crate::gta6::script::program::{FunctionRow, Program};
-use crate::gta6::script::project::index;
+use crate::gta6::script::project::{self, index};
 use crate::gta6::script::reparse::{self, ReparseError};
 use crate::gta6::script::{decode, decompile, function_in, lift, print, Pass};
 
@@ -651,6 +651,123 @@ fn every_function_of_every_listing_does_what_it_did() {
     first.report("ORACLE, the four first passes");
     every.report("ORACLE, every pass");
     assert!(first.wrong.is_empty() && every.wrong.is_empty());
+}
+
+/// The tallies of the addresses of locals handed to a function, by what the callee reaches against what the passes take it to reach.
+const REACHED: [&str; 4] = [
+    "addresses whose callee reaches no further than the passes take it to",
+    "addresses whose callee reaches further than the passes take it to",
+    "addresses whose callee reaches without bound",
+    "addresses whose callee the project holds no reach of",
+];
+
+/// Holds each address of a local that `f` hands to a function against what the callee reaches: what the passes take it to reach is the local alone where it is proved one cell wide, else every local up to the next one so proved.
+fn reached_sites(f: &mut cfg::Function, project: &Project, found: &mut Found, at: &str) {
+    passes::values::widths(f);
+    let singles: BTreeSet<u32> = (f.head.vars.iter())
+        .filter_map(|(var, info)| match var {
+            Var::Local(n) if info.single => Some(*n),
+            _ => None,
+        })
+        .collect();
+    let frame = f.head.locals;
+    let taken = |start: u32| -> u64 {
+        let end = match singles.contains(&start) {
+            true => start.saturating_add(1),
+            false => singles
+                .range(start.saturating_add(1)..)
+                .next()
+                .copied()
+                .unwrap_or(frame),
+        };
+        u64::from(end.clamp(start, frame.max(start)) - start) * 8
+    };
+    let head = f.head.clone();
+    let mut sites: Vec<(u64, Option<u32>)> = Vec::new();
+    let mut note = |top: &Expr| {
+        top.walk(&mut |e| {
+            let Expr::Call { callee, args, .. } = e else {
+                return;
+            };
+            let Some(to) = project::signatures::key_of(head.program, callee) else {
+                return;
+            };
+            let mut cell = Some(0u32);
+            for arg in args {
+                if let (
+                    Some(n),
+                    Expr::AddrOf {
+                        var: Var::Local(k),
+                        cell: c,
+                    },
+                ) = (cell, arg)
+                {
+                    let start = k.saturating_add(*c);
+                    sites.push((taken(start), project.reach(to, n)));
+                }
+                cell = cell
+                    .zip(print::cells_of(arg, &head))
+                    .and_then(|(a, b)| a.checked_add(b));
+            }
+        });
+    };
+    for block in &f.cfg.blocks {
+        for stmt in &block.stmts {
+            stmt.each_expr(&mut note);
+        }
+        if let Some(e) = block.term.expr() {
+            note(e);
+        }
+    }
+    for (assumed, reach) in sites {
+        let tally = match reach {
+            None => 3,
+            Some(project::reach::UNBOUNDED) => 2,
+            Some(bytes) if u64::from(bytes) <= assumed => 0,
+            Some(bytes) => {
+                let why = format!("reaches {bytes} bytes where the passes take {assumed}");
+                found.wrong("addresses past what the passes take", at, &why);
+                1
+            }
+        };
+        found.count(REACHED[tally], 1);
+    }
+}
+
+#[test]
+fn every_address_of_a_local_handed_to_a_function_reaches_no_further_than_the_passes_take_it() {
+    let what =
+        "the reach of every address of a local a listing hands to a function, against the project";
+    let Some(paths) = listings(what) else {
+        return;
+    };
+    let Some(project) = whole_project() else {
+        or_test_support::skip_corpus(what, format!("set {PROJECT} to the project of the folder"));
+        return;
+    };
+    let found = each(&paths, |path| {
+        let mut found = Found::default();
+        let text = std::fs::read_to_string(path).expect("the listing is text");
+        let stem = stem(path);
+        let Ok(listing) = Listing::open(&text) else {
+            found.count("listings refused", 1);
+            return found;
+        };
+        for f in listing.functions() {
+            let Ok(f) = f else {
+                found.count("listings refused", 1);
+                break;
+            };
+            let at = format!("{stem}: {}", f.head.name);
+            if let Ok(mut lowered) = cfg::lower(f) {
+                reached_sites(&mut lowered, &project, &mut found, &at);
+            }
+        }
+        found
+    });
+    let found = Found::all(found);
+    eprintln!("REACH: {} listing(s)", paths.len());
+    found.report("REACH");
 }
 
 /// Takes `f` through the passes `cx` asks, writes it in the readable form and reads that back; `None` where it does not lower. With `lowered`, every source construct is first written back as the statements and expressions it holds.

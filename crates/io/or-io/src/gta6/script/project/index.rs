@@ -12,14 +12,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    layouts, signatures, types, FieldFacts, ImportInfo, ProgramInfo, Project, ProjectError,
+    layouts, reach, signatures, types, FieldFacts, ImportInfo, ProgramInfo, Project, ProjectError,
 };
 use crate::gta6::script::ir::{
     Callee, Expr, FunctionKey, Kind, Scalar, Stmt, StoreKind, TypeKey, Var,
 };
 use crate::gta6::script::listing::Listing;
 use crate::gta6::script::program::Program;
-use crate::gta6::script::{cfg, lift, passes, Context, Names, Stats};
+use crate::gta6::script::{cfg, lift, passes, Context, Names, Options, Pass, Stats};
 
 /// The version a project file states; a file of another version is refused.
 const VERSION: u32 = 1;
@@ -135,6 +135,41 @@ pub fn tables<'a>(bodies: impl IntoIterator<Item = &'a [u8]> + Clone) -> Tables 
     tables
 }
 
+/// What one compiled program's code shows of the fields of the types a settled `project` proves its variables and receivers of: a part for [`refine`].
+// ⚠ Read with the kinds the project gives: the first part of a program was read with none.
+pub fn typed_part(
+    bytes: &[u8],
+    tables: &Tables,
+    project: &Project,
+) -> Result<Project, ProjectError> {
+    let mut program = Program::read(bytes)?;
+    tables.start(&mut program);
+    let names = Names::default();
+    let options = Options::baseline().with(Pass::Kinds).with(Pass::Interproc);
+    let cx = Context::new(&names, project, options);
+    let mut stats = Stats::default();
+    let mut part = Project::default();
+    for row in &program.functions {
+        let Ok(lifted) = lift::function_in(&program, project, row) else {
+            continue;
+        };
+        if !lifted.regions.is_empty() {
+            continue;
+        }
+        let mut f = lifted.function;
+        passes::values::run_in(&mut f, &cx, &mut stats);
+        passes::interproc::run(&mut f, &cx, &mut stats);
+        passes::types::run_in(&mut f, &cx, &mut stats);
+        layouts::of_typed_function(&mut part, &f, project);
+    }
+    Ok(part)
+}
+
+/// Settles the fields of `project` again with what the parts [`typed_part`] read show.
+pub fn refine(project: &mut Project, parts: Vec<Project>) {
+    layouts::refine(project, parts);
+}
+
 /// The part of a project one compiled program gives, read alone: a function that names another program's type or function gives nothing.
 pub fn of_program(bytes: &[u8]) -> Result<Project, ProjectError> {
     of_program_in(bytes, &Tables::default())
@@ -176,6 +211,7 @@ fn gather(project: &mut Project, f: &cfg::Function) {
     types::of_function(project, f);
     layouts::of_function(project, f);
     signatures::of_function(project, f);
+    reach::of_function(project, f);
     passes::classes::of_function(project, f);
     called(project, f);
 }
@@ -204,6 +240,7 @@ pub fn merge(parts: Vec<Project>) -> Project {
         types::absorb(&mut project, &mut part);
         layouts::absorb(&mut project, &mut part);
         signatures::absorb(&mut project, &mut part);
+        reach::absorb(&mut project, &mut part);
         passes::classes::absorb(&mut project, &mut part);
         absorb_cells(&mut project, &mut part);
         // What a topic left in the part's rows is kept where the project's rows say nothing yet.
@@ -219,6 +256,7 @@ pub fn merge(parts: Vec<Project>) -> Project {
     types::settle(&mut project);
     layouts::settle(&mut project);
     signatures::settle(&mut project);
+    reach::settle(&mut project);
     types::settle_implemented(&mut project);
     passes::classes::settle(&mut project);
     settle_cells(&mut project);
@@ -363,8 +401,14 @@ pub fn view(project: &Project, program: u32) -> Project {
         signatures: cut(&project.signatures, reads),
         calls: cut(&project.calls, reads),
         members: cut(&project.members, reads),
+        slot_results: cut(&project.slot_results, reads),
+        reach: cut(&project.reach, reads),
+        native_truths: project.native_truths.clone(),
+        native_uses: BTreeMap::new(),
         implemented: BTreeMap::new(),
         cells: Cells::default(),
+        truths: BTreeMap::new(),
+        rows: Default::default(),
     }
 }
 

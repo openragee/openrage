@@ -427,3 +427,99 @@ fn a_field_whose_object_is_called_is_of_the_most_derived_type_it_is_called_as() 
     settle(&mut project);
     assert_eq!(project.fields.get(&MADE), Some(&fields));
 }
+
+#[test]
+fn a_byte_only_ever_stored_a_truth_and_tested_for_zero_is_a_bool() {
+    let byte = |offset: u32, value: Expr| store(StoreKind::U8, local(0), offset, value);
+    let tested = |offset: u32| {
+        let read = load(Scalar::U8, local(0), offset);
+        Expr::binary(BinOp::Ne, read, int(0))
+    };
+    let less = Expr::binary(BinOp::Lt, param(0), param(1));
+    let stores = vec![
+        set(Var::Local(0), made()),
+        byte(0x10, int(1)),
+        byte(0x10, less),
+        // Stored a value of any byte, and read as a number.
+        byte(0x11, param(1)),
+        byte(0x12, int(0)),
+    ];
+    let reads = vec![
+        set(Var::Local(0), made()),
+        set(Var::Local(1), tested(0x10)),
+        set(Var::Local(1), tested(0x11)),
+        set(
+            Var::Local(1),
+            Expr::binary(BinOp::Add, load(Scalar::U8, local(0), 0x12), int(1)),
+        ),
+    ];
+    let project = settled(&[function(0x10, stores), function(0x20, reads)]);
+    let kind = |offset: u32| project.field(MADE, offset).map(|field| field.kind.clone());
+    assert_eq!(kind(0x10), Some(Kind::Bool));
+    assert_eq!(kind(0x11), Some(Kind::U8));
+    assert_eq!(kind(0x12), Some(Kind::U8));
+    assert!(project.truths.is_empty());
+}
+
+#[test]
+fn a_variable_typed_by_the_project_and_a_members_receiver_add_their_accesses_once_every_program_is_in(
+) {
+    use crate::gta6::script::class::Role;
+    use crate::gta6::script::ir::VarInfo;
+    use crate::gta6::script::project::Member;
+    // Made in one function: the type's field at 8 is an `int` there.
+    let made_here = function(
+        0x10,
+        vec![
+            set(Var::Local(0), made()),
+            Stmt::StepI32 {
+                addr: local(0),
+                offset: 8,
+                down: false,
+            },
+        ],
+    );
+    let mut project = settled(&[made_here]);
+    assert_eq!(
+        project.field(MADE, 8).map(|f| f.kind.clone()),
+        Some(Kind::I32)
+    );
+    assert_eq!(project.field(MADE, 0x10), None);
+    project.types.insert(
+        MADE,
+        TypeFacts {
+            byte_size: 32,
+            ..TypeFacts::default()
+        },
+    );
+    // A local the kinds pass types as a `MADE`, and the receiver of a member of `MADE`.
+    let mut typed = function(
+        0x20,
+        vec![set(Var::Local(2), load(Scalar::F32, local(1), 0x10))],
+    );
+    let mut info = VarInfo::new(crate::gta6::script::ir::Width::Cell);
+    info.kind = Kind::Object(MADE.to_string());
+    typed.head.vars.insert(Var::Local(1), info);
+    let member = function(0x30, vec![store(StoreKind::U8, param(0), 0x18, int(1))]);
+    let owner = Member {
+        owner: MADE,
+        role: Role::Method,
+        is_static: false,
+        slot: None,
+    };
+    project
+        .members
+        .insert(FunctionKey::new(PROGRAM, 0x30), owner);
+    let mut part = Project::default();
+    of_typed_function(&mut part, &typed, &project);
+    of_typed_function(&mut part, &member, &project);
+    refine(&mut project, vec![part]);
+    let kind = |offset: u32| {
+        project
+            .field(MADE, offset)
+            .map(|f| (f.bytes, f.kind.clone()))
+    };
+    assert_eq!(kind(8), Some((4, Kind::I32)));
+    assert_eq!(kind(0x10), Some((4, Kind::F32)));
+    assert_eq!(kind(0x18), Some((1, Kind::Bool)));
+}

@@ -107,6 +107,8 @@ impl Given {
 /// What one function's calls say, each list in key order.
 pub(super) struct Sites {
     pub(super) uses: Vec<(FunctionKey, Usage)>,
+    /// How the result of each native is read, by [`native_key`], where a read says.
+    pub(super) natives: Vec<(u64, Usage)>,
     pub(super) handed: Vec<FunctionKey>,
     pub(super) taken: Vec<FunctionKey>,
     pub(super) gives: Vec<Given>,
@@ -119,6 +121,9 @@ impl Sites {
             reader,
             head: &f.head,
             calls: BTreeMap::new(),
+            natives: BTreeMap::new(),
+            kept_natives: Vec::new(),
+            stands: BTreeMap::new(),
             vars: HashMap::new(),
             kept: Vec::new(),
             handed: BTreeSet::new(),
@@ -129,6 +134,10 @@ impl Sites {
             for stmt in &block.stmts {
                 if let Stmt::Assign { target, value } = stmt {
                     scan.assigned(*target, value);
+                }
+                // A result no one takes is read as nothing.
+                if let Stmt::Eval(Expr::Call { callee, .. }) = stmt {
+                    scan.accounted(callee);
                 }
                 stmt.each_expr(&mut |top| scan.expr(top));
             }
@@ -152,6 +161,12 @@ struct Scan<'a, 'r> {
     head: &'a Head,
     /// How each function's result is read, over every call of it here.
     calls: BTreeMap<FunctionKey, Usage>,
+    /// How each native's result is read, by [`native_key`].
+    natives: BTreeMap<u64, Usage>,
+    /// The variables assigned the result of a native, each with the native.
+    kept_natives: Vec<(Var, u64)>,
+    /// How often each native's result stands, and how often a read above says what it is read as.
+    stands: BTreeMap<u64, (u64, u64)>,
     /// How each variable is read.
     vars: HashMap<Var, Usage>,
     /// The variables assigned the result of a call, each with the function called.
@@ -219,7 +234,16 @@ impl Scan<'_, '_> {
                 };
                 self.note(whole(inner), usage);
             }
-            Expr::Call { callee, args, .. } => self.call(callee, args),
+            Expr::Call {
+                callee,
+                args,
+                returns,
+            } => {
+                if let (Some(key), None | Some(1)) = (native_key(callee), returns) {
+                    self.stands.entry(key).or_default().0 += 1;
+                }
+                self.call(callee, args);
+            }
             Expr::FunctionRef { program, at } => {
                 self.taken.insert(FunctionKey::new(*program, *at));
             }
@@ -247,8 +271,20 @@ impl Scan<'_, '_> {
                     let held = self.calls.entry(key).or_default();
                     *held = held.join(usage);
                 }
+                if let Some(key) = native_key(callee).filter(|_| usage != Usage::Unsaid) {
+                    let held = self.natives.entry(key).or_default();
+                    *held = held.join(usage);
+                    self.accounted(callee);
+                }
             }
             _ => {}
+        }
+    }
+
+    /// Notes that one place a native's result stands at is read as something said.
+    fn accounted(&mut self, callee: &Callee) {
+        if let Some(key) = native_key(callee) {
+            self.stands.entry(key).or_default().1 += 1;
         }
     }
 
@@ -297,6 +333,10 @@ impl Scan<'_, '_> {
         {
             if let Some(key) = key_of(self.head.program, callee) {
                 self.kept.push((target, key));
+            }
+            if let Some(key) = native_key(callee) {
+                self.kept_natives.push((target, key));
+                self.accounted(callee);
             }
         }
     }
@@ -366,6 +406,24 @@ impl Scan<'_, '_> {
             let held = self.calls.entry(key).or_default();
             *held = held.join(usage);
         }
+        // ⚠ A native's result kept in a variable is read as the variable is, and a variable
+        // assigned anything else as well is read as that too: it is no truth by its reads alone.
+        let kept = std::mem::take(&mut self.kept_natives);
+        for (var, key) in kept {
+            // What any code reads a global as is not said here.
+            let usage = match var {
+                Var::Global { .. } => Usage::Mixed,
+                var => self.kept_as(var),
+            };
+            let held = self.natives.entry(key).or_default();
+            *held = held.join(usage);
+        }
+        // A result that stands where nothing above reads it (an argument, a stored value) is read as anything.
+        for (key, (stands, said)) in std::mem::take(&mut self.stands) {
+            if stands > said {
+                self.natives.insert(key, Usage::Mixed);
+            }
+        }
         let said = self.calls.into_iter();
         let gives = self.given.into_iter().map(|((to, cell), found)| Given {
             to,
@@ -377,12 +435,27 @@ impl Scan<'_, '_> {
             odd: found.odd,
             from: found.from.into_iter().collect(),
         });
+        let natives = self.natives.into_iter();
         Sites {
             uses: said.filter(|(_, usage)| *usage != Usage::Unsaid).collect(),
+            natives: natives
+                .filter(|(_, usage)| *usage != Usage::Unsaid)
+                .collect(),
             handed: self.handed.into_iter().collect(),
             taken: self.taken.into_iter().collect(),
             gives: gives.collect(),
         }
+    }
+}
+
+/// The key a native is known by over a project: its handler's address where the program states one, else its hash.
+// ⚠ A compiled program states the address alone, a listing the hash: the same native read from
+// both is two keys, which only ever leaves a native of no proved use.
+pub(crate) fn native_key(callee: &Callee) -> Option<u64> {
+    match callee {
+        Callee::Native { rva, .. } if *rva != 0 => Some(u64::from(*rva)),
+        Callee::Native { hash, .. } if *hash != 0 => Some(*hash),
+        _ => None,
     }
 }
 

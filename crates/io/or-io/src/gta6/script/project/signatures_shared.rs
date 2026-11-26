@@ -12,6 +12,8 @@ use crate::gta6::script::project::Project;
 pub(super) struct Shared {
     /// The functions that fill one virtual slot down a line of types, or one slot of an interface, where they are two or more: under the least of them.
     families: BTreeMap<FunctionKey, Vec<FunctionKey>>,
+    /// Every function a virtual slot holds, with the least function of its line.
+    roots: BTreeMap<FunctionKey, FunctionKey>,
     /// The functions a call may reach without naming them: through a slot, or through a reference taken to them.
     blind: BTreeSet<FunctionKey>,
     /// How the result of each function is read, over every call that names it and every function that hands it on.
@@ -43,9 +45,11 @@ impl Shared {
         }
         let members: Vec<FunctionKey> = lines.keys().copied().collect();
         let mut families: BTreeMap<FunctionKey, Vec<FunctionKey>> = BTreeMap::new();
+        let mut roots = BTreeMap::new();
         for member in &members {
             let under = least(&mut lines, *member);
             families.entry(under).or_default().push(*member);
+            roots.insert(*member, under);
         }
         families.retain(|_, members| members.len() >= 2);
 
@@ -55,6 +59,7 @@ impl Shared {
         }
         Shared {
             families,
+            roots,
             blind,
             uses: uses(open),
         }
@@ -67,6 +72,28 @@ impl Shared {
             return None;
         }
         self.uses.get(key).and_then(|usage| usage.kind(found))
+    }
+}
+
+/// Notes for each function a virtual slot holds the kind of the one cell every function of its line hands back, where all of them prove the same.
+// ⚠ A call through the slot reaches one function of the line, whichever type the object is:
+// one function that proves nothing, or another kind, and the call yields no kind.
+pub(super) fn slot_results(project: &mut Project, shared: &Shared) {
+    let mut agreed: BTreeMap<FunctionKey, Option<Kind>> = BTreeMap::new();
+    for (member, root) in &shared.roots {
+        let held = project.signatures.get(member);
+        let proved = held.filter(|held| settled(held) && held.returns == 1);
+        let kind = proved.map(|held| held.result.clone());
+        let kind = kind.filter(|kind| *kind != Kind::Unknown);
+        let line = agreed.entry(*root).or_insert_with(|| kind.clone());
+        if *line != kind {
+            *line = None;
+        }
+    }
+    for (member, root) in &shared.roots {
+        if let Some(Some(kind)) = agreed.get(root) {
+            project.slot_results.insert(*member, kind.clone());
+        }
     }
 }
 

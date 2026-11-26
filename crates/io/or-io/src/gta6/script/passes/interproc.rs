@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::gta6::script::cfg;
 use crate::gta6::script::ir::{
-    BinOp, Expr, FunctionKey, Kind, Scalar, Stmt, UnOp, Var, VarInfo, Width,
+    BinOp, Callee, Expr, FunctionKey, Kind, Scalar, Stmt, TypeKey, UnOp, Var, VarInfo, Width,
 };
 use crate::gta6::script::print::cells_of;
 use crate::gta6::script::project::signatures::{float_bits, key_of, param_at, passed_on, settled};
@@ -61,7 +61,7 @@ pub fn run(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
 /// [`run`] whatever the options say, with the count of what it did.
 pub(crate) fn apply(f: &mut cfg::Function, project: &Project) -> Applied {
     let mut done = Applied::default();
-    if project.signatures.is_empty() {
+    if project.signatures.is_empty() && project.slot_results.is_empty() {
         return done;
     }
     done.sized = sized(f, project);
@@ -246,9 +246,18 @@ impl Kinds<'_> {
 
 /// The kind of the one cell a call of a function of a program yields, where a settled signature proves one.
 fn result_of<'p>(project: &'p Project, program: u32, e: &Expr) -> Option<&'p Kind> {
-    let Expr::Call { callee, .. } = e else {
+    let Expr::Call {
+        callee, returns, ..
+    } = e
+    else {
         return None;
     };
+    // A slot's call: whichever function of the slot's line it reaches, each proves the kind.
+    if let Callee::Virtual { ty, slot, .. } = callee {
+        let one = returns.is_none_or(|cells| cells == 1);
+        let ty = TypeKey::of_name(ty).filter(|_| one)?;
+        return project.slot_result(ty, *slot);
+    }
     let held = project.signatures.get(&key_of(program, callee)?)?;
     let proved = settled(held) && held.returns == 1 && held.result != Kind::Unknown;
     proved.then_some(&held.result)

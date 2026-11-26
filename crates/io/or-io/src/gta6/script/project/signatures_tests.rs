@@ -30,6 +30,8 @@ const DECLARATIONS: &str = r#"
         public static class DEMO
         {
             public static void USE(VmValue p0) => Vm.Native(0x0000000000000003UL, 0x00000003U, 0, p0);
+            public static VmValue ASK(VmValue p0) => Vm.Native(0x0000000000000005UL, 0x00000005U, 1, p0)[0];
+            public static VmValue GET(VmValue p0) => Vm.Native(0x0000000000000006UL, 0x00000006U, 1, p0)[0];
         }
     }
 }
@@ -541,6 +543,16 @@ fn the_functions_of_one_slot_share_what_they_agree_on() {
     // Two types fill one slot of an interface.
     assert_eq!(result(&project, 0x60), Kind::Bool);
     assert_eq!(result(&project, 0x70), Kind::Bool);
+
+    // A call through the slot yields a truth where the whole line proves one, whichever type the object is.
+    let slot = |n: u64| project.slot_result(ty(n), 3).cloned();
+    assert_eq!((slot(1), slot(2)), (Some(Kind::Bool), Some(Kind::Bool)));
+    assert_eq!((slot(3), slot(4), slot(5)), (None, None, None));
+    let held = |at: u32| project.slot_results.get(&key(at)).cloned();
+    assert_eq!(
+        (held(0x60), held(0x70)),
+        (Some(Kind::Bool), Some(Kind::Bool))
+    );
 }
 
 #[test]
@@ -570,4 +582,33 @@ fn an_integer_is_no_kind_a_caller_states() {
     assert_eq!(param(&project, 0x20, 0), Kind::Unknown);
     assert_eq!(param(&project, 0x30, 1), Kind::I32);
     assert_eq!(param(&project, 0x40, 1), Kind::Unknown);
+}
+
+#[test]
+fn a_native_whose_result_every_function_only_tests_for_zero_is_a_truth() {
+    let functions = [
+        // Tested, negated, and kept in a variable that is only tested.
+        function(
+            "void",
+            0x10,
+            1,
+            "if (((as_u32(Native.DEMO.ASK(p0)) != 0))) { Native.DEMO.USE(1); } return;",
+        ),
+        function(
+            "void",
+            0x20,
+            1,
+            "local_0 = Native.DEMO.ASK(p0); if (((as_u32(local_0) == 0))) { return; } Native.DEMO.ASK(2); return;",
+        ),
+        // Tested once, and handed on as a value once.
+        function(
+            "void",
+            0x30,
+            1,
+            "if (((as_u32(Native.DEMO.GET(p0)) != 0))) { Native.DEMO.USE(Native.DEMO.GET(p0)); } return;",
+        ),
+    ];
+    let project = project_of(&[listing(1, &functions)]);
+    assert_eq!(project.native_truths, BTreeSet::from([5]));
+    assert!(project.native_uses.is_empty());
 }

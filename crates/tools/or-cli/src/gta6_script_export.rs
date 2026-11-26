@@ -142,7 +142,15 @@ pub fn exported(
             kept
         }));
     }
-    let project = index::merge(parts);
+    let mut project = index::merge(parts);
+    // What the code shows through the variables and receivers the whole project types.
+    let typed = over(bodies, threads, |body| {
+        guarded(|| index::typed_part(&body.bytes, &tables, &project).map_err(|e| e.to_string()))
+    });
+    index::refine(
+        &mut project,
+        typed.into_iter().filter_map(Result::ok).collect(),
+    );
     write(
         PROJECT_FILE,
         &index::save(&project).map_err(|e| e.to_string())?,

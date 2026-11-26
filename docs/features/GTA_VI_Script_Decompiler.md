@@ -59,20 +59,37 @@ was.
 
 - **Values and flow**: `values`, `escape`, `forward`, `dead-loads`, `constants`, `coalesce`,
   `interproc`, `aggregates` fold temporaries into their uses, forward stores to loads, merge
-  copies and carry signatures across calls.
+  copies and carry signatures across calls. A call through a virtual slot yields the kind every
+  function the slot holds down its line of types proves, and none where one of them proves
+  nothing.
 - **Kinds**: `types`, `kinds`, `signs` give a variable a declared type where every read and write
   agrees; a variable of no proved kind is declared `Cell`, and a 32-bit reading of it is written
-  as a cast.
+  as a cast. A field of one byte that every program only ever stores a truth to and only tests
+  for zero is a `bool`. A pointer, like a reference, is compared with `null`. A variable every
+  assignment of which makes an array is an array of that element type. A value of two cells that
+  the code only takes from natives, compares and hands back to them is declared `Handle`, a word
+  the header explains. A
+  constant of no proved kind whose bits are those of a round float keeps its bits and has the
+  float written beside it as a comment, `0x3F800000 /* 1.0f */`: the bits alone prove no kind.
 - **Statements**: `structure`, `gotos`, `switch-on`, `for`.
 - **Names**: `names`, `hash-text`, `native-params`, `role-names`.
-- **Classes**: `fields`, `classes`, `receivers`, `constructors`, `operators`.
+- **Classes**: `fields`, `classes`, `receivers`, `constructors`, `operators`. An access through a
+  variable the kinds pass proves holds an object of a script type is a field of that type, where
+  the bytes lie in the type and no field the layouts state overlaps them; such a field is
+  declared in its class with the width every access of it takes and no proved kind. `script
+  export` reads every program's code a second time once the project is settled, so that the
+  accesses through such variables and through a member's receiver add to the layouts too. Two
+  whole variables compared byte by byte are compared with `==`.
 - **Compiler expansions**: `await`, `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
   `compound`, `initialisers`, `null-ops`, `concat`, `ref-out`. A lambda whose body is one value or
   a few statements, bound once and outside every loop, is written as `=>` where it is bound; any
   other is written by its function's name. `events`, `concat`, `using` and `lock` read a call
   only by the name a user's list gives it, so without such a list they rebuild nothing. An
   address handed to a call is written `ref x` only where it is proved to reach `x` alone, and
-  `&x` otherwise.
+  `&x` otherwise. `boxing` writes `object.Equals(box<T>(a), box<T>(b))` as `a == b` for a type
+  whose values are equal exactly where their bits are (never a float), and
+  `Convert.ToInt32(box<T>(x))` as `(int)x` where no value of `T` lies past an `int`'s range. A
+  clear of every byte of a variable is written `x = default;`.
 
 These names are accepted and rebuild nothing yet: `properties`, `iterators`, `wait`,
 `local-functions`, `nullable`, `tuples`, `try`. Their constructs print in the lower form.
@@ -135,10 +152,16 @@ folder where none lies beside the script.
   reaches is compared by nothing. ⚠ With `escape` on, the passes and the check both take an
   address handed to a call to reach the variable it is the address of and no local the code
   proves to be another variable: both runs are made on that premise, so the check does not test
-  it.
+  it. A temporary handed out is known in the events by the order it was first handed out, as an
+  object is, so two forms that name their temporaries apart compare alike.
 - `exec_corpus_tests.rs` (slow tier) runs that check over every function of the folder of
   listings `OPENRAGE_LIFTED_LISTINGS` names, and lifts every compiled program of the folder
-  `OPENRAGE_GTA6_SCRIPTS` names and holds each function to what its listing does.
+  `OPENRAGE_GTA6_SCRIPTS` names and holds each function to what its listing does; it also counts
+  the sites of three opcodes that only this suite checks by what holding their function came to. Over the listings and the project
+  `OPENRAGE_LIFTED_PROJECT` names it holds the premise above to an independent measure: the
+  project states, for each parameter cell of each function, how many bytes from an address handed
+  in that cell the function and the functions it hands it on to may touch, and every address of a
+  local handed to a function is held to the width the passes take it to reach.
 - `reparse.rs` reads printed source back to the tree it was printed from, over hand-written
   functions, with a bound on the statements and operands of one function; ⚠ its run over a folder
   of listings (slow tier) has not been run to its end.

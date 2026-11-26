@@ -31,7 +31,8 @@ use std::hash::{Hash, Hasher};
 
 use super::cfg::{self, BlockId, Terminator};
 use super::ir::{
-    BinOp, Callee, Expr, FunctionKey, Kind, Returns, Scalar, Stmt, UnOp, Var, VarInfo, Width,
+    BinOp, Callee, Expr, FunctionKey, Kind, Returns, Scalar, Stmt, TypeKey, UnOp, Var, VarInfo,
+    Width,
 };
 use super::listing::Listing;
 use super::passes;
@@ -717,9 +718,19 @@ impl<'f> Machine<'f> {
         // ⚠ A function whose own code proves what its one cell is returns a cell widened as
         // that: a pass may read `f() != 0` as `f()`, or `as_u32(f())` as `f()`, on that proof,
         // which a made-up cell of any bits would deny. `check_blocks` holds the proof to the code.
+        // So does a virtual call where every function its slot may reach proves the same.
+        let slot = match callee {
+            Callee::Virtual { ty, slot, .. } => TypeKey::of_name(ty)
+                .and_then(|ty| self.project.slot_result(ty, *slot))
+                .cloned(),
+            _ => None,
+        };
         match (stated, self.yielded(mix2(mix2(self.seed, id), n), returns)) {
             (Some(stated), Val::One(cell)) if stated.result != Kind::Unknown => {
                 Val::One(widened(&stated.result, cell))
+            }
+            (None, Val::One(cell)) if slot.is_some() => {
+                Val::One(slot.map_or(cell, |kind| widened(&kind, cell)))
             }
             (_, Val::One(cell)) => {
                 if matches!(callee, Callee::Local { .. } | Callee::Import { .. }) {

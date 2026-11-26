@@ -36,6 +36,7 @@ mod shared;
 mod sites;
 
 use shared::Shared;
+pub(crate) use sites::native_key;
 use sites::{Given, Sites, Usage};
 
 /// The parameter cells a function may have: a table or a head that states more is not believed.
@@ -154,6 +155,9 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
     open.passes.sort_unstable();
     open.passes.dedup();
     let sites = Sites::of(f, &reader);
+    for (native, usage) in &sites.natives {
+        *project.native_uses.entry(*native).or_insert(true) &= *usage == Usage::Truth;
+    }
     open.uses = sites.uses;
     open.handed = sites.handed;
     open.taken = sites.taken;
@@ -181,6 +185,9 @@ pub fn absorb(into: &mut Project, from: &mut Project) {
     for (key, callees) in std::mem::take(&mut from.calls) {
         into.calls.entry(key).or_insert(callees);
     }
+    for (native, truth) in std::mem::take(&mut from.native_uses) {
+        *into.native_uses.entry(native).or_insert(true) &= truth;
+    }
 }
 
 /// Once every part is in: carries kinds along the calls until nothing changes, a bounded number of rounds.
@@ -196,6 +203,13 @@ pub fn settle(project: &mut Project) {
     parameters(project, &open);
     shared::passed(project, &open, &shared);
     shared::overridden(project, &shared);
+    shared::slot_results(project, &shared);
+    let uses = std::mem::take(&mut project.native_uses);
+    project.native_truths = uses
+        .into_iter()
+        .filter(|(_, truth)| *truth)
+        .map(|(native, _)| native)
+        .collect();
 }
 
 /// The function a call reaches, where it is a function of a program: this one's, or another's by its hash and offset.

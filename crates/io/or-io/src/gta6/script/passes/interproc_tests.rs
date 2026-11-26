@@ -1,9 +1,9 @@
 use super::*;
 use crate::gta6::script::cfg::Terminator;
-use crate::gta6::script::ir::{Callee, Const};
+use crate::gta6::script::ir::{Callee, Const, TypeKey};
 use crate::gta6::script::listing::Listing;
 use crate::gta6::script::project::signatures::tests::{function, listing};
-use crate::gta6::script::project::Signature;
+use crate::gta6::script::project::{Signature, TypeFacts};
 use crate::gta6::script::{Names, Options};
 
 /// The function at 0x10 of program 1 that runs `body`, as the reader makes it.
@@ -87,6 +87,47 @@ fn a_signature_that_still_waits_states_nothing() {
     let was = f.clone();
     let done = apply(&mut f, &project(vec![waiting], 2, Kind::Bool));
     assert_eq!((done, &f), (Applied::default(), &was));
+}
+
+#[test]
+fn a_slots_result_is_a_truth_where_every_function_of_its_line_proves_one() {
+    let body = "if (((as_u32(func_000020(p0)) != 0))) { return 1; } return 0;";
+    let mut f = lowered("VmValue", body);
+    // The same call, through slot 3 of a type whose slot holds the function at 0x20.
+    let ty = TypeKey(0x0000_0001_0000_0001);
+    let slot = Callee::Virtual {
+        class: ty.to_string(),
+        method: "Method_3".to_owned(),
+        ty: ty.to_string(),
+        slot: 3,
+    };
+    let Terminator::Branch { cond, .. } = &mut f.cfg.blocks[0].term else {
+        panic!("no test");
+    };
+    cond.walk_mut(&mut |e| {
+        if let Expr::Call { callee, .. } = e {
+            *callee = slot.clone();
+        }
+    });
+    let cond = |f: &cfg::Function| match &f.cfg.blocks[0].term {
+        Terminator::Branch { cond, .. } => cond.clone(),
+        other => panic!("no test: {other:?}"),
+    };
+    let mut project = Project::default();
+    let facts = TypeFacts {
+        slots: BTreeMap::from([(3, FunctionKey::new(1, 0x20))]),
+        ..TypeFacts::default()
+    };
+    project.types.insert(ty, facts);
+    // The function the slot holds may prove a truth: another of its line need not.
+    let done = apply(&mut f.clone(), &project);
+    assert_eq!((done.casts, done.tests), (0, 0));
+    project
+        .slot_results
+        .insert(FunctionKey::new(1, 0x20), Kind::Bool);
+    let done = apply(&mut f, &project);
+    assert!(is_call(&cond(&f)), "{:?}", cond(&f));
+    assert_eq!((done.casts, done.tests), (1, 1));
 }
 
 #[test]

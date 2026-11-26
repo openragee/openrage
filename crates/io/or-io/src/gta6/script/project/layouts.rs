@@ -5,16 +5,23 @@
 //! type, or is the receiver of a function one type's virtual slots are the first to hold. A
 //! type's rows are evidence, one for each width and kind seen at an offset, until [`settle`]
 //! makes one field of the rows that agree, under the base type that holds it. A field's kind is
-//! the one every access of it in every program agrees on, and none where two disagree.
+//! the one every access of it in every program agrees on, and none where two disagree. One byte
+//! whose every store is a truth and whose every load is only tested for zero is a `bool`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{FieldFacts, Project, TypeFacts, MAX_BASES};
 use crate::gta6::script::cfg;
 use crate::gta6::script::ir::{
-    BinOp, Callee, Expr, Head, Kind, Scalar, Stmt, StoreKind, TypeKey, Var,
+    BinOp, Callee, Expr, FunctionKey, Head, Kind, Scalar, Stmt, StoreKind, TypeKey, UnOp, Var,
 };
 use crate::gta6::script::program::{Program, TypeRow};
+
+/// The rows of each type's fields and the truths of its bytes, before they are settled.
+pub type Rows = (
+    BTreeMap<TypeKey, Vec<FieldFacts>>,
+    BTreeMap<(TypeKey, u32), bool>,
+);
 
 /// The bytes of an object's header: its fields start after them.
 const HEADER: u32 = 8;
@@ -185,15 +192,20 @@ impl Sets {
         });
     }
 
+    /// The lowest local whose address the function takes.
+    fn lowest(&self) -> Option<u32> {
+        let locals = self.addressed.iter().filter_map(|var| match var {
+            Var::Local(n) => Some(*n),
+            _ => None,
+        });
+        locals.min()
+    }
+
     /// The variables that hold an object of one known type wherever they are read.
     // ⚠ A variable whose address is taken, and a local at or after one whose address is, may be
     // written through that address: what is assigned to it by name then proves nothing.
     fn bases(&self, receiver: Option<TypeKey>) -> BTreeMap<Var, TypeKey> {
-        let lowest = self.addressed.iter().filter_map(|var| match var {
-            Var::Local(n) => Some(*n),
-            _ => None,
-        });
-        let lowest = lowest.min();
+        let lowest = self.lowest();
         let mut bases = BTreeMap::new();
         for (var, ty) in &self.made {
             let reached = match var {
@@ -248,6 +260,10 @@ struct Seen<'a> {
     bases: &'a BTreeMap<Var, TypeKey>,
     head: &'a Head,
     rows: Vec<(TypeKey, FieldFacts)>,
+    /// Each byte accessed through a base, and whether every such access was of a truth.
+    truths: Vec<((TypeKey, u32), bool)>,
+    /// The loads that stand where only whether they are zero is read.
+    tested: BTreeSet<*const Expr>,
 }
 
 impl Seen<'_> {
@@ -273,6 +289,68 @@ impl Seen<'_> {
             Expr::Var(var) => self.bases.get(var).map(|key| (*key, offset)),
             _ => None,
         }
+    }
+
+    /// Notes whether an access of the one byte at `offset` from `addr` is of a truth, where that is a field of a base of known type.
+    fn truth(&mut self, addr: &Expr, offset: u32, truth: bool) {
+        if let Some((key, offset)) = self.place(addr, offset) {
+            if offset >= HEADER {
+                self.truths.push(((key, offset), truth));
+            }
+        }
+    }
+
+    /// Whether `value`, stored in one byte, is a truth by its own form: zero or one, a comparison, a test, a truth held in a variable.
+    fn is_truth(&self, value: &Expr) -> bool {
+        let mut e = value;
+        while let Expr::Cast { e: inner, .. } = e {
+            e = &**inner;
+        }
+        match e {
+            Expr::Const(c) => c.bits <= 1,
+            Expr::Truth(_) | Expr::Unary { op: UnOp::Not, .. } => true,
+            Expr::Binary { op, .. } => op.is_comparison() || op.is_logical(),
+            Expr::Var(var) => (self.head.vars.get(var)).is_some_and(|info| info.kind == Kind::Bool),
+            _ => false,
+        }
+    }
+
+    /// Notes each load under `top` that stands where only whether it is zero is read: tested, negated, compared with zero, joined by `&&` or `||`.
+    fn tests(&mut self, top: &Expr) {
+        let mut tested = |e: &Expr| {
+            let mut e = e;
+            while let Expr::Cast { e: inner, .. } = e {
+                e = &**inner;
+            }
+            if let Expr::Load { .. } = e {
+                self.tested.insert(std::ptr::from_ref(e));
+            }
+        };
+        top.walk(&mut |e| match e {
+            Expr::Truth(inner)
+            | Expr::Unary {
+                op: UnOp::Not,
+                e: inner,
+            } => tested(inner),
+            Expr::Binary {
+                op: BinOp::Eq | BinOp::Ne,
+                l,
+                r,
+                ..
+            } => {
+                if is_zero(r) {
+                    tested(l);
+                }
+                if is_zero(l) {
+                    tested(r);
+                }
+            }
+            Expr::Binary { op, l, r, .. } if op.is_logical() => {
+                tested(l);
+                tested(r);
+            }
+            _ => {}
+        });
     }
 
     /// Notes `bytes` bytes of kind `kind` at `offset` from `addr`, where that is a field of a base of known type.
@@ -367,6 +445,9 @@ impl Seen<'_> {
                 value,
             } => {
                 let zero = matches!(value, Expr::Const(c) if c.bits == 0);
+                if *kind == StoreKind::U8 {
+                    self.truth(addr, *offset, self.is_truth(value));
+                }
                 let held = match kind {
                     StoreKind::Ref => Kind::Pointer,
                     // Eight zero bytes clear a reference as well as a number.
@@ -381,7 +462,12 @@ impl Seen<'_> {
                 offset,
                 bytes,
                 ..
-            } => self.field(addr, *offset, *bytes, whole(*bytes)),
+            } => {
+                if *bytes == 1 {
+                    self.truth(addr, *offset, false);
+                }
+                self.field(addr, *offset, *bytes, whole(*bytes));
+            }
             Stmt::ZeroBytes { addr, bytes } => self.field(addr, 0, *bytes, whole(*bytes)),
             // One up or down is arithmetic, which is listed signed.
             Stmt::StepI32 { addr, offset, .. } => self.field(addr, *offset, 4, Kind::I32),
@@ -395,8 +481,13 @@ impl Seen<'_> {
     }
 
     fn expr(&mut self, top: &Expr) {
+        self.tests(top);
         top.walk(&mut |e| match e {
             Expr::Load { ty, addr, offset } => {
+                if ty.bytes() == 1 {
+                    let tested = self.tested.contains(&std::ptr::from_ref(e));
+                    self.truth(addr, *offset, tested);
+                }
                 let held = match ty {
                     // ⚠ Four bytes and eight are loaded as they lie, and a listing hands any
                     // 32 bits on as `as_u32`: neither load says a sign.
@@ -444,13 +535,49 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
         _ => None,
     };
     let bases = Sets::of(f).bases(receiver);
+    seen_through(project, f, &bases);
+}
+
+/// Adds the fields one function's loads and stores show through what a settled project proves of it: the variables the kinds pass types as an object of a script type, and the receiver of a member.
+// ⚠ Read after every program is in, with the kinds the project gives: a part for [`refine`].
+pub fn of_typed_function(part: &mut Project, f: &cfg::Function, project: &Project) {
+    let own = FunctionKey::new(f.head.program, f.head.at);
+    let object = |key: TypeKey| project.types.get(&key).is_some_and(|ty| !ty.is_value());
+    let receiver = (project.members.get(&own))
+        .filter(|member| !member.is_static && f.head.params > 0)
+        .map(|member| member.owner)
+        .filter(|owner| object(*owner));
+    let sets = Sets::of(f);
+    let mut bases = sets.bases(receiver);
+    let lowest = sets.lowest();
+    for (var, info) in &f.head.vars {
+        let Kind::Object(name) = &info.kind else {
+            continue;
+        };
+        let typed = TypeKey::of_name(name).filter(|key| key.builtin().is_none() && object(*key));
+        let reached = match var {
+            Var::Local(n) => lowest.is_some_and(|low| *n >= low),
+            Var::Value { .. } | Var::Stack { .. } | Var::Param(_) => sets.addressed.contains(var),
+            Var::Global { .. } => true,
+        };
+        if let (Some(key), false) = (typed, reached) {
+            bases.entry(*var).or_insert(key);
+        }
+    }
+    seen_through(part, f, &bases);
+}
+
+/// Adds the rows and the truths the accesses of `f` through `bases` show.
+fn seen_through(project: &mut Project, f: &cfg::Function, bases: &BTreeMap<Var, TypeKey>) {
     if bases.is_empty() {
         return;
     }
     let mut seen = Seen {
-        bases: &bases,
+        bases,
         head: &f.head,
         rows: Vec::new(),
+        truths: Vec::new(),
+        tested: BTreeSet::new(),
     };
     for block in &f.cfg.blocks {
         for stmt in &block.stmts {
@@ -466,6 +593,9 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
     }
     for (key, row) in seen.rows {
         note(project, key, row);
+    }
+    for (place, truth) in seen.truths {
+        *project.truths.entry(place).or_insert(true) &= truth;
     }
 }
 
@@ -582,6 +712,8 @@ fn agreed(project: &Project, rows: &[FieldFacts]) -> Option<FieldFacts> {
 /// Once every part is in: one field an offset, by rising offset, with the kind every access agrees on, under the type that declares it.
 // ⚠ An offset seen at two widths has no field: each access of it keeps the form it has.
 pub fn settle(project: &mut Project) {
+    // Kept, so that [`refine`] settles them again with more.
+    project.rows = (project.fields.clone(), project.truths.clone());
     let mut seen: BTreeMap<TypeKey, BTreeMap<u32, Vec<FieldFacts>>> = BTreeMap::new();
     for (key, rows) in std::mem::take(&mut project.fields) {
         if waits(key) {
@@ -597,18 +729,49 @@ pub fn settle(project: &mut Project) {
             }
         }
     }
+    // A byte every access of which, in every program, is of a truth.
+    let mut truths: BTreeMap<(TypeKey, u32), bool> = BTreeMap::new();
+    for ((key, offset), truth) in std::mem::take(&mut project.truths) {
+        let row = FieldFacts {
+            offset,
+            bytes: 1,
+            kind: Kind::Unknown,
+        };
+        if let Some(owner) = declarer(&project.types, key, &row) {
+            *truths.entry((owner, offset)).or_insert(true) &= truth;
+        }
+    }
     let known: &Project = project;
     let mut settled = BTreeMap::new();
     for (owner, offsets) in seen {
-        let fields: Vec<FieldFacts> = offsets
+        let mut fields: Vec<FieldFacts> = offsets
             .into_values()
             .filter_map(|rows| agreed(known, &rows))
             .collect();
+        // ⚠ Not a signed byte: its loads widen it by its sign, which a truth has no use for.
+        for field in &mut fields {
+            let unsigned = matches!(field.kind, Kind::U8 | Kind::Unknown);
+            let truth = truths.get(&(owner, field.offset)) == Some(&true);
+            if field.bytes == 1 && unsigned && truth {
+                field.kind = Kind::Bool;
+            }
+        }
         if !fields.is_empty() {
             settled.insert(owner, fields);
         }
     }
     project.fields = settled;
+}
+
+/// Adds the rows and the truths of `parts`, each read by [`of_typed_function`], to those the fields of `project` were settled from, and settles them again.
+pub fn refine(project: &mut Project, parts: Vec<Project>) {
+    let (rows, truths) = std::mem::take(&mut project.rows);
+    project.fields = rows;
+    project.truths = truths;
+    for mut part in parts {
+        absorb(project, &mut part);
+    }
+    settle(project);
 }
 
 #[cfg(test)]

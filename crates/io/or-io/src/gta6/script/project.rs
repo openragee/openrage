@@ -10,6 +10,7 @@
 
 pub mod index;
 pub mod layouts;
+pub mod reach;
 pub mod signatures;
 pub mod types;
 
@@ -171,12 +172,32 @@ pub struct Project {
     /// The call graph: the functions each function calls, each once, in key order.
     pub calls: BTreeMap<FunctionKey, Vec<FunctionKey>>,
     pub members: BTreeMap<FunctionKey, Member>,
+    /// The kind of the one cell a call through a virtual slot yields, by each function the slot holds, where every function the slot holds down its line proves that kind.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub slot_results: BTreeMap<FunctionKey, Kind>,
+    /// The natives every read of whose result, over every program, is only ever whether it is zero, by `signatures::native_key`.
+    // ⚠ How the code reads a result, not what the native returns: a reading of a test of one as
+    // the truth it is holds only where only the truth is read.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub native_truths: BTreeSet<u64>,
+    /// How each native's result is read so far, by key: `true` while every read is a test; empty in a settled project.
+    #[serde(skip)]
+    pub native_uses: BTreeMap<u64, bool>,
+    /// What each parameter cell of a function reaches as an address, by function and cell.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub reach: BTreeMap<FunctionKey, BTreeMap<u32, reach::Reach>>,
     /// The functions the types that implement an interface fill each of its slots with; empty once a project is settled, when `TypeFacts::returns` holds what they say.
     #[serde(skip)]
     pub implemented: BTreeMap<TypeKey, BTreeMap<u32, BTreeSet<FunctionKey>>>,
     /// What the accesses of globals and statics show until every program is in; empty in a settled project, when `ProgramInfo::global_cells` holds what they say.
     #[serde(skip)]
     pub cells: index::Cells,
+    /// Whether every access seen of the one byte at an offset of a type is of a truth, by the type the access went through and the offset; empty in a settled project, when a field's kind says it.
+    #[serde(skip)]
+    pub truths: BTreeMap<(TypeKey, u32), bool>,
+    /// The rows and the truths the fields were last settled from: `layouts::refine` settles them again with more.
+    #[serde(skip)]
+    pub rows: layouts::Rows,
 }
 
 static EMPTY: LazyLock<Project> = LazyLock::new(Project::default);
@@ -247,6 +268,11 @@ impl Project {
         }
         let function = self.slot(ty, slot)?;
         self.signatures.get(&function).map(|held| held.returns)
+    }
+
+    /// The kind of the one cell a call of virtual slot `slot` on an object of type `ty` yields, where every function the call may reach proves it.
+    pub fn slot_result(&self, ty: TypeKey, slot: u32) -> Option<&Kind> {
+        self.slot_results.get(&self.slot(ty, slot)?)
     }
 
     /// Whether `ty` is `ancestor`, derives from it or implements it.

@@ -497,40 +497,54 @@ fn a_frame_after_the_viewport_is_resized_and_back_is_the_frame_drawn_in_full() {
 }
 
 #[test]
-fn what_a_frame_owes_the_device_is_what_the_bytes_it_is_drawn_by_made_stale() {
+fn a_frame_writes_and_draws_again_only_what_the_bytes_it_is_drawn_by_moved() {
     let light = |fill: u8| [fill; LIGHT_BYTES];
     let (a, b) = ([1u8; 64], [2u8; 64]);
-    let owed = |shadow, targets, lit| Stale {
+    let writes = |view, matrices, light| Writes {
+        view,
+        matrices,
+        light,
+    };
+    let draws = |shadow, targets, lit| Stale {
         shadow,
         targets,
         lit,
     };
+    let (nothing, none) = (Writes::default(), Stale::default());
     let mut kept = Kept::default();
-    let mut taken = |view, tile, fill| {
-        let lacking = kept.take(view, tile, &light(fill));
-        (lacking, std::mem::take(&mut kept.stale))
+    // A frame as `update` and `record_targets` take it: what it writes, then what it draws.
+    let frame = |kept: &mut Kept, view, tile, fill| {
+        let writes = kept.take(view, tile, &light(fill));
+        (writes, kept.draws())
     };
-    // A first frame lacks everything, and the same frame again lacks nothing.
-    assert_eq!(taken(a, Some(a), 0), ((true, true), owed(true, true, true)));
-    assert_eq!(taken(a, Some(a), 0), ((false, false), Stale::default()));
-    // The camera moved: the targets. The sun moved: the tile. The light alone: neither.
-    assert_eq!(
-        taken(b, Some(a), 0),
-        ((true, false), owed(false, true, true))
-    );
-    assert_eq!(
-        taken(b, Some(b), 0),
-        ((false, false), owed(true, false, true))
-    );
-    assert_eq!(
-        taken(b, Some(b), 1),
-        ((false, true), owed(false, false, true))
-    );
+    // A first frame writes and draws everything, and the same frame again nothing.
+    let all = (writes(true, true, true), draws(true, true, true));
+    assert_eq!(frame(&mut kept, a, Some(a), 0), all);
+    assert_eq!(frame(&mut kept, a, Some(a), 0), (nothing, none));
+    // The camera moved: its matrix, and the surfaces into the targets.
+    let moved = (writes(true, false, false), draws(false, true, true));
+    assert_eq!(frame(&mut kept, b, Some(a), 0), moved);
+    // The sun moved: the tile's two matrices, and the surfaces into the tile.
+    let cast = (writes(false, true, false), draws(true, false, true));
+    assert_eq!(frame(&mut kept, b, Some(b), 0), cast);
+    // The light alone: no surface is drawn again.
+    let relit = (writes(false, false, true), draws(false, false, true));
+    assert_eq!(frame(&mut kept, b, Some(b), 1), relit);
+    // Both moved: the surfaces into both.
+    let both = (writes(true, true, false), draws(true, true, true));
+    assert_eq!(frame(&mut kept, a, Some(a), 1), both);
     // A frame that casts nothing leaves the tile, which the same light then finds as it cast it.
-    assert_eq!(taken(b, None, 1).1, Stale::default());
-    assert_eq!(taken(b, Some(b), 1).1, Stale::default());
-    // What no recording drew is owed still, whatever the frames after it lack.
-    assert!(kept.take(a, Some(a), &light(1)).0);
-    assert_eq!(kept.take(a, Some(a), &light(1)), (false, false));
-    assert_eq!(kept.stale, owed(true, true, true));
+    assert_eq!(frame(&mut kept, a, None, 1), (nothing, none));
+    assert_eq!(frame(&mut kept, a, Some(a), 1), (nothing, none));
+
+    // What no recording drew is owed still, whatever the frames after it lack: the tile's pass
+    // is handed the matrices again, since it copies the camera's back.
+    assert_eq!(kept.take(b, Some(b), &light(1)), writes(true, true, false));
+    assert_eq!(kept.take(b, Some(b), &light(1)), writes(false, true, false));
+    // A tile no frame cast into stays owed to the next one that casts.
+    let uncast = (nothing, draws(false, true, true));
+    assert_eq!(frame(&mut kept, b, None, 1), uncast);
+    let owed = (writes(false, true, false), draws(true, false, false));
+    assert_eq!(frame(&mut kept, b, Some(b), 1), owed);
+    assert_eq!(frame(&mut kept, b, Some(b), 1), (nothing, none));
 }

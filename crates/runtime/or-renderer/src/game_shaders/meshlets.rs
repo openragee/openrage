@@ -236,17 +236,30 @@ struct Kept {
     light: Option<Box<[u8; LIGHT_BYTES]>>,
     /// What is owed until a recording draws it.
     stale: Stale,
+    /// Whether the frame last taken in casts a shadow.
+    casts: bool,
+}
+
+/// What a frame writes of the bytes it is drawn by.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Writes {
+    /// The view matrix, into each buffer of a surface that holds one.
+    view: bool,
+    /// The camera's matrix and the light's, which the tile's pass copies to those buffers.
+    matrices: bool,
+    /// What the frame is lit by.
+    light: bool,
 }
 
 impl Kept {
-    /// Take in the bytes a frame is drawn by: whether the buffers lack its view, and its light.
-    /// What they make stale is owed from here on.
+    /// Take in the bytes a frame is drawn by: what of them the device lacks. What they make
+    /// stale is owed from here on.
     fn take(
         &mut self,
         view: [u8; 64],
         tile: Option<[u8; 64]>,
         light: &[u8; LIGHT_BYTES],
-    ) -> (bool, bool) {
+    ) -> Writes {
         let moved = self.view != Some(view);
         // A frame that casts nothing leaves the tile as it was cast last.
         let cast = tile.is_some() && tile != self.tile;
@@ -258,10 +271,26 @@ impl Kept {
         if relit {
             self.light = Some(Box::new(*light));
         }
+        self.casts = tile.is_some();
         self.stale.shadow |= cast;
         self.stale.targets |= moved;
         self.stale.lit |= moved || cast || relit;
-        (moved, relit)
+        Writes {
+            view: moved,
+            // The tile's pass copies the camera's matrix back, so it is handed this frame's.
+            matrices: self.casts && self.stale.shadow,
+            light: relit,
+        }
+    }
+
+    /// What a recording draws of what is owed, which is owed no longer.
+    fn draws(&mut self) -> Stale {
+        let mut now = std::mem::take(&mut self.stale);
+        // A tile no frame cast into stays owed to the next one that casts.
+        if !self.casts {
+            self.stale.shadow = std::mem::take(&mut now.shadow);
+        }
+        now
     }
 }
 
@@ -288,11 +317,10 @@ pub struct MeshletScene {
     mask: SunMask,
     mask_layout: wgpu::BindGroupLayout,
     mask_writer: wgpu::RenderPipeline,
-    /// The tile the sun's shadow is cast into, the camera's matrix and the light's, which a
-    /// frame copies in turn to where the surfaces read the view, and whether this frame casts.
+    /// The tile the sun's shadow is cast into, and the camera's matrix and the light's, which a
+    /// frame copies in turn to where the surfaces read the view.
     shadow_map: wgpu::TextureView,
     matrices: wgpu::Buffer,
-    casts: std::sync::atomic::AtomicBool,
     /// The meshes of the model its programs do not draw, which the frame draws as a material.
     pub rest: Vec<usize>,
     /// The surfaces it was prepared from that the device has no pass for, each by its place
@@ -1375,7 +1403,6 @@ impl MeshletScene {
             mask_writer,
             shadow_map,
             matrices,
-            casts: Default::default(),
             rest: Vec::new(),
             refused,
             waiting,
@@ -1498,15 +1525,13 @@ impl MeshletScene {
         let bytes = |matrix: Mat4| -> [u8; 64] { bytemuck::cast(matrix.to_cols_array()) };
         let (view, tile) = (bytes(lighting.view_proj), cast.map(bytes));
         let light = light_bytes(lighting, cast.is_some());
-        let mut kept = self.kept.borrow_mut();
-        let (moved, relit) = kept.take(view, tile, &light);
-        if moved {
+        let writes = self.kept.borrow_mut().take(view, tile, &light);
+        if writes.view {
             for (buffer, at) in self.draws.iter().flat_map(|draw| &draw.views) {
                 self.write(queue, buffer, *at as u64, &view);
             }
         }
-        // The tile's pass copies the camera's matrix back, so it is handed this frame's.
-        if let (Some(tile), true) = (tile, kept.stale.shadow) {
+        if let (Some(tile), true) = (tile, writes.matrices) {
             self.write(
                 queue,
                 &self.matrices,
@@ -1514,8 +1539,7 @@ impl MeshletScene {
                 bytemuck::cast_slice(&[view, tile]),
             );
         }
-        (self.casts).store(cast.is_some(), std::sync::atomic::Ordering::Relaxed);
-        if relit {
+        if writes.light {
             self.write(queue, &self.light, 0, &light);
         }
     }
@@ -1558,18 +1582,16 @@ impl MeshletScene {
         encoder: &mut wgpu::CommandEncoder,
         mut mark: impl FnMut(&mut wgpu::CommandEncoder, &'static str),
     ) {
-        let stale = std::mem::take(&mut self.kept.borrow_mut().stale);
-        match self.casts.load(std::sync::atomic::Ordering::Relaxed) {
-            true if stale.shadow => self.record_shadow(encoder),
-            // A tile no frame cast into stays owed to the next one that casts.
-            _ => self.kept.borrow_mut().stale.shadow = stale.shadow,
+        let now = self.kept.borrow_mut().draws();
+        if now.shadow {
+            self.record_shadow(encoder);
         }
         mark(encoder, "model shadow");
-        if stale.targets {
+        if now.targets {
             self.record_surfaces(encoder);
         }
         mark(encoder, "model targets");
-        if stale.lit {
+        if now.lit {
             self.record_lit(encoder);
         }
         mark(encoder, "model meter");

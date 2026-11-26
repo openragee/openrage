@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Once;
 
 use or_io::Generation;
-use or_title::game::{registry, Brand, ContainerFamily, DlcPolicy, GameProfile, InstallLayout};
+use or_title::game::{
+    registry, Brand, ContainerFamily, DlcPolicy, GameProfile, InstallLayout, Platform,
+};
 use or_title::Game;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -317,7 +319,14 @@ fn a_title_nothing_registers_is_refused_rather_than_invented() {
 fn every_shipped_title_took_the_same_two_steps() {
     for profile in registry::all() {
         assert!(!profile.id().is_empty());
-        assert!(!profile.executable_candidates().is_empty());
+        // A console package has no executable on disk, and is known by the title id it states.
+        assert!(
+            !profile.executable_candidates().is_empty()
+                || profile.gdk_title_id().is_some()
+                || !profile.playstation_title_ids().is_empty(),
+            "{} names nothing an install is known by",
+            profile.id()
+        );
     }
 }
 
@@ -358,4 +367,91 @@ fn one_shipped_title_needs_behaviour_and_the_rest_are_data() {
          to GameProfile"
     );
     assert_eq!(claiming, vec!["gta-v-legacy"]);
+}
+
+/// A console build of Testopolis: no executable on disk, known by the title id its package states.
+#[derive(Debug, Clone, Copy, Default)]
+struct TestopolisPs4;
+
+impl GameProfile for TestopolisPs4 {
+    fn id(&self) -> &'static str {
+        "testopolis-ps4"
+    }
+
+    fn label(&self) -> &'static str {
+        "Testopolis (PlayStation 4)"
+    }
+
+    fn title(&self) -> &'static str {
+        Testopolis.title()
+    }
+
+    fn platform(&self) -> Platform {
+        Platform::Ps4
+    }
+
+    fn playstation_title_ids(&self) -> &'static [&'static str] {
+        &["CUSA99999"]
+    }
+
+    fn description(&self) -> &'static str {
+        Testopolis.description()
+    }
+
+    fn container(&self) -> ContainerFamily {
+        ContainerFamily::Rpf7
+    }
+
+    fn native_target(&self) -> Generation {
+        Generation::Gen8
+    }
+
+    fn asset_targets(&self) -> &'static [Generation] {
+        &[Generation::Gen8]
+    }
+
+    fn executable_candidates(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn install_layout(&self) -> InstallLayout {
+        InstallLayout {
+            platform_archive_prefix: "ps4",
+            ..Testopolis.install_layout()
+        }
+    }
+
+    fn dlc_policy(&self) -> DlcPolicy {
+        DlcPolicy::MountAll
+    }
+}
+
+#[test]
+fn a_console_build_is_one_more_profile_found_by_its_title_id() {
+    static PROFILE: TestopolisPs4 = TestopolisPs4;
+    registry::register(&PROFILE);
+
+    let (_scratch, dir) = scratch("testopolis-ps4");
+    std::fs::create_dir_all(dir.join("sce_sys")).expect("sce_sys");
+    std::fs::write(
+        dir.join("sce_sys/param.sfo"),
+        b"\0PSF\x01\x01\0\0TITLE_ID\0CUSA99999\0",
+    )
+    .expect("param.sfo");
+    let found = registry::detect(&dir).expect("the package is a build");
+    assert_eq!(found.id(), "testopolis-ps4");
+    assert_eq!(found.platform(), Platform::Ps4);
+    assert_eq!(
+        found.title(),
+        Testopolis.title(),
+        "both builds are the same game"
+    );
+
+    let (_other, other) = scratch("another-ps4");
+    std::fs::create_dir_all(other.join("sce_sys")).expect("sce_sys");
+    std::fs::write(other.join("sce_sys/param.sfo"), b"TITLE_ID\0CUSA00001\0").expect("param.sfo");
+    assert!(
+        registry::detect(&other).is_none(),
+        "another title's package was claimed"
+    );
 }

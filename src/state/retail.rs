@@ -99,10 +99,8 @@ fn has_install_marker_in_ancestors(path: &Path) -> Option<&Path> {
                 return Some(parent);
             }
         }
-        // ⚠ An Xbox package has no executable on disk; its configuration is a marker only when a profile claims it.
-        if parent.join(or_title::game::profile::GDK_CONFIG).is_file()
-            && or_title::game::registry::detect(parent).is_some()
-        {
+        // ⚠ A console package has no executable on disk; what it carries is a marker only when a profile claims it.
+        if or_title::game::registry::detect(parent).is_some() {
             return Some(parent);
         }
         cur = parent;

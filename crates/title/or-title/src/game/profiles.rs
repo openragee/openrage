@@ -1,7 +1,9 @@
 use or_io::Generation;
 
 use super::overlay_loader::{OverlayLoaders, Project, Redirect};
-use super::profile::{Brand, ContainerFamily, DlcPolicy, GameProfile, InstallLayout, StoreHints};
+use super::profile::{
+    Brand, ContainerFamily, DlcPolicy, GameProfile, InstallLayout, Platform, StoreHints,
+};
 
 const OPEN_IV: Project = Project {
     name: "OpenIV",
@@ -81,6 +83,10 @@ impl GameProfile for GtaVLegacy {
 
     fn description(&self) -> &'static str {
         "Original / classic build of GTA V."
+    }
+
+    fn title(&self) -> &'static str {
+        "GTA V"
     }
 
     fn container(&self) -> ContainerFamily {
@@ -163,6 +169,10 @@ impl GameProfile for GtaVEnhanced {
 
     fn description(&self) -> &'static str {
         "GTA V Enhanced edition (2024 relaunch)."
+    }
+
+    fn title(&self) -> &'static str {
+        "GTA V"
     }
 
     fn container(&self) -> ContainerFamily {
@@ -346,6 +356,11 @@ impl GameProfile for Gta6 {
 
     fn description(&self) -> &'static str {
         "GTA VI. Its RPF9 archives' tables are encrypted: with a key snapshot an archive is browsed as a folder of its entries, and with no key it opens as a scan of the bodies stored in the clear. The install opens as a plain folder."
+    }
+
+    // The only build read so far is an Xbox package.
+    fn platform(&self) -> Platform {
+        Platform::XboxSeries
     }
 
     fn container(&self) -> ContainerFamily {

@@ -40,6 +40,9 @@ msgstr "武器パック：武器のモデル、テクスチャ、武器ファイ
 msgid "Add .ymap and .ytyp files: OpenRage shows what they place, lets you move each thing with a manipulator, checks the pack and builds a FiveM resource."
 msgstr ".ymapファイルと.ytypファイルを追加すると、OpenRageが配置内容を表示し、マニピュレーターで各オブジェクトを移動でき、パックをチェックしてFiveMリソースをビルドします。"
 
+msgid "Add a game folder…"
+msgstr "ゲームのフォルダーを追加…"
+
 msgid "Add a map pack…"
 msgstr "マップパックを追加…"
 
@@ -5728,6 +5731,9 @@ msgstr "フィルターはオンになっていません"
 msgid "No game"
 msgstr "ゲームなし"
 
+msgid "No game OpenRage knows is in {folder}"
+msgstr "{folder}に OpenRage が扱えるゲームはありません"
+
 msgid "No game install is chosen, so the preview shows the garment alone"
 msgstr "ゲームのインストールが選択されていないため、プレビューには衣服のみが表示されます"
 
@@ -7996,6 +8002,9 @@ msgstr "先に「ファイル」または中央部で、インポートするフ
 
 msgid "Select the first source this import made, in the Project workspace"
 msgstr "プロジェクトワークスペースで、このインポートで最初に作成されたソースを選択します"
+
+msgid "Select the folder of a game"
+msgstr "ゲームのフォルダーを選択"
 
 msgid "Select the folder to add to in Files or in the centre first"
 msgstr "先に「ファイル」または中央部で、追加先のフォルダーを選択してください"

@@ -161,6 +161,39 @@ fn a_launch_with_no_install_to_open_starts_on_the_start_page() {
 }
 
 #[test]
+fn a_console_build_has_a_row_only_once_its_folder_is_known() {
+    let folder = tempfile::tempdir().expect("a build's folder");
+    let mut known = Prefs::default();
+    known
+        .game_paths
+        .set(Game::GtaVI, Some(folder.path().to_path_buf()));
+    let said = |prefs: Prefs| -> Vec<String> {
+        let mut state = AppState::from_prefs(prefs);
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        labelled(&ctx, &mut state, Vec::new(), document_panel)
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect()
+    };
+    let platform = or_title::game::Platform::XboxSeries.label();
+    let shown = said(known);
+    assert!(
+        shown.iter().any(|text| text.starts_with(platform)),
+        "the row of a known console build does not name its platform: {shown:?}"
+    );
+    let shown = said(Prefs::default());
+    assert!(
+        !shown.iter().any(|text| text.contains(Game::GtaVI.label())),
+        "a console build nobody added has a row: {shown:?}"
+    );
+    assert!(
+        shown.iter().any(|text| text.contains("Add a game folder…")),
+        "the start page does not offer to add one: {shown:?}"
+    );
+}
+
+#[test]
 fn a_first_run_reaches_the_install_it_found_in_one_click() {
     let dir = tempfile::tempdir().expect("an install folder");
     let found = dir.path().to_path_buf();

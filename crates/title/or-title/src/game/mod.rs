@@ -14,7 +14,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use or_io::Generation;
 
 pub use profile::{
-    Brand, ContainerFamily, DlcPolicy, GameId, GameProfile, InstallLayout, StoreHints,
+    Brand, ContainerFamily, DlcPolicy, GameId, GameProfile, InstallLayout, Platform, StoreHints,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

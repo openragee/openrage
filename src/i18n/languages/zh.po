@@ -40,6 +40,9 @@ msgstr "武器包：拖放武器模型、纹理和武器文件即可添加武器
 msgid "Add .ymap and .ytyp files: OpenRage shows what they place, lets you move each thing with a manipulator, checks the pack and builds a FiveM resource."
 msgstr "添加 .ymap 和 .ytyp 文件：OpenRage 会显示它们放置的内容，可用操纵器移动每个对象，检查该包并构建 FiveM 资源。"
 
+msgid "Add a game folder…"
+msgstr "添加游戏文件夹…"
+
 msgid "Add a map pack…"
 msgstr "添加地图包…"
 
@@ -5701,6 +5704,9 @@ msgstr "未启用任何筛选"
 msgid "No game"
 msgstr "无游戏"
 
+msgid "No game OpenRage knows is in {folder}"
+msgstr "{folder} 中没有 OpenRage 认识的游戏"
+
 msgid "No game install is chosen, so the preview shows the garment alone"
 msgstr "尚未选择游戏安装，因此预览仅显示服装本身"
 
@@ -7969,6 +7975,9 @@ msgstr "先在“文件”或中央区域中选择要导入的文件"
 
 msgid "Select the first source this import made, in the Project workspace"
 msgstr "在“项目”工作区中选择本次导入创建的第一个源"
+
+msgid "Select the folder of a game"
+msgstr "选择游戏的文件夹"
 
 msgid "Select the folder to add to in Files or in the centre first"
 msgstr "先在“文件”或中央区域中选择要添加到的文件夹"

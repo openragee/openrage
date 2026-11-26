@@ -47,6 +47,17 @@ const APART: &[(&str, &str, bool)] = &[
         "state::a_drag_copies_and_a_change_of_nothing_does_nothing::",
         true,
     ),
+    // ⚠ Its maps are the samples of `or-maps`, which state few of the members
+    // a class has, and a map that gains or loses a record is laid out from the
+    // schema snapshot once anything in the process has installed one: beside
+    // the tests that open metadata, two of its tests failed every run of the
+    // binary on a machine that has a snapshot. It leaves this list when such a
+    // map is laid out from what its file states, a snapshot installed or not.
+    (
+        "openrage::bin/openrage",
+        "state::the_map_screen_holds_a_session::",
+        false,
+    ),
 ];
 
 /// A test binary cargo built, as nextest names it.

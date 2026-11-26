@@ -31,7 +31,7 @@ use glam::Vec3;
 use or_io::decl::File;
 use or_io::meta::instance::HashedString;
 use or_io::meta::typed::{CEntityDefAny, CMapData};
-use or_io::meta::MetaDocument;
+use or_io::meta::{MetaDocument, Value};
 use or_source::metadata::Inputs;
 use or_world::MapData;
 
@@ -267,62 +267,99 @@ pub(crate) struct MapSource {
     pub(crate) cooked: Vec<u8>,
 }
 
+/// The sources `model` names, in the order every plan reads them.
+fn sorted_paths(model: &Maps) -> Vec<&str> {
+    let mut paths: Vec<&str> = named_paths(model).collect();
+    paths.sort_unstable();
+    paths
+}
+
+/// The source `path` of the pack in `folder`, when it cooks to a map file; none for a source of another kind.
+fn map_source(folder: &Path, path: &str) -> Result<Option<MapSource>, Error> {
+    let unread = |why: String| Error::Source(path.to_string(), why);
+    if !stays_inside(path) {
+        return Err(unread("it leaves the folder of the pack".to_string()));
+    }
+    let dir = folder.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
+    // ⚠ Only what may be a map file refuses a deletion: a folder that names another kind is none, whether it opens or not, and
+    // neither is a metadata source that says it cooks to another file, whatever else of it does not read.
+    let another_kind = (path.rsplit('/').next())
+        .and_then(or_source::asset::parse_folder_name)
+        .is_some_and(|(_, kind)| kind != or_source::metadata::KIND);
+    let source = match or_source::asset::Source::open(&dir) {
+        Ok(source) => source,
+        Err(_) if another_kind => return Ok(None),
+        Err(why) => return Err(unread(why.to_string())),
+    };
+    if source.manifest.kind != or_source::metadata::KIND {
+        return Ok(None);
+    }
+    let cooks_to = or_source::metadata::cooked_name(&source.manifest);
+    if cooks_to.is_ok_and(|file| !file.ends_with(&format!(".{}", CMapData::EXTENSION))) {
+        return Ok(None);
+    }
+    let inputs = Inputs::read(&source).map_err(|found| unread(problems(found)))?;
+    if inputs.extension() != CMapData::EXTENSION {
+        return Ok(None);
+    }
+    let cooked = (inputs.compile())
+        .map_err(|found| unread(problems(found)))?
+        .bytes;
+    Ok(Some(MapSource {
+        path: path.to_string(),
+        opened: source,
+        inputs,
+        cooked,
+    }))
+}
+
 /// The sources of `model` in `folder` that cook to a map file, by their name.
 pub(crate) fn map_sources(folder: &Path, model: &Maps) -> Result<Vec<MapSource>, Error> {
     let mut sources = Vec::new();
-    let mut paths: Vec<&str> = named_paths(model).collect();
-    paths.sort_unstable();
-    for path in paths {
-        let unread = |why: String| Error::Source(path.to_string(), why);
-        if !stays_inside(path) {
-            return Err(unread("it leaves the folder of the pack".to_string()));
-        }
-        let dir = folder.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
-        // ⚠ Only what may be a map file refuses a deletion: a folder that names another kind is none, whether it opens or not, and
-        // neither is a metadata source that says it cooks to another file, whatever else of it does not read.
-        let another_kind = (path.rsplit('/').next())
-            .and_then(or_source::asset::parse_folder_name)
-            .is_some_and(|(_, kind)| kind != or_source::metadata::KIND);
-        let source = match or_source::asset::Source::open(&dir) {
-            Ok(source) => source,
-            Err(_) if another_kind => continue,
-            Err(why) => return Err(unread(why.to_string())),
-        };
-        if source.manifest.kind != or_source::metadata::KIND {
-            continue;
-        }
-        let cooks_to = or_source::metadata::cooked_name(&source.manifest);
-        if cooks_to.is_ok_and(|file| !file.ends_with(&format!(".{}", CMapData::EXTENSION))) {
-            continue;
-        }
-        let inputs = Inputs::read(&source).map_err(|found| unread(problems(found)))?;
-        if inputs.extension() != CMapData::EXTENSION {
-            continue;
-        }
-        let cooked = (inputs.compile())
-            .map_err(|found| unread(problems(found)))?
-            .bytes;
-        sources.push(MapSource {
-            path: path.to_string(),
-            opened: source,
-            inputs,
-            cooked,
-        });
+    for path in sorted_paths(model) {
+        sources.extend(map_source(folder, path)?);
     }
     Ok(sources)
 }
 
-/// The map files the sources of `model` cook to, in `folder`, by the name of their source.
-fn map_files(folder: &Path, model: &Maps) -> Result<Vec<MapFile>, Error> {
-    (map_sources(folder, model)?.into_iter())
-        .map(|source| {
-            let unread = |why: String| Error::Source(source.path.clone(), why);
-            MapFile::read(&source.path, &source.opened.manifest.name, source.cooked).map_err(unread)
-        })
-        .collect()
+/// What holds a source open gives of it: the name of the file it cooks to, and the map file as it is held.
+pub(crate) type HeldMap = Result<(String, CMapData), String>;
+
+/// The map files the sources of `model` cook to, in `folder`, by the name of their source; `held` gives the map file of a source something holds open, in place of the one its XML on disk cooks to.
+fn map_files(
+    folder: &Path,
+    model: &Maps,
+    held: &mut dyn FnMut(&str) -> Option<HeldMap>,
+) -> Result<Vec<MapFile>, Error> {
+    let mut files = Vec::new();
+    for path in sorted_paths(model) {
+        let unread = |why: String| Error::Source(path.to_string(), why);
+        if let Some(map) = held(path).filter(|_| stays_inside(path)) {
+            let (file, map) = map.map_err(unread)?;
+            files.push(MapFile::of(path, &file, map));
+        } else if let Some(source) = map_source(folder, path)? {
+            let stem = &source.opened.manifest.name;
+            files.push(MapFile::read(path, stem, source.cooked).map_err(unread)?);
+        }
+    }
+    Ok(files)
 }
 
 impl MapFile {
+    /// The map file `map` is, which the source `source` is held open as and cooks to the file `file`, such as `harbour.ymap`.
+    fn of(source: &str, file: &str, map: CMapData) -> Self {
+        let container_lods = match map.carried("containerLods") {
+            Some(Value::Array(lods)) => lods.len(),
+            _ => 0,
+        };
+        Self {
+            source: source.to_string(),
+            name: map_name(file.rsplit_once('.').map_or(file, |(stem, _)| stem)),
+            map,
+            container_lods,
+        }
+    }
+
     /// The map file `bytes` hold, called `stem`, which the source `source` cooks to or is to be made of.
     fn read(source: &str, stem: &str, bytes: Vec<u8>) -> Result<Self, String> {
         let map = CMapData::from_bytes(&bytes).map_err(|e| e.to_string())?;
@@ -771,7 +808,15 @@ fn plan_over(
 /// The plan that takes the entities `chosen` out of the map files of the pack of maps in `folder`; nothing is written.
 pub fn plan(folder: &Path, chosen: &[At]) -> Result<Deletion, Error> {
     let model = Maps::read(folder)?;
-    let files = map_files(folder, &model)?;
+    let files = map_files(folder, &model, &mut |_| None)?;
+    plan_over(&files, chosen, &|hash| model.name_of(hash))
+}
+
+/// [`plan`] of the pack `session` is over, with each source the session holds read as the operations done to it leave it, written or not; nothing is changed.
+pub fn plan_in(session: &mut operation::Session, chosen: &[At]) -> Result<Deletion, Error> {
+    let folder = session.folder().to_path_buf();
+    let model = Maps::read(&folder)?;
+    let files = map_files(&folder, &model, &mut |source| session.held_map(source))?;
     plan_over(&files, chosen, &|hash| model.name_of(hash))
 }
 
@@ -788,7 +833,7 @@ pub fn plan_reaching(
     beyond: &mut dyn Beyond,
 ) -> Result<(Deletion, Vec<Reached>), Error> {
     let model = Maps::read(folder)?;
-    let mut files = map_files(folder, &model)?;
+    let mut files = map_files(folder, &model, &mut |_| None)?;
     let own = files.len();
     files.extend(reached.into_iter().map(|reached| reached.0));
     let (mut named, mut under): (BTreeSet<u32>, BTreeSet<u32>) = Default::default();
@@ -893,6 +938,22 @@ mod tests {
                 &child_map_file("near", "far", &[under(2, 0), under(3, 0)], BOX),
             ),
         ]
+    }
+
+    #[test]
+    fn a_map_file_held_open_counts_the_container_lods_its_bytes_carry() {
+        let stands = Entity::at("prop_crate_far", [0.0; 3], 1);
+        let carries = crate::sample::map_file_with_container_lods("far", &[stands], &[0, 0], BOX);
+        for bytes in [carries, map_file("far", &[stands], BOX)] {
+            let read = MapFile::read("far", "far", bytes.clone()).expect("a sample map reads");
+            let map = CMapData::from_bytes(&bytes).expect("it opens");
+            let held = MapFile::of("far", "far.ymap", map);
+            assert_eq!(held.container_lods, read.container_lods);
+            assert_eq!(held.name, read.name, "one map, held open or cooked");
+        }
+        let carries = crate::sample::map_file_with_container_lods("far", &[stands], &[0, 0], BOX);
+        let read = MapFile::read("far", "far", carries).unwrap();
+        assert_eq!(read.container_lods, 2);
     }
 
     #[test]

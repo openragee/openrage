@@ -120,7 +120,9 @@ impl AppState {
             self.workbench.findings_stale = true;
         }
 
-        self.workbench.take_scan();
+        if self.workbench.take_scan() {
+            self.follow_the_map_sources_on_disk();
+        }
         self.follow_moved_members();
         let signature = self.workbench_signature();
         // ⚠ The Wardrobe's packs are heard when they change; the clock stays for the Project workspace and for a pack that cannot be watched.

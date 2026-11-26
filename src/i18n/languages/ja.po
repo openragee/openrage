@@ -757,6 +757,21 @@ msgstr "アーキタイプ {index}を取り除きました"
 msgid "Removed entity {index}"
 msgstr "エンティティ {index}を取り除きました"
 
+msgid "Entity {index} was left: {count} other entity places the same model at the same pose, and a deletion would not know which of them goes"
+msgid_plural "Entity {index} was left: {count} other entities place the same model at the same pose, and a deletion would not know which of them goes"
+msgstr[0] "エンティティ {index}は残しました: 同じモデルを同じ姿勢で配置するエンティティがほかに {count} 個あり、削除ではどれを取り除くのか決められません"
+msgstr[1] "エンティティ {index}は残しました: 同じモデルを同じ姿勢で配置するエンティティがほかに {count} 個あり、削除ではどれを取り除くのか決められません"
+
+msgid "{count} far model that stood for nothing else went with it"
+msgid_plural "{count} far models that stood for nothing else went with it"
+msgstr[0] "ほかの何の代わりでもなかった遠景モデル {count} 個も一緒に取り除きました"
+msgstr[1] "ほかの何の代わりでもなかった遠景モデル {count} 個も一緒に取り除きました"
+
+msgid "{count} entity it was the far model of went with it"
+msgid_plural "{count} entities it was the far model of went with it"
+msgstr[0] "これを遠景モデルとしていたエンティティ {count} 個も一緒に取り除きました"
+msgstr[1] "これを遠景モデルとしていたエンティティ {count} 個も一緒に取り除きました"
+
 msgid "Removed the weapon {name}"
 msgstr "武器 {name}を取り除きました"
 
@@ -880,8 +895,8 @@ msgstr "ストリーミング距離"
 msgid "Take the archetype selected out of its type file. Entities that place it stay, and the rules say they place a name no type file declares. Undo puts it back"
 msgstr "選択中のアーキタイプをタイプファイルから取り除きます。それを配置しているエンティティは残り、ルールには、どのタイプファイルにも宣言されていない名前を配置していると表示されます。「元に戻す」で元に戻せます"
 
-msgid "Take the entity selected out of its map file, with the LOD links renumbered. Undo puts it back"
-msgstr "選択中のエンティティをマップファイルから取り除き、LODのリンクを振り直します。「元に戻す」で元に戻せます"
+msgid "Take the entity selected out of the map files of the pack with its chain: a far model left standing for nothing goes with it, and so does what names it as its far model. Undo puts them back"
+msgstr "選択中のエンティティを、そのチェーンごとパックのマップファイルから取り除きます。ほかの何の代わりでもなくなった遠景モデルと、これを遠景モデルとしているものも一緒に取り除きます。「元に戻す」で元に戻せます"
 
 msgid "Take the weapon selected out of the pack. Its sources stay in the folder of the pack, where the rules say that no weapon names them; Undo puts it back"
 msgstr "選択中の武器をパックから取り除きます。そのソースはパックのフォルダーに残り、ルールには、どの武器からも参照されていないと表示されます。「元に戻す」で元に戻せます"
@@ -7805,8 +7820,8 @@ msgstr "クエリを保存…"
 msgid "Save the active document to a new location"
 msgstr "アクティブなドキュメントを新しい場所に保存します"
 
-msgid "Save the active document; one never saved asks where. With no document open, it saves the project"
-msgstr "アクティブなドキュメントを保存します。一度も保存していないドキュメントは、保存先を確認します。ドキュメントが開いていない場合は、プロジェクトを保存します"
+msgid "Save the active document; one never saved asks where. With no document open, or on the Map screen while an edit of the project's maps is unwritten, it saves the project"
+msgstr "アクティブなドキュメントを保存します。一度も保存していないドキュメントは、保存先を確認します。ドキュメントが開いていない場合や、マップ画面でプロジェクトのマップの編集がまだ書き込まれていない場合は、プロジェクトを保存します"
 
 msgid "Save the archive's changes first: a comparison reads it as it was last saved"
 msgstr "先にアーカイブの変更を保存してください：比較では、最後に保存された状態のアーカイブが読み取られます"

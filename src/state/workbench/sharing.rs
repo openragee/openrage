@@ -89,7 +89,7 @@ impl AppState {
             .collect();
         let mut found =
             or_content::sharing::concerns(project, &games, &packs, self.workbench.is_truncated());
-        if self.project_carried.changed {
+        if self.project_unsaved() {
             found.push(Concern {
                 kind: Kind::Unsaved,
                 text:

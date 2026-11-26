@@ -350,7 +350,7 @@ pub const COMMANDS: &[Spec] = &[
         label: tr_key!("Save"),
         category: tr_key!("File"),
         defaults: &[(CTRL, Key::S)],
-        hover: tr_key!("Save the active document; one never saved asks where. With no document open, it saves the project"),
+        hover: tr_key!("Save the active document; one never saved asks where. With no document open, or on the Map screen while an edit of the project's maps is unwritten, it saves the project"),
         enabled: super::project::something_to_save,
         run: super::project::save,
         ..BASE

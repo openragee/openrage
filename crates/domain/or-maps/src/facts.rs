@@ -434,6 +434,37 @@ pub fn inside_of(bytes: &[u8], extension: &str, names: Names<'_>) -> Result<Insi
     }
 }
 
+fn entity_fact(entity: &or_world::Entity<'_>, names: Names<'_>) -> EntityFact {
+    let inst = entity.instance();
+    EntityFact {
+        archetype: name_at(inst, keys::ARCHETYPE_NAME, names),
+        guid: entity.guid(),
+        position: entity.position().to_array(),
+        rotation: field::vec4_at(inst, keys::ROTATION).unwrap_or([0.0, 0.0, 0.0, 1.0]),
+        scale_xy: field::f32_at(inst, keys::SCALE_XY).unwrap_or(1.0),
+        scale_z: field::f32_at(inst, keys::SCALE_Z).unwrap_or(1.0),
+        flags: entity.flags(),
+        parent_index: field::i32_at(inst, keys::PARENT_INDEX).unwrap_or(-1),
+        num_children: entity.num_children(),
+        lod_dist: entity.lod_dist(),
+        lod_level: entity.lod_level().map(str::to_string),
+        interior: entity.is_interior_instance(),
+    }
+}
+
+/// What a map file that holds `entity` states of it, read as [`inside_of`] reads each entity of a file.
+pub fn entity_fact_of(
+    entity: &or_io::meta::typed::CEntityDefAny,
+    names: Names<'_>,
+) -> Result<EntityFact, String> {
+    match crate::operation::Record::entity(entity)?.0 {
+        Value::Struct(inst) | Value::Pointer(Some(inst)) => {
+            Ok(entity_fact(&or_world::Entity::new(&inst), names))
+        }
+        _ => Err("the entity has no record a map file holds".to_string()),
+    }
+}
+
 fn read_map(map: &MapData<'_>, names: Names<'_>) -> MapInside {
     let root = map.instance();
     let found = or_world::validate::check(map);
@@ -454,25 +485,8 @@ fn read_map(map: &MapData<'_>, names: Names<'_>) -> MapInside {
         parent: name_at(root, keys::PARENT, names),
         flags: map.flags(),
         content_flags: map.content_flags(),
-        entities: map
-            .entities()
-            .map(|entity| {
-                let inst = entity.instance();
-                EntityFact {
-                    archetype: name_at(inst, keys::ARCHETYPE_NAME, names),
-                    guid: entity.guid(),
-                    position: entity.position().to_array(),
-                    rotation: field::vec4_at(inst, keys::ROTATION).unwrap_or([0.0, 0.0, 0.0, 1.0]),
-                    scale_xy: field::f32_at(inst, keys::SCALE_XY).unwrap_or(1.0),
-                    scale_z: field::f32_at(inst, keys::SCALE_Z).unwrap_or(1.0),
-                    flags: entity.flags(),
-                    parent_index: field::i32_at(inst, keys::PARENT_INDEX).unwrap_or(-1),
-                    num_children: entity.num_children(),
-                    lod_dist: entity.lod_dist(),
-                    lod_level: entity.lod_level().map(str::to_string),
-                    interior: entity.is_interior_instance(),
-                }
-            })
+        entities: (map.entities())
+            .map(|entity| entity_fact(&entity, names))
             .collect(),
         placed: or_world::manifest::placed(map),
         stored_entities: map
@@ -558,6 +572,46 @@ fn read_interior(interior: &or_world::Interior<'_>) -> InteriorFact {
 mod tests {
     use super::*;
     use crate::model::MapSet;
+
+    #[test]
+    fn an_entity_read_alone_is_said_as_the_file_that_holds_it_says_it() {
+        use crate::sample::{child_map_file, Entity};
+        use or_io::decl::File;
+        use or_io::meta::typed::CMapData;
+        let entities = [
+            Entity {
+                children: 1,
+                ..Entity::at("prop_crate_far", [1.0, 2.0, 3.0], 7)
+            },
+            Entity {
+                parent: 0,
+                yaw: 0.6,
+                scale: 1.5,
+                ..Entity::at("prop_crate_a", [10.0, 20.0, 0.5], 8)
+            },
+            Entity {
+                parent: 4,
+                in_parent_map: true,
+                ..Entity::at("prop_crate_b", [-4.0, 0.25, 9.0], 9)
+            },
+        ];
+        let bytes = child_map_file("near", "far", &entities, ([0.0; 3], [100.0; 3]));
+        let names = |hash: u32| {
+            (hash == or_io::string_hash(b"prop_crate_a")).then(|| "prop_crate_a".to_string())
+        };
+        let Ok(Inside::Map(read)) = inside_of(&bytes, "ymap", Some(&names)) else {
+            panic!("a sample map reads");
+        };
+        let typed = CMapData::from_bytes(&bytes).expect("it opens");
+        assert_eq!(read.entities.len(), 3);
+        for (held, said) in typed.entities.iter().zip(&read.entities) {
+            assert_eq!(entity_fact_of(held, Some(&names)).as_ref(), Ok(said));
+        }
+        assert_eq!(
+            read.entities[1].archetype.text.as_deref(),
+            Some("prop_crate_a")
+        );
+    }
 
     #[test]
     fn the_sources_a_model_names_are_looked_at_to_the_depth_asked() {

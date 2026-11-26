@@ -148,7 +148,7 @@ pub(super) const REMOVE_ENTITY: Spec = Spec {
     id: "remove_entity",
     label: tr_key!("Remove entity"),
     category: tr_key!("Project ▸ More ▸ Maps"),
-    hover: tr_key!("Take the entity selected out of its map file, with the LOD links renumbered. Undo puts it back"),
+    hover: tr_key!("Take the entity selected out of the map files of the pack with its chain: a far model left standing for nothing goes with it, and so does what names it as its far model. Undo puts them back"),
     enabled: an_entity_to_stand,
     run: |state, _| match state.scanned_map().is_some() {
         true => state.remove_scanned_entity(),

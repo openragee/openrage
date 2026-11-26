@@ -239,9 +239,9 @@ impl AppState {
         unbaked || doc.dirty
     }
 
-    /// Whether `then` leaves the open project with a change to its members not yet written.
+    /// Whether `then` leaves the open project with a change to its members, or an edit of its maps, not yet written.
     pub fn loses_project(&self, then: &AfterClose) -> bool {
-        self.project_carried.changed
+        self.project_unsaved()
             && matches!(
                 then,
                 AfterClose::NewSession
@@ -255,6 +255,9 @@ impl AppState {
     pub fn answer_reload_conflicts(&mut self, reload: bool) {
         for path in std::mem::take(&mut self.reload_conflicts) {
             self.workbench.refreshed.remove(&path);
+            if self.answer_for_a_map_source(&path, reload) {
+                continue;
+            }
             if reload {
                 self.reload_ypt_from_disk(&path, true);
                 if let Err(why) = self.reload_open_file(&path, true) {

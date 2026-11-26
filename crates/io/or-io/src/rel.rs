@@ -6,7 +6,8 @@
 //! in the data block; what an item's fields are depends on the file's
 //! `rel_type`: [`speech`] and [`config`] type `rel_type` 4's, [`synth`] 10's,
 //! [`dynamic_mix`] 15's, [`curve`] 16's, [`category`] 22's, [`sound`] 54's and
-//! [`game_object`] 149's, 150's and 151's.
+//! [`game_object`] 149's, 150's and 151's. [`interior`] adds, edits and removes
+//! the interiors of a game data file and their rooms.
 //!
 //! Every length the file states is derived from what it carries and checked at
 //! open, so a save is byte-identical with the file it opened.
@@ -16,6 +17,7 @@ pub mod config;
 pub mod curve;
 pub mod dynamic_mix;
 pub mod game_object;
+pub mod interior;
 pub mod layout;
 pub mod sound;
 pub mod speech;

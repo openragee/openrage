@@ -372,6 +372,7 @@ not (
   | binary_id(=or-io::awc_replace)
   | binary_id(=or-io::awc_roundtrip)
   | binary_id(=or-io::gta5_navmesh_shipped)
+  | binary_id(=or-io::rel_interiors_of_an_install)
   | binary_id(=or-io::rpf_builder_roundtrip)
   | binary_id(=or-io::the_key_snapshot_is_in_the_tree_once)
   | binary_id(=or-io::what_a_reencoded_clip_drops)

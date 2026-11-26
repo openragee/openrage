@@ -440,6 +440,17 @@ macro_rules! rel_items {
                     $(Self::$variant(_) => stringify!($variant),)*
                 }
             }
+
+            /// The alignment of the fields the item's type declares itself, 1 for a packed type.
+            pub fn own_align(&self) -> usize {
+                match self {
+                    $(Self::$variant(_) => if $crate::rel::layout::rel_packed!($($layout)?) {
+                        1
+                    } else {
+                        $variant::OWN_ALIGN
+                    },)*
+                }
+            }
         }
     };
 }

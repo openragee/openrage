@@ -3851,7 +3851,9 @@ fields read-only, with a `.dat54` item's three extra bytes beside them. A file w
 read typed still opens, says why, and lists its items by class id as bytes. A save writes the
 container as it was read and keeps the file's extension. `src/state/opening_a_rel.rs` holds a
 synthetic file of each case to its types, its groups and an unchanged save, and `just self-check`
-draws the kind. Editing a typed field is not built.
+draws the kind. Editing a typed field is not built there; in `or-io` the interiors of a game data
+file and their rooms are added, edited and removed
+([R70x](#r70x-the-audio-of-an-interior)).
 
 **Open.** An edit loaded in game, which the owner checks.
 
@@ -10511,10 +10513,28 @@ portals of R70m, through a donor's type table. Then the audio lines in the resou
 typed root for the occlusion metadata waits for the plan's ruling 16
 ([brief](World_Editor_Plan.md#the-audio-of-an-interior-r70x)).
 
-**Where it stands.** Not built. A `.rel` item reads typed and no typed field is edited
-([R34b](#r34b-the-audio-metadata-schemas)), and the members of the occlusion metadata are spelled as
-hashes ([metadata](Source_Format_Design.md#metadata)). How the game finds an interior's occlusion
-file is not measured.
+**Where it stands.** The first step is built, in `or-io`, with no verb and no screen; the occlusion
+file and the manifest's lines are not. `crates/io/or-io/src/rel/interior.rs` adds from nothing or by
+copy, edits and removes the `InteriorSettings` and `InteriorRoom` items of a game data file,
+`rel_type` 151, under a key and never a name, and lays the data block, the item table and the hash
+table out again by the layout every shipped game data file has; a file that layout does not write
+back byte for byte is refused before anything changes
+([in full, with what it refuses and what the installs hold](../reference/Crate_Reference.md#the-interiors-of-a-game-data-rel)).
+`crates/io/or-io/tests/rel_interiors.rs` holds it on a file laid out by hand. On both installs,
+Legacy / Enhanced, `crates/io/or-io/tests/rel_interiors_of_an_install.rs` (slow tier, on top of
+`974935c9d`, 2026-11-26): `the_interiors_of_an_install_lay_out_as_an_edit_writes_them` finds that
+layout in 54 of 54 / 57 of 57 game data `.rel`, 30 / 29 of them holding an interior, and 640
+`InteriorSettings` and 2,075 `InteriorRoom` in each install that read typed and write back to their
+bytes; `every_install_rel_with_an_interior_takes_one_more_by_copy` has 30 of 30 / 29 of 29 files
+take a copy of an interior and give the shipped bytes back once it is removed; and
+`every_interior_of_an_install_is_copied_and_the_copy_removed` does so with 640 of 640 interiors of
+each install.
+
+Left in this step: a verb of `openrage-cli`, which has no family for `.rel`; authoring a static
+emitter or an alarm, so a removal one of them blocks stays blocked; and a file built by another
+tool, which is refused unless it has the shipped layout. Nothing was loaded in a game. The members
+of the occlusion metadata are spelled as hashes ([metadata](Source_Format_Design.md#metadata)), and
+how the game finds an interior's occlusion file is not measured.
 
 **Depends on.** [R70m](#r70m-interiors).
 

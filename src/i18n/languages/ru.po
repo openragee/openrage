@@ -17253,3 +17253,141 @@ msgstr "(нет ключей: её архивы читаются сканиро�
 
 msgid "{folder} is {title}. Its archives open from their tables as folders of the tree."
 msgstr "{folder} — это {title}. Её архивы открываются по своим таблицам как папки дерева."
+
+msgid "the decompiler stopped on a fault in this program"
+msgstr "декомпилятор остановился из-за сбоя в этой программе"
+
+msgid "This is a compiled GTA VI script that does not decompile, so it is shown as its bytes: {e}"
+msgstr "Это скомпилированный скрипт GTA VI, который не декомпилируется, поэтому он показан как байты: {e}"
+
+msgid "{count} function"
+msgid_plural "{count} functions"
+msgstr[0] "{count} функция"
+msgstr[1] "{count} функции"
+msgstr[2] "{count} функций"
+
+msgid "{name}: {count} line from line {line}"
+msgid_plural "{name}: {count} lines from line {line}"
+msgstr[0] "{name}: {count} строка, начиная со строки {line}"
+msgstr[1] "{name}: {count} строки, начиная со строки {line}"
+msgstr[2] "{name}: {count} строк, начиная со строки {line}"
+
+msgid "{count} class"
+msgid_plural "{count} classes"
+msgstr[0] "{count} класс"
+msgstr[1] "{count} класса"
+msgstr[2] "{count} классов"
+
+msgid "The instructions of this function do not decode: {e}"
+msgstr "Инструкции этой функции не декодируются: {e}"
+
+msgid "Select a function in the outline to list its instructions"
+msgstr "Выберите функцию в структуре, чтобы показать её инструкции"
+
+msgid "{count} function has no body in the source"
+msgid_plural "{count} functions have no body in the source"
+msgstr[0] "{count} функция не имеет тела в исходном тексте"
+msgstr[1] "{count} функции не имеют тела в исходном тексте"
+msgstr[2] "{count} функций не имеют тела в исходном тексте"
+
+msgid "{count} imported program"
+msgid_plural "{count} imported programs"
+msgstr[0] "{count} импортированная программа"
+msgstr[1] "{count} импортированные программы"
+msgstr[2] "{count} импортированных программ"
+
+msgid "Natives are named from {list}"
+msgstr "Нативные функции названы по списку {list}"
+
+msgid "Names are read from {lists}"
+msgstr "Имена прочитаны из {lists}"
+
+msgid "No names list was supplied, so a type, a field or a method is shown by its hash or its offset"
+msgstr "Список имён не предоставлен, поэтому тип, поле или метод показаны по хешу или по смещению"
+
+msgid "Open names folder"
+msgstr "Открыть папку имён"
+
+msgid "The caret is on no name"
+msgstr "Курсор не стоит на имени"
+
+msgid "{name} follows a dot: it may be defined in another program, and only a name that stands alone is followed"
+msgstr "{name} стоит после точки: оно может быть определено в другой программе, а переход выполняется только по имени, стоящему отдельно"
+
+msgid "This script defines no one thing called {name}"
+msgstr "В этом скрипте нет ровно одного определения с именем {name}"
+
+msgid "No GTA VI script is in front"
+msgstr "На переднем плане нет скрипта GTA VI"
+
+msgid "Go to definition"
+msgstr "Перейти к определению"
+
+msgid "Move the caret to where this script defines the name under it"
+msgstr "Переместить курсор туда, где этот скрипт определяет имя под курсором"
+
+msgid "Find references"
+msgstr "Найти ссылки"
+
+msgid "Find every place of this script that spells the name under the caret"
+msgstr "Найти каждое место этого скрипта, где записано имя под курсором"
+
+msgid "GTA VI Script"
+msgstr "Скрипт GTA VI"
+
+msgid "A compiled GTA VI script, read from the archive that holds it or from a deciphered file: the source it decompiles to and the classes and functions that source lists, read-only"
+msgstr "Скомпилированный скрипт GTA VI, прочитанный из архива, который его содержит, или из расшифрованного файла: исходный текст, в который он декомпилируется, и классы и функции, перечисленные в этом тексте, только чтение"
+
+msgid "a GTA VI script holds compiled bytecode; OpenRage reads one and does not write one"
+msgstr "скрипт GTA VI содержит скомпилированный байт-код; OpenRage читает такой скрипт и не записывает его"
+
+msgid "No natives list was supplied, so a native is shown by the address of its handler, or by its hash where a names list gives the hash at that address"
+msgstr "Список нативных функций не предоставлен, поэтому нативная функция показана по адресу её обработчика или по хешу там, где список имён даёт хеш для этого адреса"
+
+msgid "No native is named from {lists}: a compiled program calls a native by the address of its handler, and a natives list names one only where a names list gives the hash at that address (a table of hash and rva)"
+msgstr "Ни одна нативная функция не названа по {lists}: скомпилированная программа вызывает нативную функцию по адресу её обработчика, а список нативных функций называет её только там, где список имён даёт хеш для этого адреса (таблица hash и rva)"
+
+msgid "Not read from the names folder: {files}"
+msgstr "Не прочитано из папки имён: {files}"
+
+msgid "What other programs state of the types and functions this one uses is read from the project {file}"
+msgstr "То, что другие программы сообщают о типах и функциях, которые использует эта, прочитано из проекта {file}"
+
+msgid "Decompiled alone: a function that needs what another program states has no body. openrage-cli script export -o writes a project.json of every program of a build; put it in the names folder or beside this file, then open the script again"
+msgstr "Декомпилировано отдельно: у функции, которой нужно то, что сообщает другая программа, нет тела. openrage-cli script export -o записывает project.json всех программ сборки; поместите его в папку имён или рядом с этим файлом, затем снова откройте скрипт"
+
+msgid "A project file was found and not read: {why}"
+msgstr "Файл проекта найден, но не прочитан: {why}"
+
+msgid "Put names lists, natives lists and a project.json in this folder, then open the script again: OpenRage ships none. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
+msgstr "Поместите списки имён, списки нативных функций и project.json в эту папку, затем снова откройте скрипт: OpenRage их не поставляет. Каждый файл читается как список имён, если он читается как таковой, иначе — как список нативных функций; файл, имя которого начинается с natives или который содержит JSON, сначала проверяется как список нативных функций"
+
+msgid "Lifted listing"
+msgstr "Листинг из байт-кода"
+
+msgid "Structured statements"
+msgstr "Структурированные операторы"
+
+msgid "Source with classes"
+msgstr "Исходный код с классами"
+
+msgid "Decompiling, {seconds} s so far; functions to write: {functions}"
+msgstr "Декомпиляция, прошло {seconds} с; функций к записи: {functions}"
+
+msgid "Stop waiting"
+msgstr "Не ждать"
+
+msgid "A decompile cannot be stopped part-way: this stops waiting for it, the script keeps the source it has, and what the decompile writes is dropped when it ends"
+msgstr "Декомпиляцию нельзя остановить на полпути: это прекращает её ожидание, скрипт сохраняет имеющийся исходный код, а то, что запишет декомпиляция, отбрасывается по её завершении"
+
+msgid "{held} of {all} functions are decompiled. This program is large, so its source holds only the ones picked: click a function in the outline to add it"
+msgstr "Декомпилировано функций: {held} из {all}. Эта программа велика, поэтому её исходный код содержит только выбранные: щёлкните функцию в структуре, чтобы добавить её"
+
+msgid "Decompile every function"
+msgstr "Декомпилировать все функции"
+
+msgid "Decompiles the whole program on a thread of its own. A program this large takes minutes"
+msgstr "Декомпилирует всю программу в отдельном потоке. Для такой большой программы это занимает минуты"
+
+msgid "The script was not decompiled: {e}"
+msgstr "Скрипт не декомпилирован: {e}"

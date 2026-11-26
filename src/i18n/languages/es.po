@@ -17103,3 +17103,136 @@ msgstr "(sin claves: sus archivos se leen mediante un análisis)"
 
 msgid "{folder} is {title}. Its archives open from their tables as folders of the tree."
 msgstr "{folder} es {title}. Sus archivos comprimidos se abren desde sus tablas como carpetas del árbol."
+
+msgid "the decompiler stopped on a fault in this program"
+msgstr "el descompilador se detuvo por un fallo en este programa"
+
+msgid "This is a compiled GTA VI script that does not decompile, so it is shown as its bytes: {e}"
+msgstr "Este es un script compilado de GTA VI que no se descompila, así que se muestra como sus bytes: {e}"
+
+msgid "{count} function"
+msgid_plural "{count} functions"
+msgstr[0] "{count} función"
+msgstr[1] "{count} funciones"
+
+msgid "{name}: {count} line from line {line}"
+msgid_plural "{name}: {count} lines from line {line}"
+msgstr[0] "{name}: {count} línea desde la línea {line}"
+msgstr[1] "{name}: {count} líneas desde la línea {line}"
+
+msgid "{count} class"
+msgid_plural "{count} classes"
+msgstr[0] "{count} clase"
+msgstr[1] "{count} clases"
+
+msgid "The instructions of this function do not decode: {e}"
+msgstr "Las instrucciones de esta función no se decodifican: {e}"
+
+msgid "Select a function in the outline to list its instructions"
+msgstr "Seleccionar una función en el esquema para listar sus instrucciones"
+
+msgid "{count} function has no body in the source"
+msgid_plural "{count} functions have no body in the source"
+msgstr[0] "{count} función no tiene cuerpo en el código fuente"
+msgstr[1] "{count} funciones no tienen cuerpo en el código fuente"
+
+msgid "{count} imported program"
+msgid_plural "{count} imported programs"
+msgstr[0] "{count} programa importado"
+msgstr[1] "{count} programas importados"
+
+msgid "Natives are named from {list}"
+msgstr "Las nativas se nombran a partir de {list}"
+
+msgid "Names are read from {lists}"
+msgstr "Los nombres se leen de {lists}"
+
+msgid "No names list was supplied, so a type, a field or a method is shown by its hash or its offset"
+msgstr "No se proporcionó ninguna lista de nombres, así que un tipo, un campo o un método se muestra por su hash o su posición"
+
+msgid "Open names folder"
+msgstr "Abrir la carpeta de nombres"
+
+msgid "The caret is on no name"
+msgstr "El cursor no está sobre ningún nombre"
+
+msgid "{name} follows a dot: it may be defined in another program, and only a name that stands alone is followed"
+msgstr "{name} va después de un punto: puede estar definido en otro programa, y solo se sigue un nombre que está solo"
+
+msgid "This script defines no one thing called {name}"
+msgstr "Este script no define exactamente una cosa llamada {name}"
+
+msgid "No GTA VI script is in front"
+msgstr "No hay ningún script de GTA VI en primer plano"
+
+msgid "Go to definition"
+msgstr "Ir a la definición"
+
+msgid "Move the caret to where this script defines the name under it"
+msgstr "Mover el cursor a donde este script define el nombre que tiene debajo"
+
+msgid "Find references"
+msgstr "Buscar referencias"
+
+msgid "Find every place of this script that spells the name under the caret"
+msgstr "Buscar cada lugar de este script donde se escribe el nombre que hay bajo el cursor"
+
+msgid "GTA VI Script"
+msgstr "Script de GTA VI"
+
+msgid "A compiled GTA VI script, read from the archive that holds it or from a deciphered file: the source it decompiles to and the classes and functions that source lists, read-only"
+msgstr "Un script compilado de GTA VI, leído del archivo comprimido que lo contiene o de un archivo descifrado: el código fuente al que se descompila y las clases y funciones que ese código lista, solo lectura"
+
+msgid "a GTA VI script holds compiled bytecode; OpenRage reads one and does not write one"
+msgstr "un script de GTA VI contiene bytecode compilado; OpenRage lee uno y no escribe ninguno"
+
+msgid "No natives list was supplied, so a native is shown by the address of its handler, or by its hash where a names list gives the hash at that address"
+msgstr "No se proporcionó ninguna lista de nativas, así que una nativa se muestra por la dirección de su manejador, o por su hash donde una lista de nombres da el hash de esa dirección"
+
+msgid "No native is named from {lists}: a compiled program calls a native by the address of its handler, and a natives list names one only where a names list gives the hash at that address (a table of hash and rva)"
+msgstr "Ninguna nativa se nombra a partir de {lists}: un programa compilado llama a una nativa por la dirección de su manejador, y una lista de nativas solo nombra una donde una lista de nombres da el hash de esa dirección (una tabla de hash y rva)"
+
+msgid "Not read from the names folder: {files}"
+msgstr "No leídos de la carpeta de nombres: {files}"
+
+msgid "What other programs state of the types and functions this one uses is read from the project {file}"
+msgstr "Lo que otros programas declaran de los tipos y funciones que este usa se lee del proyecto {file}"
+
+msgid "Decompiled alone: a function that needs what another program states has no body. openrage-cli script export -o writes a project.json of every program of a build; put it in the names folder or beside this file, then open the script again"
+msgstr "Descompilado por sí solo: una función que necesita lo que otro programa declara no tiene cuerpo. openrage-cli script export -o escribe un project.json de todos los programas de una compilación; ponerlo en la carpeta de nombres o junto a este archivo y luego volver a abrir el script"
+
+msgid "A project file was found and not read: {why}"
+msgstr "Se encontró un archivo de proyecto y no se leyó: {why}"
+
+msgid "Put names lists, natives lists and a project.json in this folder, then open the script again: OpenRage ships none. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
+msgstr "Poner las listas de nombres, las listas de nativas y un project.json en esta carpeta y luego volver a abrir el script: OpenRage no incluye ninguno. Cada archivo se lee como lista de nombres si se lee como tal, y si no como lista de nativas; un archivo cuyo nombre empieza por natives, o que contiene JSON, se prueba primero como lista de nativas"
+
+msgid "Lifted listing"
+msgstr "Listado obtenido del bytecode"
+
+msgid "Structured statements"
+msgstr "Sentencias estructuradas"
+
+msgid "Source with classes"
+msgstr "Código fuente con clases"
+
+msgid "Decompiling, {seconds} s so far; functions to write: {functions}"
+msgstr "Descompilando, {seconds} s hasta ahora; funciones por escribir: {functions}"
+
+msgid "Stop waiting"
+msgstr "Dejar de esperar"
+
+msgid "A decompile cannot be stopped part-way: this stops waiting for it, the script keeps the source it has, and what the decompile writes is dropped when it ends"
+msgstr "Una descompilación no se puede detener a medias: esto deja de esperarla, el script conserva el código fuente que tiene, y lo que la descompilación escribe se descarta cuando termina"
+
+msgid "{held} of {all} functions are decompiled. This program is large, so its source holds only the ones picked: click a function in the outline to add it"
+msgstr "{held} de {all} funciones están descompiladas. Este programa es grande, así que su código fuente solo contiene las elegidas: hacer clic en una función del esquema para añadirla"
+
+msgid "Decompile every function"
+msgstr "Descompilar todas las funciones"
+
+msgid "Decompiles the whole program on a thread of its own. A program this large takes minutes"
+msgstr "Descompila todo el programa en un hilo propio. Un programa de este tamaño tarda minutos"
+
+msgid "The script was not decompiled: {e}"
+msgstr "El script no se descompiló: {e}"

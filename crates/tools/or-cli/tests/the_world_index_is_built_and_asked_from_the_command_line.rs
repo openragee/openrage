@@ -863,3 +863,194 @@ fn every_world_verb_that_reads_the_index_answers_from_the_index_of_the_level_it_
     assert!(ok && made.is_file(), "{printed}");
     assert_eq!(kept_under(&other), Vec::<String>::new());
 }
+
+/// A vehicle data file stating `(model, class)`, each a car.
+fn vehicle_file(stated: &[(&str, &str)]) -> Vec<u8> {
+    let items: String = (stated.iter())
+        .map(|(model, class)| {
+            format!(
+                "<Item><modelName>{model}</modelName><gameName>{model}</gameName>\
+                 <type>VEHICLE_TYPE_CAR</type><vehicleClass>{class}</vehicleClass></Item>"
+            )
+        })
+        .collect();
+    format!(
+        "<CVehicleModelInfo__InitDataList><InitDatas>{items}</InitDatas>\
+         </CVehicleModelInfo__InitDataList>"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn the_models_and_the_vehicles_of_an_install_are_listed_from_the_command_line_at_a_level() {
+    use or_title::install::vehicles::{LEVEL_VEHICLES, VEHICLE_FILE_TYPE};
+    use world_fixture::{dlc_list_bytes, typed_bytes, ArchetypeSpec};
+
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let config = scratch.path().join("config");
+    std::fs::create_dir(&config).expect("mkdir");
+    // A bench the town places twice, and two packs after it that each declare a model and state a vehicle.
+    let root = scratch.path().join("install");
+    std::fs::create_dir(&root).expect("mkdir");
+    write_archive(
+        &root,
+        "common.rpf",
+        &[
+            ("data/dlclist.xml", dlc_list_bytes(&["alpha", "beta"])),
+            ("data/_manifest.ymf", manifest_bytes(&[], &[])),
+            (
+                LEVEL_VEHICLES.trim_start_matches("common:/"),
+                vehicle_file(&[("carone", "VC_SPORTS")]),
+            ),
+        ],
+    );
+    let unit = cube([0.0; 3], 2.0);
+    let town = MapSpec::around(cube([0.0; 3], 100.0));
+    let benches = [
+        Placed::new("prop_bench", [1.0, 1.0, 0.0], 0.0, 1),
+        Placed::new("prop_bench", [5.0, 1.0, 0.0], 0.0, 2),
+    ];
+    write_archive(
+        &root,
+        "x64a.rpf",
+        &[
+            (
+                "types/props.ytyp",
+                typed_bytes("props", &[ArchetypeSpec::base("prop_bench", unit)]),
+            ),
+            (
+                "levels/m_town.ymap",
+                placing_map_bytes("m_town", &town, &benches),
+            ),
+            ("models/prop_bench.ydr", b"a model".to_vec()),
+        ],
+    );
+    for (order, pack) in ["alpha", "beta"].into_iter().enumerate() {
+        let model: &'static str = if pack == "alpha" {
+            "prop_alpha"
+        } else {
+            "prop_beta"
+        };
+        let registered = DataFileEntry {
+            filename: format!("dlc_{pack}:/data/vehicles.meta"),
+            file_type: VEHICLE_FILE_TYPE.into(),
+            ..Default::default()
+        };
+        let (types, drawable) = (format!("types/{pack}.ytyp"), format!("models/{model}.ydr"));
+        world_fixture::write_pack(
+            &root,
+            pack,
+            10 * (order as i32 + 1),
+            vec![registered],
+            vec![
+                (
+                    types.as_str(),
+                    typed_bytes(pack, &[ArchetypeSpec::base(model, unit)]),
+                ),
+                (drawable.as_str(), b"a model".to_vec()),
+                (
+                    "data/vehicles.meta",
+                    vehicle_file(&[(&format!("{pack}car"), "VC_SUPER")]),
+                ),
+            ],
+        );
+    }
+    let game = root.to_string_lossy().into_owned();
+    let ask = |verb: &str, more: &[&str]| -> serde_json::Value {
+        let args: Vec<&str> = [verb, "--json", "--game", &game]
+            .iter()
+            .chain(more)
+            .copied()
+            .collect();
+        let (printed, ok) = world(&config, &args);
+        assert!(ok, "{verb} {more:?}: {printed}");
+        serde_json::from_str(printed.trim()).expect("one JSON value")
+    };
+    let rows = |answer: &serde_json::Value, key: &str| -> Vec<String> {
+        let rows = answer["rows"].as_array().expect("rows").iter();
+        rows.map(|row| row[key].as_str().expect("a name").to_string())
+            .collect()
+    };
+
+    // Every pack: three models, of which the town places one, and three vehicles.
+    let whole = ask("models", &[]);
+    assert_eq!(
+        rows(&whole, "name"),
+        ["prop_alpha", "prop_bench", "prop_beta"]
+    );
+    assert_eq!((&whole["total"], &whole["models"]), (&3.into(), &3.into()));
+    assert_eq!(whole["rows"][1]["placed"], benches.len());
+    assert_eq!(whole["notes"], serde_json::json!([]));
+    assert_eq!(kept_under(&config).len(), 1);
+    // The index is kept, so the question after it opens no file, and `--fresh` reads every file again.
+    let opened = |answer: &serde_json::Value| answer["timing"]["filesOpened"].as_u64();
+    assert!(opened(&whole) > Some(0), "{:?}", whole["timing"]);
+    assert_eq!(opened(&ask("models", &[])), Some(0));
+    let fresh = ask("models", &["--fresh"]);
+    assert_eq!(opened(&fresh), opened(&whole));
+    assert_eq!(fresh["rows"], whole["rows"]);
+    assert_eq!(rows(&ask("models", &["--placed"]), "name"), ["prop_bench"]);
+    assert_eq!(
+        rows(&ask("models", &["alpha", "--pack", "dlc_alpha"]), "name"),
+        ["prop_alpha"]
+    );
+    let vehicles = ask("vehicles", &[]);
+    assert_eq!(
+        rows(&vehicles, "modelName"),
+        ["alphacar", "betacar", "carone"]
+    );
+    assert_eq!(
+        rows(&ask("vehicles", &["--class", "VC_SUPER"]), "modelName"),
+        ["alphacar", "betacar"]
+    );
+
+    // Stopped at the first pack: the second pack's model and vehicle are left out, the pack is named, and the index
+    // of the level is kept in a file of its own.
+    let level = ask("models", &["--level", "alpha"]);
+    assert_eq!(rows(&level, "name"), ["prop_alpha", "prop_bench"]);
+    assert_eq!(level["total"], 2);
+    let note = level["notes"][0].as_str().expect("a note");
+    assert!(
+        note.contains("leaves out 1 of 2 listed pack(s)") && note.ends_with("beta"),
+        "{note}"
+    );
+    assert_eq!(kept_under(&config).len(), 2);
+    let level = ask("vehicles", &["--level", "alpha"]);
+    assert_eq!(rows(&level, "modelName"), ["alphacar", "carone"]);
+    let note = level["notes"][0].as_str().expect("a note");
+    assert!(
+        note.contains("the vehicles they state") && note.ends_with("beta"),
+        "{note}"
+    );
+
+    // A mode is said in a note of each verb, in the words of what that verb reads.
+    for (verb, reads) in [("models", "type file"), ("vehicles", "vehicle data file")] {
+        let answer = ask(verb, &["--mode", "story"]);
+        let notes = answer["notes"].as_array().expect("notes").iter();
+        let notes: Vec<&str> = notes.filter_map(|note| note.as_str()).collect();
+        let said = |note: &&str| note.starts_with("mounted as ") && note.contains(reads);
+        assert!(notes.iter().any(said), "{verb}: {notes:?}");
+    }
+    assert_eq!(kept_under(&config).len(), 2);
+
+    // As text, the install first; and a flag the verb lacks, a count that is none and a folder that is no install fail.
+    let (printed, ok) = world(&config, &["models", &game, "bench"]);
+    assert!(ok && printed.starts_with("Models of "), "{printed}");
+    assert!(printed.contains("\n  prop_bench  "), "{printed}");
+    let (printed, ok) = world(&config, &["vehicles", &game, "--class", "VC_SPORTS"]);
+    assert!(ok && printed.starts_with("Vehicles of "), "{printed}");
+    assert!(
+        printed.contains("\n  carone  carone  VC_SPORTS  VEHICLE_TYPE_CAR  in common"),
+        "{printed}"
+    );
+    for refused in [
+        &["models", &game, "--near", "1,2,3"][..],
+        &["models", &game, "--count", "some"],
+        &["models", &config.to_string_lossy()],
+        &["vehicles", &game, "--kind", "base"],
+        &["vehicles", &config.to_string_lossy()],
+    ] {
+        let (printed, ok) = world(&config, refused);
+        assert!(!ok && printed.is_empty(), "{refused:?}: {printed}");
+    }
+}

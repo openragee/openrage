@@ -59,7 +59,7 @@ pub struct Work {
 
 /// One list of names in the two orders a search reads it in.
 #[derive(Debug, Default)]
-struct NameOrder {
+pub(crate) struct NameOrder {
     /// Each name once, in lower case, with the hash it is known by, by name.
     names: Vec<(String, u32)>,
     /// Each part of a name after an underscore, as the name's place in `names` and the byte the part begins at, by the part.
@@ -67,7 +67,12 @@ struct NameOrder {
 }
 
 impl NameOrder {
-    fn new(mut names: Vec<(String, u32)>) -> Self {
+    /// The hash the name at `at`, a place [`Self::matching`] gives, is known by.
+    pub(crate) fn hash_at(&self, at: usize) -> u32 {
+        self.names[at].1
+    }
+
+    pub(crate) fn new(mut names: Vec<(String, u32)>) -> Self {
         names.sort();
         names.dedup_by(|a, b| a.0 == b.0);
         let mut parts: Vec<(u32, u32)> = Vec::new();
@@ -89,7 +94,7 @@ impl NameOrder {
     }
 
     /// The names `text` answers, at most `most`, each by its place in `names`: the name itself, those that begin with it by name, those a part of which does by that part, then those that hold it by name.
-    fn matching(&self, text: &str, most: usize, work: &mut Work) -> Vec<(usize, Rank)> {
+    pub(crate) fn matching(&self, text: &str, most: usize, work: &mut Work) -> Vec<(usize, Rank)> {
         let mut found: Vec<(usize, Rank)> = Vec::new();
         if text.is_empty() {
             return found;
@@ -156,9 +161,14 @@ pub struct SearchNames {
 impl SearchNames {
     /// The archetypes of `world` that `names` states a name for, and its maps by their own.
     pub fn new(world: &WorldIndex, names: &NameIndex) -> Self {
+        Self::named_by(world, |hash| name_of(names, hash))
+    }
+
+    /// The archetypes of `world` that `name_of` gives a name in lower case for, and its maps by their own.
+    pub fn named_by(world: &WorldIndex, name_of: impl Fn(u32) -> Option<String>) -> Self {
         let mut unnamed = 0;
         let models = world.archetypes().filter_map(|archetype| {
-            let name = name_of(names, archetype.name);
+            let name = name_of(archetype.name);
             unnamed += usize::from(name.is_none());
             Some((name?, archetype.name))
         });
@@ -355,10 +365,10 @@ fn name_of(names: &NameIndex, hash: u32) -> Option<String> {
     stated.map(str::to_ascii_lowercase)
 }
 
-/// The models `text`, in lower case, answers: at most `most`, each with its name, its hash and its rank.
+/// The models `text`, in lower case, answers: at most `most`, each with its name, its hash and its rank; `declared` says whether a hash is an archetype's.
 fn models_named(
     text: &str,
-    world: &WorldIndex,
+    declared: impl Fn(u32) -> bool,
     search: &SearchNames,
     most: usize,
     work: &mut Work,
@@ -368,7 +378,7 @@ fn models_named(
     // ⚠ A name typed in full is an archetype by its hash, though no file of the install states the name.
     let typed = or_io::string_hash(text.as_bytes());
     let listed = matches!(matched.first(), Some((_, Rank::Exact)));
-    if !text.is_empty() && !listed && world.archetype(typed).is_some() {
+    if !text.is_empty() && !listed && declared(typed) {
         rows.push((text.to_string(), typed, Rank::Exact));
     }
     rows.extend(matched.into_iter().map(|(at, rank)| {
@@ -386,16 +396,30 @@ pub fn models_asked(
     search: &SearchNames,
     limit: usize,
 ) -> Result<Vec<u32>, Refused> {
+    let declared = |hash: u32| world.archetype(hash).is_some();
+    let ranked = models_ranked(text, declared, search, limit)?;
+    Ok(ranked.into_iter().map(|(hash, _)| hash).collect())
+}
+
+/// The archetypes a question of `text` lists as models, best first and at most `limit`, each with how it answers; `declared` says whether a hash is an archetype's.
+pub fn models_ranked(
+    text: &str,
+    declared: impl Fn(u32) -> bool,
+    search: &SearchNames,
+    limit: usize,
+) -> Result<Vec<(u32, Rank)>, Refused> {
     Ok(match read_pasted(text)? {
         Pasted::Place(_) => Vec::new(),
-        Pasted::Hash(hash) => (world.archetype(hash).map(|archetype| archetype.name))
+        Pasted::Hash(hash) => (declared(hash).then_some((hash, Rank::Exact)))
             .into_iter()
             .take(limit)
             .collect(),
         Pasted::Text(text) => {
             let text = text.to_ascii_lowercase();
-            let rows = models_named(&text, world, search, limit, &mut Work::default());
-            rows.into_iter().map(|(_, hash, _)| hash).collect()
+            let rows = models_named(&text, declared, search, limit, &mut Work::default());
+            rows.into_iter()
+                .map(|(_, hash, rank)| (hash, rank))
+                .collect()
         }
     })
 }
@@ -582,7 +606,8 @@ pub fn find(
             // One past the count asked for, which says whether more answer.
             let most = asked.limit.saturating_add(1);
             let search = install.search;
-            let mut models = models_named(&text, world, search, most, &mut found.work);
+            let declared = |hash: u32| world.archetype(hash).is_some();
+            let mut models = models_named(&text, declared, search, most, &mut found.work);
             found.more_models = models.len() > asked.limit;
             models.truncate(asked.limit);
             for (name, hash, rank) in models {

@@ -493,7 +493,7 @@ of its archetype's name is not measured. `own_align()`, generated on every item 
 | `gta6_mount.rs` | which maps a GTA VI install registers, from the registration documents a scan finds, with no table to read ([GTA_VI_World_Viewer.md](../features/GTA_VI_World_Viewer.md)) |
 | `mods/` | which mods an install holds, as `mods` and `mods_` hold them and in the game folder, what each writes, and which of two mods writing one path the load order resolves to |
 | `oiv.rs` | an `.oiv` package: the `assembly.xml` a build writes and reads back, and the stored zip it sits in |
-| `install/` | a table fetched from an install: clip regions, the materials palette, the shader archive, the names `install::names` indexes, and the file at a path the explorer writes (`virtual_file`, which reads archives as folders and goes into a nested archive) |
+| `install/` | a table fetched from an install: clip regions, the materials palette, the shader archive, the names `install::names` indexes, the vehicles its vehicle data files state (`install::vehicles`), and the file at a path the explorer writes (`virtual_file`, which reads archives as folders and goes into a nested archive) |
 | `archives.rs` | stock archive names and their NG key indices |
 
 ⚠ A level cuts a pack's device, its patch layer and the walk, and nothing else:
@@ -664,7 +664,7 @@ of it, four units a metre across and thirty-two in height, against four rivals
 (`NODE_SCALES`), none of which puts more than 49 of 1,223 nodes on the ground.
 The share of nodes it asks to be within a step is a floor set before that run.
 
-On 2026-11-26, with the index at its second version, the install suite of the index
+On 2026-11-26, with the index at its third version, the install suite of the index
 (`the_world_index_names_everything_a_real_install_lists`) holds on both
 installs. Legacy: 117 archives and 39,088 files opened, 11,076 maps, each read
 and answered at the centre of its streaming extents, 1,707 type files and
@@ -798,8 +798,9 @@ the form named, to three decimals; a flag's value follows it or stands behind
 `=`, and a flag the verb lacks is refused. `--level` and `--mode` mount as `dlc-list`
 does, with the index of a level kept in a file of its own
 (`where_something_is_is_asked_from_the_command_line`), and its JSON lists what
-its lines list (`the_json_lists_what_the_text_lists`). ⚠ Nothing keeps which
-maps place a model, so the verb reads every map the index names for the models
+its lines list (`the_json_lists_what_the_text_lists`). ⚠ The index keeps how
+often each map places an archetype (`Map::placed`) and not where, and `find`
+does not read that yet, so the verb reads every map the index names for the models
 the text lists (`find::models_asked`, `find::place_maps`) and for no other, and
 a text that lists no model reads no map.
 Left of the row: every part on screen (the palette, the field of Files, Show in
@@ -810,6 +811,182 @@ list makes. The palette, Go to File and the name index exist
 ([R59j](../direction/Roadmap.md#r59j-one-command-registry),
 [R24b](../direction/Roadmap.md#r24b-go-to-file),
 [R23](../direction/Roadmap.md#r23-names-and-hashes)).
+
+`models::ModelCatalogue` is the models of a mounted install as a browser lists
+them ([R70z](../direction/Roadmap.md#r70z-a-browser-of-models-and-vehicles)):
+each archetype once, as the last type file to declare it does, with its kind as
+that file states it (base, time or interior), its box, its sphere, its
+level-of-detail distance, its asset and its two dictionaries, its type file and
+pack (`ModelCatalogue::declared`) with the declarations a later one replaced
+(`ModelCatalogue::replaced`), the file of the mount that holds its model
+(`ModelCatalogue::held`), how often the maps the mount would load place it
+(`Model::placed`) and how often the interiors of its type files hold it among
+their entities and entity sets (`Model::inside`). A pack is the device of a
+root archive, and for a file of a folder that patches a pack, that pack's
+(`WorldIndex::pack_of`), and such a file is opened from the title update that
+lists it
+(`what_a_folder_that_patches_a_pack_holds_is_listed_under_that_pack_and_opened_from_the_update`).
+A model is held as the resolver of dependencies has
+it: by the drawable dictionary it states where the mount holds one, else by a
+fragment of its asset's name, else by a drawable
+(`a_model_is_held_by_the_dictionary_it_states_else_a_fragment_else_a_drawable_and_the_file_opens`).
+The catalogue is built from a `WorldIndex` and nothing else, so it opens no file
+and lists no archive
+(`the_catalogue_of_a_kept_index_opens_no_file_and_lists_no_archive`). For that
+the index keeps, from its third version on, what it used to drop: each
+archetype's kind and sphere, each archetype a map places with how often
+(`Map::placed`, entities and grass batches alike, as `PlacementIndex` counts
+them:
+`a_map_counts_each_archetype_its_entities_and_its_grass_batches_place_and_none_named_zero`),
+each archetype the interiors of a type file hold (`TypeFile::inside`),
+the type files whose declaration of an archetype a later one replaced
+(`WorldIndex::redeclared`) and the logical path of every drawable, fragment,
+drawable dictionary and texture dictionary an archive lists
+(`WorldIndex::files`), which it names and never opens. A kept file of the
+version before is refused and the install read again
+(`a_kept_file_of_the_version_before_is_rebuilt_never_trusted`), and counts in a
+kept file that sum past what a count holds stop there
+(`counts_past_what_a_count_holds_in_a_kept_file_stop_at_the_most_a_count_holds`).
+⚠ Only the copy
+the mount would load counts: a map a later archive replaces places nothing
+(`a_model_is_placed_as_often_as_the_maps_the_mount_loads_place_it`), and an
+archetype several packs declare is one row under the last
+(`an_archetype_several_packs_declare_is_listed_once_under_the_last_with_those_it_replaced`).
+⚠ A model is named where a file the index keeps has its name as its stem (a
+model or texture file, a map, a type file, a bound) and is listed by its hash
+where none has (`ModelCatalogue::unnamed`): a model that is an entry of a
+drawable dictionary has no file of its own, so most of those have no name.
+
+`ModelCatalogue::page` answers a `models::Query` with a page and the total:
+a text, read and ranked as `find` reads one (`find::models_ranked`, so a part of
+a name, a name in full or a hash;
+`a_text_lists_the_models_a_search_of_the_install_lists_for_it_in_its_order`), a
+pack, a kind, a least and a most size in metres (the longest side of the box,
+each end included, a model with no box in no range), placed or never placed
+(`each_filter_lists_the_models_it_names_and_no_other`), in the order of
+`models::Sort` by name, size or times placed, either way, a model with no name
+or no size last whichever way
+(`each_sort_orders_the_models_both_ways_and_a_model_with_no_name_or_no_size_stays_last`),
+models that tie by name
+(`models_that_tie_in_an_order_are_listed_by_name_however_many_there_are`),
+from an offset and for a count
+(`the_pages_of_an_answer_are_its_rows_in_order_and_each_states_the_whole_total`).
+An order is sorted the first time a question asks for it and kept; a question
+with no text is one pass over the models in that order, and a text is ranked by
+`find::SearchNames` and then filtered. The suite is `the_models_of_a_mount`, on
+a mount built by hand of two archives and two packs.
+
+On 2026-11-26 the install suite (`the_models_of_a_real_install`, slow tier)
+held on both installs, the catalogue built each time from a kept index that
+listed no archive and opened no file. Legacy: 159,153 models, 154,749 base,
+4,015 time and 389 interior, in 59 of the mount's 90 devices, and each kind's
+and each pack's total, as the catalogue counts it and as its filter answers, is
+the index's own count of its archetypes, the pack of each taken there by another
+road: the device its type file's own path begins with, or for a path under one
+of the 55 folders the mount says patch a pack, that pack's, which 1,139 models
+are declared under
+(`the_catalogue_of_a_real_install_agrees_with_its_index_kind_by_kind_and_pack_by_pack`).
+77,305 are held by a drawable, 76,898 by a drawable dictionary, 4,462 by a
+fragment and 488 by no file; of the 158,665 held one in 500 was opened, 318
+files, each from the archive named and to the bytes the mount opens at that
+path, each a resource, and each of the 154 dictionaries among them holds the
+model's entry
+(`every_model_the_catalogue_of_a_real_install_says_a_file_holds_opens_from_the_mount`).
+150,671 are placed, 21,960 of them inside an interior alone, and 8,482 never;
+the kept counts are those of a walk that reads all 11,076 maps again, which
+makes 1,772,945 placements, 1,765,293 of the models and the other 7,652 of 28
+archetypes no type file declares
+(`the_placement_counts_of_a_real_install_are_those_of_a_walk_of_every_map`).
+⚠ 75,388 of the 159,153 are named by no file the index keeps, and 75,380 by no
+file of the mount at all, so nearly half the list is hashes. Enhanced: 159,358
+models, 154,950 base, 4,016 time and 392 interior, in 66 of 106 devices, 1,158
+of them declared under one of 88 folders that patch a pack; 77,537
+held by a drawable, 76,901 by a dictionary, 4,515 by a fragment and 405 by no
+file; 318 of 158,953 opened, each of the 153 dictionaries holding its entry;
+150,836 placed, 22,117 inside an interior alone, 8,522 never; 11,052 maps and
+1,764,265 placements, 1,764,231 of the models and 34 of 19 archetypes no type
+file declares; 76,865 named by no file the index keeps and 76,857 by none of
+the mount. ⚠ `Model::inside` counts what every interior of a type file the mount
+would load holds, an interior a later type file declares again with it: no
+model declared again is an interior on Legacy, where three declarations are
+replaced, and one is on Enhanced, where four are (the same test, 2026-11-26).
+
+What the index keeps for the list, by the same suite on 2026-11-26: on Legacy
+the paths of 262,869 model and texture files, 22,696,406 bytes of them, 445,268
+counts of an archetype a map places and 35,740 of one an interior holds, in a
+kept file of 24,160,666 bytes; on Enhanced 263,027 paths, 445,092 and 35,958
+counts and 25,615,481 bytes. No file more is opened to build it: 39,088 on
+Legacy and 39,380 on Enhanced, as at its second version.
+
+How long a question takes
+(`the_questions_a_browser_asks_of_a_real_install_are_answered_in_milliseconds`,
+2026-11-26: thirteen questions, each asked once and then fifteen times, a page
+of 50, the dev profile) was measured four times on a machine of 30 cores that
+other lanes were building on, and follows its load. On Legacy alone, at a load
+average of 35 to 81, the middle run of each question took 1.2 to 5.1 ms. With
+both installs asked at once and ten install suites and a build beside them, at
+73 to 153, it took 1.6 to 5.5 ms on Legacy, and 14.6 ms for a text of three
+letters with two filters and a sort, and 1.6 to 8.4 ms on Enhanced. At 113 to
+181 it took 1.6 to 31.8 ms on Legacy and 65.7 ms for a text of three letters,
+and 1.3 to 8.5 ms on Enhanced and 37.7 ms for that text. In a fourth run, both
+installs asked at once at 79 to 130, it took 1.5 to 5.8 ms on Legacy and 1.5 to
+5.6 ms on Enhanced. The first question in
+an order sorts it, once: 31 to 71 ms in the first two runs, up to 959 ms in
+the third and 37 to 51 ms in the fourth. ⚠ No run was made on an idle machine. The list itself took 0.9 to
+1.5 s to put together from the index where the load was lighter and 9 to 11 s
+where it was heaviest, most of it the name orders of `find::SearchNames`, and
+the kept index read in 0.5 to 6.4 s.
+
+`vehicles::VehicleCatalogue` is the vehicles of a mounted install as a browser
+lists them, over what `or_title::install::vehicles::vehicles` reads: the
+level's own vehicle data file (`LEVEL_VEHICLES`, which the mount opens as the
+title update's copy where it has one), then each file a mounted pack registers
+as `VEHICLE_METADATA_FILE` and leaves enabled, in the mount's order, a later
+file's vehicle taking the place of an earlier one of the same model whatever
+its case
+(`each_vehicle_is_listed_once_with_what_the_last_file_to_state_it_states_and_that_files_pack`).
+Of a vehicle it reads the model, the game name, the class and the type as the
+file's own text states them (`VC_SPORTS`, `VEHICLE_TYPE_CAR`) and nothing else:
+nothing in the tree interprets a class or a type, or reads a vehicle's colours,
+variations or handling. A file that does not open or is no list of vehicles is
+listed with why and adds none
+(`a_disabled_file_and_a_file_of_another_type_add_nothing_and_a_file_that_does_not_read_says_why`),
+and a level that states no vehicles adds no file of its own
+(`a_level_that_states_no_vehicles_lists_the_files_the_packs_register_and_no_other`).
+`VehicleCatalogue::page` answers a `vehicles::VehicleQuery`: a class, a type and
+a pack, each compared as text in any case
+(`a_filter_by_class_lists_the_vehicles_the_data_puts_in_that_class_and_no_other`),
+and a text that ranks model names as `find` ranks a name and then lists the
+vehicles whose game name holds it, since several models share a game name
+(`a_type_a_pack_and_a_text_each_list_their_vehicles_and_a_page_is_a_slice_of_the_answer`).
+The suite is `the_vehicles_of_a_mount`. On 2026-11-26
+(`the_vehicles_of_a_real_install_are_each_listed_once_with_a_class_a_type_and_a_pack`,
+slow tier) every vehicle data file of both installs read: 930 vehicles from 47
+files on Legacy and 935 from 48 on Enhanced, each stating a class and a type,
+24 classes and 14 types on each, one statement on each replaced by a later
+file's, and every vehicle with a fragment of its name among the files the index
+keeps. ⚠ That a later file's vehicle replaces an earlier one of the same model
+is this module's reading and not a measure of the game.
+
+`openrage-cli world models <install> [<text>]` and
+`world vehicles <install> [<text>]` print a page of each, as lines or with
+`--json`. `world models` takes `--pack`, `--kind <base|time|interior>`,
+`--min-size` and `--max-size` in metres, `--placed` or `--unplaced`,
+`--sort <name|size|placed>` with `--desc`, and `--offset` and `--count` (50),
+and says each time how many models answer, how many the install has of each
+kind (and, with `--json`, in each pack), how many no file names, and how long
+the list and the question took; `world vehicles` takes `--class`, `--type`, `--pack`, `--offset`
+and `--count`, and says the classes, the types and the data files read. Both
+take `--level` and `--mode` as `dlc-list` does, and refuse a flag they lack
+(`each_flag_of_world_models_filters_orders_or_pages_the_list`,
+`world_vehicles_lists_each_vehicle_with_its_pack_and_filters_by_class_type_pack_and_text`,
+and through the verbs themselves in a child process
+`the_models_and_the_vehicles_of_an_install_are_listed_from_the_command_line_at_a_level`).
+Left of the row: every screen (the browser, favourites, the models opened last,
+back and forward, the placements of a model nearest first); the picture of a
+model as a PNG; the vehicle colours and variations, which nothing in the tree
+interprets, the vehicle drawn in its combinations, the copied lines and its
+sheet; and the grid of thumbnails, which waits for ruling 2.
 
 `world_forest::WorldForest` is what the streamed world needs of a mounted GTA V
 install, with no screen: the input the rules of

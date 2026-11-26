@@ -2,7 +2,9 @@
 //!
 //! Every map, type file, archetype and static bound the mount lists, each read from its own file
 //! and held a root archive at a time, so [`refresh`] can keep the index on disk and a later start
-//! reads again only the archives whose file changed.
+//! reads again only the archives whose file changed. With them, what a list of the models is said
+//! from and no file is opened for: how often each map places each archetype, how often the
+//! interiors of each type file do, and where each model and texture file lies.
 //!
 //! ⚠ Every copy an archive holds is read, not only the one the mount would load: which copy wins is
 //! settled when the archives are put together, last in mount order as [`crate::Catalogue`] has it,
@@ -23,7 +25,7 @@ use glam::Vec3;
 use or_io::meta::binary::parse_meta_binary_full;
 use or_io::meta::{Diagnostics, ErrorMode, MetaInstance};
 use or_title::vfs::{EntryFacts, Vfs};
-use or_world::{MapData, MapTypes, StateGroups};
+use or_world::{ArchetypeKind, MapData, MapTypes, StateGroups};
 
 use crate::catalogue::{map_of_bound_stem, Kind};
 use crate::contents::ModelContents;
@@ -36,6 +38,9 @@ use tree::BoxTree;
 
 /// A box, as `(min, max)`.
 pub type Span = (Vec3, Vec3);
+
+/// Archetypes by name, each once with how often it comes, lowest name first.
+pub type Counted = Vec<(u32, u32)>;
 
 /// What tells a changed archive from the one read before: the file on disk that holds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +95,8 @@ struct MapFacts {
     streaming: Option<Span>,
     /// The archetype of each interior the map places, each once, lowest first.
     interiors: Vec<u32>,
+    /// Each archetype the map places and how often, its entities and its grass batches alike.
+    placed: Counted,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,7 +108,10 @@ struct MapRow {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ArchetypeRow {
     name: u32,
+    kind: ArchetypeKind,
     span: Option<Span>,
+    /// `bsCentre` and `bsRadius`, which mean something where `span` is stated.
+    sphere: (Vec3, f32),
     lod_dist: f32,
     asset_name: u32,
     drawable_dictionary: u32,
@@ -113,6 +123,8 @@ struct TypeFileRow {
     logical: String,
     /// `None` where the file did not read as a type file.
     archetypes: Option<Vec<ArchetypeRow>>,
+    /// Each archetype the file's interiors hold among their entities and their entity sets and how often.
+    inside: Counted,
 }
 
 /// What switches one map group of a manifest, as the group states it.
@@ -149,6 +161,8 @@ struct ArchiveRows {
     type_files: Vec<TypeFileRow>,
     manifests: Vec<ManifestRow>,
     bounds: Vec<BoundRow>,
+    /// The logical path of each drawable, fragment, drawable dictionary and texture dictionary.
+    files: Vec<String>,
 }
 
 /// One map the mount would load.
@@ -171,6 +185,8 @@ pub struct Map {
     pub streaming: Option<Span>,
     /// The archetype of each interior the map places.
     pub interiors: Vec<u32>,
+    /// Each archetype the map places and how often, its entities and its grass batches alike.
+    pub placed: Counted,
 }
 
 /// One type file the mount would load.
@@ -186,6 +202,8 @@ pub struct TypeFile {
     pub read: bool,
     /// How many archetypes it declares.
     pub archetypes: usize,
+    /// Each archetype its interiors hold among their entities and their entity sets and how often.
+    pub inside: Counted,
 }
 
 /// One archetype, as the last type file to declare it does.
@@ -194,8 +212,12 @@ pub struct Archetype {
     pub name: u32,
     /// The [`TypeFile::hash`] of the file that declares it.
     pub type_file: u32,
+    /// Whether the type file declares it as a base, a time or an interior archetype.
+    pub kind: ArchetypeKind,
     /// `bbMin` and `bbMax`.
     pub span: Option<Span>,
+    /// `bsCentre` and `bsRadius`, in metres, which mean something where [`Self::span`] is stated.
+    pub sphere: (Vec3, f32),
     /// Metres.
     pub lod_dist: f32,
     /// `assetName`: the drawable or the fragment that draws it, or its entry in [`Self::drawable_dictionary`]; zero where it states none.
@@ -284,6 +306,10 @@ pub struct WorldIndex {
     type_file_by_hash: HashMap<u32, usize>,
     archetypes: HashMap<u32, Archetype>,
     redefined: usize,
+    /// By an archetype's name, the type files whose declaration of it a later one replaced, in the mount's order.
+    redeclared: HashMap<u32, Vec<u32>>,
+    /// The folder that patches a root archive, by the archive's place in mount order.
+    patches: Vec<(usize, String)>,
     bounds: Vec<Bound>,
     bound_by_hash: HashMap<u32, usize>,
     /// The bounds whose stem names each map, by the map's hash.
@@ -312,6 +338,39 @@ fn leaf_and_stem(logical: &str) -> (String, String) {
 /// patches, and above that archive's own files; then the archive that lists it and the place of its row there.
 type Rank = (usize, bool, usize, usize);
 
+/// Whether `logical` begins with `front`, whatever the case of either.
+fn begins(logical: &str, front: &str) -> bool {
+    (logical.as_bytes().get(..front.len()))
+        .is_some_and(|start| start.eq_ignore_ascii_case(front.as_bytes()))
+}
+
+/// What every folder of `patches` begins with, whatever its case: the folders of one title update share their device
+/// and the folder the patches lie in.
+fn shared_front(patches: &[(usize, String)]) -> &str {
+    let Some((_, first)) = patches.first() else {
+        return "";
+    };
+    let mut shared = first.len();
+    for (_, folder) in patches {
+        let same = first.bytes().zip(folder.bytes());
+        let same = same.take_while(|(a, b)| a.eq_ignore_ascii_case(b));
+        shared = shared.min(same.count());
+    }
+    // A folder is a path of the mount, which is ASCII, and a cut inside a character is no front at all.
+    first.get(..shared).unwrap_or("")
+}
+
+/// The last root archive a folder of `patches` that holds `logical` patches, where `front` is their [`shared_front`]; `None` for a file of no such folder.
+// ⚠ This is asked of every model and texture file a mount lists, and a title update patches tens of packs: a path that does
+// not begin as every folder does is asked of none of them.
+fn patched_root(patches: &[(usize, String)], front: &str, logical: &str) -> Option<usize> {
+    if !begins(logical, front) {
+        return None;
+    }
+    let patched = patches.iter().filter(|(_, folder)| begins(logical, folder));
+    patched.map(|(root, _)| *root).max()
+}
+
 /// The rows `rows` picks of each archive, each with its logical path, in the mount's order.
 fn ranked<'a>(
     archives: &'a [ArchiveRows],
@@ -319,15 +378,10 @@ fn ranked<'a>(
     rows: impl Fn(&'a ArchiveRows) -> Vec<&'a str>,
 ) -> Vec<(Rank, &'a str)> {
     let mut all = Vec::new();
+    let front = shared_front(patches);
     for (a, archive) in archives.iter().enumerate() {
         for (r, logical) in rows(archive).into_iter().enumerate() {
-            let under = |folder: &str| {
-                (logical.get(..folder.len()))
-                    .is_some_and(|front| front.eq_ignore_ascii_case(folder))
-            };
-            let patched =
-                (patches.iter().filter(|(_, folder)| under(folder))).map(|(root, _)| *root);
-            let rank = match patched.max() {
+            let rank = match patched_root(patches, front, logical) {
                 Some(root) => (root, true, a, r),
                 None => (a, false, a, r),
             };
@@ -336,6 +390,20 @@ fn ranked<'a>(
     }
     all.sort_unstable();
     all
+}
+
+/// Each name of `names` that is not zero and how often it comes.
+fn counted(names: impl Iterator<Item = u32>) -> Counted {
+    let mut names: Vec<u32> = names.filter(|name| *name != 0).collect();
+    names.sort_unstable();
+    let mut counted = Counted::new();
+    for name in names {
+        match counted.last_mut() {
+            Some((last, count)) if *last == name => *count += 1,
+            _ => counted.push((name, 1)),
+        }
+    }
+    counted
 }
 
 /// The archive and the row of the last copy of each leaf of `ranked`, by the leaf in lower case.
@@ -352,6 +420,15 @@ pub(crate) fn parse(bytes: &[u8]) -> Option<MetaInstance> {
         .map(|(root, _)| root)
 }
 
+/// Each archetype `map` places and how often.
+// ⚠ A grass batch is a placement and no entity, and an archetype named zero names nothing: counted as the placement index
+// counts them.
+fn placed_by(map: &MapData<'_>) -> Counted {
+    let entities = map.entities().map(|entity| entity.archetype());
+    let batches = map.grass_batches().map(|batch| batch.archetype());
+    counted(entities.chain(batches))
+}
+
 fn map_facts(bytes: &[u8]) -> Option<MapFacts> {
     let root = parse(bytes)?;
     let map = MapData::new(&root)?;
@@ -363,6 +440,7 @@ fn map_facts(bytes: &[u8]) -> Option<MapFacts> {
         .collect();
     interiors.sort_unstable();
     interiors.dedup();
+    let placed = placed_by(&map);
     Some(MapFacts {
         parent: map.parent(),
         flags: map.flags(),
@@ -370,24 +448,41 @@ fn map_facts(bytes: &[u8]) -> Option<MapFacts> {
         entities: map.stored_entities_extents(),
         streaming: map.stored_streaming_extents(),
         interiors,
+        placed,
     })
 }
 
-fn archetype_rows(bytes: &[u8]) -> Option<Vec<ArchetypeRow>> {
+/// The archetypes a type file declares, and each archetype its interiors hold with how often.
+fn archetype_rows(bytes: &[u8]) -> Option<(Vec<ArchetypeRow>, Counted)> {
     let root = parse(bytes)?;
     let types = MapTypes::new(&root)?;
     let rows = types
         .archetypes()
         .filter(|archetype| archetype.name() != 0)
-        .map(|archetype| ArchetypeRow {
-            name: archetype.name(),
-            span: archetype.bounds().map(|bounds| (bounds.min, bounds.max)),
-            lod_dist: archetype.lod_dist(),
-            asset_name: archetype.asset_name(),
-            drawable_dictionary: archetype.drawable_dictionary(),
-            texture_dictionary: archetype.texture_dictionary(),
+        .map(|archetype| {
+            let bounds = archetype.bounds();
+            ArchetypeRow {
+                name: archetype.name(),
+                kind: archetype.kind(),
+                span: bounds.map(|bounds| (bounds.min, bounds.max)),
+                sphere: bounds.map_or((Vec3::ZERO, 0.0), |bounds| (bounds.centre, bounds.radius)),
+                lod_dist: archetype.lod_dist(),
+                asset_name: archetype.asset_name(),
+                drawable_dictionary: archetype.drawable_dictionary(),
+                texture_dictionary: archetype.texture_dictionary(),
+            }
         });
-    Some(rows.collect())
+    let interiors = types
+        .archetypes()
+        .filter_map(|archetype| archetype.interior());
+    let inside = interiors.flat_map(|interior| {
+        let sets = interior.entity_sets().flat_map(|set| set.entities());
+        interior
+            .entities()
+            .chain(sets)
+            .map(|entity| entity.archetype())
+    });
+    Some((rows.collect(), counted(inside)))
 }
 
 fn manifest_row(logical: String, bytes: Option<&[u8]>) -> ManifestRow {
@@ -425,7 +520,14 @@ fn read_archive(
         let kind = Kind::of_leaf(&facts.leaf);
         if matches!(
             kind,
-            Kind::MapData | Kind::MapTypes | Kind::Manifest | Kind::Bounds
+            Kind::MapData
+                | Kind::MapTypes
+                | Kind::Manifest
+                | Kind::Bounds
+                | Kind::Drawable
+                | Kind::Fragment
+                | Kind::DrawableDict
+                | Kind::TextureDict
         ) {
             wanted.push((kind, facts.logical.clone()));
         }
@@ -443,6 +545,7 @@ fn read_archive(
         type_files: Vec::new(),
         manifests: Vec::new(),
         bounds: Vec::new(),
+        files: Vec::new(),
     };
     for (kind, logical) in wanted {
         match kind {
@@ -451,17 +554,22 @@ fn read_archive(
                 rows.maps.push(MapRow { logical, facts });
             }
             Kind::MapTypes => {
-                let archetypes = whole(&logical).as_deref().and_then(archetype_rows);
+                let read = whole(&logical).as_deref().and_then(archetype_rows);
+                let (archetypes, inside) = match read {
+                    Some((archetypes, inside)) => (Some(archetypes), inside),
+                    None => (None, Vec::new()),
+                };
                 rows.type_files.push(TypeFileRow {
                     logical,
                     archetypes,
+                    inside,
                 });
             }
             Kind::Manifest => {
                 let bytes = whole(&logical);
                 rows.manifests.push(manifest_row(logical, bytes.as_deref()));
             }
-            _ => {
+            Kind::Bounds => {
                 let mut read = ModelContents::new();
                 read.read_bound_from(
                     0,
@@ -474,6 +582,8 @@ fn read_archive(
                 let span = read.bound_box_of(0);
                 rows.bounds.push(BoundRow { logical, span });
             }
+            // A model or a texture file is named and never opened.
+            _ => rows.files.push(logical),
         }
     }
     // ⚠ A file the mount lists and could not open is no fact about the file: an archive held open, a failed read, a key not yet
@@ -580,6 +690,8 @@ impl WorldIndex {
             type_file_by_hash: HashMap::new(),
             archetypes: HashMap::new(),
             redefined: 0,
+            redeclared: HashMap::new(),
+            patches: patches.to_vec(),
             bounds: Vec::new(),
             bound_by_hash: HashMap::new(),
             stem_bounds: HashMap::new(),
@@ -610,7 +722,8 @@ impl WorldIndex {
                 content_flags: facts.as_ref().map_or(0, |f| f.content_flags),
                 entities: facts.as_ref().and_then(|f| f.entities),
                 streaming: facts.as_ref().and_then(|f| f.streaming),
-                interiors: facts.map(|f| f.interiors).unwrap_or_default(),
+                interiors: (facts.as_ref()).map_or_else(Vec::new, |f| f.interiors.clone()),
+                placed: facts.map_or_else(Vec::new, |f| f.placed),
             });
         }
         for &((_, _, a, r), _) in &type_files {
@@ -624,14 +737,18 @@ impl WorldIndex {
                 let declared = Archetype {
                     name: archetype.name,
                     type_file: hash,
+                    kind: archetype.kind,
                     span: archetype.span,
+                    sphere: archetype.sphere,
                     lod_dist: archetype.lod_dist,
                     asset_name: archetype.asset_name,
                     drawable_dictionary: archetype.drawable_dictionary,
                     texture_dictionary: archetype.texture_dictionary,
                 };
-                if index.archetypes.insert(archetype.name, declared).is_some() {
+                if let Some(earlier) = index.archetypes.insert(archetype.name, declared) {
                     index.redefined += 1;
+                    let replaced = index.redeclared.entry(archetype.name).or_default();
+                    replaced.push(earlier.type_file);
                 }
             }
             (index.type_file_by_hash).insert(hash, index.type_files.len());
@@ -642,6 +759,7 @@ impl WorldIndex {
                 archive: a,
                 read: row.archetypes.is_some(),
                 archetypes: row.archetypes.as_ref().map_or(0, Vec::len),
+                inside: row.inside.clone(),
             });
         }
         for &((_, over, a, r), _) in &manifests {
@@ -824,6 +942,28 @@ impl WorldIndex {
         self.redefined
     }
 
+    /// The type files whose declaration of the archetype `name` a later one replaced, by their [`TypeFile::hash`] in the mount's order.
+    pub fn redeclared(&self, name: u32) -> &[u32] {
+        self.redeclared.get(&name).map_or(&[], Vec::as_slice)
+    }
+
+    /// The device of the pack the file `logical` of root archive `archive` belongs to: that archive's, or for a file of a folder that patches a pack, that pack's.
+    pub fn pack_of(&self, archive: usize, logical: &str) -> &str {
+        let front = shared_front(&self.patches);
+        let root = patched_root(&self.patches, front, logical).unwrap_or(archive);
+        (self.archives.get(root)).map_or("", |rows| rows.archive.device.as_str())
+    }
+
+    /// Every drawable, fragment, drawable dictionary and texture dictionary the archives list, as the root archive that lists it and its logical path, in the mount's order: the last copy of a leaf is the one the mount would load.
+    pub fn files(&self) -> Vec<(usize, &str)> {
+        let files = ranked(&self.archives, &self.patches, |rows| {
+            rows.files.iter().map(String::as_str).collect()
+        });
+        (files.into_iter())
+            .map(|((_, _, archive, _), logical)| (archive, logical))
+            .collect()
+    }
+
     /// Every `.ybn` the mount would load, in the mount's order.
     pub fn bounds(&self) -> &[Bound] {
         &self.bounds
@@ -971,5 +1111,92 @@ impl WorldIndex {
             .map(|rows| rows.maps.len() + rows.type_files.len() + rows.bounds.len())
             .sum();
         held - self.maps.len() - self.type_files.len() - self.bounds.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::placement::PlacementIndex;
+    use crate::tests_support::map_placing;
+
+    #[test]
+    fn a_map_counts_each_archetype_its_entities_and_its_grass_batches_place_and_none_named_zero() {
+        let hash = |name: &str| or_io::string_hash(name.as_bytes());
+        // An entity and a batch of one archetype are two placements of it, and the empty name hashes to zero.
+        let entities = ["prop_x", "prop_y", "prop_x", "", "grass_a"];
+        let grass = ["grass_a", "grass_b", "grass_a", ""];
+        assert_eq!(hash(""), 0);
+        let tree = map_placing("m", &entities, &grass);
+        let map = MapData::new(&tree).expect("a map");
+        let placed = placed_by(&map);
+
+        let mut wanted: Vec<(u32, u32)> = Vec::new();
+        for name in entities
+            .iter()
+            .chain(&grass)
+            .filter(|name| !name.is_empty())
+        {
+            match wanted.iter_mut().find(|(known, _)| *known == hash(name)) {
+                Some((_, count)) => *count += 1,
+                None => wanted.push((hash(name), 1)),
+            }
+        }
+        wanted.sort_unstable();
+        assert_eq!(placed, wanted, "each once, lowest name first");
+        assert_eq!(wanted.len(), 4);
+        // And they are the counts of the index that keeps every placement.
+        let mut walked = PlacementIndex::new();
+        walked.add(&map);
+        for (name, count) in &placed {
+            assert_eq!(walked.of(*name).len(), *count as usize);
+        }
+        let counted: u64 = placed.iter().map(|(_, count)| u64::from(*count)).sum();
+        assert_eq!(counted + walked.nameless(), walked.seen());
+        assert_eq!(walked.nameless(), 2);
+    }
+
+    #[test]
+    fn a_path_is_of_the_last_root_whose_patch_folder_holds_it_whatever_its_case() {
+        let patches = vec![
+            (3, "update:/dlc_patch/alpha/".to_string()),
+            (5, "UPDATE:/dlc_patch/beta/".to_string()),
+            (7, "update:/dlc_patch/beta/".to_string()),
+        ];
+        let front = shared_front(&patches);
+        assert_eq!(
+            front, "update:/dlc_patch/",
+            "what the folders share, and no more"
+        );
+        let root = |logical: &str| patched_root(&patches, front, logical);
+        assert_eq!(root("update:/dlc_patch/alpha/levels/m.ymap"), Some(3));
+        assert_eq!(root("Update:/DLC_Patch/Alpha/levels/m.ymap"), Some(3));
+        assert_eq!(
+            root("update:/dlc_patch/BETA/m.ymap"),
+            Some(7),
+            "the last root"
+        );
+        // A path beside the folders, one of another device, and one cut short are of no folder.
+        assert_eq!(root("update:/dlc_patch/gamma/m.ymap"), None);
+        assert_eq!(root("update:/dlc_patch/alpha"), None);
+        assert_eq!(root("update:/x64/levels/m.ymap"), None);
+        assert_eq!(root("platform:/levels/m.ymap"), None);
+        assert_eq!(root(""), None);
+
+        // Folders that share nothing are each asked, and with no folder no path is patched.
+        let apart = vec![(1, "update:/a/".to_string()), (2, "other:/b/".to_string())];
+        let front = shared_front(&apart);
+        assert_eq!(front, "");
+        assert_eq!(patched_root(&apart, front, "other:/b/m.ymap"), Some(2));
+        assert_eq!(patched_root(&apart, front, "update:/a/m.ymap"), Some(1));
+        assert_eq!(shared_front(&[]), "");
+        assert_eq!(patched_root(&[], "", "update:/a/m.ymap"), None);
+        // One folder is its own front.
+        let one = &patches[..1];
+        assert_eq!(shared_front(one), "update:/dlc_patch/alpha/");
+        assert_eq!(
+            patched_root(one, shared_front(one), "update:/dlc_patch/alpha/m.ymap"),
+            Some(3)
+        );
     }
 }

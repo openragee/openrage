@@ -244,6 +244,7 @@ not (
   | binary_id(=or-cli::the_power_features_run_from_the_command_line)
   | binary_id(=or-cli::the_rule_list_is_written_from_the_command_line)
   | binary_id(=or-content::a_source_a_garment_names_is_cooked_once_and_by_the_garment_not_by_the_files_content)
+  | binary_id(=or-depends::the_models_of_a_real_install)
   | binary_id(=or-depends::the_world_index_of_a_real_install)
   | binary_id(=or-interchange::decimation)
   | binary_id(=or-interchange::every_corpus_drawable_comes_back)
@@ -601,6 +602,14 @@ priority = 100
 filter = 'binary_id(=or-depends::the_world_index_of_a_real_install)'
 slow-timeout = { period = "60s", terminate-after = 45 }
 
+# The install suite of the model catalogue reads the world index of an install once: the first of its tests to run keeps it in
+# a file of the scratch folder and the others read that file, so they run one at a time. The first reads every map and type
+# file of the install and one walks every map again, so each is held to forty-five minutes, as the suites of the index are.
+[[profile.all.overrides]]
+filter = 'binary_id(=or-depends::the_models_of_a_real_install)'
+slow-timeout = { period = "60s", terminate-after = 45 }
+test-group = 'world-models'
+
 # The install suite of GTA VI's texture packs reads every texture of every pack of an install, in three parts by
 # folder, the folders dealt by their sizes with the largest first, so that part 1 is the longest. Each part reads its packs on
 # every worker it is given, so the parts run one at a time, and start first. On four workers (`RAYON_NUM_THREADS=4`)
@@ -635,3 +644,4 @@ slow-timeout = { period = "60s", terminate-after = 45 }
 
 [test-groups]
 gta6-packs = { max-threads = 1 }
+world-models = { max-threads = 1 }

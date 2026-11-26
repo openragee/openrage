@@ -10,6 +10,7 @@ pub mod shader_defs;
 pub mod shaders;
 pub mod sky;
 pub mod timecycle;
+pub mod vehicles;
 pub mod virtual_file;
 
 pub use clip_regions::{load_clip_regions, ClipRegionLoadError, CLIP_REGIONS_VFS_PATH};

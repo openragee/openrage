@@ -10624,9 +10624,30 @@ read in `or-io`, the vehicle drawn in the combinations the game plans, the lines
 the colours shown, copied, and its sheet. The grid of thumbnails waits for the plan's ruling 2
 ([brief](World_Editor_Plan.md#a-browser-of-models-and-vehicles-r70z)).
 
-**Where it stands.** Not built. The thumbnail cache exists (`src/render/thumbnails.rs`), Placed by
-answers which maps place a model, and nothing in the tree interprets the install's vehicle colours
-and variations.
+**Where it stands.** The data of the two lists is built, headless, and no screen calls it
+([in full, with the figures](../reference/Crate_Reference.md#domain-crates)).
+`crates/domain/or-depends/src/models.rs` lists an install's models from the world index alone, with
+no file opened: each archetype once under the last type file to declare it, with its kind, box,
+sphere, level-of-detail distance, dictionaries, pack, the file that holds it and how often the maps
+place it, a page at a time with the total, by text, pack, kind, size and placed or never placed,
+sorted by name, size or times placed (`the_models_of_a_mount`). What a folder of the title update
+that patches a pack holds is listed under that pack
+(`what_a_folder_that_patches_a_pack_holds_is_listed_under_that_pack_and_opened_from_the_update`).
+The index keeps what that needs at its third version, and a kept file of the version before is read
+again (`a_kept_file_of_the_version_before_is_rebuilt_never_trusted`).
+`crates/title/or-title/src/install/vehicles.rs` reads the vehicle data files a mount would load for
+each vehicle's model, game name, class and type as the file's text states them, and
+`crates/domain/or-depends/src/vehicles.rs` pages them by text, class, type and pack
+(`the_vehicles_of_a_mount`, whose
+`a_filter_by_class_lists_the_vehicles_the_data_puts_in_that_class_and_no_other` is the first check
+of this row). `openrage-cli world models` and `world vehicles` print both. Both installs hold the
+catalogue to their index, their maps and their files (`the_models_of_a_real_install`, slow tier, on
+top of `ad33ceb29`, 2026-11-26). ⚠ Nearly half of an install's models are named by no file of it and
+are listed by their hash: 75,388 of 159,153 on Legacy and 76,865 of 159,358 on Enhanced
+(`the_catalogue_of_a_real_install_agrees_with_its_index_kind_by_kind_and_pack_by_pack`). Left: every
+screen; the picture of a model as a PNG; the vehicle colours and variations in `or-io`, the vehicle
+drawn in its combinations, the copied lines and its sheet; and the grid of thumbnails, which waits
+for ruling 2 (the cache exists, `src/render/thumbnails.rs`).
 
 **Depends on.** [R70e](#r70e-find-anything-and-go-there) and
 [R70j](#r70j-a-library-of-props-and-what-comes-in); ruling 2 for the thumbnails.

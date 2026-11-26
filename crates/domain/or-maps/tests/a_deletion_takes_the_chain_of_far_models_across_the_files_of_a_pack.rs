@@ -883,3 +883,149 @@ fn each_entity_of_the_pack_chosen_alone_leaves_a_pack_that_holds_to_every_check(
         "some entity took its chain with it: {taken} of {named}"
     );
 }
+
+/// The LOD link and the count of children of each entity of the source `source`, in order.
+fn links_of(folder: &Path, source: &str) -> Vec<(i32, u32)> {
+    (0..)
+        .map_while(|index| or_maps::edit::read_entity(&folder.join(source), index).ok())
+        .map(|entity| (entity.parent_index, entity.num_children))
+        .collect()
+}
+
+/// A pack of the map files `files`, each a file name and its bytes.
+fn pack_of(dir: &Path, files: &[(&str, Vec<u8>)]) -> PathBuf {
+    let folder = dir.join("maps");
+    let incoming: Vec<Incoming> = (files.iter())
+        .map(|(name, bytes)| Incoming {
+            name,
+            bytes,
+            from_game: false,
+            virtual_path: None,
+        })
+        .collect();
+    let added = add_files(&folder, &incoming, None).unwrap();
+    assert_eq!(added.refused, Vec::<(String, String)>::new());
+    folder
+}
+
+#[test]
+fn a_link_into_a_parent_map_leads_into_the_file_called_so_and_never_into_one_that_states_its_name()
+{
+    let extents = ([0.0; 3], [1000.0; 3]);
+    // `depot.ymap` states the name `quay`, as a file renamed without its name does: it is the map `depot` all the same.
+    let depot = || {
+        let hut = Entity::at("prop_depot_hut", [500.0, 500.0, 0.5], 71);
+        let shed = Entity::at("prop_depot_shed", [520.0, 500.0, 0.5], 72);
+        map_file("quay", &[hut, shed], extents)
+    };
+    let quay_hd = || {
+        let crane = under("prop_crane", [10.0, 20.0, 0.5], 21, 0);
+        child_map_file("quay_hd", "quay", &[crane], extents)
+    };
+    let crane = [at("quay_hd.metadata.src", 0)];
+
+    // The parent map is not in the pack: the crane goes alone, the plan says where its far model is, and the depot keeps its two.
+    let scratch = tempfile::tempdir().unwrap();
+    let files = [("depot.ymap", depot()), ("quay_hd.ymap", quay_hd())];
+    let folder = pack_of(scratch.path(), &files);
+    let planned = delete::plan(&folder, &crane).unwrap();
+    assert_eq!(goes(&planned), [(crane[0].clone(), Why::Chosen)]);
+    assert!(
+        matches!(
+            planned.notes.as_slice(),
+            [Note::ParentMapNotAmongSources { parent, .. }] if parent.hash == or_io::string_hash(b"quay")
+        ),
+        "{:?}",
+        planned.notes
+    );
+    delete::apply(&folder, &planned).unwrap();
+    assert_eq!(links_of(&folder, "depot.metadata.src"), [(-1, 0), (-1, 0)]);
+
+    // The parent map is in the pack beside it: the far model in `quay.ymap` goes with the crane, and no file is said to split a map.
+    let scratch = tempfile::tempdir().unwrap();
+    let far = Entity {
+        children: 1,
+        ..Entity::at("prop_crane_far", [10.0, 20.0, 0.5], 1)
+    };
+    let quay = map_file("quay", &[far], extents);
+    let files = [
+        ("depot.ymap", depot()),
+        ("quay.ymap", quay),
+        ("quay_hd.ymap", quay_hd()),
+    ];
+    let folder = pack_of(scratch.path(), &files);
+    let planned = delete::plan(&folder, &crane).unwrap();
+    assert_eq!(
+        goes(&planned),
+        [
+            (crane[0].clone(), Why::Chosen),
+            (at("quay.metadata.src", 0), Why::LeftWithNoChild)
+        ]
+    );
+    assert_eq!(planned.notes, Vec::new());
+    delete::apply(&folder, &planned).unwrap();
+    assert_eq!(links_of(&folder, "depot.metadata.src"), [(-1, 0), (-1, 0)]);
+    assert_eq!(links_of(&folder, "quay.metadata.src"), []);
+}
+
+#[test]
+fn an_entity_taken_out_of_a_map_renumbers_the_links_of_the_maps_under_its_file_and_of_no_other() {
+    let extents = ([0.0; 3], [100.0; 3]);
+    let far = |archetype: &'static str, x: f32, guid: u32, children: u32| Entity {
+        children,
+        ..Entity::at(archetype, [x, 10.0, 0.0], guid)
+    };
+    // `f_lod.ymap` states the name `x_lod`: the maps under it are those that name `f_lod`, and `x` is under another file.
+    let f_lod = map_file(
+        "x_lod",
+        &[
+            far("f_solo", 1.0, 10, 0),
+            far("f_far_a", 10.0, 11, 1),
+            far("f_far_b", 20.0, 12, 1),
+        ],
+        extents,
+    );
+    let houses = [
+        under("house_a", [10.0, 10.0, 0.0], 21, 1),
+        under("house_b", [20.0, 10.0, 0.0], 22, 2),
+    ];
+    let shops = [
+        under("shop_a", [60.0, 60.0, 0.0], 41, 1),
+        under("shop_b", [70.0, 60.0, 0.0], 42, 2),
+    ];
+    let scratch = tempfile::tempdir().unwrap();
+    let files = [
+        ("f_lod.ymap", f_lod),
+        ("f.ymap", child_map_file("f", "f_lod", &houses, extents)),
+        ("x.ymap", child_map_file("x", "x_lod", &shops, extents)),
+    ];
+    let folder = pack_of(scratch.path(), &files);
+    let planned = delete::plan(&folder, &[at("f_lod.metadata.src", 0)]).unwrap();
+    assert_eq!(planned.goes.len(), 1);
+    delete::apply(&folder, &planned).unwrap();
+    assert_eq!(
+        links_of(&folder, "f.metadata.src"),
+        [(0, 0), (1, 0)],
+        "the houses name the far models they named"
+    );
+    assert_eq!(
+        links_of(&folder, "x.metadata.src"),
+        [(1, 0), (2, 0)],
+        "the shops name entities of `x_lod.ymap`, which lost nothing"
+    );
+    // The rules name the file that states another name than its own.
+    let model = Maps::read(&folder).unwrap();
+    let facts = or_maps::inspect(&folder, &model, or_maps::Depth::Open);
+    let found = or_maps::rules::check(&model, &facts, None);
+    let named: Vec<&str> = (found.iter())
+        .filter(|finding| finding.code == "map-named-otherwise")
+        .filter_map(|finding| finding.place.source.as_deref())
+        .collect();
+    assert_eq!(named, ["f_lod.metadata.src"]);
+    assert!(
+        found
+            .iter()
+            .all(|f| f.code != "lod-children-uncounted" && f.code != "parent-link-broken"),
+        "the links and the counts of the pack hold: {found:?}"
+    );
+}

@@ -844,7 +844,7 @@ fn list(args: &[String]) -> Result<ExitCode, Failure> {
                     (_, Some(map), _) => println!(
                         "    {path}: {} entity(ies), {} problem(s)",
                         map.entities.len(),
-                        map.problems.len()
+                        map.problems.len() + map.record_problems.len()
                     ),
                     (_, _, Some(types)) => {
                         let interiors = (types.archetypes.iter())

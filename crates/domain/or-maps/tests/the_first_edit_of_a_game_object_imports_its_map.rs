@@ -1708,3 +1708,97 @@ fn a_first_edit_says_what_it_leaves_where_it_was_the_far_model_on_a_move_and_the
     .record;
     assert!(says(&record.notes, collision), "{:?}", record.notes);
 }
+
+/// Map files by their logical path, answered as the world index answers: a map by the hash of its file's name, and the maps under it by the parent each states.
+struct Listed(BTreeMap<String, Vec<u8>>);
+
+impl first_edit::Game for Listed {
+    fn edition(&self) -> Target {
+        Target::Legacy
+    }
+
+    fn read(&self, logical: &str) -> Option<Vec<u8>> {
+        self.0.get(logical).cloned()
+    }
+
+    fn lies_at(&self, logical: &str) -> Option<String> {
+        self.0.contains_key(logical).then(|| logical.to_string())
+    }
+
+    fn map_file(&self, name: u32) -> Option<String> {
+        let called = |logical: &&String| {
+            or_io::string_hash(logical.trim_end_matches(".ymap").as_bytes()) == name
+        };
+        self.0.keys().find(called).cloned()
+    }
+
+    fn maps_under(&self, parent: u32) -> Vec<String> {
+        use or_io::decl::File;
+        let under = |bytes: &Vec<u8>| {
+            or_io::meta::typed::CMapData::from_bytes(bytes)
+                .is_ok_and(|map| map.parent.hash == parent)
+        };
+        let listed = self.0.iter().filter(|(_, bytes)| under(bytes));
+        listed.map(|(logical, _)| logical.clone()).collect()
+    }
+}
+
+#[test]
+fn a_deletion_in_a_map_file_that_states_another_maps_name_takes_the_maps_under_the_file() {
+    // `f_lod.ymap` states the name `x_lod`: the houses of `f` are under it, and the shops of `x` under the file `x_lod.ymap`.
+    let far =
+        |archetype: &'static str, x: f32, guid: u32| counting(archetype, [x, 10.0, 0.0], guid, 1);
+    let f_lod = [
+        counting("f_solo", [1.0, 1.0, 0.0], 10, 0),
+        far("f_far_a", 10.0, 11),
+        far("f_far_b", 20.0, 12),
+    ];
+    let x_lod = [
+        counting("x_solo", [51.0, 51.0, 0.0], 30, 0),
+        far("x_far_a", 60.0, 31),
+        far("x_far_b", 70.0, 32),
+    ];
+    let houses = [
+        under("house_a", [10.0, 10.0, 0.0], 21, 1),
+        under("house_b", [20.0, 10.0, 0.0], 22, 2),
+    ];
+    let shops = [
+        under("shop_a", [60.0, 10.0, 0.0], 41, 1),
+        under("shop_b", [70.0, 10.0, 0.0], 42, 2),
+    ];
+    let game = Listed(BTreeMap::from([
+        ("f_lod.ymap".to_string(), map_file("x_lod", &f_lod, BOX)),
+        (
+            "f.ymap".to_string(),
+            child_map_file("f", "f_lod", &houses, BOX),
+        ),
+        ("x_lod.ymap".to_string(), map_file("x_lod", &x_lod, BOX)),
+        (
+            "x.ymap".to_string(),
+            child_map_file("x", "x_lod", &shops, BOX),
+        ),
+    ]));
+    let scratch = tempfile::tempdir().unwrap();
+    let project = Made::new(scratch.path(), Vec::new());
+
+    // The far model that stands for nothing goes: every entity of `f_lod.ymap` after it moves one place up.
+    let record = apply(&project.place(), &game, &deleted("f_lod.ymap", 0)).unwrap();
+    let mut imported: Vec<&str> = record
+        .imported
+        .iter()
+        .map(|made| made.map.as_str())
+        .collect();
+    imported.sort_unstable();
+    assert_eq!(
+        imported,
+        ["f.ymap", "f_lod.ymap"],
+        "the map under the file, and no map under the name it states"
+    );
+    let links = |source: &str| -> Vec<i32> {
+        (0..)
+            .map_while(|index| or_maps::edit::read_entity(&project.maps().join(source), index).ok())
+            .map(|entity| entity.parent_index)
+            .collect()
+    };
+    assert_eq!(links("f.metadata.src"), [0, 1]);
+}

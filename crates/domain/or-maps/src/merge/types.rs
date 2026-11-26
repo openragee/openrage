@@ -86,6 +86,7 @@ pub fn merge_types(
         &mut asked,
     );
     let other = other_from(
+        OTHER,
         changes[0].other,
         changes[1].other,
         || !types_changes(ours, theirs).other,
@@ -452,7 +453,7 @@ pub fn merge_types(
                 ..applied
             })
             .collect(),
-        file: file_said(&file_members, other),
+        file: file_said(&file_members, other, OTHER),
         conflicts: asked.conflicts,
         merged: !asked.stopped,
         not_compared: not_compared(false),
@@ -480,7 +481,7 @@ pub fn merge_types(
                 None => base,
                 Some(side) => root(side),
             };
-            let from = root_from(other, base, [ours, theirs])?;
+            let from = root_from(other, OTHER, base, [ours, theirs])?;
             let mut types = root_of(from.map(|(side, _)| side)).clone();
             types.archetypes = base.archetypes.clone();
             for member in ["name", "dependencies"] {

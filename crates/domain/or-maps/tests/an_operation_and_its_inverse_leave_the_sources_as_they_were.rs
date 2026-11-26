@@ -712,6 +712,30 @@ fn an_operation_that_names_what_is_not_there_is_refused_by_name_and_changes_noth
         ),
         (
             Operation::PlaceEntity {
+                source: HARBOUR.into(),
+                entity: 0,
+                pose: PoseData {
+                    scale_xy: -1.0,
+                    ..pose([0.0; 3])
+                },
+                expects: None,
+            },
+            "not above nought",
+        ),
+        (
+            Operation::PlaceEntity {
+                source: HARBOUR.into(),
+                entity: 0,
+                pose: PoseData {
+                    scale_z: 0.0,
+                    ..pose([0.0; 3])
+                },
+                expects: None,
+            },
+            "not above nought",
+        ),
+        (
+            Operation::PlaceEntity {
                 source: TYPES.into(),
                 entity: 0,
                 pose: pose([0.0; 3]),

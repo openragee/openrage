@@ -444,6 +444,7 @@ fn kind_of(problem: &validate::Problem) -> &'static str {
         PortalRoomOutOfRange { .. } => "portal names a room that is not there",
         PortalNotAQuad { .. } => "portal is not four corners",
         LightArraysDiffer { .. } => "light arrays differ in length",
+        OccludeModelSizeDiffers { .. } => "occlude model states another size than its bytes",
     }
 }
 

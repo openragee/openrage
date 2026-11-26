@@ -78,6 +78,11 @@ fn the_typed_world_family_names_only_what_the_install_states_and_the_rules_fire_
             ytyps.push(logical.to_string());
         }
     });
+    // ⚠ Each logical path once: a mount lists some paths twice, and a file listed twice is one file read twice.
+    for listed in [&mut ymaps, &mut ytyps] {
+        listed.sort();
+        listed.dedup();
+    }
     let census = Mutex::new(Census::new());
     let unread = Mutex::new(Vec::<String>::new());
     let types_facts = Mutex::new(Vec::<(String, Fact)>::new());
@@ -254,6 +259,16 @@ fn the_typed_world_family_names_only_what_the_install_states_and_the_rules_fire_
             .get(code)
             .map_or(0, |who| who.iter().filter(|w| !w.is_empty()).count())
     };
+    // ⚠ A map is the file called by its name: no file of an install that states another name holds an entity, and with a map
+    // found by its file no link into a parent map is past its end. Found by the name a file states, that rule fired on 1,432
+    // of the 19,392 maps of the Legacy install (2026-11-25).
+    for code in [
+        "map-named-otherwise",
+        "parent-link-broken",
+        "records-broken",
+    ] {
+        assert_eq!(maps_with(code), 0, "{code} fires on the game's own maps");
+    }
     // The figures the documents quote: a tenth of the game's maps is too many for a rule that only warns.
     for code in [
         "entity-twice",

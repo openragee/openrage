@@ -56,6 +56,10 @@ installs (2026-11-25; the figures are in the table below, and
   refused by it
   (`a_type_file_that_declares_an_interior_is_asked_for_by_nothing_and_refused_for_a_pack_by_name`,
   `what_a_content_says_locks_the_build_it_is_laid_out_for_locks_the_cell_and_stops_the_plan`).
+- **An `.oiv` of a Map content installs the same pack**, laid out and registered the same way
+  inside the `dlc.rpf` the package adds, and is locked by what locks the pack. It writes nothing at
+  the `stream/` folder of a resource, where the game reads nothing
+  (`an_oiv_of_a_maps_content_installs_the_pack_a_singleplayer_dlc_is_and_is_locked_as_one`).
 
 The pack is written, read back and counted by the code the install suite runs
 (`a_story_pack_keeps_its_maps_and_its_type_files_in_the_archives_the_packs_of_the_game_keep_theirs_in`,
@@ -67,11 +71,13 @@ an archetype names, is held by
 `a_model_and_a_texture_dictionary_go_into_the_archive_of_the_type_file_whose_archetype_names_them`.
 
 What the packs of the two installs state, as `how_the_packs_of_an_install_carry_their_maps`
-counted it on 2026-11-25:
+counted it on 2026-11-25, and again on 2026-11-26 with each pack counted once: the mount of the
+Enhanced install lists one pack twice, which holds no map file, so only its count of packs moved,
+from 103:
 
 | What | Legacy | Enhanced |
 |---|---|---|
-| Packs mounted beside the title update, and those that hold a map file | 86, 34 | 103, 37 |
+| Packs mounted beside the title update, and those that hold a map file | 86, 34 | 102, 37 |
 | Archives that hold a map file, every one under `x64/levels/gta5` | 161 | 164 |
 | Of them in that folder directly, one folder below, two below | 10, 46, 105 | 10, 48, 106 |
 | Registered by their pack, each `RPF_FILE` stating `CONTENTS_DLC_MAP_DATA`, disabled and persistent | 142 | 146 |
@@ -144,14 +150,16 @@ file disabled, one `<NAME>_AUTOGEN` change set enabling them all, and a
   pack, all but one of them named as a multiplayer pack, and no setup states
   `GROUP_MAP_SP`, so the rule leaves out of the story what `GROUP_MAP` names
   and nothing out of multiplayer
-  (`which_groups_the_change_sets_of_an_install_belong_to`, 2026-11-25, each
-  pair Legacy and then Enhanced). Of the 389 and 432 change sets the setups of
-  every pack and of the title update state, `GROUP_STARTUP` names 100 and 124
-  and `GROUP_MAP` names 82 and 86, in 31 and 34 packs that are all compat
-  packs, 30 and 33 of them named as multiplayer packs. The rule leaves those 82
-  and 86 change sets out of the story and none out of multiplayer, and names
-  207 and 224 as stated for no mode, which are under the nine other group names
-  the setups state or under none. No document says in words that either map
+  (`which_groups_the_change_sets_of_an_install_belong_to`, 2026-11-26 with
+  each pack counted once, each pair Legacy and then Enhanced). The contents of
+  every pack and of the title update hold 389 and 429 change sets. `GROUP_STARTUP`
+  lists 100 and 122 names and `GROUP_MAP` 82 and 86, in 31 and 34 packs that
+  are all compat packs, 30 and 33 of them named as multiplayer packs; 8 and 10
+  of the names the groups list are no change set of the content, so the names
+  do not add up to the change sets. The rule leaves those 82 and 86 change
+  sets out of the story and none out of multiplayer, and names 207 and 223 as
+  stated for no mode, which are under the nine other group names the setups
+  state or under none. No document says in words that either map
   group is one mode's: that stays the mount's reading of the names, bounded and
   not proven, held on a setup shaped as the installs state them by
   `of_the_groups_an_install_states_the_story_leaves_out_the_multiplayer_map_group_alone`.

@@ -242,7 +242,12 @@ pub fn measure(game: &MountedGame) -> Figures {
     let level = format!("{}/", layout::PACK_FOLDER);
     let props = format!("{}/", layout::props_folder());
     let mut figures = Figures::default();
+    // ⚠ Each device once: a mount can list one pack twice, and it is then counted as two packs.
+    let mut counted: BTreeSet<String> = BTreeSet::new();
     for pack in &game.packs {
+        if !counted.insert(pack.device_name.to_ascii_lowercase()) {
+            continue;
+        }
         let Some(held) = files.get(&pack.device_name.to_ascii_lowercase()) else {
             continue;
         };

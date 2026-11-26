@@ -18,7 +18,7 @@ use or_world::manifest::{dependencies_of_placed, resident_type_files};
 use or_world::manifest_build::{self, BuildError, Wanted};
 use sha2::{Digest, Sha256};
 
-use crate::facts::{named_paths, Facts, Name, Role};
+use crate::facts::{map_name, named_paths, Facts, Name, Role};
 use crate::model::Maps;
 
 /// The name the game reads a manifest by.
@@ -114,9 +114,11 @@ pub fn of(model: &Maps, facts: &Facts) -> Outcome {
         };
         let derived =
             dependencies_of_placed(&map.placed, |archetype| owner.get(&archetype).copied());
-        names.insert(map.name.hash, named(&map.name, &source.name));
+        // ⚠ By the name of its file, as the build ships it and as the game's own manifests state a map, whatever name the map states.
+        let name = map_name(&source.name);
+        names.insert(name, Name::from_text(&source.name));
         wanted.push(Wanted {
-            name: map.name.hash,
+            name,
             keep_stated: !source.game.is_empty(),
             needs: derived.types.difference(&resident).copied().collect(),
             // ⚠ A plan has no install, so an archetype of the game is one no type file here declares: the list is then short, and the writer adds it to the stated one.
@@ -194,6 +196,12 @@ pub fn of(model: &Maps, facts: &Facts) -> Outcome {
         outcome.notes.push(format!(
             "the manifests of the game kept in `{KEPT}` state {} differently from one another, and nothing kept says which the game mounts last: the entry written is taken from them in the order of their file names, so check its flags and keep only the manifest the game reads last",
             shown(&mut built.disagreeing.iter().copied(), &names)
+        ));
+    }
+    if !built.flags_differ.is_empty() {
+        outcome.notes.push(format!(
+            "the entry `{FILE}` states for {} keeps the flags the game states for a map of that name, which mark an interior's map where it places interiors and nothing else, and that is no longer what the map of this content places: the flags are not derived again for a map a kept manifest states",
+            shown(&mut built.flags_differ.iter().copied(), &names)
         ));
     }
     for map in &wanted {

@@ -16,7 +16,7 @@ use or_title::oiv::{Add, Package, PackageReader, Writer, ASSEMBLY, CONTENT};
 
 use crate::build::{check_file, moved, uncooked, BuildError, Loss, Verification};
 use crate::container::Output;
-use crate::contribution::ManifestEntry;
+use crate::contribution::{ArchiveContents, ManifestEntry};
 use crate::dlc;
 use crate::plan::{Origin, Plan, PlannedFile};
 use crate::watch::Watch;
@@ -32,12 +32,19 @@ pub(crate) fn pack_root(resource: &str) -> String {
     format!("{PACKS}/{resource}/{}", dlc::PACK)
 }
 
+/// What the contents of a package hand over beside their files: each manifest line and each statement of what an archive holds, by its content, and the contents laid out as a pack.
+pub(crate) type Packed<'a, 'b> = (
+    &'b [(&'a str, &'b ManifestEntry)],
+    &'b [(&'a str, &'b ArchiveContents)],
+    &'b BTreeSet<&'b str>,
+);
+
 /// The files of the contents in `packs` are the files of a pack, so the package installs them inside the `dlc.rpf` it adds, with the documents that make it a pack.
 ///
 /// ⚠ The package edits no `dlclist.xml`: OpenIV's add command is all this authors, so the plan says which line to add.
 fn install_packs<'a>(
     owned: &mut Vec<(&'a str, PlannedFile)>,
-    (entries, packs): (&[(&'a str, &ManifestEntry)], &BTreeSet<&str>),
+    (entries, archives, packs): Packed<'a, '_>,
     plan: &mut Plan,
 ) {
     let (packed, rest): (Vec<_>, Vec<_>) = std::mem::take(owned)
@@ -48,8 +55,12 @@ fn install_packs<'a>(
         .filter(|(module, _)| packs.contains(module))
         .copied()
         .collect();
+    let held: Vec<(&str, &ArchiveContents)> = (archives.iter())
+        .filter(|(module, _)| packs.contains(module))
+        .copied()
+        .collect();
     let name = plan.resource.clone();
-    let registrations = dlc::register(&packed, &theirs, &[], &name, &mut plan.problems);
+    let registrations = dlc::register(&packed, &theirs, &held, &name, &mut plan.problems);
     let documents = dlc::documents_of(&name, &registrations);
     let root = pack_root(&name);
     for (module, file) in packed {
@@ -116,13 +127,14 @@ pub(crate) fn without(plan: &mut Plan, gone: &BTreeSet<String>) -> Result<(), St
 /// The package's author, version and description are keys on the output's entry, which the container carries.
 pub(crate) fn finish<'a>(
     owned: &mut Vec<(&'a str, PlannedFile)>,
-    packed: (&[(&'a str, &ManifestEntry)], &BTreeSet<&str>),
+    packed: Packed<'a, '_>,
     declared: &Output,
     plan: &mut Plan,
 ) {
-    if !packed.1.is_empty() {
+    if !packed.2.is_empty() {
         install_packs(owned, packed, plan);
     }
+    plan.notes.extend(lines_left_out(packed));
     let mut package = Package::new(&plan.resource);
     for (key, field) in [
         ("author", &mut package.author),
@@ -165,6 +177,33 @@ pub(crate) fn finish<'a>(
             origin: Origin::Document(package.to_xml()),
         },
     ));
+}
+
+/// A note for each content that is no pack and adds manifest lines: a package has no manifest, so the lines are left out, and the note says which.
+///
+/// ⚠ The version and the game of a FiveM manifest are said of a resource alone and are not named.
+fn lines_left_out((entries, _, packs): Packed<'_, '_>) -> Vec<String> {
+    let mut by_content: Vec<(&str, BTreeSet<&str>)> = Vec::new();
+    for (module, entry) in entries {
+        if packs.contains(module) || matches!(entry.key.as_str(), "fx_version" | "game") {
+            continue;
+        }
+        match by_content.iter_mut().find(|(by, _)| by == module) {
+            Some((_, keys)) => {
+                keys.insert(&entry.key);
+            }
+            None => by_content.push((module, BTreeSet::from([entry.key.as_str()]))),
+        }
+    }
+    (by_content.into_iter())
+        .map(|(module, keys)| {
+            let keys: Vec<String> = keys.iter().map(|key| format!("`{key}`")).collect();
+            format!(
+                "content `{module}` adds the manifest line {}, and a package has no manifest: its files are installed where the plan lists them and nothing tells the game of them",
+                keys.join(", ")
+            )
+        })
+        .collect()
 }
 
 fn version(text: &str) -> Option<(u16, u16)> {

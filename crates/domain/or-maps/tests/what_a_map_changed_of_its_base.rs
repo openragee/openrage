@@ -1047,8 +1047,8 @@ fn what_a_file_states_of_itself_is_named_member_by_member_beside_what_it_holds()
     now.physics_dictionaries
         .push(HashedString::new("quay_collision"));
     let changes = map_changes(&base, &now);
-    // ⚠ The records a map holds are typed and not named member by member: its entities are compared apart, and the rest
-    // is said to differ.
+    // ⚠ The records a map holds are typed and not named member by member: its entities are compared apart, and each of the
+    // rest is named where it differs.
     const HELD: [&str; 7] = [
         "entities",
         "boxOccluders",
@@ -1073,7 +1073,14 @@ fn what_a_file_states_of_itself_is_named_member_by_member_beside_what_it_holds()
     let mut parked = base.clone();
     parked.car_generators.push(or_io::meta::CCarGen::default());
     let changes = map_changes(&base, &parked);
-    assert!(changes.root.is_empty() && changes.other, "{changes:?}");
+    assert!(changes.root.is_empty() && !changes.other, "{changes:?}");
+    assert_eq!(changes.records, ["carGenerators"]);
+    assert!(!changes.is_empty() && changes.rest_differs());
+    // Each family by the member that holds it, and no family is what no typed member names.
+    assert!(or_maps::changes::RECORDS
+        .iter()
+        .all(|member| HELD.contains(member)));
+    assert_eq!(or_maps::changes::RECORDS.len(), HELD.len() - 1);
 
     // And of a type file: its name and the files it depends on.
     let base = types(&[Archetype::new("prop_crate_a", [-1.0; 3], [1.0; 3])]);

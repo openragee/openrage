@@ -5,7 +5,8 @@
 //! `new Vector3(…)`), a table that names `x`, `y` and `z` as Lua, JSON or C# write one, with its braces or without, and bare
 //! numbers, with or without brackets around them. A call or brackets are read behind what a line of a script assigns them to
 //! (`coords = vector3(…)`, `"position": {…}`). Two numbers are `x` and `y` with no height; a fourth is the heading in degrees,
-//! which a table names `heading`, `h` or `w`, and a line may name behind a call of three (`vector3(…), heading = 90.0`). A hash is read from hexadecimal behind `0x`, from an unsigned decimal and from the
+//! which a table names `heading`, `h` or `w`, and a line may name behind a call of three (`vector3(…), heading = 90.0`). The line
+//! a metadata source states a position by is read as the table of its attributes (`<position x="1" y="2" z="3"/>`). A hash is read from hexadecimal behind `0x`, from an unsigned decimal and from the
 //! signed decimal a script prints for the same 32 bits, and from `hash_` with its eight digits, as the tree shows a hash with no
 //! name.
 //!
@@ -121,6 +122,9 @@ fn place_of(text: &str) -> Option<Result<PastedPlace, Refused>> {
         .map_or(text, |at| &text[..at])
         .trim_end();
     let text = text.strip_suffix([',', ';']).map_or(text, str::trim_end);
+    if let Some(attributes) = element(text) {
+        return table(&attributes);
+    }
     let text = assigned(text);
     // A heading named behind a call of three numbers: `vector3(…), heading = 90.0`.
     let (text, heading) = match text.rsplit_once(',') {
@@ -180,6 +184,24 @@ fn assigned(text: &str) -> &str {
     } else {
         text
     }
+}
+
+/// The attributes of the one XML element `text` is, as the members of a table (`x=1,y=2,z=3`): of `<position x="1" y="2" z="3"/>`, the line a metadata source states a position by.
+fn element(text: &str) -> Option<String> {
+    let inside = text.strip_prefix('<')?.strip_suffix("/>")?.trim();
+    let (name, attributes) = inside.split_once(char::is_whitespace)?;
+    if !is_name(name) || attributes.contains(['<', '>']) {
+        return None;
+    }
+    let mut members = Vec::new();
+    for attribute in attributes.split_whitespace() {
+        let (key, value) = attribute.split_once('=')?;
+        let value = ['"', '\'']
+            .iter()
+            .find_map(|quote| value.strip_prefix(*quote)?.strip_suffix(*quote))?;
+        members.push(format!("{key}={value}"));
+    }
+    Some(members.join(","))
 }
 
 /// What stands around the numbers of a place.
@@ -671,6 +693,45 @@ mod tests {
             "(1, 2, 3), heading = 5",
         ] {
             assert_eq!(read_pasted(text), Ok(Pasted::Text(text.to_string())));
+        }
+    }
+
+    #[test]
+    fn the_line_a_metadata_source_states_a_position_by_is_a_place() {
+        let here = place(-1037.74, -2738.04, 20.17);
+        each_reads(&[
+            (
+                r#"<position x="-1037.74" y="-2738.04" z="20.17"/>"#,
+                here.clone(),
+            ),
+            (
+                r#"<position x="-1037.74" y="-2738.04" z="20.17" />"#,
+                here.clone(),
+            ),
+            (
+                "  <Position x='-1037.74' y='-2738.04' z='20.17'/>",
+                here.clone(),
+            ),
+            (
+                r#"<rotation x="0" y="0" z="1" w="90"/>"#,
+                facing(0.0, 0.0, 1.0, 90.0),
+            ),
+        ]);
+        // An element that names no place, or is not one element whole, stays text.
+        for text in [
+            r#"<position x="1" y="2"/>"#,
+            r#"<position x="1" y="2" z="3" v="5"/>"#,
+            r#"<position x="1" y="2" z="3">"#,
+            r#"<position x="1" y="2" z="three"/>"#,
+            r#"<position x=1 y=2 z=3/>"#,
+            r#"<a x="1" y="2" z="3"/><b x="1" y="2" z="3"/>"#,
+            "<position/>",
+        ] {
+            assert_eq!(
+                read_pasted(text),
+                Ok(Pasted::Text(text.to_string())),
+                "{text}"
+            );
         }
     }
 

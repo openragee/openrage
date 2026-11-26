@@ -73,7 +73,7 @@ pub(crate) fn report(args: &[String]) -> Result<(String, bool), Failure> {
                     let _ = writeln!(text, "  {path} ({file}): {}", counts(&changes));
                     match &changes {
                         SourceChanges::Map(map) => {
-                            file_said(&mut text, &model, &map.root, map.other);
+                            map_file_said(&mut text, &model, map);
                             entities_said(&mut text, &model, map, "    ");
                         }
                         SourceChanges::Types(types) => {
@@ -194,6 +194,21 @@ fn members_said(model: &Maps, changes: &[MemberChange], other: bool) -> Vec<Stri
 /// The line that says what a file states of itself differently, when it does.
 fn file_said(text: &mut String, model: &Maps, root: &[MemberChange], other: bool) {
     let said = members_said(model, root, other);
+    if !said.is_empty() {
+        let _ = writeln!(text, "    the file  {}", said.join("; "));
+    }
+}
+
+/// [`file_said`] of a map, whose families of records that differ are named by the members that hold them, between its own members and the word for what none names.
+fn map_file_said(text: &mut String, model: &Maps, map: &or_maps::changes::MapChanges) {
+    let mut said = members_said(model, &map.root, false);
+    if !map.records.is_empty() {
+        said.push(format!(
+            "{} changed, which is not listed record by record",
+            map.records.join(", ")
+        ));
+    }
+    said.extend(members_said(model, &[], map.other));
     if !said.is_empty() {
         let _ = writeln!(text, "    the file  {}", said.join("; "));
     }

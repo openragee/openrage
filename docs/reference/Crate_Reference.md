@@ -1878,6 +1878,28 @@ the oriented box of a placed object are the object's own, as data a person edits
   (`what_an_archetype_takes_from_its_drawable`). The measured figures behind
   these are [R32](../direction/Roadmap.md#r32-world-data-ymap-ytyp-and-interiors)'s.
 
+**What the R70 rows of the Roadmap leave to this document.** A row of
+[R70](../direction/Roadmap.md#r70-the-gta-v-world-editor) is held to its length, and these sentences
+left a row for here when its sentence on [R71](../direction/Roadmap.md#r71-one-world-for-every-title)
+came in:
+
+- **[R70](../direction/Roadmap.md#r70-the-gta-v-world-editor).** A screen part and an open part of [R69](../direction/Roadmap.md#r69-one-window-of-tabs-and-a-rail) that edit the same shell file never run together.
+- **[R70b](../direction/Roadmap.md#r70b-the-gta-v-world-index).** An interior's bound states its box about the interior, so the index answers one at no position (`an_interiors_bound_whose_box_is_about_the_interior_is_answered_at_no_position_and_named_by_its_map`, measured by `what_the_files_of_a_real_install_state_where_the_index_takes_one_reading`).
+- **[R70c](../direction/Roadmap.md#r70c-the-gta-v-world-streamed-and-drawn).** `crates/domain/or-depends/src/world_forest.rs` streams an install's maps and selects their entities by the shared rules, behind `openrage-cli world select`.
+- **[R70d](../direction/Roadmap.md#r70d-the-day-sky-water-and-shadows-of-the-world).** `openrage-cli convert` and the formats census take the file by its name.
+- **[R70e](../direction/Roadmap.md#r70e-find-anything-and-go-there).** `crates/domain/or-maps/src/place.rs` reads what is pasted, `crates/domain/or-maps/src/script_text.rs` writes a position for a script, and `crates/domain/or-depends/src/find.rs` answers what a person typed from an install's indexes, which `openrage-cli world find` prints.
+- **[R70g](../direction/Roadmap.md#r70g-collision-as-a-query).** The ground asked at a height the query itself answered, with no rise, is the same ground (`the_ground_asked_at_the_height_it_answered_with_no_rise_is_the_same_ground`).
+- **[R70h](../direction/Roadmap.md#r70h-one-vocabulary-of-world-edits).** A place given with the game's path is a place in the game's file, carried to the source the project holds of it, and a copy of a map a later archive replaces is refused with the copy the install loads ([or-maps](#domain-crates)).
+- **[R70k](../direction/Roadmap.md#r70k-removing-what-the-game-placed).** A map that is not among the sources keeps its links, and the rules `parent-link-broken` and `lod-children-uncounted` name what a removal alone leaves.
+- **[R70l](../direction/Roadmap.md#r70l-editing-collision).** `crates/domain/or-world/src/collision/association.rs` proposes the polygons under an object's box, `crates/domain/or-maps/src/collision.rs` takes them out, sets a material or moves them, with inverses, and `openrage-cli maps collision` runs both.
+- **[R70m](../direction/Roadmap.md#r70m-interiors).** Seven rules of `or_maps::interior` stand beside `interior-broken` (`each_rule_fires_on_an_interior_built_to_break_it_and_on_no_other`), and `openrage-cli maps interior` lists an interior and applies a list.
+- **[R70n](../direction/Roadmap.md#r70n-doors).** A pack's path names the copy a title update patches it with, which is the one the index lists, and another copy is refused (`a_path_that_lies_where_the_copy_the_install_loads_does_names_it_and_another_copy_is_refused`).
+- **[R70o](../direction/Roadmap.md#r70o-parked-vehicles-zones-lights-and-occluders).** What the census judges is held in the default tier on records built by hand (`the_census_of_a_maps_records_names_one_typed_and_never_stated_and_one_stated_and_not_typed`).
+- **[R70p](../direction/Roadmap.md#r70p-roads-scenario-points-and-the-navmesh).** A road link's lanes are not named: its word is set whole. `maps roads --apply --inverse <file>` keeps the list that takes a list back (`the_list_that_takes_a_list_back_is_kept_before_a_source_is_written_and_is_refused_once_the_set_was_edited_again`).
+- **[R70v](../direction/Roadmap.md#r70v-the-keys-settings-and-guide-of-a-mapper).** A conflict is one key for two commands read in one place (`no_two_commands_of_the_table_read_in_one_place_share_a_key`).
+- **[R70y](../direction/Roadmap.md#r70y-what-a-project-changed-and-putting-it-back).** `openrage-cli maps changes` prints the comparison of a map source with its base (`crates/domain/or-maps/tests/what_a_map_changed_of_its_base.rs`). `openrage-cli maps put-back` runs a plan, and `MapChanges::count` is what a discard asks.
+- **[R70z](../direction/Roadmap.md#r70z-a-browser-of-models-and-vehicles).** The world index keeps what the list of models needs at its third version, and a kept file of the version before is read again (`a_kept_file_of_the_version_before_is_rebuilt_never_trusted`).
+
 ## Runtime crates
 
 **or-anim.** Skeletal animation from a decoded `.ycd` to a moving figure,

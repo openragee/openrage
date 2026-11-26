@@ -26,6 +26,33 @@ A RAGE byte layout exists in one place. Since 2026-09-24 that place is the `or-i
 
 Newest first. An entry records a decision as it was taken; one a later decision overturns says so on a `Superseded` line. or-io's D1–D18 are in full, with the owner's words, in [the specification's table](OR_IO_Specification.md#owner-decisions).
 
+### Each game draws its world with its own shader programs in one shared frame host (2026-11-26)
+
+Offered four ways to draw a world for several games, the owner chose: "option C like you said".
+
+- **What option C is.** One frame host owns the mechanics once, with the editor's overlays drawn after the game's frame; each game runs its own shader programs in it through a render profile, and what cannot be translated falls back to a plain pass for that material, which the panel names with its reason.
+- **What was rejected.** A, OpenRage's own shaders with each game translating its materials into them: an approximation that drifts and is never the game's look. B, each game owning its whole renderer, which writes everything once a game. D, the game's shaders handed to the native API, which is Direct3D only.
+- **What it stands on.** Translated programs come from the user's own install, are cached in the configuration folder and never enter the tree, as [2026-10-07](#game-shaders-are-translated-once-to-spir-v-and-run-natively-on-each-os-2026-10-07) set for the pack.
+- **What it answers.** Ruling 9 of [World_Editor_Plan.md](World_Editor_Plan.md#rulings-asked-of-the-owner), which left drawing the whole map through the game's shaders out of the first cut.
+- **What the tree holds against it.** The GTA VI world is drawn by OpenRage's own shader and lit by GTA V Legacy's passes, and the game's passes draw one GTA V drawable. [Unified_World_Plan.md](Unified_World_Plan.md#drawing) keeps the first as the fallback and schedules each game's own programs ([R71f](Roadmap.md#r71f-the-render-profile-and-the-programs-of-gta-v-legacy), [R71g](Roadmap.md#r71g-the-programs-of-gta-v-enhanced), [R71h](Roadmap.md#r71h-the-programs-of-gta-vi-over-a-world)).
+
+### This programme lifts the GTA VI viewer out of the app and the other GTA VI sessions pause (2026-11-26)
+
+Asked who moves the GTA VI world viewer out of the app and behind the contract, the owner answered that this programme does, and that "the gta vi other session work is paused meanwhile".
+
+- **What it means for a lane.** Until the app holds one world session ([R71c](Roadmap.md#r71c-one-world-session-one-frame-host-and-panels-by-capability)), no lane outside the programme edits `src/state/gta6_worldview/`, the world files of `src/render/viewport/` or the World panel. How long "meanwhile" lasts was not said; the plan takes it as until R71c merges and [asks](Unified_World_Plan.md#asked-of-the-owner).
+- **The pause on every agent is lifted.** The owner had paused all agents earlier that day, and lifted that pause with the go-ahead: "option C like you said, i lift the pause yes, write the plan". The plan is [Unified_World_Plan.md](Unified_World_Plan.md), and nothing of it is built.
+- **What it does not move.** GTA VI's script decompiler and its model viewport are no part of the viewer.
+
+### The world viewer and editor become one core and an adapter crate for each game (2026-11-26)
+
+The owner wrote: "we want to respect DRY and support multiple games, make a plan to rewrite the world viewer / world editor to have a more unified architecture that supports multiple rockstar games titles map viewing/editing for gta v, gta vi, rdr2, it will remove duplicated codes, and then the games should be allowed to make their own little edits of what they want / not want". To the shape proposed, "core plus one adapter crate per game", the answer was yes.
+
+- **The shape.** `or-world` becomes a core that names no game. One adapter crate for each of GTA V, GTA VI and Red Dead Redemption 2 reads its own files through `or-io` and its mount through `or-title`, and no adapter imports another. A game differs by capabilities, by policies with defaults and by extensions in slots.
+- **Where it is planned.** [Unified_World_Plan.md](Unified_World_Plan.md) and [R71](Roadmap.md#r71-one-world-for-every-title).
+- **What it changes of what is recorded.** [The plan of 2026-11-25](#every-noderunner-studio-capability-for-gta-v-is-wanted-in-openrage-2026-11-25) placed the seam between GTA V and GTA VI in the app and kept a World panel for GTA VI alone: what is built of [R70](Roadmap.md#r70-the-gta-v-world-editor) lands as it is, and its screens are built once on the core.
+- **What it does not decide.** The rulings [the plan asks](Unified_World_Plan.md#asked-of-the-owner), among them a registry crate that depends on every adapter.
+
 ### The world editor plan is built in parallel lanes (2026-11-25)
 
 After [the plan](World_Editor_Plan.md) was written, the owner set the goal: "start on it on a parallized workflow, when a workflow is near the end start another with an actionable task list".

@@ -2,7 +2,7 @@
 
 What OpenRage takes from NodeRunner Studio for GTA V, what that rests on, how it fits the tree, and the order and the briefs of the rows that build it.
 
-Status: the plan of 2026-11-25, written on the owner's request of that day ([recorded](Project_Context.md#every-noderunner-studio-capability-for-gta-v-is-wanted-in-openrage-2026-11-25)) and built in lanes since the owner said so the same day ([recorded](Project_Context.md#the-world-editor-plan-is-built-in-parallel-lanes-2026-11-25)); [R70](Roadmap.md#r70-the-gta-v-world-editor) says where each row stands.
+Status: the plan of 2026-11-25, written on the owner's request of that day ([recorded](Project_Context.md#every-noderunner-studio-capability-for-gta-v-is-wanted-in-openrage-2026-11-25)) and built in lanes since the owner said so the same day ([recorded](Project_Context.md#the-world-editor-plan-is-built-in-parallel-lanes-2026-11-25)); [R70](Roadmap.md#r70-the-gta-v-world-editor) says where each row stands. Its seam between the titles, its table of where the code goes and its ruling 9 are replaced on 2026-11-26 by [Unified_World_Plan.md](Unified_World_Plan.md#what-it-changes-for-r70).
 
 ## What this plan is for
 

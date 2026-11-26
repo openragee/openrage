@@ -5,7 +5,7 @@
 //!
 //! ⚠ A record keeps the value tree it was read from, and a save writes the
 //! typed members back into that tree: what no member names (enums,
-//! extensions, occluders, entity overrides) reaches the file as it arrived,
+//! extensions, grass batches, entity overrides) reaches the file as it arrived,
 //! and an untouched save is the tree's own save.
 
 use std::borrow::Cow;
@@ -166,6 +166,24 @@ impl Member for i32 {
         Ok(())
     }
 }
+
+/// The engine's narrow signed members, read and written through `i32` so a slot keeps its shape.
+macro_rules! narrow_signed_member {
+    ($($t:ty),*) => {$(
+        impl Member for $t {
+            fn read(value: &Value) -> Result<Self, String> {
+                let wide = i32::read(value)?;
+                <$t>::try_from(wide).map_err(|_| format!("{wide} does not fit an {}", stringify!($t)))
+            }
+
+            fn write(&self, slot: &mut Value) -> Result<(), String> {
+                i32::from(*self).write(slot)
+            }
+        }
+    )*};
+}
+
+narrow_signed_member!(i8, i16);
 
 impl Member for f32 {
     fn read(value: &Value) -> Result<Self, String> {
@@ -390,11 +408,39 @@ impl<E: Element> Member for Vec<E> {
                 .collect(),
             // ⚠ Read with no schema, `<list />` is the empty text of a leaf.
             Value::String(text) if text.trim().is_empty() => Ok(Vec::new()),
+            // A run of bytes behind a bare pointer is read as one value, and a null pointer as none.
+            Value::ByteArray(bytes) => (bytes.iter())
+                .map(|byte| E::read_element(&Value::UInt(u64::from(*byte))))
+                .collect(),
+            Value::Null => Ok(Vec::new()),
             other => expected("an array", other),
         }
     }
 
     fn write(&self, slot: &mut Value) -> Result<(), String> {
+        match slot {
+            Value::ByteArray(was) => {
+                let byte = |(i, e): (usize, &E)| {
+                    let value = e.write_element(None, None)?;
+                    let byte = u32::read(&value).ok().and_then(|b| u8::try_from(b).ok());
+                    byte.ok_or_else(|| {
+                        format!("element {i}: expected a byte, found {}", shape(&value))
+                    })
+                };
+                let bytes = self
+                    .iter()
+                    .enumerate()
+                    .map(byte)
+                    .collect::<Result<Vec<u8>, _>>()?;
+                if *was != bytes {
+                    *was = bytes;
+                }
+                return Ok(());
+            }
+            // ⚠ A null pointer has no block for a writer to put a byte in.
+            Value::Null if self.is_empty() => return Ok(()),
+            _ => {}
+        }
         let was: &[Value] = match slot {
             Value::Array(items) => items,
             _ => &[],
@@ -751,6 +797,13 @@ macro_rules! meta_record {
                         Ok(record)
                     }
                     Value::Pointer(Some(inst)) => Self::read(inst),
+                    // ⚠ Read with no schema, an element that holds nothing is the empty text of a leaf: a record that
+                    // states no member.
+                    Value::String(text) if text.trim().is_empty() => {
+                        let mut record = Self::read(&MetaInstance::new($type_name))?;
+                        record.carry.by_value = Some($type_name);
+                        Ok(record)
+                    }
                     other => expected("a struct", other),
                 }
             }
@@ -1065,7 +1118,13 @@ meta_record! {
         entities_extents_min: Vec3 = "entitiesExtentsMin",
         entities_extents_max: Vec3 = "entitiesExtentsMax",
         entities: Vec<CEntityDefAny> = "entities",
+        box_occluders: Vec<BoxOccluder> = "boxOccluders",
+        occlude_models: Vec<OccludeModel> = "occludeModels",
         physics_dictionaries: Vec<HashedString> = "physicsDictionaries",
+        time_cycle_modifiers: Vec<CTimeCycleModifier> = "timeCycleModifiers",
+        car_generators: Vec<CCarGen> = "carGenerators",
+        lod_lights_soa: CLODLight = "LODLightsSOA",
+        distant_lod_lights_soa: CDistantLODLight = "DistantLODLightsSOA",
     }
 }
 
@@ -1191,12 +1250,14 @@ impl CScenarioPointRegion {
 
 /// Whether a typed record names the member a `class` record stores under `key`.
 ///
-/// ⚠ The interior's records are judged by their class: a map carries a `timeCycleModifiers` of its own, and a name typed
-/// for every class would leave that array out of what two maps are compared by.
+/// ⚠ The records of an interior and of a map are judged by their class: their members bear names as plain as `flags`,
+/// `hash` and `position`, and a name typed for every class would leave a member another class carries under it out of
+/// what two records are compared by.
 fn is_typed(class: &str, key: u32) -> bool {
     let names =
         |members: &[&str]| (members.iter()).any(|name| literal_string_hash(name.as_bytes()) == key);
-    if (interior::MEMBERS.iter()).any(|(of, members)| is_named(class, of) && names(members)) {
+    let mut by_class = interior::MEMBERS.iter().chain(map_records::MEMBERS);
+    if by_class.any(|(of, members)| is_named(class, of) && names(members)) {
         return true;
     }
     [
@@ -1463,6 +1524,8 @@ enum Broken {
         archetype: usize,
         what: interior::Broken,
     },
+    #[error("{0}")]
+    MapRecords(map_records::Broken),
     #[error("{holder} point {point} names scenario type {index}, past the {len} type names in this region")]
     PointTypeOutOfRange {
         holder: String,
@@ -1579,6 +1642,7 @@ meta_origin!(CScenarioPointRegion);
 mod alternate;
 pub mod alternate_types;
 mod interior;
+mod map_records;
 mod ped;
 mod ped_rbf;
 pub mod ped_types;
@@ -1592,6 +1656,10 @@ pub mod weapon_types;
 pub mod world_types;
 pub use alternate::*;
 pub use interior::{CMloEntitySet, CMloPortalDef, CMloRoomDef, CMloTimeCycleModifier};
+pub use map_records::{
+    save_far_lights, BoxOccluder, CCarGen, CDistantLODLight, CLODLight, CTimeCycleModifier,
+    FloatXYZ, OccludeModel,
+};
 pub use ped::*;
 
 impl CMapData {
@@ -1612,8 +1680,10 @@ impl File for CMapData {
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, Error> {
-        let broken = broken_hierarchy(&self.entities);
-        let reshaped = self.entities.iter().any(CEntityDefAny::reshaped);
+        let broken = broken_hierarchy(&self.entities)
+            .or_else(|| map_records::broken(self).map(Broken::MapRecords));
+        let reshaped = self.entities.iter().any(CEntityDefAny::reshaped)
+            || map_records::holds_a_record_built_here(self);
         let write = || self.write();
         save_world_root(Self::EXTENSION, broken, write, &self.carry, reshaped)
     }

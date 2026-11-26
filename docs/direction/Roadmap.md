@@ -9771,8 +9771,9 @@ the list of maps only a script requests, with a stated naming rule for two versi
 
 **Where it stands.** Not built. The viewport draws a `.ynv`'s polygons ([R33b](#r33b-navmesh-ynv)).
 `crates/domain/or-world/src/map_data.rs` reads a box occluder, the stored box of an occlusion mesh
-and a parked vehicle's position and one length; it only counts the timecycle zones and tests whether
-far lights are present. The GTA VI World panel lists the script-managed groups, and no screen uses
+and, since the data part of [R70o](#r70o-parked-vehicles-zones-lights-and-occluders), a parked
+vehicle, a timecycle zone and a far light with every member the installs state. The GTA VI World
+panel lists the script-managed groups, and no screen uses
 `crates/domain/or-world/src/state.rs` for GTA V.
 
 **Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn) and
@@ -10107,10 +10108,12 @@ the occluder rules the brief names; the copy of a zone's centre for a script; an
 drawn on a selected parking spot
 ([brief](World_Editor_Plan.md#parked-vehicles-zones-lights-and-occluders-r70o)).
 
-**Where it stands.** Not built. `crates/domain/or-world/src/map_data.rs` reads a box occluder, the
-stored box of an occlusion mesh and a parked vehicle's position and one length, counts the timecycle
-zones and tests whether far lights are present; a save carries each record as it came. Which
-members an install states for them is unmeasured.
+**Where it stands.** The data part is built: `crates/io/or-io/src/meta/typed/map_records.rs` types
+these records as members of `CMapData` with save refusals, `crates/domain/or-world/src/map_data.rs` reads them as views,
+and the install suite passes on both installs
+(`every_map_of_an_install_reads_its_records_typed_states_the_members_typed_and_saves_to_its_fixed_point`,
+2026-11-25; [the census and what is left](../reference/Crate_Reference.md#io-crates)). Nothing
+after it is built, and a map made from nothing takes none.
 
 **Depends on.** Nothing for the data part; [R70f](#r70f-layers-of-what-the-game-hides),
 [R70i](#r70i-selecting-and-moving-in-the-world), [R70k](#r70k-removing-what-the-game-placed) and

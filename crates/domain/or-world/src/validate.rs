@@ -445,6 +445,66 @@ mod tests {
         typed.to_bytes().expect("an interior that holds saves");
     }
 
+    /// ⚠ As for an interior: a save of the typed map in `or-io` refuses what [`check`] reports of the far lights, and
+    /// this holds the two crates' sentences to one.
+    #[test]
+    fn far_lights_whose_arrays_differ_are_refused_at_the_save_with_the_sentence_the_check_gives() {
+        use crate::map_data::tests::{map_file, tree};
+        use or_io::decl::File;
+
+        let breaks: [(&str, &str, usize, &str); 4] = [
+            (
+                "LODLightsSOA",
+                "hash",
+                2,
+                "light array hash holds 2 where its siblings hold 3",
+            ),
+            (
+                "LODLightsSOA",
+                "direction",
+                0,
+                "light array direction holds 0 where its siblings hold 3",
+            ),
+            (
+                "LODLightsSOA",
+                "coronaIntensity",
+                1,
+                "light array coronaIntensity holds 1 where its siblings hold 3",
+            ),
+            (
+                "DistantLODLightsSOA",
+                "RGBI",
+                2,
+                "light array RGBI holds 2 where its siblings hold 3",
+            ),
+        ];
+        for (family, array, len, sentence) in breaks {
+            let bytes = map_file(|root| {
+                let Some(Value::Struct(family)) = root.get_mut(family) else {
+                    panic!("the map holds `{family}`");
+                };
+                truncate(family, array, len);
+            });
+            let root = tree(&bytes);
+            let problems = check(&MapData::new(&root).expect("a map"));
+            let said: Vec<String> = problems.iter().map(ToString::to_string).collect();
+            assert_eq!(said, [sentence]);
+
+            let typed = or_io::meta::CMapData::from_bytes(&bytes).expect("opens typed");
+            let refused = typed
+                .to_bytes()
+                .expect_err("far lights whose arrays differ are not saved");
+            assert!(matches!(refused, or_io::Error::Refused { .. }), "{refused}");
+            assert!(refused.to_string().ends_with(sentence), "{refused}");
+        }
+
+        let bytes = map_file(|_| {});
+        let root = tree(&bytes);
+        assert_eq!(check(&MapData::new(&root).expect("a map")), vec![]);
+        let typed = or_io::meta::CMapData::from_bytes(&bytes).expect("opens typed");
+        typed.to_bytes().expect("far lights that hold save");
+    }
+
     #[test]
     fn a_problem_says_what_it_is_in_a_sentence() {
         let text = Problem::ParentOutOfRange {

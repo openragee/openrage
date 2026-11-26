@@ -30,15 +30,16 @@ pub use snapshot::{
     SnapshotAge,
 };
 pub use typed::{
-    Anchor, CAlternateVariations, CAnchorProps, CBaseArchetypeDef, CBaseArchetypeDefAny,
-    CComponentInfo, CCreatureMetaData, CEntityDef, CEntityDefAny, CMapData, CMapTypes,
-    CMloArchetypeDef, CMloEntitySet, CMloInstanceDef, CMloPortalDef, CMloRoomDef,
-    CMloTimeCycleModifier, CPVClothComponentData, CPVComponentData, CPVDrawblData, CPVTextureData,
-    CPedCompExpressionData, CPedPropExpressionData, CPedPropInfo, CPedPropMetaData,
-    CPedPropTexData, CPedSelectionSet, CPedVariationInfo, CScenarioChain, CScenarioChainingEdge,
-    CScenarioChainingGraph, CScenarioChainingNode, CScenarioPoint, CScenarioPointCluster,
-    CScenarioPointContainer, CScenarioPointLookUps, CScenarioPointRegion, CShaderVariableComponent,
-    CTimeArchetypeDef, FirstPersonAlternate, FirstPersonAlternateData,
+    save_far_lights, Anchor, BoxOccluder, CAlternateVariations, CAnchorProps, CBaseArchetypeDef,
+    CBaseArchetypeDefAny, CCarGen, CComponentInfo, CCreatureMetaData, CDistantLODLight, CEntityDef,
+    CEntityDefAny, CLODLight, CMapData, CMapTypes, CMloArchetypeDef, CMloEntitySet,
+    CMloInstanceDef, CMloPortalDef, CMloRoomDef, CMloTimeCycleModifier, CPVClothComponentData,
+    CPVComponentData, CPVDrawblData, CPVTextureData, CPedCompExpressionData,
+    CPedPropExpressionData, CPedPropInfo, CPedPropMetaData, CPedPropTexData, CPedSelectionSet,
+    CPedVariationInfo, CScenarioChain, CScenarioChainingEdge, CScenarioChainingGraph,
+    CScenarioChainingNode, CScenarioPoint, CScenarioPointCluster, CScenarioPointContainer,
+    CScenarioPointLookUps, CScenarioPointRegion, CShaderVariableComponent, CTimeArchetypeDef,
+    CTimeCycleModifier, FirstPersonAlternate, FirstPersonAlternateData, FloatXYZ, OccludeModel,
     SAlternateVariationComponent, SAlternateVariationPed, SAlternateVariationSwitch,
 };
 

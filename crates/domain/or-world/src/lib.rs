@@ -51,7 +51,10 @@ pub use extension::{Extension, ExtensionKind};
 pub use extents::{Aabb, Extents};
 pub use group::{GroupProblem, MapGroup};
 pub use manifest::{Manifest, StatedDependencies};
-pub use map_data::{BoxOccluder, Entity, GrassBatch, MapData};
+pub use map_data::{
+    BoxOccluder, CarGenerator, DistantLodLight, DistantLodLights, Entity, GrassBatch, LodLight,
+    LodLights, MapData, TimeCycleModifier,
+};
 pub use map_types::{
     Archetype, ArchetypeKind, AssetType, Bounds, EntitySet, Interior, MapTypes, Portal, Room,
 };

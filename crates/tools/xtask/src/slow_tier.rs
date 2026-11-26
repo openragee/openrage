@@ -43,6 +43,7 @@ const ALWAYS_SLOW: &[&str] = &[
     "or-maps::deleting_an_entity_of_the_install_keeps_every_link",
     "or-maps::the_doors_bounds_and_path_regions_of_the_install",
     "or-depends::the_world_index_of_a_real_install",
+    "or-world::what_a_map_holds_besides_entities",
 ];
 
 const BEGIN: &str = "# slow-tier:begin";

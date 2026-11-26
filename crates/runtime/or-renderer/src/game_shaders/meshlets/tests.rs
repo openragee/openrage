@@ -348,6 +348,51 @@ fn the_built_in_sky_has_a_sun_by_day_a_dim_moon_by_night_and_less_of_both_under_
 }
 
 #[test]
+fn the_passes_of_a_batch_keep_what_the_driver_compiled_once_and_whole() {
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("kept").join("an-adapter-and-its-driver");
+    let whole: Vec<u8> = (0..1 << 20).map(|at| (at % 251) as u8).collect();
+    let asked = Arc::new(AtomicUsize::new(0));
+    let (theirs, data) = (Arc::clone(&asked), whole.clone());
+    let workers = pass_workers(Some(file.clone()), move || {
+        theirs.fetch_add(1, SeqCst);
+        Some(data.clone())
+    });
+    // Three passes of one batch: none ends before the last is handed over, then all do.
+    let (end, ends) = std::sync::mpsc::channel::<()>();
+    let ends = Arc::new(Mutex::new(ends));
+    for _ in 0..3 {
+        let ends = Arc::clone(&ends);
+        let pass = move || drop(ends.lock().map(|ends| ends.recv()));
+        workers.run(pass).unwrap();
+    }
+    for _ in 0..3 {
+        end.send(()).unwrap();
+    }
+    let started = std::time::Instant::now();
+    while !file.is_file() && started.elapsed() < std::time::Duration::from_secs(20) {
+        std::thread::yield_now();
+    }
+    // Long enough for a second write to begin, were there one.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert_eq!(std::fs::read(&file).unwrap(), whole);
+    assert_eq!(
+        asked.load(SeqCst),
+        1,
+        "writes of the file while three passes built"
+    );
+    let beside: Vec<_> = std::fs::read_dir(file.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(beside, ["an-adapter-and-its-driver"]);
+    // A backend that keeps nothing writes nothing.
+    keep(&dir.path().join("none"), None);
+    assert!(!dir.path().join("none").exists());
+}
+
+#[test]
 fn the_developer_s_aids_are_words_separated_by_commas() {
     let aids = Aids::parse(
         "target=3, pixel=C:/a b/p.wgsl,plain-device,unknown,mesh=m.wgsl,record=r.bin,unguarded,meter=frame",

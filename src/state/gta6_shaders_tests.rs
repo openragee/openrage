@@ -130,6 +130,7 @@ fn input(source: ShaderSource, wanted: Vec<u32>) -> Input {
         known: HashSet::new(),
         wanted: wanted.into_iter().map(|hash| (hash, 0)).collect(),
         shading: HashMap::new(),
+        stages: Stages::default(),
         install: None,
     }
 }
@@ -232,6 +233,7 @@ fn an_effect_read_from_its_container_is_kept_and_the_next_session_reads_no_conta
         known: HashSet::new(),
         wanted: vec![(hash, 0)],
         shading: HashMap::new(),
+        stages: Stages::default(),
         install: Some(path.clone()),
     };
     let again = work(later, &Cancel::new(), &Progress::new()).unwrap();
@@ -367,7 +369,7 @@ fn shaded(dir: &Path, effects: &[(&str, Listed)]) -> ShaderSource {
 
 /// A stand-in for the translator. A mesh program's container is `M`, the streams it reads alone
 /// and, after a nought, those it reads besides as its pass's stage; a pixel program's is `P`, or
-/// `X` for one that is refused.
+/// `X` for one that is refused. A stage's module holds one type, named by the container.
 #[derive(Default)]
 struct Told {
     read: AtomicUsize,
@@ -416,9 +418,18 @@ impl Translate for Told {
         (): &(),
     ) -> Result<Gta6ShadingPass, String> {
         self.passes.fetch_add(1, SeqCst);
+        use wgpu::naga;
         let stage = |streams: BTreeSet<u32>| or_cli::Gta6Stage {
             approximations: Default::default(),
-            module: Arc::default(),
+            module: {
+                let mut module = naga::Module::default();
+                let named = naga::Type {
+                    name: Some(format!("{streams:?}")),
+                    inner: naga::TypeInner::Scalar(naga::Scalar::F32),
+                };
+                module.types.insert(named, naga::Span::UNDEFINED);
+                Arc::new(module)
+            },
             feeds: Vec::new(),
             textures: Vec::new(),
             streams,
@@ -557,6 +568,52 @@ fn a_mesh_program_that_reads_other_streams_in_its_pass_has_every_pass_translated
     );
     let skinned = holding(&[1, 2, 3, 6, 8]);
     assert_eq!(handed(&s, hash, skinned), Some(Ok(vec![1, 2, 3, 6, 8])));
+}
+
+#[test]
+fn two_effects_whose_passes_come_to_the_same_two_stages_draw_by_one_pass_of_the_device() {
+    use or_renderer::game_shaders::meshlets::{MeshletPipelines, MeshletSurface};
+    let dir = tempfile::tempdir().unwrap();
+    let one: Listed = &[(b"M\x01", b"P")];
+    let other: Listed = &[(b"M\x01\x02", b"P")];
+    let names = ["one_t", "two_t", "other_t"];
+    let mut s = Shaders::default();
+    let source = shaded(
+        dir.path(),
+        &[(names[0], one), (names[1], one), (names[2], other)],
+    );
+    keep(&mut s, vec![Arc::new(source)]);
+    let worn = |name: &&str| (name_hash32(name.as_bytes()), holding(&[1]));
+    let wanted: Vec<Worn> = names.iter().map(worn).collect();
+    looked_for(&mut s, &Told::default(), &wanted);
+    // The passes a device builds are counted as it counts them: by the two stages of a surface.
+    let mut built = MeshletPipelines::default();
+    let mut passes = Vec::new();
+    for (hash, held) in wanted {
+        let pass = picked(&s, hash, held).unwrap().unwrap();
+        let surface = MeshletSurface {
+            vertex: Arc::clone(&pass.mesh.module),
+            fragment: Arc::clone(&pass.pixel.module),
+            feeds: Default::default(),
+            meshlets: 1,
+            primitives: 1,
+        };
+        built.hold(&surface, true);
+        passes.push(pass);
+    }
+    assert_eq!(
+        built.len(),
+        2,
+        "passes of three effects, two of the same stages"
+    );
+    // Each effect's pass is still its own: what fills its bindings is the effect's.
+    assert!(!Arc::ptr_eq(&passes[0], &passes[1]));
+    // The third's mesh stage holds something else, and its pixel stage is the others'.
+    assert!(!Arc::ptr_eq(&passes[0].mesh.module, &passes[2].mesh.module));
+    assert!(Arc::ptr_eq(
+        &passes[0].pixel.module,
+        &passes[2].pixel.module
+    ));
 }
 
 #[test]

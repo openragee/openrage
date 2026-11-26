@@ -54,6 +54,8 @@ or-io.workspace = true
 or-title.workspace = true
 # The frame and game clock a shots run fixes, so that two runs draw the same frames.
 or-transport.workspace = true
+# The workers that build a GTA VI pass: no more at once than the machine spares.
+or-job.workspace = true
 
 # Pre-flighting WGSL before wgpu sees it, since wgpu answers a bad module with
 # a panic rather than an error. Shared with the shader baker so both ends of

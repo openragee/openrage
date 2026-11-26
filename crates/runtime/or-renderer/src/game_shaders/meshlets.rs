@@ -646,6 +646,49 @@ pub struct MeshletPipelines {
     /// The folder what the driver compiled is kept in, and that once it was looked for.
     folder: Option<PathBuf>,
     compiled: Option<Option<Compiled>>,
+    /// The workers that build the passes, made with the first of them.
+    workers: Option<or_job::Pool>,
+}
+
+/// The workers that build passes, no more at once than the machine spares: a compiler holds
+/// hundreds of megabytes a stage. Each time the last of them finds no pass left to build, what
+/// `compiled` gives of the driver's work is kept in `file`: once a batch, where a save after each
+/// pass writes the whole of it as many times as there are passes.
+fn pass_workers(
+    file: Option<PathBuf>,
+    compiled: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
+) -> or_job::Pool {
+    or_job::Pool::new(or_job::workers(), BUILD_STACK, move || {
+        if let Some(file) = &file {
+            keep(file, compiled());
+        }
+    })
+}
+
+/// Keep `data`, what a driver compiled of the passes, in `file` for the next session.
+fn keep(file: &std::path::Path, data: Option<Vec<u8>>) {
+    // ⚠ One writer at a time in the process: the file beside it is named by the process alone.
+    static KEEPING: Mutex<()> = Mutex::new(());
+    let Some(data) = data else {
+        return;
+    };
+    let _one = KEEPING.lock().unwrap_or_else(|p| p.into_inner());
+    // Beside its place, then moved there: a session that reads it never sees half a file.
+    let partial = file.with_extension(format!("{}.part", std::process::id()));
+    let kept = (file.parent().map_or(Ok(()), std::fs::create_dir_all))
+        .and_then(|()| std::fs::write(&partial, &data))
+        .and_then(|()| std::fs::rename(&partial, file));
+    match kept {
+        Ok(()) => {
+            tracing::info!(
+                bytes = data.len(),
+                "the passes a driver compiled were kept for the next session"
+            );
+        }
+        Err(error) => {
+            tracing::debug!(%error, "the compiled passes are not kept for the next session");
+        }
+    }
 }
 
 impl MeshletPipelines {
@@ -715,17 +758,19 @@ impl MeshletPipelines {
             let slot = Slot::default();
             let (theirs, device) = (Arc::clone(&slot), device.clone());
             let stages = (Arc::clone(&surface.vertex), Arc::clone(&surface.fragment));
+            let workers = self.workers.get_or_insert_with(|| match compiled.clone() {
+                Some((cache, file)) => pass_workers(Some(file), move || cache.get_data()),
+                None => pass_workers(None, || None),
+            });
             let work = move || {
+                let cache = compiled.as_ref().map(|(cache, _)| &**cache);
                 let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    build_checked(&device, stages, compiled.as_ref())
+                    build_checked(&device, stages, cache)
                 }))
                 .unwrap_or_else(|_| Err("building the pass stopped on an internal error".into()));
                 *theirs.lock().unwrap_or_else(|p| p.into_inner()) = Some(built.map(Arc::new));
             };
-            (std::thread::Builder::new().name("meshlet-pass".into()))
-                .stack_size(BUILD_STACK)
-                .spawn(work)
-                .map_err(|e| format!("no worker to build the pass on: {e}"))?;
+            (workers.run(work)).map_err(|e| format!("no worker to build the pass on: {e}"))?;
             self.built.insert(key, slot);
         }
         let state = self.built[&key].lock().unwrap_or_else(|p| p.into_inner());
@@ -754,34 +799,21 @@ fn compiled_in(device: &wgpu::Device, folder: &std::path::Path) -> Option<Compil
     Some((Arc::new(cache), file))
 }
 
-/// [`build`], with what the device refuses of it as the reason, and what its driver compiled
-/// kept for the next session.
+/// [`build`], with what the device refuses of it as the reason.
 // A scope is its thread's: nothing a frame draws meanwhile is taken for the pass's.
 fn build_checked(
     device: &wgpu::Device,
     stages: (Arc<naga::Module>, Arc<naga::Module>),
-    compiled: Option<&Compiled>,
+    compiled: Option<&wgpu::PipelineCache>,
 ) -> Result<Built, String> {
     let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let started = std::time::Instant::now();
-    let built = build(device, stages, compiled.map(|(cache, _)| &**cache));
+    let built = build(device, stages, compiled);
     let refused = pollster::block_on(validation.pop()).or(pollster::block_on(internal.pop()));
     tracing::info!(elapsed = ?started.elapsed(), refused = refused.is_some(), "a GTA VI pass was built for the device");
     if let Some(error) = refused {
         return Err(error.to_string());
-    }
-    if let (Ok(_), Some((cache, file))) = (&built, compiled) {
-        // Beside its place, then moved there: a session that reads it never sees half a file.
-        let partial = file.with_extension(format!("{}.part", std::process::id()));
-        let kept = cache.get_data().map(|data| {
-            (file.parent().map_or(Ok(()), std::fs::create_dir_all))
-                .and_then(|()| std::fs::write(&partial, data))
-                .and_then(|()| std::fs::rename(&partial, file))
-        });
-        if let Some(Err(error)) = kept {
-            tracing::debug!(%error, "the compiled passes are not kept for the next session");
-        }
     }
     built
 }

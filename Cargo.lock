@@ -3389,6 +3389,7 @@ dependencies = [
  "naga",
  "or-interchange",
  "or-io",
+ "or-job",
  "or-particle",
  "or-test-support",
  "or-title",

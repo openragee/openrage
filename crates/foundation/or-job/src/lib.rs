@@ -5,6 +5,7 @@
 //! other's, so what is shared is the counting and the stopping rather than the
 //! drawing.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -290,9 +291,150 @@ pub fn side_by_side<T: Sync, R: Send>(
     out
 }
 
+type Task = Box<dyn FnOnce() + Send>;
+
+struct Waiting {
+    tasks: VecDeque<Task>,
+    /// The threads that run a task now, or are about to look for one.
+    alive: usize,
+}
+
+struct Shared {
+    waiting: Mutex<Waiting>,
+    idle: Box<dyn Fn() + Send + Sync>,
+}
+
+/// Workers for tasks handed over time: at most `limit` run at once, and `idle` runs each time the last of them finds none left.
+pub struct Pool {
+    shared: Arc<Shared>,
+    limit: usize,
+    stack: usize,
+}
+
+impl Pool {
+    /// A pool of at most `limit` workers, each on a stack of `stack` bytes.
+    pub fn new(limit: usize, stack: usize, idle: impl Fn() + Send + Sync + 'static) -> Self {
+        let waiting = Waiting {
+            tasks: VecDeque::new(),
+            alive: 0,
+        };
+        Self {
+            shared: Arc::new(Shared {
+                waiting: Mutex::new(waiting),
+                idle: Box::new(idle),
+            }),
+            limit: limit.max(1),
+            stack,
+        }
+    }
+
+    /// Have a worker run `task` once one is free.
+    ///
+    /// # Errors
+    ///
+    /// The system gave no thread, and no worker is left to take the task.
+    pub fn run(&self, task: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
+        let mut waiting = self.shared.waiting();
+        waiting.tasks.push_back(Box::new(task));
+        if waiting.alive >= self.limit {
+            return Ok(());
+        }
+        waiting.alive += 1;
+        let shared = Arc::clone(&self.shared);
+        let spawned = (std::thread::Builder::new().name("pool-worker".into()))
+            .stack_size(self.stack)
+            .spawn(move || shared.drain());
+        match spawned {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                waiting.alive -= 1;
+                // A worker that runs still takes it; with none, nobody would.
+                if waiting.alive > 0 {
+                    return Ok(());
+                }
+                waiting.tasks.pop_back();
+                Err(error)
+            }
+        }
+    }
+}
+
+impl Shared {
+    fn waiting(&self) -> std::sync::MutexGuard<'_, Waiting> {
+        self.waiting.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn drain(&self) {
+        loop {
+            let next = {
+                let mut waiting = self.waiting();
+                let next = waiting.tasks.pop_front();
+                if next.is_none() {
+                    waiting.alive -= 1;
+                }
+                next.ok_or(waiting.alive == 0)
+            };
+            match next {
+                // ⚠ A task that panics must not take its worker's place in the count with it.
+                Ok(task) => drop(std::panic::catch_unwind(std::panic::AssertUnwindSafe(task))),
+                Err(last) => {
+                    if last {
+                        (self.idle)();
+                    }
+                    return;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pool of `limit` workers that counts each time it falls idle, and what says so.
+    fn counting(limit: usize) -> (Pool, std::sync::mpsc::Receiver<()>) {
+        let (fell, idle) = std::sync::mpsc::channel();
+        let fell = Mutex::new(fell);
+        let pool = Pool::new(limit, 1 << 20, move || {
+            let _ = fell.lock().map(|fell| fell.send(()));
+        });
+        (pool, idle)
+    }
+
+    #[test]
+    fn a_pool_runs_no_more_tasks_at_once_than_its_limit_and_falls_idle_once_a_batch() {
+        let (pool, idle) = counting(2);
+        let (go, wait) = std::sync::mpsc::channel::<()>();
+        let wait = Arc::new(Mutex::new(wait));
+        // The tasks begun, and those ended.
+        let counts = Arc::new((AtomicUsize::new(0), AtomicUsize::new(0)));
+        for _ in 0..6 {
+            let (wait, counts) = (Arc::clone(&wait), Arc::clone(&counts));
+            let task = move || {
+                counts.0.fetch_add(1, Ordering::SeqCst);
+                // Held until every task of the batch is handed over.
+                let _ = wait.lock().map(|wait| wait.recv());
+                counts.1.fetch_add(1, Ordering::SeqCst);
+            };
+            pool.run(task).expect("a worker");
+        }
+        let begun = || counts.0.load(Ordering::SeqCst);
+        let started = Instant::now();
+        while begun() < 2 && started.elapsed() < Duration::from_secs(20) {
+            std::thread::yield_now();
+        }
+        // Long enough for a third worker to begin a task, were there one.
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(begun(), 2, "tasks at once of a limit of 2");
+        for _ in 0..6 {
+            go.send(()).expect("a task waits");
+        }
+        idle.recv_timeout(Duration::from_secs(20)).expect("idle");
+        assert_eq!(counts.1.load(Ordering::SeqCst), 6, "idle before the last");
+        let again = idle.recv_timeout(Duration::from_millis(200));
+        assert!(again.is_err(), "idle twice in one batch");
+    }
 
     #[test]
     fn items_run_side_by_side_on_no_more_workers_than_asked_and_come_back_in_order() {

@@ -490,6 +490,7 @@ impl RenderBridge {
             tracing::info!(
                 elapsed = ?started.elapsed(),
                 surfaces = meshlets.surfaces.len(),
+                passes = self.gta6_pipelines.len(),
                 "a GTA VI drawable's own passes were prepared"
             );
         }

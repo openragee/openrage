@@ -66,6 +66,40 @@ pub(crate) type Passes = Vec<Candidate>;
 /// ([`gta6_held_streams`]): what a pass is picked by.
 pub(crate) type Worn = (u32, u32);
 
+/// The stages of the session's passes by what they hold: two effects whose passes come to the
+/// same two modules hold the same two, and the device builds one pass for both.
+type Stages = Arc<Mutex<HashMap<[u64; 2], Arc<wgpu::naga::Module>>>>;
+
+/// Put the session's stage that holds what `module` holds in its place, or keep `module` as that
+/// stage; whether the session held one.
+fn share(stages: &Stages, module: &mut Arc<wgpu::naga::Module>) -> bool {
+    let held = digest(module);
+    let mut stages = stages.lock().unwrap_or_else(|p| p.into_inner());
+    let known = stages.contains_key(&held);
+    *module = Arc::clone(stages.entry(held).or_insert_with(|| Arc::clone(module)));
+    known
+}
+
+/// Two hashes of `module` as it prints, which is all it holds: a stage the binder or one of its
+/// options changed prints otherwise.
+fn digest(module: &wgpu::naga::Module) -> [u64; 2] {
+    use std::hash::Hasher;
+    struct Both([std::collections::hash_map::DefaultHasher; 2]);
+    impl std::fmt::Write for Both {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            self.0
+                .iter_mut()
+                .for_each(|hash| hash.write(text.as_bytes()));
+            Ok(())
+        }
+    }
+    let mut both = Both(Default::default());
+    // The second starts from another state, so that the two do not meet together by chance.
+    both.0[1].write_u8(1);
+    let _ = std::fmt::Write::write_fmt(&mut both, format_args!("{module:?}"));
+    both.0.map(|hash| hash.finish())
+}
+
 /// A program translated or refused, with the stage its pass runs it at.
 struct Done {
     stage: ShaderStageKind,
@@ -89,6 +123,7 @@ struct Shaders {
     shading: HashMap<u32, Result<Passes, String>>,
     /// What a job has looked for since the containers last changed, found or not.
     tried: HashSet<Worn>,
+    stages: Stages,
     running: Option<Running>,
     /// The pack of what is done, numbered so that a new one is told from the last.
     pack: Option<(u64, Arc<GamePack>)>,
@@ -116,6 +151,7 @@ struct Input {
     wanted: Vec<Worn>,
     /// What jobs before this one found of the wanted effects' passes.
     shading: HashMap<u32, Result<Passes, String>>,
+    stages: Stages,
     install: Option<PathBuf>,
 }
 
@@ -218,6 +254,7 @@ fn input_of(s: &Shaders, wanted: &[Worn], install: impl FnOnce() -> Option<PathB
         known: s.done.keys().cloned().collect(),
         wanted: fresh,
         shading,
+        stages: Arc::clone(&s.stages),
         install: install().filter(|path| !s.searched.contains(path)),
     }
 }
@@ -411,6 +448,7 @@ fn work_with(
         mut known,
         wanted,
         mut shading,
+        stages,
         install,
     } = input;
     // Each effect wanted, with the streams the geometries that wear it hold.
@@ -483,6 +521,7 @@ fn work_with(
                 effect,
                 &worn[hash],
                 before.clone(),
+                &stages,
                 cancel,
             );
             tracing::info!(
@@ -493,6 +532,7 @@ fn work_with(
                 translated = did.translated,
                 refused = did.refused,
                 drawn = did.drawn,
+                shared = did.shared,
                 "a GTA VI effect's shading passes were translated"
             );
             shading
@@ -582,13 +622,15 @@ fn read(
 }
 
 /// What a job did for one effect: the mesh programs it read the streams of, the passes it
-/// translated whole and how many of those were refused, and the passes its geometries draw by.
+/// translated whole and how many of those were refused, the passes its geometries draw by, and
+/// the stages of its passes the session held already.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Did {
     read: usize,
     translated: usize,
     refused: usize,
     drawn: usize,
+    shared: usize,
 }
 
 /// The passes that shade a model with `effect`: each technique whose first pass is a mesh
@@ -602,6 +644,7 @@ fn shading_passes<T: Translate>(
     effect: &Sgd5Effect,
     held: &[u32],
     before: Option<Passes>,
+    stages: &Stages,
     cancel: &Cancel,
 ) -> (Result<Passes, String>, Did) {
     let mut did = Did::default();
@@ -671,7 +714,12 @@ fn shading_passes<T: Translate>(
         });
         did.translated += 1;
         did.refused += usize::from(translated.is_err());
-        pass.pass = Some(translated.map(Arc::new));
+        let translated = translated.map(|mut translated| {
+            did.shared += usize::from(share(stages, &mut translated.mesh.module));
+            did.shared += usize::from(share(stages, &mut translated.pixel.module));
+            Arc::new(translated)
+        });
+        pass.pass = Some(translated);
     };
     // ⚠ A pass is picked by the streams its mesh program was read to read before its pixel
     // program said which slots cross as halves. Were the pass as translated to read others,

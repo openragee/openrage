@@ -119,10 +119,10 @@ fn the_frame_is_exposed_by_its_own_luminance_from_the_first_reading_of_its_own_h
     let bright = Metered::of(vec![8.0 / unread.stops.exp2(); 16]);
     let grey = at(Some(&bright));
     assert_eq!(grey.stops, unread.stops);
-    // The first reading of its own is taken whole: the curve over the scene's luminance.
+    // The first reading of its own is taken whole: the key over the scene's luminance.
     let first = at(Some(&bright));
     let scene = 8.0 / grey.stops.exp2();
-    let curve = -2.0 * scene.ln() - 10.0;
+    let curve = or_title::gta6_exposure::target_stops(&unread.own, scene);
     assert!(
         (first.stops - curve).abs() < 1e-3,
         "{} {curve}",
@@ -136,7 +136,7 @@ fn the_frame_is_exposed_by_its_own_luminance_from_the_first_reading_of_its_own_h
     // A scene four times as bright is moved towards, not jumped to, a moment later.
     let brighter = Metered::of(vec![4.0 * scene; 16]);
     let next = at(Some(&brighter)).stops;
-    let wanted = curve - 2.0 * 4f32.ln();
+    let wanted = or_title::gta6_exposure::target_stops(&unread.own, 4.0 * scene);
     assert!(next <= first.stops && next > wanted, "{next} {wanted}");
     assert!(exposure_adapting(), "still on its way");
     // A cut of the camera starts again, and its first reading is taken whole.
@@ -155,9 +155,7 @@ fn the_frame_is_exposed_by_its_own_luminance_from_the_first_reading_of_its_own_h
     // A scene of one candela a square metre.
     let lit = Metered::of(vec![1.0; 16]);
     let whole = cut(Some(&lit)).stops;
-    let scene = 1.0;
-    let settings = tables.exposure_settings();
-    let curve = or_title::gta6_exposure::target_stops(&settings, &unread.own, scene);
+    let curve = (unread.own.get_or("postfx_exposure_key_value", 0.18)).log2();
     assert!(
         whole != unread.stops && (whole - curve).abs() < 1e-3,
         "{whole} {curve}"

@@ -316,7 +316,7 @@ pub fn exposed(
         (false, false) => now.duration_since(adapting.at).as_secs_f32(),
     };
     let settings = tables.exposure_settings();
-    let target = or_title::gta6_exposure::target_stops(&settings, &moment.own, scene);
+    let target = or_title::gta6_exposure::target_stops(&moment.own, scene);
     // `metered` takes the scene as a frame at the stops it adapts from would hold it.
     let at_previous = scene * adapting.stops.exp2();
     let exposed = moment.metered(&settings, at_previous, adapting.stops, seconds);
@@ -414,8 +414,8 @@ pub fn day_of_moment(
             },
         ),
         // ⚠ GTA VI's exposure curve has the frame's name and another shape (a natural logarithm, a
-        // bending and offsets in place of a power): the moment is exposed by it already and the
-        // frame's own exposure held at nought, so the frame is never given it.
+        // bending and offsets in place of a power): the moment is exposed by its own key already and
+        // the frame's own exposure held at nought, so the frame is never given it.
         tone: ToneSettings::from_visual(
             &|name, default| match name.starts_with("Exposure.curve.") {
                 true => default,

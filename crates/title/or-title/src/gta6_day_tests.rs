@@ -208,15 +208,17 @@ fn a_queued_weather_is_laid_over_the_base_by_its_weight_with_its_modifiers() {
 }
 
 #[test]
-fn a_metered_frame_is_exposed_by_the_curve_and_adapted_towards_it_at_the_settings_pace() {
+fn a_metered_frame_is_exposed_by_its_key_and_adapted_towards_it_at_the_settings_pace() {
     let tables = tables();
     let night = tables.moment(1.45, "Rainy", 0.0).expect("a cycle");
     let settings = tables.exposure_settings();
     let previous = night.stops;
-    // A frame drawn at the night's stops that meters a thousand cd/m² of scene.
-    let metered = 1000.0 * previous.exp2();
+    // A frame drawn at the night's stops that meters a hundred cd/m² of scene.
+    let metered = 100.0 * previous.exp2();
     let at_once = night.metered(&settings, metered, previous, 0.0);
-    let want = -(1000f32.ln()) + 6.0 - 10.0;
+    let key = night.own.get_or("postfx_exposure_key_value", 0.18);
+    let least = night.own.get_or("postfx_exposure_min", f32::NEG_INFINITY);
+    let want = (key / 100.0).log2().max(least);
     assert!(
         (at_once.stops - want).abs() < 1e-3,
         "{} {want}",

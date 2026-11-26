@@ -188,8 +188,8 @@ The World screen is lit by GTA VI's own day, read from the install's timecycle, 
 settings: the sun's and the moon's place at the panel's hour, and the weather the Weather bar names,
 its cycle with its modifiers laid over it. The sun's colour, the sky's dome and the fog's colours
 come from a model of the atmosphere with the install's own values; the frame is exposed by the
-install's exposure curve, metered on the light of the moment, and the tone curves are the visual
-settings'.
+moment's key value over the luminance its meter reads, held to the moment's least and most, and
+the tone curves are the visual settings'.
 
 The lights around the camera are those the archetypes of its entities hold, those the entities
 place themselves and the maps' level-of-detail lights where no placed light stands, each lit in the

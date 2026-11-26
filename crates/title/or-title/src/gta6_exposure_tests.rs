@@ -8,20 +8,9 @@ fn keyframe(pairs: &[(&str, f32)]) -> Keyframe {
     k
 }
 
-/// Settings of this test's own, not an install's: a curve that falls a stop for each e-fold of light.
+/// Settings of this test's own, not an install's.
 fn settings() -> ExposureSettings {
     ExposureSettings {
-        curve: Curve {
-            scale: -1.0,
-            horizontal_offset: 0.0,
-            vertical_offset: 6.0,
-            bending: 0.0,
-        },
-        blend: Curve {
-            scale: -0.5,
-            vertical_offset: 2.0,
-            ..Curve::default()
-        },
         min_step: 0.2,
         max_step: 10.0,
         step_mult: 1.0,
@@ -48,34 +37,8 @@ fn at_zenith(degrees: f32) -> [f32; 3] {
 }
 
 #[test]
-fn the_curve_is_a_natural_logarithm_with_a_bending_ten_stops_down() {
-    let curve = Curve {
-        scale: -1.0,
-        horizontal_offset: 0.0,
-        vertical_offset: 7.0,
-        bending: 0.5,
-    };
-    assert_eq!(curve.stops(1.0), 0.5 + 7.0 - 10.0);
-    let e2 = 2f32.exp();
-    assert!((curve.stops(e2) - (-2.0 + 0.5 * e2 - 3.0)).abs() < 1e-5);
-    let offset = Curve {
-        horizontal_offset: 1.0,
-        ..curve
-    };
-    assert!((offset.stops(e2 - 1.0) - (-2.0 + 0.5 * (e2 - 1.0) - 3.0)).abs() < 1e-5);
-}
-
-#[test]
-fn the_settings_are_read_by_the_curves_names_and_the_steps_keep_their_defaults() {
-    let get = |name: &str, default: f32| match name {
-        "Exposure.curve.scale" => -2.0,
-        "Exposure.curve.blend.verticalOffset" => 4.0,
-        _ => default,
-    };
-    let read = ExposureSettings::of(&get);
-    assert_eq!(read.curve.scale, -2.0);
-    assert_eq!(read.blend.vertical_offset, 4.0);
-    assert_eq!(read.curve.vertical_offset, 0.0);
+fn the_steps_keep_their_defaults() {
+    let read = ExposureSettings::of(&|_, default| default);
     assert_eq!(
         (read.min_step, read.max_step, read.step_mult),
         (0.15, 15.0, 9.0)
@@ -83,39 +46,31 @@ fn the_settings_are_read_by_the_curves_names_and_the_steps_keep_their_defaults()
 }
 
 #[test]
-fn the_target_is_held_before_and_after_the_exposure_is_added_and_blends_the_two_curves() {
-    let settings = settings();
+fn the_target_is_the_key_over_the_luminance_held_before_and_after_the_exposure_is_added() {
     let k = keyframe(&[
+        ("postfx_exposure_key_value", 0.18),
         ("postfx_exposure_min", -4.0),
         ("postfx_exposure_max", 4.0),
         ("postfx_exposure", 3.0),
     ]);
-    // The curve gives -6 at e^2: held to -4, then 3 up.
-    let l = 2f32.exp();
-    assert!((settings.curve.stops(l) + 6.0).abs() < 1e-5);
-    assert!((target_stops(&settings, &k, l) + 1.0).abs() < 1e-5);
+    // Six stops over the key: held to -4, then 3 up.
+    assert!((target_stops(&k, 0.18 * 64.0) + 1.0).abs() < 1e-5);
     // 3 is within the range, and 3 up from it is held to the most.
-    let dark = (-7.0f32).exp();
-    assert!((settings.curve.stops(dark) - 3.0).abs() < 1e-4);
-    assert_eq!(target_stops(&settings, &k, dark), 4.0);
-
-    let blended = keyframe(&[("postfx_exposure_blend_curve_weight", 0.25)]);
-    let (a, b) = (settings.curve.stops(l), settings.blend.stops(l));
-    let want = a + (b - a) * 0.25;
-    assert!((target_stops(&settings, &blended, l) - want).abs() < 1e-5);
-    let unheld = target_stops(&settings, &Keyframe::default(), 1e9);
-    assert!(unheld < -20.0, "{unheld}");
+    assert_eq!(target_stops(&k, 0.18 / 8.0), 4.0);
+    let unheld = target_stops(&Keyframe::default(), 1e9);
+    assert!((unheld - (0.18f32 / 1e9).log2()).abs() < 1e-4, "{unheld}");
 }
 
 #[test]
-fn the_key_value_mode_takes_the_key_over_the_luminance_and_its_compensation() {
-    let settings = settings();
+fn neither_the_key_value_mode_nor_a_curve_nor_the_compensation_moves_the_target() {
+    let key = keyframe(&[("postfx_exposure_key_value", 0.18)]);
     let mut k = keyframe(&[
         ("postfx_exposure_use_key_value_mode", 1.0),
         ("postfx_exposure_key_value", 0.18),
+        ("postfx_exposure_blend_curve_weight", 0.25),
     ]);
-    assert!((target_stops(&settings, &k, 0.72) + 2.0).abs() < 1e-5);
-    // A curve whose seven points lie evenly on y = x / 2 is that line.
+    assert!((target_stops(&key, 0.72) + 2.0).abs() < 1e-5);
+    // A compensation curve whose seven points lie evenly on y = x / 2 is that line.
     for i in 0..7 {
         let x = -12.0 + 2.0 * i as f32;
         k.set(&format!("postfx_exposure_compensation_ev_cp{i}_x"), x);
@@ -124,7 +79,7 @@ fn the_key_value_mode_takes_the_key_over_the_luminance_and_its_compensation() {
     assert!((compensation(&k, -3.0) + 1.5).abs() < 1e-4);
     assert!((compensation(&k, -9.0) + 4.5).abs() < 1e-4);
     assert!(compensation(&k, 5.0).abs() < 1e-4, "held to the last x");
-    assert!((target_stops(&settings, &k, 0.72) - (-2.0 - 1.0)).abs() < 1e-4);
+    assert_eq!(target_stops(&k, 0.72), target_stops(&key, 0.72));
     assert_eq!(compensation(&Keyframe::default(), -3.0), 0.0);
 }
 
@@ -195,25 +150,14 @@ fn noon_is_exposed_darker_than_dusk_and_dusk_than_midnight() {
     assert!(night.illuminance < 1.0 && dusk.illuminance > 1000.0);
     // Through the low air the dusk sun reaches the ground at a small part of the noon sun.
     assert!(dusk.body_transmittance[1] < 0.2 * noon.body_transmittance[1]);
-    // The frame's sun at noon is a few units, and the moon's light a small part of it.
+    // The frame's sun at noon is a few units, and the moon's light, exposed by its key, less than it.
     let frame = |light: &FrameLight| {
         or_io::gta6::timecycle::frame_keyframe(&k, light)
             .get("light_dir_mult")
             .unwrap_or(0.0)
     };
     assert!((5.0..15.0).contains(&frame(&noon)), "{}", frame(&noon));
-    assert!(frame(&night) < 0.1 * frame(&noon), "{}", frame(&night));
-}
-
-#[test]
-fn without_the_ten_stops_noon_would_not_be_held_at_the_least() {
-    let k = day();
-    let mut settings = settings();
-    let (_, held) = light(&k, at_zenith(15.0), at_zenith(45.0), &settings);
-    settings.curve.vertical_offset += CURVE_OFFSET;
-    let (_, unheld) = light(&k, at_zenith(15.0), at_zenith(45.0), &settings);
-    assert_eq!(held, -11.5);
-    assert!(unheld > -11.5 + 5.0, "{unheld}");
+    assert!(frame(&night) < frame(&noon), "{}", frame(&night));
 }
 
 #[test]

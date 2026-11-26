@@ -546,7 +546,7 @@ impl DayTables {
 }
 
 impl Moment {
-    /// This moment exposed by a frame drawn at `previous` stops whose average luminance, in the frame's units, was `metered`: adapted from `previous` over `seconds` towards what the curve wants of it.
+    /// This moment exposed by a frame drawn at `previous` stops whose average luminance, in the frame's units, was `metered`: adapted from `previous` over `seconds` towards what its key wants of it.
     pub fn metered(
         &self,
         settings: &ExposureSettings,
@@ -556,7 +556,7 @@ impl Moment {
     ) -> Moment {
         // The frame holds every light times its exposure, so its luminance over that is the scene's.
         let luminance = metered / previous.exp2();
-        let target = target_stops(settings, &self.own, luminance);
+        let target = target_stops(&self.own, luminance);
         self.exposed_at(adapt(settings, &self.own, previous, target, seconds))
     }
 

@@ -1,6 +1,6 @@
-//! How GTA VI exposes its frame: which of the sun and the moon lights and how faded, the exposure
-//! curve of its visual settings over a metered luminance with the keyframe's clamps and its
-//! adaptation, and the light of a moment that comes of them.
+//! How GTA VI exposes its frame: which of the sun and the moon lights and how faded, the stops its
+//! key value takes over a metered luminance with the keyframe's clamps and its adaptation, and the
+//! light of a moment that comes of them.
 
 use std::f32::consts::PI;
 
@@ -13,11 +13,9 @@ use crate::gta6_cloud::CloudLayer;
 use crate::gta6_day_sun::{directional_light, Leader, LightTunables, LightVariables};
 use crate::gta6_sky::Atmosphere;
 
-/// The stops the build's curve takes off what its terms give.
-const CURVE_OFFSET: f32 = 10.0;
-/// The least luminance a curve takes the logarithm of or a key value is divided by.
+/// The least luminance a key value is divided by.
 const LEAST_LUMINANCE: f32 = 1e-6;
-/// The grey the stand-in meter sees the world as.
+/// The grey the stand-in meter sees the world as, and the key value where a keyframe states none.
 const GREY: f32 = 0.18;
 /// The up part of a way along the horizon, where the dome and the fog take their colours.
 const HORIZON: f32 = 0.02;
@@ -29,37 +27,9 @@ fn luminance(c: [f32; 3]) -> f32 {
     0.2125 * c[0] + 0.7154 * c[1] + 0.0721 * c[2]
 }
 
-/// One exposure curve of the visual settings: the stops it gives a metered luminance.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Curve {
-    pub scale: f32,
-    pub horizontal_offset: f32,
-    pub vertical_offset: f32,
-    pub bending: f32,
-}
-
-impl Curve {
-    fn of(get: &dyn Fn(&str, f32) -> f32, prefix: &str) -> Self {
-        Self {
-            scale: get(&format!("{prefix}scale"), 0.0),
-            horizontal_offset: get(&format!("{prefix}horizontalOffset"), 0.0),
-            vertical_offset: get(&format!("{prefix}verticalOffset"), 0.0),
-            bending: get(&format!("{prefix}bending"), 0.0),
-        }
-    }
-
-    /// The stops for a frame of average `luminance` cd/m²: the natural logarithm, the bending and the offsets, ten stops down.
-    pub fn stops(&self, luminance: f32) -> f32 {
-        let shifted = (self.horizontal_offset + luminance).max(LEAST_LUMINANCE);
-        self.scale * shifted.ln() + self.bending * luminance + self.vertical_offset - CURVE_OFFSET
-    }
-}
-
-/// What the visual settings state of the exposure: the curve, the curve it blends to, and the steps adaptation is held between.
+/// What the visual settings state of the exposure: the steps adaptation is held between and the bodies' fades.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ExposureSettings {
-    pub curve: Curve,
-    pub blend: Curve,
     /// The least and the most stops a second adaptation moves by.
     pub min_step: f32,
     pub max_step: f32,
@@ -83,8 +53,6 @@ impl ExposureSettings {
                 moon_phase: get("misc.Moon.Cycle", image.moon_phase),
                 moon_floor: get("misc.MoonDimMult", image.moon_floor),
             },
-            curve: Curve::of(get, "Exposure.curve."),
-            blend: Curve::of(get, "Exposure.curve.blend."),
             min_step: get("Adaptation.min.step.size", 0.15),
             max_step: get("Adaptation.max.step.size", 15.0),
             step_mult: get("Adaptation.step.size.mult", 9.0),
@@ -92,7 +60,7 @@ impl ExposureSettings {
     }
 }
 
-/// The compensation curve of the key-value mode at `ev`: two cubic Béziers over the keyframe's seven points, the input held to the first and last x; nought where the keyframe does not state all seven.
+/// The compensation curve the per-pixel exposure reads at `ev`: two cubic Béziers over the keyframe's seven points, the input held to the first and last x; nought where the keyframe does not state all seven.
 pub fn compensation(k: &Keyframe, ev: f32) -> f32 {
     let point = |i: usize| {
         let at = |axis: &str| k.get(&format!("postfx_exposure_compensation_ev_cp{i}_{axis}"));
@@ -123,23 +91,12 @@ pub fn compensation(k: &Keyframe, ev: f32) -> f32 {
     along(0.5 * (low + high), |p| p.1)
 }
 
-/// The stops the frame wants at an average luminance of `luminance` cd/m²: the curve, or the key value where the keyframe asks for it, held to the keyframe's least and most with its exposure and tweak added.
-pub fn target_stops(settings: &ExposureSettings, k: &Keyframe, luminance: f32) -> f32 {
+/// The stops the frame wants at an average luminance of `luminance` cd/m²: the keyframe's key value over it, in stops, held to the keyframe's least and most with its exposure and tweak added.
+// The build's exposure pass takes this form whatever the key-value mode states: the visual settings'
+// curves and the compensation curve are read by the per-pixel exposure alone.
+pub fn target_stops(k: &Keyframe, luminance: f32) -> f32 {
     let get = |name: &str, default: f32| k.get_or(name, default);
-    let ev = match get("postfx_exposure_use_key_value_mode", 0.0) > 0.0 {
-        true => {
-            let ev =
-                (get("postfx_exposure_key_value", GREY) / luminance.max(LEAST_LUMINANCE)).log2();
-            ev + compensation(k, ev)
-        }
-        false => {
-            let (a, b) = (
-                settings.curve.stops(luminance),
-                settings.blend.stops(luminance),
-            );
-            a + (b - a) * get("postfx_exposure_blend_curve_weight", 0.0)
-        }
-    };
+    let ev = (get("postfx_exposure_key_value", GREY) / luminance.max(LEAST_LUMINANCE)).log2();
     let least = get("postfx_exposure_min", f32::NEG_INFINITY);
     let most = get("postfx_exposure_max", f32::INFINITY);
     let hold = |stops: f32| stops.max(least.min(most)).min(most);
@@ -259,7 +216,7 @@ pub fn bodies(k: &Keyframe, sun: [f32; 3], moon: [f32; 3], tunables: &LightTunab
     }
 }
 
-/// The light of the moment `k` with the sun towards `sun` and the moon towards `moon`, and the stops it is exposed at: the target of the curve over a grey world under that light, with no history.
+/// The light of the moment `k` with the sun towards `sun` and the moon towards `moon`, and the stops it is exposed at: the target over a grey world under that light, with no history.
 // ponytail: a grey world stands in for the game's meter of its own frame (a trimmed mean of 256
 // logarithmic bins); the frame has no meter yet, and with one the stops are `adapt`ed from frame to frame.
 pub fn light(
@@ -292,7 +249,7 @@ pub fn light(
     let ambient = luminance([0, 1, 2].map(|c| sky[c] * tints[0][c] * tints[1][c]))
         * get("ambient_sky_intensity", 1.0);
     let metered = GREY / PI * (direct * lit.towards[2] + ambient);
-    let stops = target_stops(settings, k, metered);
+    let stops = target_stops(k, metered);
 
     let radiance = |view: [f32; 3]| air.radiance(view, sky_light, lit.illuminance);
     let level = |x: f32, y: f32| match x.hypot(y) > 1e-3 {

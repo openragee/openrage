@@ -740,9 +740,15 @@ impl Stated<'_> {
         Ok(Some(value))
     }
 
-    /// The four corners, in the order of [`CORNERS`].
+    /// The four corners, in the order of [`CORNERS`]; an item that states none of them is at zero.
     fn corners(&self) -> Result<[i16; 4], WaterError> {
         let mut corners = [0; 4];
+        if CORNERS
+            .iter()
+            .all(|corner| self.item.child(corner).is_none())
+        {
+            return Ok(corners);
+        }
         for (corner, element) in corners.iter_mut().zip(CORNERS) {
             *corner = self.read(element)?.ok_or(WaterError::MissingCorner {
                 list: self.list.name(),
@@ -797,6 +803,16 @@ impl Writing<'_> {
                 self.add(Element::leaf(element, value.written()))
             }
             None => {}
+        }
+        Ok(())
+    }
+
+    /// State the four corners; an item that states none keeps none while all four are zero.
+    fn put_corners(&mut self, corners: [i16; 4]) -> Result<(), WaterError> {
+        // One corner written alone would leave an item the reader refuses.
+        let absent = (corners == [0; 4]).then_some(0);
+        for (element, corner) in CORNERS.into_iter().zip(corners) {
+            self.put(element, corner, absent)?;
         }
         Ok(())
     }
@@ -872,9 +888,7 @@ impl Quad for CWaterQuad {
 
     fn write(&self, to: &mut Writing<'_>) -> Result<(), WaterError> {
         let default = Self::default();
-        for (element, corner) in CORNERS.into_iter().zip(self.rectangle_stated()) {
-            to.put(element, corner, None)?;
-        }
+        to.put_corners(self.rectangle_stated())?;
         to.put("Type", self.r#type, Some(default.r#type))?;
         to.put("IsInvisible", self.is_invisible, Some(default.is_invisible))?;
         to.put(
@@ -911,10 +925,7 @@ impl Quad for CCalmingQuad {
     }
 
     fn write(&self, to: &mut Writing<'_>) -> Result<(), WaterError> {
-        let corners = [self.min_x, self.max_x, self.min_y, self.max_y];
-        for (element, corner) in CORNERS.into_iter().zip(corners) {
-            to.put(element, corner, None)?;
-        }
+        to.put_corners([self.min_x, self.max_x, self.min_y, self.max_y])?;
         to.put_stated("fDampening", self.dampening)
     }
 
@@ -941,10 +952,7 @@ impl Quad for CWaveQuad {
     }
 
     fn write(&self, to: &mut Writing<'_>) -> Result<(), WaterError> {
-        let corners = [self.min_x, self.max_x, self.min_y, self.max_y];
-        for (element, corner) in CORNERS.into_iter().zip(corners) {
-            to.put(element, corner, None)?;
-        }
+        to.put_corners([self.min_x, self.max_x, self.min_y, self.max_y])?;
         to.put_stated("Amplitude", self.amplitude)?;
         to.put_stated("XDirection", self.x_direction)?;
         to.put_stated("YDirection", self.y_direction)

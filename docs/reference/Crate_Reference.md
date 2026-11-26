@@ -110,7 +110,16 @@ files, `metadata.dat` and the audio sector grid (`or_io::cache_loader`,
 networks (`or_io::mrf`). The level's `water.xml` is ordinary code beside the other data
 files, `or_io::gta5::data::water`: `CWaterData` types its water, calming and wave quads,
 keeps every other element and attribute of the document for the save, and answers the
-height of the water over a point. `gta5::script::decompile`
+height of the water over a point. An item that states no corner is a quad at zero, as a
+stripped level's file of both installs holds one, and an item that states some of its
+corners is refused (`an_item_that_states_no_corner_is_a_quad_at_zero_and_saves_as_it_came`).
+The mount of each of the owner's installs lists three water files, each typed whole and
+saved to the bytes it came as: the level's own, of 504 water, 542 calming and 116 wave
+quads; a stripped level's, of one water quad; and the one a pack of the update adds, of 62,
+252 and 140 (`every_water_file_is_typed_whole_and_saves_to_its_fixed_point` in
+`crates/title/or-title/tests/the_water_file_of_an_install.rs`, each install alone,
+2026-11-25).
+`gta5::script::decompile`
 turns a script's bytecode into C-like source over the same reader as its
 disassembler.
 
@@ -397,11 +406,17 @@ is listed at, so what the index reads of a file's own archive is what the mount
 opens at the path the index names
 (`a_file_the_title_update_patches_is_named_where_the_mount_opens_it`). A
 manifest in such a folder replaces the pack's by its path. An archive the mount
-lists twice, as a DLC list that names a pack twice makes it, takes its kept rows
-both times (`an_archive_the_mount_lists_twice_is_kept_both_times`). A bound is answered at a position only where a map group, a
-map's name or an interior carries it, because an archetype's own `.ybn` states
-its box about the model's origin
-(`a_point_answers_the_bounds_something_carries_whose_box_holds_it`). An archive
+lists twice, as the Enhanced install's content list names one pack twice, takes
+its kept rows both times (`an_archive_the_mount_lists_twice_is_kept_both_times`,
+`an_archive_the_mount_lists_twice_is_kept_twice_and_a_second_build_reads_neither`).
+A bound is answered at a position only where a map group or a map's name
+carries it, because an archetype's own `.ybn` states its box about the model's
+origin and one an interior alone carries states it about the interior's, as
+such a bound of both installs does
+(`a_point_answers_the_bounds_something_carries_whose_box_holds_it`,
+`an_interiors_bound_whose_box_is_about_the_interior_is_answered_at_no_position_and_named_by_its_map`);
+`interior_bounds_near_column` names an interior's bounds by the maps that place
+it. An archive
 is told from the one before it by its size and its time alone, so on a file
 system that keeps times to the second one written twice within a second at one
 size reads as unchanged, until `world index --fresh` reads it all again. A
@@ -464,10 +479,13 @@ The flags are held through the verb itself, in a child process, by
 `a_level_a_mode_a_kept_file_and_a_fresh_read_are_taken_from_the_command_line`.
 The install suite
 (`the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them`, slow
-tier, not yet run on an install) asks the ground at an install's vehicle path
-nodes. ⚠ Nothing in a `.ynd` states the scale of a node's stored integers, so
-the suite tests one reading of it against four rivals (`NODE_SCALES`), and the
-share of nodes it asks to be within a step is a floor, not a measurement.
+tier) asks the ground at an install's vehicle path nodes: 4,242 of 4,404 of
+the nodes asked on the owner's Legacy install and 4,237 of 4,403 on the
+Enhanced one have ground within a metre (2026-11-25). ⚠ Nothing in a `.ynd`
+states the scale of a node's stored integers, so the suite tests one reading
+of it, four units a metre across and thirty-two in height, against four rivals
+(`NODE_SCALES`), none of which puts more than 49 of 1,223 nodes on the ground.
+The share of nodes it asks to be within a step is a floor set before that run.
 
 On 2026-11-26, with the index at its second version, the install suite of the index
 (`the_world_index_names_everything_a_real_install_lists`) holds on both
@@ -491,6 +509,34 @@ found no kept rows and was read again. The ground under the road nodes
 on both: 4,242 of 4,404 nodes asked on Legacy and 4,237 of 4,403 on Enhanced
 have ground within a metre at four units a metre across and 32 up, where each
 rival reading puts 49 of 1,223 or fewer there.
+
+What the files of an install state where the index takes one reading of them is
+counted by `what_the_files_of_a_real_install_state_where_the_index_takes_one_reading`
+(`stated_by_the_files`, each install alone, 2026-11-25). The box of an
+interior's bound is about the interior: each of the 626 such bounds of Legacy
+and of the 629 of Enhanced has its centre nearer the origin than any place a map
+puts its interior, the type file of each states a box of no size for that
+interior, and the index answers none at the centre of its box; one a map's stem
+carried too would be answered there still, and neither install holds one. 473 of
+the 11,076 maps of Legacy and 473 of the 11,052 of Enhanced state a name that is
+not the hash of their file's stem, each the stem of another map of the mount, so
+a map is named by its file, and none of the 8,761 and 8,743 parents stated is a
+stem the mount lacks. Three archetypes of Legacy and four of Enhanced are
+declared by more than one type file, two of them with another box or another
+distance. A mount stopped at the pack in the middle of each install's list keeps
+43 of 86 packs and 260,860 of 394,262 files on Legacy, and 51 of 102 and 276,405
+of 395,136 on Enhanced, and walks nothing of a pack it leaves out
+(`a_real_install_at_a_level_of_dlc_walks_nothing_of_the_packs_listed_after_it`,
+2026-11-25). On mounts built by hand, the cutoff by a pack's name hash (`--dlc`)
+leaves out the folders a level leaves out
+(`a_pack_past_a_name_hash_is_left_out_of_the_walk_as_one_past_a_level_is`), and
+an archive one of whose files did not open is kept with no stamp and read again
+(`a_file_that_did_not_open_is_read_again_by_the_next_build_though_its_archive_stands`).
+The first build of the index took 30 s on Legacy and 36 s on Enhanced and kept
+11.3 MB and 12.1 MB, and a second start read them in 52 ms and 219 ms, in the
+test profile on thirty cores at a load of twenty (2026-11-25, before the index
+took its second version); beside building lanes the same machine took 934 s and
+1.7 s on Legacy, so a time here says more of the machine than of the index.
 
 `find` answers what a person typed from the indexes of a mounted install
 ([R70e](../direction/Roadmap.md#r70e-find-anything-and-go-there)). `find::find`
@@ -794,7 +840,7 @@ first; a failure while one is written leaves the ones before it built. `clean` r
 
 `sizes` weighs the files of a plan by the content that wrote each (`Plan::made_by`, so a ranking adds up to the plan's totals, or to what a build wrote once it is given the sizes its cooked files came out at).
 
-`resource` checks any resource folder as a server will read it, whoever made it and with no project. `resource::manifest` reads the lines of a manifest (a key followed by text or by a table of text, in single or double quotes, with comments and a glob), runs nothing and keeps the lines it could not read. `check` reads the manifest, the files it lists and its data-file lines name, and every file under `stream/`, which it opens through the reader a build reloads its own files through (`readers`); a file that opens with the marker of a server's asset escrow is counted, named and never opened, and a map, a type file or a `.ymt` kept as text is refused, since those readers also take the text a source is kept as. The rules are the table `RULES`, each a code, a severity and a sentence, and `Report` is what they found as data with its text lines. What an install knows of a name the folder lacks is asked through the trait `Install`, which the caller implements because this crate sees no mount, and the ceiling for the streaming memory of one file is the `file_memory` entry of a `limits` map, with no number of its own in the code. `openrage-cli project check-resource` runs it; `each_rule_fires_on_the_folder_built_to_break_it_and_on_no_other` holds every rule to a folder built to break it. No manifest costs the reader (`crates/domain/or-project/src/resource/manifest.rs`) its stack (`brackets_opened_to_any_depth_cost_no_stack`), a sound folder reports nothing, a locked file is held by `a_locked_file_is_counted_named_and_not_opened`, and with an install the names a folder lacks are asked of a catalogue built by hand, on no install. Adoption reads a resource folder too (`crates/domain/or-project/src/adopt.rs`). It reads the files and never says a server starts the resource or the game loads a file. Open in it: no file is weighed without the `file_memory` limit, because the size at which a server warns has not been read from a server and is not in the tree; the types a server streams (`STREAMED`) were read from no server either, so a file of another type is a warning; `model-unused` is not run on a folder, where a model may be a vehicle's or a ped's that no type file names; nothing judges the game line, so a resource of another game has its files opened as GTA V's; a pattern of the manifest is not matched against the folder; that a version line or the line that declares a map is absent is said only of a manifest read whole; and a name is found whatever its case where the machine that checks ignores case, which a server on Linux does not.
+`resource` checks any resource folder as a server will read it, whoever made it and with no project. `resource::manifest` reads the lines of a manifest (a key followed by text or by a table of text, in single or double quotes, with comments and a glob), runs nothing and keeps the lines it could not read. `check` reads the manifest, the files it lists and its data-file lines name, and every file under `stream/`, which it opens through the reader a build reloads its own files through (`readers`); a file that opens with the marker of a server's asset escrow is counted, named and never opened, and a map, a type file or a `.ymt` kept as text is refused, since those readers also take the text a source is kept as. The rules are the table `RULES`, each a code, a severity and a sentence, and `Report` is what they found as data with its text lines. What an install knows of a name the folder lacks is asked through the trait `Install`, which the caller implements because this crate sees no mount, and the ceiling for the streaming memory of one file is the `file_memory` entry of a `limits` map, with no number of its own in the code. `openrage-cli project check-resource` runs it; `each_rule_fires_on_the_folder_built_to_break_it_and_on_no_other` holds every rule to a folder built to break it. No manifest costs the reader (`crates/domain/or-project/src/resource/manifest.rs`) its stack (`brackets_opened_to_any_depth_cost_no_stack`), a sound folder reports nothing, a locked file is held by `a_locked_file_is_counted_named_and_not_opened`, and with an install the names a folder lacks are asked of a catalogue built by hand and, in the slow tier, of an install, which passes on the owner's two (`a_resource_checked_with_an_install_asks_the_game_about_what_it_places_and_does_not_declare`, 2026-11-25). Adoption reads a resource folder too (`crates/domain/or-project/src/adopt.rs`). It reads the files and never says a server starts the resource or the game loads a file. Open in it: no file is weighed without the `file_memory` limit, because the size at which a server warns has not been read from a server and is not in the tree; the types a server streams (`STREAMED`) were read from no server either, so a file of another type is a warning; `model-unused` is not run on a folder, where a model may be a vehicle's or a ped's that no type file names; nothing judges the game line, so a resource of another game has its files opened as GTA V's; a pattern of the manifest is not matched against the folder; that a version line or the line that declares a map is absent is said only of a manifest read whole; and a name is found whatever its case where the machine that checks ignores case, which a server on Linux does not.
 
 `server` reads the resources of a server together. `scan` walks a resources folder through its category folders in brackets, takes as a resource each folder with a manifest and keeps a folder that is neither in `Scan::ignored` without walking it; a link to a folder is not followed and is kept in `Scan::unlisted`, so the scan is not whole and the warning `folder-unread` names it, since a server follows one (`a_link_is_followed_by_neither_the_scan_nor_the_configuration`); it reads each manifest through `resource::manifest` and each file under a `stream/` once, and keeps names, sizes and SHA-256 digests and no bytes: a type file or a map is held only while the names it states are read, and a file that opens with the marker of an asset escrow is digested and handed to no reader. Every file is opened through the trait `Files`, which is where a test counts the reads. `findings` gives rows of the table `RULES`, each with the resources and the names it is about: files of one name in two resources (`file-in-two-resources`, or `file-in-two-resources-same` as a note where every copy is the same bytes), an archetype two resources declare, two folders of one resource name (`resource-name-twice`), what was not read of a resource, and, through the trait `GameFiles`, a file of the name of a file of the game, which is a note. A manifest of maps, a `.ymf`, is in none of these: every build that keeps one writes it under one name, and it is kept by the resource that ships it (`two_resources_that_each_keep_a_manifest_of_their_maps_do_not_clash_over_its_one_name`). Names the same resources share are one finding, as mods that write the same paths are one conflict in `or_title::mods`. `server::config` reads a server's configuration as far as its `ensure`, `start` and `exec` lines, the included files each once and where their line stands, so a finding says which of its resources starts last (`Finding::starts_last`); a resource's place is the first line that starts it or a category it is in, the order is said to be not known where a later line starts one of the resources again, a path that leaves the folder the configuration is in is not followed, and the order is said to be not known when no configuration is given or an included file was not read. `Config::read_beside` takes the scan too and reads an `exec` of `@resource/path` inside the folder of the one resource of that name, where `Config::read` keeps such a line as an included file that was not read. `concerning` asks a scan what a build is about to write again, from the plan's files under `stream/` and what `Declares::of` gives, leaving out the resource of the build's own name. `Declares` is the plan's archetype claims (`Plan::claims`, kind `ARCHETYPE_CLAIM`), which only a content of maps states, and the archetypes of every type file the plan ships under `stream/`: one copied or generated is read from its bytes and one cooked through the cook its caller hands it, and one that does not read is kept in `Declares::unread`, which `check-build` prints in place of its all-clear (`a_type_file_a_build_ships_as_a_file_is_asked_about_by_the_archetypes_it_states`). `check-build` also prints the problems of a plan that cannot be built and exits 1 (`a_build_whose_plan_has_a_problem_is_not_told_that_nothing_concerns_it`). `placement` asks it about the folder a build is written as: where that folder is inside the server's, a folder above it that is no category (`build-folder-outside-category`) and another folder of the resource's name (`build-resource-elsewhere`), with nothing said of a build written outside the server's folder or inside a resource of it, which is where a project adopted in place builds (`a_resource_adopted_where_it_stands_is_asked_about_its_type_file_and_is_placed_nowhere`). Nothing calls either but `openrage-cli project check-build`, and `openrage-cli project check-server` prints a `Report`. Open in it: nothing says which copy a server loads; that a folder in brackets is a category, that a streamed file is resolved by its name alone, what the three commands do and that `@resource/path` names a file of that resource were read from no server, and a `stop` or a `restart` line is not read; a type file or a map that does not open is the note `resource-unread` here and the error `file-unreadable` of `check-resource`, which is the owner's to rule on; a type file outside `stream/` is not read; what a server does with two folders of one resource name was read from no server, so the finding names them and no more; a name is compared in lower case for a file and exactly for a resource; and every file is digested, which on a large server reads every byte once. Each rule is held on folders built by hand: `a_category_in_brackets_is_walked_and_a_plain_folder_with_no_manifest_is_no_resource`, `a_locked_file_is_counted_digested_and_handed_to_no_reader`, `two_resources_that_stream_one_name_are_a_warning_for_different_bytes_and_a_note_for_the_same`, `two_resources_that_declare_one_archetype_are_named`, `two_folders_of_one_resource_name_are_named_and_a_line_that_starts_the_name_orders_neither`, `a_folder_that_cannot_be_listed_is_a_warning_and_the_scan_is_not_whole`, `a_streamed_file_that_cannot_be_read_is_noted_and_is_never_said_to_be_the_same_bytes`, `a_configuration_says_which_of_two_starts_last_and_without_one_the_order_is_not_known`, `a_file_of_a_resource_that_a_configuration_includes_is_read_inside_that_resource`, `a_build_is_told_only_what_concerns_the_files_and_the_archetypes_it_writes` and `a_build_written_where_a_server_does_not_look_is_warned_of_and_another_folder_of_its_name_is_named`; a resource whose manifest does not read stays in the result with its note, and a folder under which no resource is found is refused by both commands, since it would report nothing and read as passed. ⚠ `check-server` and `check-build` exit 1 on a warning, and `check-resource` exits 1 only on an error.
 
@@ -1080,8 +1126,8 @@ shapes under a tree built once, a `CollisionSet` holds colliders by key with
 the transform that places each, and the set answers a ray, a swept sphere, a
 box overlap and the ground under a point in world space. `doors` is the fourth,
 over the views and the collision: it finds the doors among the entities of a
-set of maps by the door extension of the archetype and then by name patterns
-its caller hands it, reads a leaf's hinge, width and motion from the
+set of maps by the door extension the entity or its archetype states and then
+by name patterns its caller hands it, reads a leaf's hinge, width and motion from the
 archetype's box, pairs the leaves of a double door, and opens a swinging leaf
 through its arc against a `CollisionSet` and the boxes of the other entities.
 `collision::associate`
@@ -1163,7 +1209,35 @@ the oriented box of a placed object are the object's own, as data a person edits
   among those of its entity sets, each saying whether the extension or a name
   found it
   (`a_door_is_found_by_its_extension_or_by_its_name_and_a_model_with_no_name_is_counted`,
-  `a_door_an_interior_places_is_found_where_the_instance_puts_it`). A leaf's hinge
+  `a_door_an_interior_places_is_found_where_the_instance_puts_it`). ⚠ The door
+  extension is asked of the entity before its archetype: in both of the owner's
+  installs no archetype states it, and 56 entities of the maps and 164 of the
+  interiors do
+  (`a_door_whose_entity_states_the_door_extension_is_found_by_it_whatever_its_archetype_states`,
+  `the_doors_of_the_install_are_counted_by_their_extension_and_by_their_name`,
+  2026-11-25). Over the Legacy install that suite looks at 1,836,128 entities,
+  those the interiors place among them, and finds 470 doors by the extension and
+  9,427 by a name, 5,080 by `*door*` and 4,347 by `*gate*`; 168,333 entities of
+  75,402 models have no name, of 145,500 models placed. Over the Enhanced one it
+  looks at 1,821,146 entities and finds 470 by the extension and 9,231 by a
+  name, 4,884 and 4,347; 165,495 entities of 76,872 models have no name, of
+  145,351. A model's name there is the stem of a file the mount lists, so a
+  model that is an entry of a drawable dictionary has none, and a name for such
+  a model is left. ⚠ Whether a model the patterns name is a door is not
+  measured: they find twenty times what the extension finds, and stay a guess.
+  The suite is
+  `crates/domain/or-maps/tests/the_doors_bounds_and_path_regions_of_the_install.rs`,
+  which also takes every `.ybn` and `.ynd` the mount lists through its source
+  and back
+  (`every_bound_and_path_region_of_the_install_becomes_a_source_that_cooks_to_its_canonical_save`,
+  [figures](../direction/Source_Format_Design.md#bounds-and-path-regions)); it
+  fails where an entity of a map states the extension and is no door by it, and
+  what it counts and compares is held in the default tier on files built by hand
+  (`crates/domain/or-maps/tests/common/install_measures.rs`:
+  `the_doors_of_two_maps_are_counted_by_what_found_each_and_a_model_with_no_name_once`,
+  `a_bound_and_a_path_region_built_here_cook_back_and_what_is_neither_is_said_unopened`,
+  the second holding one file to another's save so that a source that cooks to
+  other bytes is seen to be said). A leaf's hinge
   is at the end of the width its model's origin stands by, and a box of no finite
   size once scaled is not read
   (`a_leafs_box_says_where_its_hinge_is_and_whether_it_swings_slides_or_lifts`,

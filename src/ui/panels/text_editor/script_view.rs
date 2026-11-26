@@ -156,7 +156,13 @@ pub(super) fn draw(ui: &mut egui::Ui, app_state: &mut AppState, doc_id: Document
     let pressed: Vec<Action> = ui.input(|i| {
         (i.events.iter())
             .filter(|_| focused)
-            .filter_map(|event| shortcuts::action_for_event(event, &app_state.prefs))
+            .filter_map(|event| {
+                shortcuts::action_for_event(
+                    crate::ui::commands::Place::TextEditor,
+                    event,
+                    &app_state.prefs,
+                )
+            })
             .collect()
     });
     // A click with the primary modifier: the paint has already put the caret under the pointer.

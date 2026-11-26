@@ -2,7 +2,7 @@
 
 use egui::Key;
 
-use super::table::{none_if, Action, Spec, BASE};
+use super::table::{none_if, Action, Place, Spec, BASE};
 use crate::state::{AppState, DocPayload};
 use crate::ui::panels::text_editor::script_view::ScriptAsk;
 use crate::ui::shortcuts::ShortcutMods;
@@ -29,7 +29,7 @@ pub(super) const GO_TO_DEFINITION: Spec = Spec {
     defaults: &[(NONE, Key::F12)],
     hover: tr_key!("Move the caret to where this script defines the name under it"),
     enabled: a_script_in_front,
-    panel_key: true,
+    place: Place::TextEditor,
     run: |state, _| state.panels.get::<ScriptAsk>().definition = true,
     ..BASE
 };
@@ -42,7 +42,7 @@ pub(super) const FIND_REFERENCES: Spec = Spec {
     defaults: &[(SHIFT, Key::F12)],
     hover: tr_key!("Find every place of this script that spells the name under the caret"),
     enabled: a_script_in_front,
-    panel_key: true,
+    place: Place::TextEditor,
     run: |state, _| state.panels.get::<ScriptAsk>().references = true,
     ..BASE
 };

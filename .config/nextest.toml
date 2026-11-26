@@ -564,17 +564,17 @@ slow-timeout = { period = "60s", terminate-after = 45 }
 # The install suite of GTA VI's texture packs reads every texture of every pack of an install, in three parts by
 # folder, the folders dealt by their sizes with the largest first, so that part 1 is the longest. Each part reads its packs on
 # every worker it is given, so the parts run one at a time, and start first. On four workers (`RAYON_NUM_THREADS=4`)
-# part 1 took thirty minutes, and forty-one beside other work, and parts 2 and 3 took nineteen and eighteen: part 1 is
-# held to sixty and the others to forty.
+# part 1 took thirty minutes alone and forty-eight beside other work, and parts 2 and 3 nineteen and eighteen alone
+# and twenty-three and thirty beside it: part 1 is held to seventy-five and the others to forty-five.
 [[profile.all.overrides]]
 filter = 'test(the_packs_of_part_1_hold_to_the_container_model_and_each_texture_reads_or_is_refused_by_name)'
-slow-timeout = { period = "60s", terminate-after = 60 }
+slow-timeout = { period = "60s", terminate-after = 75 }
 priority = 100
 test-group = 'gta6-packs'
 
 [[profile.all.overrides]]
 filter = 'test(/^the_packs_of_part_[23]_hold_to_the_container_model_and_each_texture_reads_or_is_refused_by_name$/)'
-slow-timeout = { period = "60s", terminate-after = 40 }
+slow-timeout = { period = "60s", terminate-after = 45 }
 priority = 100
 test-group = 'gta6-packs'
 

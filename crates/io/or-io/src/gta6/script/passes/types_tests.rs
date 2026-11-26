@@ -1578,3 +1578,98 @@ fn a_callees_integer_result_is_widened_as_its_signature_says_where_interproc_is_
     assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
     assert_eq!(f.cfg.blocks[0].stmts[1], set(1, as_i32(local(0))));
 }
+
+#[test]
+fn a_variable_every_assignment_of_which_makes_an_array_is_an_array_of_its_elements() {
+    let array = |name: &str, flags: u32| Expr::NewArray {
+        ty: VmType {
+            name: name.to_owned(),
+            byte_size: 4,
+            id: 3,
+            flags,
+        },
+        len: Box::new(int(2)),
+        wrapper: String::new(),
+    };
+    let stmts = vec![
+        set(0, array("type_00000000000000AA", 0)),
+        set(1, array("type_00000000000000BB", 0x08)),
+        // Two arrays of other elements are some reference, and no array of either.
+        set(2, array("type_00000000000000AA", 0)),
+        set(2, array("type_00000000000000BB", 0x08)),
+    ];
+    let f = typed_in(stmts.clone(), Project::empty());
+    let object = Kind::Object("type_00000000000000AA".to_owned());
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Array(Box::new(object)));
+    let value = Kind::Value {
+        ty: "type_00000000000000BB".to_owned(),
+        cells: 1,
+    };
+    assert_eq!(kind_of(&f, Var::Local(1)), Kind::Array(Box::new(value)));
+    assert_eq!(kind_of(&f, Var::Local(2)), Kind::Pointer);
+    // With `kinds` off an array is a pointer, as before.
+    let f = typed_function(stmts, &Names::default());
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Pointer);
+}
+
+#[test]
+fn a_value_of_two_cells_only_natives_make_compare_and_take_is_a_handle() {
+    let native = |returns: u32, args: Vec<Expr>| Expr::Call {
+        callee: Callee::Native {
+            namespace: None,
+            name: "_0x00000000000000A1".to_owned(),
+            hash: 0xA1,
+            rva: 0,
+        },
+        args,
+        returns: Some(returns),
+    };
+    let compared = Expr::Call {
+        callee: Callee::Intrinsic {
+            name: "bytes_equal_16".to_owned(),
+            ty: None,
+            wrapper: None,
+        },
+        args: vec![
+            Expr::AddrOf {
+                var: Var::Local(0),
+                cell: 0,
+            },
+            Expr::AddrOf {
+                var: Var::Local(2),
+                cell: 0,
+            },
+        ],
+        returns: Some(1),
+    };
+    let stmts = vec![
+        set(0, native(2, Vec::new())),
+        set(2, native(2, Vec::new())),
+        Stmt::Eval(native(0, vec![local(0)])),
+        set(6, compared),
+        // Made by a native, and read a cell at a time.
+        set(4, native(2, Vec::new())),
+        set(
+            7,
+            Expr::Cell {
+                base: Box::new(local(4)),
+                index: 1,
+            },
+        ),
+    ];
+    let mut f = function(stmts);
+    for n in [0, 2, 4] {
+        let mut info = VarInfo::new(Width::Cells);
+        info.kind = Kind::Aggregate(2);
+        f.head.vars.insert(Var::Local(n), info);
+    }
+    let names = Names::default();
+    run_in(
+        &mut f,
+        &kinded(&names, Project::empty()),
+        &mut Stats::default(),
+    );
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Handle);
+    assert_eq!(kind_of(&f, Var::Local(2)), Kind::Handle);
+    assert_eq!(kind_of(&f, Var::Local(4)), Kind::Aggregate(2));
+}

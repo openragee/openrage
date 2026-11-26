@@ -30,6 +30,8 @@ const FIELD_ROUNDS: usize = 4;
 const MAX_OWNERS: u32 = 16;
 /// The rounds a kind lost may cost the kinds of what is copied from it, before every unproved kind goes.
 const LOOSE_ROUNDS: usize = 8;
+/// The flags of a type whose values are held in place.
+const VALUE: u32 = 0x1C;
 
 /// Infers the kind of every variable and constant, then drops each cast the kinds make redundant and types each access.
 pub fn run(f: &mut cfg::Function, names: &Names, stats: &mut Stats) {
@@ -1772,6 +1774,17 @@ impl Typing<'_> {
                 callee, returns, ..
             } => self.around.yields(callee, *returns).0,
             Expr::NewObject(ty) => Lat::Is(Kind::Object(ty.name.clone())),
+            // An array is a reference to its elements: objects, or values held in place.
+            Expr::NewArray { ty, .. } if self.around.kinds => {
+                let element = match ty.flags & VALUE != 0 {
+                    true => Kind::Value {
+                        ty: ty.name.clone(),
+                        cells: ty.byte_size.div_ceil(8).max(1),
+                    },
+                    false => Kind::Object(ty.name.clone()),
+                };
+                Lat::Is(Kind::Array(Box::new(element)))
+            }
             Expr::NewArray { .. } | Expr::AddrOf { .. } | Expr::ByteOffset { .. } => {
                 Lat::Is(Kind::Pointer)
             }
@@ -2303,6 +2316,15 @@ impl Typing<'_> {
                 *known = Kind::Unknown;
             }
         }
+        // ⚠ Not over a kind a list gives the value: a vector natives make and take is a vector.
+        if self.around.kinds {
+            for var in handles(&f.cfg, &self.wide) {
+                let unsaid = matches!(found.get(&var), Some(Kind::Aggregate(2) | Kind::Unknown));
+                if unsaid {
+                    found.insert(var, Kind::Handle);
+                }
+            }
+        }
         for (var, lat) in &self.known {
             found.insert(*var, lat.kind());
         }
@@ -2365,6 +2387,92 @@ impl Typing<'_> {
                 }
             }
             _ => Kind::Unknown,
+        }
+    }
+}
+
+/// The values of two cells that only natives make, compare and take: each is assigned only what a native yields in two cells, no value or another such variable, and is read only whole, as an argument or as one side of a comparison of its sixteen bytes.
+// ⚠ A value read a cell at a time is two things, or a struct whose fields are read: no handle.
+fn handles(cfg: &cfg::Cfg, wide: &HashSet<Var>) -> HashSet<Var> {
+    let mut made: HashMap<Var, bool> = HashMap::new();
+    let mut copies: Vec<(Var, Var)> = Vec::new();
+    let mut whole: HashMap<Var, (u32, u32)> = HashMap::new();
+    let note = |top: &Expr, whole: &mut HashMap<Var, (u32, u32)>| {
+        top.walk(&mut |e| match e {
+            Expr::Var(var) | Expr::AddrOf { var, .. } => whole.entry(*var).or_default().0 += 1,
+            Expr::Call { callee, args, .. } => {
+                let compared =
+                    matches!(callee, Callee::Intrinsic { name, .. } if name == "bytes_equal_16");
+                for arg in args {
+                    let taken = match (arg, callee, compared) {
+                        (Expr::Var(var), Callee::Native { .. }, _) => Some(var),
+                        (Expr::AddrOf { var, cell: 0 }, _, true) => Some(var),
+                        _ => None,
+                    };
+                    if let Some(var) = taken {
+                        whole.entry(*var).or_default().1 += 1;
+                    }
+                }
+            }
+            _ => {}
+        });
+    };
+    for block in &cfg.blocks {
+        for stmt in &block.stmts {
+            if let Stmt::Assign { target, value } = stmt {
+                if wide.contains(target) {
+                    let native = matches!(
+                        value,
+                        Expr::Call {
+                            callee: Callee::Native { .. },
+                            returns: Some(2),
+                            ..
+                        }
+                    );
+                    let held = match value {
+                        Expr::Var(from) if wide.contains(from) => {
+                            copies.push((*target, *from));
+                            whole.entry(*from).or_default().1 += 1;
+                            true
+                        }
+                        _ => native || matches!(value, Expr::GuidEmpty),
+                    };
+                    *made.entry(*target).or_insert(true) &= held;
+                }
+            }
+            stmt.each_expr(&mut |top| note(top, &mut whole));
+            for target in stmt.targets() {
+                made.entry(*target).or_insert(true);
+            }
+            if !matches!(stmt, Stmt::Assign { target, .. } if wide.contains(target)) {
+                for target in stmt.targets() {
+                    made.insert(*target, false);
+                }
+            }
+        }
+        if let Some(e) = block.term.expr() {
+            note(e, &mut whole);
+        }
+    }
+    let mut handles: HashSet<Var> = (made.into_iter())
+        .filter(|(var, made)| {
+            let (stands, taken) = whole.get(var).copied().unwrap_or_default();
+            let own = matches!(var, Var::Local(_) | Var::Value { .. } | Var::Stack { .. });
+            *made && own && stands == taken
+        })
+        .map(|(var, _)| var)
+        .collect();
+    // A copy holds a handle only where what it copies does.
+    loop {
+        let before = handles.len();
+        for (to, from) in &copies {
+            if !(handles.contains(to) && handles.contains(from)) {
+                handles.remove(to);
+                handles.remove(from);
+            }
+        }
+        if handles.len() == before {
+            return handles;
         }
     }
 }

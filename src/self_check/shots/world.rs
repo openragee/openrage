@@ -336,8 +336,8 @@ fn hex(names: &[u32]) -> Vec<String> {
     out
 }
 
-/// Write what the viewer wants and draws at its camera to `path` as JSON.
-fn dump(path: &Path) -> Result<(), String> {
+/// Write what the viewer wants and draws at its camera, and what the device holds of it (`textures`, `stand_ins`), to `path` as JSON.
+fn dump(path: &Path, (textures, stand_ins): (Vec<String>, Vec<String>)) -> Result<(), String> {
     let mut viewer = viewer();
     let selected = (viewer.selected(&mut Vec::new()))
         .ok_or("no world streams yet: put `world settle` before `world dump`")?;
@@ -379,6 +379,9 @@ fn dump(path: &Path) -> Result<(), String> {
         "list_instances": census.list_instances,
         "drawn_nodes": drawn_nodes,
         "cards": { "lists": selected.cards.len(), "records": records },
+        // ⚠ A texture is `KEY:ASKED:WIDTHxHEIGHT` and a stand-in `ID:SLOT:LEVEL`: two runs of one scene should hold the same.
+        "device_textures": textures,
+        "device_stand_ins": stand_ins,
     });
     drop(viewer);
     let text = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
@@ -432,7 +435,7 @@ impl Shell {
                     self.failed.push(why);
                 }
             }
-            WorldStep::Dump(name) => dump(&out.join(name))?,
+            WorldStep::Dump(name) => dump(&out.join(name), self.bridge.world_residency())?,
             // The groups follow the modes, as they do on the screen until a group is ticked.
             WorldStep::Modes(modes) => viewer().enabled.modes = *modes,
             WorldStep::Fly(velocity, seconds) => self.fly(state, *velocity, *seconds)?,

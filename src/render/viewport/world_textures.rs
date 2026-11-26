@@ -434,6 +434,24 @@ impl Textures {
         gone.into_iter().map(|idle| idle.key).collect()
     }
 
+    /// Each texture on the device as `KEY:ASKED:WIDTHxHEIGHT`, sorted.
+    pub(super) fn residency(&self) -> Vec<String> {
+        let mut out: Vec<String> = (self.map.iter())
+            .filter_map(|(key, texture)| match texture {
+                Texture::Ready(ready) => {
+                    let side = ready.view.texture().size();
+                    Some(format!(
+                        "{key:016X}:{}:{}x{}",
+                        ready.got, side.width, side.height
+                    ))
+                }
+                Texture::Missing => None,
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
     /// How many are on the device, and how many no pack holds or did not read.
     pub(super) fn counts(&self) -> (usize, usize) {
         let ready = |t: &&Texture| matches!(t, Texture::Ready(_));

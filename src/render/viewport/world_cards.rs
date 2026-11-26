@@ -34,6 +34,8 @@ pub(super) struct Cards {
     slots: HashMap<usize, Option<u32>>,
     /// The next slot to bake into: never one baked before, since a bake draws over what a slot holds.
     next: u32,
+    /// The level of its model each species id was baked from.
+    levels: HashMap<usize, usize>,
     /// The lists shown last, by their place in the selection.
     shown: Vec<u32>,
     /// The colour a species' records state, by each colour map of its model no file holds, and a map of each such colour.
@@ -47,6 +49,18 @@ impl Cards {
     /// The colour map that stands in for `key`, a colour map no file holds, where the records of its species state a colour.
     pub(super) fn stated(&self, key: u64) -> Option<&wgpu::TextureView> {
         self.views.get(self.stated.get(&key)?)
+    }
+
+    /// Each species id baked as `ID:SLOT:LEVEL`, and one that will never bake as `ID:-`, sorted by id.
+    pub(super) fn residency(&self) -> Vec<String> {
+        let mut ids: Vec<(&usize, &Option<u32>)> = self.slots.iter().collect();
+        ids.sort_unstable();
+        (ids.into_iter())
+            .map(|(id, slot)| match (slot, self.levels.get(id)) {
+                (Some(slot), Some(level)) => format!("{id}:{slot}:{level}"),
+                _ => format!("{id}:-"),
+            })
+            .collect()
     }
 }
 
@@ -85,11 +99,11 @@ impl WorldGpu {
         (grey, stand_in): (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>),
         absent: &mut Vec<(u64, bool)>,
         stood: &mut Vec<u64>,
-    ) -> Option<Vec<CardMesh<'a>>> {
+    ) -> Option<(Vec<CardMesh<'a>>, usize)> {
         let Some(Slot::Ready { lods, .. }) = self.models.get(model) else {
             return None;
         };
-        for lod in lods.iter().rev() {
+        for (level, lod) in lods.iter().enumerate().rev() {
             let mut ready = Vec::with_capacity(lod.meshes.len());
             let mut waits = false;
             for mesh in &lod.meshes {
@@ -153,7 +167,7 @@ impl WorldGpu {
                     }
                 })
                 .collect();
-            return Some(meshes);
+            return Some((meshes, level));
         }
         None
     }
@@ -204,6 +218,7 @@ impl WorldGpu {
         if changed {
             self.cards.table = Some(Arc::clone(species));
             self.cards.slots.clear();
+            self.cards.levels.clear();
             self.cards.by_id.clear();
         }
         // The model of each species a shown list names and no slot holds, by the nearest list that names it.
@@ -267,7 +282,7 @@ impl WorldGpu {
                 &mut keys,
             );
             stood.extend(keys.into_iter().zip(std::iter::repeat(colour)));
-            let Some(meshes) = found else {
+            let Some((meshes, level)) = found else {
                 continue;
             };
             if bakes == 0 {
@@ -280,6 +295,7 @@ impl WorldGpu {
                 && renderer.bake_card_slot(device, queue, slot, kind.centre, kind.radius, &meshes);
             if fits {
                 self.cards.next += 1;
+                self.cards.levels.insert(id, level);
             }
             settled.push((id, fits.then_some(slot)));
         }

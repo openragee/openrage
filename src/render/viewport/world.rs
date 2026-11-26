@@ -234,6 +234,14 @@ impl RenderBridge {
         self.world.changes
     }
 
+    /// The world's textures on the device and the far stand-ins baked, each as a sorted line, for the check that two runs hold the same.
+    pub fn world_residency(&self) -> (Vec<String>, Vec<String>) {
+        (
+            self.world.textures.residency(),
+            self.world.cards.residency(),
+        )
+    }
+
     /// Forget the lit frame's temporal history and start its camera offsets from their first.
     pub fn restart_temporal(&self) {
         self.renderer.restart_temporal();

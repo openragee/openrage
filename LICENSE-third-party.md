@@ -205,8 +205,8 @@ By the owner's decision of 2026-10-05
 LGPL-2.1-or-later C and NihAV's AGPL-3.0 Rust, so that OpenRage decodes every media format in its
 own Rust with no setup. Each ported file opens with a header naming its origin, its upstream path,
 the revision it was taken at and its licence, and is listed in the table below with the same four
-facts. The `license` field of the crate's `Cargo.toml` states the strictest licence among them, and
-the licences are reviewed before any publication
+facts. The `license` field of the crate's `Cargo.toml` states the strictest licence among them. The
+licences are not reviewed yet, though the packages of `v0.1.0` link the crate
 ([policy](docs/guides/Licence_And_Provenance_Policy.md#the-rules)).
 
 | Rust file | Origin | Upstream path | Revision | Licence |
@@ -252,7 +252,7 @@ decoder.
 NihAV is <https://git.nihav.org/?p=nihav.git>, by Kostya Shishkov. Its `COPYING` is the GNU Affero
 General Public License version 3, and its README states no later version, so the three Bink 2 files
 are AGPL-3.0-only and the crate's `license` field says so; the README adds that parts of the project
-can be relicensed to LGPLv2 on request, which the review before publication may use. The Bink 2
+can be relicensed to LGPLv2 on request, which the licence review may use. The Bink 2
 decoder is port-for-port too, except in what the shipped movies fix against the `bink2w64.dll` of
 the install that ships them: the inverse transform takes the columns of a block first, an inter
 block's DC takes the same 32 of rounding an intra block's does, the second pass of a chroma vector
@@ -266,7 +266,7 @@ filter of an inter block's residue, and the clamp that keeps a 16×16 square on 
 disassembly and decompilation, with the owner's decision of 2026-10-06
 ([recorded](docs/direction/Project_Context.md#the-bink-2-in-loop-filter-is-derived-from-rads-dll-2026-10-06)).
 The code is Rust of OpenRage's own, and the constants and tables it holds are the DLL's. The files
-stay in `or-media`, are reviewed before any publication with R66h, and each opens with a header
+stay in `or-media`, await R66h's licence review, and each opens with a header
 naming the DLL file, its version and the functions' addresses. The DLL itself is never copied; a
 Windows test loads the one beside the executable of the user's own install, and the Legacy
 install's, version 1.994a, gives the same pictures.

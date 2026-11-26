@@ -41,22 +41,23 @@ OpenRage opens, edits and saves the files Rockstar's RAGE games ship: a desktop 
 | | GTA V Legacy | GTA V Enhanced | Red Dead Redemption 2 | GTA VI |
 |---|:-:|:-:|:-:|:-:|
 | Install found and browsed | yes | yes | yes | yes, as a folder |
-| Archives | RPF7 · R W | RPF7 · R W | RPF8 · R | RPF9 · R by scan |
+| Archives | RPF7 · R W | RPF7 · R W | RPF8 · R | RPF9 · R, W as a patched copy |
 | Textures | R W | R W | – | R W, in part |
 | Models | R W | R W | – | R, W in part |
 | Collision and navigation | R W | R W | – | R, W in part |
-| Animation | R W | R W | – | R |
-| Particle effects | R W | R W | – | R in part |
+| Animation | R W | R W | – | R, W in part |
+| Particle effects | R W | R W | – | R, W in part |
 | Maps and world data | R W | R W | – | R, W in part |
 | Metadata and text | R W | R W | – | R, W in part |
-| Audio | R W | R W | – | R |
-| Video | R | R | – | R, pictures only |
-| Scripts | R | R | – | – |
-| Viewport lit by the game's own shaders | yes | – | – | – |
+| Audio | R W | R W | – | R, W in part |
+| Video | R | R | – | R |
+| Scripts | R | R | – | R, a value W |
+| Viewport lit by the game's own shaders | yes | – | – | in part |
+| The world streamed and flown through | – | – | – | yes |
 
 - **GTA V.** Both editions are first class. A file's layout comes from its own RSC7 version, never from the install it came from, because an Enhanced install ships Legacy resources too.
 - **Red Dead Redemption 2.** Its archives open; its resources are not decoded yet.
-- **GTA VI.** An archive's table is encrypted and OpenRage holds no key, so its files are found by scanning and nothing is written back into an archive: an edit saves as a loose file, and no save has been tried in the game.
+- **GTA VI.** An archive's table is enciphered, and its keys are read from the user's own executable. With them an install is browsed as a GTA V one is, a compiled script reads as decompiled source ([how](docs/features/GTA_VI_Script_Decompiler.md)), and the World workspace flies through the world as the game streams it ([how](docs/features/GTA_VI_World_Viewer.md)); without them an archive is listed by a scan of the bodies it stores in the clear. An edit saves as a file of its own or into a patched copy of its archive, which keeps the signed table byte for byte. The game refuses an archive whose table was rebuilt, and no file OpenRage saved has been tried in the game ([guide](docs/guides/GTA_VI_Modding.md), [what is read and refused](docs/features/GTA_VI_Xbox_Build.md)).
 - **Earlier titles.** `or-io` also reads and writes the archives of the RAGE games before GTA V and the IMG files of GTA III to GTA IV (RPF0 to RPF6, IMG1 to IMG3), and nothing inside them.
 
 [File_Support.md](docs/features/File_Support.md) says what each cell covers and where it stops.
@@ -92,9 +93,10 @@ Any other file opens as text when it is text, and read-only as its bytes otherwi
 
 ### `openrage`, the editor
 
-A desktop app on egui, winit and wgpu, with workspaces for browsing an install, models, textures, animation, particles and data, and for a project's clothing, weapons and maps.
+A desktop app on egui, winit and wgpu, with workspaces for browsing an install, models, textures, animation, particles and data, for a project's clothing, weapons and maps, and for flying through GTA VI's world.
 
-- **Viewport.** Wireframe, Solid, Material and Shaded modes; Shaded draws with GTA V Legacy's own shaders, baked from the user's install ([shading modes](docs/features/Viewport_Shading_Modes.md)).
+- **Viewport.** Wireframe, Solid, Material and Shaded modes; Shaded draws with GTA V Legacy's own shaders, baked from the user's install, and a GTA VI model's passes with the game's own programs where they translate ([shading modes](docs/features/Viewport_Shading_Modes.md)).
+- **World.** A free camera through GTA VI's world as the game streams it, at the hour and in the weather the World panel sets ([how](docs/features/GTA_VI_World_Viewer.md)).
 - **Previews.** A particle simulator ([how](docs/features/Particle_Preview.md)), an animation timeline ([how](docs/features/Animation_Preview.md)), and audio and video decoded in OpenRage's own Rust, so nothing else needs installing.
 - **Mods.** A shipped archive can be copied into the install's `mods` overlay, which the app then reads in place of the original, and a Mods panel lists what an install holds and in which order ([details](docs/features/File_Support.md#the-mods-overlay)).
 - **Plugins.** A WebAssembly module asks for capabilities by name, the user answers before its first run, and every refusal is shown ([plugins](plugins/README.md)).
@@ -106,9 +108,10 @@ The same readers and writers for scripts; `openrage-cli <command> --help` gives 
 
 | To | Commands |
 |---|---|
-| Look inside | `inspect` `describe` `search` `depends` `names` `hash` `formats` `versions` |
-| Convert | `convert` `meta` `texture` `mesh` `awc` `gfx` `script` `deflate` |
+| Look inside | `inspect` `describe` `search` `depends` `names` `hash` `hashes` `formats` `versions` `analyse` |
+| Convert | `convert` `meta` `texture` `mesh` `awc` `gfx` `script` `navmesh` `deflate` |
 | Work on archives | `rpf` `bulk` `dlc` `dlc-list` |
+| Work on GTA VI | `keys` `rpf9` `ttpf` `model` `gta6-project` `gta6-save` `gta6-mission` |
 | Build content | `project` `wardrobe` `addonped` `weapons` `maps` `particles` `source` `world` |
 | Automate | `serve` (NDJSON over stdio, [protocol](docs/reference/CLI_Server_Protocol.md)), `mcp` (for AI agents, [tools](docs/reference/MCP_Server.md)), `photo` (pictures of models with no window) |
 
@@ -135,7 +138,7 @@ Errors come only at open and at save. [OR_IO_Specification.md](docs/direction/OR
 
 ## Build from source
 
-OpenRage is pre-1.0: nothing is published yet, and crate paths and APIs still move. Windows is the primary platform, and a release tag packages Linux and macOS as well; on Linux, sound needs ALSA's headers to build (`libasound2-dev`). The toolchain is the nightly [rust-toolchain.toml](rust-toolchain.toml) pins. Install [just](https://github.com/casey/just) and `cargo install cargo-nextest --locked`, then:
+OpenRage is pre-1.0, and crate paths and APIs still move. [Releases](https://github.com/openragee/openrage/releases) hold a `.zip` for Windows, a `.tar.gz` and a `.deb` for Linux and an unsigned `.dmg` for macOS, each with a checksum. Windows is the primary platform; on Linux, sound needs ALSA's headers to build (`libasound2-dev`). The toolchain is the nightly [rust-toolchain.toml](rust-toolchain.toml) pins. Install [just](https://github.com/casey/just) and `cargo install cargo-nextest --locked`, then:
 
 ```bash
 just build        # release build of the whole workspace
@@ -168,6 +171,7 @@ Dependencies run one way, foundation → io → title → domain → runtime →
 - [docs/](docs/README.md) indexes every document, and [the roadmap](docs/direction/Roadmap.md) says what is done and what comes next.
 - [AGENTS.md](AGENTS.md) holds the rules every contributor and agent session follows, and [the development workflow](docs/guides/Development_Workflow.md) how a change lands.
 - [The format guide](docs/guides/New_Format_Implementation_Guide.md) brings a new format up from reconnaissance to the app.
+- [The GTA VI modding guide](docs/guides/GTA_VI_Modding.md) goes from the keys of an executable to a patched copy of an archive, and [the acceptance sheet](docs/guides/In_Game_Acceptance.md) says what to look for in a running game.
 - RAGE's binary layout specifications are held out of the repository ([Private_Tier.md](docs/guides/Private_Tier.md)).
 
 ## Licence
@@ -176,8 +180,8 @@ MIT — see [LICENSE](LICENSE). Third-party code and its notices are listed in
 [LICENSE-third-party.md](LICENSE-third-party.md). The one exception is `crates/io/or-media`,
 which decodes the audio and video: it holds code ported from FFmpeg (LGPL-2.1-or-later) and from
 NihAV (AGPL-3.0), and a Bink 2 filter derived from RAD's proprietary `bink2w64.dll` for
-interoperability, so it is AGPL-3.0-only, and what that asks of the editor and the CLI that link it
-is reviewed before anything is published ([policy](docs/guides/Licence_And_Provenance_Policy.md)).
+interoperability, so it is AGPL-3.0-only. The editor and the CLI link it, in a release's packages
+too, and what that asks of them is not reviewed yet ([policy](docs/guides/Licence_And_Provenance_Policy.md)).
 The decoder of BCPack texture bodies is ported from
 [bcpack-rs](https://github.com/Ahmet-Dedeler/bcpack-rs) by Ahmet Dedeler.
 
@@ -186,6 +190,7 @@ endorsed by, or connected to Rockstar Games or Take-Two Interactive. "Grand
 Theft Auto" and "Red Dead Redemption" are trademarks of their respective owners.
 No game assets are distributed with this software; it operates on files the user
 already owns. OpenRage extracts the keys it can from the user's own game
-executable. The rest come from CodeWalker's key snapshot, which OpenRage
-bundles, or from one the user supplies; the snapshot is encrypted under a key
-taken from the user's executable, so it opens nothing without the game.
+executable. The rest come from the key snapshots OpenRage bundles, CodeWalker's
+for GTA V among them, or from one the user supplies; a bundled snapshot is
+encrypted under a key taken from the user's executable, so it opens nothing
+without the game.

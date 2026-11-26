@@ -31,9 +31,10 @@ NihAV's AGPL-3.0 Rust, wherever that is the fastest correct route to decoding a 
 ([owner, 2026-10-05](../direction/Project_Context.md#every-media-format-is-decoded-in-rust-inside-the-tree-2026-10-05)).
 It is a crate of its own so that `or-io` stays MIT. Each ported file opens with a header naming its
 origin, upstream path, revision and licence; `LICENSE-third-party.md` lists it; and the crate's
-`Cargo.toml` `license` field states the strictest licence it holds. The tool is not published soon,
-and the licences are reviewed before any publication, with
-[R66h](../direction/Roadmap.md#r66h-publish-the-crate-and-the-editor-together).
+`Cargo.toml` `license` field states the strictest licence it holds. The review of these licences was
+set before any publication, with
+[R66h](../direction/Roadmap.md#r66h-publish-the-crate-and-the-editor-together). ⚠ It is not done
+yet: the repository is public and the packages of `v0.1.0` link the crate.
 
 They rest on the owner's decisions in
 [Project_Context.md](../direction/Project_Context.md#decisions) and the
@@ -129,7 +130,7 @@ measurement behind each. Measure and write the test before opening a reference.
   decoder, which decodes XMA, all LGPL-2.1-or-later, NihAV's Bink 2 decoder, AGPL-3.0-only, and the
   Bink 2 filter derived from RAD's `bink2w64.dll`; its `Cargo.toml` states the strictest of them,
   AGPL-3.0-only, and `LICENSE-third-party.md` lists each file. Each file ported later gets its row
-  there, and every licence is reviewed before publication ([R66h](../direction/Roadmap.md#r66h-publish-the-crate-and-the-editor-together)).
+  there. The review of every licence ([R66h](../direction/Roadmap.md#r66h-publish-the-crate-and-the-editor-together)) is not done yet, though `v0.1.0` is published.
 - Nothing audits the Cargo dependencies' licences; `cargo-deny` is planned in
   [cleanup before publishing](../direction/OR_IO_Specification.md#cleanup-before-publishing).
 - The module comment of `crates/io/or-io/src/meta/binary/public_names.rs`

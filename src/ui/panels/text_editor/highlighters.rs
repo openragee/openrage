@@ -12,6 +12,8 @@ pub enum Language {
     Ini,
     IdeIpl,
     Log,
+    /// The source a decompiled script is written as; no path names it.
+    CSharp,
 }
 
 impl Language {
@@ -97,6 +99,7 @@ pub fn highlight_line<'a>(language: Language, line: &'a str) -> Vec<Token<'a>> {
         Language::Ini => highlight_ini(line),
         Language::IdeIpl => highlight_ide_ipl(line),
         Language::Log => highlight_log(line),
+        Language::CSharp => highlight_csharp(line),
     }
 }
 
@@ -517,6 +520,138 @@ pub(crate) fn highlight_log(line: &str) -> Vec<Token<'_>> {
     out
 }
 
+const CSHARP_KEYWORDS: &[&str] = &[
+    "abstract",
+    "as",
+    "async",
+    "await",
+    "base",
+    "bool",
+    "break",
+    "byte",
+    "case",
+    "catch",
+    "char",
+    "class",
+    "const",
+    "continue",
+    "default",
+    "delegate",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "event",
+    "false",
+    "finally",
+    "float",
+    "for",
+    "foreach",
+    "goto",
+    "if",
+    "in",
+    "int",
+    "interface",
+    "internal",
+    "is",
+    "lock",
+    "long",
+    "namespace",
+    "new",
+    "null",
+    "object",
+    "out",
+    "override",
+    "private",
+    "protected",
+    "public",
+    "ref",
+    "return",
+    "sbyte",
+    "short",
+    "static",
+    "string",
+    "struct",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "uint",
+    "ulong",
+    "ushort",
+    "using",
+    "var",
+    "virtual",
+    "void",
+    "while",
+    "yield",
+];
+
+/// How many of the first bytes of `bytes` hold with `keep`.
+fn run(bytes: &[u8], keep: impl Fn(u8) -> bool) -> usize {
+    bytes.iter().take_while(|b| keep(**b)).count()
+}
+
+// ⚠ A line is coloured with nothing carried from the line before, so a token that spanned two
+// lines would be coloured wrong: the source a script decompiles to holds none.
+pub(crate) fn highlight_csharp(line: &str) -> Vec<Token<'_>> {
+    let mut tokens: Vec<Token<'_>> = Vec::new();
+    let bytes = line.as_bytes();
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        let (end, color) = if line[i..].starts_with("//") {
+            (bytes.len(), theme::SYNTAX_COMMENT.get())
+        } else if c == b'"' || c == b'\'' {
+            let mut end = i + 1;
+            while end < bytes.len() {
+                // A backslash takes the byte after it, a closing quote among them.
+                let step = if bytes[end] == b'\\' { 2 } else { 1 };
+                let closes = bytes[end] == c;
+                end += step;
+                if closes {
+                    break;
+                }
+            }
+            // ⚠ An escape before a character of several bytes can end inside it.
+            let mut end = end.min(bytes.len());
+            while !line.is_char_boundary(end) {
+                end += 1;
+            }
+            (end, theme::SYNTAX_STRING.get())
+        } else if c.is_ascii_digit() {
+            let digits = run(&bytes[i..], |b| word(b) || b == b'.');
+            (i + digits, theme::SYNTAX_NUMBER.get())
+        } else if word(c) {
+            let end = i + run(&bytes[i..], word);
+            let color = if CSHARP_KEYWORDS.contains(&&line[i..end]) {
+                theme::SYNTAX_KEYWORD.get()
+            } else {
+                theme::TEXT_PRIMARY.get()
+            };
+            (end, color)
+        } else {
+            // Up to the next byte that can start a word, a number, a string or a comment.
+            let rest = run(&bytes[i + 1..], |b| {
+                !(word(b) || b == b'"' || b == b'\'' || b == b'/')
+            });
+            (i + 1 + rest, theme::TEXT_PRIMARY.get())
+        };
+        push_token(&mut tokens, &line[i..end], color);
+        i = end;
+    }
+    if tokens.is_empty() {
+        tokens.push(Token {
+            text: line,
+            color: theme::TEXT_PRIMARY.get(),
+        });
+    }
+    tokens
+}
+
 fn classify_log_token(tok: &str) -> Color32 {
     if tok.eq_ignore_ascii_case("error") || tok.eq_ignore_ascii_case("fatal") {
         return theme::SYNTAX_LEVEL_ERROR.get();
@@ -662,6 +797,34 @@ mod tests {
         assert!(palette
             .iter()
             .any(|(t, c)| t == "ERROR" && *c == theme::SYNTAX_LEVEL_ERROR.get()));
+    }
+
+    #[test]
+    fn csharp_colours_a_keyword_a_number_a_string_and_a_comment_and_keeps_the_line() {
+        let _palette = crate::ui::theme::serial();
+        let line = "    if (func_000010(0x1F, 15.0f) == \"a\\\"b\") // why";
+        let toks = highlight_csharp(line);
+        assert_eq!(joined_text(&toks), line);
+        let palette = colors(&toks);
+        let has =
+            |text: &str, color: Color32| palette.iter().any(|(t, c)| t == text && *c == color);
+        assert!(has("if", theme::SYNTAX_KEYWORD.get()));
+        assert!(has("0x1F", theme::SYNTAX_NUMBER.get()));
+        assert!(has("15.0f", theme::SYNTAX_NUMBER.get()));
+        assert!(has("\"a\\\"b\"", theme::SYNTAX_STRING.get()));
+        assert!(has("// why", theme::SYNTAX_COMMENT.get()));
+        // A name that only holds a keyword is no keyword, and a slash alone opens no comment.
+        assert!(has("func_000010", theme::TEXT_PRIMARY.get()));
+        let divided = highlight_csharp("int_x = a / b;");
+        assert_eq!(joined_text(&divided), "int_x = a / b;");
+        assert!(divided.iter().all(|t| t.color == theme::TEXT_PRIMARY.get()));
+    }
+
+    #[test]
+    fn csharp_keeps_every_byte_of_a_line_that_is_not_ascii_or_not_closed() {
+        for line in ["x = \"é", "'\\é", "é(\"ü\") // ñ", "\"\\", "", "€"] {
+            assert_eq!(joined_text(&highlight_csharp(line)), line, "{line:?}");
+        }
     }
 
     #[test]

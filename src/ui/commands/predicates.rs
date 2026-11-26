@@ -1,6 +1,6 @@
 //! The checks a command is enabled by, shared by the table and the files of commands beside it.
 
-use crate::state::{AppState, DocPayload, DocumentKind, LoadingState};
+use crate::state::{AppState, DocumentKind, LoadingState};
 use crate::ui::panels::registry::ids;
 
 pub(super) fn always(_: &AppState) -> Result<(), &'static str> {
@@ -53,9 +53,6 @@ pub(super) fn a_viewport(state: &AppState) -> Result<(), &'static str> {
 }
 
 pub(super) fn a_text_document(state: &AppState) -> Result<(), &'static str> {
-    let any = state
-        .documents
-        .iter()
-        .any(|d| matches!(d.payload, DocPayload::Text(_)));
+    let any = (state.documents.iter()).any(|d| d.payload.found_in().is_some());
     none_if(!any, tr!("No text document is open"))
 }

@@ -196,6 +196,7 @@ impl Workspace {
                     | DocumentKind::Gta6Text
                     | DocumentKind::Gta6AudioData
                     | DocumentKind::Gta6Save
+                    | DocumentKind::Gta6Script
                     | DocumentKind::Compare
             ),
             Workspace::Animation => matches!(

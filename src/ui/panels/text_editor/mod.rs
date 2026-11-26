@@ -6,6 +6,7 @@ pub mod folds;
 pub mod go_to_line;
 pub mod highlighters;
 pub mod replace_worker;
+pub mod script_view;
 pub mod search;
 pub mod search_worker;
 
@@ -111,6 +112,7 @@ pub fn draw(ui: &mut egui::Ui, app_state: &mut AppState) {
             draw_text_doc(ui, app_state, doc_id)
         }
         Some(DocPayload::Meta(_)) => draw_meta_doc(ui, app_state, doc_id),
+        Some(DocPayload::Gta6Script(_)) => script_view::draw(ui, app_state, doc_id),
         Some(payload) if crate::state::ScriptDocument::in_payload(payload).is_some() => {
             draw_script_doc(ui, app_state, doc_id)
         }

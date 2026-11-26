@@ -28,7 +28,7 @@ fn tap(uv: vec2<f32>) -> vec3<f32> {
 }
 "#;
 
-/// A halving of the bloom: thirteen taps, a box of four inside and four about it; the first halving weighs each box down by its luminance.
+/// A halving of the bloom: thirteen taps, a box of four inside and four about it; the first halving weighs each tap down by its luminance within its box.
 const HALVE: &str = r#"
 fn halve(uv: vec2<f32>, karis: bool) -> vec3<f32> {
     let t = 1.0 / vec2<f32>(textureDimensions(source));
@@ -45,25 +45,19 @@ fn halve(uv: vec2<f32>, karis: bool) -> vec3<f32> {
     let k = tap(uv + t * vec2<f32>(-2.0, 2.0));
     let l = tap(uv + t * vec2<f32>(0.0, 2.0));
     let m = tap(uv + t * vec2<f32>(2.0, 2.0));
-    var boxes = array<vec3<f32>, 5>(
-        (d + e + i + j) * 0.25,
-        (a + b + f + g) * 0.25,
-        (b + c + g + h) * 0.25,
-        (f + g + k + l) * 0.25,
-        (g + h + l + m) * 0.25,
-    );
-    var weights = array<f32, 5>(0.5, 0.125, 0.125, 0.125, 0.125);
-    var sum = vec3<f32>(0.0);
-    var total = 0.0;
-    for (var n = 0u; n < 5u; n++) {
-        var w = weights[n];
-        if (karis) {
-            w = w / (1.0 + luminance(boxes[n]));
-        }
-        sum += boxes[n] * w;
-        total += w;
+    // Each box is the mean of its four taps, each tap weighed down by its own luminance where `karis`; the boxes then weigh what they always weigh, so a box wholly inside a bright source keeps all of it.
+    let sum = 0.5 * box_of(d, e, i, j, karis)
+        + 0.125 * (box_of(a, b, f, g, karis) + box_of(b, c, g, h, karis)
+        + box_of(f, g, k, l, karis) + box_of(g, h, l, m, karis));
+    return min(sum, vec3<f32>(65000.0));
+}
+
+fn box_of(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>, karis: bool) -> vec3<f32> {
+    var w = vec4<f32>(1.0);
+    if (karis) {
+        w = 1.0 / (1.0 + vec4<f32>(luminance(a), luminance(b), luminance(c), luminance(d)));
     }
-    return min(sum / max(total, 1e-6), vec3<f32>(65000.0));
+    return (a * w.x + b * w.y + c * w.z + d * w.w) / max(w.x + w.y + w.z + w.w, 1e-6);
 }
 
 @fragment

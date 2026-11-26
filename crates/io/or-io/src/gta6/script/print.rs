@@ -69,7 +69,9 @@ const TOKEN: &str = "typeof(T) is the Type and typeof(T).TypeHandle the token of
 
 /// What a header says of a `return` in an `async` method, where `await` is on.
 const HANDED: &str = "return; in an async method that is not void hands back the task its \
-                      state machine holds, which the code returns by a field of the machine";
+                      state machine holds, which the code returns by a field of the machine; \
+                      async Task<T> heads one whose machine gives its task a value of T, and \
+                      async void one of which the machine says no more";
 
 /// What a header says of the variable a `foreach` over an array may be given, where `foreach` is on.
 const ITEM: &str = "item, item_2 and on is the element a foreach reads where the code reads it \
@@ -720,6 +722,8 @@ struct Writer<'a> {
     bound: Option<String>,
     /// The task an `async` method's hidden last `return` hands back: a `return` of it elsewhere is written bare.
     back: Option<Expr>,
+    /// What an `async` method hands back, where its machine proves it: the type its head is written with.
+    task: Option<String>,
 }
 
 impl<'a> Writer<'a> {
@@ -745,6 +749,7 @@ impl<'a> Writer<'a> {
             sited: BTreeSet::new(),
             bound: None,
             back: None,
+            task: None,
         }
     }
 
@@ -875,6 +880,9 @@ impl<'a> Writer<'a> {
     /// The type a function hands back, where a type must stand.
     fn returned(&self) -> String {
         let head = self.head;
+        if let Some(task) = &self.task {
+            return task.clone();
+        }
         if !self.sharp {
             let ty = match head.returns {
                 Returns::Void => "void",

@@ -83,7 +83,9 @@ was.
   export` reads every program's code a second time once the project is settled, so that the
   accesses through such variables and through a member's receiver add to the layouts too. Two
   whole variables compared byte by byte are compared with `==`.
-- **Compiler expansions**: `await`, `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
+- **Compiler expansions**: `await` reads a kick-off and the step function it calls as one
+  method, `async Task<T>` where its state machine gives the task a value and `async void`
+  otherwise; `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
   `compound`, `initialisers`, `null-ops`, `concat`, `ref-out`. A lambda whose body is one value or
   a few statements, bound once and outside every loop, is written as `=>` where it is bound; any
   other is written by its function's name. `events`, `concat`, `using` and `lock` read a call

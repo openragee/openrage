@@ -6,7 +6,7 @@
 //! function is written as a method, whatever its role says.
 
 use crate::gta6::script::class::{Method, Role};
-use crate::gta6::script::ir::{FunctionKey, Returns, TypeKey, Var};
+use crate::gta6::script::ir::{FunctionKey, Kind, Returns, TypeKey, Var};
 use crate::gta6::script::passes::async_await;
 use crate::gta6::script::tree;
 use crate::gta6::script::Pass;
@@ -29,6 +29,15 @@ impl Writer<'_> {
         };
         if method.is_async && self.sharp && self.options.on(Pass::Await) {
             self.back = async_await::handed_back(body).cloned();
+            // ⚠ Only a machine that gives its task a value proves a `Task<T>`: one that gives it
+            // none may be of a method of no task, which the head cannot tell.
+            if let async_await::AsyncResult::TaskOf([value]) = async_await::result(body) {
+                let ty = match self.kind_of(value) {
+                    Kind::Unknown => "Cell".to_owned(),
+                    kind => self.kind_text(&kind),
+                };
+                self.task = Some(format!("Task<{ty}>"));
+            }
         }
         // The form of old knows no class, and a function no type owns is written at the top of its file.
         let (Some((owner, class)), true) = (class, self.sharp) else {

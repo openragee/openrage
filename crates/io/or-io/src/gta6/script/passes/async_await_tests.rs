@@ -594,6 +594,29 @@ fn an_end_that_completes_the_task_through_a_function_hides_what_the_compiler_wro
     let given = [Expr::Var(Var::Local(3))];
     assert_eq!(result(&flat.body), AsyncResult::TaskOf(&given));
     assert!(results(&flat.body)[0].contains("GET"));
+    // Its head says the method's task holds a value, where `await` is on.
+    let head = |options: Options| {
+        let held = crate::gta6::script::class::Method {
+            function: flat.clone(),
+            role: crate::gta6::script::class::Role::Method,
+            is_static: true,
+            is_async: true,
+            slot: None,
+            overrides: false,
+        };
+        let names = Names::default();
+        let cx = Context::new(&names, Project::empty(), options);
+        let mut out = String::new();
+        crate::gta6::script::print::method(&mut out, &held, None, 0, &cx);
+        out.lines().next().unwrap_or_default().to_owned()
+    };
+    assert!(
+        head(Options::default()).starts_with("async Task<"),
+        "{}",
+        head(Options::default())
+    );
+    let off = Options::default().without(Pass::Await);
+    assert!(head(off).starts_with("async void "), "{}", head(off));
 
     // Given the builder alone, the call completes a task with no result, and goes with the rest.
     let alone = HANDED.replace("byte_offset(p0, 0x8), local_3", "byte_offset(p0, 0x8)");

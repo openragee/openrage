@@ -613,8 +613,7 @@ where no type file declares its archetype, which waits for no model and is asked
 of no one
 (`an_entity_of_an_archetype_no_type_file_declares_is_returned_as_a_box_with_its_reason`).
 `Selected::files` is what a selection needs, and `model_of` the same for an
-archetype a selection waits for or that the view's velocity brings into range
-(`a_model_the_view_s_velocity_brings_into_range_is_named_ahead_of_it`). An
+archetype a selection waits for; nothing is asked ahead of the view. An
 entity that states no distance takes its archetype's, and its radius is half
 the diagonal of the archetype's box under its scale
 (`an_entity_that_states_no_distance_takes_its_archetype_s_and_a_scale_below_one_keeps_its_radius`).

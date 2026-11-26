@@ -545,13 +545,10 @@ impl<'a> WorldForest<'a> {
                 model,
             });
         }
-        let archetypes = |nodes: &[NodeId]| {
-            let mut seen = BTreeSet::new();
-            let named = nodes.iter().filter_map(|id| placed(*id));
-            let named = named.map(|placed| placed.archetype);
-            named.filter(|name| seen.insert(*name)).collect()
-        };
-        out.waiting = archetypes(&selection.wanted);
+        let mut seen = BTreeSet::new();
+        let named = selection.wanted.iter().filter_map(|id| placed(*id));
+        let named = named.map(|placed| placed.archetype);
+        out.waiting = named.filter(|name| seen.insert(*name)).collect();
         out
     }
 

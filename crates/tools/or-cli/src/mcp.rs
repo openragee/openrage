@@ -290,7 +290,11 @@ fn tools() -> Vec<Value> {
         &format!(
             "Run any openrage-cli command and answer what it printed and its exit code: 0 success, 1 a runtime \
              error, 2 a usage error. Each call is one process, so name files by absolute path. `args` [\"help\"] says \
-             what each command does, and [COMMAND, \"--help\"] gives its usage. Commands: {}.",
+             what each command does, and [COMMAND, \"--help\"] gives its usage. An answer keeps the last {} KiB of \
+             each stream, so a long output is paged or written to a file: [\"script\", FILE, \"--functions\", \
+             \"--json\", \"--offset\", N, \"--limit\", N] answers one page of a compiled script's functions. \
+             Commands: {}.",
+            MAX_OUTPUT_BYTES / 1024,
             commands.join(", ")
         ),
         &[

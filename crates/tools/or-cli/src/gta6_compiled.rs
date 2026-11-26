@@ -2,9 +2,11 @@
 //!
 //! ⚠ The body is the inflated plaintext an archive's content cipher yields (`rpf9 extract`), not
 //! the stored entry. A native is named only from the user's own lifted listings (`--listings`, or
-//! the table a run with them cached); no name is shipped.
+//! the table a run with them cached); no name is shipped. An instruction's mnemonic is the one
+//! `script disasm` prints: both read the instruction set of `or_io::gta6::script::opcode`.
 
-use std::io::Write;
+use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -12,6 +14,8 @@ use or_io::gta6::script::compiled::disasm;
 use or_io::gta6::script::compiled::Compiled;
 use or_io::gta6::script::compiled_write::{set_float, set_int};
 use or_io::gta6::script::native_addresses::NativeAddresses;
+
+use super::{failed, misused, note, printed};
 
 /// An edit `--set-int` or `--set-float` asks for: a code offset and the value its push takes.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,85 +34,65 @@ pub fn run(args: &[String]) -> ExitCode {
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "-h" | "--help" | "help" => {
-                print_usage();
-                return ExitCode::SUCCESS;
-            }
+            "-h" | "--help" | "help" => return printed(USAGE, ExitCode::SUCCESS),
             "--natives" => list_natives = true,
             "--listing" => listing = true,
             "--listings" => match args.next() {
                 Some(dir) => listings = Some(PathBuf::from(dir)),
-                None => {
-                    eprintln!("Error: --listings needs a folder");
-                    return ExitCode::from(2);
-                }
+                None => return misused("--listings needs a folder"),
             },
             flag @ ("--set-int" | "--set-float") => {
                 let Some(e) = args.next().and_then(|a| edit(flag, a)) else {
-                    eprintln!("Error: {flag} needs OFFSET=VALUE, the offset a listing prints");
-                    return ExitCode::from(2);
+                    return misused(&format!(
+                        "{flag} needs OFFSET=VALUE, the offset a listing prints"
+                    ));
                 };
                 edits.push(e);
             }
             "--set-string" => {
-                eprintln!(
-                    "Error: --set-string is refused: every string constant of the build's compiled programs names the same 0x28-byte object, so no string text was found to replace"
+                return misused(
+                    "--set-string is refused: every string constant of the build's compiled programs names the same 0x28-byte object, so no string text was found to replace",
                 );
-                return ExitCode::from(2);
             }
             "--out" => match args.next() {
                 Some(path) => out = Some(PathBuf::from(path)),
-                None => {
-                    eprintln!("Error: --out needs a new file");
-                    return ExitCode::from(2);
-                }
+                None => return misused("--out needs a new file"),
             },
             other if other.starts_with('-') => {
-                eprintln!("Error: unknown option {other}");
-                print_usage();
-                return ExitCode::from(2);
+                note(USAGE.trim_end());
+                return misused(&format!("unknown option {other}"));
             }
             other => paths.push(PathBuf::from(other)),
         }
     }
     if paths.is_empty() {
-        print_usage();
+        note(USAGE.trim_end());
         return ExitCode::from(2);
     }
     if !edits.is_empty() || out.is_some() {
         let (Some(out), [path], false) = (out, paths.as_slice(), edits.is_empty()) else {
-            eprintln!(
-                "Error: an edit takes one BODY, at least one --set-int or --set-float, and --out NEW"
+            return misused(
+                "an edit takes one BODY, at least one --set-int or --set-float, and --out NEW",
             );
-            return ExitCode::from(2);
         };
         return match write_edited(path, &edits, &out) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(why) => {
-                eprintln!("Error: {}: {why}", path.display());
-                ExitCode::FAILURE
-            }
+            Ok(said) => printed(&said, ExitCode::SUCCESS),
+            Err(why) => failed(&format!("{}: {why}", path.display())),
         };
     }
     let natives = match load_natives(listings.as_deref()) {
         Ok(natives) => natives,
-        Err(why) => {
-            eprintln!("Error: {why}");
-            return ExitCode::FAILURE;
-        }
+        Err(why) => return failed(&why),
     };
-    let mut failed = false;
+    // One text for the run: a reader that closes the pipe ends it with no line and no failure.
+    let mut out = String::new();
+    let mut code = ExitCode::SUCCESS;
     for path in &paths {
-        if let Err(why) = show(path, list_natives, listing, natives.as_ref()) {
-            eprintln!("Error: {}: {why}", path.display());
-            failed = true;
+        if let Err(why) = show(&mut out, path, list_natives, listing, natives.as_ref()) {
+            code = failed(&format!("{}: {why}", path.display()));
         }
     }
-    if failed {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    }
+    printed(&out, code)
 }
 
 /// The natives the listings in `listings` declare, cached in the configuration folder; without a folder, the table cached there last.
@@ -122,7 +106,9 @@ fn load_natives(listings: Option<&Path>) -> Result<Option<NativeAddresses>, Stri
     }
 }
 
+/// Writes what the body at `path` holds to `out`; what it wrote before a refusal stays.
 fn show(
+    out: &mut String,
     path: &Path,
     list_natives: bool,
     listing: bool,
@@ -131,26 +117,32 @@ fn show(
     let body = std::fs::read(path).map_err(|e| e.to_string())?;
     let program = Compiled::open(&body).map_err(|e| e.to_string())?;
     let h = program.header;
-    println!("{}", path.display());
-    println!("  program hash  {:#010X}", h.hash);
-    println!("  types         {}", h.types);
-    println!(
+    let _ = writeln!(out, "{}", path.display());
+    let _ = writeln!(out, "  program hash  {:#010X}", h.hash);
+    let _ = writeln!(out, "  types         {}", h.types);
+    let _ = writeln!(
+        out,
         "  code          {} bytes at body offset {:#X}",
         h.code_len, h.code_start
     );
-    println!("  natives       {} stated", h.natives);
+    let _ = writeln!(out, "  natives       {} stated", h.natives);
     match program.facts() {
         Ok(f) => {
-            println!("  instructions  {}", f.instructions);
-            println!(
+            let _ = writeln!(out, "  instructions  {}", f.instructions);
+            let _ = writeln!(
+                out,
                 "  native calls  {} to {} distinct natives",
                 f.native_calls, f.natives_found
             );
             if f.natives_found != h.natives as usize {
-                println!("  ⚠ the calls name a different count of natives than the header states");
+                out.push_str(
+                    "  ⚠ the calls name a different count of natives than the header states\n",
+                );
             }
         }
-        Err(e) => println!("  decode stopped: {e}"),
+        Err(e) => {
+            let _ = writeln!(out, "  decode stopped: {e}");
+        }
     }
     if list_natives {
         let calls = program.natives().map_err(|e| e.to_string())?;
@@ -160,12 +152,12 @@ fn show(
                 "  {:#08X}  native RVA {:#010X}  args {}  results {}  {name}",
                 n.offset, n.rva, n.args, n.returns
             );
-            println!("{}", line.trim_end());
+            let _ = writeln!(out, "{}", line.trim_end());
         }
     }
     if listing {
-        let out = disasm::listing(&program, natives).map_err(|e| e.to_string())?;
-        print!("{}", out.text);
+        let listed = disasm::listing(&program, natives).map_err(|e| e.to_string())?;
+        out.push_str(&listed.text);
     }
     Ok(())
 }
@@ -198,8 +190,8 @@ fn number(text: &str) -> Option<i128> {
     (value >= i128::from(i64::MIN)).then_some(value)
 }
 
-/// Apply every edit to the body at `path` and write it to the new file `out`.
-fn write_edited(path: &Path, edits: &[Edit], out: &Path) -> Result<(), String> {
+/// Apply every edit to the body at `path` and write it to the new file `out`; what to say of it.
+fn write_edited(path: &Path, edits: &[Edit], out: &Path) -> Result<String, String> {
     let mut body = std::fs::read(path).map_err(|e| e.to_string())?;
     for edit in edits {
         let done = match *edit {
@@ -212,14 +204,12 @@ fn write_edited(path: &Path, edits: &[Edit], out: &Path) -> Result<(), String> {
         .open(out)
         .map_err(|e| format!("{}: {e} (an edit goes only to a new file)", out.display()))?;
     file.write_all(&body).map_err(|e| e.to_string())?;
-    println!(
-        "Wrote {}: {} edits, {} bytes, the source body's length.",
+    Ok(format!(
+        "Wrote {}: {} edits, {} bytes, the source body's length.\n{EDITED}\n",
         out.display(),
         edits.len(),
         body.len()
-    );
-    println!("{EDITED}");
-    Ok(())
+    ))
 }
 
 /// What an edited body is and where it can go.
@@ -228,39 +218,22 @@ with `rpf9 patch ARCHIVE --entry PATH --with BODY --out NEW`: a patched copy kee
 byte-identical, so its table signature still matches and no check read in the game's code rejects \
 it, but no run of the game was made, so whether the game runs the edited program is not known.";
 
-fn print_usage() {
-    println!(
-        "Usage: openrage-cli script compiled [--natives] [--listing] [--listings DIR] BODY..."
-    );
-    println!(
-        "       openrage-cli script compiled BODY --set-int OFFSET=VALUE --set-float OFFSET=VALUE ... --out NEW"
-    );
-    println!();
-    println!(
-        "Reads a decrypted GTA VI script body: its header, its instructions and its native calls."
-    );
-    println!(
-        "  --natives        list every native call: code offset, native RVA, argument and result counts, name where known"
-    );
-    println!(
-        "  --listing        print every instruction by function: offset, opcode, mnemonic where one is established, operands"
-    );
-    println!(
-        "  --listings DIR   name natives from the lifted listings in DIR (cached; later runs without it use the cache)"
-    );
-    println!(
-        "  --set-int OFFSET=VALUE    set the integer the push at code OFFSET pushes; it must fit the push's immediate"
-    );
-    println!(
-        "  --set-float OFFSET=VALUE  set the 32-bit float a 4-byte push at code OFFSET pushes"
-    );
-    println!(
-        "  --out NEW        the new file an edited body goes to; a branch, or a value the push cannot hold, is refused"
-    );
-    println!(
-        "  An edit keeps the body's length, so it can go into a patched copy with rpf9 patch."
-    );
-}
+const USAGE: &str = "\
+Usage: openrage-cli script compiled [--natives] [--listing] [--listings DIR] BODY...
+       openrage-cli script compiled BODY --set-int OFFSET=VALUE --set-float OFFSET=VALUE ... --out NEW
+
+Reads a decrypted GTA VI script body: its header, its instructions and its native calls.
+  --natives        list every native call: code offset, native RVA, argument and result counts, name where known
+  --listing        print every instruction by function: offset, opcode, mnemonic where one is established, operands
+  --listings DIR   name natives from the lifted listings in DIR (cached; later runs without it use the cache)
+  --set-int OFFSET=VALUE    set the integer the push at code OFFSET pushes; it must fit the push's immediate
+  --set-float OFFSET=VALUE  set the 32-bit float a 4-byte push at code OFFSET pushes
+  --out NEW        the new file an edited body goes to; a branch, or a value the push cannot hold, is refused
+  An edit keeps the body's length, so it can go into a patched copy with rpf9 patch.
+
+This reads the code with none of the program's tables, so it lists a body `script` refuses.
+`script disasm` and `script decompile` read the same file through its tables: functions, types and calls resolved.
+";
 
 #[cfg(test)]
 mod tests {

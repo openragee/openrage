@@ -2,12 +2,13 @@
 //!
 //! ⚠ **A lifted listing is text, not a script.** It is what another decompiler writes from a
 //! script's bytecode, one C# method per script function, and this command reads that text and
-//! nothing else. No compiled GTA VI script is read: none is in the clear.
+//! nothing else. A compiled GTA VI script is read by `script decompile`, never by this command.
 //!
 //! ⚠ **Every name is the user's.** Natives come from `--natives-db` or `OPENRAGE_NATIVES`, type
 //! and program names from `--names`, and the source's first lines say which lists named things.
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -16,12 +17,15 @@ use std::sync::{Mutex, PoisonError};
 use or_io::gta5::script::natives::NativeDb;
 use or_io::gta6::script::listing::Listing;
 use or_io::gta6::script::names::declared_natives;
-use or_io::gta6::script::print::SourceWriter;
-use or_io::gta6::script::{function, DecompileError, Names, Stats};
+use or_io::gta6::script::project::index;
+use or_io::gta6::script::{
+    decompile_listing, Context, DecompileError, Level, Names, Options, Pass, Project, Stats,
+    CONSTRUCTS,
+};
 
 /// What this command reads and what it does not, for the help and for a file that is no text.
 const WHAT_IS_READ: &str = "`script lifted` reads a lifted listing, the text another decompiler \
-     writes from a script's bytecode; a compiled GTA VI script cannot be read yet";
+     writes from a script's bytecode; `script decompile` reads a compiled GTA VI script";
 
 /// The listings a census takes from a folder.
 const LISTING_SUFFIX: &str = ".ysc.cs";
@@ -33,6 +37,10 @@ pub struct Supplied {
     pub natives: Vec<NativeDb>,
     /// Type and program names.
     pub names: Names,
+    /// The level and the passes asked for; the four first passes where none is.
+    pub options: Option<Options>,
+    /// What other programs state of the types and functions a listing uses, where a project file was named.
+    pub project: Option<Project>,
 }
 
 pub fn run(args: &[String]) -> ExitCode {
@@ -41,64 +49,103 @@ pub fn run(args: &[String]) -> ExitCode {
     let mut names: Vec<PathBuf> = Vec::new();
     let mut out: Option<PathBuf> = None;
     let mut census = false;
+    let mut index_of = false;
+    let mut level: Option<Level> = None;
+    let mut off: Vec<Pass> = Vec::new();
+    let mut project: Option<PathBuf> = None;
 
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "-h" | "--help" | "help" => {
-                print_usage();
-                return ExitCode::SUCCESS;
-            }
+            "-h" | "--help" | "help" => return super::printed(&usage(), ExitCode::SUCCESS),
             "--census" => census = true,
-            "--natives-db" | "--names" | "-o" => {
+            "--index" => index_of = true,
+            "--natives-db" | "--names" | "--project" | "-o" => {
                 let Some(path) = iter.next().map(PathBuf::from) else {
-                    eprintln!("Error: {arg} needs a path");
-                    return ExitCode::from(2);
+                    return super::misused(&format!("{arg} needs a path"));
                 };
                 match arg.as_str() {
                     "--natives-db" => natives.push(path),
                     "--names" => names.push(path),
+                    "--project" => project = Some(path),
                     _ => out = Some(path),
                 }
             }
+            "--level" => {
+                let value = iter.next().map(String::as_str).unwrap_or_default();
+                let Some(asked) = Level::from_name(value) else {
+                    let levels = Level::ALL.map(Level::name).join(", ");
+                    return super::misused(&format!(
+                        "--level takes one of {levels}, not `{value}`"
+                    ));
+                };
+                level = Some(asked);
+            }
+            "--no" => {
+                let value = iter.next().map(String::as_str).unwrap_or_default();
+                let Some(pass) = Pass::from_name(value) else {
+                    return super::misused(&format!(
+                        "--no takes a name `script passes` prints, not `{value}`"
+                    ));
+                };
+                off.push(pass);
+            }
             other if other.starts_with('-') => {
-                eprintln!("Error: unknown option: {other}");
-                return ExitCode::from(2);
+                return super::misused(&format!("unknown option: {other}"));
             }
             other => paths.push(PathBuf::from(other)),
         }
     }
     let [path] = paths.as_slice() else {
-        print_usage();
+        super::note(usage().trim_end());
         return ExitCode::from(2);
     };
-    if census && out.as_deref().is_some_and(Path::is_file) {
-        eprintln!("Error: with --census, -o names a folder for the sources and not a file");
-        return ExitCode::from(2);
+    if index_of {
+        let Some(to) = &out else {
+            return super::misused("--index needs -o <file> for the project");
+        };
+        return match indexed(path, to) {
+            Ok(line) => super::printed(&format!("{line}\n"), ExitCode::SUCCESS),
+            Err(e) => super::failed(&e),
+        };
     }
-    let supplied = match supplied(natives, &names) {
-        Ok(supplied) => supplied,
-        Err(e) => {
-            eprintln!("Error: {e}");
-            return ExitCode::FAILURE;
+    if census && out.as_deref().is_some_and(Path::is_file) {
+        return super::misused("with --census, -o names a folder for the sources and not a file");
+    }
+    let (asked, idle) = asked_options(level, &off);
+    for pass in idle {
+        super::note(&format!(
+            "note: --no {} changes nothing: it is no pass of what was asked for",
+            pass.name()
+        ));
+    }
+    let lists = supplied(natives, &names).and_then(|mut supplied| {
+        supplied.options = asked;
+        if let Some(path) = &project {
+            let refused = |why: String| format!("{}: {why}", path.display());
+            let bytes = std::fs::read(path).map_err(|e| refused(format!("read: {e}")))?;
+            supplied.project = Some(index::load(&bytes).map_err(|e| refused(e.to_string()))?);
         }
+        Ok(supplied)
+    });
+    let supplied = match lists {
+        Ok(supplied) => supplied,
+        Err(e) => return super::failed(&e),
     };
 
     if census {
         return match census_of(path, &supplied, out.as_deref()) {
             Ok((lines, failed)) => {
-                for line in &lines {
-                    println!("{line}");
-                }
-                match failed {
-                    0 => ExitCode::SUCCESS,
-                    _ => ExitCode::FAILURE,
-                }
+                let lines: String = lines.iter().map(|line| format!("{line}\n")).collect();
+                super::printed(
+                    &lines,
+                    match failed {
+                        0 => ExitCode::SUCCESS,
+                        _ => ExitCode::FAILURE,
+                    },
+                )
             }
-            Err(e) => {
-                eprintln!("Error: {e}");
-                ExitCode::FAILURE
-            }
+            Err(e) => super::failed(&e),
         };
     }
 
@@ -108,36 +155,83 @@ pub fn run(args: &[String]) -> ExitCode {
             Some(to) => {
                 std::fs::write(to, text).map_err(|e| format!("write {}: {e}", to.display()))
             }
-            None => {
-                print!("{text}");
-                Ok(())
-            }
+            None => super::put(&text).map_err(|e| format!("write to stdout: {e}")),
         });
     match written {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("Error: {}: {e}", path.display());
-            ExitCode::FAILURE
-        }
+        Err(e) => super::failed(&format!("{}: {e}", path.display())),
     }
+}
+
+/// The level and the passes `--level` and `--no` ask for, `None` where neither was given; and the passes `--no` named that were not on to be left off.
+// ⚠ With no level asked the passes are the four first, and `--no` leaves one of those off at
+// their level: it never takes the source to another level.
+fn asked_options(level: Option<Level>, off: &[Pass]) -> (Option<Options>, Vec<Pass>) {
+    if level.is_none() && off.is_empty() {
+        return (None, Vec::new());
+    }
+    let all = level.map_or_else(Options::baseline, Options::at);
+    let idle = off.iter().copied().filter(|pass| !all.on(*pass)).collect();
+    let asked = off.iter().fold(all, |options, pass| options.without(*pass));
+    (Some(asked), idle)
+}
+
+/// The header line that says which passes ran: the four first of this command's default, or a level's.
+// Two askings that run the same passes write the same source, so the line is told by the passes.
+fn passes_line(options: Options) -> String {
+    let default = Options::baseline();
+    let names = |passes: Vec<Pass>| -> String {
+        let names: Vec<&str> = passes.into_iter().map(Pass::name).collect();
+        names.join(", ")
+    };
+    let four = names(Pass::BASELINE.to_vec());
+    let within = options.passes.iter().all(|pass| default.on(pass));
+    if options.level == default.level && within {
+        let off: Vec<Pass> = (default.passes.iter())
+            .filter(|pass| !options.on(*pass))
+            .collect();
+        let less = match off.is_empty() {
+            true => String::new(),
+            false => format!(", less {} that --no named", names(off)),
+        };
+        return format!(
+            "// passes: the default of `script lifted`, its four first passes ({four}){less}; \
+             --level source runs every pass of the source level\n"
+        );
+    }
+    let level = options.level.name();
+    let off: Vec<Pass> = (Options::at(options.level).passes.iter())
+        .filter(|pass| !options.on(*pass))
+        .collect();
+    let ran = match (options.level, off.is_empty()) {
+        (Level::Lifted, _) => "at which no pass runs".to_owned(),
+        (_, true) => "every pass of that level".to_owned(),
+        (_, false) => format!("every pass of that level but {}", names(off)),
+    };
+    format!(
+        "// passes: --level {level}, {ran}; the default of `script lifted` runs its four first \
+         passes alone ({four})\n"
+    )
 }
 
 /// Reads the lists named: natives as `script` reads them everywhere, and `0xHASH name` lists of types and programs.
 pub fn supplied(natives: Vec<PathBuf>, names: &[PathBuf]) -> Result<Supplied, String> {
-    let mut supplied = Supplied {
+    Ok(Supplied {
         natives: super::load_lists(natives)?.dbs().to_vec(),
-        names: Names::default(),
-    };
-    for path in names {
+        names: names_from(names)?,
+        ..Supplied::default()
+    })
+}
+
+/// Reads names lists, each under its file's name.
+pub(super) fn names_from(paths: &[PathBuf]) -> Result<Names, String> {
+    let mut names = Names::default();
+    for path in paths {
         let text =
             std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        let label = path.file_name().map_or_else(
-            || path.display().to_string(),
-            |n| n.to_string_lossy().into_owned(),
-        );
-        (supplied.names.read_list(&label, &text)).map_err(|e| e.to_string())?;
+        (names.read_list(&name_of(path), &text)).map_err(|e| e.to_string())?;
     }
-    Ok(supplied)
+    Ok(names)
 }
 
 /// The readable source of the listing `text`, and what decompiling it counted.
@@ -149,12 +243,17 @@ pub fn source(text: &str, supplied: &Supplied) -> Result<(String, Stats), Decomp
     let mut names = supplied.names.clone();
     names.natives = Names::best_natives(&supplied.natives, &declared).map(|(db, _)| db.clone());
 
-    let mut stats = Stats::default();
-    let mut writer = SourceWriter::new(&names);
-    for read in listing.functions() {
-        writer.function(&function(read?, &names, &mut stats)?);
-    }
-    Ok((writer.finish(&listing, &stats), stats))
+    let options = supplied.options.unwrap_or_else(Options::baseline);
+    let project = supplied.project.as_ref().unwrap_or(Project::empty());
+    let done = decompile_listing(text, &Context::new(&names, project, options))?;
+    let text: String = done.files.into_iter().map(|file| file.text).collect();
+    let said = passes_line(options);
+    // At the lowest level the text is a listing again, with no header to stand after.
+    let text = match options.level {
+        Level::Lifted => format!("{said}{text}"),
+        _ => super::after_header(&text, &said),
+    };
+    Ok((text, done.stats))
 }
 
 fn read(path: &Path) -> Result<String, String> {
@@ -174,22 +273,9 @@ pub fn census_of(
     if let Some(dir) = sources {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     }
-    let entries =
-        std::fs::read_dir(folder).map_err(|e| format!("read {}: {e}", folder.display()))?;
-    let mut listings: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| name_of(path).ends_with(LISTING_SUFFIX))
-        .collect();
-    listings.sort();
-    if listings.is_empty() {
-        return Err(format!(
-            "{} holds no `*{LISTING_SUFFIX}` listing",
-            folder.display()
-        ));
-    }
+    let listings = listings_of(folder)?;
 
-    let outcomes = over(&listings, |path| {
+    let outcomes = over(&listings, THREADS, |path| {
         let text = read(path)?;
         // A fault in one listing's decompile is that listing's failure.
         match std::panic::catch_unwind(|| source(&text, supplied)) {
@@ -231,6 +317,40 @@ pub fn census_of(
     Ok((lines, failed))
 }
 
+/// The listings of `folder`, in the order of their names.
+fn listings_of(folder: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries =
+        std::fs::read_dir(folder).map_err(|e| format!("read {}: {e}", folder.display()))?;
+    let mut listings: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| name_of(path).ends_with(LISTING_SUFFIX))
+        .collect();
+    listings.sort();
+    match listings.is_empty() {
+        true => Err(format!(
+            "{} holds no `*{LISTING_SUFFIX}` listing",
+            folder.display()
+        )),
+        false => Ok(listings),
+    }
+}
+
+/// Writes to `to` the project of every listing of `folder`, which `--project` reads; the line saying so.
+// ⚠ One listing that does not read ends it, named: a project of some of the programs would answer for all.
+fn indexed(folder: &Path, to: &Path) -> Result<String, String> {
+    let listings = listings_of(folder)?;
+    let project = index::build(&listings).map_err(|e| e.to_string())?;
+    let bytes = index::save(&project).map_err(|e| e.to_string())?;
+    std::fs::write(to, &bytes).map_err(|e| format!("write {}: {e}", to.display()))?;
+    Ok(format!(
+        "{} listing(s): a project of {} byte(s) in {}",
+        listings.len(),
+        bytes.len(),
+        to.display()
+    ))
+}
+
 fn name_of(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -240,7 +360,7 @@ fn name_of(path: &Path) -> String {
 fn counts(s: &Stats) -> String {
     format!(
         "{} function(s), {} with no body; statements {} -> {}; gotos {} -> {}; temporaries {} -> \
-         {}; {} of {} native call(s) named",
+         {}; {} of {} native call(s) named{}",
         s.functions,
         s.incomplete,
         s.statements_in,
@@ -250,27 +370,50 @@ fn counts(s: &Stats) -> String {
         s.temporaries_in,
         s.temporaries_out,
         s.natives_named,
-        s.native_calls
+        s.native_calls,
+        constructs(s)
     )
 }
 
-/// What `each` gives for every listing, in the listings' order, worked out on up to eight threads.
-// ⚠ A thread holds one listing's whole text and its source, and the largest listing is 200 MB.
-fn over<T: Send>(listings: &[PathBuf], each: impl Fn(&Path) -> T + Sync) -> Vec<T> {
+/// The source constructs the passes read, each kind with its count; nothing where none was read.
+// ⚠ Read is not written: the printer writes a construct as the code it was read from where it
+// cannot write it otherwise, and only a run with `--no <pass>` shows which.
+pub(super) fn constructs(s: &Stats) -> String {
+    let made = CONSTRUCTS.iter().zip(s.constructs);
+    let made: Vec<String> = made
+        .filter(|(_, count)| *count > 0)
+        .map(|(kind, count)| format!("{kind} {count}"))
+        .collect();
+    match made.is_empty() {
+        true => String::new(),
+        false => format!("; constructs read: {}", made.join(", ")),
+    }
+}
+
+/// The threads a census works on at most.
+// ⚠ A thread holds one listing's whole text and its source, and a listing runs to hundreds of megabytes.
+pub(super) const THREADS: usize = 8;
+
+/// What `each` gives for every item, in the items' order, worked out on up to `threads` threads.
+pub(super) fn over<I: Sync, T: Send>(
+    items: &[I],
+    threads: usize,
+    each: impl Fn(&I) -> T + Sync,
+) -> Vec<T> {
     let next = AtomicUsize::new(0);
     let done: Mutex<Vec<(usize, T)>> = Mutex::new(Vec::new());
     let threads = std::thread::available_parallelism()
         .map_or(1, usize::from)
-        .min(8)
-        .min(listings.len());
+        .min(threads)
+        .min(items.len());
     std::thread::scope(|scope| {
         for _ in 0..threads {
             scope.spawn(|| loop {
                 let n = next.fetch_add(1, Ordering::Relaxed);
-                let Some(path) = listings.get(n) else {
+                let Some(item) = items.get(n) else {
                     break;
                 };
-                let result = each(path.as_path());
+                let result = each(item);
                 let mut done = done.lock().unwrap_or_else(PoisonError::into_inner);
                 done.push((n, result));
             });
@@ -281,34 +424,57 @@ fn over<T: Send>(listings: &[PathBuf], each: impl Fn(&Path) -> T + Sync) -> Vec<
     done.into_iter().map(|(_, result)| result).collect()
 }
 
-fn print_usage() {
-    eprintln!("Decompile a lifted listing of a GTA VI script to readable source.");
-    eprintln!();
-    eprintln!("Usage: openrage-cli script lifted <listing.ysc.cs> [-o <file>]");
-    eprintln!("       openrage-cli script lifted --census <folder> [-o <folder>]");
-    eprintln!();
-    eprintln!("  A lifted listing is the text another decompiler writes from a script's");
-    eprintln!("  bytecode, one C# method per script function. This command reads that text");
-    eprintln!("  and nothing else: a compiled GTA VI script cannot be read yet.");
-    eprintln!();
-    eprintln!("  -o <file>   Write the source to a file instead of printing it.");
-    eprintln!(
-        "  --census    Decompile every `*{LISTING_SUFFIX}` listing of a folder and print one"
+/// What `script lifted --help` prints.
+fn usage() -> String {
+    let levels = Level::ALL.map(Level::name).join(", ");
+    let four: Vec<&str> = Pass::BASELINE.iter().map(|pass| pass.name()).collect();
+    let four = four.join(", ");
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "\
+Decompile a lifted listing of a GTA VI script to readable source.
+
+Usage: openrage-cli script lifted <listing.ysc.cs> [--level <name>] [--no <pass>]...
+                                  [--project <file>] [-o <file>]
+       openrage-cli script lifted --census <folder> [--level <name>] [--no <pass>]...
+                                  [--project <file>] [-o <folder>]
+       openrage-cli script lifted --index <folder> -o <project.json>
+
+  A lifted listing is the text another decompiler writes from a script's
+  bytecode, one C# method per script function. This command reads that text
+  and nothing else: `script decompile` reads a compiled GTA VI script.
+
+  -o <file>   Write the source to a file instead of printing it.
+  --census    Decompile every `*{LISTING_SUFFIX}` listing of a folder and print one
+              line of counts per listing and a total. A listing that fails is
+              reported and the census goes on; it exits non-zero if any did.
+              With -o <folder>, each listing's source is written there too.
+  --index     Write the project of every listing of a folder: what the listings
+              state of each other's types, fields and functions, for --project.
+  --level <name>   How far the source is taken: {levels}, with every
+                   pass of that level. Without it the source is what the four
+                   first passes write ({four}), and
+                   the first lines of the source say which of the two it is.
+  --no <pass>      Leave one pass off, by the name `script passes` gives it.
+                   Repeat for several. Without --level it is left off the four
+                   first passes, and the level stays theirs.
+  --project <file> The project.json `script lifted --index` or `script export`
+                   wrote.
+
+Names:
+  --natives-db <path>   A natives list, JSON or `0xHASH NAME` text. Repeat for
+                        several; each listing takes the list naming most of the
+                        natives it declares. Without the flag,
+                        OPENRAGE_NATIVES is read as ;-separated paths, and
+                        without either, what `script download-natives` fetched.
+  --names <path>        Type and program names: one `0xHASH name` per line, or a
+                        tab-separated table whose leading columns are hashes
+                        and whose next column is the name. Repeat for several.
+  ⚠ OpenRage ships no names. The first lines of the source say which lists
+    named things, and a hash no list names stays a hash."
     );
-    eprintln!("              line of counts per listing and a total. A listing that fails is");
-    eprintln!("              reported and the census goes on; it exits non-zero if any did.");
-    eprintln!("              With -o <folder>, each listing's source is written there too.");
-    eprintln!();
-    eprintln!("Names:");
-    eprintln!("  --natives-db <path>   A natives list, JSON or `0xHASH NAME` text. Repeat for");
-    eprintln!("                        several; each listing takes the list naming most of the");
-    eprintln!("                        natives it declares. Without the flag,");
-    eprintln!("                        OPENRAGE_NATIVES is read as ;-separated paths.");
-    eprintln!("  --names <path>        Type and program names: one `0xHASH name` per line, or a");
-    eprintln!("                        tab-separated table whose leading columns are hashes");
-    eprintln!("                        and whose next column is the name. Repeat for several.");
-    eprintln!("  ⚠ OpenRage ships no names. The first lines of the source say which lists");
-    eprintln!("    named things, and a hash no list names stays a hash.");
+    out
 }
 
 #[cfg(test)]
@@ -349,7 +515,7 @@ public static class Program_00000001
         let head = "\
 // program 0x00000001
 // imports: 0x0A0B0C0D
-// natives: 2 declared, no natives list supplied: 1 named by the listing itself, 1 shown by hash
+// natives: 2 declared, no natives list names a native: 1 named by the listing itself, 1 shown by hash
 // names: no names list supplied: a type or a program the listing does not name is shown by its hash
 // 1 function(s), 0 of them with no body in the listing;";
         // The first line says a lifted listing was read, and no compiled script.
@@ -363,6 +529,76 @@ public static class Program_00000001
         assert!(text.contains("_0x00000000000000BB("), "{text}");
         assert_eq!((stats.functions, stats.native_calls), (1, 2));
         assert_eq!(stats.natives_named, 1);
+    }
+
+    #[test]
+    fn the_first_lines_say_whether_the_passes_are_the_defaults_or_a_levels() {
+        let four = "values, types, structure, names";
+        let (text, _) = source(LISTING, &Supplied::default()).expect("the listing decompiles");
+        let default = format!(
+            "// passes: the default of `script lifted`, its four first passes ({four}); --level \
+             source runs every pass of the source level\n"
+        );
+        // The line stands in the header: before the blank line that ends it.
+        let header = text.split("\n\n").next().unwrap_or_default();
+        assert!(header.contains(default.trim_end()), "{text}");
+        assert_eq!(passes_line(Options::baseline()), default);
+
+        let at_source = Supplied {
+            options: Some(Options::at(Level::Source)),
+            ..Supplied::default()
+        };
+        let (text, _) = source(LISTING, &at_source).expect("the listing decompiles");
+        let header = text.split("\n\n").next().unwrap_or_default();
+        let said = "// passes: --level source, every pass of that level; the default of `script \
+                    lifted` runs its four first passes alone";
+        assert!(header.contains(said), "{text}");
+
+        // At the lowest level the text is a listing, and the line is its first.
+        let at_lifted = Supplied {
+            options: Some(Options::at(Level::Lifted)),
+            ..Supplied::default()
+        };
+        let (text, _) = source(LISTING, &at_lifted).expect("the listing decompiles");
+        assert!(
+            text.starts_with("// passes: --level lifted, at which no pass runs; "),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_pass_left_off_with_no_level_is_left_off_the_four_first_and_the_level_stays() {
+        assert_eq!(asked_options(None, &[]), (None, Vec::new()));
+
+        let (asked, idle) = asked_options(None, &[Pass::Structure]);
+        let asked = asked.expect("a pass was named");
+        assert_eq!(asked, Options::baseline().without(Pass::Structure));
+        assert_eq!(asked.level, Options::baseline().level);
+        assert!(idle.is_empty());
+        let said = passes_line(asked);
+        assert!(
+            said.contains(", less structure that --no named; "),
+            "{said}"
+        );
+        assert!(
+            said.starts_with("// passes: the default of `script lifted`"),
+            "{said}"
+        );
+
+        // A pass the four first are not is said to change nothing, and changes nothing.
+        let (asked, idle) = asked_options(None, &[Pass::Foreach]);
+        assert_eq!(asked, Some(Options::baseline()));
+        assert_eq!(idle, [Pass::Foreach]);
+
+        let (asked, idle) = asked_options(Some(Level::Source), &[Pass::Foreach]);
+        let asked = asked.expect("a level was named");
+        assert_eq!(asked, Options::at(Level::Source).without(Pass::Foreach));
+        assert!(idle.is_empty());
+        let said = passes_line(asked);
+        assert!(
+            said.starts_with("// passes: --level source, every pass of that level but foreach; "),
+            "{said}"
+        );
     }
 
     #[test]
@@ -444,13 +680,35 @@ public static class Program_00000001
     }
 
     #[test]
+    fn the_project_of_a_folder_of_listings_is_written_as_the_project_flag_reads_it() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a_good.ysc.cs"), LISTING).unwrap();
+        let to = dir.path().join("project.json");
+        let line = indexed(dir.path(), &to).expect("the folder indexes");
+        assert!(line.starts_with("1 listing(s): a project of "), "{line}");
+        let project = index::load(&std::fs::read(&to).unwrap()).expect("the project loads");
+        assert!(project.programs.contains_key(&1));
+
+        // One listing that does not read ends it, named, and no project is written.
+        std::fs::write(dir.path().join("b_bad.ysc.cs"), "not a listing\n").unwrap();
+        let other = dir.path().join("other.json");
+        let refused = indexed(dir.path(), &other).expect_err("a listing is refused");
+        assert!(refused.contains("b_bad.ysc.cs"), "{refused}");
+        assert!(!other.exists());
+
+        let empty = tempfile::tempdir().unwrap();
+        let none = indexed(empty.path(), &to);
+        assert!(none.is_err_and(|e| e.ends_with("holds no `*.ysc.cs` listing")));
+    }
+
+    #[test]
     fn a_file_that_is_no_text_is_told_from_a_listing() {
         let dir = tempfile::tempdir().unwrap();
         let compiled = dir.path().join("compiled.ysc");
         std::fs::write(&compiled, [0xFFu8, 0xFE, 0x00, 0x80]).unwrap();
         let refused = read(&compiled).expect_err("bytes that are no text");
         assert!(
-            refused.contains("a compiled GTA VI script cannot be read yet"),
+            refused.contains("`script decompile` reads a compiled GTA VI script"),
             "{refused}"
         );
     }

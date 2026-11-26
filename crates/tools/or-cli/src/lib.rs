@@ -396,7 +396,7 @@ fn print_usage() {
     );
     eprintln!("             lists its entries, with --names, --keys, --groups and --nested");
     eprintln!(
-        "  script     Inspect, disassemble or decompile a .ysc; natives named from a supplied list"
+        "  script     Inspect, disassemble or decompile a .ysc or a GTA VI program; names from supplied lists"
     );
     eprintln!("  search     Find files by name across an install (raw or mounted DLC sim)");
     eprintln!("  hash       Hash names the way RAGE does (both functions, hex or decimal)");

@@ -6,6 +6,8 @@
 //! natives says which list named them — or that none did.
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
+use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -19,6 +21,9 @@ use or_io::gta5::script::{decompile, disasm};
 mod compiled;
 #[path = "gta6_lifted.rs"]
 mod lifted;
+
+#[path = "gta6_script.rs"]
+mod gta6;
 
 const NATIVES_ENV: &str = "OPENRAGE_NATIVES";
 
@@ -53,6 +58,10 @@ pub fn run(args: &[String]) -> ExitCode {
     if args.first().map(String::as_str) == Some("compiled") {
         return compiled::run(&args[1..]);
     }
+    // A compiled GTA VI script is told from GTA V's by the command that reads it.
+    if let Some(code) = gta6::run(args) {
+        return code;
+    }
     let (mode, rest) = match args.first().map(String::as_str) {
         Some("disasm") => (Mode::Disasm, &args[1..]),
         Some("decompile") => (Mode::Decompile, &args[1..]),
@@ -68,89 +77,130 @@ pub fn run(args: &[String]) -> ExitCode {
     let mut iter = rest.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "-h" | "--help" | "help" => {
-                print_usage();
-                return ExitCode::SUCCESS;
-            }
+            "-h" | "--help" | "help" => return printed(&gta6::usage(), ExitCode::SUCCESS),
             "--natives" => what = What::Natives,
             "--strings" => what = What::Strings,
             "--statics" => what = What::Statics,
             "--no-bytes" => show_bytes = false,
             "--natives-db" => match iter.next() {
                 Some(path) => lists.push(PathBuf::from(path)),
-                None => {
-                    eprintln!("Error: --natives-db needs a path");
-                    return ExitCode::from(2);
-                }
+                None => return misused("--natives-db needs a path"),
             },
             other if other.starts_with('-') => {
-                eprintln!("Error: unknown option: {other}");
-                return ExitCode::from(2);
+                return misused(&format!("unknown option: {other}"));
             }
             other => paths.push(PathBuf::from(other)),
         }
     }
 
-    if paths.is_empty() || (mode != Mode::Check && paths.len() > 1) {
-        print_usage();
+    // Only `check` takes more than one script.
+    let one = mode == Mode::Check || paths.len() == 1;
+    let Some(first) = paths.first().filter(|_| one) else {
+        note(gta6::usage().trim_end());
         return ExitCode::from(2);
-    }
+    };
 
     let names = match load_lists(lists) {
         Ok(set) => set,
-        Err(e) => {
-            eprintln!("Error: {e}");
-            return ExitCode::FAILURE;
-        }
+        Err(e) => return failed(&e),
     };
 
     if mode == Mode::Check {
         return check_all(&paths);
     }
 
-    let path = &paths[0];
-    let Some(program) = load(path) else {
-        return ExitCode::FAILURE;
+    let program = match load(first) {
+        Ok(program) => program,
+        Err(e) => return failed(&e),
     };
     match mode {
         Mode::Disasm => disassemble(&program, &names, show_bytes),
         Mode::Decompile => {
             let (db, sentence) = provenance(&program, &names);
             match source(&program, db.as_ref(), &sentence) {
-                Ok(text) => {
-                    print!("{text}");
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    ExitCode::FAILURE
-                }
+                Ok(text) => printed(&text, ExitCode::SUCCESS),
+                Err(e) => failed(&e),
             }
         }
-        Mode::Info => {
-            match what {
+        // `check` has returned above.
+        Mode::Info | Mode::Check => {
+            let text = match what {
                 What::Summary => info(&program, &names),
                 What::Natives => natives(&program, &names),
-                What::Strings => {
-                    for s in &program.strings {
-                        println!("{s}");
-                    }
-                }
-                What::Statics => {
-                    for (i, value) in program.statics.iter().enumerate() {
-                        let tag = if (i as u32) < program.parameter_count {
-                            " (argument)"
-                        } else {
-                            ""
-                        };
-                        println!("[{i}] 0x{value:016X}{tag}");
-                    }
-                }
-            }
-            ExitCode::SUCCESS
+                What::Strings => program.strings.iter().map(|s| format!("{s}\n")).collect(),
+                What::Statics => statics(&program),
+            };
+            printed(&text, ExitCode::SUCCESS)
         }
-        Mode::Check => unreachable!(),
     }
+}
+
+/// Writes `text` to stdout; a reader that closed the pipe has what it wanted, and that is no error.
+fn put(text: &str) -> std::io::Result<()> {
+    put_to(&mut std::io::stdout().lock(), text)
+}
+
+/// Writes `text` to `out` and flushes it, a closed pipe counting as written.
+fn put_to(out: &mut impl std::io::Write, text: &str) -> std::io::Result<()> {
+    match out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => Ok(()),
+        done => done,
+    }
+}
+
+/// Prints `text` and gives `code`; a stdout that takes nothing for another reason than a closed pipe is a failure.
+fn printed(text: &str, code: ExitCode) -> ExitCode {
+    match put(text) {
+        Ok(()) => code,
+        Err(e) => failed(&format!("write to stdout: {e}")),
+    }
+}
+
+/// Writes one line to stderr.
+// ⚠ Never `eprintln!`: with both streams in one pipe a reader that left would turn the line into a panic.
+fn note(line: &str) {
+    let _ = writeln!(std::io::stderr().lock(), "{line}");
+}
+
+/// Says why the command failed, and gives the exit code of a failure.
+fn failed(why: &str) -> ExitCode {
+    note(&format!("Error: {why}"));
+    ExitCode::FAILURE
+}
+
+/// Says what is wrong with the arguments, and gives the exit code of a usage error.
+fn misused(what: &str) -> ExitCode {
+    note(&format!("Error: {what}"));
+    ExitCode::from(2)
+}
+
+/// `text` with `lines` after its leading comment lines, which are its header.
+fn after_header(text: &str, lines: &str) -> String {
+    let header = text
+        .split_inclusive('\n')
+        .take_while(|line| line.starts_with("//"));
+    let end: usize = header.map(str::len).sum();
+    let (header, rest) = text.split_at(end);
+    // A header that is the whole text may end on no line break.
+    let gap = match header.is_empty() || header.ends_with('\n') {
+        true => "",
+        false => "\n",
+    };
+    format!("{header}{gap}{lines}{rest}")
+}
+
+/// A GTA V script's initial static values, one per line.
+fn statics(program: &ScrProgram) -> String {
+    let mut out = String::new();
+    for (i, value) in program.statics.iter().enumerate() {
+        let tag = if (i as u32) < program.parameter_count {
+            " (argument)"
+        } else {
+            ""
+        };
+        let _ = writeln!(out, "[{i}] 0x{value:016X}{tag}");
+    }
+    out
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -168,29 +218,10 @@ enum What {
     Statics,
 }
 
-fn load(path: &Path) -> Option<ScrProgram> {
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("Error: read {}: {e}", path.display());
-            return None;
-        }
-    };
-    if bytes.starts_with(&or_io::container::rpf::RPF9_MAGIC.to_le_bytes()) {
-        eprintln!(
-            "Error: {}: {}",
-            path.display(),
-            super::gta6_scripts::NO_PROGRAM
-        );
-        return None;
-    }
-    match ScrProgram::from_bytes(&bytes) {
-        Ok(p) => Some(p),
-        Err(e) => {
-            eprintln!("Error: {}: {e}", path.display());
-            None
-        }
-    }
+/// The GTA V script at `path`, or why it is none, with the path.
+fn load(path: &Path) -> Result<ScrProgram, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    ScrProgram::from_bytes(&bytes).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Where `script download-natives` writes, under the configuration directory the app also uses.
@@ -273,25 +304,23 @@ pub fn download_natives(dir: &Path) -> Result<Vec<DownloadedFile>, String> {
 
 fn download_natives_command() -> ExitCode {
     let Some(dir) = config_root().map(|root| natives_dir(&root)) else {
-        eprintln!("Error: no configuration directory; set OPENRAGE_CONFIG_DIR");
-        return ExitCode::FAILURE;
+        return failed("no configuration directory; set OPENRAGE_CONFIG_DIR");
     };
     match download_natives(&dir) {
         Ok(files) => {
+            let mut out = String::new();
             for file in &files {
-                println!("{}", file.label());
+                let _ = writeln!(out, "{}", file.label());
             }
-            println!("Downloaded into {}.", dir.display());
-            println!(
+            let _ = writeln!(out, "Downloaded into {}.", dir.display());
+            let _ = writeln!(
+                out,
                 "OpenRage neither bundles nor redistributes these files, and alloc8or's \
                  lists carry no licence; they were fetched because you asked."
             );
-            ExitCode::SUCCESS
+            printed(&out, ExitCode::SUCCESS)
         }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            ExitCode::FAILURE
-        }
+        Err(e) => failed(&e),
     }
 }
 
@@ -371,22 +400,26 @@ pub fn provenance(program: &ScrProgram, names: &NativeDbSet) -> (Option<NativeDb
     }
 }
 
-fn info(program: &ScrProgram, names: &NativeDbSet) {
-    println!("name              {}", program.name);
-    println!("name hash         0x{:08X}", program.name_hash);
-    println!("globals signature 0x{:08X}", program.globals_signature);
-    println!(
+fn info(program: &ScrProgram, names: &NativeDbSet) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "name              {}", program.name);
+    let _ = writeln!(out, "name hash         0x{:08X}", program.name_hash);
+    let _ = writeln!(out, "globals signature 0x{:08X}", program.globals_signature);
+    let _ = writeln!(
+        out,
         "code              {} bytes over {} page(s)",
         program.code_length,
         ScrProgram::pages_for(program.code_length as usize)
     );
-    println!(
+    let _ = writeln!(
+        out,
         "statics           {} ({} of them arguments)",
         program.statics.len(),
         program.parameter_count
     );
-    println!("globals           {}", program.globals_count);
-    println!(
+    let _ = writeln!(out, "globals           {}", program.globals_count);
+    let _ = writeln!(
+        out,
         "natives           {} call site(s), {} distinct",
         program.natives.len(),
         program
@@ -395,13 +428,15 @@ fn info(program: &ScrProgram, names: &NativeDbSet) {
             .collect::<BTreeSet<_>>()
             .len()
     );
-    println!(
+    let _ = writeln!(
+        out,
         "strings           {} over {} byte(s)",
         program.strings.len(),
         program.strings_length
     );
-    match disasm::check(program) {
-        Ok((_, report)) => println!(
+    let _ = match disasm::check(program) {
+        Ok((_, report)) => writeln!(
+            out,
             "instructions      {} in {} function(s){}",
             report.instructions,
             report.functions,
@@ -411,45 +446,38 @@ fn info(program: &ScrProgram, names: &NativeDbSet) {
                 " — the decode disagrees with the file; run `script check`"
             }
         ),
-        Err(e) => println!("instructions      does not decode: {e}"),
-    }
-    println!();
-    println!("{}", provenance(program, names).1);
+        Err(e) => writeln!(out, "instructions      does not decode: {e}"),
+    };
+    let _ = writeln!(out, "\n{}", provenance(program, names).1);
+    out
 }
 
-fn natives(program: &ScrProgram, names: &NativeDbSet) {
+fn natives(program: &ScrProgram, names: &NativeDbSet) -> String {
     let (db, sentence) = provenance(program, names);
     let distinct: BTreeSet<u64> = program.native_hashes().into_iter().collect();
+    let mut out = String::new();
     for hash in &distinct {
-        match db.as_ref().and_then(|db| db.name(*hash)) {
-            Some(name) => println!("0x{hash:016X}  {name}"),
-            None => println!("0x{hash:016X}"),
-        }
+        let _ = match db.as_ref().and_then(|db| db.name(*hash)) {
+            Some(name) => writeln!(out, "0x{hash:016X}  {name}"),
+            None => writeln!(out, "0x{hash:016X}"),
+        };
     }
-    println!();
-    println!(
-        "{} distinct native(s) across {} call site(s).",
+    let _ = writeln!(
+        out,
+        "\n{} distinct native(s) across {} call site(s).",
         distinct.len(),
         program.natives.len()
     );
-    println!("{sentence}");
+    let _ = writeln!(out, "{sentence}");
+    out
 }
 
 fn disassemble(program: &ScrProgram, names: &NativeDbSet, show_bytes: bool) -> ExitCode {
     let (db, sentence) = provenance(program, names);
     match listing(program, db.as_ref(), &sentence, show_bytes) {
-        Ok((text, clean)) => {
-            print!("{text}");
-            if clean {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::FAILURE
-            }
-        }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            ExitCode::FAILURE
-        }
+        Ok((text, true)) => printed(&text, ExitCode::SUCCESS),
+        Ok((text, false)) => printed(&text, ExitCode::FAILURE),
+        Err(e) => failed(&e),
     }
 }
 
@@ -460,8 +488,6 @@ pub fn listing(
     sentence: &str,
     show_bytes: bool,
 ) -> Result<(String, bool), String> {
-    use std::fmt::Write as _;
-
     let (instructions, report) =
         disasm::check(program).map_err(|e| format!("`{}` does not decode: {e}", program.name))?;
     let write = |out: &mut String| -> std::fmt::Result {
@@ -487,8 +513,6 @@ pub fn source(
     names: Option<&NativeDb>,
     sentence: &str,
 ) -> Result<String, String> {
-    use std::fmt::Write as _;
-
     let out = decompile::decompile(program, names)
         .map_err(|e| format!("`{}` does not decode: {e}", program.name))?;
     let s = out.stats;
@@ -513,82 +537,111 @@ pub fn source(
 fn check_all(paths: &[PathBuf]) -> ExitCode {
     let mut clean = 0usize;
     for path in paths {
-        let Some(program) = load(path) else {
-            continue;
-        };
-        match disasm::check(&program) {
-            Err(e) => println!("{}: does not decode: {e}", path.display()),
-            Ok((_, report)) if report.is_clean() => {
-                clean += 1;
-                println!(
-                    "{}: clean — {} bytes, {} instructions, {} jump(s), {} case(s), {} call(s), \
-                     {} native call(s) checked",
-                    path.display(),
-                    report.bytes_decoded,
-                    report.instructions,
-                    report.jumps_checked,
-                    report.cases_checked,
-                    report.calls_checked,
-                    report.natives_checked
-                );
+        let line = match checked(path) {
+            Ok((line, agrees)) => {
+                clean += usize::from(agrees);
+                line
             }
-            Ok((_, report)) => println!("{}: {}", path.display(), report.problems().join("; ")),
+            Err(e) => {
+                note(&format!("Error: {e}"));
+                continue;
+            }
+        };
+        if let Err(e) = put(&format!("{line}\n")) {
+            return failed(&format!("write to stdout: {e}"));
         }
     }
-    println!(
-        "{clean} of {} script(s) decode and agree with their own file.",
+    let total = format!(
+        "{clean} of {} script(s) decode and agree with their own file.\n",
         paths.len()
     );
     if clean == paths.len() {
-        ExitCode::SUCCESS
+        printed(&total, ExitCode::SUCCESS)
     } else {
-        ExitCode::FAILURE
+        printed(&total, ExitCode::FAILURE)
     }
 }
 
-fn print_usage() {
-    eprintln!("Inspect and disassemble a compiled script (.ysc).");
-    eprintln!();
-    eprintln!("Usage: openrage-cli script <file.ysc> [--natives|--strings|--statics]");
-    eprintln!("       openrage-cli script disasm <file.ysc> [--no-bytes]");
-    eprintln!("       openrage-cli script decompile <file.ysc>");
-    eprintln!("       openrage-cli script check <file.ysc>...");
-    eprintln!("       openrage-cli script download-natives");
-    eprintln!("       openrage-cli script lifted <listing.ysc.cs> [-o <file>]");
-    eprintln!("       openrage-cli script lifted --census <folder> [-o <folder>]");
-    eprintln!();
-    eprintln!("  disasm      An instruction listing: jump and switch targets resolved,");
-    eprintln!("              calls named by function, natives named where a list does.");
-    eprintln!("  decompile   C-like source: functions, expressions, if/else, loops and");
-    eprintln!("              switches, with a labelled goto only where none fits.");
-    eprintln!("  check       Decode each script and check it against its own file: exactly");
-    eprintln!("              code_length bytes, no instruction across a code page, every");
-    eprintln!("              jump, case and call on an instruction, every native slot in");
-    eprintln!("              the table. Exits non-zero if any script disagrees.");
-    eprintln!("  lifted      Readable source from a lifted listing of a GTA VI script, the");
-    eprintln!("              text another decompiler writes from its bytecode. A compiled");
-    eprintln!("              GTA VI script cannot be read yet; `script lifted --help` says");
-    eprintln!("              what the command takes.");
-    eprintln!("  --natives   The natives this script calls, by hash, named where a list does.");
-    eprintln!("  --strings   The script's string heap, one entry per line.");
-    eprintln!("  --statics   The initial static values; the leading ones are arguments.");
-    eprintln!();
-    eprintln!("Native names:");
-    eprintln!("  --natives-db <path>   A natives list, JSON or `0xHASH NAME` text. Repeat");
-    eprintln!("                        for one list per build; each script takes the list");
-    eprintln!("                        naming most of its natives. Without the flag,");
-    eprintln!("                        {NATIVES_ENV} is read as ;-separated paths, and");
-    eprintln!("                        without either, what download-natives fetched.");
-    eprintln!("  download-natives      Fetch alloc8or's natives lists and CSY0N's crossmap from");
-    eprintln!("                        GitHub into the configuration directory, recording");
-    eprintln!("                        each file's commit. Runs only when you ask.");
-    eprintln!("  ⚠ OpenRage ships no natives list. A hash no list names stays a hash.");
+/// The line `check` prints of the GTA V script at `path`, and whether its decode agrees with its file; why the file is no script, with the path.
+fn checked(path: &Path) -> Result<(String, bool), String> {
+    let program = load(path)?;
+    let at = path.display();
+    Ok(match disasm::check(&program) {
+        Err(e) => (format!("{at}: does not decode: {e}"), false),
+        Ok((_, report)) if report.is_clean() => (
+            format!(
+                "{at}: clean — {} bytes, {} instructions, {} jump(s), {} case(s), {} call(s), \
+                 {} native call(s) checked",
+                report.bytes_decoded,
+                report.instructions,
+                report.jumps_checked,
+                report.cases_checked,
+                report.calls_checked,
+                report.natives_checked
+            ),
+            true,
+        ),
+        Ok((_, report)) => (format!("{at}: {}", report.problems().join("; ")), false),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use or_io::gta5::script::opcode;
+
+    /// A stdout that answers every write with `kind`.
+    struct Refusing(ErrorKind);
+
+    impl std::io::Write for Refusing {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(self.0.into())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_reader_that_closed_the_pipe_is_no_error_and_any_other_refusal_is_one() {
+        assert!(put_to(&mut Refusing(ErrorKind::BrokenPipe), "a line\n").is_ok());
+        let full = put_to(&mut Refusing(ErrorKind::StorageFull), "a line\n");
+        assert_eq!(full.err().map(|e| e.kind()), Some(ErrorKind::StorageFull));
+        let mut taken = Vec::new();
+        assert!(put_to(&mut taken, "a line\n").is_ok());
+        assert_eq!(taken, b"a line\n");
+    }
+
+    #[test]
+    fn lines_go_after_the_comment_lines_a_text_opens_with() {
+        let text = "// one\n// two\n\nvoid main()\n{\n    // inside\n}\n";
+        assert_eq!(
+            after_header(text, "// own\n"),
+            "// one\n// two\n// own\n\nvoid main()\n{\n    // inside\n}\n"
+        );
+        // A text that opens with no comment takes them first, and one that is all header takes them last.
+        assert_eq!(
+            after_header("void main()\n", "// own\n"),
+            "// own\nvoid main()\n"
+        );
+        assert_eq!(after_header("// one", "// own\n"), "// one\n// own\n");
+        assert_eq!(after_header("", "// own\n"), "// own\n");
+    }
+
+    #[test]
+    fn a_file_that_is_no_gta_v_script_is_refused_by_its_path_and_never_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let junk = dir.path().join("junk.ysc");
+        std::fs::write(&junk, b"no resource").unwrap();
+        let refused = checked(&junk).expect_err("no script");
+        assert!(
+            refused.starts_with(&junk.display().to_string()),
+            "{refused}"
+        );
+        let missing = checked(&dir.path().join("missing.ysc")).expect_err("no file");
+        assert!(missing.starts_with("read "), "{missing}");
+    }
 
     /// ⚠ Never fetches: the download is a directory written by hand, as `script download-natives` would leave it.
     #[test]

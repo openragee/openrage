@@ -47,10 +47,12 @@ fn own_simples<'a>(stmt: &'a tree::Stmt, f: &mut impl FnMut(&'a ir::Stmt)) {
 /// The variables that hold an object of one known type wherever the function reads them, with that type.
 // A variable only ever assigned objects the function makes of one type, and the receiver of a
 // function the project proves a member of a type. ⚠ A variable whose address is taken, and a
-// local at or after one whose address is, may be written through that address.
+// local at or after one whose address is, may be written through that address: an address the
+// function only loads or stores its own cell through reaches no other.
 fn objects(f: &mut tree::Function, project: &Project) -> BTreeMap<Var, TypeKey> {
     let mut made: BTreeMap<Var, Option<TypeKey>> = BTreeMap::new();
-    let mut addressed: BTreeSet<Var> = BTreeSet::new();
+    // Each variable whose address is taken: how often, and how often only to reach its own cell.
+    let mut taken: BTreeMap<Var, (u32, u32)> = BTreeMap::new();
     // An explicit stack: a body nests as deep as its listing does.
     let mut work: Vec<&mut Vec<tree::Stmt>> = vec![&mut f.body];
     while let Some(list) = work.pop() {
@@ -69,17 +71,30 @@ fn objects(f: &mut tree::Function, project: &Project) -> BTreeMap<Var, TypeKey> 
                         *held = None;
                     }
                 }
+                // A store through the variable's own address writes it as an assignment does.
+                if let Some(var) = layouts::own_cell_store(s) {
+                    taken.entry(var).or_default().1 += 1;
+                    made.insert(var, None);
+                }
             });
             tree::own_exprs_mut(stmt, &mut |top| {
-                top.walk(&mut |e| {
-                    if let Expr::AddrOf { var, .. } = e {
-                        addressed.insert(*var);
+                top.walk(&mut |e| match e {
+                    Expr::AddrOf { var, .. } => taken.entry(*var).or_default().0 += 1,
+                    Expr::Load { ty, addr, offset } => {
+                        if let Some(var) = layouts::own_cell(addr, *offset, ty.bytes()) {
+                            taken.entry(var).or_default().1 += 1;
+                        }
                     }
+                    _ => {}
                 });
             });
             work.extend(tree::nested_mut(stmt));
         }
     }
+    let addressed: BTreeSet<Var> = (taken.into_iter())
+        .filter(|(_, (all, own))| all > own)
+        .map(|(var, _)| var)
+        .collect();
 
     let lowest = addressed.iter().filter_map(|var| match var {
         Var::Local(n) => Some(*n),

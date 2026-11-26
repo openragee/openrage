@@ -379,3 +379,53 @@ fn a_variable_the_kinds_pass_types_as_an_object_is_a_base_of_that_type() {
     let f = past(Var::Local(1));
     assert_eq!(read(f.clone(), &project, Options::default()).body, f.body);
 }
+
+#[test]
+fn an_address_used_only_to_reach_its_own_cell_reaches_no_local_after_it() {
+    let mut f = function(vec![
+        tree::Stmt::Simple(ir::Stmt::ZeroBytes {
+            addr: Expr::AddrOf {
+                var: Var::Local(0),
+                cell: 0,
+            },
+            bytes: 4,
+        }),
+        set(Var::Local(1), made()),
+        set(Var::Local(2), load(Scalar::I32, local(1), 0x10)),
+    ]);
+    let project = project();
+    let done = read(f.clone(), &project, Options::default());
+    let wanted = set(Var::Local(2), of(MADE, load(Scalar::I32, local(1), 0x10)));
+    assert_eq!(done.body[2], wanted);
+    // An address handed on may reach every local after it.
+    f.body[0] = tree::Stmt::Simple(ir::Stmt::Eval(Expr::Call {
+        callee: ir::Callee::Local {
+            at: 0x80,
+            name: "func_000080".to_owned(),
+        },
+        args: vec![Expr::AddrOf {
+            var: Var::Local(0),
+            cell: 0,
+        }],
+        returns: Some(0),
+    }));
+    let done = read(f.clone(), &project, Options::default());
+    assert_eq!(done.body, f.body);
+    // A local written through its own address holds what was stored, whatever was assigned.
+    let stored = ir::Stmt::Store {
+        kind: StoreKind::U64,
+        addr: Expr::AddrOf {
+            var: Var::Local(1),
+            cell: 0,
+        },
+        offset: 0,
+        value: param(0),
+    };
+    let body = vec![
+        set(Var::Local(1), made()),
+        tree::Stmt::Simple(stored),
+        set(Var::Local(2), load(Scalar::I32, local(1), 0x10)),
+    ];
+    let f = function(body);
+    assert_eq!(read(f.clone(), &project, Options::default()).body, f.body);
+}

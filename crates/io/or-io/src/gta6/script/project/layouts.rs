@@ -153,8 +153,11 @@ struct Sets {
 }
 
 impl Sets {
+    // ⚠ An address the function only loads or stores its own cell through reaches no other
+    // variable: such a store is an assignment of the variable, and no address taken.
     fn of(f: &cfg::Function) -> Sets {
         let mut sets = Sets::default();
+        let mut taken: BTreeMap<Var, (u32, u32)> = BTreeMap::new();
         for block in &f.cfg.blocks {
             for stmt in &block.stmts {
                 match stmt {
@@ -168,12 +171,20 @@ impl Sets {
                         }
                     }
                 }
-                stmt.each_expr(&mut |top| sets.addresses(top));
+                if let Some(var) = own_cell_store(stmt) {
+                    taken.entry(var).or_default().1 += 1;
+                    sets.give(var, None);
+                }
+                stmt.each_expr(&mut |top| addresses(top, &mut taken));
             }
             if let Some(e) = block.term.expr() {
-                sets.addresses(e);
+                addresses(e, &mut taken);
             }
         }
+        sets.addressed = (taken.into_iter())
+            .filter(|(_, (all, own))| all > own)
+            .map(|(var, _)| var)
+            .collect();
         sets
     }
 
@@ -182,14 +193,6 @@ impl Sets {
         if *held != ty {
             *held = None;
         }
-    }
-
-    fn addresses(&mut self, top: &Expr) {
-        top.walk(&mut |e| {
-            if let Expr::AddrOf { var, .. } = e {
-                self.addressed.insert(*var);
-            }
-        });
     }
 
     /// The lowest local whose address the function takes.
@@ -227,6 +230,39 @@ impl Sets {
             bases.insert(Var::Param(0), owner);
         }
         bases
+    }
+}
+
+/// Counts each address of a variable `top` takes, and each load through one that stays in the variable's own cell.
+fn addresses(top: &Expr, taken: &mut BTreeMap<Var, (u32, u32)>) {
+    top.walk(&mut |e| match e {
+        Expr::AddrOf { var, .. } => taken.entry(*var).or_default().0 += 1,
+        Expr::Load { ty, addr, offset } => {
+            if let Some(var) = own_cell(addr, *offset, ty.bytes()) {
+                taken.entry(var).or_default().1 += 1;
+            }
+        }
+        _ => {}
+    });
+}
+
+/// The variable whose own cell an access of `bytes` bytes at `offset` through `addr` reaches, where `addr` is its address and the access stays in that cell.
+pub(crate) fn own_cell(addr: &Expr, offset: u32, bytes: u32) -> Option<Var> {
+    let Expr::AddrOf { var, cell: 0 } = addr else {
+        return None;
+    };
+    (u64::from(offset) + u64::from(bytes) <= 8).then_some(*var)
+}
+
+/// The variable whose own cell a store, a clear or a step reaches through its address, and no other.
+pub(crate) fn own_cell_store(s: &Stmt) -> Option<Var> {
+    match s {
+        Stmt::Store {
+            kind, addr, offset, ..
+        } => own_cell(addr, *offset, kind.bytes()),
+        Stmt::ZeroBytes { addr, bytes } => own_cell(addr, 0, *bytes),
+        Stmt::StepI32 { addr, offset, .. } => own_cell(addr, *offset, 4),
+        _ => None,
     }
 }
 

@@ -70,6 +70,12 @@ counted and never propagated, and an interrupt is checked between items.
 Progress is counters a second thread reads rather than a channel, because a
 frame needs only the current numbers; a job that is no loop, such as the
 editor's defragment or overlay copy, publishes its own with `Progress::reached`.
+Work that runs side by side is bounded here too: `or_job::workers` is the
+machine's cores less two, `or_job::side_by_side` maps a slice on that many
+threads and gives the results in order (the editor translates a GTA VI
+drawable's effects through it), and `or_job::Pool` runs tasks handed over time
+and calls back each time its last worker finds none left (the renderer builds
+a GTA VI pass on one, and keeps the driver's cache at that call).
 
 **or-test-support.** Corpus discovery (`Corpus`), target inference and the
 skip ledger for every suite; never hand-roll a `read_dir` over fixtures. A query

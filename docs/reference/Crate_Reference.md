@@ -102,7 +102,9 @@ which went with that crate in P63 (#335), into its modules; comments and history
 so CI builds it in its own step, and `or-source` turns it on for itself. `or_io::dds`, `or_io::awc`, `or_io::rel` and
 `or_io::gfx` are ordinary code, not declarations, each behind a feature of its
 name; `gfx` keeps a Scaleform movie's tags as bytes and converts it to SWF and
-back. The binary world tables are ordinary code behind no feature:
+back. `or_io::rel` reads and saves a `.rel` container and types its items; its
+`interior` module is the one that edits them, the interiors of a game data file
+and their rooms ([below](#the-interiors-of-a-game-data-rel)). The binary world tables are ordinary code behind no feature:
 `or_io::height_map`, `or_io::distant_lights`, `or_io::water_map`,
 `or_io::world_blanket` and `or_io::nav_precalc`, and so are the streaming cache
 files, `metadata.dat` and the audio sector grid (`or_io::cache_loader`,
@@ -409,6 +411,75 @@ Bink 2 filter is derived from a proprietary DLL, which the review before publica
 Each ported file opens with a header naming origin, upstream path, revision and licence, and
 `LICENSE-third-party.md` lists it; `or-io` stays MIT. It depends on `or-io`'s `awc` feature
 alone, and `or-io` never depends on it.
+
+### The interiors of a game data .rel
+
+`crates/io/or-io/src/rel/interior.rs` is the one module of `or_io::rel` that edits an item
+([R70x](../direction/Roadmap.md#r70x-the-audio-of-an-interior)). Through `RelFile`, on a game data
+file of `rel_type` 151: `add_interior` and `add_interior_room` take an item's typed members from
+nothing, `copy_interior` copies an interior and each room it lists under new keys, `set_interior`
+and `set_interior_room` write one again from its typed members, and `remove_interior` and
+`remove_interior_room` take one out: an interior with the rooms only it lists, a room with its place
+in every interior that lists it. A key an interior lists that the file holds as another type, or
+does not hold, stays as it was when the interior goes
+(`removing_an_interior_leaves_what_it_lists_that_is_not_a_room_of_the_file`), and an interior that
+lists a room twice is copied with that room once
+(`a_copy_of_an_interior_that_lists_a_room_twice_copies_the_room_once`). An item is under a key and
+never a name, since no shipped game data file carries a name; whether an interior's key is the hash
+of its archetype's name is not measured. `own_align()`, generated on every item enum of
+`crates/io/or-io/src/rel/layout.rs`, is the alignment of the fields an item's own type declares.
+
+- **The layout.** An edit lays the whole data block out again by the layout every shipped game data
+  file has: four leading bytes, which are carried, then each item at the next multiple of the
+  alignment of the fields its own type declares, a packed type's anywhere, with zeros between; an
+  item table ordered by each key's low byte and then the key; and a hash table, ascending, that
+  lists of an interior each room it names and of a room its ambient zone. A file that layout does
+  not write back byte for byte is refused before anything changes, and so is one with a name table
+  or of another `rel_type`
+  (`a_file_an_edit_would_not_write_back_as_it_is_is_refused_untouched`), so every other item keeps
+  its bytes and the words the hash and pack tables list of it.
+- **What is refused**, each with a sentence and the file left as it was: a file keyed by name, one
+  whose data block is shorter than its leading bytes, and one whose item table puts an item outside
+  the data block, holds one key twice or holds an item of no type
+  (`a_file_that_does_not_hold_together_is_refused_with_a_sentence`); a key the file holds
+  (`a_key_the_file_holds_is_refused`); a room naming an interior the file does not hold; an interior
+  listing a room it does not hold; a 256th room where the count is one byte and a name table offset
+  past its 24 bits (`a_member_past_what_the_encoding_states_is_refused`); a copy with no key for a
+  room, with a key for a room the interior does not list, with one key for two of its items
+  (`a_copy_refuses_one_key_for_two_rooms`) or two keys for one room; and the removal of an interior
+  or a room that a `StaticEmitter` or an `AlarmSettings` of the file names
+  (`an_interior_or_a_room_another_item_names_is_not_removed`).
+- **What holds it by hand.** `crates/io/or-io/tests/rel_interiors.rs`, on a file laid out by hand
+  and written by `RelFile::save`: an interior and its rooms added from nothing or by copy read back
+  typed and equal, the save reaches its fixed point, every other item is untouched, and removing a
+  copy gives the first bytes back.
+- **What the installs hold**, Legacy / Enhanced, each copy of each file counted
+  (`the_interiors_of_an_install_lay_out_as_an_edit_writes_them` in
+  `crates/io/or-io/tests/rel_interiors_of_an_install.rs`, slow tier, on top of `974935c9d`,
+  2026-11-26). 30 of 54 / 29 of 57 game data `.rel` hold an interior, and none of the 17 / 21 older
+  game data files, `rel_type` 149 and 150, holds one; they hold 640 `InteriorSettings` and 2,075
+  `InteriorRoom` in each install. All 2,715 read typed and write back to their bytes, every file
+  saves untouched to the bytes read, none carries a name table or a pack table entry, and an edit
+  that changes nothing leaves all 30 / 29 as read. Every game data `.rel`, 54 of 54 / 57 of 57, has
+  the layout above, and the hash table lists the rooms of 640 of 640 interiors and the ambient zone
+  of 2,075 of 2,075 rooms and no other word of them. All 2,045 rooms an interior lists are
+  `InteriorRoom` items of its own file; 8 rooms are listed by more than one interior and 42 by
+  none. Besides those lists, the words of any item that equal an interior's or a room's key are a
+  `StaticEmitter`'s interior and room, an `AlarmSettings`'s interior, and the room name a room
+  states, and no other member of any type. A room name is the hash of the room's name in its MLO
+  and names no item: it is its own item's key in 222 rooms of each install and another room's key
+  in 16, and an edit does not follow it. The game data siblings a DLC ships beside its `.rel`
+  files, `.dat149` to `.dat151`, are counted apart: 66 of 66 / 72 of 72 are byte for byte a `.rel`
+  of the walk, and 27 in each install hold an interior.
+- **An edit of every file and every interior**, same suite and day.
+  `every_install_rel_with_an_interior_takes_one_more_by_copy`: 30 of 30 Legacy and 29 of 29
+  Enhanced files, and 27 of 27 `.dat151` siblings in each install, take a copy of the interior of
+  theirs that lists the fewest rooms, read it back with every item they held unchanged, save to a
+  fixed point, and give the shipped bytes back once the copy is removed.
+  `every_interior_of_an_install_is_copied_and_the_copy_removed` does the same with each interior in
+  turn, in one file of each content: 640 of 640 in each install, of 30 / 29 files. 6 of them list
+  no room, 14 list a room another interior lists too, and the most rooms one lists is 25; none
+  lists a room twice, so that case is held on the hand-built file alone.
 
 ## Title crate
 

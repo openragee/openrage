@@ -136,6 +136,8 @@ pub struct WorldConstants {
     pub emissive_diffuse_tint: f32,
     /// How far a grass blade bends in the wind, its effect's `bendiness`: nought for none.
     pub grass_bend: f32,
+    /// The share of its lamps' light a glass takes by the cosine to its face; the rest it takes all round.
+    pub lamp_facing: f32,
 }
 
 impl WorldConstants {
@@ -213,6 +215,7 @@ impl Default for WorldConstants {
             emissive_view_power: 0.0,
             emissive_diffuse_tint: 1.0,
             grass_bend: 0.0,
+            lamp_facing: 0.0,
         }
     }
 }

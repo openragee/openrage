@@ -67,6 +67,7 @@ struct Constants {
     emissive_view_power: f32,
     emissive_diffuse_tint: f32,
     grass_bend: f32,
+    lamp_facing: f32,
 };
 @group(0) @binding(0) var<uniform> camera: Camera;
 // Slots 9 to 11 are the fourth layer's in the four-layer family, and material B of the first and second layer and the emissive map in every other.
@@ -1033,9 +1034,9 @@ fn fs_lit(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) 
     if (dropped(in, max(s.coverage, max3(surface)), BLEND_ALPHA)) {
         discard;
     }
-    // Glass takes its lamps' light all round, as the glass program mixes it in whole for a lens that states no share of its own.
+    // Glass takes its lamps' light all round but for the share its material gives the cosine; ⚠ the program's second factor on that share is a value not read, taken as nought.
     let lamps = lamps_lit(s, in.world_pos);
-    let lamp = select(lamps.facing, lamps.round, m.family.x == GLASS);
+    let lamp = select(lamps.facing, mix(lamps.round, lamps.facing, m.lamp_facing), m.family.x == GLASS);
     let lit = (diffuse_of(s) * (sun + ambient + lamp) + s.emissive) * s.coverage + surface;
     return vec4<f32>(lit, s.coverage + share - s.coverage * share);
 }

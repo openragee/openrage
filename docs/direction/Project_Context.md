@@ -40,7 +40,7 @@ Offered four ways to draw a world for several games, the owner chose: "option C 
 
 Asked who moves the GTA VI world viewer out of the app and behind the contract, the owner answered that this programme does, and that "the gta vi other session work is paused meanwhile".
 
-- **What it means for a lane.** Until the app holds one world session ([R71c](Roadmap.md#r71c-one-world-session-one-frame-host-and-panels-by-capability)), no lane outside the programme edits `src/state/gta6_worldview/`, the world files of `src/render/viewport/` or the World panel. How long "meanwhile" lasts was not said; the plan takes it as until R71c merges and [asks](Unified_World_Plan.md#asked-of-the-owner).
+- **What it means for a lane.** Until the app holds one world session ([R71c](Roadmap.md#r71c-one-world-session-one-frame-host-and-panels-by-capability)), no lane outside the programme edits `src/state/gta6_worldview/`, the world files of `src/render/viewport/` or the World panel. How long "meanwhile" lasts was not said; the plan takes it as until R71c's first part merges and [asks](Unified_World_Plan.md#asked-of-the-owner).
 - **The pause on every agent is lifted.** The owner had paused all agents earlier that day, and lifted that pause with the go-ahead: "option C like you said, i lift the pause yes, write the plan". The plan is [Unified_World_Plan.md](Unified_World_Plan.md), and nothing of it is built.
 - **What it does not move.** GTA VI's script decompiler and its model viewport are no part of the viewer.
 

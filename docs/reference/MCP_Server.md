@@ -123,6 +123,24 @@ from `COMMANDS` in `crates/tools/or-cli/src/lib.rs`, so a new command is
 offered without a change to the server; `["help"]` says what each does and
 `[COMMAND, "--help"]` gives its usage.
 
+A compiled GTA VI script decompiles to more than an answer keeps, so it is read
+a part at a time. No tool of its own is offered for a script.
+
+| `args` | What it answers |
+|---|---|
+| `["script", "list", ARCHIVE]` | the programs of an archive |
+| `["script", FILE, "--functions", "--json", "--offset", N, "--limit", N]` | one page of a program's functions as a JSON array, one function a line; stderr says which functions the page holds and the `--offset` that prints the next |
+| `["script", "decompile", FILE, "--function", NAME]` | one function: its source and the type that holds it, without the program's other types; `--with-classes` writes those too |
+| `["script", "decompile", FILE, "-o", OUT]` | the whole program, written to a file |
+
+Choose `--limit` so that a page fits an answer. A `project.json` beside FILE
+is read without being named, which takes seconds when it is the project of a
+whole build; `--alone` decompiles without it, and `--project` names another.
+
+⚠ An answer keeps the last 64 KiB of each stream. A list or a source asked for
+whole comes back without its first part, its header among it, and a list cut so
+is no longer JSON: ask for a page, or write to a file with `-o` and read that.
+
 ### `shots`
 
 `steps` is a script of

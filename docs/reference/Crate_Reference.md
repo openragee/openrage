@@ -174,6 +174,7 @@ their fields: a name says the role a field was measured to play, and nothing the
 | `gta6::ui_tree` | an RBF0 document as a strict element tree |
 | `gta6::ped_catalogue` | a ped catalogue's asset kits and set kits, typed from the value tree by member name |
 | `gta6::mission_tables`, `gta6::script_bodies` | a script body's mission state tables, found by its block table; the script archives' opaque bodies, stated and never read |
+| `gta6::script` | a script as readable source, from a compiled program (`program`, `decode`, `lift`) or from a lifted listing (`listing`), through the passes `options` names to `print` and `emit`; `compiled` is the plain instruction listing of the same bytes ([GTA_VI_Script_Decompiler.md](../features/GTA_VI_Script_Decompiler.md)) |
 | `gta6::save` | the three save containers: a story save as an owned value, a record read, a packed copy refused |
 | `gta6::other_bodies` | the bodies a scan names by their head |
 
@@ -1033,7 +1034,7 @@ inspector then shows only that document's facts
 
 `DocumentKind` names `Ypt`, `Ytd`, `Ydr`, `Ydd`, `Yft`, `Ybn`, `Yld`, `Ycd`,
 `Yed`, `Yfd`, `Ynd`, `Ynv`, `Ypdb`, `Fxc`, `Gxt2`, `Bik`, `Awc`, `HeightMap`,
-`DistantLights`, `WaterMap`, `WorldBlanket`, `NavPrecalc`, `DatTable`, `Rel`, `NameTable`, `Gfx`, `MoveNetwork`, `Dds`, `Ttpf`, `Rpf`, `Rpf9`, `Gta6Anim`, `Gta6Drawable`, `Gta6Text`, `Gta6AudioData`, `Gta6Expressions`, `Gta6Save`, `GameRoot`, `Folder`, `Text`, `Meta`, `Hex` and `Compare`, and `Registered`
+`DistantLights`, `WaterMap`, `WorldBlanket`, `NavPrecalc`, `DatTable`, `Rel`, `NameTable`, `Gfx`, `MoveNetwork`, `Dds`, `Ttpf`, `Rpf`, `Rpf9`, `Gta6Anim`, `Gta6Drawable`, `Gta6Text`, `Gta6AudioData`, `Gta6Expressions`, `Gta6Save`, `Gta6Script`, `GameRoot`, `Folder`, `Text`, `Meta`, `Hex` and `Compare`, and `Registered`
 carries the `ResourceType` of a detected format the enum does not name
 (`src/doc_counts.rs` holds the list). Only the format's own
 rows look inside `DocPayload::Registered`, by downcasting to the reader's type
@@ -1118,7 +1119,7 @@ document or a metadata document. Every other field is an `Option` cell, and
   `match`, because grouping is a product decision.
 - A kind with no `ResourceType` still costs arms in `src/state/document_io.rs`:
   `GameRoot`, `Folder` and `Compare` have no bytes, `Rpf` needs a crypto provider, and
-  `Text`, `Meta`, `Gxt2`, `Ypdb`, `Fxc`, `Bik`, `Awc`, `HeightMap`, `DistantLights`, `WaterMap`, `WorldBlanket`, `NavPrecalc`, `DatTable`, `Rel`, `NameTable`, `Gfx`, `MoveNetwork`, `Dds`, `Ttpf`, `Rpf9`, `Gta6Anim`, `Gta6Drawable`, `Gta6Text`, `Gta6AudioData`, `Gta6Expressions`, `Gta6Save` and `Hex`
+  `Text`, `Meta`, `Gxt2`, `Ypdb`, `Fxc`, `Bik`, `Awc`, `HeightMap`, `DistantLights`, `WaterMap`, `WorldBlanket`, `NavPrecalc`, `DatTable`, `Rel`, `NameTable`, `Gfx`, `MoveNetwork`, `Dds`, `Ttpf`, `Rpf9`, `Gta6Anim`, `Gta6Drawable`, `Gta6Text`, `Gta6AudioData`, `Gta6Expressions`, `Gta6Save`, `Gta6Script` and `Hex`
   are not paged.
 
 ### What a kind of content costs

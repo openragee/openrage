@@ -95,8 +95,9 @@ folder's view offers the scan and the name harvest.
   which plays and exports as Ogg Opus, and a Bink movie's pictures and sound. A drawable is drawn in
   Wireframe, Solid and Material and goes out to glTF. An enciphered entry opens deciphered: a PSO or
   RBF in the metadata editor, text as text and a resource in its kind's view. A PSO's enciphered
-  strings name the hash values it holds. A deciphered script body reads as a compiled program, its
-  header, instructions and native calls, through `openrage-cli script compiled`.
+  strings name the hash values it holds. A deciphered script body reads as a compiled program: its
+  header, instructions and native calls through `openrage-cli script compiled`, and as source through
+  `openrage-cli script decompile` and the app.
 - **Textures.** A texture stored plainly or as zlib reads as it is. One stored through the pack's
   entropy coder decodes exactly as BC1; as BC3, BC4, BC5, BC6H or BC7 it decodes through tables
   that `openrage-cli ttpf calibrate`, or the app's job, fits on your machine from the packs of the
@@ -130,8 +131,10 @@ folder's view offers the scan and the name harvest.
   patched. A plain replace of an entry whose row describes a paged resource is refused by name, and
   `replace --resource` replaces it by its loose form.
 - **Not done.** The game refuses every rebuilt archive, and no file OpenRage saved, a patched copy
-  included, has been tried in the game. A script is not
-  decompiled from its compiled body. A program the shader front end cannot translate or bind leaves
-  its pass undrawn in Shaded, and no save file of the game has been opened: the save reader was
-  written from a description of the layout.
+  included, has been tried in the game. A compiled script,
+  which `openrage-cli script` decompiles, names a native, a type or a member only where a supplied
+  names list holds it, and comes out of an archive only with a key snapshot that holds content keys
+  ([GTA_VI_Script_Decompiler.md](GTA_VI_Script_Decompiler.md)). A program the shader front end
+  cannot translate or bind leaves its pass undrawn in Shaded, and no save file of the game has been
+  opened: the save reader was written from a description of the layout.
   [GTA_VI_Xbox_Build.md](GTA_VI_Xbox_Build.md) has each reader, refusal and command.

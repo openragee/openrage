@@ -13,7 +13,7 @@ use serde_json::json;
 use super::world::flag_value;
 
 /// The flags of these two verbs that take a value, so the value is not read as a coordinate.
-const VALUED_FLAGS: &[&str] = &["--game", "--keys", "--kept"];
+const VALUED_FLAGS: &[&str] = &["--game", "--keys", "--kept", "--level"];
 
 /// The folder under the configuration directory that holds an index an install.
 const KEPT_FOLDER: &str = "gta5_world_index";
@@ -74,19 +74,26 @@ pub(super) fn install_of(
     Ok((rest.remove(first), rest))
 }
 
-/// Mount the install `args` name and index it, as `--kept`, `--keys` and `--fresh` say.
+/// Mount the install `args` name, up to the pack `--level` names, and index it, as `--kept`, `--keys` and `--fresh` say.
 fn open(args: &[String]) -> Result<(WorldIndex, Report, PathBuf, PathBuf), String> {
+    // ⚠ A flag left with no value would be passed over, and a level passed over is every pack.
+    if let Some(flag) = (args.last()).filter(|arg| VALUED_FLAGS.contains(&arg.as_str())) {
+        return Err(format!("`{flag}` takes a value"));
+    }
     let (game, _) = install_of(args, VALUED_FLAGS)?;
     let game = game.as_str();
+    let level = flag_value(args, "--level");
+    let (cutoff, options) = super::search::dlc_list_mount(None, level, None)?;
     // The path as the file system spells it, so one install is one kept index however it is named.
     let root = std::fs::canonicalize(game).map_err(|e| format!("{game}: {e}"))?;
     let kept = match flag_value(args, "--kept") {
         Some(file) => PathBuf::from(file),
-        None => default_kept(&root, None).ok_or(
+        None => default_kept(&root, level).ok_or(
             "no configuration directory to keep the index in: name a file with --kept <file>",
         )?,
     };
-    let mount = super::keys::mount_all(&root, flag_value(args, "--keys").map(Path::new))?;
+    let keys = flag_value(args, "--keys").map(Path::new);
+    let (mount, _) = super::keys::mount_at(&root, keys, cutoff, options)?;
     let fresh = args.iter().any(|a| a == "--fresh");
     let (index, report) = indexed(&mount, &root, &kept, fresh);
     Ok((index, report, root, kept))
@@ -214,7 +221,9 @@ pub(crate) fn cmd_index(args: &[String]) -> ExitCode {
     let (index, report, root, kept) = match open(args) {
         Ok(opened) => opened,
         Err(e) => {
-            eprintln!("Error: world index --game <dir> [--kept <file>] [--fresh]: {e}");
+            eprintln!(
+                "Error: world index --game <dir> [--level <pack>] [--kept <file>] [--fresh]: {e}"
+            );
             return ExitCode::from(2);
         }
     };
@@ -360,7 +369,7 @@ fn at_json(index: &WorldIndex, at: Vec3) -> serde_json::Value {
 }
 
 pub(crate) fn cmd_at(args: &[String]) -> ExitCode {
-    let usage = "world at <install> <x> <y> <z> [--kept <file>]";
+    let usage = "world at <install> <x> <y> <z> [--level <pack>] [--kept <file>]";
     let at = match install_of(args, VALUED_FLAGS).and_then(|(_, rest)| position_of(&rest)) {
         Ok(at) => at,
         Err(e) => {

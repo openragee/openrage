@@ -176,6 +176,7 @@ fn a_node_of_a_staged_region_is_taken_out_with_its_neighbours_renumbered_and_put
         &folder,
         &Operation::RemoveNode {
             node: Address::new(region, node),
+            expects: None,
         },
     )
     .unwrap_or_else(|why| panic!("{region}:{node}: {why}"));

@@ -1,7 +1,8 @@
 //! Every operation of the vocabulary of road edits, followed by the inverse `apply` gives for it, leaves every source of the set byte
 //! for byte as it was, and each region an operation leaves cooks, reads back through the owned type and saves to its fixed point. A
 //! node another region names is not taken out, one none names is taken out with every link of the set renumbered, and a request the
-//! file cannot state is refused by name with nothing changed.
+//! file cannot state is refused by name with nothing changed. An inverse states the digest of the documents its operation left, and
+//! is refused once the set holds others.
 //!
 //! ⚠ The regions are built by hand, so the clean checkout runs this.
 
@@ -13,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use or_io::gta5::CPathRegion;
 use or_maps::roads::operation::{
-    apply, apply_all, Document, Error, JunctionRecord, LinkRecord, NamedBy, NodeRecord, Operation,
-    Operations, PairRecord, FORMAT,
+    apply, apply_all, digest_of, Document, Error, JunctionRecord, LinkRecord, NamedBy, NodeRecord,
+    Operation, Operations, PairRecord, FORMAT,
 };
 use or_maps::roads::{Address, Word};
 use roads::{cooked, coors, extract, files, links_of, node, region, Junction};
@@ -89,6 +90,51 @@ fn every_region_reads_back(folder: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The digest of the documents the sources of `folder` hold on disk.
+fn digest_on_disk(folder: &Path) -> String {
+    let documents: Vec<(String, Vec<u8>)> = (or_maps::roads::sources(folder).unwrap().into_iter())
+        .map(|(name, dir)| (name, std::fs::read(dir.join("paths.json")).unwrap()))
+        .collect();
+    digest_of(
+        documents
+            .iter()
+            .map(|(name, document)| (name.as_str(), document.as_slice())),
+    )
+}
+
+/// `operation` is refused as stale with nothing changed: what it expects, and what the set was found to hold.
+fn stale(folder: &Path, operation: &Operation) -> (String, String) {
+    let before = files(folder);
+    let refused = apply(folder, operation).expect_err("a stale operation is refused");
+    assert!(files(folder) == before, "a refusal changes no source");
+    let said = refused.to_string();
+    let Error::Stale {
+        name,
+        at,
+        expects,
+        found,
+    } = refused
+    else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(name, operation.name());
+    assert_eq!(at, folder.display().to_string());
+    assert_eq!(Some(expects.as_str()), operation.expects());
+    // The words a map operation is refused with, of the same four things.
+    let of_a_map = or_maps::operation::Error::Stale {
+        name,
+        at,
+        expects: expects.clone(),
+        found: found.clone(),
+    };
+    assert_eq!(said, of_a_map.to_string());
+    assert!(
+        said.contains("take back what was done after it first"),
+        "{said}"
+    );
+    (expects, found)
+}
+
 fn refusal(folder: &Path, operation: &Operation) -> String {
     let before = files(folder);
     let refused = apply(folder, operation).expect_err("the operation is refused");
@@ -108,6 +154,7 @@ const CASES: &[Case] = &[
     // A node with no junction, moved and renamed.
     |_| Operation::SetNode {
         node: at(7, 1),
+        expects: None,
         street_name_hash: Some(Word(0xDEAD_BEEF)),
         distance_to_target: Some(44),
         coors_x: Some(-120),
@@ -119,6 +166,7 @@ const CASES: &[Case] = &[
     // The first word whole, which carries the height.
     |_| Operation::SetNode {
         node: at(8, 2),
+        expects: None,
         street_name_hash: None,
         distance_to_target: None,
         coors_x: None,
@@ -129,12 +177,14 @@ const CASES: &[Case] = &[
     },
     |_| Operation::SetLink {
         node: at(7, 3),
+        expects: None,
         link: 2,
         as_integer1: Word(0xABCD_0123),
     },
     // Across two regions, in the middle of the links of each node.
     |_| Operation::AddLink {
         node: at(7, 0),
+        expects: None,
         other_node: at(8, 1),
         as_integer1: Word(0x0000_0A0A),
         link: Some(1),
@@ -144,6 +194,7 @@ const CASES: &[Case] = &[
     // One way, last among the links of its node.
     |_| Operation::AddLink {
         node: at(8, 0),
+        expects: None,
         other_node: at(8, 2),
         as_integer1: Word(0x0000_0C0C),
         link: None,
@@ -153,6 +204,7 @@ const CASES: &[Case] = &[
     // With the link back, which the other region states.
     |_| Operation::RemoveLink {
         node: at(7, 1),
+        expects: None,
         link: 1,
         back_link: None,
         one_way: false,
@@ -160,6 +212,7 @@ const CASES: &[Case] = &[
     // The link alone, though its far node links back.
     |_| Operation::RemoveLink {
         node: at(7, 0),
+        expects: None,
         link: 0,
         back_link: None,
         one_way: true,
@@ -167,6 +220,7 @@ const CASES: &[Case] = &[
     // A vehicle node, which stands before the pedestrian node and renumbers it in both regions.
     |_| Operation::AddNode {
         region: 7,
+        expects: None,
         ped: false,
         coors_x: 250,
         coors_y: -5,
@@ -178,6 +232,7 @@ const CASES: &[Case] = &[
     // A pedestrian node, linked to the pedestrian node before it.
     |_| Operation::AddNode {
         region: 7,
+        expects: None,
         ped: true,
         coors_x: 350,
         coors_y: 60,
@@ -187,12 +242,19 @@ const CASES: &[Case] = &[
         back_as_integer1: Word(0x0000_1010),
     },
     // The first node, with its junction, the links that name it and every later node renumbered.
-    |_| Operation::RemoveNode { node: at(7, 0) },
+    |_| Operation::RemoveNode {
+        node: at(7, 0),
+        expects: None,
+    },
     // A node whose junction is the last.
-    |_| Operation::RemoveNode { node: at(7, 2) },
+    |_| Operation::RemoveNode {
+        node: at(7, 2),
+        expects: None,
+    },
     // A node put in with a link, a link that names it and a junction of its own.
     |_| Operation::InsertNode {
         node: at(7, 1),
+        expects: None,
         ped: false,
         record: NodeRecord {
             street_name_hash: Word(0x7777_0001),
@@ -231,6 +293,7 @@ const CASES: &[Case] = &[
             .replacen("\"coors_x\": 100", "\"coors_x\": 150", 1);
         assert_ne!(moved, text(SEVEN).unwrap(), "the document states the node");
         Operation::RewriteRegions {
+            expects: None,
             documents: vec![
                 Document {
                     source: SEVEN.into(),
@@ -298,6 +361,12 @@ fn every_road_operation_followed_by_its_inverse_leaves_every_source_byte_for_byt
             applied.inverse.name()
         );
 
+        assert_eq!(
+            applied.inverse.expects(),
+            Some(digest_on_disk(&folder).as_str()),
+            "the inverse of case {number} ({name}) states the digest of the documents the operation left"
+        );
+
         let undone = apply(&folder, &applied.inverse)
             .unwrap_or_else(|e| panic!("the inverse of case {number} ({name}): {e}"));
         let restored = files(&folder);
@@ -355,13 +424,36 @@ fn the_json_of_every_road_operation_reads_back_as_itself_and_another_schema_is_r
     let scratch = tempfile::tempdir().unwrap();
     let folder = set(scratch.path());
     let mut operations: Vec<Operation> = CASES.iter().map(|case| case(&folder)).collect();
-    operations.push(Operation::DisableNode { node: at(7, 1) });
+    operations.push(Operation::DisableNode {
+        node: at(7, 1),
+        expects: None,
+    });
     // The inverses carry records, and are operations a list may hold.
     for case in CASES {
         let scratch = tempfile::tempdir().unwrap();
         let folder = set(scratch.path());
         operations.push(apply(&folder, &case(&folder)).unwrap().inverse);
     }
+    // Each states what it applies to and then what it expects of the set, as a map operation states its source and then `expects`.
+    let mut named = BTreeSet::new();
+    for operation in &operations {
+        let stated = serde_json::to_string(&operation.clone().expecting("d")).unwrap();
+        // Every other piece between quotes is a member's name or a text it holds; a region is a number, between none.
+        let quoted: Vec<&str> = stated.split('"').skip(1).step_by(2).take(5).collect();
+        let name = operation.name();
+        match quoted[..] {
+            ["op", op, "node", _, "expects"] if op == name => {}
+            ["op", op, "region", "expects", "d"] if op == name => {}
+            ["op", op, "expects", "d", "documents"] if op == name => {}
+            _ => panic!("{name} states `expects` elsewhere: {stated}"),
+        }
+        named.insert(name);
+    }
+    assert_eq!(
+        named.len(),
+        9,
+        "every operation of the vocabulary: {named:?}"
+    );
     let list = Operations::new(operations);
     let text = list.to_json().unwrap();
     assert!(text.ends_with("}\n"));
@@ -394,12 +486,24 @@ fn the_json_of_every_road_operation_reads_back_as_itself_and_another_schema_is_r
 fn removing_a_node_a_link_of_another_region_names_is_refused_and_names_the_link() {
     let scratch = tempfile::tempdir().unwrap();
     let folder = set(scratch.path());
-    let said = refusal(&folder, &Operation::RemoveNode { node: at(7, 1) });
+    let said = refusal(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 1),
+            expects: None,
+        },
+    );
     assert!(
         said.contains("link 1 of node 8:1 (`nodes8.paths.src`)"),
         "{said}"
     );
-    let said = refusal(&folder, &Operation::RemoveNode { node: at(7, 3) });
+    let said = refusal(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 3),
+            expects: None,
+        },
+    );
     assert!(
         said.contains("link 0 of node 8:2 (`nodes8.paths.src`)"),
         "{said}"
@@ -409,13 +513,21 @@ fn removing_a_node_a_link_of_another_region_names_is_refused_and_names_the_link(
         &folder,
         &Operation::RemoveLink {
             node: at(8, 2),
+            expects: None,
             link: 0,
             back_link: None,
             one_way: false,
         },
     )
     .unwrap();
-    apply(&folder, &Operation::RemoveNode { node: at(7, 3) }).unwrap();
+    apply(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 3),
+            expects: None,
+        },
+    )
+    .unwrap();
     every_region_reads_back(&folder).unwrap();
 }
 
@@ -445,7 +557,14 @@ fn removing_a_node_none_names_renumbers_the_links_of_the_neighbour_so_each_reach
     assert_eq!(from_seven.len(), 2, "two links of region 7 stay");
     assert_eq!(from_eight.len(), 2, "region 8 links into region 7 twice");
 
-    let applied = apply(&folder, &Operation::RemoveNode { node: at(7, 0) }).unwrap();
+    let applied = apply(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 0),
+            expects: None,
+        },
+    )
+    .unwrap();
     let written: Vec<&Path> = applied.edited.iter().map(|e| e.file.as_path()).collect();
     assert_eq!(
         written,
@@ -493,7 +612,14 @@ fn removing_a_node_none_names_renumbers_the_links_of_the_neighbour_so_each_reach
 fn removing_a_node_takes_its_junction_and_leaves_each_other_reference_its_own() {
     let scratch = tempfile::tempdir().unwrap();
     let folder = set(scratch.path());
-    apply(&folder, &Operation::RemoveNode { node: at(7, 0) }).unwrap();
+    apply(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 0),
+            expects: None,
+        },
+    )
+    .unwrap();
     let region = cooked(&folder, SEVEN).unwrap();
     // The junction of the node that was 7:2 is the one left, named by the node's address now.
     assert_eq!(region.virtual_junctions.len(), 1);
@@ -511,6 +637,7 @@ fn a_node_the_junction_table_names_is_not_moved_and_takes_any_other_value() {
     let folder = set(scratch.path());
     let moved = |node, coors_x, coors_z| Operation::SetNode {
         node,
+        expects: None,
         street_name_hash: None,
         distance_to_target: None,
         coors_x,
@@ -533,6 +660,7 @@ fn a_node_the_junction_table_names_is_not_moved_and_takes_any_other_value() {
     apply(&folder, &moved(at(7, 0), Some(0), Some(10))).unwrap();
     let named = Operation::SetNode {
         node: at(7, 0),
+        expects: None,
         street_name_hash: Some(Word(0x0BAD_F00D)),
         distance_to_target: None,
         coors_x: None,
@@ -557,6 +685,7 @@ fn adding_a_node_keeps_the_vehicle_nodes_before_the_pedestrian_ones_and_the_coun
     let from_eight = reached_in_seven(&folder, EIGHT, 0);
     let added = |ped, linked_to| Operation::AddNode {
         region: 7,
+        expects: None,
         ped,
         coors_x: 250,
         coors_y: -5,
@@ -626,6 +755,7 @@ fn a_link_added_across_two_regions_is_stated_in_both() {
     let folder = set(scratch.path());
     let linked = Operation::AddLink {
         node: at(7, 2),
+        expects: None,
         other_node: at(8, 0),
         as_integer1: Word(0x0000_0A0A),
         link: None,
@@ -655,6 +785,7 @@ fn a_link_added_across_two_regions_is_stated_in_both() {
     // A link to a node its region does not hold, and a link from a node to itself, are refused.
     let to = |other_node| Operation::AddLink {
         node: at(7, 2),
+        expects: None,
         other_node,
         as_integer1: Word(1),
         link: None,
@@ -675,6 +806,7 @@ fn a_node_holds_no_more_links_than_its_word_counts() {
     let held = seven().nodes[2].num_links();
     let one_more = Operation::AddLink {
         node: at(7, 2),
+        expects: None,
         other_node: at(7, 1),
         as_integer1: Word(1),
         link: None,
@@ -692,11 +824,23 @@ fn a_node_holds_no_more_links_than_its_word_counts() {
 fn a_request_to_disable_a_node_is_refused_because_the_file_states_no_such_thing() {
     let scratch = tempfile::tempdir().unwrap();
     let folder = set(scratch.path());
-    let said = refusal(&folder, &Operation::DisableNode { node: at(7, 1) });
+    let said = refusal(
+        &folder,
+        &Operation::DisableNode {
+            node: at(7, 1),
+            expects: None,
+        },
+    );
     assert!(said.contains("the file states no such thing"), "{said}");
     assert!(said.starts_with("disable_node of node 7:1"), "{said}");
     // A node that is not there is refused for that.
-    let said = refusal(&folder, &Operation::DisableNode { node: at(7, 40) });
+    let said = refusal(
+        &folder,
+        &Operation::DisableNode {
+            node: at(7, 40),
+            expects: None,
+        },
+    );
     assert!(said.contains("node 7:40 is past the 4 node(s)"), "{said}");
 }
 
@@ -705,13 +849,20 @@ fn renumbering_is_refused_while_a_region_that_may_name_a_renumbered_node_is_not_
     let scratch = tempfile::tempdir().unwrap();
     let folder = seven_alone(scratch.path());
     // Node 7:1 links into region 8, whose link back could not be rewritten.
-    let said = refusal(&folder, &Operation::RemoveNode { node: at(7, 0) });
+    let said = refusal(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 0),
+            expects: None,
+        },
+    );
     assert!(said.contains("node 7:1 links to 8:1"), "{said}");
     assert!(said.contains("add region(s) 8 to the set"), "{said}");
     let said = refusal(
         &folder,
         &Operation::AddNode {
             region: 7,
+            expects: None,
             ped: false,
             coors_x: 1,
             coors_y: 2,
@@ -726,6 +877,7 @@ fn renumbering_is_refused_while_a_region_that_may_name_a_renumbered_node_is_not_
     // A pedestrian node goes last and renumbers nothing, so it is added.
     let added = Operation::AddNode {
         region: 7,
+        expects: None,
         ped: true,
         coors_x: 1,
         coors_y: 2,
@@ -739,6 +891,7 @@ fn renumbering_is_refused_while_a_region_that_may_name_a_renumbered_node_is_not_
     // A link into the region that is not there is stated one way, and said; its link back cannot be stated.
     let linked = |back_as_integer1| Operation::AddLink {
         node: at(7, 0),
+        expects: None,
         other_node: at(8, 0),
         as_integer1: Word(3),
         link: None,
@@ -771,8 +924,15 @@ fn a_document_typed_by_hand_is_put_back_as_it_was_typed() {
     std::fs::write(&document, &typed).unwrap();
     let before = files(&folder);
 
-    let applied = apply(&folder, &Operation::RemoveNode { node: at(7, 0) }).unwrap();
-    let Operation::RewriteRegions { documents } = &applied.inverse else {
+    let applied = apply(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 0),
+            expects: None,
+        },
+    )
+    .unwrap();
+    let Operation::RewriteRegions { documents, .. } = &applied.inverse else {
         panic!("{:?}", applied.inverse);
     };
     assert_eq!(documents.len(), 2, "one for each source the removal wrote");
@@ -783,6 +943,7 @@ fn a_document_typed_by_hand_is_put_back_as_it_was_typed() {
     // An operation that changes nothing leaves the document as it was typed.
     let same = Operation::SetLink {
         node: at(7, 0),
+        expects: None,
         link: 0,
         as_integer1: Word(0x11),
     };
@@ -798,11 +959,13 @@ fn a_list_is_applied_whole_or_not_at_all_and_a_dry_run_writes_nothing() {
     let before = files(&folder);
     let good = Operation::SetLink {
         node: at(7, 0),
+        expects: None,
         link: 0,
         as_integer1: Word(0x99),
     };
     let bad = Operation::SetLink {
         node: at(7, 0),
+        expects: None,
         link: 9,
         as_integer1: Word(0x99),
     };
@@ -828,9 +991,13 @@ fn a_list_is_applied_whole_or_not_at_all_and_a_dry_run_writes_nothing() {
 
     // A later operation of a list sees what an earlier one did.
     let list = [
-        Operation::RemoveNode { node: at(7, 0) },
+        Operation::RemoveNode {
+            node: at(7, 0),
+            expects: None,
+        },
         Operation::SetNode {
             node: at(7, 2),
+            expects: None,
             street_name_hash: None,
             distance_to_target: Some(77),
             coors_x: None,
@@ -861,13 +1028,20 @@ fn an_operation_is_refused_while_a_source_of_the_set_does_not_cook_and_a_rewrite
     let document = folder.join(EIGHT).join("paths.json");
     let good = std::fs::read_to_string(&document).unwrap();
     std::fs::write(&document, good.replacen("\"8:1\"", "\"8:9\"", 1)).unwrap();
-    let said = refusal(&folder, &Operation::RemoveNode { node: at(7, 2) });
+    let said = refusal(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 2),
+            expects: None,
+        },
+    );
     assert!(
         said.contains("`nodes8.paths.src` does not cook, so the regions of the set cannot be told"),
         "{said}"
     );
     // A document that does not compile is not held either.
     let rewrite = |document: &str| Operation::RewriteRegions {
+        expects: None,
         documents: vec![Document {
             source: EIGHT.into(),
             document: document.to_string(),
@@ -876,7 +1050,14 @@ fn an_operation_is_refused_while_a_source_of_the_set_does_not_cook_and_a_rewrite
     let said = refusal(&folder, &rewrite("{}"));
     assert!(said.contains("nodes8.paths.src"), "{said}");
     apply(&folder, &rewrite(&good)).unwrap();
-    apply(&folder, &Operation::RemoveNode { node: at(7, 2) }).unwrap();
+    apply(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 2),
+            expects: None,
+        },
+    )
+    .unwrap();
     every_region_reads_back(&folder).unwrap();
 }
 
@@ -896,6 +1077,7 @@ fn a_junction_reference_of_another_region_holds_a_node_and_follows_a_renumbered_
     apply(
         &folder,
         &Operation::RewriteRegions {
+            expects: None,
             documents: vec![Document {
                 source: EIGHT.into(),
                 document: serde_json::to_string_pretty(&stated).unwrap(),
@@ -906,12 +1088,19 @@ fn a_junction_reference_of_another_region_holds_a_node_and_follows_a_renumbered_
     // The link of region 8 that names 7:3 taken out, the reference alone still holds the node.
     let unlinked = Operation::RemoveLink {
         node: at(8, 2),
+        expects: None,
         link: 0,
         back_link: None,
         one_way: false,
     };
     apply(&folder, &unlinked).unwrap();
-    let said = refusal(&folder, &Operation::RemoveNode { node: at(7, 3) });
+    let said = refusal(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 3),
+            expects: None,
+        },
+    );
     assert!(
         said.contains("by the junction table of region 8 (`nodes8.paths.src`)"),
         "{said}"
@@ -920,6 +1109,7 @@ fn a_junction_reference_of_another_region_holds_a_node_and_follows_a_renumbered_
         &folder,
         &Operation::SetNode {
             node: at(7, 3),
+            expects: None,
             street_name_hash: None,
             distance_to_target: None,
             coors_x: Some(1),
@@ -936,7 +1126,14 @@ fn a_junction_reference_of_another_region_holds_a_node_and_follows_a_renumbered_
 
     // A node before it taken out, the reference names it where it is now.
     let before = files(&folder);
-    let applied = apply(&folder, &Operation::RemoveNode { node: at(7, 0) }).unwrap();
+    let applied = apply(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 0),
+            expects: None,
+        },
+    )
+    .unwrap();
     let table = cooked(&folder, EIGHT)
         .unwrap()
         .junction_map
@@ -964,7 +1161,14 @@ fn the_last_node_of_a_region_is_taken_out_and_put_back() {
         &region(9, 1, &[node([5, 6, 7], &[])], &[]),
     );
     let before = files(&folder);
-    let applied = apply(&folder, &Operation::RemoveNode { node: at(9, 0) }).unwrap();
+    let applied = apply(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(9, 0),
+            expects: None,
+        },
+    )
+    .unwrap();
     let emptied = cooked(&folder, "nodes9.paths.src").unwrap();
     assert_eq!(
         (emptied.nodes.len(), emptied.num_nodes_car_nodes),
@@ -976,6 +1180,7 @@ fn the_last_node_of_a_region_is_taken_out_and_put_back() {
         &folder,
         &Operation::AddNode {
             region: 9,
+            expects: None,
             ped: false,
             coors_x: 0,
             coors_y: 0,
@@ -1000,6 +1205,7 @@ fn stated(
 ) -> Operation {
     Operation::SetNode {
         node,
+        expects: None,
         street_name_hash: None,
         distance_to_target: None,
         coors_x: None,
@@ -1045,6 +1251,7 @@ fn a_request_that_states_what_cannot_be_is_refused_for_what_it_states() {
         &folder,
         &Operation::AddLink {
             node: at(7, 2),
+            expects: None,
             other_node: at(8, 0),
             as_integer1: Word(1),
             link: None,
@@ -1055,6 +1262,7 @@ fn a_request_that_states_what_cannot_be_is_refused_for_what_it_states() {
     assert!(said.contains("no `back_as_integer1` states one"), "{said}");
     let unlinked = |back_link, one_way| Operation::RemoveLink {
         node: at(7, 1),
+        expects: None,
         link: 1,
         back_link,
         one_way,
@@ -1078,7 +1286,10 @@ fn a_request_that_states_what_cannot_be_is_refused_for_what_it_states() {
         source: source.into(),
         document: text.clone(),
     };
-    let rewrite = |documents| Operation::RewriteRegions { documents };
+    let rewrite = |documents| Operation::RewriteRegions {
+        expects: None,
+        documents,
+    };
     let said = refusal(&folder, &rewrite(vec![]));
     assert!(said.contains("it names no source to rewrite"), "{said}");
     let said = refusal(&folder, &rewrite(vec![document(SEVEN), document(SEVEN)]));
@@ -1103,6 +1314,7 @@ fn a_node_put_in_by_hand_is_refused_where_it_would_misstate_its_region() {
     }
     let put_in = |node, ped, with: With| Operation::InsertNode {
         node,
+        expects: None,
         ped,
         record: NodeRecord {
             street_name_hash: Word(1),
@@ -1240,6 +1452,7 @@ fn an_operation_that_changes_nothing_is_taken_back_by_one_that_changes_nothing()
     let before = files(&folder);
     let same = Operation::SetLink {
         node: at(7, 0),
+        expects: None,
         link: 0,
         as_integer1: Word(0x11),
     };
@@ -1259,6 +1472,7 @@ fn a_document_that_cannot_be_written_leaves_the_one_written_before_it_as_it_was(
     std::fs::create_dir(folder.join(EIGHT).join("paths.json.part")).unwrap();
     let linked = Operation::AddLink {
         node: at(7, 2),
+        expects: None,
         other_node: at(8, 0),
         as_integer1: Word(0x0A0A),
         link: None,
@@ -1282,6 +1496,7 @@ fn a_link_left_one_way_is_said_and_a_link_that_is_returned_is_not() {
     let folder = set(scratch.path());
     let one_way = Operation::AddLink {
         node: at(8, 0),
+        expects: None,
         other_node: at(8, 2),
         as_integer1: Word(1),
         link: None,
@@ -1295,6 +1510,7 @@ fn a_link_left_one_way_is_said_and_a_link_that_is_returned_is_not() {
     // A link taken out alone and added again alone is returned by the link the far node kept.
     let alone = Operation::RemoveLink {
         node: at(7, 3),
+        expects: None,
         link: 2,
         back_link: None,
         one_way: true,
@@ -1311,6 +1527,7 @@ fn a_link_left_one_way_is_said_and_a_link_that_is_returned_is_not() {
     let folder = seven_alone(scratch.path());
     let unlinked = Operation::RemoveLink {
         node: at(7, 1),
+        expects: None,
         link: 1,
         back_link: None,
         one_way: false,
@@ -1330,6 +1547,7 @@ fn an_operation_is_refused_while_two_sources_state_the_nodes_of_one_region() {
         &folder,
         &Operation::SetLink {
             node: at(7, 0),
+            expects: None,
             link: 0,
             as_integer1: Word(0x99),
         },
@@ -1340,4 +1558,255 @@ fn an_operation_is_refused_while_two_sources_state_the_nodes_of_one_region() {
         ),
         "{said}"
     );
+}
+
+/// Where the far node of each link out of the node that stands at `stand` stands, with the word of the link, across the regions of `folder`.
+fn reached_from(folder: &Path, stand: [i16; 3]) -> Vec<([i16; 3], u32)> {
+    let regions: Vec<CPathRegion> = (or_maps::roads::sources(folder).unwrap().iter())
+        .map(|(name, _)| cooked(folder, name).unwrap())
+        .collect();
+    let far = |to: u16, index: u16| {
+        let held = (regions.iter())
+            .find(|region| region.nodes[0].address.region == to)
+            .unwrap_or_else(|| panic!("region {to} is in the set"));
+        coors(&held.nodes[usize::from(index)])
+    };
+    let mut reached = Vec::new();
+    for region in &regions {
+        for index in (0..region.nodes.len()).filter(|i| coors(&region.nodes[*i]) == stand) {
+            for ((to, other), word) in links_of(region, index) {
+                reached.push((far(to, other), word));
+            }
+        }
+    }
+    reached
+}
+
+/// Five vehicle nodes of region 7 in a row, the last three a road: the third links to the fourth, which links to the fifth and back.
+fn a_row(dir: &Path) -> PathBuf {
+    let folder = dir.join("roads");
+    let nodes = [
+        node([0, 0, 0], &[]),
+        node([100, 0, 0], &[]),
+        node([200, 0, 0], &[(7, 3, 0x25)]),
+        node([300, 0, 0], &[(7, 4, 0x37), (7, 2, 0x36)]),
+        node([400, 0, 0], &[(7, 3, 0x48)]),
+    ];
+    extract(&folder, "nodes7", &region(7, 5, &nodes, &[]));
+    folder
+}
+
+#[test]
+fn an_inverse_applied_after_the_nodes_of_its_region_were_renumbered_is_refused_and_cuts_no_road() {
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = a_row(scratch.path());
+    let (second, third, fourth) = ([100, 0, 0], [200, 0, 0], [300, 0, 0]);
+    let linked = apply(
+        &folder,
+        &Operation::AddLink {
+            node: at(7, 1),
+            expects: None,
+            other_node: at(7, 2),
+            as_integer1: Word(0x13),
+            link: None,
+            back_as_integer1: Some(Word(0x14)),
+            back_link: None,
+        },
+    )
+    .unwrap();
+    // The first node goes, and every later node of the region takes the number before its own.
+    apply(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 0),
+            expects: None,
+        },
+    )
+    .unwrap();
+    let road = [(fourth, 0x25), (second, 0x14)];
+    assert_eq!(reached_from(&folder, third), road);
+
+    let before = files(&folder);
+    let refused = apply(&folder, &linked.inverse);
+    assert!(
+        files(&folder) == before,
+        "the stale inverse wrote a source: the third node now reaches {:?} and the fourth {:?}, and the link it was to take out still stands: {:?}",
+        reached_from(&folder, third),
+        reached_from(&folder, fourth),
+        reached_from(&folder, second),
+    );
+    assert!(refused.is_err(), "{refused:?}");
+    let (_, found) = stale(&folder, &linked.inverse);
+    assert_eq!(found, digest_on_disk(&folder));
+    assert_eq!(reached_from(&folder, third), road);
+}
+
+#[test]
+fn an_inverse_is_refused_once_a_neighbour_it_links_into_was_renumbered_though_it_writes_that_neighbour_no_document(
+) {
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = scratch.path().join("roads");
+    // Node 7:1 links one way into region 8, to the node that stands at 1100.
+    let seven = [
+        node([0, 0, 0], &[(7, 1, 0x11)]),
+        node([100, 0, 0], &[(7, 0, 0x21), (8, 1, 0x22)]),
+    ];
+    extract(&folder, "nodes7", &region(7, 2, &seven, &[]));
+    let eight = [
+        node([1000, 0, 0], &[]),
+        node([1100, 0, 0], &[(8, 2, 0x61)]),
+        node([1200, 0, 0], &[(8, 1, 0x71)]),
+    ];
+    extract(&folder, "nodes8", &region(8, 3, &eight, &[]));
+    let whole = files(&folder);
+    let linking = [100, 0, 0];
+    assert_eq!(
+        reached_from(&folder, linking),
+        [([0, 0, 0], 0x21), ([1100, 0, 0], 0x22)]
+    );
+
+    let removed = apply(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(7, 1),
+            expects: None,
+        },
+    )
+    .unwrap();
+    let written: Vec<&Path> = removed.edited.iter().map(|e| e.file.as_path()).collect();
+    assert_eq!(written, [folder.join(SEVEN).join("paths.json")]);
+    // Region 7 holds no link into region 8 any more, so renumbering region 8 writes region 8 alone.
+    let shifted = apply(
+        &folder,
+        &Operation::RemoveNode {
+            node: at(8, 0),
+            expects: None,
+        },
+    )
+    .unwrap();
+    let written: Vec<&Path> = shifted.edited.iter().map(|e| e.file.as_path()).collect();
+    assert_eq!(written, [folder.join(EIGHT).join("paths.json")]);
+
+    let before = files(&folder);
+    let refused = apply(&folder, &removed.inverse);
+    assert!(
+        files(&folder) == before,
+        "the stale inverse wrote a source: the node put back reaches {:?}, and its link into region 8 reached the node at 1100",
+        reached_from(&folder, linking),
+    );
+    assert!(refused.is_err(), "{refused:?}");
+    // ⚠ The document of region 7, the one the inverse writes, is as the inverse left it: what moved is the region it names.
+    assert_eq!(
+        before.get(&folder.join(SEVEN).join("paths.json")),
+        Some(&removed.edited[0].after)
+    );
+    stale(&folder, &removed.inverse);
+
+    // Taken back newest first, both inverses are accepted and every source is as it was.
+    apply(&folder, &shifted.inverse).unwrap();
+    apply(&folder, &removed.inverse).unwrap();
+    assert!(files(&folder) == whole);
+}
+
+#[test]
+fn an_operation_that_states_what_the_set_holds_is_done_and_one_that_states_another_set_is_refused_in_a_list_too(
+) {
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = set(scratch.path());
+    let named = |hash| Operation::SetNode {
+        node: at(7, 1),
+        expects: None,
+        street_name_hash: Some(Word(hash)),
+        distance_to_target: None,
+        coors_x: None,
+        coors_y: None,
+        coors_z: None,
+        as_integer1: None,
+        as_integer2: None,
+    };
+    let as_it_stands = digest_on_disk(&folder);
+    let first = apply(&folder, &named(0x1111_1111).expecting(as_it_stands.clone())).unwrap();
+    let after_first = digest_on_disk(&folder);
+    assert_ne!(after_first, as_it_stands);
+    assert_eq!(first.inverse.expects(), Some(after_first.as_str()));
+
+    // The digest of the set as it stood is of another set now.
+    let (expects, found) = stale(&folder, &named(0x2222_2222).expecting(as_it_stands.clone()));
+    assert_eq!(
+        (expects, found),
+        (as_it_stands.clone(), after_first.clone())
+    );
+
+    // ⚠ In a list, an operation is held to what the operations before it leave, and not to the disk.
+    let before = files(&folder);
+    let to_disk = [
+        named(0x3333_3333),
+        named(0x4444_4444).expecting(after_first.clone()),
+    ];
+    let refused = apply_all(&folder, &to_disk, false).expect_err("the second is stale");
+    assert!(
+        files(&folder) == before,
+        "a list is done whole or not at all"
+    );
+    let said = refused.to_string();
+    assert!(
+        said.starts_with("operation 2 of 2, set_node of `"),
+        "{said}"
+    );
+    let Error::InList { refused, .. } = refused else {
+        panic!("{refused:?}");
+    };
+    assert!(matches!(*refused, Error::Stale { .. }), "{refused:?}");
+    // The inverses of a list, taken newest first, are each held to what the one after it left.
+    let done = apply_all(&folder, &[named(0x5555_5555), named(0x6666_6666)], false).unwrap();
+    stale(&folder, &done[0].inverse);
+    apply(&folder, &done[1].inverse).unwrap();
+    apply(&folder, &done[0].inverse).unwrap();
+    assert!(files(&folder) == before);
+
+    // An operation that is refused whatever it names is refused as stale first, where it states another set.
+    let disable = Operation::DisableNode {
+        node: at(7, 1),
+        expects: None,
+    };
+    stale(&folder, &disable.clone().expecting(as_it_stands));
+    let said = refusal(&folder, &disable.expecting(digest_on_disk(&folder)));
+    assert!(said.contains("the file states no such thing"), "{said}");
+}
+
+#[test]
+fn the_digest_of_a_set_tells_its_documents_and_the_sources_that_hold_them() {
+    let (a, b): (&[u8], &[u8]) = (b"one document", b"another");
+    let whole = digest_of([("nodes7.paths.src", a), ("nodes8.paths.src", b)]);
+    assert_eq!(
+        whole,
+        digest_of([("nodes8.paths.src", b), ("nodes7.paths.src", a)]),
+        "in whatever order they are handed in"
+    );
+    for other in [
+        digest_of([("nodes7.paths.src", b), ("nodes8.paths.src", a)]),
+        digest_of([("nodes7.paths.src", a)]),
+        digest_of([("nodes7.paths.src", a), ("nodes9.paths.src", b)]),
+        digest_of([("nodes7.paths.src", a), ("nodes8.paths.src", b"another ")]),
+        digest_of([]),
+    ] {
+        assert_ne!(other, whole);
+    }
+    // A set of one document is not that document's digest: the source that holds it is stated too.
+    assert_ne!(
+        digest_of([("nodes7.paths.src", a)]),
+        or_maps::operation::digest_of(a)
+    );
+    // The JSON of an operation states it under the name a map operation states its own.
+    let stated = Operation::RemoveNode {
+        node: at(7, 0),
+        expects: None,
+    }
+    .expecting(whole.clone());
+    let text = serde_json::to_string(&stated).unwrap();
+    assert_eq!(
+        text,
+        format!(r#"{{"op":"remove_node","node":"7:0","expects":"{whole}"}}"#)
+    );
+    assert_eq!(serde_json::from_str::<Operation>(&text).unwrap(), stated);
 }

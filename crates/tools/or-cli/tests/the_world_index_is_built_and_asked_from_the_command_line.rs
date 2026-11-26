@@ -603,3 +603,263 @@ fn where_something_is_is_asked_from_the_command_line() {
         assert!(!ok && printed.is_empty(), "{refused:?}: {printed}");
     }
 }
+
+/// The town with a bench and a floor, and two packs its list names after it: the first holds no map, and the second a map that
+/// stands the same bench under a floor ten metres over the town's.
+fn install_of_two_packs(scratch: &Path) -> PathBuf {
+    let root = scratch.join("install");
+    std::fs::create_dir(&root).expect("mkdir");
+    let list = DlcList {
+        paths: ["alpha", "beta"]
+            .iter()
+            .map(|pack| format!("dlcpacks:/{pack}/").into())
+            .collect(),
+    };
+    // ⚠ No map group names the town: a group lets its maps into a view by the hour, and this one would state none.
+    write_archive(
+        &root,
+        "common.rpf",
+        &[
+            ("data/dlclist.xml", list.to_xml().into_bytes()),
+            ("data/_manifest.ymf", manifest_bytes(&[], &[])),
+        ],
+    );
+    let square = MapSpec::around(cube([100.0, 100.0, 0.0], 100.0));
+    let in_town = Placed::new("prop_bench", [110.0, 120.0, 10.0], 90.0, 7);
+    let in_beta = Placed::new("prop_bench", [150.0, 160.0, 10.0], 180.0, 8);
+    write_archive(
+        &root,
+        "x64a.rpf",
+        &[
+            (
+                "levels/m_town.ymap",
+                placing_map_bytes("m_town", &square, std::slice::from_ref(&in_town)),
+            ),
+            (
+                "levels/m_town_0.ybn",
+                mesh_bound_bytes(level_square([110.0, 110.0, 10.0], 40.0, 0x0507)),
+            ),
+            (
+                "types/props.ytyp",
+                types_bytes("props", &[("prop_bench", cube([-1.0; 3], 2.0), 80.0)]),
+            ),
+            ("models/prop_bench.ydr", b"a model".to_vec()),
+        ],
+    );
+    write_pack(&root, "alpha", 10, None, Vec::new());
+    write_pack(
+        &root,
+        "beta",
+        20,
+        Some(("BETA_MAP", "dlc_beta:/levels.rpf")),
+        vec![
+            (
+                "levels.rpf/m_beta.ymap",
+                placing_map_bytes("m_beta", &square, std::slice::from_ref(&in_beta)),
+            ),
+            (
+                "levels.rpf/m_beta_0.ybn",
+                mesh_bound_bytes(level_square([100.0, 100.0, 20.0], 100.0, 0x0507)),
+            ),
+        ],
+    );
+    root
+}
+
+/// One verb that reads the world index: its name, how it is asked of the install `game`, and what its answer names.
+struct Asking {
+    verb: &'static str,
+    args: fn(&str) -> Vec<String>,
+    /// Every map or bound the answer names, those it says it could not read among them.
+    names: fn(&serde_json::Value) -> Vec<String>,
+}
+
+/// The `member` of each item of the list at `pointer` of `found`, in the order of their names.
+fn names_at(found: &serde_json::Value, pointer: &str, member: &str) -> Vec<String> {
+    let listed = found.pointer(pointer).and_then(|listed| listed.as_array());
+    let listed = listed.unwrap_or_else(|| panic!("{pointer} of {found}"));
+    let mut names: Vec<String> = (listed.iter())
+        .map(|one| one[member].as_str().expect("a name").to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+/// The four verbs of `world` that answer from the index, each asked of the column the town and the later pack both cover.
+///
+/// ⚠ A verb that reads a file the index names through the mount says so when the mount lacks it, and that is counted as a name:
+/// an index that held a file of another level would otherwise answer rightly by failing to open it.
+const ASKINGS: [Asking; 4] = [
+    Asking {
+        verb: "at",
+        args: |game| strings(&["at", "--json", "--game", game, "120", "130", "12"]),
+        names: |found| names_at(found, "/maps", "name"),
+    },
+    Asking {
+        verb: "ground",
+        args: |game| strings(&["ground", "--json", "--game", game, "120", "130"]),
+        names: |found| {
+            let ground = found["ground"]["bound"]["name"].as_str().expect("ground");
+            let mut names = vec![format!("ground on {ground}")];
+            names.extend(names_at(found, "/lookedIn", "name"));
+            names
+        },
+    },
+    Asking {
+        verb: "find",
+        args: |game| strings(&["find", game, "prop_bench", "--json"]),
+        names: |found| {
+            let mut names = names_at(found, "/placements/listed", "map");
+            let notes = found["notes"].as_array().expect("notes").iter();
+            let unread = notes.filter_map(|note| note.as_str());
+            names.extend(
+                unread
+                    .filter(|note| note.contains("gave no map"))
+                    .map(str::to_string),
+            );
+            names
+        },
+    },
+    Asking {
+        verb: "select",
+        args: |game| strings(&["select", game, "120,130,12", "--json"]),
+        names: |found| {
+            let mut names = names_at(found, "/maps", "name");
+            let unread = names_at(found, "/unread", "name");
+            names.extend(unread.iter().map(|name| format!("unread {name}")));
+            names
+        },
+    },
+];
+
+fn strings(args: &[&str]) -> Vec<String> {
+    args.iter().map(|arg| arg.to_string()).collect()
+}
+
+#[test]
+fn every_world_verb_that_reads_the_index_answers_from_the_index_of_the_level_it_is_asked_at() {
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let config = scratch.path().join("config");
+    std::fs::create_dir(&config).expect("mkdir");
+    let root = install_of_two_packs(scratch.path());
+    let game = root.to_string_lossy().into_owned();
+    let ask = |asking: &Asking, more: &[&str]| -> Vec<String> {
+        let mut args = (asking.args)(&game);
+        args.extend(strings(more));
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (printed, ok) = world(&config, &args);
+        assert!(ok, "{} {more:?}: {printed}", asking.verb);
+        let found = serde_json::from_str(printed.trim()).expect("one JSON value");
+        (asking.names)(&found)
+    };
+    // What each verb names with every pack, and stopped at the pack before the one that holds a map.
+    let with_beta = |verb: &str| match verb {
+        "ground" => strings(&["ground on m_beta_0", "m_beta_0", "m_town_0"]),
+        _ => strings(&["m_beta", "m_town"]),
+    };
+    let at_alpha = |verb: &str| match verb {
+        "ground" => strings(&["ground on m_town_0", "m_town_0"]),
+        _ => strings(&["m_town"]),
+    };
+
+    // ⚠ One file handed to every verb at every level: what one level kept is what the next is offered.
+    let one = scratch.path().join("one.index");
+    let one = one.to_string_lossy().into_owned();
+    // Every verb is asked before any is judged, so a verb that answers wrongly does not hide the next.
+    let wrong: std::cell::RefCell<Vec<String>> = Default::default();
+    let held = |verb: &str, what: &str, said: Vec<String>, expected: Vec<String>| {
+        if said != expected {
+            let said = format!("{verb} {what}: {said:?}, not {expected:?}");
+            wrong.borrow_mut().push(said);
+        }
+    };
+    for asking in &ASKINGS {
+        let verb = asking.verb;
+        let kept = |level: &[&str]| -> Vec<String> {
+            let more: Vec<&str> = level.iter().chain(&["--kept", &one]).copied().collect();
+            ask(asking, &more)
+        };
+        held(verb, "of every pack", kept(&[]), with_beta(verb));
+        let level = kept(&["--level", "alpha"]);
+        let what = "at the level of alpha, from a file kept of every pack";
+        held(verb, what, level, at_alpha(verb));
+        let what = "of every pack, from a file kept at the level of alpha";
+        held(verb, what, kept(&[]), with_beta(verb));
+        let level = kept(&["--level", "ALPHA"]);
+        held(verb, "at a level named in capitals", level, at_alpha(verb));
+        let what = "at the last pack of the list, which is every pack";
+        held(verb, what, kept(&["--level", "beta"]), with_beta(verb));
+    }
+    assert_eq!(kept_under(&config), Vec::<String>::new());
+
+    // With no file named, a level's index is kept in a file of its own, the same for every verb.
+    for asking in &ASKINGS {
+        let verb = asking.verb;
+        held(verb, "of every pack", ask(asking, &[]), with_beta(verb));
+        let level = ask(asking, &["--level", "alpha"]);
+        held(verb, "at the level of alpha", level, at_alpha(verb));
+        held(
+            verb,
+            "of every pack again",
+            ask(asking, &[]),
+            with_beta(verb),
+        );
+        let files = kept_under(&config).len();
+        if files != 2 {
+            wrong.borrow_mut().push(format!(
+                "{verb} left {files} kept file(s), not one of every pack and one of the level"
+            ));
+        }
+    }
+    let wrong = wrong.into_inner();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    let kept = kept_under(&config);
+
+    // `world index` builds the index of a level, and says the maps of that level alone.
+    let maps = |more: &[&str]| -> serde_json::Value {
+        let args: Vec<&str> = ["index", "--json", "--game", &game]
+            .iter()
+            .chain(more)
+            .copied()
+            .collect();
+        let (printed, ok) = world(&config, &args);
+        assert!(ok, "{more:?}: {printed}");
+        let said: serde_json::Value = serde_json::from_str(printed.trim()).expect("JSON");
+        said["maps"].clone()
+    };
+    assert_eq!(maps(&[]), 2);
+    assert_eq!(maps(&["--level", "alpha"]), 1);
+    assert_eq!(maps(&["--level", "alpha", "--kept", &one]), 1);
+    assert_eq!(maps(&["--kept", &one]), 2);
+    assert_eq!(
+        kept_under(&config),
+        kept,
+        "an index is kept where its verbs keep it"
+    );
+
+    // A level the install's list lacks fails the mount of every verb, and a level with no value is refused.
+    for asking in &ASKINGS {
+        for refused in [&["--level", "mpnone"][..], &["--level"]] {
+            let mut args = (asking.args)(&game);
+            args.extend(strings(refused));
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let (printed, ok) = world(&config, &args);
+            assert!(
+                !ok && printed.is_empty(),
+                "{} {refused:?}: {printed}",
+                asking.verb
+            );
+        }
+    }
+
+    // `world new-map` makes a map from nothing: it reads no index, of any level, and keeps none.
+    let other = scratch.path().join("elsewhere");
+    std::fs::create_dir(&other).expect("mkdir");
+    let made = scratch.path().join("m_new.ymap");
+    let (printed, ok) = world(
+        &other,
+        &["new-map", "--name", "m_new", &made.to_string_lossy()],
+    );
+    assert!(ok && made.is_file(), "{printed}");
+    assert_eq!(kept_under(&other), Vec::<String>::new());
+}

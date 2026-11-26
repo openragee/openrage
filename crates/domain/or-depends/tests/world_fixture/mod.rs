@@ -206,6 +206,51 @@ pub fn types_bytes(name: &str, archetypes: &[(&str, Span, f32)]) -> Vec<u8> {
     encoded(&root, BinaryFormat::Rbm)
 }
 
+/// The members a search of doors reads of a type file that declares an interior, and no other.
+const INTERIOR_PSC: &str = r#"<?xml version="1.0"?>
+<ParserSchema>
+  <structdef type="CEntityDef">
+    <string name="archetypeName" type="atHashString"/>
+    <Vector3 name="position"/>
+    <Vector4 name="rotation"/>
+  </structdef>
+  <structdef type="CBaseArchetypeDef">
+    <float name="lodDist"/>
+    <Vector3 name="bbMin"/>
+    <Vector3 name="bbMax"/>
+    <string name="name" type="atHashString"/>
+  </structdef>
+  <structdef type="CMloArchetypeDef" base="CBaseArchetypeDef">
+    <array name="entities" type="atArray"><pointer type="CEntityDef" policy="owner"/></array>
+  </structdef>
+  <structdef type="CMapTypes">
+    <array name="archetypes" type="atArray"><pointer type="CBaseArchetypeDef" policy="owner"/></array>
+    <string name="name" type="atHashString"/>
+  </structdef>
+</ParserSchema>"#;
+
+/// A `.ytyp`'s bytes: a `CMapTypes` named `name` declaring one interior, `interior`, which holds one entity of `model` at `at` in the interior's own space.
+pub fn interior_types_bytes(name: &str, interior: &str, model: &str, at: [f32; 3]) -> Vec<u8> {
+    let owned = |inst: MetaInstance| Value::Pointer(Some(Box::new(inst)));
+    let mut entity = MetaInstance::new("CEntityDef");
+    entity.set("archetypeName", Value::Hash(HashedString::new(model)));
+    entity.set("position", Value::Vec3(at));
+    entity.set("rotation", Value::Vec4([0.0, 0.0, 0.0, 1.0]));
+    let mut archetype = MetaInstance::new("CMloArchetypeDef");
+    archetype.set("lodDist", Value::Float(100.0));
+    archetype.set("bbMin", Value::Vec3([-10.0, -10.0, 0.0]));
+    archetype.set("bbMax", Value::Vec3([10.0, 10.0, 5.0]));
+    archetype.set("name", Value::Hash(HashedString::new(interior)));
+    archetype.set("entities", Value::Array(vec![owned(entity)]));
+    let mut root = MetaInstance::new("CMapTypes");
+    root.set("archetypes", Value::Array(vec![owned(archetype)]));
+    root.set("name", Value::Hash(HashedString::new(name)));
+    let library =
+        build_library([("interior.psc", INTERIOR_PSC.as_bytes())]).expect("the schema parses");
+    let layout = canonical::layout_for(&library, &root, BinaryFormat::Rbm, None).expect("lays out");
+    write_meta_binary(BinaryFormat::Rbm, Some(&layout), &root).expect("encodes")
+}
+
 /// A `_manifest.ymf`'s bytes: the bounds each map group and each interior archetype is named.
 pub fn manifest_bytes(groups: &[(&str, &[&str])], interiors: &[(&str, &[&str])]) -> Vec<u8> {
     let items = |type_name: &str, named: &[(&str, &[&str])]| {

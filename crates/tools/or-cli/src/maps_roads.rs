@@ -31,7 +31,7 @@ pub(crate) fn report(args: &[String]) -> Result<(String, bool), Failure> {
         .filter(|a| *a != "--json" && *a != "--dry-run")
         .cloned()
         .collect();
-    let (positional, flags) = parse(&rest, &["--apply"])?;
+    let (positional, flags) = parse(&rest, &["--apply", "--inverse"])?;
     let [folder] = positional.as_slice() else {
         return Err(Usage(
             "expected one <folder> that holds path region sources".into(),
@@ -42,8 +42,12 @@ pub(crate) fn report(args: &[String]) -> Result<(String, bool), Failure> {
             "--json is the form of the listing, and --apply prints what each operation changed"
                 .into(),
         )),
-        Some(list) => applied(Path::new(folder), list, dry_run).map(|said| (said, true)),
+        Some(list) => applied(Path::new(folder), list, dry_run, flags.get("--inverse"))
+            .map(|said| (said, true)),
         None if dry_run => Err(Usage("--dry-run goes with --apply".into())),
+        None if flags.contains_key("--inverse") => Err(Usage(
+            "--inverse keeps what takes a list back, and no --apply names a list".into(),
+        )),
         None => listed(folder, json_out),
     }
 }
@@ -133,17 +137,32 @@ fn listed(folder: &str, json_out: bool) -> Result<(String, bool), Failure> {
     Ok((text, clean))
 }
 
-/// Do the operations of the list `list` to the sources of `folder`, all of them or none, and say what each changed.
-fn applied(folder: &Path, list: &str, dry_run: bool) -> Result<String, Failure> {
+/// Do the operations of the list `list` to the sources of `folder`, all of them or none, once the list that takes them back is written to `inverse`, and say what each changed.
+fn applied(
+    folder: &Path,
+    list: &str,
+    dry_run: bool,
+    inverse: Option<&String>,
+) -> Result<String, Failure> {
     let bytes = std::fs::read(list).map_err(|e| Run(format!("{list}: {e}")))?;
     let operations = Operations::from_json(&bytes, list)
         .map_err(|e| Run(e.to_string()))?
         .operations;
-    let applied = apply_all(folder, &operations, dry_run).map_err(|e| match e {
+    let refusal = |e: Error| match e {
         // The one failure after which a source may hold what the list wrote: it says which.
         Error::Write(_) => Run(e.to_string()),
         refused => Run(format!("{refused}; no source was changed")),
-    })?;
+    };
+    // ⚠ The way back is kept before a source is written: an edit whose inverse cannot be kept is not made.
+    if let (Some(file), false) = (inverse, dry_run) {
+        let tried = apply_all(folder, &operations, true).map_err(refusal)?;
+        // Taken back newest first: each inverse expects the set the operation after its own left.
+        let back = Operations::new(tried.into_iter().rev().map(|a| a.inverse).collect());
+        let text = back.to_json().map_err(|e| Run(e.to_string()))?;
+        std::fs::write(file, text)
+            .map_err(|e| Run(format!("{file}: {e}; no source was changed")))?;
+    }
+    let applied = apply_all(folder, &operations, dry_run).map_err(refusal)?;
 
     let mut text = String::new();
     // Each document with what it held before the list and what it holds after: an operation taken back later in the list changes nothing.
@@ -191,6 +210,12 @@ fn applied(folder: &Path, list: &str, dry_run: bool) -> Result<String, Failure> 
         changed.len(),
         if dry_run { "; nothing was written" } else { "" }
     );
+    if let (Some(file), false) = (inverse, dry_run) {
+        let _ = writeln!(
+            text,
+            "the list that takes this back was written to {file}: `maps roads --apply` applies it"
+        );
+    }
     Ok(text)
 }
 
@@ -388,6 +413,7 @@ mod tests {
         };
         let linked = Operation::AddLink {
             node: Address::new(7, 2),
+            expects: None,
             other_node: Address::new(8, 1),
             as_integer1: Word(0x21),
             link: None,
@@ -396,6 +422,7 @@ mod tests {
         };
         let added = Operation::AddNode {
             region: 8,
+            expects: None,
             ped: true,
             coors_x: 5,
             coors_y: 6,
@@ -443,11 +470,13 @@ mod tests {
         write(vec![
             Operation::SetLink {
                 node: Address::new(7, 0),
+                expects: None,
                 link: 0,
                 as_integer1: Word(0x99),
             },
             Operation::DisableNode {
                 node: Address::new(7, 0),
+                expects: None,
             },
         ]);
         let Err(Run(why)) = said(&[path, "--apply", list.to_str().unwrap()]) else {
@@ -470,6 +499,104 @@ mod tests {
     }
 
     #[test]
+    fn the_list_that_takes_a_list_back_is_kept_before_a_source_is_written_and_is_refused_once_the_set_was_edited_again(
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = folder(dir.path());
+        let path = folder.to_str().unwrap();
+        let before = files(&folder);
+        let beside = |name: &str| dir.path().join(name).to_str().unwrap().to_string();
+        let write = |file: &str, operations: Vec<Operation>| {
+            std::fs::write(file, Operations::new(operations).to_json().unwrap()).unwrap();
+        };
+        let (list, back) = (beside("list.json"), beside("back.json"));
+        let linked = Operation::AddLink {
+            node: Address::new(7, 2),
+            expects: None,
+            other_node: Address::new(8, 1),
+            as_integer1: Word(0x21),
+            link: None,
+            back_as_integer1: Some(Word(0x22)),
+            back_link: None,
+        };
+        let added = Operation::AddNode {
+            region: 8,
+            expects: None,
+            ped: true,
+            coors_x: 5,
+            coors_y: 6,
+            coors_z: 7,
+            linked_to: Address::new(8, 0),
+            as_integer1: Word(0x31),
+            back_as_integer1: Word(0x32),
+        };
+        write(&list, vec![linked, added]);
+
+        // A dry run changes nothing, so it keeps nothing to take back.
+        said(&[path, "--apply", &list, "--inverse", &back, "--dry-run"])
+            .unwrap_or_else(|_| panic!("the dry run runs"));
+        assert!(files(&folder) == before && !Path::new(&back).exists());
+        // Where the way back cannot be kept, the edit is not made.
+        let nowhere = beside("no such folder/back.json");
+        let Err(Run(why)) = said(&[path, "--apply", &list, "--inverse", &nowhere]) else {
+            panic!("the inverse cannot be written");
+        };
+        assert!(why.ends_with("; no source was changed"), "{why}");
+        assert!(files(&folder) == before);
+
+        let (done, _) = said(&[path, "--apply", &list, "--inverse", &back])
+            .unwrap_or_else(|_| panic!("the list applies"));
+        let where_it_is = format!(
+            "the list that takes this back was written to {back}: `maps roads --apply` applies it\n"
+        );
+        assert!(done.ends_with(&where_it_is), "{done}");
+        let after_the_list = files(&folder);
+        assert!(after_the_list != before);
+        // Newest first, each stating the set it is to find.
+        let kept = Operations::from_json(&std::fs::read(&back).unwrap(), &back)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .operations;
+        let names: Vec<&str> = kept.iter().map(Operation::name).collect();
+        assert_eq!(names, ["remove_node", "remove_link"]);
+        assert!(kept.iter().all(|operation| operation.expects().is_some()));
+
+        // The set is edited again, and the list kept of the first edit is of a set that is no more.
+        let (later, later_back) = (beside("later.json"), beside("later_back.json"));
+        let worded = Operation::SetLink {
+            node: Address::new(7, 0),
+            expects: None,
+            link: 0,
+            as_integer1: Word(0x99),
+        };
+        write(&later, vec![worded]);
+        said(&[path, "--apply", &later, "--inverse", &later_back])
+            .unwrap_or_else(|_| panic!("the later list applies"));
+        let after_both = files(&folder);
+        assert!(after_both != after_the_list);
+        let Err(Run(why)) = said(&[path, "--apply", &back]) else {
+            panic!("the list kept of the first edit is refused");
+        };
+        assert!(
+            why.starts_with(&format!("operation 1 of 2, remove_node of `{path}`: ")),
+            "{why}"
+        );
+        assert!(
+            why.contains("take back what was done after it first"),
+            "{why}"
+        );
+        assert!(why.ends_with("; no source was changed"), "{why}");
+        assert!(files(&folder) == after_both);
+
+        // Taken back newest first, each list is accepted and every file is as it was.
+        said(&[path, "--apply", &later_back]).unwrap_or_else(|_| panic!("the later edit goes"));
+        assert!(files(&folder) == after_the_list);
+        said(&[path, "--apply", &back]).unwrap_or_else(|_| panic!("the first edit goes"));
+        assert!(files(&folder) == before);
+
+        assert!(matches!(said(&[path, "--inverse", &back]), Err(Usage(_))));
+    }
+
+    #[test]
     fn an_operation_that_changes_nothing_and_a_note_are_said_and_a_region_with_no_node_is_listed() {
         let dir = tempfile::tempdir().unwrap();
         let folder = folder(dir.path());
@@ -482,11 +609,13 @@ mod tests {
             // The word the link holds, stated again.
             Operation::SetLink {
                 node: Address::new(7, 0),
+                expects: None,
                 link: 0,
                 as_integer1: Word(0x11),
             },
             Operation::AddLink {
                 node: Address::new(7, 2),
+                expects: None,
                 other_node: Address::new(7, 0),
                 as_integer1: Word(0x41),
                 link: None,
@@ -508,6 +637,7 @@ mod tests {
         region(&folder, 9, &[&[]]);
         write(vec![Operation::RemoveNode {
             node: Address::new(9, 0),
+            expects: None,
         }]);
         said(&[path, "--apply", list.to_str().unwrap()])
             .unwrap_or_else(|_| panic!("the node is taken out"));

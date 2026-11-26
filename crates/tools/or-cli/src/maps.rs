@@ -77,8 +77,10 @@ fn print_usage() {
          [--fresh]\n  \
          openrage-cli maps edit-game <project.openrage-proj> --take-back <record.json> [--module <id>]\n  \
          openrage-cli maps doors    <project.openrage-proj> [--module <id>] [--names <file>] [--json]\n  \
+         openrage-cli maps doors    --game <install root> --map <logical path> [--names <file>] [--json]\n                             \
+         [--keys <file>] [--kept <file>] [--fresh]\n  \
          openrage-cli maps roads    <folder> [--json]\n  \
-         openrage-cli maps roads    <folder> --apply <operations.json> [--dry-run]\n\n\
+         openrage-cli maps roads    <folder> --apply <operations.json> [--dry-run] [--inverse <file>]\n\n\
          changes compares each map file and type file of the content with the base its source keeps,\n\
          the file it was imported from, and says by object what the source changed: the entities and\n\
          the archetypes added, deleted and changed, each with its index in the base and its index now,\n\
@@ -191,7 +193,14 @@ fn print_usage() {
          width), the other leaf of its double door, how far it opens each way before the box of\n\
          another entity is in its arc, and what the door rules find. All of it is read from the\n\
          model's box: the game's door tuning and the collision of the map are not read. --json prints\n\
-         the same doors as JSON.\n\
+         the same doors as JSON. With --game it lists the doors of one map file of that install,\n\
+         named by its logical path as `world index`, `world at` and `world find` print it, or by\n\
+         a path that answers the same file, as a pack's own does once the title update patches it;\n\
+         another copy of the map than the one the install loads is refused. It\n\
+         reads the type files the world index says declare what the map places and what its\n\
+         interiors hold. A model has the name of a file the install lists, or one --names gives.\n\
+         It writes nothing to the install; the world index is read from the file `world index`\n\
+         keeps (--kept, --fresh).\n\
          roads lists the path regions a folder holds as sources, each `<name>.paths.src` directly\n\
          inside it, such as the `sources` folder of a project: the region each states, its nodes, links\n\
          and junctions, and what the rules find over the set, each with a code and a severity. A rule\n\
@@ -203,8 +212,13 @@ fn print_usage() {
          every link of the set that names a later node of its region renumbered. The list is JSON\n\
          whose format is `openrage-road-operations` and whose schema is 1, each operation an object\n\
          whose `op` names it, a node named `region:index`. It writes all of them or none, and with\n\
-         --dry-run nothing. A node another region of the set names is not taken out, and a request to\n\
-         disable a node is refused, since the file states no such thing.\n\n\
+         --dry-run nothing. --inverse writes the list that puts every source back, newest first,\n\
+         before a source is written, and `maps roads --apply` applies it while the set is as the\n\
+         list left it. An operation that states `expects`, a digest of every document of the\n\
+         set, is refused when the set holds other documents, as an operation of `maps apply` is for\n\
+         its source: a link names a node of another region by its index, so the whole set is what\n\
+         an operation is held to. A node another region of the set names is not taken out, and a\n\
+         request to disable a node is refused, since the file states no such thing.\n\n\
          A build checks the files. It does not test that GTA V loads them.\n"
     );
 }
@@ -235,24 +249,42 @@ pub(crate) fn maps_of(
     Ok((project, chosen))
 }
 
-/// List the doors of each map set of the content, with their pairing and what the door rules say.
+/// What every listing of doors ends on: where what it says of a door was read from.
+pub(crate) const DOORS_READ_FROM: &str = "A door's hinge, motion and arc are read from its model's box. The game's door tuning and the collision of the map are not read.";
+
+/// List the doors of each map set of the content, or of one map file of an install, with their pairing and what the door rules say.
 fn doors(args: &[String]) -> Result<ExitCode, Failure> {
     let json_out = args.iter().any(|a| a == "--json");
-    let rest: Vec<String> = args.iter().filter(|a| *a != "--json").cloned().collect();
-    let (positional, flags) = parse(&rest, &["--module", "--names"])?;
+    let fresh = args.iter().any(|a| a == "--fresh");
+    let rest: Vec<String> = (args.iter())
+        .filter(|a| *a != "--json" && *a != "--fresh")
+        .cloned()
+        .collect();
+    let (positional, flags) = parse(
+        &rest,
+        &["--module", "--names", "--game", "--map", "--keys", "--kept"],
+    )?;
+    if flags.contains_key("--game") {
+        if !positional.is_empty() || flags.contains_key("--module") {
+            return Err(Usage(
+                "--game lists the doors of a map file of an install, and a project and --module name a content: say one".into(),
+            ));
+        }
+        return crate::maps_doors::run(&flags, fresh, json_out);
+    }
+    let of_an_install = crate::maps_doors::OF_AN_INSTALL.iter();
+    if let Some(flag) = of_an_install
+        .copied()
+        .find(|flag| flags.contains_key(*flag))
+        .or(fresh.then_some("--fresh"))
+    {
+        return Err(Usage(format!(
+            "{flag} says something of an install, and no --game <install root> names one"
+        )));
+    }
     let (project, modules) = maps_of(&positional, &flags)?;
     let patterns = or_maps::doors::built_in_patterns().map_err(|e| Run(e.to_string()))?;
-    // The names a file lists, a line each, by the hash a map file keeps of each.
-    let listed: HashMap<u32, String> = match flags.get("--names") {
-        Some(file) => std::fs::read_to_string(file)
-            .map_err(|e| Run(format!("{file}: {e}")))?
-            .lines()
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .map(|name| (or_io::string_hash(name.as_bytes()), name.to_string()))
-            .collect(),
-        None => HashMap::new(),
-    };
+    let listed = crate::maps_doors::names_listed(flags.get("--names"))?;
     let named = |hash: u32| listed.get(&hash).cloned();
     let mut reports = Vec::new();
     for id in modules {
@@ -278,9 +310,7 @@ fn doors(args: &[String]) -> Result<ExitCode, Failure> {
             serde_json::to_string_pretty(&reports).map_err(|e| Run(e.to_string()))?
         );
     } else {
-        println!(
-            "A door's hinge, motion and arc are read from its model's box. The game's door tuning and the collision of the map are not read."
-        );
+        println!("{DOORS_READ_FROM}");
     }
     Ok(ExitCode::SUCCESS)
 }

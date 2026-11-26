@@ -9638,11 +9638,17 @@ as story or multiplayer
 install states the story's group (`which_groups_the_change_sets_of_an_install_belong_to`;
 [counts](../features/Dlc_Pack_Creation.md#traps)). The index
 keeps each group's gate and each archetype's files for
-[R70c](#r70c-the-gta-v-world-streamed-and-drawn). Left: the mode in the index's key; a level and a
-mode for `world index` and `world at`, and from a screen; an archive read at every build, for the
-folders a level leaves out of it; the group that requests a map; an interior's bounds said at a
-position by `world at`; whether a pack the list names twice is mounted twice; and what the game
-does with either map group.
+[R70c](#r70c-the-gta-v-world-streamed-and-drawn). `world index` and `world at` take `--level`,
+and `at`, `ground`, `find` and `select` answer from the index of the level asked, whatever level
+the file handed was kept at
+(`every_world_verb_that_reads_the_index_answers_from_the_index_of_the_level_it_is_asked_at`, on
+two packs built by hand). Left: the mode in the index's key; a mode for `world index` and
+`world at`; a level and a mode from a screen; a level for `maps doors --game`; one spelling of
+where a mount stops, the owner's to rule
+([the spellings](../reference/Crate_Reference.md#domain-crates)); an archive read at every build,
+for the folders a level leaves out of it; the group that requests a map; an interior's bounds said
+at a position by `world at`; whether a pack the list names twice is mounted twice; and what the
+game does with either map group.
 
 **Done when.** Over a mounted install the index names every map and type file the mount lists, and a
 position inside a known map's extents answers that map, in an install suite of the slow tier, named
@@ -10094,12 +10100,24 @@ the search, the pairing, the arc, the rules `doors-overlap` and `door-blocked`, 
 [what each reads, and the counts](../reference/Crate_Reference.md#domain-crates)). On each
 install 470 doors are found by the extension, which 220 entities state (56 of the maps and 164
 of the interiors) and no archetype, so the entity is asked first
-(`the_doors_of_the_install_are_counted_by_their_extension_and_by_their_name`, 2026-11-25).
+(`the_doors_of_the_install_are_counted_by_their_extension_and_by_their_name`, 2026-11-25). With
+`--game` and `--map` the verb lists the doors of one map file of a mounted install by the same
+search, reading the type files the world index names for what the map and its interiors place
+and writing nothing to the install
+(`the_doors_of_a_map_file_of_an_install_are_listed_as_those_of_the_same_map_in_a_project`, on
+installs built by hand). A pack's path names the copy a title update patches it with, which is
+the one the index lists, and another copy is refused
+(`a_path_that_lies_where_the_copy_the_install_loads_does_names_it_and_another_copy_is_refused`).
+A dozen map files of each install, spread by name, were listed with every type file read
+(`the_doors_of_maps_of_an_install_are_listed_from_the_command_line`, 2026-11-26): 12 of 11076 on
+Legacy, 834 entities and 2 doors, both by the extension; 12 of 11052 on Enhanced, 1180 entities
+and 8 doors, all by name.
 
 Left: the door tuning and its zone; a door that opens in the view; the fitted replacement; an
 interior's entity sets; the two rules that need the game; an arc held against the game's
-collision; a verb that writes a door form or reads a person's patterns; and the name patterns, the
-cuts of the swept box and the least turn, judgements to measure.
+collision, of a project and of an install alike; the doors of an install at a level of DLC; a
+verb that writes a door form or reads a person's patterns; and the name patterns, the cuts of
+the swept box and the least turn, judgements to measure.
 
 **Depends on.** [R70g](#r70g-collision-as-a-query) and
 [R70i](#r70i-selecting-and-moving-in-the-world).
@@ -10170,11 +10188,19 @@ that Done-when clause awaits the owner. A link's lanes are not named either: its
 whole. A changed `.ynd` is held as a source whose form awaits the owner's word
 ([R70w](#r70w-a-changed-bound-and-a-changed-path-region-as-sources)), and the list of operations
 follows that form: a node's address written `region:index`, the flag words stated whole and one
-document a region. Left: scenario points, the navmesh rules, every screen and the install suite; a
+document a region. An operation may state `expects`, a digest of every document of the set, and
+every inverse states the digest of what its operation left, so a stale inverse is refused as a
+stale map operation is
+(`an_inverse_applied_after_the_nodes_of_its_region_were_renumbered_is_refused_and_cuts_no_road`).
+⚠ The digest is of the whole set, since a link names a node of another region by its index: an
+edit of a region the inverse neither writes nor names refuses it too, and inverses are taken back
+newest first. `maps roads --apply --inverse <file>` keeps the list that takes a list back
+(`the_list_that_takes_a_list_back_is_kept_before_a_source_is_written_and_is_refused_once_the_set_was_edited_again`).
+Left: scenario points, the navmesh rules, every screen and the install suite of the operations; a
 line of the acceptance sheet and a step of its recipe for an edited path region, without which a
-build that ships one says nothing of acceptance; the digest of the documents an operation applies
-to, as a map operation's `expects`, before anything holds an inverse across edits; and a rule and a
-refusal for a node placed outside the cell of its region, which no rule compares today.
+build that ships one says nothing of acceptance; a way for `maps roads` to print the digest of a
+set; whether a narrower digest is wanted, once something holds an inverse across edits; and a rule
+and a refusal for a node placed outside the cell of its region.
 
 **Depends on.** [R70f](#r70f-layers-of-what-the-game-hides),
 [R70i](#r70i-selecting-and-moving-in-the-world) and

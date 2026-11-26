@@ -258,11 +258,12 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
         .data(|d| d.get_temp::<ViewState>(view_id))
         .unwrap_or_default();
 
-    let estimate = match state.document(doc_id).map(|d| &d.payload) {
-        Some(DocPayload::Ttpf(ttpf)) => {
-            (ttpf.index_of(&texture_name)).and_then(|index| ttpf.estimate_label(index))
-        }
-        _ => None,
+    let (estimate, doubt) = match state.document(doc_id).map(|d| &d.payload) {
+        Some(DocPayload::Ttpf(ttpf)) => match ttpf.index_of(&texture_name) {
+            Some(index) => (ttpf.estimate_label(index), ttpf.doubt_label(index)),
+            None => (None, None),
+        },
+        _ => (None, None),
     };
     egui::Panel::top(ui.make_persistent_id("texture_preview_meta"))
         .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 4)))
@@ -295,6 +296,12 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
                 // A picture through fitted tables is not the one the game decodes, and says so.
                 if let Some(how) = &estimate {
                     let said = tr!("An estimate, not the exact picture: {how}", how = how);
+                    named(ui.label(egui::RichText::new(&said).small().strong()), &said);
+                }
+                // So does one through supplied tables that a block speaks against, or that
+                // nothing has been able to speak against yet.
+                if let Some(how) = &doubt {
+                    let said = tr!("Not called exact: {how}", how = how);
                     named(ui.label(egui::RichText::new(&said).small().strong()), &said);
                 }
                 if levels > 1 {

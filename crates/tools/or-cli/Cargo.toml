@@ -61,6 +61,8 @@ tracing-subscriber.workspace = true
 ureq = { version = "3.1", default-features = false, features = ["rustls", "platform-verifier"] }
 
 [dev-dependencies]
+# The made-up tables file and coded bodies the texture pack tests list and export.
+or-io = { workspace = true, features = ["made-up"] }
 # The command tests write real files, because most of what these commands do
 # is decide what goes on disk.
 tempfile.workspace = true

@@ -16469,6 +16469,69 @@ msgstr "Einige Texturen dieses Spiels sind über den Coder der Konsole gespeiche
 msgid "An estimate, not the exact picture: {how}"
 msgstr "Eine Schätzung, nicht das exakte Bild: {how}"
 
+msgid "supplied tables, not checked"
+msgstr "bereitgestellte Tabellen, ungeprüft"
+
+msgid "not this coder's tables"
+msgstr "nicht die Tabellen dieses Coders"
+
+msgid "{count} of {blocks} coded blocks disagree with the supplied tables"
+msgstr "{count} von {blocks} codierten Blöcken widersprechen den bereitgestellten Tabellen"
+
+msgid "The tables you supplied disagree with this pack: {count} of the coded blocks read so far read a value no table gives or hold what no encoder writes"
+msgstr "Die bereitgestellten Tabellen widersprechen diesem Pack: {count} der bisher gelesenen codierten Blöcke lesen einen Wert, den keine Tabelle liefert, oder enthalten etwas, das kein Encoder schreibt"
+
+msgid "The tables you supplied are not checked against your packs: `openrage-cli ttpf tables --check` does that for the packs of a folder"
+msgstr "Die bereitgestellten Tabellen sind nicht gegen die eigenen Packs geprüft: `openrage-cli ttpf tables --check` erledigt das für die Packs eines Ordners"
+
+msgid "A block that disagrees was not rebuilt as the pack stores it: the tables you supplied are wrong for it"
+msgstr "Ein widersprechender Block wurde nicht so wiederhergestellt, wie das Pack ihn speichert: Die bereitgestellten Tabellen sind für ihn falsch"
+
+msgid "Not called exact: {how}"
+msgstr "Gilt nicht als exakt: {how}"
+
+msgid "Exact rests on the rules of this block format, which a wrong table breaks: none of this texture's {count} coded blocks breaks one, and neither did any of the {blocks} blocks of the format that a check read through the tables you supplied. The rules see an entry of a preset through the blocks that read it: whether it is in its place, a BC7 end's p-bit and the top bit of an anchor's index. They do not see each end value, nor an entry that few blocks read. No texture is stored both coded and plain, so no read is compared with the pack's own blocks"
+msgstr "„Exakt“ beruht auf den Regeln dieses Blockformats, die eine falsche Tabelle verletzt: Keiner der {count} codierten Blöcke dieser Textur verletzt eine, und ebenso keiner der {blocks} Blöcke des Formats, die eine Prüfung über die bereitgestellten Tabellen gelesen hat. Die Regeln erfassen einen Eintrag eines Presets über die Blöcke, die ihn lesen: ob er an seinem Platz steht, das p-Bit eines BC7-Endpunkts und das oberste Bit des Index eines Ankers. Den einzelnen Endwert erfassen sie nicht, ebenso wenig einen Eintrag, den nur wenige Blöcke lesen. Keine Textur ist zugleich codiert und uncodiert gespeichert, daher wird kein Lesevorgang mit den eigenen Blöcken des Packs verglichen"
+
+msgid "supplied tables, no rule checks this format"
+msgstr "bereitgestellte Tabellen, keine Regel prüft dieses Format"
+
+msgid "The tables you supplied are not this coder's: a check found {count} of {blocks} coded blocks that read a value no table gives or hold what no encoder writes. No texture read through them is the pack's"
+msgstr "Die bereitgestellten Tabellen sind nicht die dieses Coders: Eine Prüfung fand {count} von {blocks} codierten Blöcken, die einen Wert lesen, den keine Tabelle liefert, oder etwas enthalten, das kein Encoder schreibt. Keine über diese Tabellen gelesene Textur ist die des Packs"
+
+msgid "A check of the tables you supplied held {bc6h} BC6H blocks and {bc7} BC7 blocks to the rules of their formats, and none broke one. No rule holds a BC1, BC3, BC4 or BC5 block"
+msgstr "Eine Prüfung der bereitgestellten Tabellen hat {bc6h} BC6H-Blöcke und {bc7} BC7-Blöcke an den Regeln ihrer Formate gemessen, und keiner verletzte eine. Für einen BC1-, BC3-, BC4- oder BC5-Block gilt keine Regel"
+
+msgid "Exact rests on two tables: the tables you supplied and BC1's built-in ones give the same value for every preset slot and index symbol this texture reads. No texture is stored both coded and plain, so no read is compared with the pack's own blocks"
+msgstr "„Exakt“ beruht auf zwei Tabellen: Die bereitgestellten Tabellen und die integrierten BC1-Tabellen liefern für jeden Preset-Slot und jedes Indexsymbol, das diese Textur liest, denselben Wert. Keine Textur ist zugleich codiert und uncodiert gespeichert, daher wird kein Lesevorgang mit den eigenen Blöcken des Packs verglichen"
+
+msgid "Read through the tables you supplied. None of this texture's coded blocks breaks a rule of its format, but one texture reads few of a preset's entries: the read is called exact only once `openrage-cli ttpf tables --check` has held the tables to the blocks of this format in a folder's packs"
+msgstr "Über die bereitgestellten Tabellen gelesen. Keiner der codierten Blöcke dieser Textur verletzt eine Regel seines Formats, doch eine einzelne Textur liest nur wenige Einträge eines Presets: Das Lesen gilt erst als exakt, wenn `openrage-cli ttpf tables --check` die Tabellen an den Blöcken dieses Formats in den Packs eines Ordners gemessen hat"
+
+msgid "Read through the tables you supplied. No rule of this block format can show a wrong table and no second table is known, so nothing can confirm the read and it is not called exact"
+msgstr "Über die bereitgestellten Tabellen gelesen. Keine Regel dieses Blockformats kann eine falsche Tabelle aufdecken, und eine zweite Tabelle ist nicht bekannt, daher kann nichts das Lesen bestätigen, und es gilt nicht als exakt"
+
+msgid "built-in BC1 tables, not confirmed"
+msgstr "integrierte BC1-Tabellen, nicht bestätigt"
+
+msgid "plain levels read, coded levels not read"
+msgstr "uncodierte Stufen gelesen, codierte Stufen nicht gelesen"
+
+msgid "a coded body not read, the levels above it read"
+msgstr "ein codierter Teil nicht gelesen, die Stufen darüber gelesen"
+
+msgid "The levels read are not all of this texture: a body of it stored through the coder was not read, so nothing is said of the levels that body holds, and the texture is not called exact"
+msgstr "Die gelesenen Stufen sind nicht die ganze Textur: Ein über den Coder gespeicherter Teil von ihr wurde nicht gelesen, daher wird über die Stufen, die dieser Teil enthält, nichts ausgesagt, und die Textur gilt nicht als exakt"
+
+msgid "{count} coded blocks read a value the built-in BC1 tables give otherwise"
+msgstr "{count} codierte Blöcke lesen einen Wert, den die integrierten BC1-Tabellen anders angeben"
+
+msgid "BC1's built-in tables were fitted by their author and nothing confirms them value for value, so a read through them alone is not called exact. Through a tables file you supply, BC1 reads through that file, and a block is counted where the two tables give another value"
+msgstr "Die integrierten BC1-Tabellen wurden von ihrem Autor angepasst, und nichts bestätigt sie Wert für Wert, daher gilt ein Lesen allein über sie nicht als exakt. Über eine bereitgestellte Tabellendatei liest BC1 über diese Datei, und ein Block wird gezählt, wo die beiden Tabellen einen anderen Wert liefern"
+
+msgid "The blocks counted read a preset slot or an index symbol for which BC1's built-in tables give another value, or none. They were rebuilt through the tables you supplied, and no second table stands behind them"
+msgstr "Die gezählten Blöcke lesen einen Preset-Slot oder ein Indexsymbol, für das die integrierten BC1-Tabellen einen anderen oder gar keinen Wert liefern. Sie wurden über die bereitgestellten Tabellen wiederhergestellt, und keine zweite Tabelle stützt sie"
+
 msgid "Stopped before it finished. The next calibration of this game goes on from where this one stopped"
 msgstr "Vor dem Abschluss gestoppt. Die nächste Kalibrierung dieses Spiels macht dort weiter, wo diese gestoppt hat"
 

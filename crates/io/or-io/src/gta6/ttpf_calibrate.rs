@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::{read_at, TexturePack, TtpfError, KIND_STORED, KIND_ZLIB};
 use crate::codec::texture::DxgiFormat;
 use crate::gta6::bcpack::calibrate::{self as fit, LevelData, LevelIn, Summary, TextureIn};
-use crate::gta6::bcpack::{self, BcPackError, Tables};
+use crate::gta6::bcpack::{self, BcPackError, Checked, Standing, Tables};
 use crate::gta6::tiling::{untile, Tile};
 
 /// A BC1 body's first bytes, which say whether it reads a preset slot with no built-in value.
@@ -18,6 +18,9 @@ const HEAD: u64 = 4096;
 const MAX_CODED_BLOCKS: usize = 1 << 16;
 /// The blocks of the largest plain level it reads: the level above the largest coded one.
 const MAX_PLAIN_BLOCKS: usize = 4 * MAX_CODED_BLOCKS;
+/// The most BC1 textures a probe reads all of, and the share of them it reads past that.
+const ALL_BC1: usize = 1024;
+const ONE_BC1_IN: usize = 8;
 /// The blocks of the largest coded level a pass that fills reads, of BC6H and BC7: such a pass
 /// reads few textures, so it can hold larger ones.
 const LARGE_CODED_BLOCKS: usize = 2 * MAX_CODED_BLOCKS;
@@ -60,6 +63,50 @@ impl TexturePack {
         self.calibration.is_some()
     }
 
+    /// Whether a body of codec kind `kind` reads through tables the user supplied, which are no estimate.
+    pub fn reads_supplied(&self, kind: u8) -> bool {
+        (self.calibration.as_deref()).is_some_and(|tables| tables.supplied(kind))
+    }
+
+    /// How the tables file the pack reads through stands; nothing checked with none.
+    pub fn standing(&self) -> Standing {
+        (self.calibration.as_deref()).map_or(Standing::default(), Tables::standing)
+    }
+
+    /// How the tables file the pack reads through stands once `read` is counted, the textures
+    /// of this pack that a listing, an export or a session has read, together: against the
+    /// file for this pack where a block of them spoke against it.
+    ///
+    /// ⚠ A texture that read clean beside one that did not was read through the same tables,
+    /// so the count stands for every read of the pack, which is then never called exact
+    /// ([`Standing::refuted`]).
+    pub fn standing_after(&self, read: &bcpack::Decode) -> Standing {
+        let found = Checked {
+            blocks: read.supplied,
+            disagree: read.disagree(),
+        };
+        match read.supplied {
+            0 => self.standing(),
+            _ => self.standing().in_pack(found),
+        }
+    }
+
+    /// [`Self::standing_after`], kept under `dir`, where the tables file the pack reads through
+    /// is kept, so that every later read of the pack through that file says it.
+    pub fn keep_read(
+        &self,
+        dir: &std::path::Path,
+        read: &bcpack::Decode,
+    ) -> std::io::Result<Standing> {
+        let after = self.standing_after(read);
+        match (self.calibration.as_deref(), after.failed_in_pack()) {
+            (Some(tables), Some(found)) if after != self.standing() => {
+                fit::keep_read(dir, tables, self.member_key(), found)
+            }
+            _ => Ok(after),
+        }
+    }
+
     /// The pack's key in a calibration file: its file's name and length.
     pub fn member_key(&self) -> u64 {
         fit::member_key(&self.path, self.on_disk)
@@ -93,6 +140,11 @@ impl TexturePack {
     /// The textures a calibration reads: each with a body of codec kind 3, 4, 5, 6 or 7, or one of
     /// kind 1 that reads a preset slot with no built-in value.
     pub fn calibration_textures(&self, stop: &dyn Fn() -> bool) -> Vec<usize> {
+        self.coded_textures(false, stop)
+    }
+
+    /// [`Self::calibration_textures`], with every texture that has a body of kind 1 where `every`.
+    fn coded_textures(&self, every: bool, stop: &dyn Fn() -> bool) -> Vec<usize> {
         let Ok(mut file) = File::open(&self.path) else {
             return Vec::new();
         };
@@ -107,7 +159,7 @@ impl TexturePack {
             let mut coded = (self.rows_of(index).into_iter().flatten())
                 .filter(|&row| self.rows[row].kind == kind && self.replaced_row(row).is_none());
             let reads = match kind {
-                1 => coded.any(|row| self.reads_unknown_slot(&mut file, row)),
+                1 if !every => coded.any(|row| self.reads_unknown_slot(&mut file, row)),
                 _ => coded.next().is_some(),
             };
             if reads {
@@ -173,12 +225,11 @@ impl TexturePack {
             if end - at > 2 * element * MAX_PLAIN_BLOCKS || !spans.iter().flatten().any(wanted) {
                 continue;
             }
-            // No table reads a body of these kinds: its lanes are what a calibration reads, where
-            // it is small enough.
-            if (3..=7).contains(&kind)
-                && self.rows[row].kind == kind
-                && self.replaced_row(row).is_none()
-            {
+            // No built-in table reads a body of these kinds: its lanes are what a calibration
+            // reads, where it is small enough. Under supplied tables a BC1 body is such a body
+            // too: decoded through its built-in tables, it would pass for a plain level.
+            let lanes_only = (3..=7).contains(&kind) || (kind == 1 && self.reads_supplied(1));
+            if lanes_only && self.rows[row].kind == kind && self.replaced_row(row).is_none() {
                 if end - at <= element * coded_blocks {
                     let lanes = (self.stored(&mut file, row).ok())
                         .and_then(|stored| bcpack::lanes(kind, &stored, (end - at) as u64).ok());
@@ -326,19 +377,98 @@ pub fn calibrate_packs_from(
     })
 }
 
+/// How the coded levels of `packs` that a calibration reads meet the plain levels beside them when
+/// drawn through `tables`, by mode; `None` once `stop` says to stop.
+pub fn score_packs(
+    packs: &[TexturePack],
+    tables: &Tables,
+    progress: &mut dyn FnMut(u64, u64),
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Option<Vec<Summary>> {
+    let mut wanted: Vec<(usize, usize, usize)> = Vec::new();
+    for (p, pack) in packs.iter().enumerate() {
+        for index in pack.calibration_textures(stop) {
+            let slices = pack.calibration_slices(index);
+            wanted.extend((0..slices).map(|slice| (p, index, slice)));
+        }
+    }
+    let read = |at: usize, large: bool| {
+        let (p, index, slice) = wanted[at];
+        Vec::from_iter(packs[p].calibration_input(index, slice, large))
+    };
+    fit::score_tables(wanted.len(), &read, tables, progress, stop)
+}
+
+/// Whether a probe reads the `nth` of `count` BC1 textures: all of them up to [`ALL_BC1`], and
+/// past that one in [`ONE_BC1_IN`] from the first.
+pub(super) fn probed_bc1(count: usize) -> impl Fn(usize) -> bool {
+    move |nth| count <= ALL_BC1 || nth.is_multiple_of(ONE_BC1_IN)
+}
+
+/// Moves each value of `tables` one step either way and says how the coded levels of `packs`
+/// then meet the plain levels beside them ([`fit::probe_tables`]), over every texture with a
+/// coded body, BC1's too; `None` once `stop` says to stop.
+///
+/// ⚠ Past [`ALL_BC1`] BC1 textures it reads one of them in [`ONE_BC1_IN`], evenly through the
+/// packs: a probe reads a texture whole from disk, its plain levels too, and a share of a large
+/// folder's BC1 textures settles the values that the rest would only settle again.
+pub fn probe_packs(
+    packs: &[TexturePack],
+    tables: &Tables,
+    progress: &mut dyn FnMut(u64, u64),
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Option<fit::Probed> {
+    let mut textures: Vec<(usize, usize)> = Vec::new();
+    for (p, pack) in packs.iter().enumerate() {
+        textures.extend(
+            pack.coded_textures(true, stop)
+                .into_iter()
+                .map(|index| (p, index)),
+        );
+    }
+    let is_bc1 = |&(p, index): &(usize, usize)| packs[p].fitted_kind(index) == Some(1);
+    let read = probed_bc1(textures.iter().filter(|texture| is_bc1(texture)).count());
+    let mut nth = 0;
+    textures.retain(|texture| {
+        let kept = !is_bc1(texture) || read(nth);
+        nth += usize::from(is_bc1(texture));
+        kept
+    });
+    let mut wanted: Vec<(usize, usize, usize)> = Vec::new();
+    for (p, index) in textures {
+        let slices = packs[p].calibration_slices(index);
+        wanted.extend((0..slices).map(|slice| (p, index, slice)));
+    }
+    let read = |at: usize, large: bool| {
+        let (p, index, slice) = wanted[at];
+        Vec::from_iter(packs[p].calibration_input(index, slice, large))
+    };
+    fit::probe_tables(wanted.len(), &read, tables, progress, stop)
+}
+
 /// How the textures of a set of packs with a body stored through the coder read, for one codec kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Coverage {
     pub kind: u8,
-    /// Textures whose coded bodies all decode exactly, those with one rebuilt through a fitted table, and those with one refused.
-    pub exact: u64,
+    /// Textures none of whose coded blocks is fitted or counted here; those through supplied
+    /// tables with a block that speaks against them; BC1 textures with a block only one table
+    /// stands behind ([`bcpack::Decode::unseconded`]); those with a body rebuilt through a
+    /// fitted table; and those with one refused.
+    pub clean: u64,
+    pub disagree: u64,
+    pub unseconded: u64,
     pub calibrated: u64,
     pub refused: u64,
+    /// The bodies with a block only one table stands behind, and those blocks.
+    pub unseconded_bodies: u64,
+    pub unseconded_blocks: u64,
     /// The blocks of the coded bodies that read, those of them rebuilt through a fitted table, and
     /// those of these drawn through a slot or symbol the fit did not solve.
     pub blocks: u64,
     pub fitted: u64,
     pub unknown: u64,
+    /// The BC6H and BC7 blocks that break a rule every encoder of their format keeps.
+    pub stray: u64,
 }
 
 impl TexturePack {
@@ -361,23 +491,49 @@ impl TexturePack {
         let element = self.entries[index]
             .format()
             .map_or(16, |format| format.element_bytes() as u64);
-        let (mut how, mut blocks) = (bcpack::Decode::default(), 0);
+        let signed = (self.entries[index].format())
+            .is_some_and(|format| format.dxgi() == DxgiFormat::Bc6hSf16);
+        let (mut how, mut blocks, mut bodies) = (bcpack::Decode::default(), 0, 0);
         for row in rows {
-            if self.body_fitted(&mut file, row, &mut how).is_err() {
+            let rested = how.unseconded;
+            if self.body_fitted(&mut file, row, signed, &mut how).is_err() {
                 of_kind.refused += 1;
                 return;
             }
             blocks += self.size(row) / element;
+            bodies += u64::from(how.unseconded > rested);
         }
+        of_kind.unseconded_bodies += bodies;
+        of_kind.unseconded_blocks += how.unseconded;
         of_kind.blocks += blocks;
         of_kind.fitted += how.calibrated;
         of_kind.unknown += how.unknown;
-        if how.is_exact() {
-            of_kind.exact += 1;
-        } else {
-            of_kind.calibrated += 1;
+        of_kind.stray += how.stray;
+        match (how.calibrated > 0, how.disagree() > 0, how.unseconded > 0) {
+            (true, _, _) => of_kind.calibrated += 1,
+            (false, true, _) => of_kind.disagree += 1,
+            (false, false, true) => of_kind.unseconded += 1,
+            (false, false, false) => of_kind.clean += 1,
         }
     }
+}
+
+/// Keeps under `dir` what a whole check through `tables`, read from the file kept there, found
+/// over `found`, the coverage of the packs checked, kind by kind, and gives how the file stands
+/// with it.
+pub fn keep_checked(
+    dir: &std::path::Path,
+    tables: &Tables,
+    found: &[Coverage],
+) -> std::io::Result<Standing> {
+    let by_kind = |of_kind: &Coverage| {
+        let found = Checked {
+            blocks: of_kind.blocks,
+            disagree: of_kind.unknown + of_kind.stray,
+        };
+        (of_kind.kind, found)
+    };
+    fit::keep_check(dir, tables, &Vec::from_iter(found.iter().map(by_kind)))
 }
 
 /// How every texture of `packs` with a body stored through the coder reads through the calibration
@@ -410,12 +566,17 @@ pub fn coverage(packs: &[TexturePack], stop: &(dyn Fn() -> bool + Sync)) -> Opti
             match worker.join() {
                 Ok(part) => {
                     for (total, part) in total.iter_mut().zip(part) {
-                        total.exact += part.exact;
+                        total.clean += part.clean;
+                        total.disagree += part.disagree;
+                        total.unseconded += part.unseconded;
+                        total.unseconded_bodies += part.unseconded_bodies;
+                        total.unseconded_blocks += part.unseconded_blocks;
                         total.calibrated += part.calibrated;
                         total.refused += part.refused;
                         total.blocks += part.blocks;
                         total.fitted += part.fitted;
                         total.unknown += part.unknown;
+                        total.stray += part.stray;
                     }
                 }
                 Err(panic) => std::panic::resume_unwind(panic),
@@ -426,7 +587,12 @@ pub fn coverage(packs: &[TexturePack], stop: &(dyn Fn() -> bool + Sync)) -> Opti
         return None;
     }
     let seen = |(kind, of_kind): (usize, Coverage)| {
-        (of_kind.exact + of_kind.calibrated + of_kind.refused > 0).then_some(Coverage {
+        let textures = of_kind.clean
+            + of_kind.disagree
+            + of_kind.unseconded
+            + of_kind.calibrated
+            + of_kind.refused;
+        (textures > 0).then_some(Coverage {
             kind: kind as u8,
             ..of_kind
         })

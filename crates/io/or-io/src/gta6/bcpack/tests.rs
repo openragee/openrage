@@ -10,6 +10,8 @@
 //! The console's coder is not public. A lane is coded as flushed fragments, each a rANS stream
 //! coded backwards from the state a fragment ends in, and the lanes' bytes are interleaved by
 //! running the decoder over one queue for each lane and noting which lane takes each byte.
+// Outside a test build the made-up fixtures take a few of these helpers and the rest lie unused.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
 use super::bc1::{difference, distance, index_word};
 use super::bc1_tables::{PRESET_ENDPOINTS, QUADRANT_INDICES};

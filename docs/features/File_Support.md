@@ -100,10 +100,24 @@ folder's view offers the scan and the name harvest.
   header, instructions and native calls through `openrage-cli script compiled`, and as source through
   `openrage-cli script decompile` and the app.
 - **Textures.** A texture stored plainly or as zlib reads as it is. One stored through the pack's
-  entropy coder decodes exactly as BC1; as BC3, BC4, BC5, BC6H or BC7 it decodes through tables
-  that `openrage-cli ttpf calibrate`, or the app's job, fits on your machine from the packs of the
-  folder, and is refused by name before that. Such a texture is an estimate and is marked
-  calibrated wherever it is shown or exported.
+  entropy coder needs the coder's tables, which no file of the game holds. With a tables file you
+  supply to `openrage-cli ttpf tables`, every mode reads through it, and a texture is called exact
+  only on a condition. A BC6H or BC7 texture: no block of it speaks against the file, and
+  `openrage-cli ttpf tables --check` has held the file's tables of its format to your packs. A BC1
+  texture: the file and BC1's built-in tables give the same value for everything it reads. A BC3,
+  BC4 or BC5 texture is never called exact, since no rule of those formats can show a wrong table.
+  A file that fails a check is reported as not this coder's tables from then on, a listing or an
+  export that counts a block against the file fails it for that pack and keeps that, and no read
+  is ever a comparison with the pack's own blocks. A texture none of whose coded bodies was read
+  says that its plain levels were read and its coded levels were not, and neither it nor one a
+  coded body of which was not read is called exact.
+  Without one, BC1 decodes through its built-in tables, which were fitted and which nothing
+  confirms value for value: a BC1 texture read through them is marked as resting on the built-in
+  tables and is not called exact. BC3, BC4, BC5, BC6H and BC7 decode through tables that
+  `openrage-cli ttpf calibrate`, or the app's job, fits on your machine from the packs of the
+  folder, and are refused by name before that. A texture read through fitted tables is an estimate
+  and is marked calibrated wherever it is shown or exported
+  ([the two sources](GTA_VI_Xbox_Build.md#textures-the-coder-and-its-tables)).
 - **Shaded.** Shaded draws a pass of a GTA VI drawable with the game's own programs where both its
   vertex and its pixel program translate and bind, lit by the hour and the weather the install's
   time cycle states, and its button says how many programs were refused and why the first was.

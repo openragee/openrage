@@ -12,7 +12,7 @@ use or_io::codec::texture::{GrcTextureFormat, RgbaImage};
 use or_io::gta5::gen8::GrcTexture;
 use or_io::gta5::shared::PgDictionary;
 use or_io::gta6::bcpack::calibrate::load_cache;
-use or_io::gta6::bcpack::Decode;
+use or_io::gta6::bcpack::{Decode, Reading, Standing};
 use or_io::gta6::hash::name_hash64;
 use or_io::gta6::headerless::{Dictionary, DictionaryTexture, Entry, Resource};
 use or_io::gta6::texture_names::name_keys;
@@ -195,6 +195,7 @@ impl TtpfDocument {
         }
         let noted = self.pack.texture_noted(index).map(|(texture, how)| {
             decodes().insert((self.pack.path().to_path_buf(), index), how);
+            self.keep_against(&how);
             texture
         });
         match noted
@@ -213,43 +214,215 @@ impl TtpfDocument {
         }
     }
 
-    /// How texture `index`'s bodies through the BCPack coder are rebuilt: exactly, or as an
-    /// estimate through tables fitted on this machine, with the share of its coded blocks drawn
-    /// through a slot or symbol the fit did not solve once it has been read. `None` for a
-    /// texture with no such body, and for one not read yet that may decode exactly.
-    pub fn decode_label(&self, index: usize) -> Option<String> {
-        use or_io::gta6::ttpf::{KIND_STORED, KIND_ZLIB};
-        let rows = self.pack.rows_of(index)?;
-        let kinds = || rows.clone().map(|row| self.pack.rows[row].kind);
-        if !kinds().any(|kind| kind != KIND_STORED && kind != KIND_ZLIB) {
-            return None;
+    /// What the textures of the pack read so far count together.
+    // ponytail: summed at each call, which each label of a frame makes; a sum kept beside the
+    // reads if a pack with thousands of textures read shows in a frame's time.
+    fn read_so_far(&self) -> Decode {
+        let path = self.pack.path().to_path_buf();
+        let of_the_pack = (path.clone(), 0)..=(path, usize::MAX);
+        let mut all = Decode::default();
+        for (_, how) in decodes().range(of_the_pack) {
+            all.add(*how);
         }
-        let read = decodes()
-            .get(&(self.pack.path().to_path_buf(), index))
-            .copied();
-        match read {
-            Some(how) if how.is_exact() => Some(tr!("exact").to_string()),
-            Some(how) => Some(tr!(
-                "calibrated, {percent} % of its coded blocks through a slot not known",
-                percent = format!("{:.1}", how.unknown_percent())
-            )),
-            // A BC3, BC4 or BC5 body reads only through a calibration.
-            None if self.pack.is_calibrated() && kinds().any(|kind| (3..=5).contains(&kind)) => {
-                Some(tr!("calibrated").to_string())
-            }
-            None => None,
+        all
+    }
+
+    /// How the tables file the pack reads through stands for it: as it is kept, and against the
+    /// file for this pack once a texture of it read so far has counted a block against it.
+    fn standing(&self) -> Standing {
+        self.pack.standing_after(&self.read_so_far())
+    }
+
+    /// Keeps, where `how`, a texture's read, counted a block against the tables supplied, what
+    /// the pack's textures read so far count against them: a later read of the pack, here or
+    /// from the command line, is then not called exact either.
+    fn keep_against(&self, how: &Decode) {
+        if how.supplied == 0 || how.disagree() == 0 {
+            return;
+        }
+        let kept = calibration_dir().map(|dir| self.pack.keep_read(&dir, &self.read_so_far()));
+        if let Some(Err(e)) = kept {
+            tracing::warn!("what a read counted against the supplied tables is not kept: {e}");
         }
     }
 
-    /// [`Self::decode_label`] where the texture is an estimate; `None` for one that reads exactly.
-    pub fn estimate_label(&self, index: usize) -> Option<String> {
+    /// How texture `index` was rebuilt and what its read may be called, once it has been read.
+    fn reading(&self, index: usize) -> Option<(Decode, Reading)> {
         let read = decodes()
             .get(&(self.pack.path().to_path_buf(), index))
             .copied();
-        if read.is_some_and(|how| how.is_exact()) {
+        read.map(|how| (how, how.reading(self.standing())))
+    }
+
+    /// Whether the pack reads its coded bodies through tables the user supplied: a file gives
+    /// every mode's or none.
+    fn supplied(&self) -> bool {
+        self.pack.reads_supplied(1)
+    }
+
+    /// What texture `index`'s read through the BCPack coder may be called: exact, an estimate
+    /// through tables fitted on this machine, what speaks against the tables the user supplied,
+    /// or that a coded body of it was not read. `None` for a texture with no such body, and for
+    /// one not read yet of which nothing can be said.
+    ///
+    /// ⚠ A read is called exact only once it has been made: that a tables file is kept says
+    /// nothing of a texture.
+    pub fn decode_label(&self, index: usize) -> Option<String> {
+        use or_io::gta6::ttpf::{KIND_STORED, KIND_ZLIB};
+        let rows = self.pack.rows_of(index)?;
+        let mut coded = (rows.map(|row| self.pack.rows[row].kind))
+            .filter(|&kind| kind != KIND_STORED && kind != KIND_ZLIB);
+        let kind = coded.next()?;
+        let not_checked = || tr!("supplied tables, not checked").to_string();
+        let no_rule = || tr!("supplied tables, no rule checks this format").to_string();
+        let not_the_coders = || tr!("not this coder's tables").to_string();
+        let standing = self.standing();
+        Some(match self.reading(index) {
+            Some((_, Reading::Exact)) => tr!("exact").to_string(),
+            // Nothing through the coder was rebuilt, or a body under the ones that were was not.
+            Some((how, Reading::CodedUnread)) => match how.supplied {
+                0 => tr!("plain levels read, coded levels not read").to_string(),
+                _ => tr!("a coded body not read, the levels above it read").to_string(),
+            },
+            Some((_, Reading::BuiltIn)) => tr!("built-in BC1 tables, not confirmed").to_string(),
+            Some((_, Reading::Unseconded { blocks })) => tr!(
+                "{count} coded blocks read a value the built-in BC1 tables give otherwise",
+                count = blocks
+            ),
+            Some((how, Reading::Calibrated)) => tr!(
+                "calibrated, {percent} % of its coded blocks through a slot not known",
+                percent = format!("{:.1}", how.unknown_percent())
+            ),
+            Some((_, Reading::Unchecked)) => not_checked(),
+            Some((_, Reading::Unruled)) => no_rule(),
+            Some((_, Reading::Disagrees { disagree, blocks })) => tr!(
+                "{count} of {blocks} coded blocks disagree with the supplied tables",
+                count = disagree,
+                blocks = blocks
+            ),
+            Some((_, Reading::NotTheCoders { .. })) => not_the_coders(),
+            // Not read yet: only how the tables stand for its format is known.
+            None if self.supplied() => match kind {
+                _ if standing.refuted().is_some() => not_the_coders(),
+                3..=5 => no_rule(),
+                6 | 7 if standing.held(kind).is_none() => not_checked(),
+                _ => return None,
+            },
+            // A BC3, BC4 or BC5 body reads only through a calibration.
+            None if self.pack.is_calibrated() && (3..=5).contains(&kind) => {
+                tr!("calibrated").to_string()
+            }
+            None => return None,
+        })
+    }
+
+    /// [`Self::decode_label`] where the texture is an estimate through fitted tables.
+    pub fn estimate_label(&self, index: usize) -> Option<String> {
+        match self.reading(index) {
+            Some((_, Reading::Calibrated)) => self.decode_label(index),
+            Some(_) => None,
+            None if self.supplied() => None,
+            None => self.decode_label(index),
+        }
+    }
+
+    /// [`Self::decode_label`] where the texture has been read and its read is neither called
+    /// exact nor an estimate: something speaks against the read through the tables the user
+    /// supplied or nothing confirms it, it went through BC1's built-in tables alone, or a coded
+    /// body of it was not read. The texture view and an export say it under "Not called exact".
+    pub fn doubt_label(&self, index: usize) -> Option<String> {
+        match self.reading(index)?.1 {
+            Reading::Exact | Reading::Calibrated => None,
+            _ => self.decode_label(index),
+        }
+    }
+
+    /// What speaks against the tables file the pack reads through: a check that failed it, or
+    /// the textures of this pack read so far, here or by a listing or an export kept with the
+    /// pack; `None` where nothing does.
+    fn tables_warning(&self) -> Option<String> {
+        let standing = self.standing();
+        if let Some(failed) = standing.failed() {
+            return Some(tr!(
+                "The tables you supplied are not this coder's: a check found {count} of {blocks} coded blocks that read a value no table gives or hold what no encoder writes. No texture read through them is the pack's",
+                count = failed.disagree,
+                blocks = failed.blocks
+            ));
+        }
+        standing.failed_in_pack().map(|against| tr!(
+            "The tables you supplied disagree with this pack: {count} of the coded blocks read so far read a value no table gives or hold what no encoder writes",
+            count = against.disagree
+        ))
+    }
+
+    /// How the tables file the pack reads through stands, and what the textures read so far say
+    /// against it; `None` where the pack reads through none.
+    pub fn tables_note(&self) -> Option<String> {
+        if !self.supplied() {
             return None;
         }
-        self.decode_label(index)
+        let standing = self.standing();
+        let held = |kind: u8| standing.held(kind).unwrap_or(0);
+        Some(match self.tables_warning() {
+            Some(warning) => warning,
+            None if held(6) + held(7) == 0 => tr!(
+                "The tables you supplied are not checked against your packs: `openrage-cli ttpf tables --check` does that for the packs of a folder"
+            )
+            .to_string(),
+            None => tr!(
+                "A check of the tables you supplied held {bc6h} BC6H blocks and {bc7} BC7 blocks to the rules of their formats, and none broke one. No rule holds a BC1, BC3, BC4 or BC5 block",
+                bc6h = held(6),
+                bc7 = held(7)
+            ),
+        })
+    }
+
+    /// What the word texture `index`'s read is called by rests on, a sentence a line; none for
+    /// a texture with no body through the coder, one not read yet and an estimate.
+    ///
+    /// ⚠ The counts it gives are of the texture's own format: what a check found of another
+    /// format says nothing of this texture.
+    pub fn decode_basis(&self, index: usize) -> Vec<String> {
+        let (Some(_), Some((how, reading))) = (self.decode_label(index), self.reading(index))
+        else {
+            return Vec::new();
+        };
+        let standing = self.standing();
+        let checked = [6, 7].into_iter().find(|&kind| how.kinds >> kind & 1 != 0);
+        let own = match reading {
+            Reading::BuiltIn => Some(tr!(
+                "BC1's built-in tables were fitted by their author and nothing confirms them value for value, so a read through them alone is not called exact. Through a tables file you supply, BC1 reads through that file, and a block is counted where the two tables give another value"
+            ).to_string()),
+            Reading::Unseconded { .. } => Some(tr!(
+                "The blocks counted read a preset slot or an index symbol for which BC1's built-in tables give another value, or none. They were rebuilt through the tables you supplied, and no second table stands behind them"
+            ).to_string()),
+            // A texture with no body through the coder has no label, so none is read here.
+            Reading::Exact if how.supplied == 0 => None,
+            Reading::Exact => Some(match checked {
+                Some(kind) => tr!(
+                    "Exact rests on the rules of this block format, which a wrong table breaks: none of this texture's {count} coded blocks breaks one, and neither did any of the {blocks} blocks of the format that a check read through the tables you supplied. The rules see an entry of a preset through the blocks that read it: whether it is in its place, a BC7 end's p-bit and the top bit of an anchor's index. They do not see each end value, nor an entry that few blocks read. No texture is stored both coded and plain, so no read is compared with the pack's own blocks",
+                    count = how.supplied,
+                    blocks = standing.held(kind).unwrap_or(0)
+                ),
+                None => tr!(
+                    "Exact rests on two tables: the tables you supplied and BC1's built-in ones give the same value for every preset slot and index symbol this texture reads. No texture is stored both coded and plain, so no read is compared with the pack's own blocks"
+                ).to_string(),
+            }),
+            Reading::Unchecked => Some(tr!(
+                "Read through the tables you supplied. None of this texture's coded blocks breaks a rule of its format, but one texture reads few of a preset's entries: the read is called exact only once `openrage-cli ttpf tables --check` has held the tables to the blocks of this format in a folder's packs"
+            ).to_string()),
+            Reading::Unruled => Some(tr!(
+                "Read through the tables you supplied. No rule of this block format can show a wrong table and no second table is known, so nothing can confirm the read and it is not called exact"
+            ).to_string()),
+            Reading::Disagrees { .. } => Some(tr!(
+                "A block that disagrees was not rebuilt as the pack stores it: the tables you supplied are wrong for it"
+            ).to_string()),
+            Reading::CodedUnread => Some(tr!(
+                "The levels read are not all of this texture: a body of it stored through the coder was not read, so nothing is said of the levels that body holds, and the texture is not called exact"
+            ).to_string()),
+            Reading::NotTheCoders { .. } | Reading::Calibrated => None,
+        };
+        own.into_iter().chain(self.tables_warning()).collect()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Read> {
@@ -727,3 +900,127 @@ pub(crate) mod calibration;
 #[path = "ttpf_reshape.rs"]
 mod relaid;
 pub(super) use relaid::{import, reshape};
+
+#[cfg(test)]
+mod tests {
+    use or_io::gta6::bcpack::calibrate::{keep_check, keep_supplied, load_cache};
+    use or_io::gta6::bcpack::made_up::{bc7_body, bc7_entries_swapped, tables_file};
+    use or_io::gta6::bcpack::Checked;
+
+    use super::*;
+    use crate::state::opening_a_ttpf::{pack_of, BODY};
+
+    /// A pack written under `folder` as `made_up.ttpf`, opened.
+    fn opened(folder: &Path, bytes: &[u8]) -> TtpfDocument {
+        std::fs::create_dir_all(folder).expect("a folder");
+        let path = folder.join("made_up.ttpf");
+        std::fs::write(&path, bytes).expect("written");
+        TtpfDocument::open(&path).expect("the pack opens")
+    }
+
+    #[test]
+    fn a_texture_that_counts_blocks_against_the_supplied_tables_fails_them_for_its_pack() {
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        crate::state::prefs::keep_prefs_in(dir.path());
+        let kept = calibration_dir().expect("a configuration folder");
+        // The tables supplied are a made-up file with the first two entries of BC7's list
+        // changed over, which a whole check of other packs has held.
+        keep_supplied(&kept, &bc7_entries_swapped(&tables_file())).expect("kept");
+        let tables = load_cache(&kept, 0).expect("the file reads");
+        let held = Checked {
+            blocks: 512,
+            disagree: 0,
+        };
+        keep_check(&kept, &tables, &[(7, held)]).expect("kept");
+
+        // Two textures of one body each through the coder's BC7 mode: texture 0 reads the two
+        // entries, texture 1 neither.
+        let blocks = BODY / 16;
+        // A row starts at a 256-byte boundary, and a coded stream may end in zeros.
+        let body = |from_presets: usize| {
+            let mut stream = bc7_body(blocks, from_presets);
+            stream.resize(stream.len().next_multiple_of(0x100), 0);
+            stream
+        };
+        let bytes = pack_of(&[(0x238, 7, body(2)), (0x238, 7, body(0))]);
+        let pack = opened(&dir.path().join("here"), &bytes);
+        assert!(pack.supplied());
+        let not_the_coders = Some(tr!("not this coder's tables").to_string());
+
+        // Read alone, texture 1 is exact: nothing of it speaks against the file, and a check
+        // held BC7.
+        pack.texture(1).expect("reads");
+        assert_eq!(pack.decode_label(1), Some(tr!("exact").to_string()));
+        assert_eq!(pack.doubt_label(1), None);
+
+        // Texture 0 counts its two blocks against the file. Texture 1 went through the same
+        // file, and is not called exact from then on.
+        pack.texture(0).expect("reads");
+        let two = tr!(
+            "{count} of {blocks} coded blocks disagree with the supplied tables",
+            count = 2,
+            blocks = blocks
+        );
+        assert_eq!(pack.decode_label(0), Some(two));
+        assert_eq!(pack.decode_label(1), not_the_coders);
+        assert_eq!(pack.doubt_label(1), not_the_coders);
+        let warning = tr!(
+            "The tables you supplied disagree with this pack: {count} of the coded blocks read so far read a value no table gives or hold what no encoder writes",
+            count = 2
+        );
+        assert_eq!(pack.tables_note(), Some(warning.clone()));
+        assert_eq!(pack.decode_basis(1), std::slice::from_ref(&warning));
+
+        // That is kept with the pack, whose key is its file's name and length: the same pack
+        // opened from another folder says it of a texture before any is read.
+        let again = opened(&dir.path().join("there"), &bytes);
+        assert_eq!(again.decode_label(1), not_the_coders);
+        assert_eq!(again.tables_note(), Some(warning));
+        // Another pack reads as the check left the file.
+        let other = pack_of(&[(0x238, 7, body(0)), (0x238, 0, vec![0; BODY])]);
+        let other = opened(&dir.path().join("other"), &other);
+        other.texture(0).expect("reads");
+        assert_eq!(other.decode_label(0), Some(tr!("exact").to_string()));
+    }
+
+    #[test]
+    fn a_texture_a_coded_body_of_which_was_not_read_is_not_called_exact() {
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        let bytes = pack_of(&[(0x238, 5, vec![0x31; 0x200])]);
+        let mut pack = opened(dir.path(), &bytes);
+        pack.pack.set_calibration(None);
+        let path = pack.pack.path().to_path_buf();
+        // What a read that stopped at a coded body counts: the levels above it, and that body.
+        let partly = Decode {
+            unread: 1,
+            ..Decode::default()
+        };
+        decodes().insert((path.clone(), 0), partly);
+        let plain = Some(tr!("plain levels read, coded levels not read").to_string());
+        assert_eq!(pack.decode_label(0), plain);
+        assert_eq!(pack.doubt_label(0), plain);
+        assert_eq!(pack.estimate_label(0), None);
+        assert_eq!(pack.decode_basis(0).len(), 1);
+
+        // A read that rebuilt coded levels and then met a body that did not read.
+        let above = Decode {
+            supplied: 64,
+            kinds: 1 << 1,
+            ..partly
+        };
+        decodes().insert((path.clone(), 0), above);
+        let above = tr!("a coded body not read, the levels above it read").to_string();
+        assert_eq!(pack.decode_label(0), Some(above));
+
+        // A read through BC1's built-in tables alone is not called exact either, and the
+        // texture view and an export say so as the list and the inspector do.
+        let built_in = Decode {
+            unseconded: 64,
+            ..Decode::default()
+        };
+        decodes().insert((path, 0), built_in);
+        let rests = Some(tr!("built-in BC1 tables, not confirmed").to_string());
+        assert_eq!(pack.decode_label(0), rests);
+        assert_eq!(pack.doubt_label(0), rests);
+    }
+}

@@ -223,14 +223,11 @@ pub enum TtpfError {
 /// What is known of a codec kind no reader reads.
 fn codec_state(kind: u8) -> String {
     match kind {
-        3..=5 => format!(
+        3..=7 => format!(
             "BC{kind} blocks through the BCPack coder, whose tables for BC{kind} are not known \
-             until `openrage-cli ttpf calibrate <folder>` fits them on this machine from the \
-             packs of a folder, so it does not decode"
-        ),
-        6 | 7 => format!(
-            "BC{kind} blocks through the BCPack coder, whose tables for BC{kind} are not known, so \
-             it does not decode"
+             until `openrage-cli ttpf tables <file>` reads them from a tables file you supply or \
+             `openrage-cli ttpf calibrate <folder>` fits them on this machine from the packs of \
+             a folder, so it does not decode"
         ),
         _ => "which no measured pack uses".into(),
     }
@@ -937,7 +934,8 @@ impl TexturePack {
         // The bytes before this were not read.
         let mut read_from = 0;
         for row in rows.clone().rev() {
-            match self.body_fitted(&mut file, row, &mut decode) {
+            let signed = layout.format.dxgi() == DxgiFormat::Bc6hSf16;
+            match self.body_fitted(&mut file, row, signed, &mut decode) {
                 Ok(body) => {
                     let at = (self.rows[row].virtual_address - start) as usize;
                     memory[at..at + body.len()].copy_from_slice(&body);
@@ -950,6 +948,15 @@ impl TexturePack {
                     {
                         return Err(e);
                     }
+                    // The levels under the ones read are not said to be exact where a body of
+                    // them is stored through the coder.
+                    let coded = |row: &usize| {
+                        let kind = self.rows[*row].kind;
+                        kind != KIND_STORED
+                            && kind != KIND_ZLIB
+                            && self.replaced_row(*row).is_none()
+                    };
+                    decode.unread = (rows.start..=row).filter(coded).count() as u64;
                     break;
                 }
             }
@@ -1111,8 +1118,8 @@ impl TexturePack {
         Ok(out)
     }
 
-    /// [`Self::body`], and for a coded body that does not decode exactly, its blocks through the
-    /// pack's calibration, counted in `decode`.
+    /// [`Self::body`], a coded body through the tables the pack has set where it reads through
+    /// them, and how its blocks were rebuilt counted in `decode`.
     ///
     /// ⚠ Only a read for showing or exporting takes this: what a save writes back goes through
     /// [`Self::body`], so an estimate is never written as if the pack stored it.
@@ -1120,16 +1127,18 @@ impl TexturePack {
         &self,
         file: &mut File,
         row: usize,
+        signed: bool,
         decode: &mut bcpack::Decode,
     ) -> Result<Vec<u8>, TtpfError> {
         let kind = self.rows[row].kind;
-        let coded = kind != KIND_STORED && kind != KIND_ZLIB && self.replaced_row(row).is_none();
-        let Some(tables) = self.calibration.as_deref().filter(|_| coded) else {
+        if kind == KIND_STORED || kind == KIND_ZLIB || self.replaced_row(row).is_some() {
             return self.body(file, row);
-        };
+        }
         self.readable_as(row, true)?;
         let stored = self.stored(file, row)?;
-        let (blocks, how) = bcpack::decode_with(kind, &stored, self.size(row), Some(tables))
+        let size = self.size(row);
+        let tables = self.calibration.as_deref();
+        let (blocks, how) = bcpack::decode_checked(kind, &stored, size, tables, signed)
             .map_err(|source| TtpfError::BcPack { row, kind, source })?;
         decode.add(how);
         Ok(blocks)
@@ -1308,7 +1317,10 @@ fn is_sparse(metadata: &std::fs::Metadata) -> bool {
 
 #[path = "ttpf_calibrate.rs"]
 mod calibrate;
-pub use calibrate::{calibrate_packs, calibrate_packs_from, coverage, Calibrated, Coverage};
+pub use calibrate::{
+    calibrate_packs, calibrate_packs_from, coverage, keep_checked, probe_packs, score_packs,
+    Calibrated, Coverage,
+};
 
 #[path = "ttpf_write.rs"]
 mod write;

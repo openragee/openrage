@@ -54,3 +54,27 @@ fn a_bc1_body_that_does_not_decode_is_refused_by_its_row_and_the_coder_says_why(
     );
     assert!(pack.texture(1).is_ok(), "the other textures read");
 }
+
+#[test]
+fn a_texture_read_above_a_coder_body_that_does_not_read_says_the_body_was_not_read() {
+    use crate::gta6::bcpack::{Reading, Standing};
+    // Texture 0's lower levels through the coder as a BC5 body, which reads through no table kept.
+    let (mut specs, _) = textures();
+    let Body::Zlib(lower) = &specs[0].bodies[0] else {
+        panic!("texture 0's first body holds its lower levels as zlib");
+    };
+    specs[0].bodies[0] = Body::Coded {
+        kind: 5,
+        decoded: lower.len() as u64,
+    };
+    let (_dir, pack) = pack_of(&specs);
+    let (texture, how) = pack.texture_noted(0).expect("its plain top level reads");
+    assert_eq!((texture.levels, how.unread), (1, 1));
+    assert_eq!(how.reading(Standing::default()), Reading::CodedUnread);
+    // A texture every body of which read says nothing of the kind.
+    let (_, how) = pack.texture_noted(1).expect("reads");
+    assert_eq!(
+        (how.unread, how.reading(Standing::default())),
+        (0, Reading::Exact)
+    );
+}

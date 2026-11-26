@@ -24,7 +24,7 @@ pub(super) const PRESETS_BYTES: usize = 256 * (2 * FIELDS + FIELDS + 16 + 1);
 /// The blocks a reference reaches back over: a walk keeps this many.
 const REACH: usize = 256;
 /// What a field is a difference from where its block refers to none: the top bit alone.
-const HALF: u16 = 0x8000;
+pub(super) const HALF: u16 = 0x8000;
 /// The lanes of the four rows of indices.
 const INDEX_LANES: [usize; 4] = [11, 12, 13, 14];
 
@@ -299,6 +299,10 @@ pub(super) struct Walk<'a> {
     /// Each block's fields, and the preset field each hangs on: 0 for none, else 1 + 12 * slot + field.
     fields: Vec<[u16; FIELDS]>,
     from: Vec<[u16; FIELDS]>,
+    /// How each field answers the preset field it hangs on: the lowest bit of the preset field
+    /// that no cut along the chain drops, and how far left the chain has moved it since. A step
+    /// of that bit in the preset field moves the field by the step shifted so far, exactly.
+    reach: Vec<[(u8, u8); FIELDS]>,
     /// Each block's indices, left-aligned in 4 bits, and the preset slot they hang on.
     first: Vec<[u8; 16]>,
     first_from: Vec<u8>,
@@ -332,6 +336,7 @@ impl<'a> Walk<'a> {
             blocks: symbols / 2,
             fields: vec![[0; FIELDS]; REACH],
             from: vec![[0; FIELDS]; REACH],
+            reach: vec![[(0, 0); FIELDS]; REACH],
             first: vec![[0; 16]; REACH],
             first_from: vec![0; REACH],
             depths: vec![0; REACH],
@@ -377,6 +382,7 @@ impl<'a> Walk<'a> {
         let slot = (back > block).then(|| 256 + block - back);
         let mut fields = [0u16; FIELDS];
         let mut from = [0u16; FIELDS];
+        let mut reach = [(0u8, 0u8); FIELDS];
         for field in 0..FIELDS {
             let to = Self::trace_at(block, field);
             let depth = shape.depth(field);
@@ -396,6 +402,7 @@ impl<'a> Walk<'a> {
                 };
                 fields[field] = left(fields[source]);
                 from[field] = from[source];
+                reach[field] = (reach[source].0, reach[source].1 + cut.unwrap_or(0) as u8);
                 if traced && self.reads_trace(&from, field) {
                     let source = Self::trace_at(block, source);
                     for candidate in 0..CANDIDATES {
@@ -418,6 +425,9 @@ impl<'a> Walk<'a> {
                     let kept = named % REACH;
                     fields[field] = (self.fields[kept][field] & keep).wrapping_add(adds);
                     from[field] = self.from[kept][field];
+                    // This block's cut drops the bits under `shift` of a field moved left already.
+                    let (lowest, moved) = self.reach[kept][field];
+                    reach[field] = (lowest.max((shift as u8).saturating_sub(moved)), moved);
                     if traced && self.reads_trace(&from, field) {
                         let named = Self::trace_at(named, field);
                         for candidate in 0..CANDIDATES {
@@ -429,6 +439,7 @@ impl<'a> Walk<'a> {
                 (None, Some(slot)) => {
                     fields[field] = (self.presets.ends[slot][field] & keep).wrapping_add(adds);
                     from[field] = (1 + FIELDS * slot + field) as u16;
+                    reach[field] = (shift as u8, 0);
                     if traced && self.reads_trace(&from, field) {
                         for candidate in 0..CANDIDATES {
                             let tried = self.presets.candidate(slot, field, candidate);
@@ -441,6 +452,7 @@ impl<'a> Walk<'a> {
         }
         self.fields[block % REACH] = fields;
         self.from[block % REACH] = from;
+        self.reach[block % REACH] = reach;
     }
 
     fn step_indices(&mut self, block: usize, shape: &Shape, back: usize) {
@@ -495,6 +507,13 @@ impl<'a> Walk<'a> {
     /// The preset field that field `field` of block `block` hangs on: 0 for none, else 1 + 12 * slot + field.
     pub(super) fn from(&self, block: usize, field: usize) -> u16 {
         self.from[block % REACH][field]
+    }
+
+    /// How field `field` of block `block` answers the preset field it hangs on: the lowest bit
+    /// of the preset field it answers to, and how far left of it the field moves for a step there.
+    pub(super) fn reach(&self, block: usize, field: usize) -> (u32, u32) {
+        let (lowest, moved) = self.reach[block % REACH][field];
+        (lowest.into(), moved.into())
     }
 
     /// The top bits a fit has settled of what field `field` of block `block` hangs on: 16 for a field that hangs on no preset.
@@ -623,26 +642,59 @@ pub(super) fn write(
     word.to_le_bytes()
 }
 
-/// The BC6H blocks that `lanes` rebuild through `presets`, and how many hang on a preset value that is not known.
+/// Whether a block of `shape` whose fields are `fields` holds an end that its difference takes
+/// out of its base's range, which no encoder writes; the range is the signed format's where
+/// `signed`, a base's top bit its sign.
+pub(super) fn out_of_range(shape: &Shape, fields: &[u16; FIELDS], signed: bool) -> bool {
+    let top = 1 << shape.base;
+    let (low, high) = if signed {
+        (-(top / 2), top / 2)
+    } else {
+        (0, top)
+    };
+    shape.transformed
+        && (3..6 * shape.regions).any(|field| {
+            let base = match base_of(shape, fields[field % 3]) {
+                base if base >= high => base - top,
+                base => base,
+            };
+            let sum = base + difference_of(shape, fields[field], field % 3);
+            sum < low || sum >= high
+        })
+}
+
+/// The BC6H blocks that `lanes` rebuild through `presets`, how many hang on a preset value that
+/// is not known, and how many no encoder writes: one with an end out of its base's range, read
+/// as the signed format's where `signed`, or with an anchor's index past half its range.
 ///
 /// A value that is not known is taken from the nearest slot that knows it, and its block counted.
-pub(super) fn blocks(lanes: &[Vec<u16>], presets: &Presets) -> Result<Rebuilt, BcPackError> {
+pub(super) fn blocks(
+    lanes: &[Vec<u16>],
+    presets: &Presets,
+    signed: bool,
+) -> Result<Rebuilt, BcPackError> {
     let presets = &presets.stood_in();
     let mut walk = Walk::new(lanes, presets, false)?;
     let mut bytes = Vec::with_capacity(16 * walk.blocks);
-    let mut unknown = 0;
+    let (mut unknown, mut stray) = (0, 0);
     for block in 0..walk.blocks {
         let (shape, partition) = walk.step(block)?;
         let known = walk.ends_known(block, shape) && walk.indices_known(block);
         unknown += usize::from(!known);
-        bytes.extend(write(
-            shape,
-            walk.fields(block),
-            partition,
-            &walk.indices(block),
-        ));
+        let indices = walk.indices(block);
+        // An anchor's top bit is not stored, so a block holds none that is set.
+        let half = 1 << (shape.index_depth() - 1);
+        let anchored = anchors(shape.regions, partition)
+            .iter()
+            .all(|&pixel| indices[pixel] < half);
+        stray += usize::from(!anchored || out_of_range(shape, walk.fields(block), signed));
+        bytes.extend(write(shape, walk.fields(block), partition, &indices));
     }
-    Ok(Rebuilt { bytes, unknown })
+    Ok(Rebuilt {
+        bytes,
+        unknown,
+        stray,
+    })
 }
 
 #[cfg(test)]

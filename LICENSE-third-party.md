@@ -84,6 +84,47 @@ widths of the modes other than BC1 are facts stated in the documentation of
 (GPL-3.0), from which no code and no table is taken. Both MIT notices are reproduced at the end of
 this file.
 
+`crates/io/or-io/src/gta6/bcpack/supplied.rs` reads a file of the coder's tables that a user
+supplies. No such file, no value of one and nothing computed from one is in the tree, and the
+tests read made-up tables. [Marvisak/VIctory](https://github.com/Marvisak/VIctory)
+(GPL-3.0-or-later; its asset policy sets the tables themselves outside its licence) publishes
+such a file, and [ivall/xcl](https://github.com/ivall/xcl) (GPL-2.0-only) holds the same tables
+as generated source. What the reader takes from them is facts about the file's layout:
+
+- the order and lengths of its tables, and the size of an entry of each preset list;
+- that its 128 entropy models are the entropy layer's own, which the reader holds a file to;
+- that entry `e` of a list is slot `255 - e`;
+- that an index table holds places between a block's two ends, not the codes a block stores,
+  and a pair table a pair's two places in the two halves of a byte;
+- the order of the parts of an entry: BC1's two colours first; BC3's two colours, then its two
+  alpha ends; BC4's and BC5's alpha ends first; BC6H's one byte that nothing reads, twelve
+  fields, a mode byte counted from 1, then sixteen indices; BC7's word, 24 end values, two depth
+  bytes, then sixteen indices;
+- that an alpha end, a BC6H field and a BC6H index are each counted from where one with no
+  reference starts (128, the top bit alone, half the index's range), a BC6H field left-aligned
+  and a BC6H index at the depth its entry's mode gives;
+- that a BC7 end is the top byte of a 16-bit value;
+- how BC7's table of lane 15's pairs is indexed and what a word of it holds;
+- where a BC7 entry's indices start, on which the two projects disagree;
+- that a BC7 entry's first word states how many subsets' ends it holds, up to three, and that
+  a subset past those reads the first one's.
+
+The tree holds no measurement of these on a pack. What it shows of them is the reader and its
+tests, which read a made-up file in this layout
+(`crates/io/or-io/src/gta6/bcpack/supplied_tests.rs`), and
+`openrage-cli ttpf tables --check` measures a file against a user's own packs: a BC6H or BC7
+list read by another layout leaves blocks no encoder writes, and the other tables are held to
+the plain mips beside the coded ones. The reader is OpenRage's own code. Two reviews held it
+against both projects' sources and found no value of the tables and no translated function. They
+found passages where a comment or a construct followed VIctory's, which were rewritten from
+OpenRage's own measurement notes and in the terms the tree already had, and a list computed from
+a published file's values, which was taken out.
+
+With a tables file kept, a read holds the file's BC1 tables against the built-in BC1 tables of
+bcpack-rs and counts the blocks that read a value the two give differently. That comparison is
+made on the user's machine, from the user's own file, at each read: no result of it is in the
+tree or in a test.
+
 ## Derived from Mesa and AMD's instruction description: the gfx10 opcode tables
 
 `crates/tools/or-shader-front/src/rdna/opcodes.rs` lists the opcode numbers and mnemonics of the

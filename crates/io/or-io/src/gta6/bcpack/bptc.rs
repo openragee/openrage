@@ -270,7 +270,7 @@ impl Sig {
     }
 
     /// The channel the block's alpha field is swapped with, counted from 1; 0 for none.
-    fn rotation(&self) -> usize {
+    pub(super) fn rotation(&self) -> usize {
         match self.mode {
             4 => 3 - self.position / 2,
             5 => 3 - self.position,
@@ -279,7 +279,7 @@ impl Sig {
     }
 
     /// Mode 4's index selection: 1 where the 3-bit set weighs the colour.
-    fn selection(&self) -> usize {
+    pub(super) fn selection(&self) -> usize {
         usize::from(self.mode == 4 && self.position.is_multiple_of(2))
     }
 
@@ -858,6 +858,33 @@ impl<'a> Walk<'a> {
         }))
     }
 
+    /// The two ends of each output channel of subset `subset` of block `block` as 8 bits, were
+    /// its endpoint value `value` to be `through`, left-aligned in 8 bits, in place of what the
+    /// block holds; `None` where its mode has no such field.
+    ///
+    /// A value of channel 0 carries its end's p-bit, so changing it redraws the other channels too.
+    pub(super) fn spans_with(
+        &self,
+        block: usize,
+        sig: Sig,
+        subset: usize,
+        (value, through): (usize, u8),
+    ) -> [Option<[u8; 2]>; 4] {
+        let ends = &self.ends[block % REACH];
+        let held = |at: usize| if at == value { through } else { ends[at] };
+        std::array::from_fn(|channel| {
+            let depth = sig.depth(subset, channel);
+            (depth != 0).then(|| {
+                std::array::from_fn(|end| {
+                    let p = (sig.shape().p != 0 && channel != 0).then(|| {
+                        (u32::from(held(8 * subset + end)) >> (8 - sig.depth(subset, 0))) & 1
+                    });
+                    widen((depth, p), held(2 * (4 * subset + channel) + end))
+                })
+            })
+        })
+    }
+
     /// `through`, a value left-aligned in 8 bits of the field `of` names by subset, output channel and end, as the 8 bits block `block` draws; the mode must have the field.
     ///
     /// Past channel 0, a mode with p-bits ends each value on the p-bit that channel 0's value
@@ -895,6 +922,20 @@ impl<'a> Walk<'a> {
         } else {
             weights(2)[usize::from(self.second[block % REACH][pixel])]
         }
+    }
+
+    /// Whether block `block` is one no encoder writes: an anchor's index, whose top bit a block
+    /// does not store, has it set, or the two ends of a subset disagree on the p-bit they share.
+    fn strays(&self, block: usize, sig: Sig) -> bool {
+        let at = block % REACH;
+        let anchors = anchors(sig.subsets(), self.partition(sig));
+        let shared = |subset: usize| {
+            let p = |end: usize| self.ends[at][8 * subset + end] >> (8 - sig.depth(subset, 0)) & 1;
+            p(0) == p(1)
+        };
+        anchors.iter().any(|&pixel| self.first[at][pixel] >= 8)
+            || (sig.two_sets() && self.second[at][0] >= 2)
+            || (sig.shape().p == 2 && !(0..sig.subsets()).all(shared))
     }
 
     /// Block `block` as the 16 bytes of a BC7 block.
@@ -986,16 +1027,21 @@ pub(super) fn blocks(lanes: &[Vec<u16>], presets: &Presets) -> Result<Rebuilt, B
     let presets = &presets.stood_in();
     let mut walk = Walk::new(lanes, presets, false)?;
     let mut bytes = Vec::with_capacity(16 * walk.blocks);
-    let mut unknown = 0;
+    let (mut unknown, mut stray) = (0, 0);
     for block in 0..walk.blocks {
         let sig = walk.step(block)?;
         let known = walk.ends_known(block, sig) && walk.indices_known(block);
         unknown += usize::from(!known);
+        stray += usize::from(walk.strays(block, sig));
         bytes.extend(walk.write(block, sig));
     }
-    Ok(Rebuilt { bytes, unknown })
+    Ok(Rebuilt {
+        bytes,
+        unknown,
+        stray,
+    })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "made-up"))]
 #[path = "bptc_tests.rs"]
-mod tests;
+pub(super) mod tests;

@@ -1,11 +1,13 @@
 //! Bodies coded here from made-up blocks through made-up tables, which a calibration then has to
 //! find again from a plain level made up to match.
+// Outside a test build the made-up fixtures take a few of these helpers and the rest lie unused.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
 use super::super::bc1;
 use super::super::planes::{blocks, built_in, mode, Half, ModeTables, FIELDS, UNKNOWN};
 use super::super::tests::encode;
 use super::super::{bc1_reads_unknown_slot, decode, decode_with, lane_widths, lanes};
-use super::super::{BcPackError, Decode};
+use super::super::{BcPackError, Decode, Reading};
 use super::*;
 use crate::gta6::bcpack::bptc::{rank, Sig, RANKS, UNPLACED};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -64,7 +66,11 @@ fn symbol_of<T: PartialEq + Copy>(table: &[T], pattern: T) -> u16 {
 /// Blocks 0 to 3 read slot 4, blocks 4 to 39 slots 100 to 102, and the rest refer to nothing, to
 /// the block before or to one 37 back. Endpoint 0 of each half is its brighter one, and each
 /// block holds pixels of index 0 and of index 1.
-fn coded_lanes(kind: u8, count: usize, tables: &ModeTables) -> Vec<Vec<u16>> {
+pub(in crate::gta6::bcpack) fn coded_lanes(
+    kind: u8,
+    count: usize,
+    tables: &ModeTables,
+) -> Vec<Vec<u16>> {
     let mode = mode(kind).expect("a mode of halves");
     let (per, fields) = (mode.elements, mode.fields());
     let widths = lane_widths(kind).expect("a mode");
@@ -285,10 +291,81 @@ fn a_calibration_finds_made_up_tables_again_and_the_body_then_decodes_as_calibra
             how,
             Decode {
                 calibrated: 256,
-                unknown: 0
+                ..Decode::default()
             }
         );
-        assert!(!how.is_exact());
+        assert_eq!(how.reading(Standing::default()), Reading::Calibrated);
+    }
+}
+
+#[test]
+fn a_probe_finds_a_table_s_own_values_no_worse_and_one_moved_a_step_beaten() {
+    for kind in [4, 3] {
+        let (texture, _, _) = chain(kind);
+        let at = Tables::at(kind).expect("a mode of halves");
+        let mut tables = Tables::empty();
+        tables.modes[at] = made_up(kind);
+        let probed = |tables: &Tables| {
+            let read = |_: usize, _: bool| vec![again(&texture)];
+            let found =
+                probe_tables(1, &read, tables, &mut |_, _| {}, &|| false).expect("not stopped");
+            let of = |indices: bool| found.of(kind, indices).expect("its table").values.clone();
+            (of(false), of(true))
+        };
+        // The level above holds the coded level's own pixels: no value moved a step does better.
+        let (ends, indices) = probed(&tables);
+        let beaten = |moved: &Moved| moved.among() == Some(Among::Beaten);
+        assert!(!ends.iter().chain(&indices).any(beaten), "BC{kind}");
+        // Slot 100's first field is the brighter end of an alpha half, which pixels of every
+        // block that reads it take: a step either way costs them.
+        let field = 100 * FIELDS;
+        assert!(ends[field].blocks > 0);
+        assert_eq!(ends[field].among(), Some(Among::Least), "BC{kind}");
+        assert_eq!(ends[5 * FIELDS].among(), None, "a slot no block reads");
+        // The pair of the two ends side by side, which every block carries.
+        let symbol = usize::from(symbol_of(&tables.modes[at].pairs, 1 << 3));
+        assert_eq!(indices[2 * symbol].among(), Some(Among::Least), "BC{kind}");
+
+        // The field a step higher, and the pair's first pixel a place from the first end: the
+        // value below each meets the level, and the probe says so of those two alone.
+        let mut off = tables.clone();
+        off.modes[at].preset[100][0] += 1;
+        off.modes[at].pairs[symbol] = 2 | 1 << 3;
+        let (ends, indices) = probed(&off);
+        assert!(
+            beaten(&ends[field]) && beaten(&indices[2 * symbol]),
+            "BC{kind}"
+        );
+        assert!(ends[field].lower < ends[field].held && ends[field].held < ends[field].higher);
+        assert!(indices[2 * symbol].lower < indices[2 * symbol].held);
+
+        // Two plain levels, the upper one the lower one's pixels repeated: their own blocks'
+        // indices are moved the same way under the symbol the table gives each pattern, and
+        // none does better moved.
+        let (_, _, truth) = chain(kind);
+        let level = |width: usize, blocks: Vec<u8>| LevelIn {
+            width,
+            height: width,
+            data: LevelData::Plain(blocks),
+        };
+        let plain = |_: usize, _: bool| {
+            vec![TextureIn {
+                signed: false,
+                kind,
+                levels: vec![
+                    level(32, level_above(kind, &truth, 16, 16)),
+                    level(16, truth.clone()),
+                ],
+            }]
+        };
+        let found =
+            probe_tables(1, &plain, &tables, &mut |_, _| {}, &|| false).expect("not stopped");
+        let stored = (found.tables.iter()).find(|table| table.stored && table.kind == kind);
+        let stored = &stored.expect("a mode of halves").values;
+        assert!(stored[2 * symbol].blocks > 0 && !stored.iter().any(beaten));
+        assert!(found
+            .of(kind, true)
+            .is_some_and(|coded| coded.values.iter().all(|moved| moved.blocks == 0)));
     }
 }
 
@@ -323,14 +400,92 @@ fn bc1_s_slot_with_no_value_is_fitted_and_only_a_body_that_reads_it_is_calibrate
     assert!(decoded == truth);
     assert_eq!((how.calibrated, how.unknown), (256, 0));
 
-    // A body that reads only built-in slots decodes exactly, with the tables or without.
-    let mut exact = coded_lanes(1, 64, &made);
-    exact[0][..4].fill(0);
-    let exact = encode(1, &exact);
-    assert!(!bc1_reads_unknown_slot(&exact, 8 * 64));
-    let plain = decode(1, &exact, 8 * 64).expect("decodes exactly");
-    let with = decode_with(1, &exact, 8 * 64, Some(&tables)).expect("decodes");
-    assert!(with == (plain, Decode::default()) && with.1.is_exact());
+    // A body that reads only built-in slots decodes through no fitted value, with the tables or
+    // without: through the built-in tables alone, which nothing confirms value for value, so
+    // every block is counted and the read is not called exact.
+    let mut built = coded_lanes(1, 64, &made);
+    built[0][..4].fill(0);
+    let built = encode(1, &built);
+    assert!(!bc1_reads_unknown_slot(&built, 8 * 64));
+    let plain = decode(1, &built, 8 * 64).expect("decodes");
+    let with = decode_with(1, &built, 8 * 64, Some(&tables)).expect("decodes");
+    assert!(with.0 == plain && Ok(&with) == decode_with(1, &built, 8 * 64, None).as_ref());
+    let alone = Decode {
+        unseconded: 64,
+        ..Decode::default()
+    };
+    assert_eq!(with.1, alone);
+    assert_eq!(with.1.reading(Standing::default()), Reading::BuiltIn);
+}
+
+#[test]
+fn a_bc1_block_that_reads_a_value_two_tables_give_differently_is_counted_and_not_called_exact() {
+    // Three blocks: block 0 reads preset slot `slot`, block 1 is a difference from block 0, and
+    // block 2 refers to nothing and carries `symbol` for its first quadrant.
+    let body = |slot: usize, symbol: u16| {
+        let mut lanes = vec![vec![0u16; 3]; 12];
+        // A distance of d blocks is the symbol 2 d up to 127, and 2 (255 - d) + 1 past it.
+        let back = |d: usize| (if d < 128 { 2 * d } else { 2 * (255 - d) + 1 }) as u16;
+        lanes[0] = vec![back(256 - slot), back(1), 0];
+        lanes[8][2] = symbol;
+        encode(1, &lanes)
+    };
+    // Tables supplied that are the built-in ones but for a slot and a symbol given another
+    // value, and a slot the built-in tables give none for: all three made up here.
+    let mut held = (1..256).filter(|&slot| built_in(1, slot));
+    let (same, moved) = (held.next().expect("a slot"), held.next().expect("another"));
+    let lone = (1..256).find(|&slot| !built_in(1, slot));
+    let (lone, odd) = (lone.expect("a slot with no built-in value"), 9);
+    let at = Tables::at(1).expect("a mode of halves");
+    let mut supplied = Tables::empty();
+    supplied.modes[at] = ModeTables::empty().with_built_in(1);
+    supplied.modes[at].preset[moved][0] ^= 1;
+    supplied.modes[at].preset[lone][..6].fill(1);
+    supplied.modes[at].quadrants[usize::from(odd)] ^= 1;
+    supplied.supplied = 1 << 1;
+    assert_eq!(supplied.bc1_apart_counts(), Some((2, 1)));
+    let read = |slot: usize, symbol: u16| {
+        let (_, how) = decode_with(1, &body(slot, symbol), 24, Some(&supplied)).expect("decodes");
+        assert_eq!((how.supplied, how.disagree()), (3, 0));
+        how
+    };
+
+    // Every value read is one both tables give: the read is exact on that ground, whatever a
+    // check has held, unless one has failed the file.
+    assert_eq!(read(same, 0).unseconded, 0);
+    assert_eq!(read(same, 0).reading(Standing::default()), Reading::Exact);
+    let against = Checked {
+        blocks: 9,
+        disagree: 1,
+    };
+    let failed = Standing::default().after(&[(7, against)]);
+    assert!(matches!(
+        read(same, 0).reading(failed),
+        Reading::NotTheCoders { .. }
+    ));
+    // The block that reads the slot, and the block chained to it.
+    assert_eq!(read(moved, 0).unseconded, 2);
+    assert_eq!(
+        read(moved, 0).reading(Standing::default()),
+        Reading::Unseconded { blocks: 2 }
+    );
+    assert_eq!(read(lone, 0).unseconded, 2);
+    assert_eq!(read(same, odd).unseconded, 1);
+    assert_eq!(read(moved, odd).unseconded, 3);
+
+    // With no tables supplied every block rests on the built-in ones alone.
+    let (_, how) = decode_with(1, &body(same, 0), 24, None).expect("decodes");
+    assert_eq!(how.unseconded, 3);
+    assert_eq!(how.reading(Standing::default()), Reading::BuiltIn);
+    assert_eq!(Tables::empty().bc1_apart_counts(), None);
+
+    // The same tables with the preset moved round by one slot: the block that read a value
+    // both tables gave now reads one only the tables supplied give, and so does the next.
+    let mut round = supplied.clone();
+    round.modes[at].preset.rotate_left(1);
+    let (_, how) = decode_with(1, &body(same, 0), 24, Some(&round)).expect("decodes");
+    let two_of_them = Reading::Unseconded { blocks: 2 };
+    assert_eq!(how.reading(Standing::default()), two_of_them);
 }
 
 #[test]
@@ -382,7 +537,8 @@ fn a_block_through_a_slot_or_a_symbol_that_is_not_known_is_drawn_and_counted() {
         how,
         Decode {
             calibrated: 2,
-            unknown: 1
+            unknown: 1,
+            ..Decode::default()
         }
     );
     assert_eq!(how.unknown_percent(), 50.0);
@@ -537,10 +693,16 @@ fn a_calibration_file_is_found_again_by_a_pack_it_lists() {
 fn the_refusal_of_a_mode_a_calibration_fits_names_the_command() {
     for kind in [3, 4, 5, 6, 7] {
         let why = BcPackError::NoBlockTables { kind }.to_string();
-        assert!(why.contains("ttpf calibrate"), "{why}");
+        assert!(
+            why.contains("ttpf calibrate") && why.contains("ttpf tables"),
+            "{why}"
+        );
     }
     let why = BcPackError::PresetNotKnown { block: 0, slot: 4 }.to_string();
-    assert!(why.contains("ttpf calibrate"), "{why}");
+    assert!(
+        why.contains("ttpf calibrate") && why.contains("ttpf tables"),
+        "{why}"
+    );
 }
 
 #[test]

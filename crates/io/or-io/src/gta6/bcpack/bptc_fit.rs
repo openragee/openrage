@@ -14,7 +14,9 @@
 //! block's edges in its own level.
 
 use super::super::bptc::{self, Presets, Sig, Walk, RANKS, UNPLACED, VALUES, WIDTHS};
-use super::{bilinear_up, box_down, edges, LevelData, Pixels, Summary, TextureIn, MIN_VOTES};
+use super::{
+    bilinear_up, box_down, edges, LevelData, Moved, Pixels, Summary, TextureIn, MIN_VOTES,
+};
 
 /// What a vote counts a difference past it as, in 8-bit steps: a block that fits nothing does not outvote the rest.
 const CAP: f32 = 24.0;
@@ -810,6 +812,127 @@ pub(super) fn score(texture: &TextureIn, presets: &Presets, summary: &mut Summar
                         summary.compared += 1;
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Moves each preset value the coded levels of `texture` read a step either way, and adds to
+/// `ends`, by slot and value, and to `first`, by slot and pixel, what its blocks are then off
+/// the plain level beside them by, in 8-bit steps as a score counts them.
+///
+/// A value's step is the least one the block answers to: a block of fewer bits drops the low
+/// bits of the preset value it hangs on. The second indices are not moved.
+///
+/// `numbered` is the number of the chain's first level among those a reader takes.
+pub(super) fn probe(
+    texture: &TextureIn,
+    presets: &Presets,
+    numbered: u32,
+    (ends, first): (&mut [Moved], &mut [Moved]),
+) {
+    for (level, numbered) in coded(texture, None).into_iter().zip(numbered..) {
+        let (Some(target), Ok(mut walk)) = (&level.target, Walk::new(level.lanes, presets, true))
+        else {
+            continue;
+        };
+        for block in 0..walk.blocks {
+            let Ok(sig) = walk.step(block) else {
+                break;
+            };
+            let known = walk.ends_known(block, sig) && walk.indices_known(block);
+            let Some(wanted) = wanted(target, level.width, level.at[block]).filter(|_| known)
+            else {
+                continue;
+            };
+            let of = Block::of(&walk, block, sig);
+            // What one pixel is off by, in the output channels `counted` says to count.
+            let pixel_off = |pixel: usize,
+                             spans: &[Option<[u8; 2]>; 4],
+                             weight: &dyn Fn(usize) -> u8,
+                             counted: &dyn Fn(usize) -> bool| {
+                let target = &wanted[pixel];
+                // A colour under a transparent pixel is whatever the encoder left there.
+                let seen = target[3] >= 16.0;
+                (0..4)
+                    .filter(|&channel| counted(channel) && (channel == 3 || seen))
+                    .map(|channel| {
+                        let drawn =
+                            spans[channel].map_or(255.0, |span| bptc::mix(span, weight(channel)));
+                        f64::from((drawn - target[channel]).abs())
+                    })
+                    .sum::<f64>()
+            };
+            let subset_of = |pixel: usize| bptc::subset_of(sig.subsets(), of.partition, pixel);
+            for subset in 0..sig.subsets() {
+                let through = |spans: &[Option<[u8; 2]>; 4]| {
+                    (0..16)
+                        .filter(|&pixel| subset_of(pixel) == subset)
+                        .map(|pixel| {
+                            pixel_off(pixel, spans, &|channel| of.weights[pixel][channel], &|_| {
+                                true
+                            })
+                        })
+                        .sum::<f64>()
+                };
+                let held = through(&of.spans[subset]);
+                for value in 8 * subset..8 * (subset + 1) {
+                    let Some(from) = usize::from(walk.end_from(block, value)).checked_sub(1) else {
+                        continue;
+                    };
+                    if sig.depth(subset, (value / 2) % 4) == 0 {
+                        continue;
+                    }
+                    let trace = walk.end_trace(block, value);
+                    let through_value =
+                        |preset: u8| (trace[usize::from(preset / 8)] >> (8 * (preset % 8))) as u8;
+                    let at = presets.ends[from / VALUES][from % VALUES];
+                    let answers = |step: &u8| {
+                        through_value(at.wrapping_add(*step)) != through_value(at)
+                            || through_value(at.wrapping_sub(*step)) != through_value(at)
+                    };
+                    let Some(step) = (0..8).map(|bit| 1u8 << bit).find(answers) else {
+                        continue;
+                    };
+                    let moved = |preset: u8| {
+                        let changed = (value, through_value(preset));
+                        through(&walk.spans_with(block, sig, subset, changed))
+                    };
+                    let (lower, higher) =
+                        (moved(at.wrapping_sub(step)), moved(at.wrapping_add(step)));
+                    ends[from].add(numbered, held, lower, higher);
+                }
+            }
+            let slot = usize::from(walk.index_slots(block).0);
+            if slot == 0 {
+                continue;
+            }
+            let depth = sig.first_depth();
+            for pixel in 0..16 {
+                let trace = walk.first_trace(block, pixel);
+                let through_index = |preset: u8| ((trace >> (4 * (preset & 15))) & 15) as u8;
+                let at = presets.first[slot][pixel];
+                let answers = |step: &u8| {
+                    through_index(at.wrapping_add(*step)) != through_index(at)
+                        || through_index(at.wrapping_sub(*step)) != through_index(at)
+                };
+                let Some(step) = [1u8, 2, 4, 8].into_iter().find(answers) else {
+                    continue;
+                };
+                let spans = &of.spans[subset_of(pixel)];
+                let moved = |preset: u8| {
+                    let weight =
+                        bptc::weights(depth)[usize::from(through_index(preset) >> (4 - depth))];
+                    pixel_off(pixel, spans, &|_| weight, &|channel| {
+                        sig.first_weighs(channel)
+                    })
+                };
+                first[16 * slot + pixel].add(
+                    numbered,
+                    moved(at),
+                    moved(at.wrapping_sub(step)),
+                    moved(at.wrapping_add(step)),
+                );
             }
         }
     }

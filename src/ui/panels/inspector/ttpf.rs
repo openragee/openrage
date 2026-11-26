@@ -114,11 +114,15 @@ pub(super) fn draw_ttpf(
         let bodies = pack.rows_of(index).map_or(0, |rows| rows.len());
         row(ui, tr!("Bodies"), &bodies.to_string());
         row(ui, tr!("Readable"), readable);
-        // Whether its bodies through the coder read exactly, or as an estimate through fitted tables.
-        if let Some(decode) = ttpf.decode_label(index).filter(|_| refusal.is_none()) {
-            row(ui, tr!("Decode"), &decode);
-        }
     });
+    // What the read of its bodies through the coder may be called, and what that word rests on.
+    // ⚠ Under the grid, where a long sentence wraps: as a row it widens the grid past the panel.
+    if let Some(decode) = ttpf.decode_label(index).filter(|_| refusal.is_none()) {
+        ui.label(format!("{}: {decode}", tr!("Decode")));
+        for basis in ttpf.decode_basis(index) {
+            ui.label(egui::RichText::new(basis).color(theme::TEXT_SECONDARY));
+        }
+    }
     if let Some(why) = refusal {
         ui.label(egui::RichText::new(why).color(theme::TEXT_SECONDARY));
     }

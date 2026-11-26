@@ -109,6 +109,9 @@ rayon = ["dep:rayon"]
 meta = ["dep:quick-xml", "bincode"]
 # BCn encode, mip chains for encoding, and image import (JPEG, BMP, TGA, TIFF, Radiance HDR, OpenEXR, DDS, and a PSD read here).
 authoring = ["dds", "dep:texpresso", "image/jpeg", "image/bmp", "image/tga", "image/tiff", "image/hdr", "image/exr"]
+# Made-up coder streams and a made-up tables file, which the tests of the crates above build
+# their packs from: the coder's test helpers, built outside a test.
+made-up = ["gta6"]
 # BC7 encode, off by default because it is the only native link.
 bc7-encode = ["authoring", "dep:intel_tex_2"]
 

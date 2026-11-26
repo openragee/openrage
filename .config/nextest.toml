@@ -341,6 +341,7 @@ not (
   | binary_id(=or-io-verify::texture_dict)
   | binary_id(=or-io-verify::the_recorded_testimony_holds)
   | binary_id(=or-io-verify::the_target_sample)
+  | binary_id(=or-io-verify::ttpf)
   | binary_id(=or-io-verify::vehicle_recording)
   | binary_id(=or-io-verify::what_a_light_states_and_in_what)
   | binary_id(=or-io-verify::what_a_save_drops)
@@ -560,12 +561,22 @@ priority = 100
 filter = 'binary_id(=or-depends::the_world_index_of_a_real_install)'
 slow-timeout = { period = "60s", terminate-after = 45 }
 
-# The install suite of GTA VI's texture packs reads every texture of every pack of an install.
-# It took fourteen and a half minutes beside two building lanes, so it is held to forty-five, and starts first.
+# The install suite of GTA VI's texture packs reads every texture of every pack of an install, in three parts by
+# folder, the folders dealt by their sizes with the largest first, so that part 1 is the longest. Each part reads its packs on
+# every worker it is given, so the parts run one at a time, and start first. On four workers (`RAYON_NUM_THREADS=4`)
+# part 1 took thirty minutes, and forty-one beside other work, and parts 2 and 3 took nineteen and eighteen: part 1 is
+# held to sixty and the others to forty.
 [[profile.all.overrides]]
-filter = 'test(every_present_head_holds_to_the_container_model_and_each_texture_reads_or_is_refused_by_name)'
-slow-timeout = { period = "60s", terminate-after = 45 }
+filter = 'test(the_packs_of_part_1_hold_to_the_container_model_and_each_texture_reads_or_is_refused_by_name)'
+slow-timeout = { period = "60s", terminate-after = 60 }
 priority = 100
+test-group = 'gta6-packs'
+
+[[profile.all.overrides]]
+filter = 'test(/^the_packs_of_part_[23]_hold_to_the_container_model_and_each_texture_reads_or_is_refused_by_name$/)'
+slow-timeout = { period = "60s", terminate-after = 40 }
+priority = 100
+test-group = 'gta6-packs'
 
 # The GTA VI script suites over a folder run every function of the user's listings through the passes on eight threads
 # of their own. No run of them is timed yet, so they are held to forty-five minutes, and start first.
@@ -574,3 +585,6 @@ filter = 'test(/^gta6::script::exec::corpus::/)'
 threads-required = 8
 slow-timeout = { period = "60s", terminate-after = 45 }
 priority = 100
+
+[test-groups]
+gta6-packs = { max-threads = 1 }

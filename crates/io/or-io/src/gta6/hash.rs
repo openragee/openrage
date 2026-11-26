@@ -11,6 +11,11 @@ pub fn literal_hash64(text: &[u8]) -> u64 {
     murmur3_x64_128_low(text, false)
 }
 
+/// The same hash of `bytes` as they are, which tells one file's bytes from another's.
+pub(crate) fn bytes_hash64(bytes: &[u8]) -> u64 {
+    murmur3_x64_128_low(bytes, false)
+}
+
 /// The 32-bit hash of `text`: `atStringHash`, which folds case before it hashes.
 pub const fn name_hash32(text: &[u8]) -> u32 {
     crate::hash::string_hash(text)

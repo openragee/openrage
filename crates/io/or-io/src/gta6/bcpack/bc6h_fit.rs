@@ -21,7 +21,8 @@
 use super::super::bc6h::{self, Presets, Shape, Walk, CANDIDATES, FIELDS};
 use super::super::bptc::{subset_of, weights};
 use super::{
-    bilinear_up, box_down, edges, nearest_up, LevelData, Pixels, Summary, TextureIn, MIN_VOTES,
+    bilinear_up, box_down, edges, nearest_up, LevelData, Moved, Pixels, Summary, TextureIn,
+    MIN_VOTES,
 };
 
 /// What a vote counts a difference past it as: a block that fits nothing does not outvote the rest.
@@ -649,24 +650,126 @@ pub(super) fn score(texture: &TextureIn, presets: &Presets, summary: &mut Summar
                 continue;
             };
             let drawn = bc6h::draw(shape, walk.fields(block), partition, &walk.indices(block));
-            let mut compare = |drawn: f32, target: f32| {
-                let off = drawn.max(FLOOR) - target.max(FLOOR);
-                summary.mismatch += f64::from(off.abs()) / STOP;
-                summary.compared += 1;
+            let (off, compared) = off(level.quads, &drawn, &wanted);
+            summary.mismatch += off;
+            summary.compared += compared;
+        }
+    }
+}
+
+/// What the pixels a block draws are off its target by, in stops, and the values compared:
+/// pixel by pixel, or where `quads` its lights averaged 2 by 2 against the level below.
+fn off(quads: bool, drawn: &[[u32; 3]; 16], wanted: &BlockPixels) -> (f64, u64) {
+    let (mut off, mut compared) = (0f64, 0u64);
+    let mut compare = |drawn: f32, target: f32| {
+        let apart = drawn.max(FLOOR) - target.max(FLOOR);
+        off += f64::from(apart.abs()) / STOP;
+        compared += 1;
+    };
+    for channel in 0..3 {
+        if quads {
+            for corner in [0, 2, 8, 10] {
+                let lights = [0, 1, 4, 5].map(|more| light(drawn[corner + more][channel] as f32));
+                let mean = lights.iter().sum::<f32>() / 4.0;
+                compare(interpolated(mean), wanted[corner][channel]);
+            }
+        } else {
+            for (drawn, target) in drawn.iter().zip(wanted) {
+                compare(drawn[channel] as f32, target[channel]);
+            }
+        }
+    }
+    (off, compared)
+}
+
+/// Moves each preset value the coded levels of `texture` read a step either way, and adds to
+/// `ends`, by slot and field, and to `first`, by slot and pixel, what its blocks are then off
+/// the plain level beside them by.
+///
+/// A field's step is the least one of its preset field that the block answers to, and a preset
+/// field several of a block's fields hang on moves them all.
+///
+/// `numbered` is the number of the chain's first level among those a reader takes.
+pub(super) fn probe(
+    texture: &TextureIn,
+    presets: &Presets,
+    numbered: u32,
+    (ends, first): (&mut [Moved], &mut [Moved]),
+) {
+    for (level, numbered) in coded(texture, true, None).into_iter().zip(numbered..) {
+        let (Some(target), Ok(mut walk)) = (&level.target, Walk::new(level.lanes, presets, true))
+        else {
+            continue;
+        };
+        for block in 0..walk.blocks {
+            let Ok((shape, partition)) = walk.step(block) else {
+                break;
             };
-            for channel in 0..3 {
-                if level.quads {
-                    for corner in [0, 2, 8, 10] {
-                        let lights =
-                            [0, 1, 4, 5].map(|more| light(drawn[corner + more][channel] as f32));
-                        let mean = lights.iter().sum::<f32>() / 4.0;
-                        compare(interpolated(mean), wanted[corner][channel]);
-                    }
-                } else {
-                    for (drawn, target) in drawn.iter().zip(&wanted) {
-                        compare(drawn[channel] as f32, target[channel]);
-                    }
+            let known = walk.ends_known(block, shape) && walk.indices_known(block);
+            let Some(wanted) = wanted(target, level.width, level.at[block]).filter(|_| known)
+            else {
+                continue;
+            };
+            let (fields, indices) = (*walk.fields(block), walk.indices(block));
+            let through = |fields: &[u16; FIELDS], indices: &[u8; 16]| {
+                off(
+                    level.quads,
+                    &bc6h::draw(shape, fields, partition, indices),
+                    &wanted,
+                )
+                .0
+            };
+            let held = through(&fields, &indices);
+            let drawn = 6 * shape.regions;
+            for field in 0..drawn {
+                let from = walk.from(block, field);
+                // Each preset field once, at the first of the block's fields that hang on it.
+                if from == 0 || (0..field).any(|before| walk.from(block, before) == from) {
+                    continue;
                 }
+                let hang = || (field..drawn).filter(|&other| walk.from(block, other) == from);
+                let lowest = hang()
+                    .map(|other| walk.reach(block, other).0)
+                    .max()
+                    .unwrap_or(0);
+                let moved = |up: bool| {
+                    let mut fields = fields;
+                    for other in hang() {
+                        // A step that leaves the field's 16 bits moves nothing.
+                        let by = 1u32.checked_shl(lowest + walk.reach(block, other).1);
+                        let by = by.unwrap_or(0) as u16;
+                        fields[other] = match up {
+                            true => fields[other].wrapping_add(by),
+                            false => fields[other].wrapping_sub(by),
+                        };
+                    }
+                    through(&fields, &indices)
+                };
+                ends[usize::from(from) - 1].add(numbered, held, moved(false), moved(true));
+            }
+            let slot = usize::from(walk.index_slot(block));
+            if slot == 0 {
+                continue;
+            }
+            let shift = 4 - shape.index_depth();
+            for pixel in 0..16 {
+                let trace = walk.first_trace(block, pixel);
+                let through_index = |preset: u8| ((trace >> (4 * (preset & 15))) & 15) as u8;
+                let at = presets.first[slot][pixel];
+                let answers = |step: &u8| {
+                    through_index(at.wrapping_add(*step)) != through_index(at)
+                        || through_index(at.wrapping_sub(*step)) != through_index(at)
+                };
+                let Some(step) = [1u8, 2, 4, 8].into_iter().find(answers) else {
+                    continue;
+                };
+                let moved = |preset: u8| {
+                    let mut indices = indices;
+                    indices[pixel] = through_index(preset) >> shift;
+                    through(&fields, &indices)
+                };
+                let (lower, higher) = (moved(at.wrapping_sub(step)), moved(at.wrapping_add(step)));
+                first[16 * slot + pixel].add(numbered, held, lower, higher);
             }
         }
     }

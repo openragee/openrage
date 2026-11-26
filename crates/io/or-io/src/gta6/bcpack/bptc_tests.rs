@@ -1,9 +1,13 @@
 //! Made-up BC7 bodies: blocks coded here into lanes through made-up presets, which the decoder
 //! has to give back and a calibration has to find again from a plain level made up to match.
+// Outside a test build the made-up fixtures take a few of these helpers and the rest lie unused.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
 use std::collections::BTreeSet;
 
-use super::super::calibrate::{calibrate, LevelData, LevelIn, TextureIn};
+use super::super::calibrate::{
+    calibrate, probe_tables, Among, LevelData, LevelIn, Moved, Tables, TextureIn,
+};
 use super::super::tests::encode;
 use super::super::{decode_with, Decode};
 use super::*;
@@ -152,6 +156,40 @@ fn six_lanes(
         }
     }
     lanes
+}
+
+/// The stream of `count` made-up blocks of mode 6 coded through `presets`, at most 127, and the
+/// size it decodes to. Block `b` takes its ends and its indices from slot `255 - b`, and its
+/// anchor's index is 7 in an even block and 0 in an odd one: the two ends of what an anchor holds.
+pub(in crate::gta6::bcpack) fn body_over_the_slots(
+    presets: &Presets,
+    count: usize,
+) -> (Vec<u8>, u64) {
+    (
+        body_from_the_slots(presets, count, count),
+        16 * count as u64,
+    )
+}
+
+/// [`body_over_the_slots`] with only the first `slots` blocks taken from a slot, and the blocks
+/// after them from nothing.
+pub(in crate::gta6::bcpack) fn body_from_the_slots(
+    presets: &Presets,
+    count: usize,
+    slots: usize,
+) -> Vec<u8> {
+    let made: Vec<Six> = (0..count)
+        .map(|b| {
+            let mut block = six(b);
+            block.indices[0] = if b % 2 == 0 { 7 } else { 0 };
+            block
+        })
+        .collect();
+    let lanes = six_lanes(&made, presets, |b| match b < slots {
+        true => (1 + 2 * b, 1 + 2 * b),
+        false => (0, 0),
+    });
+    encode(7, &lanes)
 }
 
 /// Presets no pack holds: a value for everything a mode 6 block reads of `slots`, each marked known.
@@ -324,7 +362,41 @@ fn a_narrower_mode_keeps_the_top_bits_and_its_second_subset_takes_the_first_ones
 }
 
 #[test]
-fn a_calibration_finds_made_up_presets_again_and_the_body_then_decodes() {
+fn a_block_no_encoder_writes_is_counted_as_stray() {
+    let mut made: Vec<Six> = (0..4).map(six).collect();
+    let stray = |made: &[Six]| {
+        let lanes = six_lanes(made, &blank(), |_| (0, 0));
+        blocks(&lanes, &blank()).expect("decodes").stray
+    };
+    assert_eq!(stray(&made), 0);
+    // Pixel 0 is the anchor of a block of one subset, and a block does not store its top bit.
+    made[2].indices[0] = 9;
+    assert_eq!(stray(&made), 1);
+
+    // A block of mode 1 that adds nothing to a block of mode 6: its red ends keep 7 bits, the
+    // lowest of them the p-bit the two share.
+    let after = |red: [u8; 2]| {
+        let mut first = six(5);
+        first.ends[0] = red;
+        let mut lanes = six_lanes(&[first], &blank(), |_| (0, 0));
+        for lane in &mut lanes {
+            lane.extend([0, 0]);
+        }
+        let narrower = Sig {
+            mode: 1,
+            position: 20,
+        };
+        lanes[15][2..].copy_from_slice(&pair_of(narrower));
+        lanes[0][2..].copy_from_slice(&halves(symbol(1, 8)));
+        blocks(&lanes, &blank()).expect("decodes").stray
+    };
+    assert_eq!(after([0b1100_0110, 0b0100_0110]), 0);
+    assert_eq!(after([0b1100_0100, 0b0100_0110]), 1);
+}
+
+/// An 8 by 8 block level coded through made-up presets of slots 254 and 255, under the level
+/// above it: the mip chain as a fit reads it, the presets, the level's lanes and its blocks.
+fn chain() -> (impl Fn() -> TextureIn, Presets, Vec<Vec<u16>>, Vec<u8>) {
     let (width, height) = (8, 8);
     let level: Vec<Six> = (0..width * height).map(six).collect();
     let made = made_up_presets(&[254, 255]);
@@ -340,7 +412,8 @@ fn a_calibration_finds_made_up_presets_again_and_the_body_then_decodes() {
     let lanes = six_lanes(&level, &made, backs);
     let truth: Vec<u8> = level.iter().flat_map(six_bytes).collect();
     let top = six_level_above(&level, width, height);
-    let texture = || TextureIn {
+    let coded = lanes.clone();
+    let texture = move || TextureIn {
         signed: false,
         kind: 7,
         levels: vec![
@@ -353,12 +426,62 @@ fn a_calibration_finds_made_up_presets_again_and_the_body_then_decodes() {
                 width,
                 height,
                 data: LevelData::Coded {
-                    lanes: lanes.clone(),
+                    lanes: coded.clone(),
                     at: (0..(width * height) as u32).collect(),
                 },
             },
         ],
     };
+    (texture, made, lanes, truth)
+}
+
+/// What a probe of `texture`, read through `tables`, found for the mode's ends and for its indices.
+fn probed(texture: &(impl Fn() -> TextureIn + Sync), tables: &Tables) -> (Vec<Moved>, Vec<Moved>) {
+    let read = |_: usize, _: bool| vec![texture()];
+    let found = probe_tables(1, &read, tables, &mut |_, _| {}, &|| false).expect("not stopped");
+    let of = |indices: bool| found.of(7, indices).expect("its table").values.clone();
+    (of(false), of(true))
+}
+
+#[test]
+fn a_probe_finds_a_preset_s_own_values_no_worse_and_one_moved_a_step_beaten() {
+    let (texture, made, _, _) = chain();
+    let through = |presets: &Presets| Tables {
+        bptc: presets.clone(),
+        ..Tables::empty()
+    };
+    // The level above holds the coded level's own pixels: no value moved a step does better.
+    let (ends, first) = probed(&texture, &through(&made));
+    let beaten = |moved: &Moved| moved.among() == Some(Among::Beaten);
+    assert!(!ends.iter().chain(&first).any(beaten));
+    // The odd blocks hang on slot 254's ends and the even ones on slot 255's indices.
+    let (green, pixel) = (VALUES * 254 + 2, 16 * 255 + 5);
+    assert!(ends[green].blocks > 0 && first[pixel].blocks > 0);
+    assert_eq!(
+        ends[VALUES * 255 + 2].among(),
+        None,
+        "a value no block reads"
+    );
+
+    // A mode 6 block keeps 7 bits of green, so the least step it answers to is 2.
+    let mut off = made.clone();
+    off.ends[254][2] = off.ends[254][2].wrapping_add(2);
+    off.first[255][5] = (off.first[255][5] + 1) & 15;
+    let (ends, first) = probed(&texture, &through(&off));
+    assert!(beaten(&ends[green]) && beaten(&first[pixel]));
+    assert!(ends[green].lower < ends[green].held && first[pixel].lower < first[pixel].held);
+    // Every other value still stands.
+    let others = |values: &[Moved], at: usize| {
+        (values.iter().enumerate())
+            .filter(|&(other, moved)| other != at && beaten(moved))
+            .count()
+    };
+    assert_eq!((others(&ends, green), others(&first, pixel)), (0, 0));
+}
+
+#[test]
+fn a_calibration_finds_made_up_presets_again_and_the_body_then_decodes() {
+    let (texture, made, lanes, truth) = chain();
 
     let (tables, summaries) =
         calibrate(1, &|_, _| vec![texture()], &mut |_, _| {}, &|| false).expect("not stopped");
@@ -387,7 +510,7 @@ fn a_calibration_finds_made_up_presets_again_and_the_body_then_decodes() {
     assert!(decoded == truth);
     let all_fitted = Decode {
         calibrated: 64,
-        unknown: 0,
+        ..Decode::default()
     };
     assert_eq!(how, all_fitted);
     assert!(decode_with(7, &stream, size, None).is_err());

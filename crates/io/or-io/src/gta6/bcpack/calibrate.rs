@@ -45,12 +45,107 @@ const HDR_FILLS: usize = 5;
 /// The most workers a pass reads textures on, each holding one texture and its own tallies.
 const MAX_WORKERS: usize = 16;
 
-/// The tables fitted for every mode.
+/// The tables of every mode: fitted, or read from a file the user supplied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tables {
-    modes: Vec<ModeTables>,
-    bptc: Presets,
-    hdr: bc6h::Presets,
+    pub(super) modes: Vec<ModeTables>,
+    pub(super) bptc: Presets,
+    pub(super) hdr: bc6h::Presets,
+    /// The codec kinds whose tables the user supplied whole, a bit each: a body of one is no
+    /// estimate, and BC1's stand in place of its built-in ones.
+    pub(super) supplied: u8,
+    /// The hash of the bytes of the file the user supplied, and how that file stands.
+    pub(super) digest: u64,
+    pub(super) standing: Standing,
+}
+
+/// Coded blocks read through a tables file, and those of them that read a value no table gives
+/// or held what no encoder writes: one codec kind's in a whole check, a whole check's over the
+/// kinds it failed, or those of one pack's listings and exports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Checked {
+    pub blocks: u64,
+    pub disagree: u64,
+}
+
+/// What has been found of a tables file the user supplied, for the reads of one pack: nothing
+/// for a file nothing has read through, and for fitted tables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Standing {
+    /// By codec kind, the most blocks one whole check held to the rules of the format.
+    held: [u64; 8],
+    /// The whole check that counted the most against the file: its own count, over the kinds
+    /// it failed.
+    failed: Checked,
+    /// What a listing or an export of the pack counted against the file.
+    pack: Checked,
+}
+
+/// Whether a block of codec kind `kind` has a rule every encoder keeps and a wrong table breaks.
+pub fn ruled(kind: u8) -> bool {
+    matches!(kind, 6 | 7)
+}
+
+impl Standing {
+    /// The standing after one whole check that found `found`, kind by kind.
+    ///
+    /// A kind none of whose blocks spoke against the file stands by the most blocks one check
+    /// held of it. A check that counted a block against the file fails the file, and the count
+    /// kept is one check's own, over the kinds it failed: of two checks that fail, that of the
+    /// one that counted more. A check that finds nothing, of other packs, takes no failure back.
+    pub fn after(mut self, found: &[(u8, Checked)]) -> Self {
+        let mut against = Checked::default();
+        for &(kind, of_kind) in found {
+            if of_kind.disagree > 0 {
+                against.blocks += of_kind.blocks;
+                against.disagree += of_kind.disagree;
+            } else if let Some(held) = self.held.get_mut(usize::from(kind)) {
+                *held = (*held).max(of_kind.blocks);
+            }
+        }
+        if against.disagree > self.failed.disagree {
+            self.failed = against;
+        }
+        self
+    }
+
+    /// The standing for a pack one of whose listings or exports counted `found` against the
+    /// file: of two such counts, the one with more against.
+    pub fn in_pack(mut self, found: Checked) -> Self {
+        if found.disagree > self.pack.disagree {
+            self.pack = found;
+        }
+        self
+    }
+
+    /// The whole check that failed the file: the blocks that disagreed in it, of the blocks it
+    /// read, over the kinds it failed; `None` where none has.
+    pub fn failed(&self) -> Option<Checked> {
+        (self.failed.disagree > 0).then_some(self.failed)
+    }
+
+    /// What a listing or an export of the pack counted against the file; `None` where none
+    /// counted a block.
+    pub fn failed_in_pack(&self) -> Option<Checked> {
+        (self.pack.disagree > 0).then_some(self.pack)
+    }
+
+    /// What speaks against the file for a read of the pack: a whole check that failed it, else
+    /// the pack's own listings and exports.
+    pub fn refuted(&self) -> Option<Checked> {
+        self.failed().or(self.failed_in_pack())
+    }
+
+    /// The most blocks of codec kind `kind` that one whole check held to the rules of their
+    /// format, none of them breaking one.
+    ///
+    /// `None` for a kind no check has held, for a file something speaks against
+    /// ([`Self::refuted`]), and for a kind none of whose rules a wrong table breaks
+    /// ([`ruled`]): a count of nothing against such a table shows nothing of it.
+    pub fn held(&self, kind: u8) -> Option<u64> {
+        let blocks = *self.held.get(usize::from(kind))?;
+        (ruled(kind) && blocks > 0 && self.refuted().is_none()).then_some(blocks)
+    }
 }
 
 impl Tables {
@@ -59,15 +154,55 @@ impl Tables {
             modes: KINDS.iter().map(|_| ModeTables::empty()).collect(),
             bptc: Presets::empty(),
             hdr: bc6h::Presets::empty(),
+            supplied: 0,
+            digest: 0,
+            standing: Standing::default(),
         }
     }
 
-    fn at(kind: u8) -> Option<usize> {
+    pub(super) fn at(kind: u8) -> Option<usize> {
         KINDS.iter().position(|&fitted| fitted == kind)
     }
 
     pub(super) fn of(&self, kind: u8) -> Option<&ModeTables> {
         Self::at(kind).map(|at| &self.modes[at])
+    }
+
+    /// Whether codec kind `kind` reads through tables the user supplied, which are no estimate.
+    pub fn supplied(&self, kind: u8) -> bool {
+        kind < 8 && self.supplied >> kind & 1 != 0
+    }
+
+    /// How the file these tables were read from stands; nothing checked for fitted ones.
+    pub fn standing(&self) -> Standing {
+        self.standing
+    }
+
+    /// The hash of the bytes of the file these tables were read from; 0 for fitted ones.
+    pub fn digest(&self) -> u64 {
+        self.digest
+    }
+
+    /// The tables a body of codec kind `kind`, a mode of halves, is rebuilt through: a fitted
+    /// mode's under the values the mode has built in, a supplied mode's as they are.
+    pub(super) fn resolved(&self, kind: u8) -> Option<ModeTables> {
+        let tables = self.of(kind)?;
+        Some(match self.supplied(kind) {
+            true => tables.clone(),
+            false => tables.with_built_in(kind),
+        })
+    }
+
+    /// Where the BC1 tables the user supplied and BC1's built-in ones do not give the same
+    /// value; `None` where BC1 reads through no supplied tables.
+    pub(super) fn bc1_apart(&self) -> Option<planes::Apart> {
+        let supplied = self.of(1).filter(|_| self.supplied(1))?;
+        Some(supplied.apart(&ModeTables::empty().with_built_in(1)))
+    }
+
+    /// How many preset slots and how many quadrant symbols [`Self::bc1_apart`] finds.
+    pub fn bc1_apart_counts(&self) -> Option<(usize, usize)> {
+        self.bc1_apart().map(|apart| apart.counts())
     }
 
     /// BC7's presets.
@@ -137,6 +272,7 @@ impl Tables {
             modes,
             bptc: Presets::from_bytes(bptc)?,
             hdr: bc6h::Presets::from_bytes(hdr)?,
+            ..Self::empty()
         })
     }
 }
@@ -181,8 +317,141 @@ pub fn save_cache(dir: &Path, tables: &Tables, members: &[u64]) -> std::io::Resu
     Ok(path)
 }
 
-/// The newest calibration under `dir` that read the pack `member` keys.
+/// The file under `dir` that holds the coder's tables as the user supplied them: one for every pack of every install.
+pub fn supplied_path(dir: &Path) -> PathBuf {
+    dir.join("bcpack-supplied.tables")
+}
+
+/// Keeps `bytes`, a tables file the user supplied, under `dir`, and says where; a file that does not read is not kept.
+pub fn keep_supplied(dir: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
+    super::supplied::read(bytes).map_err(|refused| refused.to_string())?;
+    let path = supplied_path(dir);
+    write_whole(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// The file under `dir` that holds what has been found of the tables file kept there.
+fn checked_path(dir: &Path) -> PathBuf {
+    supplied_path(dir).with_extension("checked")
+}
+
+/// What is kept of a tables file: how its whole checks left it standing, and what the listings
+/// and exports of each pack counted against it, by the pack's key.
+#[derive(Default)]
+struct Record {
+    standing: Standing,
+    packs: std::collections::BTreeMap<u64, Checked>,
+}
+
+impl Record {
+    /// The record kept under `dir`, where it is of the file of digest `digest`: it opens with
+    /// the digest, so it says nothing of another file kept later. Then a line for each kind a
+    /// check held, its number and its blocks; `failed`, with the blocks and those against of
+    /// the check that failed the file; and `pack`, with a pack's key and the same two counts.
+    fn read(dir: &Path, digest: u64) -> Self {
+        let text = std::fs::read_to_string(checked_path(dir)).unwrap_or_default();
+        let mut lines = text.lines();
+        let of = lines.next().and_then(|of| u64::from_str_radix(of, 16).ok());
+        let mut record = Self::default();
+        if of != Some(digest) {
+            return record;
+        }
+        for line in lines {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            let count = |at: usize| words.get(at).and_then(|n| n.parse::<u64>().ok());
+            let found = |at: usize| {
+                Some(Checked {
+                    blocks: count(at)?,
+                    disagree: count(at + 1)?,
+                })
+            };
+            match words.first().copied() {
+                Some("failed") => record.standing.failed = found(1).unwrap_or_default(),
+                Some("pack") => {
+                    let key = words
+                        .get(1)
+                        .and_then(|key| u64::from_str_radix(key, 16).ok());
+                    if let (Some(key), Some(found)) = (key, found(2)) {
+                        record.packs.insert(key, found);
+                    }
+                }
+                _ => {
+                    if let (Some(kind @ 0..8), Some(found)) = (count(0), found(1)) {
+                        record.standing = record.standing.after(&[(kind as u8, found)]);
+                    }
+                }
+            }
+        }
+        record
+    }
+
+    fn write(&self, dir: &Path, digest: u64) -> std::io::Result<()> {
+        let mut text = format!("{digest:016x}\n");
+        for (kind, blocks) in self.standing.held.iter().enumerate() {
+            if *blocks > 0 {
+                text.push_str(&format!("{kind} {blocks} 0\n"));
+            }
+        }
+        let Checked { blocks, disagree } = self.standing.failed;
+        if disagree > 0 {
+            text.push_str(&format!("failed {blocks} {disagree}\n"));
+        }
+        for (key, found) in &self.packs {
+            text.push_str(&format!(
+                "pack {key:016x} {} {}\n",
+                found.blocks, found.disagree
+            ));
+        }
+        write_whole(&checked_path(dir), text.as_bytes())
+    }
+
+    /// How the file stands for a read of the pack `member` keys.
+    fn standing_for(&self, member: u64) -> Standing {
+        let pack = self.packs.get(&member).copied().unwrap_or_default();
+        self.standing.in_pack(pack)
+    }
+}
+
+/// Adds what a whole check through `tables`, read from the file kept under `dir`, found for
+/// each codec kind to what is kept there of the file's earlier checks, and gives how the file
+/// stands with it ([`Standing::after`]), whatever pack reads through it.
+pub fn keep_check(
+    dir: &Path,
+    tables: &Tables,
+    found: &[(u8, Checked)],
+) -> std::io::Result<Standing> {
+    let mut record = Record::read(dir, tables.digest);
+    record.standing = record.standing.after(found);
+    record.write(dir, tables.digest)?;
+    Ok(record.standing)
+}
+
+/// Keeps under `dir` that a listing or an export of the pack `member` keys counted `found`
+/// against `tables`, read from the file kept there, and gives how the file then stands for
+/// that pack ([`Standing::in_pack`]): from then on no read of the pack through the file is
+/// called exact.
+pub fn keep_read(
+    dir: &Path,
+    tables: &Tables,
+    member: u64,
+    found: Checked,
+) -> std::io::Result<Standing> {
+    let mut record = Record::read(dir, tables.digest);
+    let standing = record.standing_for(member).in_pack(found);
+    record.packs.insert(member, standing.pack);
+    record.write(dir, tables.digest)?;
+    Ok(standing)
+}
+
+/// The tables the pack `member` keys reads through: those the user supplied under `dir`, as
+/// their whole checks and that pack's own reads left them standing, else the newest
+/// calibration there that read the pack.
 pub fn load_cache(dir: &Path, member: u64) -> Option<Tables> {
+    let supplied = std::fs::read(supplied_path(dir)).ok();
+    if let Some(mut tables) = supplied.and_then(|bytes| super::supplied::read(&bytes).ok()) {
+        tables.standing = Record::read(dir, tables.digest).standing_for(member);
+        return Some(tables);
+    }
     let mut found: Option<(std::time::SystemTime, Tables)> = None;
     for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let path = entry.path();
@@ -954,6 +1223,584 @@ fn score(kind: u8, mode: &Mode, levels: &[Level<'_>], tables: &ModeTables, summa
     }
 }
 
+/// What moving one value of a table one step does to how the blocks that read it meet the plain
+/// levels beside them.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Moved {
+    /// The blocks that read the value, beside a plain level, and the levels they are of: the
+    /// blocks of one level are of one picture, and say one thing many times.
+    pub blocks: u64,
+    pub levels: u64,
+    /// The level last added, by the number its reader gave it.
+    last: u32,
+    /// The sum of what their pixels are off by as the table stands, with the value a step
+    /// lower, and with it a step higher; in 8-bit steps, in stops for BC6H. Infinite for a step
+    /// that leaves an index table's places.
+    pub held: f64,
+    pub lower: f64,
+    pub higher: f64,
+}
+
+/// How the value a table holds stands against the two beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Among {
+    /// It meets the plain levels better than either.
+    Least,
+    /// As well as the better of the two, and no worse than either.
+    Tied,
+    /// One of the two meets them better.
+    Beaten,
+}
+
+impl Moved {
+    /// Adds a block of the level numbered `level`, a number no other level of the same reader has.
+    pub(super) fn add(&mut self, level: u32, held: f64, lower: f64, higher: f64) {
+        self.levels += u64::from(self.last != level);
+        self.last = level;
+        self.blocks += 1;
+        self.held += held;
+        self.lower += lower;
+        self.higher += higher;
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.blocks += other.blocks;
+        self.levels += other.levels;
+        self.held += other.held;
+        self.lower += other.lower;
+        self.higher += other.higher;
+    }
+
+    /// How the value stands; `None` for one no block read.
+    pub fn among(&self) -> Option<Among> {
+        let best = self.lower.min(self.higher);
+        // Sums of the same blocks in another order differ in their last bits.
+        let same = 1e-9 * (self.held.abs() + best.abs() + 1.0);
+        (self.blocks > 0).then(|| match self.held - best {
+            apart if apart < -same => Among::Least,
+            apart if apart <= same => Among::Tied,
+            _ => Among::Beaten,
+        })
+    }
+}
+
+/// One table of one mode, each of its values moved: its endpoint preset by slot and field, or
+/// its indices, a preset's by slot and pixel and an index table's by symbol and pixel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Probe {
+    pub kind: u8,
+    pub indices: bool,
+    /// Whether the blocks moved are the plain levels' own, by the symbol the index table gives
+    /// each pattern they hold: what the measure says of indices that are right.
+    pub stored: bool,
+    pub values: Vec<Moved>,
+}
+
+/// What a probe of every mode's tables found.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Probed {
+    pub tables: Vec<Probe>,
+    /// The BC1 blocks read through supplied tables that read a value BC1's built-in tables
+    /// give otherwise, the values of theirs held against a plain level, and what those are off
+    /// by through the tables probed and through the built-in ones.
+    pub bc1_blocks: u64,
+    pub bc1_compared: u64,
+    pub bc1_through: f64,
+    pub bc1_built_in: f64,
+    /// The number of the level last read, from 1: a mip chain takes 64 of them.
+    level: u32,
+}
+
+/// The codec kinds a probe moves the tables of, and the values of each one's two tables.
+const PROBED: [u8; 6] = [1, 3, 4, 5, 6, 7];
+/// The values of a mode of halves' index tables: two pixels for each pair symbol, then four for
+/// each quadrant symbol.
+const PAIR_VALUES: usize = 2 * 64;
+const INDEX_VALUES: usize = PAIR_VALUES + 4 * 256;
+
+impl Probed {
+    fn new() -> Self {
+        let table = |kind: u8, indices: bool| {
+            let values = match (kind, indices) {
+                (6, false) => 256 * bc6h::FIELDS,
+                (7, false) => 256 * super::bptc::VALUES,
+                (_, false) => 256 * FIELDS,
+                (6 | 7, true) => 256 * 16,
+                (_, true) => INDEX_VALUES,
+            };
+            Probe {
+                kind,
+                indices,
+                stored: false,
+                values: vec![Moved::default(); values],
+            }
+        };
+        let stored = |kind: u8| Probe {
+            stored: true,
+            ..table(kind, true)
+        };
+        Self {
+            tables: (PROBED.iter())
+                .flat_map(|&kind| [table(kind, false), table(kind, true)])
+                .chain(KINDS.map(stored))
+                .collect(),
+            ..Self::default()
+        }
+    }
+
+    /// The indices of codec kind `kind`'s stored blocks, moved; `None` for a mode not of halves.
+    fn stored(&mut self, kind: u8) -> Option<&mut [Moved]> {
+        let table = (self.tables.iter_mut()).find(|table| table.kind == kind && table.stored)?;
+        Some(&mut table.values)
+    }
+
+    /// The probe of codec kind `kind`'s endpoint preset, or of its indices.
+    pub fn of(&self, kind: u8, indices: bool) -> Option<&Probe> {
+        let wanted = |table: &&Probe| table.kind == kind && table.indices == indices;
+        self.tables
+            .iter()
+            .filter(|table| !table.stored)
+            .find(wanted)
+    }
+
+    /// Codec kind `kind`'s two tables: its endpoint preset, then its indices.
+    fn both(&mut self, kind: u8) -> Option<(&mut [Moved], &mut [Moved])> {
+        let at = 2 * PROBED.iter().position(|&probed| probed == kind)?;
+        let (ends, indices) = self.tables[at..at + 2].split_at_mut(1);
+        Some((&mut ends[0].values, &mut indices[0].values))
+    }
+
+    fn merge(&mut self, other: &Self) {
+        for (mine, theirs) in self.tables.iter_mut().zip(&other.tables) {
+            for (mine, theirs) in mine.values.iter_mut().zip(&theirs.values) {
+                mine.merge(theirs);
+            }
+        }
+        self.bc1_blocks += other.bc1_blocks;
+        self.bc1_compared += other.bc1_compared;
+        self.bc1_through += other.bc1_through;
+        self.bc1_built_in += other.bc1_built_in;
+    }
+
+    /// Takes one mip chain, read through `tables`.
+    fn take(&mut self, input: &TextureIn, tables: &Tables) {
+        // Each level of the chain is numbered from here.
+        self.level += 64;
+        let numbered = self.level;
+        match input.kind {
+            6 => {
+                if let Some((ends, first)) = self.both(6) {
+                    bc6h_fit::probe(input, &tables.hdr, numbered, (ends, first));
+                }
+            }
+            7 => {
+                if let Some((ends, first)) = self.both(7) {
+                    bptc_fit::probe(input, &tables.bptc, numbered, (ends, first));
+                }
+            }
+            kind => {
+                let (Some(mode), Some(resolved)) = (planes::mode(kind), tables.resolved(kind))
+                else {
+                    return;
+                };
+                // What BC1 reads with no tables supplied, to hold beside what it reads with them.
+                let built_in =
+                    (kind == 1 && tables.supplied(1)).then(|| ModeTables::empty().with_built_in(1));
+                let apart = built_in.as_ref().map(|built_in| resolved.apart(built_in));
+                let levels = prepare(input, mode);
+                let tables = (&resolved, built_in.as_ref().zip(apart.as_ref()));
+                probe(kind, mode, (input, &levels), tables, self);
+            }
+        }
+    }
+}
+
+/// What a block's half is held against: a value for each of its pixels, or for each 2 by 2 of them.
+enum Wanted {
+    Pixels([[f32; 3]; 16]),
+    Quads([[f32; 3]; 4]),
+}
+
+impl Wanted {
+    /// The units a half is held against in: its 16 pixels, or its four 2 by 2 pixels.
+    fn units(&self) -> usize {
+        match self {
+            Wanted::Pixels(_) => 16,
+            Wanted::Quads(_) => 4,
+        }
+    }
+
+    /// The unit pixel `pixel` lies in.
+    fn unit_of(&self, pixel: usize) -> usize {
+        match self {
+            Wanted::Pixels(_) => pixel,
+            Wanted::Quads(_) => (pixel % 4) / 2 + 2 * (pixel / 8),
+        }
+    }
+
+    /// What unit `unit` of a half that draws `drawn`, `channels` channels a pixel, is off by.
+    fn unit_off(&self, drawn: &[[f32; 3]; 16], unit: usize, channels: usize) -> f64 {
+        let off = |c: usize| match self {
+            Wanted::Pixels(target) => drawn[unit][c] - target[unit][c],
+            Wanted::Quads(target) => {
+                let (left, top) = QUADRANTS[unit];
+                let first = 4 * top + left;
+                let sum: f32 = [0, 1, 4, 5].iter().map(|more| drawn[first + more][c]).sum();
+                sum / 4.0 - target[unit][c]
+            }
+        };
+        (0..channels).map(|c| f64::from(off(c).abs())).sum()
+    }
+}
+
+/// What the pixels a half draws from `fields` and `indices` are off `wanted` by, and the values compared.
+fn half_off(
+    kind: u8,
+    plane: &Plane,
+    fields: &[u16; 6],
+    indices: &[u8; 16],
+    wanted: &Wanted,
+) -> (f64, u64) {
+    let (palette, _) = palette(kind, plane, fields);
+    let channels = plane.channels();
+    let drawn: [[f32; 3]; 16] = std::array::from_fn(|pixel| palette[usize::from(indices[pixel])]);
+    let off = (0..wanted.units()).map(|unit| wanted.unit_off(&drawn, unit, channels));
+    (off.sum(), (wanted.units() * channels) as u64)
+}
+
+/// The code of the place one step up or down from `code`'s among a half's places, `last` being
+/// its second end's: a block's code 0 is its first end, 1 its second and the rest lie between
+/// from the first. `None` past either end.
+fn stepped(code: u8, last: u8, up: bool) -> Option<u8> {
+    let place = match code {
+        0 => 0,
+        1 => last,
+        between => between - 1,
+    };
+    let moved = if up {
+        place.checked_add(1).filter(|&place| place <= last)?
+    } else {
+        place.checked_sub(1)?
+    };
+    Some(match moved {
+        0 => 0,
+        place if place == last => 1,
+        place => place + 1,
+    })
+}
+
+/// What a level's blocks are held against: the plain level below it, a value for each 2 by 2
+/// pixels, else the plain level above it averaged down, a value for each pixel, as a score
+/// takes them.
+enum Beside<'a> {
+    Below(&'a Pixels),
+    Above(Vec<Vec<f32>>),
+}
+
+impl Beside<'_> {
+    fn of<'a>(levels: &'a [Level<'_>], at: usize) -> Option<Beside<'a>> {
+        let (w, h) = (4 * levels[at].width, 4 * levels[at].height);
+        let below = (levels.get(at + 1))
+            .and_then(|below| below.plain.as_ref())
+            .filter(|below| 2 * below.width == w && 2 * below.height == h);
+        if let Some(below) = below {
+            return Some(Beside::Below(below));
+        }
+        let above = (at.checked_sub(1))
+            .and_then(|above| levels[above].plain.as_ref())
+            .filter(|above| above.width == 2 * w && above.height == 2 * h)?;
+        let down = above.channels.iter().map(|c| box_down(c, w, h));
+        Some(Beside::Above(down.collect()))
+    }
+
+    /// What the `channels` channels from `first` of the block at (`bx`, `by`) of a level `w` pixels wide are held against.
+    fn wanted(&self, (bx, by): (usize, usize), w: usize, first: usize, channels: usize) -> Wanted {
+        let taken = |plane: &[Vec<f32>], at: usize| {
+            std::array::from_fn(|c| match c < channels {
+                true => plane[first + c][at],
+                false => 0.0,
+            })
+        };
+        match self {
+            Beside::Below(below) => Wanted::Quads(std::array::from_fn(|quad| {
+                let at = (2 * by + quad / 2) * (w / 2) + 2 * bx + quad % 2;
+                taken(&below.channels, at)
+            })),
+            Beside::Above(above) => Wanted::Pixels(std::array::from_fn(|pixel| {
+                taken(above, (4 * by + pixel / 4) * w + 4 * bx + pixel % 4)
+            })),
+        }
+    }
+}
+
+/// The fields and the indices `plane` holds in `block`, a stored block.
+fn stored_half(plane: &Plane, block: &[u8]) -> ([u16; 6], [u8; 16]) {
+    let half = &block[plane.at..plane.at + 8];
+    match plane.half {
+        Half::Alpha => {
+            let word =
+                (half[2..].iter().rev()).fold(0u64, |word, &byte| word << 8 | u64::from(byte));
+            let fields =
+                std::array::from_fn(|k| half.get(k).filter(|_| k < 2).map_or(0, |&end| end.into()));
+            (
+                fields,
+                std::array::from_fn(|pixel| ((word >> (3 * pixel)) & 7) as u8),
+            )
+        }
+        Half::Colour => {
+            let colours = [
+                u16::from_le_bytes([half[0], half[1]]),
+                u16::from_le_bytes([half[2], half[3]]),
+            ];
+            let fields = std::array::from_fn(|k| match k % 3 {
+                0 => colours[k / 3] >> 11,
+                1 => (colours[k / 3] >> 5) & 63,
+                _ => colours[k / 3] & 31,
+            });
+            let word = u32::from_le_bytes([half[4], half[5], half[6], half[7]]);
+            (
+                fields,
+                std::array::from_fn(|pixel| ((word >> (2 * pixel)) & 3) as u8),
+            )
+        }
+    }
+}
+
+/// The pixels of pair or quadrant `k` of a half.
+fn pixels_of(half: Half, k: usize) -> ([usize; 4], usize) {
+    match half {
+        Half::Alpha => ([2 * k, 2 * k + 1, 0, 0], 2),
+        Half::Colour => {
+            let (left, top) = QUADRANTS[k];
+            let first = 4 * top + left;
+            ([first, first + 1, first + 4, first + 5], 4)
+        }
+    }
+}
+
+/// Moves each pixel of each pair or quadrant of a half one place either way among the half's
+/// places, and adds what the half is then off `wanted` by to `tabled`, under the symbol
+/// `symbol_of` gives the pair or quadrant; `held` is what it is off by as it stands.
+fn move_indices(
+    kind: u8,
+    plane: &Plane,
+    (fields, indices): (&[u16; 6], &[u8; 16]),
+    (wanted, held): (&Wanted, f64),
+    symbol_of: impl Fn(usize) -> Option<usize>,
+    (level, tabled): (u32, &mut [Moved]),
+) {
+    let last = match plane.half {
+        Half::Alpha => 7,
+        Half::Colour => 3,
+    };
+    // One pixel moved changes the unit it lies in and no other.
+    let (palette, _) = palette(kind, plane, fields);
+    let channels = plane.channels();
+    let drawn: [[f32; 3]; 16] = std::array::from_fn(|pixel| palette[usize::from(indices[pixel])]);
+    for k in 0..plane.indices.len() {
+        let Some(symbol) = symbol_of(k) else {
+            continue;
+        };
+        let first = match plane.half {
+            Half::Alpha => 2 * (symbol & 63),
+            Half::Colour => PAIR_VALUES + 4 * (symbol & 255),
+        };
+        let (pixels, count) = pixels_of(plane.half, k);
+        for (j, &pixel) in pixels.iter().enumerate().take(count) {
+            let unit = wanted.unit_of(pixel);
+            let before = wanted.unit_off(&drawn, unit, channels);
+            let moved = |up: bool| match stepped(indices[pixel], last, up) {
+                Some(code) => {
+                    let mut drawn = drawn;
+                    drawn[pixel] = palette[usize::from(code)];
+                    held - before + wanted.unit_off(&drawn, unit, channels)
+                }
+                // A place past either end is no place: it never does better.
+                None => f64::INFINITY,
+            };
+            tabled[first + j].add(level, held, moved(false), moved(true));
+        }
+    }
+}
+
+/// Moves each value of a mode of halves' tables that one mip chain's coded levels read, a step
+/// either way, and adds what their blocks are then off the plain level beside them by.
+///
+/// `built_in` is BC1's built-in tables where `tables` are not them, and where the two differ:
+/// a block that reads a value they give differently is drawn through both.
+///
+/// The indices of the plain levels' own blocks are moved the same way, each pair or quadrant
+/// under the symbol `tables` give its pattern: those blocks are as the pack stores them, so
+/// what they show is what the measure says of indices that are right.
+fn probe(
+    kind: u8,
+    mode: &Mode,
+    (input, levels): (&TextureIn, &[Level<'_>]),
+    (tables, built_in): (&ModeTables, Option<(&ModeTables, &planes::Apart)>),
+    into: &mut Probed,
+) {
+    // The symbol whose entry each pattern of a pair, and of a quadrant, is.
+    let mut pair_symbols = [None; 64];
+    for (symbol, &pair) in tables.pairs.iter().enumerate() {
+        if let Some(named) = pair_symbols.get_mut(usize::from(pair)) {
+            *named = Some(symbol);
+        }
+    }
+    let mut quadrant_symbols = [None; 256];
+    for (symbol, &entry) in tables.quadrants.iter().enumerate() {
+        if let Some(named) = quadrant_symbols.get_mut(usize::from(entry)) {
+            *named = Some(symbol);
+        }
+    }
+    for (li, level) in levels.iter().enumerate() {
+        let Some(beside) = Beside::of(levels, li) else {
+            continue;
+        };
+        let w = 4 * level.width;
+        let numbered = into.level + (li as u32).min(63);
+        if let (LevelData::Plain(blocks), Some(stored)) =
+            (&input.levels[li].data, into.stored(kind))
+        {
+            let size = mode.block_bytes();
+            for (place, block) in blocks.chunks_exact(size).enumerate() {
+                let at = (place % level.width, place / level.width);
+                let mut channel = 0;
+                for plane in mode.planes {
+                    let wanted = beside.wanted(at, w, channel, plane.channels());
+                    channel += plane.channels();
+                    let (fields, indices) = stored_half(plane, block);
+                    let held = half_off(kind, plane, &fields, &indices, &wanted).0;
+                    // The symbol whose entry is the pattern the pair or quadrant holds.
+                    let symbol_of = |k: usize| {
+                        let (pixels, count) = pixels_of(plane.half, k);
+                        let bits = if count == 2 { 3 } else { 2 };
+                        let pattern = (0..count).fold(0u16, |all, j| {
+                            all | u16::from(indices[pixels[j]]) << (bits * j)
+                        });
+                        match plane.half {
+                            Half::Alpha => pair_symbols[usize::from(pattern)],
+                            Half::Colour => quadrant_symbols[usize::from(pattern)],
+                        }
+                    };
+                    let (shown, into) = ((&wanted, held), (numbered, &mut *stored));
+                    move_indices(kind, plane, (&fields, &indices), shown, symbol_of, into);
+                }
+            }
+        }
+        let Some(coded) = &level.coded else {
+            continue;
+        };
+        for block in 0..coded.chains.blocks {
+            let place = coded.at[block] as usize;
+            if place >= level.width * level.height {
+                continue;
+            }
+            let at = (place % level.width, place / level.width);
+            let rests = built_in.is_some_and(|(_, apart)| {
+                coded.chains.roots[block].is_some_and(|slot| apart.slot(slot.into()))
+                    || (8..12).any(|lane| apart.symbol(coded.lanes[lane][block]))
+            });
+            let mut channel = 0;
+            for plane in mode.planes {
+                let wanted = beside.wanted(at, w, channel, plane.channels());
+                channel += plane.channels();
+                let through = |tables: &ModeTables| {
+                    let fields = plane_fields(mode, plane, &coded.chains, block, tables)?;
+                    let indices = planes::indices(mode, plane, coded.lanes, block, tables);
+                    let known = indices.iter().all(Option::is_some);
+                    known.then(|| (fields, indices.map(|index| index.unwrap_or(0))))
+                };
+                let Some((fields, indices)) = through(tables) else {
+                    continue;
+                };
+                let (held, compared) = half_off(kind, plane, &fields, &indices, &wanted);
+                let other = built_in.filter(|_| rests).map(|(built_in, _)| built_in);
+                if let Some((fields, indices)) = other.and_then(through) {
+                    into.bc1_blocks += 1;
+                    into.bc1_compared += compared;
+                    into.bc1_through += held;
+                    into.bc1_built_in += half_off(kind, plane, &fields, &indices, &wanted).0;
+                }
+                let Some((ends, tabled)) = into.both(kind) else {
+                    continue;
+                };
+                if let Some(slot) = coded.chains.roots[block] {
+                    for k in 0..plane.fields.len() {
+                        let most = (1u16 << plane.bits(k)) - 1;
+                        let moved = |by: u16| {
+                            let mut fields = fields;
+                            fields[k] = (fields[k] + by) & most;
+                            half_off(kind, plane, &fields, &indices, &wanted).0
+                        };
+                        let at = usize::from(slot) * FIELDS + plane.base + k;
+                        ends[at].add(numbered, held, moved(most), moved(1));
+                    }
+                }
+                let symbol_of = |k: usize| {
+                    let (lane, sub) = plane.indices[k];
+                    Some(usize::from(coded.lanes[lane][mode.elements * block + sub]))
+                };
+                let (shown, into) = ((&wanted, held), (numbered, tabled));
+                move_indices(kind, plane, (&fields, &indices), shown, symbol_of, into);
+            }
+        }
+    }
+}
+
+/// Moves each value of every mode's tables one step either way and says how the coded levels of
+/// `count` textures, each read through `texture` as a fit reads it, then meet the plain levels
+/// beside them: a value that is the coder's meets them no worse than the two beside it, as far
+/// as the blocks that read it can tell. `None` once `stop` says to stop.
+///
+/// A step of a preset value is the least one the block that reads it answers to: a block of
+/// fewer bits than the value drops the value's low bits.
+pub fn probe_tables(
+    count: usize,
+    texture: &(dyn Fn(usize, bool) -> Vec<TextureIn> + Sync),
+    tables: &Tables,
+    progress: &mut dyn FnMut(u64, u64),
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Option<Probed> {
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZero::get)
+        .clamp(1, MAX_WORKERS)
+        .min(count.max(1));
+    let (next, done) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    let probed = std::thread::scope(|scope| {
+        let running: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut part = Probed::new();
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        if index >= count || stop() {
+                            break;
+                        }
+                        for input in texture(index, false) {
+                            part.take(&input, tables);
+                        }
+                        done.fetch_add(1, Ordering::Relaxed);
+                    }
+                    part
+                })
+            })
+            .collect();
+        while !running.iter().all(|worker| worker.is_finished()) {
+            progress(done.load(Ordering::Relaxed) as u64, count as u64);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let mut probed = Probed::new();
+        for worker in running {
+            match worker.join() {
+                Ok(part) => probed.merge(&part),
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        }
+        probed
+    });
+    (!stop()).then_some(probed)
+}
+
 /// What one worker gathers in one pass: tallies of a fixed size, whatever it reads.
 struct Part {
     votes: Vec<Option<Votes>>,
@@ -998,6 +1845,17 @@ impl Doing {
                 _ if pass < HDR_PASSES + HDR_FILLS => BptcPass::Fill,
                 _ => BptcPass::Rest,
             },
+        }
+    }
+
+    /// The pass that scores every mode at once, through tables no fit made.
+    fn score() -> Self {
+        Self {
+            halves: true,
+            second: true,
+            last: true,
+            bptc: BptcPass::Score,
+            hdr: BptcPass::Score,
         }
     }
 
@@ -1091,7 +1949,9 @@ impl Part {
         if !doing.halves {
             return false;
         }
-        let resolved = tables.modes[at].with_built_in(input.kind);
+        let Some(resolved) = tables.resolved(input.kind) else {
+            return false;
+        };
         let mut levels = prepare(input, mode);
         if !levels.iter().any(|level| level.coded.is_some()) {
             return false;
@@ -1271,7 +2131,42 @@ pub fn calibrate_from(
     from: Option<&[u8]>,
     kept: &mut dyn FnMut(&[u8]),
 ) -> Option<(Tables, Vec<Summary>)> {
-    let mut tables = Tables::empty();
+    run(count, texture, progress, stop, from, kept, None)
+}
+
+/// How the coded levels of `count` textures, each read through `texture` as a fit reads it, meet
+/// the plain levels beside them when drawn through `tables`: a fit's figures for tables it did
+/// not fit. `None` once `stop` says to stop.
+pub fn score_tables(
+    count: usize,
+    texture: &(dyn Fn(usize, bool) -> Vec<TextureIn> + Sync),
+    tables: &Tables,
+    progress: &mut dyn FnMut(u64, u64),
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Option<Vec<Summary>> {
+    let scored = run(
+        count,
+        texture,
+        progress,
+        stop,
+        None,
+        &mut |_| {},
+        Some(tables),
+    );
+    scored.map(|(_, summaries)| summaries)
+}
+
+/// A fit, or with `given` the one pass that scores every mode through those tables.
+fn run(
+    count: usize,
+    texture: &(dyn Fn(usize, bool) -> Vec<TextureIn> + Sync),
+    progress: &mut dyn FnMut(u64, u64),
+    stop: &(dyn Fn() -> bool + Sync),
+    from: Option<&[u8]>,
+    kept: &mut dyn FnMut(&[u8]),
+    given: Option<&Tables>,
+) -> Option<(Tables, Vec<Summary>)> {
+    let mut tables = given.cloned().unwrap_or_else(Tables::empty);
     let mut summaries: Vec<Summary> = (KINDS.iter())
         .map(|&kind| Summary {
             kind,
@@ -1286,7 +2181,10 @@ pub fn calibrate_from(
         kind: 6,
         ..Summary::default()
     };
-    let passes = (FIRST_PASSES + SECOND_PASSES).max(HDR_PASSES + HDR_FILLS) + 1;
+    let passes = match given {
+        Some(_) => 1,
+        None => (FIRST_PASSES + SECOND_PASSES).max(HDR_PASSES + HDR_FILLS) + 1,
+    };
     let workers = std::thread::available_parallelism()
         .map_or(1, std::num::NonZero::get)
         .clamp(1, MAX_WORKERS)
@@ -1313,7 +2211,10 @@ pub fn calibrate_from(
         hdr.add(&rest[1]);
     }
     for pass in first..passes {
-        let doing = Doing::of(pass, passes);
+        let doing = match given {
+            Some(_) => Doing::score(),
+            None => Doing::of(pass, passes),
+        };
         let second = doing.second;
         if doing.bptc == BptcPass::Fill && plain_bptc.is_none() {
             plain_bptc = Some(tables.bptc.clone());
@@ -1442,6 +2343,6 @@ pub fn calibrate_from(
     Some((tables, summaries))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "made-up"))]
 #[path = "calibrate_tests.rs"]
 pub(in crate::gta6) mod tests;

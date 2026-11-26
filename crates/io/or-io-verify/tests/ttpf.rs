@@ -4,6 +4,11 @@
 //! packs whose head is not on disk yet, and packs shorter than their sentinel or sparse: both are
 //! reported, and neither fails the suite. Every head that is present must hold to the container
 //! model.
+//!
+//! The suite reads every texture of every pack, which is over an hour of one machine's work, so
+//! it is read in [`PARTS`] parts, each a test with a limit of its own (`.config/nextest.toml`): the
+//! packs of a folder stay together, and the parts are dealt from the folders' sizes on disk, so
+//! no folder is named here.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -25,6 +30,49 @@ fn packs_under(dir: &Path, found: &mut Vec<PathBuf>) {
             found.push(path);
         }
     }
+}
+
+/// The parts the packs are read in.
+const PARTS: usize = 3;
+
+/// `folders`, each its size and what it holds, dealt into [`PARTS`] heaps: the largest folder
+/// first, each to the heap that holds the least so far, the first of those that hold as little.
+fn dealt<T>(mut folders: Vec<(u64, Vec<T>)>) -> Vec<Vec<T>> {
+    folders.sort_by_key(|folder| std::cmp::Reverse(folder.0));
+    let mut heaps: Vec<(u64, Vec<T>)> = (0..PARTS).map(|_| (0, Vec::new())).collect();
+    for (size, held) in folders {
+        if let Some(least) = heaps.iter_mut().min_by_key(|heap| heap.0) {
+            least.0 += size;
+            least.1.extend(held);
+        }
+    }
+    heaps.into_iter().map(|heap| heap.1).collect()
+}
+
+/// The packs of part `part` of [`PARTS`], the packs of one folder all in one part.
+fn part_of(packs: Vec<PathBuf>, part: usize) -> Vec<PathBuf> {
+    let mut folders: BTreeMap<PathBuf, (u64, Vec<PathBuf>)> = BTreeMap::new();
+    for path in packs {
+        let folder = path.parent().unwrap_or(Path::new("")).to_path_buf();
+        let folder = folders.entry(folder).or_default();
+        folder.0 += std::fs::metadata(&path).map_or(0, |file| file.len());
+        folder.1.push(path);
+    }
+    let mut parts = dealt(folders.into_values().collect());
+    let mut packs = parts.swap_remove(part);
+    packs.sort();
+    packs
+}
+
+#[test]
+fn folders_are_dealt_whole_largest_first_to_the_part_that_holds_least() {
+    let folders = [24, 13, 6, 5, 3, 2, 2, 1].map(|size| (size, vec![size, 100 + size]));
+    let parts = dealt(folders.to_vec());
+    // The largest folder is alone in the first part, and the rest fill the other two evenly.
+    assert_eq!(parts[0], [24, 124]);
+    assert_eq!(parts[1], [13, 113, 2, 102, 1, 101]);
+    assert_eq!(parts[2], [6, 106, 5, 105, 3, 103, 2, 102]);
+    assert_eq!(parts.iter().map(Vec::len).sum::<usize>(), 16);
 }
 
 fn packs(what: &str) -> Option<Vec<PathBuf>> {
@@ -85,10 +133,28 @@ fn zero_head(pack: &TexturePack, row: usize) -> bool {
 }
 
 #[test]
-fn every_present_head_holds_to_the_container_model_and_each_texture_reads_or_is_refused_by_name() {
-    let Some(packs) = packs("gta6 ttpf") else {
+fn the_packs_of_part_1_hold_to_the_container_model_and_each_texture_reads_or_is_refused_by_name() {
+    read_part(0);
+}
+
+#[test]
+fn the_packs_of_part_2_hold_to_the_container_model_and_each_texture_reads_or_is_refused_by_name() {
+    read_part(1);
+}
+
+#[test]
+fn the_packs_of_part_3_hold_to_the_container_model_and_each_texture_reads_or_is_refused_by_name() {
+    read_part(2);
+}
+
+/// Every present head of part `part` holds to the container model, and each texture of its
+/// packs reads or is refused by name.
+fn read_part(part: usize) {
+    let what = format!("gta6 ttpf, part {} of {PARTS}", part + 1);
+    let Some(packs) = packs(&what) else {
         return;
     };
+    let packs = part_of(packs, part);
     let (mut headless, mut complete, mut short) = (Vec::new(), 0usize, Vec::new());
     // Keyed by whether the pack is complete, then by "read" or the reason a texture is refused.
     let mut tally: BTreeMap<(&str, String), usize> = BTreeMap::new();
@@ -164,8 +230,9 @@ fn every_present_head_holds_to_the_container_model_and_each_texture_reads_or_is_
         );
     }
     eprintln!(
-        "ttpf: {} pack(s): {} with no head on disk, {complete} complete, {} short or sparse; \
-         {mips_read} mips read, {whole_chains} texture(s) with every stated mip",
+        "ttpf, part {} of {PARTS}: {} pack(s): {} with no head on disk, {complete} complete, {} \
+         short or sparse; {mips_read} mips read, {whole_chains} texture(s) with every stated mip",
+        part + 1,
         packs.len(),
         headless.len(),
         short.len()
@@ -174,6 +241,6 @@ fn every_present_head_holds_to_the_container_model_and_each_texture_reads_or_is_
         eprintln!("ttpf: {state:>8} {n:>6}  {outcome}");
     }
     if complete + short.len() == 0 {
-        skip_install("gta6 ttpf", "no .ttpf head is on disk yet");
+        skip_install(&what, "no .ttpf head is on disk yet");
     }
 }

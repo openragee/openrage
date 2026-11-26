@@ -298,19 +298,25 @@ fn wrote(
     name: &str,
     path: &std::path::Path,
 ) -> String {
-    let estimate = match state.document(doc_id).map(|d| &d.payload) {
-        Some(DocPayload::Ttpf(ttpf)) => {
-            (ttpf.index_of(name)).and_then(|index| ttpf.estimate_label(index))
-        }
-        _ => None,
+    let (estimate, doubt) = match state.document(doc_id).map(|d| &d.payload) {
+        Some(DocPayload::Ttpf(ttpf)) => match ttpf.index_of(name) {
+            Some(index) => (ttpf.estimate_label(index), ttpf.doubt_label(index)),
+            None => (None, None),
+        },
+        _ => (None, None),
     };
-    match estimate {
-        Some(how) => tr!(
+    match (estimate, doubt) {
+        (Some(how), _) => tr!(
             "Wrote {path}. This texture is {how}: an estimate, not the blocks the pack stores",
             path = path.display(),
             how = how
         ),
-        None => format!("Wrote {}", path.display()),
+        (None, Some(how)) => format!(
+            "Wrote {}. {}",
+            path.display(),
+            tr!("Not called exact: {how}", how = how)
+        ),
+        (None, None) => format!("Wrote {}", path.display()),
     }
 }
 

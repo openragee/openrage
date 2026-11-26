@@ -69,12 +69,20 @@ pub(super) fn draw_ttpf(ui: &mut egui::Ui, state: &mut AppState, doc_id: Documen
             ui.data_mut(|d| d.insert_temp(id, false));
         }
     }
-    let calibrate = ui.button(tr!("Calibrate decoding")).on_hover_text(tr!(
-        "Fit the tables of the console's texture coder from every pack of this game, so that the textures stored through it for BC3, BC4, BC5, BC6H and BC7 read. No file holds those tables, so such a texture is an estimate and is marked calibrated"
-    ));
-    if calibrate.clicked() {
-        let folder = crate::state::ttpf_document::calibration::folder_of(ttpf.pack.path());
-        state.calibrate_texture_decoding(&folder);
+    // Tables the user supplied are read in place of a calibration, so none is offered: the list
+    // says how the file stands.
+    let supplied = ttpf.tables_note();
+    if let Some(note) = &supplied {
+        ui.label(egui::RichText::new(note).color(theme::TEXT_SECONDARY));
+    }
+    if supplied.is_none() {
+        let calibrate = ui.button(tr!("Calibrate decoding")).on_hover_text(tr!(
+            "Fit the tables of the console's texture coder from every pack of this game, so that the textures stored through it for BC3, BC4, BC5, BC6H and BC7 read. No file holds those tables, so such a texture is an estimate and is marked calibrated"
+        ));
+        if calibrate.clicked() {
+            let folder = crate::state::ttpf_document::calibration::folder_of(ttpf.pack.path());
+            state.calibrate_texture_decoding(&folder);
+        }
     }
     ui.add_space(crate::ui::theme::SPACING_HAIR);
 
@@ -102,7 +110,7 @@ pub(super) fn draw_ttpf(ui: &mut egui::Ui, state: &mut AppState, doc_id: Documen
             let format = entry
                 .format()
                 .map_or_else(|| format!("{:#05x}", entry.format_code), |f| f.name());
-            // A texture through the coder says whether it reads exactly or as an estimate.
+            // A texture through the coder says what its read may be called.
             let status = (ttpf.refusal(index))
                 .or_else(|| ttpf.decode_label(index))
                 .unwrap_or_else(|| tr!("readable").to_string());

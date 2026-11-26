@@ -6,12 +6,15 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use or_io::codec::texture::{decode_level, save_png, to_dds};
-use or_io::gta6::bcpack::calibrate::{load_cache, save_cache};
-use or_io::gta6::bcpack::Decode;
+use or_io::gta6::bcpack::calibrate::{
+    keep_supplied, load_cache, save_cache, Among, Probed, Summary,
+};
+use or_io::gta6::bcpack::{Checked, Decode, Reading, Standing};
 use or_io::gta6::hash::name_hash64;
 use or_io::gta6::texture_names::{name_keys, use_label};
 use or_io::gta6::ttpf::{
-    calibrate_packs_from, coverage, Format, Texture, TexturePack, KIND_STORED, KIND_ZLIB,
+    calibrate_packs_from, coverage, keep_checked, probe_packs, score_packs, Coverage, Format,
+    Texture, TexturePack, KIND_STORED, KIND_ZLIB,
 };
 
 /// A cube's faces in the order a pack stores them, D3D's.
@@ -30,16 +33,116 @@ fn open(path: &Path) -> Result<TexturePack, String> {
     Ok(pack)
 }
 
-/// How a texture with a body through the coder was decoded, for a line that lists or exports it.
-fn decode_note(how: &Decode) -> String {
-    if how.is_exact() {
-        return "exact".to_string();
+/// How the tables file `pack` reads through stands once `all` is counted, what a listing or an
+/// export read of the pack: kept beside the file, so that a later read of the pack says it too.
+///
+/// ⚠ A listing words its textures by this, after every one of them is read: a texture that read
+/// clean before another counted a block against the file was read through the same file.
+fn standing_after(pack: &TexturePack, all: &Decode) -> Standing {
+    match calibration_dir().map(|dir| pack.keep_read(&dir, all)) {
+        Some(Ok(standing)) => standing,
+        Some(Err(e)) => {
+            eprintln!("what this read counted against the tables supplied is not kept: {e}");
+            pack.standing_after(all)
+        }
+        None => pack.standing_after(all),
     }
+}
+
+/// What a texture with a body through the coder may be called, for a line that lists or exports
+/// it: `standing` is how the tables file its pack reads through stands.
+fn decode_note(how: &Decode, standing: Standing) -> String {
+    match how.reading(standing) {
+        Reading::Exact => "exact".to_string(),
+        Reading::BuiltIn => "NOT called exact: through BC1's built-in tables alone, which \
+                             nothing confirms value for value"
+            .to_string(),
+        Reading::Unseconded { blocks } => format!(
+            "NOT called exact: {blocks} of its coded blocks read a value BC1's built-in tables \
+             give otherwise, or not at all"
+        ),
+        Reading::Calibrated => format!(
+            "calibrated: an estimate through tables fitted on this machine, {:.1}% of its coded \
+             blocks through a slot or symbol not known",
+            how.unknown_percent()
+        ),
+        Reading::Unchecked => "NOT called exact yet: through the tables supplied, which no \
+                               check has held to blocks of its format"
+            .to_string(),
+        Reading::Unruled => "NOT called exact: through the tables supplied, and no rule of its \
+                             blocks' format can show a wrong table"
+            .to_string(),
+        Reading::Disagrees { disagree, blocks } => format!(
+            "NOT exact: {disagree} of its {blocks} coded blocks read a value no table gives or \
+             hold what no encoder writes, through the tables supplied"
+        ),
+        Reading::NotTheCoders { .. } => {
+            "NOT exact: blocks were counted against the tables supplied, which are not this \
+             coder's"
+                .to_string()
+        }
+        // Nothing through the coder was rebuilt, or a body under the ones that were was not.
+        Reading::CodedUnread => match how.supplied {
+            0 => "NOT called exact: its plain levels were read and its coded levels were not",
+            _ => {
+                "NOT called exact: a coded body of it was not read, and only the levels above \
+                 that body were"
+            }
+        }
+        .to_string(),
+    }
+}
+
+/// How the tables file a pack reads through stands, in sentences.
+fn standing_note(standing: Standing) -> String {
+    let counted = |found: Checked| {
+        format!(
+            "found {} of {} coded blocks that read a value no table gives or hold what no \
+             encoder writes",
+            found.disagree, found.blocks
+        )
+    };
+    if let Some(failed) = standing.failed() {
+        return format!(
+            "They are NOT this coder's tables: a check {}.",
+            counted(failed)
+        );
+    }
+    if let Some(here) = standing.failed_in_pack() {
+        return format!(
+            "They are NOT this coder's tables for this pack: a read of its textures {}, \
+             and no texture of it read through them is called exact.",
+            counted(here)
+        );
+    }
+    let of = |kind: u8, name: &str| match standing.held(kind) {
+        Some(blocks) => format!(
+            "A check held {blocks} {name} blocks to the rules of their format, and none broke \
+             one."
+        ),
+        None => format!("No check has read a {name} block through them."),
+    };
     format!(
-        "calibrated: an estimate through tables fitted on this machine, {:.1}% of its coded \
-         blocks through a slot or symbol not known",
-        how.unknown_percent()
+        "{} {} A BC6H or BC7 texture is called exact only once `ttpf tables --check <folder>` \
+         has held the tables of its format and none of its own blocks breaks a rule; a BC1 \
+         texture only where BC1's built-in tables give the same values; a BC3, BC4 or BC5 \
+         texture never, since no rule of those formats can show a wrong table.",
+        of(6, "BC6H"),
+        of(7, "BC7")
     )
+}
+
+/// What the textures of one pack just read said against the tables supplied, where any did.
+fn pack_verdict(all: &Decode) -> Option<String> {
+    (all.supplied > 0 && all.disagree() > 0).then(|| {
+        format!(
+            "The tables supplied are not this coder's tables for this pack: {} of {} coded \
+             blocks read a value no table gives or hold what no encoder writes. That is kept \
+             with the pack, and no texture of it read through them is called exact.",
+            all.disagree(),
+            all.supplied
+        )
+    })
 }
 
 fn kind_name(kind: u8) -> String {
@@ -101,10 +204,10 @@ fn cmd_info(args: &[String]) -> Result<(), String> {
         pack.entries.len(),
         pack.rows.len()
     );
-    println!(
-        "{:>6} {:<22} {:>11} {:<22} {:<20} READ",
-        "INDEX", "NAME", "SIZE", "FORMAT", "BODIES"
-    );
+    // A line up to what its texture's read is called, and the read where the texture has a
+    // body through the coder: the word waits for what every texture of the pack counted.
+    let mut lines: Vec<(String, Option<Decode>)> = Vec::new();
+    let mut all = Decode::default();
     for (index, entry) in pack.entries.iter().enumerate() {
         let name = match names.get(&entry.key) {
             _ if !entry.on_disk => "not on disk".to_string(),
@@ -129,25 +232,44 @@ fn cmd_info(args: &[String]) -> Result<(), String> {
                 kinds.push(name);
             }
         }
-        let read = match pack.texture_noted(index) {
+        let (read, how) = match pack.texture_noted(index) {
             Ok((texture, how)) => {
                 let mips = match texture.faces {
                     1 => format!("yes, {} mip(s)", texture.levels),
                     faces => format!("yes, {faces} slices of {} mip(s)", texture.levels),
                 };
-                // A texture with a body through the coder says whether its decode is exact.
-                match coded {
-                    true => format!("{mips}, {}", decode_note(&how)),
-                    false => mips,
-                }
+                all.add(how);
+                // A texture with a body through the coder says what its read may be called.
+                (mips, coded.then_some(how))
             }
-            Err(e) => format!("no: {e}"),
+            Err(e) => (format!("no: {e}"), None),
         };
-        println!(
+        let line = format!(
             "{index:>6} {name:<22} {:>11} {format:<22} {:<20} {read}",
             format!("{}x{}", entry.width, entry.height),
             kinds.join(", ")
         );
+        lines.push((line, how));
+    }
+    let standing = standing_after(&pack, &all);
+    if (pack.rows.iter()).any(|row| pack.reads_supplied(row.kind)) {
+        println!(
+            "Coded bodies read through the tables supplied. {}\n",
+            standing_note(standing)
+        );
+    }
+    println!(
+        "{:>6} {:<22} {:>11} {:<22} {:<20} READ",
+        "INDEX", "NAME", "SIZE", "FORMAT", "BODIES"
+    );
+    for (line, how) in lines {
+        match how {
+            Some(how) => println!("{line}, {}", decode_note(&how, standing)),
+            None => println!("{line}"),
+        }
+    }
+    if let Some(verdict) = pack_verdict(&all) {
+        println!("\n{verdict}");
     }
     Ok(())
 }
@@ -196,8 +318,13 @@ fn cmd_export(args: &[String]) -> Result<(), String> {
         Some(index) => vec![index],
         None => (0..pack.entries.len()).collect(),
     };
-    let (mut written, mut refused) = (0usize, 0usize);
-    let mut estimates = 0usize;
+    let mut refused = 0usize;
+    let (mut estimates, mut doubted, mut unseconded, mut partly) = (0usize, 0usize, 0usize, 0);
+    // The files of each texture written and how it read: what its read is called waits for
+    // what every texture exported counted.
+    let mut wrote: Vec<(Vec<String>, Decode)> = Vec::new();
+    let mut all = Decode::default();
+    let mut failed = None;
     for index in indices {
         let (texture, how) = match pack.texture_noted(index) {
             Ok(read) => read,
@@ -209,14 +336,43 @@ fn cmd_export(args: &[String]) -> Result<(), String> {
             }
         };
         let cube = pack.entries[index].dimension == 2;
-        // An export of an estimate says so on its line.
-        let note = match how.is_exact() {
-            true => String::new(),
-            false => format!("; {}", decode_note(&how)),
+        all.add(how);
+        match write_faces(out_dir, &index.to_string(), texture, cube, as_dds) {
+            Ok(files) => wrote.push((files, how)),
+            Err(e) => {
+                failed = Some(e);
+                break;
+            }
+        }
+    }
+    let standing = standing_after(&pack, &all);
+    let written = wrote.len();
+    for (files, how) in wrote {
+        // An export that is not exact says so on its line.
+        let reading = how.reading(standing);
+        let note = match reading {
+            Reading::Exact => String::new(),
+            _ => format!("; {}", decode_note(&how, standing)),
         };
-        estimates += usize::from(!how.is_exact());
-        write_faces(out_dir, &index.to_string(), texture, cube, as_dds, &note)?;
-        written += 1;
+        estimates += usize::from(reading == Reading::Calibrated);
+        unseconded += usize::from(matches!(
+            reading,
+            Reading::BuiltIn | Reading::Unseconded { .. }
+        ));
+        doubted += usize::from(matches!(
+            reading,
+            Reading::Unchecked
+                | Reading::Unruled
+                | Reading::Disagrees { .. }
+                | Reading::NotTheCoders { .. }
+        ));
+        partly += usize::from(reading == Reading::CodedUnread);
+        for file in files {
+            println!("{file}{note})");
+        }
+    }
+    if let Some(e) = failed {
+        return Err(e);
     }
     if written == 0 {
         return Err(format!("no texture of {} is readable", input.display()));
@@ -230,6 +386,28 @@ fn cmd_export(args: &[String]) -> Result<(), String> {
             "{estimates} of them are calibrated: estimates through tables fitted on this \
              machine, not the pack's stored blocks"
         );
+    }
+    if unseconded > 0 {
+        println!(
+            "{unseconded} of them are BC1 textures not called exact: BC1's built-in tables were \
+             fitted and nothing confirms them value for value, so a block is called exact only \
+             where a tables file you supply (`ttpf tables <file>`) gives the same value"
+        );
+    }
+    if partly > 0 {
+        println!(
+            "{partly} of them are not called exact: a body of each through the coder was not \
+             read, and only the levels above that body are written"
+        );
+    }
+    if doubted > 0 {
+        println!(
+            "{doubted} of them read through the tables supplied and are not called exact. {}",
+            standing_note(standing)
+        );
+    }
+    if let Some(verdict) = pack_verdict(&all) {
+        println!("{verdict}");
     }
     Ok(())
 }
@@ -248,13 +426,8 @@ fn packs_under(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
-/// Fit the coder's tables from every pack under a folder, and keep them for those packs.
-fn cmd_calibrate(args: &[String]) -> Result<(), String> {
-    let (folder, covered) = match args {
-        [folder] => (folder, false),
-        [folder, flag] if flag == "--coverage" => (folder, true),
-        _ => return Err("usage: ttpf calibrate <folder> [--coverage]".into()),
-    };
+/// Every pack that opens under `folder`, in the order of their paths.
+fn open_under(folder: &str) -> Result<Vec<TexturePack>, String> {
     let mut paths = Vec::new();
     packs_under(Path::new(folder), &mut paths)?;
     paths.sort();
@@ -265,32 +438,35 @@ fn cmd_calibrate(args: &[String]) -> Result<(), String> {
             Err(e) => eprintln!("{}: {e}", path.display()),
         }
     }
-    if packs.is_empty() {
-        return Err(format!("no texture pack opens under {folder}"));
+    match packs.is_empty() {
+        true => Err(format!("no texture pack opens under {folder}")),
+        false => Ok(packs),
     }
+}
+
+/// Says how far a run is, a line that is written over.
+fn percent_said() -> impl FnMut(u64, u64) {
     let mut said = u64::MAX;
-    let mut progress = |done: u64, total: u64| {
+    move |done: u64, total: u64| {
         let percent = 100 * done / total.max(1);
         if percent != said {
             said = percent;
             eprint!("\r{percent:>3}%");
         }
-    };
-    // A run cut short is gone on from by the next one, at the pass it was in.
-    let dir = calibration_dir().ok_or("no configuration directory to keep the calibration in")?;
-    let found =
-        calibrate_packs_from(&packs, Some(&dir), &mut progress, &|| false).ok_or("stopped")?;
-    eprintln!();
-    println!("Calibrated from {} pack(s) under {folder}\n", packs.len());
+    }
+}
+
+/// How far each mode's coded mips are from the plain mips beside them, a line a mode.
+fn print_summaries(summaries: &[Summary]) {
     println!(
         "{:<5} {:>7} {:>7} {:>10} {:>10} {:>6} {:>6} {:>10}  AGAINST THE PLAIN MIPS",
         "MODE", "CHAINS", "BODIES", "BLOCKS", "NOT KNOWN", "SLOTS", "PAIRS", "QUADRANTS"
     );
-    for summary in &found.summaries {
+    for summary in summaries {
         let mismatch = match (summary.mean_mismatch(), summary.mean_alpha_mismatch()) {
-            (Some(mean), _) if summary.kind == 6 => format!("{mean:.2} stops off"),
-            (Some(mean), Some(alpha)) => format!("colour {mean:.2}, alpha {alpha:.2} of 255 off"),
-            (Some(mean), None) => format!("{mean:.2} of 255 off"),
+            (Some(mean), _) if summary.kind == 6 => format!("{mean:.4} stops off"),
+            (Some(mean), Some(alpha)) => format!("colour {mean:.4}, alpha {alpha:.4} of 255 off"),
+            (Some(mean), None) => format!("{mean:.4} of 255 off"),
             (None, _) => "no coded mip beside a plain one".to_string(),
         };
         println!(
@@ -305,6 +481,236 @@ fn cmd_calibrate(args: &[String]) -> Result<(), String> {
             summary.quadrants
         );
     }
+}
+
+/// How every coded texture of a set of packs reads, a line a mode.
+fn print_coverage(found: &[Coverage]) {
+    println!(
+        "{:<5} {:>9} {:>9} {:>9} {:>10} {:>8} {:>12} {:>12} {:>10} {:>8}",
+        "MODE",
+        "CLEAN",
+        "DISAGREE",
+        "ONE TABLE",
+        "CALIBRATED",
+        "REFUSED",
+        "BLOCKS",
+        "FITTED",
+        "NOT KNOWN",
+        "STRAY"
+    );
+    for of_kind in found {
+        println!(
+            "{:<5} {:>9} {:>9} {:>9} {:>10} {:>8} {:>12} {:>12} {:>10} {:>8}",
+            format!("BC{}", of_kind.kind),
+            of_kind.clean,
+            of_kind.disagree,
+            of_kind.unseconded,
+            of_kind.calibrated,
+            of_kind.refused,
+            of_kind.blocks,
+            of_kind.fitted,
+            of_kind.unknown,
+            of_kind.stray
+        );
+    }
+    for of_kind in found.iter().filter(|of_kind| of_kind.unseconded_blocks > 0) {
+        println!(
+            "BC{}: {} bodies hold {} blocks only one table stands behind.",
+            of_kind.kind, of_kind.unseconded_bodies, of_kind.unseconded_blocks
+        );
+    }
+    println!(
+        "CLEAN, DISAGREE, ONE TABLE, CALIBRATED and REFUSED count textures: those none of whose \
+         coded blocks is fitted or counted here, those through supplied tables with a block \
+         counted as NOT KNOWN or STRAY, BC1 textures with a block only one table stands behind, \
+         those through fitted tables, and those with a body that does not read. Only one table \
+         stands behind a BC1 block read through the built-in tables alone, and behind one read \
+         through supplied tables where it reads a preset slot or a quadrant symbol the built-in \
+         tables give another value for, or none. NOT KNOWN counts \
+         the blocks drawn through a preset slot or an index symbol no table gave a value. STRAY \
+         counts the BC6H and BC7 blocks no encoder writes: an end out of its base's range, an \
+         anchor's index past half its range, a shared p-bit two ends disagree on. No rule holds \
+         a BC1, BC3, BC4 or BC5 block, so their STRAY is 0 whatever the tables."
+    );
+}
+
+/// The fewest coded levels that have to read a value for a probe to say how it stands: the
+/// blocks of one level are of one picture, and under that a few pictures decide.
+const PROBE_LEVELS: u64 = 8;
+
+/// What moving each value of each table one step did, a line a table and a band of how many
+/// levels read a value.
+fn print_probe(probed: &Probed) {
+    println!(
+        "{:<12} {:<16} {:>7} {:>7} {:>7} {:>7}",
+        "TABLE", "READ BY", "VALUES", "LEAST", "TIED", "BEATEN"
+    );
+    let bands: [(&str, u64, u64); 4] = [
+        ("no level", 0, 0),
+        ("1 to 7 levels", 1, PROBE_LEVELS - 1),
+        ("8 to 63 levels", PROBE_LEVELS, 63),
+        ("64 or more", 64, u64::MAX),
+    ];
+    for table in &probed.tables {
+        let name = format!(
+            "BC{} {}",
+            table.kind,
+            match (table.stored, table.indices) {
+                (true, _) => "stored",
+                (false, true) => "indices",
+                (false, false) => "ends",
+            }
+        );
+        for (band, from, to) in bands {
+            let read = || (table.values.iter()).filter(|moved| (from..=to).contains(&moved.levels));
+            let stood = |how: Among| read().filter(|moved| moved.among() == Some(how)).count();
+            let values = read().count();
+            if values > 0 {
+                println!(
+                    "{name:<12} {band:<16} {values:>7} {:>7} {:>7} {:>7}",
+                    stood(Among::Least),
+                    stood(Among::Tied),
+                    stood(Among::Beaten)
+                );
+            }
+        }
+    }
+    println!(
+        "A value is a field of a preset slot, an index of a preset slot, or a pixel of an index \
+         table's symbol. Each was moved one step down and one step up, a step being the least \
+         one the block that reads it answers to, and the blocks that read it were held against \
+         the plain mips beside them each way. LEAST: the table's value meets them better than \
+         both; TIED: as well as the better; BEATEN: a value beside it meets them better. A \
+         plain mip is another image and the blocks of one level are of one picture, so a value \
+         few levels read says little: under {PROBE_LEVELS} levels it is not determined. The \
+         rows named stored move the indices of \
+         the plain mips' own blocks the same way, each under the symbol the table gives the \
+         pattern it holds: those blocks are right, so what is BEATEN there is the measure and \
+         not the table."
+    );
+    if probed.bc1_blocks > 0 {
+        let mean = |sum: f64| sum / probed.bc1_compared.max(1) as f64;
+        println!(
+            "BC1: {} of the blocks read read a value the built-in tables give otherwise; they \
+             are {:.4} of 255 off the plain mips through the tables supplied and {:.4} through \
+             the built-in ones.",
+            probed.bc1_blocks,
+            mean(probed.bc1_through),
+            mean(probed.bc1_built_in)
+        );
+    }
+}
+
+/// Keep a tables file the user names as the coder's tables, or check what is kept against a folder's packs.
+fn cmd_tables(args: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: ttpf tables <file> | ttpf tables --check <folder> [--probe]";
+    let dir = calibration_dir().ok_or("no configuration directory to keep the tables in")?;
+    let (folder, probe) = match args {
+        [flag, folder] if flag == "--check" => (folder, false),
+        [flag, folder, probe] if flag == "--check" && probe == "--probe" => (folder, true),
+        [file] if !file.starts_with('-') => {
+            let bytes = std::fs::read(file).map_err(|e| format!("{file}: {e}"))?;
+            let path = keep_supplied(&dir, &bytes).map_err(|e| format!("{file}: {e}"))?;
+            // The file kept may be one a check has read through before.
+            let kept = load_cache(&dir, 0).ok_or("the tables kept do not read back")?;
+            println!(
+                "Kept in {} as the tables supplied, digest {:016x}: every pack now reads BC1, \
+                 BC3, BC4, BC5, BC6H and BC7 bodies through them, in place of a calibration. \
+                 That the file reads says its layout is a tables file's, not that its values \
+                 are this coder's. {}",
+                path.display(),
+                kept.digest(),
+                standing_note(kept.standing())
+            );
+            return Ok(());
+        }
+        _ => return Err(USAGE.into()),
+    };
+    let mut packs = open_under(folder)?;
+    let Some(tables) = load_cache(&dir, packs[0].member_key()) else {
+        // With no tables kept only BC1 reads, through its built-in ones.
+        println!(
+            "{} pack(s) under {folder}, with no tables kept: neither supplied ones nor a \
+             calibration\n",
+            packs.len()
+        );
+        print_coverage(&coverage(&packs, &|| false).ok_or("stopped")?);
+        return Ok(());
+    };
+    let supplied = [1, 3, 4, 5, 6, 7]
+        .into_iter()
+        .all(|kind| tables.supplied(kind));
+    println!(
+        "{} pack(s) under {folder}, through {}\n",
+        packs.len(),
+        match supplied {
+            true => format!("the tables supplied, digest {:016x}", tables.digest()),
+            false => "the calibration kept for them".to_string(),
+        }
+    );
+    let tables = std::sync::Arc::new(tables);
+    for pack in &mut packs {
+        pack.set_calibration(Some(tables.clone()));
+    }
+    // Every coded body decoded once, then the levels a calibration reads drawn against the plain ones.
+    let found = coverage(&packs, &|| false).ok_or("stopped")?;
+    print_coverage(&found);
+    if let Some((slots, symbols)) = tables.bc1_apart_counts() {
+        println!(
+            "BC1's tables as supplied and as built in give another value for {slots} preset \
+             slots and {symbols} quadrant symbols: a BC1 block that reads one of those is one \
+             only the tables supplied stand behind."
+        );
+    }
+    println!();
+    if supplied {
+        // What the check found is kept by mode with the file's digest, beside what earlier
+        // checks of the same file found, and every later read says it.
+        let standing =
+            keep_checked(&dir, &tables, &found).map_err(|e| format!("{}: {e}", dir.display()))?;
+        if standing.failed().is_some() {
+            return Err(standing_note(standing));
+        }
+        println!(
+            "{} A count of none shows that the entries of BC6H's and BC7's preset lists that \
+             these blocks read are in this coder's order, with BC7's p-bits and the anchors' top \
+             bits. It does not show each end value of each slot, nor the place of an entry few \
+             blocks read, nor anything of a BC3, BC4 or BC5 table, which no rule sees and no \
+             second table confirms. BC1's tables are held against the built-in ones above. \
+             --probe holds each value to the plain mips.\n",
+            standing_note(standing)
+        );
+    }
+    let scored = score_packs(&packs, &tables, &mut percent_said(), &|| false).ok_or("stopped")?;
+    eprintln!();
+    print_summaries(&scored);
+    if probe {
+        // The rules above see an entry's place, a p-bit and an anchor's top bit; this holds
+        // each value to the pixels.
+        let probed = probe_packs(&packs, &tables, &mut percent_said(), &|| false);
+        eprintln!();
+        println!();
+        print_probe(&probed.ok_or("stopped")?);
+    }
+    Ok(())
+}
+
+/// Fit the coder's tables from every pack under a folder, and keep them for those packs.
+fn cmd_calibrate(args: &[String]) -> Result<(), String> {
+    let (folder, covered) = match args {
+        [folder] => (folder, false),
+        [folder, flag] if flag == "--coverage" => (folder, true),
+        _ => return Err("usage: ttpf calibrate <folder> [--coverage]".into()),
+    };
+    let mut packs = open_under(folder)?;
+    let mut progress = percent_said();
+    // A run cut short is gone on from by the next one, at the pass it was in.
+    let dir = calibration_dir().ok_or("no configuration directory to keep the calibration in")?;
+    let found =
+        calibrate_packs_from(&packs, Some(&dir), &mut progress, &|| false).ok_or("stopped")?;
+    eprintln!();
+    println!("Calibrated from {} pack(s) under {folder}\n", packs.len());
+    print_summaries(&found.summaries);
     let path = save_cache(&dir, &found.tables, &found.members)
         .map_err(|e| format!("{}: {e}", dir.display()))?;
     println!("\nKept in {}", path.display());
@@ -316,22 +722,8 @@ fn cmd_calibrate(args: &[String]) -> Result<(), String> {
     for pack in &mut packs {
         pack.set_calibration(Some(tables.clone()));
     }
-    println!(
-        "\n{:<5} {:>9} {:>10} {:>8} {:>12} {:>12}  THROUGH A SLOT NOT KNOWN",
-        "MODE", "EXACT", "CALIBRATED", "REFUSED", "BLOCKS", "FITTED"
-    );
-    for of_kind in coverage(&packs, &|| false).ok_or("stopped")? {
-        println!(
-            "{:<5} {:>9} {:>10} {:>8} {:>12} {:>12}  {:.2}% of the fitted blocks",
-            format!("BC{}", of_kind.kind),
-            of_kind.exact,
-            of_kind.calibrated,
-            of_kind.refused,
-            of_kind.blocks,
-            of_kind.fitted,
-            100.0 * of_kind.unknown as f64 / of_kind.fitted.max(1) as f64
-        );
-    }
+    println!();
+    print_coverage(&coverage(&packs, &|| false).ok_or("stopped")?);
     println!(
         "The tables are fitted on this machine, not read from a source: a texture drawn through \
          them is an estimate, and `ttpf info` and `ttpf export` say which are."
@@ -340,15 +732,15 @@ fn cmd_calibrate(args: &[String]) -> Result<(), String> {
 }
 
 /// Write `texture` into `out_dir` as `<stem>.png` or `.dds`, a cube's faces, in their stored
-/// order, and an array's or a volume's slices as files of their own.
+/// order, and an array's or a volume's slices as files of their own; a line for each file
+/// written, open for what the caller says of the texture before it closes the bracket.
 fn write_faces(
     out_dir: &Path,
     stem: &str,
     texture: Texture,
     cube: bool,
     as_dds: bool,
-    note: &str,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let extension = if as_dds { "dds" } else { "png" };
     let faces: Vec<(String, Texture)> = match texture.faces {
         1 => vec![(format!("{stem}.{extension}"), texture)],
@@ -365,6 +757,7 @@ fn write_faces(
             })
             .collect(),
     };
+    let mut written = Vec::new();
     for (name, face) in faces {
         let path = out_dir.join(name);
         if as_dds {
@@ -373,16 +766,16 @@ fn write_faces(
             decode_level(&face, 0).and_then(|image| save_png(&path, &image))
         }
         .map_err(|e| format!("{}: {e}", path.display()))?;
-        println!(
-            "{}  ({}x{} {}, {} mip(s){note})",
+        written.push(format!(
+            "{}  ({}x{} {}, {} mip(s)",
             path.display(),
             face.width,
             face.height,
             face.format.name(),
             face.levels
-        );
+        ));
     }
-    Ok(())
+    Ok(written)
 }
 
 /// A folder to export to, and whether as DDS.
@@ -491,7 +884,9 @@ pub(crate) fn export_dictionary(
                     n += 1;
                     stem = format!("{named}_{n}");
                 }
-                write_faces(out, &stem, texture, t.dimension == 2, as_dds, "")?;
+                for file in write_faces(out, &stem, texture, t.dimension == 2, as_dds)? {
+                    println!("{file})");
+                }
                 written += 1;
             }
             Err(e) => {
@@ -725,9 +1120,43 @@ fn print_usage() {
     eprintln!("        mips beside them. Name the folder that holds every pack of the game: a");
     eprintln!("        slot is fitted only from the packs read. --coverage then decodes every");
     eprintln!("        coded body of those packs once and counts, by mode, the textures that");
+    eprintln!("        read with nothing against them, as estimates, or not at all, which takes");
+    eprintln!("        longer than the fit.");
+    eprintln!("  tables <file> | tables --check <folder> [--probe]");
+    eprintln!("        Read the BCPack coder's preset and index tables from <file>, a tables file");
+    eprintln!("        you supply in the layout they are published in, and keep them in the");
+    eprintln!("        configuration directory. Every pack of every install then reads its coded");
+    eprintln!("        bodies through them, in place of a calibration. OpenRage ships no such");
+    eprintln!("        file and vouches for none, and a file that reads is not thereby the");
+    eprintln!("        coder's: --check decodes every coded body of the packs under <folder>");
+    eprintln!("        through the tables kept for them, supplied or fitted, and counts by mode");
+    eprintln!("        the blocks through a value no table gives and the blocks no encoder");
+    eprintln!("        writes, then says how far the coded mips are from the plain mips beside");
+    eprintln!("        them. Tables that are right leave none of either; supplied tables that");
+    eprintln!("        leave one are reported as not this coder's, and the command fails. What");
+    eprintln!("        a check found is kept by mode with the file's digest, and a failure stands");
+    eprintln!("        whatever a later check of other packs finds. The count said of a failure");
+    eprintln!("        is one check's own, and the count held of a mode the largest check's. An");
+    eprintln!("        info or an export that counts such a block fails the file for that pack:");
+    eprintln!("        the count is kept with the pack and the file's digest, and no texture of");
+    eprintln!("        the pack is called exact through that file, in that listing or after. info");
+    eprintln!("        says exact for a texture every coded body of which was read, and export");
+    eprintln!("        says nothing, only on one of two grounds. A BC6H or");
+    eprintln!("        BC7 texture: none of its blocks breaks a rule of its format and a check");
+    eprintln!("        has held the tables of that format. A BC1 texture: every value it reads");
+    eprintln!("        is the same in the file and in BC1's built-in tables. A BC3, BC4 or BC5");
+    eprintln!("        texture is never called exact, since no rule of those formats can show a");
+    eprintln!("        wrong table. Otherwise they say how many blocks disagree, how many BC1");
+    eprintln!("        blocks read a value the two tables give differently, or that the tables");
+    eprintln!("        are not checked for the format. Through the blocks that read an entry");
+    eprintln!("        the rules see its place in its list, a p-bit and an anchor's top bit, and");
+    eprintln!("        not each end value. --probe then moves each value of each table");
+    eprintln!("        one step down and one step up and counts the values that meet the plain");
     eprintln!(
-        "        read exactly, as estimates, or not at all, which takes longer than the fit."
+        "        mips beside the coded ones better than both, as well, or worse, by how many"
     );
+    eprintln!("        coded levels read each: a value few levels read is not determined by it.");
+    eprintln!("        Of a folder with more than 1,024 BC1 textures it reads one in eight.");
     eprintln!("  plan <file.ttpf>...");
     eprintln!("        Print what a save would write against what the file holds: rows whose");
     eprintln!("        offset, pad or kind differ, rows whose start is carried, and entries");
@@ -742,8 +1171,17 @@ fn print_usage() {
     eprintln!("by slice, each z-slab holding the chain; with every mip of the chain whose tail");
     eprintln!("slot is measured (1-, 4-, 8- and 16-byte elements), and a lone level in one tile.");
     eprintln!("A body of codec kind 1 (BC1 coder in the BODIES column) holds BC1 blocks through");
-    eprintln!("the console's BCPack coder and decodes exactly, but for one that reads a preset");
-    eprintln!("endpoint no value is known for. That one, and bodies of codec kinds 3 to 7 (BC3,");
+    eprintln!("the console's BCPack coder. With a tables file kept by `ttpf tables`, a body of");
+    eprintln!("every coder kind reads through it, exactly as far as its check says. Without one,");
+    eprintln!("kind 1 decodes through its built-in tables, which were fitted and which nothing");
+    eprintln!("confirms value for value: such a texture is said to rest on them and is not called");
+    eprintln!("exact. With a tables file kept, a BC1 texture says how many of its blocks read a");
+    eprintln!("value the two tables give differently. A read stops at the first body that does");
+    eprintln!("not read and gives the levels above it: a texture none of whose coded bodies was");
+    eprintln!("read says that its plain levels were read and its coded levels were not, one a");
+    eprintln!("coded body of which was not read says that, and neither is called exact. A body");
+    eprintln!("that reads a preset endpoint the built-in tables have no value for, and bodies of");
+    eprintln!("codec kinds 3 to 7 (BC3,");
     eprintln!(
         "BC4, BC5, BC6H and BC7 through the coder), read once `ttpf calibrate` has fitted the"
     );
@@ -753,7 +1191,7 @@ fn print_usage() {
     eprintln!("it carries the coded bodies as the file stores them. A signed BC6H texture is");
     eprintln!("drawn through the tables the unsigned ones fitted: no plain mip lies beside one,");
     eprintln!("and what checks it is that its blocks' ends stay in range as an encoder's do.");
-    eprintln!("Refused, each by name: bodies of codec kinds 3 to 7 with no calibration kept;");
+    eprintln!("Refused, each by name: bodies of codec kinds 3 to 7 with no tables kept;");
     eprintln!("cubes of 1-, 2- and 8-byte pixels; arrays in 4 KiB tiles;");
     eprintln!("volumes in tile modes other than 1; a mip in a tail with no measured slot (2-byte");
     eprintln!("elements, and past the slots measured); other DXGI numbers; entries and bytes");
@@ -778,6 +1216,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "replace" => cmd_replace(rest),
         "plan" => cmd_plan(rest),
         "calibrate" => cmd_calibrate(rest),
+        "tables" => cmd_tables(rest),
         "-h" | "--help" | "help" => {
             print_usage();
             return ExitCode::SUCCESS;

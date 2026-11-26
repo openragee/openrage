@@ -16469,6 +16469,69 @@ msgstr "此游戏的部分纹理通过主机的编码器存储，目前尚无法
 msgid "An estimate, not the exact picture: {how}"
 msgstr "这是估算值，并非精确图像：{how}"
 
+msgid "supplied tables, not checked"
+msgstr "使用提供的表，未检查"
+
+msgid "not this coder's tables"
+msgstr "不是此编码器的表"
+
+msgid "{count} of {blocks} coded blocks disagree with the supplied tables"
+msgstr "{blocks} 个已编码块中有 {count} 个与提供的表不符"
+
+msgid "The tables you supplied disagree with this pack: {count} of the coded blocks read so far read a value no table gives or hold what no encoder writes"
+msgstr "提供的表与此包不符：目前已读取的已编码块中有 {count} 个读取了任何表都未给出的值，或包含任何编码器都不会写出的内容"
+
+msgid "The tables you supplied are not checked against your packs: `openrage-cli ttpf tables --check` does that for the packs of a folder"
+msgstr "提供的表尚未对照你的包进行检查：`openrage-cli ttpf tables --check` 可对某个文件夹中的包执行此检查"
+
+msgid "A block that disagrees was not rebuilt as the pack stores it: the tables you supplied are wrong for it"
+msgstr "不符的块没有按包中存储的样子重建：提供的表对它而言是错误的"
+
+msgid "Not called exact: {how}"
+msgstr "不称为精确：{how}"
+
+msgid "Exact rests on the rules of this block format, which a wrong table breaks: none of this texture's {count} coded blocks breaks one, and neither did any of the {blocks} blocks of the format that a check read through the tables you supplied. The rules see an entry of a preset through the blocks that read it: whether it is in its place, a BC7 end's p-bit and the top bit of an anchor's index. They do not see each end value, nor an entry that few blocks read. No texture is stored both coded and plain, so no read is compared with the pack's own blocks"
+msgstr "“精确”依据的是此块格式的规则，错误的表会违反这些规则：此纹理的 {count} 个已编码块无一违反规则，检查经由提供的表读取的 {blocks} 个该格式的块也无一违反。这些规则只能通过读取预设条目的块来查看该条目：它是否在其位置上、BC7 端点的 p 位以及锚点索引的最高位。它们看不出每个端点值，也看不出只有少数块读取的条目。没有纹理同时以编码和未编码两种形式存储，因此任何读取都不会与包自身的块进行比较"
+
+msgid "supplied tables, no rule checks this format"
+msgstr "使用提供的表，没有规则可检查此格式"
+
+msgid "The tables you supplied are not this coder's: a check found {count} of {blocks} coded blocks that read a value no table gives or hold what no encoder writes. No texture read through them is the pack's"
+msgstr "提供的表不是此编码器的表：检查发现，{blocks} 个已编码块中有 {count} 个读取了任何表都未给出的值，或包含任何编码器都不会写出的内容。经由这些表读取的纹理都不是包中的纹理"
+
+msgid "A check of the tables you supplied held {bc6h} BC6H blocks and {bc7} BC7 blocks to the rules of their formats, and none broke one. No rule holds a BC1, BC3, BC4 or BC5 block"
+msgstr "对提供的表的检查，已按各自格式的规则核对了 {bc6h} 个 BC6H 块和 {bc7} 个 BC7 块，没有任何块违反规则。BC1、BC3、BC4、BC5 块不受任何规则约束"
+
+msgid "Exact rests on two tables: the tables you supplied and BC1's built-in ones give the same value for every preset slot and index symbol this texture reads. No texture is stored both coded and plain, so no read is compared with the pack's own blocks"
+msgstr "“精确”依据的是两份表：对于此纹理读取的每个预设槽位和索引符号，提供的表与 BC1 的内置表给出相同的值。没有纹理同时以编码和未编码两种形式存储，因此任何读取都不会与包自身的块进行比较"
+
+msgid "Read through the tables you supplied. None of this texture's coded blocks breaks a rule of its format, but one texture reads few of a preset's entries: the read is called exact only once `openrage-cli ttpf tables --check` has held the tables to the blocks of this format in a folder's packs"
+msgstr "经由提供的表读取。此纹理的已编码块无一违反其格式的规则，但单个纹理只读取预设中的少数条目：只有在 `openrage-cli ttpf tables --check` 用某个文件夹的包中该格式的块核对这些表之后，才将此读取称为精确"
+
+msgid "Read through the tables you supplied. No rule of this block format can show a wrong table and no second table is known, so nothing can confirm the read and it is not called exact"
+msgstr "经由提供的表读取。此块格式没有任何规则能揭示错误的表，也没有已知的第二份表，因此无从确认此读取，不将其称为精确"
+
+msgid "built-in BC1 tables, not confirmed"
+msgstr "内置 BC1 表，未经确认"
+
+msgid "plain levels read, coded levels not read"
+msgstr "已读取未编码级别，未读取已编码级别"
+
+msgid "a coded body not read, the levels above it read"
+msgstr "有一个已编码部分未读取，其上的级别已读取"
+
+msgid "The levels read are not all of this texture: a body of it stored through the coder was not read, so nothing is said of the levels that body holds, and the texture is not called exact"
+msgstr "已读取的级别并非此纹理的全部：其中经由编码器存储的一个部分未被读取，因此对该部分所含的级别不作任何说明，也不将此纹理称为精确"
+
+msgid "{count} coded blocks read a value the built-in BC1 tables give otherwise"
+msgstr "{count} 个已编码块读取了内置 BC1 表给出不同值的表项"
+
+msgid "BC1's built-in tables were fitted by their author and nothing confirms them value for value, so a read through them alone is not called exact. Through a tables file you supply, BC1 reads through that file, and a block is counted where the two tables give another value"
+msgstr "BC1 的内置表由其作者拟合而成，没有任何依据逐值确认它们，因此仅经由内置表的读取不称为精确。经由你提供的表文件时，BC1 经由该文件读取，并在两份表给出不同值之处计入相应的块"
+
+msgid "The blocks counted read a preset slot or an index symbol for which BC1's built-in tables give another value, or none. They were rebuilt through the tables you supplied, and no second table stands behind them"
+msgstr "计入的块读取了内置 BC1 表给出不同值或未给出值的预设槽位或索引符号。它们经由你提供的表重建，没有第二份表为其佐证"
+
 msgid "Stopped before it finished. The next calibration of this game goes on from where this one stopped"
 msgstr "在完成前已停止。下次校准此游戏时将从这次停止的地方继续"
 

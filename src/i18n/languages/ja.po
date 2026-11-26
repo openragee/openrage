@@ -16469,6 +16469,69 @@ msgstr "このゲームの一部のテクスチャはコンソールのコーダ
 msgid "An estimate, not the exact picture: {how}"
 msgstr "推定値であり、正確な画像ではありません：{how}"
 
+msgid "supplied tables, not checked"
+msgstr "提供されたテーブル、未チェック"
+
+msgid "not this coder's tables"
+msgstr "このコーダーのテーブルではありません"
+
+msgid "{count} of {blocks} coded blocks disagree with the supplied tables"
+msgstr "符号化ブロック{blocks}個のうち{count}個が提供されたテーブルと一致しません"
+
+msgid "The tables you supplied disagree with this pack: {count} of the coded blocks read so far read a value no table gives or hold what no encoder writes"
+msgstr "提供されたテーブルはこのパックと一致しません：これまでに読み取った符号化ブロックのうち{count}個が、どのテーブルにもない値を読み取るか、どのエンコーダーも書き出さない内容を含んでいます"
+
+msgid "The tables you supplied are not checked against your packs: `openrage-cli ttpf tables --check` does that for the packs of a folder"
+msgstr "提供されたテーブルは、お使いのパックに対してチェックされていません：`openrage-cli ttpf tables --check` がフォルダー内のパックに対してチェックを行います"
+
+msgid "A block that disagrees was not rebuilt as the pack stores it: the tables you supplied are wrong for it"
+msgstr "一致しないブロックは、パックが保存しているとおりには復元されていません：提供されたテーブルはそのブロックに対して誤っています"
+
+msgid "Not called exact: {how}"
+msgstr "正確とは表示されません：{how}"
+
+msgid "Exact rests on the rules of this block format, which a wrong table breaks: none of this texture's {count} coded blocks breaks one, and neither did any of the {blocks} blocks of the format that a check read through the tables you supplied. The rules see an entry of a preset through the blocks that read it: whether it is in its place, a BC7 end's p-bit and the top bit of an anchor's index. They do not see each end value, nor an entry that few blocks read. No texture is stored both coded and plain, so no read is compared with the pack's own blocks"
+msgstr "「正確」はこのブロック形式の規則に基づきます。誤ったテーブルはこの規則に反します：このテクスチャの符号化ブロック{count}個はどれも規則に反しておらず、チェックが提供されたテーブルを通して読み取ったこの形式のブロック{blocks}個も同様でした。規則は、プリセットのエントリーを、それを読み取るブロックを通してのみ確認できます。わかるのは、エントリーが正しい位置にあるか、BC7のエンドポイントのpビット、アンカーのインデックスの最上位ビットです。個々のエンドポイント値や、読み取るブロックが少ないエントリーまではわかりません。符号化と非符号化の両方で保存されているテクスチャはないため、読み取り結果がパック自身のブロックと比較されることはありません"
+
+msgid "supplied tables, no rule checks this format"
+msgstr "提供されたテーブル、この形式をチェックする規則なし"
+
+msgid "The tables you supplied are not this coder's: a check found {count} of {blocks} coded blocks that read a value no table gives or hold what no encoder writes. No texture read through them is the pack's"
+msgstr "提供されたテーブルはこのコーダーのものではありません：チェックで、符号化ブロック{blocks}個のうち{count}個が、どのテーブルにもない値を読み取るか、どのエンコーダーも書き出さない内容を含んでいました。これらのテーブルを通して読み取ったテクスチャは、パックのものではありません"
+
+msgid "A check of the tables you supplied held {bc6h} BC6H blocks and {bc7} BC7 blocks to the rules of their formats, and none broke one. No rule holds a BC1, BC3, BC4 or BC5 block"
+msgstr "提供されたテーブルのチェックで、BC6Hブロック{bc6h}個とBC7ブロック{bc7}個をそれぞれの形式の規則に照らしましたが、規則に反するブロックはありませんでした。BC1、BC3、BC4、BC5のブロックに当てはまる規則はありません"
+
+msgid "Exact rests on two tables: the tables you supplied and BC1's built-in ones give the same value for every preset slot and index symbol this texture reads. No texture is stored both coded and plain, so no read is compared with the pack's own blocks"
+msgstr "「正確」は2つのテーブルに基づきます：このテクスチャが読み取るすべてのプリセットスロットとインデックスシンボルについて、提供されたテーブルとBC1の内蔵テーブルが同じ値を与えています。符号化と非符号化の両方で保存されているテクスチャはないため、読み取り結果がパック自身のブロックと比較されることはありません"
+
+msgid "Read through the tables you supplied. None of this texture's coded blocks breaks a rule of its format, but one texture reads few of a preset's entries: the read is called exact only once `openrage-cli ttpf tables --check` has held the tables to the blocks of this format in a folder's packs"
+msgstr "提供されたテーブルを通して読み取りました。このテクスチャの符号化ブロックはどれも形式の規則に反していませんが、1つのテクスチャが読み取るプリセットのエントリーはわずかです：`openrage-cli ttpf tables --check` がフォルダー内のパックにあるこの形式のブロックでテーブルを確認するまで、この読み取りは正確とは表示されません"
+
+msgid "Read through the tables you supplied. No rule of this block format can show a wrong table and no second table is known, so nothing can confirm the read and it is not called exact"
+msgstr "提供されたテーブルを通して読み取りました。このブロック形式には誤ったテーブルを示せる規則がなく、2つ目のテーブルも知られていないため、この読み取りを裏付けるものはなく、正確とは表示されません"
+
+msgid "built-in BC1 tables, not confirmed"
+msgstr "内蔵のBC1テーブル、未確認"
+
+msgid "plain levels read, coded levels not read"
+msgstr "非符号化レベルは読み取り済み、符号化レベルは未読み取り"
+
+msgid "a coded body not read, the levels above it read"
+msgstr "符号化された部分の1つは未読み取り、それより上のレベルは読み取り済み"
+
+msgid "The levels read are not all of this texture: a body of it stored through the coder was not read, so nothing is said of the levels that body holds, and the texture is not called exact"
+msgstr "読み取ったレベルはこのテクスチャのすべてではありません：コーダーを通して保存された部分の1つが読み取られていないため、その部分が保持するレベルについては何も示されず、このテクスチャは正確とは表示されません"
+
+msgid "{count} coded blocks read a value the built-in BC1 tables give otherwise"
+msgstr "符号化ブロック{count}個が、内蔵のBC1テーブルでは別の値になる値を読み取っています"
+
+msgid "BC1's built-in tables were fitted by their author and nothing confirms them value for value, so a read through them alone is not called exact. Through a tables file you supply, BC1 reads through that file, and a block is counted where the two tables give another value"
+msgstr "BC1の内蔵テーブルは作者がフィットさせたもので、値ごとに裏付けるものがないため、内蔵テーブルだけを通した読み取りは正確とは表示されません。提供されたテーブルファイルがある場合、BC1はそのファイルを通して読み取られ、2つのテーブルの値が異なる箇所のブロックがカウントされます"
+
+msgid "The blocks counted read a preset slot or an index symbol for which BC1's built-in tables give another value, or none. They were rebuilt through the tables you supplied, and no second table stands behind them"
+msgstr "カウントされたブロックは、BC1の内蔵テーブルが別の値を与えるか、値を持たないプリセットスロットまたはインデックスシンボルを読み取っています。これらは提供されたテーブルを通して再構築されており、裏付けとなる2つ目のテーブルはありません"
+
 msgid "Stopped before it finished. The next calibration of this game goes on from where this one stopped"
 msgstr "完了前に停止しました。このゲームの次のキャリブレーションは、今回停止したところから続行します"
 

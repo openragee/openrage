@@ -246,6 +246,60 @@ pub(super) fn bc1_unknown_reach() -> usize {
         .unwrap_or(0)
 }
 
+/// Where two tables of BC1 do not give the same value, or only one of them gives one: by preset
+/// slot, and by quadrant symbol.
+pub(super) struct Apart {
+    slots: [bool; 256],
+    symbols: [bool; 256],
+}
+
+impl ModeTables {
+    /// Where these tables and `other` do not give the same value.
+    pub(super) fn apart(&self, other: &Self) -> Apart {
+        Apart {
+            slots: std::array::from_fn(|slot| self.preset[slot] != other.preset[slot]),
+            symbols: std::array::from_fn(|symbol| {
+                self.quadrants[symbol] != other.quadrants[symbol]
+            }),
+        }
+    }
+}
+
+impl Apart {
+    pub(super) fn slot(&self, slot: usize) -> bool {
+        self.slots[slot & 255]
+    }
+
+    pub(super) fn symbol(&self, symbol: u16) -> bool {
+        self.symbols[usize::from(symbol & 255)]
+    }
+
+    /// How many preset slots, and how many quadrant symbols.
+    pub(super) fn counts(&self) -> (usize, usize) {
+        let count = |all: &[bool]| all.iter().filter(|&&apart| apart).count();
+        (count(&self.slots), count(&self.symbols))
+    }
+
+    /// The blocks of the BC1 body `lanes` that read such a value: one whose chain of references
+    /// starts at such a slot, or one of whose quadrants carries such a symbol.
+    pub(super) fn blocks(&self, lanes: &[Vec<u16>]) -> usize {
+        // Whether each block's chain of references starts at such a slot: a block takes it from
+        // the block it refers to, and no field has to be rebuilt to know it.
+        let mut rests: Vec<bool> = Vec::with_capacity(lanes[0].len());
+        for block in 0..lanes[0].len() {
+            let back = back(&BC1, lanes, block);
+            rests.push(match back {
+                0 => false,
+                back if back > block => self.slot(256 + block - back),
+                back => rests[block - back],
+            });
+        }
+        (rests.iter().enumerate())
+            .filter(|&(block, &rests)| rests || (8..12).any(|lane| self.symbol(lanes[lane][block])))
+            .count()
+    }
+}
+
 /// Two 4-bit symbols as one 8-bit symbol, the first on the even bits.
 pub(super) fn interleave(first: u16, second: u16) -> u16 {
     (0..4).fold(0, |all, bit| {
@@ -392,6 +446,8 @@ pub(super) fn indices(
 pub(super) struct Rebuilt {
     pub(super) bytes: Vec<u8>,
     pub(super) unknown: usize,
+    /// The blocks that break a rule every encoder of their format keeps; none in a mode with no such rule.
+    pub(super) stray: usize,
 }
 
 /// The value of the solved slot nearest `slot` for `field`, which stands in for one that is not known.
@@ -463,5 +519,9 @@ pub(super) fn blocks(
         }
         unknown += usize::from(!known);
     }
-    Ok(Rebuilt { bytes, unknown })
+    Ok(Rebuilt {
+        bytes,
+        unknown,
+        stray: 0,
+    })
 }

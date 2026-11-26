@@ -503,16 +503,17 @@ nothing of this phase, R70g needs R70b only for the bounds at a position, and R7
 drawn with its models, is what most screen rows wait for. A row takes the default beside its
 question in [the rulings asked](World_Editor_Plan.md#rulings-asked-of-the-owner), except a part
 whose ruling says "It waits". Parts of R70a, R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k,
-R70l, R70m, R70n, R70o, R70p, R70q, R70r, R70v, R70w and R70y are built, on installs and packs made
-by hand and on the staged corpus, with no screen but the Build tab's line of R70a, the Map screen's
-session of R70h and its Delete of R70k, and the presets of keys in Settings of R70v. No row is
-closed, the install suites that have run on the two installs are those of R70b, R70c, R70d, R70e,
-R70g, R70h, R70k, R70n, R70q, R70r, R70w and R70y and of the data parts of R70m and R70o
+R70l, R70m, R70n, R70o, R70p, R70q, R70r, R70v, R70w, R70x, R70y and R70z are built, on installs and
+packs made by hand and on the staged corpus, with no screen but the Build tab's line of R70a, the
+Map screen's session of R70h and its Delete of R70k, and the presets of keys in Settings of R70v.
+No row is closed, the install suites that have run on the two installs are those of R70b, R70c,
+R70d, R70e, R70g, R70h, R70k, R70m, R70n, R70q, R70r, R70w, R70x, R70y and R70z and of the data
+part of R70o
 ([how a lane runs one](../guides/Development_Workflow.md#install-suites)), and nothing was loaded
 in a game: each row's Where it stands says what is built and what is left. R70 has no letter left:
 a finding that fits no row opens the next number.
 
-- [ ] [R70 The GTA V world editor](#r70-the-gta-v-world-editor) — the plan of 2026-11-25, in the parts below, begun in lanes the same day; parts of R70a, R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70l, R70m, R70n, R70o, R70p, R70q, R70r, R70v, R70w and R70y are built and no row is closed, and the Map screen of wave P44 and the World screen of GTA VI are what it starts from
+- [ ] [R70 The GTA V world editor](#r70-the-gta-v-world-editor) — the plan of 2026-11-25, in the parts below, begun in lanes the same day; parts of R70a, R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70l, R70m, R70n, R70o, R70p, R70q, R70r, R70v, R70w, R70x, R70y and R70z are built and no row is closed, and the Map screen of wave P44 and the World screen of GTA VI are what it starts from
   - [ ] [R70a What the game loads](#r70a-what-the-game-loads)
   - [ ] [R70b The GTA V world index](#r70b-the-gta-v-world-index)
   - [ ] [R70g Collision as a query](#r70g-collision-as-a-query)
@@ -9553,8 +9554,9 @@ together.
 A part's Done when is its check; its brief says what to read and build. A part that writes a
 kind of file adds it to the recipe and the sheet of R70a. Lanes began on 2026-11-25: parts of R70a,
 R70b, R70c, R70d, R70e, R70g, R70h, R70i, R70j, R70k, R70l, R70m, R70n, R70o, R70p, R70q, R70r, R70v,
-R70w and R70y are built, none closed, install suites run for R70b, R70c, R70d, R70e, R70g,
-R70h, R70k, R70m, R70n, R70o, R70q, R70r, R70w and R70y, and nothing loaded in a game.
+R70w, R70x, R70y and R70z are built, none closed, install suites run for R70b, R70c, R70d, R70e,
+R70g, R70h, R70k, R70m, R70n, R70o, R70q, R70r, R70w, R70x, R70y and R70z, and nothing loaded in a
+game.
 
 ### R70a What the game loads
 

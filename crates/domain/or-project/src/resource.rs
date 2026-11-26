@@ -127,10 +127,12 @@ pub const RULES: &[Rule] = &[
         Info,
         "a map places an archetype that no type file of the resource declares, so the game or another resource has to",
     ),
+    // ⚠ A note and no warning: asked of the game's own type files it fires on more than half of them, so it says of a resource what
+    // the game says of itself (`how_many_texture_dictionaries_the_type_files_of_an_install_name_and_no_file_holds`).
     rule(
         "texture-dictionary-missing",
-        Warning,
-        "an archetype of a type file names a texture dictionary that neither the resource nor the game holds",
+        Info,
+        "an archetype of a type file names a texture dictionary that neither the resource nor the game holds, as more than half the type files of the game do",
     ),
     rule(
         "texture-dictionary-elsewhere",
@@ -141,6 +143,17 @@ pub const RULES: &[Rule] = &[
 
 pub fn rule_of(code: &str) -> Option<&'static Rule> {
     RULES.iter().find(|r| r.code == code)
+}
+
+/// The texture dictionaries the archetypes of `types` name that `held` says nothing holds, each as its archetype names it.
+pub fn unheld_texture_dictionaries(
+    types: &CMapTypes,
+    held: impl Fn(u32) -> bool,
+) -> Vec<&HashedString> {
+    (types.archetypes.iter())
+        .map(|archetype| &archetype.texture_dictionary)
+        .filter(|textures| textures.hash != 0 && !held(textures.hash))
+        .collect()
 }
 
 /// What an install is asked about a name the resource does not hold, each by the hash the game keys it with.
@@ -544,7 +557,6 @@ impl Report {
         let mut declared: BTreeSet<u32> = BTreeSet::new();
         for (path, types) in &named.types {
             let mut without_model = Vec::new();
-            let mut without_textures = Vec::new();
             for archetype in &types.archetypes {
                 declared.insert(archetype.name.hash);
                 // An interior is drawn by the entities it holds and has no model of its own.
@@ -560,14 +572,14 @@ impl Report {
                 if !interior && !held(asset.hash) && !(dictionary != 0 && held(dictionary)) {
                     without_model.push(shown(asset));
                 }
-                let textures = &archetype.texture_dictionary;
-                if textures.hash != 0
-                    && !dictionaries.contains(&textures.hash)
-                    && !install.is_some_and(|game| game.holds_texture_dictionary(textures.hash))
-                {
-                    without_textures.push(shown(textures));
-                }
             }
+            let held = |name: u32| {
+                dictionaries.contains(&name)
+                    || install.is_some_and(|game| game.holds_texture_dictionary(name))
+            };
+            let without_textures: Vec<String> = (unheld_texture_dictionaries(types, held).iter())
+                .map(|name| shown(name))
+                .collect();
             let (code, tail) = match install {
                 Some(_) => ("model-missing", "and the game holds none either"),
                 None => (

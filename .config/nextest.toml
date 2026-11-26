@@ -237,6 +237,7 @@ not (
   | binary_id(=or-cli::fix_all_safe_and_the_texture_optimiser_run_from_the_command_line)
   | binary_id(=or-cli::gta6_edit_to_patched_copy)
   | binary_id(=or-cli::gta6_shaded_stage_census)
+  | binary_id(=or-cli::how_many_texture_dictionaries_the_type_files_of_an_install_name_and_no_file_holds)
   | binary_id(=or-cli::the_actions_of_the_workspace_run_from_the_command_line)
   | binary_id(=or-cli::the_census_names_every_reader)
   | binary_id(=or-cli::the_mesh_doctor_runs_from_the_command_line)
@@ -298,6 +299,7 @@ not (
   | (binary_id(=or-title::the_water_file_of_an_install) & (
       test(/^a_real_install::/)
     ))
+  | binary_id(=or-title::which_groups_the_change_sets_of_an_install_belong_to)
   | binary_id(=or-io::gta6_string_blobs)
   | binary_id(=or-io::gta6_string_hashes)
   | binary_id(=or-io::gta6_patch_in_place)
@@ -377,6 +379,7 @@ not (
   | binary_id(=or-io::ycd_encode)
   | binary_id(=or-maps::a_merge_is_right_refused_or_a_conflict_and_never_a_guess)
   | binary_id(=or-maps::deleting_an_entity_of_the_install_keeps_every_link)
+  | binary_id(=or-maps::how_the_packs_of_an_install_carry_their_maps)
   | binary_id(=or-maps::the_doors_bounds_and_path_regions_of_the_install)
   | binary_id(=or-maps::the_rules_fire_on_a_map_built_to_break_them)
   | binary_id(=or-maps::what_the_rules_say_of_the_install)
@@ -504,6 +507,7 @@ not (
   | binary_id(=or-wardrobe::two_packs_of_one_collection_are_refused_and_a_tampered_build_fails_its_check)
   | binary_id(=or-world::naming_every_scenario_point)
   | binary_id(=or-world::what_a_map_holds_besides_entities)
+  | binary_id(=or-world::what_the_flags_of_a_manifest_entry_follow)
   | (binary_id(=xtask::bin/xtask) & (
       test(/^janitor::tests::/)
     ))

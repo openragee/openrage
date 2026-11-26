@@ -12,6 +12,7 @@
 
 pub mod cfg;
 pub mod compiled;
+pub mod compiled_write;
 pub mod ir;
 pub mod listing;
 pub mod names;

@@ -77,13 +77,16 @@ The table of contents of an RPF9 archive is enciphered, and OpenRage ships no ke
 from the user's own executable, and [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md) gives the steps.
 With them, an archive the editor opens is a folder of the Files tree, as a GTA V one is: a nested
 archive is a folder in it, each row shows its entry's kind as the table states it, a double-click
-opens an entry, Extract writes one out, and the Inspector shows a selected entry's row. An entry is
-named where OpenRage holds a name that hashes to it, and by its hash otherwise.
+opens an entry, Extract writes one out, and the Inspector shows a selected entry's row; there is no
+separate archive panel. An entry is named where OpenRage holds a name that hashes to it, from your
+names folder, the names you mined and harvested, kept through one cache in the configuration
+folder, and the bundled words, and by its hash otherwise.
 `openrage-cli rpf9` lists, finds, counts and extracts entries from the table, nested archives
 included, an enciphered one deciphered, and `rpf9 tree-install` merges an install's paths in the
-order the game mounts its archives. Without keys, the editor and `openrage-cli rpf scan` find the
-bodies an archive stores in the clear, and the archive opens as its scan's list, in a tab of its
-own, with a message saying why. The install opens as a plain folder.
+order the game mounts its archives. The install opens as a plain folder. Only without keys do the
+editor and `openrage-cli rpf scan` fall back to finding the bodies an archive stores in the clear:
+the archive then opens as its scan's list, in a tab of its own, with a message saying why, and the
+folder's view offers the scan and the name harvest.
 
 - **Read.** Texture packs (`.ttpf`) and dictionary textures, drawables, fragments, dictionaries of
   drawables and their skeletons, bounds, navigation cells, map placements and map types, clip
@@ -117,6 +120,10 @@ own, with a message saying why. The install opens as a plain folder.
   signature still matches and no check read in the game's code rejects it; the game has not been run
   with one. `openrage-cli rpf9 patch` writes one, `rpf9 fits` says whether a replacement fits, and
   the tree's Save as… and File ▸ Save into a copy of the archive… write one when every change fits.
+  A change fits only at the body's own length, and a changed chunk is deflated again with zlib's
+  levels and then an optimal parse, which must fit the stored size the table states:
+  [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md#a-patched-copy-step-by-step) gives the steps and
+  what fits today.
   A rebuilt archive lays a table out again, which the game refuses because only its maker can sign
   one: `rpf9 replace`, `remove`, `rename`, `defrag`, `add` and `build`, `dlc create-gta6`, and the
   app's saves when a change does not fit, whose message names the rows that kept it from being

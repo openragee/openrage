@@ -7,9 +7,13 @@
 //! counted. Measured first on the Xbox build 1.0.2.1 with zlib at level 9: 42 of 3,249 deflated
 //! chunks fitted (the game's compressor is stronger), every table walked, and every 24-byte
 //! row's table was 64 KiB cuts of its body; that is what is asserted, the rest is printed.
+//! (3) Beside (1), up to 40 deflated chunks per kind are re-deflated by the patch writer's optimal
+//! parse, counted against the same ceilings and inflated back; that every stream inflates to its
+//! chunk is asserted, the fits and the time per 64 KiB are printed.
 //!
 //! Bounded: 40 bodies per kind, 8 per kind from each archive file, bodies of at most 4 MiB stored,
-//! and 300 s of walking, after which it reports what it reached.
+//! and 300 s of walking, after which it reports what it reached; the optimal parse takes chunks of
+//! at most 256 KiB inflated, and 300 s more in all, which the walk's bound does not count.
 //!
 //! Install-gated, game-derived and slow (it walks nested archives); it skips without:
 //!   `OPENRAGE_GTA6_KEYS`   the `gtavi_magic.dat` key snapshot (never committed)
@@ -25,6 +29,7 @@ use std::time::{Duration, Instant};
 use flate2::write::{DeflateEncoder, ZlibEncoder};
 use flate2::{Compression, Decompress, FlushDecompress, Status};
 use or_io::container::rpf::gta6_chunk_table::{entry_chunks, Chunk};
+use or_io::container::rpf::gta6_patch::optimal_deflate;
 use or_io::container::rpf::rpf9_write::write_rpf9_resource_chunks;
 use or_io::container::rpf::{
     read_rpf9_body, Gta6Class, Gta6Entry, Gta6Mount, Gta6NestedRow, GtaViKeys, Rpf9BodyKind,
@@ -56,9 +61,12 @@ const DEADLINE: Duration = Duration::from_secs(300);
 const CAPS: [u64; 2] = [8 << 20, 32 << 20];
 /// The piece a 24-byte row's body is cut into before each piece is deflated or stored.
 const PIECE: usize = 0x1_0000;
-/// The fewest bytes of slack an empty stored block pads a stream by, so the stream can end exactly
-/// at its stored size as OpenRage's reader requires.
-const PADDABLE: i64 = 5;
+/// Deflated chunks the optimal parse re-deflates per kind.
+const OPTIMAL_PER_KIND: usize = 40;
+/// The largest chunk, inflated, the optimal parse is given.
+const OPTIMAL_CAP: usize = 256 << 10;
+/// The optimal parse's time in all, beside the walk's.
+const OPTIMAL_BUDGET: Duration = Duration::from_secs(300);
 
 const TEXTURE_DICTIONARY: &str = "texture dictionary";
 const DRAWABLE: &str = "drawable";
@@ -126,12 +134,18 @@ fn masked(message: impl Display) -> String {
 /// `data` inflated as one stream (zlib, or raw DEFLATE) that ends exactly at its end and gives
 /// exactly `want` bytes; `None` otherwise.
 fn inflate_exact(data: &[u8], zlib: bool, want: usize) -> Option<Vec<u8>> {
+    inflate_within(data, zlib, want)
+        .filter(|(used, _)| *used == data.len())
+        .map(|(_, out)| out)
+}
+
+/// `data` inflated as one stream that ends within it and gives exactly `want` bytes, with the bytes it
+/// used: the reader ignores what follows a chunk's stream.
+fn inflate_within(data: &[u8], zlib: bool, want: usize) -> Option<(usize, Vec<u8>)> {
     let mut d = Decompress::new(zlib);
     let mut out = Vec::with_capacity(want + 1);
     match d.decompress_vec(data, &mut out, FlushDecompress::Finish) {
-        Ok(Status::StreamEnd) if d.total_in() as usize == data.len() && out.len() == want => {
-            Some(out)
-        }
+        Ok(Status::StreamEnd) if out.len() == want => Some((d.total_in() as usize, out)),
         _ => None,
     }
 }
@@ -169,15 +183,17 @@ fn walk_stored(stored: &[u8], table: &[Chunk]) -> Result<Vec<Piece>, String> {
                 data: bytes.to_vec(),
                 raw: false,
             },
-            true => match inflate_exact(bytes, true, want) {
-                Some(data) => Piece { data, raw: false },
+            true => match inflate_within(bytes, true, want) {
+                Some((_, data)) => Piece { data, raw: false },
                 None => Piece {
-                    data: inflate_exact(bytes, false, want).ok_or_else(|| {
-                        format!(
-                            "chunk {i} does not inflate from {} bytes to {want}",
-                            c.stored
-                        )
-                    })?,
+                    data: inflate_within(bytes, false, want)
+                        .map(|(_, d)| d)
+                        .ok_or_else(|| {
+                            format!(
+                                "chunk {i} does not inflate from {} bytes to {want}",
+                                c.stored
+                            )
+                        })?,
                     raw: true,
                 },
             },
@@ -356,6 +372,12 @@ struct Tally {
     cut_ours: usize,
     writes: BTreeMap<String, usize>,
     archive: BTreeMap<String, usize>,
+    /// Per chunk the optimal parse re-deflated: its ceiling, the tree's best, the optimal parse's.
+    optimal: Vec<[i64; 3]>,
+    optimal_inflated: u64,
+    optimal_time: Duration,
+    /// Optimal streams that do not inflate back to their chunk.
+    optimal_wrong: usize,
 }
 
 #[derive(Default)]
@@ -366,6 +388,8 @@ struct State {
     walk_failed: Vec<String>,
     started: Option<Instant>,
     timed_out: bool,
+    /// The optimal parse's time so far, which the walk's bound leaves out.
+    optimal_spent: Duration,
 }
 
 impl State {
@@ -375,7 +399,8 @@ impl State {
     }
 
     fn done(&mut self) -> bool {
-        if self.started.is_some_and(|t| t.elapsed() > DEADLINE) {
+        if (self.started).is_some_and(|t| t.elapsed().saturating_sub(self.optimal_spent) > DEADLINE)
+        {
             self.timed_out = true;
             return true;
         }
@@ -387,8 +412,9 @@ impl State {
     }
 }
 
-/// The headroom of one body's chunks, as part (1) counts it, into `t`.
-fn headroom(t: &mut Tally, table: &[Chunk], pieces: &[Piece]) {
+/// The headroom of one body's chunks, as parts (1) and (3) count it, into `t`; the optimal parse's
+/// time is added to `spent`.
+fn headroom(t: &mut Tally, spent: &mut Duration, table: &[Chunk], pieces: &[Piece]) {
     let mut all = true;
     for (c, piece) in table.iter().zip(pieces) {
         t.chunks += 1;
@@ -397,7 +423,24 @@ fn headroom(t: &mut Tally, table: &[Chunk], pieces: &[Piece]) {
             continue;
         }
         t.deflated += 1;
-        let slack = i64::from(c.stored) - deflated_len(&piece.data, piece.raw) as i64;
+        let tree = deflated_len(&piece.data, piece.raw) as i64;
+        let slack = i64::from(c.stored) - tree;
+        if t.optimal.len() < OPTIMAL_PER_KIND
+            && piece.data.len() <= OPTIMAL_CAP
+            && *spent < OPTIMAL_BUDGET
+        {
+            let began = Instant::now();
+            let stream =
+                optimal_deflate(&piece.data, !piece.raw).expect("the optimal parse deflates");
+            let took = began.elapsed();
+            *spent += took;
+            t.optimal_time += took;
+            t.optimal_inflated += piece.data.len() as u64;
+            let back = inflate_exact(&stream, !piece.raw, piece.data.len());
+            t.optimal_wrong += usize::from(back.as_deref() != Some(&piece.data[..]));
+            t.optimal
+                .push([i64::from(c.stored), tree, stream.len() as i64]);
+        }
         t.slack.push(slack);
         if slack >= 0 {
             t.fit += 1;
@@ -491,7 +534,7 @@ fn measure(
     let t = st.kinds.entry(kind).or_default();
     t.bodies += 1;
     t.ciphered += usize::from(ciphered);
-    headroom(t, table, &pieces);
+    headroom(t, &mut st.optimal_spent, table, &pieces);
 
     let (write, before) = match row {
         None => {
@@ -618,6 +661,11 @@ fn walk(
     }
 }
 
+/// Milliseconds per 64 KiB inflated.
+fn per_64k(time: Duration, inflated: u64) -> f64 {
+    time.as_secs_f64() * 1000.0 * PIECE as f64 / inflated.max(1) as f64
+}
+
 fn print(kind: &str, t: &Tally) {
     let mut s = t.slack.clone();
     s.sort_unstable();
@@ -630,17 +678,36 @@ fn print(kind: &str, t: &Tally) {
     );
     if !s.is_empty() {
         println!(
-            "  slack least {}, tenth {}, median {}, ninetieth {}, most {}; below 0: {}, \
-             0 to {}: {}, {PADDABLE} or more: {}",
+            "  slack least {}, tenth {}, median {}, ninetieth {}, most {}; below 0: {}, 0 or more: {}",
             at(0.0),
             at(0.1),
             at(0.5),
             at(0.9),
             at(1.0),
             band(i64::MIN, -1),
-            PADDABLE - 1,
-            band(0, PADDABLE - 1),
-            band(PADDABLE, i64::MAX),
+            band(0, i64::MAX),
+        );
+    }
+    if !t.optimal.is_empty() {
+        let n = t.optimal.len();
+        // Slack against the ceiling of the tree's best (1) or the optimal parse's (2) stream.
+        let of = |i: usize| t.optimal.iter().map(move |c| c[0] - c[i]);
+        let total = |i: usize| t.optimal.iter().map(|c| c[i]).sum::<i64>();
+        let over = |i: usize| 100.0 * (total(i) - total(0)) as f64 / total(0).max(1) as f64;
+        let mut slack: Vec<i64> = of(2).collect();
+        slack.sort_unstable();
+        println!(
+            "  optimal parse over {n} of those chunks: {} fit, against {} at the tree's best \
+             level; {:+.2} % over the stored bytes, against {:+.2} %; slack median {}, most {}; \
+             {:.0} ms per 64 KiB; {} streams do not inflate back",
+            of(2).filter(|&s| s >= 0).count(),
+            of(1).filter(|&s| s >= 0).count(),
+            over(2),
+            over(1),
+            slack[n / 2],
+            slack[n - 1],
+            per_64k(t.optimal_time, t.optimal_inflated),
+            t.optimal_wrong,
         );
     }
     for (label, n) in &t.writes {
@@ -688,9 +755,31 @@ fn which_edits_fit_in_place_is_measured_per_kind() {
     for kind in HEADERLESS.iter().map(|(k, _)| *k).chain(PSO) {
         print(kind, st.kinds.get(kind).unwrap_or(&Tally::default()));
     }
+    let kinds = || st.kinds.values();
+    let measured: usize = kinds().map(|t| t.optimal.len()).sum();
+    let fit_optimal = (kinds().flat_map(|t| &t.optimal))
+        .filter(|c| c[0] >= c[2])
+        .count();
+    let fit_tree = (kinds().flat_map(|t| &t.optimal))
+        .filter(|c| c[0] >= c[1])
+        .count();
+    let inflated = kinds().map(|t| t.optimal_inflated).sum();
+    println!(
+        "optimal parse in all: {fit_optimal} of {measured} chunks fit, against {fit_tree} at the \
+         tree's best level; {:.1} s spent of the {} s budget, {:.0} ms per 64 KiB",
+        st.optimal_spent.as_secs_f64(),
+        OPTIMAL_BUDGET.as_secs(),
+        per_64k(st.optimal_spent, inflated),
+    );
     for failure in st.walk_failed.iter().take(20) {
         eprintln!("  {failure}");
     }
+    let wrong: usize = kinds().map(|t| t.optimal_wrong).sum();
+    assert_eq!(
+        wrong, 0,
+        "{wrong} optimal-parse streams do not inflate back to their chunk"
+    );
+    assert!(measured > 0, "the optimal parse measured no chunk");
     assert!(
         st.walk_failed.is_empty(),
         "{} bodies do not walk by their chunk tables",

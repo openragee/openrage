@@ -52,6 +52,8 @@ fn closed_of(near: &[(u32, Option<Arc<NavMesh>>)], found: &BTreeMap<u32, bool>) 
 
 /// The cells the table of the archive at `archive` holds a navigation row of; `None` where it does
 /// not open or a row's cell does not read.
+// Only navigation rows are counted: on the build every sized class-0x0B row of a file holding one
+// is metadata, never a navigation body (`openrage-cli`'s install-gated navmesh edit test holds it).
 fn table_cells(archive: &Path, keys: Result<Arc<GtaViKeys>, String>) -> Option<BTreeSet<u32>> {
     let keys = keys.ok()?;
     let mut file = File::open(archive).ok()?;

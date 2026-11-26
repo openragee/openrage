@@ -80,6 +80,7 @@ impl AppState {
         if shown.is_some_and(|kind| self.active_workspace.handles_kind(kind)) {
             let path = body_path(&place.file, place.offset, View::Bytes);
             tree_open::leave(&path, &place, row_start, rpf9_table::keys);
+            tree_open::name(self, &path, doc, node);
             self.open_scanned_path(path, true);
         }
         true

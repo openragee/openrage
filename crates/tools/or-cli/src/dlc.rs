@@ -41,7 +41,8 @@ fn print_usage() {
          openrage-cli dlc create <src_dir> <out_dir> --name <name> [--type compat|level|tu|paid]\n                          \
          [--order N] [--minor-order N] [--encryption open|aes|ng]\n  \
          openrage-cli dlc inspect <dlc.rpf | document>\n\n\
-         inspect also reads one setup, content or change-set document, GTA V's or GTA VI's.\n\n\
+         inspect also reads one setup, content or change-set document, GTA V's or GTA VI's.\n\
+         A GTA VI pack (RPF9) is read with its key snapshot: --keys <snapshot> [--exe <game.exe>].\n\n\
          create builds <out_dir>/<name>/dlc.rpf from everything under <src_dir>,\n\
          preserving the tree, and prints the dlclist.xml line the pack needs.\n\n\
          It never writes into a game install: install the pack by copying the\n\
@@ -257,6 +258,9 @@ fn cmd_inspect(args: &[String]) -> Result<(), String> {
         return Err("expected <dlc.rpf>".into());
     };
     let path = PathBuf::from(path);
+    if crate::rpf::is_rpf9(&path) {
+        return crate::gta6_dlc_inspect::run(&path, keys_override.as_deref(), &args[1..]);
+    }
     if is_xml_document(&path)? {
         let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         return inspect_document(&bytes);

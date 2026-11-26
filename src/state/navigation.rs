@@ -303,7 +303,9 @@ impl AppState {
     /// The place a row is, if it can be named well enough to come back to.
     pub fn place_of(&self, at: Location) -> Option<Place> {
         let doc = self.document(at.doc)?;
-        if let Some(binding) = doc.rpf_entry_binding {
+        let tree_row = (doc.path.as_deref())
+            .and_then(|path| super::rpf_archive_open::tree_open::row_of(self, path));
+        if let Some(binding) = doc.rpf_entry_binding.or(tree_row) {
             return self.place_of(Location {
                 doc: binding.parent_doc_id,
                 node: binding.entry_id,

@@ -666,8 +666,9 @@ pub(crate) fn save_dialog_for_active(state: &AppState) -> Option<std::path::Path
 
 /// The Save As dialog for a document, named after it.
 pub(crate) fn save_dialog_for(state: &AppState, id: DocumentId) -> Option<std::path::PathBuf> {
-    if let Some(name) = state.gta6_tree_copy_name(id) {
-        return file_dialogs::save_gta6_archive_copy(&name);
+    // A GTA VI tree's dialog opens once its save is planned, saying what the save will write.
+    if state.plan_gta6_tree_save(id) {
+        return None;
     }
     let doc = state.document(id)?;
     file_dialogs::save_any_file(doc.kind, Some(&save_as_name(doc)))

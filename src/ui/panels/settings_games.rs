@@ -71,13 +71,23 @@ fn draw_game_row(ui: &mut egui::Ui, state: &mut AppState, game: Game) {
                 ui.colored_label(theme::SUCCESS, tr!("(active)"));
             }
             if !supported {
-                let (colour, note) = if crate::state::gta_vi::read_by_scan(game) {
-                    (theme::TEXT_SECONDARY, tr!("(read without names)"))
+                let (colour, note, hover) = if crate::state::gta_vi::read_by_scan(game) {
+                    let keys = crate::state::rpf9_scan::rpf9_table::gta6_keys_held::gta6_keys();
+                    if keys == crate::state::rpf9_scan::rpf9_table::gta6_keys_held::Gta6Keys::Asking
+                    {
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(200));
+                    }
+                    gta6_note(&keys, game.profile().description())
                 } else {
-                    (theme::WARNING, tr!("(not readable yet)"))
+                    let note = tr!("(not readable yet)").to_string();
+                    (
+                        theme::WARNING,
+                        note,
+                        game.profile().description().to_string(),
+                    )
                 };
-                ui.colored_label(colour, note)
-                    .on_hover_text(game.profile().description());
+                ui.colored_label(colour, note).on_hover_text(hover);
             }
         });
         ui.add_space(theme::SPACING_HAIR);
@@ -153,6 +163,37 @@ fn draw_game_row(ui: &mut egui::Ui, state: &mut AppState, game: Game) {
         }
     });
     ui.add_space(theme::SPACING_HAIR);
+}
+
+/// The note beside GTA VI's name: whether its keys were found and how many names are held, its colour, and its hover text.
+fn gta6_note(
+    keys: &crate::state::rpf9_scan::rpf9_table::gta6_keys_held::Gta6Keys,
+    description: &str,
+) -> (theme::Themed, String, String) {
+    use crate::state::rpf9_scan::rpf9_table::gta6_keys_held::Gta6Keys;
+    let (colour, note) = match keys {
+        Gta6Keys::Held { names: Some(held) } => (
+            theme::SUCCESS,
+            tr_n!(
+                "(keys found, {count} name held)",
+                "(keys found, {count} names held)",
+                *held
+            ),
+        ),
+        Gta6Keys::Held { names: None } => (
+            theme::SUCCESS,
+            tr!("(keys found, reading the names…)").to_string(),
+        ),
+        Gta6Keys::Asking => (
+            theme::TEXT_SECONDARY,
+            tr!("(looking for the keys…)").to_string(),
+        ),
+        Gta6Keys::Missing(why) => {
+            let note = tr!("(no keys: its archives are read by a scan)").to_string();
+            return (theme::WARNING, note, why.clone());
+        }
+    };
+    (colour, note, description.to_string())
 }
 
 /// The open game's keys: one coloured line that says whether archives open, and the detail behind its arrow.
@@ -431,4 +472,20 @@ fn draw_keys_actions(ui: &mut egui::Ui, state: &mut AppState) {
             );
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::rpf9_scan::rpf9_table::gta6_keys_held::Gta6Keys;
+
+    #[test]
+    fn gta_vi_s_note_says_the_keys_are_found_and_the_names_held_or_why_a_scan_reads_it() {
+        let (_, note, _) = gta6_note(&Gta6Keys::Held { names: Some(3) }, "d");
+        assert_eq!(note, "(keys found, 3 names held)");
+        assert!(!note.contains("without names"));
+        let (_, note, hover) = gta6_note(&Gta6Keys::Missing("zq why".to_string()), "d");
+        assert!(note.contains("scan"), "{note}");
+        assert_eq!(hover, "zq why");
+    }
 }

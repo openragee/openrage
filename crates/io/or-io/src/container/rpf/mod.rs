@@ -87,7 +87,8 @@ pub use gta6_mount::{open_at, Gta6DecryptedBody, Gta6Mount};
 pub use gta6_navigation_rows::{navigation_cell, navigation_cells, NAVIGATION_MESH};
 #[cfg(feature = "gta6")]
 pub use gta6_patch::{
-    plan_patch, write_patched_copy, BodyPatch, ChunkPatch, PatchPlan, PatchRefusal, PatchReport,
+    plan_patch, write_patched_copy, write_planned_copy, BodyPatch, ChunkPatch, PatchPlan,
+    PatchRefusal, PatchReport,
 };
 #[cfg(feature = "gta6")]
 pub use gta6_rpf::{Gta6Context, Rpf9Kind, Rpf9Place, GTA6_NAMES_ENV};

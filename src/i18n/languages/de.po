@@ -781,9 +781,6 @@ msgstr "Räume und Portale werden aus der Datei gelesen. Änderungen im Bereich 
 msgid "Rotation"
 msgstr "Rotation"
 
-msgid "Save the edits to a new archive: a patched copy where every edit fits its entry's chunks, else a rebuilt archive, which the game refuses"
-msgstr "Die Änderungen in ein neues Archiv speichern: eine gepatchte Kopie, wenn jede Änderung in die Chunks ihres Eintrags passt, sonst ein neu aufgebautes Archiv, das das Spiel ablehnt"
-
 msgid "Scale"
 msgstr "Skalierung"
 
@@ -12824,9 +12821,6 @@ msgstr "GTA VI-Archiv"
 msgid "RPF9 — a GTA VI archive, shown as what a scan without its table finds, read-only"
 msgstr "RPF9 – ein GTA VI-Archiv, angezeigt als das, was ein Scan ohne seine Tabelle findet, schreibgeschützt"
 
-msgid "(read without names)"
-msgstr "(ohne Namen gelesen)"
-
 msgid "Its first 64 bytes are zero, as a piece a download has not delivered reads, so whether it is an RPF9 archive and what its header states are not known; the bytes present are scanned."
 msgstr "Seine ersten 64 Bytes sind null, wie bei einem Stück, das ein Download nicht geliefert hat, daher ist nicht bekannt, ob es ein RPF9-Archiv ist und was sein Header angibt; die vorhandenen Bytes werden gescannt."
 
@@ -17070,3 +17064,42 @@ msgstr "Liste {list}: {entries}"
 
 msgid "Add to the facial controls it writes"
 msgstr "Zu den Gesichtssteuerungen hinzufügen, die es schreibt"
+
+msgid "{count} byte over"
+msgid_plural "{count} bytes over"
+msgstr[0] "{count} Byte zu viel"
+msgstr[1] "{count} Bytes zu viel"
+
+msgid "{count} byte short"
+msgid_plural "{count} bytes short"
+msgstr[0] "{count} Byte zu wenig"
+msgstr[1] "{count} Bytes zu wenig"
+
+msgid "The edits to {file} save as a patched copy: each changed body is written in its entry's place, chunk by chunk, and the table stays byte-identical, so its signature still matches and no check read in the game's code rejects it; the game has not been run with it."
+msgstr "Die Änderungen an {file} werden als gepatchte Kopie gespeichert: Jeder geänderte Inhalt wird an der Stelle seines Eintrags geschrieben, Chunk für Chunk, und die Tabelle bleibt byte-gleich, daher passt ihre Signatur weiterhin und keine im Code des Spiels gelesene Prüfung lehnt sie ab; das Spiel wurde damit nicht ausgeführt."
+
+msgid "The edits to {file} save as a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "Die Änderungen an {file} werden als neu aufgebautes Archiv gespeichert, das das Spiel ablehnt, weil nur sein Hersteller die Tabelle signieren kann."
+
+msgid "These rows keep it from being patched in place: {rows}."
+msgstr "Diese Zeilen verhindern, dass an Ort und Stelle gepatcht wird: {rows}."
+
+msgid "No key opens the tables of these archives, so they are read by a scan: {why}"
+msgstr "Kein Schlüssel öffnet die Tabellen dieser Archive, daher werden sie per Scan gelesen: {why}"
+
+msgid "(keys found, {count} name held)"
+msgid_plural "(keys found, {count} names held)"
+msgstr[0] "(Schlüssel gefunden, {count} Name vorhanden)"
+msgstr[1] "(Schlüssel gefunden, {count} Namen vorhanden)"
+
+msgid "(keys found, reading the names…)"
+msgstr "(Schlüssel gefunden, Namen werden gelesen…)"
+
+msgid "(looking for the keys…)"
+msgstr "(Schlüssel werden gesucht…)"
+
+msgid "(no keys: its archives are read by a scan)"
+msgstr "(keine Schlüssel: seine Archive werden per Scan gelesen)"
+
+msgid "{folder} is {title}. Its archives open from their tables as folders of the tree."
+msgstr "{folder} ist {title}. Seine Archive öffnen sich über ihre Tabellen als Ordner des Baums."

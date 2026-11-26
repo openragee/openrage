@@ -160,12 +160,105 @@ fn a_type_4_geometry_child_is_copied_with_arrays_of_its_own() {
     assert_eq!(v[x..x + 8], v[y..y + 8]);
 }
 
-#[test]
-fn a_type_4_geometry_child_whose_0xf8_is_set_is_refused_by_name() {
+/// The count the built +0xF8 record states: one more than the child's vertices, as some measured.
+const F8_COUNT: usize = 5;
+
+/// [`plain`] with a +0xF8 record: its count four times, two arrays of 6-byte elements back to
+/// back, the first the child's vertices and one more, a record outside the child at +0x20, the
+/// child at +0x28 and a word and a float at +0x30; the sections, the child and the record.
+fn with_record() -> (Rpf9Sections, usize, usize) {
     let (mut s, child) = plain();
-    let record = appended(&mut s, &[0; 0x30]);
-    put(&mut s, child + 0xF8, &word(record));
-    assert!(copy_child(&mut s).contains("+0xF8 is set"));
+    let vertices = target(&s.virtual_section, child + 0xB0);
+    let mut arrays = s.virtual_section[vertices..vertices + 6 * (F8_COUNT - 1)].to_vec();
+    // The first array's last element, then the second array.
+    arrays.extend((1..=6 + 6 * F8_COUNT).map(|x| x as u8));
+    let first = appended(&mut s, &arrays);
+    let owner = appended(&mut s, &[[0; 16], [0x11; 16]].concat());
+    let count = (F8_COUNT as u32).to_le_bytes();
+    let mut record = [count, count].concat();
+    record.extend(word(first));
+    record.extend([count, count].concat());
+    record.extend(word(first + 6 * F8_COUNT));
+    record.extend(word(owner));
+    record.extend(word(child));
+    record.extend(10u32.to_le_bytes());
+    record.extend(0.5f32.to_le_bytes());
+    record.resize(0x50, 0);
+    let at = appended(&mut s, &record);
+    put(&mut s, child + 0xF8, &word(at));
+    (s, child, at)
+}
+
+#[test]
+fn a_type_4_geometry_child_whose_0xf8_is_set_is_copied_with_a_record_of_its_own() {
+    let (mut s, child, record) = with_record();
+    let source = s.virtual_section[child..child + 0x130].to_vec();
+    let arrays = |v: &[u8], r: usize| {
+        [0x08, 0x18].map(|w| v[target(v, r + w)..target(v, r + w) + 6 * F8_COUNT].to_vec())
+    };
+    let held = s.virtual_section[record..record + 0x50].to_vec();
+    let held_arrays = arrays(&s.virtual_section, record);
+    let op = BoundReshape::CopyChild { child: 0 };
+    reshape_bound_body(&mut s, BoundHolder::Bound, &op).expect("laid out past the end");
+
+    let read = read_bound(&s.virtual_section).expect("it reads back");
+    assert_eq!(read.children.len(), 2);
+    let shown = |i: usize| format!("{:?}", read.children[i].bound);
+    assert_eq!(shown(1), shown(0), "the copy reads as its source");
+    let v = &s.virtual_section;
+    assert_eq!(v[child..child + 0x130], source[..], "the source's record");
+    assert_eq!(
+        v[record..record + 0x50],
+        held[..],
+        "the source's +0xF8 record"
+    );
+    assert_eq!(arrays(v, record), held_arrays, "the source's +0xF8 arrays");
+
+    let copy = target(v, target(v, 0x70) + 8);
+    let ours = target(v, copy + 0xF8);
+    assert_ne!(ours, record, "the copy's +0xF8 names a record of its own");
+    assert_eq!(v[ours..ours + 8], v[record..record + 8]);
+    assert_eq!(v[ours + 0x10..ours + 0x18], v[record + 0x10..record + 0x18]);
+    for w in [0x08, 0x18] {
+        assert_ne!(target(v, ours + w), target(v, record + w), "+{w:#X}");
+    }
+    assert_eq!(
+        arrays(v, ours),
+        held_arrays,
+        "the same elements in arrays of its own"
+    );
+    assert_eq!(
+        u64_at(v, ours + 0x20),
+        u64_at(v, record + 0x20),
+        "+0x20 kept"
+    );
+    assert_eq!(
+        target(v, ours + 0x28),
+        copy,
+        "the copy's record names the copy"
+    );
+    assert_eq!(
+        target(v, record + 0x28),
+        child,
+        "the source's names the source"
+    );
+    assert_eq!(v[ours + 0x30..ours + 0x50], v[record + 0x30..record + 0x50]);
+}
+
+#[test]
+fn a_0xf8_record_off_the_measured_layout_is_refused_by_name() {
+    // A record that names another geometry at +0x28.
+    let (mut s, _, record) = with_record();
+    put(&mut s, record + 0x28, &word(record));
+    assert!(copy_child(&mut s).contains("at its +0x28"));
+    // A second array whose capacity is not the count.
+    let (mut s, _, record) = with_record();
+    put(&mut s, record + 0x14, &9u32.to_le_bytes());
+    assert!(copy_child(&mut s).contains("one count four times"));
+    // A word past the arrays that aims into the section.
+    let (mut s, child, record) = with_record();
+    put(&mut s, record + 0x40, &word(child));
+    assert!(copy_child(&mut s).contains("share them"));
 }
 
 #[test]

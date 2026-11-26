@@ -101,6 +101,7 @@ impl super::AppState {
         let view = super::rpf9_scan::View::Bytes;
         let path = super::rpf9_scan::body_path(&place.file, place.offset, view);
         tree_open::leave(&path, &place, row_start, super::rpf9_scan::rpf9_table::keys);
+        tree_open::name(self, &path, parent, entry);
         self.load_file(path);
         true
     }

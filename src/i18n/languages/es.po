@@ -781,9 +781,6 @@ msgstr "Las salas y los portales se leen del archivo. Cambiarlos en la pantalla 
 msgid "Rotation"
 msgstr "Rotación"
 
-msgid "Save the edits to a new archive: a patched copy where every edit fits its entry's chunks, else a rebuilt archive, which the game refuses"
-msgstr "Guardar los cambios en un archivo nuevo: una copia parcheada si cada cambio cabe en los fragmentos de su entrada, y si no un archivo reconstruido, que el juego rechaza"
-
 msgid "Scale"
 msgstr "Escala"
 
@@ -12824,9 +12821,6 @@ msgstr "Archivo comprimido de GTA VI"
 msgid "RPF9 — a GTA VI archive, shown as what a scan without its table finds, read-only"
 msgstr "RPF9 — un archivo comprimido de GTA VI, mostrado como lo encuentra un análisis sin su tabla, de solo lectura"
 
-msgid "(read without names)"
-msgstr "(leído sin nombres)"
-
 msgid "Its first 64 bytes are zero, as a piece a download has not delivered reads, so whether it is an RPF9 archive and what its header states are not known; the bytes present are scanned."
 msgstr "Sus primeros 64 bytes son cero, como se lee un fragmento que una descarga no ha entregado, así que se desconoce si es un archivo comprimido RPF9 y qué indica su encabezado; se analizan los bytes presentes."
 
@@ -17070,3 +17064,42 @@ msgstr "lista {list}: {entries}"
 
 msgid "Add to the facial controls it writes"
 msgstr "Añadir a los controles faciales que escribe"
+
+msgid "{count} byte over"
+msgid_plural "{count} bytes over"
+msgstr[0] "{count} byte de más"
+msgstr[1] "{count} bytes de más"
+
+msgid "{count} byte short"
+msgid_plural "{count} bytes short"
+msgstr[0] "{count} byte de menos"
+msgstr[1] "{count} bytes de menos"
+
+msgid "The edits to {file} save as a patched copy: each changed body is written in its entry's place, chunk by chunk, and the table stays byte-identical, so its signature still matches and no check read in the game's code rejects it; the game has not been run with it."
+msgstr "Los cambios en {file} se guardan como una copia parcheada: cada cuerpo cambiado se escribe en el lugar de su entrada, fragmento a fragmento, y la tabla sigue idéntica byte a byte, así que su firma sigue coincidiendo y ninguna comprobación leída en el código del juego la rechaza; el juego no se ha ejecutado con ella."
+
+msgid "The edits to {file} save as a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "Los cambios en {file} se guardan como un archivo reconstruido, que el juego rechaza porque solo su creador puede firmar la tabla."
+
+msgid "These rows keep it from being patched in place: {rows}."
+msgstr "Estas filas impiden parchearlo en su sitio: {rows}."
+
+msgid "No key opens the tables of these archives, so they are read by a scan: {why}"
+msgstr "Ninguna clave abre las tablas de estos archivos, así que se leen mediante un análisis: {why}"
+
+msgid "(keys found, {count} name held)"
+msgid_plural "(keys found, {count} names held)"
+msgstr[0] "(claves encontradas, {count} nombre disponible)"
+msgstr[1] "(claves encontradas, {count} nombres disponibles)"
+
+msgid "(keys found, reading the names…)"
+msgstr "(claves encontradas, leyendo los nombres…)"
+
+msgid "(looking for the keys…)"
+msgstr "(buscando las claves…)"
+
+msgid "(no keys: its archives are read by a scan)"
+msgstr "(sin claves: sus archivos se leen mediante un análisis)"
+
+msgid "{folder} is {title}. Its archives open from their tables as folders of the tree."
+msgstr "{folder} es {title}. Sus archivos comprimidos se abren desde sus tablas como carpetas del árbol."

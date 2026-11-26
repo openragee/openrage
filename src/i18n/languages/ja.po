@@ -781,9 +781,6 @@ msgstr "ルームとポータルはファイルから読み取られます。変
 msgid "Rotation"
 msgstr "回転"
 
-msgid "Save the edits to a new archive: a patched copy where every edit fits its entry's chunks, else a rebuilt archive, which the game refuses"
-msgstr "編集を新しいアーカイブに保存（すべての編集がエントリのチャンクに収まればパッチ済みコピー、そうでなければ再構築されたアーカイブとなり、ゲームはこれを拒否します）"
-
 msgid "Scale"
 msgstr "スケール"
 
@@ -12776,9 +12773,6 @@ msgstr "GTA VIアーカイブ"
 msgid "RPF9 — a GTA VI archive, shown as what a scan without its table finds, read-only"
 msgstr "RPF9 — GTA VIのアーカイブ。目次なしのスキャンで見つかる内容として表示され、読み取り専用です"
 
-msgid "(read without names)"
-msgstr "(名前なしで読み取り)"
-
 msgid "Its first 64 bytes are zero, as a piece a download has not delivered reads, so whether it is an RPF9 archive and what its header states are not known; the bytes present are scanned."
 msgstr "先頭の64バイトはすべてゼロです。ダウンロードで届いていない部分はこのように読み取られるため、RPF9アーカイブかどうか、ヘッダーに何が書かれているかは不明です。存在するバイトをスキャンします。"
 
@@ -17070,3 +17064,42 @@ msgstr "リスト {list}: {entries}"
 
 msgid "Add to the facial controls it writes"
 msgstr "書き込む顔の制御に追加"
+
+msgid "{count} byte over"
+msgid_plural "{count} bytes over"
+msgstr[0] "{count} バイト超過"
+msgstr[1] "{count} バイト超過"
+
+msgid "{count} byte short"
+msgid_plural "{count} bytes short"
+msgstr[0] "{count} バイト不足"
+msgstr[1] "{count} バイト不足"
+
+msgid "The edits to {file} save as a patched copy: each changed body is written in its entry's place, chunk by chunk, and the table stays byte-identical, so its signature still matches and no check read in the game's code rejects it; the game has not been run with it."
+msgstr "{file} への編集はパッチ済みコピーとして保存されます。変更された各本体はチャンクごとにエントリの位置に書き込まれ、テーブルはバイト単位で同一のままなので、その署名は一致したままで、ゲームのコードで読み取ったどのチェックもこれを拒否しません。ただし、これでゲームを実行したことはありません。"
+
+msgid "The edits to {file} save as a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{file} への編集は再構築されたアーカイブとして保存されます。テーブルに署名できるのは作成者だけなので、ゲームはそれを拒否します。"
+
+msgid "These rows keep it from being patched in place: {rows}."
+msgstr "次の行のため、その場でパッチできません: {rows}。"
+
+msgid "No key opens the tables of these archives, so they are read by a scan: {why}"
+msgstr "これらのアーカイブのテーブルを開けるキーがないため、スキャンで読み取ります: {why}"
+
+msgid "(keys found, {count} name held)"
+msgid_plural "(keys found, {count} names held)"
+msgstr[0] "(キーあり、名前 {count} 件を保持)"
+msgstr[1] "(キーあり、名前 {count} 件を保持)"
+
+msgid "(keys found, reading the names…)"
+msgstr "(キーあり、名前を読み取り中…)"
+
+msgid "(looking for the keys…)"
+msgstr "(キーを探しています…)"
+
+msgid "(no keys: its archives are read by a scan)"
+msgstr "(キーなし: アーカイブはスキャンで読み取ります)"
+
+msgid "{folder} is {title}. Its archives open from their tables as folders of the tree."
+msgstr "{folder}は{title}です。そのアーカイブはテーブルから開かれ、ツリーのフォルダーになります。"

@@ -3,7 +3,8 @@
 //!
 //! A table is written as one page: the layout the game's writer chose (where the map block sits,
 //! when it splits a section in two pages) is not known, so a written table opens as the same table
-//! but is not byte-identical to the one the game ships.
+//! but is not byte-identical to the one the game ships. Written over the section it was read from,
+//! a table keeps every byte and the length that section states while its blocks keep their sizes.
 
 use crate::hash::string_hash;
 
@@ -826,6 +827,9 @@ impl Texts {
     }
 }
 
+/// Character blocks, and each text's block and offset in them.
+type Packed = (Vec<Vec<u8>>, Vec<(usize, usize)>);
+
 impl TextTable {
     /// The entry of `label`, whose key is its hash with `A` to `Z` folded to lower case.
     pub fn get(&self, label: &str) -> Option<&TextEntry> {
@@ -865,6 +869,87 @@ impl TextTable {
 
     /// The virtual section of this table as one page, which [`read`] returns as this table.
     pub fn to_section(&self) -> Result<Vec<u8>> {
+        let (chars, places) = self.pack(usize::MAX)?;
+        if chars.is_empty() {
+            return Err(TextTableError::Unwritable(
+                "a table holds at least one text".into(),
+            ));
+        }
+        // Block ids from 1: groups, map, entries, variant entries, variants, then the characters.
+        let mut kinds = self.record_blocks();
+        let variant = kinds.iter().any(|k| k.0 == VARIANT);
+        kinds.extend(chars.iter().map(|c| (CHARS, c.len())));
+        let data = self.data_blocks(&kinds, &chars, &places)?;
+        self.reads_back(lay_out(&kinds, &data, variant)?)
+    }
+
+    /// This table written over `original`, the section of a table, at the blocks it states: every
+    /// other byte kept, refused where a block would change size and so the section's length.
+    pub fn to_section_over(&self, original: &[u8]) -> Result<Vec<u8>> {
+        let (_, layout) = read(original)?;
+        let stated = |kind: u32| layout.blocks.iter().filter(move |b| b.kind == kind);
+        let mut records = self.record_blocks();
+        let mut held: Vec<(u32, usize)> = (layout.blocks.iter())
+            .filter(|b| b.kind != CHARS)
+            .map(|b| (b.kind, b.size))
+            .collect();
+        records.sort_unstable();
+        held.sort_unstable();
+        if records != held {
+            return Err(TextTableError::Unwritable(
+                "its groups, entries or variants are not as many as the section holds, so its length would change".into(),
+            ));
+        }
+        let (chars, places) = self.pack(stated(CHARS).count())?;
+        if !chars.iter().map(Vec::len).eq(stated(CHARS).map(|b| b.size)) {
+            return Err(TextTableError::Unwritable(
+                "its texts do not fill the character blocks to the sizes the section states, so its length would change".into(),
+            ));
+        }
+        let kinds: Vec<(u32, usize)> = layout.blocks.iter().map(|b| (b.kind, b.size)).collect();
+        let data = self.data_blocks(&kinds, &chars, &places)?;
+        let mut section = original.to_vec();
+        for (block, bytes) in layout.blocks.iter().zip(&data) {
+            section[block.offset..block.offset + block.size].copy_from_slice(bytes);
+        }
+        self.reads_back(section)
+    }
+
+    /// `section` where it reads back as this table.
+    fn reads_back(&self, section: Vec<u8>) -> Result<Vec<u8>> {
+        match read(&section) {
+            Ok((back, _)) if back == *self => Ok(section),
+            Ok(_) => Err(TextTableError::Unwritable(
+                "its entries do not read back as written: they are not in slot order, two share a slot, or a key sits where probing does not find it".into(),
+            )),
+            Err(e) => Err(TextTableError::Unwritable(format!("it does not read back: {e}"))),
+        }
+    }
+
+    /// Its record blocks as a written table numbers them: groups, map, entries, variant entries,
+    /// variants; each with its size.
+    fn record_blocks(&self) -> Vec<(u32, usize)> {
+        let (sets, forms): (usize, usize) = (self.entries.iter())
+            .filter_map(|e| match &e.item {
+                TextItem::Variants(v) => Some(v.forms.len()),
+                TextItem::Text(_) => None,
+            })
+            .fold((0, 0), |(s, f), n| (s + 1, f + n));
+        let plain = self.entries.len() - sets;
+        let mut kinds = vec![(GROUP, GROUP_LEN * self.groups as usize), (MAP, 16)];
+        if plain > 0 {
+            kinds.push((ENTRY, ENTRY_LEN * plain));
+        }
+        if sets > 0 {
+            kinds.push((VARIANT_ENTRY, VARIANT_LEN * sets));
+            kinds.push((VARIANT, VARIANT_LEN * forms));
+        }
+        kinds
+    }
+
+    /// Its texts in visit order by first fit into at most `most` character blocks: the blocks,
+    /// and each text's block and offset.
+    fn pack(&self, most: usize) -> Result<Packed> {
         let mut chars: Vec<Vec<u8>> = Vec::new();
         let mut places = Vec::new();
         for (key, text) in self.texts() {
@@ -883,38 +968,32 @@ impl TextTable {
             }
             let k = match chars.iter().position(|b| b.len() + n <= CHAR_BLOCK) {
                 Some(k) => k,
-                None => {
+                None if chars.len() < most => {
                     chars.push(Vec::new());
                     chars.len() - 1
+                }
+                None => {
+                    return Err(TextTableError::Unwritable(format!(
+                        "its texts need more than the {most} character blocks the section states"
+                    )))
                 }
             };
             places.push((k, chars[k].len()));
             chars[k].extend_from_slice(text.as_bytes());
             chars[k].push(0);
         }
-        if chars.is_empty() {
-            return Err(TextTableError::Unwritable(
-                "a table holds at least one text".into(),
-            ));
-        }
-        let (sets, forms): (usize, usize) = (self.entries.iter())
-            .filter_map(|e| match &e.item {
-                TextItem::Variants(v) => Some(v.forms.len()),
-                TextItem::Text(_) => None,
-            })
-            .fold((0, 0), |(s, f), n| (s + 1, f + n));
-        let plain = self.entries.len() - sets;
-        let groups = self.groups as usize;
+        Ok((chars, places))
+    }
 
-        // Block ids from 1: groups, map, entries, variant entries, variants, then the characters.
-        let mut kinds = vec![(GROUP, GROUP_LEN * groups), (MAP, 16)];
-        if plain > 0 {
-            kinds.push((ENTRY, ENTRY_LEN * plain));
-        }
-        if sets > 0 {
-            kinds.push((VARIANT_ENTRY, VARIANT_LEN * sets));
-            kinds.push((VARIANT, VARIANT_LEN * forms));
-        }
+    /// The bytes of the blocks `kinds` (kind and size, in id order), its texts at `places` in
+    /// the character blocks `chars`, which are those of `kinds` in order.
+    fn data_blocks(
+        &self,
+        kinds: &[(u32, usize)],
+        chars: &[Vec<u8>],
+        places: &[(usize, usize)],
+    ) -> Result<Vec<Vec<u8>>> {
+        let groups = self.groups as usize;
         let index = |kind: u32| kinds.iter().position(|k| k.0 == kind).unwrap_or(0);
         let (gi, mi, ei, si, fi) = (
             index(GROUP),
@@ -923,17 +1002,19 @@ impl TextTable {
             index(VARIANT_ENTRY),
             index(VARIANT),
         );
-        let char_id = kinds.len() as u64 + 1;
-        kinds.extend(chars.iter().map(|c| (CHARS, c.len())));
+        let char_blocks: Vec<usize> = (0..kinds.len()).filter(|i| kinds[*i].0 == CHARS).collect();
         let ptr = |index: usize, off: usize| (index as u64 + 1) | (off as u64) << 20;
 
         let mut data: Vec<Vec<u8>> = kinds.iter().map(|(_, size)| vec![0u8; *size]).collect();
-        for (block, c) in data.iter_mut().skip(char_id as usize - 1).zip(&chars) {
-            block.copy_from_slice(c);
+        for (&i, c) in char_blocks.iter().zip(chars) {
+            data[i].copy_from_slice(c);
         }
         let mut texts = places.iter();
-        let mut text_ptr =
-            || (texts.next()).map_or(0, |(k, off)| ptr(char_id as usize - 1 + *k, *off));
+        let mut text_ptr = || {
+            (texts.next())
+                .and_then(|(k, off)| char_blocks.get(*k).map(|&i| ptr(i, *off)))
+                .unwrap_or(0)
+        };
         let (mut p, mut s, mut f) = (0, 0, 0);
         for e in &self.entries {
             if e.group as usize >= groups || usize::from(e.slot) >= SLOTS {
@@ -993,15 +1074,7 @@ impl TextTable {
         m[..4].copy_from_slice(&self.groups.to_le_bytes());
         m[4..8].copy_from_slice(&(self.entries.len() as u32).to_le_bytes());
         m[8..16].copy_from_slice(&ptr(gi, 0).to_le_bytes());
-
-        let section = lay_out(&kinds, &data, sets > 0)?;
-        match read(&section) {
-            Ok((back, _)) if back == *self => Ok(section),
-            Ok(_) => Err(TextTableError::Unwritable(
-                "its entries do not read back as written: they are not in slot order, two share a slot, or a key sits where probing does not find it".into(),
-            )),
-            Err(e) => Err(TextTableError::Unwritable(format!("it does not read back: {e}"))),
-        }
+        Ok(data)
     }
 }
 

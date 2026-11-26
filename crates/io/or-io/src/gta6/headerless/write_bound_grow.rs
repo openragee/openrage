@@ -12,7 +12,8 @@ use crate::container::rpf::{grow_section, Rpf9GrowError, Rpf9Section, Rpf9Sectio
 use super::bound::{bound_at, child_bound, COMPOSITE, GEOMETRY};
 use super::bytes::sections;
 use super::write_bound_runs::{
-    geometry_copied, geometry_value_copied, runs_after_add, runs_after_delete, NOT_COPIED,
+    geometry_copied, geometry_value_copied, own_record_named, runs_after_add, runs_after_delete,
+    NOT_COPIED,
 };
 use super::write_bound_vertex::item_box;
 use super::write_bvh::{corners, refit_composite, tree, union, Span, NODE};
@@ -1286,6 +1287,7 @@ fn child_copied(s: &mut Rpf9Sections, at: usize, child: usize) -> Grown<()> {
     let places = room(s, &lens)?;
     let v = &mut s.virtual_section;
     put(v, places[0], &copy)?;
+    own_record_named(v, places[0])?;
     pointers.extend((VIRTUAL + places[0] as u64).to_le_bytes());
     put(v, places[1], &pointers)?;
     put_ptr(v, at + 0x70, places[1])?;

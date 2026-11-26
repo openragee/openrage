@@ -27,11 +27,18 @@ const NAMED: [usize; 7] = [0x88, 0xB0, 0xF0, 0x118, 0x130, 0x138, 0x148];
 /// A type-4 geometry child's record bytes: the bytes at +0x130 are the next object's.
 const PLAIN_RECORD: usize = 0x130;
 /// The same words of a type-4 geometry child's record.
-const PLAIN_NAMED: [usize; 8] = [0x78, 0x88, 0xB0, 0xC0, 0xC8, 0xF0, 0x108, 0x118];
+const PLAIN_NAMED: [usize; 9] = [0x78, 0x88, 0xB0, 0xC0, 0xC8, 0xF0, 0xF8, 0x108, 0x118];
+/// The bytes of the record a type-4 geometry child's +0xF8 names.
+const F8_RECORD: usize = 0x50;
+/// The bytes of an element of either of that record's two arrays.
+const F8_ELEMENT: usize = 6;
+/// That record's words that aim at bytes: its two arrays, a record outside the child, the child.
+const F8_NAMED: [usize; 4] = [0x08, 0x18, 0x20, 0x28];
 
 /// Why a child is not copied.
 pub(super) const NOT_COPIED: &str = "a child that does not read is not copied";
-const F8_SET: &str = "a type-4 geometry whose +0xF8 is set is not copied: the record it names holds pair arrays whose element size is not known";
+const F8_COUNTS: &str = "the record a type-4 geometry's +0xF8 names does not state one count four times, as every measured one does: each array's count and capacity";
+const F8_OWNER: &str = "the record a type-4 geometry's +0xF8 names does not name that geometry at its +0x28, as every measured one does";
 const OCTANTS: &str = "a type-4 geometry's octants are not laid out as in every measured one: the 8 counts just before the 8 pointers, each pointer null exactly when its count is 0, the index arrays back to back after them";
 const SLOTS: &str = "a slot of a type-4 geometry's +0x108 block is not laid out as in every measured one: a count equal to its capacity, and a pointer set exactly when the count is not 0";
 const EXCESS: &str = "the geometry's runs give keys to more primitives than it holds, and which primitive the extra runs belong to is not known";
@@ -307,6 +314,55 @@ fn displacements(b: Bytes, at: usize) -> Result<Option<Piece>> {
     }))
 }
 
+/// The record a type-4 geometry's +0xF8 names and its two arrays, back to back after it, as one
+/// piece; `None` where the word is null.
+// Its +0x20 aims outside the child and is kept, as the keys are; its +0x28, which names the child,
+// is left null until the copy is laid out ([`own_record_named`]).
+fn own_record(b: Bytes, at: usize) -> Result<Option<Piece>> {
+    let Some(r) = b.ptr("+0xF8 record", at + 0xF8)? else {
+        return Ok(None);
+    };
+    let mut bytes = b.get("+0xF8 record", r, F8_RECORD)?.to_vec();
+    named_only(&bytes, &F8_NAMED)?;
+    let count = b.u32("+0xF8 record's count", r)?;
+    for o in [4, 0x10, 0x14] {
+        if b.u32("+0xF8 record's count", r + o)? != count {
+            return Err(refuse(F8_COUNTS));
+        }
+    }
+    if b.ptr("+0xF8 record's geometry", r + 0x28)? != Some(at) {
+        return Err(refuse(F8_OWNER));
+    }
+    bytes[0x28..0x30].fill(0);
+    let mut inner = Vec::new();
+    for word in [0x08, 0x18] {
+        let to = b.to("+0xF8 record's array", r + word)?;
+        let array = b.array("+0xF8 record's array", to, count as usize, F8_ELEMENT)?;
+        inner.push((word, bytes.len()));
+        bytes.extend_from_slice(array);
+    }
+    Ok(Some(Piece {
+        bytes,
+        named_by: vec![(0xF8, 0)],
+        inner,
+    }))
+}
+
+/// The +0xF8 record of the type-4 geometry child laid out at `at`, where it has one, made to name
+/// that child at its +0x28.
+pub(super) fn own_record_named(v: &mut [u8], at: usize) -> Result<()> {
+    let record = sections(v, Some(&[]), |b, _| {
+        match b.u8("bound type", at + 0x10)? {
+            PLAIN_GEOMETRY => b.ptr("+0xF8 record", at + 0xF8),
+            _ => Ok(None),
+        }
+    })?;
+    match record {
+        Some(r) => put(v, r + 0x28, &word_of(at)),
+        None => Ok(()),
+    }
+}
+
 /// A geometry child's record of type `kind` and what its copy lays out: each array it names, and
 /// a type-5 child's BVH record with the nodes at the count it allocates.
 fn parts(v: &[u8], at: usize, kind: u8) -> Result<(Vec<u8>, Vec<Piece>)> {
@@ -314,9 +370,6 @@ fn parts(v: &[u8], at: usize, kind: u8) -> Result<(Vec<u8>, Vec<Piece>)> {
         let plain = kind == PLAIN_GEOMETRY;
         let len = if plain { PLAIN_RECORD } else { BOUND_CHILD };
         let mut record = b.get("geometry child", at, len)?.to_vec();
-        if plain && b.u64("+0xF8 record", at + 0xF8)? != 0 {
-            return Err(refuse(F8_SET));
-        }
         let primitives = b.u32("primitive count", at + 0xD4)? as usize;
         let mut lists = vec![
             (0x88, "primitives", primitives, 16),
@@ -372,6 +425,7 @@ fn parts(v: &[u8], at: usize, kind: u8) -> Result<(Vec<u8>, Vec<Piece>)> {
         if plain {
             pieces.extend(octants(b, at)?);
             pieces.extend(displacements(b, at)?);
+            pieces.extend(own_record(b, at)?);
         } else if let Some(h) = b.ptr("BVH", at + 0x130)? {
             let mut bytes = b.get("BVH", h, BVH_RECORD)?.to_vec();
             named_only(&bytes, &[0x50])?;
@@ -407,9 +461,9 @@ fn named_only(bytes: &[u8], known: &[usize]) -> Result<()> {
 }
 
 /// The record of a copy of the geometry child at `source`; `None` for a child that is no geometry.
-// Every array it names, a type-5 child's BVH record and nodes, a type-4 child's octants and +0x108
-// block are laid out anew past the virtual section's end and named by it. Its keys are copied as
-// they are: a key may be named by several geometries of a body.
+// Every array it names, a type-5 child's BVH record and nodes, a type-4 child's octants, +0x108
+// block and +0xF8 record are laid out anew past the virtual section's end and named by it. Its
+// keys are copied as they are: a key may be named by several geometries of a body.
 pub(super) fn geometry_copied(s: &mut Rpf9Sections, source: usize) -> Grown<Option<Vec<u8>>> {
     let v = &s.virtual_section;
     let kind = sections(v, Some(&[]), |b, _| b.u8("bound type", source + 0x10))?;

@@ -51,6 +51,10 @@ nanomp3 = { version = "0.2", optional = true }
 # still builds for wasm32.
 rusty_mp3 = { version = "1", optional = true }
 
+# A GTA VI patched chunk the tree's deflater cannot fit under its stored size is tried again by
+# an optimal parse, which deflates shorter; pure Rust, Apache-2.0.
+zopfli = { version = "0.8", default-features = false, features = ["std", "zlib"], optional = true }
+
 # BCn decode. Chosen over texture2ddecoder for BC1-BC7 because it honours the
 # S3TC rule that BC2/BC3 colour blocks are always 4-colour (`only_opaque`),
 # which texture2ddecoder gets wrong, and because `bc6h_float` gives real HDR
@@ -96,7 +100,7 @@ gfx = []
 rel = []
 # GTA VI's formats, read, its `.ttpf` texture packs, written, and the scan of
 # its RPF9 archives that finds them.
-gta6 = ["archives", "dep:sha2"]
+gta6 = ["archives", "dep:sha2", "dep:zopfli"]
 # Without these the executable is read whole, and the key scan and the NG
 # encrypt derivation run on one thread.
 mmap = ["dep:memmap2"]

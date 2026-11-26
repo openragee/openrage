@@ -389,7 +389,7 @@ fn a_replaced_row_saved_to_a_new_file_reopens_with_the_new_body_and_the_source_i
     assert_eq!(started, Some(true));
     finished(&mut state);
     // A body of another size changes its row, so the copy is rebuilt, and the toast names the row.
-    let sizes = format!("{shown} is 1320 bytes, not the 1920 its row states");
+    let sizes = format!("{shown} is 1320 bytes, not the 1920 its row states, 600 bytes short");
     let refused = [
         "copy.rpf",
         "the game refuses",
@@ -469,6 +469,161 @@ fn a_replaced_row_of_its_own_size_saves_as_a_patched_copy_whose_table_is_as_read
     assert_eq!(body_of(&copy, OTHER), replaced);
     assert_eq!(body_of(&copy, PSO), table_form_pso());
     assert_eq!(std::fs::read(&path).expect("the source"), before);
+}
+
+/// `len` bytes no deflater shrinks into a chunk that held [`other`].
+fn noise(len: usize) -> Vec<u8> {
+    let mut x = 0x9E37_79B9_7F4A_7C15u64;
+    (0..len)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x as u8
+        })
+        .collect()
+}
+
+/// The names of the files in `dir`, sorted.
+fn listed(dir: &Path) -> Vec<String> {
+    let mut out: Vec<String> = (std::fs::read_dir(dir).expect("the folder lists"))
+        .map(|e| {
+            e.expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The archive of [`three`] in `dir`, its [`OTHER`] row replaced by `body`, as the tree opens it,
+/// and that row's name.
+fn edited_tree(dir: &Path, body: Vec<u8>) -> (PathBuf, RpfDocument, String) {
+    let path = three(dir);
+    let mut tree = tree(&path);
+    let row = row_holding(&tree.session, &other());
+    let shown = (tree.session.node(row).map(|n| n.name.clone())).expect("the row");
+    (tree.session.set_bytes_for(row, body)).expect("the row takes the bytes");
+    (path, tree, shown)
+}
+
+#[test]
+fn a_save_that_will_be_rebuilt_is_planned_writing_nothing_and_then_writes_only_that_copy() {
+    let _serial = crate::ui::theme::serial();
+    let keys = synthetic_keys().expect("the synthetic snapshot parses");
+    let _reading = reading_with(Arc::clone(&keys));
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let (path, tree, shown) = edited_tree(dir.path(), noise(other().len()));
+    let edits = tree_edits(&tree.session).expect("the tree's edits");
+
+    let planned = plan_tree(&path, &edits, &keys).expect("the save plans");
+    assert!(!planned.patched(), "{:?}", planned.kept);
+    assert_eq!(
+        listed(dir.path()),
+        ["source.rpf"],
+        "planning writes nothing"
+    );
+    // The row of the right size whose body does not fit its chunk is named, with by how much.
+    let named = |why: &String| why.contains(&shown) && why.ends_with("bytes over");
+    assert!(planned.kept.iter().any(named), "{:?}", planned.kept);
+
+    let out = dir.path().join("copy.rpf");
+    let saved = write_planned(&path, &out, &keys, &planned).expect("the copy is written");
+    assert!(
+        matches!(saved, Saved::Rebuilt { tables: true, .. }),
+        "{saved:?}"
+    );
+    assert_eq!(listed(dir.path()), ["copy.rpf", "source.rpf"]);
+    assert_eq!(
+        body_of(&std::fs::read(&out).expect("the copy"), OTHER),
+        noise(other().len())
+    );
+}
+
+#[test]
+fn a_save_that_will_be_patched_is_planned_writing_nothing_and_then_writes_only_that_copy() {
+    let _serial = crate::ui::theme::serial();
+    let keys = synthetic_keys().expect("the synthetic snapshot parses");
+    let _reading = reading_with(Arc::clone(&keys));
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let (path, tree, _) = edited_tree(dir.path(), vec![b'a'; other().len()]);
+    let edits = tree_edits(&tree.session).expect("the tree's edits");
+
+    let planned = plan_tree(&path, &edits, &keys).expect("the save plans");
+    assert!(planned.patched(), "{:?}", planned.kept);
+    assert_eq!(
+        listed(dir.path()),
+        ["source.rpf"],
+        "planning writes nothing"
+    );
+
+    let out = dir.path().join("copy.rpf");
+    let saved = write_planned(&path, &out, &keys, &planned).expect("the copy is written");
+    assert_eq!(saved, Saved::Patched);
+    assert_eq!(listed(dir.path()), ["copy.rpf", "source.rpf"]);
+    let before = std::fs::read(&path).expect("the source");
+    only_the_body_differs(&before, &std::fs::read(&out).expect("the copy"), OTHER);
+}
+
+/// Plan the save of the tree shown, have its dialog pick `out`, and poll until the save ends; the
+/// dialog's title.
+fn saved_through_the_dialog(state: &mut AppState, out: &Path) -> String {
+    assert!(state.plan_tree_save(DOC, synthetic_keys));
+    file_dialogs::answer_next(out.to_path_buf());
+    finished(state);
+    file_dialogs::last_dialog().expect("the save dialog was shown")
+}
+
+#[test]
+fn the_save_dialog_says_which_copy_the_save_writes_and_names_the_row_that_does_not_fit() {
+    let _serial = crate::ui::theme::serial();
+    let _reading = reading_with(synthetic_keys().expect("the synthetic snapshot parses"));
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let (path, tree, shown) = edited_tree(dir.path(), noise(other().len()));
+    let mut state = showing(path, tree);
+    let out = dir.path().join("copy.rpf");
+
+    let title = saved_through_the_dialog(&mut state, &out);
+    let rebuilt = [
+        "source.rpf",
+        "rebuilt archive",
+        "the game refuses",
+        shown.as_str(),
+        "bytes over",
+    ];
+    assert!(rebuilt.iter().all(|w| title.contains(w)), "{title}");
+    assert!(!title.contains("patched copy"), "{title}");
+    let refused = ["copy.rpf", "the game refuses"];
+    assert!(
+        said(&state, ToastType::Success, &refused),
+        "{:?}",
+        toasts(&state)
+    );
+    assert_eq!(listed(dir.path()), ["copy.rpf", "source.rpf"]);
+
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let (path, tree, _) = edited_tree(dir.path(), vec![b'a'; other().len()]);
+    let mut state = showing(path, tree);
+    let out = dir.path().join("copy.rpf");
+
+    let title = saved_through_the_dialog(&mut state, &out);
+    let patched = [
+        "source.rpf",
+        "patched copy",
+        "byte-identical",
+        "has not been run",
+    ];
+    assert!(patched.iter().all(|w| title.contains(w)), "{title}");
+    assert!(!title.contains("refuses"), "{title}");
+    let written = ["copy.rpf", "is a patched copy"];
+    assert!(
+        said(&state, ToastType::Success, &written),
+        "{:?}",
+        toasts(&state)
+    );
+    assert_eq!(listed(dir.path()), ["copy.rpf", "source.rpf"]);
 }
 
 #[test]
@@ -652,18 +807,30 @@ fn a_small_clear_row_of_a_real_archive_changed_at_its_size_saves_as_a_patched_co
         *last ^= 1;
         (tree.session.set_bytes_for(row, body.clone())).expect("the row takes the bytes");
         let edits = tree_edits(&tree.session).expect("the tree's edits");
-        let dir = tempfile::tempdir().expect("a scratch directory");
-        let out = dir.path().join("copy.rpf");
-        let before = std::fs::read(path).expect("the source");
         // A deflated chunk OpenRage's encoder cannot fit under its ceiling (nearly every one, as
-        // measured) is rebuilt, and another row may fit; a rebuild for any other reason fails.
-        let saved = write_tree(path, &edits, &out, &keys).expect("the copy is written");
-        if let Saved::Rebuilt { kept, .. } = saved {
-            if !kept.iter().all(|why| why.contains("deflates at best")) {
-                rebuilt.push(kept);
+        // measured) plans a rebuild, which is never written, and another row may fit; a rebuild for
+        // any other reason fails. So the run writes at most one copy, the patched one.
+        let planned = plan_tree(path, &edits, &keys).expect("the save plans");
+        if !planned.patched() {
+            if !planned
+                .kept
+                .iter()
+                .all(|why| why.contains("deflates at best"))
+            {
+                rebuilt.push(planned.kept);
             }
             continue;
         }
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let out = dir.path().join("copy.rpf");
+        let saved = write_planned(path, &out, &keys, &planned).expect("the copy is written");
+        assert_eq!(saved, Saved::Patched);
+        assert_eq!(
+            listed(dir.path()),
+            ["copy.rpf"],
+            "one copy and nothing beside it"
+        );
+        let before = std::fs::read(path).expect("the source");
         let copy = std::fs::read(&out).expect("the copy");
         let mount = Gta6Mount::open_root(&mut Cursor::new(&before), &keys).expect("it opens");
         let held = (mount.archive.entries.iter())

@@ -246,9 +246,13 @@ fn the_row_offers_export_to_gltf_which_asks_what_the_menu_s_command_asks() {
     );
     assert_eq!(asked(&state), by_the_row, "the menu asks for another");
 
-    // A dictionary's is drawn before a drawable is chosen, and runs once one is.
+    // A dictionary of two's is drawn before a drawable is chosen, and runs once one is; a dictionary
+    // of one opens on its drawable.
     let dictionary = Resource::Dictionary(Dictionary {
-        entries: vec![(0x20, Ok(Entry::Drawable(Box::new(drawable(false)))))],
+        entries: vec![
+            (0x20, Ok(Entry::Drawable(Box::new(drawable(false))))),
+            (0x21, Ok(Entry::Drawable(Box::new(drawable(false))))),
+        ],
     });
     let (mut state, doc, _dir) = opened(dictionary);
     assert!(height(&state) > 0.0, "the row is given no room");

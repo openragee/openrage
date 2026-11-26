@@ -2,6 +2,7 @@
 //! OpenRage reopens, and the tree's edits save to a new file, as a patched copy whose table is
 //! byte-identical when every edit is a body that fits its entry's chunks, else through the GTA VI
 //! writer as a rebuilt archive, which the game refuses because only its maker can sign the table.
+//! Which of the two is planned on a worker before anything is written, and the save dialog says it.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::File;
@@ -11,12 +12,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use or_io::container::rpf::gta6_container_write::Rpf9NewBody;
 use or_io::container::rpf::{
-    plan_patch, read_rpf9_body, write_patched_copy, write_rpf9_resource, BodyForm, BodyPatch,
-    Gta6Class, Gta6Mount, GtaViKeys, Rpf9ArchiveWriter, Rpf9Sections, RpfEntry, RpfVersion,
-    RPF9_MAGIC, RPF9_SLOT,
+    plan_patch, read_rpf9_body, write_planned_copy, write_rpf9_resource, BodyForm, BodyPatch,
+    Gta6Class, Gta6Mount, GtaViKeys, PatchPlan, PatchRefusal, Rpf9ArchiveWriter, Rpf9Sections,
+    RpfEntry, RpfVersion, RPF9_MAGIC, RPF9_SLOT,
 };
 use or_io::container::RpfArchive;
 
+use crate::platform::file_dialogs;
 use crate::state::document::{ArchiveId, DocumentId, RpfNodeId};
 use crate::state::extract_job::{plan, ExtractItem, TypeFilter};
 use crate::state::rpf_node::{ArchiveSource, RpfNodeBacking};
@@ -92,18 +94,63 @@ fn new_file(out: &Path, archive: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Write the archive at `source` with `replaced` in it into the new file `out`: as a patched copy
-/// when each body fits its entry's chunks and `kept` names no other edit, else by `rebuild`, saying
-/// why each row named was not patched in place.
-pub(crate) fn save_choosing(
+/// What a save of a GTA VI archive writes, planned before a byte is: the bodies patched in place,
+/// or the archive `writer` rebuilds, with why each row named keeps it from being patched.
+pub(crate) struct Planned {
+    patches: Vec<PatchPlan>,
+    pub(crate) kept: Vec<String>,
+    writer: Rpf9ArchiveWriter,
+}
+
+impl Planned {
+    /// Whether the save writes a patched copy rather than a rebuilt archive.
+    pub(crate) fn patched(&self) -> bool {
+        self.kept.is_empty() && !self.patches.is_empty()
+    }
+}
+
+/// How far `got` bytes are from the `want` a row or a chunk states.
+fn off_by(got: u64, want: u64) -> String {
+    if got > want {
+        tr_n!("{count} byte over", "{count} bytes over", got - want)
+    } else {
+        tr_n!("{count} byte short", "{count} bytes short", want - got)
+    }
+}
+
+/// What a save of the archive `file` planned as `planned` writes and why, as its dialog says it.
+pub(crate) fn planned_said(file: &str, planned: &Planned) -> String {
+    if planned.patched() {
+        return tr!(
+            "The edits to {file} save as a patched copy: each changed body is written in its entry's place, chunk by chunk, and the table stays byte-identical, so its signature still matches and no check read in the game's code rejects it; the game has not been run with it.",
+            file = file
+        );
+    }
+    let said = tr!(
+        "The edits to {file} save as a rebuilt archive, which the game refuses because only its maker can sign the table.",
+        file = file
+    );
+    if planned.kept.is_empty() {
+        return said;
+    }
+    let rows = planned.kept.join("; ");
+    let why = tr!(
+        "These rows keep it from being patched in place: {rows}.",
+        rows = rows
+    );
+    format!("{said} {why}")
+}
+
+/// Plan `replaced` into the archive at `source`, reading only: a patched copy when each body fits
+/// its entry's chunks and `kept` names no other edit, else a rebuild by `writer`, with each row that
+/// keeps it from being patched named with the refusal and by how many bytes.
+pub(crate) fn plan_save(
     source: &Path,
-    out: &Path,
     keys: &GtaViKeys,
     replaced: &[Replaced],
     mut kept: Vec<String>,
-    rebuild: impl FnOnce() -> Result<(bool, bool), String>,
-) -> Result<Saved, String> {
-    new_file(out, source)?;
+    writer: Rpf9ArchiveWriter,
+) -> Result<Planned, String> {
     let mut file = File::open(source).map_err(|e| format!("{}: {e}", source.display()))?;
     let mut patches = Vec::new();
     for row in replaced {
@@ -120,12 +167,15 @@ pub(crate) fn save_choosing(
         let size = row.body.len() as u64;
         if row.at.real != Some(size) {
             let real = (row.at.real).map_or_else(|| "?".to_owned(), |real| real.to_string());
-            kept.push(tr!(
+            let why = tr!(
                 "{name} is {size} bytes, not the {real} its row states",
                 name = row.name,
                 size = size,
                 real = real
-            ));
+            );
+            let by =
+                (row.at.real).map_or_else(String::new, |real| format!(", {}", off_by(size, real)));
+            kept.push(format!("{why}{by}"));
             continue;
         }
         let patch = BodyPatch {
@@ -134,30 +184,70 @@ pub(crate) fn save_choosing(
             body: row.body.clone(),
         };
         match plan_patch(&mut file, keys, &patch) {
-            Ok(_) => patches.push(patch),
-            Err(why) => kept.push(format!("{}: {why}", row.name)),
+            Ok(plan) => patches.push(plan),
+            Err(why) => {
+                let by = match &why {
+                    PatchRefusal::ChunkDoesNotFit {
+                        deflated,
+                        optimal,
+                        ceiling,
+                        ..
+                    } => {
+                        let best = (*deflated).min(*optimal) as u64;
+                        format!(", {}", off_by(best, u64::from(*ceiling)))
+                    }
+                    _ => String::new(),
+                };
+                kept.push(format!("{}: {why}{by}", row.name));
+            }
         }
     }
-    drop(file);
-    if kept.is_empty() && !patches.is_empty() {
-        write_patched_copy(source, out, keys, &patches).map_err(|e| e.to_string())?;
-        return Ok(Saved::Patched);
-    }
-    let (tables, bodies) = rebuild()?;
-    Ok(Saved::Rebuilt {
-        tables,
-        bodies,
+    Ok(Planned {
+        patches,
         kept,
+        writer,
     })
 }
 
-// ponytail: one list for the process, emptied by the next frame's poll.
-static ENDED: Mutex<Vec<Ended>> = Mutex::new(Vec::new());
+/// Write what `planned` says into the new file `out`, and no other file.
+pub(crate) fn write_planned(
+    source: &Path,
+    out: &Path,
+    keys: &GtaViKeys,
+    planned: &Planned,
+) -> Result<Saved, String> {
+    new_file(out, source)?;
+    if planned.patched() {
+        write_planned_copy(source, out, keys, planned.patches.clone())
+            .map_err(|e| e.to_string())?;
+        return Ok(Saved::Patched);
+    }
+    let (tables, bodies) = write_plan(&planned.writer, source, out, keys)?;
+    Ok(Saved::Rebuilt {
+        tables,
+        bodies,
+        kept: planned.kept.clone(),
+    })
+}
 
-fn ended() -> MutexGuard<'static, Vec<Ended>> {
-    ENDED
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+/// A tree's save planned on a worker: its document, the edit it was at, the archive, and the keys
+/// it was planned with.
+struct Plan {
+    doc_id: DocumentId,
+    at: u64,
+    source: PathBuf,
+    keys: Arc<GtaViKeys>,
+    planned: Planned,
+}
+
+// ponytail: lists for the process, emptied by the next frame's poll: the saves that ended, the plans
+// whose dialog has not been shown, and the plan whose dialog picked the file the save writes.
+static ENDED: Mutex<Vec<Ended>> = Mutex::new(Vec::new());
+static PLANNED: Mutex<Vec<(DocumentId, Result<Plan, String>)>> = Mutex::new(Vec::new());
+static HELD: Mutex<Option<Plan>> = Mutex::new(None);
+
+fn lock<T>(list: &'static Mutex<T>) -> MutexGuard<'static, T> {
+    list.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// A clear headerless resource of a GTA VI tree, decoded, in the loose form OpenRage reopens; `None`
@@ -500,14 +590,20 @@ pub(crate) fn write_plan(
     Ok((plan.tables_changed > 0, plan.bodies_changed > 0))
 }
 
-/// Write the archive at `source` with `edits` made into the new file `out`, as a patched copy where
-/// every edit is a body that fits its entry's chunks, else rebuilt.
+/// Plan the archive at `source` with `edits` made, reading only, then write it into the new file
+/// `out` as planned.
 fn write_tree(
     source: &Path,
     edits: &[Edit],
     out: &Path,
     keys: &GtaViKeys,
 ) -> Result<Saved, String> {
+    write_planned(source, out, keys, &plan_tree(source, edits, keys)?)
+}
+
+/// Plan the archive at `source` with `edits` made, reading only: a patched copy where every edit is
+/// a body that fits its entry's chunks, else rebuilt.
+fn plan_tree(source: &Path, edits: &[Edit], keys: &GtaViKeys) -> Result<Planned, String> {
     let wanted: BTreeSet<u64> = (edits.iter())
         .filter_map(|edit| match edit {
             Edit::Replace { at, .. } | Edit::Rename { at, .. } | Edit::Remove { at, .. } => {
@@ -557,9 +653,7 @@ fn write_tree(
             }
         }
     }
-    save_choosing(source, out, keys, &replaced, kept, || {
-        write_plan(&writer, source, out, keys)
-    })
+    plan_save(source, keys, &replaced, kept, writer)
 }
 
 impl AppState {
@@ -616,17 +710,107 @@ impl AppState {
                 return Some(false);
             }
         };
+        // The plan the dialog showed is the one written; a save asked with no dialog plans first.
+        let held = (lock(&HELD).take())
+            .filter(|plan| plan.doc_id == doc_id && plan.at == at && plan.source == source);
         let out = out.to_path_buf();
         std::thread::spawn(move || {
-            let said = keys().and_then(|keys| write_tree(&source, &edits, &out, &keys));
-            ended().push((doc_id, at, out, said));
+            let said = match held {
+                Some(plan) => write_planned(&source, &out, &plan.keys, &plan.planned),
+                None => keys().and_then(|keys| write_tree(&source, &edits, &out, &keys)),
+            };
+            lock(&ENDED).push((doc_id, at, out, said));
         });
         Some(true)
     }
 
-    /// Say how each save of a GTA VI tree ended.
+    /// Plan a save of the GTA VI tree `doc_id` on a worker, writing nothing, for the next poll to say
+    /// in the save dialog; false for any other document.
+    pub(crate) fn plan_gta6_tree_save(&self, doc_id: DocumentId) -> bool {
+        self.plan_tree_save(doc_id, crate::state::rpf9_scan::rpf9_table::keys)
+    }
+
+    fn plan_tree_save(
+        &self,
+        doc_id: DocumentId,
+        keys: impl FnOnce() -> Result<Arc<GtaViKeys>, String> + Send + 'static,
+    ) -> bool {
+        let Some(doc) = self.document(doc_id) else {
+            return false;
+        };
+        let DocPayload::Rpf(rpf) = &doc.payload else {
+            return false;
+        };
+        let Some(source) = top_rpf9(&rpf.session).and_then(|a| a.path().map(Path::to_path_buf))
+        else {
+            return false;
+        };
+        let at = doc.history.at();
+        let edits = tree_edits(&rpf.session);
+        std::thread::spawn(move || {
+            let plan = edits.and_then(|edits| {
+                let keys = keys()?;
+                let planned = plan_tree(&source, &edits, &keys)?;
+                Ok(Plan {
+                    doc_id,
+                    at,
+                    source,
+                    keys,
+                    planned,
+                })
+            });
+            lock(&PLANNED).push((doc_id, plan));
+        });
+        true
+    }
+
+    /// Show the save dialog of each tree's save planned, its title saying what the save writes and
+    /// why, and save into the file it picks.
+    fn ask_where_planned_saves_go(&mut self) {
+        let arrived: Vec<_> = {
+            let mut planned = lock(&PLANNED);
+            // ponytail: a plan of another app's document is left for that app's poll.
+            let (here, others): (Vec<_>, Vec<_>) = (std::mem::take(&mut *planned).into_iter())
+                .partition(|(doc_id, _)| self.document(*doc_id).is_some());
+            *planned = others;
+            here
+        };
+        for (doc_id, plan) in arrived {
+            let plan = match plan {
+                Ok(plan) => plan,
+                Err(why) => {
+                    self.show_error_toast(tr!(
+                        "Cannot save into a copy of the archive: {reason}",
+                        reason = why
+                    ));
+                    continue;
+                }
+            };
+            // An edit made while the save was planned is planned again.
+            if self.document(doc_id).map(|d| d.history.at()) != Some(plan.at) {
+                let keys = plan.keys;
+                self.plan_tree_save(doc_id, move || Ok(keys));
+                continue;
+            }
+            let Some(name) = self.gta6_tree_copy_name(doc_id) else {
+                continue;
+            };
+            let said = planned_said(&crate::state::jobs::file_name(&plan.source), &plan.planned);
+            let Some(out) = file_dialogs::save_gta6_archive_copy(&name, &said) else {
+                continue;
+            };
+            *lock(&HELD) = Some(plan);
+            // Save as… asks what every save asks, the retail gate included, then writes the plan held.
+            let previous = self.active_document.replace(doc_id);
+            self.save_active_document_as(out);
+            self.active_document = previous;
+        }
+    }
+
+    /// Show the dialog of each save planned, and say how each save of a GTA VI tree ended.
     pub(in crate::state) fn poll_tree_saves(&mut self) {
-        let done = std::mem::take(&mut *ended());
+        self.ask_where_planned_saves_go();
+        let done = std::mem::take(&mut *lock(&ENDED));
         for (doc_id, at, out, said) in done {
             let file = crate::state::jobs::file_name(&out);
             let saved = match said {

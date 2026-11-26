@@ -781,9 +781,6 @@ msgstr "룸과 포털은 파일에서 읽습니다. 데이터 화면에서 변�
 msgid "Rotation"
 msgstr "회전"
 
-msgid "Save the edits to a new archive: a patched copy where every edit fits its entry's chunks, else a rebuilt archive, which the game refuses"
-msgstr "편집 내용을 새 아카이브에 저장 (모든 편집이 항목의 청크에 들어가면 패치된 사본, 그렇지 않으면 재구성된 아카이브가 되며 게임은 이를 거부합니다)"
-
 msgid "Scale"
 msgstr "배율"
 
@@ -12824,9 +12821,6 @@ msgstr "GTA VI 아카이브"
 msgid "RPF9 — a GTA VI archive, shown as what a scan without its table finds, read-only"
 msgstr "RPF9 — GTA VI 아카이브로, 테이블 없이 스캔하여 찾은 내용으로 표시되며 읽기 전용입니다"
 
-msgid "(read without names)"
-msgstr "(이름 없이 읽음)"
-
 msgid "Its first 64 bytes are zero, as a piece a download has not delivered reads, so whether it is an RPF9 archive and what its header states are not known; the bytes present are scanned."
 msgstr "처음 64바이트가 모두 0입니다. 다운로드가 전달하지 못한 조각이 그렇게 읽히므로, RPF9 아카이브인지와 헤더에 무엇이 지정되어 있는지 알 수 없습니다. 존재하는 바이트를 스캔합니다."
 
@@ -17070,3 +17064,42 @@ msgstr "목록 {list}: {entries}"
 
 msgid "Add to the facial controls it writes"
 msgstr "쓰는 얼굴 컨트롤에 추가"
+
+msgid "{count} byte over"
+msgid_plural "{count} bytes over"
+msgstr[0] "{count}바이트 초과"
+msgstr[1] "{count}바이트 초과"
+
+msgid "{count} byte short"
+msgid_plural "{count} bytes short"
+msgstr[0] "{count}바이트 부족"
+msgstr[1] "{count}바이트 부족"
+
+msgid "The edits to {file} save as a patched copy: each changed body is written in its entry's place, chunk by chunk, and the table stays byte-identical, so its signature still matches and no check read in the game's code rejects it; the game has not been run with it."
+msgstr "{file}에 대한 편집은 패치된 사본으로 저장됩니다. 변경된 각 본문은 청크 단위로 항목의 자리에 쓰이고 테이블은 바이트 단위로 그대로 유지되므로, 그 서명은 여전히 일치하며 게임 코드에서 읽은 어떤 검사도 이를 거부하지 않습니다. 다만 이것으로 게임을 실행해 본 적은 없습니다."
+
+msgid "The edits to {file} save as a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{file}에 대한 편집은 재구성된 아카이브로 저장되며, 테이블에는 만든 사람만 서명할 수 있으므로 게임은 그것을 거부합니다."
+
+msgid "These rows keep it from being patched in place: {rows}."
+msgstr "다음 행 때문에 제자리에서 패치할 수 없습니다: {rows}."
+
+msgid "No key opens the tables of these archives, so they are read by a scan: {why}"
+msgstr "이 아카이브들의 테이블을 여는 키가 없으므로 스캔으로 읽습니다: {why}"
+
+msgid "(keys found, {count} name held)"
+msgid_plural "(keys found, {count} names held)"
+msgstr[0] "(키 있음, 이름 {count}개 보유)"
+msgstr[1] "(키 있음, 이름 {count}개 보유)"
+
+msgid "(keys found, reading the names…)"
+msgstr "(키 있음, 이름을 읽는 중…)"
+
+msgid "(looking for the keys…)"
+msgstr "(키를 찾는 중…)"
+
+msgid "(no keys: its archives are read by a scan)"
+msgstr "(키 없음: 아카이브를 스캔으로 읽음)"
+
+msgid "{folder} is {title}. Its archives open from their tables as folders of the tree."
+msgstr "{folder}은(는) {title}입니다. 이 아카이브는 테이블에서 열려 트리의 폴더가 됩니다."

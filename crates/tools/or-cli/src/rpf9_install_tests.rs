@@ -103,6 +103,7 @@ fn the_root_archives_mount_before_the_packs() {
             root.join("pack").join("a").join("a.rpf"),
             root.join("a.rpf"),
         ],
+        &Registry::default(),
     );
     assert_eq!(
         order,
@@ -111,6 +112,100 @@ fn the_root_archives_mount_before_the_packs() {
             root.join("z.rpf"),
             root.join("pack").join("a").join("a.rpf"),
             root.join("pack").join("b").join("b.rpf"),
+        ]
+    );
+}
+
+fn setup_xml(name: &str, order: i32) -> String {
+    format!(
+        "<SSetupData><nameHash>{name}</nameHash><type>EXTRACONTENT_COMPAT_PACK</type>\
+         <order value=\"{order}\"/></SSetupData>"
+    )
+}
+
+/// A pack archive at `pack/<folder>/<folder>.rpf` whose setup states `order`, naming `shared`.
+fn write_pack(root: &Path, folder: &str, order: i32, shared: u8) -> PathBuf {
+    let archive = fixture::archive(&[
+        ("common/shared.dat", Body::Raw(vec![shared; 16])),
+        (
+            "setup.xml",
+            Body::Chunked(vec![(setup_xml(folder, order).into_bytes(), true)]),
+        ),
+    ]);
+    let dir = root.join("pack").join(folder);
+    std::fs::create_dir_all(&dir).expect("make the pack folder");
+    let path = dir.join(format!("{folder}.rpf"));
+    std::fs::write(&path, archive).expect("write the pack archive");
+    path
+}
+
+#[test]
+fn the_pack_whose_setup_states_order_1_mounts_before_order_2_whatever_their_paths() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let root = dir.path();
+    let later = write_pack(root, "a", 2, 1);
+    let first = write_pack(root, "b", 1, 2);
+    let names = resolver_of(&["common/shared.dat", "setup.xml"]);
+    let registry = pack_registry(root, &build_archives(root), &fixture::keys());
+    assert_eq!(registry.packs.len(), 2, "both setups are read");
+
+    let tree = do_tree_install(root, &fixture::keys(), &names).expect("the tree");
+    assert_eq!(tree.archives, vec![first, later.clone()]);
+    let shared = &tree.paths["common/shared.dat"];
+    assert_eq!(
+        (&tree.archives[shared.archive], shared.shadowed),
+        (&later, 1)
+    );
+}
+
+fn registry_of(packs: &[(PathBuf, &str, i32)]) -> Registry {
+    Registry::of(
+        (packs.iter())
+            .map(|(archive, name, order)| {
+                let setup = Document::parse(setup_xml(name, *order).as_bytes()).expect("a setup");
+                (archive.clone(), vec![setup])
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn packs_whose_setups_tie_mount_by_path_and_a_folder_of_no_setup_mounts_last() {
+    let root = Path::new("build");
+    let pack = |folder: &str, file: &str| root.join("pack").join(folder).join(file);
+    // The registry puts "b" first by its setup's name hash; the tie of order 1 keeps the path order.
+    let registry = registry_of(&[
+        (pack("b", "b.rpf"), "a_first", 1),
+        (pack("a", "a.rpf"), "z_last", 1),
+        (pack("c", "c.rpf"), "c", 0),
+    ]);
+    assert_eq!(
+        (registry.packs.iter())
+            .map(|p| p.setup.name_hash.as_str())
+            .collect::<Vec<_>>(),
+        ["c", "a_first", "z_last"]
+    );
+    let order = mount_order(
+        root,
+        vec![
+            pack("0", "none.rpf"),
+            pack("b", "b.rpf"),
+            pack("a", "a2.rpf"),
+            pack("a", "a.rpf"),
+            pack("c", "c.rpf"),
+            root.join("z.rpf"),
+        ],
+        &registry,
+    );
+    assert_eq!(
+        order,
+        vec![
+            root.join("z.rpf"),
+            pack("c", "c.rpf"),
+            pack("a", "a.rpf"),
+            pack("a", "a2.rpf"),
+            pack("b", "b.rpf"),
+            pack("0", "none.rpf"),
         ]
     );
 }
@@ -260,6 +355,24 @@ fn the_install_tree_of_the_build_merges_every_archive_in_mount_order() {
         return;
     };
     let keys = GtaViKeys::from_file(&snapshot).expect("the key snapshot parses");
+    let registry = pack_registry(&build, &build_archives(&build), &keys);
+    assert!(!registry.packs.is_empty(), "the packs' setups are read");
+    // Measured on the build: every setup states order 1, so the packs tie and mount by path.
+    assert!(registry.packs.iter().all(|pack| pack.setup.order == 1));
+    // Every archive under pack/ whose table lists a setup gives a pack, so none moves for want of one.
+    for path in build_archives(&build)
+        .iter()
+        .filter(|p| p.parent() != Some(build.as_path()))
+    {
+        let table = or_title::gta6_mount::table::Table::open(path, &keys);
+        if table.is_ok_and(|t| t.find("setup2.xml").is_some()) {
+            assert!(
+                registry.packs.iter().any(|pack| pack.archive == *path),
+                "{} lists a setup that gives no pack",
+                path.display()
+            );
+        }
+    }
     let tree = do_tree_install(&build, &keys, &NameResolver::new()).expect("the tree");
     assert_eq!(tree.archives.len(), build_archives(&build).len());
     let at_root = |p: &PathBuf| p.parent() == Some(build.as_path());

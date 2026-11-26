@@ -5,6 +5,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::num::NonZeroU64;
 use std::path::Path;
 
 use flate2::{
@@ -21,6 +22,13 @@ use crate::error::IoError;
 
 /// The content cipher type the reader opens; a body under any other is not re-enciphered.
 const CONTENT_CIPHER_TYPE: u16 = 17;
+/// Rounds of the optimal parse over one chunk: about a second for 64 KiB in an optimised build,
+/// several at the dev profile's `opt-level = 1`.
+const OPTIMAL_ROUNDS: u64 = 15;
+/// Rounds in a row that find no shorter stream, after which the optimal parse stops early.
+const OPTIMAL_STALL: u64 = 3;
+/// The largest chunk the optimal parse is run over: past it a parse takes many seconds.
+pub const OPTIMAL_CAP: usize = 256 * 1024;
 
 /// A new inflated body for row `entry` of the table of the archive whose header is at offset `base`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,10 +44,12 @@ pub struct ChunkPatch {
     pub inflated: u32,
     /// The stored size the table states; a changed chunk fills exactly this many bytes.
     pub ceiling: u32,
-    /// The new stream's length before the empty blocks that fill it; the ceiling if unchanged or stored.
+    /// The new stream's length before what fills it to the ceiling; the ceiling if unchanged or stored.
     pub new_stored: u32,
     pub zlib: bool,
     pub changed: bool,
+    /// Whether the optimal parse wrote the new stream, no level of the tree's deflater fitting.
+    pub optimal: bool,
 }
 
 /// What patching one row writes: its chunks, and the bytes laid at absolute offsets of the file.
@@ -97,16 +107,27 @@ pub enum PatchRefusal {
     )]
     Length { entry: u32, got: u64, want: u64 },
     #[error(
-        "chunk {chunk} of entry {entry} deflates at best to {deflated} bytes, which cannot fill its \
-         {ceiling}-byte stored size exactly: a stream may not run past it, and no padding is 1 to 4 \
-         or 8 bytes long"
+        "chunk {chunk} of entry {entry} deflates at best to {deflated} bytes by the tree's deflater \
+         and {}, and neither fits its {ceiling}-byte stored size: a stream may not run past it",
+        optimal_said(*.optimal)
     )]
     ChunkDoesNotFit {
         entry: u32,
         chunk: usize,
+        /// The shortest stream of the tree's deflater at any level.
         deflated: usize,
+        /// The optimal parse's stream; `usize::MAX` when the chunk is past [`OPTIMAL_CAP`] and it was not tried.
+        optimal: usize,
         ceiling: u32,
     },
+}
+
+fn optimal_said(optimal: usize) -> String {
+    if optimal == usize::MAX {
+        format!("the optimal parse is not tried on a chunk past {OPTIMAL_CAP} bytes")
+    } else {
+        format!("to {optimal} by an optimal parse")
+    }
 }
 
 /// Plan `patch.body` over its row's chunks, refusing by name a body that cannot keep their sizes.
@@ -137,29 +158,48 @@ pub fn write_patched_copy(
     }
     let mut src = File::open(source)?;
     let mut plans: Vec<PatchPlan> = Vec::with_capacity(patches.len());
-    let mut spans: Vec<(u64, u64)> = Vec::new();
     for patch in patches {
-        if plans
-            .iter()
-            .any(|p| p.base == patch.base && p.entry == patch.entry)
-        {
-            return Err(bad(format!(
-                "entry {} of the archive at {:#x} is patched twice",
-                patch.entry, patch.base
-            )));
-        }
         let plan = plan_patch(&mut src, keys, patch).map_err(|refusal| {
             bad(format!(
                 "entry {} of the archive at {:#x} cannot be patched in place: {refusal}",
                 patch.entry, patch.base
             ))
         })?;
-        for span in protected_spans(&mut src, keys, patch.base)? {
+        plans.push(plan);
+    }
+    write_planned_copy(source, out, keys, plans)
+}
+
+/// [`write_patched_copy`] from plans [`plan_patch`] already made over `source`.
+pub fn write_planned_copy(
+    source: &Path,
+    out: &Path,
+    keys: &GtaViKeys,
+    plans: Vec<PatchPlan>,
+) -> Result<PatchReport, IoError> {
+    if out.exists() {
+        return Err(bad(format!(
+            "{} exists, and a patched copy is written only to a new file",
+            out.display()
+        )));
+    }
+    let mut src = File::open(source)?;
+    let mut spans: Vec<(u64, u64)> = Vec::new();
+    for (i, plan) in plans.iter().enumerate() {
+        if plans[..i]
+            .iter()
+            .any(|p| p.base == plan.base && p.entry == plan.entry)
+        {
+            return Err(bad(format!(
+                "entry {} of the archive at {:#x} is patched twice",
+                plan.entry, plan.base
+            )));
+        }
+        for span in protected_spans(&mut src, keys, plan.base)? {
             if !spans.contains(&span) {
                 spans.push(span);
             }
         }
-        plans.push(plan);
     }
 
     let mut writes: Vec<(u64, &[u8])> = plans
@@ -303,13 +343,13 @@ fn mount_spans<R: Read + Seek>(
         }
     };
     push((mount.base, mount.base + u64::from(header.toc_end)));
-    // The names blob ends the archive, after every row; where a row starts in it, `end` is not the
-    // archive's (a file cut short), and the blob is not in the file to be written over.
+    // The names blob ends the archive, after every row; where a row's stored bytes reach into it,
+    // `end` is not the archive's (a file cut short), and the blob is not in the file to be written over.
     let names = end.saturating_sub(u64::from(header.names_size));
     let entries = mount.archive.entries.iter();
     if !entries
-        .filter_map(|e| mount.absolute_start(e))
-        .any(|s| s >= names)
+        .filter_map(|e| Some(mount.absolute_start(e)? + e.stored.unwrap_or(0)))
+        .any(|row_end| row_end > names)
     {
         push((names, end));
     }
@@ -431,17 +471,21 @@ fn plan_in<R: Read + Seek>(
         })?;
         let changed = content != piece;
         let mut new_stored = chunk.stored;
+        let mut by_optimal = false;
         if changed {
             let new = if chunk.zlib {
-                let (stream, deflated) = deflate_to(piece, framed, stored).map_err(|deflated| {
-                    PatchRefusal::ChunkDoesNotFit {
-                        entry: e,
-                        chunk: i,
-                        deflated,
-                        ceiling: chunk.stored,
-                    }
-                })?;
+                let (stream, deflated, optimal) =
+                    deflate_to(piece, framed, stored).map_err(|(deflated, optimal)| {
+                        PatchRefusal::ChunkDoesNotFit {
+                            entry: e,
+                            chunk: i,
+                            deflated,
+                            optimal,
+                            ceiling: chunk.stored,
+                        }
+                    })?;
                 new_stored = deflated as u32;
+                by_optimal = optimal;
                 stream
             } else {
                 piece.to_vec()
@@ -462,6 +506,7 @@ fn plan_in<R: Read + Seek>(
             new_stored,
             zlib: chunk.zlib,
             changed,
+            optimal: by_optimal,
         });
         pos = (pos + stored + 15) & !15;
         cursor += inflated;
@@ -512,7 +557,8 @@ fn lone_chunk(plain: &[u8], real: Option<u64>) -> Option<Chunk> {
 }
 
 /// A chunk's content from its stored bytes, and whether its stream is zlib-framed (raw DEFLATE
-/// otherwise); a deflated chunk must inflate from exactly its stored bytes to exactly its inflated size.
+/// otherwise); a deflated chunk's stream must end within its stored bytes and inflate to exactly its
+/// inflated size, and the bytes after it are ignored, as the reader and the game ignore them.
 fn chunk_content(stored: &[u8], chunk: &Chunk) -> Option<(bool, Vec<u8>)> {
     if !chunk.zlib {
         return Some((false, stored.to_vec()));
@@ -521,7 +567,7 @@ fn chunk_content(stored: &[u8], chunk: &Chunk) -> Option<(bool, Vec<u8>)> {
     [true, false]
         .into_iter()
         .find_map(|framed| match inflate_head(stored, framed, n) {
-            Ok(Some((used, out))) if used == stored.len() && out.len() == n => Some((framed, out)),
+            Ok(Some((used, out))) if used <= stored.len() && out.len() == n => Some((framed, out)),
             _ => None,
         })
 }
@@ -539,27 +585,65 @@ fn inflate_head(
     Ok((status == Status::StreamEnd).then(|| (d.total_in() as usize, out)))
 }
 
-/// `content` deflated (zlib-framed when `zlib`) at the shortest level whose stream, led by empty
-/// blocks, fills exactly `len` bytes, with that stream's own length; `Err` holds the shortest any made.
-// flate2 offers levels and no strategy, so the levels are all that is tried.
-fn deflate_to(content: &[u8], zlib: bool, len: usize) -> Result<(Vec<u8>, usize), usize> {
+/// `content` deflated (zlib-framed when `zlib`) to a stream filled to exactly `len` bytes: the
+/// shortest fitting level of the tree's deflater, else the optimal parse's stream on a chunk of at most
+/// [`OPTIMAL_CAP`] bytes.
+/// `Ok` holds the filled stream, its own length and whether the optimal parse made it; `Err` holds
+/// the shortest length of the tree's deflater and the optimal parse's.
+// The optimal parse is far slower than any level, so it runs only for a chunk no level fits.
+fn deflate_to(
+    content: &[u8],
+    zlib: bool,
+    len: usize,
+) -> Result<(Vec<u8>, usize, bool), (usize, usize)> {
     let mut streams: Vec<Vec<u8>> = (0..=9)
         .filter_map(|level| deflate(content, level, zlib))
         .collect();
     streams.sort_by_key(Vec::len);
     let shortest = streams.first().map_or(usize::MAX, Vec::len);
-    let head = if zlib { 2 } else { 0 };
-    for stream in streams {
-        let Some(pad) = len.checked_sub(stream.len()).and_then(padding) else {
-            continue;
-        };
-        let mut out = Vec::with_capacity(len);
-        out.extend_from_slice(&stream[..head]);
-        out.extend_from_slice(&pad);
-        out.extend_from_slice(&stream[head..]);
-        return Ok((out, stream.len()));
+    if let Some((out, own)) = streams
+        .iter()
+        .find_map(|s| Some((fill(s, zlib, len)?, s.len())))
+    {
+        return Ok((out, own, false));
     }
-    Err(shortest)
+    if content.len() > OPTIMAL_CAP {
+        return Err((shortest, usize::MAX));
+    }
+    let optimal = optimal_deflate(content, zlib);
+    let optimal_len = optimal.as_ref().map_or(usize::MAX, Vec::len);
+    match optimal.and_then(|s| fill(&s, zlib, len)) {
+        Some(out) => Ok((out, optimal_len, true)),
+        None => Err((shortest, optimal_len)),
+    }
+}
+
+/// `stream` filled to exactly `len` bytes: led by empty blocks, past its zlib head when `zlib`, where
+/// they fill the slack, else followed by zeros, which the reader and the game ignore past a stream's end.
+fn fill(stream: &[u8], zlib: bool, len: usize) -> Option<Vec<u8>> {
+    let slack = len.checked_sub(stream.len())?;
+    let Some(pad) = padding(slack) else {
+        return Some([stream, &vec![0u8; slack][..]].concat());
+    };
+    let (head, rest) = stream.split_at_checked(if zlib { 2 } else { 0 })?;
+    Some([head, &pad[..], rest].concat())
+}
+
+/// `content` deflated by an optimal parse (zopfli), zlib-framed when `zlib`, raw DEFLATE otherwise.
+pub fn optimal_deflate(content: &[u8], zlib: bool) -> Option<Vec<u8>> {
+    let options = zopfli::Options {
+        iteration_count: NonZeroU64::new(OPTIMAL_ROUNDS)?,
+        iterations_without_improvement: NonZeroU64::new(OPTIMAL_STALL)?,
+        ..zopfli::Options::default()
+    };
+    let format = if zlib {
+        zopfli::Format::Zlib
+    } else {
+        zopfli::Format::Deflate
+    };
+    let mut out = Vec::with_capacity(content.len() / 2 + 64);
+    zopfli::compress(options, format, content, &mut out).ok()?;
+    Some(out)
 }
 
 fn deflate(content: &[u8], level: u32, zlib: bool) -> Option<Vec<u8>> {
@@ -572,8 +656,7 @@ fn deflate(content: &[u8], level: u32, zlib: bool) -> Option<Vec<u8>> {
 }
 
 /// Empty DEFLATE blocks that begin and end on a byte and fill exactly `n` bytes, to lead a stream; `None`
-/// for 1 to 4 and 8, which no run of them fills. OpenRage's reader takes a chunk only when its stream
-/// ends at its stored size, so a short stream is filled from inside rather than followed by zeros.
+/// for 1 to 4 and 8, which no run of them fills.
 fn padding(n: usize) -> Option<Vec<u8>> {
     // Groups of k empty fixed blocks closed by an empty stored block: 5, 6, 7 and 9 bytes for k = 0..=3.
     let (groups, used): (&[usize], usize) = match n % 5 {

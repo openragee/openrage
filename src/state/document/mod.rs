@@ -114,8 +114,10 @@ pub struct Document {
 impl Document {
     pub fn new(id: DocumentId, path: Option<PathBuf>, payload: DocPayload) -> Self {
         let kind = payload.kind();
-        let name = path
-            .as_ref()
+        let shown = path
+            .as_deref()
+            .and_then(super::rpf_archive_open::tree_open::shown);
+        let name = (shown.as_ref().or(path.as_ref()))
             .and_then(|p| p.file_stem().and_then(|s| s.to_str()))
             .unwrap_or(tr!("Untitled"))
             .to_string();
@@ -348,8 +350,8 @@ impl Document {
 
     /// Its file's name, extension included, or its name while it has no file.
     pub fn file_name(&self) -> String {
-        self.path
-            .as_deref()
+        let shown = (self.path.as_deref()).and_then(super::rpf_archive_open::tree_open::shown);
+        (shown.as_deref().or(self.path.as_deref()))
             .and_then(Path::file_name)
             .map_or_else(|| self.name.clone(), |n| n.to_string_lossy().into_owned())
     }

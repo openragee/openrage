@@ -13,9 +13,9 @@ mod read;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use glam::Affine3A;
+use glam::{Affine3A, Vec3};
 use or_world::state::Gate;
-use or_world::streaming::{Forest, Level, MapBox, NodeId, NodeState, View, PRESTREAM};
+use or_world::streaming::{Forest, Level, MapBox, NodeId, NodeState, View};
 use or_world::WorldState;
 
 use crate::world_index::{tree, Map, WorldIndex, WorldSource};
@@ -30,6 +30,20 @@ const MOST_KEYED: u32 = 1 << 31;
 /// The forest key of the entities of the interior that entity `at` of the map `map` places.
 pub fn interior_key(map: u32, at: u32) -> u64 {
     INTERIOR | u64::from(map) << 31 | u64::from(at % MOST_KEYED)
+}
+
+/// How far past its box a GTA V map streams in, in metres.
+pub const PRESTREAM: f32 = 50.0;
+
+/// Whether a camera at `eye` streams in a GTA V map of `boxes`: within its box grown by [`PRESTREAM`].
+// ⚠ The box is the entities' where the streaming one does not hold them. GTA V's rule, kept
+// apart from the GTA VI build's sphere that `MapBox::wants` answers by.
+pub fn streams_in(boxes: &MapBox, eye: Vec3) -> bool {
+    let (s, e) = (boxes.streaming, boxes.entities);
+    let holds = s.0.cmple(e.0).all() && s.1.cmpge(e.1).all();
+    let (min, max) = if holds { s } else { e };
+    let grow = Vec3::splat(PRESTREAM);
+    eye.cmpge(min - grow).all() && eye.cmple(max + grow).all()
 }
 
 /// The two boxes `map` states, as the streaming rules take them; `None` where it states neither.
@@ -209,8 +223,6 @@ pub struct Selected {
     pub instances: Vec<Instance>,
     /// The archetypes in range whose model is loading, each once, nearest ancestors first.
     pub waiting: Vec<u32>,
-    /// The archetypes out of range whose model is loading that the view's velocity brings into range, each once.
-    pub ahead: Vec<u32>,
     /// Whether a fade in time is under way: the next selection differs though nothing moves.
     pub fading: bool,
 }
@@ -314,7 +326,7 @@ impl<'a> WorldForest<'a> {
             let Some(boxes) = map_box(map) else {
                 continue;
             };
-            let asked = boxes.wanted(view, map.content_flags) && groups.is_active(map.hash, state);
+            let asked = streams_in(&boxes, view.eye) && groups.is_active(map.hash, state);
             if let Some(at) = index.place_of_map(map.hash).filter(|_| map.read && asked) {
                 let (min, max) = boxes.entities;
                 let away = view.eye.distance(view.eye.clamp(min, max));
@@ -540,7 +552,6 @@ impl<'a> WorldForest<'a> {
             named.filter(|name| seen.insert(*name)).collect()
         };
         out.waiting = archetypes(&selection.wanted);
-        out.ahead = archetypes(&selection.ahead);
         out
     }
 

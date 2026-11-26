@@ -2,7 +2,9 @@
 //! beside each node what it places.
 
 use glam::{Affine3A, Vec3};
-use or_world::streaming::{Category, Extent, Kind, Node, ParentRef, PRESTREAM};
+use or_world::streaming::{Category, Extent, Kind, Node, ParentRef};
+
+use super::PRESTREAM;
 use or_world::{Entity, MapData, MapTypes};
 
 use super::{interior_key, ModelFiles, NoModel, Unread};

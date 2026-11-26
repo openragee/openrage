@@ -15,13 +15,13 @@ use forest_fixture::{
 };
 use glam::{Quat, Vec3};
 use or_depends::world_forest::{
-    interior_key, map_box, model_of, request_of, Model, ModelFiles, NoModel, Request, Selected,
-    Unread, Why,
+    interior_key, map_box, model_of, request_of, streams_in, Model, ModelFiles, NoModel, Request,
+    Selected, Unread, Why, PRESTREAM,
 };
 use or_depends::world_index::{refresh, KeptState};
 use or_depends::{MountedWorld, WorldForest, WorldIndex, WorldSource};
 use or_world::state::{flags as group_flags, Gate, NOT_BY_DEFAULT};
-use or_world::streaming::{Level, NodeState, View, FADE, PRESTREAM};
+use or_world::streaming::{Level, NodeState, View, FADE};
 use or_world::{Placement, WorldState};
 use world_fixture::{cube, hash, mount, Counting};
 
@@ -794,7 +794,7 @@ fn a_map_streams_by_its_entities_extents_where_its_streaming_ones_do_not_hold_th
     for name in ["m_loose", "m_cornered"] {
         let map = index.map(hash(name)).expect("the map is indexed");
         let boxes = map_box(map).expect("it states its boxes");
-        assert!(boxes.wanted(&view, map.content_flags), "{name}");
+        assert!(streams_in(&boxes, view.eye), "{name}");
     }
     assert!(index.maps_in_column(0.0, 0.0).is_empty());
     assert!(index.maps_near_column(0.0, 0.0, PRESTREAM).is_empty());
@@ -924,37 +924,6 @@ fn of_the_maps_a_view_wants_the_nearest_is_read_first() {
         assert_eq!(streamed.waiting.len(), left);
     }
     assert_eq!(read, ["m_b", "m_c", "m_a"]);
-}
-
-#[test]
-fn a_model_the_view_s_velocity_brings_into_range_is_named_ahead_of_it() {
-    let near = Ent {
-        lod_dist: 40.0,
-        ..ent("hd_a", [0.0; 3])
-    };
-    let map = map_around(cube([-10.0; 3], 20.0), vec![near]);
-    let dir = install(&[("x64a.rpf", vec![map_file("m_one", &map), family_types()])]);
-    let game = mount(dir.path());
-    let source = MountedWorld::new(&game, dir.path());
-    let (index, _) = WorldIndex::build(&source, None);
-    let mut forest = WorldForest::new(&index, &source, ROOMY);
-    let loading = |_: u32| NodeState::Loading;
-
-    // 100 m off, past its 40 m and its band: at rest nothing is waited for or asked ahead.
-    let mut view = at(100.0, 0.0, 0.0);
-    forest.stream(&view, &noon());
-    let at_rest = forest.select(&view, &loading);
-    assert!(at_rest.waiting.is_empty() && at_rest.ahead.is_empty());
-    // Closing at 60 m a second, a second on it is 40 m off, in range.
-    view.velocity = Vec3::new(-60.0, 0.0, 0.0);
-    let closing = forest.select(&view, &loading);
-    assert_eq!(closing.ahead, [hash("hd_a")]);
-    assert!(closing.waiting.is_empty() && closing.instances.is_empty());
-    // In range it is waited for, and no longer ahead.
-    let within = at(30.0, 0.0, 0.0);
-    let waited = forest.select(&within, &loading);
-    assert_eq!(waited.waiting, [hash("hd_a")]);
-    assert!(waited.ahead.is_empty());
 }
 
 #[test]

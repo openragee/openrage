@@ -252,6 +252,7 @@ pub fn draw(ctx: &egui::Context, state: &mut AppState, bridge: Option<&mut Rende
     panels::edit_mode::draw_refused_write(ctx, state);
     panels::save_destination::draw(ctx, state);
     panels::file_prompts::draw(ctx, state);
+    panels::gta6_save_question::draw(ctx, state);
     panels::project::draw_questions(ctx, state);
     panels::new_project::draw(ctx, state);
     panels::guide::draw(ctx, state);

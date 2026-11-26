@@ -17076,9 +17076,6 @@ msgstr "아카이브의 어떤 항목도 {offset}의 본문을 가지고 있지 
 msgid "Save into a copy of the archive…"
 msgstr "아카이브의 사본에 저장…"
 
-msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"
-msgstr "GTA VI 문서의 편집을 그 항목 위치에, 읽어 온 아카이브의 새 사본에 씁니다. 테이블의 서명이 오래되어 게임은 그 사본을 거부합니다"
-
 msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
 msgstr "GTA VI 키가 없습니다: 설정 ▸ 게임에서 GTA VI 설치 폴더를 지정하면 그 실행 파일로 키를 풀 수 있습니다."
 
@@ -17359,3 +17356,30 @@ msgstr[1] "{preset}: 명령 {count}개의 키를 바꿉니다."
 
 msgid "The world goes over to the weather chosen in a minute of the game's time, as the game's own weather changes"
 msgstr "게임 시간 1분에 걸쳐 게임 자체의 날씨가 바뀌듯 선택한 날씨로 바뀝니다"
+
+msgid "Not saved into its row: {reason}"
+msgstr "해당 행에 저장되지 않았습니다: {reason}"
+
+msgid "{name} is saved into its row of {archive}, and the archive's Save as… writes it to a new file: a patched copy where the body fits its entry's chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{name}은(는) {archive}의 해당 행에 저장되었으며, 아카이브의 다른 이름으로 저장…은 새 파일에 씁니다. 본문이 항목의 청크에 들어가면 패치된 사본이고, 그렇지 않으면 재구성된 아카이브이며, 테이블에는 만든 사람만 서명할 수 있으므로 게임은 그것을 거부합니다."
+
+msgid "Save a copy"
+msgstr "사본 저장"
+
+msgid "Save a patched copy"
+msgstr "패치된 사본 저장"
+
+msgid "Save a rebuilt archive"
+msgstr "재구성된 아카이브 저장"
+
+msgid "Nothing in {file} is edited, so the copy is the archive as it was read, byte for byte."
+msgstr "{file}에는 편집된 것이 없으므로 사본은 읽은 그대로의 아카이브이며 바이트 단위로 같습니다."
+
+msgid "{file} is the archive as it was read, byte for byte: nothing in it is edited."
+msgstr "{file}은(는) 읽은 그대로의 아카이브이며 바이트 단위로 같습니다. 그 안에는 편집된 것이 없습니다."
+
+msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from: a patched copy, its table byte-identical, where the body fits its entry's chunks, which no check read in the game's code rejects though the game has not been run with it; else a rebuilt archive, which the game refuses because only its maker can sign the table"
+msgstr "GTA VI 문서의 편집을 읽어 온 아카이브의 새 사본에 항목의 자리에 씁니다. 본문이 항목의 청크에 들어가면 테이블이 바이트 단위로 같은 패치된 사본이 되며, 게임 코드에서 읽은 어떤 검사도 그것을 거부하지 않지만 게임을 그것으로 실행한 적은 없습니다. 그렇지 않으면 재구성된 아카이브가 되며, 테이블에는 만든 사람만 서명할 수 있으므로 게임은 그것을 거부합니다"
+
+msgid "The text table is laid out again at another length ({reason}), so a save into its archive writes a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "텍스트 테이블이 다른 길이로 다시 배치되므로({reason}) 그 아카이브에 저장하면 재구성된 아카이브가 쓰이며, 테이블에는 만든 사람만 서명할 수 있으므로 게임은 그것을 거부합니다."

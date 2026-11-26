@@ -149,6 +149,8 @@ pub(super) struct Rpf9State {
     /// For each entry of the tree, its leaf; `u32::MAX` for a folder.
     entry_of: Vec<u32>,
     leaves: Vec<Leaf>,
+    /// Whether each leaf is stored deflated, worked out once it is first asked.
+    deflated: Vec<OnceLock<bool>>,
 }
 
 /// Read an RPF9's table into a tree of entries, with the state its bodies are read through.
@@ -180,11 +182,13 @@ pub(super) fn read(input: &Input) -> Result<(Toc, Rpf9State)> {
         name_heap: Vec::new(),
         outcome: TocDecryptOutcome::Nominal,
     };
+    let deflated = leaves.iter().map(|_| OnceLock::new()).collect();
     let state = Rpf9State {
         mount,
         context,
         entry_of,
         leaves,
+        deflated,
     };
     Ok((toc, state))
 }
@@ -629,7 +633,7 @@ mod tests {
         assert_eq!(
             media,
             Some(Rpf9Kind {
-                label: "media",
+                label: "file",
                 extension: None
             })
         );

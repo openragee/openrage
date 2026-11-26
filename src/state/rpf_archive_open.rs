@@ -85,7 +85,7 @@ impl super::AppState {
             let super::RpfNodeBacking::ArchiveFile {
                 archive_id,
                 entry_index,
-                override_bytes: None,
+                override_bytes,
             } = &rpf.session.node(entry)?.backing
             else {
                 return None;
@@ -93,14 +93,20 @@ impl super::AppState {
             let archive = &rpf.session.archive(*archive_id)?.archive;
             let place = archive.rpf9_place(*entry_index)?;
             let row_start = place.base + archive.binary_entry(*entry_index)?.file_offset;
-            Some((place, row_start))
+            Some((place, row_start, override_bytes.clone()))
         })();
-        let Some((place, row_start)) = place else {
+        let Some((place, row_start, edited)) = place else {
             return false;
         };
         let view = super::rpf9_scan::View::Bytes;
         let path = super::rpf9_scan::body_path(&place.file, place.offset, view);
-        tree_open::leave(&path, &place, row_start, super::rpf9_scan::rpf9_table::keys);
+        tree_open::leave(
+            &path,
+            &place,
+            row_start,
+            super::rpf9_scan::rpf9_table::keys,
+            edited,
+        );
         tree_open::name(self, &path, parent, entry);
         self.load_file(path);
         true

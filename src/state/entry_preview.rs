@@ -100,17 +100,30 @@ pub fn classify(name: &str, bytes: &[u8]) -> PreviewBody {
     }
 }
 
-/// Offset, sixteen bytes and their printable characters, per line.
-pub fn hex_lines(bytes: &[u8]) -> Vec<String> {
+/// Offset, `per_line` bytes and their printable characters, per line.
+pub fn hex_lines(bytes: &[u8], per_line: usize) -> Vec<String> {
+    let per_line = per_line.max(1);
     bytes
-        .chunks(16)
+        .chunks(per_line)
         .enumerate()
-        .map(|(i, row)| hex_line(i * 16, row))
+        .map(|(i, row)| line(i * per_line, row, per_line))
         .collect()
 }
 
-/// One line of [`hex_lines`]: `row`'s bytes, at `offset` into the file.
+/// The most of 16, 8 or 4 bytes whose line fits `width` at `glyph` per character; 4 when none does.
+pub fn bytes_per_line(width: f32, glyph: f32) -> usize {
+    let chars = if glyph > 0.0 { width / glyph } else { 0.0 };
+    // The offset, two spaces, each byte's two digits and a space, two spaces and its character.
+    let fits = |n: usize| (8 + 2 + 3 * n - 1 + 2 + n) as f32 <= chars;
+    [16, 8].into_iter().find(|&n| fits(n)).unwrap_or(4)
+}
+
+/// One line of sixteen bytes: `row`'s bytes, at `offset` into the file.
 pub fn hex_line(offset: usize, row: &[u8]) -> String {
+    line(offset, row, 16)
+}
+
+fn line(offset: usize, row: &[u8], per_line: usize) -> String {
     let hex: Vec<String> = row.iter().map(|b| format!("{b:02X}")).collect();
     let text: String = row
         .iter()
@@ -122,7 +135,8 @@ pub fn hex_line(offset: usize, row: &[u8]) -> String {
             }
         })
         .collect();
-    format!("{offset:08X}  {:<47}  {text}", hex.join(" "))
+    let width = 3 * per_line - 1;
+    format!("{offset:08X}  {:<width$}  {text}", hex.join(" "))
 }
 
 fn folder_body(session: &RpfEditSession, id: RpfNodeId) -> PreviewBody {
@@ -170,7 +184,7 @@ pub fn preview(session: &RpfEditSession, id: RpfNodeId) -> Option<EntryPreview> 
         .map(|p| format!("/{p}"))
         .unwrap_or_default();
     let size = (!node.is_dir()).then(|| session.size_for(id)).flatten();
-    let kind = super::files_view::kind_in_words(session, node);
+    let mut kind = super::files_view::kind_in_words(session, node);
     let drawn = matches!(
         super::files_view::pictures::picture_kind(&node.name),
         Some(PictureKind::Texture | PictureKind::Model)
@@ -183,7 +197,10 @@ pub fn preview(session: &RpfEditSession, id: RpfNodeId) -> Option<EntryPreview> 
         PreviewBody::TooLarge
     } else {
         match session.bytes_for(id) {
-            Some(bytes) => classify(&node.name, &bytes),
+            Some(bytes) => {
+                kind = super::files_view::kind_by_head(kind, &bytes);
+                classify(&node.name, &bytes)
+            }
             None => PreviewBody::Unreadable,
         }
     };
@@ -268,11 +285,31 @@ mod tests {
 
     #[test]
     fn a_hex_line_is_offset_bytes_and_printables() {
-        let lines = hex_lines(b"RPF7\x00\x01abcdefghijklmnop");
+        let lines = hex_lines(b"RPF7\x00\x01abcdefghijklmnop", 16);
         assert_eq!(lines.len(), 2);
         assert!(lines[0].starts_with("00000000  52 50 46 37 00 01 61"));
         assert!(lines[0].ends_with("RPF7..abcdefghij"));
         assert!(lines[1].starts_with("00000010  6B"));
+    }
+
+    #[test]
+    fn a_narrow_pane_takes_fewer_bytes_per_line_and_every_line_is_as_wide() {
+        // 16 bytes take 75 characters, 8 take 43 and 4 take 27.
+        assert_eq!(bytes_per_line(75.0 * 7.0, 7.0), 16);
+        assert_eq!(bytes_per_line(74.0 * 7.0, 7.0), 8);
+        assert_eq!(bytes_per_line(290.0, 6.0), 8);
+        assert_eq!(bytes_per_line(42.0 * 7.0, 7.0), 4);
+        assert_eq!(bytes_per_line(10.0, 0.0), 4);
+        let lines = hex_lines(&[0x41; 20], 8);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].len(), 43);
+        assert_eq!(
+            lines[2].len(),
+            lines[0].len() - 4,
+            "a short line pads its hex column"
+        );
+        assert!(lines[1].starts_with("00000008  41"));
+        assert_eq!(hex_lines(&[0x41; 16], 16)[0].len(), 75);
     }
 
     #[test]

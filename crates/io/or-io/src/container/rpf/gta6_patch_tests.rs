@@ -315,6 +315,7 @@ fn what_cannot_go_in_place_is_refused_by_name_and_writes_nothing() {
         deflated,
         optimal,
         ceiling,
+        ..
     } = &refused
     else {
         panic!("{refused}");
@@ -428,15 +429,17 @@ fn empty_blocks_fill_every_length_but_one_to_four_and_eight() {
         }
     }
 
-    let (shortest, optimal) = deflate_to(&content, true, 0).expect_err("nothing fits no bytes");
+    let (shortest, optimal) = deflate_to(&content, true, 0, OPTIMAL_CAP, &mut |_| true)
+        .expect_err("nothing fits no bytes");
     let least = shortest.min(optimal);
     for len in [least, least + 5, least + 9, least + 100] {
-        let (stream, own, _) = deflate_to(&content, true, len).expect("fills");
+        let (stream, own, _) =
+            deflate_to(&content, true, len, OPTIMAL_CAP, &mut |_| true).expect("fills");
         assert_eq!(stream.len(), len);
         assert!(own <= len);
     }
     assert_eq!(
-        deflate_to(&content, true, least - 1),
+        deflate_to(&content, true, least - 1, OPTIMAL_CAP, &mut |_| true),
         Err((shortest, optimal))
     );
 }
@@ -492,7 +495,8 @@ fn both_encoders_streams_inflate_to_the_same_bytes() {
 #[test]
 fn a_chunk_only_the_optimal_parse_fits_is_patched_and_reads_back() {
     let new = words(0x4000, 21);
-    let (shortest, ceiling) = deflate_to(&new, true, 0).expect_err("nothing fits no bytes");
+    let (shortest, ceiling) =
+        deflate_to(&new, true, 0, OPTIMAL_CAP, &mut |_| true).expect_err("nothing fits no bytes");
     assert!(
         shortest > ceiling,
         "the tree's deflater makes {shortest} bytes and the optimal parse {ceiling}: the case needs \
@@ -501,8 +505,8 @@ fn a_chunk_only_the_optimal_parse_fits_is_patched_and_reads_back() {
     // The old content deflates short enough to be led by empty blocks to the ceiling.
     let mut old = new.clone();
     old[100..2100].fill(b'a');
-    let (stored, _, _) =
-        deflate_to(&old, true, ceiling).expect("the old content fills the ceiling");
+    let (stored, _, _) = deflate_to(&old, true, ceiling, OPTIMAL_CAP, &mut |_| true)
+        .expect("the old content fills the ceiling");
     let mut held = stored;
     pad16(&mut held);
     let mut archive = tabled(vec![Chunk {
@@ -522,8 +526,15 @@ fn a_chunk_only_the_optimal_parse_fits_is_patched_and_reads_back() {
         entry: 0,
         body: new.clone(),
     };
-    let plan = plan_in(&mount, &mut Cursor::new(&file[..]), &keys(), &patch)
-        .expect("the optimal parse fits");
+    let plan = plan_in(
+        &mount,
+        &mut Cursor::new(&file[..]),
+        &keys(),
+        &patch,
+        OPTIMAL_CAP,
+        &mut |_, _| true,
+    )
+    .expect("the optimal parse fits");
     let chunk = plan.chunks[0];
     assert!(chunk.changed && chunk.optimal, "{chunk:?}");
     assert_eq!(
@@ -542,9 +553,12 @@ fn pad16(v: &mut Vec<u8>) {
     v.resize(v.len().next_multiple_of(16), 0);
 }
 
-/// A two-entry archive whose entry 0 has `chunks` for its table and entry 1 none.
+/// A two-entry archive whose entry 0 has `chunks` for its table (mode 3 where its sizes fit 64 KiB,
+/// else mode 4) and entry 1 none.
 fn tabled(chunks: Vec<Chunk>) -> Gta6Archive {
-    let (u1, words) = author(&Table { mode: 3, chunks }).expect("authored");
+    let small = |c: &Chunk| c.inflated <= 0x10000 && c.stored <= 0x10000;
+    let mode = if chunks.iter().all(small) { 3 } else { 4 };
+    let (u1, words) = author(&Table { mode, chunks }).expect("authored");
     let mut cell_and_heap = 8u32.to_le_bytes().to_vec();
     cell_and_heap.extend_from_slice(&u1.to_le_bytes());
     for word in words {
@@ -626,7 +640,15 @@ fn a_ciphered_row_is_re_enciphered_where_its_framing_covers_it() {
         entry: 0,
         body: new.clone(),
     };
-    let plan = plan_in(&mount, &mut Cursor::new(&file[..]), &keys, &patch).expect("planned");
+    let plan = plan_in(
+        &mount,
+        &mut Cursor::new(&file[..]),
+        &keys,
+        &patch,
+        OPTIMAL_CAP,
+        &mut |_, _| true,
+    )
+    .expect("planned");
     assert!(plan.ciphered);
     let changed: Vec<bool> = plan.chunks.iter().map(|c| c.changed).collect();
     assert_eq!(changed, [false, true, false]);
@@ -672,7 +694,14 @@ fn a_row_with_no_chunk_table_is_one_stream_or_one_stored_body() {
             entry: 1,
             body,
         };
-        let plan = plan_in(&mount, &mut Cursor::new(&file[..]), &keys, &patch);
+        let plan = plan_in(
+            &mount,
+            &mut Cursor::new(&file[..]),
+            &keys,
+            &patch,
+            OPTIMAL_CAP,
+            &mut |_, _| true,
+        );
         (file, plan)
     };
 
@@ -750,7 +779,14 @@ fn a_chunk_with_filler_after_its_stream_plans_unchanged_and_beside_an_edit_of_an
             entry: 0,
             body,
         };
-        plan_in(&mount, &mut Cursor::new(&file[..]), &keys(), &patch)
+        plan_in(
+            &mount,
+            &mut Cursor::new(&file[..]),
+            &keys(),
+            &patch,
+            OPTIMAL_CAP,
+            &mut |_, _| true,
+        )
     };
     let unchanged = plan(old.clone()).expect("an unchanged body plans");
     assert!(unchanged.writes.is_empty());
@@ -777,7 +813,8 @@ fn a_stream_three_bytes_short_of_its_ceiling_is_followed_by_zeros_and_patches_ag
     let ceiling = shortest + 3;
     let mut old = new.clone();
     old[100..3000].fill(b'a');
-    let (stored, _, _) = deflate_to(&old, true, ceiling).expect("the old content fills it");
+    let (stored, _, _) = deflate_to(&old, true, ceiling, OPTIMAL_CAP, &mut |_| true)
+        .expect("the old content fills it");
     let chunk = Chunk {
         inflated: new.len() as u32,
         stored: ceiling as u32,
@@ -789,8 +826,15 @@ fn a_stream_three_bytes_short_of_its_ceiling_is_followed_by_zeros_and_patches_ag
         entry: 0,
         body: body.to_vec(),
     };
-    let plan = plan_in(&mount, &mut Cursor::new(&file[..]), &keys(), &patch(&new))
-        .expect("a stream 3 bytes short fits");
+    let plan = plan_in(
+        &mount,
+        &mut Cursor::new(&file[..]),
+        &keys(),
+        &patch(&new),
+        OPTIMAL_CAP,
+        &mut |_, _| true,
+    )
+    .expect("a stream 3 bytes short fits");
     let c = plan.chunks[0];
     assert!(c.changed && !c.optimal, "{c:?}");
     assert_eq!(
@@ -803,8 +847,15 @@ fn a_stream_three_bytes_short_of_its_ceiling_is_followed_by_zeros_and_patches_ag
     copy[*at as usize..][..bytes.len()].copy_from_slice(bytes);
     assert_eq!(mount.read_entry(Cursor::new(&copy), &entry).unwrap(), new);
     // The patched copy plans again: its zeros after the stream are read past.
-    let again = plan_in(&mount, &mut Cursor::new(&copy[..]), &keys(), &patch(&old))
-        .expect("a patched copy patches again");
+    let again = plan_in(
+        &mount,
+        &mut Cursor::new(&copy[..]),
+        &keys(),
+        &patch(&old),
+        OPTIMAL_CAP,
+        &mut |_, _| true,
+    )
+    .expect("a patched copy patches again");
     assert!(again.chunks[0].changed);
 }
 
@@ -812,7 +863,8 @@ fn a_stream_three_bytes_short_of_its_ceiling_is_followed_by_zeros_and_patches_ag
 fn a_chunk_past_the_optimal_cap_is_refused_without_the_optimal_parse() {
     let content = noise(OPTIMAL_CAP + 1, 61);
     let started = std::time::Instant::now();
-    let refused = deflate_to(&content, true, 1000).expect_err("noise fits no 1000 bytes");
+    let refused = deflate_to(&content, true, 1000, OPTIMAL_CAP, &mut |_| true)
+        .expect_err("noise fits no 1000 bytes");
     assert_eq!(refused.1, usize::MAX, "the optimal parse is not tried");
     assert!(refused.0 > content.len());
     assert!(started.elapsed() < std::time::Duration::from_secs(20));
@@ -822,9 +874,254 @@ fn a_chunk_past_the_optimal_cap_is_refused_without_the_optimal_parse() {
         deflated: refused.0,
         optimal: refused.1,
         ceiling: 1000,
+        cap: OPTIMAL_CAP,
     }
     .to_string();
-    assert!(said.contains("not tried"), "{said}");
+    assert!(said.contains("not tried on a chunk past 8 MiB"), "{said}");
+}
+
+/// The words an [`OPTIMAL_PART`] of [`sparse_words`] opens with.
+const SPARSE: usize = OPTIMAL_PART / 8;
+
+/// Each part a run of one text's words then zeros: a chunk of many parts whose optimal parse is quick.
+fn sparse_words(n: usize, seed: u32) -> Vec<u8> {
+    let text = words(n / 8 + SPARSE, seed);
+    let mut out = vec![0u8; n];
+    for (i, part) in out.chunks_mut(OPTIMAL_PART).enumerate() {
+        let k = part.len().min(SPARSE);
+        part[..k].copy_from_slice(&text[i * SPARSE..][..k]);
+    }
+    out
+}
+
+/// A one-chunk row whose chunk the optimal parse alone fits, and its old content filling that ceiling.
+fn only_optimal_fits(new: &[u8]) -> (Gta6Mount, Gta6Entry, Vec<u8>) {
+    let (shortest, ceiling) =
+        deflate_to(new, true, 0, OPTIMAL_CAP, &mut |_| true).expect_err("nothing fits no bytes");
+    assert!(
+        shortest > ceiling,
+        "the tree's deflater makes {shortest} bytes and the optimal parse {ceiling}: the case needs \
+         content the optimal parse deflates shorter"
+    );
+    let mut old = new.to_vec();
+    for part in old.chunks_mut(OPTIMAL_PART) {
+        let k = part.len().min(SPARSE);
+        part[..k].fill(b'a');
+    }
+    let (stored, _, _) = deflate_to(&old, true, ceiling, OPTIMAL_CAP, &mut |_| true)
+        .expect("the old content fills the ceiling");
+    let chunk = Chunk {
+        inflated: new.len() as u32,
+        stored: ceiling as u32,
+        zlib: true,
+    };
+    let (mount, entry, file) = laid(&[(stored, chunk)]);
+    assert_eq!(mount.read_entry(Cursor::new(&file), &entry).unwrap(), old);
+    (mount, entry, file)
+}
+
+#[test]
+fn a_one_mebibyte_chunk_past_the_old_cap_is_patched_by_the_optimal_parse() {
+    let new = sparse_words(1 << 20, 71);
+    let (mount, entry, file) = only_optimal_fits(&new);
+    let patch = BodyPatch {
+        base: 0,
+        entry: 0,
+        body: new.clone(),
+    };
+    let mut ticks = Vec::new();
+    let plan = plan_in(
+        &mount,
+        &mut Cursor::new(&file[..]),
+        &keys(),
+        &patch,
+        OPTIMAL_CAP,
+        &mut |d, t| {
+            ticks.push((d, t));
+            true
+        },
+    )
+    .expect("the optimal parse fits a 1 MiB chunk");
+    let chunk = plan.chunks[0];
+    assert!(chunk.changed && chunk.optimal, "{chunk:?}");
+    assert_eq!(chunk.new_stored, chunk.ceiling);
+    // The count climbs a part at a time to the body's length, which every tick states.
+    let total = new.len() as u64;
+    assert!(ticks.iter().all(|&(_, t)| t == total), "{ticks:?}");
+    assert!(ticks.windows(2).all(|w| w[0].0 <= w[1].0), "{ticks:?}");
+    assert_eq!(ticks.last().map(|t| t.0), Some(total));
+    let parts = (ticks.iter()).filter(|&&(d, _)| d > 0 && d < total).count();
+    assert!(parts >= (1 << 20) / OPTIMAL_PART - 1, "{ticks:?}");
+    let mut copy = file.clone();
+    for (at, bytes) in &plan.writes {
+        copy[*at as usize..][..bytes.len()].copy_from_slice(bytes);
+    }
+    assert_eq!(mount.read_entry(Cursor::new(&copy), &entry).unwrap(), new);
+}
+
+#[test]
+fn a_stop_ends_the_plan_inside_the_optimal_parse_and_writes_nothing() {
+    let new = sparse_words(1 << 20, 72);
+    let (mount, _, file) = only_optimal_fits(&new);
+    let patch = BodyPatch {
+        base: 0,
+        entry: 0,
+        body: new.clone(),
+    };
+    let total = new.len() as u64;
+    let (mut asked_after, mut stopped_at) = (0, None);
+    let planned = plan_in(
+        &mount,
+        &mut Cursor::new(&file[..]),
+        &keys(),
+        &patch,
+        OPTIMAL_CAP,
+        &mut |d, _| {
+            if stopped_at.is_some() {
+                asked_after += 1;
+            }
+            // Stopped after the optimal parse's first part, well short of the chunk's end.
+            if d > 0 && d < total && stopped_at.is_none() {
+                stopped_at = Some(d);
+                return false;
+            }
+            stopped_at.is_none()
+        },
+    );
+    assert!(
+        matches!(planned, Err(PatchRefusal::Stopped { entry: 0 })),
+        "{planned:?}"
+    );
+    assert_eq!(stopped_at, Some(OPTIMAL_PART as u64));
+    assert_eq!(asked_after, 0, "a stopped plan is not asked again");
+
+    // A built archive on disk, through the public planner: a stopped plan leaves nothing to write.
+    let archive = built(vec![("docs/a.txt", Rpf9NewBody::Chunked(body()))]);
+    let (_dir, src, out) = on_disk(&archive);
+    let mut edited = body();
+    edited[0x20000 + 100..0x20000 + 4100].fill(b'a');
+    let patch = BodyPatch {
+        base: 0,
+        entry: 0,
+        body: edited,
+    };
+    let mut source = File::open(&src).unwrap();
+    let stopped = plan_patch_with(&mut source, &keys(), &patch, OPTIMAL_CAP, &mut |_, _| false);
+    assert!(matches!(stopped, Err(PatchRefusal::Stopped { entry: 0 })));
+    assert!(
+        (stopped.unwrap_err().to_string()).contains("nothing was written"),
+        "the refusal says so"
+    );
+    assert!(!out.exists());
+    assert_eq!(
+        std::fs::read(&src).unwrap(),
+        archive,
+        "the source is untouched"
+    );
+}
+
+#[test]
+fn parts_of_the_optimal_parse_join_as_one_stream_that_inflates_to_the_content() {
+    // Three parts, the third short, the text repeated closer than the window across each seam.
+    let text = words(30_000, 81);
+    let content = [&text[..], &text, &text, &text, &text, &letters(1000, 82)].concat();
+    assert!(content.len() > 2 * OPTIMAL_PART && content.len() < 3 * OPTIMAL_PART);
+    for zlib in [true, false] {
+        let mut asked = Vec::new();
+        let stream = optimal_parse(&content, zlib, &mut |n| {
+            asked.push(n);
+            true
+        })
+        .expect("the optimal parse");
+        assert_eq!(asked, [0, OPTIMAL_PART, 2 * OPTIMAL_PART]);
+        let chunk = Chunk {
+            inflated: content.len() as u32,
+            stored: stream.len() as u32,
+            zlib: true,
+        };
+        assert_eq!(
+            chunk_content(&stream, &chunk),
+            Some((zlib, content.clone()))
+        );
+        // The window crosses each seam: the repeats cost far less than the text, as parts parsed
+        // apart would not.
+        let first = optimal_deflate(&text, zlib).unwrap();
+        assert!(
+            stream.len() < 2 * first.len(),
+            "{} against {}",
+            stream.len(),
+            first.len()
+        );
+    }
+}
+
+/// Bytes like a vertex stream: little-endian words that walk by small steps, with noisy low bits.
+fn vertices(n: usize, seed: u32) -> Vec<u8> {
+    let mut x = 0x4000_0000u32;
+    let mut out = Vec::with_capacity(n + 4);
+    for r in xorshift(n / 4 + 1, seed) {
+        x = x.wrapping_add((r >> 20) & 0x3FF).wrapping_sub(0x1FF);
+        out.extend_from_slice(&((x & !0xFF) | (r & 0x3F)).to_le_bytes());
+    }
+    out.truncate(n);
+    out
+}
+
+/// A content maker: its length and its seed.
+type Content = fn(usize, u32) -> Vec<u8>;
+
+/// The optimal parse's time on 1, 8 and 32 MiB chunks, what a part boundary costs against one
+/// whole parse at 256 KiB, and the longest a stop waits.
+#[test]
+#[ignore = "a measurement of many minutes, run once and read"]
+fn the_optimal_parse_on_chunks_of_1_8_and_32_mib() {
+    use std::time::Instant;
+    let kinds: [(&str, Content); 3] = [
+        ("words", words),
+        ("letters", letters),
+        ("vertices", vertices),
+    ];
+    for (kind, make) in kinds {
+        let content = make(256 << 10, 91);
+        let parted = optimal_deflate(&content, true).unwrap();
+        let mut whole = Vec::new();
+        let options = optimal_options().unwrap();
+        zopfli::compress(options, zopfli::Format::Zlib, &content[..], &mut whole).unwrap();
+        let level9 = deflate(&content, 9, true).unwrap().len();
+        eprintln!(
+            "{kind}, 256 KiB: {} bytes in 64 KiB parts, {} in one parse, {level9} at zlib level 9",
+            parted.len(),
+            whole.len()
+        );
+    }
+    for (kind, make) in kinds {
+        for mib in [1usize, 8, 32] {
+            if mib == 32 && kind != "words" {
+                continue;
+            }
+            let content = make(mib << 20, 92);
+            let began = Instant::now();
+            // A stop is seen when the parse next asks, so the longest gap is how long one waits.
+            let (mut last, mut gap) = (began, std::time::Duration::ZERO);
+            let stream = optimal_parse(&content, true, &mut |_| {
+                gap = gap.max(last.elapsed());
+                last = Instant::now();
+                true
+            })
+            .unwrap();
+            let took = began.elapsed();
+            eprintln!(
+                "{kind}, {mib} MiB: {:.1} s, {:.2} us a byte, a stop waits at most {:.2} s, {} \
+                 bytes ({:.1} %), zlib level 9 {}",
+                took.as_secs_f64(),
+                took.as_secs_f64() * 1e6 / content.len() as f64,
+                gap.max(last.elapsed()).as_secs_f64(),
+                stream.len(),
+                100.0 * stream.len() as f64 / content.len() as f64,
+                deflate(&content, 9, true).unwrap().len()
+            );
+        }
+    }
 }
 
 #[test]

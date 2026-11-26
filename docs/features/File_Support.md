@@ -98,7 +98,9 @@ folder's view offers the scan and the name harvest.
   RBF in the metadata editor, text as text and a resource in its kind's view. A PSO's enciphered
   strings name the hash values it holds. A deciphered script body reads as a compiled program: its
   header, instructions and native calls through `openrage-cli script compiled`, and as source through
-  `openrage-cli script decompile` and the app.
+  `openrage-cli script decompile` and the app. `script compiled --set-int` and `--set-float` write a
+  new body of the same length with a push's value changed; `--set-string` is refused, since no string
+  text of the build's programs was found to replace.
 - **Textures.** A texture stored plainly or as zlib reads as it is. One stored through the pack's
   entropy coder needs the coder's tables, which no file of the game holds. With a tables file you
   supply to `openrage-cli ttpf tables`, every mode reads through it, and a texture is called exact
@@ -137,9 +139,14 @@ folder's view offers the scan and the name harvest.
   with one. `openrage-cli rpf9 patch` writes one, `rpf9 fits` says whether a replacement fits, and
   the tree's Save as… and File ▸ Save into a copy of the archive… write one when every change fits.
   A change fits only at the body's own length, and a changed chunk is deflated again with zlib's
-  levels and then an optimal parse, which must fit the stored size the table states:
-  [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md#a-patched-copy-step-by-step) gives the steps and
-  what fits today.
+  levels and then, on a chunk within a size cap, an optimal parse, which must fit the stored size
+  the table states. On the one build measured most unchanged chunks of up to 256 KiB fit again
+  (measured at `57eece64`), and
+  a larger chunk fits only where zlib fits it. A model or another headerless resource saves
+  from the app as a rebuilt archive, and `rpf9 patch` takes its inflated body instead.
+  [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md#one-value-from-the-files-tree-to-a-patched-copy)
+  walks one edit from the tree to a patched copy, gives the CLI's steps and a script's, and says
+  [what fits today](../guides/GTA_VI_Modding.md#what-fits-today) with the measured figures.
   A rebuilt archive lays a table out again, which the game refuses because only its maker can sign
   one: `rpf9 replace`, `remove`, `rename`, `defrag`, `add` and `build`, `dlc create-gta6`, and the
   app's saves when a change does not fit, whose message names the rows that kept it from being

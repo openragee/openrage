@@ -132,7 +132,7 @@ pub enum GateOutcome {
 }
 
 /// A gated edit's `Err` once the gate has prompted or refused; the gate already told the user, so it is never toasted.
-pub(super) fn retail_pending_message() -> String {
+pub(crate) fn retail_pending_message() -> String {
     tr!("Awaiting retail-edit confirmation").to_string()
 }
 

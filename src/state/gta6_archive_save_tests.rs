@@ -130,6 +130,46 @@ fn an_edited_pso_body_saved_into_a_copy_reopens_with_the_edit() {
 }
 
 #[test]
+fn the_command_asks_where_the_copy_goes_under_a_short_title_and_writes_it_there() {
+    use crate::ui::commands::{run_action, Action};
+
+    let _serial = crate::ui::theme::serial();
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let source = source(dir.path());
+    let (_, start) = start_of(&std::fs::read(&source).expect("the source"), PSO);
+    let meta = MetaDocument::from_bytes(table_form_pso());
+    let mut state = showing(body_path(&source, start, View::Bytes), edited(meta, 81));
+
+    // The command reaches its dialog, which a stand-in given no answer cancels.
+    let ctx = egui::Context::default();
+    run_action(&mut state, &ctx, Action::SaveIntoArchiveCopy);
+    assert_eq!(file_dialogs::last_dialog().as_deref(), Some("Save a copy"));
+
+    let out = dir.path().join("copy.rpf");
+    file_dialogs::answer_next(out.clone());
+    assert!(state.ask_and_save_with(synthetic_keys));
+    assert_eq!(file_dialogs::last_dialog().as_deref(), Some("Save a copy"));
+    finished(&mut state);
+    assert!(
+        said(
+            &state,
+            ToastType::Success,
+            &["copy.rpf", "in its entry's place"]
+        ),
+        "{:?}",
+        state.toasts.iter().map(|t| &t.message).collect::<Vec<_>>()
+    );
+    let copy = std::fs::read(&out).expect("the copy");
+    let (mount, _) = start_of(&copy, PSO);
+    let entry = (mount.archive.entries.iter())
+        .find(|e| e.name64 == name_hash64(PSO.as_bytes()))
+        .expect("the entry");
+    let body = (mount.read_entry(Cursor::new(&copy), entry)).expect("the body reads");
+    let reopened = or_io::meta::MetaDocument::parse(&Default::default(), body).expect("it reads");
+    assert_eq!(reopened.instance.fields[0].1, Value::UInt(81));
+}
+
+#[test]
 fn an_edited_headerless_body_saved_into_a_copy_reopens_with_the_edit() {
     let _serial = crate::ui::theme::serial();
     let dir = tempfile::tempdir().expect("a scratch directory");

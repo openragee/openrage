@@ -14,13 +14,32 @@ use quick_xml::Reader;
 use crate::meta::error::{MetaError, Result};
 use crate::meta::schema::library::hash_spelling;
 use crate::meta::schema::{
-    normalize_member_name, ArrayKind, BitsetStorage, EnumDef, Field as SchemaField, FieldType,
-    ResolvedStruct, SchemaLibrary, StringKind, StructDef, TypeName,
+    normalize_member_name, ArrayKind, EnumDef, Field as SchemaField, FieldType, ResolvedStruct,
+    SchemaLibrary, StringKind, StructDef, TypeName,
 };
 
 use super::value::{HashedString, MetaInstance, UnknownNode, Value};
 
+/// What a read is given: the library, and whether an element typed as a structure the library
+/// lacks is kept (as the structure it derives from, else as text) rather than refused.
+#[derive(Clone, Copy)]
+struct Cx<'a> {
+    library: &'a SchemaLibrary,
+    keep_unknown: bool,
+}
+
 pub fn parse_meta(library: &SchemaLibrary, bytes: &[u8]) -> Result<MetaInstance> {
+    parse_root(
+        Cx {
+            library,
+            keep_unknown: false,
+        },
+        bytes,
+    )
+}
+
+fn parse_root(cx: Cx<'_>, bytes: &[u8]) -> Result<MetaInstance> {
+    let library = cx.library;
     let mut reader = Reader::from_reader(bytes);
     let cfg = reader.config_mut();
     cfg.trim_text(false);
@@ -42,7 +61,7 @@ pub fn parse_meta(library: &SchemaLibrary, bytes: &[u8]) -> Result<MetaInstance>
                 let canonical = kept_name(&resolved, &tag);
                 return read_struct_body(
                     &mut reader,
-                    library,
+                    cx,
                     &resolved,
                     &tag,
                     &canonical,
@@ -55,7 +74,7 @@ pub fn parse_meta(library: &SchemaLibrary, bytes: &[u8]) -> Result<MetaInstance>
                     .resolve_any(&tag)
                     .ok_or_else(|| MetaError::UnknownType(tag.clone()))?;
                 let mut inst = MetaInstance::new(kept_name(&resolved, &tag));
-                apply_attribute_fields(&mut inst, &resolved, e.attributes())?;
+                apply_attribute_fields(&mut inst, cx, &resolved, e.attributes())?;
                 return Ok(inst);
             }
             _ => {}
@@ -64,29 +83,62 @@ pub fn parse_meta(library: &SchemaLibrary, bytes: &[u8]) -> Result<MetaInstance>
     }
 }
 
-/// XML `bytes` typed by `library`, or as the tree they state with the structure `library` lacks.
+/// XML `bytes` typed by `library` where it can, else untyped whole with the structure it lacks.
 pub fn parse_typed_or_tree(
     library: &SchemaLibrary,
     bytes: &[u8],
 ) -> Result<(MetaInstance, Option<String>)> {
-    match parse_meta(library, bytes) {
+    // A `type` naming a structure the library lacks is read as the structure it derives from,
+    // with the members that one lacks kept as text, so the document stays typed. A document
+    // whose root the library lacks is the tree it states, or kept as text where no tree holds it.
+    let cx = Cx {
+        library,
+        keep_unknown: true,
+    };
+    match parse_root(cx, bytes) {
         Err(MetaError::UnknownType(name)) => {
-            super::schemaless::parse_schemaless(bytes).map(|tree| (tree, Some(name)))
+            let tree = super::schemaless::parse_schemaless(bytes).or_else(|_| kept_whole(bytes))?;
+            Ok((tree, Some(name)))
         }
         read => read.map(|typed| (typed, None)),
     }
 }
 
+/// A document as one element kept whole under an instance with no type, which a save writes as it came.
+fn kept_whole(bytes: &[u8]) -> Result<MetaInstance> {
+    let mut reader = Reader::from_reader(bytes);
+    reader.config_mut().trim_text(false);
+    let mut buf = Vec::new();
+    let root = loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(MetaError::Other(
+                    "no root element found in XML document".into(),
+                ))
+            }
+            Event::Start(e) => {
+                break read_unknown_open(&mut reader, &local_name(e.name()), e.attributes())?
+            }
+            Event::Empty(e) => break read_unknown_empty(&local_name(e.name()), e.attributes())?,
+            _ => {}
+        }
+        buf.clear();
+    };
+    let mut inst = MetaInstance::new("");
+    inst.extras.push(root);
+    Ok(inst)
+}
+
 fn read_struct_body(
     reader: &mut Reader<&[u8]>,
-    library: &SchemaLibrary,
+    cx: Cx<'_>,
     resolved: &ResolvedStruct<'_>,
     close_tag: &str,
     type_name: &str,
     attrs: Attributes,
 ) -> Result<MetaInstance> {
     let mut inst = MetaInstance::new(type_name);
-    apply_attribute_fields(&mut inst, resolved, attrs)?;
+    apply_attribute_fields(&mut inst, cx, resolved, attrs)?;
 
     let mut buf = Vec::new();
     loop {
@@ -98,7 +150,7 @@ fn read_struct_body(
                 if let Some((field, name)) =
                     lookup_field(resolved, &tag).filter(|_| !is_a_reference(e.attributes()))
                 {
-                    let value = read_field_open(reader, library, &field.ty, &tag, e.attributes())?;
+                    let value = read_field_open(reader, cx, &field.ty, &tag, e.attributes())?;
                     inst.fields.push((name, value));
                 } else {
                     let extra = read_unknown_open(reader, &tag, e.attributes())?;
@@ -110,7 +162,7 @@ fn read_struct_body(
                 if let Some((field, name)) =
                     lookup_field(resolved, &tag).filter(|_| !is_a_reference(e.attributes()))
                 {
-                    let value = read_field_empty(library, &field.ty, e.attributes())?;
+                    let value = read_field_empty(cx, &field.ty, e.attributes())?;
                     inst.fields.push((name, value));
                 } else {
                     let extra = read_unknown_empty(&tag, e.attributes())?;
@@ -182,22 +234,20 @@ pub fn member_counts(inst: &MetaInstance) -> (usize, usize) {
 
 fn read_field_open(
     reader: &mut Reader<&[u8]>,
-    library: &SchemaLibrary,
+    cx: Cx<'_>,
     ty: &FieldType,
     tag: &str,
     attrs: Attributes,
 ) -> Result<Value> {
+    let library = cx.library;
     match ty {
-        FieldType::Array { elem, .. } => read_array(reader, library, elem.as_ref(), tag),
-        FieldType::Map { key, value } => {
-            read_map(reader, library, key.as_ref(), value.as_ref(), tag)
-        }
+        FieldType::Array { elem, .. } => read_array(reader, cx, elem.as_ref(), tag),
+        FieldType::Map { key, value } => read_map(reader, cx, key.as_ref(), value.as_ref(), tag),
         FieldType::Struct(name) => {
             let resolved = library
                 .resolve_any(name)
                 .ok_or_else(|| MetaError::UnknownType(name.clone()))?;
-            let inner =
-                read_struct_body(reader, library, &resolved, tag, &resolved.def.name, attrs)?;
+            let inner = read_struct_body(reader, cx, &resolved, tag, &resolved.def.name, attrs)?;
             Ok(Value::Struct(Box::new(inner)))
         }
         FieldType::Pointer { base, .. } => {
@@ -216,11 +266,23 @@ fn read_field_open(
                 consume_to_close(reader, tag)?;
                 return Ok(Value::Pointer(None));
             }
-            let resolved = library
-                .resolve_any(&concrete)
-                .ok_or_else(|| MetaError::UnknownType(concrete.clone()))?;
-            let kept = kept_name(&resolved, &concrete);
-            let inner = read_struct_body(reader, library, &resolved, tag, &kept, attrs)?;
+            let inner = match library.resolve_any(&concrete) {
+                Some(resolved) => {
+                    let kept = kept_name(&resolved, &concrete);
+                    read_struct_body(reader, cx, &resolved, tag, &kept, attrs)?
+                }
+                None if cx.keep_unknown => match library.resolve_any(base) {
+                    // An attribute the base has no member for would be lost: refused instead.
+                    Some(resolved) if !attributes_fit(&resolved, &attrs)? => {
+                        return Err(MetaError::UnknownType(concrete))
+                    }
+                    Some(resolved) => {
+                        read_struct_body(reader, cx, &resolved, tag, &concrete, attrs)?
+                    }
+                    None => kept_as_text(reader, tag, &concrete, attrs)?,
+                },
+                None => return Err(MetaError::UnknownType(concrete)),
+            };
             Ok(Value::Pointer(Some(Box::new(inner))))
         }
         _ => {
@@ -243,12 +305,45 @@ fn read_field_open(
             } else {
                 attr_value.unwrap_or_default()
             };
-            scalar_value(library, ty, &raw)
+            scalar_value(cx, ty, &raw)
         }
     }
 }
 
-fn read_field_empty(library: &SchemaLibrary, ty: &FieldType, attrs: Attributes) -> Result<Value> {
+/// Whether every attribute in `attrs` but `type` and a map entry's `key` is a member of `resolved`.
+fn attributes_fit(resolved: &ResolvedStruct<'_>, attrs: &Attributes) -> Result<bool> {
+    for a in attrs.clone() {
+        let name = local_name(a?.key);
+        let key = normalize_member_name(&name);
+        let member = (resolved.fields.iter()).any(|f| f.name == key || f.name == name);
+        if !member && name != "type" && name != "key" {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// An element typed as a structure neither its `type` nor its base names in the library: its
+/// elements kept whole under `type_name`, or refused where it holds text, which no instance keeps.
+fn kept_as_text(
+    reader: &mut Reader<&[u8]>,
+    tag: &str,
+    type_name: &str,
+    attrs: Attributes,
+) -> Result<MetaInstance> {
+    let node = read_unknown_open(reader, tag, attrs)?;
+    // An instance keeps no text and no attribute of its own but its type: refused, the document
+    // falls back to a reader that keeps them.
+    let own_attribute = node.attrs.iter().any(|(k, _)| k != "type" && k != "key");
+    if !node.text.trim().is_empty() || own_attribute {
+        return Err(MetaError::UnknownType(type_name.to_string()));
+    }
+    let mut inst = MetaInstance::new(type_name);
+    inst.extras = node.children;
+    Ok(inst)
+}
+
+fn read_field_empty(cx: Cx<'_>, ty: &FieldType, attrs: Attributes) -> Result<Value> {
     match ty {
         FieldType::Array { .. } => Ok(Value::Array(Vec::new())),
         FieldType::Map { .. } => Ok(Value::Map(Vec::new())),
@@ -262,14 +357,14 @@ fn read_field_empty(library: &SchemaLibrary, ty: &FieldType, attrs: Attributes) 
         FieldType::Pointer { .. } => Ok(Value::Pointer(None)),
         _ => {
             let raw = attrs_value_attr(&attrs)?.unwrap_or_default();
-            scalar_value(library, ty, &raw)
+            scalar_value(cx, ty, &raw)
         }
     }
 }
 
 fn read_array(
     reader: &mut Reader<&[u8]>,
-    library: &SchemaLibrary,
+    cx: Cx<'_>,
     elem: &FieldType,
     end_tag: &str,
 ) -> Result<Value> {
@@ -282,11 +377,11 @@ fn read_array(
             Event::End(e) if local_name(e.name()) == end_tag => break,
             Event::Start(e) => {
                 let tag = local_name(e.name());
-                let value = read_field_open(reader, library, elem, &tag, e.attributes())?;
+                let value = read_field_open(reader, cx, elem, &tag, e.attributes())?;
                 items.push(value);
             }
             Event::Empty(e) => {
-                let value = read_field_empty(library, elem, e.attributes())?;
+                let value = read_field_empty(cx, elem, e.attributes())?;
                 items.push(value);
             }
             Event::Text(t) => text.push_str(&decode_utf8(t.as_ref())),
@@ -299,7 +394,7 @@ fn read_array(
     // its text. Ignoring it emptied every `OccludeModel::verts` on re-import.
     if items.is_empty() && is_scalar(elem) {
         for token in text.split_ascii_whitespace() {
-            items.push(scalar_value(library, elem, token)?);
+            items.push(scalar_value(cx, elem, token)?);
         }
     }
     Ok(Value::Array(items))
@@ -323,9 +418,13 @@ fn is_scalar(ty: &FieldType) -> bool {
     )
 }
 
+/// ⚠ A map is written two ways: a `<Key>` then a `<Value>` element per entry, or one
+/// `<Item key="…">` per entry whose element is the value. Pairing the keyed form's elements as
+/// key and value read every other entry as a key and lost the rest. The keyed form's `type` may
+/// name the key's type (`atHashString`), not a structure.
 fn read_map(
     reader: &mut Reader<&[u8]>,
-    library: &SchemaLibrary,
+    cx: Cx<'_>,
     key_ty: &FieldType,
     val_ty: &FieldType,
     end_tag: &str,
@@ -339,34 +438,79 @@ fn read_map(
             Event::End(e) if local_name(e.name()) == end_tag => break,
             Event::Start(e) => {
                 let tag = local_name(e.name());
-                let value = if pending_key.is_none() {
-                    read_field_open(reader, library, key_ty, &tag, e.attributes())?
-                } else {
-                    read_field_open(reader, library, val_ty, &tag, e.attributes())?
-                };
-                if let Some(k) = pending_key.take() {
-                    pairs.push((k, value));
-                } else {
-                    pending_key = Some(value);
+                match (pending_key.take(), attribute(&e.attributes(), "key")?) {
+                    (None, Some(key)) => {
+                        let key = scalar_value(cx, key_ty, &key)?;
+                        let typed = attribute(&e.attributes(), "type")?;
+                        let value = match val_ty {
+                            // A `type` that spells the key's type names no structure: the value
+                            // reads as its base, under the base's name.
+                            FieldType::Pointer { base, .. }
+                                if typed.as_deref().is_some_and(|t| names_the_type(key_ty, t)) =>
+                            {
+                                let resolved = (cx.library.resolve_any(base))
+                                    .ok_or_else(|| MetaError::UnknownType(base.clone()))?;
+                                let kept = kept_name(&resolved, base);
+                                let inner = read_struct_body(
+                                    reader,
+                                    cx,
+                                    &resolved,
+                                    &tag,
+                                    &kept,
+                                    e.attributes(),
+                                )?;
+                                Value::Pointer(Some(Box::new(inner)))
+                            }
+                            _ => read_field_open(reader, cx, val_ty, &tag, e.attributes())?,
+                        };
+                        pairs.push((key, value));
+                    }
+                    (None, None) => {
+                        pending_key =
+                            Some(read_field_open(reader, cx, key_ty, &tag, e.attributes())?);
+                    }
+                    (Some(key), _) => {
+                        let value = read_field_open(reader, cx, val_ty, &tag, e.attributes())?;
+                        pairs.push((key, value));
+                    }
                 }
             }
-            Event::Empty(e) => {
-                let value = if pending_key.is_none() {
-                    read_field_empty(library, key_ty, e.attributes())?
-                } else {
-                    read_field_empty(library, val_ty, e.attributes())?
-                };
-                if let Some(k) = pending_key.take() {
-                    pairs.push((k, value));
-                } else {
-                    pending_key = Some(value);
+            Event::Empty(e) => match (pending_key.take(), attribute(&e.attributes(), "key")?) {
+                (None, Some(key)) => {
+                    let key = scalar_value(cx, key_ty, &key)?;
+                    pairs.push((key, read_field_empty(cx, val_ty, e.attributes())?));
                 }
-            }
+                (None, None) => pending_key = Some(read_field_empty(cx, key_ty, e.attributes())?),
+                (Some(key), _) => pairs.push((key, read_field_empty(cx, val_ty, e.attributes())?)),
+            },
             _ => {}
         }
         buf.clear();
     }
     Ok(Value::Map(pairs))
+}
+
+/// Whether `spelling`, a keyed map entry's `type`, names the map's key type `ty`.
+fn names_the_type(ty: &FieldType, spelling: &str) -> bool {
+    match ty {
+        FieldType::Enum(name) => {
+            name == spelling
+                || name.replace("::", "__") == spelling
+                || name.replace("__", "::") == spelling
+        }
+        _ => crate::meta::schema::parser::map_key_type(spelling, None) == *ty,
+    }
+}
+
+/// The value of the attribute `name`, decoded.
+fn attribute(attrs: &Attributes, name: &str) -> Result<Option<String>> {
+    for a in attrs.clone() {
+        let a = a?;
+        if local_name(a.key) == name {
+            return Ok(Some(decode_attr(&a.value)));
+        }
+    }
+    Ok(None)
 }
 
 fn read_unknown_open(
@@ -439,6 +583,7 @@ fn consume_to_close(reader: &mut Reader<&[u8]>, end_tag: &str) -> Result<()> {
 
 fn apply_attribute_fields(
     inst: &mut MetaInstance,
+    cx: Cx<'_>,
     resolved: &ResolvedStruct<'_>,
     attrs: Attributes,
 ) -> Result<()> {
@@ -452,8 +597,7 @@ fn apply_attribute_fields(
             .find(|f| f.name == key || f.name == name)
         {
             let raw = decode_attr(&a.value);
-            let value = scalar_value(&SchemaLibrary::default(), &field.ty, &raw)
-                .unwrap_or(Value::String(raw));
+            let value = scalar_value(cx, &field.ty, &raw).unwrap_or(Value::String(raw));
             inst.fields.push((field.name.clone(), value));
         }
     }
@@ -489,7 +633,8 @@ fn attrs_value_attr(attrs: &Attributes) -> Result<Option<String>> {
     Ok(Some(joined))
 }
 
-fn scalar_value(library: &SchemaLibrary, ty: &FieldType, raw: &str) -> Result<Value> {
+fn scalar_value(cx: Cx<'_>, ty: &FieldType, raw: &str) -> Result<Value> {
+    let library = cx.library;
     let trimmed = raw.trim();
     match ty {
         FieldType::Bool => Ok(Value::Bool(matches!(
@@ -525,9 +670,18 @@ fn scalar_value(library: &SchemaLibrary, ty: &FieldType, raw: &str) -> Result<Va
             type_name: name.clone(),
             variant: trimmed.to_string(),
         }),
-        FieldType::Bitset { values, storage } => Ok(Value::Bitset {
-            type_name: values.clone(),
-            bits: parse_bitset(library, values, *storage, trimmed),
+        FieldType::Bitset { values, .. } => Ok(match parse_bitset(library, values, trimmed) {
+            Some(bits) => Value::Bitset {
+                type_name: values.clone(),
+                bits,
+            },
+            None if cx.keep_unknown => Value::Raw(trimmed.to_string()),
+            // ⚠ A strict read, as GTA V's, keeps the bits its tokens name and drops the rest, as
+            // it always has: a binary writer refuses a raw bitset.
+            None => Value::Bitset {
+                type_name: values.clone(),
+                bits: named_bits(library, values, trimmed),
+            },
         }),
         FieldType::Pad(_) => Ok(Value::Null),
         FieldType::Unknown(_) => Ok(Value::Raw(raw.to_string())),
@@ -611,46 +765,58 @@ fn parse_color(s: &str) -> u32 {
     }
 }
 
-fn parse_bitset(
-    library: &SchemaLibrary,
-    enum_name: &str,
-    storage: BitsetStorage,
-    raw: &str,
-) -> u128 {
-    let _ = storage;
+/// The bits `raw` states, or `None` where a token names no member of the enum, a bit it cannot
+/// hold, or a number it cannot be, so the text is kept as written rather than saved as no bits.
+fn parse_bitset(library: &SchemaLibrary, enum_name: &str, raw: &str) -> Option<u128> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return 0;
+        return Some(0);
     }
     if let Some(stripped) = trimmed.strip_prefix("0x").or(trimmed.strip_prefix("0X")) {
-        return u128::from_str_radix(stripped, 16).unwrap_or(0);
+        return u128::from_str_radix(stripped, 16).ok();
     }
     if let Ok(n) = trimmed.parse::<u128>() {
-        return n;
+        return Some(n);
     }
-    let Some(enum_def) = library.enum_(enum_name) else {
-        return 0;
-    };
+    let enum_def = library.enum_(enum_name)?;
     let mut bits: u128 = 0;
     for token in trimmed.split(|c: char| matches!(c, ' ' | ',' | '\t' | '\n' | '\r' | '|')) {
         let t = token.trim();
         if t.is_empty() {
             continue;
         }
-        if let Some(idx) = enum_def.values.iter().position(|v| v.name == t) {
-            bits |= bit_for(enum_def, idx);
+        let v = enum_def.variant_value(enum_member(enum_def, t)?);
+        if !(0..128).contains(&v) {
+            return None;
         }
+        bits |= 1u128 << v;
     }
-    bits
+    Some(bits)
 }
 
-fn bit_for(enum_def: &EnumDef, idx: usize) -> u128 {
-    let v = enum_def.variant_value(idx);
-    if (0..128).contains(&v) {
-        1u128 << v
-    } else {
-        0
+/// The bits of `raw` the library names, the rest dropped: `0` for bad hex or an enum it lacks.
+fn named_bits(library: &SchemaLibrary, enum_name: &str, raw: &str) -> u128 {
+    if let Some(stripped) = raw.strip_prefix("0x").or(raw.strip_prefix("0X")) {
+        return u128::from_str_radix(stripped, 16).unwrap_or(0);
     }
+    let Some(enum_def) = library.enum_(enum_name) else {
+        return 0;
+    };
+    (raw.split(|c: char| c.is_ascii_whitespace() || matches!(c, ',' | '|')))
+        .filter_map(|token| enum_member(enum_def, token.trim()))
+        .map(|idx| enum_def.variant_value(idx))
+        .filter(|v| (0..128).contains(v))
+        .fold(0, |bits, v| bits | 1u128 << v)
+}
+
+/// The member `spelling` names: by name, or by the literal hash of the spelling where the library
+/// holds the member only as its hash (`hash_XXXXXXXX`).
+fn enum_member(enum_def: &EnumDef, spelling: &str) -> Option<usize> {
+    let values = &enum_def.values;
+    (values.iter().position(|v| v.name == spelling)).or_else(|| {
+        let hashed = hash_spelling(spelling);
+        values.iter().position(|v| v.name == hashed)
+    })
 }
 
 pub(crate) fn local_name(name: QName) -> String {
@@ -774,5 +940,189 @@ mod tests {
         assert_eq!(untyped.as_deref(), Some("CZqRoot"));
         let (_, untyped) = parse_typed_or_tree(&dump("CZqRoot"), XML.as_bytes()).expect("typed");
         assert_eq!(untyped, None);
+    }
+
+    /// A made-up dump with a bitset and an enum over an enum one of whose members it holds only
+    /// as the literal hash of its spelling, a keyed map and an array of pointers.
+    fn flags_dump() -> SchemaLibrary {
+        let hidden = format!("_0x{:08x}", crate::literal_string_hash(b"ZQ_HIDDEN"));
+        let json = format!(
+            r#"{{"structs":[
+              {{"name":"CZqFlags","markup":"$struct$ =@CZqFlags@\r\n{{\r\n\t$bitset$<$enum$ @ZqFlag@> Flags;\r\n\t$enum$ @ZqFlag@ Kind;\r\n\t$map$<$string$, $struct$ @ZqPart@*> Parts;\r\n\t$array$<$struct$ @ZqPart@*> Items;\r\n\t$struct$ $void$* Any;\r\n}};\r\n"}},
+              {{"name":"ZqPart","markup":"$struct$ =@ZqPart@\r\n{{\r\n\t$float$ Weight;\r\n}};\r\n"}}
+            ],"enums":[
+              {{"name":"ZqFlag","markup":"$enum$ =@ZqFlag@\r\n{{\r\n\tZQ_A = 0,\r\n\t{hidden} = 1,\r\n\tZQ_C = 2,\r\n}};\r\n"}}
+            ]}}"#
+        );
+        library_from_par_tree(json.as_bytes()).expect("the dump reads")
+    }
+
+    fn flags(body: &str) -> String {
+        format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<CZqFlags>\n{body}</CZqFlags>\n")
+    }
+
+    /// Typed with nothing untyped, and saved at a fixed point; the first save.
+    fn saved_typed(library: &SchemaLibrary, xml: &str) -> (MetaInstance, String) {
+        let (inst, untyped) = parse_typed_or_tree(library, xml.as_bytes()).expect("reads");
+        assert_eq!(untyped, None, "the root is typed");
+        let saved = crate::meta::write_meta(&inst).expect("writes");
+        let (again, _) = parse_typed_or_tree(library, saved.as_bytes()).expect("reads again");
+        assert_eq!(crate::meta::write_meta(&again).expect("writes"), saved);
+        (inst, saved)
+    }
+
+    #[test]
+    fn a_bitset_token_held_only_as_a_hash_survives_a_save() {
+        let library = flags_dump();
+        let xml = flags("  <Flags>ZQ_A ZQ_HIDDEN</Flags>\n");
+        let (inst, saved) = saved_typed(&library, &xml);
+        let set = Value::Bitset {
+            type_name: "ZqFlag".into(),
+            bits: 0b11,
+        };
+        assert_eq!(inst.get("Flags"), Some(&set));
+        assert!(saved.contains("<Flags>0x3</Flags>"), "{saved}");
+        let strict = parse_meta(&library, xml.as_bytes()).expect("reads strict");
+        assert_eq!(strict.get("Flags"), Some(&set));
+    }
+
+    #[test]
+    fn a_bitset_token_no_member_names_is_kept_as_written() {
+        let library = flags_dump();
+        for written in ["ZQ_A ZQ_NOWHERE", "0xZZ"] {
+            let (inst, saved) =
+                saved_typed(&library, &flags(&format!("  <Flags>{written}</Flags>\n")));
+            assert_eq!(inst.get("Flags"), Some(&Value::Raw(written.into())));
+            assert!(
+                saved.contains(&format!("<Flags>{written}</Flags>")),
+                "{saved}"
+            );
+        }
+        // A strict read, GTA V's, reads as it always has: the bits named, the rest dropped, so a
+        // binary save still writes a bitset.
+        for (written, bits) in [("ZQ_A ZQ_NOWHERE", 0b1), ("0xZZ", 0)] {
+            let xml = flags(&format!("  <Flags>{written}</Flags>\n"));
+            let strict = parse_meta(&library, xml.as_bytes()).expect("reads strict");
+            let set = Value::Bitset {
+                type_name: "ZqFlag".into(),
+                bits,
+            };
+            assert_eq!(strict.get("Flags"), Some(&set), "{written}");
+        }
+    }
+
+    #[test]
+    fn an_enum_value_held_only_as_a_hash_keeps_the_xmls_spelling() {
+        let library = flags_dump();
+        let def = library.enum_("ZqFlag").expect("the enum");
+        assert_eq!(enum_member(def, "ZQ_HIDDEN"), Some(1));
+        assert_eq!(enum_member(def, "ZQ_C"), Some(2));
+        assert_eq!(enum_member(def, "ZQ_NOWHERE"), None);
+        let (inst, saved) = saved_typed(&library, &flags("  <Kind>ZQ_HIDDEN</Kind>\n"));
+        let kind = Value::Enum {
+            type_name: "ZqFlag".into(),
+            variant: "ZQ_HIDDEN".into(),
+        };
+        assert_eq!(inst.get("Kind"), Some(&kind));
+        assert!(saved.contains("<Kind>ZQ_HIDDEN</Kind>"), "{saved}");
+        assert!(!saved.contains("hash_"), "{saved}");
+    }
+
+    #[test]
+    fn a_keyed_map_whose_type_names_the_keys_type_opens_typed() {
+        let library = flags_dump();
+        let xml = flags(concat!(
+            "  <Parts>\n",
+            "    <Item key=\"zqLeft\" type=\"atHashString\">\n      <Weight value=\"0.5\"/>\n    </Item>\n",
+            "    <Item key=\"zqRight\" type=\"ZqPart\">\n      <Weight value=\"2.0\"/>\n    </Item>\n",
+            "  </Parts>\n",
+        ));
+        parse_meta(&library, xml.as_bytes()).expect("a strict read takes the key's type too");
+        let (inst, saved) = saved_typed(&library, &xml);
+        parse_meta(&library, saved.as_bytes()).expect("a strict read reads the save");
+        let Some(Value::Map(pairs)) = inst.get("Parts") else {
+            panic!("Parts reads as a map: {:?}", inst.get("Parts"));
+        };
+        let entry = |(key, value): &(Value, Value)| {
+            let Value::Pointer(Some(part)) = value else {
+                panic!("a pointer: {value:?}");
+            };
+            (key.clone(), part.type_name.clone(), part.fields.clone())
+        };
+        let weight = |w| vec![("Weight".to_string(), Value::Float(w))];
+        assert_eq!(
+            pairs.iter().map(entry).collect::<Vec<_>>(),
+            [
+                (
+                    Value::Hash(HashedString::new("zqLeft")),
+                    "ZqPart".to_string(),
+                    weight(0.5)
+                ),
+                (
+                    Value::Hash(HashedString::new("zqRight")),
+                    "ZqPart".to_string(),
+                    weight(2.0)
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_item_type_the_library_lacks_reads_as_its_base_and_keeps_the_rest() {
+        let library = flags_dump();
+        let xml = flags(concat!(
+            "  <Items>\n",
+            "    <Item type=\"ZqPart\">\n      <Weight value=\"1.0\"/>\n    </Item>\n",
+            "    <Item type=\"CZqMissing__Tunables\">\n      <Weight value=\"3.0\"/>\n      <zqOwn>kept</zqOwn>\n    </Item>\n",
+            "  </Items>\n",
+            "  <Any type=\"CZqMissing\">\n    <zqOwn value=\"7\"/>\n  </Any>\n",
+        ));
+        let (inst, saved) = saved_typed(&library, &xml);
+        assert_eq!(saved, xml, "every element is written back as it came");
+        let Some(Value::Array(items)) = inst.get("Items") else {
+            panic!("Items reads as an array");
+        };
+        let Value::Pointer(Some(missing)) = &items[1] else {
+            panic!("a pointer: {:?}", items[1]);
+        };
+        assert_eq!(missing.type_name, "CZqMissing__Tunables");
+        assert_eq!(missing.fields, [("Weight".to_string(), Value::Float(3.0))]);
+        assert_eq!(missing.extras[0].tag, "zqOwn");
+        let Some(Value::Pointer(Some(any))) = inst.get("Any") else {
+            panic!("Any reads as a pointer");
+        };
+        assert!(any.fields.is_empty(), "no base names its members");
+        assert_eq!(
+            any.extras[0].attrs,
+            [("value".to_string(), "7".to_string())]
+        );
+        assert_eq!(member_counts(&inst), (4, 2));
+    }
+
+    #[test]
+    fn an_attribute_no_member_keeps_is_not_lost_by_a_lenient_read() {
+        let library = flags_dump();
+        for element in [
+            "  <Any type=\"CZqMissing\" zqA=\"1\">\n    <zqOwn value=\"7\"/>\n  </Any>\n",
+            concat!(
+                "  <Items>\n    <Item type=\"CZqMissing__Tunables\" zqA=\"1\">\n",
+                "      <Weight value=\"3.0\"/>\n    </Item>\n  </Items>\n",
+            ),
+        ] {
+            let xml = flags(element);
+            let (inst, _) = parse_typed_or_tree(&library, xml.as_bytes()).expect("opens");
+            let saved = crate::meta::write_meta(&inst).expect("writes");
+            assert!(saved.contains("zqA=\"1\""), "{saved}");
+        }
+    }
+
+    #[test]
+    fn a_document_no_structure_or_tree_holds_is_kept_whole_and_named_untyped() {
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<zq_cycle_data version=\"2\">\n  <Item name=\"a\">text and attributes</Item>\n</zq_cycle_data>\n";
+        assert!(super::super::schemaless::parse_schemaless(xml.as_bytes()).is_err());
+        let (inst, untyped) = parse_typed_or_tree(&flags_dump(), xml.as_bytes()).expect("opens");
+        assert_eq!(untyped.as_deref(), Some("zq_cycle_data"));
+        assert_eq!(member_counts(&inst), (0, 1));
+        assert_eq!(crate::meta::write_meta(&inst).expect("writes"), xml);
     }
 }

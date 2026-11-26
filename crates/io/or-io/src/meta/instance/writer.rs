@@ -9,7 +9,12 @@ use super::value::{HashedString, MetaInstance, UnknownNode, Value};
 pub fn write_meta(inst: &MetaInstance) -> Result<String> {
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    write_struct(&mut out, inst, 0)?;
+    // An instance with no type and only kept elements is a document kept whole, root included.
+    if inst.type_name.is_empty() && inst.fields.is_empty() && !inst.extras.is_empty() {
+        inst.extras.iter().for_each(|e| write_extra(&mut out, e, 0));
+    } else {
+        write_struct(&mut out, inst, 0)?;
+    }
     if !out.ends_with('\n') {
         out.push('\n');
     }

@@ -1590,6 +1590,8 @@ mod write;
 mod write_derived_and_grown;
 #[path = "anim/write_edit_tests.rs"]
 mod write_edit;
+#[path = "anim/write_in_extent_tests.rs"]
+mod write_in_extent;
 #[path = "anim/write_mapped_tests.rs"]
 mod write_mapped;
 #[path = "anim/write_relayout_tests.rs"]

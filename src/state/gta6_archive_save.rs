@@ -9,10 +9,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use or_io::container::rpf::{BodyForm, GtaViKeys, Rpf9ArchiveWriter};
 
+use crate::platform::file_dialogs;
 use crate::state::extract_job::ExtractItem;
 use crate::state::gta6_resource_save::EditedSave;
 use crate::state::rpf_archive_open::tree_verbs::{
-    patched_said, plan_save, with_kept, write_planned, Replaced, Saved,
+    as_read_said, patched_said, plan_save, with_kept, write_planned, Replaced, Saved,
 };
 use crate::state::{AppState, DocPayload, Document};
 
@@ -65,9 +66,21 @@ impl AppState {
         ))
     }
 
-    /// Write the active document's edits into a new copy at `out` of its archive, on a worker.
-    pub(crate) fn save_into_archive_copy(&mut self, out: PathBuf) -> bool {
-        self.save_into_archive_copy_with(out, super::keys)
+    /// Ask where the copy of the active document's archive goes, then write its edits there on a
+    /// worker; the toast after says which copy it is.
+    pub(crate) fn ask_and_save_into_archive_copy(&mut self) -> bool {
+        self.ask_and_save_with(super::keys)
+    }
+
+    fn ask_and_save_with(&mut self, keys: Keys) -> bool {
+        let Some(name) = self.archive_copy_name() else {
+            return false;
+        };
+        // Which copy is written is planned once the file is picked, so the title names neither.
+        let Some(out) = file_dialogs::save_gta6_archive_copy(&name, tr!("Save a copy")) else {
+            return false;
+        };
+        self.save_into_archive_copy_with(out, keys)
     }
 
     fn save_into_archive_copy_with(&mut self, out: PathBuf, keys: Keys) -> bool {
@@ -135,14 +148,20 @@ impl AppState {
                 }
             };
             let file = crate::state::jobs::file_name(&out);
-            let Saved::Rebuilt {
-                tables,
-                bodies,
-                kept,
-            } = saved
-            else {
-                self.show_toast(patched_said(&file));
-                continue;
+            let (tables, bodies, kept) = match saved {
+                Saved::AsRead => {
+                    self.show_toast(as_read_said(&file));
+                    continue;
+                }
+                Saved::Patched => {
+                    self.show_toast(patched_said(&file));
+                    continue;
+                }
+                Saved::Rebuilt {
+                    tables,
+                    bodies,
+                    kept,
+                } => (tables, bodies, kept),
             };
             let said = match (tables, bodies) {
                 (true, _) => tr!(

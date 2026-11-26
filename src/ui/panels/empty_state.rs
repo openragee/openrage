@@ -93,9 +93,13 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
                 }
             }
             None => {
-                if let Some((game, root)) = an_install_found(state) {
+                for (game, root) in installs_offered(state) {
                     if ui.button(tr!("Open {game}", game = game.label())).clicked() {
-                        state.request_game_switch(game, root);
+                        if crate::state::gta_vi::read_by_scan(game) {
+                            state.open_folder(root);
+                        } else {
+                            state.request_game_switch(game, root);
+                        }
                     }
                 }
             }
@@ -153,15 +157,18 @@ fn draw_project_actions(ui: &mut egui::Ui, state: &mut AppState) {
     ui.add_space(theme::SPACING_DEFAULT);
 }
 
-/// The active game's install on disk, else any other readable one found.
-fn an_install_found(state: &AppState) -> Option<(Game, PathBuf)> {
-    state
-        .prefs
-        .active_game
-        .into_iter()
-        .chain(Game::all())
-        .filter(|game| game.profile().is_supported())
-        .find_map(|game| Some((game, found_install(state, game)?)))
+/// The active game's install on disk, else every game whose folder is set and there, a title read by scan included.
+///
+/// ⚠ Every one and not the first: no game being active, the prefs do not say which folder was set last.
+fn installs_offered(state: &AppState) -> Vec<(Game, PathBuf)> {
+    let found = |game: Game| {
+        let readable = game.profile().is_supported() || crate::state::gta_vi::read_by_scan(game);
+        Some((game, found_install(state, game).filter(|_| readable)?))
+    };
+    if let Some(active) = state.prefs.active_game.and_then(found) {
+        return vec![active];
+    }
+    Game::all().filter_map(found).collect()
 }
 
 fn can_create(kind: DocumentKind) -> bool {
@@ -290,6 +297,33 @@ mod tests {
                 (state.active_workspace, state.active_document),
                 (Workspace::Browse, Some(id)),
                 "{ws:?}'s Browse the install did not show the install"
+            );
+        }
+    }
+
+    /// ⚠ With no game active, a GTA VI folder set in Settings was passed over for a GTA V install found earlier.
+    #[test]
+    fn with_no_game_active_the_empty_state_offers_each_folder_set_gta_vi_included() {
+        use or_title::Game;
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let (enhanced, gta6) = (
+            tempfile::tempdir().expect("a"),
+            tempfile::tempdir().expect("b"),
+        );
+        let mut state = nothing_open();
+        state.active_workspace = Workspace::Model;
+        state.prefs.active_game = None;
+        state.prefs.game_paths = Default::default();
+        let paths = &mut state.prefs.game_paths;
+        paths.set(Game::GtaVEnhanced, Some(enhanced.path().to_path_buf()));
+        paths.set(Game::GtaVI, Some(gta6.path().to_path_buf()));
+        let shown = settled(&ctx, &mut state);
+        for game in [Game::GtaVI, Game::GtaVEnhanced] {
+            let offer = tr!("Open {game}", game = game.label()).to_string();
+            assert!(
+                shown.iter().any(|(label, _)| *label == offer),
+                "{offer} is not offered: {shown:?}"
             );
         }
     }

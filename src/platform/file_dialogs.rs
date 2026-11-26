@@ -156,9 +156,9 @@ fn save_keeping_extension(info: &kinds::KindInfo, default_name: Option<&str>) ->
     })
 }
 
-/// Where a GTA VI archive's edits are written: always a new archive, offered as `default_name`, under a title `said` saying what the save writes.
-pub fn save_gta6_archive_copy(default_name: &str, said: &str) -> Option<PathBuf> {
-    ask(said, |dialog| {
+/// Where a GTA VI archive's edits are written: always a new archive, offered as `default_name`, under a short `title` naming the copy.
+pub fn save_gta6_archive_copy(default_name: &str, title: &str) -> Option<PathBuf> {
+    ask(title, |dialog| {
         dialog
             .add_filter("RPF archive", &["rpf"])
             .set_file_name(default_name)

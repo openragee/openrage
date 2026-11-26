@@ -17076,9 +17076,6 @@ msgstr "aucune entrée de l'archive ne contient le contenu à {offset}"
 msgid "Save into a copy of the archive…"
 msgstr "Enregistrer dans une copie de l'archive…"
 
-msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from. The game refuses that copy, because its table's signature is stale"
-msgstr "Écrire les modifications du document de GTA VI à la place de son entrée, dans une nouvelle copie de l'archive dont il est lu. Le jeu refuse cette copie, parce que la signature de sa table est périmée"
-
 msgid "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
 msgstr "Aucune clé de GTA VI : choisissez le dossier d'installation de GTA VI dans Paramètres ▸ Jeux pour que son exécutable puisse les déverrouiller."
 
@@ -17359,3 +17356,30 @@ msgstr[1] "{preset} change les touches de {count} commandes."
 
 msgid "The world goes over to the weather chosen in a minute of the game's time, as the game's own weather changes"
 msgstr "Le monde passe à la météo choisie en une minute du temps du jeu, comme change la météo du jeu lui-même"
+
+msgid "Not saved into its row: {reason}"
+msgstr "Non enregistré dans sa ligne : {reason}"
+
+msgid "{name} is saved into its row of {archive}, and the archive's Save as… writes it to a new file: a patched copy where the body fits its entry's chunks, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "{name} est enregistré dans sa ligne de {archive}, et Enregistrer sous… de l'archive l'écrit dans un nouveau fichier : une copie corrigée là où le corps tient dans les blocs de son entrée, sinon une archive reconstruite, que le jeu refuse car seul son auteur peut signer la table."
+
+msgid "Save a copy"
+msgstr "Enregistrer une copie"
+
+msgid "Save a patched copy"
+msgstr "Enregistrer une copie corrigée"
+
+msgid "Save a rebuilt archive"
+msgstr "Enregistrer une archive reconstruite"
+
+msgid "Nothing in {file} is edited, so the copy is the archive as it was read, byte for byte."
+msgstr "Rien dans {file} n'est modifié, donc la copie est l'archive telle qu'elle a été lue, octet par octet."
+
+msgid "{file} is the archive as it was read, byte for byte: nothing in it is edited."
+msgstr "{file} est l'archive telle qu'elle a été lue, octet par octet : rien n'y est modifié."
+
+msgid "Write the GTA VI document's edits in place of its entry, in a new copy of the archive it was read from: a patched copy, its table byte-identical, where the body fits its entry's chunks, which no check read in the game's code rejects though the game has not been run with it; else a rebuilt archive, which the game refuses because only its maker can sign the table"
+msgstr "Écrire les modifications du document GTA VI à la place de son entrée, dans une nouvelle copie de l'archive d'où il a été lu : une copie corrigée, sa table identique octet par octet, là où le corps tient dans les blocs de son entrée, qu'aucune vérification lue dans le code du jeu ne refuse bien que le jeu n'ait pas été lancé avec elle ; sinon une archive reconstruite, que le jeu refuse car seul son auteur peut signer la table"
+
+msgid "The text table is laid out again at another length ({reason}), so a save into its archive writes a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "La table de textes est disposée de nouveau à une autre longueur ({reason}), donc un enregistrement dans son archive écrit une archive reconstruite, que le jeu refuse car seul son auteur peut signer la table."

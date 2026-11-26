@@ -9,11 +9,16 @@
 //! row's table was 64 KiB cuts of its body; that is what is asserted, the rest is printed.
 //! (3) Beside (1), up to 40 deflated chunks per kind are re-deflated by the patch writer's optimal
 //! parse, counted against the same ceilings and inflated back; that every stream inflates to its
-//! chunk is asserted, the fits and the time per 64 KiB are printed.
+//! chunk is asserted, the fits and the time per 64 KiB are printed, and so are the deflated chunks
+//! past the patch writer's cap (`OPTIMAL_CAP` of `gta6_patch`), which it is never given there; the
+//! census itself parses only chunks of at most 256 KiB, to keep its own time bounded.
+//! (4) Which kinds the build holds where the census samples is asserted against a node mirror's
+//! listing of every chunk table of the build (`MIRRORED`).
 //!
 //! Bounded: 40 bodies per kind, 8 per kind from each archive file, bodies of at most 4 MiB stored,
-//! and 300 s of walking, after which it reports what it reached; the optimal parse takes chunks of
-//! at most 256 KiB inflated, and 300 s more in all, which the walk's bound does not count.
+//! and 300 s of walking, after which it reports what it reached; the census's optimal parse takes
+//! chunks of at most 256 KiB inflated, and 300 s more in all, which the walk's bound does not count: at most
+//! about ten minutes in all.
 //!
 //! Install-gated, game-derived and slow (it walks nested archives); it skips without:
 //!   `OPENRAGE_GTA6_KEYS`   the `gtavi_magic.dat` key snapshot (never committed)
@@ -29,21 +34,25 @@ use std::time::{Duration, Instant};
 use flate2::write::{DeflateEncoder, ZlibEncoder};
 use flate2::{Compression, Decompress, FlushDecompress, Status};
 use or_io::container::rpf::gta6_chunk_table::{entry_chunks, Chunk};
-use or_io::container::rpf::gta6_patch::optimal_deflate;
+use or_io::container::rpf::gta6_patch::{optimal_deflate, OPTIMAL_CAP as WRITER_CAP};
 use or_io::container::rpf::rpf9_write::write_rpf9_resource_chunks;
 use or_io::container::rpf::{
     read_rpf9_body, Gta6Class, Gta6Entry, Gta6Mount, Gta6NestedRow, GtaViKeys, Rpf9BodyKind,
     Rpf9Form, Rpf9Role, Rpf9Sections, GTA6_SNAPSHOT_ENV,
 };
+use or_io::gta6::audio_data::{stamped, AudioData};
 use or_io::gta6::headerless::{
-    cut_edges, read_bound, read_dictionary_model, read_drawable, read_drawable_with_bound,
-    read_navmesh, write_bound_vertices, write_dictionary, write_shaders,
+    cut_edges, read_bound, read_dictionary, read_dictionary_model, read_drawable,
+    read_drawable_with_bound, read_navmesh, read_particle_effects, write_bound_vertices,
+    write_dictionary, write_fragment_level, write_particle_effects, write_shaders, Entry,
 };
 use or_io::gta6::mission_tables::Body as MissionBody;
+use or_io::gta6::other_bodies::{Gta6HeightGrid, Gta6HeightMap, OtherBody};
 use or_io::gta6::script::compiled::Compiled;
 use or_io::meta::binary::hash_index::title_names;
 use or_io::meta::binary::pso::table_strings::write_adding_strings;
 use or_io::meta::binary::rbm::gta6 as headerless_meta;
+use or_io::meta::binary::rbm::gta6_grow_tree::write_grown;
 use or_io::meta::binary::{parse_meta_binary_full, ContainerLayout};
 use or_io::meta::{write_meta_binary, Diagnostics, SchemaLibrary};
 use or_test_support::skip_install;
@@ -63,35 +72,80 @@ const CAPS: [u64; 2] = [8 << 20, 32 << 20];
 const PIECE: usize = 0x1_0000;
 /// Deflated chunks the optimal parse re-deflates per kind.
 const OPTIMAL_PER_KIND: usize = 40;
-/// The largest chunk, inflated, the optimal parse is given.
-const OPTIMAL_CAP: usize = 256 << 10;
+/// The largest chunk, inflated, this census gives its own sampled optimal parse.
+const SAMPLE_PARSE_CAP: usize = 256 << 10;
 /// The optimal parse's time in all, beside the walk's.
 const OPTIMAL_BUDGET: Duration = Duration::from_secs(300);
 
 const TEXTURE_DICTIONARY: &str = "texture dictionary";
+const DRAWABLE_DICTIONARY: &str = "drawable dictionary";
 const DRAWABLE: &str = "drawable";
+const FRAGMENT: &str = "fragment";
 const CLIPS: &str = "clip family";
 const TEXT_TABLE: &str = "text table";
 const BOUND: &str = "bound";
 const NAV_MESH: &str = "nav mesh";
 const HEADERLESS_META: &str = "headerless metadata";
+const MAP_DATA: &str = "map data";
+const MAP_TYPES: &str = "map types";
+const PARTICLES: &str = "particles";
 const SCRIPT: &str = "script program";
 const PSO_TABLE: &str = "PSO table form";
 const PSO_P: &str = "PSO P-form";
 const MISSION: &str = "mission tables";
+const RBF: &str = "RBF";
+const XML: &str = "XML";
+const TEXT: &str = "plain text";
+const AUDIO_DATA: &str = "audio game data";
+const HEIGHT_MAP: &str = "height map";
+const AWC: &str = "AWC";
 
 /// The headerless kinds and their type codes, as the measured table of rows lists them.
-const HEADERLESS: [(&str, &[u32]); 8] = [
-    (TEXTURE_DICTIONARY, &[0x04, 0x05]),
+const HEADERLESS: [(&str, &[u32]); 13] = [
+    (TEXTURE_DICTIONARY, &[0x05]),
+    (DRAWABLE_DICTIONARY, &[0x04]),
     (DRAWABLE, &[0x02]),
+    (FRAGMENT, &[0x03]),
     (CLIPS, &[0x43, 0x46, 0x4E, 0x66, 0x6D]),
     (TEXT_TABLE, &[0x6F]),
     (BOUND, &[0x06]),
     (NAV_MESH, &[0x4F]),
     (HEADERLESS_META, &[0x0B, 0x57, 0x6C, 0x71, 0x73]),
+    (MAP_DATA, &[0x49]),
+    (MAP_TYPES, &[0x4A]),
+    (PARTICLES, &[0x48]),
     (SCRIPT, &[0x59]),
 ];
 const PSO: [&str; 3] = [PSO_TABLE, PSO_P, MISSION];
+/// The 24-byte-row kinds, named by the head of a body's first chunk.
+const ROW24: [&str; 9] = [
+    PSO_TABLE, PSO_P, MISSION, RBF, XML, TEXT, AUDIO_DATA, HEIGHT_MAP, AWC,
+];
+/// Inflated bytes of a 24-byte row's first chunk its kind is named by.
+const HEAD: usize = 512;
+/// Per kind this census added in round 36, the bodies a node mirror of its sampling (a chunk table,
+/// at most 4 MiB stored, deciphered, walked by its table, 40 per kind and 8 per archive file) takes
+/// over every table of the Xbox build 1.0.2.1. The mirror finds no chunk-tabled `ADAT` body.
+const MIRRORED: [(&str, usize); 12] = [
+    (TEXTURE_DICTIONARY, 40),
+    (DRAWABLE_DICTIONARY, 40),
+    (FRAGMENT, 40),
+    (MAP_DATA, 24),
+    (MAP_TYPES, 27),
+    (PARTICLES, 18),
+    (RBF, 35),
+    (XML, 40),
+    (TEXT, 35),
+    (AUDIO_DATA, 27),
+    (HEIGHT_MAP, 11),
+    (AWC, 0),
+];
+
+/// The bodies of `kind` that fill its sample: [`PER_KIND`], or fewer where the mirror found fewer.
+fn full_at(kind: &str) -> usize {
+    let mirrored = MIRRORED.iter().find(|(m, _)| *m == kind);
+    mirrored.map_or(PER_KIND, |&(_, n)| n.min(PER_KIND))
+}
 
 fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var)
@@ -258,6 +312,33 @@ fn rewrite_headerless(kind: &str, s: &Rpf9Sections, role: Option<Rpf9Role>) -> R
                 Err(e) => Rewrite::Refused(masked(e)),
             },
         },
+        DRAWABLE_DICTIONARY => match read_dictionary(v, Some(p.as_slice())) {
+            Err(e) => Rewrite::Unread(masked(e)),
+            Ok(dictionary) => {
+                let mut out = v.clone();
+                for (code, entry) in &dictionary.entries {
+                    let shaders = match entry {
+                        Err(e) => return Rewrite::Unread(masked(e)),
+                        Ok(Entry::Drawable(d)) => &d.shaders,
+                        Ok(_) => continue,
+                    };
+                    if let Err(e) =
+                        write_shaders(Rpf9Role::Dictionary, &mut out, Some(*code), shaders)
+                    {
+                        return Rewrite::Refused(masked(e));
+                    }
+                }
+                Rewrite::Wrote(out, p.clone())
+            }
+        },
+        FRAGMENT => match read_drawable_with_bound(v, Some(p.as_slice())) {
+            Err(e) => Rewrite::Unread(masked(e)),
+            Ok(read) => in_place(s, |v| write_fragment_level(v, p, &read)),
+        },
+        PARTICLES => match read_particle_effects(v, None) {
+            Err(e) => Rewrite::Unread(masked(e)),
+            Ok(list) => in_place(s, |v| write_particle_effects(v, &list)),
+        },
         DRAWABLE => {
             let shaders = match role {
                 Some(Rpf9Role::Drawable) => read_drawable(v, Some(p.as_slice())).map(|d| d.shaders),
@@ -291,7 +372,7 @@ fn rewrite_headerless(kind: &str, s: &Rpf9Sections, role: Option<Rpf9Role>) -> R
         }
         TEXT_TABLE => match or_io::gta6::text::read(v) {
             Err(e) => Rewrite::Unread(masked(e)),
-            Ok((table, _)) => match table.to_section() {
+            Ok((table, _)) => match table.to_section_over(v) {
                 Ok(out) => Rewrite::Wrote(out, p.clone()),
                 Err(e) => Rewrite::Refused(masked(e)),
             },
@@ -304,11 +385,11 @@ fn rewrite_headerless(kind: &str, s: &Rpf9Sections, role: Option<Rpf9Role>) -> R
             Err(e) => Rewrite::Unread(masked(e)),
             Ok(_) => in_place(s, |v| cut_edges(v, &[])),
         },
-        HEADERLESS_META => match headerless_meta::open(v, p) {
+        // The app saves a headerless metadata document, a map's among them, through `write_grown`.
+        HEADERLESS_META | MAP_DATA | MAP_TYPES => match headerless_meta::open(v, p) {
             Err(e) => Rewrite::Unread(masked(e)),
             Ok((instance, layout)) => match layout.container {
-                ContainerLayout::Rbm(rbm) => match headerless_meta::write_sections(&rbm, &instance)
-                {
+                ContainerLayout::Rbm(rbm) => match write_grown(&rbm, &instance) {
                     Ok((v, p)) => Rewrite::Wrote(v, p),
                     Err(e) => Rewrite::Refused(masked(e)),
                 },
@@ -335,6 +416,76 @@ fn rewrite_pso(library: &SchemaLibrary, body: &[u8]) -> Rewrite {
         Ok(out) => Rewrite::Wrote(out, Vec::new()),
         Err(e) => Rewrite::Refused(masked(e)),
     }
+}
+
+/// A 24-byte row's body of `kind` read and written back as the app saves it.
+fn rewrite_row24(library: &SchemaLibrary, kind: &str, body: &[u8]) -> Rewrite {
+    fn saved<E: Display>(out: Result<Vec<u8>, E>) -> Rewrite {
+        match out {
+            Ok(out) => Rewrite::Wrote(out, Vec::new()),
+            Err(e) => Rewrite::Refused(masked(e)),
+        }
+    }
+    match kind {
+        HEIGHT_MAP => match OtherBody::of(body, body.len() as u64) {
+            Some(OtherBody::HeightGrid) => match Gta6HeightGrid::open(body) {
+                Ok(grid) => saved(grid.save()),
+                Err(e) => Rewrite::Unread(masked(e)),
+            },
+            _ => match Gta6HeightMap::open(body) {
+                Ok(map) => saved(map.save()),
+                Err(e) => Rewrite::Unread(masked(e)),
+            },
+        },
+        // A text body is saved as the text it holds.
+        XML | TEXT => match String::from_utf8(body.to_vec()) {
+            Ok(text) => Rewrite::Wrote(text.into_bytes(), Vec::new()),
+            Err(e) => Rewrite::Unread(masked(e)),
+        },
+        AUDIO_DATA => match AudioData::read(body) {
+            Ok(_) => Rewrite::NoWriter,
+            Err(e) => Rewrite::Unread(masked(e)),
+        },
+        AWC => Rewrite::NoWriter,
+        _ => rewrite_pso(library, body),
+    }
+}
+
+/// The 24-byte-row kind the head of a body's first chunk names, a PSO's form named later from the
+/// whole body; `None` where the head opens none of them.
+fn kind_of_head(head: &[u8], real: u64) -> Option<&'static str> {
+    let head = &head[..head.len().min(HEAD)];
+    if head.starts_with(b"PSIN") {
+        return Some(PSO_TABLE);
+    }
+    if head.starts_with(b"RBF0") {
+        return Some(RBF);
+    }
+    if head.starts_with(b"ADAT") {
+        return Some(AWC);
+    }
+    if stamped(head) {
+        return Some(AUDIO_DATA);
+    }
+    if matches!(
+        OtherBody::of(head, real),
+        Some(OtherBody::HeightMap | OtherBody::HeightGrid)
+    ) {
+        return Some(HEIGHT_MAP);
+    }
+    let text = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
+    let utf8 = match std::str::from_utf8(text) {
+        Ok(_) => true,
+        Err(e) => e.error_len().is_none(),
+    };
+    let plain = (text.iter()).all(|&c| c >= 0x20 || matches!(c, b'\t' | b'\n' | b'\r'));
+    if text.is_empty() || !utf8 || !plain {
+        return None;
+    }
+    Some(match text.trim_ascii_start().starts_with(b"<") {
+        true => XML,
+        false => TEXT,
+    })
 }
 
 /// A PSO's form: `PMAP` after `PSIN` is the P-form; a table form whose blocks hold a state table
@@ -364,6 +515,8 @@ struct Tally {
     stored_chunks: usize,
     deflated: usize,
     fit: usize,
+    /// Deflated chunks past the patch writer's cap inflated, which its optimal parse is never given.
+    past_cap: usize,
     /// Stored size less the size re-deflated, per deflated chunk.
     slack: Vec<i64>,
     /// Bodies every deflated chunk of which fits.
@@ -407,8 +560,8 @@ impl State {
         HEADERLESS
             .iter()
             .map(|(k, _)| *k)
-            .chain(PSO)
-            .all(|k| self.kinds.get(k).map_or(0, |t| t.bodies) >= PER_KIND)
+            .chain(ROW24)
+            .all(|k| self.kinds.get(k).map_or(0, |t| t.bodies) >= full_at(k))
     }
 }
 
@@ -423,10 +576,11 @@ fn headroom(t: &mut Tally, spent: &mut Duration, table: &[Chunk], pieces: &[Piec
             continue;
         }
         t.deflated += 1;
+        t.past_cap += usize::from(piece.data.len() > WRITER_CAP);
         let tree = deflated_len(&piece.data, piece.raw) as i64;
         let slack = i64::from(c.stored) - tree;
         if t.optimal.len() < OPTIMAL_PER_KIND
-            && piece.data.len() <= OPTIMAL_CAP
+            && piece.data.len() <= SAMPLE_PARSE_CAP
             && *spent < OPTIMAL_BUDGET
         {
             let began = Instant::now();
@@ -541,7 +695,10 @@ fn measure(
             let cut: Vec<usize> = body.chunks(PIECE).map(<[u8]>::len).collect();
             let stated: Vec<usize> = table.iter().map(|c| c.inflated as usize).collect();
             t.cut_ours += usize::from(cut == stated);
-            (rewrite_pso(library, &body), (body.clone(), Vec::new()))
+            (
+                rewrite_row24(library, kind, &body),
+                (body.clone(), Vec::new()),
+            )
         }
         Some(_) if kind == SCRIPT => match Compiled::open(&body) {
             Ok(_) => (Rewrite::NoWriter, (body.clone(), Vec::new())),
@@ -618,15 +775,17 @@ fn walk(
             }
             continue;
         }
+        // A 24-byte row's kind is named from its body's head below.
+        let row24 = extra.nested.is_none();
         let kind = match extra.nested {
             Some(row) => HEADERLESS
                 .iter()
                 .find(|(_, codes)| codes.contains(&row.resource_type))
                 .map(|(kind, _)| *kind),
-            None if PSO.iter().any(|k| st.wants(k)) => Some(PSO_TABLE),
+            None if ROW24.iter().any(|k| st.wants(k)) => Some(PSO_TABLE),
             None => None,
         };
-        let Some(kind) = kind.filter(|k| *k == PSO_TABLE || st.wants(k)) else {
+        let Some(mut kind) = kind.filter(|k| row24 || st.wants(k)) else {
             continue;
         };
         let stored_len = extra.nested.map_or(entry.stored, |r| Some(r.stored_size()));
@@ -641,11 +800,16 @@ fn walk(
         let Ok(stored) = stored_of(mount, file, keys, entry, extra.nested) else {
             continue;
         };
-        if kind == PSO_TABLE {
+        if row24 {
+            let real =
+                (entry.real).unwrap_or_else(|| table.iter().map(|c| u64::from(c.inflated)).sum());
             let head = walk_stored(&stored, &table[..1.min(table.len())]);
-            if !head.is_ok_and(|p| p.first().is_some_and(|p| p.data.starts_with(b"PSIN"))) {
+            let named =
+                (head.ok()).and_then(|p| p.first().and_then(|p| kind_of_head(&p.data, real)));
+            let Some(named) = named else {
                 continue;
-            }
+            };
+            kind = named;
         }
         let ciphered = entry.cipher.is_some();
         measure(
@@ -673,8 +837,18 @@ fn print(kind: &str, t: &Tally) {
     let band = |lo: i64, hi: i64| s.iter().filter(|&&v| (lo..=hi).contains(&v)).count();
     println!(
         "{kind}: {} bodies ({} enciphered), {} chunks ({} stored, {} deflated); {} deflated chunks fit, \
-         {} bodies fit whole; 24-byte tables cut as OpenRage cuts: {}",
-        t.bodies, t.ciphered, t.chunks, t.stored_chunks, t.deflated, t.fit, t.all_fit, t.cut_ours
+         {} bodies fit whole; {} deflated chunks past the patch writer's {} MiB cap; 24-byte \
+         tables cut as OpenRage cuts: {}",
+        t.bodies,
+        t.ciphered,
+        t.chunks,
+        t.stored_chunks,
+        t.deflated,
+        t.fit,
+        t.all_fit,
+        t.past_cap,
+        WRITER_CAP >> 20,
+        t.cut_ours
     );
     if !s.is_empty() {
         println!(
@@ -752,7 +926,7 @@ fn which_edits_fit_in_place_is_measured_per_kind() {
     if st.timed_out {
         println!("the walk stopped at its {} s bound", DEADLINE.as_secs());
     }
-    for kind in HEADERLESS.iter().map(|(k, _)| *k).chain(PSO) {
+    for kind in HEADERLESS.iter().map(|(k, _)| *k).chain(ROW24) {
         print(kind, st.kinds.get(kind).unwrap_or(&Tally::default()));
     }
     let kinds = || st.kinds.values();
@@ -798,6 +972,27 @@ fn which_edits_fit_in_place_is_measured_per_kind() {
             t.is_none_or(|t| t.cut_ours == t.bodies),
             "a {kind} table is not 64 KiB cuts of its body"
         );
+    }
+    let texts = st.kinds.get(TEXT_TABLE).map(|t| &t.writes);
+    assert!(
+        texts.is_none_or(|w| w.keys().all(|label| label == "identical")),
+        "a text table written over its own section is not byte-identical: {texts:?}"
+    );
+    let bodies = |kind: &str| st.kinds.get(kind).map_or(0, |t| t.bodies);
+    for (kind, mirrored) in MIRRORED {
+        if mirrored == 0 {
+            assert_eq!(
+                bodies(kind),
+                0,
+                "a {kind} body the node mirror does not list"
+            );
+        } else if !st.timed_out {
+            assert!(
+                bodies(kind) >= mirrored,
+                "{} {kind} bodies sampled, where the node mirror samples {mirrored}",
+                bodies(kind)
+            );
+        }
     }
     if !st.timed_out {
         for (kind, _) in HEADERLESS {

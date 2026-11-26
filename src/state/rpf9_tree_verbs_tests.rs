@@ -519,7 +519,7 @@ fn a_save_that_will_be_rebuilt_is_planned_writing_nothing_and_then_writes_only_t
     let edits = tree_edits(&tree.session).expect("the tree's edits");
 
     let planned = plan_tree(&path, &edits, &keys).expect("the save plans");
-    assert!(!planned.patched(), "{:?}", planned.kept);
+    assert_eq!(planned.writes(), Writes::Rebuilt, "{:?}", planned.kept);
     assert_eq!(
         listed(dir.path()),
         ["source.rpf"],
@@ -552,7 +552,7 @@ fn a_save_that_will_be_patched_is_planned_writing_nothing_and_then_writes_only_t
     let edits = tree_edits(&tree.session).expect("the tree's edits");
 
     let planned = plan_tree(&path, &edits, &keys).expect("the save plans");
-    assert!(planned.patched(), "{:?}", planned.kept);
+    assert_eq!(planned.writes(), Writes::Patched, "{:?}", planned.kept);
     assert_eq!(
         listed(dir.path()),
         ["source.rpf"],
@@ -567,13 +567,27 @@ fn a_save_that_will_be_patched_is_planned_writing_nothing_and_then_writes_only_t
     only_the_body_differs(&before, &std::fs::read(&out).expect("the copy"), OTHER);
 }
 
-/// Plan the save of the tree shown, have its dialog pick `out`, and poll until the save ends; the
-/// dialog's title.
-fn saved_through_the_dialog(state: &mut AppState, out: &Path) -> String {
+/// Plan the save of the tree shown, answer its question, have its dialog pick `out`, and poll until
+/// the save ends; the question's title and sentence, and the dialog's title.
+fn saved_through_the_dialog(state: &mut AppState, out: &Path) -> (String, String, String) {
     assert!(state.plan_tree_save(DOC, synthetic_keys));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let (heading, sentence) = loop {
+        state.poll_archive_saves();
+        if let Some(asked) = state.planned_save_question() {
+            break asked;
+        }
+        assert!(Instant::now() < deadline, "the save was never asked about");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let folder = out.parent().expect("a folder");
+    assert_eq!(listed(folder).len(), 1, "asking writes nothing");
     file_dialogs::answer_next(out.to_path_buf());
+    state.answer_planned_save(true);
+    assert_eq!(state.planned_save_question(), None, "answered");
     finished(state);
-    file_dialogs::last_dialog().expect("the save dialog was shown")
+    let title = file_dialogs::last_dialog().expect("the save dialog was shown");
+    (heading.to_owned(), sentence, title)
 }
 
 #[test]
@@ -585,7 +599,12 @@ fn the_save_dialog_says_which_copy_the_save_writes_and_names_the_row_that_does_n
     let mut state = showing(path, tree);
     let out = dir.path().join("copy.rpf");
 
-    let title = saved_through_the_dialog(&mut state, &out);
+    let (heading, sentence, title) = saved_through_the_dialog(&mut state, &out);
+    // The native dialog's title bar cuts a sentence off, so it carries only the kind of copy.
+    assert_eq!(
+        (heading.as_str(), title.as_str()),
+        ("Save a rebuilt archive", "Save a rebuilt archive")
+    );
     let rebuilt = [
         "source.rpf",
         "rebuilt archive",
@@ -593,9 +612,9 @@ fn the_save_dialog_says_which_copy_the_save_writes_and_names_the_row_that_does_n
         shown.as_str(),
         "bytes over",
     ];
-    assert!(rebuilt.iter().all(|w| title.contains(w)), "{title}");
-    assert!(!title.contains("patched copy"), "{title}");
-    let refused = ["copy.rpf", "the game refuses"];
+    assert!(rebuilt.iter().all(|w| sentence.contains(w)), "{sentence}");
+    assert!(!sentence.contains("patched copy"), "{sentence}");
+    let refused = ["copy.rpf", "the game refuses", shown.as_str(), "bytes over"];
     assert!(
         said(&state, ToastType::Success, &refused),
         "{:?}",
@@ -608,15 +627,19 @@ fn the_save_dialog_says_which_copy_the_save_writes_and_names_the_row_that_does_n
     let mut state = showing(path, tree);
     let out = dir.path().join("copy.rpf");
 
-    let title = saved_through_the_dialog(&mut state, &out);
+    let (heading, sentence, title) = saved_through_the_dialog(&mut state, &out);
+    assert_eq!(
+        (heading.as_str(), title.as_str()),
+        ("Save a patched copy", "Save a patched copy")
+    );
     let patched = [
         "source.rpf",
         "patched copy",
         "byte-identical",
         "has not been run",
     ];
-    assert!(patched.iter().all(|w| title.contains(w)), "{title}");
-    assert!(!title.contains("refuses"), "{title}");
+    assert!(patched.iter().all(|w| sentence.contains(w)), "{sentence}");
+    assert!(!sentence.contains("refuses"), "{sentence}");
     let written = ["copy.rpf", "is a patched copy"];
     assert!(
         said(&state, ToastType::Success, &written),
@@ -624,6 +647,66 @@ fn the_save_dialog_says_which_copy_the_save_writes_and_names_the_row_that_does_n
         toasts(&state)
     );
     assert_eq!(listed(dir.path()), ["copy.rpf", "source.rpf"]);
+}
+
+#[test]
+fn a_tree_saved_with_no_edit_is_said_to_be_the_archive_as_it_was_read() {
+    let _serial = crate::ui::theme::serial();
+    let keys = synthetic_keys().expect("the synthetic snapshot parses");
+    let _reading = reading_with(Arc::clone(&keys));
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let path = three(dir.path());
+    let tree = tree(&path);
+    let edits = tree_edits(&tree.session).expect("the tree's edits");
+    let planned = plan_tree(&path, &edits, &keys).expect("the save plans");
+    assert_eq!(planned.writes(), Writes::AsRead, "{:?}", planned.kept);
+
+    let mut state = showing(path.clone(), tree);
+    let out = dir.path().join("copy.rpf");
+    let (heading, sentence, title) = saved_through_the_dialog(&mut state, &out);
+    assert_eq!(
+        (heading.as_str(), title.as_str()),
+        ("Save a copy", "Save a copy")
+    );
+    let as_read = ["source.rpf", "as it was read", "byte for byte"];
+    assert!(as_read.iter().all(|w| sentence.contains(w)), "{sentence}");
+    let wrong = ["refuses", "rebuilt", "patched"];
+    assert!(!wrong.iter().any(|w| sentence.contains(w)), "{sentence}");
+    let written = ["copy.rpf", "as it was read", "nothing in it is edited"];
+    assert!(
+        said(&state, ToastType::Success, &written),
+        "{:?}",
+        toasts(&state)
+    );
+    let copy = std::fs::read(&out).expect("the copy");
+    assert_eq!(copy, std::fs::read(&path).expect("the source"));
+}
+
+/// Ctrl+Shift+S runs Save as… on a GTA VI tree whether or not a field holds the keyboard: winit
+/// hands the key to the command before egui sees it, so a selected row cannot keep it.
+#[test]
+fn ctrl_shift_s_runs_save_as_on_a_gta_vi_tree_whatever_holds_the_keyboard() {
+    use winit::keyboard::{Key, KeyCode, ModifiersState, PhysicalKey};
+
+    use crate::ui::commands::{spec, Action};
+    use crate::ui::shortcuts::{action_for_press, PRIMARY_STATE};
+
+    let _serial = crate::ui::theme::serial();
+    let _reading = reading_with(synthetic_keys().expect("the synthetic snapshot parses"));
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let (path, tree, _) = edited_tree(dir.path(), noise(other().len()));
+    let state = showing(path, tree);
+    let mods = PRIMARY_STATE | ModifiersState::SHIFT;
+    for typing in [false, true] {
+        let key = Key::Character("S".into());
+        let physical = PhysicalKey::Code(KeyCode::KeyS);
+        let pressed = action_for_press(&key, physical, mods, typing, &state.prefs);
+        assert_eq!(pressed, Some(Action::SaveAs), "typing {typing}");
+    }
+    let save_as = spec(Action::SaveAs).expect("Save as… is a command");
+    assert_eq!((save_as.enabled)(&state), Ok(()));
+    // The window never runs a panel's own key.
+    assert!(!save_as.panel_key);
 }
 
 #[test]
@@ -811,7 +894,7 @@ fn a_small_clear_row_of_a_real_archive_changed_at_its_size_saves_as_a_patched_co
         // measured) plans a rebuild, which is never written, and another row may fit; a rebuild for
         // any other reason fails. So the run writes at most one copy, the patched one.
         let planned = plan_tree(path, &edits, &keys).expect("the save plans");
-        if !planned.patched() {
+        if planned.writes() != Writes::Patched {
             if !planned
                 .kept
                 .iter()

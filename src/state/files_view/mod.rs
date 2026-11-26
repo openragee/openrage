@@ -60,6 +60,46 @@ pub fn type_in_words(node: &RpfSessionNode) -> String {
     }
 }
 
+/// A GTA VI plain file's kind as its body's head names it, which only a read gives.
+pub fn kind_by_head(kind: String, head: &[u8]) -> String {
+    if kind != or_io::container::rpf::gta6_kinds::PLAIN_FILE {
+        return kind;
+    }
+    if head.starts_with(b"PSIN") {
+        return "PSO".into();
+    }
+    if head.starts_with(b"RBF0") {
+        return "RBF".into();
+    }
+    if !super::document_io::is_text(head) {
+        return kind;
+    }
+    let text = head.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(head);
+    match text.trim_ascii_start().starts_with(b"<") {
+        true => tr!("XML").to_string(),
+        false => tr!("text").to_string(),
+    }
+}
+
+/// Deflate or None: what or-io says of an RPF9 body, else what the entry's compressor names.
+fn compression_label(rpf9_deflated: Option<bool>, compressed: bool) -> &'static str {
+    match rpf9_deflated.unwrap_or(compressed) {
+        true => tr!("Deflate"),
+        false => tr!("None"),
+    }
+}
+
+/// The bytes row `id` adds to its folder's total: a file's size, an archive's own, a folder's none.
+pub fn listed_bytes(session: &RpfEditSession, id: RpfNodeId) -> u64 {
+    match session.node(id).map(|node| (&node.backing, node.is_dir())) {
+        Some((RpfNodeBacking::Archive { .. }, _)) => {
+            row_facts(session, id).and_then(|f| f.size).unwrap_or(0)
+        }
+        Some((_, false)) => session.size_for(id).unwrap_or(0),
+        _ => 0,
+    }
+}
+
 fn encryption_label(encryption: RpfEncryption) -> &'static str {
     match encryption {
         RpfEncryption::None | RpfEncryption::Open => tr!("None"),
@@ -140,14 +180,10 @@ pub fn row_facts(session: &RpfEditSession, id: RpfNodeId) -> Option<RowFacts> {
                 RpfEntry::Binary(b) => {
                     facts.size = Some(u64::from(b.uncompressed_size));
                     facts.stored = Some(u64::from(b.read_size()));
-                    // An RPF9 row states a stored size always, so one equal to its real size is stored.
-                    let rpf9 = archive.version == or_io::container::rpf::RpfVersion::Rpf9;
-                    let stored = rpf9 && b.read_size() == b.uncompressed_size;
-                    facts.compression = Some(if b.is_compressed() && !stored {
-                        tr!("Deflate")
-                    } else {
-                        tr!("None")
-                    });
+                    facts.compression = Some(compression_label(
+                        archive.rpf9_deflated(*entry_index),
+                        b.is_compressed(),
+                    ));
                     facts.encryption = Some(if b.encrypted {
                         encryption_label(archive.header.encryption)
                     } else {
@@ -212,11 +248,10 @@ pub fn row_facts(session: &RpfEditSession, id: RpfNodeId) -> Option<RowFacts> {
                     {
                         facts.size = Some(u64::from(b.uncompressed_size));
                         facts.stored = Some(u64::from(b.read_size()));
-                        facts.compression = Some(if b.is_compressed() {
-                            tr!("Deflate")
-                        } else {
-                            tr!("None")
-                        });
+                        facts.compression = Some(compression_label(
+                            parent.rpf9_deflated(*parent_entry_index),
+                            b.is_compressed(),
+                        ));
                     }
                 }
                 ArchiveSource::Disk(None) => {}
@@ -489,5 +524,51 @@ impl AppState {
         }
         self.request_expand(doc, folder);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use or_io::container::rpf::RpfBuilder;
+
+    use super::*;
+
+    #[test]
+    fn the_folder_total_counts_a_nested_archive() {
+        let mut inner = RpfBuilder::default();
+        inner
+            .insert_with("deep.txt", b"deep".to_vec(), false)
+            .unwrap();
+        let inner = inner.to_bytes().unwrap();
+        let mut outer = RpfBuilder::default();
+        outer
+            .insert_with("inner.rpf", inner.clone(), false)
+            .unwrap();
+        outer
+            .insert_with("top.txt", b"top".to_vec(), false)
+            .unwrap();
+        let session = RpfEditSession::from_archive(outer.build().unwrap()).unwrap();
+        let rows = session.children_of(session.root_id());
+        let total: u64 = rows.iter().map(|&id| listed_bytes(&session, id)).sum();
+        assert_eq!(total, inner.len() as u64 + 3);
+    }
+
+    #[test]
+    fn a_plain_gta_vi_file_is_named_by_its_head_and_another_kind_keeps_its_name() {
+        let plain = || or_io::container::rpf::gta6_kinds::PLAIN_FILE.to_string();
+        assert_eq!(kind_by_head(plain(), b"PSIN\0\0\0\x10"), "PSO");
+        assert_eq!(kind_by_head(plain(), b"RBF0\x01"), "RBF");
+        assert_eq!(kind_by_head(plain(), b"\xEF\xBB\xBF  <CData>"), tr!("XML"));
+        assert_eq!(kind_by_head(plain(), b"a = 1\n"), tr!("text"));
+        assert_eq!(kind_by_head(plain(), b"\x00\x01\x02"), plain());
+        assert_eq!(kind_by_head("drawable".into(), b"PSIN"), "drawable");
+    }
+
+    #[test]
+    fn an_rpf9_body_takes_or_io_s_word_over_its_compressor() {
+        assert_eq!(compression_label(Some(false), true), tr!("None"));
+        assert_eq!(compression_label(Some(true), false), tr!("Deflate"));
+        assert_eq!(compression_label(None, true), tr!("Deflate"));
+        assert_eq!(compression_label(None, false), tr!("None"));
     }
 }

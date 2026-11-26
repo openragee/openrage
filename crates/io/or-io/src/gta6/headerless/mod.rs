@@ -27,6 +27,7 @@ mod write_bone_names;
 mod write_bound_grow;
 mod write_bound_reshape;
 mod write_bound_runs;
+mod write_bound_values;
 mod write_bound_vertex;
 mod write_bvh;
 mod write_dictionary;

@@ -293,6 +293,30 @@ pub fn edit(resource: &AnimResource, edit: &AnimEdit) -> Result<AnimResource, An
     Ok(edited)
 }
 
+/// What [`edit_in_extent`] refuses an edit with when it would change the virtual section's length.
+pub(super) const PAST_EXTENT: &str = "a copy patched in place keeps every length";
+
+/// [`edit`] where every block it writes keeps within its old extent, so the virtual section keeps its length; refused by name otherwise.
+// A block is re-encoded at its tightest, which fits wherever the block's own bit widths and counts
+// would, so no looser encoding is tried; a block that comes back shorter is zero-filled to its
+// old extent.
+pub fn edit_in_extent(
+    resource: &AnimResource,
+    change: &AnimEdit,
+) -> Result<AnimResource, AnimError> {
+    let length = |r: &AnimResource| (r.sections.as_deref()).map(|s| s.virtual_section.len());
+    let edited = edit(resource, change)?;
+    let (was, now) = (length(resource), length(&edited));
+    if was != now {
+        return Err(AnimError::Unwritten(format!(
+            "it moves a block past its old extent, so the virtual section of {} bytes would become {}; {PAST_EXTENT}, so this edit needs a rebuilt archive, which the game refuses because only its maker can sign the table",
+            was.unwrap_or(0),
+            now.unwrap_or(0)
+        )));
+    }
+    Ok(edited)
+}
+
 fn section_of(aligned: &Aligned) -> Section<'_> {
     let len = aligned.bytes().len();
     Section {

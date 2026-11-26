@@ -2,8 +2,9 @@
 //! row's own body plans no change and writes a byte-identical copy, and the body with one byte flipped
 //! in its first stored chunk (else its first chunk) is written to a copy and read back, or refused by
 //! name; the tally per shape is printed, with the fits only the optimal parse made, how far each
-//! encoder's stream runs past a ceiling it misses, and the slowest plan. Each archive is cut to the
-//! prefix its sampled rows need, so no archive is copied whole.
+//! encoder's stream runs past a ceiling it misses, the edits of chunks past 256 KiB the optimal parse
+//! was run over, and the slowest plan; a chunk within `OPTIMAL_CAP` is never refused untried. Each
+//! archive is cut to the prefix its sampled rows need, so no archive is copied whole.
 //!
 //! Install-gated and game-derived, so it skips cleanly without its env vars:
 //!   `OPENRAGE_GTA6_KEYS`   the `gtavi_magic.dat` key snapshot (never committed)
@@ -18,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use or_io::container::rpf::gta6_chunk_table::{cell_offset, decode};
+use or_io::container::rpf::gta6_patch::OPTIMAL_CAP;
 use or_io::container::rpf::{
     open_at, plan_patch, write_patched_copy, BodyPatch, Gta6Class, Gta6Entry, Gta6Mount, GtaViKeys,
     PatchRefusal, GTA6_SNAPSHOT_ENV,
@@ -32,6 +34,8 @@ const PER_SHAPE: usize = 4;
 /// Nested archives walked per archive, and how deep.
 const NESTED_PER_ARCHIVE: usize = 4;
 const MAX_DEPTH: usize = 3;
+/// An edited chunk of more than this is tallied apart when the optimal parse is run over it.
+const LARGE: usize = 256 << 10;
 
 fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var)
@@ -157,6 +161,8 @@ struct Tally {
     over_optimal: Vec<i64>,
     /// The longest one edited body took to plan.
     slowest: Duration,
+    /// Edits of a chunk past [`LARGE`] that the optimal parse was run over.
+    large_tried: usize,
 }
 
 fn refusal_name(r: &PatchRefusal) -> String {
@@ -266,12 +272,14 @@ fn a_one_byte_edit_patches_in_place_or_is_refused_by_name_per_row_shape() {
                 body: altered.clone(),
                 ..same
             };
+            let inflated = |k: usize| plan.chunks.get(k).map_or(0, |c| c.inflated as usize);
             let began = Instant::now();
             let planned = plan_patch(&mut src, &keys, &patch);
             tally.slowest = tally.slowest.max(began.elapsed());
             match planned {
                 Err(r) => {
                     if let PatchRefusal::ChunkDoesNotFit {
+                        chunk,
                         deflated,
                         optimal,
                         ceiling,
@@ -284,12 +292,23 @@ fn a_one_byte_edit_patches_in_place_or_is_refused_by_name_per_row_shape() {
                         // `usize::MAX` is a chunk past the cap, on which the optimal parse is not tried.
                         if optimal != usize::MAX {
                             tally.over_optimal.push(past(optimal));
+                            tally.large_tried += usize::from(inflated(chunk) > LARGE);
+                        } else {
+                            assert!(
+                                inflated(chunk) > OPTIMAL_CAP,
+                                "{}: chunk {chunk} of {} bytes is within the cap and was not given \
+                                 the optimal parse",
+                                c.shape,
+                                inflated(chunk)
+                            );
                         }
                     }
                     *tally.refused.entry(refusal_name(&r)).or_default() += 1;
                 }
                 Ok(plan) => {
-                    tally.fit_optimal += usize::from(plan.chunks.iter().any(|k| k.optimal));
+                    let optimal = plan.chunks.iter().any(|k| k.optimal);
+                    tally.fit_optimal += usize::from(optimal);
+                    tally.large_tried += usize::from(optimal && inflated(chosen) > LARGE);
                     let report = write_patched_copy(&prefix, &copy, &keys, &[patch])
                         .unwrap_or_else(|e| panic!("{}: a planned patch writes: {e}", c.shape));
                     assert_eq!(report.chunks_changed, 1, "{}", c.shape);
@@ -328,8 +347,8 @@ fn a_one_byte_edit_patches_in_place_or_is_refused_by_name_per_row_shape() {
         eprintln!(
             "{shape}: {} sampled, {} fit ({} only by the optimal parse), {} own-body copies \
              identical, {} unread, {} where reader and table disagree, refused {:?}, past the \
-             ceiling by {:?} with the tree's deflater and {:?} with the optimal parse; slowest \
-             plan {} ms",
+             ceiling by {:?} with the tree's deflater and {:?} with the optimal parse; {} edits of \
+             a chunk past 256 KiB given the optimal parse; slowest plan {} ms",
             t.sampled,
             t.fit,
             t.fit_optimal,
@@ -339,6 +358,7 @@ fn a_one_byte_edit_patches_in_place_or_is_refused_by_name_per_row_shape() {
             t.refused,
             sorted(&t.over),
             sorted(&t.over_optimal),
+            t.large_tried,
             t.slowest.as_millis()
         );
     }

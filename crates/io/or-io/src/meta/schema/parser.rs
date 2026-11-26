@@ -410,7 +410,7 @@ impl MapAttrs {
 }
 
 /// The type a map's `key=` spelling names.
-fn map_key_type(spelling: &str, enum_key_type: Option<String>) -> FieldType {
+pub(crate) fn map_key_type(spelling: &str, enum_key_type: Option<String>) -> FieldType {
     match spelling {
         "enum" => FieldType::Enum(enum_key_type.unwrap_or_default()),
         "u8" => FieldType::U8,

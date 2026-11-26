@@ -86,7 +86,7 @@ fn a_path_two_archives_name_is_listed_once_from_the_later_pack() {
     assert_eq!(
         shared,
         &format!(
-            "common/shared.dat\t{}\tmedia\t32\tover 1 earlier",
+            "common/shared.dat\t{}\tfile\t32\tover 1 earlier",
             from.display()
         )
     );
@@ -246,12 +246,12 @@ fn a_pack_is_printed_whole_with_its_nested_rows_indented() {
         lines[2]
     );
     assert!(
-        lines[3].starts_with("         0  inner/a.pso  media  "),
+        lines[3].starts_with("         0  inner/a.pso  file  "),
         "{}",
         lines[3]
     );
     assert!(
-        lines[4].starts_with("       1  top.ydr  media  stored "),
+        lines[4].starts_with("       1  top.ydr  file  stored "),
         "{}",
         lines[4]
     );

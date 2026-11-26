@@ -14,6 +14,7 @@ pub mod file_prompts;
 pub mod gallery;
 pub mod game_picker;
 pub mod gta6_anim_scene;
+pub mod gta6_save_question;
 pub mod guide;
 pub mod gxt2_table;
 pub mod hierarchy;

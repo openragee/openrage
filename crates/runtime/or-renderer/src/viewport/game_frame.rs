@@ -285,8 +285,8 @@ impl ViewportRenderer {
             frame.reflection.write(queue, &map);
             frame.reflection_of = Some(revision);
         }
-        // The world's water reads a copy of the lit frame, which is made when the frame is
-        if self.world.water.drawn() {
+        // The world's water and glass read a copy of the lit frame, which is made when the frame is
+        if self.world.mirrors() {
             let size = (self.width, self.height);
             let behind = frame.refraction.get_or_insert_with(|| {
                 crate::game_shaders::targets::render_target(
@@ -297,15 +297,20 @@ impl ViewportRenderer {
                     wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
                 )
             });
-            let water = &mut self.world.water;
-            water.upload(queue);
-            water.bind(
-                device,
-                behind,
-                frame.passes.half_depth(),
-                frame.reflection.view(),
-                frame.passes.shadow_map().as_ref(),
-            );
+            let depth = frame.passes.half_depth();
+            self.world
+                .bind_frame(device, frame.reflection.view(), Some(&*behind), depth);
+            if self.world.water.drawn() {
+                let water = &mut self.world.water;
+                water.upload(queue);
+                water.bind(
+                    device,
+                    behind,
+                    depth,
+                    frame.reflection.view(),
+                    frame.passes.shadow_map().as_ref(),
+                );
+            }
         }
     }
 
@@ -704,7 +709,7 @@ impl ViewportRenderer {
             self.gpu_mark(encoder, "terrain shadow");
         }
         // Water reads how far the opaque surfaces lie, where the pass that works that out has no occlusion to give
-        let refracts = self.refracts || self.world.water.drawn();
+        let refracts = self.refracts || self.world.mirrors();
         if self.world.water.drawn() {
             self.world.water.write(
                 queue,

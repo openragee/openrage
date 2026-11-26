@@ -88,6 +88,11 @@ struct Constants {
 @group(1) @binding(15) var map_smp: sampler;
 @group(1) @binding(16) var<uniform> m: Constants;
 @group(2) @binding(0) var<uniform> light: Light;
+// The sky as two paraboloids, the upper half on the right; the copy of the lit frame before what blends; how far along the view the frame drew, nought where it drew nothing.
+@group(2) @binding(1) var sky_map: texture_2d<f32>;
+@group(2) @binding(2) var frame_copy: texture_2d<f32>;
+@group(2) @binding(3) var frame_depth: texture_2d<f32>;
+@group(2) @binding(4) var frame_smp: sampler;
 
 const STANDARD: u32 = 0u;
 const TWO_LAYER: u32 = 1u;
@@ -988,6 +993,76 @@ fn lamps_lit(s: Surface, world_pos: vec3<f32>) -> LampLight {
     return sum;
 }
 
+// The texel of the sky's map of two paraboloids that looks along `d`.
+fn paraboloid(d: vec3<f32>) -> vec2<f32> {
+    let s = d.xy / (1.0 + abs(d.z));
+    return select(vec2<f32>(0.25 - 0.25 * s.x, 0.5 - 0.5 * s.y), vec2<f32>(0.75 + 0.25 * s.x, 0.5 - 0.5 * s.y), d.z >= 0.0);
+}
+
+// Where a point lies on the frame, and how far along the view; `z` at or below nought behind the eye.
+fn on_frame(p: vec3<f32>) -> vec3<f32> {
+    let clip = camera.view_proj * vec4<f32>(p, 1.0);
+    let ndc = clip.xy / max(clip.w, 1e-4);
+    return vec3<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5, clip.w);
+}
+
+// How far a point on the frame lies behind what the frame drew there, below nought where it drew nothing.
+fn behind_drawn(at: vec3<f32>) -> f32 {
+    let scene = textureSampleLevel(frame_depth, frame_smp, at.xy, 0.0).r;
+    if (scene <= 0.0 || scene >= camera.camera_misc.y * 0.995) {
+        return -1.0;
+    }
+    return at.z - scene;
+}
+
+// How many steps a mirrored ray takes across the frame, how many halve the last, and how each step grows.
+const TRACE_STEPS: i32 = 24;
+const REFINE_STEPS: i32 = 4;
+const TRACE_GROWTH: f32 = 1.35;
+
+// The lit frame where a ray from `start` along `r` first passes behind what the frame drew, and in `a` how far it is to be trusted: nought where it leaves the frame or meets nothing.
+fn traced(start: vec3<f32>, r: vec3<f32>) -> vec4<f32> {
+    var before = 0.0;
+    var t = 0.5;
+    for (var i = 0; i < TRACE_STEPS; i++) {
+        let at = on_frame(start + r * t);
+        if (at.z <= 0.0 || any(at.xy < vec2<f32>(0.0)) || any(at.xy > vec2<f32>(1.0))) {
+            return vec4<f32>(0.0);
+        }
+        let past = behind_drawn(at);
+        if (past > 0.0) {
+            // A ray that has gone far behind a surface went past its edge, not into it.
+            if (past > 2.0 * (t - before) + 1.0) {
+                return vec4<f32>(0.0);
+            }
+            var lo = before;
+            var hi = t;
+            for (var k = 0; k < REFINE_STEPS; k++) {
+                let mid = 0.5 * (lo + hi);
+                if (behind_drawn(on_frame(start + r * mid)) > 0.0) {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            let hit = on_frame(start + r * hi);
+            let edge = min(min(hit.x, 1.0 - hit.x), min(hit.y, 1.0 - hit.y));
+            return vec4<f32>(textureSampleLevel(frame_copy, frame_smp, hit.xy, 0.0).rgb, smoothstep(0.0, 0.08, edge));
+        }
+        before = t;
+        t = t * TRACE_GROWTH + 0.5;
+    }
+    return vec4<f32>(0.0);
+}
+
+// What a pane of glass mirrors along `r`: the lit frame where the ray meets what it drew, else the sky.
+// ⚠ A stand-in: the glass program's indirect light is a grid of probes and a grid of light over the world that the game makes as it runs, and it samples no map of the sky; the sky's map and the lit frame stand in for them.
+fn glass_mirrored(start: vec3<f32>, r: vec3<f32>) -> vec3<f32> {
+    let sky_seen = textureSampleLevel(sky_map, frame_smp, paraboloid(r), 0.0).rgb;
+    let world_seen = traced(start, r);
+    return mix(sky_seen, world_seen.rgb, world_seen.a);
+}
+
 // What blends over the frame the game's passes lit, lit by the same sun and ambient light and by the nearest lamps, which the passes cannot reach here, premultiplied by its coverage; a forward emissive adds its own light instead.
 @fragment
 fn fs_lit(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
@@ -1008,7 +1083,11 @@ fn fs_lit(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) 
     let view_dir = normalize(camera.camera_pos_ws.xyz - in.world_pos);
     let highlight = light.sun_colour.rgb * shine(s, towards, view_dir);
     // ⚠ What it reflects is no part of its coverage: a clear pane still shows the sky, which the ambient light's colour above and below stands in for, by the share `reflected` gives, and lets through only what it does not reflect.
-    let mirrored = mix(light.ambient_down.rgb, light.ambient_up.rgb, reflect(-view_dir, s.normal).z * 0.5 + 0.5);
+    let r = reflect(-view_dir, s.normal);
+    var mirrored = mix(light.ambient_down.rgb, light.ambient_up.rgb, r.z * 0.5 + 0.5);
+    if (m.family.x == GLASS) {
+        mirrored = glass_mirrored(in.world_pos, r);
+    }
     let share = reflected(s, max(dot(s.normal, view_dir), 1e-4));
     let surface = highlight + mirrored * share;
     if (dropped(in, max(s.coverage, max3(surface)), BLEND_ALPHA)) {

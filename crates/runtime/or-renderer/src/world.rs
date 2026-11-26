@@ -234,9 +234,13 @@ pub(crate) struct World {
     stand_ins: [wgpu::TextureView; WORLD_MAPS],
     /// The standard material of no map and the constants most effects state, which every such material shares.
     plain: Arc<wgpu::BindGroup>,
-    /// The sun and the ambient light of the game's frame, which what blends over it is lit by.
+    /// The sun and the ambient light of the game's frame, which what blends over it is lit by, with the map of the sky, the copy of the lit frame and its depth, which glass mirrors.
     light: wgpu::Buffer,
+    light_layout: wgpu::BindGroupLayout,
     light_group: wgpu::BindGroup,
+    /// What glass mirrors before the frame has a sky, a copy or a depth: nought, which the trace reads as nothing drawn.
+    no_frame: wgpu::TextureView,
+    clamped: wgpu::Sampler,
     /// The view of each cascade of the sun's shadow, bound where a pass binds its camera.
     cascades: [(wgpu::Buffer, wgpu::BindGroup); CASCADES],
     /// The frame's instances, `per` to a buffer, each buffer made again only when a frame has more instances for it than it holds.
@@ -324,6 +328,37 @@ fn bound(
     });
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("viewport-world-material-bg"),
+        layout,
+        entries: &entries,
+    })
+}
+
+/// The light of the game's frame as every world pipeline binds it: its buffer, then the map of the sky, the copy of the lit frame and its depth, and their sampler.
+fn light_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    light: &wgpu::Buffer,
+    views: [&wgpu::TextureView; 3],
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    let mut entries = vec![wgpu::BindGroupEntry {
+        binding: 0,
+        resource: light.as_entire_binding(),
+    }];
+    entries.extend(
+        (1u32..)
+            .zip(views)
+            .map(|(binding, view)| wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::TextureView(view),
+            }),
+    );
+    entries.push(wgpu::BindGroupEntry {
+        binding: 4,
+        resource: wgpu::BindingResource::Sampler(sampler),
+    });
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("viewport-world-light-bg"),
         layout,
         entries: &entries,
     })
@@ -482,22 +517,51 @@ impl World {
                 }],
             })
         };
+        let frame_map = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
         let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("viewport-world-light-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                // The vertex stage reads the seconds the wind moves by
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    // The vertex stage reads the seconds the wind moves by
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                frame_map(1),
+                frame_map(2),
+                frame_map(3),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
         let light = uniform("viewport-world-light", lamps::LIGHT_FLOATS);
-        let light_group = group("viewport-world-light-bg", &light_layout, &light);
+        let no_frame = constant_view(device, queue, [0.0; 4]);
+        let clamped = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("viewport-world-frame-sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        let light_group = light_bind_group(device, &light_layout, &light, [&no_frame; 3], &clamped);
         let cascades = std::array::from_fn(|_| {
             let view = uniform("viewport-world-cascade", CAMERA_FLOATS);
             let seen = group("viewport-world-cascade-bg", camera_bgl, &view);
@@ -523,7 +587,10 @@ impl World {
             stand_ins,
             plain,
             light,
+            light_layout,
             light_group,
+            no_frame,
+            clamped,
             cascades,
             instances: Vec::new(),
             per: 1,
@@ -696,6 +763,11 @@ impl World {
         !self.draws.is_empty()
     }
 
+    /// Whether anything this frame reads a copy of the lit frame: the water, or the world's glass.
+    pub(crate) fn mirrors(&self) -> bool {
+        self.draws_anything() || self.water.drawn()
+    }
+
     /// Issue `batches` into `pass`, each with the pipeline `pipelines` holds for its bucket: a bucket it holds none for is left out, and a buffer or a material that is bound already is not bound again. With `cast`, each draw's instances are those that cascade casts.
     fn record(
         &self,
@@ -823,6 +895,25 @@ impl World {
         for faces in &self.pipelines.lit {
             self.draw(pass, camera, faces, false);
         }
+    }
+
+    /// Bind what glass mirrors this frame: the map of the sky, the copy of the lit frame and its depth, each where the frame has one.
+    pub(crate) fn bind_frame(
+        &mut self,
+        device: &wgpu::Device,
+        sky: &wgpu::TextureView,
+        behind: Option<&wgpu::TextureView>,
+        depth: Option<&wgpu::TextureView>,
+    ) {
+        let none = &self.no_frame;
+        let views = [sky, behind.unwrap_or(none), depth.unwrap_or(none)];
+        self.light_group = light_bind_group(
+            device,
+            &self.light_layout,
+            &self.light,
+            views,
+            &self.clamped,
+        );
     }
 
     /// Write the light of the game's frame, which [`Self::draw_lit`] lights what blends by, and how far the night emissives are on, which every material's own light is blended by.

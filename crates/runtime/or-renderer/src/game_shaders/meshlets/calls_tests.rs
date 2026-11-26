@@ -393,6 +393,43 @@ fn a_frame_drawn_after_a_skip_is_byte_for_byte_the_frame_drawn_in_full() {
     assert_eq!(refused, None);
 }
 
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_frame_after_the_viewport_is_resized_and_back_is_the_frame_drawn_in_full() {
+    let test = "a_frame_after_the_viewport_is_resized_and_back_is_the_frame_drawn_in_full";
+    let Some((device, queue, mut renderer)) = shown(test, &[two_levels(true)]) else {
+        return;
+    };
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let gpu = (&device, &queue);
+    let camera = OrbitCamera {
+        distance: 2.5,
+        ..OrbitCamera::default()
+    };
+    let in_full = frame(gpu, &mut renderer, &camera, casting());
+    let whole = seen(gpu, &renderer);
+    // To another size and back under the same camera and sky: the targets are made anew each
+    // time, so every pass draws again though no byte a frame is drawn by moved.
+    renderer.resize(&device, SIDE / 2, SIDE / 2);
+    let halved = frame(gpu, &mut renderer, &camera, casting());
+    renderer.resize(&device, SIDE, SIDE);
+    let back = frame(gpu, &mut renderer, &camera, casting());
+    assert_eq!((halved, back), (in_full, in_full));
+    for (part, (now, before)) in seen(gpu, &renderer).iter().zip(&whole).enumerate() {
+        let differ = now.iter().zip(before).filter(|(a, b)| a != b).count();
+        assert_eq!(
+            differ, 0,
+            "part {part} of the frame differs in {differ} bytes"
+        );
+        assert!(before.iter().any(|byte| *byte != 0), "part {part} is blank");
+    }
+    let refused = pollster::block_on(validation.pop()).map(|e| e.to_string());
+    assert_eq!(refused, None);
+}
+
 #[test]
 fn what_a_frame_owes_the_device_is_what_the_bytes_it_is_drawn_by_made_stale() {
     let light = |fill: u8| [fill; LIGHT_BYTES];

@@ -211,8 +211,70 @@ impl StoreKind {
     }
 }
 
+/// A type across programs: the 64-bit hash of a script type's name, or a builtin type's index.
+// A builtin's index has its top bit set and no upper half, which no name hash is taken to have.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub struct TypeKey(pub u64);
+
+impl TypeKey {
+    /// The key of the type named `type_` and sixteen hex digits, or `type_` and a builtin's eight.
+    pub fn of_name(name: &str) -> Option<TypeKey> {
+        let digits = name.strip_prefix("type_")?;
+        let hex = matches!(digits.len(), 8 | 16) && digits.bytes().all(|b| b.is_ascii_hexdigit());
+        let key = hex
+            .then(|| u64::from_str_radix(digits, 16).ok())
+            .flatten()?;
+        (digits.len() == 16 || key & 0x8000_0000 != 0).then_some(TypeKey(key))
+    }
+
+    /// The key of a type as a program states it: a builtin by its id, any other by its name.
+    pub fn of(ty: &VmType) -> Option<TypeKey> {
+        match ty.id & 0x8000_0000 != 0 {
+            true => Some(TypeKey(u64::from(ty.id))),
+            false => TypeKey::of_name(&ty.name),
+        }
+    }
+
+    /// The index of a builtin type, `None` for a script type.
+    pub fn builtin(self) -> Option<u32> {
+        (self.0 >> 32 == 0 && self.0 & 0x8000_0000 != 0).then_some(self.0 as u32)
+    }
+}
+
+/// The name a type no list names prints under.
+impl fmt::Display for TypeKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.builtin() {
+            Some(index) => write!(f, "type_{index:08X}"),
+            None => write!(f, "type_{:016X}", self.0),
+        }
+    }
+}
+
+/// A function across programs: its program's hash and its bytecode offset.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub struct FunctionKey(pub u64);
+
+impl FunctionKey {
+    pub fn new(program: u32, at: u32) -> FunctionKey {
+        FunctionKey(u64::from(program) << 32 | u64::from(at))
+    }
+
+    pub fn program(self) -> u32 {
+        (self.0 >> 32) as u32
+    }
+
+    pub fn at(self) -> u32 {
+        self.0 as u32
+    }
+}
+
 /// What a value is, as far as anything says.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Kind {
     /// A 64-bit cell nothing has typed.
     #[default]
@@ -240,6 +302,13 @@ pub enum Kind {
     Handle,
     /// A value of this many cells whose layout nothing states.
     Aggregate(u32),
+    /// A value of the type named, held in place in `cells` cells: a struct, an enum, a nullable.
+    Value {
+        ty: String,
+        cells: u32,
+    },
+    /// A reference to an array of elements of this kind.
+    Array(Box<Kind>),
 }
 
 impl Kind {
@@ -502,8 +571,45 @@ impl Callee {
     }
 }
 
+/// The source construct an expression reads as; the value and the effects stay the expression's own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ExprSugar {
+    /// `receiver.Method(args)`: a call whose first argument is its receiver.
+    Method,
+    /// `base.Name`: a load of a field of the type `owner`.
+    Field { owner: TypeKey },
+    /// `receiver.Name`: a call of a getter, whose one argument is its receiver.
+    Property,
+    /// `a + b`: a call of an operator a type declares.
+    Operator,
+    /// `(args) => body`: a reference to a function that is a lambda's body.
+    Lambda,
+    /// `a ?? b`: a select of `a` where `a` is not null.
+    Coalesce,
+    /// `a?.b`: a select of null where `a` is null.
+    NullConditional,
+    /// `a + b` over strings, or an interpolated string: a call that joins its arguments.
+    Concat,
+    /// `(T)x`: a call that boxes, unboxes or casts.
+    Convert,
+    /// `typeof(T)`: a call that yields a type's handle.
+    TypeOf,
+    /// `out x`: the address of a variable the callee fills.
+    Out,
+    /// `ref x`: the address of a variable the callee reads and may write.
+    Ref,
+    /// `(a, b)`: cells that are a tuple.
+    Tuple,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
+    /// `e` read as the source construct `kind`; [`Expr::desugar`] leaves `e`.
+    // ⚠ Made on the structured form only: the passes over blocks run before any exists.
+    Sugar {
+        kind: ExprSugar,
+        e: Box<Expr>,
+    },
     Const(Const),
     Var(Var),
     /// `GuidEmpty`: two zero cells.
@@ -625,6 +731,24 @@ impl Expr {
         Expr::Cast { to, e: Box::new(e) }
     }
 
+    /// `e` read as the source construct `kind`.
+    pub fn sugar(kind: ExprSugar, e: Expr) -> Expr {
+        Expr::Sugar {
+            kind,
+            e: Box::new(e),
+        }
+    }
+
+    /// Takes every source reading off this expression and off those inside it.
+    pub fn desugar(&mut self) {
+        self.walk_mut(&mut |node| {
+            if let Expr::Sugar { e: inner, .. } = node {
+                let inner = std::mem::replace(&mut **inner, Expr::GuidEmpty);
+                *node = inner;
+            }
+        });
+    }
+
     /// The C# type the listing gives this expression, `Unknown` for an untyped cell.
     // Meaningful on what the reader made; a kind the types pass set on a constant shows through.
     pub fn listed_kind(&self) -> Kind {
@@ -667,6 +791,7 @@ impl Expr {
             | Expr::StringConstant { .. }
             | Expr::BuiltinGlobal(_) => {}
             Expr::Cell { base: e, .. }
+            | Expr::Sugar { e, .. }
             | Expr::Cast { e, .. }
             | Expr::Truth(e)
             | Expr::Unary { e, .. }
@@ -715,6 +840,7 @@ impl Expr {
             | Expr::StringConstant { .. }
             | Expr::BuiltinGlobal(_) => {}
             Expr::Cell { base: e, .. }
+            | Expr::Sugar { e, .. }
             | Expr::Cast { e, .. }
             | Expr::Truth(e)
             | Expr::Unary { e, .. }
@@ -903,6 +1029,8 @@ pub struct VarInfo {
     pub kind: Kind,
     /// The name to print in place of the slot name, once the names pass has one.
     pub name: Option<String>,
+    /// Whether the form a front end made proves the local a variable of one cell that no other variable runs across.
+    pub single: bool,
 }
 
 impl VarInfo {
@@ -911,6 +1039,7 @@ impl VarInfo {
             width,
             kind: Kind::Unknown,
             name: None,
+            single: false,
         }
     }
 }

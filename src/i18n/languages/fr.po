@@ -17359,3 +17359,6 @@ msgid "{preset} changes the keys of {count} command."
 msgid_plural "{preset} changes the keys of {count} commands."
 msgstr[0] "{preset} change les touches de {count} commande."
 msgstr[1] "{preset} change les touches de {count} commandes."
+
+msgid "The world goes over to the weather chosen in a minute of the game's time, as the game's own weather changes"
+msgstr "Le monde passe à la météo choisie en une minute du temps du jeu, comme change la météo du jeu lui-même"

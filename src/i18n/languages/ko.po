@@ -17359,3 +17359,6 @@ msgid "{preset} changes the keys of {count} command."
 msgid_plural "{preset} changes the keys of {count} commands."
 msgstr[0] "{preset}: 명령 {count}개의 키를 바꿉니다."
 msgstr[1] "{preset}: 명령 {count}개의 키를 바꿉니다."
+
+msgid "The world goes over to the weather chosen in a minute of the game's time, as the game's own weather changes"
+msgstr "게임 시간 1분에 걸쳐 게임 자체의 날씨가 바뀌듯 선택한 날씨로 바뀝니다"

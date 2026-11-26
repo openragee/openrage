@@ -142,9 +142,17 @@ pub struct WorldDrawn {
 /// the level-of-detail distances, the height of the screen and how far the sun's shadow is cast.
 type LaidFor = (u64, [u32; 16], u64, u32, u32, Option<u32>);
 
-/// What the day was worked out for: the hour, the days, the weather, the camera's place north
+/// What the day was worked out for: the hour, the days, the weathers, the camera's place north
 /// in hundreds of metres, whether the install's tables gave one, and the exposure the frame metered.
-type DayFor = (u32, u32, WeatherState, i32, bool, u32, usize);
+type DayFor = (
+    u32,
+    u32,
+    crate::state::gta6_world::worldview::sky::WeathersKey,
+    i32,
+    bool,
+    u32,
+    usize,
+);
 
 #[derive(Default)]
 pub(super) struct WorldGpu {
@@ -325,11 +333,12 @@ impl RenderBridge {
         // ⚠ Handing the renderer a day bumps its revision: only when what it was worked out for changed.
         let lighting = Instant::now();
         let metered = self.renderer.metered();
-        let (day, lights, exposure) = viewer.sky(days, weather, metered.as_ref());
+        let weathers = viewer.weathers(weather);
+        let (day, lights, exposure) = viewer.sky(days, weathers, metered.as_ref());
         let day_for = (
             viewer.hour.to_bits(),
             days.to_bits(),
-            weather,
+            weathers.key(),
             (eye.y / 100.0).round() as i32,
             day.is_some(),
             exposure.to_bits(),
@@ -348,7 +357,7 @@ impl RenderBridge {
         self.renderer.set_coronas(lights.coronas);
         self.renderer.set_world_lamps(lights.lamps);
         self.renderer.set_world_exposure(exposure);
-        self.renderer.set_world_wind(viewer.wind(weather));
+        self.renderer.set_world_wind(viewer.wind(weathers));
         world.cost.lights = lighting.elapsed();
         // ⚠ The game stretches its cascades by what its camera rides; the viewer's rides nothing, so its cascades are the free camera's, and past them the terrain alone shades, as the game's does.
         if let Some(terrain) = viewer.terrain() {
@@ -369,7 +378,7 @@ impl RenderBridge {
         // The GTA V day is worked out again once the world is left.
         self.day_key = None;
         // From a room that sees no portal to the outside, no water.
-        let water = viewer.water(weather).filter(|_| viewer.sees_outside());
+        let water = viewer.water(weathers).filter(|_| viewer.sees_outside());
         if (world.water).refresh(&mut self.renderer, &self.device, water.as_ref(), eye) {
             world.changes += 1;
         }

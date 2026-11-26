@@ -13,7 +13,7 @@ use or_io::gta6::water::height::WaterGround;
 use or_io::gta6::water::WaterData;
 use or_title::gta6_day::DayTables;
 
-use crate::state::drivers::WeatherState;
+use super::sky::Weathers;
 
 #[path = "water_fog.rs"]
 mod fog;
@@ -111,8 +111,8 @@ pub struct Seen {
     hour: f32,
     /// The name of the day's cycle the weather stands for.
     weather: &'static str,
-    /// The weather of the Weather bar it stands for.
-    state: WeatherState,
+    /// The weathers of the frame it stands for.
+    state: Weathers,
     y: f32,
 }
 
@@ -154,7 +154,7 @@ impl Seen {
 }
 
 /// The water of the install at `root` as a camera `y` metres north sees it at `hour` in `weather`; `None` until its quads are read.
-pub fn seen(root: &Path, hour: f32, weather: WeatherState, y: f32) -> Option<Seen> {
+pub fn seen(root: &Path, hour: f32, weathers: Weathers, y: f32) -> Option<Seen> {
     Some(Seen {
         quads: water(root)?,
         ground: ground(root),
@@ -163,8 +163,8 @@ pub fn seen(root: &Path, hour: f32, weather: WeatherState, y: f32) -> Option<See
         cascades: cascades(root),
         day: super::sky::tables(root),
         hour,
-        weather: super::sky::weather_name(weather),
-        state: weather,
+        weather: super::sky::weather_name(weathers.target()),
+        state: weathers,
         y,
     })
 }

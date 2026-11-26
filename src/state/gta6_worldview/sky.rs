@@ -2,7 +2,7 @@
 //! as the day the frame takes in place of a GTA V install's.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Instant;
 
 use glam::Vec3;
@@ -15,6 +15,7 @@ use or_title::gta6_cloud::{CloudLayer, EXTINCTION};
 use or_title::gta6_day::{read_day, DayTables, Moment};
 use or_title::gta6_sky::Atmosphere;
 
+pub use super::sky_weather::{Weathering, Weathers, WeathersKey};
 use crate::state::drivers::WeatherState;
 
 /// The archive of an install the tables of the day are in.
@@ -85,31 +86,39 @@ pub fn tables(root: &Path) -> Option<Arc<DayTables>> {
 /// The room a camera stands in, for the day: the hashes of its time-cycle modifier and second modifier, and how far in it is (0 to 1).
 pub type Room = ([u32; 2], f32);
 
-/// What a moment is worked out for: the tables, the hour, the weather, the camera's row north, and its room with how far in.
-type MomentKey = (usize, u32, WeatherState, i32, Option<([u32; 2], u32)>);
+/// What a moment is worked out for: the tables, the hour, the weathers, the camera's row north, and its room with how far in.
+type MomentKey = (usize, u32, WeathersKey, i32, Option<([u32; 2], u32)>);
 
-/// What the worker of moments is given: the key, the tables, the hour, the camera's place north, and its room.
-type MomentAsk = (MomentKey, Arc<DayTables>, f32, f32, Option<Room>);
+/// What the worker of moments is given: the key, the tables, the hour, the weathers, the camera's place north, and its room.
+type MomentAsk = (MomentKey, Arc<DayTables>, f32, Weathers, f32, Option<Room>);
 
-/// The most moments held at once: one for each set of tables, hour and weather, out of doors and in a room, that asks.
+/// The most moments held at once of one set of tables: one for each hour and weather, out of doors and in a room, that asks.
 const MOMENTS_HELD: usize = 4;
 
-/// The moments last worked out and what for, the last asked for at the end.
-static MOMENT: Mutex<Vec<(MomentKey, Option<Moment>)>> = Mutex::new(Vec::new());
+/// A moment held, the tables it was worked out from, and what for.
+// ⚠ The tables are held weakly: their address keys the moment, and a weak hold keeps it from being another tables' while the moment is held.
+type Held = (Weak<DayTables>, MomentKey, Option<Moment>);
+
+/// The moments last worked out and what for, the last asked for of each tables at the end.
+static MOMENT: Mutex<Vec<Held>> = Mutex::new(Vec::new());
 /// What the worker of moments is working out, and the moments asked of it next.
 static MOMENT_WORK: Mutex<(Option<MomentKey>, Vec<MomentAsk>)> = Mutex::new((None, Vec::new()));
 
-/// Whether two keys are of the same tables, hour and weather, and both out of doors or both in a room: one stands for the other while it is worked out.
+/// Whether two keys are of the same tables, hour and weathers whatever their weights, and both out of doors or both in a room: one stands for the other while it is worked out.
 fn near(a: &MomentKey, b: &MomentKey) -> bool {
-    (a.0, a.1, a.2, a.4.is_some()) == (b.0, b.1, b.2, b.4.is_some())
+    let weathers = |k: &MomentKey| (k.2 .0, k.2 .1, k.2 .3.map(|(w, _)| w));
+    (a.0, a.1, weathers(a), a.4.is_some()) == (b.0, b.1, weathers(b), b.4.is_some())
 }
 
-/// Hold `moment` for `key` in place of a moment `near` it, the oldest let go past [`MOMENTS_HELD`].
-fn hold(held: &mut Vec<(MomentKey, Option<Moment>)>, key: MomentKey, moment: Option<Moment>) {
-    held.retain(|(was, _)| !near(was, &key));
-    held.push((key, moment));
-    if held.len() > MOMENTS_HELD {
-        held.remove(0);
+/// Hold `moment` of `tables` for `key` in place of a moment `near` it, the oldest of the same tables let go past [`MOMENTS_HELD`], and every moment of tables let go.
+fn hold(held: &mut Vec<Held>, tables: &Arc<DayTables>, key: MomentKey, moment: Option<Moment>) {
+    held.retain(|(of, was, _)| of.strong_count() > 0 && !near(was, &key));
+    held.push((Arc::downgrade(tables), key, moment));
+    let same = |k: &MomentKey| k.0 == key.0;
+    if held.iter().filter(|(_, k, _)| same(k)).count() > MOMENTS_HELD {
+        if let Some(oldest) = held.iter().position(|(_, k, _)| same(k)) {
+            held.remove(oldest);
+        }
     }
 }
 
@@ -118,7 +127,7 @@ fn hold(held: &mut Vec<(MomentKey, Option<Moment>)>, key: MomentKey, moment: Opt
 pub fn moment(
     tables: &Arc<DayTables>,
     hour: f32,
-    weather: WeatherState,
+    weathers: Weathers,
     y: f32,
     room: Option<Room>,
 ) -> Option<Moment> {
@@ -127,23 +136,24 @@ pub fn moment(
     let key: MomentKey = (
         Arc::as_ptr(tables) as usize,
         hour.to_bits(),
-        weather,
+        weathers.key(),
         rows as i32,
         room.map(|(modifiers, blend)| (modifiers, blend.to_bits())),
     );
     let mut held = MOMENT.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some((_, moment)) = held.iter().find(|(was, _)| *was == key) {
+    if let Some((_, _, moment)) = held.iter().find(|(_, was, _)| *was == key) {
         return moment.clone();
     }
-    // Only the place or the room moved: the moment held stands while a worker works the new one out.
-    if let Some((_, moment)) = held.iter().find(|(was, _)| near(was, &key)) {
+    // Only the place, the room or how far the weathers have come moved: the moment held stands while a worker works the new one out.
+    if let Some((_, _, moment)) = held.iter().find(|(_, was, _)| near(was, &key)) {
         let moment = moment.clone();
         drop(held);
-        ask_moment((key, Arc::clone(tables), hour, rows * LATITUDE_STEP, room));
+        let y = rows * LATITUDE_STEP;
+        ask_moment((key, Arc::clone(tables), hour, weathers, y, room));
         return moment;
     }
-    let moment = moment_of(tables, hour, weather, rows * LATITUDE_STEP, room);
-    hold(&mut held, key, moment.clone());
+    let moment = moment_of(tables, hour, weathers, rows * LATITUDE_STEP, room);
+    hold(&mut held, tables, key, moment.clone());
     moment
 }
 
@@ -151,16 +161,11 @@ pub fn moment(
 fn moment_of(
     tables: &DayTables,
     hour: f32,
-    weather: WeatherState,
+    weathers: Weathers,
     y: f32,
     room: Option<Room>,
 ) -> Option<Moment> {
-    match room {
-        Some((modifiers, blend)) => {
-            tables.moment_inside(hour, weather_name(weather), y, modifiers, blend)
-        }
-        None => tables.moment(hour, weather_name(weather), y),
-    }
+    tables.moment_in(hour, weathers.named(), y, room)
 }
 
 /// Ask the worker of moments for `ask` in place of what was asked of it near it, starting it where it is not at work.
@@ -187,13 +192,14 @@ fn work_moments() {
             work.0 = next.as_ref().map(|ask| ask.0);
             next
         };
-        let Some((key, tables, hour, y, room)) = next else {
+        let Some((key, tables, hour, weathers, y, room)) = next else {
             return;
         };
-        let worked = || moment_of(&tables, hour, key.2, y, room);
+        let worked = || moment_of(&tables, hour, weathers, y, room);
         let moment = super::pool::or_on_panic("the day's moment", worked, None);
         hold(
             &mut MOMENT.lock().unwrap_or_else(|p| p.into_inner()),
+            &tables,
             key,
             moment,
         );
@@ -327,24 +333,32 @@ pub fn day_of(
     weather: WeatherState,
     y: f32,
 ) -> Option<Day> {
-    let moment = moment(tables, hour, weather, y, None)?;
+    let weathers = Weathers::steady(weather);
+    let moment = moment(tables, hour, weathers, y, None)?;
     Some(day_of_moment(
         tables,
         moment,
         (hour, days),
-        weather,
+        weathers,
         Vec3::new(0.0, y, 0.0),
     ))
 }
 
-/// The day the frame is lit by from `moment`, at `hour` of the `days`th day in `weather`, for a camera at `eye` (z metres above the sea, y metres north).
+/// The day the frame is lit by from `moment`, at `hour` of the `days`th day in `weathers`, for a camera at `eye` (z metres above the sea, y metres north).
 pub fn day_of_moment(
     tables: &DayTables,
     moment: Moment,
     (hour, days): (f32, f32),
-    weather: WeatherState,
+    weathers: Weathers,
     eye: Vec3,
 ) -> Day {
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let wet = lerp(
+        weathers.from.wetness(),
+        weathers.to.wetness(),
+        weathers.along,
+    );
+    let wet = (weathers.queued).map_or(wet, |(w, weight)| lerp(wet, w.wetness(), weight));
     let height = eye.z;
     let visual = &tables.visual_settings;
     // The moment's light is stated whole, faded already by its own bodies.
@@ -377,7 +391,7 @@ pub fn day_of_moment(
         cycle_time: NEAR_FULL_MOON + days + hour / 24.0,
         moon_dim: moment.moon_dim,
         // The Weather bar's own wetness where the install's weather states no rain.
-        wetness: moment.wetness.max(weather.wetness()),
+        wetness: moment.wetness.max(wet),
         // How far a material's glow has gone to its night value: the cycle's own blend, else on by the night hours.
         night_emissive: (moment.own.get("global_emissive_scale_blend_value")).unwrap_or_else(
             || {
@@ -608,7 +622,7 @@ pub fn light_scale(
 ) -> f32 {
     scale_of(
         tables
-            .and_then(|tables| moment(tables, hour, weather, y, None))
+            .and_then(|tables| moment(tables, hour, Weathers::steady(weather), y, None))
             .as_ref(),
     )
 }
@@ -619,253 +633,5 @@ pub fn scale_of(moment: Option<&Moment>) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use or_renderer::game_shaders::lighting::View;
-
-    fn tables() -> Arc<DayTables> {
-        tables_with("")
-    }
-
-    /// The tables, their visual settings with `more` after the rest.
-    fn tables_with(more: &str) -> Arc<DayTables> {
-        let samples: String = (0..13)
-            .map(|k| format!(r#"<sample name="s{k}" hour="{k}"/>"#))
-            .collect();
-        let time = format!("<time_data>{samples}</time_data>");
-        let cycle = r#"<timecycle_keyframe_data><cycle name="Sunny" regions="1"><region name="GLOBAL">
-            <light_dir_mult> 1 1 1 1 1 1 1 1 1 1 1 1 1</light_dir_mult>
-            </region></cycle></timecycle_keyframe_data>"#;
-        let settings = "Tonemapping.dark.filmic.W 11.2\nExposure.curve.scale -2.0\nemissive.night.start.time 22\nemissive.night.end.time 4\n";
-        let settings = format!("{settings}{more}");
-        Arc::new(DayTables::of_texts([
-            time.as_str(),
-            cycle,
-            settings.as_str(),
-        ]))
-    }
-
-    #[test]
-    fn the_frames_sun_stands_where_gta_vis_does_at_every_hour_of_its_day() {
-        let tables = tables();
-        let view = View {
-            camera_height: 0.0,
-            projection: glam::Mat4::IDENTITY,
-            near: 0.1,
-        };
-        for hour in [7.5f32, 9.0, 13.45, 16.0, 19.0, 23.0, 2.0] {
-            let moment = tables
-                .moment(hour, "Sunny", 0.0)
-                .expect("the cycle is read");
-            let day = day_of(&tables, hour, 0.0, WeatherState::Clear, 0.0).expect("a day");
-            let (sun, _) = day.lighting(&view).sun_and_moon();
-            let own = glam::Vec3::from(moment.sun);
-            assert!(
-                (sun - own).length() < 1e-3,
-                "at {hour}: {sun:?} and {own:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn the_day_takes_the_installs_curve_and_night_hours_and_leaves_its_exposure_curve() {
-        let tables = tables();
-        let day = day_of(&tables, 23.0, 2.0, WeatherState::Rain, 0.0);
-        assert!(day.is_none(), "no cycle stands for rain in these tables");
-        let day = day_of(&tables, 23.0, 2.0, WeatherState::Clear, 0.0).expect("a day");
-        assert_eq!(day.tone.dark.w, 11.2);
-        assert_eq!(day.tone.curve_scale, ToneSettings::default().curve_scale);
-        assert_eq!(day.night_emissive, 1.0);
-        assert_eq!(day.cycle_time, NEAR_FULL_MOON + 2.0 + 23.0 / 24.0);
-        let noon = day_of(&tables, 12.0, 0.0, WeatherState::Clear, 0.0).expect("a day");
-        assert_eq!(noon.night_emissive, 0.0);
-    }
-
-    #[test]
-    fn the_frame_maps_the_moment_at_nought_stops_and_the_lights_take_its_exposure() {
-        let tables = tables();
-        let view = View {
-            camera_height: 0.0,
-            projection: glam::Mat4::IDENTITY,
-            near: 0.1,
-        };
-        for hour in [13.45f32, 1.0] {
-            let day = day_of(&tables, hour, 0.0, WeatherState::Clear, 0.0).expect("a day");
-            assert_eq!(day.tone(&day.lighting(&view)).stops, 0.0, "at {hour}");
-            let moment = tables.moment(hour, "Sunny", 0.0).expect("a moment");
-            let scale = light_scale(Some(&tables), hour, WeatherState::Clear, 0.0);
-            assert_eq!(scale, moment.light_scale);
-            assert_eq!(scale_of(Some(&moment)), scale);
-            let exposed = moment.stops.exp2() / std::f32::consts::PI;
-            assert!(
-                (scale - exposed).abs() <= 1e-6 * exposed,
-                "{scale} {exposed}"
-            );
-            let once = day_of_moment(
-                &tables,
-                moment,
-                (hour, 0.0),
-                WeatherState::Clear,
-                Vec3::ZERO,
-            );
-            assert_eq!(once.hours, day.hours, "at {hour}");
-        }
-        let none = light_scale(None, 12.0, WeatherState::Clear, 0.0);
-        assert_eq!(none, NO_DAY_LIGHT_SCALE);
-        assert_eq!(scale_of(None), NO_DAY_LIGHT_SCALE);
-    }
-
-    #[test]
-    fn the_frame_is_exposed_by_its_own_luminance_from_the_first_reading_of_its_own_hour() {
-        let tables = tables();
-        let at = |metered: Option<&Metered>| {
-            let moment = moment(&tables, 9.5, WeatherState::Clear, 0.0, None).expect("a moment");
-            exposed(&tables, moment, (9.5, WeatherState::Clear), 0, metered)
-        };
-        let unread = moment(&tables, 9.5, WeatherState::Clear, 0.0, None).expect("a moment");
-        // What is read in the first frame of an hour was drawn under the hour before.
-        let bright = Metered::of(vec![8.0; 16]);
-        let grey = at(Some(&bright));
-        assert_eq!(grey.stops, unread.stops);
-        // The first reading of its own is taken whole: the curve over the scene's luminance.
-        let first = at(Some(&bright));
-        let scene = 8.0 / grey.stops.exp2();
-        let curve = -2.0 * scene.ln() - 10.0;
-        assert!(
-            (first.stops - curve).abs() < 1e-3,
-            "{} {curve}",
-            first.stops
-        );
-        assert_eq!(first.light_scale, first.stops.exp2() / std::f32::consts::PI);
-        // A frame that reads the same scene keeps its exposure; nothing read holds it.
-        let same = Metered::of(vec![scene * first.stops.exp2(); 16]);
-        assert_eq!(at(Some(&same)).stops, first.stops);
-        assert_eq!(at(None).stops, first.stops);
-        // A scene four times as bright is moved towards, not jumped to, a moment later.
-        let brighter = Metered::of(vec![4.0 * scene * first.stops.exp2(); 16]);
-        let next = at(Some(&brighter)).stops;
-        let wanted = curve - 2.0 * 4f32.ln();
-        assert!(next <= first.stops && next > wanted, "{next} {wanted}");
-        assert!(exposure_adapting(), "still on its way");
-        // A cut of the camera starts again, and its first reading is taken whole.
-        let cut = |metered: Option<&Metered>| {
-            let moment = moment(&tables, 9.5, WeatherState::Clear, 0.0, None).expect("a moment");
-            exposed(&tables, moment, (9.5, WeatherState::Clear), 1, metered)
-        };
-        assert_eq!(cut(Some(&brighter)).stops, unread.stops);
-        // A scene of one candela a square metre, as the frame drawn at the cut's first stops holds it.
-        let lit = Metered::of(vec![unread.stops.exp2(); 16]);
-        let whole = cut(Some(&lit)).stops;
-        let scene = 1.0;
-        let settings = tables.exposure_settings();
-        let curve = or_title::gta6_exposure::target_stops(&settings, &unread.own, scene);
-        assert!(
-            whole != unread.stops && (whole - curve).abs() < 1e-3,
-            "{whole} {curve}"
-        );
-        // ⚠ Another test's moment may be on a worker meanwhile, which `adapting` also counts.
-        assert!(!exposure_adapting(), "arrived");
-    }
-
-    #[test]
-    fn a_moment_of_a_new_hour_is_worked_out_at_once_and_one_of_another_place_on_a_worker() {
-        // The latitude runs from 20 to 30 degrees over 100 km north.
-        let tables = tables_with("sky.latitude.YPosMin -50000\nsky.latitude.YPosMax 50000\nsky.latitude.rangeMin 20\nsky.latitude.rangeMax 30\n");
-        let clear = WeatherState::Clear;
-        let first = moment(&tables, 10.25, clear, 0.0, None).expect("a moment");
-        let far = 40_000.0;
-        // The moment held stands for the far place while a worker works it out.
-        let held = moment(&tables, 10.25, clear, far, None).expect("a moment");
-        assert_eq!(held.sun, first.sun);
-        let until = Instant::now() + std::time::Duration::from_secs(20);
-        while moment_pending() && Instant::now() < until {
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
-        let arrived = moment(&tables, 10.25, clear, far, None).expect("a moment");
-        let own = tables.moment(10.25, "Sunny", far).expect("a moment");
-        assert_eq!(arrived.sun, own.sun);
-        assert_ne!(arrived.sun, first.sun, "the latitude moved the sun");
-        // Another hour is worked out at once.
-        let later = moment(&tables, 15.5, clear, far, None).expect("a moment");
-        assert_eq!(
-            later.sun,
-            tables.moment(15.5, "Sunny", far).expect("a moment").sun
-        );
-    }
-
-    #[test]
-    fn an_even_sky_lights_its_clouds_with_its_own_radiance_and_a_clear_cycle_draws_none() {
-        let even = SkyView::of(|_| [2.0, 3.0, 4.0], 1.0);
-        let seen = hemisphere_radiance(&even.radiance);
-        for (got, want) in seen.iter().zip([2.0, 3.0, 4.0]) {
-            assert!((got - want).abs() < 0.02 * want, "{seen:?}");
-        }
-        let day = day_of(&tables(), 12.0, 0.0, WeatherState::Clear, 0.0).expect("a day");
-        assert!(day.sky_view.expect("a table").clouds.is_none());
-    }
-
-    #[test]
-    fn the_night_glows_by_the_moments_own_air_glow_in_thousandths() {
-        let mut tables = tables();
-        // ⚠ The last moment is held by the tables' address and the hour: each reading takes an hour of its own.
-        let at = |tables: &Arc<DayTables>, hour: f32| {
-            let day = day_of(tables, hour, 0.0, WeatherState::Clear, 0.0).expect("a day");
-            day.sky_view.expect("a table").night.expect("a night")
-        };
-        assert_eq!(
-            at(&tables, 0.0).fill,
-            [0.0; 3],
-            "these tables state no glow"
-        );
-        // A cycle that states the air's glow: its base colour times its intensity, in thousandths.
-        // Each value is one a half float holds whole, as the game keeps a cycle's samples.
-        for (hour, intensity) in [(1.0, 1.0f32), (2.0, 0.25)] {
-            let cycle = format!(
-                r#"<timecycle_keyframe_data><cycle name="Sunny" regions="1"><region name="GLOBAL">
-                <sky_air_glow_base_color_b>{}</sky_air_glow_base_color_b>
-                <sky_air_glow_base_intensity>{}</sky_air_glow_base_intensity>
-                </region></cycle></timecycle_keyframe_data>"#,
-                " 0.5".repeat(13),
-                format!(" {intensity}").repeat(13),
-            );
-            Arc::make_mut(&mut tables).timecycle = DayTables::of_texts([cycle.as_str()]).timecycle;
-            let fill = at(&tables, hour).fill;
-            let want = 0.5 * intensity * 0.001;
-            assert!((fill[2] - want).abs() < 1e-8, "{fill:?} {want}");
-        }
-    }
-
-    #[test]
-    fn the_day_carries_the_installs_bloom_weights_temporal_times_and_sharpening() {
-        let settings = |name: &str, default: f32| match name {
-            "bloom.airy.weight2" => 0.712,
-            "bloom.airy.weight256" => 0.317,
-            "temporalaa.convergenceTimeFar" => 1.0,
-            "sharpen.intensity" => 0.15,
-            _ => default,
-        };
-        let mut own = or_io::gta5::data::timecycle::Keyframe::default();
-        own.set("postfx_intensity_bloom", 0.1498);
-        own.set("postfx_exposure_perpixel_amount", 0.2);
-        let post = post_of(&settings, &own);
-        assert_eq!(post.bloom_weights[0], 0.712);
-        assert_eq!(post.bloom_weights[7], 0.317);
-        // A size the settings leave out takes the executable's own weight
-        assert_eq!(post.bloom_weights[3], 0.5);
-        assert_eq!((post.bloom_mix, post.local.amount), (0.1498, 0.2));
-        assert_eq!((post.temporal.far, post.sharpen), (1.0, 0.15));
-        // A keyframe that states no compensation curve compensates nothing
-        assert!(post.local.compensation.iter().all(|c| *c == 0.0));
-    }
-
-    #[test]
-    fn every_weather_of_the_bar_names_a_cycle() {
-        use WeatherState::*;
-        let names = [Clear, Cloudy, Fog, Rain, Storm].map(weather_name);
-        assert!(names.iter().all(|name| !name.is_empty()));
-        assert_eq!(
-            names.iter().collect::<std::collections::HashSet<_>>().len(),
-            5
-        );
-    }
-}
+#[path = "sky_tests.rs"]
+mod tests;

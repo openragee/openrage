@@ -271,7 +271,8 @@ fn day(ui: &mut egui::Ui, state: &mut AppState, viewer: &mut Viewer) {
                 }
                 chosen
             });
-        named(chosen.response.clone(), tr!("Weather"));
+        named(chosen.response.clone(), tr!("Weather"))
+            .on_hover_text(tr!("The world goes over to the weather chosen in a minute of the game's time, as the game's own weather changes"));
         ui.label(tr!("Weather"));
         if let Some(weather) = chosen.inner.filter(|w| *w != current) {
             state.set_weather_state(weather);

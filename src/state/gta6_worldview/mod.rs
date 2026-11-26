@@ -32,6 +32,7 @@ mod occluders;
 mod pool;
 pub(crate) mod sky;
 mod sky_night;
+mod sky_weather;
 pub(crate) mod stream;
 pub(crate) mod terrain;
 mod texture;
@@ -158,6 +159,8 @@ pub struct Viewer {
     pub day_took: std::time::Duration,
     /// The game's wind about the camera.
     wind: wind::Wind,
+    /// The change of weather the frame is drawn in.
+    weathering: sky::Weathering,
 }
 
 impl Default for Viewer {
@@ -204,6 +207,7 @@ impl Default for Viewer {
             textures_waiting: 0,
             day_took: std::time::Duration::ZERO,
             wind: wind::Wind::default(),
+            weathering: sky::Weathering::default(),
         }
     }
 }
@@ -658,7 +662,7 @@ impl Viewer {
     pub fn sky(
         &mut self,
         days: f32,
-        weather: crate::state::drivers::WeatherState,
+        weathers: sky::Weathers,
         metered: Option<&or_renderer::viewport::Metered>,
     ) -> (
         Option<or_renderer::game_shaders::lighting::Day>,
@@ -673,11 +677,11 @@ impl Viewer {
             // Inside a room, the day takes the room's own modifier over the weather's.
             let room = (inside.as_ref())
                 .map(|inside| ([inside.timecycle, inside.secondary_timecycle], inside.blend));
-            let moment = sky::moment(tables, hour, weather, eye.y, room)?;
+            let moment = sky::moment(tables, hour, weathers, eye.y, room)?;
             Some(sky::exposed(
                 tables,
                 moment,
-                (hour, weather),
+                (hour, weathers.target()),
                 self.cuts,
                 metered,
             ))
@@ -685,7 +689,7 @@ impl Viewer {
         let scale = sky::scale_of(moment.as_ref());
         let day = (tables.as_ref())
             .zip(moment)
-            .map(|(tables, moment)| sky::day_of_moment(tables, moment, (hour, days), weather, eye))
+            .map(|(tables, moment)| sky::day_of_moment(tables, moment, (hour, days), weathers, eye))
             .map(|mut day| {
                 if let (Some(view), Some(root)) = (day.sky_view.as_mut(), self.root.as_deref()) {
                     view.stars = sky_night::stars(root);
@@ -730,9 +734,14 @@ impl Viewer {
     }
 
     /// The water of the install shown once its quads are read, with the ground under it and the day it is seen in.
-    pub fn water(&self, weather: crate::state::drivers::WeatherState) -> Option<water::Seen> {
+    pub fn water(&self, weathers: sky::Weathers) -> Option<water::Seen> {
         let root = self.root.as_deref()?;
-        water::seen(root, self.hour, weather, self.camera.position.y)
+        water::seen(root, self.hour, weathers, self.camera.position.y)
+    }
+
+    /// The weathers this frame is drawn in, `chosen` the one the Weather bar names: the change towards it stepped on by the frame's time.
+    pub fn weathers(&mut self, chosen: crate::state::drivers::WeatherState) -> sky::Weathers {
+        self.weathering.step(chosen)
     }
 
     /// The scale every distance is multiplied by: the person's, and the lens's where it is narrower than the game's.

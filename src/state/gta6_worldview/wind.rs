@@ -104,8 +104,9 @@ fn world_wind(state: &WindState) -> WorldWind {
 }
 
 impl Viewer {
-    /// The wind the grass bends in this frame, in `weather`: calm where the install's day or its executable's variable table is not read.
-    pub fn wind(&mut self, weather: WeatherState) -> WorldWind {
+    /// The wind the grass bends in this frame, in `weathers`, its way and base speed the weather's they go towards: calm where the install's day or its executable's variable table is not read.
+    pub fn wind(&mut self, weathers: sky::Weathers) -> WorldWind {
+        let weather = weathers.target();
         let Some(tables) = self.root.as_deref().and_then(sky::tables) else {
             return WorldWind::default();
         };
@@ -114,7 +115,7 @@ impl Viewer {
         };
         let room = (self.inside())
             .map(|inside| ([inside.timecycle, inside.secondary_timecycle], inside.blend));
-        let moment = sky::moment(&tables, self.hour, weather, self.camera.position.y, room);
+        let moment = sky::moment(&tables, self.hour, weathers, self.camera.position.y, room);
         let Some(variables) = moment.and_then(|m| WindVariables::of_moment(&m.own, table)) else {
             return WorldWind::default();
         };

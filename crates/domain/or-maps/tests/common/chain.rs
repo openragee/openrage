@@ -4,6 +4,10 @@
 //! The samples of one tree share its pack, which is imported once: each deletion is undone, and the pack is held to the bytes it
 //! was made with before the next.
 //!
+//! [`put_back_sampled`] is the same body with two steps more. Before the deletion, the entity chosen is stood a metre off with
+//! another flag and put back by `or_maps::put_back`. Before the deletion is undone, the entity is put back the same way. Each
+//! time the pack is held to the bytes it was made with, and the inverses of the plan to leave the edit it was made of.
+//!
 //! ⚠ **A link is judged by identity, not by count**, as `executing_a_plan_keeps_every_link` judges the working set: archetype, place
 //! and guid of both ends, before and after.
 
@@ -17,8 +21,10 @@ use or_io::decl::File;
 use or_io::meta::typed::CMapData;
 use or_io::meta::{MetaDocument, MetaInstance};
 use or_maps::delete::{self, Error};
+use or_maps::edit::{pose_of, read_entity, Pose};
 use or_maps::import::{add_files, Incoming};
-use or_maps::operation::{apply_all, inverses, At};
+use or_maps::operation::{apply, apply_all, inverses, At, Operation, PoseData, Record};
+use or_maps::put_back;
 use or_world::execute::{identity, links_by_identity, Key};
 use or_world::{GroupProblem, MapData, MapGroup};
 
@@ -54,6 +60,18 @@ pub struct Report {
     pub notes: usize,
     /// Inverses that were the XML as it was and not the operation that takes one back.
     pub rewritten: usize,
+    /// Deletions whose chosen entity was put back, and the entities that came back in all.
+    pub put_back: usize,
+    pub came_back: usize,
+    /// Plans to put an entity back that were refused, by the kind of refusal.
+    pub not_put_back: BTreeMap<&'static str, usize>,
+    /// Sources a plan to put an entity back wrote whole, as XML, and not by an operation that says what goes in.
+    pub put_back_whole: usize,
+    /// Entities moved and flagged, and those of them put back by one record with the extents of their file.
+    pub moved: usize,
+    pub moved_back: usize,
+    /// Plans to put a moved entity back that were refused, by the kind of refusal.
+    pub not_moved_back: BTreeMap<&'static str, usize>,
     pub failures: Vec<String>,
 }
 
@@ -75,6 +93,13 @@ impl Report {
             lowered,
             notes,
             rewritten,
+            put_back,
+            came_back,
+            not_put_back,
+            put_back_whole,
+            moved,
+            moved_back,
+            not_moved_back,
             failures,
         } = other;
         self.maps += maps;
@@ -95,6 +120,17 @@ impl Report {
         self.lowered += lowered;
         self.notes += notes;
         self.rewritten += rewritten;
+        self.put_back += put_back;
+        self.came_back += came_back;
+        for (why, count) in not_put_back {
+            *self.not_put_back.entry(why).or_default() += count;
+        }
+        self.put_back_whole += put_back_whole;
+        self.moved += moved;
+        self.moved_back += moved_back;
+        for (why, count) in not_moved_back {
+            *self.not_moved_back.entry(why).or_default() += count;
+        }
         self.failures.extend(failures);
     }
 
@@ -103,7 +139,9 @@ impl Report {
             "{} maps hold entities; every {stride}th sampled: {}\n  sources not made: {:?}\n  refused: {:?}; \
              left as ambiguous: {}\n  deleted: {} ({} with a chain, {} across files), {} entities in all\n  \
              {} links renumbered inside a file and {} into a parent map, {} counts lowered, {} notes\n  \
-             {} inverses were the XML as it was\n  failures: {}\n    {}",
+             {} inverses were the XML as it was\n  \
+             put back: {} ({} entities came back, {} sources written whole); not put back: {:?}\n  \
+             moved: {}, put back: {}; not put back: {:?}\n  failures: {}\n    {}",
             self.maps,
             self.sampled,
             self.not_made,
@@ -118,6 +156,13 @@ impl Report {
             self.lowered,
             self.notes,
             self.rewritten,
+            self.put_back,
+            self.came_back,
+            self.put_back_whole,
+            self.not_put_back,
+            self.moved,
+            self.moved_back,
+            self.not_moved_back,
             self.failures.len(),
             self.failures.join("\n    ")
         )
@@ -347,9 +392,9 @@ impl Pack {
         before.as_ref().map_err(Clone::clone)
     }
 
-    /// Delete one entity of the map `name` with its chain, hold what is left to the checks and undo it; false when a failure may
-    /// have left the pack other than it was made.
-    fn delete_in(&self, name: u32, report: &mut Report) -> bool {
+    /// Delete one entity of the map `name` with its chain, hold what is left to the checks and undo it, putting the entity back
+    /// in between with `put_back`; false when a failure may have left the pack other than it was made.
+    fn delete_in(&self, name: u32, put_back: bool, report: &mut Report) -> bool {
         let (folder, sources) = (&self.folder, &self.sources);
         // The file of the map that holds its entities, and the entity to delete in it.
         let found = self
@@ -383,6 +428,10 @@ impl Pack {
                 return true;
             }
         };
+
+        if put_back && !self.moved_back(&at, before, report) {
+            return false;
+        }
 
         let planned = match delete::plan(folder, std::slice::from_ref(&at)) {
             Ok(planned) => planned,
@@ -489,6 +538,10 @@ impl Pack {
             return false;
         }
 
+        if put_back && !self.put_back(&at, planned.goes.len(), before, &after_files, report) {
+            return false;
+        }
+
         let back = inverses(&applied);
         report.rewritten += (back.iter())
             .filter(|inverse| inverse.name() == "rewrite_source")
@@ -516,6 +569,204 @@ impl Pack {
     }
 }
 
+impl Pack {
+    /// Put the entity `at` back, which a deletion of `gone` entities took out and left the pack holding `deleted`: the pack is
+    /// then the bytes it was made with, and the inverses of what did it leave the deletion. False when a failure left the pack
+    /// other than the deletion left it.
+    fn put_back(
+        &self,
+        at: &At,
+        gone: usize,
+        before: &Before,
+        deleted: &BTreeMap<String, Vec<u8>>,
+        report: &mut Report,
+    ) -> bool {
+        let folder = &self.folder;
+        let fail = |report: &mut Report, why: String| {
+            let said = format!("{} entity {}, put back: {why}", at.source, at.index);
+            report.failures.push(said);
+        };
+        // The pack was made of the files the bases are, so the index the deletion named is the index in the base.
+        let planned = match put_back::plan(folder, &put_back::Named::Base(at.clone())) {
+            Ok(planned) => planned,
+            Err(refused) => {
+                match earned(&refused) {
+                    Some(kind) => *report.not_put_back.entry(kind).or_default() += 1,
+                    None => fail(report, format!("no plan: {refused}")),
+                }
+                return true;
+            }
+        };
+        if planned.returns.len() != gone || planned.restored.is_some() {
+            let came = planned.returns.len();
+            fail(
+                report,
+                format!("{came} entities would come back where {gone} went"),
+            );
+            return true;
+        }
+        let done = match put_back::apply(folder, &planned) {
+            Ok(done) => done,
+            Err(e) => {
+                fail(report, format!("the plan did not apply: {e}"));
+                return true;
+            }
+        };
+        // ⚠ From here a failure leaves the pack other than the deletion left it.
+        if files(folder) != before.files {
+            fail(report, "the pack is not the bytes it was made with".into());
+            return false;
+        }
+        if let Err(e) = apply_all(folder, &inverses(&done), false) {
+            fail(report, format!("its inverses did not apply: {e}"));
+            return false;
+        }
+        if files(folder) != *deleted {
+            fail(report, "its inverses do not leave the deletion".into());
+            return false;
+        }
+        report.put_back += 1;
+        report.came_back += planned.returns.len();
+        report.put_back_whole += (planned.operations.iter())
+            .filter(|operation| operation.name() == "rewrite_source")
+            .count();
+        true
+    }
+}
+
+/// Why a plan to put an entity back was refused, where the refusal is one the sources earn and no failure of the suite.
+fn earned(refused: &put_back::Error) -> Option<&'static str> {
+    Some(match refused {
+        put_back::Error::Ambiguous { .. } => "it cannot be told from a twin",
+        put_back::Error::FarModelAmbiguous { .. } => "its far model cannot be told from a twin",
+        put_back::Error::SplitMap(_) => "two files hold entities of one map",
+        put_back::Error::Unwritable { .. } => "its file cannot be written with it",
+        _ => return None,
+    })
+}
+
+impl Pack {
+    /// Stand the entity `at` a metre off and state another flag of it, then put it back: the pack is then the bytes it was made
+    /// with, and the inverses of what did it leave the edit. False when a failure left the pack other than it was made.
+    fn moved_back(&self, at: &At, before: &Before, report: &mut Report) -> bool {
+        let folder = &self.folder;
+        let fail = |report: &mut Report, why: String| {
+            let said = format!("{} entity {}, moved: {why}", at.source, at.index);
+            report.failures.push(said);
+        };
+        let dir = folder.join(&at.source);
+        let stands = match read_entity(&dir, at.index) {
+            Ok(stands) => stands,
+            Err(why) => {
+                fail(report, format!("the entity is not read: {why}"));
+                return true;
+            }
+        };
+        let pose = pose_of(&stands);
+        let moved = Operation::PlaceEntity {
+            source: at.source.clone(),
+            expects: None,
+            entity: at.index,
+            pose: PoseData::from(Pose {
+                position: pose.position + glam::Vec3::X,
+                ..pose
+            }),
+        };
+        let first = match apply(folder, &moved) {
+            Ok(first) => first,
+            Err(e) => {
+                fail(report, format!("the move did not apply: {e}"));
+                return true;
+            }
+        };
+        // ⚠ From here a failure leaves the pack other than it was made.
+        let flagged = read_entity(&dir, at.index).and_then(|mut flagged| {
+            // The lowest bit, which says nothing of where the LOD parent is.
+            flagged.flags ^= 1;
+            Record::entity(&flagged)
+        });
+        let stated = flagged.and_then(|record| {
+            let stated = Operation::ReplaceEntity {
+                source: at.source.clone(),
+                expects: None,
+                entity: at.index,
+                record,
+                extents: None,
+            };
+            apply(folder, &stated).map_err(|e| e.to_string())
+        });
+        let second = match stated {
+            Ok(second) => second,
+            Err(why) => {
+                fail(report, format!("the flag was not stated: {why}"));
+                return false;
+            }
+        };
+        report.moved += 1;
+        let edited = files(folder);
+        if edited == before.files {
+            fail(report, "the move and the flag changed no file".into());
+            return true;
+        }
+        // The edit taken back by its own inverses, which leaves the pack as it was made where the entity is not put back.
+        let undo = |report: &mut Report| {
+            let back = inverses(&[first.clone(), second.clone()]);
+            let undone = apply_all(folder, &back, false);
+            let whole = undone.is_ok() && files(folder) == before.files;
+            if !whole {
+                fail(report, "the edit was not taken back".into());
+            }
+            whole
+        };
+
+        let planned = match put_back::plan(folder, &put_back::Named::Now(at.clone())) {
+            Ok(planned) => planned,
+            Err(refused) => {
+                match earned(&refused) {
+                    Some(kind) => *report.not_moved_back.entry(kind).or_default() += 1,
+                    None => fail(report, format!("no plan: {refused}")),
+                }
+                return undo(report);
+            }
+        };
+        if planned.restored.is_none() || !planned.returns.is_empty() {
+            let came = planned.returns.len();
+            fail(
+                report,
+                format!("{came} entities would come back for one that was moved"),
+            );
+            return undo(report);
+        }
+        let done = match put_back::apply(folder, &planned) {
+            Ok(done) => done,
+            Err(e) => {
+                fail(report, format!("the plan did not apply: {e}"));
+                return undo(report);
+            }
+        };
+        if files(folder) != before.files {
+            fail(report, "the pack is not the bytes it was made with".into());
+            return false;
+        }
+        if let Err(e) = apply_all(folder, &inverses(&done), false) {
+            fail(report, format!("its inverses did not apply: {e}"));
+            return false;
+        }
+        if files(folder) != edited {
+            fail(report, "its inverses do not leave the edit".into());
+            return false;
+        }
+        // The plan again, which leaves the pack as it was made for the deletion that follows.
+        let again = put_back::apply(folder, &planned);
+        if again.is_err() || files(folder) != before.files {
+            fail(report, "the plan did not apply a second time".into());
+            return false;
+        }
+        report.moved_back += 1;
+        true
+    }
+}
+
 /// Delete one entity of each map of `names`, which are of one tree, and hold what is left to the checks.
 ///
 /// The tree is imported once: each deletion is undone and the pack held to the bytes it was made with before the next, and a pack
@@ -525,6 +776,7 @@ fn delete_each(
     names: &[u32],
     facts: &BTreeMap<u32, Facts>,
     children: &BTreeMap<u32, Vec<u32>>,
+    put_back: bool,
     report: &mut Report,
 ) {
     let mut pack: Option<Pack> = None;
@@ -544,7 +796,7 @@ fn delete_each(
                 }
             },
         };
-        if made.delete_in(*name, report) {
+        if made.delete_in(*name, put_back, report) {
             pack = Some(made);
         }
     }
@@ -560,6 +812,26 @@ pub fn delete_sampled(
     sampled: &[u32],
     facts: &BTreeMap<u32, Facts>,
     children: &BTreeMap<u32, Vec<u32>>,
+) -> Report {
+    sampled_in_packs(open, sampled, facts, children, false)
+}
+
+/// [`delete_sampled`], with the entity each deletion chose put back before the deletion is undone.
+pub fn put_back_sampled(
+    open: &(dyn Fn(&str) -> Option<Vec<u8>> + Sync),
+    sampled: &[u32],
+    facts: &BTreeMap<u32, Facts>,
+    children: &BTreeMap<u32, Vec<u32>>,
+) -> Report {
+    sampled_in_packs(open, sampled, facts, children, true)
+}
+
+fn sampled_in_packs(
+    open: &(dyn Fn(&str) -> Option<Vec<u8>> + Sync),
+    sampled: &[u32],
+    facts: &BTreeMap<u32, Facts>,
+    children: &BTreeMap<u32, Vec<u32>>,
+    put_back: bool,
 ) -> Report {
     let mut by_tree: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     for name in sampled {
@@ -579,7 +851,7 @@ pub fn delete_sampled(
             scope.spawn(|| {
                 let mut report = Report::default();
                 while let Some(names) = groups.get(next.fetch_add(1, Ordering::Relaxed)) {
-                    delete_each(open, names, facts, children, &mut report);
+                    delete_each(open, names, facts, children, put_back, &mut report);
                 }
                 whole.lock().expect("no worker panicked").merge(report);
             });

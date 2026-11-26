@@ -1212,6 +1212,97 @@ fn an_interior_says_what_its_entities_changed_and_its_own_members_beside_them() 
     assert!(kept.entities.is_none() && !kept.other, "{kept:?}");
 }
 
+#[test]
+fn what_a_discard_would_lose_counts_each_thing_the_comparison_lists_once() {
+    // One added, two deleted, four changed and a pair of twins nothing tells apart; then a member of the map and a parked car.
+    let (base, mut now) = one_of_everything();
+    let listed = |changes: &MapChanges| {
+        (
+            changes.added.len(),
+            changes.deleted.len(),
+            changes.changed.len(),
+            changes.ambiguous.len(),
+            changes.root.len(),
+            changes.records.len(),
+            changes.other,
+        )
+    };
+    let changes = map_changes(&base, &now);
+    assert_eq!(listed(&changes), (1, 2, 4, 1, 0, 0, false));
+    assert_eq!(changes.count(), 1 + 2 + 4 + 1);
+    // ⚠ The parked cars are a family of records the map types: it counts once, however many of its records differ.
+    now.content_flags = 66;
+    now.car_generators.push(or_io::meta::CCarGen::default());
+    now.car_generators.push(or_io::meta::CCarGen::default());
+    let changes = map_changes(&base, &now);
+    assert_eq!(listed(&changes), (1, 2, 4, 1, 1, 1, false));
+    assert_eq!(changes.count(), 1 + 2 + 4 + 1 + 1 + 1);
+    assert_eq!(SourceChanges::Map(changes).count(), 10);
+    assert_eq!(map_changes(&base, &base.clone()).count(), 0);
+
+    // A type file: an archetype added, one deleted, one with a taller box, and another name of the file.
+    let base = types(&[
+        Archetype::new("prop_crate_a", [-1.0; 3], [1.0; 3]),
+        Archetype::new("prop_crate_b", [-2.0; 3], [2.0; 3]),
+        Archetype::new("prop_crate_c", [-3.0; 3], [3.0; 3]),
+    ]);
+    let mut now = types(&[
+        Archetype::new("prop_crate_b", [-2.0; 3], [2.0, 2.0, 4.5]),
+        Archetype::new("prop_crate_c", [-3.0; 3], [3.0; 3]),
+        Archetype::new("prop_crate_d", [-1.0; 3], [1.0; 3]),
+    ]);
+    now.name = HashedString::new("quay_types");
+    let changes = types_changes(&base, &now);
+    assert_eq!(
+        (
+            changes.added.len(),
+            changes.deleted.len(),
+            changes.changed.len(),
+            changes.root.len()
+        ),
+        (1, 1, 1, 1)
+    );
+    // ⚠ An archetype counts once however many of its members changed: the taller box moved the centre of its sphere too.
+    assert_eq!(changes.changed[0].changes.len(), 2);
+    assert_eq!(changes.count(), 4);
+    assert_eq!(SourceChanges::Types(changes).count(), 4);
+
+    // An interior counts each change of its entities, and once more when a member of its own changed.
+    let mut held = CMloArchetypeDef::default();
+    held.base.name = HashedString::new("v_shop");
+    held.entities = vec![
+        CEntityDefAny::Base(entity("prop_chair", 1, [0.0, 0.0, 0.0])),
+        CEntityDefAny::Base(entity("prop_table", 2, [1.0, 0.0, 0.0])),
+        CEntityDefAny::Base(entity("prop_lamp", 3, [2.0, 0.0, 0.0])),
+    ];
+    let mut other = held.clone();
+    other.entities[2].position.z = 1.5;
+    other.entities.remove(0);
+    let (mut base, mut now) = (CMapTypes::default(), CMapTypes::default());
+    base.archetypes
+        .push(CBaseArchetypeDefAny::CMloArchetypeDef(held));
+    now.archetypes
+        .push(CBaseArchetypeDefAny::CMloArchetypeDef(other.clone()));
+    assert_eq!(types_changes(&base, &now).count(), 2);
+    other.mlo_flags = 2;
+    now.archetypes[0] = CBaseArchetypeDefAny::CMloArchetypeDef(other);
+    assert_eq!(types_changes(&base, &now).count(), 3);
+
+    // Two archetypes of one name of which one changed are one group nothing tells apart.
+    let twice = types(&[
+        Archetype::new("prop_crate_a", [-1.0; 3], [1.0; 3]),
+        Archetype::new("prop_crate_a", [-2.0; 3], [2.0; 3]),
+    ]);
+    let mut taller = twice.clone();
+    taller.archetypes[1].bb_max.z = 9.0;
+    assert_eq!(types_changes(&twice, &taller).count(), 1);
+    // What no typed member names counts once, of an archetype and of the file.
+    let untyped = a_type_file_with_members_no_record_types;
+    assert_eq!(types_changes(&untyped(1, 1), &untyped(2, 1)).count(), 1);
+    assert_eq!(types_changes(&untyped(1, 1), &untyped(1, 2)).count(), 1);
+    assert_eq!(types_changes(&untyped(1, 1), &untyped(1, 1)).count(), 0);
+}
+
 /// A type file of one archetype that states `asset_type` in a member no typed record names, and that states `composites` of itself in another.
 fn a_type_file_with_members_no_record_types(asset_type: u64, composites: u64) -> CMapTypes {
     const PSC: &str = r#"<?xml version="1.0"?>

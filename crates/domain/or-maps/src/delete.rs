@@ -258,9 +258,18 @@ fn problems(found: Vec<or_source::Problem>) -> String {
         .join("; ")
 }
 
-/// The map files the sources of `model` cook to, in `folder`, by the name of their source.
-fn map_files(folder: &Path, model: &Maps) -> Result<Vec<MapFile>, Error> {
-    let mut files = Vec::new();
+/// A source of a pack that cooks to a map file: what its folder holds, and the file.
+pub(crate) struct MapSource {
+    /// The source, as the pack names it.
+    pub(crate) path: String,
+    pub(crate) opened: or_source::asset::Source,
+    pub(crate) inputs: Inputs,
+    pub(crate) cooked: Vec<u8>,
+}
+
+/// The sources of `model` in `folder` that cook to a map file, by their name.
+pub(crate) fn map_sources(folder: &Path, model: &Maps) -> Result<Vec<MapSource>, Error> {
+    let mut sources = Vec::new();
     let mut paths: Vec<&str> = named_paths(model).collect();
     paths.sort_unstable();
     for path in paths {
@@ -293,9 +302,24 @@ fn map_files(folder: &Path, model: &Maps) -> Result<Vec<MapFile>, Error> {
         let cooked = (inputs.compile())
             .map_err(|found| unread(problems(found)))?
             .bytes;
-        files.push(MapFile::read(path, &source.manifest.name, cooked).map_err(unread)?);
+        sources.push(MapSource {
+            path: path.to_string(),
+            opened: source,
+            inputs,
+            cooked,
+        });
     }
-    Ok(files)
+    Ok(sources)
+}
+
+/// The map files the sources of `model` cook to, in `folder`, by the name of their source.
+fn map_files(folder: &Path, model: &Maps) -> Result<Vec<MapFile>, Error> {
+    (map_sources(folder, model)?.into_iter())
+        .map(|source| {
+            let unread = |why: String| Error::Source(source.path.clone(), why);
+            MapFile::read(&source.path, &source.opened.manifest.name, source.cooked).map_err(unread)
+        })
+        .collect()
 }
 
 impl MapFile {

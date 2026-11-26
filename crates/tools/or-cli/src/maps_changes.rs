@@ -2,6 +2,7 @@
 //! by object (`or_maps::changes`).
 
 use std::fmt::Write as _;
+use std::path::Path;
 use std::process::ExitCode;
 
 use or_maps::changes::{
@@ -41,15 +42,7 @@ pub(crate) fn report(args: &[String]) -> Result<(String, bool), Failure> {
         let model =
             or_maps::Maps::read(&folder).map_err(|e| Run(format!("content `{id}`: {e}")))?;
         let facts = or_maps::inspect(&folder, &model, Depth::Stat);
-        let compared_role = |path: &&str| {
-            let role = facts.source(path).and_then(|source| source.role());
-            matches!(role, Some(Role::Map | Role::Types))
-        };
-        // Read once, so that a link of a map file into its parent map is compared by the entity it names there.
-        let read = PackSources::read(
-            &folder,
-            or_maps::facts::named_paths(&model).filter(compared_role),
-        );
+        let read = sources_read(&folder, &model);
         let mut sources = Vec::new();
         let _ = writeln!(text, "content {id}:");
         for path in or_maps::facts::named_paths(&model) {
@@ -104,6 +97,19 @@ pub(crate) fn report(args: &[String]) -> Result<(String, bool), Failure> {
     Ok((text, compared))
 }
 
+/// The map files and type files of the content in `folder`, read once, so that a link of a map file into its parent map is compared by the entity it names there.
+pub(crate) fn sources_read(folder: &Path, model: &Maps) -> PackSources {
+    let facts = or_maps::inspect(folder, model, Depth::Stat);
+    let compared_role = |path: &&str| {
+        let role = facts.source(path).and_then(|source| source.role());
+        matches!(role, Some(Role::Map | Role::Types))
+    };
+    PackSources::read(
+        folder,
+        or_maps::facts::named_paths(model).filter(compared_role),
+    )
+}
+
 fn counts(changes: &SourceChanges) -> String {
     let (added, deleted, changed, ambiguous, unchanged) = match changes {
         SourceChanges::Map(c) => (
@@ -143,7 +149,7 @@ fn shown(model: &Maps, name: &Name) -> String {
 }
 
 /// Give each name of a report that has no text the one a person typed into the pack for its hash.
-fn name_hashes(report: &mut Value, model: &Maps) {
+pub(crate) fn name_hashes(report: &mut Value, model: &Maps) {
     match report {
         Value::Array(items) => items.iter_mut().for_each(|v| name_hashes(v, model)),
         Value::Object(members) => {
@@ -161,7 +167,7 @@ fn name_hashes(report: &mut Value, model: &Maps) {
     }
 }
 
-fn entity(model: &Maps, entity: &EntityRef) -> String {
+pub(crate) fn entity(model: &Maps, entity: &EntityRef) -> String {
     format!(
         "{} at {}, guid {}",
         shown(model, &entity.archetype),
@@ -214,7 +220,7 @@ fn map_file_said(text: &mut String, model: &Maps, map: &or_maps::changes::MapCha
     }
 }
 
-fn change(model: &Maps, change: &EntityChange) -> String {
+pub(crate) fn change(model: &Maps, change: &EntityChange) -> String {
     match change {
         EntityChange::Moved { from, to } => {
             format!("moved from {} to {}", numbers(from), numbers(to))

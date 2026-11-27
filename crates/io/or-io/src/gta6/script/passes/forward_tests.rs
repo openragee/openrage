@@ -1,4 +1,5 @@
 use super::*;
+use crate::gta6::script::ir::Callee;
 use crate::gta6::script::listing::Listing;
 use crate::gta6::script::{Names, Options, Project};
 
@@ -46,13 +47,18 @@ fn read(body: &str) -> cfg::Function {
     cfg::lower(f).expect("the function lowers")
 }
 
-/// Asserts that this pass alone, with `passes` on, makes of `before` the blocks `after` reads as.
-fn becomes(passes: &[Pass], before: &str, after: &str) {
-    let mut f = read(before);
+/// What this pass alone, with `passes` on, makes of `f`.
+fn ran(passes: &[Pass], mut f: cfg::Function) -> cfg::Function {
     let options = (passes.iter()).fold(Options::baseline(), |options, pass| options.with(*pass));
     let names = Names::default();
     let cx = Context::new(&names, Project::empty(), options);
     run(&mut f, &cx, &mut Stats::default());
+    f
+}
+
+/// Asserts that this pass alone, with `passes` on, makes of `before` the blocks `after` reads as.
+fn becomes(passes: &[Pass], before: &str, after: &str) {
+    let f = ran(passes, read(before));
     assert_eq!(f.cfg, read(after).cfg, "from:\n{before}");
 }
 
@@ -345,4 +351,144 @@ fn a_cell_stays_memory_where_a_read_may_run_before_its_store_or_its_address_goes
             cell(&filled_with("7"))
         ),
     );
+}
+
+#[test]
+fn a_value_read_once_where_two_arms_meet_moves_there_under_forward() {
+    let arms = |first: &str, read: &str| {
+        format!(
+            "{first} {TEST} {{ local_2 = 1; }} else {{ local_2 = 2; }} Native.DEMO.USE2({read}, local_2); return;"
+        )
+    };
+    let before = arms("v_000010_0 = Native.DEMO.GET(p0);", "v_000010_0");
+    becomes(&[Pass::Forward], &before, &arms("", "Native.DEMO.GET(p0)"));
+    // The name switched off, the value stays where it was made.
+    stays(&[Pass::DeadLoads], &before);
+}
+
+/// `before`, then `clear`, then `local_3` read whole.
+fn cleared(before: &str, clear: &str) -> String {
+    format!("{before} {clear} Native.DEMO.USE(local_3); return;")
+}
+
+/// A clear of the low four bytes of `local_3`.
+const CLEAR: &str = "zero_bytes(Vm.Address(locals, 3), 4);";
+
+#[test]
+fn a_clear_of_the_low_bytes_of_a_local_whose_upper_bytes_nothing_writes_is_zero() {
+    becomes(
+        &[Pass::Forward],
+        &cleared("", CLEAR),
+        &cleared("", "local_3 = 0;"),
+    );
+    // A store of the low four bytes leaves the upper ones as they were: zero.
+    let low = "store_i32(Vm.Address(locals, 3), 0x0, p0);";
+    becomes(
+        &[Pass::Forward],
+        &cleared(low, CLEAR),
+        &cleared(low, "local_3 = 0;"),
+    );
+    // The name switched off, the clear stays.
+    stays(&[Pass::DeadLoads], &cleared("", CLEAR));
+}
+
+#[test]
+fn a_clear_of_the_low_bytes_stays_where_the_upper_bytes_may_hold_something() {
+    for before in [
+        // Assigned whole.
+        "local_3 = p0;",
+        // Stored above the fourth byte.
+        "store_i32(Vm.Address(locals, 3), 0x4, p0);",
+        // Stored through the address of the local below it.
+        "store_u64(Vm.Address(locals, 2), 0x8, p0);",
+        // Handed to a callee, which may write any of it.
+        "Native.DEMO.USE(Vm.Address(locals, 3));",
+    ] {
+        stays(&[Pass::Forward], &cleared(before, CLEAR));
+    }
+}
+
+/// A load of the four bytes at `p0 + 0x8`, tested for zero.
+const LOADED: &str = "((as_u32(load_i32(p0, 0x8)) == 0))";
+
+/// Whether this pass alone, with `passes` on, sends the first block of `body` straight on.
+fn decided(passes: &[Pass], body: &str) -> bool {
+    let f = ran(passes, read(body));
+    matches!(f.cfg.blocks[0].term, Terminator::Jump(_))
+}
+
+#[test]
+fn a_branch_whose_arms_meet_goes_straight_on_where_its_test_cannot_fault() {
+    let gone_through = format!("store_i32(p0, 0x10, 5); if ({LOADED}) {{ }} else {{ }} return;");
+    assert!(decided(&[Pass::DeadLoads], &gone_through));
+    // The name switched off, the test stays.
+    stays(&[Pass::Forward], &gone_through);
+    for body in [
+        // The test may be the first to go through the pointer.
+        format!("if ({LOADED}) {{ }} else {{ }} return;"),
+        // A call is made whichever way the test goes.
+        "store_i32(p0, 0x10, 5); if (((as_u32(Native.DEMO.GET(p0)) == 0))) { } else { } return;"
+            .to_owned(),
+        // The arms do not meet.
+        format!(
+            "store_i32(p0, 0x10, 5); if ({LOADED}) {{ Native.DEMO.USE(p1); }} else {{ }} return;"
+        ),
+    ] {
+        stays(&[Pass::DeadLoads], &body);
+    }
+}
+
+/// An element of the array at `p0 + 0x10`, at `p1`.
+const ELEMENT: &str = r#"Vm.Intrinsic("array_get_u64", 1, load_u64(p0, 0x10), p1)[0]"#;
+
+/// The blocks of `body` with the first element `body` reads also read before it, for nothing.
+fn read_before(body: &str) -> cfg::Function {
+    let mut f = read(body);
+    let mut found = None;
+    for stmt in &f.cfg.blocks[0].stmts {
+        stmt.each_expr(&mut |top| {
+            top.walk(&mut |e| {
+                let element = matches!(
+                    e,
+                    Expr::Call {
+                        callee: Callee::Intrinsic { .. },
+                        ..
+                    }
+                );
+                if element && found.is_none() {
+                    found = Some(e.clone());
+                }
+            });
+        });
+    }
+    let element = found.expect("the body reads an element");
+    f.cfg.blocks[0].stmts.insert(0, Stmt::Eval(element));
+    f
+}
+
+#[test]
+fn a_read_kept_for_nothing_that_the_next_statement_makes_first_goes() {
+    let next = format!("Native.DEMO.USE2(p0, {ELEMENT}); return;");
+    let f = ran(&[Pass::DeadLoads], read_before(&next));
+    assert_eq!(f.cfg, read(&next).cfg);
+    // The name switched off, the read stays.
+    let f = ran(&[Pass::Forward], read_before(&next));
+    assert_eq!(f.cfg, read_before(&next).cfg);
+}
+
+#[test]
+fn a_read_kept_for_nothing_stays_where_the_next_statement_may_fault_or_act_first() {
+    for next in [
+        // A call comes before the element.
+        format!("Native.DEMO.USE2(Native.DEMO.GET(p1), {ELEMENT}); return;"),
+        // The statement after is another, which may change what the element is.
+        format!("store_u64(p0, 0x10, p1); Native.DEMO.USE({ELEMENT}); return;"),
+        // In an arm that may not run.
+        format!(
+            "local_1 = (((((as_i32(p1) == as_i32(5))) != Truth(0)) ? (VmValue)({ELEMENT}) : (VmValue)(7))); Native.DEMO.USE(local_1); return;"
+        ),
+    ] {
+        let f = ran(&[Pass::DeadLoads], read_before(&next));
+        assert_eq!(f.cfg, read_before(&next).cfg, "{next}");
+    }
 }

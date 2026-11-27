@@ -7,7 +7,11 @@ use crate::gta6::script::ir::{
     BinOp, Callee, Const, Expr, Head, Kind, Scalar, Stmt, StoreKind, Var, Width,
 };
 
-use super::effects::{cells_of, depth, evaluated, inert, one_cell, Effects, Facts};
+use super::effects::{cells_of, depth, evaluated, inert, one_cell, stored, Effects, Facts};
+
+#[path = "values_fold_across.rs"]
+mod across;
+pub(in crate::gta6::script::passes) use self::across::across;
 
 /// How many statements may stand between a value's assignment and the place it moves to.
 // ponytail: a fixed reach keeps a block of thousands of statements linear; a running summary of
@@ -255,6 +259,116 @@ pub(super) fn zeroes(f: &mut cfg::Function) -> bool {
     // A local of several cells that is gone is no variable of the function any more.
     for var in zero.keys() {
         f.head.vars.remove(var);
+    }
+    true
+}
+
+/// Counts each load in `top` through a local's own address, and spoils the local where the load goes through the address of a later cell.
+fn own_loads(top: &Expr, own: &mut HashMap<Var, u32>, spoiled: &mut HashSet<Var>) {
+    top.walk(&mut |e| {
+        let (Expr::Load { addr, .. } | Expr::LoadBytes { addr, .. }) = e else {
+            return;
+        };
+        if let Expr::AddrOf {
+            var: var @ Var::Local(_),
+            cell,
+        } = &**addr
+        {
+            *own.entry(*var).or_default() += 1;
+            if *cell != 0 {
+                spoiled.insert(*var);
+            }
+        }
+    });
+}
+
+/// Writes each clear of the low four to seven bytes of a one-cell local as `local = 0`, where nothing ever writes a byte above the fourth but a clear.
+// A frame starts as zeroes: bytes that only clears and constants of 32 bits ever write are zero all
+// along, so a clear of every byte below them leaves the whole cell zero, as `local = 0` does.
+// ⚠ Every address of the local must be one of its own loads and stores, no other local's address
+// may reach its cell, and no pointer either: a write the function does not state may reach the
+// upper bytes.
+pub(in crate::gta6::script::passes) fn low_clears(f: &mut cfg::Function) -> bool {
+    let facts = Facts::of(f);
+    // The accesses through each local's own address, the locals a clear of the low bytes leaves
+    // whole, and the locals something writes above the low four bytes.
+    let mut own: HashMap<Var, u32> = HashMap::new();
+    let mut clears: HashSet<Var> = HashSet::new();
+    let mut spoiled: HashSet<Var> = HashSet::new();
+    for block in &f.cfg.blocks {
+        for stmt in &block.stmts {
+            if let Some((
+                Expr::AddrOf {
+                    var: var @ Var::Local(_),
+                    cell,
+                },
+                offset,
+                bytes,
+            )) = stored(stmt)
+            {
+                *own.entry(*var).or_default() += 1;
+                let low = bytes.is_some_and(|bytes| offset.saturating_add(bytes) <= 4);
+                match stmt {
+                    // Zeroes, however far they run.
+                    Stmt::ZeroBytes { bytes, .. } if *cell == 0 => {
+                        if (4..8).contains(bytes) {
+                            clears.insert(*var);
+                        }
+                    }
+                    _ if *cell == 0 && low => {}
+                    _ => {
+                        spoiled.insert(*var);
+                    }
+                }
+            }
+            match stmt {
+                Stmt::Assign {
+                    value: Expr::Const(c),
+                    ..
+                } if c.bits <= u64::from(u32::MAX) => {}
+                other => spoiled.extend(other.targets().iter().copied()),
+            }
+            stmt.each_expr(&mut |top| own_loads(top, &mut own, &mut spoiled));
+        }
+        if let Some(e) = block.term.expr() {
+            own_loads(e, &mut own, &mut spoiled);
+        }
+    }
+    let whole: HashSet<Var> = clears
+        .into_iter()
+        .filter(|var| {
+            let Var::Local(n) = *var else {
+                return false;
+            };
+            let uses = facts.uses.get(var).copied().unwrap_or_default();
+            let accesses = own.get(var).copied().unwrap_or(0);
+            let covering = (facts.direct_locals.iter())
+                .filter(|(lo, hi)| *lo <= n && n <= *hi)
+                .count();
+            let alone = uses.addrs == uses.direct
+                && uses.direct == accesses
+                && covering == accesses as usize;
+            let narrow = !facts.widths.contains_key(var)
+                && (f.head.vars.get(var)).is_none_or(|info| info.width != Width::Cells);
+            let hidden = facts.place(*var).is_some_and(|place| !facts.exposed(place));
+            !spoiled.contains(var) && alone && narrow && hidden
+        })
+        .collect();
+    if whole.is_empty() {
+        return false;
+    }
+    for stmt in f.cfg.blocks.iter_mut().flat_map(|block| &mut block.stmts) {
+        let var = match &*stmt {
+            Stmt::ZeroBytes {
+                addr: Expr::AddrOf { var, cell: 0 },
+                bytes,
+            } if (4..8).contains(bytes) && whole.contains(var) => *var,
+            _ => continue,
+        };
+        *stmt = Stmt::Assign {
+            target: var,
+            value: Expr::Const(Const::i32(0)),
+        };
     }
     true
 }

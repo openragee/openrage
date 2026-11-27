@@ -10,13 +10,13 @@ pub(super) mod flow;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::gta6::script::cfg::{self, dominates, BlockId};
-use crate::gta6::script::ir::{Const, Expr, Scalar, Stmt, StoreKind, Var, Width};
+use crate::gta6::script::cfg::{self, dominates, BlockId, Terminator};
+use crate::gta6::script::ir::{BinOp, Const, Expr, Scalar, Stmt, StoreKind, Var, Width};
 use crate::gta6::script::{Context, Pass, Stats};
 
 use self::flow::Set;
-use super::values::effects::{each_top, stored, sure_loads, Effects, Facts};
-use super::values::fold::constant;
+use super::values::effects::{each_top, evaluated, stored, sure_loads, Effects, Facts};
+use super::values::fold::{across, constant, low_clears};
 
 /// The names this file's rewrites are switched by.
 pub const PASSES: &[Pass] = &[Pass::Forward, Pass::DeadLoads];
@@ -30,6 +30,12 @@ const RECENT: usize = 8;
 /// The statements after the one that zeroes a temporary that are looked through for the stores that fill it.
 const NEAR: usize = 64;
 
+/// The blocks that only jump on that are followed to where a branch's arm comes.
+const STEPS: usize = 64;
+
+/// The most nodes a statement may evaluate for a read in it to be weighed against the read before it.
+const NODES: usize = 4096;
+
 /// Where a statement stands: its block and its place there, the terminator past the last statement.
 type Site = (BlockId, usize);
 
@@ -38,6 +44,10 @@ type Site = (BlockId, usize);
 // read. With `escape` on, a store through another variable leaves the constant where one of the
 // two holds an object no one else has yet, or where it is the same variable and other bytes.
 // A temporary that is zeroed and filled through its own address is no memory at all: `cells`.
+// `forward` also moves a temporary's value to its one read in a later block (`across`), and
+// writes a clear of the low bytes of a local whose upper bytes stay zero as `local = 0`.
+// `dead-loads` also drops a branch whose arms meet where its test cannot fault, and a read kept
+// for nothing that the next statement makes first.
 pub fn run(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> bool {
     let options = &cx.options;
     if f.head.incomplete.is_some() || f.cfg.blocks.is_empty() {
@@ -47,8 +57,11 @@ pub fn run(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> bool 
     if options.on(Pass::Forward) {
         changed |= cells(f);
         changed |= stores(f, options.on(Pass::Escape));
+        changed |= low_clears(f);
+        changed |= across(f, options.on(Pass::Escape));
     }
     changed |= options.on(Pass::DeadLoads) && loads(f);
+    changed |= options.on(Pass::DeadLoads) && repeated(f);
     if changed {
         super::values::declared(f);
     }
@@ -552,15 +565,66 @@ fn reads(e: &Expr, var: Var) -> bool {
     read
 }
 
+/// The block control comes to from `b` through blocks that only jump on.
+fn landing(cfg: &cfg::Cfg, mut b: BlockId) -> BlockId {
+    for _ in 0..STEPS {
+        match cfg.blocks.get(b) {
+            Some(block) if block.stmts.is_empty() => match block.term {
+                Terminator::Jump(next) if next != b => b = next,
+                _ => break,
+            },
+            _ => break,
+        }
+    }
+    b
+}
+
+/// Where a block's branch goes whichever way it is decided, where both its arms come to one block.
+fn met(cfg: &cfg::Cfg, b: BlockId) -> Option<BlockId> {
+    match &cfg.blocks.get(b)?.term {
+        Terminator::Branch { then, els, .. } => {
+            (landing(cfg, *then) == landing(cfg, *els)).then_some(*then)
+        }
+        _ => None,
+    }
+}
+
+/// Whether evaluating `e` shows nothing: it calls, stores, allocates and divides nothing, and every load it makes goes through an address `safe` says cannot be the first to fault.
+fn idle(facts: &Facts, e: &Expr, safe: impl Fn(&Expr) -> bool) -> bool {
+    let mut idle = true;
+    e.walk(&mut |node| {
+        idle &= match node {
+            Expr::Load { addr, .. } | Expr::LoadBytes { addr, .. } => safe(addr),
+            // A variable is always there to read.
+            Expr::Var(_) => true,
+            Expr::Binary {
+                op: BinOp::Div | BinOp::Rem,
+                ..
+            } => false,
+            other => quiet(facts, other),
+        };
+    });
+    idle
+}
+
+/// Whether evaluating `e` itself, apart from its operands, changes nothing and reads no memory.
+fn quiet(facts: &Facts, e: &Expr) -> bool {
+    let mut alone = Effects::default();
+    alone.node(facts, e);
+    alone.free()
+}
+
 /// Removes each load nothing reads that cannot be the first to go through its address.
 // A load may fault, and one that does is what the source relied on: it goes only where the same
 // address was gone through before on every path, with nothing between that could change it, or
-// where the address is of an object the function made.
+// where the address is of an object the function made. By the same proof a branch whose arms
+// meet goes straight on where its test does nothing else.
 fn loads(f: &mut cfg::Function) -> bool {
     let facts = Facts::of(f);
     let any = (f.cfg.blocks.iter().flat_map(|block| &block.stmts))
         .any(|stmt| unread_load(&facts, stmt).is_some());
-    if !any {
+    let meets = (0..f.cfg.blocks.len()).any(|b| met(&f.cfg, b).is_some());
+    if !any && !meets {
         return false;
     }
     let defs = |var: Var| facts.uses.get(&var).map_or(0, |uses| uses.defs);
@@ -630,6 +694,7 @@ fn loads(f: &mut cfg::Function) -> bool {
     };
 
     let mut dead: HashSet<Site> = HashSet::new();
+    let mut decided: Vec<(BlockId, BlockId)> = Vec::new();
     for (b, block) in f.cfg.blocks.iter().enumerate() {
         // The variables the block has gone through since it last assigned them, and the computed
         // addresses it has gone through since memory was last written.
@@ -670,9 +735,26 @@ fn loads(f: &mut cfg::Function) -> bool {
                 recent.retain(|seen| !reads(seen, *target));
             }
         }
+        let (Some(to), Some(test)) = (met(&f.cfg, b), block.term.expr()) else {
+            continue;
+        };
+        let at = (b, block.stmts.len());
+        let safe = |addr: &Expr| match addr {
+            Expr::Var(base) => since.contains(base) || above(*base, at),
+            Expr::AddrOf { .. } => true,
+            computed => recent.contains(&computed),
+        };
+        if idle(&facts, test, safe) {
+            decided.push((b, to));
+        }
     }
-    if dead.is_empty() {
+    if dead.is_empty() && decided.is_empty() {
         return false;
+    }
+    for (b, to) in decided {
+        if let Some(block) = f.cfg.blocks.get_mut(b) {
+            block.term = Terminator::Jump(to);
+        }
     }
     for (b, block) in f.cfg.blocks.iter_mut().enumerate() {
         let mut k = 0;
@@ -682,6 +764,99 @@ fn loads(f: &mut cfg::Function) -> bool {
         });
     }
     true
+}
+
+/// What a statement that keeps no value evaluates, under the readings of its result: `_ = (int)p->f[i];` is `p->f[i]`.
+fn discarded(stmt: &Stmt) -> Option<&Expr> {
+    let Stmt::Eval(e) = stmt else {
+        return None;
+    };
+    let mut inner = e;
+    while let Expr::Cast { e: next, .. } | Expr::Truth(next) = inner {
+        inner = &**next;
+    }
+    Some(inner)
+}
+
+/// Whether `top` evaluates something equal to `read` in an arm that may not run.
+fn in_arm(top: &Expr, read: &Expr) -> bool {
+    let mut armed = false;
+    top.walk(&mut |e| {
+        let arms: [Option<&Expr>; 2] = match e {
+            Expr::Select { then, els, .. } => [Some(&**then), Some(&**els)],
+            Expr::Binary {
+                op: BinOp::LogicalAnd | BinOp::LogicalOr,
+                r,
+                ..
+            } => [Some(&**r), None],
+            _ => [None, None],
+        };
+        for arm in arms.into_iter().flatten() {
+            arm.walk(&mut |node| armed |= node == read);
+        }
+    });
+    armed
+}
+
+/// Whether the expressions `tops` of one statement, in the order it evaluates them, come to `read` before they do anything that shows, and not in an arm that may not run.
+fn first_of(facts: &Facts, tops: &[&Expr], read: &Expr) -> bool {
+    let mut order = Vec::new();
+    for top in tops {
+        evaluated(top, &mut order);
+    }
+    let mut own = Vec::new();
+    evaluated(read, &mut own);
+    if order.len() > NODES {
+        return false;
+    }
+    // A node comes after every node it works on: the read's own nodes stand just before it.
+    let Some(at) = order.iter().position(|e| *e == read) else {
+        return false;
+    };
+    let Some(start) = (at + 1).checked_sub(own.len()) else {
+        return false;
+    };
+    let still = (order[..start].iter()).all(|e| match e {
+        Expr::Var(_) => true,
+        Expr::Binary {
+            op: BinOp::Div | BinOp::Rem,
+            ..
+        } => false,
+        other => quiet(facts, other),
+    });
+    still && !tops.iter().any(|top| in_arm(top, read))
+}
+
+/// Removes each statement that only reads what the statement after it reads first: `_ = p->f[i]; g(p->f[i]);` is `g(p->f[i]);`.
+// The two reads are made in one state: what the second statement evaluates before it changes
+// nothing. So the read left faults where the one removed would have, and reads what it read.
+fn repeated(f: &mut cfg::Function) -> bool {
+    let facts = Facts::of(f);
+    let mut changed = false;
+    for block in &mut f.cfg.blocks {
+        let old = std::mem::take(&mut block.stmts);
+        let mut kept: Vec<Stmt> = Vec::with_capacity(old.len());
+        // From the last: each statement is weighed against the one kept after it.
+        for stmt in old.into_iter().rev() {
+            let again = discarded(&stmt).is_some_and(|read| {
+                let does = Effects::of_expr(&facts, read);
+                let mut tops: Vec<&Expr> = Vec::new();
+                match kept.last() {
+                    Some(next) => next.each_expr(&mut |top| tops.push(top)),
+                    None => tops.extend(block.term.expr()),
+                }
+                !(does.call || does.store || does.alloc) && first_of(&facts, &tops, read)
+            });
+            if again {
+                changed = true;
+                continue;
+            }
+            kept.push(stmt);
+        }
+        kept.reverse();
+        block.stmts = kept;
+    }
+    changed
 }
 
 #[cfg(test)]

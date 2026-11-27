@@ -84,42 +84,74 @@ fn rewrite_platform_extension(path: &str, letter: char) -> String {
     out
 }
 
-/// The platform letter a row of this archive reads under: the archive's own version picks the
-/// Rockstar title that ships that format (GTA VI for RPF9, RDR2 for RPF8, GTA V for every RPF
-/// and IMG before), and that profile's platform settles the letter. When the row is not inside
-/// an archive (a loose folder entry, the install root), the letter falls back to the active
-/// install's and ultimately `y`.
+/// The platform letter a row of this archive reads under.
+///
+/// The archive's [`RpfVersion`](or_io::container::rpf::version::RpfVersion) names only a container
+/// family (RPF9, RPF8, every RPF7-and-before), not a platform: RPF7 archives ship on PC, every
+/// PlayStation, every Xbox, so one version maps to many letters. RPF9 archives are only known on
+/// Xbox Series for now, but Rockstar ships RAGE games across many platforms and nothing stops a
+/// PC GTA VI build adding `y`-prefixed archives next to the Xbox Series `z`-prefixed ones.
+///
+/// So the archive version picks the container family, and the active install picks the platform:
+/// when the active game's profile ships that same container family, its platform letter wins
+/// (the user is browsing their own install). Only where no active install matches does the tree
+/// fall back to the canonical title for that version — GTA VI for RPF9, RDR2 for RPF8, GTA V for
+/// every RPF7-and-before — and use its own platform letter, `y` where even that is unknown.
+///
+/// ⚠ Still a shortcut: a user running two RAGE installs on different platforms (a GTA V PC build
+/// and a GTA V PS4 build) can only have one at a time as active, so the inactive install's rows
+/// will render under the active one's letter. Full per-install platform resolution means tying
+/// each mounted archive to the install root it was found under — out of this patch's scope.
 fn platform_letter_for(state: &AppState, session: &RpfEditSession, node: &RpfSessionNode) -> char {
-    archive_platform_letter(session, node).unwrap_or_else(|| {
-        state
-            .prefs
-            .active_game
-            .map(|g| g.platform_letter())
-            .unwrap_or('y')
-    })
+    let archive_family = archive_container_family(session, node);
+    let active = state.prefs.active_game;
+    // The active install's letter wins, but only when its container family matches what this
+    // archive actually holds; a GTA V install does not tell us the letter of an RPF9 archive.
+    if let (Some(family), Some(game)) = (archive_family, active) {
+        if game.profile().container() == family {
+            return game.platform_letter();
+        }
+    }
+    // No install context, or its family doesn't match: fall back to the canonical title.
+    match archive_family {
+        Some(family) => canonical_game_for_container(family).platform_letter(),
+        None => active.map(|g| g.platform_letter()).unwrap_or('y'),
+    }
 }
 
-/// The letter the archive the row sits in writes its RAGE extensions under, read from the
-/// archive's version. `None` for a row of no archive (a disk folder, the install root).
-fn archive_platform_letter(session: &RpfEditSession, node: &RpfSessionNode) -> Option<char> {
+/// The container family of the archive the row sits in, `None` for a row outside one.
+fn archive_container_family(
+    session: &RpfEditSession,
+    node: &RpfSessionNode,
+) -> Option<or_title::ContainerFamily> {
     let archive_id = match &node.backing {
         RpfNodeBacking::ArchiveFile { archive_id, .. } => *archive_id,
         _ => return None,
     };
     let version = session.archive(archive_id)?.archive.version;
-    Some(game_for_rpf_version(version).platform_letter())
+    Some(container_family_for_version(version))
 }
 
-/// The Rockstar title whose profile ships this archive version: RPF9 is GTA VI's, RPF8 is RDR2's,
-/// every RPF7-and-before and every IMG is from the GTA V era or earlier, all PC-era `y` on the
-/// profiles this tree knows about.
-fn game_for_rpf_version(version: or_io::container::rpf::version::RpfVersion) -> or_title::Game {
+/// The container family (`RpfVersion` has more variants than the profile tracks).
+fn container_family_for_version(
+    version: or_io::container::rpf::version::RpfVersion,
+) -> or_title::ContainerFamily {
     use or_io::container::rpf::version::RpfVersion;
-    use or_title::Game;
+    use or_title::ContainerFamily;
     match version {
-        RpfVersion::Rpf9 => Game::GtaVI,
-        RpfVersion::Rpf8 => Game::Rdr2,
-        _ => Game::GtaVLegacy,
+        RpfVersion::Rpf9 => ContainerFamily::Rpf9,
+        RpfVersion::Rpf8 => ContainerFamily::Rpf8,
+        _ => ContainerFamily::Rpf7,
+    }
+}
+
+/// The title the tree falls back to when no active install matches the archive's container.
+fn canonical_game_for_container(family: or_title::ContainerFamily) -> or_title::Game {
+    use or_title::{ContainerFamily, Game};
+    match family {
+        ContainerFamily::Rpf9 => Game::GtaVI,
+        ContainerFamily::Rpf8 => Game::Rdr2,
+        ContainerFamily::Rpf7 => Game::GtaVLegacy,
     }
 }
 

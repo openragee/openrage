@@ -15887,9 +15887,6 @@ msgstr "槽位 {slot} 中存档 {title} 的打包副本（SLAYER1）：其数据
 msgid "The GTA VI save does not read: {e}"
 msgstr "无法读取 GTA VI 存档：{e}"
 
-msgid "a GTA VI save record is read only: its header holds a checksum whose algorithm is not known"
-msgstr "GTA VI 存档记录为只读：其头部含有一个算法未知的校验和"
-
 msgid "Code block {id}"
 msgstr "代码块 {id}"
 
@@ -15925,9 +15922,6 @@ msgstr "类型：{kind}"
 
 msgid "Saved {seconds} seconds after 1970, UTC"
 msgstr "保存于 1970 年后 {seconds} 秒（UTC）"
-
-msgid "Checksum {sum}, of an algorithm that is not known: the record is read only"
-msgstr "校验和 {sum}，所用算法未知：该记录为只读"
 
 msgid "The payload is not JSON text and is not decoded"
 msgstr "载荷不是 JSON 文本，不会被解码"

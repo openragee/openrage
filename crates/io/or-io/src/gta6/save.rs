@@ -303,13 +303,7 @@ impl Block {
 
     /// Put the JSON `json` in place of the value `path` reaches, and leave every other byte of the block.
     pub fn set(&mut self, path: &[&str], json: &str) -> Result<(), SaveError> {
-        let json = json.trim();
-        serde_json::from_str::<Value>(json).map_err(|e| SaveError::NotJson(e.to_string()))?;
-        let span = value_span(&self.text, path).ok_or_else(|| SaveError::NoValue {
-            path: path.join("/"),
-        })?;
-        self.text.replace_range(span, json);
-        Ok(())
+        json_set(&mut self.text, path, json)
     }
 
     /// Add the JSON `json` after the last member of the object or element of the array `path`
@@ -320,55 +314,81 @@ impl Block {
         key: Option<&str>,
         json: &str,
     ) -> Result<(), SaveError> {
-        let json = json.trim();
-        serde_json::from_str::<Value>(json).map_err(|e| SaveError::NotJson(e.to_string()))?;
-        let no = |why| SaveError::NotAdded {
-            path: path.join("/"),
-            why,
-        };
-        let text = self.text.as_bytes();
-        let at = (value_span(&self.text, path))
-            .ok_or(no("no value lies there"))?
-            .start;
-        let held = items(text, at).ok_or(no("the value there is no object and no array"))?;
-        let piece = match (text[at] == b'{', key) {
-            (true, Some(key)) if held.iter().any(|item| key_of(text, item) == Some(key)) => {
-                return Err(no("the object already holds the key"))
-            }
-            (true, Some(key)) => format!("{}:{json}", Value::from(key)),
-            (false, None) => json.to_owned(),
-            (true, None) => return Err(no("a member of an object needs a key")),
-            (false, Some(_)) => return Err(no("an element of an array takes no key")),
-        };
-        match held.last() {
-            Some(last) => self.text.insert_str(last.end, &format!(",{piece}")),
-            None => self.text.insert_str(at + 1, &piece),
-        }
-        Ok(())
+        json_insert(&mut self.text, path, key, json)
     }
 
     /// Take out the member or element `path` reaches, with the comma that set it apart.
     pub fn remove(&mut self, path: &[&str]) -> Result<(), SaveError> {
-        let no = || SaveError::NoValue {
-            path: path.join("/"),
-        };
-        let (step, parent) = path.split_last().ok_or_else(no)?;
-        let text = self.text.as_bytes();
-        let at = value_span(&self.text, parent).ok_or_else(no)?.start;
-        let held = items(text, at).ok_or_else(no)?;
-        let k = match text[at] {
-            b'{' => (held.iter()).position(|item| key_of(text, item) == Some(*step)),
-            _ => step.parse().ok().filter(|k| *k < held.len()),
-        }
-        .ok_or_else(no)?;
-        let cut = match (held.get(k + 1), k.checked_sub(1)) {
-            (Some(next), _) => held[k].start..next.start,
-            (None, Some(before)) => held[before].end..held[k].end,
-            (None, None) => held[k].clone(),
-        };
-        self.text.replace_range(cut, "");
-        Ok(())
+        json_remove(&mut self.text, path)
     }
+}
+
+/// Put the JSON `json` in place of the value `path` reaches in `text`, leaving every other byte.
+fn json_set(text: &mut String, path: &[&str], json: &str) -> Result<(), SaveError> {
+    let json = json.trim();
+    serde_json::from_str::<Value>(json).map_err(|e| SaveError::NotJson(e.to_string()))?;
+    let span = value_span(text, path).ok_or_else(|| SaveError::NoValue {
+        path: path.join("/"),
+    })?;
+    text.replace_range(span, json);
+    Ok(())
+}
+
+/// Add the JSON `json` after the last member or element the object or array at `path` holds.
+fn json_insert(
+    text: &mut String,
+    path: &[&str],
+    key: Option<&str>,
+    json: &str,
+) -> Result<(), SaveError> {
+    let json = json.trim();
+    serde_json::from_str::<Value>(json).map_err(|e| SaveError::NotJson(e.to_string()))?;
+    let no = |why| SaveError::NotAdded {
+        path: path.join("/"),
+        why,
+    };
+    let bytes = text.as_bytes();
+    let at = value_span(text, path)
+        .ok_or(no("no value lies there"))?
+        .start;
+    let held = items(bytes, at).ok_or(no("the value there is no object and no array"))?;
+    let piece = match (bytes[at] == b'{', key) {
+        (true, Some(key)) if held.iter().any(|item| key_of(bytes, item) == Some(key)) => {
+            return Err(no("the object already holds the key"))
+        }
+        (true, Some(key)) => format!("{}:{json}", Value::from(key)),
+        (false, None) => json.to_owned(),
+        (true, None) => return Err(no("a member of an object needs a key")),
+        (false, Some(_)) => return Err(no("an element of an array takes no key")),
+    };
+    match held.last() {
+        Some(last) => text.insert_str(last.end, &format!(",{piece}")),
+        None => text.insert_str(at + 1, &piece),
+    }
+    Ok(())
+}
+
+/// Take out the member or element `path` reaches in `text`, with the comma that set it apart.
+fn json_remove(text: &mut String, path: &[&str]) -> Result<(), SaveError> {
+    let no = || SaveError::NoValue {
+        path: path.join("/"),
+    };
+    let (step, parent) = path.split_last().ok_or_else(no)?;
+    let bytes = text.as_bytes();
+    let at = value_span(text, parent).ok_or_else(no)?.start;
+    let held = items(bytes, at).ok_or_else(no)?;
+    let k = match bytes[at] {
+        b'{' => (held.iter()).position(|item| key_of(bytes, item) == Some(*step)),
+        _ => step.parse().ok().filter(|k| *k < held.len()),
+    }
+    .ok_or_else(no)?;
+    let cut = match (held.get(k + 1), k.checked_sub(1)) {
+        (Some(next), _) => held[k].start..next.start,
+        (None, Some(before)) => held[before].end..held[k].end,
+        (None, None) => held[k].clone(),
+    };
+    text.replace_range(cut, "");
+    Ok(())
 }
 
 /// A story save: its code blocks and its script blocks, in the file's order.
@@ -762,6 +782,47 @@ impl Asav {
     pub fn text(&self) -> Option<&str> {
         let text = std::str::from_utf8(&self.payload).ok()?;
         Some(text.trim_end_matches('\0'))
+    }
+
+    /// The text of the value `path` reaches in the JSON payload; `None` where the payload is not
+    /// UTF-8 or no value lies there.
+    pub fn get(&self, path: &[&str]) -> Option<&str> {
+        let text = std::str::from_utf8(&self.payload).ok()?;
+        text.get(value_span(text, path)?)
+    }
+
+    /// Put the JSON `json` in place of the value `path` reaches in the payload; the checksum is
+    /// recomputed by [`Asav::save`], so the game still accepts the file.
+    pub fn set(&mut self, path: &[&str], json: &str) -> Result<(), SaveError> {
+        self.edit_payload(|text| json_set(text, path, json))
+    }
+
+    /// Add the JSON `json` after the last member or element the object or array at `path` holds.
+    pub fn insert(
+        &mut self,
+        path: &[&str],
+        key: Option<&str>,
+        json: &str,
+    ) -> Result<(), SaveError> {
+        self.edit_payload(|text| json_insert(text, path, key, json))
+    }
+
+    /// Take out the member or element `path` reaches in the payload.
+    pub fn remove(&mut self, path: &[&str]) -> Result<(), SaveError> {
+        self.edit_payload(|text| json_remove(text, path))
+    }
+
+    /// Edit the payload as text and write it back; the payload must be UTF-8. Any trailing bytes
+    /// after the JSON (such as zero padding) are kept, since the edit touches only the value tree.
+    fn edit_payload(
+        &mut self,
+        f: impl FnOnce(&mut String) -> Result<(), SaveError>,
+    ) -> Result<(), SaveError> {
+        let mut text = String::from_utf8(self.payload.clone())
+            .map_err(|_| SaveError::NotJson("the payload is not UTF-8 text".to_owned()))?;
+        f(&mut text)?;
+        self.payload = text.into_bytes();
+        Ok(())
     }
 
     /// The file: the header rebuilt over the payload, written at the offset the header states, with

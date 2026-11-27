@@ -58,7 +58,7 @@ fn header_lines(h: &AsavHeader) -> Vec<String> {
             h.payload_offset, h.size, h.stored_size
         ),
         format!(
-            "  checksum      {:#010X}, of an algorithm that is not known",
+            "  checksum      {:#010X}, the RAGE joaat of the header; recomputed on save",
             h.checksum
         ),
         format!(

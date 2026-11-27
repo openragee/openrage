@@ -33,15 +33,28 @@ mod tests {
 
     use super::*;
 
-    /// A settings record laid out by hand: the header, then `payload` where the header says.
+    /// A settings record carrying `payload`, written with a valid checksum so the reader accepts it.
     fn record(payload: &[u8]) -> Vec<u8> {
-        let mut bytes = vec![0u8; save::ASAV_HEADER];
-        bytes[..4].copy_from_slice(b"ASAV");
-        bytes[4..8].copy_from_slice(&save::ASAV_VERSION.to_le_bytes());
-        bytes[8..12].copy_from_slice(&2u32.to_le_bytes());
-        bytes[0x14..0x18].copy_from_slice(&(save::ASAV_HEADER as u32).to_le_bytes());
-        bytes.extend_from_slice(payload);
-        bytes
+        let header = save::AsavHeader {
+            kind: 2,
+            word_0c: 1,
+            word_10: 0,
+            payload_offset: save::ASAV_HEADER as u32,
+            stored_size: 0,
+            size: 0,
+            time: 0,
+            title: String::new(),
+            slot: String::new(),
+            checksum: 0,
+            word_164: 0,
+            size_again: 0,
+        };
+        save::Asav {
+            header,
+            payload: payload.to_vec(),
+        }
+        .save()
+        .expect("the record writes")
     }
 
     #[test]

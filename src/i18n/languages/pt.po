@@ -15887,9 +15887,6 @@ msgstr "Uma cópia empacotada (SLAYER1) do jogo salvo {title} no slot {slot}: o 
 msgid "The GTA VI save does not read: {e}"
 msgstr "O jogo salvo do GTA VI não é lido: {e}"
 
-msgid "a GTA VI save record is read only: its header holds a checksum whose algorithm is not known"
-msgstr "um registro de jogo salvo do GTA VI é somente leitura: o cabeçalho dele contém um checksum cujo algoritmo não é conhecido"
-
 msgid "Code block {id}"
 msgstr "Bloco de código {id}"
 
@@ -15925,9 +15922,6 @@ msgstr "Tipo: {kind}"
 
 msgid "Saved {seconds} seconds after 1970, UTC"
 msgstr "Salvo {seconds} segundos depois de 1970, UTC"
-
-msgid "Checksum {sum}, of an algorithm that is not known: the record is read only"
-msgstr "Checksum {sum}, de um algoritmo que não é conhecido: o registro é somente leitura"
 
 msgid "The payload is not JSON text and is not decoded"
 msgstr "O conteúdo não é texto JSON e não é decodificado"

@@ -16015,9 +16015,6 @@ msgstr "Упакованная копия (SLAYER1) сохранения {title}
 msgid "The GTA VI save does not read: {e}"
 msgstr "Сохранение GTA VI не читается: {e}"
 
-msgid "a GTA VI save record is read only: its header holds a checksum whose algorithm is not known"
-msgstr "запись сохранения GTA VI доступна только для чтения: в её заголовке контрольная сумма, алгоритм которой неизвестен"
-
 msgid "Code block {id}"
 msgstr "Блок кода {id}"
 
@@ -16053,9 +16050,6 @@ msgstr "Вид: {kind}"
 
 msgid "Saved {seconds} seconds after 1970, UTC"
 msgstr "Сохранено через {seconds} с после 1970 года, UTC"
-
-msgid "Checksum {sum}, of an algorithm that is not known: the record is read only"
-msgstr "Контрольная сумма {sum}, алгоритм которой неизвестен: запись доступна только для чтения"
 
 msgid "The payload is not JSON text and is not decoded"
 msgstr "Полезная нагрузка не является текстом JSON и не декодируется"

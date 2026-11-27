@@ -15887,9 +15887,6 @@ msgstr "Eine gepackte Kopie (SLAYER1) des Spielstands {title} in Slot {slot}: Ih
 msgid "The GTA VI save does not read: {e}"
 msgstr "Der GTA VI-Spielstand lässt sich nicht lesen: {e}"
 
-msgid "a GTA VI save record is read only: its header holds a checksum whose algorithm is not known"
-msgstr "ein GTA VI-Spielstanddatensatz ist schreibgeschützt: Sein Header enthält eine Prüfsumme, deren Algorithmus nicht bekannt ist"
-
 msgid "Code block {id}"
 msgstr "Codeblock {id}"
 
@@ -15925,9 +15922,6 @@ msgstr "Art: {kind}"
 
 msgid "Saved {seconds} seconds after 1970, UTC"
 msgstr "Gespeichert {seconds} Sekunden nach 1970, UTC"
-
-msgid "Checksum {sum}, of an algorithm that is not known: the record is read only"
-msgstr "Prüfsumme {sum} eines nicht bekannten Algorithmus: Der Datensatz ist schreibgeschützt"
 
 msgid "The payload is not JSON text and is not decoded"
 msgstr "Die Nutzdaten sind kein JSON-Text und werden nicht dekodiert"

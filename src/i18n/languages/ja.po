@@ -15887,9 +15887,6 @@ msgstr "スロット {slot}のセーブデータ {title}のパックされたコ
 msgid "The GTA VI save does not read: {e}"
 msgstr "GTA VIのセーブデータを読み取れません：{e}"
 
-msgid "a GTA VI save record is read only: its header holds a checksum whose algorithm is not known"
-msgstr "GTA VIのセーブレコードは読み取り専用です：ヘッダーに、アルゴリズムが不明なチェックサムが含まれているためです"
-
 msgid "Code block {id}"
 msgstr "コードブロック {id}"
 
@@ -15925,9 +15922,6 @@ msgstr "種類：{kind}"
 
 msgid "Saved {seconds} seconds after 1970, UTC"
 msgstr "UTCで1970年から {seconds} 秒後に保存"
-
-msgid "Checksum {sum}, of an algorithm that is not known: the record is read only"
-msgstr "チェックサム {sum}：アルゴリズムが不明なため、レコードは読み取り専用です"
 
 msgid "The payload is not JSON text and is not decoded"
 msgstr "ペイロードはJSONテキストではないため、デコードされません"

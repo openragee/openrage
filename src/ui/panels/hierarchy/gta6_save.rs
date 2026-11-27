@@ -18,11 +18,6 @@ use crate::state::{Change, Swap};
 // ponytail: a cap, not a virtual list; a typed array of thousands shows its first rows only.
 const ROWS: usize = 256;
 
-/// Why a record takes no edit and no save.
-const READ_ONLY: &str = tr_key!(
-    "a GTA VI save record is read only: its header holds a checksum whose algorithm is not known"
-);
-
 /// The save's row of the capability table.
 pub(crate) const CAPABILITIES: FormatCapabilities = FormatCapabilities {
     selection_summary: Some(summary),
@@ -113,12 +108,15 @@ fn key_names() -> &'static HashMap<u32, String> {
     })
 }
 
-/// The known name whose hash the key `key` states: the metadata names' first, else the one
-/// `vocabulary` holds, which is lower case and so names only a key hashed from lower case.
+/// The known name whose hash the key `key` states: the metadata names first, then a settings
+/// record's brute-forced field names, else the one `vocabulary` holds, which is lower case and so
+/// names only a key hashed from lower case.
 fn key_name<'a>(vocabulary: &'a Vocabulary, key: &str) -> Option<&'a str> {
     let hash = save::parse_key(key)?;
     let held = || (vocabulary.name32(hash)).filter(|name| save::key_hash(name) == hash);
-    (key_names().get(&hash).map(String::as_str)).or_else(held)
+    (key_names().get(&hash).map(String::as_str))
+        .or_else(|| save::known_field_name(hash))
+        .or_else(held)
 }
 
 /// The key a member typed as `typed` is written under: a reserved key as it is, a name as its hash.
@@ -161,66 +159,105 @@ impl Gta6SaveDocument {
         Self { save, rows }
     }
 
-    /// Swap the text of story block `row` with `other` and read its tree again; `false`, changing nothing, where there is no such block.
+    /// Swap the text of block `row` with `other` and read its tree again; `false`, changing
+    /// nothing, where there is no such block. A record has one block, its payload.
     fn swap_text(&mut self, row: usize, other: &mut String) -> bool {
-        let Save::Story(story) = &mut self.save else {
-            return false;
-        };
-        let block = (story.code.iter_mut().chain(&mut story.script)).nth(row);
-        let (Some(block), Some(tree)) = (block, self.rows.get_mut(row)) else {
-            return false;
-        };
-        std::mem::swap(&mut block.text, other);
-        *tree = row_of(&block.text);
-        true
+        match &mut self.save {
+            Save::Story(story) => {
+                let block = (story.code.iter_mut().chain(&mut story.script)).nth(row);
+                let (Some(block), Some(tree)) = (block, self.rows.get_mut(row)) else {
+                    return false;
+                };
+                std::mem::swap(&mut block.text, other);
+                *tree = row_of(&block.text);
+                true
+            }
+            Save::Record(record) => {
+                if row != 0 || self.rows.is_empty() {
+                    return false;
+                }
+                let current = String::from_utf8_lossy(&record.payload).into_owned();
+                record.payload = std::mem::replace(other, current).into_bytes();
+                if let Some(tree) = record.text().map(row_of) {
+                    self.rows[0] = tree;
+                }
+                true
+            }
+        }
     }
 
-    /// The text, as the file writes it, of the value at `path` under the two outer keys of story block `row`.
+    /// The text, as the file writes it, of the value at `path` under the block's outer keys of
+    /// block `row` (a record's payload has no outer keys, so `path` is from the payload root).
     fn text_at(&self, row: usize, path: &[String]) -> Option<&str> {
-        let Save::Story(story) = &self.save else {
-            return None;
-        };
         let under = &self.rows.get(row)?.under;
         let full: Vec<&str> = under.iter().chain(path).map(String::as_str).collect();
-        story.blocks().nth(row)?.get(&full)
+        match &self.save {
+            Save::Story(story) => story.blocks().nth(row)?.get(&full),
+            Save::Record(record) => (row == 0).then(|| record.get(&full)).flatten(),
+        }
     }
 
-    /// Make `edit` at `path` of story block `row`: the text the block held before, or `None` where the edit changed nothing.
+    /// Make `edit` at `path` of block `row`: the text the block held before, or `None` where the
+    /// edit changed nothing. A record's one block is its payload JSON, at row 0.
     fn edit(
         &mut self,
         row: usize,
         path: &[String],
         edit: &SaveEdit,
     ) -> Result<Option<String>, String> {
-        let Save::Story(story) = &self.save else {
-            return Err(crate::i18n::tr(READ_ONLY).to_string());
-        };
-        let (Some(block), Some(tree)) = (story.blocks().nth(row), self.rows.get(row)) else {
-            return Err(tr!("The save holds no such block").to_string());
-        };
-        // The edit is made on a copy, so a refusal leaves the block as it was.
-        let mut edited = block.clone();
-        let full: Vec<&str> = (tree.under.iter().chain(path))
-            .map(String::as_str)
-            .collect();
-        match edit {
-            SaveEdit::Set(json) => edited.set(&full, json),
-            SaveEdit::Add(key, json) => edited.insert(&full, key.as_deref(), json),
-            SaveEdit::Remove => edited.remove(&full),
+        let no_block = || tr!("The save holds no such block").to_string();
+        match &self.save {
+            Save::Story(story) => {
+                let (Some(block), Some(tree)) = (story.blocks().nth(row), self.rows.get(row))
+                else {
+                    return Err(no_block());
+                };
+                // The edit is made on a copy, so a refusal leaves the block as it was.
+                let mut edited = block.clone();
+                let full: Vec<&str> = (tree.under.iter().chain(path))
+                    .map(String::as_str)
+                    .collect();
+                match edit {
+                    SaveEdit::Set(json) => edited.set(&full, json),
+                    SaveEdit::Add(key, json) => edited.insert(&full, key.as_deref(), json),
+                    SaveEdit::Remove => edited.remove(&full),
+                }
+                .map_err(|e| e.to_string())?;
+                if edited.text == block.text {
+                    return Ok(None);
+                }
+                let mut text = edited.text;
+                Ok(self.swap_text(row, &mut text).then_some(text))
+            }
+            Save::Record(record) => {
+                let Some(tree) = (row == 0).then_some(()).and(self.rows.first()) else {
+                    return Err(no_block());
+                };
+                let mut edited = record.clone();
+                let full: Vec<&str> = (tree.under.iter().chain(path))
+                    .map(String::as_str)
+                    .collect();
+                match edit {
+                    SaveEdit::Set(json) => edited.set(&full, json),
+                    SaveEdit::Add(key, json) => edited.insert(&full, key.as_deref(), json),
+                    SaveEdit::Remove => edited.remove(&full),
+                }
+                .map_err(|e| e.to_string())?;
+                if edited.payload == record.payload {
+                    return Ok(None);
+                }
+                let mut text = String::from_utf8_lossy(&edited.payload).into_owned();
+                Ok(self.swap_text(0, &mut text).then_some(text))
+            }
         }
-        .map_err(|e| e.to_string())?;
-        if edited.text == block.text {
-            return Ok(None);
-        }
-        let mut text = edited.text;
-        Ok(self.swap_text(row, &mut text).then_some(text))
     }
 
-    /// The file a save writes: a story save with every block's text as it is held, a record refused.
+    /// The file a save writes: a story save over its blocks' texts, a record over its payload with
+    /// a fresh checksum.
     pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
         match &self.save {
             Save::Story(story) => story.save().map_err(|e| e.to_string()),
-            Save::Record(_) => Err(crate::i18n::tr(READ_ONLY).to_string()),
+            Save::Record(record) => record.save().map_err(|e| e.to_string()),
         }
     }
 
@@ -311,12 +348,13 @@ impl Gta6SaveDocument {
                     "Payload: {count} bytes",
                     record.payload.len()
                 ));
-                lines.push(tr!(
-                    "Checksum {sum}, of an algorithm that is not known: the record is read only",
-                    sum = format!("{:08X}", h.checksum)
-                ));
                 if self.rows.is_empty() {
                     lines.push(tr!("The payload is not JSON text and is not decoded").to_string());
+                } else {
+                    lines.push(
+                        tr!("In the outline, a click on a value edits it as JSON, and a right-click on a row adds to it or takes it out")
+                            .to_string(),
+                    );
                 }
             }
         }
@@ -402,7 +440,11 @@ struct Tree<'a> {
 
 impl Tree<'_> {
     fn editable(&self) -> bool {
-        matches!(self.doc.save, Save::Story(_))
+        match &self.doc.save {
+            Save::Story(_) => true,
+            // A record is editable where its payload is JSON, which is the one case it has a row.
+            Save::Record(_) => !self.doc.rows.is_empty(),
+        }
     }
 
     /// Whether `key` as it is written, or the known name it hashes, holds the filter.
@@ -605,9 +647,6 @@ fn draw_rows(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId) {
         held: &mut held,
         edits: Vec::new(),
     };
-    if !tree.editable() {
-        ui.add(detail_label(crate::i18n::tr(READ_ONLY)));
-    }
     let all = tree.filter.is_empty();
     let mut clicked = None;
     for (k, row) in doc.rows.iter().enumerate() {
@@ -701,14 +740,29 @@ mod tests {
         keys.iter().map(|key| (*key).to_owned()).collect()
     }
 
-    /// A record: a header alone, whose payload starts where the header ends.
-    fn record() -> Vec<u8> {
-        let mut header = vec![0u8; save::ASAV_HEADER];
-        header[..4].copy_from_slice(b"ASAV");
-        header[4] = 1;
-        header[0x14..0x18].copy_from_slice(&(save::ASAV_HEADER as u32).to_le_bytes());
-        header[0x128..0x12E].copy_from_slice(b"SAVE03");
-        header
+    /// A settings record, slot SAVE03, carrying `payload` as its body, written with a valid
+    /// checksum so the strict reader accepts it.
+    fn record(payload: &str) -> Vec<u8> {
+        let header = save::AsavHeader {
+            kind: 2,
+            word_0c: 1,
+            word_10: 0,
+            payload_offset: save::ASAV_HEADER as u32,
+            stored_size: 0,
+            size: 0,
+            time: 0,
+            title: "Profile Settings".to_owned(),
+            slot: "SAVE03".to_owned(),
+            checksum: 0,
+            word_164: 0,
+            size_again: 0,
+        };
+        save::Asav {
+            header,
+            payload: payload.as_bytes().to_vec(),
+        }
+        .save()
+        .expect("the record writes")
     }
 
     #[test]
@@ -745,27 +799,82 @@ mod tests {
     #[test]
     fn a_packed_copy_and_a_file_that_is_no_save_are_told_apart() {
         assert!(!is_save(b"RSC7"));
-        // A packed copy's head, its name empty, then the header of the save it packs.
-        let mut packed = b"SLAYER1\0".to_vec();
-        packed.extend_from_slice(&1u32.to_le_bytes());
-        packed.extend_from_slice(&0u32.to_le_bytes());
-        packed.extend_from_slice(&0u64.to_le_bytes());
-        let mut header = record();
-        header[0x14..0x18].fill(0);
-        packed.extend_from_slice(&header);
+        // A packed copy wraps a real record; opening it is refused, naming the slot it packs.
+        let packed = save::Slayer1::write("", &record("{\"$v\":1}")).expect("a packed copy writes");
         assert!(is_save(&packed));
         let refused = open(&packed).err().expect("a packed copy is refused");
         assert!(refused.contains("SAVE03"), "{refused}");
-        // The same header alone is a record: read only, and with no JSON no row.
-        let record = document(&record());
-        assert!(!has_rows(&DocPayload::Gta6Save(Arc::clone(&record))));
-        assert!(record.to_bytes().is_err());
-        assert_eq!(record.facts().len(), 6);
-        let mut held = (*record).clone();
+        // A record whose payload is not JSON opens but shows no row and takes no edit.
+        let opaque = document(&record("not json at all"));
+        assert!(!has_rows(&DocPayload::Gta6Save(Arc::clone(&opaque))));
+        assert_eq!(opaque.facts().len(), 5);
+        let mut held = (*opaque).clone();
         assert_eq!(
             held.edit(0, &[], &SaveEdit::Remove),
-            Err(crate::i18n::tr(READ_ONLY).to_string())
+            Err(tr!("The save holds no such block").to_string())
         );
+    }
+
+    #[test]
+    fn a_settings_record_is_opened_edited_and_saved_and_reopens_with_the_edits() {
+        let audio = save::key_text("audio");
+        let music = save::key_text("musicLevel");
+        let sfx = save::key_text("sfxLevel");
+        let payload = format!("{{\"$v\":2.0,\"{audio}\":{{\"{music}\":75}}}}");
+        let bytes = record(&payload);
+        let mut doc = (*document(&bytes)).clone();
+
+        // One row, the payload, whose tree is the whole object (a record has no outer keys).
+        assert_eq!(doc.rows.len(), 1);
+        assert!(doc.rows[0].under.is_empty());
+        let music_at = path(&[audio.as_str(), music.as_str()]);
+        assert_eq!(doc.text_at(0, &music_at), Some("75"));
+
+        // Change a value and add a member.
+        doc.edit(0, &music_at, &SaveEdit::Set("100".into()))
+            .expect("set")
+            .expect("the value changed");
+        doc.edit(
+            0,
+            &path(&[audio.as_str()]),
+            &SaveEdit::Add(Some(sfx.clone()), "40".into()),
+        )
+        .expect("add")
+        .expect("the object changed");
+        assert_eq!(doc.text_at(0, &music_at), Some("100"));
+
+        // The written file reopens — so its checksum is valid — with both edits in place.
+        let written = doc.to_bytes().expect("the record writes");
+        assert!(written.starts_with(b"ASAV"));
+        let again = document(&written);
+        assert_eq!(again.text_at(0, &music_at), Some("100"));
+        assert_eq!(
+            again.text_at(0, &path(&[audio.as_str(), sfx.as_str()])),
+            Some("40")
+        );
+    }
+
+    #[test]
+    fn an_edit_to_a_record_is_a_step_of_undo_and_marks_it_changed() {
+        let fov = save::key_text("fov");
+        let payload = format!("{{\"$v\":1.0,\"{fov}\":90}}");
+        let mut state = AppState::new();
+        let payload = open(&record(&payload)).expect("a record");
+        state
+            .documents
+            .push(Document::new(1, Some(PathBuf::from("SAVE03")), payload));
+        state.active_document = Some(1);
+        let fov_at = path(&[fov.as_str()]);
+        let value = |state: &AppState| match state.document(1).map(|d| &d.payload) {
+            Some(DocPayload::Gta6Save(doc)) => doc.text_at(0, &fov_at).map(str::to_owned),
+            _ => None,
+        };
+        (state.edit_gta6_save(1, 0, &fov_at, &SaveEdit::Set("110".into()))).expect("an edit");
+        assert_eq!(value(&state).as_deref(), Some("110"));
+        assert!(state.document(1).is_some_and(|d| d.dirty));
+        assert!(state.undo().is_some());
+        assert_eq!(value(&state).as_deref(), Some("90"));
+        assert!(!state.document(1).is_some_and(|d| d.dirty));
     }
 
     #[test]
@@ -892,6 +1001,9 @@ mod tests {
         let key = save::key_text(name);
         let none = Vocabulary::default();
         assert_eq!(key_name(&none, &key), None, "no metadata name hashes to it");
+        // A known settings field name is shown by its hash, with no vocabulary.
+        assert_eq!(key_name(&none, &save::key_text("audio")), Some("audio"));
+        assert_eq!(key_name(&none, &save::key_text("fov")), Some("fov"));
         let mut vocabulary = Vocabulary::default();
         assert!(vocabulary.add(name, None));
         assert_eq!(key_name(&vocabulary, &key), Some(name));

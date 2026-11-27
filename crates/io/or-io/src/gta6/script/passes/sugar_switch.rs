@@ -4,7 +4,8 @@
 //! ⚠ The `Sugar::SwitchOn` made here holds each arm under the equality that leads to it and no
 //! ordering test: `tree::desugar` gives a chain of `if`s that runs as the tests did, not the tests
 //! themselves. It is made only where every constant is proved to reach its arm through the
-//! ordering tests above it.
+//! ordering tests above it. Arms with no statements, which all run on to what follows the
+//! `switch`, are one arm of all their constants, so `desugar` tests them in one `if`.
 
 use std::collections::BTreeSet;
 
@@ -24,6 +25,9 @@ const TESTS: usize = 1024;
 
 /// The statements one reading looks at to learn where bodies leave; past them a body is taken not to.
 const LOOKS: usize = 1 << 14;
+
+/// The most constants arms with no statements are joined into one arm by: each joins one more `||` to its test.
+const JOINED: usize = 256;
 
 /// `x < k`, `x <= k`, `x > k` or `x >= k`, with how the two are compared.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,8 +61,8 @@ impl Order {
 pub(super) enum What<'a> {
     /// `x == a`, or `x == a || x == b`: each constant as it is compared, and as it is written.
     Equal(Vec<(u64, &'a Expr)>),
-    /// `x != a`.
-    Unequal(u64, &'a Expr),
+    /// `x != a`, or `x != a && x != b`: each constant as it is compared, and as it is written where it is compared at the type of the first.
+    Unequal(Vec<(u64, Option<&'a Expr>)>),
     Ordered(Order),
 }
 
@@ -98,7 +102,7 @@ pub(super) fn test(cond: &Expr) -> Option<Test<'_>> {
                     wide,
                     bound,
                 }),
-                false => What::Unequal(bound, r),
+                false => What::Unequal(vec![(bound, Some(&**r))]),
             };
             return Some(Test {
                 value: l,
@@ -107,6 +111,13 @@ pub(super) fn test(cond: &Expr) -> Option<Test<'_>> {
                 what,
             });
         }
+    }
+    if let Expr::Binary {
+        op: BinOp::LogicalAnd,
+        ..
+    } = cond
+    {
+        return unequals(cond);
     }
     let mut tested: Option<(&Expr, &Kind, bool)> = None;
     let mut constants = Vec::new();
@@ -145,6 +156,59 @@ pub(super) fn test(cond: &Expr) -> Option<Test<'_>> {
         at,
         wide,
         what: What::Equal(constants),
+    })
+}
+
+/// `x != a && x != b ..`: the test that one value is none of the constants, each compared at one width.
+// 32 bits are unequal whichever sign they are read with, so the types may differ in sign alone.
+fn unequals(cond: &Expr) -> Option<Test<'_>> {
+    let mut first: Option<(&Expr, &Kind, bool)> = None;
+    let mut constants = Vec::new();
+    let mut open = vec![cond];
+    while let Some(e) = open.pop() {
+        if constants.len() >= TESTS {
+            return None;
+        }
+        match e {
+            Expr::Binary {
+                op: BinOp::LogicalAnd,
+                l,
+                r,
+                ..
+            } => {
+                open.push(&**r);
+                open.push(&**l);
+            }
+            Expr::Binary {
+                op: BinOp::Ne,
+                at,
+                l,
+                r,
+            } => {
+                let (wide, _) = width(at)?;
+                let own = match first {
+                    None => {
+                        first = Some((&**l, at, wide));
+                        true
+                    }
+                    Some((value, held, as_wide)) => {
+                        if as_wide != wide || !same(under(value, wide), under(l, wide)) {
+                            return None;
+                        }
+                        held == at
+                    }
+                };
+                constants.push((constant(r, wide)?, own.then_some(&**r)));
+            }
+            _ => return None,
+        }
+    }
+    let (value, at, wide) = first?;
+    Some(Test {
+        value,
+        at,
+        wide,
+        what: What::Unequal(constants),
     })
 }
 
@@ -447,12 +511,12 @@ impl<'a> Reading<'a> {
                     rest: after,
                 });
             }
-            What::Unequal(constant, written) => {
-                if !self.takes(&[*constant], above) {
+            What::Unequal(constants) => {
+                let values: Vec<u64> = constants.iter().map(|(constant, _)| *constant).collect();
+                if !self.takes(&values, above) {
                     return false;
                 }
-                let each = [(*constant, Some(*written))];
-                let arm = self.written(asked.value, asked.at, &each, None);
+                let arm = self.written(asked.value, asked.at, constants, None);
                 self.arms.push((arm, other));
                 more.push(Open {
                     list: then,
@@ -583,7 +647,10 @@ fn read(top: &[Stmt]) -> Option<Read> {
             reading.defaults.push((next.list, next.rest));
         }
     }
-    if reading.arms.len() < ARMS {
+    // An ordering test halves the cases of a `switch` and no test a source writes, so under one
+    // the constants count, however few arms they lead to.
+    let halved = !reading.orders.is_empty() && reading.seen.len() >= ARMS;
+    if reading.arms.len() < ARMS && !halved {
         return None;
     }
     // ⚠ An ordering test with arms on one side only is not the halving of a set of cases: a
@@ -612,7 +679,7 @@ fn read(top: &[Stmt]) -> Option<Read> {
             return None;
         }
     }
-    let arms = (reading.arms.into_iter())
+    let arms = (joined(reading.arms).into_iter())
         .map(|(test, body)| Arm {
             test,
             body: body.to_vec(),
@@ -623,6 +690,62 @@ fn read(top: &[Stmt]) -> Option<Read> {
         default: default.to_vec(),
         held,
     })
+}
+
+/// The constants an arm's test names: one for each equality its `||` joins.
+fn constants_of(test: &Expr) -> usize {
+    let mut count = 0;
+    let mut open = vec![test];
+    while let Some(e) = open.pop() {
+        match e {
+            Expr::Binary {
+                op: BinOp::LogicalOr,
+                l,
+                r,
+                ..
+            } => {
+                open.push(&**r);
+                open.push(&**l);
+            }
+            _ => count += 1,
+        }
+    }
+    count
+}
+
+/// The arms with no statements joined into the first of them, up to [`JOINED`] constants an arm: each runs on to what follows the `switch`.
+// ⚠ The tests of one reading are equalities of one value, read with nothing between them, and no
+// two arms name one constant: which arm holds does not hang on the order they are asked in.
+fn joined<'a>(arms: Vec<(Expr, &'a [Stmt])>) -> Vec<(Expr, &'a [Stmt])> {
+    let mut out: Vec<(Expr, &'a [Stmt])> = Vec::with_capacity(arms.len());
+    // The arm the next empty one joins, and the constants it holds so far.
+    let mut open: Option<(usize, usize)> = None;
+    for (test, body) in arms {
+        if !body.is_empty() {
+            out.push((test, body));
+            continue;
+        }
+        let count = constants_of(&test);
+        match open {
+            Some((at, held)) if held + count <= JOINED && at < out.len() => {
+                if let Some((first, _)) = out.get_mut(at) {
+                    let l = std::mem::replace(first, Expr::GuidEmpty);
+                    *first = Expr::Binary {
+                        op: BinOp::LogicalOr,
+                        at: Kind::Bool,
+                        l: Box::new(l),
+                        r: Box::new(test),
+                    };
+                }
+                open = Some((at, held + count));
+            }
+            _ => {
+                open = Some((out.len(), count));
+                out.push((test, body));
+            }
+        }
+    }
+    out
 }
 
 /// [`read`] of the statements of `list` from `at`, where an `if` on a test starts them; of that `if` alone unless `whole`.

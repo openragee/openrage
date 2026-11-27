@@ -87,6 +87,7 @@ fn head(vars: &[(Var, Kind)]) -> Head {
         single: false,
     };
     Head {
+        value_types: Default::default(),
         program: 1,
         at: 0x10,
         name: "func_000010".to_owned(),
@@ -1311,3 +1312,6 @@ fn a_rewrite_runs_only_where_its_name_is_on() {
     let read = rewritten(body(), &vars, Project::empty(), every);
     assert_eq!(tree::desugar(read), body());
 }
+
+#[path = "sugar_expressions_nested_tests.rs"]
+mod inside;

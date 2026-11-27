@@ -1,5 +1,6 @@
 //! Sugar for expressions and simple statements: tests of one value as a `switch`, the null
-//! operators, compound assignment, string concatenation, initialisers and `ref`.
+//! operators, compound assignment, string concatenation, initialisers, one inside another, and
+//! `ref` and `out`.
 //!
 //! Works on the structured form, last before `names`. An expression is read through an
 //! `ExprSugar` and statements through a `Group` or a `Sugar::SwitchOn`, and `tree::desugar` gives
@@ -9,18 +10,25 @@
 //! `switch` drops the ordering tests its cases were halved by, an initialiser puts the copies
 //! and the assignments that stood between its stores around itself, and a choice between a
 //! reference and what stands in for null is one assignment where it was an `if` of two.
+//!
+//! ⚠ An initialiser that holds another holds the inner object's statements among its own, in
+//! the order they ran, with no variable of its own in the source: the printer writes them as
+//! the field's value, `new A { F = new B { G = a } }`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gta6::script::ir::{
-    self, BinOp, Callee, Expr, ExprSugar, Head, Kind, Scalar, Var, Width,
+    self, BinOp, Callee, Expr, ExprSugar, FunctionKey, Head, Kind, Scalar, Var, Width,
 };
+use crate::gta6::script::print::cells_of;
+use crate::gta6::script::project::{reach, signatures};
 use crate::gta6::script::tree::{self, Group, Stmt, Sugar};
 use crate::gta6::script::{Context, Pass, Project, Stats};
 
 /// The names this file's rewrites are switched by.
 // ⚠ `nullable` and `tuples` read nothing: no table states which type is a nullable or a tuple.
-// `ref-out` never reads an `out`, which needs a callee proved to write before it reads.
+// `ref-out` reads an `out` only where the project's reach table proves the script function
+// writes the whole variable before it reads it.
 pub const PASSES: &[Pass] = &[
     Pass::SwitchOn,
     Pass::NullOps,
@@ -38,6 +46,12 @@ const FIELDS: usize = 1024;
 /// The most variables one initialiser follows its object through.
 const NAMES: usize = 8;
 
+/// The most initialisers one is read inside, one in another.
+const DEPTH: usize = 4;
+
+/// The most statements an initialiser inside another is read from.
+const INNER: usize = 256;
+
 /// Reads each proved shape as the operator, the initialiser or the `switch` of the source.
 pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
     let options = cx.options;
@@ -51,6 +65,18 @@ pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
         true => Reached::of(body),
         false => Reached::default(),
     };
+    let named = match options.on(Pass::Initialisers) {
+        true => named(body),
+        false => BTreeMap::new(),
+    };
+    let around = Around {
+        reached: &reached,
+        named: &named,
+    };
+    let kept = match options.on(Pass::RefOut) {
+        true => kept_in(body, head, project),
+        false => Reached::default(),
+    };
     let nulls = options.on(Pass::NullOps);
     let joins = options.on(Pass::Concat);
     let refs = options.on(Pass::RefOut);
@@ -59,7 +85,7 @@ pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
     let mut work: Vec<(&mut Vec<Stmt>, bool)> = vec![(body, true)];
     while let Some((list, whole)) = work.pop() {
         if options.on(Pass::Initialisers) {
-            initialisers(list, &reached);
+            initialisers(list, &around);
         }
         let mut at = 0;
         while at < list.len() {
@@ -82,7 +108,7 @@ pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
                             joined(e, head, project);
                         }
                         if refs {
-                            referred(e, head, project);
+                            referred(e, head, project, &kept);
                         }
                     });
                 });
@@ -91,6 +117,10 @@ pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
                 compounded(stmt, head, project);
             }
             at += 1;
+        }
+        // A list a construct holds by its role keeps its statements as they are.
+        if refs && whole {
+            outs(list);
         }
         for stmt in list {
             // ⚠ A list a construct holds by its role keeps its last statements where they are:
@@ -595,10 +625,144 @@ fn bounded(var: Var, head: &Head) -> bool {
     }
 }
 
-/// Reads the address of a variable handed to a call as `ref`, where it reaches that variable alone.
+/// The bytes a variable is known to hold: its cells, where a kind states them.
+fn held_bytes(var: Var, head: &Head) -> Option<u32> {
+    if matches!(var, Var::Global { .. }) {
+        return None;
+    }
+    let info = head.vars.get(&var);
+    let cells = match info.map(|info| (&info.width, &info.kind)) {
+        None | Some((Width::Cell, _)) => 1,
+        Some((Width::Cells, Kind::Aggregate(cells) | Kind::Value { cells, .. })) => (*cells).max(1),
+        Some((Width::Cells, Kind::Vector | Kind::Handle)) => 2,
+        Some((Width::Cells, _)) => return None,
+    };
+    cells.checked_mul(8)
+}
+
+/// What a script function is proved to do through the address of a variable it is handed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Handed {
+    /// It touches no byte past the variable and writes its cells before it reads any.
+    Out,
+    /// It touches no byte past the variable.
+    Within,
+    /// It may touch bytes past the variable.
+    Past,
+    /// The project does not say.
+    Unknown,
+}
+
+/// What the function `key` does through the address of `var` handed to its parameter cell `cell`, by the project's reach table.
+// ⚠ A reach is of what goes through the one cell, in the function's own code and what it hands
+// the cell to, never of its callers; where the address may be kept, or the bytes reached are
+// unbounded (handed to a native, a slot or a function not read), nothing is said.
+fn handed(project: &Project, key: FunctionKey, cell: u32, var: Var, head: &Head) -> Handed {
+    let (Some(bytes), Some(held)) = (project.reach(key, cell), held_bytes(var, head)) else {
+        return Handed::Unknown;
+    };
+    if bytes == reach::UNBOUNDED || project.address_dies(key, cell) != Some(true) {
+        return Handed::Unknown;
+    }
+    if bytes > held {
+        return Handed::Past;
+    }
+    // Every byte of the variable written on every path, and none read before it is written.
+    let out = project.param_mode(key, cell) == Some(reach::Mode::Out)
+        && project
+            .param_covered(key, cell)
+            .is_some_and(|covered| covered >= held);
+    match out {
+        true => Handed::Out,
+        false => Handed::Within,
+    }
+}
+
+/// The parameter cell each argument of a call lands in, the cells of the arguments before it, and the cells of them all, where they are known.
+fn landing(args: &[Expr], head: &Head) -> (Vec<Option<u32>>, Option<u32>) {
+    let mut next = Some(0u32);
+    let mut cells = Vec::with_capacity(args.len());
+    for arg in args {
+        cells.push(next);
+        next = (next.zip(cells_of(arg, head))).and_then(|(a, b)| a.checked_add(b));
+    }
+    (cells, next)
+}
+
+/// What each argument of a call to the script function `key` is proved to be, where it is the address of a variable.
+fn proved_args(
+    key: Option<FunctionKey>,
+    args: &[Expr],
+    head: &Head,
+    project: &Project,
+) -> Vec<Option<(Var, Handed)>> {
+    let (cells, all) = landing(args, head);
+    // ⚠ The cells handed must be the cells the function takes, or an argument lands elsewhere.
+    let takes = |key: &FunctionKey| {
+        let signature = project.signatures.get(key);
+        let params = signature.map(|held| held.params.iter().map(|p| p.cells).sum::<u32>());
+        params.is_some() && params == all
+    };
+    let key = key.filter(takes);
+    let each = args.iter().zip(cells).map(|(arg, at)| match arg {
+        Expr::AddrOf { var, cell: 0 } => Some(match key.zip(at) {
+            Some((key, cell)) => (*var, handed(project, key, cell, *var, head)),
+            None => (*var, Handed::Unknown),
+        }),
+        _ => None,
+    });
+    each.collect()
+}
+
+/// Whether the cells of two variables of the frame may be the same cells.
+fn overlaps(a: Var, b: Var, head: &Head) -> bool {
+    let span = |var: Var| held_bytes(var, head).map(|bytes| bytes / 8);
+    match (a, b) {
+        (Var::Local(x), Var::Local(y)) | (Var::Param(x), Var::Param(y)) => {
+            match (span(a), span(b)) {
+                (Some(of_a), Some(of_b)) => {
+                    x < y.saturating_add(of_b) && y < x.saturating_add(of_a)
+                }
+                _ => true,
+            }
+        }
+        _ => a == b,
+    }
+}
+
+/// Whether `e` takes the address of any variable.
+fn addresses(e: &Expr) -> bool {
+    let mut found = false;
+    e.walk(&mut |node| found |= matches!(node, Expr::AddrOf { .. }));
+    found
+}
+
+/// Whether no argument but the one at `index` may reach the cells of `var`: each takes no address, or is the address of another variable the callee touches nothing past.
+fn apart(
+    index: usize,
+    var: Var,
+    args: &[Expr],
+    proved: &[Option<(Var, Handed)>],
+    head: &Head,
+) -> bool {
+    args.iter().enumerate().all(|(other, arg)| {
+        if other == index {
+            return true;
+        }
+        match proved.get(other).copied().flatten() {
+            Some((held, Handed::Out | Handed::Within)) => !overlaps(var, held, head),
+            Some(_) => false,
+            None => !addresses(arg),
+        }
+    })
+}
+
+/// Reads the address of a variable handed to a call as `ref`, where it reaches that variable alone, and as `out` where the script function it is handed to writes it whole before it reads it.
 // ⚠ Never the first cell of a call that may be made on it: a receiver is written before the dot.
-// Only a native, and a function proved to take no receiver, are handed no receiver.
-fn referred(e: &mut Expr, head: &Head, project: &Project) {
+// Only a native, and a function proved to take no receiver, are handed no receiver. An `out`
+// also needs that nothing else the callee can reach holds the variable's address: no other
+// argument, and no address of it, or of a cell before it, taken elsewhere and kept.
+fn referred(e: &mut Expr, head: &Head, project: &Project, kept: &Reached) {
     match e {
         Expr::Call { callee, args, .. } => {
             let free = |program: u32, at: u32| {
@@ -612,11 +776,28 @@ fn referred(e: &mut Expr, head: &Head, project: &Project) {
                 Callee::Import { program, at, .. } => usize::from(!free(*program, *at)),
                 Callee::Builtin { .. } | Callee::Virtual { .. } => 1,
             };
-            for arg in args.iter_mut().skip(first) {
-                let own = matches!(&*arg, Expr::AddrOf { var, cell: 0 } if bounded(*var, head));
-                if own {
+            let key = signatures::key_of(head.program, callee);
+            let all: &[Expr] = args.as_slice();
+            let proved = proved_args(key, all, head, project);
+            let kinds: Vec<Option<ExprSugar>> = (proved.iter().enumerate())
+                .map(|(index, found)| {
+                    let (var, handed) = (*found)?;
+                    if index < first {
+                        return None;
+                    }
+                    let alone = || !kept.has(var) && apart(index, var, all, &proved, head);
+                    match handed {
+                        Handed::Out if alone() => Some(ExprSugar::Out),
+                        Handed::Out | Handed::Within => Some(ExprSugar::Ref),
+                        Handed::Unknown if bounded(var, head) => Some(ExprSugar::Ref),
+                        Handed::Past | Handed::Unknown => None,
+                    }
+                })
+                .collect();
+            for (arg, kind) in args.iter_mut().zip(kinds) {
+                if let Some(kind) = kind {
                     let held = std::mem::replace(arg, Expr::GuidEmpty);
-                    *arg = Expr::sugar(ExprSugar::Ref, held);
+                    *arg = Expr::sugar(kind, held);
                 }
             }
         }
@@ -632,7 +813,7 @@ fn referred(e: &mut Expr, head: &Head, project: &Project) {
             };
             for arg in args.iter_mut().take(plain) {
                 if let Expr::Sugar {
-                    kind: ExprSugar::Ref,
+                    kind: ExprSugar::Ref | ExprSugar::Out,
                     e: held,
                 } = arg
                 {
@@ -643,6 +824,58 @@ fn referred(e: &mut Expr, head: &Head, project: &Project) {
         }
         _ => {}
     }
+}
+
+/// Whether `first` makes a variable zero and `next` is a call that hands it whole as an `out`, naming it nowhere else.
+// ⚠ Only where the call is the statement's own value: one inside a choice may not be made, and
+// then the zero is what stays. Another argument that read the variable would read the zero.
+fn zeroed_out(first: &Stmt, next: &Stmt) -> bool {
+    let (Stmt::Simple(ir::Stmt::Assign { target, value }), Stmt::Simple(call)) = (first, next)
+    else {
+        return false;
+    };
+    let zero = is_null(value) || matches!(bare(value), Expr::ZeroSlots(_));
+    let top = match call {
+        ir::Stmt::Eval(e) => e,
+        ir::Stmt::Assign { target: to, value } if to != target => value,
+        _ => return false,
+    };
+    let Expr::Call { args, .. } = bare(top) else {
+        return false;
+    };
+    let handed = Expr::AddrOf {
+        var: *target,
+        cell: 0,
+    };
+    let out = args
+        .iter()
+        .any(|arg| matches!(arg, Expr::Sugar { kind: ExprSugar::Out, e } if **e == handed));
+    zero && out && times(*target, [call]) == 1
+}
+
+/// Reads a variable made zero and then handed as an `out` by the next statement as the one statement `F(out var x)`.
+// The zero is what a callee that writes the whole variable before it reads any never sees.
+fn outs(list: &mut Vec<Stmt>) {
+    if list.len() < 2 {
+        return;
+    }
+    let mut out = Vec::with_capacity(list.len());
+    let mut stmts = std::mem::take(list).into_iter().peekable();
+    while let Some(stmt) = stmts.next() {
+        let paired = stmts.peek().is_some_and(|next| zeroed_out(&stmt, next));
+        match (paired, stmt) {
+            (true, Stmt::Simple(zero)) => match stmts.next() {
+                Some(Stmt::Simple(call)) => out.push(group(Group::Out, vec![zero, call])),
+                Some(other) => {
+                    out.push(Stmt::Simple(zero));
+                    out.push(other);
+                }
+                None => out.push(Stmt::Simple(zero)),
+            },
+            (_, stmt) => out.push(stmt),
+        }
+    }
+    *list = out;
 }
 
 /// The constant `e` is, as a comparison of whole cells sees it when `wide` and one of 32 bits otherwise.
@@ -688,21 +921,22 @@ impl Reached {
         tree::each_expr(body, &mut |top| {
             top.walk(&mut |e| {
                 if let Expr::AddrOf { var, .. } = e {
-                    match *var {
-                        Var::Local(n) => {
-                            reached.local = Some(reached.local.map_or(n, |low| low.min(n)))
-                        }
-                        Var::Param(n) => {
-                            reached.param = Some(reached.param.map_or(n, |low| low.min(n)))
-                        }
-                        other => {
-                            reached.named.insert(other);
-                        }
-                    }
+                    reached.add(*var);
                 }
             });
         });
         reached
+    }
+
+    /// Notes that a pointer may reach `var`, and so every local or parameter after it.
+    fn add(&mut self, var: Var) {
+        match var {
+            Var::Local(n) => self.local = Some(self.local.map_or(n, |low| low.min(n))),
+            Var::Param(n) => self.param = Some(self.param.map_or(n, |low| low.min(n))),
+            other => {
+                self.named.insert(other);
+            }
+        }
     }
 
     /// Whether code that is not handed `var` may still read it: through a pointer, or by its name where it is a global.
@@ -714,6 +948,75 @@ impl Reached {
             temporary => self.named.contains(&temporary),
         }
     }
+}
+
+/// The variables a pointer kept past the statement that took it may reach: every address taken but those handed to a script function that touches nothing past the variable and keeps nothing.
+// ⚠ Of the body as the pass finds it; nothing it rewrites takes an address or drops one.
+fn kept_in(body: &[Stmt], head: &Head, project: &Project) -> Reached {
+    let mut taken: BTreeMap<Var, usize> = BTreeMap::new();
+    let mut dying: BTreeMap<Var, usize> = BTreeMap::new();
+    tree::each_expr(body, &mut |top| {
+        top.walk(&mut |e| match e {
+            Expr::AddrOf { var, .. } => *taken.entry(*var).or_default() += 1,
+            Expr::Call { callee, args, .. } => {
+                let key = signatures::key_of(head.program, callee);
+                let proved = proved_args(key, args, head, project);
+                for (var, handed) in proved.into_iter().flatten() {
+                    if matches!(handed, Handed::Out | Handed::Within) {
+                        *dying.entry(var).or_default() += 1;
+                    }
+                }
+            }
+            _ => {}
+        });
+    });
+    let mut kept = Reached::default();
+    for (var, times) in taken {
+        if dying.get(&var).copied().unwrap_or(0) < times {
+            kept.add(var);
+        }
+    }
+    kept
+}
+
+/// Every variable a body assigns, reads or takes the address of, with the times it does.
+fn named(body: &[Stmt]) -> BTreeMap<Var, usize> {
+    let mut named: BTreeMap<Var, usize> = BTreeMap::new();
+    tree::each_simple(body, &mut |s| {
+        for target in s.targets() {
+            *named.entry(*target).or_default() += 1;
+        }
+    });
+    tree::each_expr(body, &mut |top| {
+        top.walk(&mut |e| {
+            if let Expr::Var(var) | Expr::AddrOf { var, .. } = e {
+                *named.entry(*var).or_default() += 1;
+            }
+        });
+    });
+    named
+}
+
+/// The times the statements name `var`: assigned, read or its address taken.
+fn times<'a>(var: Var, stmts: impl IntoIterator<Item = &'a ir::Stmt>) -> usize {
+    let mut times = 0;
+    for s in stmts {
+        times += s.targets().iter().filter(|target| **target == var).count();
+        s.each_expr(&mut |top| {
+            top.walk(&mut |e| {
+                let named = matches!(e, Expr::Var(v) | Expr::AddrOf { var: v, .. } if *v == var);
+                times += usize::from(named);
+            });
+        });
+    }
+    times
+}
+
+/// What an initialiser is read against.
+struct Around<'a> {
+    reached: &'a Reached,
+    /// Every variable the function names, with the times it does.
+    named: &'a BTreeMap<Var, usize>,
 }
 
 /// What a statement makes that the statements after it may fill.
@@ -840,6 +1143,10 @@ enum Between {
     Copy,
     /// An assignment that cannot tell where it stands: it goes before the object is made.
     Apart,
+    /// The first statement of an object or array made inside this one: the statements it is, in order.
+    Inner(Vec<ir::Stmt>),
+    /// A later statement of one made inside this one.
+    Held,
 }
 
 /// The initialiser the statements at the head of a list read as.
@@ -873,8 +1180,10 @@ fn object(
     target: Var,
     opened: &[ir::Stmt],
     rest: &[Stmt],
-    reached: &Reached,
+    around: &Around<'_>,
+    depth: usize,
 ) -> Option<Initialised> {
+    let reached = around.reached;
     let mut names = vec![target];
     let mut filled: Vec<(u32, u32)> = (opened.iter())
         .filter_map(|s| field_store(s, &names))
@@ -885,10 +1194,7 @@ fn object(
     for s in opened.iter().skip(1) {
         s.each_expr(&mut |e| passed.add(e));
     }
-    let blind = |value: &Expr, names: &[Var]| {
-        let alone = level(value) == 0;
-        (names.iter()).all(|name| !mentions(value, *name) && (alone || !reached.has(*name)))
-    };
+    let blind = |value: &Expr, names: &[Var]| blind_to(value, names, reached);
     let exposed = |value: &Expr| {
         let mut found = false;
         value.walk(&mut |node| {
@@ -900,7 +1206,23 @@ fn object(
     };
     let mut roles = Vec::new();
     let mut last = None;
+    // The statements of one made inside this one still to pass.
+    let mut skip = 0usize;
     for (index, stmt) in rest.iter().take(FIELDS).enumerate() {
+        if skip > 0 {
+            skip -= 1;
+            roles.push(Between::Held);
+            continue;
+        }
+        let tail = rest.get(index..).unwrap_or_default();
+        if let Some(inner) = nested(tail, &names, &filled, around, depth) {
+            for s in &inner.parts {
+                s.each_expr(&mut |e| passed.add(e));
+            }
+            skip = inner.held.saturating_sub(1);
+            roles.push(Between::Inner(inner.parts));
+            continue;
+        }
         let Some(s) = simple(stmt) else {
             break;
         };
@@ -964,6 +1286,8 @@ fn object(
             }
             Between::Copy => after.push(stmt.clone()),
             Between::Apart => before.push(stmt.clone()),
+            Between::Inner(made) => parts.extend(made),
+            Between::Held => {}
         }
     }
     let kind = Group::Construct;
@@ -975,14 +1299,71 @@ fn object(
     })
 }
 
-/// The initialiser the statements at the head of `list` are.
-fn initialiser(list: &[Stmt], reached: &Reached) -> Option<Initialised> {
+/// Whether evaluating `value` where the source would cannot tell the object `names` name from what the variable held before: it names none of them, and reads no memory a pointer to one may be in.
+fn blind_to(value: &Expr, names: &[Var], reached: &Reached) -> bool {
+    let alone = level(value) == 0;
+    (names.iter()).all(|name| !mentions(value, *name) && (alone || !reached.has(*name)))
+}
+
+/// An object or array made inside another: the statements it is, and the statements of the list it stands for before the store that takes it.
+struct Inner {
+    parts: Vec<ir::Stmt>,
+    held: usize,
+}
+
+/// The object or array made, constructed and filled by the statements `list` starts with, where the statement after them stores it whole to a field of the object `names` name: `new A { F = new B { G = a } }`.
+// ⚠ The source makes the inner one where the field takes it, which is where these statements
+// make it: so only where its own statements stand straight before that store, none of them can
+// tell the outer object from what its variable held before, and nothing else names the inner
+// variable, which the source has no name for.
+fn nested(
+    list: &[Stmt],
+    names: &[Var],
+    filled: &[(u32, u32)],
+    around: &Around<'_>,
+    depth: usize,
+) -> Option<Inner> {
+    if depth >= DEPTH {
+        return None;
+    }
+    let (inner, fresh, opened) = opening(list.first()?)?;
+    let global = matches!(inner, Var::Global { .. });
+    if global || names.contains(&inner) || around.reached.has(inner) {
+        return None;
+    }
+    let window = list.get(..list.len().min(INNER)).unwrap_or_default();
+    let (parts, held) = match initialiser(window, around, depth + 1) {
+        Some(read) if read.before.is_empty() && read.after.is_empty() => match read.made {
+            Sugar::Group { parts, .. } => (parts, read.held),
+            _ => return None,
+        },
+        Some(_) => return None,
+        None => match fresh {
+            Fresh::Object => (opened.to_vec(), 1),
+            Fresh::Array(_) => return None,
+        },
+    };
+    let store = simple(list.get(held)?)?;
+    let (bytes, value, _) = field_store(store, names)?;
+    let twice = (filled.iter()).any(|held| held.0 < bytes.1 && bytes.0 < held.1);
+    let taken = matches!(bare(whole(value)), Expr::Var(var) if *var == inner);
+    let mut unseen = true;
+    for s in &parts {
+        s.each_expr(&mut |e| unseen &= blind_to(e, names, around.reached));
+    }
+    let alone = around.named.get(&inner) == Some(&times(inner, parts.iter().chain([store])));
+    (!twice && taken && unseen && alone).then_some(Inner { parts, held })
+}
+
+/// The initialiser the statements at the head of `list` are, read inside `depth` others.
+fn initialiser(list: &[Stmt], around: &Around<'_>, depth: usize) -> Option<Initialised> {
     let (first, rest) = list.split_first()?;
     let (target, fresh, opened) = opening(first)?;
     let len = match fresh {
-        Fresh::Object => return object(target, opened, rest, reached),
+        Fresh::Object => return object(target, opened, rest, around, depth),
         Fresh::Array(len) => len,
     };
+    let reached = around.reached;
     // ⚠ The source assigns the variable after the last element: no value may be able to tell,
     // by the variable's name or through a pointer to it.
     let blind =
@@ -1020,14 +1401,14 @@ fn initialiser(list: &[Stmt], reached: &Reached) -> Option<Initialised> {
 }
 
 /// Reads each object or array made and filled by the statements after it as one statement.
-fn initialisers(list: &mut Vec<Stmt>, reached: &Reached) {
+fn initialisers(list: &mut Vec<Stmt>, around: &Around<'_>) {
     if !list.iter().any(|stmt| opening(stmt).is_some()) {
         return;
     }
     let mut out = Vec::with_capacity(list.len());
     let mut at = 0;
     while at < list.len() {
-        match initialiser(&list[at..], reached) {
+        match initialiser(&list[at..], around, 0) {
             Some(read) => {
                 out.extend(read.before);
                 out.push(Stmt::Sugar(Box::new(read.made)));

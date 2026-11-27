@@ -95,6 +95,12 @@ fn value(e: &Expr, x: u64) -> u64 {
             r,
             ..
         } => u64::from(value(l, x) != 0 || value(r, x) != 0),
+        Expr::Binary {
+            op: BinOp::LogicalAnd,
+            l,
+            r,
+            ..
+        } => u64::from(value(l, x) != 0 && value(r, x) != 0),
         Expr::Binary { op, at, l, r } => {
             let (a, b) = (value(l, x) as u32, value(r, x) as u32);
             let ordering = match at {
@@ -432,6 +438,70 @@ fn tests_stay_where_one_switch_would_run_otherwise() {
     let (constants, default) = arms_of(&done[0]);
     let each: Vec<Vec<u64>> = vec![vec![10], vec![20], vec![30], vec![40]];
     assert_eq!((constants, default.len()), (each, 0));
+}
+
+/// `x != a && x != b`, the second compared with its sign.
+fn none_of(a: i64, b: i64) -> Expr {
+    Expr::Binary {
+        op: BinOp::LogicalAnd,
+        at: Kind::Bool,
+        l: Box::new(unequal(a)),
+        r: Box::new(compare(BinOp::Ne, Kind::I32, b)),
+    }
+}
+
+#[test]
+fn cases_halved_that_all_run_on_to_what_follows_are_one_arm() {
+    // `if (x <= 20) { if (x != 10 && x != 20) return; } else if (x != 30 && x != 40) return; func_99();`
+    let low = vec![when(none_of(10, 20), vec![leave()], Vec::new())];
+    let high = vec![when(none_of(30, 40), vec![leave()], Vec::new())];
+    let body = vec![
+        when(compare(BinOp::Le, Kind::I32, 20), low, high),
+        does(0x99),
+    ];
+    let done = read_whole(&body, &VALUES);
+    let [only, after] = done.as_slice() else {
+        panic!("two statements: {done:?}");
+    };
+    let (constants, default) = arms_of(only);
+    let each: Vec<Vec<u64>> = vec![vec![10, 20, 30, 40]];
+    assert_eq!(constants, each);
+    assert_eq!(default, [leave()].as_slice());
+    assert_eq!(*after, does(0x99));
+
+    // With no ordering test above it, one arm of two constants stays an `if`.
+    let alone = vec![when(none_of(10, 20), vec![leave()], Vec::new()), does(0x99)];
+    let mut list = alone.clone();
+    switched(&mut list, 0, true);
+    assert_eq!(list, alone);
+}
+
+#[test]
+fn arms_with_no_statements_join_and_an_arm_with_statements_stays_its_own() {
+    // `if (x != 1) { if (x != 2) { if (x != 3) return; } } func_99();`
+    let nested = vec![when(
+        unequal(1),
+        vec![when(
+            unequal(2),
+            vec![when(unequal(3), vec![leave()], Vec::new())],
+            Vec::new(),
+        )],
+        Vec::new(),
+    )];
+    let mut body = nested.clone();
+    body.push(does(0x99));
+    let done = read_whole(&body, &VALUES);
+    let (constants, default) = arms_of(&done[0]);
+    let each: Vec<Vec<u64>> = vec![vec![1, 2, 3]];
+    assert_eq!(constants, each);
+    assert_eq!(default, [leave()].as_slice());
+
+    let first = when(equal(10), vec![does(0x10), leave()], nested);
+    let body = vec![first, does(0x99)];
+    let done = read_whole(&body, &VALUES);
+    let (constants, _) = arms_of(&done[0]);
+    let each: Vec<Vec<u64>> = vec![vec![10], vec![1, 2, 3]];
+    assert_eq!(constants, each);
 }
 
 #[test]

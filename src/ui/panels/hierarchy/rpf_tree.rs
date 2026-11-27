@@ -31,22 +31,74 @@ fn icon_name(name: &str, kind: Option<Rpf9Kind>) -> Option<String> {
 }
 
 /// The name of a GTA VI row as it is shown, with the build's platform letter substituted for any
-/// `#` the stored name carries, and the kind's extension appended where the name has none.
+/// `#` the stored name carries, for any `y`-prefixed RAGE extension the names vocabulary ships
+/// (`n01.ybn` → `n01.zbn` on an Xbox Series build), and the kind's extension appended where the
+/// name has none.
 fn displayed_name(name: &str, kind: Option<Rpf9Kind>, letter: char) -> String {
     use or_io::container::rpf::substitute_platform_letter;
     let stated = substitute_platform_letter(name, letter);
-    if std::path::Path::new(&stated).extension().is_some() {
-        return stated;
+    let rewritten = rewrite_platform_extension(&stated, letter);
+    if std::path::Path::new(&rewritten).extension().is_some() {
+        return rewritten;
     }
     match kind.and_then(|k| k.extension_for(letter)) {
-        Some(ext) => format!("{stated}.{ext}"),
-        None => stated,
+        Some(ext) => format!("{rewritten}.{ext}"),
+        None => rewritten,
     }
 }
 
-/// The platform letter of the active install (`y` for PC, `z` for Xbox Series, …), which gives
-/// a GTA VI row its concrete extension where the file stores the `#`-stub.
-fn platform_letter(state: &AppState) -> char {
+/// Swap the first letter of a `y`-prefixed RAGE extension at the end of `path` for `letter`.
+///
+/// The names vocabulary ships paths with Windows extensions baked in (`n01_e01_0.ybn`,
+/// `models/car.ydr`), so on an Xbox Series build the row should still read `.zbn` / `.zdr`.
+/// Only extensions whose tail after the first letter matches a known RAGE stub (`dr`, `ft`,
+/// `td`, `bn`, `map`, `typ`, …) are rewritten; `rpf`, `dat`, `gfx`, `mrf`, `meta`, `cut` and
+/// anything else stays as given.
+fn rewrite_platform_extension(path: &str, letter: char) -> String {
+    const RAGE_LETTERS: &[char] = &['y', 'w', 'x', 'd', 'z', 'c', 'o', 'p', 'a', 's', 'n', 'v'];
+    /// The tail after the platform letter, from the public rage.re reference (`#dr`, `#td`, …).
+    const RAGE_STUB_TAILS: &[&str] = &[
+        "dr", "ft", "dd", "td", "bn", "bd", "bs", "cd", "ld", "sc", "nv", "nh", "jd", "mt", "pt",
+        "ch", "ad", "cs", "pd", "pdb", "ldb", "as", "sd", "vr", "wr", "map", "typ", "mf", "ed",
+        "fd", "nm", "pm", "pmd", "pfl", "pl", "nd", "cdt", "edt", "gd", "gx", "hm", "pr", "prp",
+        "sf", "sg", "si", "sp", "st", "tb", "tx", "vd",
+    ];
+    let Some(dot) = path.rfind('.') else {
+        return path.to_string();
+    };
+    let ext = &path[dot + 1..];
+    let Some(first) = ext.chars().next() else {
+        return path.to_string();
+    };
+    if !RAGE_LETTERS.contains(&first) || first == letter {
+        return path.to_string();
+    }
+    let tail = &ext[first.len_utf8()..];
+    if !RAGE_STUB_TAILS.iter().any(|s| *s == tail) {
+        return path.to_string();
+    }
+    let mut out = String::with_capacity(path.len());
+    out.push_str(&path[..=dot]);
+    out.push(letter);
+    out.push_str(tail);
+    out
+}
+
+/// The platform letter a GTA VI archive's rows read under: the archive's own version picks GTA VI's
+/// profile (`z` for the Xbox Series build this project tracks), everything else falls back to the
+/// active install's letter and ultimately `y`.
+fn platform_letter_for(state: &AppState, session: &RpfEditSession, node: &RpfSessionNode) -> char {
+    use or_io::container::rpf::version::RpfVersion;
+    let rpf9 = match &node.backing {
+        RpfNodeBacking::ArchiveFile { archive_id, .. } => session
+            .archive(*archive_id)
+            .map(|slot| slot.archive.version == RpfVersion::Rpf9)
+            .unwrap_or(false),
+        _ => false,
+    };
+    if rpf9 {
+        return or_title::Game::GtaVI.platform_letter();
+    }
     state
         .prefs
         .active_game
@@ -329,7 +381,7 @@ pub(super) fn draw_row(
         );
         return;
     }
-    let Some((node, unsaved, size, bound_doc_id, kind, learned)) =
+    let Some((node, unsaved, size, bound_doc_id, kind, learned, letter)) =
         state.document(doc_id).and_then(|d| match &d.payload {
             DocPayload::Rpf(rpf) => {
                 let node = rpf.session.node(node_id)?.clone();
@@ -342,6 +394,9 @@ pub(super) fn draw_row(
                 let learned = kind
                     .filter(|_| node.name.starts_with("hash_"))
                     .and_then(|_| learned_name_for(&rpf.session, &node));
+                // The platform letter rows of this archive read under, so a Windows-form name
+                // the vocabulary ships (`n01.ybn`) renders as `.zbn` on an Xbox Series archive.
+                let letter = platform_letter_for(state, &rpf.session, &node);
                 Some((
                     node,
                     rpf.session.archive_unsaved(node_id),
@@ -349,6 +404,7 @@ pub(super) fn draw_row(
                     rpf.entry_documents.get(&node_id).copied(),
                     kind,
                     learned,
+                    letter,
                 ))
             }
             _ => None,
@@ -506,7 +562,7 @@ pub(super) fn draw_row(
             // The visible row name carries the build's platform letter (`#dr` → `ydr` on PC,
             // `zdr` on Xbox Series), or the kind's extension where the row states no name.
             // Where the body stated its own model name on open, that stem replaces the hash.
-            let display = displayed_name(&row_name, kind, platform_letter(state));
+            let display = displayed_name(&row_name, kind, letter);
             let label = icons::icon_label(&icon, &display, color.into());
             let r = selectable_header(ui, selected, label);
             ui.add(detail_label(detail_text(kind, size)));
@@ -613,10 +669,28 @@ mod tests {
             displayed_name("models/car.#dr", Some(DRAWABLE), 'z'),
             "models/car.zdr"
         );
-        // A path already in its concrete form stays as is.
+        // A path already in its concrete form stays as is for the matching letter.
         assert_eq!(
             displayed_name("models/car.ydr", Some(DRAWABLE), 'y'),
             "models/car.ydr"
+        );
+        // A `y`-prefixed extension the names vocabulary ships rewrites to the build's letter.
+        assert_eq!(
+            displayed_name("models/car.ydr", Some(DRAWABLE), 'z'),
+            "models/car.zdr"
+        );
+        assert_eq!(
+            displayed_name("terrain/n01_e01_0.ybn", None, 'z'),
+            "terrain/n01_e01_0.zbn"
+        );
+        // A bare extension like `.rpf` / `.dat` / `.meta` isn't RAGE-shaped, so it stays.
+        assert_eq!(
+            displayed_name("packs/base.rpf", None, 'z'),
+            "packs/base.rpf"
+        );
+        assert_eq!(
+            displayed_name("world/heightmap.dat", None, 'z'),
+            "world/heightmap.dat"
         );
         // A row with no kind keeps its name whatever letter is asked.
         assert_eq!(displayed_name("plain_file", None, 'z'), "plain_file");
